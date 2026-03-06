@@ -273,12 +273,12 @@
 
 ### 6.1 ATA/IDE Disk Driver
 
-- [ ] Write `src/kernel/drivers/ata.c` / `ata.h`
-- [ ] Detect ATA drives on the primary bus (ports `0x1F0`–`0x1F7`)
-- [ ] Implement `ata_read_sectors(lba, count, buffer)` via PIO
-- [ ] Implement `ata_write_sectors(lba, count, buffer)` via PIO
-- [ ] Test: read sector 0 of a QEMU disk image → get known data → ✅
-- [ ] Commit: `"drivers: ATA PIO disk read/write"`
+- [x] Write `src/kernel/drivers/ata.c` / `ata.h` ✅
+- [x] Detect ATA drives on the primary bus (ports `0x1F0`–`0x1F7`) ✅ IDENTIFY command
+- [x] Implement `ata_read_sectors(lba, count, buffer)` via PIO ✅ LBA28
+- [x] Implement `ata_write_sectors(lba, count, buffer)` via PIO ✅ + cache flush
+- [x] Test: read sector 0 of a QEMU disk image → `"QEMU HARDDISK" (64 MiB)` → ✅
+- [x] Commit: `"drivers: ATA PIO disk read/write"` ✅ `5bcb1f9`
 
 ### 6.2 Virtual Filesystem (VFS) Layer — Drive Letters
 

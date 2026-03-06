@@ -20,6 +20,7 @@
 #include "vmm.h"
 #include "heap.h"
 #include "ata.h"
+#include "vfs.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -53,6 +54,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 7: Initialize ATA disk driver */
     ata_init();
+
+    /* Step 8: Initialize VFS */
+    vfs_init();
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
