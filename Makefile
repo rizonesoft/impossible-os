@@ -103,7 +103,12 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 ## run: Launch QEMU with the ISO (UEFI boot via OVMF)
 run: $(ISO_FILE)
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
-	@test -f $(BUILD_DIR)/disk.img || qemu-img create -f raw $(BUILD_DIR)/disk.img 64M
+	@if [ ! -f $(BUILD_DIR)/disk.img ]; then \
+		qemu-img create -f raw $(BUILD_DIR)/disk.img 64M && \
+		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
+		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
+		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
+	fi
 	$(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234

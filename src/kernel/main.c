@@ -22,6 +22,7 @@
 #include "ata.h"
 #include "vfs.h"
 #include "initrd.h"
+#include "fat32.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -59,7 +60,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* Step 9: Load initrd if a module was provided by GRUB */
+    /* Step 9: Mount FAT32 from ATA disk at A:\ */
+    if (ata_get_drive(0)->present) {
+        if (fat32_init(0) == 0)
+            vfs_mount('A', fat32_get_driver(), fat32_get_root());
+    }
+
+    /* Step 10: Load initrd if a module was provided by GRUB */
     if (g_boot_info.module_available) {
         uint64_t mod_size = g_boot_info.module_end - g_boot_info.module_start;
         initrd_init(g_boot_info.module_start, mod_size);
@@ -189,6 +196,24 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 printk("VFS read C:\\hello.txt: \"%s\"\n", (char *)buf);
             }
             vfs_close(f);
+        }
+    }
+
+    /* FAT32 test: list files on A:\ */
+    if (vfs_is_mounted('A')) {
+        struct vfs_node *a_root = vfs_get_drive_root('A');
+        if (a_root) {
+            struct vfs_dirent *de;
+            uint32_t idx = 0;
+            fb_set_color(FB_COLOR_YELLOW, FB_COLOR_BG_DEFAULT);
+            printk("--- A:\\ (FAT32) ---\n");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            while ((de = vfs_readdir(a_root, idx)) != (struct vfs_dirent *)0) {
+                printk("  %s %s\n",
+                       (de->type & VFS_DIRECTORY) ? "[DIR]" : "     ",
+                       de->name);
+                idx++;
+            }
         }
     }
 
