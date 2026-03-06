@@ -16,6 +16,7 @@
 #include "pic.h"
 #include "pit.h"
 #include "keyboard.h"
+#include "pmm.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -38,7 +39,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 3: Parse Multiboot2 info structure */
     multiboot2_parse((uintptr_t)mbi);
 
-    /* Step 4: Initialize framebuffer (needs parsed boot info) */
+    /* Step 4: Initialize physical memory manager (needs parsed memory map) */
+    pmm_init();
+
+    /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
 
     /* Step 5: Load proper GDT with kernel/user segments and TSS */

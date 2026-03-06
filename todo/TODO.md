@@ -217,15 +217,15 @@
 
 ### 4.6 Keyboard Driver (PS/2)
 
-- [ ] Write `src/kernel/drivers/keyboard.c` / `keyboard.h`
-- [ ] Register IRQ 1 handler
-- [ ] Read scan codes from port `0x60`
-- [ ] Build a scan-code → ASCII lookup table (US QWERTY)
-- [ ] Handle Shift, Caps Lock, Ctrl, Alt modifier keys
-- [ ] Push characters into a circular input buffer
-- [ ] Implement `keyboard_getchar()` — blocking read from buffer
-- [ ] Test: type on keyboard → characters appear on VGA screen → ✅
-- [ ] Commit: `"kernel: PS/2 keyboard driver"`
+- [x] Write `src/kernel/drivers/keyboard.c` / `keyboard.h` ✅
+- [x] Register IRQ 1 handler ✅ (interrupt vector 33)
+- [x] Read scan codes from port `0x60` ✅
+- [x] Build a scan-code → ASCII lookup table (US QWERTY) ✅
+- [x] Handle Shift, Caps Lock, Ctrl, Alt modifier keys ✅
+- [x] Push characters into a circular input buffer ✅ 256-byte ring buffer
+- [x] Implement `keyboard_getchar()` — blocking read from buffer ✅ + non-blocking `trygetchar()`
+- [x] Test: type on keyboard → characters appear on screen → ✅ echo loop with `>` prompt
+- [x] Commit: `"kernel: PS/2 keyboard driver"` ✅ `73921fe`
 
 ---
 

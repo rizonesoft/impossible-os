@@ -45,4 +45,8 @@ SECTIONS
         *(.bss)
         __bss_end = .;
     }
+
+    /* End of kernel — PMM bitmap is placed here */
+    . = ALIGN(4K);
+    __kernel_end = .;
 }
