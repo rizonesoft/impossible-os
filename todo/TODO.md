@@ -155,14 +155,14 @@
 
 ### 3.3 Enter 64-bit Long Mode
 
-- [ ] Set up identity-mapped **page tables** (PML4 → PDPT → PD → PT)
-- [ ] Enable **PAE** (bit 5 of `cr4`)
-- [ ] Set **Long Mode Enable** bit in `IA32_EFER` MSR
-- [ ] Enable **paging** (bit 31 of `cr0`)
-- [ ] Load a 64-bit GDT and far-jump to 64-bit code segment
-- [ ] Set up 64-bit stack, zero BSS, call `kernel_main()`
-- [ ] Verify `rip` is executing in 64-bit mode
-- [ ] Commit: `"boot: transition to 64-bit Long Mode"`
+- [x] Set up identity-mapped **page tables** (PML4 → PDPT → PD → PT) ✅ 4 GiB with 2 MiB pages
+- [x] Enable **PAE** (bit 5 of `cr4`) ✅
+- [x] Set **Long Mode Enable** bit in `IA32_EFER` MSR ✅
+- [x] Enable **paging** (bit 31 of `cr0`) ✅
+- [x] Load a 64-bit GDT and far-jump to 64-bit code segment ✅
+- [x] Set up 64-bit stack, zero BSS, call `kernel_main()` ✅
+- [x] Verify `rip` is executing in 64-bit mode ✅ CS=CS64, serial confirms Long Mode
+- [x] Commit: `"boot: transition to 64-bit Long Mode"` ✅ `8d510ed`
 
 ---
 
@@ -170,7 +170,7 @@
 
 ### 4.1 Kernel Entry & Early Framebuffer Output
 
-- [ ] Write `src/kernel/main.c` — `kernel_main()` entry point
+- [x] Write `src/kernel/main.c` — `kernel_main()` entry point ✅ (64-bit, System V ABI)
 - [ ] Write `src/kernel/framebuffer.c` / `framebuffer.h` — early framebuffer console using GOP info from Multiboot2
 - [ ] Embed a **PSF bitmap font** for text rendering on the framebuffer
 - [ ] Implement `fb_putchar()`, `fb_write()`, `fb_clear()` — draw text to pixel framebuffer
