@@ -86,7 +86,7 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(ISO_DIR)/boot/grub
 	@# Build the initrd packer tool (host binary)
 	@mkdir -p $(BUILD_DIR)/tools
-	$(HOST_CC) -o $(BUILD_DIR)/tools/make-initrd scripts/make-initrd.c
+	$(HOST_CC) -o $(BUILD_DIR)/tools/make-initrd tools/make-initrd.c
 	@# Create test files and pack initrd
 	@mkdir -p $(BUILD_DIR)/initrd_files
 	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
