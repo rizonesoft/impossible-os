@@ -61,23 +61,22 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* Step 9: IXFS on ATA disk — format if needed, mount at D:\ */
+    /* Step 9: IXFS on ATA master — format if needed, mount at C:\ (main disk) */
     if (ata_get_drive(0)->present) {
         const struct ata_drive *drv = ata_get_drive(0);
         if (ixfs_init(0) != 0) {
-            /* Not IXFS — format it */
             if (ixfs_format(0, drv->sectors, "Impossible OS") == 0)
                 ixfs_init(0);
         }
         if (ixfs_get_root())
-            vfs_mount('D', ixfs_get_driver(), ixfs_get_root());
+            vfs_mount('C', ixfs_get_driver(), ixfs_get_root());
     }
 
-    /* Step 10: Load initrd if a module was provided by GRUB */
+    /* Step 10: Load initrd at B:\ (boot files, read-only) */
     if (g_boot_info.module_available) {
         uint64_t mod_size = g_boot_info.module_end - g_boot_info.module_start;
         initrd_init(g_boot_info.module_start, mod_size);
-        vfs_mount('C', initrd_get_driver(), initrd_get_root());
+        vfs_mount('B', initrd_get_driver(), initrd_get_root());
     }
 
 
@@ -190,9 +189,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                heap_get_used(), heap_get_free());
     }
 
-    /* VFS/initrd test: read a file from C:\ */
-    if (vfs_is_mounted('C')) {
-        struct vfs_node *f = vfs_open("C:\\hello.txt", VFS_O_READ);
+    /* VFS/initrd test: read a file from B:\ */
+    if (vfs_is_mounted('B')) {
+        struct vfs_node *f = vfs_open("B:\\hello.txt", VFS_O_READ);
         if (f) {
             uint8_t buf[128];
             int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
@@ -201,22 +200,22 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
                 printk("[OK] ");
                 fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("VFS read C:\\hello.txt: \"%s\"\n", (char *)buf);
+                printk("VFS read B:\\hello.txt: \"%s\"\n", (char *)buf);
             }
             vfs_close(f);
         }
     }
 
-    /* IXFS test: list files on D:\ */
-    if (vfs_is_mounted('D')) {
-        struct vfs_node *d_root = vfs_get_drive_root('D');
-        if (d_root) {
+    /* IXFS test: list files on C:\ */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root) {
             struct vfs_dirent *de;
             uint32_t idx = 0;
             fb_set_color(FB_COLOR_YELLOW, FB_COLOR_BG_DEFAULT);
-            printk("--- D:\\ (IXFS) ---\n");
+            printk("--- C:\\ (IXFS) ---\n");
             fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            while ((de = vfs_readdir(d_root, idx)) != (struct vfs_dirent *)0) {
+            while ((de = vfs_readdir(c_root, idx)) != (struct vfs_dirent *)0) {
                 printk("  %s %s\n",
                        (de->type & VFS_DIRECTORY) ? "[DIR]" : "     ",
                        de->name);

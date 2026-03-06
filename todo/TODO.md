@@ -324,9 +324,9 @@
   - [x] **Block bitmap** — 1 bit per block (4 KiB blocks) ✅
   - [x] **Inode table** — fixed-size entries (permissions, size, timestamps, block pointers) ✅ 128 bytes, 12 direct + 1 indirect
   - [x] **Data blocks** — file/directory content ✅ 64-byte dir entries
-- [ ] Write `src/kernel/fs/ixfs.c` / `ixfs.h`
-- [ ] Implement `ixfs_format()` — write superblock, zero bitmaps, create root directory
-- [ ] Implement `ixfs_mount()` — read superblock, verify magic, load bitmaps
+- [x] Write `src/kernel/fs/ixfs.c` / `ixfs.h` ✅
+- [x] Implement `ixfs_format()` — write superblock, zero bitmaps, create root directory ✅
+- [x] Implement `ixfs_mount()` — read superblock, verify magic, load bitmaps ✅ persistence verified
 - [ ] Implement inode operations:
   - [ ] `ixfs_read_inode()` / `ixfs_write_inode()`
   - [ ] `ixfs_alloc_block()` / `ixfs_free_block()`
