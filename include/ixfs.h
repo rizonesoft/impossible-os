@@ -41,10 +41,26 @@
 #define IXFS_ROOT_INODE      1           /* root directory is always inode 1 */
 #define IXFS_INODE_FREE      0           /* inode 0 is reserved/unused */
 
-/* Inode type flags (stored in i_mode) */
+/* Inode type flags (stored in upper bits of i_mode) */
 #define IXFS_S_FILE          0x8000      /* regular file */
 #define IXFS_S_DIR           0x4000      /* directory */
-#define IXFS_S_RDONLY        0x0001      /* read-only */
+#define IXFS_S_TYPEMASK      0xF000      /* mask for type bits */
+
+/* Permission bits (stored in lower 9 bits of i_mode, Unix-style) */
+#define IXFS_S_IRUSR         0x0100      /* owner read */
+#define IXFS_S_IWUSR         0x0080      /* owner write */
+#define IXFS_S_IXUSR         0x0040      /* owner execute */
+#define IXFS_S_IRGRP         0x0020      /* group read */
+#define IXFS_S_IWGRP         0x0010      /* group write */
+#define IXFS_S_IXGRP         0x0008      /* group execute */
+#define IXFS_S_IROTH         0x0004      /* other read */
+#define IXFS_S_IWOTH         0x0002      /* other write */
+#define IXFS_S_IXOTH         0x0001      /* other execute */
+
+/* Common permission combos */
+#define IXFS_PERM_FILE       0x01B4      /* rw-rw-r-- (0664) */
+#define IXFS_PERM_DIR        0x01ED      /* rwxrwxr-x (0775) */
+#define IXFS_PERM_READONLY   0x0124      /* r--r--r-- (0444) */
 
 /* --- On-Disk Structures --- */
 
@@ -69,8 +85,10 @@ struct ixfs_superblock {
 
 /* Inode — 128 bytes each (32 inodes per block) */
 struct ixfs_inode {
-    uint16_t i_mode;               /* type + permissions (IXFS_S_FILE, etc.) */
+    uint16_t i_mode;               /* type (upper 4) + permissions (lower 9) */
     uint16_t i_links;              /* hard link count */
+    uint16_t i_uid;                /* owner user ID */
+    uint16_t i_gid;                /* owner group ID */
     uint32_t i_size;               /* file size in bytes */
     uint32_t i_blocks;             /* number of data blocks used */
     uint32_t i_ctime;              /* creation time (seconds since epoch) */
@@ -78,7 +96,7 @@ struct ixfs_inode {
     uint32_t i_atime;              /* access time */
     uint32_t i_direct[IXFS_DIRECT_BLOCKS];   /* direct block pointers */
     uint32_t i_indirect;           /* single-indirect block pointer */
-    uint8_t  i_reserved[12];       /* pad to 128 bytes */
+    uint8_t  i_reserved[8];        /* pad to 128 bytes */
 } __attribute__((packed));
 
 #define IXFS_INODES_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode))
@@ -103,3 +121,7 @@ int ixfs_init(uint32_t partition_lba);
 /* Get VFS driver and root node */
 struct vfs_fs_driver *ixfs_get_driver(void);
 struct vfs_node *ixfs_get_root(void);
+
+/* Permission check: returns 0 if access allowed, -1 if denied */
+int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
+                    uint16_t gid, int want_write);

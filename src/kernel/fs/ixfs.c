@@ -605,8 +605,12 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
             p[i] = 0;
     }
 
-    new_inode.i_mode = (type == VFS_DIRECTORY) ? IXFS_S_DIR : IXFS_S_FILE;
+    new_inode.i_mode = (type == VFS_DIRECTORY)
+                      ? (IXFS_S_DIR | IXFS_PERM_DIR)
+                      : (IXFS_S_FILE | IXFS_PERM_FILE);
     new_inode.i_links = 1;
+    new_inode.i_uid = 0;    /* root */
+    new_inode.i_gid = 0;
     new_inode.i_size = 0;
     new_inode.i_blocks = 0;
 
@@ -956,7 +960,7 @@ int ixfs_format(uint32_t partition_lba, uint32_t total_sectors,
         p[i] = 0;
 
     root_data_block = sb.s_data_start; /* first data block */
-    root_inode.i_mode      = IXFS_S_DIR;
+    root_inode.i_mode      = IXFS_S_DIR | IXFS_PERM_DIR;
     root_inode.i_links     = 1;
     root_inode.i_size      = 2 * sizeof(struct ixfs_dir_entry); /* . and .. */
     root_inode.i_blocks    = 1;
@@ -1091,4 +1095,32 @@ struct vfs_node *ixfs_get_root(void)
     if (vnode_count == 0)
         return (struct vfs_node *)0;
     return &vnodes[0].node;  /* root is always vnode[0] */
+}
+
+int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
+                    uint16_t gid, int want_write)
+{
+    uint16_t perm;
+
+    /* Root (uid 0) bypasses all permission checks */
+    if (uid == 0) return 0;
+
+    /* Determine which permission bits to check */
+    if (uid == inode->i_uid) {
+        /* Owner */
+        perm = (inode->i_mode >> 6) & 0x7;
+    } else if (gid == inode->i_gid) {
+        /* Group */
+        perm = (inode->i_mode >> 3) & 0x7;
+    } else {
+        /* Other */
+        perm = inode->i_mode & 0x7;
+    }
+
+    /* Check: read requires bit 2 (r), write requires bit 1 (w) */
+    if (want_write) {
+        return (perm & 0x2) ? 0 : -1;
+    } else {
+        return (perm & 0x4) ? 0 : -1;
+    }
 }
