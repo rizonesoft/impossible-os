@@ -399,7 +399,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     {
         extern void exec_loader_func(void);
 
-        printk("\n  Exec test: load hello.elf from initrd\n");
+        printk("\n  Exec test: load hello.exe from initrd\n");
 
         /* The exec loader is a kernel task that loads the ELF binary.
          * We use a kernel task because exec needs to read from the initrd
@@ -563,9 +563,9 @@ void exec_loader_func(void)
         return;
     }
 
-    file = vfs_finddir(root, "hello.elf");
+    file = vfs_finddir(root, "hello.exe");
     if (!file) {
-        printk("  [ExecLoader] hello.elf not found in initrd\n");
+        printk("  [ExecLoader] hello.exe not found in initrd\n");
         return;
     }
 
@@ -591,7 +591,7 @@ void exec_loader_func(void)
         __asm__ volatile("hlt");
 }
 
-/* --- Shell loader: kernel task that execs shell.elf from initrd --- */
+/* --- Shell loader: kernel task that execs shell.exe from initrd --- */
 void shell_loader_func(void)
 {
     struct vfs_node *root = initrd_get_root();
@@ -603,9 +603,9 @@ void shell_loader_func(void)
         return;
     }
 
-    file = vfs_finddir(root, "shell.elf");
+    file = vfs_finddir(root, "shell.exe");
     if (!file) {
-        printk("[ShellLoader] shell.elf not found in initrd\n");
+        printk("[ShellLoader] shell.exe not found in initrd\n");
         return;
     }
 
