@@ -44,6 +44,11 @@ struct boot_info {
     uintptr_t acpi_rsdp_addr;   /* physical address of RSDP */
     uint8_t  acpi_version;      /* 1 = RSDP v1, 2 = RSDP v2 */
     uint8_t  acpi_available;    /* 1 if ACPI tag was found */
+
+    /* Module (initrd) */
+    uintptr_t module_start;     /* physical address of first module */
+    uintptr_t module_end;       /* physical address of end of module */
+    uint8_t   module_available; /* 1 if a module was loaded */
 };
 
 /* Global boot info — populated by multiboot2_parse() */

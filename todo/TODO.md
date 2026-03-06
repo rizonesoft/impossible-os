@@ -282,18 +282,18 @@
 
 ### 6.2 Virtual Filesystem (VFS) Layer — Drive Letters
 
-- [ ] Write `src/kernel/fs/vfs.c` / `vfs.h`
-- [ ] Define `vfs_node` struct: name, type (file/dir), size, inode, read/write/open/close ops
-- [ ] Implement **drive letter mounting**: assign `A:\`, `C:\`, `D:\` etc. to partitions
-- [ ] Implement **backslash path parsing**: `C:\Users\Default\file.txt`
-- [ ] Implement `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()`
-- [ ] Implement `vfs_readdir()`, `vfs_finddir()`
-- [ ] Allow mounting different FS drivers (IXFS, FAT32, initrd) at drive letters
-- [ ] Drive letter assignment:
-  - `A:\` — EFI System Partition (FAT32, read-only after boot)
-  - `C:\` — Root OS partition (IXFS)
-  - `D:\`, `E:\`… — Additional drives / USB
-- [ ] Commit: `"fs: VFS with Windows-style drive letters"`
+- [x] Write `src/kernel/fs/vfs.c` / `vfs.h` ✅
+- [x] Define `vfs_node` struct: name, type (file/dir), size, inode, read/write/open/close ops ✅
+- [x] Implement **drive letter mounting**: assign `A:\`, `C:\`, `D:\` etc. to partitions ✅
+- [x] Implement **backslash path parsing**: `C:\Users\Default\file.txt` ✅
+- [x] Implement `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()` ✅
+- [x] Implement `vfs_readdir()`, `vfs_finddir()` ✅
+- [x] Allow mounting different FS drivers (IXFS, FAT32, initrd) at drive letters ✅ pluggable vfs_ops
+- [x] Drive letter assignment:
+  - `A:\` — EFI System Partition (FAT32, read-only after boot) ✅ reserved
+  - `C:\` — Root OS partition (IXFS) ✅ reserved
+  - `D:\`, `E:\`… — Additional drives / USB ✅ 26 letters
+- [x] Commit: `"fs: VFS with Windows-style drive letters"` ✅ `cdc2b7e`
 
 ### 6.3 Initial RAM Filesystem (initrd)
 

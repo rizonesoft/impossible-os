@@ -21,6 +21,7 @@
 #include "heap.h"
 #include "ata.h"
 #include "vfs.h"
+#include "initrd.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -57,6 +58,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 8: Initialize VFS */
     vfs_init();
+
+    /* Step 9: Load initrd if a module was provided by GRUB */
+    if (g_boot_info.module_available) {
+        uint64_t mod_size = g_boot_info.module_end - g_boot_info.module_start;
+        initrd_init(g_boot_info.module_start, mod_size);
+        vfs_mount('C', initrd_get_driver(), initrd_get_root());
+    }
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
@@ -165,6 +173,23 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
         printk("Heap: alloc/free/realloc test passed (used: %u, free: %u bytes)\n",
                heap_get_used(), heap_get_free());
+    }
+
+    /* VFS/initrd test: read a file from C:\ */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *f = vfs_open("C:\\hello.txt", VFS_O_READ);
+        if (f) {
+            uint8_t buf[128];
+            int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
+            if (n > 0) {
+                buf[n] = '\0';
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("VFS read C:\\hello.txt: \"%s\"\n", (char *)buf);
+            }
+            vfs_close(f);
+        }
     }
 
     /* Timer verification */

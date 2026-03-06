@@ -103,6 +103,18 @@ void multiboot2_parse(uintptr_t mbi_addr)
             break;
         }
 
+        /* --- module (type 3) — initrd loaded by GRUB --- */
+        case MULTIBOOT2_TAG_TYPE_MODULE: {
+            /* Module tag layout: type(4) + size(4) + mod_start(4) + mod_end(4) + string */
+            uint32_t *mod = (uint32_t *)((uintptr_t)tag + 8);
+            if (!g_boot_info.module_available) {
+                g_boot_info.module_start = (uintptr_t)mod[0];
+                g_boot_info.module_end   = (uintptr_t)mod[1];
+                g_boot_info.module_available = 1;
+            }
+            break;
+        }
+
         default:
             /* Ignore unknown tags */
             break;

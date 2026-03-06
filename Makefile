@@ -83,7 +83,15 @@ iso: $(ISO_FILE)
 
 $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(ISO_DIR)/boot/grub
+	@# Build the initrd with test files
+	@mkdir -p $(BUILD_DIR)/initrd_files
+	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
+	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
+	python3 scripts/make-initrd.py -o $(BUILD_DIR)/initrd.img \
+		$(BUILD_DIR)/initrd_files/hello.txt \
+		$(BUILD_DIR)/initrd_files/readme.txt
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf
+	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
 	@echo "[ISO] $(ISO_FILE) created"
