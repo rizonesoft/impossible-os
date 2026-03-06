@@ -11,6 +11,7 @@
 #include "serial.h"
 #include "framebuffer.h"
 #include "printk.h"
+#include "gdt.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -36,7 +37,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 4: Initialize framebuffer (needs parsed boot info) */
     fb_init();
 
-    /* Step 5: Print boot banner */
+    /* Step 5: Load proper GDT with kernel/user segments and TSS */
+    gdt_init();
+
+    /* Step 6: Print boot banner */
     fb_set_color(FB_COLOR_CYAN, FB_COLOR_BG_DEFAULT);
     printk("\n");
     printk("  ================================================\n");

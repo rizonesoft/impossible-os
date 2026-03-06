@@ -171,13 +171,12 @@
 ### 4.1 Kernel Entry & Early Framebuffer Output
 
 - [x] Write `src/kernel/main.c` — `kernel_main()` entry point ✅ (64-bit, System V ABI)
-- [ ] Write `src/kernel/framebuffer.c` / `framebuffer.h` — early framebuffer console using GOP info from Multiboot2
-- [ ] Embed a **PSF bitmap font** for text rendering on the framebuffer
-- [ ] Implement `fb_putchar()`, `fb_write()`, `fb_clear()` — draw text to pixel framebuffer
-- [ ] Implement `kprintf()` — kernel-level formatted print (subset of printf), renders to framebuffer
-- [ ] Also output `kprintf()` to **serial port** (`0x3F8`) for host-side logging
-- [ ] Print "Impossible OS Kernel Loaded" on screen
-- [ ] Commit: `"kernel: framebuffer console and kprintf"`
+- [x] Write `src/kernel/framebuffer.c` / `framebuffer.h` — early framebuffer console using GOP info ✅
+- [x] Embed a **PSF bitmap font** for text rendering on the framebuffer ✅ 8×16 VGA, 95 glyphs
+- [x] Implement `fb_putchar()`, `fb_write()`, `fb_clear()` — draw text to pixel framebuffer ✅ + scroll, colors
+- [x] Implement `printk()` — kernel printf, renders to framebuffer + serial ✅ %d/%u/%x/%p/%s/%c
+- [x] Print "Impossible OS Kernel Loaded" on screen ✅
+- [x] Commit: `"kernel: framebuffer console and printk"` ✅ `db71581`
 
 ### 4.2 Global Descriptor Table (Kernel-Level)
 

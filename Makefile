@@ -44,8 +44,8 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -no-reboot -no-shutdown
 
 # --- Source Discovery ---
-# Assembly sources (boot)
-ASM_SRCS := $(shell find $(BOOT_DIR) -name '*.asm' 2>/dev/null)
+# Assembly sources (boot + kernel)
+ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' 2>/dev/null)
 ASM_OBJS := $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SRCS))
 
 # C sources (kernel + libc)
