@@ -103,8 +103,8 @@
 - [x] Add `make iso` target — packages `build/` into `os-build.iso` ✅
 - [x] Add `make run` target — launches QEMU with the ISO ✅
 - [x] Add `make clean` target — removes all build artifacts ✅
-- [ ] Test `make clean && make all && make run` cycle end-to-end
-- [ ] Commit: `"build: root Makefile with full build pipeline"`
+- [x] Test `make clean && make all && make run` cycle end-to-end ✅ kernel boots via UEFI, serial output confirmed
+- [x] Commit: `"build: root Makefile with full build pipeline"` ✅ `531b05f`
 
 ---
 
