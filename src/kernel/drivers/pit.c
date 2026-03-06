@@ -83,5 +83,6 @@ void sleep_ms(uint32_t ms)
 
 uint64_t uptime(void)
 {
+    if (pit_actual_freq == 0) return 0;  /* PIT not yet initialized */
     return tick_count / pit_actual_freq;
 }
