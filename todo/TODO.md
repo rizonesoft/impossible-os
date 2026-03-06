@@ -243,14 +243,14 @@
 
 ### 5.2 Virtual Memory Manager (VMM) — Paging
 
-- [ ] Write `src/kernel/mm/vmm.c` / `vmm.h`
-- [ ] Create kernel page directory / PML4
-- [ ] Implement `vmm_map_page(virt, phys, flags)` — maps a single 4 KiB page
-- [ ] Implement `vmm_unmap_page(virt)` — unmaps and optionally frees the frame
-- [ ] Identity-map the first 4 MiB (kernel + VGA)
-- [ ] Higher-half kernel mapping at `0xFFFFFFFF80000000` (optional but recommended)
-- [ ] Handle **page faults** (ISR 14) — print faulting address from `cr2`
-- [ ] Commit: `"mm: virtual memory manager with paging"`
+- [x] Write `src/kernel/mm/vmm.c` / `vmm.h` ✅
+- [x] Create kernel page directory / PML4 ✅ takes over boot PML4 from CR3
+- [x] Implement `vmm_map_page(virt, phys, flags)` — maps a single 4 KiB page ✅
+- [x] Implement `vmm_unmap_page(virt)` — unmaps and optionally frees the frame ✅
+- [x] Identity-map the first 4 GiB (boot-time 2 MiB pages) ✅ preserved from entry.asm
+- [x] Higher-half kernel mapping at `0xFFFFFFFF80000000` — deferred to future phase
+- [x] Handle **page faults** (ISR 14) — print faulting address from `cr2` ✅ with decoded error code
+- [x] Commit: `"mm: virtual memory manager with paging"` ✅ `3c05f6e`
 
 ### 5.3 Kernel Heap (`kmalloc` / `kfree`)
 

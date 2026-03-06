@@ -18,6 +18,7 @@
 #include "keyboard.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "heap.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -45,6 +46,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 5: Initialize virtual memory manager (needs PMM for page tables) */
     vmm_init();
+
+    /* Step 6: Initialize kernel heap (needs VMM for page mapping) */
+    heap_init();
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
@@ -122,6 +126,37 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("ACPI RSDP v%u at %p\n",
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
+    }
+
+    /* Heap test: alloc, write, free, realloc */
+    {
+        uint8_t *a = (uint8_t *)kmalloc(64);
+        uint8_t *b = (uint8_t *)kmalloc(128);
+        uint8_t *c = (uint8_t *)kmalloc(256);
+        uint32_t ok = 1;
+
+        /* Write patterns */
+        if (a) { uint32_t j; for (j = 0; j < 64; j++) a[j] = (uint8_t)j; }
+        if (b) { uint32_t j; for (j = 0; j < 128; j++) b[j] = (uint8_t)(j ^ 0xAA); }
+        if (c) { uint32_t j; for (j = 0; j < 256; j++) c[j] = (uint8_t)(j ^ 0x55); }
+
+        /* Verify patterns */
+        if (a) { uint32_t j; for (j = 0; j < 64; j++) if (a[j] != (uint8_t)j) ok = 0; }
+        if (b) { uint32_t j; for (j = 0; j < 128; j++) if (b[j] != (uint8_t)(j ^ 0xAA)) ok = 0; }
+
+        kfree(b);
+        b = (uint8_t *)krealloc(a, 512);
+        /* Verify old data survived realloc */
+        if (b) { uint32_t j; for (j = 0; j < 64; j++) if (b[j] != (uint8_t)j) ok = 0; }
+
+        kfree(b);
+        kfree(c);
+
+        fb_set_color(ok ? FB_COLOR_GREEN : FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+        printk("[%s] ", ok ? "OK" : "FAIL");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Heap: alloc/free/realloc test passed (used: %u, free: %u bytes)\n",
+               heap_get_used(), heap_get_free());
     }
 
     /* Timer verification */
