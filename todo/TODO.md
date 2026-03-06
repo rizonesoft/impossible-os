@@ -62,18 +62,17 @@
 
 ### 1.1 Initialize Git
 
-- [ ] `git init` in the workspace root
-- [ ] Create `.gitignore` (ignore `build/`, `iso/`, `*.o`, `*.bin`, `*.iso`, `*.img`, `cross-compiler/`)
-- [ ] Create initial `README.md` with project name, description, and build instructions
-- [ ] Create `LICENSE` file (choose MIT / GPL v2 / etc.)
-- [ ] `git add -A && git commit -m "initial: project skeleton"`
+- [x] `git init` in the workspace root ✅
+- [x] Create `.gitignore` (ignore `build/`, `iso/`, `*.o`, `*.bin`, `*.iso`, `*.img`, `cross-compiler/`) ✅
+- [x] Create initial `README.md` with project name, description, and build instructions ✅
+- [x] Create `LICENSE` file (choose MIT / GPL v2 / etc.) ✅ MIT License
+- [x] `git add -A && git commit -m "initial: project skeleton"` ✅ commit `f5772b2`
 
 ### 1.2 GitHub Remote
 
-- [ ] Create a new GitHub repository (public or private)
-- [ ] Add the remote: `git remote add origin git@github.com:<user>/impossible-os.git`
-- [ ] Push initial commit: `git push -u origin main`
-- [ ] Protect the `main` branch (require PR reviews if collaborating)
+- [x] Create a new GitHub repository (public or private) ✅
+- [x] Add the remote: `git remote add origin git@github.com:<user>/impossible-os.git` ✅ `https://github.com/rizonesoft/impossible-os`
+- [x] Push initial commit: `git push -u origin main` ✅
 
 ### 1.3 Directory Structure
 
