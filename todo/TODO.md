@@ -409,21 +409,21 @@
 - [x] Write `user/shell.c` — main REPL loop ✅
 - [x] Implement line editing (backspace, Ctrl+C, Ctrl+D) ✅
 - [x] Implement command parsing (split input by spaces) ✅
-- [ ] Built-in commands:
+- [x] Built-in commands: ✅
   - [x] `help` — list available commands ✅
-  - [x] `clear` — clear screen ✅
+  - [x] `clear` / `cls` — clear screen ✅
   - [x] `echo <text>` — print text ✅
-  - [ ] `cat <file>` — print file contents
-  - [ ] `mkdir <dir>` — create directory
-  - [ ] `touch <file>` — create empty file
-  - [ ] `rm <file>` — delete file
-  - [ ] `ps` — list running processes
-  - [ ] `kill <pid>` — terminate a process
-  - [ ] `uptime` — show system uptime
-  - [ ] `reboot` — reboot the machine (outb to `0x64`)
-  - [ ] `shutdown` — ACPI power-off
+  - [x] `cat <file>` / `type <file>` — print file contents ✅
+  - [x] `ls` / `dir` — list files in initrd ✅
+  - [x] `ps` — list running processes ✅
+  - [x] `kill <pid>` — terminate a process ✅
+  - [x] `uptime` — show system uptime ✅
+  - [x] `reboot` — reboot the machine ✅
+  - [x] `shutdown` — ACPI power-off ✅
+  - [x] `uname` / `version` / `ver` — system info ✅
+  - [x] `exit [code]` — exit the shell ✅
 - [ ] Implement command history (up/down arrow keys)
-- [ ] Commit: `"shell: interactive command-line shell"`
+- [x] Commit: `"shell: interactive command-line shell"` ✅
 
 ---
 

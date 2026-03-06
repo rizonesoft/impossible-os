@@ -14,11 +14,22 @@
 #include "initrd.h"
 #include "vfs.h"
 #include "heap.h"
+#include "pit.h"
+
+/* --- Port I/O helper --- */
+static inline void outb(uint16_t port, uint8_t val)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+static inline void outw(uint16_t port, uint16_t val)
+{
+    __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+}
 
 /* --- Syscall implementations --- */
 
-/* SYS_WRITE: write data to a file descriptor.
- * Currently only fd=1 (stdout) is supported → serial/framebuffer. */
+/* SYS_WRITE: write data to a file descriptor. */
 static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
 {
     uint64_t i;
@@ -37,9 +48,7 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
     return (int64_t)i;
 }
 
-/* SYS_READ: read data from a file descriptor.
- * Currently only fd=0 (stdin) is supported → keyboard buffer.
- * Blocking: yields until at least 1 byte is available. */
+/* SYS_READ: blocking read from stdin. */
 static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 {
     uint64_t i;
@@ -50,8 +59,6 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
         return -1;
     if (!dst || len == 0)
         return 0;
-
-    /* Read at least one byte (blocking on first byte) */
 
     /* Wait for the first byte */
     for (;;) {
@@ -72,11 +79,93 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
     return (int64_t)i;
 }
 
-/* SYS_EXIT: terminate the current task with proper cleanup. */
+/* SYS_EXIT: terminate the current task. */
 static void sys_exit(uint64_t code)
 {
     task_exit((int32_t)code);
-    /* never returns */
+}
+
+/* SYS_READFILE: read a file from the initrd by name. */
+static int64_t sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
+                            uint64_t buf_size)
+{
+    const char *name = (const char *)name_ptr;
+    uint8_t *buf = (uint8_t *)buf_ptr;
+    struct vfs_node *root = initrd_get_root();
+    struct vfs_node *file;
+    uint64_t to_read;
+
+    if (!root || !name || !buf || buf_size == 0)
+        return -1;
+
+    file = vfs_finddir(root, name);
+    if (!file)
+        return -1;
+
+    to_read = file->size < buf_size ? file->size : buf_size;
+    vfs_read(file, 0, (uint32_t)to_read, buf);
+    return (int64_t)to_read;
+}
+
+/* SYS_READDIR: read a directory entry at index from the initrd root. */
+static int64_t sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
+                           uint64_t index)
+{
+    char *buf = (char *)buf_ptr;
+    struct vfs_node *root = initrd_get_root();
+    struct vfs_dirent *entry;
+    uint64_t i;
+
+    if (!root || !buf || buf_size == 0)
+        return -1;
+
+    entry = vfs_readdir(root, (uint32_t)index);
+    if (!entry)
+        return -1;
+
+    for (i = 0; i < buf_size - 1 && entry->name[i]; i++)
+        buf[i] = entry->name[i];
+    buf[i] = '\0';
+    return 0;
+}
+
+/* Process info structure — must match user/include/syscall.h */
+struct proc_info {
+    uint32_t pid;
+    uint32_t state;
+    char     name[32];
+};
+
+/* SYS_GETPROCS: fill buffer with process info. Returns count. */
+static int64_t sys_getprocs(uint64_t buf_ptr, uint64_t buf_size)
+{
+    struct proc_info *out = (struct proc_info *)buf_ptr;
+    uint32_t count = task_count();
+    uint32_t max = (uint32_t)(buf_size / sizeof(struct proc_info));
+    uint32_t i, j;
+
+    if (!out || max == 0)
+        return (int64_t)count;
+
+    for (i = 0; i < count && i < max; i++) {
+        struct task *t = task_get_by_pid(i);
+        if (!t) {
+            out[i].pid = i;
+            out[i].state = 0xFF;
+            out[i].name[0] = '\0';
+            continue;
+        }
+        out[i].pid = t->pid;
+        out[i].state = t->state;
+        if (t->name) {
+            for (j = 0; j < 31 && t->name[j]; j++)
+                out[i].name[j] = t->name[j];
+            out[i].name[j] = '\0';
+        } else {
+            out[i].name[0] = '\0';
+        }
+    }
+    return (int64_t)count;
 }
 
 /* --- INT 0x80 handler --- */
@@ -98,7 +187,6 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     case SYS_EXIT:
         sys_exit(arg1);
-        /* never returns */
         break;
     case SYS_YIELD:
         yield();
@@ -108,15 +196,11 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = (int64_t)task_fork(frame);
         break;
     case SYS_EXEC: {
-        /* arg1 = pointer to filename string, arg2 = filename length */
         const char *filename = (const char *)arg1;
         struct vfs_node *root = initrd_get_root();
         struct vfs_node *file;
 
-        if (!root || !filename) {
-            ret = -1;
-            break;
-        }
+        if (!root || !filename) { ret = -1; break; }
 
         file = vfs_finddir(root, filename);
         if (!file) {
@@ -125,24 +209,55 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             break;
         }
 
-        /* Read file into a buffer */
         {
             uint8_t *buf = (uint8_t *)kmalloc(file->size);
-            if (!buf) {
-                ret = -1;
-                break;
-            }
+            if (!buf) { ret = -1; break; }
             vfs_read(file, 0, file->size, buf);
             ret = (int64_t)task_exec(buf, file->size);
-            /* Note: we don't kfree buf here because exec replaces
-             * the current task. If exec fails, we should free it. */
-            if (ret < 0)
-                kfree(buf);
+            if (ret < 0) kfree(buf);
         }
         break;
     }
     case SYS_WAITPID:
         ret = (int64_t)task_waitpid((uint32_t)arg1);
+        break;
+    case SYS_READFILE:
+        ret = sys_readfile(arg1, arg2, arg3);
+        break;
+    case SYS_READDIR:
+        ret = sys_readdir(arg1, arg2, arg3);
+        break;
+    case SYS_GETPROCS:
+        ret = sys_getprocs(arg1, arg2);
+        break;
+    case SYS_KILL:
+        if (arg1 > 0 && arg1 < task_count()) {
+            struct task *t = task_get_by_pid((uint32_t)arg1);
+            if (t && t->state != TASK_DEAD) {
+                t->state = TASK_DEAD;
+                t->exit_status = -1;
+                printk("[KILL] Task %u killed\n", (uint64_t)arg1);
+                ret = 0;
+            } else {
+                ret = -1;
+            }
+        } else {
+            ret = -1;
+        }
+        break;
+    case SYS_UPTIME:
+        ret = (int64_t)uptime();
+        break;
+    case SYS_REBOOT:
+        printk("[REBOOT] System rebooting...\n");
+        outb(0x64, 0xFE);
+        for (;;) __asm__ volatile("hlt");
+        break;
+    case SYS_SHUTDOWN:
+        printk("[SHUTDOWN] System shutting down...\n");
+        outw(0x604, 0x2000);     /* QEMU ACPI power-off */
+        outw(0xB004, 0x2000);    /* Bochs power-off */
+        for (;;) __asm__ volatile("hlt");
         break;
     default:
         printk("[WARN] Unknown syscall %u from PID %u\n",
@@ -151,7 +266,6 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     }
 
-    /* Place return value in RAX of the caller's frame */
     frame->rax = (uint64_t)ret;
     return (uint64_t)frame;
 }

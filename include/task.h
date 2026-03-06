@@ -79,6 +79,9 @@ struct task *task_current(void);
 /* Get total number of tasks (including dead ones). */
 uint32_t task_count(void);
 
+/* Get a task by PID. Returns NULL if invalid. */
+struct task *task_get_by_pid(uint32_t pid);
+
 /* Enable/disable preemptive scheduling. */
 void scheduler_enable(void);
 void scheduler_disable(void);

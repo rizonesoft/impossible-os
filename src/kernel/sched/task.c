@@ -402,6 +402,13 @@ uint32_t task_count(void)
     return num_tasks;
 }
 
+struct task *task_get_by_pid(uint32_t pid)
+{
+    if (pid >= num_tasks)
+        return (struct task *)0;
+    return &tasks[pid];
+}
+
 /* ============================================================================
  * Process lifecycle functions
  * ============================================================================ */
