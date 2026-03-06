@@ -208,12 +208,12 @@
 
 ### 4.5 Programmable Interval Timer (PIT) — System Clock
 
-- [ ] Write `src/kernel/drivers/pit.c` / `pit.h`
-- [ ] Program PIT channel 0 to fire at ~100 Hz (or 1000 Hz)
-- [ ] Register IRQ 0 handler → increments a global `tick_count`
-- [ ] Implement `sleep_ms()` using tick count
-- [ ] Implement `uptime()` returning seconds since boot
-- [ ] Commit: `"kernel: PIT timer at 100 Hz"`
+- [x] Write `src/kernel/drivers/pit.c` / `pit.h` ✅
+- [x] Program PIT channel 0 to fire at ~100 Hz (or 1000 Hz) ✅ 100 Hz, divisor 11931
+- [x] Register IRQ 0 handler → increments a global `tick_count` ✅
+- [x] Implement `sleep_ms()` using tick count ✅ hlt-based busy wait
+- [x] Implement `uptime()` returning seconds since boot ✅
+- [x] Commit: `"kernel: PIT timer at 100 Hz"` ✅ `3c4913f`
 
 ### 4.6 Keyboard Driver (PS/2)
 

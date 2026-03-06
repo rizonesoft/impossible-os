@@ -15,6 +15,7 @@
 #include "idt.h"
 #include "pic.h"
 #include "pit.h"
+#include "keyboard.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -52,7 +53,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Start PIT system timer */
     pit_init();
 
-    /* Step 9: Enable interrupts */
+    /* Step 9: Initialize PS/2 keyboard */
+    keyboard_init();
+
+    /* Step 10: Enable interrupts */
     __asm__ volatile ("sti");
 
     /* Step 8: Print boot banner */
@@ -112,7 +116,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                g_boot_info.acpi_rsdp_addr);
     }
 
-    /* Timer test: sleep 1 second and verify ticks */
+    /* Timer verification */
     printk("\n  Timer test: sleeping 1 second...\n");
     sleep_ms(1000);
     fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
@@ -121,12 +125,19 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     printk("Timer working! Ticks: %u, Uptime: %u sec\n",
            pit_get_ticks(), uptime());
 
-    /* Done */
-    printk("\n");
+    /* Keyboard echo loop */
     fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("  Impossible OS kernel loaded successfully!\n");
-    fb_set_color(FB_COLOR_DARK_GRAY, FB_COLOR_BG_DEFAULT);
-    printk("  System halted.\n");
+    printk("\n  Impossible OS kernel loaded successfully!\n");
+    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+    printk("\n> ");
+    for (;;) {
+        char c = keyboard_getchar();
+        if (c == '\n') {
+            printk("\n> ");
+        } else {
+            printk("%c", (int)c);
+        }
+    }
 
 halt:
     for (;;) {
