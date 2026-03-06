@@ -112,26 +112,20 @@
 
 ### 2.1 Basic QEMU Launch
 
-- [ ] Write a minimal `scripts/run-qemu.sh` wrapper script
-- [ ] Configure QEMU for UEFI boot:
-  ```
-  qemu-system-x86_64 \
-    -bios /usr/share/OVMF/OVMF_CODE_4M.fd \
-    -cdrom build/os-build.iso \
-    -m 2G -serial stdio -no-reboot -no-shutdown
-  ```
-- [ ] Verify WSLg passes the QEMU GUI window through to Windows desktop
-- [ ] If no WSLg: configure QEMU with `-nographic` or `-curses` as fallback
-- [ ] Add `-enable-kvm` flag (if KVM is available inside WSL — check `lscpu | grep Virtualization`)
+- [x] Write a minimal `scripts/run-qemu.sh` wrapper script ✅ supports `--debug` and `--headless`
+- [x] Configure QEMU for UEFI boot ✅ uses split pflash OVMF (CODE + VARS)
+- [x] Verify WSLg passes the QEMU GUI window through to Windows desktop ✅
+- [x] If no WSLg: configure QEMU with `-nographic` or `-curses` as fallback ✅ `--headless` flag
+- [x] Add `-enable-kvm` flag (if KVM is available inside WSL — check `lscpu | grep Virtualization`) ✅ VT-x + `/dev/kvm` detected, auto-enabled
 
 ### 2.2 Debug-Friendly QEMU
 
-- [ ] Add `-d int,cpu_reset` to log interrupts during crashes
-- [ ] Add `-s -S` flags for GDB remote debugging on port 1234
-- [ ] Create `scripts/debug.sh` that launches QEMU paused + connects GDB
-- [ ] Write a `.gdbinit` file with `target remote :1234` and symbol loading
+- [x] Add `-d int,cpu_reset` to log interrupts during crashes ✅ in `make run-debug`
+- [x] Add `-s -S` flags for GDB remote debugging on port 1234 ✅ in `--debug` flag
+- [x] Create `scripts/debug.sh` that launches QEMU paused + connects GDB ✅
+- [x] Write a `.gdbinit` file with `target remote :1234` and symbol loading ✅
 - [ ] Test breakpoint at kernel entry in GDB
-- [ ] Commit: `"test: QEMU launch and debug scripts"`
+- [x] Commit: `"test: QEMU launch and debug scripts"` ✅ `c2fc17c`
 
 ---
 
@@ -143,13 +137,13 @@
 
 ### 3.1 GRUB UEFI Bootloader
 
-- [ ] Write `src/boot/grub.cfg` with `menuentry "Impossible OS"` pointing to the kernel ELF
-- [ ] Configure GRUB to use **Multiboot2** protocol (UEFI-compatible)
-- [ ] Write `src/boot/multiboot2_header.asm` — Multiboot2 header with framebuffer tag
-- [ ] Request a **GOP framebuffer** via Multiboot2 framebuffer tag (no VGA text mode)
-- [ ] Test: `grub-mkrescue` produces a bootable UEFI ISO
-- [ ] Test: QEMU boots the ISO with `-bios /usr/share/OVMF/OVMF_CODE_4M.fd` → GRUB menu appears → ✅
-- [ ] Commit: `"boot: GRUB UEFI bootloader with Multiboot2"`
+- [x] Write `src/boot/grub.cfg` with `menuentry "Impossible OS"` pointing to the kernel ELF ✅
+- [x] Configure GRUB to use **Multiboot2** protocol (UEFI-compatible) ✅
+- [x] Write `src/boot/multiboot2_header.asm` — Multiboot2 header with framebuffer tag ✅ 1024×768×32
+- [x] Request a **GOP framebuffer** via Multiboot2 framebuffer tag (no VGA text mode) ✅
+- [x] Test: `grub-mkrescue` produces a bootable UEFI ISO ✅ 12 MB ISO
+- [x] Test: QEMU boots the ISO with OVMF → GRUB menu appears → kernel loads ✅
+- [x] Commit: `"boot: GRUB UEFI bootloader with Multiboot2"` ✅ `531b05f`
 
 ### 3.2 Kernel Entry via Multiboot2
 
