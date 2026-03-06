@@ -11,7 +11,7 @@
 #include "types.h"
 
 /* Maximum limits */
-#define VFS_MAX_NAME     128
+#define VFS_MAX_NAME     256
 #define VFS_MAX_PATH     512
 #define VFS_MAX_DRIVES   26     /* A: through Z: */
 

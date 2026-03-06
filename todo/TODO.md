@@ -335,11 +335,11 @@
   - [x] `ixfs_read()` — read file data ✅
   - [x] `ixfs_write()` — write file data ✅
   - [x] `ixfs_delete()` — unlink file, free blocks ✅
-- [ ] Implement directory operations:
-  - [ ] `ixfs_mkdir()` — create directory
-  - [ ] `ixfs_readdir()` — list directory entries
-  - [ ] `ixfs_finddir()` — lookup by name
-  - [ ] `ixfs_rmdir()` — remove empty directory
+- [x] Implement directory operations: ✅ `0ee2fa8`
+  - [x] `ixfs_mkdir()` — create directory ✅ (via `ixfs_create` with `VFS_DIRECTORY`)
+  - [x] `ixfs_readdir()` — list directory entries ✅
+  - [x] `ixfs_finddir()` — lookup by name ✅
+  - [x] `ixfs_rmdir()` — remove empty directory ✅ (via `ixfs_unlink` with empty check)
 - [ ] Support **long filenames** (up to 255 chars)
 - [ ] Support **file permissions** (owner, read/write/execute)
 - [ ] Support **timestamps** (created, modified, accessed)

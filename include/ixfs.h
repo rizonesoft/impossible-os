@@ -13,7 +13,7 @@
  *   - 4 KiB block size (matches page size for efficient I/O)
  *   - Inodes hold 12 direct + 1 single-indirect block pointer
  *   - Directories are files containing ixfs_dir_entry records
- *   - Max file size: (12 + 1024) * 4 KiB ≈ 4 MiB (expandable)
+ *   - Max filename: 251 characters (252 bytes with null terminator)
  * ============================================================================ */
 
 #pragma once
@@ -35,7 +35,7 @@
 #define IXFS_MAX_FILE_BLOCKS (IXFS_DIRECT_BLOCKS + IXFS_PTRS_PER_BLOCK)
 
 /* Max filename length in directory entries */
-#define IXFS_MAX_NAME        60
+#define IXFS_MAX_NAME        252         /* 251 chars + null terminator */
 
 /* Special inode numbers */
 #define IXFS_ROOT_INODE      1           /* root directory is always inode 1 */
