@@ -38,20 +38,33 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
 }
 
 /* SYS_READ: read data from a file descriptor.
- * Currently only fd=0 (stdin) is supported → keyboard buffer. */
+ * Currently only fd=0 (stdin) is supported → keyboard buffer.
+ * Blocking: yields until at least 1 byte is available. */
 static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 {
     uint64_t i;
     char *dst = (char *)buf;
+    char c;
 
     if (fd != STDIN_FD)
         return -1;
     if (!dst || len == 0)
         return 0;
 
-    /* Non-blocking: read whatever is available */
-    for (i = 0; i < len; i++) {
-        char c = keyboard_trygetchar();
+    /* Read at least one byte (blocking on first byte) */
+
+    /* Wait for the first byte */
+    for (;;) {
+        c = keyboard_trygetchar();
+        if (c != 0)
+            break;
+        yield();
+    }
+    dst[0] = c;
+
+    /* Fill remaining bytes non-blocking */
+    for (i = 1; i < len; i++) {
+        c = keyboard_trygetchar();
         if (c == 0)
             break;
         dst[i] = c;

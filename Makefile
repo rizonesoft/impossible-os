@@ -128,11 +128,19 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 		-Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.elf \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/hello.o $(BUILD_DIR)/user/libc.a
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/shell.c -o $(BUILD_DIR)/user/shell.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/shell.elf \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/shell.o $(BUILD_DIR)/user/libc.a
 	@cp $(BUILD_DIR)/user/hello.elf $(BUILD_DIR)/initrd_files/hello.elf
+	@cp $(BUILD_DIR)/user/shell.elf $(BUILD_DIR)/initrd_files/shell.elf
 	$(BUILD_DIR)/tools/make-initrd -o $(BUILD_DIR)/initrd.img \
 		$(BUILD_DIR)/initrd_files/hello.txt \
 		$(BUILD_DIR)/initrd_files/readme.txt \
-		$(BUILD_DIR)/initrd_files/hello.elf
+		$(BUILD_DIR)/initrd_files/hello.elf \
+		$(BUILD_DIR)/initrd_files/shell.elf
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf
 	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg

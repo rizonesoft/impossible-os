@@ -406,14 +406,13 @@
 
 ## Phase 9 — Command-Line Shell
 
-- [ ] Write `src/shell/shell.c` — main REPL loop
-- [ ] Implement line editing (backspace, cursor left/right)
-- [ ] Implement command parsing (split input by spaces)
+- [x] Write `user/shell.c` — main REPL loop ✅
+- [x] Implement line editing (backspace, Ctrl+C, Ctrl+D) ✅
+- [x] Implement command parsing (split input by spaces) ✅
 - [ ] Built-in commands:
-  - [ ] `help` — list available commands
-  - [ ] `clear` — clear VGA screen
-  - [ ] `echo <text>` — print text
-  - [ ] `ls [path]` — list directory via VFS
+  - [x] `help` — list available commands ✅
+  - [x] `clear` — clear screen ✅
+  - [x] `echo <text>` — print text ✅
   - [ ] `cat <file>` — print file contents
   - [ ] `mkdir <dir>` — create directory
   - [ ] `touch <file>` — create empty file

@@ -431,18 +431,20 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("Fork test passed\n");
     }
 
-    /* Keyboard echo loop */
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("\n  Impossible OS kernel loaded successfully!\n");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("\n> ");
-    for (;;) {
-        char c = keyboard_getchar();
-        if (c == '\n') {
-            printk("\n> ");
-        } else {
-            printk("%c", (int)c);
-        }
+    /* === Launch the shell === */
+    {
+        extern void shell_loader_func(void);
+
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("\n  Impossible OS kernel loaded successfully!\n\n");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+
+        task_create(shell_loader_func, "ShellLoader");
+        scheduler_enable();
+
+        /* Main thread idles forever while shell runs */
+        for (;;)
+            __asm__ volatile("hlt");
     }
 
 halt:
@@ -585,6 +587,42 @@ void exec_loader_func(void)
      * ELF entry. We must NOT yield (INT 0x81 would overwrite that frame) or
      * return (task_wrapper would mark us DEAD). Instead, halt and let the
      * preemptive scheduler's PIT interrupt pick up the new frame. */
+    for (;;)
+        __asm__ volatile("hlt");
+}
+
+/* --- Shell loader: kernel task that execs shell.elf from initrd --- */
+void shell_loader_func(void)
+{
+    struct vfs_node *root = initrd_get_root();
+    struct vfs_node *file;
+    uint8_t *buf;
+
+    if (!root) {
+        printk("[ShellLoader] initrd not available\n");
+        return;
+    }
+
+    file = vfs_finddir(root, "shell.elf");
+    if (!file) {
+        printk("[ShellLoader] shell.elf not found in initrd\n");
+        return;
+    }
+
+    buf = (uint8_t *)kmalloc(file->size);
+    if (!buf) {
+        printk("[ShellLoader] cannot allocate buffer\n");
+        return;
+    }
+
+    vfs_read(file, 0, (uint32_t)file->size, buf);
+
+    if (task_exec(buf, file->size) < 0) {
+        printk("[ShellLoader] exec failed\n");
+        kfree(buf);
+        return;
+    }
+
     for (;;)
         __asm__ volatile("hlt");
 }
