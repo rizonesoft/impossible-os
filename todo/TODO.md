@@ -319,11 +319,11 @@
 
 > IXFS is the native filesystem for Impossible OS, designed for the root partition (`C:\`).
 
-- [ ] Design IXFS on-disk layout:
-  - [ ] **Superblock** — magic number (`0x49584653` = "IXFS"), version, block size, total blocks, free count
-  - [ ] **Block bitmap** — 1 bit per block (4 KiB blocks)
-  - [ ] **Inode table** — fixed-size entries (permissions, size, timestamps, block pointers)
-  - [ ] **Data blocks** — file/directory content
+- [x] Design IXFS on-disk layout: ✅ `a25010f`
+  - [x] **Superblock** — magic number (`0x49584653` = "IXFS"), version, block size, total blocks, free count ✅ 512 bytes
+  - [x] **Block bitmap** — 1 bit per block (4 KiB blocks) ✅
+  - [x] **Inode table** — fixed-size entries (permissions, size, timestamps, block pointers) ✅ 128 bytes, 12 direct + 1 indirect
+  - [x] **Data blocks** — file/directory content ✅ 64-byte dir entries
 - [ ] Write `src/kernel/fs/ixfs.c` / `ixfs.h`
 - [ ] Implement `ixfs_format()` — write superblock, zero bitmaps, create root directory
 - [ ] Implement `ixfs_mount()` — read superblock, verify magic, load bitmaps

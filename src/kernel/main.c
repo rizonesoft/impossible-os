@@ -23,6 +23,7 @@
 #include "vfs.h"
 #include "initrd.h"
 #include "fat32.h"
+#include "ixfs.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -60,10 +61,16 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* Step 9: Mount FAT32 from ATA disk at A:\ */
+    /* Step 9: IXFS on ATA disk — format if needed, mount at D:\ */
     if (ata_get_drive(0)->present) {
-        if (fat32_init(0) == 0)
-            vfs_mount('A', fat32_get_driver(), fat32_get_root());
+        const struct ata_drive *drv = ata_get_drive(0);
+        if (ixfs_init(0) != 0) {
+            /* Not IXFS — format it */
+            if (ixfs_format(0, drv->sectors, "Impossible OS") == 0)
+                ixfs_init(0);
+        }
+        if (ixfs_get_root())
+            vfs_mount('D', ixfs_get_driver(), ixfs_get_root());
     }
 
     /* Step 10: Load initrd if a module was provided by GRUB */
@@ -72,6 +79,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         initrd_init(g_boot_info.module_start, mod_size);
         vfs_mount('C', initrd_get_driver(), initrd_get_root());
     }
+
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
@@ -199,21 +207,23 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         }
     }
 
-    /* FAT32 test: list files on A:\ */
-    if (vfs_is_mounted('A')) {
-        struct vfs_node *a_root = vfs_get_drive_root('A');
-        if (a_root) {
+    /* IXFS test: list files on D:\ */
+    if (vfs_is_mounted('D')) {
+        struct vfs_node *d_root = vfs_get_drive_root('D');
+        if (d_root) {
             struct vfs_dirent *de;
             uint32_t idx = 0;
             fb_set_color(FB_COLOR_YELLOW, FB_COLOR_BG_DEFAULT);
-            printk("--- A:\\ (FAT32) ---\n");
+            printk("--- D:\\ (IXFS) ---\n");
             fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            while ((de = vfs_readdir(a_root, idx)) != (struct vfs_dirent *)0) {
+            while ((de = vfs_readdir(d_root, idx)) != (struct vfs_dirent *)0) {
                 printk("  %s %s\n",
                        (de->type & VFS_DIRECTORY) ? "[DIR]" : "     ",
                        de->name);
                 idx++;
             }
+            if (idx == 0)
+                printk("  (empty — freshly formatted)\n");
         }
     }
 
