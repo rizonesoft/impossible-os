@@ -13,6 +13,7 @@
 #include "printk.h"
 #include "gdt.h"
 #include "idt.h"
+#include "pic.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -44,7 +45,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 6: Load IDT with exception and IRQ handlers */
     idt_init();
 
-    /* Step 7: Enable interrupts */
+    /* Step 7: Remap PIC so hardware IRQs don't conflict with CPU exceptions */
+    pic_init();
+
+    /* Step 8: Enable interrupts */
     __asm__ volatile ("sti");
 
     /* Step 8: Print boot banner */

@@ -189,14 +189,14 @@
 
 ### 4.3 Interrupt Descriptor Table (IDT)
 
-- [ ] Write `src/kernel/idt.c` / `idt.h`
-- [ ] Define 256 IDT entries
-- [ ] Write ISR stubs (0–31) for CPU exceptions in assembly
-- [ ] Write IRQ stubs (32–47) for hardware interrupts
-- [ ] Implement a generic `isr_handler()` dispatcher in C
-- [ ] Load IDT with `lidt`
-- [ ] Test: trigger a divide-by-zero → handler fires, prints message → ✅
-- [ ] Commit: `"kernel: IDT and exception handlers"`
+- [x] Write `src/kernel/idt.c` / `idt.h` ✅
+- [x] Define 256 IDT entries ✅
+- [x] Write ISR stubs (0–31) for CPU exceptions in assembly ✅ `isr_stubs.asm`
+- [x] Write IRQ stubs (32–47) for hardware interrupts ✅
+- [x] Implement a generic `isr_handler()` dispatcher in C ✅ with KERNEL PANIC screen
+- [x] Load IDT with `lidt` ✅
+- [x] Test: trigger a divide-by-zero → handler fires, prints message → ✅
+- [x] Commit: `"kernel: IDT and exception handlers"` ✅ `e3b72ee`
 
 ### 4.4 Programmable Interrupt Controller (PIC)
 
