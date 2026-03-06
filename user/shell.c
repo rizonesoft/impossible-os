@@ -167,6 +167,8 @@ static void cmd_help(void)
     printf("  ps                List running processes\n");
     printf("  kill <pid>        Terminate a process\n");
     printf("  uptime            Show system uptime\n");
+    printf("  ping <ip>         Send ICMP echo request\n");
+    printf("  ifconfig          Show network configuration\n");
     printf("  reboot            Reboot the system\n");
     printf("  shutdown          Power off the system\n");
     printf("  exit [code]       Exit the shell\n");
@@ -315,6 +317,90 @@ static void cmd_shutdown(void)
     sys_shutdown();
 }
 
+/* Parse "a.b.c.d" → big-endian IP (network byte order) */
+static unsigned int parse_ip(const char *s)
+{
+    unsigned int a = 0, b = 0, c = 0, d = 0;
+    int i, field = 0;
+    unsigned int cur = 0;
+
+    for (i = 0; s[i]; i++) {
+        if (s[i] >= '0' && s[i] <= '9') {
+            cur = cur * 10 + (unsigned int)(s[i] - '0');
+        } else if (s[i] == '.') {
+            if (field == 0) a = cur;
+            else if (field == 1) b = cur;
+            else if (field == 2) c = cur;
+            cur = 0;
+            field++;
+        }
+    }
+    d = cur;
+    /* Return in big-endian (network byte order for x86 little-endian) */
+    return a | (b << 8) | (c << 16) | (d << 24);
+}
+
+static void print_ip(unsigned int ip)
+{
+    printf("%u.%u.%u.%u",
+           ip & 0xFF, (ip >> 8) & 0xFF,
+           (ip >> 16) & 0xFF, (ip >> 24) & 0xFF);
+}
+
+static void cmd_ping(int argc, char **argv)
+{
+    unsigned int ip;
+    int i;
+
+    if (argc < 2) {
+        printf("Usage: ping <ip_address>\n");
+        return;
+    }
+
+    ip = parse_ip(argv[1]);
+    printf("PING ");
+    print_ip(ip);
+    printf("\n");
+
+    for (i = 1; i <= 4; i++) {
+        sys_ping(ip, i);
+        printf("  Sent echo request seq=%d\n", i);
+
+        /* Wait a bit for reply (simple busy-wait) */
+        {
+            int j;
+            for (j = 0; j < 500000; j++)
+                sys_yield();
+        }
+    }
+}
+
+static void cmd_ifconfig(void)
+{
+    struct user_net_config cfg;
+    sys_netinfo(&cfg, sizeof(cfg));
+
+    printf("  eth0:\n");
+    printf("    MAC:     %x:%x:%x:%x:%x:%x\n",
+           (unsigned int)cfg.mac[0], (unsigned int)cfg.mac[1],
+           (unsigned int)cfg.mac[2], (unsigned int)cfg.mac[3],
+           (unsigned int)cfg.mac[4], (unsigned int)cfg.mac[5]);
+
+    if (cfg.configured) {
+        printf("    IP:      ");
+        print_ip(cfg.ip);
+        printf("\n    Subnet:  ");
+        print_ip(cfg.subnet);
+        printf("\n    Gateway: ");
+        print_ip(cfg.gateway);
+        printf("\n    DNS:     ");
+        print_ip(cfg.dns);
+        printf("\n");
+    } else {
+        printf("    IP:      (not configured, DHCP pending)\n");
+    }
+}
+
 /* --- Command dispatch --- */
 static int dispatch(int argc, char **argv)
 {
@@ -341,6 +427,10 @@ static int dispatch(int argc, char **argv)
         cmd_kill(argc, argv);
     else if (strcmp(argv[0], "uptime") == 0)
         cmd_uptime();
+    else if (strcmp(argv[0], "ping") == 0)
+        cmd_ping(argc, argv);
+    else if (strcmp(argv[0], "ifconfig") == 0 || strcmp(argv[0], "ipconfig") == 0)
+        cmd_ifconfig();
     else if (strcmp(argv[0], "reboot") == 0)
         cmd_reboot();
     else if (strcmp(argv[0], "shutdown") == 0)

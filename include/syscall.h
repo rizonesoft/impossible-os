@@ -25,6 +25,8 @@
 #define SYS_UPTIME   12  /* sys_uptime()              → seconds */
 #define SYS_REBOOT   13  /* sys_reboot()              → no return */
 #define SYS_SHUTDOWN 14  /* sys_shutdown()             → no return */
+#define SYS_PING     15  /* sys_ping(ip_addr)           → 0 / -1 */
+#define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
 
 /* File descriptors */
 #define STDOUT_FD   1

@@ -15,6 +15,7 @@
 #include "pic.h"
 #include "printk.h"
 #include "heap.h"
+#include "net.h"
 
 /* --- Port I/O --- */
 static inline void outb_nic(uint16_t port, uint8_t val)
@@ -137,11 +138,12 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
     uint16_t status = inw_nic(io_base + REG_ISR);
 
     if (status & INT_ROK) {
-        rx_ready++;
-    }
-
-    if (status & INT_TOK) {
-        /* Transmit completed — nothing to do */
+        /* Drain all received packets from the ring buffer */
+        uint8_t pkt_buf[ETH_FRAME_MAX];
+        uint32_t pkt_len;
+        while ((pkt_len = rtl8139_receive(pkt_buf, sizeof(pkt_buf))) > 0) {
+            net_rx(pkt_buf, pkt_len);
+        }
     }
 
     if (status & (INT_RER | INT_TER | INT_RX_OVERFLOW)) {

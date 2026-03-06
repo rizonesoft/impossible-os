@@ -18,6 +18,7 @@
 #include "keyboard.h"
 #include "pci.h"
 #include "rtl8139.h"
+#include "net.h"
 #include "pmm.h"
 #include "vmm.h"
 #include "heap.h"
@@ -133,9 +134,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 10: PCI bus scan and NIC init */
     pci_scan();
     rtl8139_init();
+    net_init();
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
+
+    /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
+    dhcp_discover();
 
     /* Step 8: Print boot banner */
     fb_set_color(FB_COLOR_CYAN, FB_COLOR_BG_DEFAULT);

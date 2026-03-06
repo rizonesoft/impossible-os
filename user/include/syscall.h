@@ -26,6 +26,8 @@
 #define SYS_UPTIME   12
 #define SYS_REBOOT   13
 #define SYS_SHUTDOWN 14
+#define SYS_PING     15
+#define SYS_NETINFO  16
 
 /* Task states (must match kernel task.h) */
 #define TASK_READY    0
@@ -38,6 +40,16 @@ struct proc_info {
     unsigned int pid;
     unsigned int state;
     char         name[32];
+};
+
+/* Net config (must match kernel net.h) */
+struct user_net_config {
+    unsigned int ip;
+    unsigned int subnet;
+    unsigned int gateway;
+    unsigned int dns;
+    unsigned char mac[6];
+    unsigned char configured;
 };
 
 /* File descriptors */
@@ -113,15 +125,8 @@ static inline void sys_exit(int code)
     for (;;) ;
 }
 
-static inline void sys_yield(void)
-{
-    syscall0(SYS_YIELD);
-}
-
-static inline long sys_fork(void)
-{
-    return syscall0(SYS_FORK);
-}
+static inline void sys_yield(void) { syscall0(SYS_YIELD); }
+static inline long sys_fork(void)  { return syscall0(SYS_FORK); }
 
 static inline long sys_exec(const char *path, size_t len)
 {
@@ -149,24 +154,17 @@ static inline long sys_getprocs(struct proc_info *buf, size_t bufsize)
     return syscall2(SYS_GETPROCS, (long)buf, (long)bufsize);
 }
 
-static inline long sys_kill(int pid)
+static inline long sys_kill(int pid)       { return syscall1(SYS_KILL, pid); }
+static inline long sys_uptime(void)        { return syscall0(SYS_UPTIME); }
+static inline void sys_reboot(void)        { syscall0(SYS_REBOOT); for(;;); }
+static inline void sys_shutdown(void)      { syscall0(SYS_SHUTDOWN); for(;;); }
+
+static inline long sys_ping(unsigned int ip, int seq)
 {
-    return syscall1(SYS_KILL, pid);
+    return syscall2(SYS_PING, (long)ip, (long)seq);
 }
 
-static inline long sys_uptime(void)
+static inline long sys_netinfo(struct user_net_config *buf, size_t size)
 {
-    return syscall0(SYS_UPTIME);
-}
-
-static inline void sys_reboot(void)
-{
-    syscall0(SYS_REBOOT);
-    for (;;) ;
-}
-
-static inline void sys_shutdown(void)
-{
-    syscall0(SYS_SHUTDOWN);
-    for (;;) ;
+    return syscall2(SYS_NETINFO, (long)buf, (long)size);
 }

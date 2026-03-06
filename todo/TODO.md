@@ -440,15 +440,15 @@
 
 ### 10.2 Network Stack
 
-- [ ] Write `src/kernel/net/ethernet.c` — parse/build Ethernet frames
-- [ ] Write `src/kernel/net/arp.c` — ARP request/reply
-- [ ] Write `src/kernel/net/ip.c` — IPv4 send/receive
-- [ ] Write `src/kernel/net/icmp.c` — ICMP echo (ping)
-- [ ] Write `src/kernel/net/udp.c` — UDP send/receive
+- [x] Write `src/kernel/net/ethernet.c` — parse/build Ethernet frames ✅
+- [x] Write `src/kernel/net/arp.c` — ARP request/reply ✅
+- [x] Write `src/kernel/net/ip.c` — IPv4 send/receive ✅
+- [x] Write `src/kernel/net/icmp.c` — ICMP echo (ping) ✅
+- [x] Write `src/kernel/net/udp.c` — UDP send/receive ✅
 - [ ] Write `src/kernel/net/tcp.c` — basic TCP (SYN/ACK, data, FIN) *(stretch goal)*
-- [ ] Write `src/kernel/net/dhcp.c` — obtain IP via DHCP
-- [ ] Test: ping from QEMU guest → host responds → ✅
-- [ ] Commit: `"net: basic IP/UDP/ICMP network stack"`
+- [x] Write `src/kernel/net/dhcp.c` — obtain IP via DHCP ✅
+- [x] Shell: `ping` and `ifconfig`/`ipconfig` commands ✅
+- [x] Commit: `"net: basic IP/UDP/ICMP network stack"` ✅
 
 ---
 

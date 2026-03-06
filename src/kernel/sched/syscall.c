@@ -16,6 +16,7 @@
 #include "vfs.h"
 #include "heap.h"
 #include "pit.h"
+#include "net.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)
@@ -270,6 +271,25 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         outw_sc(0xB004, 0x2000);    /* Bochs power-off */
         for (;;) __asm__ volatile("hlt");
         break;
+    case SYS_PING: {
+        /* arg1 = IP address (big-endian), arg2 = seq number */
+        icmp_send_echo((uint32_t)arg1, 1, (uint16_t)arg2, "ImpOS", 5);
+        ret = 0;
+        break;
+    }
+    case SYS_NETINFO: {
+        /* arg1 = user buffer, arg2 = buffer size */
+        uint8_t *ubuf = (uint8_t *)arg1;
+        uint64_t sz = arg2 < sizeof(net_cfg) ? arg2 : sizeof(net_cfg);
+        uint64_t k;
+        const uint8_t *src = (const uint8_t *)&net_cfg;
+        if (ubuf) {
+            for (k = 0; k < sz; k++)
+                ubuf[k] = src[k];
+        }
+        ret = 0;
+        break;
+    }
     default:
         printk("[WARN] Unknown syscall %u from PID %u\n",
                syscall_nr, (uint64_t)task_current()->pid);
