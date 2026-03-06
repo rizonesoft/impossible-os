@@ -341,7 +341,7 @@
   - [x] `ixfs_finddir()` — lookup by name ✅
   - [x] `ixfs_rmdir()` — remove empty directory ✅ (via `ixfs_unlink` with empty check)
 - [x] Support **long filenames** (up to 251 chars) ✅ `ae5fccb` — 256-byte dir entries, 16/block
-- [ ] Support **file permissions** (owner, read/write/execute)
+- [x] Support **file permissions** (owner, read/write/execute) ✅ `e78b306` — Unix rwx, uid/gid, `ixfs_check_perm()`
 - [ ] Support **timestamps** (created, modified, accessed)
 - [ ] Write `scripts/mkfs-ixfs.py` — host-side tool to format a disk image as IXFS
 - [ ] Mount IXFS partition at `C:\`

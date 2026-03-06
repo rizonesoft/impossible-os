@@ -14,6 +14,7 @@
 #include "ixfs.h"
 #include "ata.h"
 #include "heap.h"
+#include "pit.h"
 #include "printk.h"
 
 /* Number of inodes to allocate (fixed at format time) */
@@ -366,6 +367,13 @@ static int ixfs_file_read(struct vfs_node *node, uint32_t offset,
     }
 
     kfree(data_buf);
+
+    /* Update access time */
+    if (bytes_read > 0) {
+        v->inode.i_atime = (uint32_t)uptime();
+        ixfs_write_inode(v->ino, &v->inode);
+    }
+
     return (int)bytes_read;
 }
 
@@ -429,9 +437,12 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
         blk_index++;
     }
 
-    /* Update inode size if we wrote past the end */
+    /* Update inode size and timestamps */
     if (offset + bytes_written > v->inode.i_size)
         v->inode.i_size = offset + bytes_written;
+
+    v->inode.i_mtime = (uint32_t)uptime();
+    v->inode.i_atime = v->inode.i_mtime;
 
     /* Flush inode to disk */
     v->node.size = v->inode.i_size;
@@ -609,10 +620,16 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
                       ? (IXFS_S_DIR | IXFS_PERM_DIR)
                       : (IXFS_S_FILE | IXFS_PERM_FILE);
     new_inode.i_links = 1;
-    new_inode.i_uid = 0;    /* root */
+    new_inode.i_uid = 0;
     new_inode.i_gid = 0;
     new_inode.i_size = 0;
     new_inode.i_blocks = 0;
+    {
+        uint32_t now = (uint32_t)uptime();
+        new_inode.i_ctime = now;
+        new_inode.i_mtime = now;
+        new_inode.i_atime = now;
+    }
 
     /* If directory, allocate an initial data block for . and .. */
     if (type == VFS_DIRECTORY) {
