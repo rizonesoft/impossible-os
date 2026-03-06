@@ -76,33 +76,33 @@
 
 ### 1.3 Directory Structure
 
-- [ ] Create `src/boot/` — bootloader assembly & early C
-- [ ] Create `src/kernel/` — kernel core
-- [ ] Create `src/kernel/drivers/` — hardware drivers
-- [ ] Create `src/kernel/mm/` — memory management
-- [ ] Create `src/kernel/fs/` — filesystem
-- [ ] Create `src/kernel/ipc/` — inter-process communication
-- [ ] Create `src/kernel/sched/` — scheduler
-- [ ] Create `src/libc/` — minimal C standard library
-- [ ] Create `src/shell/` — command-line shell
-- [ ] Create `src/desktop/` — desktop environment & window manager
-- [ ] Create `src/installer/` — OS installer
-- [ ] Create `include/` — shared kernel headers
-- [ ] Create `scripts/` — helper build/test scripts
-- [ ] Create `build/` — build output (gitignored)
-- [ ] Create `docs/` — architecture notes, design docs
-- [ ] Create `todo/` — this TODO file
-- [ ] Commit: `"chore: establish directory structure"`
+- [x] Create `src/boot/` — bootloader assembly & early C ✅
+- [x] Create `src/kernel/` — kernel core ✅
+- [x] Create `src/kernel/drivers/` — hardware drivers ✅
+- [x] Create `src/kernel/mm/` — memory management ✅
+- [x] Create `src/kernel/fs/` — filesystem ✅
+- [x] Create `src/kernel/ipc/` — inter-process communication ✅
+- [x] Create `src/kernel/sched/` — scheduler ✅
+- [x] Create `src/libc/` — minimal C standard library ✅
+- [x] Create `src/shell/` — command-line shell ✅
+- [x] Create `src/desktop/` — desktop environment & window manager ✅
+- [x] Create `src/installer/` — OS installer ✅
+- [x] Create `include/` — shared kernel headers ✅
+- [x] Create `scripts/` — helper build/test scripts ✅
+- [x] Create `build/` — build output (gitignored) ✅
+- [x] Create `docs/` — architecture notes, design docs ✅
+- [x] Create `todo/` — this TODO file ✅
+- [x] Commit: `"chore: establish directory structure"` ✅ `39bec1a`
 
 ### 1.4 Build System (Makefile)
 
-- [ ] Create root `Makefile` with variables: `CC`, `AS`, `LD`, `CFLAGS`, `LDFLAGS`
-- [ ] Add `make all` target — builds everything into `build/`
-- [ ] Add `make boot` target — assembles the bootloader
-- [ ] Add `make kernel` target — compiles and links the kernel
-- [ ] Add `make iso` target — packages `build/` into `os-build.iso`
-- [ ] Add `make run` target — launches QEMU with the ISO
-- [ ] Add `make clean` target — removes all build artifacts
+- [x] Create root `Makefile` with variables: `CC`, `AS`, `LD`, `CFLAGS`, `LDFLAGS` ✅
+- [x] Add `make all` target — builds everything into `build/` ✅
+- [x] Add `make boot` target — assembles the bootloader ✅
+- [x] Add `make kernel` target — compiles and links the kernel ✅
+- [x] Add `make iso` target — packages `build/` into `os-build.iso` ✅
+- [x] Add `make run` target — launches QEMU with the ISO ✅
+- [x] Add `make clean` target — removes all build artifacts ✅
 - [ ] Test `make clean && make all && make run` cycle end-to-end
 - [ ] Commit: `"build: root Makefile with full build pipeline"`
 
