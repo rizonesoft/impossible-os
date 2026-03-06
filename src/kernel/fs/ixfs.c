@@ -750,10 +750,41 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
                 return -1;
             }
 
-            /* Don't delete directories (for safety) */
+            /* If it's a directory, check it's empty first */
             if (target.i_mode & IXFS_S_DIR) {
-                kfree(data_buf);
-                return -1;
+                uint32_t d_total = target.i_size
+                                 / sizeof(struct ixfs_dir_entry);
+                uint32_t d_real = 0;
+                uint32_t d_idx;
+                uint8_t *dir_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+                if (!dir_buf) { kfree(data_buf); return -1; }
+
+                for (d_idx = 0; d_idx < d_total; d_idx++) {
+                    uint32_t d_off = d_idx * sizeof(struct ixfs_dir_entry);
+                    uint32_t d_bi = d_off / IXFS_BLOCK_SIZE;
+                    uint32_t d_bo = d_off % IXFS_BLOCK_SIZE;
+                    uint32_t d_blk = ixfs_get_block(&target, d_bi);
+                    struct ixfs_dir_entry *child;
+
+                    if (d_blk == 0) break;
+                    if (ixfs_read_block(d_blk, dir_buf) != 0) break;
+
+                    child = (struct ixfs_dir_entry *)(dir_buf + d_bo);
+                    if (child->d_inode == 0) continue;
+                    /* Skip . and .. */
+                    if (child->d_name[0] == '.' &&
+                        (child->d_name[1] == '\0' ||
+                         (child->d_name[1] == '.'
+                          && child->d_name[2] == '\0')))
+                        continue;
+                    d_real++;
+                }
+                kfree(dir_buf);
+
+                if (d_real > 0) {
+                    kfree(data_buf);
+                    return -1;  /* directory not empty */
+                }
             }
 
             /* Free all direct data blocks */

@@ -257,6 +257,36 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         }
     }
 
+    /* IXFS mkdir/rmdir test on C:\ */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root && c_root->ops && c_root->ops->create) {
+            /* mkdir */
+            int rc = c_root->ops->create(c_root, "TestDir", VFS_DIRECTORY);
+            if (rc == 0) {
+                /* Verify it shows up in readdir */
+                struct vfs_dirent *de = vfs_readdir(c_root, 0);
+                if (de && de->type & VFS_DIRECTORY) {
+                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                    printk("[OK] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("IXFS mkdir: C:\\%s\n", de->name);
+                }
+
+                /* rmdir (empty dir) */
+                if (c_root->ops->unlink) {
+                    rc = c_root->ops->unlink(c_root, "TestDir");
+                    de = vfs_readdir(c_root, 0);
+                    fb_set_color(rc == 0 ? FB_COLOR_GREEN : FB_COLOR_RED,
+                                 FB_COLOR_BG_DEFAULT);
+                    printk("[%s] ", rc == 0 ? "OK" : "FAIL");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("IXFS rmdir: C:\\TestDir %s\n",
+                           rc == 0 ? "removed" : "failed");
+                }
+            }
+        }
+    }
     /* Timer verification */
     printk("\n  Timer test: sleeping 1 second...\n");
     sleep_ms(1000);

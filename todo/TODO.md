@@ -330,11 +330,11 @@
 - [x] Implement inode operations: ✅ (implemented in `ixfs.c` commit `05fc65d`)
   - [x] `ixfs_read_inode()` / `ixfs_write_inode()` ✅
   - [x] `ixfs_alloc_block()` / `ixfs_free_block()` ✅
-- [ ] Implement file operations:
-  - [ ] `ixfs_create()` — create a new file
-  - [ ] `ixfs_read()` — read file data
-  - [ ] `ixfs_write()` — write file data
-  - [ ] `ixfs_delete()` — unlink file, free blocks
+- [x] Implement file operations: ✅ `50e743c`
+  - [x] `ixfs_create()` — create a new file ✅
+  - [x] `ixfs_read()` — read file data ✅
+  - [x] `ixfs_write()` — write file data ✅
+  - [x] `ixfs_delete()` — unlink file, free blocks ✅
 - [ ] Implement directory operations:
   - [ ] `ixfs_mkdir()` — create directory
   - [ ] `ixfs_readdir()` — list directory entries
