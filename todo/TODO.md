@@ -147,11 +147,11 @@
 
 ### 3.2 Kernel Entry via Multiboot2
 
-- [ ] Write `src/boot/entry.asm` — Multiboot2 entry stub
-- [ ] GRUB drops us in **32-bit protected mode** — verify via Multiboot2 magic in `eax`
-- [ ] Parse the **Multiboot2 info structure** (memory map, framebuffer info, ACPI RSDP)
-- [ ] Save framebuffer address, pitch, width, height, bpp from Multiboot2 tags
-- [ ] Commit: `"boot: Multiboot2 entry and info parsing"`
+- [x] Write `src/boot/entry.asm` — Multiboot2 entry stub ✅ verifies magic, error to serial
+- [x] GRUB drops us in **32-bit protected mode** — verify via Multiboot2 magic in `eax` ✅ `0x36D76289`
+- [x] Parse the **Multiboot2 info structure** (memory map, framebuffer info, ACPI RSDP) ✅ 20 mmap entries
+- [x] Save framebuffer address, pitch, width, height, bpp from Multiboot2 tags ✅
+- [x] Commit: `"boot: Multiboot2 entry and info parsing"` ✅ `bd29d60`
 
 ### 3.3 Enter 64-bit Long Mode
 
@@ -268,6 +268,10 @@
 
 ## Phase 6 — Storage & Filesystem
 
+> ⚡ **Design Decision:** Impossible OS uses **Windows-style drive letters** (`C:\`, `D:\`)
+> and a custom filesystem called **IXFS** (Impossible X FileSystem) for the root partition.
+> FAT32 is used only for the EFI System Partition (required by UEFI).
+
 ### 6.1 ATA/IDE Disk Driver
 
 - [ ] Write `src/kernel/drivers/ata.c` / `ata.h`
@@ -277,35 +281,73 @@
 - [ ] Test: read sector 0 of a QEMU disk image → get known data → ✅
 - [ ] Commit: `"drivers: ATA PIO disk read/write"`
 
-### 6.2 Virtual Filesystem (VFS) Layer
+### 6.2 Virtual Filesystem (VFS) Layer — Drive Letters
 
 - [ ] Write `src/kernel/fs/vfs.c` / `vfs.h`
 - [ ] Define `vfs_node` struct: name, type (file/dir), size, inode, read/write/open/close ops
+- [ ] Implement **drive letter mounting**: assign `A:\`, `C:\`, `D:\` etc. to partitions
+- [ ] Implement **backslash path parsing**: `C:\Users\Default\file.txt`
 - [ ] Implement `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()`
 - [ ] Implement `vfs_readdir()`, `vfs_finddir()`
-- [ ] Allow mounting different FS drivers at mount points
-- [ ] Commit: `"fs: virtual filesystem abstraction layer"`
+- [ ] Allow mounting different FS drivers (IXFS, FAT32, initrd) at drive letters
+- [ ] Drive letter assignment:
+  - `A:\` — EFI System Partition (FAT32, read-only after boot)
+  - `C:\` — Root OS partition (IXFS)
+  - `D:\`, `E:\`… — Additional drives / USB
+- [ ] Commit: `"fs: VFS with Windows-style drive letters"`
 
 ### 6.3 Initial RAM Filesystem (initrd)
 
 - [ ] Write `src/kernel/fs/initrd.c` / `initrd.h`
 - [ ] Define a simple archive format (header + flat file entries)
 - [ ] Write a userspace tool `scripts/make-initrd.py` to pack files into the initrd image
-- [ ] Mount initrd at `/` during early boot
+- [ ] Mount initrd at `C:\` during early boot (before disk drivers are ready)
 - [ ] Test: read a text file from initrd via VFS → ✅
 - [ ] Commit: `"fs: initrd RAM filesystem"`
 
-### 6.4 FAT32 Filesystem Driver
+### 6.4 FAT32 Filesystem Driver (EFI Partition Only)
 
 - [ ] Write `src/kernel/fs/fat32.c` / `fat32.h`
 - [ ] Parse the **BPB** (BIOS Parameter Block) from the boot sector
 - [ ] Read the **FAT** (File Allocation Table)
-- [ ] Implement directory listing (read cluster chains)
-- [ ] Implement file read (follow cluster chains → copy to buffer)
-- [ ] Implement file write + creating new files
-- [ ] Implement file/directory deletion
-- [ ] Test: format a QEMU disk as FAT32, read/write files from the OS → ✅
-- [ ] Commit: `"fs: FAT32 read/write driver"`
+- [ ] Implement read-only directory listing (read cluster chains)
+- [ ] Implement read-only file read (follow cluster chains → copy to buffer)
+- [ ] Mount the EFI System Partition at `A:\`
+- [ ] Test: list files on `A:\` from the OS → ✅
+- [ ] Commit: `"fs: FAT32 read-only driver for EFI partition"`
+
+### 6.5 IXFS — Impossible X FileSystem (Custom)
+
+> IXFS is the native filesystem for Impossible OS, designed for the root partition (`C:\`).
+
+- [ ] Design IXFS on-disk layout:
+  - [ ] **Superblock** — magic number (`0x49584653` = "IXFS"), version, block size, total blocks, free count
+  - [ ] **Block bitmap** — 1 bit per block (4 KiB blocks)
+  - [ ] **Inode table** — fixed-size entries (permissions, size, timestamps, block pointers)
+  - [ ] **Data blocks** — file/directory content
+- [ ] Write `src/kernel/fs/ixfs.c` / `ixfs.h`
+- [ ] Implement `ixfs_format()` — write superblock, zero bitmaps, create root directory
+- [ ] Implement `ixfs_mount()` — read superblock, verify magic, load bitmaps
+- [ ] Implement inode operations:
+  - [ ] `ixfs_read_inode()` / `ixfs_write_inode()`
+  - [ ] `ixfs_alloc_block()` / `ixfs_free_block()`
+- [ ] Implement file operations:
+  - [ ] `ixfs_create()` — create a new file
+  - [ ] `ixfs_read()` — read file data
+  - [ ] `ixfs_write()` — write file data
+  - [ ] `ixfs_delete()` — unlink file, free blocks
+- [ ] Implement directory operations:
+  - [ ] `ixfs_mkdir()` — create directory
+  - [ ] `ixfs_readdir()` — list directory entries
+  - [ ] `ixfs_finddir()` — lookup by name
+  - [ ] `ixfs_rmdir()` — remove empty directory
+- [ ] Support **long filenames** (up to 255 chars)
+- [ ] Support **file permissions** (owner, read/write/execute)
+- [ ] Support **timestamps** (created, modified, accessed)
+- [ ] Write `scripts/mkfs-ixfs.py` — host-side tool to format a disk image as IXFS
+- [ ] Mount IXFS partition at `C:\`
+- [ ] Test: format a QEMU disk as IXFS, create/read/write/delete files → ✅
+- [ ] Commit: `"fs: IXFS custom filesystem"`
 
 ---
 
@@ -547,10 +589,12 @@
 - [ ] Display a **welcome screen** (GUI or text-mode)
 - [ ] **Disk selection** — list available drives (ATA enumeration)
 - [ ] **Partitioning** — create a **GPT** partition table on the target disk (UEFI requires GPT)
-  - [ ] Create an **EFI System Partition** (FAT32, ~512 MiB, type `EF00`)
-  - [ ] Create a root partition (remainder of disk)
-- [ ] **Format** partitions (write FAT32 BPB + empty FAT for ESP)
-- [ ] **Copy files** — copy kernel ELF, initrd, and OS files to the root partition
+  - [ ] Create an **EFI System Partition** (FAT32, ~512 MiB, type `EF00`) → `A:\`
+  - [ ] Create a root partition (remainder of disk, IXFS) → `C:\`
+- [ ] **Format** partitions:
+  - [ ] Write FAT32 BPB + empty FAT for ESP
+  - [ ] Run `ixfs_format()` on the root partition
+- [ ] **Copy files** — copy kernel ELF, initrd, and OS files to `C:\`
 - [ ] **Install GRUB for UEFI** — `grub-install --target=x86_64-efi` to the ESP
 - [ ] **Finalize** — display "Installation Complete, Reboot" message
 - [ ] Test in QEMU: boot ISO → install to a virtual disk → reboot from disk → OS loads → ✅
