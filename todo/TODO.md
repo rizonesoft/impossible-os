@@ -200,11 +200,11 @@
 
 ### 4.4 Programmable Interrupt Controller (PIC)
 
-- [ ] Write `src/kernel/drivers/pic.c` / `pic.h`
-- [ ] Remap PIC1 (master) to IRQ 32–39, PIC2 (slave) to IRQ 40–47
-- [ ] Implement `pic_send_eoi()` — end-of-interrupt acknowledgment
-- [ ] Mask/unmask individual IRQ lines
-- [ ] Commit: `"kernel: PIC remapping and IRQ management"`
+- [x] Write `src/kernel/drivers/pic.c` / `pic.h` ✅
+- [x] Remap PIC1 (master) to IRQ 32–39, PIC2 (slave) to IRQ 40–47 ✅
+- [x] Implement `pic_send_eoi()` — end-of-interrupt acknowledgment ✅
+- [x] Mask/unmask individual IRQ lines ✅
+- [x] Commit: `"kernel: PIC remapping and IRQ management"` ✅ `90625cb`
 
 ### 4.5 Programmable Interval Timer (PIT) — System Clock
 

@@ -14,6 +14,7 @@
 #include "gdt.h"
 #include "idt.h"
 #include "pic.h"
+#include "pit.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -48,7 +49,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 7: Remap PIC so hardware IRQs don't conflict with CPU exceptions */
     pic_init();
 
-    /* Step 8: Enable interrupts */
+    /* Step 8: Start PIT system timer */
+    pit_init();
+
+    /* Step 9: Enable interrupts */
     __asm__ volatile ("sti");
 
     /* Step 8: Print boot banner */
@@ -107,6 +111,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
     }
+
+    /* Timer test: sleep 1 second and verify ticks */
+    printk("\n  Timer test: sleeping 1 second...\n");
+    sleep_ms(1000);
+    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+    printk("[OK] ");
+    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+    printk("Timer working! Ticks: %u, Uptime: %u sec\n",
+           pit_get_ticks(), uptime());
 
     /* Done */
     printk("\n");
