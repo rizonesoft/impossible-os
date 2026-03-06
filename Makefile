@@ -3,8 +3,9 @@
 # Target: x86-64, UEFI-only (GRUB + Multiboot2)
 # ============================================================================
 
-# --- Cross-Compiler Toolchain ---
+# Tools
 CC      := x86_64-elf-gcc
+HOST_CC := gcc
 AS      := nasm
 LD      := x86_64-elf-ld
 OBJCOPY := x86_64-elf-objcopy
@@ -83,11 +84,14 @@ iso: $(ISO_FILE)
 
 $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(ISO_DIR)/boot/grub
-	@# Build the initrd with test files
+	@# Build the initrd packer tool (host binary)
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -o $(BUILD_DIR)/tools/make-initrd scripts/make-initrd.c
+	@# Create test files and pack initrd
 	@mkdir -p $(BUILD_DIR)/initrd_files
 	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
 	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
-	python3 scripts/make-initrd.py -o $(BUILD_DIR)/initrd.img \
+	$(BUILD_DIR)/tools/make-initrd -o $(BUILD_DIR)/initrd.img \
 		$(BUILD_DIR)/initrd_files/hello.txt \
 		$(BUILD_DIR)/initrd_files/readme.txt
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf

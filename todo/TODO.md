@@ -297,12 +297,12 @@
 
 ### 6.3 Initial RAM Filesystem (initrd)
 
-- [ ] Write `src/kernel/fs/initrd.c` / `initrd.h`
-- [ ] Define a simple archive format (header + flat file entries)
-- [ ] Write a userspace tool `scripts/make-initrd.py` to pack files into the initrd image
-- [ ] Mount initrd at `C:\` during early boot (before disk drivers are ready)
-- [ ] Test: read a text file from initrd via VFS → ✅
-- [ ] Commit: `"fs: initrd RAM filesystem"`
+- [x] Write `src/kernel/fs/initrd.c` / `initrd.h` ✅
+- [x] Define a simple archive format (header + flat file entries) ✅ IXRD magic
+- [x] Write a userspace tool `scripts/make-initrd.py` to pack files into the initrd image ✅
+- [x] Mount initrd at `C:\` during early boot (before disk drivers are ready) ✅ via GRUB module2
+- [x] Test: read a text file from initrd via VFS → `"Hello from Impossible OS!"` ✅
+- [x] Commit: `"fs: initrd RAM filesystem"` ✅ `4623e63`
 
 ### 6.4 FAT32 Filesystem Driver (EFI Partition Only)
 
