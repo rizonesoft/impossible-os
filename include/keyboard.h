@@ -16,6 +16,12 @@
 #define KEY_TAB        '\t'
 #define KEY_ENTER      '\n'
 
+/* Arrow keys (non-ASCII, use high values) */
+#define KEY_UP         0x80
+#define KEY_DOWN       0x81
+#define KEY_LEFT       0x82
+#define KEY_RIGHT      0x83
+
 /* Initialize the PS/2 keyboard driver (registers IRQ 1) */
 void keyboard_init(void);
 

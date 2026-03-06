@@ -45,6 +45,7 @@ static uint8_t shift_held = 0;
 static uint8_t ctrl_held  = 0;
 static uint8_t alt_held   = 0;
 static uint8_t capslock_on = 0;
+static uint8_t e0_prefix  = 0;   /* set when 0xE0 prefix byte received */
 
 /* --- Scan code set 1 → ASCII lookup tables (US QWERTY) --- */
 
@@ -99,6 +100,27 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
 
     /* Read the scan code from the keyboard data port */
     scancode = inb(KB_DATA_PORT);
+
+    /* Handle 0xE0 prefix (extended scan codes for arrow keys etc.) */
+    if (scancode == 0xE0) {
+        e0_prefix = 1;
+        goto done;
+    }
+
+    if (e0_prefix) {
+        e0_prefix = 0;
+        /* Only handle key presses (bit 7 clear) */
+        if (!(scancode & 0x80)) {
+            switch (scancode) {
+            case 0x48: kb_buffer_push((char)KEY_UP);    break;  /* Up arrow */
+            case 0x50: kb_buffer_push((char)KEY_DOWN);  break;  /* Down arrow */
+            case 0x4B: kb_buffer_push((char)KEY_LEFT);  break;  /* Left arrow */
+            case 0x4D: kb_buffer_push((char)KEY_RIGHT); break;  /* Right arrow */
+            default: break;
+            }
+        }
+        goto done;
+    }
 
     /* Handle modifier key presses and releases */
     switch (scancode) {

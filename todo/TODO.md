@@ -422,7 +422,7 @@
   - [x] `shutdown` — ACPI power-off ✅
   - [x] `uname` / `version` / `ver` — system info ✅
   - [x] `exit [code]` — exit the shell ✅
-- [ ] Implement command history (up/down arrow keys)
+- [x] Implement command history (up/down arrow keys) ✅
 - [x] Commit: `"shell: interactive command-line shell"` ✅
 
 ---

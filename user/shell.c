@@ -15,11 +15,58 @@
 #define LINE_MAX    256
 #define ARGV_MAX    32
 #define PROMPT      "impossible> "
+#define HISTORY_MAX 16
+
+/* Arrow key codes (must match kernel keyboard.h) */
+#define KEY_UP      0x80
+#define KEY_DOWN    0x81
+#define KEY_LEFT    0x82
+#define KEY_RIGHT   0x83
+
+/* --- Command history ring buffer --- */
+static char history[HISTORY_MAX][LINE_MAX];
+static int  history_count = 0;     /* total entries stored */
+static int  history_idx   = 0;     /* next write slot */
+
+static void history_add(const char *line)
+{
+    if (strlen(line) == 0)
+        return;
+    /* Don't add duplicates of the last entry */
+    if (history_count > 0) {
+        int prev = (history_idx - 1 + HISTORY_MAX) % HISTORY_MAX;
+        if (strcmp(history[prev], line) == 0)
+            return;
+    }
+    strcpy(history[history_idx], line);
+    history_idx = (history_idx + 1) % HISTORY_MAX;
+    if (history_count < HISTORY_MAX)
+        history_count++;
+}
+
+/* Clear the current line on screen and replace with new text */
+static void line_replace(char *buf, int *pos, const char *newtext)
+{
+    int i;
+    /* Move cursor to start of input and clear */
+    for (i = 0; i < *pos; i++)
+        putchar('\b');
+    for (i = 0; i < *pos; i++)
+        putchar(' ');
+    for (i = 0; i < *pos; i++)
+        putchar('\b');
+
+    /* Copy and display new text */
+    strcpy(buf, newtext);
+    *pos = (int)strlen(buf);
+    printf("%s", buf);
+}
 
 /* --- Line editing --- */
 static int readline(char *buf, int max)
 {
     int pos = 0;
+    int hist_pos = history_count;  /* start past the end = "new line" */
     char c;
 
     while (pos < max - 1) {
@@ -49,6 +96,31 @@ static int readline(char *buf, int max)
             if (pos == 0) {
                 printf("\n");
                 return -1;
+            }
+            continue;
+        }
+
+        /* Arrow key: up = previous history */
+        if ((unsigned char)c == KEY_UP) {
+            if (hist_pos > 0 && history_count > 0) {
+                hist_pos--;
+                int real = (history_idx - history_count + hist_pos
+                            + HISTORY_MAX) % HISTORY_MAX;
+                line_replace(buf, &pos, history[real]);
+            }
+            continue;
+        }
+
+        /* Arrow key: down = next history / clear */
+        if ((unsigned char)c == KEY_DOWN) {
+            if (hist_pos < history_count - 1) {
+                hist_pos++;
+                int real = (history_idx - history_count + hist_pos
+                            + HISTORY_MAX) % HISTORY_MAX;
+                line_replace(buf, &pos, history[real]);
+            } else if (hist_pos < history_count) {
+                hist_pos = history_count;
+                line_replace(buf, &pos, "");
             }
             continue;
         }
@@ -307,6 +379,9 @@ int main(void)
         }
         if (len == 0)
             continue;
+
+        /* Add to history before parsing (parse modifies the string) */
+        history_add(line);
 
         argc = parse(line, argv, ARGV_MAX);
         result = dispatch(argc, argv);
