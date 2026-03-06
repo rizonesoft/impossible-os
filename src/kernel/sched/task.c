@@ -80,6 +80,8 @@ void task_init(void)
         tasks[i].state = TASK_DEAD;
         tasks[i].rsp = 0;
         tasks[i].stack_base = (uint8_t *)0;
+        tasks[i].kernel_rsp = 0;
+        tasks[i].user_stack_base = (uint8_t *)0;
         tasks[i].name = (const char *)0;
     }
 
@@ -172,10 +174,93 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].state = TASK_READY;
     tasks[pid].rsp = (uint64_t)sp;
     tasks[pid].stack_base = stack;
+    tasks[pid].kernel_rsp = (uint64_t)(stack + TASK_STACK_SIZE);
+    tasks[pid].user_stack_base = (uint8_t *)0;  /* kernel task */
     tasks[pid].name = name;
     num_tasks++;
 
-    printk("[OK] Task %u (\"%s\") created\n",
+    printk("[OK] Task %u (\"%s\") created (kernel)\n",
+           (uint64_t)pid, name ? name : "?");
+
+    return (int)pid;
+}
+
+int task_create_user(task_entry_t entry, const char *name)
+{
+    uint32_t pid;
+    uint8_t *kstack, *ustack;
+    uint64_t *sp;
+
+    if (num_tasks >= TASK_MAX) {
+        printk("[FAIL] task_create_user: max tasks reached\n");
+        return -1;
+    }
+
+    pid = num_tasks;
+
+    /* Allocate kernel stack (for interrupt/syscall handling) */
+    kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
+    if (!kstack) {
+        printk("[FAIL] task_create_user: cannot allocate kernel stack\n");
+        return -1;
+    }
+
+    /* Allocate user stack */
+    ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
+    if (!ustack) {
+        printk("[FAIL] task_create_user: cannot allocate user stack\n");
+        /* TODO: free kstack */
+        return -1;
+    }
+
+    /* Build initial interrupt frame on the KERNEL stack.
+     * The ISR restore does: pop regs, add rsp 16, iretq.
+     * iretq pops RIP, CS, RFLAGS, RSP, SS.
+     * CS/SS use user-mode selectors (ring 3 = DPL|3).
+     * RSP points to the user stack top.
+     * RIP points directly to the entry function. */
+    sp = (uint64_t *)(kstack + TASK_STACK_SIZE);
+    sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
+
+    {
+        uint64_t user_rsp = (uint64_t)(ustack + USER_STACK_SIZE) & ~0xFULL;
+
+        sp -= 22;
+        sp[0]  = 0;                                /* r15 */
+        sp[1]  = 0;                                /* r14 */
+        sp[2]  = 0;                                /* r13 */
+        sp[3]  = 0;                                /* r12 */
+        sp[4]  = 0;                                /* r11 */
+        sp[5]  = 0;                                /* r10 */
+        sp[6]  = 0;                                /* r9 */
+        sp[7]  = 0;                                /* r8 */
+        sp[8]  = 0;                                /* rbp */
+        sp[9]  = 0;                                /* rdi */
+        sp[10] = 0;                                /* rsi */
+        sp[11] = 0;                                /* rdx */
+        sp[12] = 0;                                /* rcx */
+        sp[13] = 0;                                /* rbx */
+        sp[14] = 0;                                /* rax */
+        sp[15] = 0;                                /* int_no */
+        sp[16] = 0;                                /* err_code */
+        sp[17] = (uint64_t)entry;                  /* rip = user entry */
+        sp[18] = GDT_USER_CODE | 3;                /* cs = user code, RPL=3 */
+        sp[19] = 0x202;                            /* rflags: IF set */
+        sp[20] = user_rsp;                         /* rsp = user stack */
+        sp[21] = GDT_USER_DATA | 3;                /* ss = user data, RPL=3 */
+    }
+
+    /* Initialize TCB */
+    tasks[pid].pid = pid;
+    tasks[pid].state = TASK_READY;
+    tasks[pid].rsp = (uint64_t)sp;
+    tasks[pid].stack_base = kstack;
+    tasks[pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
+    tasks[pid].user_stack_base = ustack;
+    tasks[pid].name = name;
+    num_tasks++;
+
+    printk("[OK] Task %u (\"%s\") created (user mode)\n",
            (uint64_t)pid, name ? name : "?");
 
     return (int)pid;
@@ -219,6 +304,10 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     tasks[next].state = TASK_RUNNING;
     current_task = next;
     sched_ticks = 0;
+
+    /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
+    if (tasks[next].kernel_rsp)
+        tss_set_kernel_stack(tasks[next].kernel_rsp);
 
     return tasks[next].rsp;
 }
@@ -264,6 +353,10 @@ uint64_t schedule(struct interrupt_frame *frame)
     /* Switch to next task */
     tasks[next].state = TASK_RUNNING;
     current_task = next;
+
+    /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
+    if (tasks[next].kernel_rsp)
+        tss_set_kernel_stack(tasks[next].kernel_rsp);
 
     /* Return the next task's saved frame pointer */
     return tasks[next].rsp;

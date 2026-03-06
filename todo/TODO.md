@@ -364,21 +364,21 @@
 
 ### 7.2 Preemptive Scheduler
 
-- [ ] Hook the PIT timer IRQ to call `schedule()` automatically
-- [ ] Implement a **round-robin** scheduler with fixed time quantum
-- [ ] Handle idle task (runs when no other tasks are ready)
-- [ ] Test: tasks preempt each other without explicit yields → ✅
-- [ ] Commit: `"sched: preemptive round-robin scheduler"`
+- [x] Hook the PIT timer IRQ to call `schedule()` automatically ✅ `8314c43`
+- [x] Implement a **round-robin** scheduler with fixed time quantum (5 ticks / 50ms) ✅
+- [x] Handle idle task (dead tasks yield via INT 0x81) ✅
+- [x] Test: tasks preempt each other without explicit yields → ✅
+- [x] Commit: `"sched: preemptive round-robin scheduler"` ✅
 
 ### 7.3 User Mode
 
-- [ ] Set up user-mode code/data segments in the GDT
-- [ ] Implement `switch_to_user_mode()` using `iretq`
-- [ ] Set up a **TSS** so the CPU knows where the kernel stack is on ring transitions
-- [ ] Handle **system calls** via `int 0x80` or `syscall` instruction
-- [ ] Implement basic syscalls: `sys_write`, `sys_read`, `sys_exit`, `sys_yield`
-- [ ] Test: a user-mode program calls `sys_write` → text appears on screen → ✅
-- [ ] Commit: `"kernel: user-mode transition and syscall interface"`
+- [x] Set up user-mode code/data segments in the GDT ✅ (already existed: 0x18/0x20)
+- [x] Implement `switch_to_user_mode()` using `iretq` ✅ `task_create_user()` with ring 3 interrupt frame
+- [x] Set up a **TSS** so the CPU knows where the kernel stack is on ring transitions ✅ `tss_set_kernel_stack()` on every switch
+- [x] Handle **system calls** via `int 0x80` or `syscall` instruction ✅ INT 0x80 with DPL=3
+- [x] Implement basic syscalls: `sys_write`, `sys_read`, `sys_exit`, `sys_yield` ✅
+- [x] Test: a user-mode program calls `sys_write` → text appears on screen → ✅
+- [x] Commit: `"kernel: user-mode transition and syscall interface"` ✅
 
 ### 7.4 Process Management
 

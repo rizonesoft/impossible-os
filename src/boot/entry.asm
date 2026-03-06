@@ -146,14 +146,14 @@ _start:
     xor eax, eax
     rep stosd
 
-    ; PML4[0] → PDPT (present + writable)
+    ; PML4[0] → PDPT (present + writable + user)
     mov eax, pdpt_table
-    or eax, 0x03                 ; present + writable
+    or eax, 0x07                 ; present + writable + user
     mov [pml4_table], eax
 
     ; PDPT[0..3] → PD[0..3]
     mov eax, pd_tables
-    or eax, 0x03                 ; present + writable
+    or eax, 0x07                 ; present + writable + user
     mov [pdpt_table + 0*8], eax
     add eax, 4096
     mov [pdpt_table + 1*8], eax
@@ -164,9 +164,9 @@ _start:
 
     ; Fill all 4 PDs with 2 MiB identity-mapped pages
     ; Each PD has 512 entries, each mapping 2 MiB = 0x200000
-    ; PD entry flags: Present (0x01) + Writable (0x02) + Page Size 2MiB (0x80) = 0x83
+    ; PD entry flags: Present (0x01) + Writable (0x02) + User (0x04) + Page Size 2MiB (0x80) = 0x87
     mov edi, pd_tables           ; start of first PD
-    mov eax, 0x00000083          ; first 2 MiB page, flags: P+W+PS
+    mov eax, 0x00000087          ; first 2 MiB page, flags: P+W+U+PS
     mov ecx, 512 * 4             ; 4 PDs × 512 entries = 2048 entries
 
 .fill_pd:

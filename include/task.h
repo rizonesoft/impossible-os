@@ -23,9 +23,10 @@
 #define TASK_BLOCKED    3   /* future: waiting on I/O or event */
 
 /* Limits */
-#define TASK_MAX        32          /* max concurrent tasks */
-#define TASK_STACK_SIZE 8192        /* 8 KiB per task */
-#define SCHED_QUANTUM   5           /* ticks per time slice (50ms at 100Hz) */
+#define TASK_MAX         32          /* max concurrent tasks */
+#define TASK_STACK_SIZE  8192        /* 8 KiB per kernel task stack */
+#define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
+#define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
 
 /* Saved CPU context (callee-saved registers only for cooperative switch) */
 struct task_context {
@@ -42,8 +43,10 @@ struct task_context {
 struct task {
     uint32_t    pid;            /* process ID */
     uint32_t    state;          /* TASK_RUNNING, TASK_READY, etc. */
-    uint64_t    rsp;            /* saved stack pointer */
-    uint8_t    *stack_base;     /* base of allocated stack (for kfree) */
+    uint64_t    rsp;            /* saved stack pointer (interrupt frame) */
+    uint8_t    *stack_base;     /* base of kernel stack (for kfree) */
+    uint64_t    kernel_rsp;     /* top of kernel stack (for TSS rsp0) */
+    uint8_t    *user_stack_base;/* base of user stack (NULL for kernel tasks) */
     const char *name;           /* human-readable name */
 };
 
@@ -57,6 +60,10 @@ void task_init(void);
 
 /* Create a new kernel thread. Returns PID or -1 on failure. */
 int task_create(task_entry_t entry, const char *name);
+
+/* Create a new user-mode thread. Returns PID or -1 on failure.
+ * The entry function runs in ring 3 with its own user stack. */
+int task_create_user(task_entry_t entry, const char *name);
 
 /* Voluntarily yield the CPU to the next ready task. */
 void yield(void);

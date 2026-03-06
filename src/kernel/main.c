@@ -25,6 +25,7 @@
 #include "fat32.h"
 #include "ixfs.h"
 #include "task.h"
+#include "syscall.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -373,6 +374,27 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("Preemptive scheduling test passed\n");
     }
 
+    /* === User mode test === */
+    {
+        extern void user_test_func(void);
+
+        syscall_init();
+        task_create_user(user_test_func, "UserTest");
+
+        printk("\n  User mode test: ring 3 program calls sys_write\n");
+        scheduler_enable();
+
+        /* Main thread sleeps while user task runs */
+        sleep_ms(500);
+
+        scheduler_disable();
+
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("User mode test passed\n");
+    }
+
     /* Keyboard echo loop */
     fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
     printk("\n  Impossible OS kernel loaded successfully!\n");
@@ -439,4 +461,50 @@ void preempt_b_func(void)
                (uint64_t)pb_count);
         sleep_ms(100);
     }
+}
+
+/* --- User-mode test function ---
+ * This runs in ring 3 — NO kernel function calls allowed!
+ * All I/O goes through INT 0x80 syscalls. */
+void user_test_func(void)
+{
+    /* sys_write(fd=1, buf, len) via INT 0x80 */
+    static const char msg1[] = "  [UserMode] Hello from ring 3!\n";
+    __asm__ volatile(
+        "mov $1, %%rax\n"   /* SYS_WRITE */
+        "mov $1, %%rdi\n"   /* fd = stdout */
+        "mov %0, %%rsi\n"   /* buf */
+        "mov %1, %%rdx\n"   /* len */
+        "int $0x80\n"
+        :
+        : "r"((uint64_t)msg1), "r"((uint64_t)sizeof(msg1) - 1)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+    );
+
+    /* sys_write again to confirm we survived */
+    static const char msg2[] = "  [UserMode] Syscall returned successfully!\n";
+    __asm__ volatile(
+        "mov $1, %%rax\n"   /* SYS_WRITE */
+        "mov $1, %%rdi\n"   /* fd = stdout */
+        "mov %0, %%rsi\n"   /* buf */
+        "mov %1, %%rdx\n"   /* len */
+        "int $0x80\n"
+        :
+        : "r"((uint64_t)msg2), "r"((uint64_t)sizeof(msg2) - 1)
+        : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+    );
+
+    /* sys_exit(0) */
+    __asm__ volatile(
+        "mov $3, %%rax\n"   /* SYS_EXIT */
+        "mov $0, %%rdi\n"   /* exit code = 0 */
+        "int $0x80\n"
+        :
+        :
+        : "rax", "rdi", "memory"
+    );
+
+    /* Should never reach here */
+    for (;;)
+        __asm__ volatile("hlt");
 }

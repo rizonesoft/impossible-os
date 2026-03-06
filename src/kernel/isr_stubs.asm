@@ -165,4 +165,5 @@ IRQ 15, 47           ; Secondary ATA
 ; =============================================================================
 ; Software interrupt stubs
 ; =============================================================================
+ISR_NOERRCODE 128     ; syscall — INT 0x80 (user → kernel)
 ISR_NOERRCODE 129     ; yield() — cooperative task switch (INT 0x81)

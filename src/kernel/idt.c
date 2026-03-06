@@ -56,6 +56,7 @@ extern void irq12(void); extern void irq13(void); extern void irq14(void);
 extern void irq15(void);
 
 /* External assembly: software interrupt stubs */
+extern void isr128(void);  /* syscall — INT 0x80 (user → kernel) */
 extern void isr129(void);  /* yield() — cooperative task switch (INT 0x81) */
 
 /* Exception names for debug printing */
@@ -186,6 +187,9 @@ void idt_init(void)
     }
 
     /* Install software interrupt stubs */
+    /* INT 0x80: syscall — DPL=3 (0xEE) so ring 3 can trigger it */
+    idt_set_entry(128, (uint64_t)isr128, GDT_KERNEL_CODE, 0, 0xEE);
+    /* INT 0x81: yield — DPL=0 (kernel only) */
     idt_set_entry(129, (uint64_t)isr129, GDT_KERNEL_CODE, 0, 0x8E);
 
     /* Load the IDT */
