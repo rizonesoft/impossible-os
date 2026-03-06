@@ -55,6 +55,9 @@ extern void irq9(void);  extern void irq10(void); extern void irq11(void);
 extern void irq12(void); extern void irq13(void); extern void irq14(void);
 extern void irq15(void);
 
+/* External assembly: software interrupt stubs */
+extern void isr129(void);  /* yield() — cooperative task switch (INT 0x81) */
+
 /* Exception names for debug printing */
 static const char *exception_names[32] = {
     "Division By Zero",          /* 0 */
@@ -100,13 +103,14 @@ static void idt_set_entry(uint8_t index, uint64_t handler, uint16_t selector,
     idt[index].zero        = 0;
 }
 
-/* --- C-level interrupt dispatcher (called from assembly) --- */
-void isr_handler(struct interrupt_frame *frame)
+/* --- C-level interrupt dispatcher (called from assembly) ---
+ * Returns the stack frame pointer to restore. Usually the same frame,
+ * but the PIT scheduler may return a different task's frame. */
+uint64_t isr_handler(struct interrupt_frame *frame)
 {
     /* If a custom handler is registered, call it */
     if (handlers[frame->int_no]) {
-        handlers[frame->int_no](frame);
-        return;
+        return handlers[frame->int_no](frame);
     }
 
     /* Default handler for CPU exceptions (0-31) */
@@ -131,6 +135,8 @@ void isr_handler(struct interrupt_frame *frame)
         for (;;)
             __asm__ volatile ("cli; hlt");
     }
+
+    return (uint64_t)frame;
 }
 
 void idt_register_handler(uint8_t n, interrupt_handler_t handler)
@@ -178,6 +184,9 @@ void idt_init(void)
     for (i = 0; i < 16; i++) {
         idt_set_entry((uint8_t)(i + 32), irq_stubs[i], GDT_KERNEL_CODE, 0, 0x8E);
     }
+
+    /* Install software interrupt stubs */
+    idt_set_entry(129, (uint64_t)isr129, GDT_KERNEL_CODE, 0, 0x8E);
 
     /* Load the IDT */
     idtr.limit = (uint16_t)(sizeof(idt) - 1);

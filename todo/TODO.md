@@ -354,13 +354,13 @@
 
 ### 7.1 Kernel Threads (Cooperative)
 
-- [ ] Write `src/kernel/sched/task.c` / `task.h`
-- [ ] Define a **TCB** (Task Control Block): stack pointer, registers, state, PID
-- [ ] Implement `task_create(entry_function)` — allocate stack and TCB
-- [ ] Implement cooperative `yield()` — saves context, picks next task
-- [ ] Write context-switch assembly (`switch_context.asm`)
-- [ ] Test: two kernel threads alternately printing → ✅
-- [ ] Commit: `"sched: cooperative kernel threads"`
+- [x] Write `src/kernel/sched/task.c` / `task.h` ✅ `b807967`
+- [x] Define a **TCB** (Task Control Block): stack pointer, registers, state, PID ✅
+- [x] Implement `task_create(entry_function)` — allocate stack and TCB ✅
+- [x] Implement cooperative `yield()` — saves context, picks next task ✅
+- [x] Write context-switch assembly (`switch_context.asm`) ✅
+- [x] Test: two kernel threads alternately printing → ✅
+- [x] Commit: `"sched: cooperative kernel threads"` ✅
 
 ### 7.2 Preemptive Scheduler
 

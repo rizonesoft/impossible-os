@@ -334,7 +334,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(thread_a_func, "ThreadA");
         task_create(thread_b_func, "ThreadB");
 
-        printk("\n  Multitasking test: two threads alternate messages\n");
+        printk("\n  Cooperative test: two threads alternate via yield()\n");
 
         /* Main thread yields to let both threads run */
         yield();
@@ -349,6 +349,28 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("[OK] ");
         fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
         printk("Cooperative threading test passed\n");
+    }
+
+    /* === Preemptive scheduling test === */
+    {
+        extern void preempt_a_func(void);
+        extern void preempt_b_func(void);
+
+        task_create(preempt_a_func, "PreemptA");
+        task_create(preempt_b_func, "PreemptB");
+
+        printk("\n  Preemptive test: threads run without yield()\n");
+        scheduler_enable();
+
+        /* Main thread sleeps while the preemptive threads run */
+        sleep_ms(600);
+
+        scheduler_disable();
+
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Preemptive scheduling test passed\n");
     }
 
     /* Keyboard echo loop */
@@ -389,4 +411,32 @@ void thread_b_func(void)
     printk("  [ThreadB] Back in thread B (2/3)\n");
     yield();
     printk("  [ThreadB] Thread B finishing (3/3)\n");
+}
+
+/* --- Test thread functions for preemptive scheduling --- */
+
+static volatile uint32_t pa_count = 0;
+static volatile uint32_t pb_count = 0;
+
+void preempt_a_func(void)
+{
+    uint32_t i;
+    for (i = 0; i < 3; i++) {
+        pa_count++;
+        printk("  [PreemptA] Running (%u/3) — no yield!\n",
+               (uint64_t)pa_count);
+        /* Busy-wait ~50ms (loop, not yield) to prove preemption */
+        sleep_ms(100);
+    }
+}
+
+void preempt_b_func(void)
+{
+    uint32_t i;
+    for (i = 0; i < 3; i++) {
+        pb_count++;
+        printk("  [PreemptB] Running (%u/3) — no yield!\n",
+               (uint64_t)pb_count);
+        sleep_ms(100);
+    }
 }

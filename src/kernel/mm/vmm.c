@@ -246,7 +246,7 @@ uintptr_t vmm_get_physical(uintptr_t virt)
 
 /* --- Page Fault Handler (ISR 14) --- */
 
-static void page_fault_handler(struct interrupt_frame *frame)
+static uint64_t page_fault_handler(struct interrupt_frame *frame)
 {
     uintptr_t fault_addr = read_cr2();
 
@@ -275,6 +275,8 @@ static void page_fault_handler(struct interrupt_frame *frame)
     /* Halt — page faults in the kernel are fatal for now */
     for (;;)
         __asm__ volatile ("cli; hlt");
+
+    return (uint64_t)frame;  /* unreachable */
 }
 
 /* --- Initialization --- */

@@ -45,7 +45,10 @@ isr_common_stub:
     mov rbp, rsp
     and rsp, ~0xF
     call isr_handler
-    mov rsp, rbp
+    ; isr_handler returns the frame pointer to restore in rax.
+    ; Normally it returns the same frame, but the scheduler may return
+    ; a different task's frame to perform a preemptive context switch.
+    mov rsp, rax
 
     ; Restore all general-purpose registers
     pop r15
@@ -158,3 +161,8 @@ IRQ 12, 44           ; PS/2 Mouse
 IRQ 13, 45           ; FPU
 IRQ 14, 46           ; Primary ATA
 IRQ 15, 47           ; Secondary ATA
+
+; =============================================================================
+; Software interrupt stubs
+; =============================================================================
+ISR_NOERRCODE 129     ; yield() — cooperative task switch (INT 0x81)

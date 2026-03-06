@@ -1,25 +1,39 @@
 /* ============================================================================
- * task.c — Cooperative kernel thread scheduler
+ * task.c — Kernel thread scheduler (cooperative + preemptive)
  *
- * Round-robin cooperative scheduling. Tasks call yield() to voluntarily
- * give up the CPU. The scheduler picks the next READY task.
+ * Round-robin scheduling with fixed time quantum. The PIT timer IRQ
+ * calls schedule() to preempt tasks automatically. Tasks can also
+ * call yield() for cooperative switching.
  *
  * Task 0 is the boot/main thread — it uses the existing kernel stack
  * and is created implicitly by task_init().
  * ============================================================================ */
 
 #include "task.h"
+#include "idt.h"
+#include "gdt.h"
 #include "heap.h"
 #include "printk.h"
+
+/* Software interrupt vector for yield() */
+#define YIELD_INT_VECTOR 0x81
 
 /* --- Task table --- */
 static struct task tasks[TASK_MAX];
 static uint32_t num_tasks = 0;
 static uint32_t current_task = 0;
 
+/* --- Preemptive scheduler state --- */
+static volatile uint32_t sched_enabled = 0;
+static volatile uint32_t sched_ticks = 0;    /* ticks since last switch */
+
+/* Forward declarations */
+static uint64_t yield_irq_handler(struct interrupt_frame *frame);
+uint64_t schedule_now(struct interrupt_frame *frame);
+
 /* --- Task wrapper ---
  * New tasks start execution here. When the entry function returns,
- * we mark the task as dead and yield forever. */
+ * we mark the task as dead and halt forever (scheduler will skip us). */
 static void task_wrapper(void)
 {
     /* The entry function pointer is stored in r12 by task_create.
@@ -29,15 +43,30 @@ static void task_wrapper(void)
 
     entry();
 
-    /* Task finished — mark as dead and yield */
+    /* Task finished — mark as dead */
     tasks[current_task].state = TASK_DEAD;
     printk("[SCHED] Task %u (\"%s\") exited\n",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
 
-    /* Yield forever (we're dead, scheduler will skip us) */
+    /* Yield forever — yield() via INT 0x81 always works,
+     * whether preemptive scheduler is enabled or not. */
     for (;;)
         yield();
+}
+
+/* --- Find the next runnable task (round-robin) --- */
+static uint32_t find_next_task(uint32_t from)
+{
+    uint32_t i, next;
+
+    next = from;
+    for (i = 0; i < num_tasks; i++) {
+        next = (next + 1) % num_tasks;
+        if (tasks[next].state == TASK_READY || tasks[next].state == TASK_RUNNING)
+            return next;
+    }
+    return from;  /* no other task found */
 }
 
 /* --- Public API --- */
@@ -56,7 +85,7 @@ void task_init(void)
 
     /* Task 0: the current boot/main thread.
      * Its stack is the existing kernel boot stack — we don't allocate one.
-     * RSP will be saved by switch_context when it first yields. */
+     * RSP will be saved by switch_context/schedule when it first yields. */
     tasks[0].pid = 0;
     tasks[0].state = TASK_RUNNING;
     tasks[0].stack_base = (uint8_t *)0;  /* boot stack, don't free */
@@ -64,7 +93,11 @@ void task_init(void)
     num_tasks = 1;
     current_task = 0;
 
-    printk("[OK] Scheduler initialized (PID 0 = main thread)\n");
+    printk("[OK] Scheduler initialized (PID 0 = main, quantum = %u ticks)\n",
+           (uint64_t)SCHED_QUANTUM);
+
+    /* Register the yield software interrupt handler (INT 0x81) */
+    idt_register_handler(YIELD_INT_VECTOR, yield_irq_handler);
 }
 
 int task_create(task_entry_t entry, const char *name)
@@ -87,35 +120,52 @@ int task_create(task_entry_t entry, const char *name)
         return -1;
     }
 
-    /* Set up initial stack frame so switch_context can "return" into task_wrapper.
+    /* Set up initial stack as a full interrupt frame so the ISR stub can
+     * iretq into task_wrapper on the first preemptive switch.
      *
-     * Stack layout (growing downward):
-     *   [top of stack]      ← stack + TASK_STACK_SIZE
-     *   ... (unused) ...
-     *   r15                 ← sp[0]  = 0
-     *   r14                 ← sp[1]  = 0
-     *   r13                 ← sp[2]  = 0
-     *   r12                 ← sp[3]  = entry (task_wrapper reads this)
-     *   rbp                 ← sp[4]  = 0
-     *   rbx                 ← sp[5]  = 0
-     *   return address      ← sp[6]  = task_wrapper
+     * The ISR restore sequence is:
+     *   pop r15..r8  (8 regs)
+     *   pop rbp rdi rsi rdx rcx rbx rax  (7 regs)
+     *   add rsp, 16  (skip int_no, err_code)
+     *   iretq        (pops rip, cs, rflags, rsp, ss)
      *
-     * switch_context does: pop r15..rbx, ret → task_wrapper
+     * Total: 22 qwords on the stack.
      */
     sp = (uint64_t *)(stack + TASK_STACK_SIZE);
 
-    /* Align to 16 bytes (required by System V ABI) */
+    /* Align to 16 bytes */
     sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
 
-    /* Build the initial stack frame (7 entries: 6 regs + return addr) */
-    sp -= 7;
-    sp[0] = 0;                           /* r15 */
-    sp[1] = 0;                           /* r14 */
-    sp[2] = 0;                           /* r13 */
-    sp[3] = (uint64_t)entry;             /* r12 = entry function pointer */
-    sp[4] = 0;                           /* rbp */
-    sp[5] = 0;                           /* rbx */
-    sp[6] = (uint64_t)task_wrapper;      /* return address */
+    /* Reserve space for a secondary stack area that iretq will set RSP to.
+     * iretq pops RIP, CS, RFLAGS, RSP, SS — the RSP in the frame tells
+     * the CPU where to set the stack AFTER returning. */
+    {
+        uint64_t new_rsp = (uint64_t)sp;  /* stack top after iretq */
+
+        sp -= 22;
+        sp[0]  = 0;                           /* r15 */
+        sp[1]  = 0;                           /* r14 */
+        sp[2]  = 0;                           /* r13 */
+        sp[3]  = (uint64_t)entry;             /* r12 = entry function ptr */
+        sp[4]  = 0;                           /* r11 */
+        sp[5]  = 0;                           /* r10 */
+        sp[6]  = 0;                           /* r9 */
+        sp[7]  = 0;                           /* r8 */
+        sp[8]  = 0;                           /* rbp */
+        sp[9]  = 0;                           /* rdi */
+        sp[10] = 0;                           /* rsi */
+        sp[11] = 0;                           /* rdx */
+        sp[12] = 0;                           /* rcx */
+        sp[13] = 0;                           /* rbx */
+        sp[14] = 0;                           /* rax */
+        sp[15] = 0;                           /* int_no (dummy) */
+        sp[16] = 0;                           /* err_code (dummy) */
+        sp[17] = (uint64_t)task_wrapper;      /* rip */
+        sp[18] = GDT_KERNEL_CODE;             /* cs = 0x08 */
+        sp[19] = 0x202;                       /* rflags: IF set */
+        sp[20] = new_rsp;                     /* rsp after iretq */
+        sp[21] = GDT_KERNEL_DATA;             /* ss = 0x10 */
+    }
 
     /* Initialize TCB */
     tasks[pid].pid = pid;
@@ -131,31 +181,103 @@ int task_create(task_entry_t entry, const char *name)
     return (int)pid;
 }
 
+/* Cooperative yield via software interrupt.
+ * Triggers INT 0x81 which goes through the ISR stub (saves full frame),
+ * then yield_irq_handler forces a context switch via schedule_now(). */
 void yield(void)
 {
-    uint32_t prev = current_task;
-    uint32_t next;
-    uint32_t i;
+    __asm__ volatile("int $0x81");
+}
 
-    /* Find the next ready task (round-robin) */
-    next = prev;
-    for (i = 0; i < num_tasks; i++) {
-        next = (next + 1) % num_tasks;
-        if (tasks[next].state == TASK_READY || tasks[next].state == TASK_RUNNING)
-            break;
-    }
+/* --- Yield interrupt handler (INT 0x81) ---
+ * Forces an immediate context switch (ignores quantum). */
+static uint64_t yield_irq_handler(struct interrupt_frame *frame)
+{
+    return schedule_now(frame);
+}
 
-    /* No other task to switch to */
-    if (next == prev) return;
+/* Force an immediate context switch (called from yield INT or schedule). */
+uint64_t schedule_now(struct interrupt_frame *frame)
+{
+    uint32_t prev, next;
 
-    /* Update states */
+    if (num_tasks <= 1)
+        return (uint64_t)frame;
+
+    prev = current_task;
+    next = find_next_task(prev);
+
+    if (next == prev)
+        return (uint64_t)frame;
+
+    /* Save current task's interrupt frame pointer */
+    tasks[prev].rsp = (uint64_t)frame;
     if (tasks[prev].state == TASK_RUNNING)
         tasks[prev].state = TASK_READY;
+
+    /* Switch to next task */
+    tasks[next].state = TASK_RUNNING;
+    current_task = next;
+    sched_ticks = 0;
+
+    return tasks[next].rsp;
+}
+
+/* --- Preemptive scheduler (called from PIT IRQ handler) ---
+ *
+ * The ISR stub has already saved all registers on the current task's stack.
+ * 'frame' points to the saved register state.
+ *
+ * If it's time to switch:
+ *   1. Save the current stack pointer (frame) into current task's TCB
+ *   2. Pick the next task
+ *   3. Return the next task's saved frame pointer
+ *   4. The ISR stub restores from the new frame and iretq's into it
+ *
+ * If no switch needed, return the same frame pointer.
+ */
+uint64_t schedule(struct interrupt_frame *frame)
+{
+    uint32_t prev, next;
+
+    if (!sched_enabled || num_tasks <= 1)
+        return (uint64_t)frame;
+
+    sched_ticks++;
+
+    if (sched_ticks < SCHED_QUANTUM)
+        return (uint64_t)frame;
+
+    /* Time quantum expired — switch tasks */
+    sched_ticks = 0;
+    prev = current_task;
+    next = find_next_task(prev);
+
+    if (next == prev)
+        return (uint64_t)frame;
+
+    /* Save current task's interrupt frame pointer */
+    tasks[prev].rsp = (uint64_t)frame;
+    if (tasks[prev].state == TASK_RUNNING)
+        tasks[prev].state = TASK_READY;
+
+    /* Switch to next task */
     tasks[next].state = TASK_RUNNING;
     current_task = next;
 
-    /* Perform the context switch */
-    switch_context(&tasks[prev].rsp, tasks[next].rsp);
+    /* Return the next task's saved frame pointer */
+    return tasks[next].rsp;
+}
+
+void scheduler_enable(void)
+{
+    sched_ticks = 0;
+    sched_enabled = 1;
+}
+
+void scheduler_disable(void)
+{
+    sched_enabled = 0;
 }
 
 struct task *task_current(void)

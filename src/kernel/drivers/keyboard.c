@@ -92,12 +92,10 @@ static const char scancode_shifted[0x59] = {
 #define SC_CAPSLOCK       0x3A
 
 /* --- IRQ 1 handler --- */
-static void keyboard_irq_handler(struct interrupt_frame *frame)
+static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
 {
     uint8_t scancode;
     char c;
-
-    (void)frame;
 
     /* Read the scan code from the keyboard data port */
     scancode = inb(KB_DATA_PORT);
@@ -164,6 +162,7 @@ static void keyboard_irq_handler(struct interrupt_frame *frame)
 done:
     (void)alt_held;  /* suppress unused warning (reserved for future use) */
     pic_send_eoi(IRQ_KEYBOARD);
+    return (uint64_t)frame;
 }
 
 void keyboard_init(void)

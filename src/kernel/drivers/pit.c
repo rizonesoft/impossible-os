@@ -10,6 +10,7 @@
 #include "pic.h"
 #include "idt.h"
 #include "printk.h"
+#include "task.h"
 
 /* PIT I/O ports */
 #define PIT_CHANNEL0  0x40
@@ -36,12 +37,16 @@ static volatile uint64_t tick_count = 0;
 static uint32_t pit_divisor;
 static uint32_t pit_actual_freq;
 
-/* IRQ 0 handler — called on every PIT tick */
-static void pit_irq_handler(struct interrupt_frame *frame)
+/* IRQ 0 handler — called on every PIT tick.
+ * Returns a frame pointer: same frame if no task switch, or a
+ * different task's saved frame for preemptive context switch. */
+static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
-    (void)frame;
     tick_count++;
     pic_send_eoi(IRQ_TIMER);
+
+    /* Let the scheduler decide if it's time to switch tasks */
+    return schedule(frame);
 }
 
 void pit_init(void)

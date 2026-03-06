@@ -29,6 +29,8 @@ struct interrupt_frame {
 /* Initialize all 256 IDT entries and load with lidt */
 void idt_init(void);
 
-/* Register a custom handler for a specific interrupt number */
-typedef void (*interrupt_handler_t)(struct interrupt_frame *frame);
+/* Interrupt handler type — returns stack frame pointer (for preemptive switching).
+ * Most handlers return the same frame; the scheduler may return a different
+ * task's frame pointer to switch contexts. */
+typedef uint64_t (*interrupt_handler_t)(struct interrupt_frame *frame);
 void idt_register_handler(uint8_t n, interrupt_handler_t handler);

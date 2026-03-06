@@ -25,6 +25,7 @@
 /* Limits */
 #define TASK_MAX        32          /* max concurrent tasks */
 #define TASK_STACK_SIZE 8192        /* 8 KiB per task */
+#define SCHED_QUANTUM   5           /* ticks per time slice (50ms at 100Hz) */
 
 /* Saved CPU context (callee-saved registers only for cooperative switch) */
 struct task_context {
@@ -65,6 +66,15 @@ struct task *task_current(void);
 
 /* Get total number of tasks (including dead ones). */
 uint32_t task_count(void);
+
+/* Enable/disable preemptive scheduling. */
+void scheduler_enable(void);
+void scheduler_disable(void);
+
+/* Called from PIT IRQ handler — preemptive round-robin.
+ * Returns the (possibly new) interrupt frame pointer to restore. */
+struct interrupt_frame;
+uint64_t schedule(struct interrupt_frame *frame);
 
 /* --- Assembly (switch_context.asm) --- */
 
