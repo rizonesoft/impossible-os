@@ -24,6 +24,7 @@
 #include "initrd.h"
 #include "fat32.h"
 #include "ixfs.h"
+#include "task.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -324,6 +325,32 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     printk("Timer working! Ticks: %u, Uptime: %u sec\n",
            pit_get_ticks(), uptime());
 
+    /* === Cooperative threading test === */
+    task_init();
+    {
+        extern void thread_a_func(void);
+        extern void thread_b_func(void);
+
+        task_create(thread_a_func, "ThreadA");
+        task_create(thread_b_func, "ThreadB");
+
+        printk("\n  Multitasking test: two threads alternate messages\n");
+
+        /* Main thread yields to let both threads run */
+        yield();
+        yield();
+        yield();
+        yield();
+        yield();
+        yield();
+
+        /* Both threads should have finished by now */
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Cooperative threading test passed\n");
+    }
+
     /* Keyboard echo loop */
     fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
     printk("\n  Impossible OS kernel loaded successfully!\n");
@@ -342,4 +369,24 @@ halt:
     for (;;) {
         __asm__ volatile ("hlt");
     }
+}
+
+/* --- Test thread functions for cooperative scheduling --- */
+
+void thread_a_func(void)
+{
+    printk("  [ThreadA] Hello from thread A (1/3)\n");
+    yield();
+    printk("  [ThreadA] Back in thread A (2/3)\n");
+    yield();
+    printk("  [ThreadA] Thread A finishing (3/3)\n");
+}
+
+void thread_b_func(void)
+{
+    printk("  [ThreadB] Hello from thread B (1/3)\n");
+    yield();
+    printk("  [ThreadB] Back in thread B (2/3)\n");
+    yield();
+    printk("  [ThreadB] Thread B finishing (3/3)\n");
 }

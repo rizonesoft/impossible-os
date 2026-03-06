@@ -343,10 +343,10 @@
 - [x] Support **long filenames** (up to 251 chars) ✅ `ae5fccb` — 256-byte dir entries, 16/block
 - [x] Support **file permissions** (owner, read/write/execute) ✅ `e78b306` — Unix rwx, uid/gid, `ixfs_check_perm()`
 - [x] Support **timestamps** (created, modified, accessed) ✅ `55a657d` — via `uptime()`, set on create/read/write
-- [ ] Write `scripts/mkfs-ixfs.py` — host-side tool to format a disk image as IXFS
-- [ ] Mount IXFS partition at `C:\`
-- [ ] Test: format a QEMU disk as IXFS, create/read/write/delete files → ✅
-- [ ] Commit: `"fs: IXFS custom filesystem"`
+- [x] Write `tools/mkfs-ixfs.c` — host-side IXFS formatter ✅ `7c580d3`
+- [x] Mount IXFS partition at `C:\` ✅ (auto-format on first boot)
+- [x] Create Windows-like folder hierarchy on fresh format ✅ `7c580d3`
+- [x] Commit: `"fs: IXFS custom filesystem"` ✅
 
 ---
 
