@@ -306,14 +306,14 @@
 
 ### 6.4 FAT32 Filesystem Driver (EFI Partition Only)
 
-- [ ] Write `src/kernel/fs/fat32.c` / `fat32.h`
-- [ ] Parse the **BPB** (BIOS Parameter Block) from the boot sector
-- [ ] Read the **FAT** (File Allocation Table)
-- [ ] Implement read-only directory listing (read cluster chains)
-- [ ] Implement read-only file read (follow cluster chains → copy to buffer)
-- [ ] Mount the EFI System Partition at `A:\`
-- [ ] Test: list files on `A:\` from the OS → ✅
-- [ ] Commit: `"fs: FAT32 read-only driver for EFI partition"`
+- [x] Write `src/kernel/fs/fat32.c` / `fat32.h` ✅
+- [x] Parse the **BPB** (BIOS Parameter Block) from the boot sector ✅
+- [x] Read the **FAT** (File Allocation Table) ✅ cluster chain following
+- [x] Implement read-only directory listing (read cluster chains) ✅ 8.3 short names
+- [x] Implement read-only file read (follow cluster chains → copy to buffer) ✅
+- [x] Mount the EFI System Partition at `A:\` ✅
+- [x] Test: list files on `A:\` from the OS → `readme.txt`, `test.txt` ✅
+- [x] Commit: `"fs: FAT32 read-only driver for EFI partition"` ✅ `5ee58e9`
 
 ### 6.5 IXFS — Impossible X FileSystem (Custom)
 
