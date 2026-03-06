@@ -1,13 +1,13 @@
 /* ============================================================================
- * task.h — Cooperative kernel threading
+ * task.h — Kernel task/process management
  *
- * Provides lightweight kernel threads with cooperative scheduling (yield).
- * Each task has its own stack and TCB (Task Control Block).
+ * Provides kernel and user-mode threads with cooperative and preemptive
+ * scheduling. Supports fork, exec, waitpid, and process cleanup.
  *
  * Design:
- *   - Round-robin scheduler, cooperative (no preemption yet)
- *   - Per-task 8 KiB kernel stack, heap-allocated
- *   - Context switch saves only callee-saved registers (System V ABI)
+ *   - Round-robin scheduler, cooperative + preemptive
+ *   - Per-task kernel stack (8 KiB) + optional user stack (16 KiB)
+ *   - Context switch via interrupt frame swapping
  *   - PID 0 = idle/main thread (uses the boot stack)
  *   - Tasks that return from their entry function are marked DEAD
  * ============================================================================ */
@@ -20,7 +20,8 @@
 #define TASK_RUNNING    0   /* currently on the CPU */
 #define TASK_READY      1   /* runnable, waiting for scheduler */
 #define TASK_DEAD       2   /* finished, awaiting cleanup */
-#define TASK_BLOCKED    3   /* future: waiting on I/O or event */
+#define TASK_BLOCKED    3   /* waiting on I/O or event */
+#define TASK_WAITING    4   /* blocked on waitpid */
 
 /* Limits */
 #define TASK_MAX         32          /* max concurrent tasks */
@@ -48,6 +49,10 @@ struct task {
     uint64_t    kernel_rsp;     /* top of kernel stack (for TSS rsp0) */
     uint8_t    *user_stack_base;/* base of user stack (NULL for kernel tasks) */
     const char *name;           /* human-readable name */
+    uint32_t    parent_pid;     /* PID of parent (0 for init) */
+    int32_t     exit_status;    /* exit code (set on TASK_DEAD) */
+    int32_t     wait_pid;       /* PID we're waiting on (-1 = none) */
+    uint32_t    exec_pending;   /* 1 = exec'd frame pending, skip save on switch-out */
 };
 
 /* Task entry function type */
@@ -82,6 +87,27 @@ void scheduler_disable(void);
  * Returns the (possibly new) interrupt frame pointer to restore. */
 struct interrupt_frame;
 uint64_t schedule(struct interrupt_frame *frame);
+
+/* --- Process lifecycle --- */
+
+/* Fork the current task. Returns child PID to parent, 0 to child, -1 on error.
+ * 'frame' is the parent's interrupt frame (from the syscall). */
+int task_fork(struct interrupt_frame *frame);
+
+/* Exec: load an ELF binary and replace the current task's code.
+ * 'data' is the raw ELF file, 'size' is its length.
+ * Returns 0 on success, -1 on failure. */
+int task_exec(const uint8_t *data, uint64_t size);
+
+/* Exit the current task with a status code.
+ * Wakes any parent waiting via waitpid. */
+void task_exit(int32_t status);
+
+/* Wait for a child task to exit. Returns exit status, or -1 on error. */
+int32_t task_waitpid(uint32_t child_pid);
+
+/* Clean up a dead task's resources (free stacks). */
+void task_cleanup(uint32_t pid);
 
 /* --- Assembly (switch_context.asm) --- */
 

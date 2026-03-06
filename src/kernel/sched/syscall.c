@@ -11,6 +11,9 @@
 #include "task.h"
 #include "printk.h"
 #include "keyboard.h"
+#include "initrd.h"
+#include "vfs.h"
+#include "heap.h"
 
 /* --- Syscall implementations --- */
 
@@ -56,17 +59,11 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
     return (int64_t)i;
 }
 
-/* SYS_EXIT: terminate the current task. */
+/* SYS_EXIT: terminate the current task with proper cleanup. */
 static void sys_exit(uint64_t code)
 {
-    struct task *cur = task_current();
-    printk("[SCHED] Task %u (\"%s\") called sys_exit(%u)\n",
-           (uint64_t)cur->pid, cur->name ? cur->name : "?", code);
-    cur->state = TASK_DEAD;
-
-    /* Yield away — we're dead */
-    for (;;)
-        yield();
+    task_exit((int32_t)code);
+    /* never returns */
 }
 
 /* --- INT 0x80 handler --- */
@@ -93,6 +90,46 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_YIELD:
         yield();
         ret = 0;
+        break;
+    case SYS_FORK:
+        ret = (int64_t)task_fork(frame);
+        break;
+    case SYS_EXEC: {
+        /* arg1 = pointer to filename string, arg2 = filename length */
+        const char *filename = (const char *)arg1;
+        struct vfs_node *root = initrd_get_root();
+        struct vfs_node *file;
+
+        if (!root || !filename) {
+            ret = -1;
+            break;
+        }
+
+        file = vfs_finddir(root, filename);
+        if (!file) {
+            printk("[EXEC] File not found: %s\n", filename);
+            ret = -1;
+            break;
+        }
+
+        /* Read file into a buffer */
+        {
+            uint8_t *buf = (uint8_t *)kmalloc(file->size);
+            if (!buf) {
+                ret = -1;
+                break;
+            }
+            vfs_read(file, 0, file->size, buf);
+            ret = (int64_t)task_exec(buf, file->size);
+            /* Note: we don't kfree buf here because exec replaces
+             * the current task. If exec fails, we should free it. */
+            if (ret < 0)
+                kfree(buf);
+        }
+        break;
+    }
+    case SYS_WAITPID:
+        ret = (int64_t)task_waitpid((uint32_t)arg1);
         break;
     default:
         printk("[WARN] Unknown syscall %u from PID %u\n",

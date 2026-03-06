@@ -395,6 +395,42 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("User mode test passed\n");
     }
 
+    /* === Exec test: load and run an ELF from the initrd === */
+    {
+        extern void exec_loader_func(void);
+
+        printk("\n  Exec test: load hello.elf from initrd\n");
+
+        /* The exec loader is a kernel task that loads the ELF binary.
+         * We use a kernel task because exec needs to read from the initrd
+         * (which requires kernel-mode VFS access) before switching to user mode. */
+        task_create(exec_loader_func, "ExecLoader");
+        scheduler_enable();
+        sleep_ms(500);
+        scheduler_disable();
+
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Exec test passed\n");
+    }
+
+    /* === Fork test: fork a user process, child prints, parent waits === */
+    {
+        extern void fork_test_func(void);
+
+        printk("\n  Fork test: fork + waitpid\n");
+        task_create_user(fork_test_func, "ForkTest");
+        scheduler_enable();
+        sleep_ms(800);
+        scheduler_disable();
+
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Fork test passed\n");
+    }
+
     /* Keyboard echo loop */
     fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
     printk("\n  Impossible OS kernel loaded successfully!\n");
@@ -505,6 +541,141 @@ void user_test_func(void)
     );
 
     /* Should never reach here */
+    for (;;)
+        __asm__ volatile("hlt");
+}
+
+/* --- Exec loader: kernel task that loads an ELF from initrd ---
+ * This runs as a kernel task (ring 0). It reads the ELF file from the initrd,
+ * then calls task_exec() to load it. task_exec() sets up a new user-mode
+ * interrupt frame, so on the next schedule the task will run in ring 3
+ * at the ELF entry point. */
+void exec_loader_func(void)
+{
+    struct vfs_node *root = initrd_get_root();
+    struct vfs_node *file;
+    uint8_t *buf;
+
+    if (!root) {
+        printk("  [ExecLoader] initrd not available\n");
+        return;
+    }
+
+    file = vfs_finddir(root, "hello.elf");
+    if (!file) {
+        printk("  [ExecLoader] hello.elf not found in initrd\n");
+        return;
+    }
+
+    buf = (uint8_t *)kmalloc(file->size);
+    if (!buf) {
+        printk("  [ExecLoader] cannot allocate buffer\n");
+        return;
+    }
+
+    vfs_read(file, 0, (uint32_t)file->size, buf);
+
+    if (task_exec(buf, file->size) < 0) {
+        printk("  [ExecLoader] exec failed\n");
+        kfree(buf);
+        return;
+    }
+
+    /* task_exec set our TCB's rsp to a new interrupt frame pointing at the
+     * ELF entry. We must NOT yield (INT 0x81 would overwrite that frame) or
+     * return (task_wrapper would mark us DEAD). Instead, halt and let the
+     * preemptive scheduler's PIT interrupt pick up the new frame. */
+    for (;;)
+        __asm__ volatile("hlt");
+}
+
+/* --- Fork test function ---
+ * Runs in ring 3. Forks, child prints and exits, parent calls waitpid. */
+void fork_test_func(void)
+{
+    long child_pid;
+
+    /* SYS_FORK */
+    __asm__ volatile(
+        "mov $5, %%rax\n"
+        "int $0x80\n"
+        : "=a"(child_pid)
+        :
+        : "rcx", "r11", "memory"
+    );
+
+    if (child_pid == 0) {
+        /* Child process */
+        static const char msg[] = "  [Fork] Child process running!\n";
+        __asm__ volatile(
+            "mov $1, %%rax\n"
+            "mov $1, %%rdi\n"
+            "mov %0, %%rsi\n"
+            "mov %1, %%rdx\n"
+            "int $0x80\n"
+            :
+            : "r"((uint64_t)msg), "r"((uint64_t)sizeof(msg) - 1)
+            : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+        );
+
+        /* Exit with code 42 */
+        __asm__ volatile(
+            "mov $3, %%rax\n"
+            "mov $42, %%rdi\n"
+            "int $0x80\n"
+            :
+            :
+            : "rax", "rdi", "memory"
+        );
+    } else {
+        /* Parent process */
+        static const char msg[] = "  [Fork] Parent waiting for child...\n";
+        __asm__ volatile(
+            "mov $1, %%rax\n"
+            "mov $1, %%rdi\n"
+            "mov %0, %%rsi\n"
+            "mov %1, %%rdx\n"
+            "int $0x80\n"
+            :
+            : "r"((uint64_t)msg), "r"((uint64_t)sizeof(msg) - 1)
+            : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+        );
+
+        /* SYS_WAITPID(child_pid) */
+        long status;
+        __asm__ volatile(
+            "mov $7, %%rax\n"
+            "mov %1, %%rdi\n"
+            "int $0x80\n"
+            : "=a"(status)
+            : "r"(child_pid)
+            : "rcx", "r11", "memory"
+        );
+
+        /* Report result */
+        static const char msg2[] = "  [Fork] Parent: child exited!\n";
+        __asm__ volatile(
+            "mov $1, %%rax\n"
+            "mov $1, %%rdi\n"
+            "mov %0, %%rsi\n"
+            "mov %1, %%rdx\n"
+            "int $0x80\n"
+            :
+            : "r"((uint64_t)msg2), "r"((uint64_t)sizeof(msg2) - 1)
+            : "rax", "rdi", "rsi", "rdx", "rcx", "r11", "memory"
+        );
+
+        /* Exit parent */
+        __asm__ volatile(
+            "mov $3, %%rax\n"
+            "mov $0, %%rdi\n"
+            "int $0x80\n"
+            :
+            :
+            : "rax", "rdi", "memory"
+        );
+    }
+
     for (;;)
         __asm__ volatile("hlt");
 }

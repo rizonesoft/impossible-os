@@ -14,6 +14,7 @@
 #include "gdt.h"
 #include "heap.h"
 #include "printk.h"
+#include "elf.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81
@@ -83,6 +84,10 @@ void task_init(void)
         tasks[i].kernel_rsp = 0;
         tasks[i].user_stack_base = (uint8_t *)0;
         tasks[i].name = (const char *)0;
+        tasks[i].parent_pid = 0;
+        tasks[i].exit_status = 0;
+        tasks[i].wait_pid = -1;
+        tasks[i].exec_pending = 0;
     }
 
     /* Task 0: the current boot/main thread.
@@ -177,6 +182,10 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].kernel_rsp = (uint64_t)(stack + TASK_STACK_SIZE);
     tasks[pid].user_stack_base = (uint8_t *)0;  /* kernel task */
     tasks[pid].name = name;
+    tasks[pid].parent_pid = current_task;
+    tasks[pid].exit_status = 0;
+    tasks[pid].wait_pid = -1;
+    tasks[pid].exec_pending = 0;
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (kernel)\n",
@@ -258,6 +267,10 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
     tasks[pid].user_stack_base = ustack;
     tasks[pid].name = name;
+    tasks[pid].parent_pid = current_task;
+    tasks[pid].exit_status = 0;
+    tasks[pid].wait_pid = -1;
+    tasks[pid].exec_pending = 0;
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (user mode)\n",
@@ -295,13 +308,16 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     if (next == prev)
         return (uint64_t)frame;
 
-    /* Save current task's interrupt frame pointer */
-    tasks[prev].rsp = (uint64_t)frame;
+    /* Save current task's interrupt frame pointer
+     * (skip if exec_pending — don't overwrite the exec'd frame) */
+    if (!tasks[prev].exec_pending)
+        tasks[prev].rsp = (uint64_t)frame;
     if (tasks[prev].state == TASK_RUNNING)
         tasks[prev].state = TASK_READY;
 
     /* Switch to next task */
     tasks[next].state = TASK_RUNNING;
+    tasks[next].exec_pending = 0;  /* clear on switch-in */
     current_task = next;
     sched_ticks = 0;
 
@@ -345,13 +361,16 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (next == prev)
         return (uint64_t)frame;
 
-    /* Save current task's interrupt frame pointer */
-    tasks[prev].rsp = (uint64_t)frame;
+    /* Save current task's interrupt frame pointer
+     * (skip if exec_pending — don't overwrite the exec'd frame) */
+    if (!tasks[prev].exec_pending)
+        tasks[prev].rsp = (uint64_t)frame;
     if (tasks[prev].state == TASK_RUNNING)
         tasks[prev].state = TASK_READY;
 
     /* Switch to next task */
     tasks[next].state = TASK_RUNNING;
+    tasks[next].exec_pending = 0;  /* clear on switch-in */
     current_task = next;
 
     /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
@@ -382,3 +401,259 @@ uint32_t task_count(void)
 {
     return num_tasks;
 }
+
+/* ============================================================================
+ * Process lifecycle functions
+ * ============================================================================ */
+
+/* Simple memcpy for stack duplication */
+static void task_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)
+{
+    uint64_t i;
+    for (i = 0; i < n; i++)
+        dst[i] = src[i];
+}
+
+int task_fork(struct interrupt_frame *frame)
+{
+    uint32_t child_pid;
+    uint8_t *kstack, *ustack;
+    uint64_t *sp;
+    uint64_t parent_pid_val = current_task;
+
+    if (num_tasks >= TASK_MAX) {
+        printk("[FAIL] task_fork: max tasks reached\n");
+        return -1;
+    }
+
+    child_pid = num_tasks;
+
+    /* Allocate kernel stack for child */
+    kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
+    if (!kstack) {
+        printk("[FAIL] task_fork: cannot allocate kernel stack\n");
+        return -1;
+    }
+
+    /* Allocate user stack for child */
+    ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
+    if (!ustack) {
+        printk("[FAIL] task_fork: cannot allocate user stack\n");
+        return -1;
+    }
+
+    /* Copy parent's user stack to child */
+    if (tasks[parent_pid_val].user_stack_base) {
+        task_memcpy(ustack, tasks[parent_pid_val].user_stack_base,
+                    USER_STACK_SIZE);
+    }
+
+    /* Build the child's interrupt frame on its kernel stack.
+     * Copy the parent's frame, but adjust: child gets rax=0, parent gets child_pid.
+     * The child's RSP (in the frame) needs to point to the child's user stack
+     * at the same relative offset as the parent's. */
+    sp = (uint64_t *)(kstack + TASK_STACK_SIZE);
+    sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
+    sp -= 22;
+
+    /* Copy the parent's interrupt frame */
+    task_memcpy((uint8_t *)sp, (const uint8_t *)frame, 22 * sizeof(uint64_t));
+
+    /* Adjust child's user RSP to equivalent position in child's user stack */
+    if (tasks[parent_pid_val].user_stack_base) {
+        uint64_t parent_ustack_base = (uint64_t)tasks[parent_pid_val].user_stack_base;
+        uint64_t parent_ustack_rsp = sp[20];  /* rsp in iretq frame */
+        uint64_t offset = parent_ustack_rsp - parent_ustack_base;
+        sp[20] = (uint64_t)ustack + offset;   /* child's equivalent RSP */
+    }
+
+    /* Child gets return value 0 */
+    sp[14] = 0;  /* rax = 0 for child */
+
+    /* Initialize child TCB */
+    tasks[child_pid].pid = child_pid;
+    tasks[child_pid].state = TASK_READY;
+    tasks[child_pid].rsp = (uint64_t)sp;
+    tasks[child_pid].stack_base = kstack;
+    tasks[child_pid].kernel_rsp = (uint64_t)(kstack + TASK_STACK_SIZE);
+    tasks[child_pid].user_stack_base = ustack;
+    tasks[child_pid].name = tasks[parent_pid_val].name;
+    tasks[child_pid].parent_pid = parent_pid_val;
+    tasks[child_pid].exit_status = 0;
+    tasks[child_pid].wait_pid = -1;
+    tasks[child_pid].exec_pending = 0;
+    num_tasks++;
+
+    printk("[FORK] PID %u forked -> child PID %u\n",
+           (uint64_t)parent_pid_val, (uint64_t)child_pid);
+
+    /* Parent gets child_pid as return value */
+    return (int)child_pid;
+}
+
+int task_exec(const uint8_t *data, uint64_t size)
+{
+    struct elf_load_result elf;
+    uint64_t *sp;
+    uint32_t pid = current_task;
+    uint8_t *new_kstack;
+
+    /* Load the ELF binary */
+    elf = elf_load(data, size);
+    if (!elf.success) {
+        printk("[EXEC] Failed to load ELF\n");
+        return -1;
+    }
+
+    /* Allocate a FRESH kernel stack - we cannot reuse the current one
+     * because the calling function (exec_loader_func) is still on it. */
+    new_kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
+    if (!new_kstack) {
+        printk("[EXEC] Cannot allocate kernel stack\n");
+        return -1;
+    }
+
+    /* Free old user stack and allocate a fresh one */
+    if (tasks[pid].user_stack_base) {
+        kfree(tasks[pid].user_stack_base);
+    }
+    tasks[pid].user_stack_base = (uint8_t *)kmalloc(USER_STACK_SIZE);
+    if (!tasks[pid].user_stack_base) {
+        printk("[EXEC] Cannot allocate user stack\n");
+        kfree(new_kstack);
+        return -1;
+    }
+
+    /* Build a fresh interrupt frame on the NEW kernel stack */
+    sp = (uint64_t *)(new_kstack + TASK_STACK_SIZE);
+    sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
+
+    {
+        uint64_t user_rsp = (uint64_t)(tasks[pid].user_stack_base +
+                                        USER_STACK_SIZE) & ~0xFULL;
+        sp -= 22;
+        sp[0]  = 0;                                /* r15 */
+        sp[1]  = 0;                                /* r14 */
+        sp[2]  = 0;                                /* r13 */
+        sp[3]  = 0;                                /* r12 */
+        sp[4]  = 0;                                /* r11 */
+        sp[5]  = 0;                                /* r10 */
+        sp[6]  = 0;                                /* r9 */
+        sp[7]  = 0;                                /* r8 */
+        sp[8]  = 0;                                /* rbp */
+        sp[9]  = 0;                                /* rdi */
+        sp[10] = 0;                                /* rsi */
+        sp[11] = 0;                                /* rdx */
+        sp[12] = 0;                                /* rcx */
+        sp[13] = 0;                                /* rbx */
+        sp[14] = 0;                                /* rax */
+        sp[15] = 0;                                /* int_no */
+        sp[16] = 0;                                /* err_code */
+        sp[17] = elf.entry;                        /* rip = ELF entry */
+        sp[18] = GDT_USER_CODE | 3;                /* cs = user code, RPL=3 */
+        sp[19] = 0x202;                            /* rflags: IF set */
+        sp[20] = user_rsp;                         /* rsp = user stack */
+        sp[21] = GDT_USER_DATA | 3;                /* ss = user data, RPL=3 */
+    }
+
+    /* Switch to new kernel stack and mark exec pending */
+    tasks[pid].rsp = (uint64_t)sp;
+    tasks[pid].stack_base = new_kstack;
+    tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
+    tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
+
+    printk("[EXEC] PID %u -> entry %p\n",
+           (uint64_t)pid, elf.entry);
+
+    return 0;
+}
+
+void task_exit(int32_t status)
+{
+    uint32_t pid = current_task;
+    uint32_t i;
+
+    tasks[pid].state = TASK_DEAD;
+    tasks[pid].exit_status = status;
+
+    printk("[SCHED] Task %u (\"%s\") exited with status %d\n",
+           (uint64_t)pid,
+           tasks[pid].name ? tasks[pid].name : "?",
+           (uint64_t)(uint32_t)status);
+
+    /* Wake parent if it's waiting on us */
+    for (i = 0; i < num_tasks; i++) {
+        if (tasks[i].state == TASK_WAITING &&
+            tasks[i].wait_pid == (int32_t)pid) {
+            tasks[i].state = TASK_READY;
+            tasks[i].wait_pid = -1;
+            break;
+        }
+    }
+
+    /* Yield away forever */
+    for (;;)
+        yield();
+}
+
+int32_t task_waitpid(uint32_t child_pid)
+{
+    /* Validate child PID */
+    if (child_pid >= num_tasks || child_pid == current_task) {
+        printk("[WAIT] Invalid child PID %u\n", (uint64_t)child_pid);
+        return -1;
+    }
+
+    /* Verify this is actually our child */
+    if (tasks[child_pid].parent_pid != current_task) {
+        printk("[WAIT] PID %u is not a child of PID %u\n",
+               (uint64_t)child_pid, (uint64_t)current_task);
+        return -1;
+    }
+
+    /* If child is already dead, return immediately */
+    if (tasks[child_pid].state == TASK_DEAD) {
+        int32_t status = tasks[child_pid].exit_status;
+        task_cleanup(child_pid);
+        return status;
+    }
+
+    /* Block until child exits */
+    tasks[current_task].state = TASK_WAITING;
+    tasks[current_task].wait_pid = (int32_t)child_pid;
+
+    /* Yield away — scheduler will skip us since we're TASK_WAITING */
+    yield();
+
+    /* When we wake up, child has exited */
+    {
+        int32_t status = tasks[child_pid].exit_status;
+        task_cleanup(child_pid);
+        return status;
+    }
+}
+
+void task_cleanup(uint32_t pid)
+{
+    if (pid >= num_tasks || pid == 0)
+        return;
+
+    if (tasks[pid].state != TASK_DEAD)
+        return;
+
+    /* Free kernel stack */
+    if (tasks[pid].stack_base) {
+        kfree(tasks[pid].stack_base);
+        tasks[pid].stack_base = (uint8_t *)0;
+    }
+
+    /* Free user stack */
+    if (tasks[pid].user_stack_base) {
+        kfree(tasks[pid].user_stack_base);
+        tasks[pid].user_stack_base = (uint8_t *)0;
+    }
+
+    tasks[pid].kernel_rsp = 0;
+    tasks[pid].rsp = 0;
+}
+

@@ -91,9 +91,18 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(BUILD_DIR)/initrd_files
 	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
 	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
+	@# Build user-mode ELF programs
+	@mkdir -p $(BUILD_DIR)/user
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-I$(INCLUDE) -c user/hello.c -o $(BUILD_DIR)/user/hello.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.elf $(BUILD_DIR)/user/hello.o
+	@cp $(BUILD_DIR)/user/hello.elf $(BUILD_DIR)/initrd_files/hello.elf
 	$(BUILD_DIR)/tools/make-initrd -o $(BUILD_DIR)/initrd.img \
 		$(BUILD_DIR)/initrd_files/hello.txt \
-		$(BUILD_DIR)/initrd_files/readme.txt
+		$(BUILD_DIR)/initrd_files/readme.txt \
+		$(BUILD_DIR)/initrd_files/hello.elf
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf
 	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg

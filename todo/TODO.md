@@ -382,12 +382,12 @@
 
 ### 7.4 Process Management
 
-- [ ] Implement `fork()` — duplicate address space (copy-on-write optional)
-- [ ] Implement `exec()` — load an ELF binary into a process's address space
-- [ ] Write a minimal **ELF loader** (`src/kernel/elf.c`)
-- [ ] Implement `waitpid()` and `exit()` syscalls
-- [ ] Implement process cleanup (free pages, close files, remove from scheduler)
-- [ ] Commit: `"kernel: fork, exec, and ELF loader"`
+- [x] Implement `fork()` — duplicate address space (copy-on-write optional) ✅
+- [x] Implement `exec()` — load an ELF binary into a process's address space ✅
+- [x] Write a minimal **ELF loader** (`src/kernel/elf.c`) ✅
+- [x] Implement `waitpid()` and `exit()` syscalls ✅
+- [x] Implement process cleanup (free pages, close files, remove from scheduler) ✅
+- [x] Commit: `"kernel: fork, exec, and ELF loader"` ✅
 
 ---
 
