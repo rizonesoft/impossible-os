@@ -233,13 +233,13 @@
 
 ### 5.1 Physical Memory Manager (PMM)
 
-- [ ] Write `src/kernel/mm/pmm.c` / `pmm.h`
-- [ ] Parse the **Multiboot2 memory map** tag (UEFI-provided, replaces legacy e820)
-- [ ] Implement a **bitmap allocator** (1 bit per 4 KiB frame)
-- [ ] `pmm_alloc_frame()` — find and mark a free frame
-- [ ] `pmm_free_frame()` — release a frame
-- [ ] Mark kernel memory, BIOS, and MMIO regions as reserved
-- [ ] Commit: `"mm: physical memory manager (bitmap)"`
+- [x] Write `src/kernel/mm/pmm.c` / `pmm.h` ✅
+- [x] Parse the **Multiboot2 memory map** tag (UEFI-provided) ✅
+- [x] Implement a **bitmap allocator** (1 bit per 4 KiB frame) ✅ 1048576 frames = 4 GiB
+- [x] `pmm_alloc_frame()` — find and mark a free frame ✅
+- [x] `pmm_free_frame()` — release a frame ✅
+- [x] Mark kernel memory, BIOS, and MMIO regions as reserved ✅ first 1 MiB + kernel + bitmap
+- [x] Commit: `"mm: physical memory manager (bitmap)"` ✅ `d906cec`
 
 ### 5.2 Virtual Memory Manager (VMM) — Paging
 

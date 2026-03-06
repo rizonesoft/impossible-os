@@ -17,6 +17,7 @@
 #include "pit.h"
 #include "keyboard.h"
 #include "pmm.h"
+#include "vmm.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -41,6 +42,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 4: Initialize physical memory manager (needs parsed memory map) */
     pmm_init();
+
+    /* Step 5: Initialize virtual memory manager (needs PMM for page tables) */
+    vmm_init();
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
