@@ -327,9 +327,9 @@
 - [x] Write `src/kernel/fs/ixfs.c` / `ixfs.h` ✅
 - [x] Implement `ixfs_format()` — write superblock, zero bitmaps, create root directory ✅
 - [x] Implement `ixfs_mount()` — read superblock, verify magic, load bitmaps ✅ persistence verified
-- [ ] Implement inode operations:
-  - [ ] `ixfs_read_inode()` / `ixfs_write_inode()`
-  - [ ] `ixfs_alloc_block()` / `ixfs_free_block()`
+- [x] Implement inode operations: ✅ (implemented in `ixfs.c` commit `05fc65d`)
+  - [x] `ixfs_read_inode()` / `ixfs_write_inode()` ✅
+  - [x] `ixfs_alloc_block()` / `ixfs_free_block()` ✅
 - [ ] Implement file operations:
   - [ ] `ixfs_create()` — create a new file
   - [ ] `ixfs_read()` — read file data

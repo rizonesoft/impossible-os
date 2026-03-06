@@ -167,7 +167,9 @@ int vfs_mount(char drive_letter, struct vfs_fs_driver *driver, struct vfs_node *
     if (root_node) {
         root_node->type = VFS_DIRECTORY | VFS_MOUNTPOINT;
         root_node->ops = driver->ops;
-        root_node->fs_data = driver->priv_data;
+        /* Only overwrite fs_data if the driver provides its own */
+        if (driver->priv_data)
+            root_node->fs_data = driver->priv_data;
     }
 
     printk("[OK] VFS: mounted \"%s\" at %c:\\\n",

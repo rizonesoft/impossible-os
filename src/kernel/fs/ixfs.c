@@ -181,14 +181,21 @@ static int ixfs_read_inode(uint32_t ino, struct ixfs_inode *inode)
     uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
     uint32_t i;
     uint8_t *dst;
+    uint8_t *tmp_buf;
 
-    if (ixfs_read_block(block, blk_buf) != 0)
+    tmp_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+    if (!tmp_buf) return -1;
+
+    if (ixfs_read_block(block, tmp_buf) != 0) {
+        kfree(tmp_buf);
         return -1;
+    }
 
     dst = (uint8_t *)inode;
     for (i = 0; i < sizeof(struct ixfs_inode); i++)
-        dst[i] = blk_buf[offset + i];
+        dst[i] = tmp_buf[offset + i];
 
+    kfree(tmp_buf);
     return 0;
 }
 
@@ -200,16 +207,24 @@ static int ixfs_write_inode(uint32_t ino, const struct ixfs_inode *inode)
     uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
     uint32_t i;
     const uint8_t *src;
+    uint8_t *tmp_buf;
+
+    tmp_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+    if (!tmp_buf) return -1;
 
     /* Read the block first (to preserve other inodes in the same block) */
-    if (ixfs_read_block(block, blk_buf) != 0)
+    if (ixfs_read_block(block, tmp_buf) != 0) {
+        kfree(tmp_buf);
         return -1;
+    }
 
     src = (const uint8_t *)inode;
     for (i = 0; i < sizeof(struct ixfs_inode); i++)
-        blk_buf[offset + i] = src[i];
+        tmp_buf[offset + i] = src[i];
 
-    return ixfs_write_block(block, blk_buf);
+    i = ixfs_write_block(block, tmp_buf);
+    kfree(tmp_buf);
+    return i;
 }
 
 /* --- VFS node storage --- */
@@ -572,9 +587,9 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 
     if (!pv) return -1;
 
-    /* Find a free inode */
+    /* Find a free inode (0 = reserved, 1 = root) */
     new_ino = 0;
-    for (i = 1; i < sb.s_total_inodes; i++) {
+    for (i = 2; i < sb.s_total_inodes; i++) {
         struct ixfs_inode tmp;
         if (ixfs_read_inode(i, &tmp) == 0 && tmp.i_mode == 0) {
             new_ino = i;
@@ -696,6 +711,109 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
     return 0;
 }
 
+static int ixfs_unlink(struct vfs_node *parent, const char *name)
+{
+    struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
+    uint32_t total_entries;
+    uint32_t i;
+    uint8_t *data_buf;
+
+    if (!pv) return -1;
+
+    total_entries = pv->inode.i_size / sizeof(struct ixfs_dir_entry);
+
+    data_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+    if (!data_buf) return -1;
+
+    for (i = 0; i < total_entries; i++) {
+        uint32_t byte_off = i * sizeof(struct ixfs_dir_entry);
+        uint32_t bi = byte_off / IXFS_BLOCK_SIZE;
+        uint32_t bo = byte_off % IXFS_BLOCK_SIZE;
+        uint32_t dir_block;
+        struct ixfs_dir_entry *de;
+
+        dir_block = ixfs_get_block(&pv->inode, bi);
+        if (dir_block == 0) break;
+
+        if (ixfs_read_block(dir_block, data_buf) != 0) break;
+
+        de = (struct ixfs_dir_entry *)(data_buf + bo);
+
+        if (de->d_inode != 0 && ixfs_strcmp(de->d_name, name)) {
+            struct ixfs_inode target;
+            uint32_t target_ino = de->d_inode;
+            uint32_t j;
+
+            /* Read the target inode */
+            if (ixfs_read_inode(target_ino, &target) != 0) {
+                kfree(data_buf);
+                return -1;
+            }
+
+            /* Don't delete directories (for safety) */
+            if (target.i_mode & IXFS_S_DIR) {
+                kfree(data_buf);
+                return -1;
+            }
+
+            /* Free all direct data blocks */
+            for (j = 0; j < IXFS_DIRECT_BLOCKS; j++) {
+                if (target.i_direct[j] != 0)
+                    ixfs_free_block(target.i_direct[j]);
+            }
+
+            /* Free indirect block and its referenced blocks */
+            if (target.i_indirect != 0) {
+                uint8_t *ind_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+                if (ind_buf) {
+                    if (ixfs_read_block(target.i_indirect, ind_buf) == 0) {
+                        uint32_t *ptrs = (uint32_t *)ind_buf;
+                        for (j = 0; j < IXFS_PTRS_PER_BLOCK; j++) {
+                            if (ptrs[j] != 0)
+                                ixfs_free_block(ptrs[j]);
+                        }
+                    }
+                    kfree(ind_buf);
+                }
+                ixfs_free_block(target.i_indirect);
+            }
+
+            /* Zero the inode on disk */
+            {
+                uint8_t *p = (uint8_t *)&target;
+                for (j = 0; j < sizeof(struct ixfs_inode); j++)
+                    p[j] = 0;
+            }
+            ixfs_write_inode(target_ino, &target);
+            sb.s_free_inodes++;
+
+            /* Clear the directory entry */
+            de->d_inode = 0;
+            de->d_name[0] = '\0';
+            ixfs_write_block(dir_block, data_buf);
+
+            /* Remove from vnode cache if present */
+            for (j = 0; j < vnode_count; j++) {
+                if (vnodes[j].ino == target_ino) {
+                    vnodes[j].ino = 0;
+                    break;
+                }
+            }
+
+            /* Flush metadata */
+            ixfs_write_inode(pv->ino, &pv->inode);
+            ixfs_flush_bitmap();
+            ixfs_flush_superblock();
+
+            kfree(data_buf);
+            return 0;
+        }
+    }
+
+    kfree(data_buf);
+    return -1;  /* file not found */
+}
+
 static struct vfs_ops ixfs_dir_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,
@@ -704,7 +822,7 @@ static struct vfs_ops ixfs_dir_ops = {
     .readdir = ixfs_readdir,
     .finddir = ixfs_finddir,
     .create  = ixfs_create,
-    .unlink  = (void *)0,
+    .unlink  = ixfs_unlink,
 };
 
 /* --- FS driver descriptor --- */

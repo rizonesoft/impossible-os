@@ -206,23 +206,54 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         }
     }
 
-    /* IXFS test: list files on C:\ */
+    /* IXFS CRUD test on C:\ */
     if (vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
-        if (c_root) {
-            struct vfs_dirent *de;
-            uint32_t idx = 0;
-            fb_set_color(FB_COLOR_YELLOW, FB_COLOR_BG_DEFAULT);
-            printk("--- C:\\ (IXFS) ---\n");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            while ((de = vfs_readdir(c_root, idx)) != (struct vfs_dirent *)0) {
-                printk("  %s %s\n",
-                       (de->type & VFS_DIRECTORY) ? "[DIR]" : "     ",
-                       de->name);
-                idx++;
+        if (c_root && c_root->ops && c_root->ops->create) {
+            /* Create a file */
+            int rc = c_root->ops->create(c_root, "test.txt", VFS_FILE);
+            if (rc == 0) {
+                /* Write data to the file */
+                struct vfs_node *f = vfs_open("C:\\test.txt", VFS_O_WRITE);
+                if (f) {
+                    const char *msg = "IXFS is working!";
+                    uint32_t len = 0;
+                    while (msg[len]) len++;
+                    vfs_write(f, 0, len, (const uint8_t *)msg);
+                    vfs_close(f);
+                }
+
+                /* Read it back */
+                f = vfs_open("C:\\test.txt", VFS_O_READ);
+                if (f) {
+                    uint8_t buf[64];
+                    int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
+                    if (n > 0) {
+                        buf[n] = '\0';
+                        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                        printk("[OK] ");
+                        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                        printk("IXFS CRUD: C:\\test.txt = \"%s\"\n",
+                               (char *)buf);
+                    }
+                    vfs_close(f);
+                }
+
+                /* Delete it */
+                if (c_root->ops->unlink) {
+                    c_root->ops->unlink(c_root, "test.txt");
+                    f = vfs_open("C:\\test.txt", VFS_O_READ);
+                    fb_set_color(f ? FB_COLOR_RED : FB_COLOR_GREEN,
+                                 FB_COLOR_BG_DEFAULT);
+                    printk("[%s] ", f ? "FAIL" : "OK");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("IXFS delete: C:\\test.txt %s\n",
+                           f ? "still exists!" : "removed");
+                    if (f) vfs_close(f);
+                }
             }
-            if (idx == 0)
-                printk("  (empty — freshly formatted)\n");
+        } else {
+            printk("  IXFS: no c_root or no create op\n");
         }
     }
 
