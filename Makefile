@@ -39,6 +39,7 @@ OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
 QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
                -cdrom $(ISO_FILE) \
+               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
                -m 2G \
                -serial stdio \
                -no-reboot -no-shutdown
@@ -90,6 +91,7 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 ## run: Launch QEMU with the ISO (UEFI boot via OVMF)
 run: $(ISO_FILE)
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@test -f $(BUILD_DIR)/disk.img || qemu-img create -f raw $(BUILD_DIR)/disk.img 64M
 	$(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234

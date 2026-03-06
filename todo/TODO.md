@@ -254,14 +254,14 @@
 
 ### 5.3 Kernel Heap (`kmalloc` / `kfree`)
 
-- [ ] Write `src/kernel/mm/heap.c` / `heap.h`
-- [ ] Implement a simple **first-fit free-list** allocator
-- [ ] `kmalloc(size)` — allocate kernel memory
-- [ ] `kfree(ptr)` — free kernel memory
-- [ ] `krealloc(ptr, size)` — resize allocation
-- [ ] Add basic **coalescing** of adjacent free blocks
-- [ ] Test: allocate, use, and free varying sizes without corruption → ✅
-- [ ] Commit: `"mm: kernel heap allocator"`
+- [x] Write `src/kernel/mm/heap.c` / `heap.h` ✅
+- [x] Implement a simple **first-fit free-list** allocator ✅
+- [x] `kmalloc(size)` — allocate kernel memory ✅ 16-byte aligned
+- [x] `kfree(ptr)` — free kernel memory ✅ with double-free protection
+- [x] `krealloc(ptr, size)` — resize allocation ✅ with next-block merge optimization
+- [x] Add basic **coalescing** of adjacent free blocks ✅
+- [x] Test: allocate, use, and free varying sizes without corruption → ✅
+- [x] Commit: `"mm: kernel heap allocator"` ✅ `8c6c131`
 
 ---
 

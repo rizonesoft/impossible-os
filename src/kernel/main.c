@@ -19,6 +19,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "heap.h"
+#include "ata.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -49,6 +50,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 6: Initialize kernel heap (needs VMM for page mapping) */
     heap_init();
+
+    /* Step 7: Initialize ATA disk driver */
+    ata_init();
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
