@@ -1,55 +1,32 @@
 /* ============================================================================
- * hello.c — Minimal user-mode ELF test program
+ * hello.c — User-mode test program
  *
- * This is compiled as a freestanding ELF binary, loaded at 0x400000.
- * All I/O goes through INT 0x80 syscalls.
+ * Linked against libc.a. Uses printf() and main() convention.
+ * crt0.asm calls main() and passes the return value to sys_exit().
  * ============================================================================ */
 
-/* Syscall numbers (must match kernel's syscall.h) */
-#define SYS_WRITE   1
-#define SYS_EXIT    3
+#include "stdio.h"
+#include "string.h"
+#include "stdlib.h"
 
-typedef unsigned long uint64_t;
-
-static inline long syscall2(long nr, long a1, long a2, long a3)
+int main(void)
 {
-    long ret;
-    __asm__ volatile(
-        "int $0x80"
-        : "=a"(ret)
-        : "a"(nr), "D"(a1), "S"(a2), "d"(a3)
-        : "rcx", "r11", "memory"
-    );
-    return ret;
-}
+    /* Test printf with various format specifiers */
+    printf("  [ELF] Hello from user-mode ELF binary!\n");
+    printf("  [ELF] printf works: %d + %d = %d\n", 17, 25, 17 + 25);
+    printf("  [ELF] hex: 0x%x, string: \"%s\"\n", 0xDEAD, "Impossible OS");
 
-static inline void syscall1(long nr, long a1)
-{
-    __asm__ volatile(
-        "int $0x80"
-        :
-        : "a"(nr), "D"(a1)
-        : "rcx", "r11", "memory"
-    );
-}
+    /* Test string functions */
+    char buf[64];
+    strcpy(buf, "libc ");
+    strcat(buf, "is working!");
+    printf("  [ELF] strlen(\"%s\") = %d\n", buf, (int)strlen(buf));
 
-static uint64_t strlen(const char *s)
-{
-    uint64_t n = 0;
-    while (s[n]) n++;
-    return n;
-}
+    /* Test itoa */
+    char numbuf[32];
+    itoa(12345, numbuf, 10);
+    printf("  [ELF] itoa(12345) = \"%s\"\n", numbuf);
 
-void _start(void)
-{
-    const char msg[] = "  [ELF] Hello from user-mode ELF binary!\n";
-    syscall2(SYS_WRITE, 1, (long)msg, (long)strlen(msg));
-
-    const char msg2[] = "  [ELF] About to call sys_exit(42)\n";
-    syscall2(SYS_WRITE, 1, (long)msg2, (long)strlen(msg2));
-
-    syscall1(SYS_EXIT, 42);
-
-    /* Should never reach here */
-    for (;;) ;
+    printf("  [ELF] About to return 42 from main()\n");
+    return 42;
 }

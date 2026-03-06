@@ -393,14 +393,14 @@
 
 ## Phase 8 — Minimal C Library (`libc`)
 
-- [ ] Write `src/libc/string.c` — `memcpy`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy`
-- [ ] Write `src/libc/stdlib.c` — `atoi`, `itoa`, `malloc` (wraps `sys_brk`/`sys_mmap`)
-- [ ] Write `src/libc/stdio.c` — `printf`, `puts`, `getchar` (wraps syscalls)
-- [ ] Write `src/libc/ctype.c` — `isalpha`, `isdigit`, `toupper`, `tolower`
-- [ ] Write `src/libc/math.c` — basic integer math helpers
-- [ ] Create `src/libc/crt0.asm` — C runtime entry (`_start` calls `main`, then `sys_exit`)
-- [ ] Link userland programs against `libc.a`
-- [ ] Commit: `"libc: minimal C standard library"`
+- [x] Write `user/lib/string.c` — `memcpy`, `memset`, `strlen`, `strcmp`, `strcpy`, `strncpy` + more ✅
+- [x] Write `user/lib/stdlib.c` — `atoi`, `itoa`, `malloc` (64KiB bump allocator) ✅
+- [x] Write `user/lib/stdio.c` — `printf`, `puts`, `getchar` (wraps syscalls) ✅
+- [x] Write `user/lib/ctype.c` — `isalpha`, `isdigit`, `toupper`, `tolower` + more ✅
+- [x] Write `user/lib/math.c` — `iabs`, `imin`, `imax`, `ipow`, `isqrt` ✅
+- [x] Create `user/lib/crt0.asm` — C runtime entry (`_start` calls `main`, then `sys_exit`) ✅
+- [x] Link userland programs against `libc.a` ✅
+- [x] Commit: `"libc: minimal C standard library"` ✅
 
 ---
 

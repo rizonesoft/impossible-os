@@ -91,13 +91,43 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(BUILD_DIR)/initrd_files
 	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
 	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
-	@# Build user-mode ELF programs
-	@mkdir -p $(BUILD_DIR)/user
+	@# Build userland libc
+	@mkdir -p $(BUILD_DIR)/user/lib
+	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
 	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
 		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
 		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-I$(INCLUDE) -c user/hello.c -o $(BUILD_DIR)/user/hello.o
-	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.elf $(BUILD_DIR)/user/hello.o
+		-Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/lib/stdlib.c -o $(BUILD_DIR)/user/lib/stdlib.o
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/lib/stdio.c -o $(BUILD_DIR)/user/lib/stdio.o
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
+	x86_64-elf-ar rcs $(BUILD_DIR)/user/libc.a \
+		$(BUILD_DIR)/user/lib/string.o \
+		$(BUILD_DIR)/user/lib/stdlib.o \
+		$(BUILD_DIR)/user/lib/stdio.o \
+		$(BUILD_DIR)/user/lib/ctype.o \
+		$(BUILD_DIR)/user/lib/math.o
+	@echo "[LIBC] $(BUILD_DIR)/user/libc.a created"
+	@# Build user-mode ELF programs (linked against crt0 + libc)
+	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+		-Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.elf \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/hello.o $(BUILD_DIR)/user/libc.a
 	@cp $(BUILD_DIR)/user/hello.elf $(BUILD_DIR)/initrd_files/hello.elf
 	$(BUILD_DIR)/tools/make-initrd -o $(BUILD_DIR)/initrd.img \
 		$(BUILD_DIR)/initrd_files/hello.txt \
