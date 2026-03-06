@@ -14,3 +14,6 @@ void serial_putchar(char c);
 
 /* Write a null-terminated string to serial */
 void serial_write(const char *str);
+
+/* Non-blocking read: returns character or 0 if no data available */
+char serial_trygetchar(void);

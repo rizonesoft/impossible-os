@@ -11,20 +11,31 @@
 #include "task.h"
 #include "printk.h"
 #include "keyboard.h"
+#include "serial.h"
 #include "initrd.h"
 #include "vfs.h"
 #include "heap.h"
 #include "pit.h"
 
 /* --- Port I/O helper --- */
-static inline void outb(uint16_t port, uint8_t val)
+static inline void outb_sc(uint16_t port, uint8_t val)
 {
     __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
 }
 
-static inline void outw(uint16_t port, uint16_t val)
+static inline void outw_sc(uint16_t port, uint16_t val)
 {
     __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
+}
+
+/* --- Input helper: try both keyboard and serial --- */
+static char input_trygetchar(void)
+{
+    char c;
+    c = keyboard_trygetchar();
+    if (c) return c;
+    c = serial_trygetchar();
+    return c;
 }
 
 /* --- Syscall implementations --- */
@@ -48,7 +59,7 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
     return (int64_t)i;
 }
 
-/* SYS_READ: blocking read from stdin. */
+/* SYS_READ: blocking read from stdin (keyboard + serial). */
 static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 {
     uint64_t i;
@@ -60,9 +71,9 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
     if (!dst || len == 0)
         return 0;
 
-    /* Wait for the first byte */
+    /* Wait for the first byte (from keyboard OR serial) */
     for (;;) {
-        c = keyboard_trygetchar();
+        c = input_trygetchar();
         if (c != 0)
             break;
         yield();
@@ -71,7 +82,7 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 
     /* Fill remaining bytes non-blocking */
     for (i = 1; i < len; i++) {
-        c = keyboard_trygetchar();
+        c = input_trygetchar();
         if (c == 0)
             break;
         dst[i] = c;
@@ -250,13 +261,13 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     case SYS_REBOOT:
         printk("[REBOOT] System rebooting...\n");
-        outb(0x64, 0xFE);
+        outb_sc(0x64, 0xFE);
         for (;;) __asm__ volatile("hlt");
         break;
     case SYS_SHUTDOWN:
         printk("[SHUTDOWN] System shutting down...\n");
-        outw(0x604, 0x2000);     /* QEMU ACPI power-off */
-        outw(0xB004, 0x2000);    /* Bochs power-off */
+        outw_sc(0x604, 0x2000);     /* QEMU ACPI power-off */
+        outw_sc(0xB004, 0x2000);    /* Bochs power-off */
         for (;;) __asm__ volatile("hlt");
         break;
     default:

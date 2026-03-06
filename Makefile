@@ -43,7 +43,7 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
                -m 2G \
                -serial stdio \
-               -no-reboot -no-shutdown
+               -no-reboot
 
 # --- Source Discovery ---
 # Assembly sources (boot + kernel)

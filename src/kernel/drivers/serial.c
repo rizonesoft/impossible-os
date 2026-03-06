@@ -47,3 +47,11 @@ void serial_write(const char *str)
         serial_putchar(*str++);
     }
 }
+
+char serial_trygetchar(void)
+{
+    /* Check Line Status Register bit 0 (Data Ready) */
+    if ((inb(SERIAL_PORT + 5) & 0x01) == 0)
+        return 0;
+    return (char)inb(SERIAL_PORT);
+}
