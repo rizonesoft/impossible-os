@@ -180,12 +180,12 @@
 
 ### 4.2 Global Descriptor Table (Kernel-Level)
 
-- [ ] Write `src/kernel/gdt.c` / `gdt.h`
-- [ ] Define kernel code, kernel data, user code, user data segments
-- [ ] Define a **TSS** (Task State Segment) entry
-- [ ] Write `gdt_flush()` in assembly to reload segment registers
-- [ ] Call `gdt_init()` from `kernel_main()`
-- [ ] Commit: `"kernel: GDT with TSS"`
+- [x] Write `src/kernel/gdt.c` / `gdt.h` ✅
+- [x] Define kernel code, kernel data, user code, user data segments ✅
+- [x] Define a **TSS** (Task State Segment) entry ✅ at `0x10F040`
+- [x] Write `gdt_flush()` in assembly to reload segment registers ✅ `gdt_asm.asm`
+- [x] Call `gdt_init()` from `kernel_main()` ✅
+- [x] Commit: `"kernel: GDT with TSS"` ✅ `13b84e7`
 
 ### 4.3 Interrupt Descriptor Table (IDT)
 
