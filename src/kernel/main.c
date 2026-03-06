@@ -16,6 +16,8 @@
 #include "pic.h"
 #include "pit.h"
 #include "keyboard.h"
+#include "pci.h"
+#include "rtl8139.h"
 #include "pmm.h"
 #include "vmm.h"
 #include "heap.h"
@@ -128,7 +130,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 9: Initialize PS/2 keyboard */
     keyboard_init();
 
-    /* Step 10: Enable interrupts */
+    /* Step 10: PCI bus scan and NIC init */
+    pci_scan();
+    rtl8139_init();
+
+    /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
 
     /* Step 8: Print boot banner */

@@ -431,11 +431,12 @@
 
 ### 10.1 NIC Driver
 
-- [ ] Write `src/kernel/drivers/rtl8139.c` — RTL8139 NIC driver (simple, well-documented)
-- [ ] Detect the NIC via PCI enumeration
-- [ ] Initialize the NIC (reset, enable Rx/Tx, set MAC address)
-- [ ] Implement `nic_send(packet, length)` and receive via IRQ handler
-- [ ] Commit: `"drivers: RTL8139 NIC driver"`
+- [x] Write PCI bus driver (`pci.h` / `pci.c`) — config space I/O, bus scan, device lookup ✅
+- [x] Write `src/kernel/drivers/rtl8139.c` — RTL8139 NIC driver ✅
+- [x] Detect the NIC via PCI enumeration ✅
+- [x] Initialize the NIC (reset, enable Rx/Tx, set MAC address) ✅
+- [x] Implement `rtl8139_send(packet, length)` and receive via IRQ handler ✅
+- [x] Commit: `"drivers: RTL8139 NIC driver"` ✅
 
 ### 10.2 Network Stack
 
