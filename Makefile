@@ -13,10 +13,10 @@ OBJCOPY := x86_64-elf-objcopy
 CFLAGS  := -Wall -Wextra -Werror \
            -ffreestanding -nostdlib -nostdinc \
            -fno-stack-protector -fno-pie -no-pie \
-           -m32 \
-           -std=gnu11 -O2 -g
-ASFLAGS := -f elf32 -g
-LDFLAGS := -nostdlib -static -m elf_i386 -z max-page-size=0x1000
+           -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
+           -mcmodel=kernel -std=gnu11 -O2 -g
+ASFLAGS := -f elf64 -g
+LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 
 # --- Directories ---
 SRC_DIR    := src
@@ -106,13 +106,16 @@ clean:
 # Pattern Rules
 # ============================================================================
 
-# Compile C source files
+# Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC] $<"
 
 # Assemble NASM source files
+# entry.asm is multi-format (starts 32-bit, transitions to 64-bit)
+# multiboot2_header.asm is format-agnostic (data only)
+# Both assembled as elf64 since the linker expects elf64 objects
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@

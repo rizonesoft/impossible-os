@@ -54,19 +54,19 @@ static void serial_write(const char *str)
     }
 }
 
-/* Simple hex printer (no sprintf in freestanding) */
-static void serial_write_hex(uint32_t val)
+/* Simple hex printer for 64-bit values */
+static void serial_write_hex(uint64_t val)
 {
     const char hex[] = "0123456789ABCDEF";
-    char buf[11]; /* "0x" + 8 hex digits + null */
+    char buf[19]; /* "0x" + 16 hex digits + null */
     int i;
 
     buf[0] = '0';
     buf[1] = 'x';
-    for (i = 7; i >= 0; i--) {
-        buf[2 + (7 - i)] = hex[(val >> (i * 4)) & 0xF];
+    for (i = 15; i >= 0; i--) {
+        buf[2 + (15 - i)] = hex[(val >> (i * 4)) & 0xF];
     }
-    buf[10] = '\0';
+    buf[18] = '\0';
     serial_write(buf);
 }
 
@@ -106,11 +106,11 @@ static const char *mmap_type_str(uint32_t type)
 }
 
 /* --- External: Multiboot2 parser --- */
-extern void multiboot2_parse(uint32_t *mbi_addr);
+extern void multiboot2_parse(uintptr_t mbi_addr);
 
 /* --- Kernel entry point --- */
 
-void kernel_main(uint32_t magic, uint32_t *mbi)
+void kernel_main(uint64_t magic, uint64_t mbi)
 {
     uint32_t i;
     uint64_t total_ram = 0;
@@ -120,6 +120,7 @@ void kernel_main(uint32_t magic, uint32_t *mbi)
     serial_write("\n");
     serial_write("================================================\n");
     serial_write("  Impossible OS Kernel\n");
+    serial_write("  Architecture: x86-64 (Long Mode)\n");
     serial_write("  Boot: UEFI via GRUB + Multiboot2\n");
     serial_write("================================================\n\n");
 
@@ -136,10 +137,13 @@ void kernel_main(uint32_t magic, uint32_t *mbi)
 
     /* Parse Multiboot2 info structure */
     serial_write("[OK] Multiboot2 info at: ");
-    serial_write_hex((uint32_t)(uintptr_t)mbi);
+    serial_write_hex(mbi);
     serial_write("\n");
 
-    multiboot2_parse(mbi);
+    /* Verify we're in 64-bit Long Mode */
+    serial_write("[OK] Running in 64-bit Long Mode\n");
+
+    multiboot2_parse((uintptr_t)mbi);
 
     /* --- Memory map --- */
     serial_write("\n--- Memory Map (");

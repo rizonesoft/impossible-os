@@ -18,21 +18,20 @@
 struct boot_info g_boot_info;
 
 /* Helper: align address up to 8-byte boundary (Multiboot2 tags are 8-aligned) */
-static inline uint32_t align_up_8(uint32_t addr)
+static inline uintptr_t align_up_8(uintptr_t addr)
 {
-    return (addr + 7) & ~((uint32_t)7);
+    return (addr + 7) & ~((uintptr_t)7);
 }
 
-void multiboot2_parse(uint32_t *mbi_addr)
+void multiboot2_parse(uintptr_t mbi_addr)
 {
     struct multiboot2_info_header *header;
     struct multiboot2_tag *tag;
-    uint32_t mbi = (uint32_t)(uintptr_t)mbi_addr;
 
-    header = (struct multiboot2_info_header *)mbi;
+    header = (struct multiboot2_info_header *)mbi_addr;
 
     /* First tag starts 8 bytes after the info header */
-    tag = (struct multiboot2_tag *)(mbi + 8);
+    tag = (struct multiboot2_tag *)(mbi_addr + 8);
 
     while (tag->type != MULTIBOOT2_TAG_TYPE_END) {
         switch (tag->type) {
@@ -60,7 +59,7 @@ void multiboot2_parse(uint32_t *mbi_addr)
             while (offset < mmap_tag->size &&
                    g_boot_info.mmap_count < BOOT_MMAP_MAX_ENTRIES) {
                 entry = (struct multiboot2_mmap_entry *)
-                        ((uint32_t)(uintptr_t)mmap_tag + offset);
+                        ((uintptr_t)mmap_tag + offset);
 
                 g_boot_info.mmap[g_boot_info.mmap_count].base_addr = entry->addr;
                 g_boot_info.mmap[g_boot_info.mmap_count].length = entry->len;
@@ -77,7 +76,7 @@ void multiboot2_parse(uint32_t *mbi_addr)
             struct multiboot2_tag_framebuffer *fb_tag;
             fb_tag = (struct multiboot2_tag_framebuffer *)tag;
 
-            g_boot_info.fb.addr   = (uint32_t)fb_tag->framebuffer_addr;
+            g_boot_info.fb.addr   = (uintptr_t)fb_tag->framebuffer_addr;
             g_boot_info.fb.pitch  = fb_tag->framebuffer_pitch;
             g_boot_info.fb.width  = fb_tag->framebuffer_width;
             g_boot_info.fb.height = fb_tag->framebuffer_height;
@@ -90,7 +89,7 @@ void multiboot2_parse(uint32_t *mbi_addr)
         /* --- ACPI old RSDP (type 14) --- */
         case MULTIBOOT2_TAG_TYPE_ACPI_OLD: {
             /* RSDP data starts at offset 8 (after type + size) */
-            g_boot_info.acpi_rsdp_addr = (uint32_t)(uintptr_t)tag + 8;
+            g_boot_info.acpi_rsdp_addr = (uintptr_t)tag + 8;
             g_boot_info.acpi_version = 1;
             g_boot_info.acpi_available = 1;
             break;
@@ -98,7 +97,7 @@ void multiboot2_parse(uint32_t *mbi_addr)
 
         /* --- ACPI new RSDP (type 15) --- */
         case MULTIBOOT2_TAG_TYPE_ACPI_NEW: {
-            g_boot_info.acpi_rsdp_addr = (uint32_t)(uintptr_t)tag + 8;
+            g_boot_info.acpi_rsdp_addr = (uintptr_t)tag + 8;
             g_boot_info.acpi_version = 2;
             g_boot_info.acpi_available = 1;
             break;
@@ -111,7 +110,7 @@ void multiboot2_parse(uint32_t *mbi_addr)
 
         /* Advance to next tag (aligned to 8 bytes) */
         tag = (struct multiboot2_tag *)
-              align_up_8((uint32_t)(uintptr_t)tag + tag->size);
+              align_up_8((uintptr_t)tag + tag->size);
     }
 
     (void)header; /* suppress unused warning */

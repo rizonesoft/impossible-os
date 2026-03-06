@@ -18,7 +18,7 @@ struct boot_mmap_entry {
 
 /* Framebuffer information from the bootloader */
 struct boot_framebuffer {
-    uint32_t addr;          /* physical address (32-bit for now) */
+    uintptr_t addr;         /* physical address */
     uint32_t pitch;         /* bytes per scanline */
     uint32_t width;         /* pixels */
     uint32_t height;        /* pixels */
@@ -41,7 +41,7 @@ struct boot_info {
     uint8_t  fb_available;  /* 1 if framebuffer tag was found */
 
     /* ACPI */
-    uint32_t acpi_rsdp_addr;    /* physical address of RSDP */
+    uintptr_t acpi_rsdp_addr;   /* physical address of RSDP */
     uint8_t  acpi_version;      /* 1 = RSDP v1, 2 = RSDP v2 */
     uint8_t  acpi_available;    /* 1 if ACPI tag was found */
 };
