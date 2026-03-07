@@ -26,6 +26,7 @@
 #include "kernel/drivers/ata.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
+#include "kernel/drivers/blkdev.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/initrd.h"
 #include "kernel/fs/fat32.h"
@@ -44,6 +45,38 @@
 #include "desktop/desktop.h"
 #include "kernel/acpi.h"
 #include "kernel/version.h"
+
+/* ---- Block device adapter wrappers ----
+ * These adapt driver-specific APIs to the blkdev function pointer signature:
+ *   int fn(uint64_t lba, uint32_t count, void *buf, void *driver_data)
+ */
+static int blkdev_virtio_read(uint64_t lba, uint32_t count, void *buf,
+                               void *driver_data)
+{
+    (void)driver_data;
+    return virtio_blk_read(lba, count, buf);
+}
+
+static int blkdev_virtio_write(uint64_t lba, uint32_t count, const void *buf,
+                                void *driver_data)
+{
+    (void)driver_data;
+    return virtio_blk_write(lba, count, buf);
+}
+
+static int blkdev_ahci_read(uint64_t lba, uint32_t count, void *buf,
+                             void *driver_data)
+{
+    int port_idx = (int)(uintptr_t)driver_data;
+    return ahci_read(port_idx, lba, count, buf);
+}
+
+static int blkdev_ahci_write(uint64_t lba, uint32_t count, const void *buf,
+                              void *driver_data)
+{
+    int port_idx = (int)(uintptr_t)driver_data;
+    return ahci_write(port_idx, lba, count, (void *)buf);
+}
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -83,6 +116,54 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 7c: Initialize AHCI (SATA) driver */
     ahci_init();
+
+    /* Step 7d: Register block devices */
+    {
+        struct blkdev bd;
+
+        /* ATA master */
+        if (ata_get_drive(0)->present) {
+            const struct ata_drive *drv = ata_get_drive(0);
+            bd = (struct blkdev){0};
+            bd.name[0]='a'; bd.name[1]='t'; bd.name[2]='a'; bd.name[3]='0'; bd.name[4]='\0';
+            bd.sector_size  = 512;
+            bd.sector_count = (uint64_t)drv->sectors;
+            bd.read  = (blkdev_read_fn)0;  /* ATA PIO not wrapped yet */
+            bd.write = (blkdev_write_fn)0;
+            /* Skip — ATA PIO has incompatible API (uint32_t lba, uint8_t count) */
+        }
+
+        /* VirtIO-blk */
+        if (virtio_blk_present()) {
+            bd = (struct blkdev){0};
+            bd.name[0]='v'; bd.name[1]='i'; bd.name[2]='r'; bd.name[3]='t';
+            bd.name[4]='i'; bd.name[5]='o'; bd.name[6]='0'; bd.name[7]='\0';
+            bd.sector_size  = 512;
+            bd.sector_count = virtio_blk_capacity();
+            bd.read  = blkdev_virtio_read;
+            bd.write = blkdev_virtio_write;
+            bd.driver_data  = (void *)0;
+            blkdev_register(&bd);
+        }
+
+        /* AHCI / SATA drives */
+        {
+            int di;
+            for (di = 0; di < ahci_drive_count(); di++) {
+                bd = (struct blkdev){0};
+                bd.name[0]='s'; bd.name[1]='a'; bd.name[2]='t'; bd.name[3]='a';
+                bd.name[4]='0' + (char)di; bd.name[5]='\0';
+                bd.sector_size  = 512;
+                bd.sector_count = ahci_capacity(di);
+                bd.read  = blkdev_ahci_read;
+                bd.write = blkdev_ahci_write;
+                bd.driver_data  = (void *)(uintptr_t)di;
+                blkdev_register(&bd);
+            }
+        }
+
+        blkdev_list();
+    }
 
     /* Step 8: Initialize VFS */
     vfs_init();

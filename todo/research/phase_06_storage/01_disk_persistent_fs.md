@@ -11,7 +11,7 @@ Currently IXFS is RAM-only — files disappear on reboot. For persistence we nee
 | Controller | Type | QEMU flag | Status |
 |-----------|------|-----------|--------|
 | **virtio-blk** | Paravirtual | `-drive file=disk.img,if=none,id=disk0 -device virtio-blk-pci,drive=disk0` | ✅ Implemented |
-| **AHCI (SATA)** | HDD/SSD | `-drive file=disk.img,if=none -device ahci -device ide-hd` | Planned |
+| **AHCI (SATA)** | HDD/SSD | `-drive file=sata.img,if=none,id=disk1 -device ahci,id=ahci0 -device ide-hd,drive=disk1,bus=ahci0.0` | ✅ Implemented |
 | **NVMe** | Modern SSD | `-drive file=disk.img,if=none -device nvme` | Future |
 | **IDE** | Legacy | `-drive file=disk.img,if=ide` | Legacy (ATA PIO exists) |
 

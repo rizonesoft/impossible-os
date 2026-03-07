@@ -102,6 +102,39 @@ at `C:\` to provide the kernel with essential files.
 | `virtio_blk_capacity()` | Total sectors from device_cfg MMIO |
 | `virtio_blk_present()` | Check if device was initialized |
 
+## AHCI (SATA) Driver
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/drivers/ahci.c` | AHCI SATA driver (MMIO, DMA) |
+| `include/kernel/drivers/ahci.h` | AHCI register defs, HBA structs, API |
+
+### Configuration
+
+| Property | Value |
+|----------|-------|
+| Transport | AHCI MMIO via PCI BAR5 (ABAR) |
+| PCI detection | Class `0x01` (Storage), Subclass `0x06` (AHCI) |
+| Controller | Intel ICH9 AHCI (QEMU default) |
+| Command model | DMA via command list + PRDT entries |
+| Addressing | LBA48 (up to 128 PiB) |
+| Sector size | 512 bytes |
+| QEMU flags | `-drive file=sata.img,format=raw,if=none,id=disk1 -device ahci,id=ahci0 -device ide-hd,drive=disk1,bus=ahci0.0` |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `ahci_init()` | Detect controller, init HBA, enumerate ports, IDENTIFY |
+| `ahci_read(port, lba, count, buf)` | Read sectors via READ DMA EXT |
+| `ahci_write(port, lba, count, buf)` | Write sectors via WRITE DMA EXT |
+| `ahci_identify(port)` | Get model, serial, capacity |
+| `ahci_capacity(port)` | Total sectors for given port |
+| `ahci_present()` | Check if any SATA drive initialized |
+| `ahci_drive_count()` | Number of detected SATA drives |
+
 ## Virtual Filesystem (VFS)
 
 ### Key Files

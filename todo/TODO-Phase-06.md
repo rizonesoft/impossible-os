@@ -32,34 +32,47 @@
 > - Negotiates `VIRTIO_F_VERSION_1` for modern interface
 > - QEMU upgraded from 8.2.2 → 10.2.1 (built from source with GTK display)
 
-### 1.2 AHCI (SATA) Driver
+### 1.2 AHCI (SATA) Driver ✅
 
-- [ ] Create `src/kernel/drivers/ahci.c` and `include/ahci.h`
-- [ ] Detect AHCI controller via PCI (class `0x01`, subclass `0x06`)
-- [ ] Map ABAR (AHCI Base Address Register) from PCI BAR5
-- [ ] Enumerate ports: scan for attached SATA drives (device signature in port TFD)
-- [ ] Initialize HBA: enable AHCI mode, clear interrupts, allocate command lists + FIS buffers
-- [ ] Implement `ahci_read(port, lba, count, buffer)` — build command FIS (READ DMA EXT) + PRD table
-- [ ] Implement `ahci_write(port, lba, count, buffer)` — WRITE DMA EXT command
-- [ ] Implement `ahci_identify(port)` — IDENTIFY DEVICE command (model, serial, capacity)
-- [ ] Handle AHCI IRQ (port interrupt status)
-- [ ] Register with VFS block device layer
-- [ ] Test: read drive identity and sector 0 from QEMU SATA disk
-- [ ] QEMU flag: `-drive file=disk.img,format=raw,if=none,id=disk0 -device ahci,id=ahci -device ide-hd,drive=disk0,bus=ahci.0`
-- [ ] Commit: `"drivers: AHCI SATA disk driver"`
+- [x] Create `src/kernel/drivers/ahci.c` and `include/kernel/drivers/ahci.h`
+- [x] Detect AHCI controller via PCI (class `0x01`, subclass `0x06`)
+- [x] Map ABAR (AHCI Base Address Register) from PCI BAR5
+- [x] Enumerate ports: scan for attached SATA drives (device signature)
+- [x] Initialize HBA: enable AHCI mode, clear interrupts, allocate command lists + FIS buffers
+- [x] Implement `ahci_read(port, lba, count, buffer)` — READ DMA EXT + PRDT
+- [x] Implement `ahci_write(port, lba, count, buffer)` — WRITE DMA EXT command
+- [x] Implement `ahci_identify(port)` — IDENTIFY DEVICE (model, serial, LBA48 capacity)
+- [x] Handle AHCI IRQ (polling-based, interrupt enable per port)
+- [ ] Register with VFS block device layer *(deferred to §1.3)*
+- [x] Test: read drive identity and sector 0 from QEMU SATA disk
+- [x] QEMU flags: `-drive file=sata.img,format=raw,if=none,id=disk1 -device ahci,id=ahci0 -device ide-hd,drive=disk1,bus=ahci0.0`
+- [x] Commit: `"drivers: AHCI SATA disk driver"`
 
-### 1.3 Block Device Abstraction Layer
+> **Implementation notes:**
+> - Intel ICH9 AHCI controller detected at PCI 0:3.0
+> - ABAR at 0x81043000, AHCI v1.0, 6 ports / 32 command slots
+> - Per-port: 1 KiB command list (32 headers), 256-byte FIS receive, 32 command tables
+> - Uses command slot 0 with single PRDT entry for I/O
+> - Tested: "QEMU HARDDISK" 32 MiB (65536 sectors), sector 0 read OK
 
-- [ ] Create `include/blkdev.h` and `src/kernel/drivers/blkdev.c`
-- [ ] Define `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data)
-- [ ] Implement `blkdev_register(dev)` — add to global device list
-- [ ] Implement `blkdev_get(name)` — look up by name ("virtio0", "sata0")
-- [ ] Implement `blkdev_read(dev, lba, count, buf)` — dispatch to driver
-- [ ] Implement `blkdev_write(dev, lba, count, buf)` — dispatch to driver
-- [ ] Implement `blkdev_list()` — enumerate all registered devices
-- [ ] Register existing ATA/IDE driver as a blkdev
-- [ ] Register virtio-blk and AHCI as blkdevs
-- [ ] Commit: `"drivers: block device abstraction layer"`
+### 1.3 Block Device Abstraction Layer ✅
+
+- [x] Create `include/kernel/drivers/blkdev.h` and `src/kernel/drivers/blkdev.c`
+- [x] Define `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data)
+- [x] Implement `blkdev_register(dev)` — add to global device list
+- [x] Implement `blkdev_get(name)` — look up by name ("virtio0", "sata0")
+- [x] Implement `blkdev_read(dev, lba, count, buf)` — dispatch to driver
+- [x] Implement `blkdev_write(dev, lba, count, buf)` — dispatch to driver
+- [x] Implement `blkdev_list()` — enumerate all registered devices
+- [ ] Register existing ATA/IDE driver as a blkdev *(deferred — legacy uint8_t count API)*
+- [x] Register virtio-blk and AHCI as blkdevs (adapter wrappers in `main.c`)
+- [x] Commit: `"drivers: block device abstraction layer"`
+
+> **Implementation notes:**
+> - Registry holds up to 16 devices, function-pointer dispatch
+> - Adapter wrappers bridge driver APIs to uniform `(lba, count, buf, driver_data)` signature
+> - AHCI uses `driver_data` as port index; VirtIO ignores it
+> - Tested: 2 devices registered (virtio0 + sata0)
 
 ---
 
@@ -310,14 +323,14 @@
 | Priority | Section | Reason |
 |----------|---------|--------|
 | ✅ Done | 1.1 VirtIO-blk Driver | Modern VirtIO 1.0 MMIO — implemented and tested |
-| 🔴 P0 | 1.3 Block Device Layer | Abstraction needed by all FS code |
+| ✅ Done | 1.3 Block Device Layer | Unified interface over VirtIO/AHCI |
 | 🔴 P0 | 2. Partition Tables | Required to find filesystems on disk |
 | 🔴 P0 | 3.1 FAT32 Read | Read USB drives, boot media |
 | 🟠 P1 | 4.1–4.4 IXFS on Disk | Persistence — files survive reboot |
 | 🟠 P1 | 5.1 Auto-Mount | Drive letters from real disks |
 | 🟠 P1 | 3.2 FAT32 Write | Full read/write for removable media |
 | 🟠 P1 | 7.6 IXFS Directory Structure | Standard paths on first boot |
-| 🟡 P2 | 1.2 AHCI Driver | SATA HDD/SSD support |
+| ✅ Done | 1.2 AHCI Driver | SATA HDD/SSD — implemented and tested |
 | 🟡 P2 | 7.1 Disk Cache | Performance — reduce disk I/O |
 | 🟡 P2 | 5.2 Mount/Unmount Commands | Manual storage management |
 | 🟡 P2 | 6. Disk Management GUI | Visual partition management |

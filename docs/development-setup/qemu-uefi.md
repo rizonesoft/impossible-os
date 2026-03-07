@@ -38,6 +38,9 @@ QEMU_FLAGS := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
               -cdrom $(ISO_FILE) \
               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
               -device virtio-blk-pci,drive=disk0 \
+              -drive file=$(BUILD_DIR)/sata.img,format=raw,if=none,id=disk1 \
+              -device ahci,id=ahci0 \
+              -device ide-hd,drive=disk1,bus=ahci0.0 \
               -m 2G \
               -serial stdio \
               -vga none \
@@ -55,6 +58,9 @@ QEMU_FLAGS := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 | `-cdrom $(ISO_FILE)` | Boot from the ISO |
 | `-drive file=disk.img,...,if=none,id=disk0` | 64 MiB raw disk image (VirtIO backend) |
 | `-device virtio-blk-pci,drive=disk0` | VirtIO block device (modern 1.0 transport) |
+| `-drive file=sata.img,...,if=none,id=disk1` | 32 MiB raw disk image (AHCI/SATA backend) |
+| `-device ahci,id=ahci0` | Intel ICH9 AHCI controller |
+| `-device ide-hd,drive=disk1,bus=ahci0.0` | SATA hard disk on AHCI port 0 |
 | `-m 2G` | 2 GiB RAM |
 | `-serial stdio` | Serial port (COM1) output to terminal |
 | `-vga none -device VGA,xres=1280,yres=720` | Custom resolution framebuffer |
