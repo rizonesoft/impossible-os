@@ -563,21 +563,6 @@
 - [ ] Write `CHANGELOG.md` — document changes per version
 - [ ] Push tags: `git push --tags`
 
-### 13.3 Milestone Version Map
-
-| Version | Milestone |
-|---------|-----------|
-| `0.1.0` | UEFI GRUB boots kernel, framebuffer console output |
-| `0.2.0` | Kernel boots in Long Mode, interrupts working |
-| `0.3.0` | Memory management (PMM + VMM + heap) |
-| `0.4.0` | Keyboard input, PIT timer, basic shell |
-| `0.5.0` | Filesystem (initrd + FAT32 read) |
-| `0.6.0` | Multitasking (preemptive scheduler, user mode) |
-| `0.7.0` | Framebuffer graphics + mouse driver |
-| `0.8.0` | Window manager + desktop shell |
-| `0.9.0` | Installer ISO boots and installs to disk |
-| `1.0.0` | Full boot-to-desktop experience, stable in Hyper-V |
-
 ---
 
 ## Phase 14 — OS Installer
