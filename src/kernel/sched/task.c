@@ -23,6 +23,7 @@
 static struct task tasks[TASK_MAX];
 static uint32_t num_tasks = 0;
 static uint32_t current_task = 0;
+static uint32_t current_thread = 0;  /* thread index within current task */
 
 /* --- Preemptive scheduler state --- */
 static volatile uint32_t sched_enabled = 0;
@@ -56,25 +57,58 @@ static void task_wrapper(void)
         yield();
 }
 
-/* --- Find the next runnable task (round-robin) --- */
-static uint32_t find_next_task(uint32_t from)
+/* --- Find the next runnable task+thread (round-robin) ---
+ * Searches across ALL tasks and their threads for the next schedulable unit.
+ * Sets *out_thread to the thread index within the found task.
+ * Returns the task index. */
+static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
+                               uint32_t *out_thread)
 {
-    uint32_t i, next;
+    uint32_t ti, tj;
+    uint32_t task_idx, thread_idx;
 
-    next = from;
-    for (i = 0; i < num_tasks; i++) {
-        next = (next + 1) % num_tasks;
-        if (tasks[next].state == TASK_READY || tasks[next].state == TASK_RUNNING)
-            return next;
+    /* Start from the *next* thread after the current one */
+    task_idx = from_task;
+    thread_idx = from_thread;
+
+    /* Walk all tasks × threads in round-robin order */
+    for (ti = 0; ti < num_tasks; ti++) {
+        /* Move to next thread (or next task's first thread) */
+        thread_idx++;
+        if (thread_idx >= tasks[task_idx].num_threads) {
+            task_idx = (task_idx + 1) % num_tasks;
+            thread_idx = 0;
+        }
+
+        /* Check all threads in this new task, then wrap to next task */
+        for (tj = 0; tj < tasks[task_idx].num_threads; tj++) {
+            uint32_t check_tid = (thread_idx + tj) % tasks[task_idx].num_threads;
+            struct thread *thr = &tasks[task_idx].threads[check_tid];
+
+            /* Task must be alive and thread must be runnable */
+            if ((tasks[task_idx].state == TASK_READY ||
+                 tasks[task_idx].state == TASK_RUNNING) &&
+                (thr->state == THREAD_READY ||
+                 thr->state == THREAD_RUNNING)) {
+                *out_thread = check_tid;
+                return task_idx;
+            }
+        }
+
+        /* No runnable thread in this task, move to next */
+        thread_idx = tasks[task_idx].num_threads;  /* will wrap in outer loop */
     }
-    return from;  /* no other task found */
+
+    /* Nothing else found — stay on current */
+    *out_thread = from_thread;
+    return from_task;
 }
 
 /* --- Public API --- */
 
 void task_init(void)
 {
-    uint32_t i;
+    uint32_t i, j;
 
     for (i = 0; i < TASK_MAX; i++) {
         tasks[i].pid = 0;
@@ -88,6 +122,17 @@ void task_init(void)
         tasks[i].exit_status = 0;
         tasks[i].wait_pid = -1;
         tasks[i].exec_pending = 0;
+        tasks[i].num_threads = 0;
+        for (j = 0; j < THREAD_MAX; j++) {
+            tasks[i].threads[j].id = 0;
+            tasks[i].threads[j].state = THREAD_DEAD;
+            tasks[i].threads[j].rsp = 0;
+            tasks[i].threads[j].stack_base = (uint8_t *)0;
+            tasks[i].threads[j].stack_size = 0;
+            tasks[i].threads[j].parent_task = 0;
+            tasks[i].threads[j].exit_status = 0;
+            tasks[i].threads[j].join_tid = -1;
+        }
     }
 
     /* Task 0: the current boot/main thread.
@@ -99,6 +144,15 @@ void task_init(void)
     tasks[0].name = "main";
     num_tasks = 1;
     current_task = 0;
+
+    /* Thread 0 = main thread (implicit, uses task's own stack) */
+    tasks[0].threads[0].id = 0;
+    tasks[0].threads[0].state = THREAD_RUNNING;
+    tasks[0].threads[0].stack_base = (uint8_t *)0;  /* boot stack */
+    tasks[0].threads[0].stack_size = 0;
+    tasks[0].threads[0].parent_task = 0;
+    tasks[0].threads[0].join_tid = -1;
+    tasks[0].num_threads = 1;
 
     printk("[OK] Scheduler initialized (PID 0 = main, quantum = %u ticks)\n",
            (uint64_t)SCHED_QUANTUM);
@@ -186,6 +240,15 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+
+    /* Thread 0 = main thread (uses task's kernel stack) */
+    tasks[pid].threads[0].id = 0;
+    tasks[pid].threads[0].state = THREAD_READY;
+    tasks[pid].threads[0].stack_base = (uint8_t *)0;  /* shares task stack */
+    tasks[pid].threads[0].stack_size = 0;
+    tasks[pid].threads[0].parent_task = pid;
+    tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].num_threads = 1;
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (kernel)\n",
@@ -271,6 +334,15 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].exit_status = 0;
     tasks[pid].wait_pid = -1;
     tasks[pid].exec_pending = 0;
+
+    /* Thread 0 = main thread (uses task's kernel stack) */
+    tasks[pid].threads[0].id = 0;
+    tasks[pid].threads[0].state = THREAD_READY;
+    tasks[pid].threads[0].stack_base = (uint8_t *)0;  /* shares task stack */
+    tasks[pid].threads[0].stack_size = 0;
+    tasks[pid].threads[0].parent_task = pid;
+    tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].num_threads = 1;
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (user mode)\n",
@@ -297,35 +369,49 @@ static uint64_t yield_irq_handler(struct interrupt_frame *frame)
 /* Force an immediate context switch (called from yield INT or schedule). */
 uint64_t schedule_now(struct interrupt_frame *frame)
 {
-    uint32_t prev, next;
+    uint32_t prev_task, prev_thread;
+    uint32_t next_task, next_thread;
 
-    if (num_tasks <= 1)
+    if (num_tasks <= 1 && tasks[0].num_threads <= 1)
         return (uint64_t)frame;
 
-    prev = current_task;
-    next = find_next_task(prev);
+    prev_task = current_task;
+    prev_thread = current_thread;
+    next_task = find_next_task(prev_task, prev_thread, &next_thread);
 
-    if (next == prev)
+    if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
 
-    /* Save current task's interrupt frame pointer
+    /* Save current task/thread's interrupt frame pointer
      * (skip if exec_pending — don't overwrite the exec'd frame) */
-    if (!tasks[prev].exec_pending)
-        tasks[prev].rsp = (uint64_t)frame;
-    if (tasks[prev].state == TASK_RUNNING)
-        tasks[prev].state = TASK_READY;
+    if (!tasks[prev_task].exec_pending) {
+        /* Save to thread if multi-threaded, otherwise to task */
+        if (prev_thread > 0)
+            tasks[prev_task].threads[prev_thread].rsp = (uint64_t)frame;
+        else
+            tasks[prev_task].rsp = (uint64_t)frame;
+    }
+    if (tasks[prev_task].state == TASK_RUNNING)
+        tasks[prev_task].state = TASK_READY;
+    if (tasks[prev_task].threads[prev_thread].state == THREAD_RUNNING)
+        tasks[prev_task].threads[prev_thread].state = THREAD_READY;
 
-    /* Switch to next task */
-    tasks[next].state = TASK_RUNNING;
-    tasks[next].exec_pending = 0;  /* clear on switch-in */
-    current_task = next;
+    /* Switch to next task/thread */
+    tasks[next_task].state = TASK_RUNNING;
+    tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
+    tasks[next_task].exec_pending = 0;  /* clear on switch-in */
+    current_task = next_task;
+    current_thread = next_thread;
     sched_ticks = 0;
 
     /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
-    if (tasks[next].kernel_rsp)
-        tss_set_kernel_stack(tasks[next].kernel_rsp);
+    if (tasks[next_task].kernel_rsp)
+        tss_set_kernel_stack(tasks[next_task].kernel_rsp);
 
-    return tasks[next].rsp;
+    /* Return the correct RSP: thread stack if secondary thread, task stack otherwise */
+    if (next_thread > 0)
+        return tasks[next_task].threads[next_thread].rsp;
+    return tasks[next_task].rsp;
 }
 
 /* --- Preemptive scheduler (called from PIT IRQ handler) ---
@@ -343,7 +429,8 @@ uint64_t schedule_now(struct interrupt_frame *frame)
  */
 uint64_t schedule(struct interrupt_frame *frame)
 {
-    uint32_t prev, next;
+    uint32_t prev_task, prev_thread;
+    uint32_t next_task, next_thread;
 
     if (!sched_enabled || num_tasks <= 1)
         return (uint64_t)frame;
@@ -353,32 +440,43 @@ uint64_t schedule(struct interrupt_frame *frame)
     if (sched_ticks < SCHED_QUANTUM)
         return (uint64_t)frame;
 
-    /* Time quantum expired — switch tasks */
+    /* Time quantum expired — switch */
     sched_ticks = 0;
-    prev = current_task;
-    next = find_next_task(prev);
+    prev_task = current_task;
+    prev_thread = current_thread;
+    next_task = find_next_task(prev_task, prev_thread, &next_thread);
 
-    if (next == prev)
+    if (next_task == prev_task && next_thread == prev_thread)
         return (uint64_t)frame;
 
-    /* Save current task's interrupt frame pointer
+    /* Save current task/thread's interrupt frame pointer
      * (skip if exec_pending — don't overwrite the exec'd frame) */
-    if (!tasks[prev].exec_pending)
-        tasks[prev].rsp = (uint64_t)frame;
-    if (tasks[prev].state == TASK_RUNNING)
-        tasks[prev].state = TASK_READY;
+    if (!tasks[prev_task].exec_pending) {
+        if (prev_thread > 0)
+            tasks[prev_task].threads[prev_thread].rsp = (uint64_t)frame;
+        else
+            tasks[prev_task].rsp = (uint64_t)frame;
+    }
+    if (tasks[prev_task].state == TASK_RUNNING)
+        tasks[prev_task].state = TASK_READY;
+    if (tasks[prev_task].threads[prev_thread].state == THREAD_RUNNING)
+        tasks[prev_task].threads[prev_thread].state = THREAD_READY;
 
-    /* Switch to next task */
-    tasks[next].state = TASK_RUNNING;
-    tasks[next].exec_pending = 0;  /* clear on switch-in */
-    current_task = next;
+    /* Switch to next task/thread */
+    tasks[next_task].state = TASK_RUNNING;
+    tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
+    tasks[next_task].exec_pending = 0;
+    current_task = next_task;
+    current_thread = next_thread;
 
     /* Update TSS rsp0 so ring 3→0 transitions use the correct kernel stack */
-    if (tasks[next].kernel_rsp)
-        tss_set_kernel_stack(tasks[next].kernel_rsp);
+    if (tasks[next_task].kernel_rsp)
+        tss_set_kernel_stack(tasks[next_task].kernel_rsp);
 
-    /* Return the next task's saved frame pointer */
-    return tasks[next].rsp;
+    /* Return the correct RSP */
+    if (next_thread > 0)
+        return tasks[next_task].threads[next_thread].rsp;
+    return tasks[next_task].rsp;
 }
 
 void scheduler_enable(void)
@@ -664,3 +762,200 @@ void task_cleanup(uint32_t pid)
     tasks[pid].rsp = 0;
 }
 
+/* ============================================================================
+ * Thread functions — per-task kernel threads
+ *
+ * Threads share the same PID and address space as the parent task.
+ * Each thread has its own stack. The scheduler treats threads as
+ * additional runnable entities within a task.
+ *
+ * thread_create() adds a new schedulable thread to the current task.
+ * The scheduler gives time slices to ALL threads across ALL tasks.
+ * ============================================================================ */
+
+/* Thread entry wrapper — sets up the thread function call and handles exit.
+ * Thread entry pointer is in r12, argument pointer is in r13 (set by thread_create). */
+static void thread_wrapper(void)
+{
+    thread_entry_t entry;
+    void *arg;
+
+    __asm__ volatile("mov %%r12, %0" : "=r"(entry));
+    __asm__ volatile("mov %%r13, %0" : "=r"(arg));
+
+    entry(arg);
+
+    /* Thread returned — exit cleanly */
+    thread_exit(0);
+}
+
+int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
+{
+    uint32_t task_idx = current_task;
+    struct task *t = &tasks[task_idx];
+    uint32_t tid;
+    uint8_t *stack;
+    uint64_t *sp;
+
+    if (t->num_threads >= THREAD_MAX) {
+        printk("[FAIL] thread_create: max threads reached (PID %u)\n",
+               (uint64_t)t->pid);
+        return -1;
+    }
+
+    /* Use at least THREAD_STACK_SIZE */
+    if (stack_size < THREAD_STACK_SIZE)
+        stack_size = THREAD_STACK_SIZE;
+
+    /* Allocate thread stack */
+    stack = (uint8_t *)kmalloc(stack_size);
+    if (!stack) {
+        printk("[FAIL] thread_create: cannot allocate stack\n");
+        return -1;
+    }
+
+    tid = t->num_threads;
+
+    /* Build initial interrupt frame on thread stack.
+     * Same layout as task_create: 22 qwords for ISR stub restore + iretq. */
+    sp = (uint64_t *)(stack + stack_size);
+    sp = (uint64_t *)((uint64_t)sp & ~0xFULL);
+
+    {
+        uint64_t new_rsp = (uint64_t)sp;
+
+        sp -= 22;
+        sp[0]  = 0;                           /* r15 */
+        sp[1]  = 0;                           /* r14 */
+        sp[2]  = (uint64_t)arg;               /* r13 = argument */
+        sp[3]  = (uint64_t)entry;             /* r12 = entry function */
+        sp[4]  = 0;                           /* r11 */
+        sp[5]  = 0;                           /* r10 */
+        sp[6]  = 0;                           /* r9 */
+        sp[7]  = 0;                           /* r8 */
+        sp[8]  = 0;                           /* rbp */
+        sp[9]  = 0;                           /* rdi */
+        sp[10] = 0;                           /* rsi */
+        sp[11] = 0;                           /* rdx */
+        sp[12] = 0;                           /* rcx */
+        sp[13] = 0;                           /* rbx */
+        sp[14] = 0;                           /* rax */
+        sp[15] = 0;                           /* int_no */
+        sp[16] = 0;                           /* err_code */
+        sp[17] = (uint64_t)thread_wrapper;    /* rip */
+        sp[18] = GDT_KERNEL_CODE;             /* cs = 0x08 */
+        sp[19] = 0x202;                       /* rflags: IF set */
+        sp[20] = new_rsp;                     /* rsp after iretq */
+        sp[21] = GDT_KERNEL_DATA;             /* ss = 0x10 */
+    }
+
+    /* Initialize thread control block */
+    t->threads[tid].id = tid;
+    t->threads[tid].state = THREAD_READY;
+    t->threads[tid].rsp = (uint64_t)sp;
+    t->threads[tid].stack_base = stack;
+    t->threads[tid].stack_size = stack_size;
+    t->threads[tid].parent_task = task_idx;
+    t->threads[tid].exit_status = 0;
+    t->threads[tid].join_tid = -1;
+    t->num_threads++;
+
+    printk("[OK] Thread %u created in task %u (\"%s\")\n",
+           (uint64_t)tid, (uint64_t)t->pid,
+           t->name ? t->name : "?");
+
+    return (int)tid;
+}
+
+void thread_exit(int32_t status)
+{
+    struct task *t = &tasks[current_task];
+    struct thread *thr = &t->threads[current_thread];
+    uint32_t j;
+
+    thr->state = THREAD_DEAD;
+    thr->exit_status = status;
+
+    printk("[SCHED] Thread %u (task %u \"%s\") exited with status %d\n",
+           (uint64_t)thr->id, (uint64_t)t->pid,
+           t->name ? t->name : "?",
+           (uint64_t)(uint32_t)status);
+
+    /* Wake any thread in the same task blocked on thread_join(our tid) */
+    for (j = 0; j < t->num_threads; j++) {
+        if (t->threads[j].state == THREAD_BLOCKED &&
+            t->threads[j].join_tid == (int32_t)thr->id) {
+            t->threads[j].state = THREAD_READY;
+            t->threads[j].join_tid = -1;
+        }
+    }
+
+    /* If this was the main thread (tid 0), the entire task dies */
+    if (current_thread == 0) {
+        task_exit(status);
+        /* does not return */
+    }
+
+    /* Yield away forever */
+    for (;;)
+        yield();
+}
+
+int32_t thread_join(uint32_t thread_id)
+{
+    struct task *t = &tasks[current_task];
+
+    /* Validate thread ID */
+    if (thread_id >= t->num_threads || thread_id == current_thread) {
+        printk("[THREAD] Invalid thread ID %u for join\n",
+               (uint64_t)thread_id);
+        return -1;
+    }
+
+    /* If target thread is already dead, return immediately */
+    if (t->threads[thread_id].state == THREAD_DEAD) {
+        int32_t status = t->threads[thread_id].exit_status;
+
+        /* Free the thread's stack */
+        if (t->threads[thread_id].stack_base) {
+            kfree(t->threads[thread_id].stack_base);
+            t->threads[thread_id].stack_base = (uint8_t *)0;
+        }
+
+        return status;
+    }
+
+    /* Block current thread until target exits */
+    t->threads[current_thread].state = THREAD_BLOCKED;
+    t->threads[current_thread].join_tid = (int32_t)thread_id;
+
+    /* Yield away — scheduler will skip us since we're THREAD_BLOCKED */
+    yield();
+
+    /* When we wake up, target thread has exited */
+    {
+        int32_t status = t->threads[thread_id].exit_status;
+
+        /* Free the thread's stack */
+        if (t->threads[thread_id].stack_base) {
+            kfree(t->threads[thread_id].stack_base);
+            t->threads[thread_id].stack_base = (uint8_t *)0;
+        }
+
+        return status;
+    }
+}
+
+void thread_yield(void)
+{
+    yield();  /* Same mechanism — INT 0x81 */
+}
+
+struct thread *thread_current(void)
+{
+    if (current_task >= num_tasks)
+        return (struct thread *)0;
+    if (current_thread >= tasks[current_task].num_threads)
+        return (struct thread *)0;
+    return &tasks[current_task].threads[current_thread];
+}

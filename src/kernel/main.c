@@ -406,6 +406,47 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("Preemptive scheduling test passed\n");
     }
 
+    /* === Kernel thread test (shared globals) === */
+    {
+        extern volatile uint32_t thread_shared_counter;
+        extern void thread_inc_func(void *arg);
+
+        int tid_a, tid_b;
+        int32_t status_a, status_b;
+
+        thread_shared_counter = 0;
+        printk("\n  Thread test: two threads sharing a global counter\n");
+
+        tid_a = thread_create(thread_inc_func, (void *)"ThreadA", 0);
+        tid_b = thread_create(thread_inc_func, (void *)"ThreadB", 0);
+
+        if (tid_a >= 0 && tid_b >= 0) {
+            /* Join both threads — blocks until each exits */
+            status_a = thread_join((uint32_t)tid_a);
+            status_b = thread_join((uint32_t)tid_b);
+            (void)status_a;
+            (void)status_b;
+
+            if (thread_shared_counter == 10) {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Kernel thread test passed (counter=%u)\n",
+                       (uint64_t)thread_shared_counter);
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Kernel thread test: expected 10, got %u\n",
+                       (uint64_t)thread_shared_counter);
+            }
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("thread_create failed\n");
+        }
+    }
     /* === User mode test === */
     {
         extern void user_test_func(void);
@@ -633,6 +674,22 @@ void thread_b_func(void)
     printk("  [ThreadB] Back in thread B (2/3)\n");
     yield();
     printk("  [ThreadB] Thread B finishing (3/3)\n");
+}
+
+/* --- Kernel thread test functions --- */
+
+volatile uint32_t thread_shared_counter = 0;
+
+void thread_inc_func(void *arg)
+{
+    uint32_t i;
+    const char *label = (const char *)arg;
+    for (i = 0; i < 5; i++) {
+        thread_shared_counter++;
+        printk("    [%s] shared_counter = %u\n", label,
+               (uint64_t)thread_shared_counter);
+        thread_yield();
+    }
 }
 
 /* --- Test thread functions for preemptive scheduling --- */
