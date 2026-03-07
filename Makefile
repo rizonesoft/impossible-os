@@ -49,6 +49,7 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -device rtl8139,netdev=net0 \
                -netdev user,id=net0 \
                -device virtio-tablet-pci \
+               -rtc base=localtime \
                -no-reboot
 
 # --- Source Discovery ---
@@ -202,6 +203,7 @@ run-log: $(ISO_FILE)
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
+		-rtc base=localtime \
 		-no-reboot
 	@echo "[LOG] Serial output saved to serial.log"
 
