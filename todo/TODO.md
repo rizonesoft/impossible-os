@@ -582,64 +582,13 @@
 
 ## Phase 14 — OS Installer
 
-### 14.1 Installer Program
-
-- [ ] Write `src/installer/installer.c` — runs as a special init process from the ISO
-- [ ] Display a **welcome screen** (GUI or text-mode)
-- [ ] **Disk selection** — list available drives (ATA enumeration)
-- [ ] **Partitioning** — create a **GPT** partition table on the target disk (UEFI requires GPT)
-  - [ ] Create an **EFI System Partition** (FAT32, ~512 MiB, type `EF00`) → `A:\`
-  - [ ] Create a root partition (remainder of disk, IXFS) → `C:\`
-- [ ] **Format** partitions:
-  - [ ] Write FAT32 BPB + empty FAT for ESP
-  - [ ] Run `ixfs_format()` on the root partition
-- [ ] **Copy files** — copy kernel ELF, initrd, and OS files to `C:\`
-- [ ] **Install GRUB for UEFI** — `grub-install --target=x86_64-efi` to the ESP
-- [ ] **Finalize** — display "Installation Complete, Reboot" message
-- [ ] Test in QEMU: boot ISO → install to a virtual disk → reboot from disk → OS loads → ✅
-- [ ] Commit: `"installer: full OS installer"`
-
-### 14.2 Bootable ISO Creation
-
-- [ ] Write `scripts/make-iso.sh` — automates ISO creation
-- [ ] Use `grub-mkrescue` or `xorriso` to produce `os-build.iso`
-- [ ] Verify ISO boots in QEMU
-- [ ] Sign the ISO with a checksum (`sha256sum os-build.iso > os-build.iso.sha256`)
-- [ ] Commit: `"release: ISO build script"`
+> **Deferred** — see [099-TODO-ISOInstaller.md](099-TODO-ISOInstaller.md)
 
 ---
 
 ## Phase 15 — Hyper-V Production Testing
 
-### 15.1 Hyper-V VM Setup
-
-- [ ] Enable Hyper-V on Windows host (if not already)
-- [ ] Open Hyper-V Manager → **New → Virtual Machine**
-- [ ] Choose **Generation 2** VM
-- [ ] Allocate ≥ 2 GB RAM, ≥ 1 vCPU
-- [ ] Create a virtual hard disk (≥ 20 GB, VHDX)
-- [ ] **Disable Secure Boot** (VM Settings → Security → uncheck)
-- [ ] Attach ISO: `\\wsl.localhost\Ubuntu\home\<user>\impossible-os\build\os-build.iso`
-
-### 15.2 Hyper-V Test Runs
-
-- [ ] **Test 1:** ISO boots to installer without errors
-- [ ] **Test 2:** Installer partitions and formats the virtual disk
-- [ ] **Test 3:** Installer copies OS files and installs bootloader
-- [ ] **Test 4:** VM reboots from disk → kernel loads → shell or desktop appears
-- [ ] **Test 5:** Keyboard and mouse work inside Hyper-V
-- [ ] **Test 6:** Filesystem operations work (create, read, delete files)
-- [ ] **Test 7:** Window manager renders correctly at Hyper-V's resolution
-- [ ] **Test 8:** Graceful shutdown/reboot via ACPI
-- [ ] Document any Hyper-V-specific issues and fixes
-
-### 15.3 Performance & Stability
-
-- [ ] Run the OS for 30+ minutes without crash
-- [ ] Stress-test memory allocator (allocate/free in a loop)
-- [ ] Stress-test process creation (fork-bomb protection)
-- [ ] Verify no memory leaks via serial log inspection
-- [ ] Commit: `"test: Hyper-V validation pass"`
+> **Deferred** — see [100-TODO-ProductionTest.md](100-TODO-ProductionTest.md)
 
 ---
 
