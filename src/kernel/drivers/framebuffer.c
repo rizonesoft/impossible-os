@@ -209,29 +209,49 @@ void fb_init(void)
 
 void fb_swap(void)
 {
+    uint32_t *src;
+    uint32_t *dst;
+    uint32_t count;
+    uint32_t hw_stride;
+
     if (!fb_ready)
         return;
 
-    /* If back_buf == hw_addr we're in fallback mode, nothing to copy */
     if (back_buf == hw_addr)
         return;
 
-    /* Disable interrupts so the hardware FB is never half-updated */
+    hw_stride = fb_pitch / (fb_bpp / 8);
+
+    /* Use local copies so rep movsd doesn't corrupt our global pointers */
+    src = back_buf;
+    dst = hw_addr;
+
+    /* Disable interrupts so HW FB is never half-updated */
     __asm__ volatile ("cli");
 
-    /* Fast bulk copy using rep movsd (copies 4 bytes per iteration).
-     * Much faster than a C loop — the CPU optimizes this internally. */
-    {
-        uint32_t count = fb_stride * fb_height;  /* total 32-bit pixels */
+    /* If strides match, copy the whole buffer in one shot */
+    if (fb_stride == hw_stride) {
+        count = fb_stride * fb_height;
         __asm__ volatile (
             "rep movsd"
-            : "+S"(back_buf), "+D"(hw_addr), "+c"(count)
+            : "+S"(src), "+D"(dst), "+c"(count)
             :
             : "memory"
         );
-        /* Restore pointers (rep movsd advances them) */
-        back_buf -= fb_stride * fb_height;
-        hw_addr  -= fb_stride * fb_height;
+    } else {
+        /* Different strides — copy row by row */
+        uint32_t y;
+        for (y = 0; y < fb_height; y++) {
+            uint32_t *row_src = back_buf + y * fb_stride;
+            uint32_t *row_dst = hw_addr  + y * hw_stride;
+            count = fb_width;
+            __asm__ volatile (
+                "rep movsd"
+                : "+S"(row_src), "+D"(row_dst), "+c"(count)
+                :
+                : "memory"
+            );
+        }
     }
 
     __asm__ volatile ("sti");

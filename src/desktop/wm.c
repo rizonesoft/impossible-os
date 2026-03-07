@@ -513,23 +513,10 @@ static void blit_client(const struct wm_window *w)
 {
     int32_t cx = client_x(w);
     int32_t cy = client_y(w);
-    uint32_t scr_w = fb_get_width();
-    uint32_t scr_h = fb_get_height();
-    uint32_t row, col;
 
-    for (row = 0; row < w->height; row++) {
-        uint32_t sy = (uint32_t)(cy + (int32_t)row);
-        if (sy >= scr_h)
-            break;
-
-        for (col = 0; col < w->width; col++) {
-            uint32_t sx = (uint32_t)(cx + (int32_t)col);
-            if (sx >= scr_w)
-                break;
-
-            fb_put_pixel(sx, sy, w->framebuffer[row * w->fb_pitch + col]);
-        }
-    }
+    /* Use fb_blit for fast row-level copy */
+    fb_blit((uint32_t)cx, (uint32_t)cy,
+            w->framebuffer, w->width, w->height, w->fb_pitch);
 }
 
 /* Sort order for compositing — sort active windows by z_order, ascending */
