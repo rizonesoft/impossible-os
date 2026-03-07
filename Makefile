@@ -44,9 +44,11 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
                -m 2G \
                -serial stdio \
+               -vga none \
+               -device VGA,xres=1280,yres=720 \
                -device rtl8139,netdev=net0 \
                -netdev user,id=net0 \
-               -display gtk \
+               -device virtio-tablet-pci \
                -no-reboot
 
 # --- Source Discovery ---
@@ -65,7 +67,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all boot kernel iso run run-debug clean
+.PHONY: all boot kernel iso run run-debug run-log clean
 
 ## all: Build everything (bootloader + kernel + ISO)
 all: iso
@@ -91,10 +93,19 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@# Build the initrd packer tool (host binary)
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -o $(BUILD_DIR)/tools/make-initrd tools/make-initrd.c
-	@# Create test files and pack initrd
+	@# Build jpg2raw converter (uses stb_image)
+	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/jpg2raw tools/jpg2raw.c -lm -Itools
+	@# Create initrd files directory and test files
 	@mkdir -p $(BUILD_DIR)/initrd_files
 	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
 	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
+	@# Convert wallpaper background image to raw BGRA
+	$(BUILD_DIR)/tools/jpg2raw resources/backgrounds/background.jpg \
+		$(BUILD_DIR)/initrd_files/wallpaper.raw 1280 720 2>&1
+	@cp $(BUILD_DIR)/initrd_files/wallpaper.raw $(BUILD_DIR)/initrd_files/bg.raw
+	@# Convert start button icon (32x32 PNG with alpha)
+	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
+		$(BUILD_DIR)/initrd_files/start_icon.raw 32 32 2>&1
 	@# Build userland libc
 	@mkdir -p $(BUILD_DIR)/user/lib
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
@@ -144,7 +155,10 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 		$(BUILD_DIR)/initrd_files/hello.txt \
 		$(BUILD_DIR)/initrd_files/readme.txt \
 		$(BUILD_DIR)/initrd_files/hello.exe \
-		$(BUILD_DIR)/initrd_files/shell.exe
+		$(BUILD_DIR)/initrd_files/shell.exe \
+		$(BUILD_DIR)/initrd_files/wallpaper.raw \
+		$(BUILD_DIR)/initrd_files/bg.raw \
+		$(BUILD_DIR)/initrd_files/start_icon.raw
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf
 	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
@@ -160,12 +174,36 @@ run: $(ISO_FILE)
 		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
 	fi
-	GDK_BACKEND=x11 $(QEMU) $(QEMU_FLAGS)
+	$(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: $(ISO_FILE)
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
 	$(QEMU) $(QEMU_FLAGS) -s -S -d int,cpu_reset
+
+## run-log: Launch QEMU with serial output captured to serial.log
+run-log: $(ISO_FILE)
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@if [ ! -f $(BUILD_DIR)/disk.img ]; then \
+		qemu-img create -f raw $(BUILD_DIR)/disk.img 64M && \
+		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
+		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
+		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
+	fi
+	$(QEMU) \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-cdrom $(ISO_FILE) \
+		-drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
+		-m 2G \
+		-serial file:serial.log \
+		-vga none \
+		-device VGA,xres=1280,yres=720 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-no-reboot
+	@echo "[LOG] Serial output saved to serial.log"
 
 ## clean: Remove all build artifacts
 clean:
