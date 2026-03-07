@@ -31,6 +31,7 @@
 #include "kernel/fs/initrd.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/fs/ixfs.h"
+#include "kernel/fs/mbr.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
@@ -76,6 +77,20 @@ static int blkdev_ahci_write(uint64_t lba, uint32_t count, const void *buf,
 {
     int port_idx = (int)(uintptr_t)driver_data;
     return ahci_write(port_idx, lba, count, (void *)buf);
+}
+
+static int blkdev_ata_read(uint64_t lba, uint32_t count, void *buf,
+                            void *driver_data)
+{
+    (void)driver_data;
+    return ata_read_sectors((uint32_t)lba, (uint8_t)count, buf);
+}
+
+static int blkdev_ata_write(uint64_t lba, uint32_t count, const void *buf,
+                             void *driver_data)
+{
+    (void)driver_data;
+    return ata_write_sectors((uint32_t)lba, (uint8_t)count, buf);
 }
 
 /* External: Multiboot2 parser */
@@ -128,9 +143,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             bd.name[0]='a'; bd.name[1]='t'; bd.name[2]='a'; bd.name[3]='0'; bd.name[4]='\0';
             bd.sector_size  = 512;
             bd.sector_count = (uint64_t)drv->sectors;
-            bd.read  = (blkdev_read_fn)0;  /* ATA PIO not wrapped yet */
-            bd.write = (blkdev_write_fn)0;
-            /* Skip — ATA PIO has incompatible API (uint32_t lba, uint8_t count) */
+            bd.read  = blkdev_ata_read;
+            bd.write = blkdev_ata_write;
+            bd.driver_data  = (void *)0;
+            blkdev_register(&bd);
         }
 
         /* VirtIO-blk */
@@ -247,6 +263,37 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
+
+    /* Step 11b: Scan block devices for MBR partition tables.
+     * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli. */
+    {
+        int bi;
+        for (bi = 0; bi < blkdev_count(); bi++) {
+            const struct blkdev *dev = blkdev_get_by_index(bi);
+            uint8_t sect[512];
+            if (!dev) continue;
+
+            if (blkdev_read(dev, 0, 1, sect) == 0) {
+                struct mbr_table tbl = mbr_parse(sect);
+                if (tbl.valid && tbl.count > 0) {
+                    int pi;
+                    printk("[MBR] %s: %u partition(s)\n",
+                           dev->name, (uint64_t)tbl.count);
+                    for (pi = 0; pi < tbl.count; pi++) {
+                        uint64_t mb = (uint64_t)tbl.parts[pi].sector_count
+                                    * 512 / (1024 * 1024);
+                        printk("  p%u: %s  LBA %u  %u MiB",
+                               (uint64_t)(pi + 1),
+                               mbr_type_name(tbl.parts[pi].type),
+                               (uint64_t)tbl.parts[pi].start_lba, mb);
+                        if (tbl.parts[pi].status == 0x80)
+                            printk(" [boot]");
+                        printk("\n");
+                    }
+                }
+            }
+        }
+    }
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();
