@@ -160,7 +160,7 @@ run: $(ISO_FILE)
 		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
 	fi
-	$(QEMU) $(QEMU_FLAGS)
+	GDK_BACKEND=x11 $(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: $(ISO_FILE)
