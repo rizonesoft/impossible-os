@@ -30,6 +30,8 @@
 #include "task.h"
 #include "syscall.h"
 
+#include "mouse.h"
+
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
 
@@ -130,6 +132,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 9: Initialize PS/2 keyboard */
     keyboard_init();
+
+    /* Step 10a: Initialize PS/2 mouse */
+    mouse_init();
 
     /* Step 10: PCI bus scan and NIC init */
     pci_scan();
