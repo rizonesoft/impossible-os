@@ -24,3 +24,4 @@ serial.log
 # OS-specific
 .DS_Store
 Thumbs.db
+.build_number

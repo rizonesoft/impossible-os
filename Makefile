@@ -52,6 +52,24 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -rtc base=localtime \
                -no-reboot
 
+# --- Version Information ---
+# Read SemVer from VERSION file, auto-increment build number
+VERSION_FILE   := VERSION
+BUILD_NUM_FILE := .build_number
+VERSION_RAW    := $(shell cat $(VERSION_FILE) 2>/dev/null | tr -d '[:space:]')
+VERSION_MAJOR  := $(word 1,$(subst ., ,$(VERSION_RAW)))
+VERSION_MINOR  := $(word 2,$(subst ., ,$(VERSION_RAW)))
+VERSION_PATCH  := $(word 3,$(subst ., ,$(VERSION_RAW)))
+BUILD_NUMBER   := $(shell cat $(BUILD_NUM_FILE) 2>/dev/null | tr -d '[:space:]')
+GIT_HASH       := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
+
+# Inject version into CFLAGS
+CFLAGS += -DVERSION_MAJOR=$(VERSION_MAJOR) \
+          -DVERSION_MINOR=$(VERSION_MINOR) \
+          -DVERSION_PATCH=$(VERSION_PATCH) \
+          -DVERSION_BUILD=$(BUILD_NUMBER) \
+          -DVERSION_GIT_HASH='"$(GIT_HASH)"'
+
 # --- Source Discovery ---
 # Assembly sources (boot + kernel)
 ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' 2>/dev/null)
@@ -68,10 +86,16 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all boot kernel iso run run-debug run-log clean
+.PHONY: all _increment_build boot kernel iso run run-debug run-log clean
 
 ## all: Build everything (bootloader + kernel + ISO)
-all: iso
+all: _increment_build iso
+	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_HASH))"
+
+## _increment_build: Auto-increment the build number
+_increment_build:
+	@expr $$(cat $(BUILD_NUM_FILE) 2>/dev/null || echo 0) + 1 > $(BUILD_NUM_FILE)
+	@echo "[BUILD] #$$(cat $(BUILD_NUM_FILE))"
 
 ## boot: Assemble the bootloader
 boot: $(ASM_OBJS)

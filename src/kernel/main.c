@@ -38,6 +38,7 @@
 #include "kernel/drivers/pit.h"
 #include "desktop/desktop.h"
 #include "kernel/acpi.h"
+#include "kernel/version.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -165,6 +166,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     printk("      Impossible OS\n");
     printk("  ================================================\n");
     fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+    version_print();
     printk("  Architecture: x86-64 (Long Mode)\n");
     printk("  Boot: UEFI via GRUB + Multiboot2\n");
     printk("\n");
