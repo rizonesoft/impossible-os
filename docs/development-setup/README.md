@@ -6,9 +6,11 @@ This directory documents the complete development environment for Impossible OS.
 
 | Document | Description |
 |----------|-------------|
+| [Repository](repository.md) | Git setup, directory structure, naming conventions |
+| [Build System](build-system.md) | Makefile targets, build pipeline, versioning integration |
 | [WSL Sandbox](wsl-sandbox.md) | WSL 2 setup, workspace isolation, safety boundaries |
 | [Toolchain](toolchain.md) | Cross-compiler, NASM, build tools, and verified versions |
-| [QEMU & UEFI](qemu-uefi.md) | QEMU configuration, OVMF firmware, testing workflow |
+| [QEMU & UEFI](qemu-uefi.md) | QEMU configuration, OVMF firmware, testing and debugging |
 | [Agent Configuration](agent-config.md) | IDE rules, skills, workflows, and coding conventions |
 
 ## Quick Reference
