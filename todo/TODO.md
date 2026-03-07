@@ -533,10 +533,10 @@
 
 ### 12.3 ACPI (Power Management)
 
-- [ ] Parse **RSDP** → **RSDT** → **FADT**
-- [ ] Implement `acpi_shutdown()` — write to PM1a_CNT register
-- [ ] Implement `acpi_reboot()`
-- [ ] Commit: `"kernel: ACPI power management"`
+- [x] Parse **RSDP** → **RSDT** → **FADT** ✅ XSDT support + checksum validation
+- [x] Implement `acpi_shutdown()` — write to PM1a_CNT register ✅ DSDT \_S5 parsing + QEMU/Bochs fallback
+- [x] Implement `acpi_reboot()` ✅ ACPI reset reg → keyboard controller → triple fault
+- [x] Commit: `"kernel: ACPI power management"` ✅ `804eccb`
 
 ### 12.4 PCI Bus Enumeration
 
