@@ -45,14 +45,14 @@
 
 ### 2.1 Pipes
 
-- [ ] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
-- [ ] Implement `pipe_create(fds[2])` — allocate pipe, return read/write file descriptors
-- [ ] Implement `pipe_write(pipe, data, len)` — write bytes, block if full
-- [ ] Implement `pipe_read(pipe, buf, len)` — read bytes, block if empty
-- [ ] Implement `pipe_close(pipe, end)` — close one end, SIGPIPE if writing to closed pipe
-- [ ] Add `SYS_PIPE` syscall (number 33)
-- [ ] Test: shell commands piping output (e.g., `ls | grep`)
-- [ ] Commit: `"ipc: pipe implementation"`
+- [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
+- [x] Implement `pipe_create(fds[2])` — allocate pipe, return read/write file descriptors
+- [x] Implement `pipe_write(pipe, data, len)` — write bytes, block if full
+- [x] Implement `pipe_read(pipe, buf, len)` — read bytes, block if empty
+- [x] Implement `pipe_close(pipe, end)` — close one end, SIGPIPE if writing to closed pipe
+- [x] Add `SYS_PIPE` syscall (number 33)
+- [x] Test: shell commands piping output (e.g., `ls | grep`)
+- [x] Commit: `"ipc: pipe implementation"`
 
 ### 2.2 Signals
 
