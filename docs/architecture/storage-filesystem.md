@@ -100,6 +100,31 @@ Example boot output:
   p3: IXFS  LBA 36864–102399  32 MiB  "Impossible OS"
 ```
 
+### Partition Scanner
+
+At boot, `partition_scan_all()` iterates over every registered block device and:
+
+1. Reads sector 0, tries GPT (if protective MBR `0xEE` detected), otherwise falls back to MBR
+2. Creates **sub-block-devices** (e.g., `disk0p1`, `disk0p2`) that offset all LBA reads/writes by the partition's start LBA
+3. Probes each partition for known filesystem signatures:
+   - **FAT32**: Boot signature `0x55AA` + `"FAT32"` at BPB offset 82
+   - **IXFS**: Magic `0x49584653` at superblock offset 0
+   - **ext2**: Magic `0xEF53` at superblock byte 1080
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/fs/partition.c` | Unified scanner + sub-blkdev layer |
+| `include/kernel/fs/partition.h` | API and partition info struct |
+
+Example boot output:
+```text
+[GPT] virtio0: 3 partition(s)
+  Disk 0, Partition 1: Unknown, 1 MiB (EFI System)
+  Disk 0, Partition 2: Unknown, 16 MiB (Basic Data)
+  Disk 0, Partition 3: Unknown, 32 MiB (IXFS)
+```
+
+
 ## ATA/IDE Disk Driver
 
 ### Key Files

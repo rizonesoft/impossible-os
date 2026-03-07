@@ -33,6 +33,7 @@
 #include "kernel/fs/ixfs.h"
 #include "kernel/fs/mbr.h"
 #include "kernel/fs/gpt.h"
+#include "kernel/fs/partition.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
@@ -265,76 +266,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
 
-    /* Step 11b: Scan block devices for MBR/GPT partition tables.
-     * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli. */
-    {
-        int bi;
-        for (bi = 0; bi < blkdev_count(); bi++) {
-            const struct blkdev *dev = blkdev_get_by_index(bi);
-            uint8_t sect[512];
-            if (!dev) continue;
-
-            if (blkdev_read(dev, 0, 1, sect) != 0)
-                continue;
-
-            struct mbr_table mtbl = mbr_parse(sect);
-            if (!mtbl.valid)
-                continue;
-
-            /* Check for GPT protective MBR (type 0xEE) */
-            {
-                int is_gpt = 0;
-                int mi;
-                for (mi = 0; mi < mtbl.count; mi++) {
-                    if (mtbl.parts[mi].type == MBR_TYPE_GPT) {
-                        is_gpt = 1;
-                        break;
-                    }
-                }
-
-                if (is_gpt) {
-                    struct gpt_table gtbl = gpt_parse(dev, sect);
-                    if (gtbl.valid && gtbl.count > 0) {
-                        int gi;
-                        printk("[GPT] %s: %u partition(s)\n",
-                               dev->name, (uint64_t)gtbl.count);
-                        for (gi = 0; gi < gtbl.count; gi++) {
-                            uint64_t sectors = gtbl.parts[gi].end_lba
-                                             - gtbl.parts[gi].start_lba + 1;
-                            uint64_t mb = sectors * 512 / (1024 * 1024);
-                            printk("  p%u: %s  LBA %u–%u  %u MiB",
-                                   (uint64_t)(gi + 1),
-                                   gpt_type_name(&gtbl.parts[gi].type_guid),
-                                   gtbl.parts[gi].start_lba,
-                                   gtbl.parts[gi].end_lba, mb);
-                            if (gtbl.parts[gi].name[0])
-                                printk("  \"%s\"", gtbl.parts[gi].name);
-                            printk("\n");
-                        }
-                    }
-                    continue;  /* Skip MBR output for GPT disks */
-                }
-            }
-
-            /* Regular MBR partitions */
-            if (mtbl.count > 0) {
-                int pi;
-                printk("[MBR] %s: %u partition(s)\n",
-                       dev->name, (uint64_t)mtbl.count);
-                for (pi = 0; pi < mtbl.count; pi++) {
-                    uint64_t mb = (uint64_t)mtbl.parts[pi].sector_count
-                                * 512 / (1024 * 1024);
-                    printk("  p%u: %s  LBA %u  %u MiB",
-                           (uint64_t)(pi + 1),
-                           mbr_type_name(mtbl.parts[pi].type),
-                           (uint64_t)mtbl.parts[pi].start_lba, mb);
-                    if (mtbl.parts[pi].status == 0x80)
-                        printk(" [boot]");
-                    printk("\n");
-                }
-            }
-        }
-    }
+    /* Step 11b: Scan block devices for partition tables (GPT first, MBR fallback).
+     * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
+     * Creates sub-blkdevs for each partition and probes filesystems. */
+    partition_scan_all();
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();

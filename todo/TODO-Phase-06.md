@@ -90,24 +90,24 @@
 
 ### 2.2 GPT Partition Table
 
-- [ ] Create `src/kernel/fs/gpt.c`
-- [ ] Detect GPT: check protective MBR at LBA 0 (type `0xEE`)
-- [ ] Parse GPT header at LBA 1: verify signature "EFI PART", validate CRC32
-- [ ] Parse partition entry array (128-byte entries, starting at LBA 2)
-- [ ] Define `struct gpt_entry` (type_guid, unique_guid, start_lba, end_lba, name)
-- [ ] Recognize GUIDs: EFI System Partition, Microsoft Basic Data, custom IXFS GUID
-- [ ] CRC32 validation of header + partition array
-- [ ] Commit: `"fs: GPT partition table parsing"`
+- [x] Create `src/kernel/fs/gpt.c`
+- [x] Detect GPT: check protective MBR at LBA 0 (type `0xEE`)
+- [x] Parse GPT header at LBA 1: verify signature "EFI PART", validate CRC32
+- [x] Parse partition entry array (128-byte entries, starting at LBA 2)
+- [x] Define `struct gpt_entry` (type_guid, unique_guid, start_lba, end_lba, name)
+- [x] Recognize GUIDs: EFI System Partition, Microsoft Basic Data, custom IXFS GUID
+- [x] CRC32 validation of header + partition array
+- [x] Commit: `"fs: GPT partition table parsing"`
 
 ### 2.3 Partition Scanner
 
-- [ ] Create `src/kernel/fs/partition.c`
-- [ ] On each registered blkdev: try GPT first, fall back to MBR
-- [ ] For each discovered partition: create a sub-blkdev (offset reads/writes by partition start LBA)
-- [ ] Auto-detect filesystem on each partition (probe FAT32, ext2, IXFS magic bytes)
-- [ ] Log discovered partitions via serial: "Disk 0, Partition 1: FAT32, 2.0 GB"
-- [ ] Call at boot after disk drivers initialize
-- [ ] Commit: `"fs: partition scanner & auto-detect"`
+- [x] Create `src/kernel/fs/partition.c`
+- [x] On each registered blkdev: try GPT first, fall back to MBR
+- [x] For each discovered partition: create a sub-blkdev (offset reads/writes by partition start LBA)
+- [x] Auto-detect filesystem on each partition (probe FAT32, ext2, IXFS magic bytes)
+- [x] Log discovered partitions via serial: "Disk 0, Partition 1: FAT32, 2.0 GB"
+- [x] Call at boot after disk drivers initialize
+- [x] Commit: `"fs: partition scanner & auto-detect"`
 
 ---
 
