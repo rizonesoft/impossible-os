@@ -458,9 +458,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
-        /* Main thread idles forever while shell runs */
-        for (;;)
+        /* Main thread idles while shell runs; renders mouse cursor */
+        for (;;) {
+            mouse_draw_cursor();
+            fb_swap();
             __asm__ volatile("hlt");
+        }
     }
 
 halt:
