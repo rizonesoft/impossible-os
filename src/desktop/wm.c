@@ -60,6 +60,12 @@ static void mark_dirty(void)
     needs_redraw = 1;
 }
 
+/* Public version for external callers (e.g., cursor movement) */
+void wm_mark_dirty(void)
+{
+    needs_redraw = 1;
+}
+
 /* Get the total outer width/height including decorations */
 static uint32_t outer_width(const struct wm_window *w)
 {

@@ -523,8 +523,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     /* Dispatch mouse events to WM (may set dirty flag) */
                     wm_handle_mouse(ms.x, ms.y, ms.buttons);
 
-                    /* Composite all windows to the back buffer (skips
-                     * if WM dirty flag is clear) */
+                    /* Cursor moved — force full redraw to erase old cursor
+                     * pixels from the back buffer */
+                    if (cursor_moved || first_frame)
+                        wm_mark_dirty();
+
+                    /* Composite all windows to the back buffer */
                     wm_composite();
 
                     /* Draw mouse cursor on top of composited scene */
