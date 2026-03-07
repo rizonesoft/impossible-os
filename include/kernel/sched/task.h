@@ -33,7 +33,7 @@
 
 /* Limits */
 #define TASK_MAX         32          /* max concurrent tasks */
-#define THREAD_MAX       8           /* max threads per task */
+#define THREAD_MAX       16          /* max threads per task */
 #define THREAD_STACK_SIZE 8192       /* 8 KiB per thread stack */
 #define TASK_STACK_SIZE  8192        /* 8 KiB per kernel task stack */
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */

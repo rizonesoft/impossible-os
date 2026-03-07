@@ -30,6 +30,7 @@
 #include "kernel/fs/ixfs.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
+#include "kernel/ipc/pipe.h"
 
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
@@ -526,6 +527,55 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("semaphore thread_create failed\n");
         }
     }
+
+    /* === Pipe test (writer → reader) === */
+    {
+        extern int pipe_test_id;
+        extern volatile uint32_t pipe_test_ok;
+        extern void pipe_writer_func(void *arg);
+        extern void pipe_reader_func(void *arg);
+
+        int pipe_fds[2];
+        int ptid_w, ptid_r;
+
+        pipe_init();
+        pipe_test_ok = 0;
+        printk("\n  Pipe test: writer thread sends data to reader thread\n");
+
+        if (pipe_create(pipe_fds) == 0) {
+            pipe_test_id = pipe_fds[0];  /* same ID for both ends */
+
+            ptid_r = thread_create(pipe_reader_func, (void *)0, 0);
+            ptid_w = thread_create(pipe_writer_func, (void *)0, 0);
+
+            if (ptid_w >= 0 && ptid_r >= 0) {
+                thread_join((uint32_t)ptid_w);
+                thread_join((uint32_t)ptid_r);
+
+                if (pipe_test_ok) {
+                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                    printk("[OK] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("Pipe test passed\n");
+                } else {
+                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                    printk("[FAIL] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("Pipe test: data mismatch\n");
+                }
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("pipe thread_create failed\n");
+            }
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("pipe_create failed\n");
+        }
+    }
     /* === User mode test === */
     {
         extern void user_test_func(void);
@@ -819,6 +869,43 @@ void sem_consumer_func(void *arg)
         sem_consumed++;
         printk("    [Consumer] consumed item %u\n", (uint64_t)sem_consumed);
     }
+}
+
+/* --- Pipe test functions --- */
+
+#include "kernel/ipc/pipe.h"
+
+int pipe_test_id = -1;
+volatile uint32_t pipe_test_ok = 0;
+
+static const char pipe_test_msg[] = "Hello from pipe!";
+
+void pipe_writer_func(void *arg)
+{
+    (void)arg;
+    pipe_write(pipe_test_id, pipe_test_msg, 16);
+    pipe_close(pipe_test_id, PIPE_WRITE);
+}
+
+void pipe_reader_func(void *arg)
+{
+    char buf[32];
+    int32_t n;
+    uint32_t i;
+    (void)arg;
+
+    for (i = 0; i < 32; i++) buf[i] = 0;
+    n = pipe_read(pipe_test_id, buf, 32);
+    if (n == 16) {
+        /* Verify the message */
+        uint32_t match = 1;
+        for (i = 0; i < 16; i++) {
+            if (buf[i] != pipe_test_msg[i]) { match = 0; break; }
+        }
+        if (match) pipe_test_ok = 1;
+    }
+    printk("    [Reader] got %d bytes: \"%s\"\n", (uint64_t)(uint32_t)n, buf);
+    pipe_close(pipe_test_id, PIPE_READ);
 }
 
 /* --- Test thread functions for preemptive scheduling --- */

@@ -27,6 +27,7 @@
 #define SYS_SHUTDOWN 14  /* sys_shutdown()             → no return */
 #define SYS_PING     15  /* sys_ping(ip_addr)           → 0 / -1 */
 #define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
+#define SYS_PIPE     33  /* sys_pipe(fds)                → 0 / -1 */
 
 /* File descriptors */
 #define STDOUT_FD   1
