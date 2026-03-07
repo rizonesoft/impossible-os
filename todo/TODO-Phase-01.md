@@ -11,15 +11,15 @@
 
 ### 1.1 Kernel Threads
 
-- [ ] Define `thread_t` struct (id, stack_ptr, stack_base, stack_size, state, parent_task)
-- [ ] Implement `thread_create(entry, arg, stack_size)` — allocate stack, init context
-- [ ] Implement `thread_exit(status)` — clean up, notify joiners
-- [ ] Implement `thread_join(thread)` — block until target thread exits
-- [ ] Implement `thread_yield()` — voluntary context switch to next thread
-- [ ] Add per-task thread list (linked list of `thread_t` within `struct task`)
-- [ ] Update scheduler to schedule threads (not just tasks)
-- [ ] Test: two threads in one process sharing globals
-- [ ] Commit: `"sched: kernel threads"`
+- [x] Define `thread_t` struct (id, stack_ptr, stack_base, stack_size, state, parent_task)
+- [x] Implement `thread_create(entry, arg, stack_size)` — allocate stack, init context
+- [x] Implement `thread_exit(status)` — clean up, notify joiners
+- [x] Implement `thread_join(thread)` — block until target thread exits
+- [x] Implement `thread_yield()` — voluntary context switch to next thread
+- [x] Add per-task thread list (linked list of `thread_t` within `struct task`)
+- [x] Update scheduler to schedule threads (not just tasks)
+- [x] Test: two threads in one process sharing globals
+- [x] Commit: `"sched: kernel threads"`
 
 ### 1.2 Mutexes
 
