@@ -17,6 +17,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/ipc/signal.h"
 
 /* Task states */
 #define TASK_RUNNING    0   /* currently on the CPU */
@@ -81,6 +82,8 @@ struct task {
     /* --- Per-task thread list --- */
     struct thread threads[THREAD_MAX];   /* thread pool for this task */
     uint32_t     num_threads;            /* number of threads (>= 1, thread 0 = main) */
+    /* --- Signal state --- */
+    struct signal_state signals;         /* per-task signal handlers + pending mask */
 };
 
 /* Task entry function type */

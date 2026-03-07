@@ -12,6 +12,7 @@
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/printk.h"
+#include "kernel/ipc/signal.h"
 
 /* --- Port I/O --- */
 #define KB_DATA_PORT  0x60
@@ -176,6 +177,12 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
         c = (char)(c - 'a' + 1);
     else if (ctrl_held && c >= 'A' && c <= 'Z')
         c = (char)(c - 'A' + 1);
+
+    /* Ctrl+C (char code 3) → dispatch SIGINT to foreground task */
+    if (c == 3) {
+        signal_ctrl_c();
+        goto done;
+    }
 
     /* Push printable/control characters into the buffer */
     if (c != 0)

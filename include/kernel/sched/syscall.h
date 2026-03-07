@@ -28,6 +28,7 @@
 #define SYS_PING     15  /* sys_ping(ip_addr)           → 0 / -1 */
 #define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
 #define SYS_PIPE     33  /* sys_pipe(fds)                → 0 / -1 */
+#define SYS_SIGNAL   34  /* sys_signal(sig, handler)      → old handler */
 
 /* File descriptors */
 #define STDOUT_FD   1

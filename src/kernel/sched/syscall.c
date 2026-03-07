@@ -19,6 +19,7 @@
 #include "kernel/net/net.h"
 #include "kernel/acpi.h"
 #include "kernel/ipc/pipe.h"
+#include "kernel/ipc/signal.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)
@@ -291,6 +292,11 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         int *user_fds = (int *)arg1;
         if (!user_fds) { ret = -1; break; }
         ret = (int64_t)pipe_create(user_fds);
+        break;
+    }
+    case SYS_SIGNAL: {
+        signal_handler_t old = signal_handler((int)arg1, (signal_handler_t)arg2);
+        ret = (int64_t)(uint64_t)old;
         break;
     }
     default:

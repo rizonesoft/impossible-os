@@ -15,6 +15,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
 #include "kernel/elf.h"
+#include "kernel/ipc/signal.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81
@@ -154,6 +155,9 @@ void task_init(void)
     tasks[0].threads[0].join_tid = -1;
     tasks[0].num_threads = 1;
 
+    /* Initialize signal state for PID 0 */
+    signal_init_task(&tasks[0].signals);
+
     printk("[OK] Scheduler initialized (PID 0 = main, quantum = %u ticks)\n",
            (uint64_t)SCHED_QUANTUM);
 
@@ -249,6 +253,7 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].num_threads = 1;
+    signal_init_task(&tasks[pid].signals);
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (kernel)\n",
@@ -343,6 +348,7 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
     tasks[pid].num_threads = 1;
+    signal_init_task(&tasks[pid].signals);
     num_tasks++;
 
     printk("[OK] Task %u (\"%s\") created (user mode)\n",
@@ -685,6 +691,11 @@ void task_exit(int32_t status)
            (uint64_t)pid,
            tasks[pid].name ? tasks[pid].name : "?",
            (uint64_t)(uint32_t)status);
+
+    /* Send SIGCHLD to parent */
+    if (pid != 0) {
+        signal_send(tasks[pid].parent_pid, SIGCHLD);
+    }
 
     /* Wake parent if it's waiting on us */
     for (i = 0; i < num_tasks; i++) {
