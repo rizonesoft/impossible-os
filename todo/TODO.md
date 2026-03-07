@@ -540,11 +540,11 @@
 
 ### 12.4 PCI Bus Enumeration
 
-- [ ] Write `src/kernel/drivers/pci.c` / `pci.h`
-- [ ] Enumerate all PCI devices (bus, device, function scan)
-- [ ] Read vendor/device IDs, class codes, BARs
-- [ ] Implement PCI config space read/write
-- [ ] Commit: `"drivers: PCI bus enumeration"`
+- [x] Write `src/kernel/drivers/pci.c` / `pci.h` ✅ already implemented (222 lines)
+- [x] Enumerate all PCI devices (bus, device, function scan) ✅ `pci_scan()` called at boot
+- [x] Read vendor/device IDs, class codes, BARs ✅ `pci_find_device()` + `struct pci_device`
+- [x] Implement PCI config space read/write ✅ `pci_read{8,16,32}()` / `pci_write{16,32}()`
+- [x] Commit: `"drivers: PCI bus enumeration"` ✅ previously committed
 
 ---
 
