@@ -221,11 +221,17 @@ void fb_swap(void)
 
     hw_stride = fb_pitch / (fb_bpp / 8);
 
+    /* Disable interrupts during the copy so the hardware FB is never
+     * in a half-updated state (prevents visible tearing/flicker). */
+    __asm__ volatile ("cli");
+
     for (y = 0; y < fb_height; y++) {
         mem_cpy32(hw_addr + y * hw_stride,
                   back_buf + y * fb_stride,
                   fb_width);
     }
+
+    __asm__ volatile ("sti");
 }
 
 void fb_blit(uint32_t dst_x, uint32_t dst_y,
