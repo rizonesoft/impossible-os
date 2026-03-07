@@ -26,6 +26,7 @@ INCLUDE    := include
 BOOT_DIR   := $(SRC_DIR)/boot
 KERNEL_DIR := $(SRC_DIR)/kernel
 LIBC_DIR   := $(SRC_DIR)/libc
+DESKTOP_DIR:= $(SRC_DIR)/desktop
 
 ISO_DIR    := $(BUILD_DIR)/isodir
 ISO_FILE   := $(BUILD_DIR)/os-build.iso
@@ -53,7 +54,7 @@ ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' 2>/dev/null)
 ASM_OBJS := $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SRCS))
 
 # C sources (kernel + libc)
-C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) -name '*.c' 2>/dev/null)
+C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(DESKTOP_DIR) -name '*.c' 2>/dev/null)
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
 # All objects
