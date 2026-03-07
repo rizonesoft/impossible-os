@@ -37,6 +37,7 @@
 #include "desktop/font.h"
 #include "kernel/drivers/pit.h"
 #include "desktop/desktop.h"
+#include "kernel/acpi.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -212,6 +213,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("ACPI RSDP v%u at %p\n",
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
+
+        /* Parse RSDP → RSDT → FADT for power management */
+        acpi_init();
     }
 
     /* Heap test: alloc, write, free, realloc */

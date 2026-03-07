@@ -17,6 +17,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/net/net.h"
+#include "kernel/acpi.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)
@@ -261,15 +262,10 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = (int64_t)uptime();
         break;
     case SYS_REBOOT:
-        printk("[REBOOT] System rebooting...\n");
-        outb_sc(0x64, 0xFE);
-        for (;;) __asm__ volatile("hlt");
+        acpi_reboot();
         break;
     case SYS_SHUTDOWN:
-        printk("[SHUTDOWN] System shutting down...\n");
-        outw_sc(0x604, 0x2000);     /* QEMU ACPI power-off */
-        outw_sc(0xB004, 0x2000);    /* Bochs power-off */
-        for (;;) __asm__ volatile("hlt");
+        acpi_shutdown();
         break;
     case SYS_PING: {
         /* arg1 = IP address (big-endian), arg2 = seq number */
