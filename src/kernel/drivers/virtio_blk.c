@@ -69,6 +69,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     uint8_t status_byte = 0xFF;
     int d0, d1, d2;
     uint32_t timeout;
+    uint64_t rflags;
 
     if (!initialized)
         return -1;
@@ -126,7 +127,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     blk_vq.avail->idx++;
     __asm__ volatile ("mfence" ::: "memory");
 
-    /* Enable interrupts for IRQ delivery */
+    /* Enable interrupts for IRQ delivery. Save current RFLAGS first. */
+    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
     virtio_irq_fired = 0;
     __asm__ volatile ("sti");
 
@@ -143,7 +145,10 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
     }
 
-    __asm__ volatile ("cli");
+    /* Restore interrupt state if it was previously disabled (bit 9 in RFLAGS) */
+    if (!(rflags & (1 << 9))) {
+        __asm__ volatile ("cli");
+    }
 
     if (timeout == 0) {
         printk("[VIRTIO-BLK] I/O timeout (avail=%u, used=%u, status=%x)\n",
