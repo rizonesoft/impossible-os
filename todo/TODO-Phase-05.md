@@ -1,471 +1,639 @@
-# Phase 05 — Desktop Shell
+# Phase 05 — Core Applications
 
-> **Goal:** Build a complete, Windows 11-quality desktop shell experience with taskbar
-> window management, start menu, context menus, notification system, window snapping,
-> virtual desktops, drag-and-drop, and polished user-facing features like boot splash,
-> screensavers, night light, and quick settings.
-
----
-
-## 1. Taskbar Window List
-> *Research: [01_taskbar_window_list.md](research/phase_04_desktop_shell/01_taskbar_window_list.md)*
-
-### 1.1 Window Buttons on Taskbar
-
-- [ ] Define `struct taskbar_entry` (window ptr, title, icon, active flag, flashing flag)
-- [ ] Create `src/desktop/taskbar_winlist.c`
-- [ ] Implement `taskbar_add_window(win)` — add entry when window is created
-- [ ] Implement `taskbar_remove_window(win)` — remove entry when window is closed
-- [ ] Implement `taskbar_set_active(win)` — highlight the focused window's button
-- [ ] Implement `taskbar_flash(win)` — blink button to get user attention
-- [ ] Draw window buttons between start button and system tray
-- [ ] Active window button: highlighted with accent color + underline
-- [ ] Click a window button → focus/raise that window
-- [ ] Click the active window button → minimize it
-- [ ] Commit: `"desktop: taskbar window list"`
-
-### 1.2 Taskbar Button Context Menu
-
-- [ ] Right-click window button → context menu:
-  - [ ] "Close" → close window
-  - [ ] "Maximize" / "Restore" → toggle maximize
-  - [ ] "Minimize"
-  - [ ] *(Stretch)* "Move to Desktop ►" → move to virtual desktop
-- [ ] Commit: `"desktop: taskbar button context menu"`
-
-### 1.3 Window Peek (Aero Peek)
-> *Research: [13_window_peek.md](research/phase_04_desktop_shell/13_window_peek.md)*
-
-- [ ] Hover taskbar button for 500ms → make all other windows 10% opacity
-- [ ] Mouse leaves taskbar → restore all window opacity to 100%
-- [ ] "Show Desktop" peek → hover far-right corner of taskbar → all windows transparent
-- [ ] Click far-right corner → minimize all windows (show desktop toggle)
-- [ ] Codex: `System\Shell\EnablePeek = 1`
-- [ ] Commit: `"desktop: window peek (Aero Peek)"`
+> **Goal:** Deliver a suite of essential GUI applications that make Impossible OS
+> a usable daily environment: file manager, terminal emulator, settings panel,
+> text editor, calculator, paint program, and a collection of utility apps —
+> all built on a shared UI widget library.
 
 ---
 
-## 2. Start Menu
-> *Research: [02_start_menu.md](research/phase_04_desktop_shell/02_start_menu.md)*
+## 1. UI Widget Library (Shared)
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Shared UI Widget Library*
 
-### 2.1 Start Menu Layout
+### 1.1 Core Widgets
 
-- [ ] Create `src/desktop/start_menu.c`
-- [ ] Centered Windows 11 style layout:
-  - [ ] Search bar at top: "Search apps and files"
-  - [ ] **Pinned** section: grid of app icons (4 columns × 2 rows)
-  - [ ] **Recommended** section: recent files with timestamps
-  - [ ] **Footer**: user avatar + name (left), power button (right)
-- [ ] Acrylic blur background via `gfx_acrylic()`
-- [ ] Rounded corners + drop shadow
-- [ ] Commit: `"desktop: start menu layout"`
+- [ ] Create `include/ui.h` and `src/apps/ui/ui.c`
+- [ ] **Button** — `struct ui_button` with label, position, hover/press/disabled states
+  - [ ] `ui_button_draw(surface, btn)` — rounded rect with state colors
+  - [ ] `ui_button_hit(btn, mx, my)` — hit test
+- [ ] **Text Input** — `struct ui_textbox` with text, cursor_pos, focused
+  - [ ] `ui_textbox_draw(surface, tb)` — bordered input with blinking cursor
+  - [ ] `ui_textbox_key(tb, key)` — handle typing, backspace, delete, arrows
+  - [ ] Focus management (click to focus, Tab to next)
+- [ ] **Scroll Bar** — `struct ui_scrollbar` with value, max, page_size, vertical/horizontal
+  - [ ] `ui_scrollbar_draw(surface, sb)` — track + thumb
+  - [ ] Mouse drag support for thumb
+  - [ ] Mouse wheel scrolling
+- [ ] **Label** — static text rendering with alignment (left/center/right)
+- [ ] **Checkbox** — `[ ]` / `[✓]` toggle with label text
+- [ ] **Dropdown / ComboBox** — collapsed value + expandable option list
+- [ ] Commit: `"apps: UI widget library core"`
 
-### 2.2 Start Menu Data
+### 1.2 Menu Bar
 
-- [ ] Load pinned apps from Codex `User\{name}\Shell\PinnedApps`
-- [ ] Load recent files from Codex `User\{name}\Shell\RecentFiles`
-- [ ] Scan installed apps from `C:\Impossible\Bin\` and `C:\Programs\`
-- [ ] Display app icons from icon store
-- [ ] Commit: `"desktop: start menu data loading"`
+- [ ] Define `struct ui_menu_bar` (list of menu items, each with dropdown items)
+- [ ] `ui_menu_bar_draw(surface, menu)` — horizontal bar (File, Edit, View, Help)
+- [ ] `ui_menu_bar_click(menu, mx, my)` — open dropdown at correct position
+- [ ] Dropdown items: label, shortcut text, separator, callback
+- [ ] Keyboard shortcuts: Alt+F for File, Escape to close
+- [ ] Commit: `"apps: UI menu bar widget"`
 
-### 2.3 Start Menu Interaction
+### 1.3 Dialogs
 
-- [ ] Click start button (or Win key) → toggle start menu open/close
-- [ ] Click pinned app → launch app, close menu
-- [ ] Click recent file → open with associated app (`file_assoc_open`)
-- [ ] Power button → submenu: Shut down, Restart, Sleep, Lock
-- [ ] Search: filter apps + files by typed query
-- [ ] Slide-up animation from taskbar (200ms, `GFX_EASE_OUT_CUBIC`)
-- [ ] Click outside / press Escape → close menu
-- [ ] Commit: `"desktop: start menu interaction"`
+- [ ] **Open File Dialog** — `ui_dialog_open(path_out, max_len, filter)` — VFS browser
+  - [ ] File list with icons from icon store
+  - [ ] Filter by extension (e.g., "*.txt", "*.png")
+  - [ ] Navigate directories, address bar
+- [ ] **Save As Dialog** — `ui_dialog_save(path_out, max_len, filter)` — similar with filename input
+- [ ] **Message Dialog** — `ui_dialog_message(title, msg, type)` — OK / Yes/No / OK/Cancel
+- [ ] **Color Picker Dialog** — gradient square + hue slider + hex input
+- [ ] Commit: `"apps: UI dialog widgets (open/save/message)"`
 
----
+### 1.4 Advanced Widgets
 
-## 3. System Tray & Notifications
-> *Research: [03_systray_notifications.md](research/phase_04_desktop_shell/03_systray_notifications.md)*
-
-### 3.1 System Tray Icons
-
-- [ ] Create `src/desktop/systray.c`
-- [ ] Draw tray icon area to the left of the clock:
-  - [ ] 🔊 Volume icon — click → volume slider popup
-  - [ ] 🌐 Network icon — click → network status popup (IP, connected/disconnected)
-  - [ ] 🔔 Notification bell — click → open notification center
-- [ ] Update icons dynamically (e.g., network disconnected → different icon)
-- [ ] Commit: `"desktop: system tray icons"`
-
-### 3.2 Notification Toasts
-
-- [ ] Create `src/desktop/notify.c`
-- [ ] Implement `notify_send(title, msg, icon)` — display a toast notification
-- [ ] Implement `notify_dismiss(id)` — dismiss a specific notification
-- [ ] Toast slides in from bottom-right corner
-- [ ] Auto-dismiss after 5 seconds (configurable)
-- [ ] Show icon + title (bold) + message body + [Dismiss] button
-- [ ] Stack multiple toasts vertically
-- [ ] Commit: `"desktop: notification toasts"`
+- [ ] **Slider** — horizontal bar with draggable handle (for volume, brightness)
+- [ ] **Toggle Switch** — on/off slide switch (for settings)
+- [ ] **Progress Bar** — horizontal fill bar (for operations)
+- [ ] **Tab Bar** — horizontal tab strip with click-to-switch
+- [ ] **List View** — scrollable vertical list with selection
+- [ ] **Tree View** — expandable/collapsible hierarchical list (for device manager)
+- [ ] **Status Bar** — bottom information bar (line/col, file size, tool name)
+- [ ] Commit: `"apps: UI advanced widgets (slider, toggle, tabs, tree)"`
 
 ---
 
-## 4. Context Menus
-> *Research: [04_context_menus.md](research/phase_04_desktop_shell/04_context_menus.md)*
+## 2. File Manager
+> *Research: [01_file_manager.md](research/phase_05_core_apps/01_file_manager.md)*
 
-### 4.1 Context Menu System
+### 2.1 File Manager Core
 
-- [ ] Define `struct menu_item` (label, icon, callback, submenu ptr, separator, disabled, checked)
-- [ ] Create `src/desktop/context_menu.c`
-- [ ] Implement `context_menu_show(x, y, items, count)` — display menu at position
-- [ ] Render with rounded rect + drop shadow + Acrylic blur
-- [ ] Keyboard navigation: up/down arrows, Enter to select, Escape to close
-- [ ] Submenu support: `►` arrow, hover to open child menu
-- [ ] Separator lines between groups
-- [ ] Disabled items rendered grayed out
-- [ ] Checked items show checkmark
-- [ ] Auto-close when clicking outside
-- [ ] Commit: `"desktop: context menu system"`
+- [ ] Create `src/apps/filemgr/filemgr.c`
+- [ ] Window layout: toolbar + sidebar + file area + status bar
+- [ ] Navigation toolbar: Back (←), Forward (→), Up (↑), address bar
+- [ ] Address bar shows current path (`C:\Users\Default\Documents`)
+- [ ] File area: read directory via VFS, display files/folders
+- [ ] Icons from icon store: `icon_for_extension()` for each file
+- [ ] Double-click file → `file_assoc_open()` (open with associated app)
+- [ ] Double-click folder → navigate into it
+- [ ] Status bar: item count, folder/file breakdown, total size
+- [ ] Commit: `"apps: file manager core"`
 
-### 4.2 Desktop Context Menu
+### 2.2 Sidebar
 
-- [ ] Right-click desktop → context menu:
-  - [ ] View ► → Large icons, Medium, Small, List
-  - [ ] Sort by ► → Name, Date, Size, Type
-  - [ ] Refresh
-  - [ ] ─────
-  - [ ] New ► → Folder, Text Document, Shortcut
-  - [ ] ─────
-  - [ ] Paste
-  - [ ] ─────
-  - [ ] Display settings
-  - [ ] Personalize
-- [ ] Commit: `"desktop: desktop right-click menu"`
+- [ ] Quick Access section: Desktop, Documents, Downloads, Pictures
+- [ ] Drive section: list all mounted drives (C:\, D:\)
+- [ ] Click sidebar item → navigate to that path
+- [ ] Commit: `"apps: file manager sidebar"`
 
-### 4.3 File Context Menu
+### 2.3 View Modes
 
-- [ ] Right-click file/icon → context menu:
-  - [ ] Open
-  - [ ] Open with... ►
-  - [ ] ─────
-  - [ ] Cut / Copy / Paste
-  - [ ] Delete (sends to recycle bin)
-  - [ ] Rename
-  - [ ] ─────
-  - [ ] Properties
-- [ ] Commit: `"desktop: file context menu"`
+- [ ] Icon view — large icons with filename below (default)
+- [ ] Detail view — table: Name, Size, Type, Date Modified
+- [ ] Sort by: name, date, size, type (click column header to toggle)
+- [ ] View toggle buttons in toolbar
+- [ ] Commit: `"apps: file manager view modes"`
 
----
+### 2.4 File Operations
 
-## 5. Window Snapping
-> *Research: [05_window_snapping_vdesktops.md](research/phase_04_desktop_shell/05_window_snapping_vdesktops.md)*
+- [ ] Create folder: right-click → New → Folder (or Ctrl+Shift+N)
+- [ ] Delete: select file → Delete key or right-click → Delete → moves to recycle bin
+- [ ] Rename: select file → F2 or right-click → Rename → inline text edit
+- [ ] Copy/Paste: Ctrl+C → Ctrl+V (clipboard file paths)
+- [ ] Cut/Paste: Ctrl+X → Ctrl+V (move file)
+- [ ] Commit: `"apps: file manager operations (create/delete/rename/copy)"`
 
-### 5.1 Keyboard Snapping
+### 2.5 Advanced Features
 
-- [ ] Create `src/kernel/wm_snap.c`
-- [ ] Win+Left → snap to left half of screen
-- [ ] Win+Right → snap to right half
-- [ ] Win+Up → maximize
-- [ ] Win+Down → restore (if maximized) / minimize (if restored)
-- [ ] Animate snap transitions (200ms slide + resize)
-- [ ] Commit: `"desktop: keyboard window snapping"`
-
-### 5.2 Edge Snapping (Mouse)
-
-- [ ] Drag window to top edge → maximize
-- [ ] Drag window to left/right edge → snap to half
-- [ ] Drag window to corner → snap to quarter
-- [ ] Show snap preview zone (semi-transparent outline) before drop
-- [ ] Commit: `"desktop: edge snap with preview"`
-
-### 5.3 Snap Layouts
-> *Research: [06_snap_layouts.md](research/phase_04_desktop_shell/06_snap_layouts.md)*
-
-- [ ] Hover over maximize button → show snap layout popup
-- [ ] Layout options:
-  - [ ] 50/50 (left/right)
-  - [ ] 50/50 (top/bottom)
-  - [ ] 66/33 (left wide, right narrow)
-  - [ ] 33/33/33 (three columns)
-- [ ] Click a zone → snap current window to that zone
-- [ ] After snapping, prompt user to fill remaining zones with other windows
-- [ ] Commit: `"desktop: snap layouts on maximize hover"`
+- [ ] *(Stretch)* Search within current folder (search bar in toolbar)
+- [ ] *(Stretch)* Drag and drop files between file manager and desktop
+- [ ] *(Stretch)* File/folder properties dialog (size, path, dates)
+- [ ] *(Stretch)* Preview pane for images and text files
+- [ ] *(Stretch)* Tabs — multiple directories in one window
+- [ ] Commit: `"apps: file manager advanced features"`
 
 ---
 
-## 6. Virtual Desktops
-> *Research: [05_window_snapping_vdesktops.md](research/phase_04_desktop_shell/05_window_snapping_vdesktops.md)*
+## 3. Terminal Emulator
+> *Research: [02_terminal.md](research/phase_05_core_apps/02_terminal.md)*
 
-### 6.1 Virtual Desktop Manager
+### 3.1 Terminal Core
 
-- [ ] Create `src/kernel/wm_vdesktop.c`
-- [ ] Define `struct virtual_desktop` (windows list, name)
-- [ ] Support up to `MAX_VIRTUAL_DESKTOPS` (8)
-- [ ] Create default "Desktop 1" at boot
-- [ ] Implement `vdesktop_create()` — add new desktop
-- [ ] Implement `vdesktop_remove(id)` — close desktop, move windows to previous
-- [ ] Implement `vdesktop_switch(id)` — change active desktop (hide/show windows)
-- [ ] Commit: `"desktop: virtual desktop manager"`
+- [ ] Create `src/apps/terminal/terminal.c` and `include/terminal.h`
+- [ ] Define `struct terminal_cell` (codepoint, fg_color, bg_color, attrs: bold/underline/inverse)
+- [ ] Define `struct terminal` (grid, cursor, scroll state, ANSI parser, font, selection)
+- [ ] Grid: `TERM_COLS × SCROLLBACK` cells (100 cols × 500 scrollback rows)
+- [ ] Calculate `cell_w` / `cell_h` from Cascadia Code monospace font
+- [ ] Spawn `shell.exe` as child process (or in-process initially)
+- [ ] Pipe shell stdout → `terminal_put_char()` → grid
+- [ ] Pipe keyboard input → shell stdin
+- [ ] Commit: `"apps: terminal emulator core"`
 
-### 6.2 Keyboard Shortcuts
+### 3.2 Character Rendering
 
-- [ ] Ctrl+Win+Left/Right → switch between desktops
-- [ ] Ctrl+Win+D → create new desktop
-- [ ] Ctrl+Win+F4 → close current desktop
-- [ ] Commit: `"desktop: virtual desktop keyboard shortcuts"`
+- [ ] `terminal_render(t, surface)` — draw all visible cells
+- [ ] Draw cell background if non-default color
+- [ ] Draw character glyph via `font_draw_char()` (Cascadia Code)
+- [ ] Render cursor: block (default), underline, or bar style
+- [ ] Cursor blinking animation (toggle every 500ms via PIT ticks)
+- [ ] Handle: newline (`\n`), carriage return (`\r`), backspace (`\b`), tab (`\t`)
+- [ ] Commit: `"apps: terminal text rendering"`
 
-### 6.3 Win+Tab Overview (Future)
+### 3.3 ANSI Escape Code Parser
 
-- [ ] *(Stretch)* Win+Tab → overview mode: show all desktops + thumbnails
-- [ ] *(Stretch)* Click desktop to switch, drag windows between desktops
-- [ ] *(Stretch)* "New Desktop" button at bottom
+- [ ] Create `src/apps/terminal/ansi.c`
+- [ ] State machine: Normal → ESC (`\e`) → CSI (`[`) → parameters → command
+- [ ] `\e[0m` — reset attributes
+- [ ] `\e[1m` — bold, `\e[4m` — underline, `\e[7m` — inverse
+- [ ] `\e[30-37m` / `\e[40-47m` — 8 foreground/background colors
+- [ ] `\e[90-97m` — bright foreground colors
+- [ ] `\e[H` — cursor position (row, col)
+- [ ] `\e[2J` — clear screen, `\e[K` — clear to end of line
+- [ ] `\e[A/B/C/D` — cursor up/down/right/left
+- [ ] Define 16-color ANSI palette (black through bright white)
+- [ ] *(Stretch)* `\e[38;5;Nm` — 256-color extended palette
+- [ ] Commit: `"apps: terminal ANSI escape codes"`
 
----
+### 3.4 Scrollback & Selection
 
-## 7. Notification Center
-> *Research: [07_notification_center.md](research/phase_04_desktop_shell/07_notification_center.md)*
+- [ ] Scrollback buffer: 500 lines of history above the visible viewport
+- [ ] Mouse wheel → scroll up/down through history
+- [ ] Scroll bar on right side
+- [ ] Mouse click + drag → text selection (highlighted)
+- [ ] Ctrl+Shift+C → copy selection to clipboard
+- [ ] Ctrl+Shift+V → paste from clipboard to shell stdin
+- [ ] Commit: `"apps: terminal scrollback and copy/paste"`
 
-### 7.1 Notification History Panel
+### 3.5 Codex Settings
 
-- [ ] Create `src/desktop/notify_center.c`
-- [ ] Slide-in panel from right edge of screen
-- [ ] Display past notifications:
-  - [ ] Grouped by app/source
-  - [ ] Each entry: icon + title + message + timestamp
-  - [ ] Dismiss individual notifications (X button)
-  - [ ] "Clear all" button at bottom
-- [ ] Store last 100 notifications in Codex `System\Shell\NotifyHistory`
-- [ ] Open: click 🔔 in system tray
-- [ ] Close: click outside or press Escape
-- [ ] Commit: `"desktop: notification center"`
+- [ ] Font name: `Apps\Terminal\FontName` (default "Cascadia Code")
+- [ ] Font size: `Apps\Terminal\FontSize` (default 14)
+- [ ] Cursor style: `Apps\Terminal\CursorStyle` (block/underline/bar)
+- [ ] Cursor blink: `Apps\Terminal\CursorBlink` (1/0)
+- [ ] Opacity: `Apps\Terminal\Opacity` (0–100, for Acrylic transparency)
+- [ ] Scrollback lines: `Apps\Terminal\ScrollbackLines` (default 500)
+- [ ] Recalculate cols/rows on window resize
+- [ ] Commit: `"apps: terminal settings"`
 
----
+### 3.6 Advanced Features (Future)
 
-## 8. Drag and Drop
-> *Research: [08_drag_and_drop.md](research/phase_04_desktop_shell/08_drag_and_drop.md)*
-
-### 8.1 Drag-and-Drop System
-
-- [ ] Define `drag_state_t` struct (active, format, data, size, cursor_x/y, drag_icon, source_window)
-- [ ] Create `src/desktop/drag.c`
-- [ ] Implement `drag_begin(fmt, data, size, icon)` — start drag operation
-- [ ] Implement `drag_update(mx, my)` — called on mouse move, update icon position
-- [ ] Implement `drag_drop(target)` — called on mouse release, deliver data to target
-- [ ] Implement `drag_cancel()` — Escape to cancel
-- [ ] Commit: `"desktop: drag-and-drop system"`
-
-### 8.2 Visual Feedback
-
-- [ ] Draw semi-transparent drag icon following cursor
-- [ ] Highlight valid drop targets when hovering
-- [ ] Show "forbidden" cursor over invalid drop targets
-- [ ] Commit: `"desktop: drag-and-drop visual feedback"`
-
-### 8.3 Drag Types
-
-- [ ] Files: File Manager → Desktop → Notepad (move/copy/open)
-- [ ] Text: select text, drag to another text field
-- [ ] *(Stretch)* Taskbar: reorder pinned apps via drag
-- [ ] Commit: `"desktop: file and text drag support"`
+- [ ] *(Stretch)* Multiple tabs — tabbed terminal sessions
+- [ ] *(Stretch)* Acrylic transparency background via `gfx_acrylic()`
+- [ ] *(Stretch)* Split panes — vertical/horizontal
+- [ ] *(Stretch)* Saved profiles/themes (color schemes)
 
 ---
 
-## 9. Quick Settings Panel
-> *Research: [09_quick_settings.md](research/phase_04_desktop_shell/09_quick_settings.md)*
+## 4. Settings Panel
+> *Research: [03_settings_panel.md](research/phase_05_core_apps/03_settings_panel.md)*
 
-### 9.1 Quick Settings Popup
+### 4.1 SPL Framework
 
-- [ ] Create `src/desktop/quick_settings.c`
-- [ ] Open: click system tray area or Win+A
-- [ ] Layout: 3×2 grid of toggle buttons + volume/brightness sliders
-- [ ] Toggle buttons (each flips a Codex value + triggers a service):
-  - [ ] WiFi / Network (enable/disable network)
-  - [ ] Bluetooth (placeholder — future)
-  - [ ] Airplane Mode (disable all radios)
-  - [ ] Night Light (toggle blue light filter)
-  - [ ] Do Not Disturb (suppress notifications)
-  - [ ] *(Stretch)* Cast / Screen share
-- [ ] Volume slider → reads/writes Codex `System\Sound\Volume`
-- [ ] Brightness slider → reads/writes Codex `System\Display\Brightness`
-- [ ] [Edit ⚙] link → open full Settings app
-- [ ] Rounded corners, Acrylic background, drop shadow
-- [ ] Commit: `"desktop: quick settings panel"`
+- [ ] Create `include/spl.h` — SPL interface
+- [ ] Define messages: `SPL_INIT`, `SPL_GETINFO`, `SPL_OPEN`, `SPL_CLOSE`, `SPL_SAVE`
+- [ ] Define `spl_info_t` (name, description, icon_path, category, version)
+- [ ] Define `spl_panel_t` (surface, width, height, mouse state, codex_root)
+- [ ] Define `spl_applet_fn` function pointer type
+- [ ] Commit: `"apps: SPL applet interface"`
 
----
+### 4.2 Settings Host App
 
-## 10. Boot Splash Screen
-> *Research: [10_boot_splash.md](research/phase_04_desktop_shell/10_boot_splash.md)*
+- [ ] Create `src/apps/settings/settings.c`
+- [ ] UI layout: category sidebar (left) + panel area (right)
+- [ ] Scan `C:\Impossible\System\Settings\` for `.spl` files at startup
+- [ ] For each `.spl`: load, call `SPL_INIT` + `SPL_GETINFO`, add to category list
+- [ ] Category sidebar: System, Personalization, Apps, Privacy, Update
+- [ ] Click an applet name → call `SPL_OPEN` with panel surface
+- [ ] Back button → return to applet list
+- [ ] On close → call `SPL_CLOSE` for active applet
+- [ ] Commit: `"apps: Settings Panel host"`
 
-### 10.1 Graphical Boot Splash
+### 4.3 Core Applets
 
-- [ ] Create `src/kernel/boot_splash.c`
-- [ ] Implement `boot_splash_init()` — draw logo + progress bar on framebuffer
-- [ ] Implement `boot_splash_progress(pct)` — update progress bar (0–100%)
-- [ ] Implement `boot_splash_status(msg)` — display status text ("Loading drivers...")
-- [ ] Implement `boot_splash_finish()` — fade out, transition to desktop
-- [ ] Call progress updates during kernel init:
-  - [ ] 10% — Memory manager
-  - [ ] 20% — Drivers
-  - [ ] 40% — Filesystem
-  - [ ] 60% — Network
-  - [ ] 80% — Desktop
-  - [ ] 100% — Ready
-- [ ] Design: centered OS logo, gradient background, smooth progress bar
-- [ ] Commit: `"kernel: graphical boot splash screen"`
+- [ ] `about.spl.c` — OS version, CPU, RAM, hardware summary (simplest applet)
+- [ ] `display.spl.c` — resolution selector, DPI scale dropdown, brightness slider
+- [ ] `theme.spl.c` — accent color picker, dark/light mode toggle, corner radius
+- [ ] `wallpaper.spl.c` — wallpaper selector (browse images), fit mode
+- [ ] `network.spl.c` — IP address, DHCP toggle, DNS, hostname
+- [ ] `sound.spl.c` — volume slider, mute toggle
+- [ ] `datetime.spl.c` — timezone selector, 12h/24h toggle, date format, NTP sync button
+- [ ] `power.spl.c` — screen timeout, sleep settings, shutdown/restart
+- [ ] `taskbar.spl.c` — taskbar height, position, auto-hide toggle
+- [ ] Commit: `"apps: Settings Panel core applets"`
 
-### 10.2 Boot Menu (F8)
+### 4.4 Additional Applets
 
-- [ ] *(Stretch)* Hold F8 during boot → show boot options:
-  - [ ] Normal boot (default)
-  - [ ] Safe mode (minimal drivers, no network)
-  - [ ] Recovery console (text-mode shell only)
-  - [ ] Last known good (restore previous Codex)
-- [ ] Commit: `"kernel: boot menu"`
+- [ ] `cursors.spl.c` — cursor theme, cursor size
+- [ ] `fonts.spl.c` — installed fonts, default system font
+- [ ] `accounts.spl.c` — user management (future)
+- [ ] `apps.spl.c` — installed programs, uninstall
+- [ ] `storage.spl.c` — disk usage, drive information
+- [ ] Commit: `"apps: Settings Panel additional applets"`
 
----
+### 4.5 Win32 .cpl Mapping
 
-## 11. Screensaver & Lock Screen
-> *Research: [11_screensaver_lockscreen.md](research/phase_04_desktop_shell/11_screensaver_lockscreen.md)*
-
-### 11.1 Screensaver System
-
-- [ ] Create `src/desktop/screensaver.c`
-- [ ] Define screensaver API: `scr_entry_fn(msg, surface)` with SCR_INIT/SCR_FRAME/SCR_CLOSE
-- [ ] Implement idle detection (track last mouse/keyboard input time)
-- [ ] Trigger screensaver after idle timeout (configurable: 1, 2, 5, 10, 15, 30 min, never)
-- [ ] Dismiss on any mouse move or keypress
-- [ ] Codex: `System\Screensaver\IdleTimeout`, `System\Screensaver\Type`
-- [ ] Commit: `"desktop: screensaver system"`
-
-### 11.2 Built-In Screensavers
-
-- [ ] **Blank** — solid black screen (power saving)
-- [ ] **Starfield** — stars moving toward viewer (3D perspective)
-- [ ] **Matrix** — falling green characters
-- [ ] **Bouncing Logo** — OS logo bouncing off screen edges
-- [ ] **Clock** — large floating digital clock
-- [ ] Commit: `"desktop: built-in screensavers"`
-
-### 11.3 Lock Screen
-
-- [ ] Create `src/desktop/lockscreen.c`
-- [ ] Blurred wallpaper background via `gfx_blur()`
-- [ ] Display: large clock, date, user avatar + name
-- [ ] Password input field
-- [ ] [Unlock →] button → verify password, return to desktop
-- [ ] Option: "Require password on wake" (Codex `System\Screensaver\RequirePassword`)
-- [ ] Lock manually: Win+L shortcut or Start menu → Lock
-- [ ] Lock automatically: after screensaver activates (if password required)
-- [ ] Commit: `"desktop: lock screen"`
+- [ ] *(Stretch)* CPL → SPL message translation
+- [ ] *(Stretch)* `desk.cpl` → `display.spl`, `mmsys.cpl` → `sound.spl`, etc.
+- [ ] *(Stretch)* Add to builtin stub table
 
 ---
 
-## 12. Desktop Widgets
-> *Research: [12_desktop_widgets.md](research/phase_04_desktop_shell/12_desktop_widgets.md)*
+## 5. Notepad
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Notepad*
 
-### 12.1 Widget Framework
+### 5.1 Text Buffer (Gap Buffer)
 
-- [ ] Create `src/desktop/widgets.c`
-- [ ] Define widget API: `widget_fn(msg, surface, ctx)` with WGT_INIT/WGT_RENDER/WGT_TICK/WGT_CLOSE
-- [ ] Widget manager: load, position, update widgets on desktop
-- [ ] Draggable widget positioning
-- [ ] Transparent/floating widget rendering
-- [ ] Commit: `"desktop: widget framework"`
+- [ ] Create `src/apps/notepad/notepad.c`
+- [ ] Implement gap buffer: `struct text_buffer` (buf, buf_size, gap_start, gap_end)
+- [ ] `text_insert(buf, char)` — insert at cursor (gap start)
+- [ ] `text_delete(buf)` — delete char before cursor
+- [ ] `text_move_cursor(buf, direction)` — move gap
+- [ ] `text_get_line(buf, line_num)` — return line contents
+- [ ] `text_line_count(buf)` — count newlines
+- [ ] Commit: `"apps: Notepad gap buffer"`
 
-### 12.2 Built-In Widgets
+### 5.2 Text Rendering & Cursor
 
-- [ ] **Clock** (200×100) — analog or digital clock, updates 1/sec
-- [ ] **CPU Meter** (200×120) — usage bar graph, updates 1/sec
-- [ ] **RAM Monitor** (200×100) — used/free memory bars, updates 5/sec
-- [ ] **Calendar** (200×200) — month view, today highlighted
-- [ ] **Quick Notes** (200×150) — sticky note text, persist to Codex
-- [ ] Commit: `"desktop: built-in widgets (clock, CPU, RAM, calendar, notes)"`
+- [ ] Define `struct notepad` state (text, cursor_line/col, scroll_y, filepath, modified)
+- [ ] Render visible lines from gap buffer using `font_draw_string()`
+- [ ] Draw blinking I-beam cursor at insertion point
+- [ ] Arrow keys: move cursor left/right/up/down
+- [ ] Home/End: jump to line start/end
+- [ ] Ctrl+Home/End: jump to file start/end
+- [ ] Commit: `"apps: Notepad text rendering"`
 
----
+### 5.3 File Menu
 
-## 13. Night Light
-> *Research: [14_night_light.md](research/phase_04_desktop_shell/14_night_light.md)*
+- [ ] Menu bar: File, Edit, View, Help
+- [ ] File → New: clear buffer, reset filepath
+- [ ] File → Open: `ui_dialog_open()` → load file via VFS
+- [ ] File → Save: write buffer to current filepath via VFS
+- [ ] File → Save As: `ui_dialog_save()` → choose path + save
+- [ ] "Unsaved changes" warning on close or New if `modified` flag set
+- [ ] Window title: "filename.txt — Notepad" (asterisk if modified)
+- [ ] Commit: `"apps: Notepad file operations"`
 
-### 13.1 Blue Light Filter
+### 5.4 Editing Features
 
-- [ ] Create `src/kernel/display/nightlight.c`
-- [ ] Implement `nightlight_apply(surface, intensity)` — reduce blue channel up to 50%
-- [ ] Apply per-pixel color transform in compositor's final blit
-- [ ] Gradual transition over 30 minutes (sunset → full warm)
-- [ ] Schedule: auto on/off based on time (e.g., 9 PM → 7 AM)
-- [ ] Manual toggle via Quick Settings or Codex
-- [ ] Codex: `System\Display\NightLight`, `NightLightIntensity` (0–100), `NightLightStart`, `NightLightEnd`
-- [ ] Commit: `"display: night light / blue light filter"`
-
----
-
-## 14. Focus / Do Not Disturb Mode
-> *Research: [15_focus_mode.md](research/phase_04_desktop_shell/15_focus_mode.md)*
-
-### 14.1 Focus Assist
-
-- [ ] Create `src/desktop/focus_mode.c`
-- [ ] Define modes: Off, Priority Only, Do Not Disturb
-- [ ] **Off** — all notifications shown normally
-- [ ] **Priority only** — only alarms/reminders shown
-- [ ] **Do Not Disturb** — all notifications silenced, saved to history
-- [ ] Toggle via Quick Settings toggle or Win+N
-- [ ] Auto-activate during: full-screen apps, scheduled hours
-- [ ] Notification badge on system tray shows suppressed count
-- [ ] When DND ends, show summary: "You missed N notifications"
-- [ ] Codex: `System\Shell\FocusMode`, `FocusScheduleStart`, `FocusScheduleEnd`
-- [ ] Commit: `"desktop: focus / do not disturb mode"`
+- [ ] Mouse click → set cursor position
+- [ ] Select text: click + drag, or Shift+Arrow keys
+- [ ] Ctrl+A → select all
+- [ ] Cut/Copy/Paste via clipboard (Ctrl+X/C/V)
+- [ ] Vertical scroll bar for long files
+- [ ] Word wrap toggle (View menu)
+- [ ] Status bar: line/col, encoding (UTF-8), line ending
+- [ ] *(Stretch)* Find/Replace: Ctrl+F, Ctrl+H
+- [ ] *(Stretch)* Undo/Redo: Ctrl+Z/Y (action stack)
+- [ ] *(Stretch)* Line numbers in left gutter
+- [ ] *(Stretch)* Syntax highlighting for .c/.h/.asm
+- [ ] Commit: `"apps: Notepad editing features"`
 
 ---
 
-## 15. Agent-Recommended Additions
+## 6. Calculator
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Calculator*
 
-> Items not in the research files but important for a complete desktop shell.
+### 6.1 Calculator Core
 
-### 15.1 Keyboard Shortcut Manager
+- [ ] Create `src/apps/calculator/calculator.c`
+- [ ] Define `struct calculator` (display_value, operand, memory, op, flags)
+- [ ] Button grid: 5 rows × 4 columns (numbers, operators, functions)
+- [ ] Buttons rendered with `gfx_fill_rounded_rect()` + hover/press state colors
+- [ ] Display area: current number (large font) + operation preview (small)
+- [ ] Commit: `"apps: Calculator layout"`
 
-- [ ] Define system-wide hotkey table (key combo → action callback)
-- [ ] Register all shortcuts in one place:
-  - [ ] Win → toggle Start Menu
-  - [ ] Win+E → open File Manager
-  - [ ] Win+L → lock screen
-  - [ ] Win+D → show desktop (minimize all)
-  - [ ] Win+R → run dialog
-  - [ ] Alt+Tab → task switcher
-  - [ ] Alt+F4 → close focused window
-  - [ ] Print Screen → screenshot
-- [ ] Allow user-defined shortcuts via Codex `System\Shell\Hotkeys\`
-- [ ] Commit: `"desktop: system-wide keyboard shortcut manager"`
+### 6.2 Arithmetic Engine
 
-### 15.2 Alt+Tab Task Switcher
+- [ ] Basic operations: +, −, ×, ÷
+- [ ] = key: compute result, display
+- [ ] C: clear all, CE: clear entry only
+- [ ] ⌫: backspace one digit
+- [ ] Decimal point input
+- [ ] Percentage (%)
+- [ ] Sign toggle (±)
+- [ ] 1/x, x², √x
+- [ ] Division by zero → display "Error"
+- [ ] Keyboard input: numpad and regular number keys
+- [ ] Commit: `"apps: Calculator arithmetic"`
 
-- [ ] Alt+Tab → overlay showing all window thumbnails
-- [ ] Keep pressing Tab while holding Alt → cycle through windows
-- [ ] Release Alt → focus selected window
-- [ ] Show window title + icon below each thumbnail
-- [ ] Acrylic background panel
-- [ ] Commit: `"desktop: Alt+Tab task switcher"`
+### 6.3 Memory & History
 
-### 15.3 Run Dialog (Win+R)
+- [ ] Memory buttons: M+, M−, MR, MC, MS
+- [ ] *(Stretch)* Scientific mode: sin, cos, tan, log, sqrt, pow, π
+- [ ] *(Stretch)* Programmer mode: hex, binary, octal, bitwise ops
+- [ ] *(Stretch)* History: list of previous calculations
+- [ ] Commit: `"apps: Calculator memory and advanced modes"`
 
-- [ ] Win+R → small dialog box with text field
-- [ ] Type command/path → execute
-- [ ] History of recent entries (stored in Codex)
-- [ ] Auto-complete from PATH directories
-- [ ] Commit: `"desktop: Win+R run dialog"`
+---
 
-### 15.4 Desktop Icons
+## 7. Paint
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Paint*
 
-- [ ] Render icons on desktop surface (grid-aligned)
-- [ ] Default icons: This PC, Recycle Bin, user's shortcuts
-- [ ] Single-click selects, double-click opens
-- [ ] Drag to reorder, auto-arrange option
-- [ ] Label text below icon (with text shadow for readability over wallpaper)
-- [ ] Commit: `"desktop: desktop icon grid"`
+### 7.1 Canvas & Viewport
 
-### 15.5 Window Minimize/Restore All
+- [ ] Create `src/apps/paint/paint.c`
+- [ ] Define `struct paint` state (canvas surface, undo stack, current tool, colors, brush size)
+- [ ] Canvas: `gfx_surface_t` — default 800×600 white
+- [ ] Scroll viewport: horizontal + vertical scroll bars
+- [ ] Canvas positioned inside window with toolbar (left) + color palette (bottom) + status bar
+- [ ] Commit: `"apps: Paint canvas and viewport"`
 
-- [ ] Win+M → minimize all windows
-- [ ] Win+Shift+M → restore all minimized windows
-- [ ] Win+D → toggle show desktop (minimize all / restore all)
-- [ ] Commit: `"desktop: minimize/restore all windows"`
+### 7.2 Drawing Tools
+
+- [ ] **Pencil** — freehand drawing (Bresenham line between mouse events)
+- [ ] **Brush** — variable-size soft brush (filled circle stamps)
+- [ ] **Eraser** — draw with background color
+- [ ] **Line** — click + drag → preview rubber-band line → draw on release
+- [ ] **Rectangle** — outline or filled rectangle (Shift for square)
+- [ ] **Ellipse** — outline or filled ellipse (Shift for circle)
+- [ ] **Fill Bucket** — flood fill (BFS/stack-based) with selected color
+- [ ] **Text** — click to place, type text, set font size
+- [ ] Tool selection via toolbar buttons (left panel)
+- [ ] Commit: `"apps: Paint drawing tools"`
+
+### 7.3 Color System
+
+- [ ] Color palette bar at bottom: 20 preset colors
+- [ ] Foreground + background color indicators (click to swap)
+- [ ] Click palette color → set foreground; right-click → set background
+- [ ] *(Stretch)* Color picker dialog for custom colors (Hue/Saturation/Value)
+- [ ] Commit: `"apps: Paint color palette"`
+
+### 7.4 Undo & File Operations
+
+- [ ] Undo stack: save canvas snapshot before each stroke (max 32 levels)
+- [ ] Ctrl+Z → undo, Ctrl+Y → redo
+- [ ] File → New: create blank canvas (prompt for dimensions)
+- [ ] File → Open: load image via `image_load()` (JPG, PNG, BMP)
+- [ ] File → Save: save as BMP via `image_save_bmp()`
+- [ ] File → Save As: choose format (BMP, PNG)
+- [ ] *(Stretch)* Select tool: rectangle selection, move/copy region
+- [ ] *(Stretch)* Zoom: mouse wheel zoom, percentage display
+- [ ] *(Stretch)* Resize canvas: Image → Resize
+- [ ] Status bar: canvas dimensions, current tool, brush size
+- [ ] Commit: `"apps: Paint undo and file ops"`
+
+---
+
+## 8. Task Manager
+> *Research: [04_task_manager.md](research/phase_05_core_apps/04_task_manager.md)*
+
+### 8.1 Task Manager App
+
+- [ ] Create `src/apps/taskmgr/taskmgr.c`
+- [ ] Open via Ctrl+Shift+Esc system-wide shortcut
+- [ ] **Processes tab**: table listing all processes
+  - [ ] Columns: Name, CPU%, RAM, PID, Status
+  - [ ] Read from scheduler task list
+  - [ ] Select process → [End Task] button → kill process
+  - [ ] Auto-update every 1 second
+- [ ] **Performance tab**:
+  - [ ] CPU usage: rolling line chart (last 60 seconds)
+  - [ ] RAM usage: bar showing used / total MB (from PMM stats)
+- [ ] Status bar: total processes, overall CPU%, RAM used/total
+- [ ] Commit: `"apps: Task Manager"`
+
+---
+
+## 9. Device Manager
+> *Research: [05_device_manager.md](research/phase_05_core_apps/05_device_manager.md)*
+
+### 9.1 Device Manager App
+
+- [ ] Create `src/apps/devmgr/devmgr.c`
+- [ ] Define `struct device_info` (name, driver, category, vendor/device IDs, bus/slot/func, IRQ, status)
+- [ ] Tree view: categories → individual devices
+  - [ ] Display adapters → "VGA Compatible (Multiboot2 FB)"
+  - [ ] Network adapters → "Realtek RTL8139 (PCI)"
+  - [ ] Storage controllers → "VirtIO Block Device"
+  - [ ] Input devices → "PS/2 Keyboard (IRQ 1)", "VirtIO Tablet (PCI)"
+  - [ ] System devices → "PIT Timer", "PCI Bus", "ACPI"
+- [ ] Data source: PCI enumeration + registered driver list
+- [ ] Device status indicators: OK (✓), no driver (⚠), error (✗)
+- [ ] *(Stretch)* Click device → properties: vendor ID, device ID, IRQ, driver name
+- [ ] Commit: `"apps: Device Manager"`
+
+---
+
+## 10. Shell Commands (Expanded)
+> *Research: [06_shell_commands.md](research/phase_05_core_apps/06_shell_commands.md)*
+
+### 10.1 File Operation Commands
+
+- [ ] `cd <dir>` — change working directory
+- [ ] `pwd` — print working directory
+- [ ] `mkdir <name>` — create directory
+- [ ] `rmdir <name>` — remove empty directory
+- [ ] `cp <src> <dst>` — copy file
+- [ ] `mv <src> <dst>` — move/rename file
+- [ ] `rm <file>` — delete file (to recycle bin)
+- [ ] `touch <file>` — create empty file
+- [ ] Commit: `"shell: file operation commands"`
+
+### 10.2 System Commands
+
+- [ ] `whoami` — current user name
+- [ ] `date` — current date and time
+- [ ] `free` — RAM usage (used/total from PMM)
+- [ ] Output redirection: `echo hello > file.txt`
+- [ ] *(Stretch)* Tab completion for file/command names
+- [ ] *(Stretch)* Pipe: `cat file | grep text`
+- [ ] *(Stretch)* `&&` chaining: `mkdir foo && cd foo`
+- [ ] Commit: `"shell: system commands + redirection"`
+
+### 10.3 Network Commands
+
+- [ ] *(Stretch)* `wget <url>` — download file (requires HTTP client)
+- [ ] *(Stretch)* `nslookup <host>` — DNS resolve
+
+---
+
+## 11. Image Viewer
+> *Research: [08_image_viewer.md](research/phase_05_core_apps/08_image_viewer.md)*
+
+### 11.1 Image Viewer App
+
+- [ ] Create `src/apps/imgview/imgview.c`
+- [ ] Load image via `image_load()` (JPEG, PNG, BMP)
+- [ ] Fit image to window on load (preserve aspect ratio)
+- [ ] Zoom: mouse wheel, fit-to-window button, actual size (100%) button
+- [ ] Pan: click+drag when zoomed past window bounds
+- [ ] Navigate: ← → arrows for previous/next image in same folder
+- [ ] Toolbar: Previous, Next, zoom percentage, zoom in/out buttons
+- [ ] Status bar: filename, dimensions, file size, image index ("1 of 12")
+- [ ] *(Stretch)* Slideshow mode: auto-advance every 3-5 seconds
+- [ ] *(Stretch)* Right-click → "Set as wallpaper"
+- [ ] Commit: `"apps: Image Viewer"`
+
+---
+
+## 12. Screenshot Tool
+> *Research: [09_screenshot_tool.md](research/phase_05_core_apps/09_screenshot_tool.md)*
+
+### 12.1 Screenshot Capture
+
+- [ ] Create `src/apps/screenshot/screenshot.c`
+- [ ] `screenshot_capture()` — capture full screen from compositor backbuffer
+- [ ] `screenshot_window(win)` — capture single window
+- [ ] `screenshot_region(x, y, w, h)` — capture rectangular region
+- [ ] Save as PNG to `C:\Users\{name}\Pictures\Screenshots\`
+- [ ] Copy to clipboard
+- [ ] Show notification toast: "Screenshot saved"
+- [ ] Keyboard shortcuts:
+  - [ ] PrtSc → full screen capture + auto-save
+  - [ ] Alt+PrtSc → active window only
+  - [ ] Win+Shift+S → region select mode
+- [ ] Commit: `"apps: Screenshot Tool"`
+
+### 12.2 Region Select Overlay
+
+- [ ] Dim entire screen with semi-transparent overlay
+- [ ] Click + drag → rubber-band selection rectangle (clear region)
+- [ ] Release → capture the selected region
+- [ ] Escape → cancel
+- [ ] Commit: `"apps: Screenshot region select"`
+
+---
+
+## 13. Archive Manager
+> *Research: [10_archive_manager.md](research/phase_05_core_apps/10_archive_manager.md)*
+
+### 13.1 Archive Manager App
+
+- [ ] Create `src/apps/archiver/archiver.c`
+- [ ] Open `.zip` files (via file association → double-click)
+- [ ] Browse archive contents: file list with name, size, modified date
+- [ ] Icons from icon store for each archived file
+- [ ] [Extract All] button → choose destination, extract via `zip_extract()`
+- [ ] [Add Files] button → add files to existing archive
+- [ ] [New] → create new empty archive
+- [ ] Status bar: item count, compressed size
+- [ ] *(Stretch)* Extract individual files (select + extract)
+- [ ] *(Stretch)* Drag files out of archive
+- [ ] Commit: `"apps: Archive Manager"`
+
+---
+
+## 14. Calendar App
+> *Research: [11_calendar_app.md](research/phase_05_core_apps/11_calendar_app.md)*
+
+### 14.1 Calendar View
+
+- [ ] Create `src/apps/calendar/calendar.c`
+- [ ] Month view: grid of days (Mon–Sun × weeks)
+- [ ] Current day highlighted with accent color
+- [ ] Navigation: ◀ / ▶ buttons to switch months
+- [ ] Events for selected day shown below calendar grid
+- [ ] [+ Add Event] → dialog: time, title, color
+- [ ] Events stored in Codex: `User\{name}\Calendar\Events\{date}\*`
+- [ ] Also accessible: click taskbar clock → opens calendar
+- [ ] Commit: `"apps: Calendar"`
+
+---
+
+## 15. System Information
+> *Research: [12_system_information.md](research/phase_05_core_apps/12_system_information.md)*
+
+### 15.1 System Info App
+
+- [ ] Create `src/apps/sysinfo/sysinfo.c`
+- [ ] Display:
+  - [ ] OS name, version, build date (from VERSION file)
+  - [ ] CPU: vendor, model (from CPUID)
+  - [ ] RAM: total MB, available MB (from PMM)
+  - [ ] Uptime: hours, minutes
+  - [ ] Display: resolution, color depth
+  - [ ] Network: NIC name, IP address
+  - [ ] Storage: drive name, total size
+  - [ ] Boot: Multiboot2 via GRUB2
+- [ ] Data from: CPUID, `g_boot_info`, PMM, PCI, Codex
+- [ ] Reusable by `about.spl` in Settings Panel
+- [ ] Commit: `"apps: System Information"`
+
+---
+
+## 16. On-Screen Keyboard
+> *Research: [13_onscreen_keyboard.md](research/phase_05_core_apps/13_onscreen_keyboard.md)*
+
+### 16.1 Virtual Keyboard
+
+- [ ] Create `src/apps/osk/osk.c`
+- [ ] Full QWERTY layout rendered as button grid
+- [ ] Click/tap key → inject keypress event into WM input queue
+- [ ] Modifier keys: Shift, Caps Lock, Ctrl, Alt (toggle state)
+- [ ] Shifted layout: uppercase letters + symbols
+- [ ] Auto-show when text input is focused (touch mode)
+- [ ] Auto-hide when physical keyboard detected
+- [ ] Movable/resizable window
+- [ ] Commit: `"apps: On-Screen Keyboard"`
+
+---
+
+## 17. Utility Apps
+
+### 17.1 Font Manager
+> *Research: [14_font_manager.md](research/phase_05_core_apps/14_font_manager.md)*
+
+- [ ] Create `src/apps/fontmgr/fontmgr.c`
+- [ ] List installed `.ttf` files from `C:\Impossible\Fonts\`
+- [ ] Preview each font: "The quick brown fox jumps over the lazy dog"
+- [ ] Preview at different sizes (12, 16, 24, 36px)
+- [ ] Install new font: copy `.ttf` to fonts directory + register in Codex
+- [ ] Remove font (cannot remove system default)
+- [ ] Set default system font / monospace font
+- [ ] Commit: `"apps: Font Manager"`
+
+### 17.2 Color Picker
+> *Research: [15_color_picker.md](research/phase_05_core_apps/15_color_picker.md)*
+
+- [ ] Create `src/apps/colorpicker/colorpicker.c`
+- [ ] Activate with Win+Shift+C
+- [ ] Cursor changes to crosshair/eyedropper
+- [ ] Magnified circle around cursor showing pixel grid
+- [ ] Click to capture → read pixel from compositor backbuffer
+- [ ] Show popup: RGB, HSL, HEX (#FF5733) values
+- [ ] Copy hex value to clipboard on capture
+- [ ] Color history: remember last 10 picked colors
+- [ ] Commit: `"apps: Color Picker"`
+
+### 17.3 Sticky Notes
+> *Research: [16_sticky_notes.md](research/phase_05_core_apps/16_sticky_notes.md)*
+
+- [ ] Create `src/apps/stickynotes/stickynotes.c`
+- [ ] Floating desktop notes (always-on-top windows)
+- [ ] Click "+" to create new note
+- [ ] Resizable colored rectangles with editable text
+- [ ] Color options: yellow, pink, blue, green, purple
+- [ ] Auto-save to Codex: `User\{name}\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`
+- [ ] Persist across reboots (load at startup)
+- [ ] Delete: click X on note → confirm
+- [ ] Commit: `"apps: Sticky Notes"`
+
+---
+
+## 18. Agent-Recommended Additions
+
+> Items not in the research files but important for a complete app ecosystem.
+
+### 18.1 Common App Event Loop
+
+- [ ] Define standard app message loop pattern: `while (wm_get_event(&evt)) { ... }`
+- [ ] Standard event types: KEY_DOWN, KEY_UP, MOUSE_MOVE, MOUSE_CLICK, PAINT, CLOSE
+- [ ] Template `app_main()` function that all apps follow
+- [ ] Document the pattern so future apps are consistent
+- [ ] Commit: `"apps: standard app event loop pattern"`
+
+### 18.2 App Installer / Uninstaller
+
+- [ ] *(Stretch)* `.ipkg` format (ZIP with manifest.json): name, version, files, shortcuts
+- [ ] *(Stretch)* `install <pkg>` → extract to `C:\Programs\{name}\`, create shortcuts
+- [ ] *(Stretch)* `uninstall <name>` → remove files, shortcuts, Codex entries
+
+### 18.3 Help / About Dialog (Shared)
+
+- [ ] Generic "About {AppName}" dialog (reusable by all apps)
+- [ ] Show app icon, name, version, copyright
+- [ ] "Help → About" menu item in every app
+- [ ] Commit: `"apps: shared About dialog"`
 
 ---
 
@@ -473,24 +641,25 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1.1 Taskbar Window List | Core UX — switch between open apps |
-| 🔴 P0 | 2. Start Menu | App launcher — most used UI element |
-| 🔴 P0 | 4. Context Menus | Essential interaction — right-click everywhere |
-| 🔴 P0 | 15.4 Desktop Icons | Visual desktop experience |
-| 🟠 P1 | 3. System Tray & Notifications | Status feedback, toast notifications |
-| 🟠 P1 | 5.1–5.2 Window Snapping | Productivity — snap to halves/quarters |
-| 🟠 P1 | 15.1 Keyboard Shortcuts | Essential OS navigation |
-| 🟠 P1 | 15.2 Alt+Tab | Task switching |
-| 🟡 P2 | 10.1 Boot Splash | Visual polish — first thing users see |
-| 🟡 P2 | 8. Drag and Drop | File management UX |
-| 🟡 P2 | 9. Quick Settings | System toggles |
-| 🟡 P2 | 13. Night Light | Eye comfort |
-| 🟢 P3 | 5.3 Snap Layouts | Advanced window management |
-| 🟢 P3 | 6. Virtual Desktops | Multi-workspace |
-| 🟢 P3 | 7. Notification Center | History panel |
-| 🟢 P3 | 14. Focus/DND Mode | Notification control |
-| 🟢 P3 | 1.3 Window Peek | Polish |
-| 🔵 P4 | 11. Screensaver & Lock Screen | Security + visual flair |
-| 🔵 P4 | 12. Desktop Widgets | Optional enhancements |
-| 🔵 P4 | 15.3 Run Dialog | Power user feature |
-| 🔵 P4 | 10.2 Boot Menu | Recovery/safe mode |
+| 🔴 P0 | 1.1–1.2 UI Widget Library | Foundation for all apps |
+| 🔴 P0 | 3.1–3.2 Terminal (core + rendering) | Primary development tool |
+| 🔴 P0 | 2.1–2.2 File Manager (core + sidebar) | Essential file browsing |
+| 🟠 P1 | 5. Notepad | Text editing — most basic app |
+| 🟠 P1 | 6. Calculator | Quick utility — lightweight showcase |
+| 🟠 P1 | 10. Shell Commands | Essential CLI productivity |
+| 🟠 P1 | 1.3 Dialogs (Open/Save) | Required by Notepad/Paint/File Manager |
+| 🟡 P2 | 8. Task Manager | Process management |
+| 🟡 P2 | 4. Settings Panel | System configuration |
+| 🟡 P2 | 3.3–3.4 Terminal (ANSI + scrollback) | Terminal polish |
+| 🟡 P2 | 11. Image Viewer | Media viewing |
+| 🟡 P2 | 12. Screenshot Tool | Utility |
+| 🟢 P3 | 7. Paint | Creative app |
+| 🟢 P3 | 9. Device Manager | Hardware info |
+| 🟢 P3 | 15. System Information | Diagnostics |
+| 🟢 P3 | 13. Archive Manager | ZIP handling |
+| 🔵 P4 | 14. Calendar | Personal productivity |
+| 🔵 P4 | 16. On-Screen Keyboard | Accessibility |
+| 🔵 P4 | 17.1 Font Manager | System utility |
+| 🔵 P4 | 17.2 Color Picker | Developer utility |
+| 🔵 P4 | 17.3 Sticky Notes | Convenience |
+| 🔵 P4 | 18. Agent Recommendations | Polish + ecosystem |
