@@ -47,7 +47,6 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -device rtl8139,netdev=net0 \
                -netdev user,id=net0 \
                -display sdl \
-               -ctrl-grab \
                -no-reboot
 
 # --- Source Discovery ---
