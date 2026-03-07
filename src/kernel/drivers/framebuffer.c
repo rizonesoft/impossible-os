@@ -437,8 +437,6 @@ void fb_clear(void)
 
     cursor_x = 0;
     cursor_y = 0;
-
-    fb_swap();
 }
 
 void fb_scroll(void)
@@ -468,7 +466,6 @@ void fb_putchar(char c)
     case '\n':
         cursor_x = 0;
         cursor_y++;
-        fb_swap();          /* flush on newline for responsive console */
         break;
     case '\r':
         cursor_x = 0;

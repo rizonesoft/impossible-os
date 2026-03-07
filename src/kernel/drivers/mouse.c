@@ -304,26 +304,8 @@ void mouse_draw_cursor(void)
     uint32_t scr_w = fb_get_width();
     uint32_t scr_h = fb_get_height();
 
-    /* First, restore the old cursor position */
-    mouse_restore_under();
-
-    /* Save the pixels under the new cursor position */
-    saved_x = cx;
-    saved_y = cy;
-
-    for (py = 0; py < CURSOR_H; py++) {
-        for (px = 0; px < CURSOR_W; px++) {
-            uint32_t sx = (uint32_t)(cx + (int32_t)px);
-            uint32_t sy = (uint32_t)(cy + (int32_t)py);
-
-            if (sx < scr_w && sy < scr_h)
-                saved_under[py][px] = fb_read_pixel(sx, sy);
-            else
-                saved_under[py][px] = 0;
-        }
-    }
-
-    /* Draw the cursor sprite */
+    /* No save/restore needed — the compositor redraws everything each frame.
+     * We just draw the cursor on top of the composited scene. */
     for (py = 0; py < CURSOR_H; py++) {
         for (px = 0; px < CURSOR_W; px++) {
             uint8_t pix = cursor_data[py][px];
@@ -340,6 +322,4 @@ void mouse_draw_cursor(void)
             fb_put_pixel(sx, sy, color);
         }
     }
-
-    cursor_visible = 1;
 }
