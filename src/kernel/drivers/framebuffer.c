@@ -260,6 +260,14 @@ void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color)
     back_buf[y * fb_stride + x] = color;
 }
 
+uint32_t fb_read_pixel(uint32_t x, uint32_t y)
+{
+    if (x >= fb_width || y >= fb_height)
+        return 0;
+
+    return back_buf[y * fb_stride + x];
+}
+
 void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                   uint32_t color)
 {

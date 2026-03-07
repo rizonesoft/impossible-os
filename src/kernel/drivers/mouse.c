@@ -4,7 +4,7 @@
  * Handles IRQ 12 (interrupt vector 44 after PIC remap).
  * Initializes the PS/2 auxiliary device, parses 3-byte mouse packets,
  * tracks the global cursor position clamped to screen bounds, and renders
- * a 12×19 arrow cursor sprite on the framebuffer.
+ * a 12×19 arrow cursor sprite on the framebuffer with save/restore.
  *
  * PS/2 mouse protocol:
  *   Byte 0: [Y-ovf][X-ovf][Y-sign][X-sign][1][MBtn][RBtn][LBtn]
@@ -38,7 +38,6 @@ static inline void outb(uint16_t port, uint8_t val)
 
 /* ---- PS/2 controller helpers ---- */
 
-/* Wait until the PS/2 input buffer is empty (ready to accept commands) */
 static void ps2_wait_input(void)
 {
     uint32_t timeout = 100000;
@@ -46,7 +45,6 @@ static void ps2_wait_input(void)
         ;
 }
 
-/* Wait until the PS/2 output buffer is full (data available to read) */
 static void ps2_wait_output(void)
 {
     uint32_t timeout = 100000;
@@ -54,23 +52,20 @@ static void ps2_wait_output(void)
         ;
 }
 
-/* Send a command byte to the PS/2 controller (port 0x64) */
 static void ps2_send_cmd(uint8_t cmd)
 {
     ps2_wait_input();
     outb(PS2_CMD_PORT, cmd);
 }
 
-/* Send a byte to the PS/2 mouse via the auxiliary port */
 static void mouse_write(uint8_t data)
 {
     ps2_wait_input();
-    outb(PS2_CMD_PORT, 0xD4);   /* Tell controller: next byte is for mouse */
+    outb(PS2_CMD_PORT, 0xD4);   /* next byte goes to mouse */
     ps2_wait_input();
     outb(PS2_DATA_PORT, data);
 }
 
-/* Read an acknowledgment byte from the mouse */
 static uint8_t mouse_read(void)
 {
     ps2_wait_output();
@@ -111,14 +106,15 @@ static volatile int32_t mouse_x;
 static volatile int32_t mouse_y;
 static volatile uint8_t mouse_buttons;
 
-/* Packet assembly state (3-byte packets) */
-static volatile uint8_t  mouse_cycle;     /* 0, 1, or 2 */
+/* Packet assembly */
+static volatile uint8_t  mouse_cycle;
 static volatile uint8_t  mouse_packet[3];
 
-/* Saved pixels under the cursor (for restore) */
+/* Saved pixels under the cursor for restore */
 static uint32_t saved_under[CURSOR_H][CURSOR_W];
 static int32_t  saved_x = -1;
 static int32_t  saved_y = -1;
+static uint8_t  cursor_visible = 0;
 
 /* ---- IRQ 12 handler ---- */
 
@@ -126,7 +122,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
 {
     uint8_t status = inb(PS2_STATUS_PORT);
 
-    /* Bit 0 = output buffer full, Bit 5 = mouse data (auxiliary) */
+    /* Bit 0 = output buffer full, Bit 5 = mouse data */
     if (!(status & 0x01)) {
         pic_send_eoi(IRQ_MOUSE);
         return (uint64_t)frame;
@@ -134,9 +130,15 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
 
     uint8_t data = inb(PS2_DATA_PORT);
 
+    /* Only process if bit 5 indicates auxiliary (mouse) data */
+    if (!(status & 0x20)) {
+        pic_send_eoi(IRQ_MOUSE);
+        return (uint64_t)frame;
+    }
+
     switch (mouse_cycle) {
     case 0:
-        /* Byte 0: only accept if bit 3 is set (always-1 in PS/2 protocol) */
+        /* Byte 0: only accept if bit 3 is set (always-1 in PS/2) */
         if (data & 0x08) {
             mouse_packet[0] = data;
             mouse_cycle = 1;
@@ -153,7 +155,6 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
         mouse_cycle = 0;
 
         {
-            /* Decode deltas (signed 9-bit values) */
             int32_t dx = (int32_t)mouse_packet[1];
             int32_t dy = (int32_t)mouse_packet[2];
 
@@ -161,11 +162,11 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
             if (mouse_packet[0] & 0x10) dx |= (int32_t)0xFFFFFF00;
             if (mouse_packet[0] & 0x20) dy |= (int32_t)0xFFFFFF00;
 
-            /* Discard if overflow bits are set */
+            /* Discard if overflow */
             if (mouse_packet[0] & 0xC0)
                 break;
 
-            /* PS/2 Y-axis is inverted (positive = up) */
+            /* PS/2 Y-axis is inverted */
             mouse_x += dx;
             mouse_y -= dy;
 
@@ -177,7 +178,6 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
             if ((uint32_t)mouse_y >= fb_get_height())
                 mouse_y = (int32_t)fb_get_height() - 1;
 
-            /* Update button state */
             mouse_buttons = mouse_packet[0] & 0x07;
         }
         break;
@@ -201,47 +201,45 @@ void mouse_init(void)
     mouse_buttons = 0;
     mouse_cycle = 0;
 
-    /* Step 1: Enable the auxiliary (mouse) device on the PS/2 controller */
+    /* Enable auxiliary (mouse) device */
     ps2_send_cmd(0xA8);
 
-    /* Step 2: Enable IRQ 12 in the PS/2 controller's config byte */
-    ps2_send_cmd(0x20);        /* Read config byte */
+    /* Enable IRQ 12 in PS/2 config byte */
+    ps2_send_cmd(0x20);
     ps2_wait_output();
     status_byte = inb(PS2_DATA_PORT);
-    status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 (auxiliary) */
+    status_byte |= 0x02;       /* Bit 1 = enable IRQ 12 */
     status_byte &= ~0x20;      /* Bit 5 = 0 = enable mouse clock */
-    ps2_send_cmd(0x60);        /* Write config byte */
+    ps2_send_cmd(0x60);
     ps2_wait_input();
     outb(PS2_DATA_PORT, status_byte);
 
-    /* Step 3: Use default settings */
-    mouse_write(0xF6);         /* Set defaults */
-    mouse_read();              /* ACK */
+    /* Set defaults */
+    mouse_write(0xF6);
+    mouse_read();
 
-    /* Step 4: Set sample rate to 100 samples/sec */
-    mouse_write(0xF3);         /* Set sample rate command */
-    mouse_read();              /* ACK */
-    mouse_write(100);          /* 100 samples/sec */
-    mouse_read();              /* ACK */
+    /* Set sample rate to 100 */
+    mouse_write(0xF3);
+    mouse_read();
+    mouse_write(100);
+    mouse_read();
 
-    /* Step 5: Set resolution to 4 counts/mm */
-    mouse_write(0xE8);         /* Set resolution command */
-    mouse_read();              /* ACK */
-    mouse_write(0x02);         /* 4 counts/mm */
-    mouse_read();              /* ACK */
+    /* Set resolution to 4 counts/mm */
+    mouse_write(0xE8);
+    mouse_read();
+    mouse_write(0x02);
+    mouse_read();
 
-    /* Step 6: Enable data reporting */
-    mouse_write(0xF4);         /* Enable */
-    mouse_read();              /* ACK */
+    /* Enable data reporting */
+    mouse_write(0xF4);
+    mouse_read();
 
-    /* Step 7: Flush any pending data */
+    /* Flush */
     while (inb(PS2_STATUS_PORT) & 0x01)
         inb(PS2_DATA_PORT);
 
-    /* Step 8: Register IRQ 12 handler (vector 44 = 32 + 12) */
+    /* Register IRQ 12 (vector 44) */
     idt_register_handler(44, mouse_irq_handler);
-
-    /* Step 9: Unmask IRQ 12 on the PIC */
     pic_unmask_irq(IRQ_MOUSE);
 
     printk("[OK] PS/2 mouse initialized (IRQ 12)\n");
@@ -261,23 +259,41 @@ struct mouse_state mouse_get_state(void)
 }
 
 /* ============================================================================
- * Cursor rendering
+ * Cursor rendering with save/restore
  * ============================================================================ */
 
 void mouse_save_under(void)
 {
-    /* Not implemented yet — requires reading from back buffer.
-     * For now, the WM will handle save/restore via dirty rects. */
-    saved_x = mouse_x;
-    saved_y = mouse_y;
-    (void)saved_under;
+    /* Already saved or no cursor to save under */
+    (void)0;
 }
 
 void mouse_restore_under(void)
 {
-    /* Placeholder — WM dirty rect system will handle cursor restore */
-    (void)saved_x;
-    (void)saved_y;
+    uint32_t px, py;
+    uint32_t scr_w, scr_h;
+
+    if (!cursor_visible)
+        return;
+
+    scr_w = fb_get_width();
+    scr_h = fb_get_height();
+
+    /* Restore saved pixels at the old cursor position */
+    for (py = 0; py < CURSOR_H; py++) {
+        for (px = 0; px < CURSOR_W; px++) {
+            if (cursor_data[py][px] == 0)
+                continue;  /* was transparent, nothing to restore */
+
+            uint32_t sx = (uint32_t)(saved_x + (int32_t)px);
+            uint32_t sy = (uint32_t)(saved_y + (int32_t)py);
+
+            if (sx < scr_w && sy < scr_h)
+                fb_put_pixel(sx, sy, saved_under[py][px]);
+        }
+    }
+
+    cursor_visible = 0;
 }
 
 void mouse_draw_cursor(void)
@@ -288,11 +304,31 @@ void mouse_draw_cursor(void)
     uint32_t scr_w = fb_get_width();
     uint32_t scr_h = fb_get_height();
 
+    /* First, restore the old cursor position */
+    mouse_restore_under();
+
+    /* Save the pixels under the new cursor position */
+    saved_x = cx;
+    saved_y = cy;
+
+    for (py = 0; py < CURSOR_H; py++) {
+        for (px = 0; px < CURSOR_W; px++) {
+            uint32_t sx = (uint32_t)(cx + (int32_t)px);
+            uint32_t sy = (uint32_t)(cy + (int32_t)py);
+
+            if (sx < scr_w && sy < scr_h)
+                saved_under[py][px] = fb_read_pixel(sx, sy);
+            else
+                saved_under[py][px] = 0;
+        }
+    }
+
+    /* Draw the cursor sprite */
     for (py = 0; py < CURSOR_H; py++) {
         for (px = 0; px < CURSOR_W; px++) {
             uint8_t pix = cursor_data[py][px];
             if (pix == 0)
-                continue;  /* transparent */
+                continue;
 
             uint32_t sx = (uint32_t)(cx + (int32_t)px);
             uint32_t sy = (uint32_t)(cy + (int32_t)py);
@@ -304,4 +340,6 @@ void mouse_draw_cursor(void)
             fb_put_pixel(sx, sy, color);
         }
     }
+
+    cursor_visible = 1;
 }

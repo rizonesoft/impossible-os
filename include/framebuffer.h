@@ -36,6 +36,9 @@ void fb_set_color(uint32_t fg, uint32_t bg);
 /* Put a pixel at (x, y) with the given RGB color */
 void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color);
 
+/* Read a pixel from the back buffer at (x, y) */
+uint32_t fb_read_pixel(uint32_t x, uint32_t y);
+
 /* Filled rectangle */
 void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
                   uint32_t color);
