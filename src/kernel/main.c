@@ -24,6 +24,7 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/ata.h"
+#include "kernel/drivers/virtio_blk.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/initrd.h"
 #include "kernel/fs/fat32.h"
@@ -75,6 +76,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 7: Initialize ATA disk driver */
     ata_init();
+
+    /* Step 7b: Initialize VirtIO block device */
+    virtio_blk_init();
 
     /* Step 8: Initialize VFS */
     vfs_init();
@@ -702,6 +706,46 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("[FAIL] ");
             fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
             printk("swap test alloc failed\n");
+        }
+    }
+
+    /* === VirtIO-blk test (read sector 0) === */
+    if (virtio_blk_present()) {
+        uint8_t sect0[512];
+        uint32_t vt;
+        int vrc;
+
+        printk("\n  VirtIO-blk test: reading sector 0\n");
+
+        for (vt = 0; vt < 512; vt++)
+            sect0[vt] = 0;
+
+        vrc = virtio_blk_read(0, 1, sect0);
+        if (vrc == 0) {
+            /* Print first 16 bytes as hex */
+            printk("    Sector 0 bytes: ");
+            for (vt = 0; vt < 16; vt++)
+                printk("%x ", (uint64_t)sect0[vt]);
+            printk("\n");
+
+            /* Check MBR signature (0x55AA at offset 510-511) */
+            if (sect0[510] == 0x55 && sect0[511] == 0xAA) {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("VirtIO-blk: sector 0 read OK (MBR signature found)\n");
+            } else {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("VirtIO-blk: sector 0 read OK (%u sectors total)\n",
+                       (uint64_t)virtio_blk_capacity());
+            }
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("VirtIO-blk: sector 0 read failed\n");
         }
     }
     /* === User mode test === */

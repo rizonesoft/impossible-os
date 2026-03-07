@@ -41,7 +41,8 @@ OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
 QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
                -cdrom $(ISO_FILE) \
-               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
+               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
+               -device virtio-blk-pci,drive=disk0,disable-modern=on,ioeventfd=off \
                -m 2G \
                -serial stdio \
                -vga none \
