@@ -485,6 +485,47 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("mutex thread_create failed\n");
         }
     }
+
+    /* === Semaphore test (producer-consumer) === */
+    {
+        extern volatile uint32_t sem_produced;
+        extern volatile uint32_t sem_consumed;
+        extern void sem_producer_func(void *arg);
+        extern void sem_consumer_func(void *arg);
+
+        int stid_p, stid_c;
+
+        sem_produced = 0;
+        sem_consumed = 0;
+        printk("\n  Semaphore test: producer-consumer synchronization\n");
+
+        stid_c = thread_create(sem_consumer_func, (void *)0, 0);
+        stid_p = thread_create(sem_producer_func, (void *)0, 0);
+
+        if (stid_p >= 0 && stid_c >= 0) {
+            thread_join((uint32_t)stid_p);
+            thread_join((uint32_t)stid_c);
+
+            if (sem_consumed == 5) {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Semaphore test passed (consumed=%u)\n",
+                       (uint64_t)sem_consumed);
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Semaphore test: expected 5, got %u\n",
+                       (uint64_t)sem_consumed);
+            }
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("semaphore thread_create failed\n");
+        }
+    }
     /* === User mode test === */
     {
         extern void user_test_func(void);
@@ -747,6 +788,37 @@ void mutex_inc_func(void *arg)
         mutex_unlock(&test_mutex);
     }
     printk("    [%s] done (100 increments)\n", label);
+}
+
+/* --- Semaphore test functions --- */
+
+#include "kernel/sched/semaphore.h"
+
+static semaphore_t test_sem = SEM_INIT("test_sem", 0);
+volatile uint32_t sem_produced = 0;
+volatile uint32_t sem_consumed = 0;
+
+void sem_producer_func(void *arg)
+{
+    uint32_t i;
+    (void)arg;
+    for (i = 0; i < 5; i++) {
+        sem_produced++;
+        printk("    [Producer] produced item %u\n", (uint64_t)sem_produced);
+        sem_signal(&test_sem);
+        thread_yield();
+    }
+}
+
+void sem_consumer_func(void *arg)
+{
+    uint32_t i;
+    (void)arg;
+    for (i = 0; i < 5; i++) {
+        sem_wait(&test_sem);
+        sem_consumed++;
+        printk("    [Consumer] consumed item %u\n", (uint64_t)sem_consumed);
+    }
 }
 
 /* --- Test thread functions for preemptive scheduling --- */
