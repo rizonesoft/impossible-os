@@ -33,6 +33,7 @@
 #include "mouse.h"
 #include "wm.h"
 #include "font.h"
+#include "pit.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -505,23 +506,34 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
-        /* Compositor loop — runs as the idle thread */
-        for (;;) {
-            struct mouse_state ms = mouse_get_state();
+        /* Compositor loop — runs as the idle thread, rate-limited to ~30fps */
+        {
+            uint64_t last_frame = 0;
 
-            /* Dispatch mouse events to WM */
-            wm_handle_mouse(ms.x, ms.y, ms.buttons);
+            for (;;) {
+                uint64_t now = pit_get_ticks();
 
-            /* Composite all windows to the back buffer */
-            wm_composite();
+                /* Only composite every 3 PIT ticks (~30ms = ~33fps) */
+                if (now - last_frame >= 3) {
+                    struct mouse_state ms = mouse_get_state();
 
-            /* Draw mouse cursor on top */
-            mouse_draw_cursor();
+                    /* Dispatch mouse events to WM */
+                    wm_handle_mouse(ms.x, ms.y, ms.buttons);
 
-            /* Present to screen */
-            fb_swap();
+                    /* Composite all windows to the back buffer */
+                    wm_composite();
 
-            __asm__ volatile("hlt");
+                    /* Draw mouse cursor on top */
+                    mouse_draw_cursor();
+
+                    /* Present to screen */
+                    fb_swap();
+
+                    last_frame = now;
+                }
+
+                __asm__ volatile("hlt");
+            }
         }
     }
 

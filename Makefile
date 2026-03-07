@@ -46,6 +46,7 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -serial stdio \
                -device rtl8139,netdev=net0 \
                -netdev user,id=net0 \
+               -usb -device usb-tablet \
                -no-reboot
 
 # --- Source Discovery ---

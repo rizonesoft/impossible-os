@@ -209,9 +209,6 @@ void fb_init(void)
 
 void fb_swap(void)
 {
-    uint32_t y;
-    uint32_t hw_stride;
-
     if (!fb_ready)
         return;
 
@@ -219,16 +216,22 @@ void fb_swap(void)
     if (back_buf == hw_addr)
         return;
 
-    hw_stride = fb_pitch / (fb_bpp / 8);
-
-    /* Disable interrupts during the copy so the hardware FB is never
-     * in a half-updated state (prevents visible tearing/flicker). */
+    /* Disable interrupts so the hardware FB is never half-updated */
     __asm__ volatile ("cli");
 
-    for (y = 0; y < fb_height; y++) {
-        mem_cpy32(hw_addr + y * hw_stride,
-                  back_buf + y * fb_stride,
-                  fb_width);
+    /* Fast bulk copy using rep movsd (copies 4 bytes per iteration).
+     * Much faster than a C loop — the CPU optimizes this internally. */
+    {
+        uint32_t count = fb_stride * fb_height;  /* total 32-bit pixels */
+        __asm__ volatile (
+            "rep movsd"
+            : "+S"(back_buf), "+D"(hw_addr), "+c"(count)
+            :
+            : "memory"
+        );
+        /* Restore pointers (rep movsd advances them) */
+        back_buf -= fb_stride * fb_height;
+        hw_addr  -= fb_stride * fb_height;
     }
 
     __asm__ volatile ("sti");
