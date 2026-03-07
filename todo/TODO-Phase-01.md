@@ -32,11 +32,11 @@
 
 ### 1.3 Semaphores
 
-- [ ] Define `semaphore_t` struct (count, wait queue)
-- [ ] Implement `sem_wait(s)` — decrement, block if count < 0
-- [ ] Implement `sem_signal(s)` — increment, wake one waiter
-- [ ] Implement `sem_init(s, initial_count)`
-- [ ] Commit: `"sched: semaphore synchronization"`
+- [x] Define `semaphore_t` struct (count, wait queue)
+- [x] Implement `sem_wait(s)` — decrement, block if count < 0
+- [x] Implement `sem_signal(s)` — increment, wake one waiter
+- [x] Implement `sem_init(s, initial_count)`
+- [x] Commit: `"sched: semaphore synchronization"`
 
 ---
 
