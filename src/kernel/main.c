@@ -447,6 +447,44 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("thread_create failed\n");
         }
     }
+
+    /* === Mutex test (two threads, protected counter) === */
+    {
+        extern volatile uint32_t mutex_shared_counter;
+        extern void mutex_inc_func(void *arg);
+
+        int mtid_a, mtid_b;
+
+        mutex_shared_counter = 0;
+        printk("\n  Mutex test: two threads racing on a protected counter\n");
+
+        mtid_a = thread_create(mutex_inc_func, (void *)"MutexA", 0);
+        mtid_b = thread_create(mutex_inc_func, (void *)"MutexB", 0);
+
+        if (mtid_a >= 0 && mtid_b >= 0) {
+            thread_join((uint32_t)mtid_a);
+            thread_join((uint32_t)mtid_b);
+
+            if (mutex_shared_counter == 200) {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Mutex test passed (counter=%u)\n",
+                       (uint64_t)mutex_shared_counter);
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Mutex test: expected 200, got %u\n",
+                       (uint64_t)mutex_shared_counter);
+            }
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("mutex thread_create failed\n");
+        }
+    }
     /* === User mode test === */
     {
         extern void user_test_func(void);
@@ -690,6 +728,25 @@ void thread_inc_func(void *arg)
                (uint64_t)thread_shared_counter);
         thread_yield();
     }
+}
+
+/* --- Mutex test functions --- */
+
+#include "kernel/sched/mutex.h"
+
+static mutex_t test_mutex = MUTEX_INIT("test_mutex");
+volatile uint32_t mutex_shared_counter = 0;
+
+void mutex_inc_func(void *arg)
+{
+    uint32_t i;
+    const char *label = (const char *)arg;
+    for (i = 0; i < 100; i++) {
+        mutex_lock(&test_mutex);
+        mutex_shared_counter++;
+        mutex_unlock(&test_mutex);
+    }
+    printk("    [%s] done (100 increments)\n", label);
 }
 
 /* --- Test thread functions for preemptive scheduling --- */
