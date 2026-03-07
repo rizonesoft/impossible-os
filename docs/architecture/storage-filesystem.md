@@ -21,16 +21,17 @@ User / Kernel code
   └──┬──┘ └──┬──┘ └─────┘
      │       │
      ▼       ▼
-  ┌──────────────────────┐
-  │  Block Device Layer  │  blkdev_read() / blkdev_write()
-  │    (blkdev.c)        │
-  └──┬──────────────┬────┘
-     │              │
-     ▼              ▼
-  ┌──────────┐  ┌──────────┐
-  │VirtIO-blk│  │ATA Driver│   Hardware drivers
-  │(modern)  │  │ (PIO)    │
-  └──────────┘  └──────────┘
+  ┌──────────────────────────────┐
+  │  Block Device Abstraction Layer  │  blkdev_read() / blkdev_write()
+  │          (blkdev.c)              │  up to 16 registered devices
+  └──┬──────────┬─────────┬──────┘
+     │          │         │
+     ▼          ▼         ▼
+  ┌────────┐  ┌───────┐  ┌───────┐
+  │VirtIO  │  │ AHCI  │  │ ATA   │   Hardware drivers
+  │(MMIO)  │  │(DMA)  │  │(PIO)  │
+  └────────┘  └───────┘  └───────┘
+   virtio0     sata0      ata0
 ```
 
 ## Drive Letter Assignment
@@ -43,6 +44,27 @@ User / Kernel code
 
 During early boot (before disk drivers), the **initrd** is temporarily mounted
 at `C:\` to provide the kernel with essential files.
+
+## Partitioning
+
+The kernel currently supports the **MBR (Master Boot Record)** partition table format.
+During the boot sequence, right after initializing the block devices (VirtIO, AHCI, ATA), the kernel scans the first sector of each device.
+
+### Supported Partition Types
+
+| Type ID | Human Readable | Purpose |
+|---------|----------------|---------|
+| `0x0C`  | FAT32 (LBA)    | Supported for UEFI boot partitions |
+| `0x0B`  | FAT32 (CHS)    | Legacy FAT32 (treated identically to 0x0C) |
+| `0x83`  | Linux          | Recognized, but not mountable natively yet |
+| `0xDA`  | IXFS           | Custom type ID for Native Impossible OS filesystem partitions |
+| `0xEE`  | GPT Protective | Recognized (GPT parsing not yet implemented) |
+
+The parsing implementation skips empty (`0x00`) or zero-size entries. Active partitions are logged during boot to the serial output, for example:
+```text
+[MBR] virtio0: 3 partition(s)
+  p1: FAT32 (LBA)  LBA 2048  16 MiB [boot]
+```
 
 ## ATA/IDE Disk Driver
 
@@ -134,6 +156,35 @@ at `C:\` to provide the kernel with essential files.
 | `ahci_capacity(port)` | Total sectors for given port |
 | `ahci_present()` | Check if any SATA drive initialized |
 | `ahci_drive_count()` | Number of detected SATA drives |
+
+## Block Device Abstraction Layer
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/drivers/blkdev.c` | Device registry, dispatch, listing |
+| `include/kernel/drivers/blkdev.h` | `struct blkdev` and API |
+
+### Configuration
+
+| Property | Value |
+|----------|-------|
+| Max devices | 16 (BLKDEV_MAX) |
+| Dispatch | Function-pointer based |
+| Naming | "virtio0", "sata0", "sata1", etc. |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `blkdev_register(dev)` | Add device to global registry |
+| `blkdev_get(name)` | Look up by name string |
+| `blkdev_get_by_index(idx)` | Look up by index |
+| `blkdev_read(dev, lba, count, buf)` | Dispatch read to driver |
+| `blkdev_write(dev, lba, count, buf)` | Dispatch write to driver |
+| `blkdev_count()` | Number of registered devices |
+| `blkdev_list()` | Print all devices to serial/console |
 
 ## Virtual Filesystem (VFS)
 
