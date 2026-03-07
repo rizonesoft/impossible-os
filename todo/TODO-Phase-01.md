@@ -82,16 +82,16 @@
 
 ### 3.1 Swap / Page File
 
-- [ ] Create swap file: `C:\Impossible\System\pagefile.sys`
-- [ ] Implement `swap_init(path, size)` — initialize swap file
-- [ ] Implement `swap_out(phys_frame)` — write page to swap, free frame
-- [ ] Implement `swap_in(swap_id, phys_frame)` — read page back from swap
-- [ ] Implement LRU or Clock page replacement algorithm
-- [ ] Track swap state in page table entries (Present=0, swap_id encoded)
-- [ ] Handle page fault → check if page is swapped → `swap_in()` → retry
-- [ ] Configurable swap size (default: 1× RAM, stored in Codex)
-- [ ] Test: allocate more memory than physical RAM → swap kicks in
-- [ ] Commit: `"mm: swap / page file support"`
+- [x] Create swap file: `C:\Impossible\System\pagefile.sys`
+- [x] Implement `swap_init(path, size)` — initialize swap file
+- [x] Implement `swap_out(phys_frame)` — write page to swap, free frame
+- [x] Implement `swap_in(swap_id, phys_frame)` — read page back from swap
+- [x] Implement LRU or Clock page replacement algorithm
+- [x] Track swap state in page table entries (Present=0, swap_id encoded)
+- [x] Handle page fault → check if page is swapped → `swap_in()` → retry
+- [x] Configurable swap size (default: 1× RAM, stored in Codex)
+- [x] Test: allocate more memory than physical RAM → swap kicks in
+- [x] Commit: `"mm: swap / page file support"`
 
 ### 3.2 Memory-Mapped Files
 > *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*
