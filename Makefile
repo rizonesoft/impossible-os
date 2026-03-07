@@ -41,11 +41,13 @@ OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
 QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
                -cdrom $(ISO_FILE) \
-               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
+               -drive file=$(BUILD_DIR)/mbr-test.img,format=raw,if=none,id=disk0 \
                -device virtio-blk-pci,drive=disk0 \
                -drive file=$(BUILD_DIR)/sata.img,format=raw,if=none,id=disk1 \
                -device ahci,id=ahci0 \
                -device ide-hd,drive=disk1,bus=ahci0.0 \
+               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk2 \
+               -device virtio-blk-pci,drive=disk2 \
                -m 2G \
                -serial stdio \
                -vga none \
@@ -206,6 +208,9 @@ run: $(ISO_FILE)
 	@if [ ! -f $(BUILD_DIR)/sata.img ]; then \
 		qemu-img create -f raw $(BUILD_DIR)/sata.img 32M; \
 	fi
+	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
+		python3 tools/make_mbr.py $(BUILD_DIR)/mbr-test.img; \
+	fi
 	$(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
@@ -221,6 +226,9 @@ run-log: $(ISO_FILE)
 		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
 		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
+		python3 tools/make_mbr.py $(BUILD_DIR)/mbr-test.img; \
 	fi
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
