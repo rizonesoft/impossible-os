@@ -543,7 +543,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     first_frame = 0;
                 }
 
-                __asm__ volatile("hlt");
+                /* Yield to other tasks instead of HLT.  HLT surrenders the
+                 * entire time slice; yield() does a cooperative context switch
+                 * but keeps us in the ready queue for prompt re-scheduling. */
+                yield();
             }
         }
     }
