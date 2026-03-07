@@ -1,9 +1,10 @@
 # Phase 10 — Compatibility & Internationalization
 
-> **Goal:** Make Impossible OS a dual-format platform that natively runs both ELF
-> and Windows PE executables, provides Win32 API compatibility through stub DLLs,
-> supports international keyboard layouts and Unicode, and optionally runs Java
-> bytecode — creating a truly versatile operating system.
+> **Goal:** Make Impossible OS a **tri-format platform** that natively runs ELF,
+> Windows PE, and macOS Mach-O executables — the only hobby OS to load all three
+> major binary formats. Provide Win32 and macOS API compatibility through stub
+> libraries, support international keyboard layouts and Unicode, and optionally
+> run Java bytecode — creating a truly versatile operating system.
 
 ---
 
@@ -36,16 +37,18 @@
   - [ ] Return entry point = ImageBase + AddressOfEntryPoint
 - [ ] Commit: `"kernel: PE loader core"`
 
-### 1.3 Dual-Format Detection
+### 1.3 Tri-Format Detection
 
 - [ ] Create `load_binary(data, size)` in `src/kernel/task.c` (or new file)
 - [ ] Auto-detect format by magic bytes:
   - [ ] `"MZ"` (0x5A4D) → `pe_load()` — Windows PE
   - [ ] `"\x7FELF"` (0x464C457F) → `elf_load()` — native ELF
+  - [ ] `0xFEEDFACF` → `macho_load()` — macOS Mach-O (64-bit)
+  - [ ] `0xFEEDFACE` → reject with "32-bit Mach-O not supported"
   - [ ] Unknown → return error
 - [ ] Update exec path: replace direct `elf_load()` call with `load_binary()`
-- [ ] Both loaders return identical `struct load_result` (entry_point, success)
-- [ ] Commit: `"kernel: dual-format binary detection (ELF + PE)"`
+- [ ] All three loaders return identical `struct load_result` (entry_point, success)
+- [ ] Commit: `"kernel: tri-format binary detection (ELF + PE + Mach-O)"`
 
 ### 1.4 Base Relocation
 
@@ -309,11 +312,107 @@
 
 ---
 
-## 8. Agent-Recommended Additions
+## 8. Mach-O Binary Loader (macOS Compatibility)
+
+> **Unique differentiator:** Impossible OS as a tri-format platform — the only hobby
+> OS that natively loads ELF + PE + Mach-O executables.
+
+### 8.1 Mach-O Header Structures
+
+- [ ] Create `include/macho.h` (~80 lines)
+- [ ] Define `struct mach_header_64` (magic `0xFEEDFACF`, cputype `CPU_TYPE_X86_64`, ncmds, sizeofcmds)
+- [ ] Define `struct load_command` (cmd, cmdsize) — base for all load commands
+- [ ] Define `struct segment_command_64` (cmd `LC_SEGMENT_64`, segname, vmaddr, vmsize, fileoff, filesize, nsects)
+- [ ] Define `struct section_64` (sectname, segname, addr, size, offset)
+- [ ] Define Mach-O constants: `MH_MAGIC_64`, `CPU_TYPE_X86_64`, `LC_SEGMENT_64`, `LC_MAIN`, `LC_LOAD_DYLIB`, `LC_SYMTAB`, `LC_DYSYMTAB`
+- [ ] Commit: `"kernel: Mach-O header structures"`
+
+### 8.2 Mach-O Loader Core
+
+- [ ] Create `src/kernel/macho.c` (~300 lines)
+- [ ] Implement `macho_load(data, size)`:
+  - [ ] Validate header: `magic == 0xFEEDFACF` (64-bit)
+  - [ ] Verify `cputype == CPU_TYPE_X86_64 (0x01000007)`
+  - [ ] Walk load commands (`ncmds` entries):
+    - [ ] `LC_SEGMENT_64`: map each segment (`__TEXT`, `__DATA`, `__DATA_CONST`, `__LINKEDIT`)
+    - [ ] `LC_MAIN`: read entry point offset (replaces deprecated `LC_UNIXTHREAD`)
+    - [ ] `LC_LOAD_DYLIB`: collect required dylib names
+  - [ ] For each segment: allocate vmsize at vmaddr, memcpy filesize bytes from fileoff
+  - [ ] Zero-fill remainder (vmsize − filesize = BSS-like)
+  - [ ] Return entry point from `LC_MAIN` offset + `__TEXT` vmaddr
+- [ ] Commit: `"kernel: Mach-O loader core"`
+
+### 8.3 Mach-O Dylib Import Resolution
+
+- [ ] Parse `LC_LOAD_DYLIB` commands to find required libraries:
+  - [ ] `/usr/lib/libSystem.B.dylib` — macOS system library (libc + POSIX)
+  - [ ] `/usr/lib/libc++.1.dylib` — C++ standard library (future)
+- [ ] Parse `LC_SYMTAB` + `LC_DYSYMTAB` for symbol table and indirect symbols
+- [ ] Read `__stubs` + `__la_symbol_ptr` sections in `__DATA` segment
+- [ ] Patch lazy symbol pointers with our stub function addresses
+- [ ] Builtin dylib registry:
+  - [ ] `"libSystem.B.dylib"` → `builtin_libsystem[]`
+- [ ] Commit: `"kernel: Mach-O dylib import resolution"`
+
+### 8.4 libSystem.B.dylib Stubs (macOS API)
+
+- [ ] Create `src/kernel/macos/libsystem.c`
+- [ ] macOS uses **System V x64 calling convention** (same as ELF!) — no register bridge needed
+- [ ] Console I/O stubs:
+  - [ ] `write(fd, buf, len)` → `sys_write()`
+  - [ ] `read(fd, buf, len)` → `sys_read()`
+  - [ ] `_exit(code)` → `sys_exit()`
+- [ ] Memory stubs:
+  - [ ] `malloc(size)` → `kmalloc()`
+  - [ ] `free(ptr)` → `kfree()`
+  - [ ] `calloc(n, size)` → zero-initialized malloc
+  - [ ] `realloc(ptr, size)` → resize
+  - [ ] `mmap(addr, len, prot, flags, fd, off)` → `sys_mmap()`
+  - [ ] `munmap(addr, len)` → `sys_munmap()`
+- [ ] String stubs:
+  - [ ] `printf(fmt, ...)` → format + `sys_write()`
+  - [ ] `puts(str)` → write + newline
+  - [ ] `strlen()`, `strcpy()`, `strcmp()`, `memcpy()`, `memset()`
+- [ ] File I/O stubs:
+  - [ ] `open(path, flags)` → `vfs_open()`
+  - [ ] `close(fd)` → `vfs_close()`
+  - [ ] `stat(path, buf)` → `vfs_stat()`
+- [ ] Process stubs:
+  - [ ] `getpid()` → return current process ID
+  - [ ] `abort()` → `sys_exit(134)`
+- [ ] Commit: `"macos: libSystem.B.dylib stubs"`
+
+### 8.5 macOS Path Translation
+
+- [ ] Translate macOS-style paths to VFS:
+  - [ ] `/Users/name/file.txt` → `C:\Users\name\file.txt`
+  - [ ] `/tmp/` → `C:\Temp\`
+  - [ ] `/` → `C:\`
+- [ ] Forward slash preserved (VFS already supports it)
+- [ ] Commit: `"macos: path translation"`
+
+### 8.6 Test: Run macOS Hello World
+
+- [ ] Cross-compile test: `clang -target x86_64-apple-macos -o hello hello.c` (on macOS host)
+- [ ] Or: hand-craft minimal Mach-O binary with `write()` + `_exit()` syscalls
+- [ ] Include in initrd
+- [ ] Execute: `hello` → prints "Hello from macOS binary!"
+- [ ] Commit: `"kernel: run first Mach-O program"`
+
+### 8.7 Unimplemented macOS Function Logger
+
+- [ ] Same pattern as Win32 logger (§9.3): log unresolved dylib symbols
+- [ ] `"UNIMPL: libSystem.B.dylib!pthread_create"`
+- [ ] Return safe default instead of crashing
+- [ ] Commit: `"macos: unimplemented function logger"`
+
+---
+
+## 9. Agent-Recommended Additions
 
 > Items not in the research files but important for a complete compatibility layer.
 
-### 8.1 Win32 GUI Stubs — Tier 3 (Future)
+### 9.1 Win32 GUI Stubs — Tier 3 (Future)
 
 - [ ] *(Stretch)* `src/kernel/win32/user32.c`:
   - [ ] `RegisterClassExW()` → register window class with WM
@@ -332,7 +431,7 @@
   - [ ] `SetPixel()` / `GetPixel()` → framebuffer access
 - [ ] Commit: `"win32: user32.dll + gdi32.dll GUI stubs"`
 
-### 8.2 PE Resource Section Parser
+### 9.2 PE Resource Section Parser
 
 - [ ] *(Stretch)* Parse DataDirectory[2] (Resource Table)
 - [ ] *(Stretch)* Extract embedded icons for taskbar/window title
@@ -340,7 +439,7 @@
 - [ ] *(Stretch)* Extract string tables for localization
 - [ ] Commit: `"kernel: PE resource section parser"`
 
-### 8.3 Unimplemented Function Logger
+### 9.3 Unimplemented Function Logger
 
 - [ ] When a PE program calls an unimplemented Win32 function:
   - [ ] Log to serial: `"UNIMPL: kernel32.dll!CreateThread"`
@@ -350,7 +449,7 @@
 - [ ] Helps identify which stubs to implement next
 - [ ] Commit: `"win32: unimplemented function logger"`
 
-### 8.4 ELF Dynamic Linking (Parallel Track)
+### 9.4 ELF Dynamic Linking (Parallel Track)
 
 - [ ] *(Stretch)* Parse `PT_DYNAMIC` segment in ELF
 - [ ] *(Stretch)* Load `.so` shared libraries
@@ -359,14 +458,15 @@
 - [ ] *(Stretch)* Run static musl-linked Linux binaries
 - [ ] Commit: `"kernel: ELF dynamic linking"`
 
-### 8.5 Compatibility Test Suite
+### 9.5 Compatibility Test Suite
 
 - [ ] Create `tests/compat/` directory
 - [ ] MinGW "Hello World" console program → test PE load + WriteConsoleA
 - [ ] MinGW file I/O program → test CreateFileA + ReadFile + WriteFile
 - [ ] MinGW memory allocation program → test VirtualAlloc + HeapAlloc
-- [ ] Native ELF regression tests → ensure dual-format doesn't break ELF
-- [ ] Commit: `"tests: Win32 compatibility test suite"`
+- [ ] Mach-O "Hello World" → test Mach-O load + libSystem write()
+- [ ] Native ELF regression tests → ensure tri-format doesn't break ELF
+- [ ] Commit: `"tests: tri-format compatibility test suite"`
 
 ---
 
@@ -374,23 +474,26 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1.1–1.3 PE Loader + Dual-Format | Foundation — load Windows binaries |
+| 🔴 P0 | 1.1–1.3 PE Loader + Tri-Format | Foundation — load Windows + macOS binaries |
 | 🔴 P0 | 2.1–2.3 Import Resolution + IAT | Connect PE programs to OS |
 | 🔴 P0 | 3.1–3.2 Win32 Console Stubs | Run first Windows PE "Hello World" |
 | 🟠 P1 | 3.3–3.4 msvcrt + ntdll Stubs | C runtime for compiled programs |
+| 🟠 P1 | 8.1–8.2 Mach-O Loader Core | Load macOS binaries |
+| 🟠 P1 | 8.3–8.4 Mach-O Dylib + libSystem | Run macOS console programs |
 | 🟠 P1 | 6.1–6.2 Keyboard Layout System | International input support |
 | 🟠 P1 | 6.4 UTF-8 Unicode | Text support for all languages |
-| 🟠 P1 | 8.3 Unimplemented Function Logger | Debug PE compatibility |
+| 🟠 P1 | 9.3 Unimplemented Function Logger | Debug PE/Mach-O compatibility |
 | 🟡 P2 | 4.1 File I/O Stubs | Windows programs that read/write files |
 | 🟡 P2 | 4.2 Memory Stubs | VirtualAlloc / HeapAlloc |
 | 🟡 P2 | 4.3 Windows Path Translation | Drive letters + backslashes |
+| 🟡 P2 | 8.5 macOS Path Translation | POSIX → VFS paths |
 | 🟡 P2 | 1.4 Base Relocation | Load PE at non-preferred addresses |
 | 🟡 P2 | 6.3 Layout Switching | Win+Space, system tray indicator |
 | 🟢 P3 | 5.1 Calling Convention | Proper x64 register mapping |
-| 🟢 P3 | 8.5 Compatibility Tests | Regression testing |
+| 🟢 P3 | 9.5 Compatibility Tests | Tri-format regression testing |
 | 🟢 P3 | 2.4 External DLL Loading | Load real PE DLLs |
 | 🟢 P3 | 6.5 Localization | Multi-language UI |
-| 🔵 P4 | 8.1 Win32 GUI Stubs | Windows GUI programs (long-term) |
-| 🔵 P4 | 8.2 PE Resource Parser | Icons, version info |
-| 🔵 P4 | 8.4 ELF Dynamic Linking | .so shared libraries |
+| 🔵 P4 | 9.1 Win32 GUI Stubs | Windows GUI programs (long-term) |
+| 🔵 P4 | 9.2 PE Resource Parser | Icons, version info |
+| 🔵 P4 | 9.4 ELF Dynamic Linking | .so shared libraries |
 | 🔵 P4 | 7. Java Runtime | JVM support (educational/future) |
