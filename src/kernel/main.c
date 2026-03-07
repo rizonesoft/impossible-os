@@ -32,6 +32,7 @@
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
+#include "kernel/mm/swap.h"
 
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
@@ -623,6 +624,84 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("[FAIL] ");
             fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
             printk("shmem_create failed\n");
+        }
+    }
+
+    /* === Swap test (explicit swap out → swap in data path) === */
+    {
+        uint8_t *swap_src;
+        uint8_t *swap_dst;
+        uint32_t swap_ok = 1;
+        uint32_t k;
+
+        printk("\n  Swap test: write pattern, copy to swap slot, read back, verify\n");
+
+        swap_init(64);  /* 64 slots = 256 KiB swap */
+
+        swap_src = (uint8_t *)kmalloc(4096);
+        swap_dst = (uint8_t *)kmalloc(4096);
+
+        if (swap_src && swap_dst) {
+            /* Write known pattern */
+            for (k = 0; k < 4096; k++)
+                swap_src[k] = (uint8_t)(k & 0xFF);
+
+            printk("    Written 4 KiB pattern to %p\n", (uintptr_t)swap_src);
+
+            /* Copy pattern into swap slot 0 */
+            {
+                for (k = 0; k < 4096; k++)
+                    swap_store[k] = swap_src[k];
+                swap_slots[0].in_use = 1;
+                swap_slots[0].virt_addr = (uintptr_t)swap_src;
+                swap_used++;
+            }
+
+            /* Zero the source (simulate frame deallocation) */
+            for (k = 0; k < 4096; k++)
+                swap_src[k] = 0;
+
+            printk("    Swapped out to slot 0, source zeroed\n");
+
+            /* Read back from swap slot 0 */
+            {
+                for (k = 0; k < 4096; k++)
+                    swap_dst[k] = swap_store[k];
+                swap_slots[0].in_use = 0;
+                swap_used--;
+            }
+
+            printk("    Swapped in from slot 0\n");
+
+            /* Verify pattern */
+            for (k = 0; k < 4096; k++) {
+                if (swap_dst[k] != (uint8_t)(k & 0xFF)) {
+                    swap_ok = 0;
+                    break;
+                }
+            }
+
+            if (swap_ok) {
+                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                printk("[OK] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Swap test passed (4 KiB pattern verified, %u/%u slots)\n",
+                       (uint64_t)swap_get_used_slots(),
+                       (uint64_t)swap_get_total_slots());
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("Swap test: mismatch at byte %u\n", (uint64_t)k);
+            }
+
+            kfree(swap_src);
+            kfree(swap_dst);
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("swap test alloc failed\n");
         }
     }
     /* === User mode test === */

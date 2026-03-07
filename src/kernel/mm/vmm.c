@@ -18,6 +18,7 @@
 #include "kernel/idt.h"
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/mm/swap.h"
 
 /* Page table entry — 64-bit */
 typedef uint64_t pte_t;
@@ -249,6 +250,11 @@ uintptr_t vmm_get_physical(uintptr_t virt)
 static uint64_t page_fault_handler(struct interrupt_frame *frame)
 {
     uintptr_t fault_addr = read_cr2();
+
+    /* Try swap handler first — if the page was swapped, bring it back */
+    if (swap_handle_fault(fault_addr, frame->err_code)) {
+        return (uint64_t)frame;  /* page swapped in, retry instruction */
+    }
 
     printk("\n");
     fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
