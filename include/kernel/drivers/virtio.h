@@ -14,6 +14,20 @@
 
 #include "kernel/types.h"
 
+/* ---- MMIO read/write helpers ---- */
+static inline uint8_t mmio_read8(volatile uint8_t *addr) { return *addr; }
+static inline uint16_t mmio_read16(volatile uint16_t *addr) { return *addr; }
+static inline uint32_t mmio_read32(volatile uint32_t *addr) { return *addr; }
+static inline void mmio_write8(volatile uint8_t *addr, uint8_t v) { *addr = v; }
+static inline void mmio_write16(volatile uint16_t *addr, uint16_t v) { *addr = v; }
+static inline void mmio_write32(volatile uint32_t *addr, uint32_t v) { *addr = v; }
+static inline void mmio_write64(volatile uint8_t *base, uint32_t off, uint64_t val) {
+    volatile uint32_t *lo = (volatile uint32_t *)(base + off);
+    volatile uint32_t *hi = (volatile uint32_t *)(base + off + 4);
+    *lo = (uint32_t)(val & 0xFFFFFFFF);
+    *hi = (uint32_t)(val >> 32);
+}
+
 /* ---- VirtIO PCI vendor/device IDs ---- */
 #define VIRTIO_PCI_VENDOR       0x1AF4
 #define VIRTIO_PCI_DEV_INPUT    0x1052  /* modern: 0x1040 + 18 (input) */

@@ -42,7 +42,7 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
                -cdrom $(ISO_FILE) \
                -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
-               -device virtio-blk-pci,drive=disk0,disable-modern=on,ioeventfd=off \
+               -device virtio-blk-pci,drive=disk0 \
                -m 2G \
                -serial stdio \
                -vga none \

@@ -18,46 +18,7 @@
 #include "kernel/printk.h"
 #include "kernel/mm/vmm.h"
 
-/* ---- MMIO read/write helpers ---- */
-static inline uint8_t mmio_read8(volatile uint8_t *addr)
-{
-    return *addr;
-}
-
-static inline uint16_t mmio_read16(volatile uint16_t *addr)
-{
-    return *addr;
-}
-
-static inline uint32_t mmio_read32(volatile uint32_t *addr)
-{
-    return *addr;
-}
-
-static inline void mmio_write8(volatile uint8_t *addr, uint8_t val)
-{
-    *addr = val;
-}
-
-static inline void mmio_write16(volatile uint16_t *addr, uint16_t val)
-{
-    *addr = val;
-}
-
-static inline void mmio_write32(volatile uint32_t *addr, uint32_t val)
-{
-    *addr = val;
-}
-
-static inline void mmio_write64(volatile uint8_t *base, uint32_t off,
-                                 uint64_t val)
-{
-    /* Write as two 32-bit halves (some devices don't support 64-bit MMIO) */
-    volatile uint32_t *lo = (volatile uint32_t *)(base + off);
-    volatile uint32_t *hi = (volatile uint32_t *)(base + off + 4);
-    *lo = (uint32_t)(val & 0xFFFFFFFF);
-    *hi = (uint32_t)(val >> 32);
-}
+/* MMIO helpers are now in virtio.h as static inline */
 
 /* ---- Memory helpers ---- */
 static void vio_memset(void *dst, uint8_t val, uint64_t n)
