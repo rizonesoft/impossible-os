@@ -506,30 +506,37 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
-        /* Compositor loop — runs as the idle thread, rate-limited to ~30fps */
+        /* Compositor loop — runs as idle thread.
+         * Only redraws when something changed (mouse moved, window changed). */
         {
-            uint64_t last_frame = 0;
+            int32_t prev_mx = -1, prev_my = -1;
+            uint8_t prev_mb = 0;
+            uint8_t first_frame = 1;
 
             for (;;) {
-                uint64_t now = pit_get_ticks();
+                struct mouse_state ms = mouse_get_state();
+                uint8_t cursor_moved = (ms.x != prev_mx || ms.y != prev_my);
+                uint8_t btn_changed  = (ms.buttons != prev_mb);
 
-                /* Only composite every 3 PIT ticks (~30ms = ~33fps) */
-                if (now - last_frame >= 3) {
-                    struct mouse_state ms = mouse_get_state();
-
-                    /* Dispatch mouse events to WM */
+                /* Only do work if something actually changed */
+                if (first_frame || cursor_moved || btn_changed) {
+                    /* Dispatch mouse events to WM (may set dirty flag) */
                     wm_handle_mouse(ms.x, ms.y, ms.buttons);
 
-                    /* Composite all windows to the back buffer */
+                    /* Composite all windows to the back buffer (skips
+                     * if WM dirty flag is clear) */
                     wm_composite();
 
-                    /* Draw mouse cursor on top */
+                    /* Draw mouse cursor on top of composited scene */
                     mouse_draw_cursor();
 
                     /* Present to screen */
                     fb_swap();
 
-                    last_frame = now;
+                    prev_mx = ms.x;
+                    prev_my = ms.y;
+                    prev_mb = ms.buttons;
+                    first_frame = 0;
                 }
 
                 __asm__ volatile("hlt");

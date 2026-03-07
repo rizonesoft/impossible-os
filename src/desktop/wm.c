@@ -6,13 +6,17 @@
  * onto the screen back buffer in z-order (painter's algorithm), then the
  * caller calls fb_swap() to present.
  *
+ * Dirty-flag compositing: only redraws when something changed (mouse moved,
+ * window moved/created/destroyed).  This eliminates flicker caused by QEMU's
+ * host display thread catching a partially-drawn frame during the async read.
+ *
  * Features:
  *   - Window creation/destruction with dynamic framebuffer allocation
  *   - Title bar decorations with close button
  *   - Mouse-driven window dragging via title bar
  *   - Z-order stacking with bring-to-front on click
  *   - Focus tracking (active window has highlighted title bar)
- *   - Dirty rectangle optimization (mark regions for redraw)
+ *   - Dirty-flag compositing (only redraws when needed)
  * ============================================================================ */
 
 #include "wm.h"
@@ -30,6 +34,9 @@ static uint8_t wm_ready = 0;
 /* Previous mouse button state for edge detection */
 static uint8_t prev_buttons = 0;
 
+/* Dirty flag — when set, the compositor will redraw on next call */
+static volatile uint8_t needs_redraw = 1;
+
 /* ---- Helpers ---- */
 
 static uint32_t str_len(const char *s)
@@ -45,6 +52,12 @@ static void str_copy(char *dst, const char *src, uint32_t max)
     for (i = 0; i < max - 1 && src[i]; i++)
         dst[i] = src[i];
     dst[i] = '\0';
+}
+
+/* Mark the screen as needing a redraw */
+static void mark_dirty(void)
+{
+    needs_redraw = 1;
 }
 
 /* Get the total outer width/height including decorations */
@@ -120,6 +133,7 @@ void wm_init(void)
 
     focused_window = -1;
     prev_buttons = 0;
+    needs_redraw = 1;
     wm_ready = 1;
 
     /* Lock the framebuffer console — all text output now goes to serial only.
@@ -187,6 +201,7 @@ int wm_create_window(const char *title, int32_t x, int32_t y,
     /* Auto-focus */
     wm_focus_window((int)i);
 
+    mark_dirty();
     return (int)i;
 }
 
@@ -210,6 +225,8 @@ void wm_destroy_window(int handle)
 
     if (focused_window == handle)
         focused_window = -1;
+
+    mark_dirty();
 }
 
 /* ============================================================================
@@ -225,6 +242,7 @@ void wm_move_window(int handle, int32_t x, int32_t y)
 
     windows[handle].x = x;
     windows[handle].y = y;
+    mark_dirty();
 }
 
 void wm_resize_window(int handle, uint32_t width, uint32_t height)
@@ -267,6 +285,8 @@ void wm_resize_window(int handle, uint32_t width, uint32_t height)
     w->width = width;
     w->height = height;
     w->fb_pitch = width;
+
+    mark_dirty();
 }
 
 void wm_raise_window(int handle)
@@ -285,6 +305,7 @@ void wm_raise_window(int handle)
     }
 
     windows[handle].z_order = max_z + 1;
+    mark_dirty();
 }
 
 void wm_focus_window(int handle)
@@ -299,6 +320,8 @@ void wm_focus_window(int handle)
         windows[handle].flags |= WM_FLAG_FOCUSED;
         focused_window = handle;
     }
+
+    mark_dirty();
 }
 
 /* ============================================================================
@@ -373,7 +396,6 @@ static void draw_decorations(const struct wm_window *w)
 {
     uint32_t ow = outer_width(w);
     uint32_t tb_color;
-    uint32_t bx, by;
     int32_t text_x, text_y;
     uint32_t title_len;
     uint32_t btn_size = WM_TITLEBAR_HEIGHT - 2 * 4;  /* button with padding */
@@ -382,13 +404,8 @@ static void draw_decorations(const struct wm_window *w)
     tb_color = (w->flags & WM_FLAG_FOCUSED) ? WM_COLOR_TITLEBAR_ACTIVE
                                              : WM_COLOR_TITLEBAR_INACTIVE;
 
-    /* Draw title bar background */
-    for (by = 0; by < WM_TITLEBAR_HEIGHT; by++) {
-        for (bx = 0; bx < ow; bx++) {
-            fb_put_pixel((uint32_t)(w->x + (int32_t)bx),
-                         (uint32_t)(w->y + (int32_t)by), tb_color);
-        }
-    }
+    /* Draw title bar background using fb_fill_rect for speed */
+    fb_fill_rect((uint32_t)w->x, (uint32_t)w->y, ow, WM_TITLEBAR_HEIGHT, tb_color);
 
     /* Draw title text (left-aligned with padding) */
     text_x = w->x + 8;
@@ -407,16 +424,8 @@ static void draw_decorations(const struct wm_window *w)
     {
         int32_t cbx = w->x + (int32_t)ow - (int32_t)WM_TITLEBAR_HEIGHT + 4;
         int32_t cby = w->y + 4;
-        uint32_t cx, cy;
 
-        /* Button background */
-        for (cy = 0; cy < btn_size; cy++) {
-            for (cx = 0; cx < btn_size; cx++) {
-                fb_put_pixel((uint32_t)(cbx + (int32_t)cx),
-                             (uint32_t)(cby + (int32_t)cy),
-                             WM_COLOR_CLOSE_BTN);
-            }
-        }
+        fb_fill_rect((uint32_t)cbx, (uint32_t)cby, btn_size, btn_size, WM_COLOR_CLOSE_BTN);
 
         /* Draw "×" on the button */
         {
@@ -434,15 +443,8 @@ static void draw_decorations(const struct wm_window *w)
     {
         int32_t mbx = w->x + (int32_t)ow - 2 * (int32_t)WM_TITLEBAR_HEIGHT + 4;
         int32_t mby = w->y + 4;
-        uint32_t mx_i, my_i;
 
-        for (my_i = 0; my_i < btn_size; my_i++) {
-            for (mx_i = 0; mx_i < btn_size; mx_i++) {
-                fb_put_pixel((uint32_t)(mbx + (int32_t)mx_i),
-                             (uint32_t)(mby + (int32_t)my_i),
-                             WM_COLOR_MIN_BTN);
-            }
-        }
+        fb_fill_rect((uint32_t)mbx, (uint32_t)mby, btn_size, btn_size, WM_COLOR_MIN_BTN);
 
         /* Draw "−" line */
         {
@@ -459,29 +461,20 @@ static void draw_decorations(const struct wm_window *w)
     {
         int32_t gbx = w->x + (int32_t)ow - 3 * (int32_t)WM_TITLEBAR_HEIGHT + 4;
         int32_t gby = w->y + 4;
-        uint32_t gx, gy;
+        uint32_t d;
 
-        for (gy = 0; gy < btn_size; gy++) {
-            for (gx = 0; gx < btn_size; gx++) {
-                fb_put_pixel((uint32_t)(gbx + (int32_t)gx),
-                             (uint32_t)(gby + (int32_t)gy),
-                             WM_COLOR_MAX_BTN);
-            }
-        }
+        fb_fill_rect((uint32_t)gbx, (uint32_t)gby, btn_size, btn_size, WM_COLOR_MAX_BTN);
 
         /* Draw "□" outline */
-        {
-            uint32_t d;
-            for (d = 3; d < btn_size - 3; d++) {
-                fb_put_pixel((uint32_t)(gbx + (int32_t)d),
-                             (uint32_t)(gby + 3), 0x00FFFFFF);
-                fb_put_pixel((uint32_t)(gbx + (int32_t)d),
-                             (uint32_t)(gby + (int32_t)(btn_size - 4)), 0x00FFFFFF);
-                fb_put_pixel((uint32_t)(gbx + 3),
-                             (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
-                fb_put_pixel((uint32_t)(gbx + (int32_t)(btn_size - 4)),
-                             (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
-            }
+        for (d = 3; d < btn_size - 3; d++) {
+            fb_put_pixel((uint32_t)(gbx + (int32_t)d),
+                         (uint32_t)(gby + 3), 0x00FFFFFF);
+            fb_put_pixel((uint32_t)(gbx + (int32_t)d),
+                         (uint32_t)(gby + (int32_t)(btn_size - 4)), 0x00FFFFFF);
+            fb_put_pixel((uint32_t)(gbx + 3),
+                         (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
+            fb_put_pixel((uint32_t)(gbx + (int32_t)(btn_size - 4)),
+                         (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
         }
     }
 
@@ -490,25 +483,20 @@ static void draw_decorations(const struct wm_window *w)
         uint32_t oh = outer_height(w);
         uint32_t px;
 
-        /* Top border (above title bar) */
-        for (px = 0; px < ow; px++)
+        /* Top and bottom */
+        for (px = 0; px < ow; px++) {
             fb_put_pixel((uint32_t)(w->x + (int32_t)px),
                          (uint32_t)w->y, WM_COLOR_BORDER);
-
-        /* Bottom border */
-        for (px = 0; px < ow; px++)
             fb_put_pixel((uint32_t)(w->x + (int32_t)px),
                          (uint32_t)(w->y + (int32_t)oh - 1), WM_COLOR_BORDER);
-
-        /* Left border */
-        for (px = 0; px < oh; px++)
+        }
+        /* Left and right */
+        for (px = 0; px < oh; px++) {
             fb_put_pixel((uint32_t)w->x,
                          (uint32_t)(w->y + (int32_t)px), WM_COLOR_BORDER);
-
-        /* Right border */
-        for (px = 0; px < oh; px++)
             fb_put_pixel((uint32_t)(w->x + (int32_t)ow - 1),
                          (uint32_t)(w->y + (int32_t)px), WM_COLOR_BORDER);
+        }
     }
 }
 
@@ -559,6 +547,12 @@ void wm_composite(void)
 
     if (!wm_ready)
         return;
+
+    /* Only redraw if something changed */
+    if (!needs_redraw)
+        return;
+
+    needs_redraw = 0;
 
     /* Fill screen background (desktop wallpaper color) */
     fb_fill_rect(0, 0, fb_get_width(), fb_get_height(), 0x001A1A2E);
@@ -615,6 +609,7 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
             if (left_held) {
                 windows[i].x = mx - windows[i].drag_offset_x;
                 windows[i].y = my - windows[i].drag_offset_y;
+                mark_dirty();
             }
             if (left_released) {
                 windows[i].dragging = 0;
