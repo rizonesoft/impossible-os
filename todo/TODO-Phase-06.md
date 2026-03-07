@@ -21,7 +21,7 @@
 - [x] Implement `virtio_blk_read(lba, count, buffer)` — 3-descriptor chain (header, data, status)
 - [x] Implement `virtio_blk_write(lba, count, buffer)` — write sectors
 - [x] Implement `virtio_blk_capacity()` — query disk size via device_cfg MMIO
-- [ ] Register with VFS block device layer *(deferred to §1.3)*
+- [x] Register with VFS block device layer *(done in §1.3 as "virtio0")*
 - [x] Test: read sector 0 from QEMU virtio disk (verified UEFI + BIOS boot)
 - [x] QEMU flag: `-drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0`
 - [x] Commit: `"drivers: virtio-blk modern VirtIO 1.0 transport"`
@@ -43,7 +43,7 @@
 - [x] Implement `ahci_write(port, lba, count, buffer)` — WRITE DMA EXT command
 - [x] Implement `ahci_identify(port)` — IDENTIFY DEVICE (model, serial, LBA48 capacity)
 - [x] Handle AHCI IRQ (polling-based, interrupt enable per port)
-- [ ] Register with VFS block device layer *(deferred to §1.3)*
+- [x] Register with VFS block device layer *(done in §1.3 as "sata0")*
 - [x] Test: read drive identity and sector 0 from QEMU SATA disk
 - [x] QEMU flags: `-drive file=sata.img,format=raw,if=none,id=disk1 -device ahci,id=ahci0 -device ide-hd,drive=disk1,bus=ahci0.0`
 - [x] Commit: `"drivers: AHCI SATA disk driver"`
@@ -64,7 +64,7 @@
 - [x] Implement `blkdev_read(dev, lba, count, buf)` — dispatch to driver
 - [x] Implement `blkdev_write(dev, lba, count, buf)` — dispatch to driver
 - [x] Implement `blkdev_list()` — enumerate all registered devices
-- [ ] Register existing ATA/IDE driver as a blkdev *(deferred — legacy uint8_t count API)*
+- [x] Register existing ATA/IDE driver as a blkdev (adapter wraps `uint8_t count`)
 - [x] Register virtio-blk and AHCI as blkdevs (adapter wrappers in `main.c`)
 - [x] Commit: `"drivers: block device abstraction layer"`
 
@@ -79,14 +79,14 @@
 ## 2. Partition Table Support
 > *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
-### 2.1 MBR Partition Table
+### 2.1 MBR Partition Table ✅
 
-- [ ] Create `src/kernel/fs/mbr.c`
-- [ ] Parse MBR at LBA 0: 4 partition entries at offset 446
-- [ ] Define `struct mbr_entry` (status, type, start_lba, sector_count)
-- [ ] Recognize partition types: `0x0C` (FAT32 LBA), `0x83` (Linux), `0xDA` (IXFS custom)
-- [ ] Return partition list (start LBA, size, type) for each active entry
-- [ ] Commit: `"fs: MBR partition table parsing"`
+- [x] Create `src/kernel/fs/mbr.c`
+- [x] Parse MBR at LBA 0: 4 partition entries at offset 446
+- [x] Define `struct mbr_entry` (status, type, start_lba, sector_count)
+- [x] Recognize partition types: `0x0C` (FAT32 LBA), `0x83` (Linux), `0xDA` (IXFS custom)
+- [x] Return partition list (start LBA, size, type) for each active entry
+- [x] Commit: `"fs: MBR partition table parsing"`
 
 ### 2.2 GPT Partition Table
 
