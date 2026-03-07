@@ -552,9 +552,9 @@
 
 ### 13.1 Semantic Versioning
 
-- [ ] Create `VERSION` file in repo root (start at `0.1.0`)
-- [ ] Embed version string into the kernel (print at boot & in `uname` command)
-- [ ] Update `VERSION` at each milestone (see below)
+- [x] Create `VERSION` file in repo root (start at `0.1.0`) ✅ SemVer + auto-incrementing build number
+- [x] Embed version string into the kernel (print at boot & in `uname` command) ✅ `version_print()` at boot
+- [x] Update `VERSION` at each milestone (see below) ✅ `a1819dc`
 
 ### 13.2 Git Workflow
 
