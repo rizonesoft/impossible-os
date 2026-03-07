@@ -67,13 +67,13 @@
 
 ### 2.3 Shared Memory
 
-- [ ] Implement `shmem_create(name, size)` — allocate named shared memory region
-- [ ] Implement `shmem_map(id)` — map shared region into calling process's address space
-- [ ] Implement `shmem_unmap(id)` — unmap from process
-- [ ] Reference counting — free when last process unmaps
-- [ ] Add `SYS_SHMEM_CREATE` (35) and `SYS_SHMEM_MAP` (36) syscalls
-- [ ] Test: two processes sharing a counter via shared memory
-- [ ] Commit: `"ipc: named shared memory"`
+- [x] Implement `shmem_create(name, size)` — allocate named shared memory region
+- [x] Implement `shmem_map(id)` — map shared region into calling process's address space
+- [x] Implement `shmem_unmap(id)` — unmap from process
+- [x] Reference counting — free when last process unmaps
+- [x] Add `SYS_SHMEM_CREATE` (35) and `SYS_SHMEM_MAP` (36) syscalls
+- [x] Test: two processes sharing a counter via shared memory
+- [x] Commit: `"ipc: named shared memory"`
 
 ---
 
