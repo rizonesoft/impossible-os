@@ -527,9 +527,9 @@
 
 ### 12.2 Real-Time Clock (RTC)
 
-- [ ] Write `src/kernel/drivers/rtc.c` — read CMOS date/time
-- [ ] Display clock in the taskbar
-- [ ] Commit: `"drivers: CMOS RTC date/time"`
+- [x] Write `src/kernel/drivers/rtc.c` — read CMOS date/time ✅ BCD conversion + update-in-progress handling
+- [x] Display clock in the taskbar ✅ real HH:MM via `rtc_read()`
+- [x] Commit: `"drivers: CMOS RTC date/time"` ✅ `608fd0e`
 
 ### 12.3 ACPI (Power Management)
 
