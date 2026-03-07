@@ -1,12 +1,18 @@
 /* ============================================================================
- * framebuffer.c — Framebuffer console driver
+ * framebuffer.c — Framebuffer graphics driver
  *
- * Renders text on the GOP framebuffer provided by GRUB via Multiboot2.
- * Uses an embedded 8x16 bitmap font (basic ASCII, 32-126).
+ * Renders text and graphics on the GOP framebuffer provided by GRUB via
+ * Multiboot2.  Uses an embedded 8x16 bitmap font (basic ASCII, 32-126).
+ *
+ * Features:
+ *   - Double buffering (back buffer allocated via kmalloc)
+ *   - Drawing primitives: fill_rect, draw_rect, draw_line, circles
+ *   - Block copy (blit) for compositing
  * ============================================================================ */
 
 #include "framebuffer.h"
 #include "boot_info.h"
+#include "heap.h"
 
 /* --- Embedded 8x16 bitmap font (ASCII 32–126) ---
  * Each character is 8 pixels wide × 16 pixels tall = 16 bytes per glyph.
@@ -117,12 +123,15 @@ static const uint8_t font_data[FONT_GLYPHS][FONT_HEIGHT] = {
     /*126 '~' */ {0x00,0x00,0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
 };
 
-/* --- Console state --- */
-static uint32_t *fb_addr;      /* framebuffer base address */
-static uint32_t fb_pitch;       /* bytes per scanline */
+/* ---- Console / framebuffer state ---- */
+
+static uint32_t *hw_addr;       /* hardware framebuffer base (write-only) */
+static uint32_t *back_buf;      /* back buffer (all drawing goes here) */
+static uint32_t fb_pitch;       /* bytes per scanline (hardware) */
 static uint32_t fb_width;       /* pixels */
 static uint32_t fb_height;      /* pixels */
 static uint32_t fb_bpp;         /* bits per pixel */
+static uint32_t fb_stride;      /* pixels per scanline in back buffer */
 
 static uint32_t cursor_x;       /* text column (in characters) */
 static uint32_t cursor_y;       /* text row (in characters) */
@@ -134,7 +143,29 @@ static uint32_t bg_color;       /* background color */
 
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
 
-/* --- Implementation --- */
+/* ---- Helper: absolute value ---- */
+
+static inline int32_t iabs(int32_t v) { return v < 0 ? -v : v; }
+
+/* ---- Fast memory helpers (no libc) ---- */
+
+static void mem_set32(uint32_t *dst, uint32_t val, uint32_t count)
+{
+    uint32_t i;
+    for (i = 0; i < count; i++)
+        dst[i] = val;
+}
+
+static void mem_cpy32(uint32_t *dst, const uint32_t *src, uint32_t count)
+{
+    uint32_t i;
+    for (i = 0; i < count; i++)
+        dst[i] = src[i];
+}
+
+/* ============================================================================
+ * Lifecycle
+ * ============================================================================ */
 
 void fb_init(void)
 {
@@ -143,11 +174,12 @@ void fb_init(void)
         return;
     }
 
-    fb_addr   = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
+    hw_addr   = (uint32_t *)(uintptr_t)g_boot_info.fb.addr;
     fb_pitch  = g_boot_info.fb.pitch;
     fb_width  = g_boot_info.fb.width;
     fb_height = g_boot_info.fb.height;
     fb_bpp    = g_boot_info.fb.bpp;
+    fb_stride = fb_width;   /* back buffer is tightly packed */
 
     max_cols  = fb_width / FONT_WIDTH;
     max_rows  = fb_height / FONT_HEIGHT;
@@ -158,37 +190,204 @@ void fb_init(void)
     fg_color  = FB_COLOR_FG_DEFAULT;
     bg_color  = FB_COLOR_BG_DEFAULT;
 
-    fb_ready  = 1;
+    /* Allocate the back buffer via kernel heap */
+    back_buf = (uint32_t *)kmalloc(fb_width * fb_height * sizeof(uint32_t));
+    if (!back_buf) {
+        /* Fallback: draw directly to HW framebuffer (no double buffering) */
+        back_buf = hw_addr;
+        fb_stride = fb_pitch / (fb_bpp / 8);
+    }
+
+    fb_ready = 1;
 
     fb_clear();
 }
+
+/* ============================================================================
+ * Double buffering
+ * ============================================================================ */
+
+void fb_swap(void)
+{
+    uint32_t y;
+    uint32_t hw_stride;
+
+    if (!fb_ready)
+        return;
+
+    /* If back_buf == hw_addr we're in fallback mode, nothing to copy */
+    if (back_buf == hw_addr)
+        return;
+
+    hw_stride = fb_pitch / (fb_bpp / 8);
+
+    for (y = 0; y < fb_height; y++) {
+        mem_cpy32(hw_addr + y * hw_stride,
+                  back_buf + y * fb_stride,
+                  fb_width);
+    }
+}
+
+void fb_blit(uint32_t dst_x, uint32_t dst_y,
+             const uint32_t *src, uint32_t w, uint32_t h, uint32_t src_pitch)
+{
+    uint32_t row;
+    uint32_t copy_w, copy_h;
+
+    if (!fb_ready || !src)
+        return;
+
+    /* Clamp to screen bounds */
+    copy_w = (dst_x + w > fb_width)  ? fb_width  - dst_x : w;
+    copy_h = (dst_y + h > fb_height) ? fb_height - dst_y : h;
+
+    for (row = 0; row < copy_h; row++) {
+        mem_cpy32(back_buf + (dst_y + row) * fb_stride + dst_x,
+                  src + row * src_pitch,
+                  copy_w);
+    }
+}
+
+/* ============================================================================
+ * Pixel / drawing primitives
+ * ============================================================================ */
 
 void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color)
 {
     if (x >= fb_width || y >= fb_height)
         return;
 
-    /* Calculate pixel offset: pitch is in bytes, each pixel is 4 bytes (32bpp) */
-    uint32_t *pixel = (uint32_t *)((uint8_t *)fb_addr + y * fb_pitch + x * (fb_bpp / 8));
-    *pixel = color;
+    back_buf[y * fb_stride + x] = color;
 }
 
-void fb_clear(void)
+void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  uint32_t color)
 {
-    uint32_t x, y;
+    uint32_t row;
+    uint32_t x1, y1;
 
     if (!fb_ready)
         return;
 
-    for (y = 0; y < fb_height; y++) {
-        for (x = 0; x < fb_width; x++) {
-            fb_put_pixel(x, y, bg_color);
-        }
-    }
+    /* Clamp */
+    x1 = (x + w > fb_width)  ? fb_width  : x + w;
+    y1 = (y + h > fb_height) ? fb_height : y + h;
 
-    cursor_x = 0;
-    cursor_y = 0;
+    for (row = y; row < y1; row++) {
+        mem_set32(back_buf + row * fb_stride + x, color, x1 - x);
+    }
 }
+
+void fb_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  uint32_t color)
+{
+    if (!fb_ready || w == 0 || h == 0)
+        return;
+
+    /* Top edge */
+    fb_fill_rect(x, y, w, 1, color);
+    /* Bottom edge */
+    fb_fill_rect(x, y + h - 1, w, 1, color);
+    /* Left edge */
+    fb_fill_rect(x, y, 1, h, color);
+    /* Right edge */
+    fb_fill_rect(x + w - 1, y, 1, h, color);
+}
+
+void fb_draw_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                  uint32_t color)
+{
+    int32_t dx, dy, sx, sy, err, e2;
+
+    if (!fb_ready)
+        return;
+
+    dx = iabs(x1 - x0);
+    dy = -iabs(y1 - y0);
+    sx = x0 < x1 ? 1 : -1;
+    sy = y0 < y1 ? 1 : -1;
+    err = dx + dy;
+
+    for (;;) {
+        if (x0 >= 0 && (uint32_t)x0 < fb_width &&
+            y0 >= 0 && (uint32_t)y0 < fb_height) {
+            back_buf[(uint32_t)y0 * fb_stride + (uint32_t)x0] = color;
+        }
+
+        if (x0 == x1 && y0 == y1)
+            break;
+
+        e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+/* Midpoint circle — plots 8 symmetric points per step */
+void fb_draw_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color)
+{
+    int32_t x, y, d;
+
+    if (!fb_ready || r <= 0)
+        return;
+
+    x = 0;
+    y = r;
+    d = 1 - r;
+
+    while (x <= y) {
+        /* 8-way symmetry */
+        fb_put_pixel((uint32_t)(cx + x), (uint32_t)(cy + y), color);
+        fb_put_pixel((uint32_t)(cx - x), (uint32_t)(cy + y), color);
+        fb_put_pixel((uint32_t)(cx + x), (uint32_t)(cy - y), color);
+        fb_put_pixel((uint32_t)(cx - x), (uint32_t)(cy - y), color);
+        fb_put_pixel((uint32_t)(cx + y), (uint32_t)(cy + x), color);
+        fb_put_pixel((uint32_t)(cx - y), (uint32_t)(cy + x), color);
+        fb_put_pixel((uint32_t)(cx + y), (uint32_t)(cy - x), color);
+        fb_put_pixel((uint32_t)(cx - y), (uint32_t)(cy - x), color);
+
+        if (d < 0) {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y--;
+        }
+        x++;
+    }
+}
+
+/* Filled circle — horizontal spans via midpoint algorithm */
+void fb_fill_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color)
+{
+    int32_t x, y, d;
+
+    if (!fb_ready || r <= 0)
+        return;
+
+    x = 0;
+    y = r;
+    d = 1 - r;
+
+    while (x <= y) {
+        /* Draw horizontal spans for each pair of symmetric points */
+        fb_draw_line(cx - x, cy + y, cx + x, cy + y, color);
+        fb_draw_line(cx - x, cy - y, cx + x, cy - y, color);
+        fb_draw_line(cx - y, cy + x, cx + y, cy + x, color);
+        fb_draw_line(cx - y, cy - x, cx + y, cy - x, color);
+
+        if (d < 0) {
+            d += 2 * x + 3;
+        } else {
+            d += 2 * (x - y) + 5;
+            y--;
+        }
+        x++;
+    }
+}
+
+/* ============================================================================
+ * Text rendering (writes to back buffer, auto-swaps on newline)
+ * ============================================================================ */
 
 static void fb_draw_char(uint32_t cx, uint32_t cy, char c)
 {
@@ -205,43 +404,51 @@ static void fb_draw_char(uint32_t cx, uint32_t cy, char c)
 
     for (py = 0; py < FONT_HEIGHT; py++) {
         uint8_t row = glyph[py];
+        uint32_t screen_y = cy * FONT_HEIGHT + py;
+        uint32_t base_x   = cx * FONT_WIDTH;
+
+        if (screen_y >= fb_height)
+            break;
+
         for (px = 0; px < FONT_WIDTH; px++) {
-            uint32_t color = (row & (0x80 >> px)) ? fg_color : bg_color;
-            fb_put_pixel(cx * FONT_WIDTH + px, cy * FONT_HEIGHT + py, color);
+            uint32_t screen_x = base_x + px;
+            if (screen_x >= fb_width)
+                break;
+            uint32_t clr = (row & (0x80 >> px)) ? fg_color : bg_color;
+            back_buf[screen_y * fb_stride + screen_x] = clr;
         }
     }
 }
 
+void fb_clear(void)
+{
+    if (!fb_ready)
+        return;
+
+    mem_set32(back_buf, bg_color, fb_stride * fb_height);
+
+    cursor_x = 0;
+    cursor_y = 0;
+
+    fb_swap();
+}
+
 void fb_scroll(void)
 {
-    uint32_t y;
-    uint8_t *dst;
-    uint8_t *src;
-    uint32_t row_bytes = fb_pitch * FONT_HEIGHT;
+    uint32_t row_pixels;
+    uint32_t text_area;
 
     if (!fb_ready)
         return;
 
-    /* Copy each row up by one text line */
-    for (y = 0; y < (max_rows - 1); y++) {
-        dst = (uint8_t *)fb_addr + y * row_bytes;
-        src = (uint8_t *)fb_addr + (y + 1) * row_bytes;
+    row_pixels = fb_stride * FONT_HEIGHT;
+    text_area  = fb_stride * (max_rows - 1) * FONT_HEIGHT;
 
-        /* Copy row_bytes worth of pixel data */
-        uint32_t i;
-        for (i = 0; i < row_bytes; i++) {
-            dst[i] = src[i];
-        }
-    }
+    /* Shift all rows up by one text line */
+    mem_cpy32(back_buf, back_buf + row_pixels, text_area);
 
     /* Clear the last row */
-    dst = (uint8_t *)fb_addr + (max_rows - 1) * row_bytes;
-    uint32_t *pixel = (uint32_t *)dst;
-    uint32_t pixels_in_row = (fb_pitch / (fb_bpp / 8)) * FONT_HEIGHT;
-    uint32_t i;
-    for (i = 0; i < pixels_in_row; i++) {
-        pixel[i] = bg_color;
-    }
+    mem_set32(back_buf + text_area, bg_color, row_pixels);
 }
 
 void fb_putchar(char c)
@@ -253,6 +460,7 @@ void fb_putchar(char c)
     case '\n':
         cursor_x = 0;
         cursor_y++;
+        fb_swap();          /* flush on newline for responsive console */
         break;
     case '\r':
         cursor_x = 0;
@@ -300,3 +508,10 @@ void fb_set_color(uint32_t fg, uint32_t bg)
     fg_color = fg;
     bg_color = bg;
 }
+
+/* ============================================================================
+ * Queries
+ * ============================================================================ */
+
+uint32_t fb_get_width(void)  { return fb_width; }
+uint32_t fb_get_height(void) { return fb_height; }

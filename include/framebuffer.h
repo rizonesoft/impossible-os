@@ -1,18 +1,23 @@
 /* ============================================================================
- * framebuffer.h — Framebuffer console driver
+ * framebuffer.h — Framebuffer graphics driver
  *
- * Renders text on the GOP framebuffer using an embedded bitmap font.
+ * Renders text and graphics on the GOP framebuffer using an embedded bitmap
+ * font.  Supports double buffering, drawing primitives, and block copy.
  * ============================================================================ */
 
 #pragma once
 
 #include "types.h"
 
-/* Initialize the framebuffer console (call after multiboot2_parse) */
+/* ---- Lifecycle ---- */
+
+/* Initialize the framebuffer console (call after multiboot2_parse + heap_init) */
 void fb_init(void);
 
 /* Clear the screen with background color */
 void fb_clear(void);
+
+/* ---- Text rendering ---- */
 
 /* Write a single character at the current cursor position */
 void fb_putchar(char c);
@@ -20,16 +25,51 @@ void fb_putchar(char c);
 /* Write a string to the framebuffer */
 void fb_write(const char *str);
 
-/* Put a pixel at (x, y) with the given RGB color */
-void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color);
-
 /* Scroll the framebuffer up by one text row */
 void fb_scroll(void);
 
 /* Set text colors */
 void fb_set_color(uint32_t fg, uint32_t bg);
 
-/* Predefined colors (32-bit ARGB) */
+/* ---- Pixel / drawing primitives ---- */
+
+/* Put a pixel at (x, y) with the given RGB color */
+void fb_put_pixel(uint32_t x, uint32_t y, uint32_t color);
+
+/* Filled rectangle */
+void fb_fill_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  uint32_t color);
+
+/* Outline rectangle (1 px border) */
+void fb_draw_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h,
+                  uint32_t color);
+
+/* Bresenham line from (x0,y0) to (x1,y1) */
+void fb_draw_line(int32_t x0, int32_t y0, int32_t x1, int32_t y1,
+                  uint32_t color);
+
+/* Circle outline (midpoint algorithm) */
+void fb_draw_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color);
+
+/* Filled circle */
+void fb_fill_circle(int32_t cx, int32_t cy, int32_t r, uint32_t color);
+
+/* ---- Double buffering ---- */
+
+/* Block-copy a rectangular region from src buffer into the back buffer */
+void fb_blit(uint32_t dst_x, uint32_t dst_y,
+             const uint32_t *src, uint32_t w, uint32_t h, uint32_t src_pitch);
+
+/* Copy the back buffer to the hardware framebuffer */
+void fb_swap(void);
+
+/* ---- Queries ---- */
+
+uint32_t fb_get_width(void);
+uint32_t fb_get_height(void);
+
+/* ---- Predefined colors (32-bit ARGB) ---- */
+
 #define FB_COLOR_BLACK       0x00000000
 #define FB_COLOR_WHITE       0x00FFFFFF
 #define FB_COLOR_LIGHT_GRAY  0x00C0C0C0
