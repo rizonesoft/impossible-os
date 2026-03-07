@@ -56,14 +56,14 @@
 
 ### 2.2 Signals
 
-- [ ] Define signal constants: `SIGKILL(9)`, `SIGTERM(15)`, `SIGINT(2)`, `SIGCHLD(17)`
-- [ ] Implement `signal_send(pid, sig)` — deliver signal to process
-- [ ] Implement `signal_handler(sig, handler)` — register user-mode handler
-- [ ] Handle `SIGINT` from Ctrl+C in terminal
-- [ ] Handle `SIGCHLD` when child process exits
-- [ ] Implement default handlers (SIGKILL always kills, SIGTERM clean exit)
-- [ ] Add `SYS_SIGNAL` syscall (number 34)
-- [ ] Commit: `"ipc: signal delivery"`
+- [x] Define signal constants: `SIGKILL(9)`, `SIGTERM(15)`, `SIGINT(2)`, `SIGCHLD(17)`
+- [x] Implement `signal_send(pid, sig)` — deliver signal to process
+- [x] Implement `signal_handler(sig, handler)` — register user-mode handler
+- [x] Handle `SIGINT` from Ctrl+C in terminal
+- [x] Handle `SIGCHLD` when child process exits
+- [x] Implement default handlers (SIGKILL always kills, SIGTERM clean exit)
+- [x] Add `SYS_SIGNAL` syscall (number 34)
+- [x] Commit: `"ipc: signal delivery"`
 
 ### 2.3 Shared Memory
 
