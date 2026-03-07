@@ -26,6 +26,7 @@ void mouse_init(void);
 
 /* Get the current mouse state (position + buttons) */
 struct mouse_state mouse_get_state(void);
+uint32_t mouse_get_irq_count(void);
 
 /* Draw / redraw the mouse cursor at its current position.
  * Call this once per frame after compositing. */

@@ -106,9 +106,11 @@ static volatile int32_t mouse_x;
 static volatile int32_t mouse_y;
 static volatile uint8_t mouse_buttons;
 
-/* Packet assembly */
 static volatile uint8_t  mouse_cycle;
 static volatile uint8_t  mouse_packet[3];
+
+/* Debug counter — how many IRQ 12 interrupts we've received */
+static volatile uint32_t mouse_irq_count;
 
 /* Saved pixels under the cursor for restore */
 static uint32_t saved_under[CURSOR_H][CURSOR_W];
@@ -122,6 +124,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
 {
     uint8_t status = inb(PS2_STATUS_PORT);
 
+    mouse_irq_count++;
     /* Bit 0 = output buffer full, Bit 5 = mouse data */
     if (!(status & 0x01)) {
         pic_send_eoi(IRQ_MOUSE);
@@ -256,6 +259,11 @@ struct mouse_state mouse_get_state(void)
     s.y = mouse_y;
     s.buttons = mouse_buttons;
     return s;
+}
+
+uint32_t mouse_get_irq_count(void)
+{
+    return mouse_irq_count;
 }
 
 /* ============================================================================
