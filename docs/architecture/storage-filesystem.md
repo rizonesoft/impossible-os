@@ -66,6 +66,40 @@ The parsing implementation skips empty (`0x00`) or zero-size entries. Active par
   p1: FAT32 (LBA)  LBA 2048  16 MiB [boot]
 ```
 
+### GPT (GUID Partition Table)
+
+When the MBR scan detects a protective partition (type `0xEE`), the kernel reads the GPT header at LBA 1 and validates it using CRC32 checksums. It then parses the 128-byte partition entries starting at LBA 2.
+
+**Validation steps:**
+1. Verify `"EFI PART"` signature in header
+2. CRC32 check of the header (with CRC field zeroed)
+3. CRC32 check of the entire partition entry array
+
+#### Recognized Partition Type GUIDs
+
+| GUID | Human Readable | Purpose |
+|------|----------------|---------|
+| `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` | EFI System | UEFI boot partition |
+| `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` | Basic Data | Windows/general data |
+| `0FC63DAF-8483-4772-8E79-3D69D8477DE4` | Linux | Linux filesystem |
+| `DA000000-0000-4978-4653-000000000001` | IXFS | Custom Impossible OS partition |
+
+#### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/fs/gpt.c` | GPT parser with CRC32 validation |
+| `include/kernel/fs/gpt.h` | GPT structures, GUIDs, API |
+| `tools/make-gpt.c` | Host tool to generate GPT test images |
+
+Example boot output:
+```text
+[GPT] virtio0: 3 partition(s)
+  p1: EFI System  LBA 2048–4095  1 MiB  "EFI System"
+  p2: Basic Data  LBA 4096–36863  16 MiB  "Windows Data"
+  p3: IXFS  LBA 36864–102399  32 MiB  "Impossible OS"
+```
+
 ## ATA/IDE Disk Driver
 
 ### Key Files

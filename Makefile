@@ -41,7 +41,7 @@ OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
 QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
                -cdrom $(ISO_FILE) \
-               -drive file=$(BUILD_DIR)/mbr-test.img,format=raw,if=none,id=disk0 \
+               -drive file=$(BUILD_DIR)/gpt-test.img,format=raw,if=none,id=disk0 \
                -device virtio-blk-pci,drive=disk0 \
                -drive file=$(BUILD_DIR)/sata.img,format=raw,if=none,id=disk1 \
                -device ahci,id=ahci0 \
@@ -211,6 +211,10 @@ run: $(ISO_FILE)
 	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
 		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-mbr tools/make-mbr.c && \
 		$(BUILD_DIR)/tools/make-mbr $(BUILD_DIR)/mbr-test.img; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/gpt-test.img ]; then \
+		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-gpt tools/make-gpt.c && \
+		$(BUILD_DIR)/tools/make-gpt $(BUILD_DIR)/gpt-test.img; \
 	fi
 	$(QEMU) $(QEMU_FLAGS)
 
