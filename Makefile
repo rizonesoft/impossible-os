@@ -46,7 +46,8 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -serial stdio \
                -device rtl8139,netdev=net0 \
                -netdev user,id=net0 \
-               -display gtk,grab-on-hover=on \
+               -display sdl \
+               -ctrl-grab \
                -no-reboot
 
 # --- Source Discovery ---
@@ -160,7 +161,7 @@ run: $(ISO_FILE)
 		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
 	fi
-	GDK_BACKEND=x11 $(QEMU) $(QEMU_FLAGS)
+	SDL_VIDEODRIVER=x11 $(QEMU) $(QEMU_FLAGS)
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: $(ISO_FILE)
