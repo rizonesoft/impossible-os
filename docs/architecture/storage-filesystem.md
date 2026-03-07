@@ -21,10 +21,16 @@ User / Kernel code
   └──┬──┘ └──┬──┘ └─────┘
      │       │
      ▼       ▼
-  ┌──────────────┐
-  │  ATA Driver  │  ata_read_sectors() / ata_write_sectors()
-  │   (ata.c)    │  PIO mode, LBA28
-  └──────────────┘
+  ┌──────────────────────┐
+  │  Block Device Layer  │  blkdev_read() / blkdev_write()
+  │    (blkdev.c)        │
+  └──┬──────────────┬────┘
+     │              │
+     ▼              ▼
+  ┌──────────┐  ┌──────────┐
+  │VirtIO-blk│  │ATA Driver│   Hardware drivers
+  │(modern)  │  │ (PIO)    │
+  └──────────┘  └──────────┘
 ```
 
 ## Drive Letter Assignment
@@ -63,6 +69,38 @@ at `C:\` to provide the kernel with essential files.
 | `ata_init()` | Detect drives via IDENTIFY command |
 | `ata_read_sectors(lba, count, buf)` | Read sectors from disk |
 | `ata_write_sectors(lba, count, buf)` | Write sectors + cache flush |
+
+## VirtIO Block Driver (Modern 1.0)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/drivers/virtio_blk.c` | VirtIO block driver (modern MMIO) |
+| `include/kernel/drivers/virtio_blk.h` | VirtIO-blk API and request types |
+| `src/kernel/drivers/virtio.c` | Shared modern PCI transport layer |
+| `include/kernel/drivers/virtio.h` | VirtIO structs, virtqueue API |
+
+### Configuration
+
+| Property | Value |
+|----------|-------|
+| Transport | Modern VirtIO 1.0 PCI (MMIO via PCI capabilities) |
+| PCI ID | Vendor `0x1AF4`, Device `0x1001` (transitional) or `0x1042` (modern) |
+| Queue type | Split virtqueue (desc/avail/used rings) |
+| Features | `VIRTIO_F_VERSION_1` negotiated |
+| Sector size | 512 bytes |
+| QEMU flag | `-drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0` |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `virtio_blk_init()` | Detect + initialize via PCI capability walking |
+| `virtio_blk_read(lba, count, buf)` | Read sectors (3-descriptor chain) |
+| `virtio_blk_write(lba, count, buf)` | Write sectors |
+| `virtio_blk_capacity()` | Total sectors from device_cfg MMIO |
+| `virtio_blk_present()` | Check if device was initialized |
 
 ## Virtual Filesystem (VFS)
 

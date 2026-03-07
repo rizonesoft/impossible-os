@@ -8,14 +8,16 @@ Currently IXFS is RAM-only — files disappear on reboot. For persistence we nee
 
 ## Disk Drivers
 
-| Controller | Type | QEMU flag | Priority |
-|-----------|------|-----------|----------|
-| **AHCI (SATA)** | HDD/SSD | `-drive file=disk.img,if=none -device ahci -device ide-hd` | P0 |
-| **NVMe** | Modern SSD | `-drive file=disk.img,if=none -device nvme` | P1 |
-| **IDE** | Legacy | `-drive file=disk.img,if=ide` | Legacy |
-| **virtio-blk** | Paravirtual | `-drive file=disk.img,if=virtio` | Easiest |
+| Controller | Type | QEMU flag | Status |
+|-----------|------|-----------|--------|
+| **virtio-blk** | Paravirtual | `-drive file=disk.img,if=none,id=disk0 -device virtio-blk-pci,drive=disk0` | ✅ Implemented |
+| **AHCI (SATA)** | HDD/SSD | `-drive file=disk.img,if=none -device ahci -device ide-hd` | Planned |
+| **NVMe** | Modern SSD | `-drive file=disk.img,if=none -device nvme` | Future |
+| **IDE** | Legacy | `-drive file=disk.img,if=ide` | Legacy (ATA PIO exists) |
 
-> **Recommended**: Start with **virtio-blk** (simplest driver, ~200 lines), then AHCI (~500 lines).
+> **VirtIO-blk** is implemented using the modern VirtIO 1.0 MMIO transport (not legacy PIO).
+> Uses the shared `virtio.c` infrastructure for PCI capability walking and split virtqueues.
+> Tested on QEMU 8.2.2 and 10.2.1, verified on both UEFI and BIOS boot paths.
 
 ## Filesystem Options
 
@@ -30,5 +32,14 @@ Currently IXFS is RAM-only — files disappear on reboot. For persistence we nee
 ## Partition Tables: GPT (modern) or MBR (legacy)
 ## OS installer: Format disk, copy system files, install bootloader
 
-## Files: `src/kernel/drivers/virtio_blk.c`, `src/kernel/fs/fat32.c`
-## Implementation: 3-6 weeks
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/drivers/virtio_blk.c` | VirtIO block driver (modern 1.0 transport) |
+| `src/kernel/drivers/virtio.c` | Shared VirtIO modern PCI transport |
+| `src/kernel/drivers/ata.c` | ATA/IDE PIO disk driver |
+| `src/kernel/fs/fat32.c` | FAT32 filesystem driver |
+| `src/kernel/fs/ixfs.c` | IXFS custom filesystem |
+
+## Implementation: 3-6 weeks (VirtIO-blk done, FAT32/IXFS-on-disk remaining)

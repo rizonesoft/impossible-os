@@ -3,6 +3,10 @@
 Impossible OS boots via **UEFI** (not legacy BIOS). QEMU emulates UEFI using the
 **OVMF** firmware. GRUB is the bootloader, loading the kernel via **Multiboot2**.
 
+> **QEMU Version:** 10.2.1 (built from source with GTK display support).
+> Upgraded from system QEMU 8.2.2 to resolve VirtIO legacy PIO transport issues.
+> Installed at `/usr/local/bin/qemu-system-x86_64`.
+
 ## UEFI Firmware (OVMF)
 
 | Property | Value |
@@ -32,7 +36,8 @@ QEMU is invoked via `make run` with the following flags:
 QEMU_FLAGS := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
               -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
               -cdrom $(ISO_FILE) \
-              -drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
+              -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
+              -device virtio-blk-pci,drive=disk0 \
               -m 2G \
               -serial stdio \
               -vga none \
@@ -48,7 +53,8 @@ QEMU_FLAGS := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 |------|---------|
 | `-drive if=pflash ...` | UEFI firmware (code + variables) |
 | `-cdrom $(ISO_FILE)` | Boot from the ISO |
-| `-drive file=disk.img` | 64 MiB FAT32 virtual disk (ATA) |
+| `-drive file=disk.img,...,if=none,id=disk0` | 64 MiB raw disk image (VirtIO backend) |
+| `-device virtio-blk-pci,drive=disk0` | VirtIO block device (modern 1.0 transport) |
 | `-m 2G` | 2 GiB RAM |
 | `-serial stdio` | Serial port (COM1) output to terminal |
 | `-vga none -device VGA,xres=1280,yres=720` | Custom resolution framebuffer |

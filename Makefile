@@ -43,6 +43,9 @@ QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
                -cdrom $(ISO_FILE) \
                -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk0 \
                -device virtio-blk-pci,drive=disk0 \
+               -drive file=$(BUILD_DIR)/sata.img,format=raw,if=none,id=disk1 \
+               -device ahci,id=ahci0 \
+               -device ide-hd,drive=disk1,bus=ahci0.0 \
                -m 2G \
                -serial stdio \
                -vga none \
@@ -199,6 +202,9 @@ run: $(ISO_FILE)
 		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
 		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
+	fi
+	@if [ ! -f $(BUILD_DIR)/sata.img ]; then \
+		qemu-img create -f raw $(BUILD_DIR)/sata.img 32M; \
 	fi
 	$(QEMU) $(QEMU_FLAGS)
 

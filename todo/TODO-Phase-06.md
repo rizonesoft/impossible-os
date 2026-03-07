@@ -10,21 +10,27 @@
 ## 1. Disk Drivers
 > *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
-### 1.1 VirtIO Block Device Driver
+### 1.1 VirtIO Block Device Driver ✅
 
-- [ ] Create `src/kernel/drivers/virtio_blk.c` and `include/virtio_blk.h`
-- [ ] Detect virtio-blk device via PCI enumeration (vendor `0x1AF4`, device `0x1001`)
-- [ ] Map MMIO BAR registers (or use PIO fallback)
-- [ ] Initialize virtio device:
-  - [ ] Acknowledge device → set DRIVER → negotiate features → set DRIVER_OK
-  - [ ] Allocate virtqueue (descriptor table, available ring, used ring)
-- [ ] Implement `virtio_blk_read(lba, count, buffer)` — read sectors via request virtqueue
-- [ ] Implement `virtio_blk_write(lba, count, buffer)` — write sectors
-- [ ] Implement `virtio_blk_capacity()` — query disk size (total sectors)
-- [ ] Register with VFS block device layer
-- [ ] Test: read sector 0 from QEMU virtio disk
-- [ ] QEMU flag: `-drive file=disk.img,format=raw,if=virtio`
-- [ ] Commit: `"drivers: virtio-blk disk driver"`
+- [x] Create `src/kernel/drivers/virtio_blk.c` and `include/virtio_blk.h`
+- [x] Detect virtio-blk device via PCI enumeration (vendor `0x1AF4`, device `0x1001` or `0x1042`)
+- [x] Map MMIO BAR registers via modern VirtIO 1.0 PCI capabilities
+- [x] Initialize virtio device:
+  - [x] Acknowledge → DRIVER → negotiate features → FEATURES_OK → DRIVER_OK
+  - [x] Allocate virtqueue (descriptor table, available ring, used ring) via `virtq_init()`
+- [x] Implement `virtio_blk_read(lba, count, buffer)` — 3-descriptor chain (header, data, status)
+- [x] Implement `virtio_blk_write(lba, count, buffer)` — write sectors
+- [x] Implement `virtio_blk_capacity()` — query disk size via device_cfg MMIO
+- [ ] Register with VFS block device layer *(deferred to §1.3)*
+- [x] Test: read sector 0 from QEMU virtio disk (verified UEFI + BIOS boot)
+- [x] QEMU flag: `-drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0`
+- [x] Commit: `"drivers: virtio-blk modern VirtIO 1.0 transport"`
+
+> **Implementation notes:**
+> - Uses modern VirtIO 1.0 MMIO transport from `virtio.c` (shared with virtio-input)
+> - Legacy PIO transport abandoned due to device reset issues on both QEMU 8.2 and 10.2
+> - Negotiates `VIRTIO_F_VERSION_1` for modern interface
+> - QEMU upgraded from 8.2.2 → 10.2.1 (built from source with GTK display)
 
 ### 1.2 AHCI (SATA) Driver
 
@@ -303,7 +309,7 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1.1 VirtIO-blk Driver | Simplest disk driver — enables all FS work |
+| ✅ Done | 1.1 VirtIO-blk Driver | Modern VirtIO 1.0 MMIO — implemented and tested |
 | 🔴 P0 | 1.3 Block Device Layer | Abstraction needed by all FS code |
 | 🔴 P0 | 2. Partition Tables | Required to find filesystems on disk |
 | 🔴 P0 | 3.1 FAT32 Read | Read USB drives, boot media |
