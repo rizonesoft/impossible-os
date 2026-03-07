@@ -18,6 +18,7 @@
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
 #include "kernel/fs/initrd.h"
+#include "kernel/acpi.h"
 
 /* ---- Wallpaper pixel buffer ---- */
 static const uint32_t *wallpaper_buf; /* Points directly into initrd memory */
@@ -460,9 +461,7 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                     break;
                 }
                 case 2:  /* Shutdown */
-                    /* For now, just halt */
-                    printk("\n[SHUTDOWN] System halted by user.\n");
-                    __asm__ volatile("cli; hlt");
+                    acpi_shutdown();
                     break;
                 }
                 return 1;
