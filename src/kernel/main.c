@@ -31,6 +31,8 @@
 #include "syscall.h"
 
 #include "mouse.h"
+#include "wm.h"
+#include "font.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -455,13 +457,70 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("\n  Impossible OS kernel loaded successfully!\n\n");
         fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
 
+        /* Initialize window manager */
+        wm_init();
+
+        /* Create a demo window */
+        {
+            int demo = wm_create_window("Welcome", 100, 80, 400, 250, WM_DEFAULT_FLAGS);
+            if (demo >= 0) {
+                /* Draw some content in the demo window */
+                wm_fill_rect(demo, 0, 0, 400, 250, 0x001E1E2E);
+
+                /* Draw a greeting using font module into window's fb */
+                {
+                    uint32_t *fb = wm_get_framebuffer(demo);
+                    uint32_t pitch = wm_get_client_width(demo);
+                    const char *msg = "Welcome to Impossible OS!";
+                    uint32_t mx_i = 0;
+                    int32_t tx = 20, ty = 20;
+                    (void)fb; (void)pitch;
+                    while (msg[mx_i]) {
+                        font_draw_char((uint32_t)(100 + (int32_t)WM_BORDER_WIDTH + tx + (int32_t)(mx_i * FONT_WIDTH)),
+                                       (uint32_t)(80 + (int32_t)WM_TITLEBAR_HEIGHT + (int32_t)WM_BORDER_WIDTH + ty),
+                                       msg[mx_i], 0x0088DDFF, 0x001E1E2E);
+                        mx_i++;
+                    }
+                    /* Also write into the window framebuffer for compositing */
+                    mx_i = 0;
+                    while (msg[mx_i]) {
+                        /* Render each glyph into the window's own buffer */
+                        const uint8_t *glyph = font_get_glyph(msg[mx_i]);
+                        uint32_t py, px;
+                        for (py = 0; py < FONT_HEIGHT; py++) {
+                            uint8_t row = glyph[py];
+                            for (px = 0; px < FONT_WIDTH; px++) {
+                                uint32_t color = (row & (0x80 >> px)) ? 0x0088DDFF : 0x001E1E2E;
+                                uint32_t wx = (uint32_t)tx + mx_i * FONT_WIDTH + px;
+                                uint32_t wy = (uint32_t)ty + py;
+                                wm_put_pixel(demo, wx, wy, color);
+                            }
+                        }
+                        mx_i++;
+                    }
+                }
+            }
+        }
+
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
-        /* Main thread idles while shell runs; renders mouse cursor */
+        /* Compositor loop — runs as the idle thread */
         for (;;) {
+            struct mouse_state ms = mouse_get_state();
+
+            /* Dispatch mouse events to WM */
+            wm_handle_mouse(ms.x, ms.y, ms.buttons);
+
+            /* Composite all windows to the back buffer */
+            wm_composite();
+
+            /* Draw mouse cursor on top */
             mouse_draw_cursor();
+
+            /* Present to screen */
             fb_swap();
+
             __asm__ volatile("hlt");
         }
     }
