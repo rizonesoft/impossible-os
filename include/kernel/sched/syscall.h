@@ -29,6 +29,8 @@
 #define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
 #define SYS_PIPE     33  /* sys_pipe(fds)                → 0 / -1 */
 #define SYS_SIGNAL   34  /* sys_signal(sig, handler)      → old handler */
+#define SYS_SHMEM_CREATE 35 /* sys_shmem_create(name, size) → id / -1 */
+#define SYS_SHMEM_MAP    36 /* sys_shmem_map(id)            → ptr / 0 */
 
 /* File descriptors */
 #define STDOUT_FD   1

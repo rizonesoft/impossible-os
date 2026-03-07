@@ -31,6 +31,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
+#include "kernel/ipc/shmem.h"
 
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
@@ -576,6 +577,54 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("pipe_create failed\n");
         }
     }
+
+    /* === Shared memory test (two threads, named region) === */
+    {
+        extern volatile uint32_t shmem_test_ok;
+        extern void shmem_writer_func(void *arg);
+        extern void shmem_reader_func(void *arg);
+
+        int shm_id;
+        int shm_tw, shm_tr;
+
+        shmem_test_ok = 0;
+        printk("\n  Shared memory test: two threads sharing a named counter\n");
+
+        shm_id = shmem_create("test_counter", sizeof(uint32_t));
+        if (shm_id >= 0) {
+            shm_tw = thread_create(shmem_writer_func, (void *)0, 0);
+            shm_tr = thread_create(shmem_reader_func, (void *)0, 0);
+
+            if (shm_tw >= 0 && shm_tr >= 0) {
+                thread_join((uint32_t)shm_tw);
+                thread_join((uint32_t)shm_tr);
+
+                if (shmem_test_ok) {
+                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                    printk("[OK] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("Shared memory test passed\n");
+                } else {
+                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                    printk("[FAIL] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("Shared memory test: counter != 200\n");
+                }
+            } else {
+                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                printk("[FAIL] ");
+                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                printk("shmem thread_create failed\n");
+            }
+
+            shmem_unmap(shm_id);  /* creator unmaps too */
+        } else {
+            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+            printk("[FAIL] ");
+            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+            printk("shmem_create failed\n");
+        }
+    }
     /* === User mode test === */
     {
         extern void user_test_func(void);
@@ -906,6 +955,58 @@ void pipe_reader_func(void *arg)
     }
     printk("    [Reader] got %d bytes: \"%s\"\n", (uint64_t)(uint32_t)n, buf);
     pipe_close(pipe_test_id, PIPE_READ);
+}
+
+/* --- Shared memory test functions --- */
+
+#include "kernel/ipc/shmem.h"
+
+volatile uint32_t shmem_test_ok = 0;
+
+void shmem_writer_func(void *arg)
+{
+    int id;
+    volatile uint32_t *counter;
+    uint32_t i;
+    (void)arg;
+
+    id = shmem_open("test_counter");
+    if (id < 0) return;
+
+    counter = (volatile uint32_t *)shmem_map(id);
+    if (!counter) return;
+
+    for (i = 0; i < 100; i++)
+        (*counter)++;
+
+    printk("    [ShmWriter] done (100 increments, counter=%u)\n",
+           (uint64_t)*counter);
+    shmem_unmap(id);
+}
+
+void shmem_reader_func(void *arg)
+{
+    int id;
+    volatile uint32_t *counter;
+    uint32_t i;
+    (void)arg;
+
+    id = shmem_open("test_counter");
+    if (id < 0) return;
+
+    counter = (volatile uint32_t *)shmem_map(id);
+    if (!counter) return;
+
+    for (i = 0; i < 100; i++)
+        (*counter)++;
+
+    printk("    [ShmReader] done (100 increments, counter=%u)\n",
+           (uint64_t)*counter);
+
+    if (*counter == 200)
+        shmem_test_ok = 1;
+
+    shmem_unmap(id);
 }
 
 /* --- Test thread functions for preemptive scheduling --- */

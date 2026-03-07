@@ -20,6 +20,7 @@
 #include "kernel/acpi.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/ipc/shmem.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)
@@ -297,6 +298,16 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     case SYS_SIGNAL: {
         signal_handler_t old = signal_handler((int)arg1, (signal_handler_t)arg2);
         ret = (int64_t)(uint64_t)old;
+        break;
+    }
+    case SYS_SHMEM_CREATE: {
+        const char *name = (const char *)arg1;
+        ret = (int64_t)shmem_create(name, (uint32_t)arg2);
+        break;
+    }
+    case SYS_SHMEM_MAP: {
+        void *ptr = shmem_map((int)arg1);
+        ret = (int64_t)(uint64_t)ptr;
         break;
     }
     default:
