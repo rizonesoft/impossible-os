@@ -12,6 +12,7 @@
 #include "desktop/font.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"
+#include "kernel/drivers/rtc.h"
 #include "desktop/wm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
@@ -305,24 +306,19 @@ void desktop_draw_taskbar(void)
         }
     }
 
-    /* ---- Clock (uptime) ---- */
+    /* ---- Clock (RTC real time) ---- */
     {
-        uint64_t secs = uptime();
-        uint32_t hrs  = (uint32_t)(secs / 3600);
-        uint32_t mins = (uint32_t)((secs % 3600) / 60);
-        uint32_t s    = (uint32_t)(secs % 60);
+        struct rtc_time rtc;
+        rtc_read(&rtc);
 
-        /* Format HH:MM:SS */
-        char clock_buf[9];
-        clock_buf[0] = '0' + (char)(hrs / 10);
-        clock_buf[1] = '0' + (char)(hrs % 10);
+        /* Format HH:MM */
+        char clock_buf[6];
+        clock_buf[0] = '0' + (char)(rtc.hour / 10);
+        clock_buf[1] = '0' + (char)(rtc.hour % 10);
         clock_buf[2] = ':';
-        clock_buf[3] = '0' + (char)(mins / 10);
-        clock_buf[4] = '0' + (char)(mins % 10);
-        clock_buf[5] = ':';
-        clock_buf[6] = '0' + (char)(s / 10);
-        clock_buf[7] = '0' + (char)(s % 10);
-        clock_buf[8] = '\0';
+        clock_buf[3] = '0' + (char)(rtc.minute / 10);
+        clock_buf[4] = '0' + (char)(rtc.minute % 10);
+        clock_buf[5] = '\0';
 
         uint32_t clock_w = text_width(clock_buf);
         uint32_t clock_x = sw - clock_w - 8;

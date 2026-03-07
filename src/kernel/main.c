@@ -15,6 +15,7 @@
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
+#include "kernel/drivers/rtc.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/rtl8139.h"
@@ -134,6 +135,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 8: Start PIT system timer */
     pit_init();
+
+    /* Step 8b: Initialize CMOS real-time clock */
+    rtc_init();
 
     /* Step 9: Initialize PS/2 keyboard */
     keyboard_init();
