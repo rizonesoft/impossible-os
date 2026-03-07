@@ -23,12 +23,12 @@
 
 ### 1.2 Mutexes
 
-- [ ] Define `mutex_t` struct (locked flag, owner thread)
-- [ ] Implement `mutex_lock(m)` — block if already locked (spinlock → sleep)
-- [ ] Implement `mutex_unlock(m)` — release, wake blocked thread
-- [ ] Implement `mutex_trylock(m)` — non-blocking attempt
-- [ ] Add deadlock detection (optional: lock ordering check)
-- [ ] Commit: `"sched: mutex synchronization"`
+- [x] Define `mutex_t` struct (locked flag, owner thread)
+- [x] Implement `mutex_lock(m)` — block if already locked (spinlock → sleep)
+- [x] Implement `mutex_unlock(m)` — release, wake blocked thread
+- [x] Implement `mutex_trylock(m)` — non-blocking attempt
+- [x] Add deadlock detection (optional: lock ordering check)
+- [x] Commit: `"sched: mutex synchronization"`
 
 ### 1.3 Semaphores
 
