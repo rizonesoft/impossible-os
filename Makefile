@@ -209,7 +209,8 @@ run: $(ISO_FILE)
 		qemu-img create -f raw $(BUILD_DIR)/sata.img 32M; \
 	fi
 	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
-		python3 tools/make_mbr.py $(BUILD_DIR)/mbr-test.img; \
+		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-mbr tools/make-mbr.c && \
+		$(BUILD_DIR)/tools/make-mbr $(BUILD_DIR)/mbr-test.img; \
 	fi
 	$(QEMU) $(QEMU_FLAGS)
 
@@ -228,7 +229,8 @@ run-log: $(ISO_FILE)
 		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
 	fi
 	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
-		python3 tools/make_mbr.py $(BUILD_DIR)/mbr-test.img; \
+		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-mbr tools/make-mbr.c && \
+		$(BUILD_DIR)/tools/make-mbr $(BUILD_DIR)/mbr-test.img; \
 	fi
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
