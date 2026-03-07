@@ -5,8 +5,8 @@
  * Scans all bus/device/function combinations and logs found devices.
  * ============================================================================ */
 
-#include "pci.h"
-#include "printk.h"
+#include "kernel/drivers/pci.h"
+#include "kernel/printk.h"
 
 /* --- Port I/O --- */
 static inline void outl(uint16_t port, uint32_t val)

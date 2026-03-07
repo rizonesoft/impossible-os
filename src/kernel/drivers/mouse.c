@@ -12,11 +12,11 @@
  *   Byte 2: Y movement (delta, signed via bit 5 of byte 0)
  * ============================================================================ */
 
-#include "mouse.h"
-#include "idt.h"
-#include "pic.h"
-#include "framebuffer.h"
-#include "printk.h"
+#include "kernel/drivers/mouse.h"
+#include "kernel/idt.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/drivers/framebuffer.h"
+#include "kernel/printk.h"
 
 /* ---- Port I/O ---- */
 
@@ -266,6 +266,12 @@ uint32_t mouse_get_irq_count(void)
     return mouse_irq_count;
 }
 
+void mouse_set_position(int32_t x, int32_t y)
+{
+    mouse_x = x;
+    mouse_y = y;
+}
+
 /* ============================================================================
  * Cursor rendering with save/restore
  * ============================================================================ */
@@ -312,8 +318,22 @@ void mouse_draw_cursor(void)
     uint32_t scr_w = fb_get_width();
     uint32_t scr_h = fb_get_height();
 
-    /* No save/restore needed — the compositor redraws everything each frame.
-     * We just draw the cursor on top of the composited scene. */
+    /* Save the pixels under the new cursor position */
+    saved_x = cx;
+    saved_y = cy;
+    for (py = 0; py < CURSOR_H; py++) {
+        for (px = 0; px < CURSOR_W; px++) {
+            uint32_t sx = (uint32_t)(cx + (int32_t)px);
+            uint32_t sy = (uint32_t)(cy + (int32_t)py);
+            if (sx < scr_w && sy < scr_h)
+                saved_under[py][px] = fb_read_pixel(sx, sy);
+            else
+                saved_under[py][px] = 0;
+        }
+    }
+    cursor_visible = 1;
+
+    /* Draw the cursor on top */
     for (py = 0; py < CURSOR_H; py++) {
         for (px = 0; px < CURSOR_W; px++) {
             uint8_t pix = cursor_data[py][px];

@@ -12,10 +12,10 @@
  *   Directory entries → 32 bytes each (8.3 short names)
  * ============================================================================ */
 
-#include "fat32.h"
-#include "ata.h"
-#include "heap.h"
-#include "printk.h"
+#include "kernel/fs/fat32.h"
+#include "kernel/drivers/ata.h"
+#include "kernel/mm/heap.h"
+#include "kernel/printk.h"
 
 /* FAT32 special cluster values */
 #define FAT32_EOC       0x0FFFFFF8   /* end of chain (>= this value) */

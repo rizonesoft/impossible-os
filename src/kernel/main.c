@@ -5,35 +5,37 @@
  * Initializes serial, framebuffer, parses boot info, prints system details.
  * ============================================================================ */
 
-#include "types.h"
-#include "multiboot2.h"
-#include "boot_info.h"
-#include "serial.h"
-#include "framebuffer.h"
-#include "printk.h"
-#include "gdt.h"
-#include "idt.h"
-#include "pic.h"
-#include "pit.h"
-#include "keyboard.h"
-#include "pci.h"
-#include "rtl8139.h"
-#include "net.h"
-#include "pmm.h"
-#include "vmm.h"
-#include "heap.h"
-#include "ata.h"
-#include "vfs.h"
-#include "initrd.h"
-#include "fat32.h"
-#include "ixfs.h"
-#include "task.h"
-#include "syscall.h"
+#include "kernel/types.h"
+#include "kernel/multiboot2.h"
+#include "kernel/boot_info.h"
+#include "kernel/drivers/serial.h"
+#include "kernel/drivers/framebuffer.h"
+#include "kernel/printk.h"
+#include "kernel/gdt.h"
+#include "kernel/idt.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/drivers/pit.h"
+#include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/pci.h"
+#include "kernel/drivers/rtl8139.h"
+#include "kernel/net/net.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/mm/heap.h"
+#include "kernel/drivers/ata.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/fs/initrd.h"
+#include "kernel/fs/fat32.h"
+#include "kernel/fs/ixfs.h"
+#include "kernel/sched/task.h"
+#include "kernel/sched/syscall.h"
 
-#include "mouse.h"
-#include "wm.h"
-#include "font.h"
-#include "pit.h"
+#include "kernel/drivers/mouse.h"
+#include "kernel/drivers/virtio_input.h"
+#include "desktop/wm.h"
+#include "desktop/font.h"
+#include "kernel/drivers/pit.h"
+#include "desktop/desktop.h"
 
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
@@ -143,6 +145,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     pci_scan();
     rtl8139_init();
     net_init();
+    virtio_input_init();  /* VirtIO tablet for absolute mouse coords */
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
@@ -461,6 +464,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize window manager */
         wm_init();
 
+        /* Initialize desktop (wallpaper, taskbar, copy backgrounds to IXFS) */
+        desktop_init();
+
         /* Create a demo window */
         {
             int demo = wm_create_window("Welcome", 100, 80, 400, 250, WM_DEFAULT_FLAGS);
@@ -507,40 +513,82 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         scheduler_enable();
 
         /* Compositor loop — runs as idle thread.
-         * Only redraws when something changed (mouse moved, window changed). */
+         * Only redraws when something changed (mouse moved, window changed).
+         * Uses VirtIO tablet (absolute coords) if available, else PS/2 mouse.
+         *
+         * Clear the framebuffer first to wipe boot console text. */
+        fb_fill_rect(0, 0, fb_get_width(), fb_get_height(), 0x00000000);
         {
             int32_t prev_mx = -1, prev_my = -1;
             uint8_t prev_mb = 0;
             uint8_t first_frame = 1;
+            uint64_t last_clock_sec = 0;
 
             for (;;) {
-                struct mouse_state ms = mouse_get_state();
-                uint8_t cursor_moved = (ms.x != prev_mx || ms.y != prev_my);
-                uint8_t btn_changed  = (ms.buttons != prev_mb);
+                int32_t mx, my;
+                uint8_t mb;
+
+                /* Get mouse state from the best available source */
+                if (virtio_input_available()) {
+                    struct virtio_input_state vis = virtio_input_get_state();
+                    mx = vis.x;
+                    my = vis.y;
+                    mb = vis.buttons;
+                    /* Update PS/2 mouse state so mouse_draw_cursor() works */
+                    mouse_set_position(mx, my);
+                } else {
+                    struct mouse_state ms = mouse_get_state();
+                    mx = ms.x;
+                    my = ms.y;
+                    mb = ms.buttons;
+                }
+
+                uint8_t cursor_moved = (mx != prev_mx || my != prev_my);
+                uint8_t btn_changed  = (mb != prev_mb);
+
+                /* Check if clock needs update (every second) */
+                uint64_t cur_sec = uptime();
+                uint8_t clock_tick = (cur_sec != last_clock_sec);
+                if (clock_tick) last_clock_sec = cur_sec;
 
                 /* Only do work if something actually changed */
-                if (first_frame || cursor_moved || btn_changed) {
-                    /* Dispatch mouse events to WM (may set dirty flag) */
-                    wm_handle_mouse(ms.x, ms.y, ms.buttons);
+                uint8_t need_full = first_frame || btn_changed
+                                 || (cursor_moved && mb != 0);
 
-                    /* Cursor moved — force full redraw to erase old cursor
-                     * pixels from the back buffer */
-                    if (cursor_moved || first_frame)
-                        wm_mark_dirty();
+                if (need_full) {
+                    /* Full composite needed: first frame, button change,
+                     * or dragging (cursor moved with button held) */
 
-                    /* Composite all windows to the back buffer */
+                    /* Dispatch mouse */
+                    if (!desktop_handle_click(mx, my, mb)) {
+                        wm_handle_mouse(mx, my, mb);
+                    }
+
+                    /* Full redraw */
+                    wm_mark_dirty();
                     wm_composite();
-
-                    /* Draw mouse cursor on top of composited scene */
                     mouse_draw_cursor();
-
-                    /* Present to screen */
                     fb_swap();
 
-                    prev_mx = ms.x;
-                    prev_my = ms.y;
-                    prev_mb = ms.buttons;
+                    prev_mx = mx;
+                    prev_my = my;
+                    prev_mb = mb;
                     first_frame = 0;
+                } else if (cursor_moved) {
+                    /* Cursor-only move (no buttons held) — just
+                     * erase old cursor and draw at new position */
+                    mouse_restore_under();
+                    mouse_draw_cursor();
+                    fb_swap();
+
+                    prev_mx = mx;
+                    prev_my = my;
+                } else if (clock_tick) {
+                    /* Clock-only update: redraw taskbar in-place */
+                    mouse_restore_under();
+                    desktop_draw_taskbar();
+                    mouse_draw_cursor();
+                    fb_swap();
                 }
 
                 /* Yield to other tasks instead of HLT.  HLT surrenders the

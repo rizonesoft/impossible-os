@@ -14,9 +14,9 @@
  * On kfree(), adjacent free blocks are coalesced to reduce fragmentation.
  * ============================================================================ */
 
-#include "heap.h"
-#include "pmm.h"
-#include "printk.h"
+#include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/printk.h"
 
 /* Heap size constants */
 #define HEAP_INITIAL_PAGES  256      /* 256 pages = 1 MiB */

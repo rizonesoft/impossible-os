@@ -4,8 +4,8 @@
  * Builds/parses UDP datagrams. Dispatches to DHCP on port 68.
  * ============================================================================ */
 
-#include "net.h"
-#include "printk.h"
+#include "kernel/net/net.h"
+#include "kernel/printk.h"
 
 /* --- Memory helpers --- */
 static void udp_memcpy(void *dst, const void *src, uint64_t n)

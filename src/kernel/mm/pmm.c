@@ -14,9 +14,9 @@
  *   5. Re-reserve: first 1 MiB, kernel image, bitmap itself
  * ============================================================================ */
 
-#include "pmm.h"
-#include "boot_info.h"
-#include "printk.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/boot_info.h"
+#include "kernel/printk.h"
 
 /* Linker symbols */
 extern char __kernel_end[];

@@ -6,17 +6,17 @@
  * Return value placed back in frame->rax.
  * ============================================================================ */
 
-#include "syscall.h"
-#include "idt.h"
-#include "task.h"
-#include "printk.h"
-#include "keyboard.h"
-#include "serial.h"
-#include "initrd.h"
-#include "vfs.h"
-#include "heap.h"
-#include "pit.h"
-#include "net.h"
+#include "kernel/sched/syscall.h"
+#include "kernel/idt.h"
+#include "kernel/sched/task.h"
+#include "kernel/printk.h"
+#include "kernel/drivers/keyboard.h"
+#include "kernel/drivers/serial.h"
+#include "kernel/fs/initrd.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/mm/heap.h"
+#include "kernel/drivers/pit.h"
+#include "kernel/net/net.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)

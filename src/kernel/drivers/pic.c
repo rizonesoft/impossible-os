@@ -8,8 +8,8 @@
  * This avoids conflicts with CPU exceptions (0-31).
  * ============================================================================ */
 
-#include "pic.h"
-#include "printk.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/printk.h"
 
 /* Inline port I/O helpers */
 static inline void outb(uint16_t port, uint8_t val)

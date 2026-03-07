@@ -12,9 +12,9 @@
  *   D:\, E:\… — Additional drives / USB
  * ============================================================================ */
 
-#include "vfs.h"
-#include "heap.h"
-#include "printk.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/mm/heap.h"
+#include "kernel/printk.h"
 
 /* Drive mount table: one entry per drive letter A-Z */
 struct drive_mount {

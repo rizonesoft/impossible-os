@@ -5,9 +5,9 @@
  * Supports: %d, %u, %x, %p, %s, %c, %%
  * ============================================================================ */
 
-#include "printk.h"
-#include "serial.h"
-#include "framebuffer.h"
+#include "kernel/printk.h"
+#include "kernel/drivers/serial.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* GCC built-in variadic args (no libc needed) */
 typedef __builtin_va_list va_list;

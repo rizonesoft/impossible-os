@@ -5,9 +5,9 @@
  * Used by exec() to run user programs from the initrd.
  * ============================================================================ */
 
-#include "elf.h"
-#include "printk.h"
-#include "heap.h"
+#include "kernel/elf.h"
+#include "kernel/printk.h"
+#include "kernel/mm/heap.h"
 
 /* Simple memcpy for loading segments */
 static void elf_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)

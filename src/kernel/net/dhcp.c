@@ -4,8 +4,8 @@
  * Performs DHCP discover/offer/request/ack to obtain IP configuration.
  * ============================================================================ */
 
-#include "net.h"
-#include "printk.h"
+#include "kernel/net/net.h"
+#include "kernel/printk.h"
 
 /* --- Memory helpers --- */
 static void dhcp_memcpy(void *dst, const void *src, uint64_t n)

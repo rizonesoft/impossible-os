@@ -19,15 +19,16 @@
  *   - Dirty-flag compositing (only redraws when needed)
  * ============================================================================ */
 
-#include "wm.h"
-#include "framebuffer.h"
-#include "font.h"
-#include "mouse.h"
-#include "heap.h"
+#include "desktop/wm.h"
+#include "kernel/drivers/framebuffer.h"
+#include "desktop/font.h"
+#include "kernel/drivers/mouse.h"
+#include "kernel/mm/heap.h"
+#include "desktop/desktop.h"
 
 /* ---- Internal state ---- */
 
-static struct wm_window windows[WM_MAX_WINDOWS];
+struct wm_window windows[WM_MAX_WINDOWS];
 static int focused_window = -1;
 static uint8_t wm_ready = 0;
 
@@ -406,6 +407,10 @@ static void draw_decorations(const struct wm_window *w)
     uint32_t title_len;
     uint32_t btn_size = WM_TITLEBAR_HEIGHT - 2 * 4;  /* button with padding */
 
+    /* Safety: skip if window position is negative (would wrap uint32_t) */
+    if (w->x < 0 || w->y < 0)
+        return;
+
     /* Title bar color depends on focus */
     tb_color = (w->flags & WM_FLAG_FOCUSED) ? WM_COLOR_TITLEBAR_ACTIVE
                                              : WM_COLOR_TITLEBAR_INACTIVE;
@@ -512,6 +517,10 @@ static void blit_client(const struct wm_window *w)
     int32_t cx = client_x(w);
     int32_t cy = client_y(w);
 
+    /* Safety: skip if client area starts at negative coordinates */
+    if (cx < 0 || cy < 0)
+        return;
+
     /* Use fb_blit for fast row-level copy */
     fb_blit((uint32_t)cx, (uint32_t)cy,
             w->framebuffer, w->width, w->height, w->fb_pitch);
@@ -560,8 +569,8 @@ void wm_composite(void)
 
     needs_redraw = 0;
 
-    /* Fill screen background (desktop wallpaper color) */
-    fb_fill_rect(0, 0, fb_get_width(), fb_get_height(), 0x001A1A2E);
+    /* Draw desktop wallpaper (or fallback gradient) */
+    desktop_draw_wallpaper();
 
     /* Get sorted windows (bottom to top) */
     get_sorted_order(order, &count);
@@ -575,6 +584,12 @@ void wm_composite(void)
 
         blit_client(w);
     }
+
+    /* Draw taskbar on top of everything */
+    desktop_draw_taskbar();
+
+    /* Draw start menu if open (overlays taskbar) */
+    desktop_draw_start_menu();
 }
 
 /* ============================================================================
@@ -613,8 +628,22 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
     for (i = 0; i < WM_MAX_WINDOWS; i++) {
         if (windows[i].active && windows[i].dragging) {
             if (left_held) {
-                windows[i].x = mx - windows[i].drag_offset_x;
-                windows[i].y = my - windows[i].drag_offset_y;
+                int32_t new_x = mx - windows[i].drag_offset_x;
+                int32_t new_y = my - windows[i].drag_offset_y;
+
+                /* Clamp so the window stays fully on-screen */
+                int32_t ow = (int32_t)outer_width(&windows[i]);
+                int32_t oh = (int32_t)outer_height(&windows[i]);
+                int32_t sw = (int32_t)fb_get_width();
+                int32_t sh = (int32_t)fb_get_height();
+
+                if (new_x < 0)             new_x = 0;
+                if (new_y < 0)             new_y = 0;
+                if (new_x + ow > sw)       new_x = sw - ow;
+                if (new_y + oh > sh)       new_y = sh - oh;
+
+                windows[i].x = new_x;
+                windows[i].y = new_y;
                 mark_dirty();
             }
             if (left_released) {

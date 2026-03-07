@@ -16,8 +16,8 @@
  *   0x3F6 — Alternate status / Device control
  * ============================================================================ */
 
-#include "ata.h"
-#include "printk.h"
+#include "kernel/drivers/ata.h"
+#include "kernel/printk.h"
 
 /* Primary ATA bus ports */
 #define ATA_DATA       0x1F0

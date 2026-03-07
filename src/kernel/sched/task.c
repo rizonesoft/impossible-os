@@ -9,12 +9,12 @@
  * and is created implicitly by task_init().
  * ============================================================================ */
 
-#include "task.h"
-#include "idt.h"
-#include "gdt.h"
-#include "heap.h"
-#include "printk.h"
-#include "elf.h"
+#include "kernel/sched/task.h"
+#include "kernel/idt.h"
+#include "kernel/gdt.h"
+#include "kernel/mm/heap.h"
+#include "kernel/printk.h"
+#include "kernel/elf.h"
 
 /* Software interrupt vector for yield() */
 #define YIELD_INT_VECTOR 0x81

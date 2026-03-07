@@ -4,8 +4,8 @@
  * Maintains an ARP table cache. Handles ARP requests/replies.
  * ============================================================================ */
 
-#include "net.h"
-#include "printk.h"
+#include "kernel/net/net.h"
+#include "kernel/printk.h"
 
 /* --- Memory helpers --- */
 static void arp_memcpy(void *dst, const void *src, uint64_t n)

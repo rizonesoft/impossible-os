@@ -9,13 +9,13 @@
  *   - OSDev wiki: RTL8139
  * ============================================================================ */
 
-#include "rtl8139.h"
-#include "pci.h"
-#include "idt.h"
-#include "pic.h"
-#include "printk.h"
-#include "heap.h"
-#include "net.h"
+#include "kernel/drivers/rtl8139.h"
+#include "kernel/drivers/pci.h"
+#include "kernel/idt.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/printk.h"
+#include "kernel/mm/heap.h"
+#include "kernel/net/net.h"
 
 /* --- Port I/O --- */
 static inline void outb_nic(uint16_t port, uint8_t val)

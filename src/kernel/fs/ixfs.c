@@ -11,11 +11,11 @@
  *   Blocks 10+:   Data blocks
  * ============================================================================ */
 
-#include "ixfs.h"
-#include "ata.h"
-#include "heap.h"
-#include "pit.h"
-#include "printk.h"
+#include "kernel/fs/ixfs.h"
+#include "kernel/drivers/ata.h"
+#include "kernel/mm/heap.h"
+#include "kernel/drivers/pit.h"
+#include "kernel/printk.h"
 
 /* Number of inodes to allocate (fixed at format time) */
 #define IXFS_DEFAULT_INODES  256

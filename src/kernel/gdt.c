@@ -12,8 +12,8 @@
  * Then loads the GDT and TSS via assembly helpers.
  * ============================================================================ */
 
-#include "gdt.h"
-#include "printk.h"
+#include "kernel/gdt.h"
+#include "kernel/printk.h"
 
 /* A single GDT entry (8 bytes) */
 struct gdt_entry {

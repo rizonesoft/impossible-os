@@ -8,9 +8,9 @@
  * polluting the framebuffer when the desktop compositor is active.
  * ============================================================================ */
 
-#include "log.h"
-#include "serial.h"
-#include "pit.h"
+#include "kernel/log.h"
+#include "kernel/drivers/serial.h"
+#include "kernel/drivers/pit.h"
 
 /* GCC built-in variadic args (no libc needed) */
 typedef __builtin_va_list va_list;

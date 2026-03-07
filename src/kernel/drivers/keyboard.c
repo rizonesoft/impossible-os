@@ -8,10 +8,10 @@
  * Supports: Shift (left/right), Caps Lock, Ctrl, Alt modifier keys.
  * ============================================================================ */
 
-#include "keyboard.h"
-#include "idt.h"
-#include "pic.h"
-#include "printk.h"
+#include "kernel/drivers/keyboard.h"
+#include "kernel/idt.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/printk.h"
 
 /* --- Port I/O --- */
 #define KB_DATA_PORT  0x60

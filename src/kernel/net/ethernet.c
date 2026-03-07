@@ -4,9 +4,9 @@
  * Builds outgoing frames and dispatches incoming frames by EtherType.
  * ============================================================================ */
 
-#include "net.h"
-#include "rtl8139.h"
-#include "printk.h"
+#include "kernel/net/net.h"
+#include "kernel/drivers/rtl8139.h"
+#include "kernel/printk.h"
 
 /* Global network configuration */
 struct net_config net_cfg;

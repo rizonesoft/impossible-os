@@ -5,10 +5,10 @@
  * Provides a C-level interrupt dispatcher called from assembly stubs.
  * ============================================================================ */
 
-#include "idt.h"
-#include "gdt.h"
-#include "printk.h"
-#include "framebuffer.h"
+#include "kernel/idt.h"
+#include "kernel/gdt.h"
+#include "kernel/printk.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* IDT entry (16 bytes in Long Mode) */
 struct idt_entry {

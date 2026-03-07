@@ -4,7 +4,7 @@
  * Extracted from main.c for reuse by printk and other subsystems.
  * ============================================================================ */
 
-#include "serial.h"
+#include "kernel/drivers/serial.h"
 
 #define SERIAL_PORT 0x3F8
 

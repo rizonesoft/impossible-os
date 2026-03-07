@@ -6,11 +6,11 @@
  * timekeeping, sleep_ms(), and uptime().
  * ============================================================================ */
 
-#include "pit.h"
-#include "pic.h"
-#include "idt.h"
-#include "printk.h"
-#include "task.h"
+#include "kernel/drivers/pit.h"
+#include "kernel/drivers/pic.h"
+#include "kernel/idt.h"
+#include "kernel/printk.h"
+#include "kernel/sched/task.h"
 
 /* PIT I/O ports */
 #define PIT_CHANNEL0  0x40

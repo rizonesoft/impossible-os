@@ -13,11 +13,11 @@
  *                     9 bits    9 bits    9 bits   9 bits  12 bits
  * ============================================================================ */
 
-#include "vmm.h"
-#include "pmm.h"
-#include "idt.h"
-#include "printk.h"
-#include "framebuffer.h"
+#include "kernel/mm/vmm.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/idt.h"
+#include "kernel/printk.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* Page table entry — 64-bit */
 typedef uint64_t pte_t;

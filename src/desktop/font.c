@@ -9,8 +9,8 @@
  * framebuffer's double-buffering system.
  * ============================================================================ */
 
-#include "font.h"
-#include "framebuffer.h"
+#include "desktop/font.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* ---- Embedded 8×16 bitmap font (ASCII 32–126) ----
  * Each glyph is 8 pixels wide × 16 rows tall.

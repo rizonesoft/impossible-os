@@ -4,8 +4,8 @@
  * Builds IP datagrams, computes header checksums, dispatches by protocol.
  * ============================================================================ */
 
-#include "net.h"
-#include "printk.h"
+#include "kernel/net/net.h"
+#include "kernel/printk.h"
 
 /* --- Memory helpers --- */
 static void ip_memcpy(void *dst, const void *src, uint64_t n)

@@ -10,9 +10,9 @@
  * Results are stored in the global g_boot_info structure.
  * ============================================================================ */
 
-#include "types.h"
-#include "multiboot2.h"
-#include "boot_info.h"
+#include "kernel/types.h"
+#include "kernel/multiboot2.h"
+#include "kernel/boot_info.h"
 
 /* Global boot info — zero-initialized by BSS */
 struct boot_info g_boot_info;

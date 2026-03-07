@@ -10,9 +10,9 @@
  *   - Block copy (blit) for compositing
  * ============================================================================ */
 
-#include "framebuffer.h"
-#include "boot_info.h"
-#include "heap.h"
+#include "kernel/drivers/framebuffer.h"
+#include "kernel/boot_info.h"
+#include "kernel/mm/heap.h"
 
 /* --- Embedded 8x16 bitmap font (ASCII 32–126) ---
  * Each character is 8 pixels wide × 16 pixels tall = 16 bytes per glyph.

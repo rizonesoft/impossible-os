@@ -9,10 +9,10 @@
  * appropriate control based on hit-testing and focus tracking.
  * ============================================================================ */
 
-#include "controls.h"
-#include "wm.h"
-#include "font.h"
-#include "framebuffer.h"
+#include "desktop/controls.h"
+#include "desktop/wm.h"
+#include "desktop/font.h"
+#include "kernel/drivers/framebuffer.h"
 
 /* ---- Per-window control storage ---- */
 

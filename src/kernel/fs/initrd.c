@@ -7,8 +7,8 @@
  * The archive is read-only (it lives in memory loaded by the bootloader).
  * ============================================================================ */
 
-#include "initrd.h"
-#include "printk.h"
+#include "kernel/fs/initrd.h"
+#include "kernel/printk.h"
 
 /* --- In-memory file representation --- */
 struct initrd_file {
@@ -216,4 +216,17 @@ struct vfs_fs_driver *initrd_get_driver(void)
 struct vfs_node *initrd_get_root(void)
 {
     return &root_node;
+}
+
+const uint8_t *initrd_get_file_data(const char *name, uint32_t *size_out)
+{
+    uint32_t i;
+    for (i = 0; i < file_count; i++) {
+        if (initrd_strcmp(files[i].node.name, name)) {
+            if (size_out)
+                *size_out = files[i].data_size;
+            return files[i].data;
+        }
+    }
+    return (const uint8_t *)0;
 }
