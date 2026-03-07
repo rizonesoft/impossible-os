@@ -185,6 +185,53 @@ int main(int argc, char *argv[])
     hdr_crc = crc32(hdr, 92);
     w32(hdr + 16, hdr_crc);
 
+    /* ---- Write filesystem signatures into partition data areas ---- */
+
+    /* Partition 1 (EFI System, LBA 2048): minimal FAT32 BPB */
+    {
+        uint8_t *bpb = disk + 2048 * SECTOR_SIZE;
+        bpb[0]  = 0xEB; bpb[1] = 0x58; bpb[2] = 0x90;  /* Jump + NOP */
+        memcpy(bpb + 3, "MSDOS5.0", 8);                  /* OEM name */
+        w16(bpb + 11, 512);          /* Bytes per sector */
+        bpb[13] = 8;                 /* Sectors per cluster */
+        w16(bpb + 14, 32);           /* Reserved sectors */
+        bpb[16] = 2;                 /* Number of FATs */
+        w16(bpb + 17, 0);            /* Root entry count (0 for FAT32) */
+        w16(bpb + 19, 0);            /* Total sectors 16 (0 for FAT32) */
+        bpb[21] = 0xF8;              /* Media type (fixed disk) */
+        w16(bpb + 22, 0);            /* Sectors per FAT 16 (0 for FAT32) */
+        w32(bpb + 32, 2048);         /* Total sectors 32 */
+        w32(bpb + 36, 16);           /* Sectors per FAT 32 */
+        w32(bpb + 44, 2);            /* Root cluster */
+        w16(bpb + 48, 1);            /* FSInfo sector */
+        w16(bpb + 50, 6);            /* Backup boot sector */
+        memcpy(bpb + 82, "FAT32   ", 8);  /* FS type string */
+        bpb[510] = 0x55;             /* Boot signature */
+        bpb[511] = 0xAA;
+    }
+
+    /* Partition 3 (IXFS, LBA 36864): IXFS superblock */
+    {
+        uint8_t *sb = disk + 36864ULL * SECTOR_SIZE;
+        uint32_t total_sectors = 102399 - 36864 + 1;  /* 65536 sectors */
+        uint32_t total_blocks  = total_sectors / 8;   /* 4K blocks */
+
+        w32(sb + 0, 0x49584653);     /* s_magic = "IXFS" */
+        w32(sb + 4, 1);              /* s_version */
+        w32(sb + 8, 4096);           /* s_block_size */
+        w32(sb + 12, total_blocks);  /* s_total_blocks */
+        w32(sb + 16, total_blocks - 4); /* s_free_blocks */
+        w32(sb + 20, 128);           /* s_total_inodes */
+        w32(sb + 24, 127);           /* s_free_inodes */
+        w32(sb + 28, 1);             /* s_bitmap_start */
+        w32(sb + 32, 1);             /* s_bitmap_blocks */
+        w32(sb + 36, 2);             /* s_inode_start */
+        w32(sb + 40, 1);             /* s_inode_blocks */
+        w32(sb + 44, 3);             /* s_data_start */
+        w32(sb + 48, 1);             /* s_root_inode */
+        memcpy(sb + 52, "Impossible OS", 13);  /* s_volume_name */
+    }
+
     /* ---- Write disk image ---- */
     fp = fopen(argv[1], "wb");
     if (!fp) {
