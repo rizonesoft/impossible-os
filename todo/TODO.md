@@ -520,10 +520,10 @@
 
 ### 12.1 Logging
 
-- [ ] Write `src/kernel/log.c` — `log_info()`, `log_warn()`, `log_error()`
-- [ ] Output logs to serial port (`0x3F8`) for host-side capture
-- [ ] Add QEMU `-serial file:serial.log` to capture logs to a file
-- [ ] Commit: `"kernel: serial logging subsystem"`
+- [x] Write `src/kernel/log.c` — `log_info()`, `log_warn()`, `log_error()` ✅ with timestamps + subsystem tags
+- [x] Output logs to serial port (`0x3F8`) for host-side capture ✅ serial-only (no framebuffer)
+- [x] Add QEMU `-serial file:serial.log` to capture logs to a file ✅ `make run-log`
+- [x] Commit: `"kernel: serial logging subsystem"` ✅ `b39e58a`
 
 ### 12.2 Real-Time Clock (RTC)
 
