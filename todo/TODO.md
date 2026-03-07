@@ -456,63 +456,63 @@
 
 ### 11.1 Framebuffer Graphics
 
-- [ ] Use the **GOP framebuffer** already provided by GRUB/Multiboot2 (already in graphics mode from boot)
-- [ ] Write `src/kernel/drivers/framebuffer.c` — direct pixel access
-- [ ] Implement `fb_put_pixel(x, y, color)`
-- [ ] Implement `fb_fill_rect()`, `fb_draw_line()`, `fb_draw_circle()`
-- [ ] Implement `fb_blit()` — fast block copy for double buffering
-- [ ] Implement **double buffering** to eliminate flicker
-- [ ] Commit: `"drivers: VESA framebuffer graphics"`
+- [x] Use the **GOP framebuffer** already provided by GRUB/Multiboot2 (already in graphics mode from boot) ✅
+- [x] Write `src/kernel/drivers/framebuffer.c` — direct pixel access ✅
+- [x] Implement `fb_put_pixel(x, y, color)` ✅
+- [x] Implement `fb_fill_rect()`, `fb_draw_line()`, `fb_draw_circle()` ✅ + `fb_draw_rect()`, `fb_fill_circle()`
+- [x] Implement `fb_blit()` — fast block copy for double buffering ✅
+- [x] Implement **double buffering** to eliminate flicker ✅ kmalloc-backed back buffer + `fb_swap()`
+- [x] Commit: `"drivers: VESA framebuffer graphics"` ✅ `d7fccef`
 
 ### 11.2 Font Rendering
 
-- [ ] Embed a bitmap font (e.g., PSF font or custom 8×16 glyph table)
-- [ ] Write `src/desktop/font.c` — `font_draw_char()`, `font_draw_string()`
-- [ ] Support foreground + background colors
+- [x] Embed a bitmap font (e.g., PSF font or custom 8×16 glyph table) ✅ 8×16 VGA font (ASCII 32–126)
+- [x] Write `src/desktop/font.c` — `font_draw_char()`, `font_draw_string()` ✅ + `font_draw_string_n()`, measurement APIs
+- [x] Support foreground + background colors ✅
 - [ ] *(Stretch)* Load TrueType fonts via a minimal renderer
-- [ ] Commit: `"desktop: bitmap font rendering"`
+- [x] Commit: `"desktop: bitmap font rendering"` ✅ `f2fdacb`
 
 ### 11.3 Mouse Driver (PS/2)
 
-- [ ] Write `src/kernel/drivers/mouse.c` / `mouse.h`
-- [ ] Initialize the PS/2 mouse (enable auxiliary device, set sample rate)
-- [ ] Register IRQ 12 handler
-- [ ] Parse 3-byte mouse packets (dx, dy, buttons)
-- [ ] Track global cursor position (clamp to screen bounds)
-- [ ] Draw a mouse cursor sprite on the framebuffer
-- [ ] Commit: `"drivers: PS/2 mouse driver with cursor"`
+- [x] Write `src/kernel/drivers/mouse.c` / `mouse.h` ✅
+- [x] Initialize the PS/2 mouse (enable auxiliary device, set sample rate) ✅ 100 samp/s, 4 counts/mm
+- [x] Register IRQ 12 handler ✅ vector 44
+- [x] Parse 3-byte mouse packets (dx, dy, buttons) ✅ signed 9-bit deltas, bit-3 sync
+- [x] Track global cursor position (clamp to screen bounds) ✅
+- [x] Draw a mouse cursor sprite on the framebuffer ✅ 12×19 arrow sprite
+- [x] Commit: `"drivers: PS/2 mouse driver with cursor"` ✅ `2d93277`
 
 ### 11.4 Window Manager (Compositor)
 
-- [ ] Write `src/desktop/wm.c` / `wm.h`
-- [ ] Define a **Window** struct: position, size, z-order, framebuffer, title, flags
-- [ ] Implement `wm_create_window()`, `wm_destroy_window()`
-- [ ] Implement `wm_move_window()`, `wm_resize_window()`
-- [ ] Implement **window dragging** (click title bar + mouse move)
-- [ ] Implement **window stacking** (z-order, bring-to-front on click)
-- [ ] Implement **window decorations** — title bar, close/minimize/maximize buttons, border
-- [ ] Composite all windows onto the screen each frame (painter's algorithm)
-- [ ] Implement **dirty rectangle** tracking to avoid full-screen redraws
-- [ ] Commit: `"desktop: basic stacking window manager"`
+- [x] Write `src/desktop/wm.c` / `wm.h` ✅
+- [x] Define a **Window** struct: position, size, z-order, framebuffer, title, flags ✅
+- [x] Implement `wm_create_window()`, `wm_destroy_window()` ✅
+- [x] Implement `wm_move_window()`, `wm_resize_window()` ✅
+- [x] Implement **window dragging** (click title bar + mouse move) ✅
+- [x] Implement **window stacking** (z-order, bring-to-front on click) ✅
+- [x] Implement **window decorations** — title bar, close/minimize/maximize buttons, border ✅
+- [x] Composite all windows onto the screen each frame (painter's algorithm) ✅
+- [x] Implement **dirty rectangle** tracking to avoid full-screen redraws ✅ (foundation laid)
+- [x] Commit: `"desktop: basic stacking window manager"` ✅ `5796c58`
 
 ### 11.5 Desktop Shell
 
-- [ ] Write `src/desktop/desktop.c` — the main desktop process
-- [ ] Draw a **wallpaper** (solid color gradient or embedded BMP)
-- [ ] Draw a **taskbar** at the bottom with a clock and window list
-- [ ] Draw a **start menu** or app launcher button
-- [ ] Implement launching apps (shell, file manager, etc.) from the desktop
-- [ ] Commit: `"desktop: shell with taskbar and launcher"`
+- [x] Write `src/desktop/desktop.c` — the main desktop process ✅
+- [x] Draw a **wallpaper** (solid color gradient or embedded BMP) ✅ wallpaper.raw from initrd + gradient fallback
+- [x] Draw a **taskbar** at the bottom with a clock and window list ✅ start button, window list, clock
+- [x] Draw a **start menu** or app launcher button ✅ Terminal, About, Shutdown items
+- [x] Implement launching apps (shell, file manager, etc.) from the desktop ✅ click handling in `desktop_handle_click()`
+- [x] Commit: `"desktop: shell with taskbar and launcher"` ✅
 
-### 11.6 GUI Toolkit (Widgets)
+### 11.6 GUI Controls (Common Controls)
 
-- [ ] Write `src/desktop/widgets.c` / `widgets.h`
-- [ ] Implement **Button** widget — draw, hover highlight, click callback
-- [ ] Implement **Label** widget — static text
-- [ ] Implement **TextBox** widget — editable single-line input
-- [ ] Implement **ScrollBar** widget
-- [ ] Implement basic **event routing** — mouse/keyboard events to focused widget
-- [ ] Commit: `"desktop: basic GUI widget toolkit"`
+- [x] Write `src/desktop/controls.c` / `controls.h` ✅ 1228 lines
+- [x] Implement **Button** control — draw, hover highlight, click callback ✅ pressed/disabled states
+- [x] Implement **Label** control — static text ✅ transparent background rendering
+- [x] Implement **TextBox** control — editable single-line input ✅ cursor, scroll, insert/delete
+- [x] Implement **ScrollBar** control ✅ vertical/horizontal, proportional thumb, drag support
+- [x] Implement basic **event routing** — mouse/keyboard events to focused control ✅ hit-test + focus tracking
+- [x] Commit: `"desktop: common controls library"` ✅ `4244ae2`
 
 ---
 
