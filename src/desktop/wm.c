@@ -121,6 +121,10 @@ void wm_init(void)
     focused_window = -1;
     prev_buttons = 0;
     wm_ready = 1;
+
+    /* Lock the framebuffer console — all text output now goes to serial only.
+     * The compositor exclusively owns the back buffer from this point. */
+    fb_lock_compositor();
 }
 
 /* ============================================================================

@@ -71,6 +71,12 @@ void fb_swap(void);
 uint32_t fb_get_width(void);
 uint32_t fb_get_height(void);
 
+/* ---- Compositor lock ---- */
+/* When locked, fb_putchar/fb_draw_char become no-ops.
+ * Call fb_lock_compositor() when the WM compositor takes over the screen. */
+void fb_lock_compositor(void);
+void fb_unlock_compositor(void);
+
 /* ---- Predefined colors (32-bit ARGB) ---- */
 
 #define FB_COLOR_BLACK       0x00000000

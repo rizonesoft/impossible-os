@@ -141,6 +141,8 @@ static uint32_t max_rows;       /* max text rows */
 static uint32_t fg_color;       /* foreground color */
 static uint32_t bg_color;       /* background color */
 
+static uint8_t compositor_locked; /* when set, fb_putchar/draw_char are no-ops */
+
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
 
 /* ---- Helper: absolute value ---- */
@@ -432,6 +434,9 @@ static void fb_draw_char(uint32_t cx, uint32_t cy, char c)
     uint32_t px, py;
     const uint8_t *glyph;
 
+    if (compositor_locked)
+        return;
+
     if (c < FONT_FIRST || c > FONT_LAST)
         glyph_index = 0; /* space for unprintable */
     else
@@ -488,7 +493,7 @@ void fb_scroll(void)
 
 void fb_putchar(char c)
 {
-    if (!fb_ready)
+    if (!fb_ready || compositor_locked)
         return;
 
     switch (c) {
@@ -549,3 +554,13 @@ void fb_set_color(uint32_t fg, uint32_t bg)
 
 uint32_t fb_get_width(void)  { return fb_width; }
 uint32_t fb_get_height(void) { return fb_height; }
+
+void fb_lock_compositor(void)
+{
+    compositor_locked = 1;
+}
+
+void fb_unlock_compositor(void)
+{
+    compositor_locked = 0;
+}
