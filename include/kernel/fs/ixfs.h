@@ -11,7 +11,7 @@
  *
  * Design:
  *   - 4 KiB block size (matches page size for efficient I/O)
- *   - Inodes hold 12 direct + 1 single-indirect block pointer
+ *   - Inodes hold 12 direct + 1 single-indirect + 1 double-indirect ptr
  *   - Directories are files containing ixfs_dir_entry records
  *   - Max filename: 251 characters (252 bytes with null terminator)
  * ============================================================================ */
@@ -32,7 +32,8 @@
 #define IXFS_DIRECT_BLOCKS   12          /* direct block pointers per inode */
 #define IXFS_INDIRECT_BLOCKS 1           /* single-indirect pointers */
 #define IXFS_PTRS_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(uint32_t))  /* 1024 */
-#define IXFS_MAX_FILE_BLOCKS (IXFS_DIRECT_BLOCKS + IXFS_PTRS_PER_BLOCK)
+#define IXFS_MAX_FILE_BLOCKS (IXFS_DIRECT_BLOCKS + IXFS_PTRS_PER_BLOCK \
+                            + IXFS_PTRS_PER_BLOCK * IXFS_PTRS_PER_BLOCK)
 
 /* Max filename length in directory entries */
 #define IXFS_MAX_NAME        252         /* 251 chars + null terminator */
@@ -96,7 +97,8 @@ struct ixfs_inode {
     uint32_t i_atime;              /* access time */
     uint32_t i_direct[IXFS_DIRECT_BLOCKS];   /* direct block pointers */
     uint32_t i_indirect;           /* single-indirect block pointer */
-    uint8_t  i_reserved[8];        /* pad to 128 bytes */
+    uint32_t i_dindirect;          /* double-indirect block pointer */
+    uint8_t  i_reserved[4];        /* pad to 128 bytes */
 } __attribute__((packed));
 
 #define IXFS_INODES_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode))

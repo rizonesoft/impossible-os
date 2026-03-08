@@ -192,13 +192,13 @@
 
 ### 5.1 IXFS On-Disk Format
 
-- [ ] Define IXFS superblock (magic "IXFS", version, block_size, block_count, inode_count, free_block_bitmap_lba)
-- [ ] Define inode table: fixed-size inodes (name, type, size, timestamps, block pointers)
-- [ ] Direct block pointers (12) + single indirect + double indirect
-- [ ] Free block bitmap for allocation
-- [ ] Free inode bitmap for inode allocation
-- [ ] Write IXFS format specification document
-- [ ] Commit: `"fs: IXFS on-disk format specification"`
+- [x] Define IXFS superblock (magic "IXFS", version, block_size, block_count, inode_count, free_block_bitmap_lba)
+- [x] Define inode table: fixed-size inodes (name, type, size, timestamps, block pointers)
+- [x] Direct block pointers (12) + single indirect + double indirect
+- [x] Free block bitmap for allocation
+- [x] Free inode bitmap for inode allocation
+- [x] Write IXFS format specification document
+- [x] Commit: `"fs: IXFS on-disk format specification"`
 
 ### 5.2 IXFS Disk Operations
 
