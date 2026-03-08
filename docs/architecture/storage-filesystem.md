@@ -43,7 +43,7 @@ User / Kernel code
 | `D:\`–`Z:\` | Any | Additional drives | USB, extra disks |
 
 During early boot (before disk drivers), the **initrd** is temporarily mounted
-at `C:\` to provide the kernel with essential files.
+at `B:\` to provide the kernel with essential files (see initrd section below).
 
 ## Partitioning
 
@@ -405,7 +405,18 @@ All VFS operations are supported:
 
 ## IXFS — Impossible X FileSystem
 
-> Full specification: [`docs/architecture/ixfs-specification.md`](ixfs-specification.md)
+> Full on-disk format specification: [`ixfs-specification.md`](ixfs-specification.md)
+
+IXFS is the native Impossible OS filesystem, mounted at `C:\` (system drive).
+
+| Property | Value |
+|----------|-------|
+| Block size | 4 KiB (matches page size) |
+| Inode size | 128 bytes (32 per block) |
+| Max file size | ~4 GiB (12 direct + indirect + double-indirect) |
+| Max volume | 32 GiB (current block group limit) |
+| Allocation | Bitmap + block group allocator (locality-aware) |
+| I/O layer | `blkdev_read/write` (works with any storage backend) |
 
 ### Key Files
 
@@ -413,104 +424,21 @@ All VFS operations are supported:
 |------|---------|
 | `src/kernel/fs/ixfs.c` | IXFS kernel driver (format, mount, VFS ops) |
 | `include/kernel/fs/ixfs.h` | On-disk structures and public API |
+| `src/kernel/fs/firstboot.c` | First-boot hierarchy + initrd copy (temporary) |
 | `docs/architecture/ixfs-specification.md` | Full on-disk format specification |
 
-### On-Disk Layout
+### Implemented Features
 
-```
-Block 0:        Superblock (512 useful bytes, padded to 4 KiB)
-Block 1..N:     Block bitmap (1 bit per 4 KiB block)
-Block N+1..M:   Inode table (32 inodes × 128 bytes per block)
-Block M+1..end: Data blocks (file and directory content)
-```
+- **Full CRUD**: create, read, write, delete, rename files and directories
+- **Block device abstraction**: all I/O via `blkdev` (partition sub-devices)
+- **Block group allocator**: 32768 blocks/group, locality hints, O(1) sequential alloc
+- **Auto-mount**: `partition_mount_filesystems()` detects IXFS and mounts at `C:\`
+- **Permissions**: Unix rwx, uid/gid, `ixfs_check_perm()`
+- **Timestamps**: created, modified, accessed
+- **First-boot setup**: `firstboot_setup()` populates empty `C:\` with default hierarchy
+  and copies initrd files to `C:\Impossible\System\`
 
-### Superblock
+### Planned Enhancements
 
-| Field | Size | Description |
-|-------|------|-------------|
-| `s_magic` | 4 bytes | `0x49584653` ("IXFS") |
-| `s_version` | 4 bytes | Format version (currently 1) |
-| `s_block_size` | 4 bytes | 4096 (4 KiB) |
-| `s_total_blocks` | 4 bytes | Total blocks on partition |
-| `s_free_blocks` | 4 bytes | Free block count |
-| `s_total_inodes` | 4 bytes | Total inodes allocated |
-| `s_free_inodes` | 4 bytes | Free inode count |
-| `s_bitmap_start` | 4 bytes | First block of bitmap |
-| `s_inode_start` | 4 bytes | First block of inode table |
-| `s_data_start` | 4 bytes | First data block |
-| `s_root_inode` | 4 bytes | Root directory inode (always 1) |
-| `s_volume_name` | 32 bytes | Volume label |
-
-### Inode (128 bytes, 32 per block)
-
-| Field | Size | Description |
-|-------|------|-------------|
-| `i_mode` | 2 bytes | Type (upper 4 bits) + permissions (lower 9) |
-| `i_links` | 2 bytes | Hard link count |
-| `i_uid` / `i_gid` | 4 bytes | Owner/group IDs |
-| `i_size` | 4 bytes | File size in bytes |
-| `i_blocks` | 4 bytes | Data blocks used |
-| `i_ctime` | 4 bytes | Creation timestamp |
-| `i_mtime` | 4 bytes | Modification timestamp |
-| `i_atime` | 4 bytes | Access timestamp |
-| `i_direct[12]` | 48 bytes | 12 direct block pointers |
-| `i_indirect` | 4 bytes | Single indirect block pointer |
-| `i_dindirect` | 4 bytes | Double indirect block pointer |
-
-Max file size: ~4 GiB (12 + 1024 + 1024² blocks × 4 KiB).
-
-### Directory Entries (64 bytes, 64 per block)
-
-| Field | Size | Description |
-|-------|------|-------------|
-| `d_inode` | 4 bytes | Inode number (0 = free/deleted) |
-| `d_name` | 252 bytes | Filename (up to 251 chars + null) |
-
-Actually **256 bytes** per entry (4 + 252), giving **16 entries per block**.
-
-### Features
-
-| Feature | Status | Details |
-|---------|--------|---------|
-| Block device layer | ✅ | Via `blkdev_read/write` (partition sub-devices) |
-| Auto-mount at `C:\` | ✅ | `partition_mount_filesystems()` at boot |
-| Format | ✅ | `ixfs_format(dev, label)` |
-| Mount | ✅ | `ixfs_init(dev)` → loads superblock + bitmap |
-| Create files | ✅ | `ixfs_create()` via VFS |
-| Read files | ✅ | `ixfs_file_read()` with block pointer traversal |
-| Write files | ✅ | `ixfs_file_write()` with block allocation |
-| Delete files/dirs | ✅ | `ixfs_unlink()` with empty-dir check |
-| Create directories | ✅ | With `.` and `..` entries |
-| List directories | ✅ | `ixfs_readdir()` skips deleted entries |
-| Long filenames | ✅ | Up to 251 characters |
-| Permissions | ✅ | Unix rwx, uid/gid, `ixfs_check_perm()` |
-| Timestamps | ✅ | Created, modified, accessed |
-| Block alloc/free | ✅ | Bitmap-based, flushed to disk |
-| Rename | ✅ | `ixfs_rename(parent, old, new)` |
-| First-boot setup | ✅ | `firstboot_setup()` populates empty C:\ |
-| Block group allocator | ✅ | 32768 blocks/group, locality hints, O(1) sequential alloc |
-
-### First-Boot Module
-
-> **Files**: `src/kernel/fs/firstboot.c`, `include/kernel/fs/firstboot.h`
-> **Removal**: Delete these files and the `firstboot_setup()` call in `main.c`
-
-On first boot (when C:\ is empty), `firstboot_setup()` automatically:
-
-1. Creates the default directory hierarchy:
-
-```
-C:\
-├── Impossible\
-│   ├── System\     ← initrd files copied here
-│   └── Commands\
-├── Users\
-│   └── Default\
-└── Programs\
-```
-
-2. Copies all files from `B:\` (initrd) to `C:\Impossible\System\`
-
-This is temporary — once an installer exists, the firstboot module can be
-removed entirely. The installer would create the hierarchy and copy files
-during installation instead.
+See `TODO-Phase-06.md` §5.5–5.11 for the full roadmap:
+extent-based allocation, journaling, CoW/snapshots, checksums, 64-bit addressing.
