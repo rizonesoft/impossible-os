@@ -150,8 +150,8 @@
 
 ---
 
-## 4. NTFS Filesystem
-> *Minimal read/write NTFS driver for Windows-compatible disk access*
+## 4. External Filesystem Drivers
+> *Read/write drivers for NTFS, ext2/ext3/ext4, and exFAT*
 
 ### 4.1 NTFS Read Support
 
@@ -184,6 +184,69 @@
 - [ ] Mount NTFS partition to a drive letter (e.g., `D:\`)
 - [ ] Test: read files from a Windows-formatted NTFS partition
 - [ ] Commit: `"fs: NTFS VFS integration"`
+
+### 4.4 ext2/ext3/ext4 Read Support
+
+> ext2/ext3/ext4 share the same on-disk layout (magic `0xEF53`). A single
+> driver handles all three — ext3 adds journaling, ext4 adds extents.
+
+- [ ] Create `src/kernel/fs/ext2.c` and `include/kernel/fs/ext2.h`
+- [ ] Parse superblock at byte 1024: magic, block_size, inode_size, blocks_count, inodes_count
+- [ ] Parse block group descriptor table (follows superblock)
+- [ ] Implement `ext2_read_inode(ino)` — locate inode in correct block group
+- [ ] Implement block pointer traversal: 12 direct + indirect + dindirect + tindirect
+- [ ] Detect ext4 extents: check `EXT4_EXTENTS_FL` flag, parse extent tree header + entries
+- [ ] Implement `ext2_read_file(inode, offset, buf, size)` — follow block pointers or extents
+- [ ] Implement `ext2_readdir(inode)` — parse `ext2_dir_entry_2` linked list
+- [ ] Implement `ext2_stat(path)` — return file metadata from inode
+- [ ] VFS integration: register ext2 driver, mount to drive letter
+- [ ] Update partition scanner to log "ext2", "ext3", or "ext4" based on feature flags
+- [ ] Commit: `"fs: ext2/ext3/ext4 read support"`
+
+### 4.5 ext2/ext3/ext4 Write Support
+
+- [ ] Implement block bitmap read/write for allocation
+- [ ] Implement inode bitmap read/write for inode allocation
+- [ ] Implement `ext2_write_file(inode, offset, data, size)` — allocate blocks, write data
+- [ ] Implement `ext2_create(dir_inode, name, type)` — allocate inode + dir entry
+- [ ] Implement `ext2_delete(dir_inode, name)` — free blocks/inode, unlink dir entry
+- [ ] Implement `ext2_rename(dir, old_name, new_name)`
+- [ ] Update block group descriptor free counts + superblock free counts
+- [ ] Wire write ops into VFS callbacks
+- [ ] Commit: `"fs: ext2/ext3/ext4 write support"`
+
+### 4.6 exFAT Read Support
+
+> exFAT is the standard for large USB drives (>32 GB) and SDXC cards.
+> Simpler than NTFS, designed for flash media.
+
+- [ ] Create `src/kernel/fs/exfat.c` and `include/kernel/fs/exfat.h`
+- [ ] Parse exFAT boot sector: bytes_per_sector_shift, sectors_per_cluster_shift, cluster_count, FAT_offset, data_offset, root_dir_cluster
+- [ ] Verify OEM name `"EXFAT   "` and boot signature `0xAA55`
+- [ ] Implement FAT traversal (32-bit entries, similar to FAT32 but no 0x0FFFFFFF masking)
+- [ ] Implement `exfat_read_dir(cluster)` — parse directory entry set:
+  - [ ] File Directory Entry (0x85): attributes, timestamps, data_length
+  - [ ] Stream Extension Entry (0xC0): name_length, first_cluster, data_length
+  - [ ] File Name Entry (0xC1): 15 UTF-16LE characters per entry
+- [ ] Assemble full filename from chained File Name Entries
+- [ ] Implement `exfat_read_file(path, buf, size)` — follow cluster chain
+- [ ] Implement `exfat_stat(path)` — return file metadata
+- [ ] Add exFAT probe to partition scanner (OEM "EXFAT   " at boot sector)
+- [ ] VFS integration: register exfat driver, mount to drive letter
+- [ ] Commit: `"fs: exFAT read support"`
+
+### 4.7 exFAT Write Support
+
+- [ ] Implement allocation bitmap read/write (replaces FAT-based free scan)
+- [ ] Implement `exfat_alloc_cluster()` — scan allocation bitmap
+- [ ] Implement `exfat_write_file(dir_cluster, name, data, size)` — allocate clusters, write data
+- [ ] Implement `exfat_create_file(dir, name)` — create directory entry set (File + Stream + Name entries)
+- [ ] Implement `exfat_create_dir(parent, name)` — create directory with dot entries
+- [ ] Implement `exfat_delete_file(dir, name)` — free clusters, mark entries as deleted (0x05/0x40/0x41)
+- [ ] Implement `exfat_rename(dir, old, new)` — update File Name entries
+- [ ] UpCase table validation for case-insensitive comparisons
+- [ ] Wire write ops into VFS callbacks
+- [ ] Commit: `"fs: exFAT write support"`
 
 ---
 
