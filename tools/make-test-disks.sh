@@ -20,8 +20,6 @@ set -e
 OUT="${1:-build/test-disks}"
 BUILD="${2:-build}"
 MKFS_IXFS="${BUILD}/tools/mkfs-ixfs"
-MAKE_MBR="${BUILD}/tools/make-mbr"
-MAKE_GPT="${BUILD}/tools/make-gpt"
 
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
@@ -213,29 +211,15 @@ fi
 # ============================================================================
 IMG="$OUT/mbr.img"
 if [ ! -f "$IMG" ]; then
-    if [ -x "$MAKE_MBR" ]; then
-        log "Creating mbr.img (8 MiB)"
-        "$MAKE_MBR" -o "$IMG" -s 8M 2>/dev/null || {
-            # Fallback: create a simple MBR disk with dd + manual partition entry
-            dd if=/dev/zero of="$IMG" bs=1M count=8 2>/dev/null
-            # Write MBR signature
-            printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
-            # Write a FAT32 partition entry at offset 446 (16 bytes)
-            # Type 0x0C (FAT32 LBA), start LBA 2048, size ~14336 sectors
-            printf '\x80\x00\x00\x00\x0C\x00\x00\x00' | dd of="$IMG" bs=1 seek=446 conv=notrunc 2>/dev/null
-            printf '\x00\x08\x00\x00\x00\x38\x00\x00' | dd of="$IMG" bs=1 seek=454 conv=notrunc 2>/dev/null
-        }
-        CREATED=$((CREATED + 1))
-    else
-        warn "mbr.img — $MAKE_MBR not found (build first: make system-disk)"
-        # Create minimal MBR image as fallback
-        log "Creating mbr.img (8 MiB, minimal fallback)"
-        dd if=/dev/zero of="$IMG" bs=1M count=8 2>/dev/null
-        printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
-        printf '\x80\x00\x00\x00\x0C\x00\x00\x00' | dd of="$IMG" bs=1 seek=446 conv=notrunc 2>/dev/null
-        printf '\x00\x08\x00\x00\x00\x38\x00\x00' | dd of="$IMG" bs=1 seek=454 conv=notrunc 2>/dev/null
-        CREATED=$((CREATED + 1))
-    fi
+    log "Creating mbr.img (8 MiB)"
+    dd if=/dev/zero of="$IMG" bs=1M count=8 2>/dev/null
+    # Write MBR signature
+    printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
+    # Write a FAT32 partition entry at offset 446 (16 bytes)
+    # Type 0x0C (FAT32 LBA), start LBA 2048, size ~14336 sectors
+    printf '\x80\x00\x00\x00\x0C\x00\x00\x00' | dd of="$IMG" bs=1 seek=446 conv=notrunc 2>/dev/null
+    printf '\x00\x08\x00\x00\x00\x38\x00\x00' | dd of="$IMG" bs=1 seek=454 conv=notrunc 2>/dev/null
+    CREATED=$((CREATED + 1))
 else
     log "mbr.img already exists, skipping"
 fi
@@ -245,26 +229,15 @@ fi
 # ============================================================================
 IMG="$OUT/gpt.img"
 if [ ! -f "$IMG" ]; then
-    if [ -x "$MAKE_GPT" ]; then
-        log "Creating gpt.img (16 MiB)"
-        "$MAKE_GPT" -o "$IMG" -s 16M 2>/dev/null || {
-            warn "gpt.img — make-gpt failed, creating minimal GPT"
-            dd if=/dev/zero of="$IMG" bs=1M count=16 2>/dev/null
-            # Write protective MBR signature
-            printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
-            # Write EFI PART signature at LBA 1
-            printf 'EFI PART' | dd of="$IMG" bs=1 seek=512 conv=notrunc 2>/dev/null
-        }
-        CREATED=$((CREATED + 1))
-    else
-        warn "gpt.img — $MAKE_GPT not found (build first: make system-disk)"
-        # Create minimal GPT image
-        log "Creating gpt.img (16 MiB, minimal fallback)"
-        dd if=/dev/zero of="$IMG" bs=1M count=16 2>/dev/null
-        printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
-        printf 'EFI PART' | dd of="$IMG" bs=1 seek=512 conv=notrunc 2>/dev/null
-        CREATED=$((CREATED + 1))
-    fi
+    log "Creating gpt.img (16 MiB)"
+    dd if=/dev/zero of="$IMG" bs=1M count=16 2>/dev/null
+    # Write protective MBR: partition type 0xEE + signature
+    printf '\x00\x00\x00\x00\xEE\x00\x00\x00' | dd of="$IMG" bs=1 seek=446 conv=notrunc 2>/dev/null
+    printf '\x01\x00\x00\x00\xFF\x7F\x00\x00' | dd of="$IMG" bs=1 seek=454 conv=notrunc 2>/dev/null
+    printf '\x55\xAA' | dd of="$IMG" bs=1 seek=510 conv=notrunc 2>/dev/null
+    # Write EFI PART signature at LBA 1
+    printf 'EFI PART' | dd of="$IMG" bs=1 seek=512 conv=notrunc 2>/dev/null
+    CREATED=$((CREATED + 1))
 else
     log "gpt.img already exists, skipping"
 fi

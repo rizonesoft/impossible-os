@@ -25,3 +25,6 @@ serial.log
 .DS_Store
 Thumbs.db
 .build_number
+
+# OVMF firmware copies
+OVMF_VARS*.fd

@@ -232,8 +232,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     partition_scan_all();
     partition_mount_filesystems();
 
-    /* NOTE: firstboot is no longer needed — the system disk is
-     * pre-populated with all files by mkfs-ixfs --populate. */
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();

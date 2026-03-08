@@ -113,5 +113,4 @@ kernel binary, producing output like:
 | `jpg2raw` | `tools/jpg2raw.c` | `build/tools/jpg2raw` | Convert JPG/PNG → raw BGRA |
 | `mkfs-ixfs` | `tools/mkfs-ixfs.c` | `build/tools/mkfs-ixfs` | Create IXFS v2 disk images |
 | `make-system-disk` | `tools/make-system-disk.c` | `build/tools/make-system-disk` | Create GPT system disk |
-| `make-gpt` | `tools/make-gpt.c` | `build/tools/make-gpt` | Create GPT test disk |
-| `make-mbr` | `tools/make-mbr.c` | `build/tools/make-mbr` | Create MBR test disk |
+| `make-test-disks` | `tools/make-test-disks.sh` | `build/test-disks/*.img` | Generate FS test images |

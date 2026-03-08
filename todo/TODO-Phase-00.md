@@ -212,15 +212,15 @@ make all
 
 ---
 
-## 6. Cleanup Obsolete Files
+## 6. Cleanup Obsolete Files ✅
 
 - [x] Delete `tools/make-initrd.c` — removed in `56c2a12`
-- [ ] Delete `tools/make-gpt.c`
-- [ ] Delete `tools/make-mbr.c` (if MBR support dropped)
-- [ ] Delete `src/kernel/fs/firstboot.c` and `include/kernel/fs/firstboot.h`
-- [ ] Delete `src/boot/grub.cfg` (moves into disk builder)
-- [ ] Update `.gitignore` to reflect new build artifacts
-- [ ] Commit: `"build: remove obsolete tools and configs"`
+- [x] Delete `tools/make-gpt.c` — removed (test-disks uses minimal dd-based GPT)
+- [x] Delete `tools/make-mbr.c` — removed (test-disks uses minimal dd-based MBR)
+- [x] Delete `src/kernel/fs/firstboot.c` and `include/kernel/fs/firstboot.h` — already deleted in `e542907`
+- [x] ~~Delete `src/boot/grub.cfg`~~ — **kept** (still used by both ISO and system-disk Makefile targets)
+- [x] Update `.gitignore` to reflect new build artifacts
+- [x] Commit: `"build: remove obsolete tools and configs"`
 
 ---
 
