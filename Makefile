@@ -221,6 +221,9 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 	@cp $(BOOT_DIR)/grub.cfg $(BUILD_DIR)/efi_staging/boot/grub/grub.cfg
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
+	@# Patch BPB total_sectors_32 (offset 32) to 524288 = 256 MiB
+	@# mkfs.fat --offset writes 510 MiB (formats to end-of-file, ignoring GPT)
+	@printf '\x00\x00\x08\x00' | dd of=$@ bs=1 seek=$$(( $(EFI_OFFSET) + 32 )) conv=notrunc status=none
 	@# Step 3: Format IXFS partition and populate with system files
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \
