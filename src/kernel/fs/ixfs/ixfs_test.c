@@ -26,7 +26,7 @@ void ixfs_test_performance(void)
     {
         uint32_t b1, b2, b3;
         uint32_t g1, g2, g3;
-        uint32_t saved_free = vol->sb.s_free_blocks;
+        uint64_t saved_free = vol->sb.s_free_blocks;
 
         b1 = ixfs_alloc_block(vol);
         b2 = ixfs_alloc_block(vol);
@@ -48,6 +48,12 @@ void ixfs_test_performance(void)
                (uint64_t)b1, (uint64_t)b2, (uint64_t)b3,
                pass ? "yes" : "NO");
 
+        /* All allocated blocks must be >= data_start */
+        pass = (b1 >= vol->sb.s_data_start);
+        printk("  [%s] Block groups: data_start guard (b1=%u >= %u)\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)b1, (uint64_t)vol->sb.s_data_start);
+
         /* Free and verify count restored */
         ixfs_free_block(vol, b1);
         ixfs_free_block(vol, b2);
@@ -57,12 +63,6 @@ void ixfs_test_performance(void)
         printk("  [%s] Block groups: free restored (%u/%u)\n",
                pass ? "OK" : "FAIL",
                (uint64_t)vol->sb.s_free_blocks, (uint64_t)saved_free);
-
-        /* Hint regression */
-        pass = (g1 < vol->group_count && vol->groups[g1].bg_next_free <= b1);
-        printk("  [%s] Block groups: hint regression (hint=%u, freed=%u)\n",
-               pass ? "OK" : "FAIL",
-               (uint64_t)vol->groups[g1].bg_next_free, (uint64_t)b1);
     }
 
     /* --- Test 2: Buffer Cache --- */

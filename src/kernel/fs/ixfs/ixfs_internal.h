@@ -19,7 +19,7 @@
 
 #define IXFS_MAX_VOLUMES     4
 #define IXFS_CACHE_SIZE      64   /* cached blocks per volume */
-#define IXFS_MAX_OPEN_NODES  64   /* open vnodes per volume */
+#define IXFS_MAX_OPEN_NODES  128  /* open vnodes per volume */
 
 /* Directory hash index constants */
 #define IXFS_HASH_BUCKETS   128

@@ -420,13 +420,13 @@
 
 > **Priority: P3** — Needed for the installer / build-time disk images
 
-- [ ] Create `tools/mkfs-ixfs.c` — standalone host tool (runs on Linux/macOS)
-- [ ] Accept: output image path, volume size, label
-- [ ] Write IXFS superblock, bitmaps, inode table (same layout as kernel `ixfs_format()`)
-- [ ] `--populate <dir>` flag: recursively copy a host directory into the IXFS image
+- [x] Create `tools/mkfs-ixfs.c` — standalone host tool (runs on Linux/macOS)
+- [x] Accept: output image path, volume size, label
+- [x] Write IXFS superblock, bitmaps, inode table (same layout as kernel `ixfs_format()`)
+- [x] `--populate <dir>` flag: recursively copy a host directory into the IXFS image
 - [ ] Makefile target: `build/system-disk.img` with pre-populated IXFS from `build/initrd_files/`
 - [ ] Once working: remove firstboot.c/firstboot.h and the `firstboot_setup()` call from main.c
-- [ ] Commit: `"tools: mkfs-ixfs host formatter"`
+- [x] Commit: `"tools: mkfs-ixfs host formatter"`
 
 ---
 
@@ -492,21 +492,238 @@
 - [ ] `cache_invalidate(dev)` — clear cache for a device (on unmount)
 - [ ] Commit: `"fs: block-level disk cache"`
 
-### 8.2 Filesystem Integrity
+### 8.2 Filesystem Integrity / CheckDisk
 
-- [ ] `fsck_ixfs()` — basic filesystem check on IXFS
-  - [ ] Validate superblock magic and version
-  - [ ] Check free block bitmap consistency
-  - [ ] Verify inode reference counts
+> **Priority: P2** — Critical for data integrity after crashes
+
+#### CLI: `chkdsk`
+- [ ] Shell command: `chkdsk C:` — run filesystem check on a volume
+- [ ] `chkdsk C: /fix` — auto-repair detected issues
+- [ ] `chkdsk C: /scan` — scan-only mode (no modifications)
+- [ ] IXFS checks:
+  - [ ] Validate superblock magic, version, and self-checksum
+  - [ ] Verify free block bitmap consistency (allocated vs. referenced)
+  - [ ] Check inode reference counts against directory entries
   - [ ] Detect orphan inodes (allocated but unreferenced)
-- [ ] `fsck_fat32()` — basic FAT32 check
-  - [ ] Validate BPB fields
-  - [ ] Check FAT chain consistency (no cross-links)
+  - [ ] Verify checksum table integrity (CRC32C mismatches)
+  - [ ] Validate journal state (replay or discard incomplete txn)
+  - [ ] Check extent tree consistency (overlapping, out-of-bounds)
+- [ ] FAT32 checks:
+  - [ ] Validate BPB fields and FAT copies
+  - [ ] Check FAT chain consistency (no cross-links, no loops)
   - [ ] Detect lost clusters (allocated but not in any chain)
 - [ ] Auto-check on mount if "dirty" flag is set (unclean shutdown)
-- [ ] Commit: `"fs: filesystem integrity checks (fsck)"`
+- [ ] Commit: `"tools: chkdsk command"`
 
-### 8.3 NVMe Driver (Future)
+#### GUI: CheckDisk Utility
+- [ ] Create `src/apps/chkdsk/chkdsk_gui.c`
+- [ ] Drive selector dropdown (list mounted volumes)
+- [ ] Options: Scan Only / Scan & Fix / Surface Scan
+- [ ] Real-time progress bar with phase descriptions
+- [ ] Results panel: errors found, fixed, remaining
+- [ ] Log output scrollable text area
+- [ ] "Schedule on next boot" option for system drive
+- [ ] Commit: `"apps: CheckDisk GUI"`
+
+### 8.3 Partition Manager
+
+> **Priority: P2** — Essential for disk management
+
+#### CLI: `diskpart`
+- [ ] Shell command: `diskpart` — interactive partition manager
+- [ ] `diskpart list disks` — list all physical disks with sizes
+- [ ] `diskpart list parts <disk>` — list partitions on a disk
+- [ ] `diskpart create <disk> <size_mb> <type>` — create partition (FAT32/IXFS)
+- [ ] `diskpart delete <disk> <part_num>` — delete a partition
+- [ ] `diskpart format <drive> <fs_type> [label]` — format a partition
+- [ ] `diskpart assign <part> <letter>` — assign drive letter
+- [ ] `diskpart active <disk> <part>` — set active/boot partition
+- [ ] `diskpart info <drive>` — show detailed partition/volume info
+- [ ] Read/write GPT and MBR partition tables
+- [ ] Safety: confirm before destructive operations
+- [ ] Commit: `"tools: diskpart command"`
+
+#### GUI: Partition Manager
+- [ ] Create `src/apps/partmgr/partmgr.c`
+- [ ] Upper panel: list view of all disks and partitions (tabular)
+- [ ] Lower panel: graphical disk bar with proportional partition segments
+  - [ ] Color-coded by filesystem type (IXFS=blue, FAT32=green, NTFS=orange, unalloc=gray)
+  - [ ] Labels: drive letter, filesystem, size, % used
+- [ ] Right-click context menu: Create, Delete, Format, Change Letter, Properties
+- [ ] Create Partition dialog: size slider, filesystem picker, label
+- [ ] Format dialog: filesystem type, quick vs. full, label
+- [ ] Warning dialogs for all destructive operations
+- [ ] Disk properties panel: model, serial, total size, SMART status
+- [ ] Commit: `"apps: Partition Manager GUI"`
+
+### 8.4 Defragmentation & TRIM
+
+> **Priority: P3** — Performance optimization for fragmented volumes
+
+#### CLI: `defrag`
+- [ ] Shell command: `defrag C:` — defragment an IXFS volume
+- [ ] `defrag C: /analyze` — report fragmentation level without modifying
+- [ ] `defrag C: /trim` — send TRIM commands to SSD (AHCI/NVMe)
+- [ ] `defrag C: /optimize` — auto-choose defrag (HDD) or TRIM (SSD)
+- [ ] Fragmentation analysis: scan all inodes, count non-contiguous extents
+- [ ] Defrag engine: relocate blocks to consolidate extents
+  - [ ] Use journal for crash safety during block relocation
+  - [ ] Skip metadata blocks and system files
+  - [ ] Priority: large files first (biggest fragmentation impact)
+- [ ] TRIM support: iterate free-block bitmap, send TRIM for free ranges
+- [ ] Progress reporting: % complete, files processed, extents consolidated
+- [ ] Commit: `"tools: defrag/trim command"`
+
+#### GUI: Disk Defragmenter
+- [ ] Create `src/apps/defrag/defrag_gui.c`
+- [ ] Volume selector with fragmentation percentage per drive
+- [ ] Visual block map: grid showing used/free/fragmented blocks (color-coded)
+- [ ] Analyze button: populate fragmentation report without modifying
+- [ ] Defragment / Optimize button: run with real-time block map updates
+- [ ] Progress bar with ETA
+- [ ] Results: fragments before/after, time elapsed
+- [ ] Schedule option: auto-defrag weekly/monthly
+- [ ] Commit: `"apps: Disk Defragmenter GUI"`
+
+### 8.5 File & Data Recovery
+
+> **Priority: P3** — Essential safety net for accidental deletion
+
+#### CLI: `recover`
+- [ ] Shell command: `recover C:` — scan for recoverable deleted files
+- [ ] `recover C: /list` — list recoverable files with sizes and confidence
+- [ ] `recover C: /restore <filename> <dest>` — restore a specific file
+- [ ] `recover C: /all <dest_dir>` — restore all recoverable files
+- [ ] IXFS recovery:
+  - [ ] Scan inode table for deleted inodes (i_links == 0, data intact)
+  - [ ] Check if data blocks are still unallocated (not overwritten)
+  - [ ] Recover filename from directory entry scan (d_inode == 0 entries)
+  - [ ] Confidence score: high (blocks untouched), medium (partial), low (reused)
+- [ ] FAT32 recovery:
+  - [ ] Scan for directory entries with 0xE5 (deleted) marker
+  - [ ] Follow FAT chain if first cluster still intact
+- [ ] Data carving: scan raw blocks for file signatures (JPEG, PNG, PDF, ZIP, etc.)
+- [ ] Commit: `"tools: recover command"`
+
+#### GUI: Recovery Wizard
+- [ ] Create `src/apps/recover/recover_gui.c`
+- [ ] Step 1: Select drive to scan
+- [ ] Step 2: Scanning progress with file count
+- [ ] Step 3: Results table — filename, size, type, confidence (High/Med/Low)
+- [ ] Step 4: Select files to recover → choose destination
+- [ ] Preview panel for text/image files before recovery
+- [ ] Filter by file type, date range, size range
+- [ ] Commit: `"apps: Recovery Wizard GUI"`
+
+### 8.6 System File Checker
+
+> **Priority: P2** — Validates OS integrity
+
+#### CLI: `sfc`
+- [ ] Shell command: `sfc /scannow` — verify all system files
+- [ ] `sfc /verifyonly` — scan without repairing
+- [ ] `sfc /scanfile <path>` — check a specific file
+- [ ] Maintain `C:\Impossible\System\manifest.dat` — hash table of known-good system files
+  - [ ] Each entry: relative path, expected CRC32C, expected size, version
+  - [ ] Generated at build time by Makefile from system binaries
+- [ ] Scan: iterate manifest, compute CRC32C of each file, compare
+- [ ] Repair: restore corrupted files from initrd / recovery image
+- [ ] Report: files scanned, verified, corrupted, repaired
+- [ ] Commit: `"tools: sfc command"`
+
+#### GUI: System File Checker
+- [ ] Create `src/apps/sfc/sfc_gui.c`
+- [ ] "Scan Now" button — runs full system file verification
+- [ ] Progress bar with current file being checked
+- [ ] Results: list of verified/corrupted/repaired files
+- [ ] Detail view: click a file to see expected vs. actual hash
+- [ ] "Repair" button for corrupted files (requires recovery source)
+- [ ] Log export: save results to `C:\Temp\sfc_log.txt`
+- [ ] Commit: `"apps: System File Checker GUI"`
+
+### 8.7 Disk Benchmark
+
+> **Priority: P3** — Performance testing and diagnostics
+
+#### CLI: `diskbench`
+- [ ] Shell command: `diskbench C:` — run sequential + random I/O benchmark
+- [ ] Sequential read/write: 1 MiB block, 32 MiB total
+- [ ] Random read/write: 4 KiB block, 1000 operations
+- [ ] Report: throughput (MB/s), IOPS, latency (avg/min/max)
+- [ ] Commit: `"tools: diskbench command"`
+
+#### GUI: Disk Benchmark
+- [ ] Create `src/apps/diskbench/diskbench_gui.c`
+- [ ] Drive selector + Start button
+- [ ] Real-time bar chart: seq read, seq write, rand read, rand write
+- [ ] Results table: MB/s, IOPS, latency per test
+- [ ] History: save past results for comparison
+- [ ] Commit: `"apps: Disk Benchmark GUI"`
+
+### 8.8 Disk Wipe / Secure Erase
+
+> **Priority: P4** — Privacy and drive decommissioning
+
+#### CLI: `diskwipe`
+- [ ] Shell command: `diskwipe <drive> /quick` — zero all free space
+- [ ] `diskwipe <drive> /full` — overwrite entire partition (1-pass zeros)
+- [ ] `diskwipe <drive> /dod` — 3-pass DoD 5220.22-M wipe
+- [ ] `diskwipe <drive> /trim` — secure erase via TRIM (SSD only)
+- [ ] Mandatory confirmation prompt with volume label + size
+- [ ] Progress bar with % complete and throughput
+- [ ] Commit: `"tools: diskwipe command"`
+
+#### GUI: Disk Wipe Utility
+- [ ] Create `src/apps/diskwipe/diskwipe_gui.c`
+- [ ] Drive selector (only unmounted or non-system drives)
+- [ ] Wipe method picker: Quick / Full / DoD / Secure Erase
+- [ ] Warning dialog with drive info and point-of-no-return confirmation
+- [ ] Progress with ETA
+- [ ] Completion certificate: report of wipe method, time, verification
+- [ ] Commit: `"apps: Disk Wipe GUI"`
+
+### 8.9 Disk Usage Analyzer
+
+> **Priority: P3** — Visual space consumption analysis
+
+#### CLI: `diskuse`
+- [ ] Shell command: `diskuse C:` — show top-level directory sizes
+- [ ] `diskuse C:\Users /depth 3` — recursive to N levels
+- [ ] `diskuse C: /top 20` — show 20 largest files
+- [ ] Output: tree with size, percentage, bar chart in terminal
+- [ ] Commit: `"tools: diskuse command"`
+
+#### GUI: Disk Usage Analyzer
+- [ ] Create `src/apps/diskuse/diskuse_gui.c`
+- [ ] Treemap visualization: rectangles sized by space consumption
+- [ ] Hierarchical directory list with expandable nodes
+- [ ] Color by file type (documents, images, executables, etc.)
+- [ ] "Largest Files" tab: sorted list of biggest space consumers
+- [ ] Right-click: Open location, Delete, Properties
+- [ ] Commit: `"apps: Disk Usage Analyzer GUI"`
+
+### 8.10 Volume Shadow Copy / Backup
+
+> **Priority: P4** — Leverages existing IXFS snapshot infrastructure
+
+#### CLI: `snapshot`
+- [ ] Shell command: `snapshot create C: "backup_name"` — create named snapshot
+- [ ] `snapshot list C:` — list all snapshots with dates and sizes
+- [ ] `snapshot restore C: "backup_name"` — restore from snapshot
+- [ ] `snapshot delete C: "backup_name"` — remove a snapshot
+- [ ] `snapshot diff C: "snap_name"` — show files changed since snapshot
+- [ ] Built on existing `ixfs_snapshot_create/list/restore/delete` APIs
+- [ ] Commit: `"tools: snapshot command"`
+
+#### GUI: Snapshot Manager
+- [ ] Create `src/apps/snapshot/snapshot_gui.c`
+- [ ] Timeline view: snapshots shown chronologically
+- [ ] Create / Restore / Delete buttons with confirmation
+- [ ] Diff viewer: files added/modified/deleted since a snapshot
+- [ ] Auto-snapshot: schedule daily/weekly system snapshots
+- [ ] Commit: `"apps: Snapshot Manager GUI"`
+
+### 8.11 NVMe Driver (Future)
 
 - [ ] *(Stretch)* Create `src/kernel/drivers/nvme.c`
 - [ ] *(Stretch)* Detect NVMe controller via PCI (class `0x01`, subclass `0x08`)
@@ -514,14 +731,14 @@
 - [ ] *(Stretch)* Implement read/write via NVMe commands (Identify, Read, Write)
 - [ ] *(Stretch)* QEMU flag: `-drive file=disk.img,format=raw,if=none,id=d0 -device nvme,drive=d0,serial=1234`
 
-### 8.4 USB Mass Storage (Future)
+### 8.12 USB Mass Storage (Future)
 
 - [ ] *(Stretch)* USB mass storage class driver (bulk-only transport)
 - [ ] *(Stretch)* SCSI command layer (INQUIRY, READ10, WRITE10)
 - [ ] *(Stretch)* Hot-plug notification: show toast "USB drive detected", auto-mount
 - [ ] *(Stretch)* Safe removal: flush + unmount + notification
 
-### 8.5 Disk I/O Metrics
+### 8.13 Disk I/O Metrics
 
 - [ ] Track read/write byte counts per block device
 - [ ] Track I/O operations per second
@@ -529,7 +746,7 @@
 - [ ] Shell command: `iostat` — show disk I/O statistics
 - [ ] Commit: `"drivers: disk I/O metrics"`
 
-### 8.6 IXFS Directory Structure (First Boot)
+### 8.14 IXFS Directory Structure (First Boot)
 
 - [ ] On first boot (fresh IXFS format), create standard directory tree:
   - [ ] `C:\Impossible\` — system root
@@ -564,15 +781,23 @@
 | 🟠 P1 | 5.1–5.4 IXFS on Disk | Persistence — files survive reboot |
 | 🟠 P1 | 6.1 Auto-Mount | Drive letters from real disks |
 | 🟠 P1 | 3.2 FAT32 Write | Full read/write for removable media |
-| 🟠 P1 | 8.6 IXFS Directory Structure | Standard paths on first boot |
+| 🟠 P1 | 8.14 IXFS Directory Structure | Standard paths on first boot |
 | ✅ Done | 1.2 AHCI Driver | SATA HDD/SSD — implemented and tested |
 | 🟡 P2 | 4.2 NTFS Write | Write to Windows partitions |
 | 🟡 P2 | 8.1 Disk Cache | Performance — reduce disk I/O |
 | 🟡 P2 | 6.2 Mount/Unmount Commands | Manual storage management |
 | 🟡 P2 | 7. Disk Management GUI | Visual partition management |
-| 🟢 P3 | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
+| � P2 | 8.2 CheckDisk (CLI + GUI) | Filesystem integrity after crashes |
+| 🟡 P2 | 8.3 Partition Manager (CLI + GUI) | Disk partitioning |
+| 🟡 P2 | 8.6 System File Checker (CLI + GUI) | OS integrity validation |
+| �🟢 P3 | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
 | 🟢 P3 | 4.3 NTFS VFS | Complete NTFS integration |
-| 🟢 P3 | 8.2 Filesystem Integrity | Recovery from unclean shutdown |
-| 🟢 P3 | 8.5 Disk I/O Metrics | Performance monitoring |
-| 🔵 P4 | 8.3 NVMe Driver | Modern SSD support (future) |
-| 🔵 P4 | 8.4 USB Mass Storage | Hot-plug USB drives (future) |
+| 🟢 P3 | 8.4 Defrag/TRIM (CLI + GUI) | Performance optimization |
+| 🟢 P3 | 8.5 File/Data Recovery (CLI + GUI) | Accidental deletion safety net |
+| 🟢 P3 | 8.7 Disk Benchmark (CLI + GUI) | Performance testing |
+| 🟢 P3 | 8.9 Disk Usage Analyzer (CLI + GUI) | Space consumption analysis |
+| 🟢 P3 | 8.13 Disk I/O Metrics | Performance monitoring |
+| 🔵 P4 | 8.8 Disk Wipe (CLI + GUI) | Secure erase / privacy |
+| 🔵 P4 | 8.10 Snapshot Manager (CLI + GUI) | Volume shadow copy / backup |
+| 🔵 P4 | 8.11 NVMe Driver | Modern SSD support (future) |
+| 🔵 P4 | 8.12 USB Mass Storage | Hot-plug USB drives (future) |

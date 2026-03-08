@@ -622,3 +622,22 @@ These features, taken together, make IXFS genuinely competitive:
 **IXFS's unique identity**: A hybrid of ext4's block-group locality with
 Btrfs-style CoW snapshots, plus mandatory per-block checksums. Designed
 from scratch for Impossible OS with zero legacy baggage.
+
+---
+
+## Host-Side mkfs-ixfs Tool
+
+`tools/mkfs-ixfs.c` is a standalone host tool that creates IXFS v2 disk images.
+
+**Usage**: `mkfs-ixfs -o output.img [-s SIZE] [-l LABEL] [--populate DIR]`
+
+| Flag | Description |
+|------|-------------|
+| `-o FILE` | Output image path (required) |
+| `-s SIZE` | Volume size (e.g. `32M`, `1G`, default: `32M`) |
+| `-l LABEL` | Volume label (default: `IXFS`) |
+| `--populate DIR` | Recursively copy host directory into image |
+
+The tool creates an image with the same layout as `ixfs_format()`:
+superblock → bitmap → checksum table → inode table → journal → refcount →
+snapshot → data blocks. Files ≤48 bytes are inlined automatically.

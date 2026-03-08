@@ -30,7 +30,7 @@ DESKTOP_DIR:= $(SRC_DIR)/desktop
 
 ISO_DIR    := $(BUILD_DIR)/isodir
 ISO_FILE   := $(BUILD_DIR)/os-build.iso
-KERNEL_BIN := $(BUILD_DIR)/kernel.elf
+KERNEL_BIN := $(BUILD_DIR)/kernel.exe
 LINKER_SCRIPT := $(SRC_DIR)/boot/linker.ld
 
 # --- QEMU Configuration (UEFI via OVMF) ---
@@ -92,10 +92,10 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel iso run run-debug run-log clean
+.PHONY: all _increment_build boot kernel iso system-disk run run-debug run-log clean
 
-## all: Build everything (bootloader + kernel + ISO)
-all: _increment_build iso
+## all: Build everything (bootloader + kernel + ISO + system disk)
+all: _increment_build iso system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_HASH))"
 
 ## _increment_build: Auto-increment the build number
@@ -190,11 +190,24 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 		$(BUILD_DIR)/initrd_files/wallpaper.raw \
 		$(BUILD_DIR)/initrd_files/bg.raw \
 		$(BUILD_DIR)/initrd_files/start_icon.raw
-	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.elf
+	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.exe
 	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
 	@echo "[ISO] $(ISO_FILE) created"
+
+## system-disk: Create IXFS system disk image pre-populated from initrd_files
+system-disk: $(BUILD_DIR)/system-disk.img
+
+$(BUILD_DIR)/system-disk.img: $(ISO_FILE) tools/mkfs-ixfs.c
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
+	$(BUILD_DIR)/tools/mkfs-ixfs \
+		-o $(BUILD_DIR)/system-disk.img \
+		-s 32M \
+		-l "Impossible OS" \
+		--populate $(BUILD_DIR)/initrd_files
+	@echo "[DISK] $(BUILD_DIR)/system-disk.img created (32 MiB IXFS v2)"
 
 ## run: Launch QEMU with the ISO (UEFI boot via OVMF)
 run: $(ISO_FILE)

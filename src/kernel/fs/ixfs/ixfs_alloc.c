@@ -62,11 +62,13 @@ void ixfs_init_groups(struct ixfs_volume *vol)
 
 /* Allocate a block, preferring the given block group index for locality.
  * Pass preferred_group = 0xFFFFFFFF to allocate from any group.
- * Returns block number or 0 on failure. */
+ * Returns block number or 0 on failure.
+ * NEVER allocates blocks below s_data_start (metadata area). */
 uint32_t ixfs_alloc_block_near(struct ixfs_volume *vol, uint32_t preferred_group)
 {
     uint32_t tries;
     uint32_t start_group;
+    uint32_t data_floor = vol->sb.s_data_start;
 
     if (vol->sb.s_free_blocks == 0)
         return 0;
@@ -89,6 +91,10 @@ uint32_t ixfs_alloc_block_near(struct ixfs_volume *vol, uint32_t preferred_group
         if (b < bg->bg_start || b >= end)
             b = bg->bg_start;
 
+        /* Never allocate below s_data_start (metadata area) */
+        if (b < data_floor)
+            b = data_floor;
+
         /* Scan from hint to end of group */
         for (; b < end; b++) {
             if (!bitmap_test(vol->block_bitmap, b)) {
@@ -101,14 +107,18 @@ uint32_t ixfs_alloc_block_near(struct ixfs_volume *vol, uint32_t preferred_group
             }
         }
 
-        /* Wrap: scan from group start to hint */
-        for (b = bg->bg_start; b < bg->bg_next_free && b < end; b++) {
-            if (!bitmap_test(vol->block_bitmap, b)) {
-                bitmap_set(vol->block_bitmap, b);
-                bg->bg_free--;
-                vol->sb.s_free_blocks--;
-                bg->bg_next_free = b + 1;
-                return b;
+        /* Wrap: scan from group start (or data_floor) to hint */
+        {
+            uint32_t wrap_start = (bg->bg_start < data_floor)
+                                ? data_floor : bg->bg_start;
+            for (b = wrap_start; b < bg->bg_next_free && b < end; b++) {
+                if (!bitmap_test(vol->block_bitmap, b)) {
+                    bitmap_set(vol->block_bitmap, b);
+                    bg->bg_free--;
+                    vol->sb.s_free_blocks--;
+                    bg->bg_next_free = b + 1;
+                    return b;
+                }
             }
         }
 
