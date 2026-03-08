@@ -186,44 +186,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* Step 9: IXFS on ATA master — format if needed, mount at C:\ (main disk) */
-    if (ata_get_drive(0)->present) {
-        const struct ata_drive *drv = ata_get_drive(0);
-        int fresh_format = 0;
-        if (ixfs_init(0) != 0) {
-            if (ixfs_format(0, drv->sectors, "Impossible OS") == 0) {
-                ixfs_init(0);
-                fresh_format = 1;
-            }
-        }
-        if (ixfs_get_root())
-            vfs_mount('C', ixfs_get_driver(), ixfs_get_root());
-
-        /* Create Windows-like folder hierarchy on fresh format */
-        if (fresh_format && vfs_is_mounted('C')) {
-            struct vfs_node *root = vfs_get_drive_root('C');
-            if (root && root->ops && root->ops->create) {
-                root->ops->create(root, "Impossible", VFS_DIRECTORY);
-                root->ops->create(root, "Users", VFS_DIRECTORY);
-                root->ops->create(root, "Programs", VFS_DIRECTORY);
-
-                /* Create subdirectories */
-                {
-                    struct vfs_node *imp = root->ops->finddir(root, "Impossible");
-                    if (imp && imp->ops && imp->ops->create) {
-                        imp->ops->create(imp, "System", VFS_DIRECTORY);
-                        imp->ops->create(imp, "Commands", VFS_DIRECTORY);
-                    }
-                }
-                {
-                    struct vfs_node *usr = root->ops->finddir(root, "Users");
-                    if (usr && usr->ops && usr->ops->create)
-                        usr->ops->create(usr, "Default", VFS_DIRECTORY);
-                }
-                printk("[OK] Created default folder hierarchy on C:\\\n");
-            }
-        }
-    }
+    /* NOTE: IXFS/FAT32 partitions are now auto-mounted by
+     * partition_mount_filesystems() after partition_scan_all().
+     * See the boot sequence below (after IDT/PIC/PIT init). */
 
     /* Step 10: Load initrd at B:\ (boot files, read-only) */
     if (g_boot_info.module_available) {

@@ -265,15 +265,15 @@
 
 ### 5.2 IXFS Disk Operations
 
-- [ ] Create `src/kernel/fs/ixfs_disk.c`
-- [ ] Implement `ixfs_format(dev, label)` — write superblock, bitmaps, root directory inode
-- [ ] Implement `ixfs_mount(dev)` — read superblock, load bitmaps into memory
-- [ ] Implement `ixfs_alloc_block()` — find free block from bitmap
-- [ ] Implement `ixfs_free_block(block)` — mark block as free
-- [ ] Implement `ixfs_alloc_inode()` — find free inode slot
-- [ ] Implement `ixfs_read_inode(ino)` — read inode from disk
-- [ ] Implement `ixfs_write_inode(ino, inode)` — write inode to disk
-- [ ] Commit: `"fs: IXFS disk operations"`
+- [x] Create `src/kernel/fs/ixfs_disk.c`
+- [x] Implement `ixfs_format(dev, label)` — write superblock, bitmaps, root directory inode
+- [x] Implement `ixfs_mount(dev)` — read superblock, load bitmaps into memory
+- [x] Implement `ixfs_alloc_block()` — find free block from bitmap
+- [x] Implement `ixfs_free_block(block)` — mark block as free
+- [x] Implement `ixfs_alloc_inode()` — find free inode slot
+- [x] Implement `ixfs_read_inode(ino)` — read inode from disk
+- [x] Implement `ixfs_write_inode(ino, inode)` — write inode to disk
+- [x] Commit: `"fs: IXFS disk operations"`
 
 ### 5.3 IXFS File Operations
 

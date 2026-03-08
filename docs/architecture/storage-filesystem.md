@@ -376,83 +376,85 @@ All VFS operations are supported:
 
 ## IXFS — Impossible X FileSystem
 
+> Full specification: [`docs/architecture/ixfs-specification.md`](ixfs-specification.md)
+
 ### Key Files
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/fs/ixfs.c` | IXFS kernel driver |
-| `include/kernel/fs/ixfs.h` | IXFS API and on-disk structures |
-| `tools/mkfs-ixfs.c` | Host-side formatter |
+| `src/kernel/fs/ixfs.c` | IXFS kernel driver (format, mount, VFS ops) |
+| `include/kernel/fs/ixfs.h` | On-disk structures and public API |
+| `docs/architecture/ixfs-specification.md` | Full on-disk format specification |
 
 ### On-Disk Layout
 
 ```
-Block 0:    Superblock (512 bytes)
-Block 1–N:  Block bitmap (1 bit per 4 KiB block)
-Block N+1:  Inode table start
-Block M+1:  Data blocks start
+Block 0:        Superblock (512 useful bytes, padded to 4 KiB)
+Block 1..N:     Block bitmap (1 bit per 4 KiB block)
+Block N+1..M:   Inode table (32 inodes × 128 bytes per block)
+Block M+1..end: Data blocks (file and directory content)
 ```
 
 ### Superblock
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `magic` | 4 bytes | `0x49584653` ("IXFS") |
-| `version` | 4 bytes | Format version |
-| `block_size` | 4 bytes | 4096 (4 KiB) |
-| `total_blocks` | 4 bytes | Total blocks on partition |
-| `free_blocks` | 4 bytes | Free block count |
-| `inode_count` | 4 bytes | Total inodes |
-| `root_inode` | 4 bytes | Inode number of root directory |
+| `s_magic` | 4 bytes | `0x49584653` ("IXFS") |
+| `s_version` | 4 bytes | Format version (currently 1) |
+| `s_block_size` | 4 bytes | 4096 (4 KiB) |
+| `s_total_blocks` | 4 bytes | Total blocks on partition |
+| `s_free_blocks` | 4 bytes | Free block count |
+| `s_total_inodes` | 4 bytes | Total inodes allocated |
+| `s_free_inodes` | 4 bytes | Free inode count |
+| `s_bitmap_start` | 4 bytes | First block of bitmap |
+| `s_inode_start` | 4 bytes | First block of inode table |
+| `s_data_start` | 4 bytes | First data block |
+| `s_root_inode` | 4 bytes | Root directory inode (always 1) |
+| `s_volume_name` | 32 bytes | Volume label |
 
-### Inode (128 bytes)
-
-| Field | Size | Description |
-|-------|------|-------------|
-| `type` | 2 bytes | File or directory |
-| `permissions` | 2 bytes | Unix-style rwx |
-| `uid` / `gid` | 4 bytes | Owner/group IDs |
-| `size` | 8 bytes | File size in bytes |
-| `created` | 8 bytes | Creation timestamp |
-| `modified` | 8 bytes | Last modification |
-| `accessed` | 8 bytes | Last access |
-| `direct[12]` | 48 bytes | 12 direct block pointers |
-| `indirect` | 4 bytes | Single indirect block pointer |
-
-### Directory Entries (256 bytes each)
+### Inode (128 bytes, 32 per block)
 
 | Field | Size | Description |
 |-------|------|-------------|
-| `inode` | 4 bytes | Inode number |
-| `name` | 252 bytes | Filename (up to 251 chars + null) |
+| `i_mode` | 2 bytes | Type (upper 4 bits) + permissions (lower 9) |
+| `i_links` | 2 bytes | Hard link count |
+| `i_uid` / `i_gid` | 4 bytes | Owner/group IDs |
+| `i_size` | 4 bytes | File size in bytes |
+| `i_blocks` | 4 bytes | Data blocks used |
+| `i_ctime` | 4 bytes | Creation timestamp |
+| `i_mtime` | 4 bytes | Modification timestamp |
+| `i_atime` | 4 bytes | Access timestamp |
+| `i_direct[12]` | 48 bytes | 12 direct block pointers |
+| `i_indirect` | 4 bytes | Single indirect block pointer |
+| `i_dindirect` | 4 bytes | Double indirect block pointer |
 
-16 directory entries per 4 KiB block.
+Max file size: ~4 GiB (12 + 1024 + 1024² blocks × 4 KiB).
+
+### Directory Entries (64 bytes, 64 per block)
+
+| Field | Size | Description |
+|-------|------|-------------|
+| `d_inode` | 4 bytes | Inode number (0 = free/deleted) |
+| `d_name` | 252 bytes | Filename (up to 251 chars + null) |
+
+Actually **256 bytes** per entry (4 + 252), giving **16 entries per block**.
 
 ### Features
 
 | Feature | Status | Details |
 |---------|--------|---------|
-| Create files | ✅ | `ixfs_create()` |
-| Read files | ✅ | `ixfs_read()` |
-| Write files | ✅ | `ixfs_write()` |
-| Delete files | ✅ | `ixfs_delete()` |
-| Create directories | ✅ | `ixfs_mkdir()` |
-| List directories | ✅ | `ixfs_readdir()` |
-| Remove directories | ✅ | Empty check enforced |
+| Block device layer | ✅ | Via `blkdev_read/write` (partition sub-devices) |
+| Auto-mount at `C:\` | ✅ | `partition_mount_filesystems()` at boot |
+| Format | ✅ | `ixfs_format(dev, label)` |
+| Mount | ✅ | `ixfs_init(dev)` → loads superblock + bitmap |
+| Create files | ✅ | `ixfs_create()` via VFS |
+| Read files | ✅ | `ixfs_file_read()` with block pointer traversal |
+| Write files | ✅ | `ixfs_file_write()` with block allocation |
+| Delete files/dirs | ✅ | `ixfs_unlink()` with empty-dir check |
+| Create directories | ✅ | With `.` and `..` entries |
+| List directories | ✅ | `ixfs_readdir()` skips deleted entries |
 | Long filenames | ✅ | Up to 251 characters |
 | Permissions | ✅ | Unix rwx, uid/gid, `ixfs_check_perm()` |
-| Timestamps | ✅ | Created, modified, accessed (via `uptime()`) |
-| Auto-format | ✅ | First boot creates Windows-like folder hierarchy |
+| Timestamps | ✅ | Created, modified, accessed |
+| Block alloc/free | ✅ | Bitmap-based, flushed to disk |
 
-### Default Directory Hierarchy
-
-On fresh format, IXFS creates:
-
-```
-C:\
-├── Users\
-│   └── Default\
-├── System\
-├── Programs\
-└── Temp\
-```

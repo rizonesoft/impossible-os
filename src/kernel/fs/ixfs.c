@@ -12,7 +12,7 @@
  * ============================================================================ */
 
 #include "kernel/fs/ixfs.h"
-#include "kernel/drivers/ata.h"
+#include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/printk.h"
@@ -20,8 +20,8 @@
 /* Number of inodes to allocate (fixed at format time) */
 #define IXFS_DEFAULT_INODES  256
 
-/* Partition LBA offset on the ATA disk */
-static uint32_t ixfs_part_lba;
+/* Block device the IXFS volume resides on */
+static const struct blkdev *ixfs_dev;
 
 /* In-memory superblock */
 static struct ixfs_superblock sb;
@@ -52,34 +52,20 @@ static int ixfs_strcmp(const char *a, const char *b)
     return *a == *b;
 }
 
-/* --- Internal: block I/O via ATA --- */
+/* --- Internal: block I/O via blkdev --- */
 
 /* Read a single IXFS block (4 KiB = 8 sectors) */
 static int ixfs_read_block(uint32_t block, void *buf)
 {
-    uint32_t lba = ixfs_part_lba + block * IXFS_SECTORS_PER_BLK;
-    uint32_t i;
-    uint8_t *p = (uint8_t *)buf;
-
-    for (i = 0; i < IXFS_SECTORS_PER_BLK; i++) {
-        if (ata_read_sectors(lba + i, 1, p + i * 512) != 0)
-            return -1;
-    }
-    return 0;
+    uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
+    return blkdev_read(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
 /* Write a single IXFS block (4 KiB = 8 sectors) */
 static int ixfs_write_block(uint32_t block, const void *buf)
 {
-    uint32_t lba = ixfs_part_lba + block * IXFS_SECTORS_PER_BLK;
-    uint32_t i;
-    const uint8_t *p = (const uint8_t *)buf;
-
-    for (i = 0; i < IXFS_SECTORS_PER_BLK; i++) {
-        if (ata_write_sectors(lba + i, 1, p + i * 512) != 0)
-            return -1;
-    }
-    return 0;
+    uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
+    return blkdev_write(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
 /* Zero a block on disk */
@@ -888,10 +874,9 @@ static struct vfs_fs_driver ixfs_driver = {
  * Public API
  * ======================================================================== */
 
-int ixfs_format(uint32_t partition_lba, uint32_t total_sectors,
-                const char *volume_name)
+int ixfs_format(const struct blkdev *dev, const char *volume_name)
 {
-    uint32_t total_blocks = total_sectors / IXFS_SECTORS_PER_BLK;
+    uint32_t total_blocks;
     uint32_t bitmap_blocks_needed;
     uint32_t inode_blocks;
     uint32_t used_blocks;
@@ -901,7 +886,8 @@ int ixfs_format(uint32_t partition_lba, uint32_t total_sectors,
     uint32_t root_data_block;
     uint8_t *p;
 
-    ixfs_part_lba = partition_lba;
+    ixfs_dev = dev;
+    total_blocks = (uint32_t)(dev->sector_count / IXFS_SECTORS_PER_BLK);
 
     /* Calculate layout */
     bitmap_blocks_needed = (total_blocks + (IXFS_BLOCK_SIZE * 8) - 1)
@@ -1014,12 +1000,12 @@ int ixfs_format(uint32_t partition_lba, uint32_t total_sectors,
     return 0;
 }
 
-int ixfs_init(uint32_t partition_lba)
+int ixfs_init(const struct blkdev *dev)
 {
     uint32_t i;
     uint8_t *p;
 
-    ixfs_part_lba = partition_lba;
+    ixfs_dev = dev;
     vnode_count = 0;
 
     /* Read block 0 (superblock) */

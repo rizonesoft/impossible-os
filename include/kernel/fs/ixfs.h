@@ -113,12 +113,14 @@ struct ixfs_dir_entry {
 
 /* --- API --- */
 
-/* Format a disk region as IXFS (creates superblock, bitmap, inodes, root dir) */
-int ixfs_format(uint32_t partition_lba, uint32_t total_sectors,
-                const char *volume_name);
+/* Forward declaration */
+struct blkdev;
 
-/* Mount an IXFS volume from disk */
-int ixfs_init(uint32_t partition_lba);
+/* Format a disk region as IXFS (creates superblock, bitmap, inodes, root dir) */
+int ixfs_format(const struct blkdev *dev, const char *volume_name);
+
+/* Mount an IXFS volume from a block device */
+int ixfs_init(const struct blkdev *dev);
 
 /* Get VFS driver and root node */
 struct vfs_fs_driver *ixfs_get_driver(void);

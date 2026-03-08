@@ -16,6 +16,7 @@
 #include "kernel/fs/mbr.h"
 #include "kernel/fs/gpt.h"
 #include "kernel/fs/fat32.h"
+#include "kernel/fs/ixfs.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/drivers/serial.h"
@@ -312,40 +313,47 @@ void partition_scan_all(void)
 void partition_mount_filesystems(void)
 {
     int i;
-    /* Drive letters for FAT32: start at 'D' (A=FAT32 root, B=initrd, C=IXFS) */
+    /* C: = first IXFS (system), D:+ = FAT32 partitions */
+    int ixfs_mounted = 0;
     char next_fat32_letter = 'D';
 
     for (i = 0; i < part_count; i++) {
         struct partition_info *pi = &part_store[i];
+        char name[16];
+        char num_buf[4];
+        int pos;
+        const struct blkdev *sub_dev;
 
-        if (pi->fs_type == PART_FS_FAT32) {
-            /* Find the sub-blkdev for this partition */
-            char name[16];
-            char num_buf[4];
-            int pos;
-            const struct blkdev *sub_dev;
+        if (pi->fs_type != PART_FS_FAT32 && pi->fs_type != PART_FS_IXFS)
+            continue;
 
-            part_strcpy(name, "disk", sizeof(name));
-            part_itoa(pi->disk_index, num_buf);
-            pos = part_strlen(name);
-            part_strcpy(name + pos, num_buf, (int)sizeof(name) - pos);
-            pos = part_strlen(name);
-            name[pos] = 'p'; name[pos + 1] = '\0';
-            pos = part_strlen(name);
-            part_itoa(pi->part_index, num_buf);
-            part_strcpy(name + pos, num_buf, (int)sizeof(name) - pos);
+        /* Build sub-blkdev name: "disk0p1" */
+        part_strcpy(name, "disk", sizeof(name));
+        part_itoa(pi->disk_index, num_buf);
+        pos = part_strlen(name);
+        part_strcpy(name + pos, num_buf, (int)sizeof(name) - pos);
+        pos = part_strlen(name);
+        name[pos] = 'p'; name[pos + 1] = '\0';
+        pos = part_strlen(name);
+        part_itoa(pi->part_index, num_buf);
+        part_strcpy(name + pos, num_buf, (int)sizeof(name) - pos);
 
-            sub_dev = blkdev_get(name);
-            if (!sub_dev)
+        sub_dev = blkdev_get(name);
+        if (!sub_dev)
+            continue;
+
+        if (pi->fs_type == PART_FS_IXFS && !ixfs_mounted) {
+            if (ixfs_init(sub_dev) != 0) {
+                printk("[WARN] IXFS: failed to init %s\n", name);
                 continue;
-
-            /* Initialize FAT32 on this partition */
+            }
+            vfs_mount('C', ixfs_get_driver(), ixfs_get_root());
+            ixfs_mounted = 1;
+        } else if (pi->fs_type == PART_FS_FAT32) {
             if (fat32_init(sub_dev) != 0) {
                 printk("[WARN] FAT32: failed to init %s\n", name);
                 continue;
             }
-
-            /* Mount to the next available drive letter */
             if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
