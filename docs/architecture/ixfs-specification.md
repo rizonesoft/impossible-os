@@ -244,6 +244,34 @@ ixfs_vnode.dir_hash → struct ixfs_dir_hash
     nodes[]             → (entry_index, next) chain
 ```
 
+
+---
+
+## Extent-Based Allocation
+
+IXFS replaces legacy block pointers with extent-based allocation for
+efficient contiguous block management.
+
+### Extent Structure (12 bytes)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `e_start` | `uint64_t` | First block number (64-bit) |
+| `e_count` | `uint32_t` | Number of contiguous blocks |
+
+### Inode Layout
+
+- 4 inline extents per inode (48 bytes) — no extra I/O needed
+- `i_extent_count` (uint8_t) — how many extents are active
+- `i_extent_block` (uint64_t) — overflow tree block (0 = none)
+
+### Operation
+
+- **Sequential writes** merge into the last extent (O(1) — 1 extent for contiguous files)
+- **Block lookup** walks inline extents to map file offset → disk block
+- **Max capacity**: 64 TiB with 64-bit block numbers and 4K blocks
+- **Overflow**: if >4 extents needed, an extent tree block is allocated (future)
+
 ---
 
 ## Formatting
@@ -343,7 +371,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 
 | Feature | Section | Status |
 |---------|---------|--------|
-| Extent-based allocation | §5.6 | 🔜 Planned |
+| Extent-based allocation | §5.6 | ✅ Implemented |
 | Journaling (WAL) | §5.7 | 🔜 Planned |
 | Copy-on-Write + Snapshots | §5.8 | 🔜 Planned |
 | Sparse files | §5.9.1 | 🔜 Planned |

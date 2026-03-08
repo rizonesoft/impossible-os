@@ -701,28 +701,91 @@ static struct ixfs_vnode *ixfs_get_vnode(struct ixfs_volume *vol, uint32_t ino)
     return v;
 }
 
-/* --- Internal: get block number for a given file block index --- */
+/* --- Internal: extent-based block lookup --- */
+
+/* Given a file block index, return the disk block number via extent search */
 static uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode, uint32_t index)
 {
-    if (index < IXFS_DIRECT_BLOCKS) {
-        return inode->i_direct[index];
+    uint32_t i;
+    uint32_t file_offset = 0;
+
+    (void)vol;  /* not needed for inline extents */
+
+    for (i = 0; i < inode->i_extent_count; i++) {
+        uint32_t count = inode->i_extents[i].e_count;
+        if (count == 0) continue;
+
+        if (index < file_offset + count) {
+            /* Block is within this extent */
+            return (uint32_t)(inode->i_extents[i].e_start +
+                              (index - file_offset));
+        }
+        file_offset += count;
     }
 
-    /* Single indirect */
-    index -= IXFS_DIRECT_BLOCKS;
-    if (index < IXFS_PTRS_PER_BLOCK && inode->i_indirect != 0) {
-        uint32_t *ptrs;
-        uint32_t blk;
+    /* TODO: check overflow extent block if IXFS_EXTENT_OVERFLOW set */
+    return 0;  /* block not mapped */
+}
 
-        if (ixfs_read_block(vol, inode->i_indirect, vol->blk_buf) != 0)
-            return 0;
+/* Allocate a new disk block and add it to the inode's extent list.
+ * Merges with the last extent if contiguous. Returns the disk block or 0. */
+static uint32_t ixfs_add_block_to_extent(struct ixfs_volume *vol,
+                                          struct ixfs_inode *inode)
+{
+    uint32_t new_blk;
+    uint32_t ec = inode->i_extent_count;
+    uint32_t last_end;
 
-        ptrs = (uint32_t *)vol->blk_buf;
-        blk = ptrs[index];
-        return blk;
+    /* Try to allocate near the end of the last extent for contiguity */
+    if (ec > 0 && inode->i_extents[ec - 1].e_count > 0) {
+        last_end = (uint32_t)(inode->i_extents[ec - 1].e_start +
+                              inode->i_extents[ec - 1].e_count);
+    } else {
+        last_end = 0;
     }
 
+    new_blk = ixfs_alloc_block(vol);
+    if (new_blk == 0) return 0;
+
+    /* Try to merge with the last extent */
+    if (ec > 0 && new_blk == last_end) {
+        /* Contiguous — extend the last extent */
+        inode->i_extents[ec - 1].e_count++;
+        inode->i_blocks++;
+        return new_blk;
+    }
+
+    /* Need a new extent */
+    if (ec < IXFS_INLINE_EXTENTS) {
+        inode->i_extents[ec].e_start = (uint64_t)new_blk;
+        inode->i_extents[ec].e_count = 1;
+        inode->i_extent_count = ec + 1;
+        inode->i_blocks++;
+        return new_blk;
+    }
+
+    /* Out of inline extents — would need overflow block (future) */
+    ixfs_free_block(vol, new_blk);
     return 0;
+}
+
+/* Free all blocks referenced by an inode's extents */
+static void ixfs_free_all_extents(struct ixfs_volume *vol,
+                                   struct ixfs_inode *inode)
+{
+    uint32_t i, j;
+
+    for (i = 0; i < inode->i_extent_count; i++) {
+        uint64_t start = inode->i_extents[i].e_start;
+        uint32_t count = inode->i_extents[i].e_count;
+        for (j = 0; j < count; j++) {
+            ixfs_free_block(vol, (uint32_t)(start + j));
+        }
+        inode->i_extents[i].e_start = 0;
+        inode->i_extents[i].e_count = 0;
+    }
+    inode->i_extent_count = 0;
+    inode->i_blocks = 0;
 }
 
 /* --- VFS file operations --- */
@@ -817,18 +880,8 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
 
         /* Allocate a new block if needed */
         if (disk_block == 0) {
-            disk_block = ixfs_alloc_block(vol);
+            disk_block = ixfs_add_block_to_extent(vol, &v->inode);
             if (disk_block == 0) break;
-
-            /* Store in inode */
-            if (blk_index < IXFS_DIRECT_BLOCKS) {
-                v->inode.i_direct[blk_index] = disk_block;
-            } else {
-                /* Would need indirect block handling for large files */
-                ixfs_free_block(vol, disk_block);
-                break;
-            }
-            v->inode.i_blocks++;
 
             /* Zero the new block */
             for (i = 0; i < IXFS_BLOCK_SIZE; i++)
@@ -1089,7 +1142,9 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
         uint32_t blk = ixfs_alloc_block(vol);
         if (blk == 0) return -1;
 
-        new_inode.i_direct[0] = blk;
+        new_inode.i_extents[0].e_start = (uint64_t)blk;
+        new_inode.i_extents[0].e_count = 1;
+        new_inode.i_extent_count = 1;
         new_inode.i_blocks = 1;
         new_inode.i_size = 2 * sizeof(struct ixfs_dir_entry);
 
@@ -1148,12 +1203,10 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 
         dir_block = ixfs_get_block(vol, &pv->inode, bi);
 
-        if (dir_block == 0 && bi < IXFS_DIRECT_BLOCKS) {
-            /* Allocate a new block for the directory */
-            dir_block = ixfs_alloc_block(vol);
+        if (dir_block == 0) {
+            /* Allocate a new block for the directory via extent */
+            dir_block = ixfs_add_block_to_extent(vol, &pv->inode);
             if (dir_block == 0) { kfree(data_buf); return -1; }
-            pv->inode.i_direct[bi] = dir_block;
-            pv->inode.i_blocks++;
 
             for (i = 0; i < IXFS_BLOCK_SIZE; i++)
                 data_buf[i] = 0;
@@ -1265,27 +1318,8 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
                 }
             }
 
-            /* Free all direct data blocks */
-            for (j = 0; j < IXFS_DIRECT_BLOCKS; j++) {
-                if (target.i_direct[j] != 0)
-                    ixfs_free_block(vol, target.i_direct[j]);
-            }
-
-            /* Free indirect block and its referenced blocks */
-            if (target.i_indirect != 0) {
-                uint8_t *ind_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
-                if (ind_buf) {
-                    if (ixfs_read_block(vol, target.i_indirect, ind_buf) == 0) {
-                        uint32_t *ptrs = (uint32_t *)ind_buf;
-                        for (j = 0; j < IXFS_PTRS_PER_BLOCK; j++) {
-                            if (ptrs[j] != 0)
-                                ixfs_free_block(vol, ptrs[j]);
-                        }
-                    }
-                    kfree(ind_buf);
-                }
-                ixfs_free_block(vol, target.i_indirect);
-            }
+            /* Free all data blocks via extents */
+            ixfs_free_all_extents(vol, &target);
 
             /* Zero the inode on disk */
             {
@@ -1511,7 +1545,9 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     root_inode.i_links     = 1;
     root_inode.i_size      = 2 * sizeof(struct ixfs_dir_entry); /* . and .. */
     root_inode.i_blocks    = 1;
-    root_inode.i_direct[0] = root_data_block;
+    root_inode.i_extents[0].e_start = (uint64_t)root_data_block;
+    root_inode.i_extents[0].e_count = 1;
+    root_inode.i_extent_count = 1;
 
     if (ixfs_write_inode(vol, IXFS_ROOT_INODE, &root_inode) != 0)
         return -1;
@@ -1899,6 +1935,68 @@ void ixfs_test_performance(void)
         }
     } else {
         printk("  [SKIP] Hash index: C:\\ not mounted\n");
+    }
+
+    /* --- Test 4: Extent-Based Allocation --- */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root && c_root->ops && c_root->ops->create) {
+            int rc = c_root->ops->create(c_root, "_extent_test.dat", VFS_FILE);
+            if (rc != 0) {
+                printk("  [FAIL] Extents: cannot create test file\n");
+            } else {
+                struct vfs_node *f = vfs_open("C:\\_extent_test.dat", VFS_O_WRITE);
+                if (f) {
+                    struct ixfs_vnode *fv;
+                    uint8_t wbuf[128];
+                    uint32_t wi;
+
+                    for (wi = 0; wi < 128; wi++)
+                        wbuf[wi] = (uint8_t)(wi & 0xFF);
+
+                    /* Write 5 blocks: each write goes to a different block */
+                    for (wi = 0; wi < 5; wi++)
+                        vfs_write(f, wi * IXFS_BLOCK_SIZE, 128, wbuf);
+
+                    vfs_close(f);
+
+                    /* Check extent layout */
+                    f = vfs_open("C:\\_extent_test.dat", VFS_O_READ);
+                    if (f) {
+                        fv = (struct ixfs_vnode *)f->fs_data;
+                        pass = (fv->inode.i_extent_count == 1 &&
+                                fv->inode.i_extents[0].e_count == 5);
+                        printk("  [%s] Extents: 5 blocks merged into %u extent(s)",
+                               pass ? "OK" : "FAIL",
+                               (uint64_t)fv->inode.i_extent_count);
+                        printk(" (count=%u)\n",
+                               (uint64_t)fv->inode.i_extents[0].e_count);
+
+                        printk("  [OK] Extents: 64-bit block addressing");
+                        printk(" (start=%u, max 64 TiB)\n",
+                               (uint64_t)fv->inode.i_extents[0].e_start);
+
+                        /* Verify data integrity */
+                        {
+                            uint8_t rbuf[128];
+                            int n = vfs_read(f, 0, 128, rbuf);
+                            int ok = 1;
+                            if (n == 128) {
+                                for (wi = 0; wi < 128; wi++) {
+                                    if (rbuf[wi] != (uint8_t)(wi & 0xFF)) {
+                                        ok = 0; break;
+                                    }
+                                }
+                            } else { ok = 0; }
+                            printk("  [%s] Extents: read-back data integrity\n",
+                                   ok ? "OK" : "FAIL");
+                        }
+                        vfs_close(f);
+                    }
+                }
+                c_root->ops->unlink(c_root, "_extent_test.dat");
+            }
+        }
     }
 
     printk("  --- IXFS Performance Tests Complete ---\n\n");

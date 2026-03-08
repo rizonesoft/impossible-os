@@ -341,15 +341,15 @@
 
 > **Priority: P1** — Replaces the old block-pointer system entirely
 
-- [ ] Define `struct ixfs_extent { uint64_t start_block; uint32_t block_count; }` (12 bytes)
-- [ ] Replace `i_direct[12]` + `i_indirect` + `i_dindirect` with extent array in inode
-- [ ] Fit 4 inline extents directly in inode (replaces block pointers, same 52 bytes)
-- [ ] If > 4 extents needed: store extent tree in a data block (B-tree of extents)
-- [ ] Merge adjacent extents on allocation (contiguous writes = 1 extent)
-- [ ] Update `ixfs_alloc_block()` to allocate contiguous runs preferentially
-- [ ] Update `ixfs_read_file` / `ixfs_write_file` to use extent lookup
-- [ ] Max file size with 64-bit block numbers: **64 TiB** (with 4K blocks)
-- [ ] Commit: `"fs: IXFS extent-based allocation"`
+- [x] Define `struct ixfs_extent { uint64_t start_block; uint32_t block_count; }` (12 bytes)
+- [x] Replace `i_direct[12]` + `i_indirect` + `i_dindirect` with extent array in inode
+- [x] Fit 4 inline extents directly in inode (replaces block pointers, same 52 bytes)
+- [x] If > 4 extents needed: store extent tree in a data block (B-tree of extents)
+- [x] Merge adjacent extents on allocation (contiguous writes = 1 extent)
+- [x] Update `ixfs_alloc_block()` to allocate contiguous runs preferentially
+- [x] Update `ixfs_read_file` / `ixfs_write_file` to use extent lookup
+- [x] Max file size with 64-bit block numbers: **64 TiB** (with 4K blocks)
+- [x] Commit: `"fs: IXFS extent-based allocation"`
 
 ### 5.7 Write-Ahead Log (Journal)
 

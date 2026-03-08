@@ -40,12 +40,19 @@ struct ixfs_block_group {
     uint32_t bg_next_free;   /* hint: next block to try allocating */
 };
 
-/* Inode limits */
-#define IXFS_DIRECT_BLOCKS   12          /* direct block pointers per inode */
-#define IXFS_INDIRECT_BLOCKS 1           /* single-indirect pointers */
-#define IXFS_PTRS_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(uint32_t))  /* 1024 */
-#define IXFS_MAX_FILE_BLOCKS (IXFS_DIRECT_BLOCKS + IXFS_PTRS_PER_BLOCK \
-                            + IXFS_PTRS_PER_BLOCK * IXFS_PTRS_PER_BLOCK)
+/* Extent-based allocation */
+#define IXFS_INLINE_EXTENTS  4    /* extents stored directly in inode */
+#define IXFS_EXTENT_OVERFLOW 0x01 /* flag: overflow extent block in use */
+
+/* Max blocks addressable via 4 inline extents: each can cover up to 2^32 blocks
+ * With overflow tree: effectively unlimited */
+#define IXFS_MAX_FILE_BLOCKS 0xFFFFFFFF  /* 4 KiB × 2^32 = 16 TiB (per extent) */
+
+/* Extent — describes a contiguous run of blocks (12 bytes) */
+struct ixfs_extent {
+    uint64_t e_start;            /* first block number (64-bit for 64 TiB) */
+    uint32_t e_count;            /* number of contiguous blocks (0 = unused) */
+} __attribute__((packed));
 
 /* Max filename length in directory entries */
 #define IXFS_MAX_NAME        252         /* 251 chars + null terminator */
@@ -107,10 +114,11 @@ struct ixfs_inode {
     uint32_t i_ctime;              /* creation time (seconds since epoch) */
     uint32_t i_mtime;              /* modification time */
     uint32_t i_atime;              /* access time */
-    uint32_t i_direct[IXFS_DIRECT_BLOCKS];   /* direct block pointers */
-    uint32_t i_indirect;           /* single-indirect block pointer */
-    uint32_t i_dindirect;          /* double-indirect block pointer */
-    uint8_t  i_reserved[4];        /* pad to 128 bytes */
+    struct ixfs_extent i_extents[IXFS_INLINE_EXTENTS]; /* 4 inline extents (48 bytes) */
+    uint8_t  i_extent_count;       /* number of active inline extents (0-4) */
+    uint8_t  i_extent_flags;       /* IXFS_EXTENT_OVERFLOW if overflow in use */
+    uint16_t i_extent_pad;         /* alignment padding */
+    uint64_t i_extent_block;       /* block for overflow extent tree (0=none) */
 } __attribute__((packed));
 
 #define IXFS_INODES_PER_BLOCK  (IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode))
