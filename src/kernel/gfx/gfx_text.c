@@ -39,7 +39,8 @@ static const char *ttf_filenames[FONT_MAX_SLOTS] = {
     "selawksb.ttf",            /* FONT_UI_BOLD — Selawik Semibold */
     "CascadiaCode-Regular.ttf",/* FONT_MONO — Cascadia Code Regular */
     "CascadiaCode-Bold.ttf",   /* FONT_MONO_BOLD — Cascadia Code Bold */
-    NULL, NULL, NULL, NULL
+    "selawkb.ttf",             /* FONT_UI_HEAVY — Selawik Bold */
+    NULL, NULL, NULL
 };
 
 /* Fallback filenames if primary not found */
@@ -48,7 +49,8 @@ static const char *ttf_fallbacks[FONT_MAX_SLOTS] = {
     "Inter-Bold.ttf",      /* fallback UI bold */
     "selawk.ttf",          /* fallback mono → UI regular */
     "selawksb.ttf",        /* fallback mono bold → UI semibold */
-    NULL, NULL, NULL, NULL
+    "Inter-Bold.ttf",      /* fallback UI heavy → Inter bold */
+    NULL, NULL, NULL
 };
 
 /* ---- Load a TTF file from VFS ---- */

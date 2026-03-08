@@ -169,6 +169,7 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 | 1 | `FONT_UI_BOLD` | Selawik Semibold | `selawksb.ttf` |
 | 2 | `FONT_MONO` | Cascadia Code Regular | `CascadiaCode-Regular.ttf` |
 | 3 | `FONT_MONO_BOLD` | Cascadia Code Bold | `CascadiaCode-Bold.ttf` |
+| 4 | `FONT_UI_HEAVY` | Selawik Bold | `selawkb.ttf` |
 
 **Fallback chain:** If primary font not found, slots 0–1 fall back to Inter Regular/Bold, slots 2–3 fall back to Selawik.
 
@@ -176,7 +177,7 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 
 | Font | License | Files |
 |------|---------|-------|
-| Selawik | MIT | `selawk.ttf`, `selawksb.ttf` |
+| Selawik | MIT | `selawk.ttf`, `selawksb.ttf`, `selawkb.ttf` |
 | Cascadia Code | OFL 1.1 | `CascadiaCode-Regular.ttf`, `CascadiaCode-Bold.ttf` |
 | Inter | OFL 1.1 | `Inter-Regular.ttf`, `Inter-Bold.ttf` |
 

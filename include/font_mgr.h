@@ -26,6 +26,7 @@
 #define FONT_UI_BOLD      1   /* UI font bold — Selawik Semibold */
 #define FONT_MONO         2   /* Monospace — Cascadia Code Regular */
 #define FONT_MONO_BOLD    3   /* Monospace bold — Cascadia Code Bold */
+#define FONT_UI_HEAVY     4   /* UI font heavy — Selawik Bold */
 #define FONT_MAX_SLOTS    8   /* Maximum loaded fonts */
 
 /* Backwards-compatible aliases */
