@@ -145,6 +145,10 @@ static uint8_t compositor_locked; /* when set, fb_putchar/draw_char are no-ops *
 
 static uint8_t  fb_ready;       /* 1 if framebuffer is initialized */
 
+/* VBE page flip state — two pages in VRAM for tear-free rendering */
+static uint8_t  page_flip_ok;   /* 1 if VBE page flipping is available */
+static uint8_t  page_current;   /* which page (0 or 1) is currently displayed */
+
 /* ---- Helper: absolute value ---- */
 
 static inline int32_t iabs(int32_t v) { return v < 0 ? -v : v; }
@@ -202,11 +206,50 @@ void fb_init(void)
 
     fb_ready = 1;
 
+    /* Try to enable VBE page flipping for tear-free rendering.
+     * QEMU's Bochs VGA (0x1234:0x1111) has 16 MB VRAM and supports
+     * VBE_DISPI_INDEX_Y_OFFSET for instant display offset switching.
+     * We set virtual height = 2× physical height, creating two pages:
+     *   Page 0: rows 0 .. height-1
+     *   Page 1: rows height .. 2*height-1
+     * We copy back_buf to the INVISIBLE page, then flip to show it. */
+    {
+        uint16_t vbe_id;
+
+        /* Probe: read VBE DISPI ID */
+        __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x00),
+                          "Nd"((uint16_t)0x01CE));
+        __asm__ volatile ("inw %1, %0" : "=a"(vbe_id) :
+                          "Nd"((uint16_t)0x01CF));
+
+        if ((vbe_id & 0xFFF0) == 0xB0C0) {
+            /* Valid Bochs VGA — set virtual height to 2× for page flipping */
+            __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x07),
+                              "Nd"((uint16_t)0x01CE));
+            __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)(fb_height * 2)),
+                              "Nd"((uint16_t)0x01CF));
+
+            /* Start displaying page 0, drawing to page 1 */
+            page_flip_ok = 1;
+            page_current = 0;
+        }
+    }
+
     fb_clear();
 }
 
 /* ============================================================================
- * Double buffering
+ * Double buffering — VBE page flip
+ *
+ * The key insight: QEMU's host display thread reads hw_addr asynchronously
+ * on a separate host thread.  Any guest-side locking (cli, scheduler_disable)
+ * only affects the guest CPU thread, not the host's display refresh.
+ *
+ * With page flipping:
+ *   1. Copy back_buf → INVISIBLE page in VRAM (QEMU can't see this)
+ *   2. Atomic flip via VBE_DISPI_INDEX_Y_OFFSET (single outw instruction)
+ *   3. QEMU's next display refresh reads the new, fully-written page  *
+ * Result: ZERO tearing, because QEMU never reads a partially-written page.
  * ============================================================================ */
 
 void fb_swap(void)
@@ -215,6 +258,7 @@ void fb_swap(void)
     uint64_t *dst;
     uint64_t count;
     uint32_t hw_stride;
+    uint32_t target_y;
 
     if (!fb_ready)
         return;
@@ -224,62 +268,67 @@ void fb_swap(void)
 
     hw_stride = fb_pitch / (fb_bpp / 8);
 
-    /* Flush all cached back-buffer writes before copying to HW */
     __asm__ volatile ("sfence" ::: "memory");
 
-    /* Wait for VGA vertical retrace (port 0x3DA, bit 3).
-     * This synchronizes our copy with the display's vblank period,
-     * so QEMU's host display thread doesn't read a half-updated frame.
-     * The busy-wait is bounded (~16ms at 60 Hz guest refresh).  If the
-     * port returns 0xFF (no VGA ISR emulation), skip after a timeout. */
-    {
-        uint32_t timeout = 100000;  /* ~1 ms on modern CPUs */
+    if (page_flip_ok) {
+        /* Determine which page is currently INVISIBLE (we copy there) */
+        target_y = (page_current == 0) ? fb_height : 0;
+        dst = (uint64_t *)(hw_addr + target_y * hw_stride);
+        src = (uint64_t *)back_buf;
 
-        /* Phase 1: wait for any current retrace to end */
-        while (timeout--) {
-            uint8_t st;
-            __asm__ volatile ("inb %1, %0" : "=a"(st) : "Nd"((uint16_t)0x3DA));
-            if (st == 0xFF) goto skip_vsync;  /* no VGA ISR emulation */
-            if (!(st & 0x08)) break;
+        /* Copy back_buf to the INVISIBLE page — QEMU can't see this */
+        __asm__ volatile ("cli");
+        if (fb_stride == hw_stride) {
+            count = (uint64_t)(fb_stride * fb_height) / 2;
+            __asm__ volatile (
+                "rep movsq"
+                : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
+            );
+        } else {
+            uint32_t y;
+            for (y = 0; y < fb_height; y++) {
+                src = (uint64_t *)(back_buf + y * fb_stride);
+                dst = (uint64_t *)(hw_addr + (target_y + y) * hw_stride);
+                count = (uint64_t)fb_width / 2;
+                __asm__ volatile (
+                    "rep movsq"
+                    : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
+                );
+            }
         }
-        /* Phase 2: wait for retrace to start */
-        timeout = 200000;
-        while (timeout--) {
-            uint8_t st;
-            __asm__ volatile ("inb %1, %0" : "=a"(st) : "Nd"((uint16_t)0x3DA));
-            if (st & 0x08) break;
-        }
+        __asm__ volatile ("sti");
+
+        /* ATOMIC FLIP: switch display to the page we just wrote.
+         * This is a single I/O port write — instantaneous. */
+        __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x09),
+                          "Nd"((uint16_t)0x01CE));  /* Y_OFFSET index */
+        __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)target_y),
+                          "Nd"((uint16_t)0x01CF));  /* Y_OFFSET value */
+
+        page_current ^= 1;
+        return;
     }
-skip_vsync:
 
-    /* Disable interrupts so HW FB is never half-updated by guest ISRs */
+    /* Fallback: direct copy to displayed buffer (tearing possible) */
     __asm__ volatile ("cli");
 
-    /* If strides match, copy entire buffer in one shot using 64-bit moves.
-     * rep movsq is ~2× faster than rep movsd for large sequential copies,
-     * reducing the tearing window visible to QEMU's host display thread. */
     if (fb_stride == hw_stride) {
         src = (uint64_t *)back_buf;
         dst = (uint64_t *)hw_addr;
-        count = (uint64_t)(fb_stride * fb_height) / 2;  /* DWORD pairs → QWORDs */
+        count = (uint64_t)(fb_stride * fb_height) / 2;
         __asm__ volatile (
             "rep movsq"
-            : "+S"(src), "+D"(dst), "+c"(count)
-            :
-            : "memory"
+            : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
         );
     } else {
-        /* Different strides — copy row by row */
         uint32_t y;
         for (y = 0; y < fb_height; y++) {
             src = (uint64_t *)(back_buf + y * fb_stride);
             dst = (uint64_t *)(hw_addr  + y * hw_stride);
-            count = (uint64_t)fb_width / 2;  /* DWORD pairs → QWORDs */
+            count = (uint64_t)fb_width / 2;
             __asm__ volatile (
                 "rep movsq"
-                : "+S"(src), "+D"(dst), "+c"(count)
-                :
-                : "memory"
+                : "+S"(src), "+D"(dst), "+c"(count) : : "memory"
             );
         }
     }
