@@ -31,6 +31,8 @@
 #define IXFS_DEFAULT_INODES  256
 #define IXFS_JOURNAL_BLOCKS  16
 #define IXFS_JOURNAL_MAGIC   0x4A584653
+#define IXFS_REFCOUNT_BLOCKS 2
+#define IXFS_SNAPSHOT_BLOCKS 1
 
 /* Inode type + permission flags */
 #define IXFS_S_FILE          0x8000
@@ -63,7 +65,11 @@ struct ixfs_superblock {
     uint32_t s_journal_start;
     uint32_t s_journal_blocks;
     uint32_t s_journal_seq;
-    uint8_t  s_reserved[416];
+    uint32_t s_refcount_start;
+    uint32_t s_refcount_blocks;
+    uint32_t s_snapshot_start;
+    uint32_t s_snapshot_count;
+    uint8_t  s_reserved[400];
 } __attribute__((packed));
 
 struct ixfs_inode {
@@ -295,15 +301,21 @@ int main(int argc, char *argv[])
     sb.s_bitmap_blocks = bitmap_blocks;
     sb.s_inode_start   = 1 + bitmap_blocks;
     sb.s_inode_blocks  = inode_blocks;
-    sb.s_data_start    = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS;
+    sb.s_data_start    = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS
+                       + IXFS_REFCOUNT_BLOCKS + IXFS_SNAPSHOT_BLOCKS;
     sb.s_root_inode    = IXFS_ROOT_INODE;
     sb.s_journal_start = 1 + bitmap_blocks + inode_blocks;
     sb.s_journal_blocks = IXFS_JOURNAL_BLOCKS;
     sb.s_journal_seq   = 0;
+    sb.s_refcount_start = sb.s_journal_start + IXFS_JOURNAL_BLOCKS;
+    sb.s_refcount_blocks = IXFS_REFCOUNT_BLOCKS;
+    sb.s_snapshot_start = sb.s_refcount_start + IXFS_REFCOUNT_BLOCKS;
+    sb.s_snapshot_count = 0;
     strncpy((char *)sb.s_volume_name, vol_name, 31);
 
-    /* Count used blocks: superblock + bitmap + inodes + journal + root data */
-    used_blocks = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS + 1;
+    /* Count used blocks: sb + bitmap + inodes + journal + refcount + snapshot + root */
+    used_blocks = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS
+                + IXFS_REFCOUNT_BLOCKS + IXFS_SNAPSHOT_BLOCKS + 1;
     sb.s_free_blocks = total_blocks - used_blocks;
 
     /* Allocate and initialize bitmap */

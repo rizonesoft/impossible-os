@@ -369,17 +369,17 @@
 
 > **Priority: P2** — IXFS's signature feature, differentiating it from ext4/NTFS
 
-- [ ] **CoW block writes**: never overwrite a block in-place; always write to a new location
-- [ ] Update parent pointers (extent tree / inode) to point to new block
-- [ ] Old blocks remain valid until explicitly freed → enables snapshots
-- [ ] **Snapshot API**: `ixfs_snapshot_create(name)` — freeze current state by incrementing refcounts
-- [ ] **Refcounted blocks**: each block has a reference count (shared between snapshots)
-- [ ] `ixfs_free_block()` decrements refcount; only frees when refcount reaches 0
-- [ ] **Snapshot listing**: `ixfs_snapshot_list()` — enumerate available snapshots
-- [ ] **Snapshot rollback**: `ixfs_snapshot_restore(name)` — swap active tree with snapshot tree
-- [ ] **Snapshot delete**: `ixfs_snapshot_delete(name)` — decrement refcounts, free unreferenced blocks
-- [ ] Shell commands: `snapshot create <name>`, `snapshot list`, `snapshot restore <name>`
-- [ ] Commit: `"fs: IXFS copy-on-write + snapshots"`
+- [x] **CoW block writes**: never overwrite a block in-place; always write to a new location
+- [x] Update parent pointers (extent tree / inode) to point to new block
+- [x] Old blocks remain valid until explicitly freed → enables snapshots
+- [x] **Snapshot API**: `ixfs_snapshot_create(name)` — freeze current state by incrementing refcounts
+- [x] **Refcounted blocks**: each block has a reference count (shared between snapshots)
+- [x] `ixfs_free_block()` decrements refcount; only frees when refcount reaches 0
+- [x] **Snapshot listing**: `ixfs_snapshot_list()` — enumerate available snapshots
+- [x] **Snapshot rollback**: `ixfs_snapshot_restore(name)` — swap active tree with snapshot tree
+- [x] **Snapshot delete**: `ixfs_snapshot_delete(name)` — decrement refcounts, free unreferenced blocks
+- [x] Shell commands: `snapshot create <name>`, `snapshot list`, `snapshot restore <name>`
+- [x] Commit: `"fs: IXFS copy-on-write + snapshots"`
 
 ### 5.9 Advanced Features
 

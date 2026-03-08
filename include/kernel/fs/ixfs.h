@@ -90,6 +90,23 @@ struct ixfs_extent {
 #define IXFS_JE_COMMIT       2           /* journal entry: transaction committed */
 #define IXFS_TXN_MAX_ENTRIES 8           /* max blocks per transaction */
 
+/* --- Copy-on-Write + Snapshots --- */
+
+#define IXFS_MAX_SNAPSHOTS   8           /* max simultaneous snapshots */
+#define IXFS_SNAP_NAME_LEN   32          /* snapshot name length */
+#define IXFS_REFCOUNT_BLOCKS 2           /* blocks for refcount table (8192 entries) */
+#define IXFS_SNAPSHOT_BLOCKS 1           /* block for snapshot table */
+
+/* On-disk snapshot entry (64 bytes) — 64 per block */
+struct ixfs_snapshot_entry {
+    char     se_name[IXFS_SNAP_NAME_LEN]; /* snapshot name */
+    uint32_t se_timestamp;               /* creation time */
+    uint32_t se_root_block;              /* block storing saved inode table */
+    uint32_t se_inode_blocks;            /* number of inode blocks saved */
+    uint32_t se_flags;                   /* 1=active, 0=deleted */
+    uint8_t  se_reserved[12];            /* pad to 64 bytes */
+} __attribute__((packed));
+
 /* --- On-Disk Structures --- */
 
 /* Superblock — always in block 0 (first 4 KiB of the partition) */
@@ -111,7 +128,11 @@ struct ixfs_superblock {
     uint32_t s_journal_start;      /* first block of journal area */
     uint32_t s_journal_blocks;     /* number of journal blocks */
     uint32_t s_journal_seq;        /* current transaction sequence */
-    uint8_t  s_reserved[416];      /* pad to 512 bytes (428 - 12) */
+    uint32_t s_refcount_start;     /* first block of refcount table */
+    uint32_t s_refcount_blocks;    /* number of refcount blocks */
+    uint32_t s_snapshot_start;     /* first block of snapshot table */
+    uint32_t s_snapshot_count;     /* number of active snapshots */
+    uint8_t  s_reserved[400];      /* pad to 512 bytes */
 } __attribute__((packed));
 
 /* Inode — 128 bytes each (32 inodes per block) */
@@ -167,3 +188,9 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
 
 /* Test block groups, buffer cache, and directory hash index */
 void ixfs_test_performance(void);
+
+/* Snapshot API */
+int ixfs_snapshot_create(const char *name);
+int ixfs_snapshot_list(void);
+int ixfs_snapshot_restore(const char *name);
+int ixfs_snapshot_delete(const char *name);

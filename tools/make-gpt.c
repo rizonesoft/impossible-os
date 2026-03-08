@@ -220,20 +220,25 @@ int main(int argc, char *argv[])
         w32(sb + 4, 1);              /* s_version */
         w32(sb + 8, 4096);           /* s_block_size */
         w32(sb + 12, total_blocks);  /* s_total_blocks */
-        w32(sb + 16, total_blocks - 20); /* sb+bm+in+j(16)+root */
+        w32(sb + 16, total_blocks - 23); /* sb+bm+in+j(16)+rc(2)+sn(1)+root */
         w32(sb + 20, 128);           /* s_total_inodes */
         w32(sb + 24, 127);           /* s_free_inodes */
         w32(sb + 28, 1);             /* s_bitmap_start */
         w32(sb + 32, 1);             /* s_bitmap_blocks */
         w32(sb + 36, 2);             /* s_inode_start */
         w32(sb + 40, 1);             /* s_inode_blocks */
-        w32(sb + 44, 19);            /* s_data_start (3+16 journal) */
+        w32(sb + 44, 22);            /* s_data_start (3+16+2+1) */
         w32(sb + 48, 1);             /* s_root_inode */
         memcpy(sb + 52, "Impossible OS", 13);  /* s_volume_name */
         /* Journal fields (offset 84) */
         w32(sb + 84, 3);             /* s_journal_start */
         w32(sb + 88, 16);            /* s_journal_blocks */
         w32(sb + 92, 0);             /* s_journal_seq */
+        /* CoW fields (offset 96) */
+        w32(sb + 96, 19);            /* s_refcount_start */
+        w32(sb + 100, 2);            /* s_refcount_blocks */
+        w32(sb + 104, 21);           /* s_snapshot_start */
+        w32(sb + 108, 0);            /* s_snapshot_count */
     }
 
     /* ---- Write disk image ---- */

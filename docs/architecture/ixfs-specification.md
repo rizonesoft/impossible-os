@@ -320,6 +320,54 @@ On mount, `ixfs_journal_recover()` scans from tail to head:
 
 ---
 
+## Copy-on-Write + Snapshots
+
+IXFS provides block-level Copy-on-Write (CoW) with refcounted blocks,
+enabling zero-overhead point-in-time snapshots.
+
+### Refcount Table
+
+| Area | Block(s) | Description |
+|------|----------|-------------|
+| Refcount table | `s_refcount_start` .. `+1` | 1 byte per block (max 255 refs) |
+
+- 2 blocks store uint8_t refcounts for all 8192 blocks
+- Allocated blocks start at refcount 1; free blocks at 0
+- When a snapshot is created, all data block refcounts are incremented
+
+### CoW Mechanism
+
+When writing to a block with `refcount > 1`:
+1. Allocate a new block (refcount = 1)
+2. Copy old data to new block
+3. Write new data to new block
+4. Update inode extent to point to new block
+5. Decrement old block's refcount (free at 0)
+
+### Snapshot Table
+
+| Area | Block(s) | Description |
+|------|----------|-------------|
+| Snapshot table | `s_snapshot_start` | Up to 8 snapshot entries (64 bytes each) |
+
+Each `ixfs_snapshot_entry` (64 bytes):
+- `se_name[32]` — snapshot name
+- `se_timestamp` — creation time
+- `se_root_block` — block storing saved inode table copy
+- `se_inode_blocks` — number of inode blocks saved
+- `se_flags` — active/deleted
+
+### Snapshot API
+
+| Function | Description |
+|----------|-------------|
+| `ixfs_snapshot_create(name)` | Save inode table copy, increment all data block refcounts |
+| `ixfs_snapshot_list()` | Enumerate active snapshots |
+| `ixfs_snapshot_restore(name)` | Swap current inode table with saved copy |
+| `ixfs_snapshot_delete(name)` | Decrement refcounts, free unreferenced blocks |
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:
@@ -419,7 +467,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 |---------|---------|--------|
 | Extent-based allocation | §5.6 | ✅ Implemented |
 | Journaling (WAL) | §5.7 | ✅ Implemented |
-| Copy-on-Write + Snapshots | §5.8 | 🔜 Planned |
+| Copy-on-Write + Snapshots | §5.8 | ✅ Implemented |
 | Sparse files | §5.9.1 | 🔜 Planned |
 | Inline small files | §5.9.2 | 🔜 Planned |
 | Per-block checksums | §5.9.3 | 🔜 Planned |
