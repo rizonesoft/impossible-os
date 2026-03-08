@@ -92,16 +92,29 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel iso system-disk run run-debug run-log clean
+.PHONY: all _increment_build boot kernel iso grub-efi system-disk run run-debug run-log clean
 
 ## all: Build everything (bootloader + kernel + ISO + system disk)
-all: _increment_build iso system-disk
+all: _increment_build iso grub-efi system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_HASH))"
 
 ## _increment_build: Auto-increment the build number
 _increment_build:
 	@expr $$(cat $(BUILD_NUM_FILE) 2>/dev/null || echo 0) + 1 > $(BUILD_NUM_FILE)
 	@echo "[BUILD] #$$(cat $(BUILD_NUM_FILE))"
+
+## grub-efi: Build standalone GRUB EFI binary for direct disk boot
+GRUB_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
+GRUB_MODULES := part_gpt fat normal multiboot2 boot \
+                all_video efi_gop gfxterm configfile echo \
+                search test reboot halt font loadenv
+
+grub-efi: $(GRUB_EFI)
+
+$(GRUB_EFI):
+	@mkdir -p $(BUILD_DIR)/tools
+	grub-mkimage -O x86_64-efi -o $@ -p /boot/grub $(GRUB_MODULES)
+	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 
 ## boot: Assemble the bootloader
 boot: $(ASM_OBJS)
