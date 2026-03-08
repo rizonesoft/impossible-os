@@ -5,12 +5,12 @@
  * a simple API for text rendering on gfx_surface_t.
  *
  * Bundled fonts:
- *   Selawik Regular + Semibold  (MIT)     — UI font
- *   Cascadia Code Regular + Bold (OFL 1.1) — Monospace font
- *   Inter Regular + Bold (OFL 1.1)        — Alternative UI font (fallback)
+ *   Selawik Regular + Semibold + Bold (MIT) — UI font
+ *   Cascadia Code Regular + Bold (OFL 1.1)  — Monospace font
+ *   Inter Regular + Bold (OFL 1.1)          — Alternative UI font (fallback)
  *
  * Usage:
- *   ttf_mgr_init();                            // load fonts at boot
+ *   ttf_mgr_init();                            // load fonts + build cache
  *   ttf_font_t *f = ttf_get(FONT_UI, 16);     // get 16px UI font
  *   ttf_draw_string(surface, f, 10, 10, "Hello", GFX_COLOR_WHITE);
  * ============================================================================ */
@@ -35,8 +35,27 @@
 #define FONT_SLOT_TITLE   FONT_UI_BOLD
 #define FONT_SLOT_ICON    FONT_UI
 
-/* Maximum cached pixel sizes per font slot */
-#define FONT_MAX_SIZES    4
+/* --- Glyph cache constants --- */
+
+#define GLYPH_CACHE_FIRST   32   /* First cached codepoint (space) */
+#define GLYPH_CACHE_LAST   126   /* Last cached codepoint (tilde) */
+#define GLYPH_CACHE_COUNT   95   /* LAST - FIRST + 1 */
+
+/* Common pixel sizes to pre-rasterize at boot */
+#define GLYPH_CACHE_SIZES    5
+/* Actual sizes: 12, 14, 16, 20, 24 — defined in gfx_text.c */
+
+/* --- Glyph cache entry --- */
+
+typedef struct glyph_entry {
+    uint8_t *bitmap;     /* Pre-rasterized alpha bitmap (NULL if empty glyph) */
+    int16_t  width;      /* Bitmap width in pixels */
+    int16_t  height;     /* Bitmap height in pixels */
+    int16_t  xoff;       /* X offset from pen position */
+    int16_t  yoff;       /* Y offset from baseline */
+    int16_t  advance;    /* Horizontal advance in pixels (pre-scaled) */
+    int16_t  _pad;       /* Padding for alignment */
+} glyph_entry_t;
 
 /* --- Font handle --- */
 
@@ -54,22 +73,26 @@ typedef struct ttf_font {
 
 /* --- API --- */
 
-/* Initialize the font manager — load fonts from C:\Impossible\Fonts\ */
+/* Initialize the font manager — load fonts from C:\Impossible\Fonts\
+ * and pre-rasterize glyph cache for common sizes. */
 void ttf_mgr_init(void);
 
 /* Get a font handle for a given slot and pixel size.
  * Returns NULL if the slot is not loaded. */
 ttf_font_t *ttf_get(int slot, int pixel_size);
 
-/* Draw a single character. Returns the advance width in pixels. */
+/* Draw a single character. Returns the advance width in pixels.
+ * Uses glyph cache for ASCII 32-126 at cached sizes. */
 int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                   int codepoint, gfx_color_t color);
 
-/* Draw a string with kerning. Returns total width in pixels. */
+/* Draw a string with kerning. Returns total width in pixels.
+ * Uses glyph cache for ASCII 32-126 at cached sizes. */
 int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                     const char *text, gfx_color_t color);
 
-/* Measure the width of a string without drawing. */
+/* Measure the width of a string without drawing.
+ * Uses cached advance values when available. */
 int ttf_measure_width(ttf_font_t *f, const char *text);
 
 /* Get the line height (ascent - descent + line_gap, scaled). */

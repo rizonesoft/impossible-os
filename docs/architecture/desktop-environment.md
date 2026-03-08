@@ -181,6 +181,17 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 | Cascadia Code | OFL 1.1 | `CascadiaCode-Regular.ttf`, `CascadiaCode-Bold.ttf` |
 | Inter | OFL 1.1 | `Inter-Regular.ttf`, `Inter-Bold.ttf` |
 
+**Glyph Cache:**
+
+Pre-rasterizes ASCII 32–126 at boot for 5 common pixel sizes (12, 14, 16, 20, 24px) across all loaded font slots. Eliminates per-frame `kmalloc`/`kfree` and stb_truetype rasterization for common text.
+
+| Property | Value |
+|----------|-------|
+| Cache entries | 5 slots × 5 sizes × 95 chars = 2375 max |
+| Entry struct | `glyph_entry_t` — bitmap ptr, width, height, x/y offset, advance |
+| Lookup | O(1) by `[slot][size_index][codepoint - 32]` |
+| Fallback | Non-ASCII and uncached sizes fall through to stb_truetype |
+
 **Build:** Both `stb_truetype_impl.c` and `gfx_text.c` compiled with `-msse2`. FPU state protected via `fxsave`/`fxrstor`.
 
 ## Framebuffer Graphics

@@ -94,23 +94,23 @@
 
 ### 2.2 Font Bundle
 
-- [ ] Download **Selawik** Regular + Semibold (~380 KB total, MIT license)
-- [ ] Download **Cascadia Code** Regular + Bold (~580 KB total, OFL 1.1)
-- [ ] Place `.ttf` files in `resources/fonts/`
-- [ ] Update Makefile to copy fonts into sysroot
-- [ ] Define font slots: `FONT_UI`, `FONT_UI_BOLD`, `FONT_MONO`, `FONT_MONO_BOLD`
-- [ ] Add font license files to `resources/fonts/LICENSE-*`
-- [ ] *(Stretch)* Add **Inter** as an alternative UI font
-- [ ] Commit: `"resources: Selawik + Cascadia Code font bundle"`
+- [x] Download **Selawik** Regular + Semibold + Bold (~132 KB total, MIT license)
+- [x] Download **Cascadia Code** Regular + Bold (~1.2 MB total, OFL 1.1)
+- [x] Place `.ttf` files in `resources/fonts/`
+- [x] Update Makefile to copy fonts into sysroot
+- [x] Define font slots: `FONT_UI`, `FONT_UI_BOLD`, `FONT_MONO`, `FONT_MONO_BOLD`, `FONT_UI_HEAVY`
+- [x] Add font license files to `resources/fonts/LICENSE-*`
+- [x] *(Stretch)* Add **Inter** as an alternative UI font
+- [x] Commit: `"resources: Selawik + Cascadia Code font bundle"`
 
 ### 2.3 Glyph Caching
 
-- [ ] Pre-rasterize ASCII 32–126 at common sizes (12, 14, 16, 20, 24px) at boot
-- [ ] Cache struct: bitmap, width, height, x/y offset, advance per glyph
-- [ ] Cache size: ~95 KB (95 chars × 5 sizes × 4 font slots × ~50 bytes)
-- [ ] Fast lookup in `font_draw_char()` — bypass stb_truetype for cached glyphs
-- [ ] Benchmark: cached vs. uncached rendering speed
-- [ ] Commit: `"desktop: glyph cache for fast text rendering"`
+- [x] Pre-rasterize ASCII 32–126 at common sizes (12, 14, 16, 20, 24px) at boot
+- [x] Cache struct: bitmap, width, height, x/y offset, advance per glyph
+- [x] Cache size: ~95 KB (95 chars × 5 sizes × 4 font slots × ~50 bytes)
+- [x] Fast lookup in `font_draw_char()` — bypass stb_truetype for cached glyphs
+- [x] Benchmark: cached vs. uncached rendering speed
+- [x] Commit: `"desktop: glyph cache for fast text rendering"`
 
 ### 2.4 Replace Bitmap Font
 
