@@ -12,7 +12,7 @@
 
 /* ---- Terminal dimensions (in characters) ---- */
 #define TERM_COLS    80
-#define TERM_ROWS    25
+#define TERM_ROWS    20
 #define TERM_INPUT_BUF 256
 
 /* ---- Lifecycle ---- */

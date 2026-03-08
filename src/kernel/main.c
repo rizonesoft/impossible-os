@@ -47,6 +47,7 @@
 #include "desktop/font.h"
 #include "kernel/drivers/pit.h"
 #include "desktop/desktop.h"
+#include "desktop/terminal.h"
 #include "kernel/acpi.h"
 #include "kernel/version.h"
 
@@ -971,6 +972,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             }
         }
 
+        terminal_open();
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
