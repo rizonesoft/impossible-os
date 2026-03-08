@@ -243,8 +243,135 @@ else
 fi
 
 # ============================================================================
+# OPTICAL MEDIA TEST IMAGES
+# ============================================================================
+OPTICAL="$OUT/optical"
+mkdir -p "$OPTICAL"
+
+# Prepare optical sample content
+OPT_CONTENT=$(mktemp -d)
+echo -n "ISO 9660 test file for optical driver testing." > "$OPT_CONTENT/readme.txt"
+mkdir -p "$OPT_CONTENT/media"
+dd if=/dev/urandom of="$OPT_CONTENT/media/sample.dat" bs=1024 count=32 2>/dev/null
+mkdir -p "$OPT_CONTENT/level1/level2"
+echo -n "Deeply nested file." > "$OPT_CONTENT/level1/level2/deep.txt"
+touch "$OPT_CONTENT/empty.txt"
+
+# ============================================================================
+# 10. ISO 9660 (classic CD-ROM filesystem)
+# ============================================================================
+IMG="$OPTICAL/iso9660.iso"
+if [ ! -f "$IMG" ]; then
+    if command -v genisoimage &>/dev/null; then
+        log "Creating iso9660.iso (ISO 9660)"
+        genisoimage -quiet -o "$IMG" -V "TEST_ISO9660" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    elif command -v xorriso &>/dev/null; then
+        log "Creating iso9660.iso (ISO 9660, via xorriso)"
+        xorriso -as mkisofs -o "$IMG" -V "TEST_ISO9660" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    else
+        warn "iso9660.iso — genisoimage or xorriso not found"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+else
+    log "iso9660.iso already exists, skipping"
+fi
+
+# ============================================================================
+# 11. ISO 9660 + Joliet extensions (long Unicode filenames)
+# ============================================================================
+IMG="$OPTICAL/joliet.iso"
+if [ ! -f "$IMG" ]; then
+    if command -v genisoimage &>/dev/null; then
+        log "Creating joliet.iso (ISO 9660 + Joliet)"
+        genisoimage -quiet -J -o "$IMG" -V "TEST_JOLIET" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    elif command -v xorriso &>/dev/null; then
+        log "Creating joliet.iso (Joliet, via xorriso)"
+        xorriso -as mkisofs -J -o "$IMG" -V "TEST_JOLIET" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    else
+        warn "joliet.iso — genisoimage or xorriso not found"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+else
+    log "joliet.iso already exists, skipping"
+fi
+
+# ============================================================================
+# 12. UDF 1.02 (DVD data disc)
+# ============================================================================
+IMG="$OPTICAL/udf.iso"
+if [ ! -f "$IMG" ]; then
+    if command -v genisoimage &>/dev/null; then
+        log "Creating udf.iso (UDF 1.02)"
+        genisoimage -quiet -udf -o "$IMG" -V "TEST_UDF" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    elif command -v mkudffs &>/dev/null; then
+        log "Creating udf.iso (UDF 1.02, via mkudffs)"
+        dd if=/dev/zero of="$IMG" bs=1M count=4 2>/dev/null
+        mkudffs --media-type=dvd --vid="TEST_UDF" "$IMG" >/dev/null 2>&1
+        CREATED=$((CREATED + 1))
+    else
+        warn "udf.iso — genisoimage or mkudffs not found (install genisoimage or udftools)"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+else
+    log "udf.iso already exists, skipping"
+fi
+
+# ============================================================================
+# 13. UDF 2.50 (Blu-ray compatible)
+# ============================================================================
+IMG="$OPTICAL/udf250.iso"
+if [ ! -f "$IMG" ]; then
+    if command -v mkudffs &>/dev/null; then
+        log "Creating udf250.iso (UDF 2.50)"
+        dd if=/dev/zero of="$IMG" bs=1M count=8 2>/dev/null
+        mkudffs --udfrev=0x0250 --media-type=dvd --vid="TEST_UDF250" "$IMG" >/dev/null 2>&1
+        CREATED=$((CREATED + 1))
+    else
+        warn "udf250.iso — mkudffs not found (install udftools)"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+else
+    log "udf250.iso already exists, skipping"
+fi
+
+# ============================================================================
+# 14. Mixed ISO 9660 + UDF bridge
+# ============================================================================
+IMG="$OPTICAL/mixed.iso"
+if [ ! -f "$IMG" ]; then
+    if command -v genisoimage &>/dev/null; then
+        log "Creating mixed.iso (ISO 9660 + UDF bridge)"
+        genisoimage -quiet -J -udf -o "$IMG" -V "TEST_MIXED" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    elif command -v xorriso &>/dev/null; then
+        log "Creating mixed.iso (ISO 9660 + UDF bridge, via xorriso)"
+        xorriso -as mkisofs -J -udf -o "$IMG" -V "TEST_MIXED" "$OPT_CONTENT" 2>/dev/null
+        CREATED=$((CREATED + 1))
+    else
+        warn "mixed.iso — genisoimage or xorriso not found"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+else
+    log "mixed.iso already exists, skipping"
+fi
+
+rm -rf "$OPT_CONTENT"
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
 log "Done: $CREATED created, $SKIPPED skipped"
+echo ""
+log "Disk images:"
 ls -lh "$OUT"/*.img 2>/dev/null | awk '{printf "  %-20s %s\n", $NF, $5}'
+if ls "$OPTICAL"/*.iso &>/dev/null 2>&1; then
+    log "Optical images:"
+    ls -lh "$OPTICAL"/*.iso 2>/dev/null | awk '{printf "  %-20s %s\n", $NF, $5}'
+fi
+

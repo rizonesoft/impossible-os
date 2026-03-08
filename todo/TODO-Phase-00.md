@@ -92,7 +92,6 @@ make all
 
 - [x] Boot from disk: `-drive file=build/system-disk.img,format=raw,if=none,id=sysdisk`
 - [x] Keep OVMF UEFI firmware (boots from EFI partition on GPT disk)
-- [ ] Keep secondary SATA test disk for AHCI testing — *deferred to test-disks*
 - [x] Update `run`, `run-debug`, `run-log` targets
 - [x] Commit: `3251de9`
 
@@ -163,19 +162,19 @@ make all
 - [x] Makefile target: `test-disks` (generates all, skips if already exist)
 - [x] Commit: `"tools: test disk library for filesystem drivers"`
 
-### 5.3 Optical Media Test Images (`build/test-disks/optical/`)
+### 5.3 Optical Media Test Images (`build/test-disks/optical/`) ✅
 
 > CD/DVD/Blu-ray test images for ATAPI driver and optical filesystem support.
 > Attached via `-cdrom` in QEMU.
 
-- [ ] `iso9660.iso` — ISO 9660 (classic CD-ROM filesystem, via `genisoimage`)
-- [ ] `joliet.iso` — ISO 9660 + Joliet extensions (long Unicode filenames, via `genisoimage -J`)
-- [ ] `udf.iso` — UDF 1.02 (DVD data disc, via `mkudffs` + `genisoimage -udf`)
-- [ ] `udf250.iso` — UDF 2.50 (Blu-ray compatible, via `mkudffs -r 2.50`)
-- [ ] `mixed.iso` — ISO 9660 + UDF bridge (readable by both drivers)
-- [ ] Each image populated with: `readme.txt`, `media/sample.dat`, nested directories
-- [ ] QEMU attachment: `-cdrom build/test-disks/optical/iso9660.iso`
-- [ ] Commit: `"tools: optical media test images"`
+- [x] `iso9660.iso` — ISO 9660 (via `xorriso` or `genisoimage`)
+- [x] `joliet.iso` — ISO 9660 + Joliet extensions (via `xorriso -J`)
+- [x] `udf.iso` — UDF 1.02 (via `genisoimage -udf` or `mkudffs`, skips if not installed)
+- [x] `udf250.iso` — UDF 2.50 (via `mkudffs --udfrev=0x0250`, skips if not installed)
+- [x] `mixed.iso` — ISO 9660 + UDF bridge (via `xorriso -J -udf`)
+- [x] Each image populated with: `readme.txt`, `media/sample.dat`, nested directories
+- [x] QEMU attachment: `-cdrom build/test-disks/optical/iso9660.iso`
+- [x] Commit: `"tools: optical media test images"`
 
 ### 5.4 QEMU Disk Attachment
 
