@@ -36,12 +36,12 @@
 
 ### 1.3 Gradients
 
-- [ ] Create `src/kernel/gfx/gfx_gradient.c`
-- [ ] Define `gfx_gradient_t` struct (start color, end color, direction)
-- [ ] Implement `gfx_fill_gradient_rect()` — vertical + horizontal linear gradients
-- [ ] Implement `gfx_fill_gradient_rounded()` — gradient with rounded corners
-- [ ] Implement radial gradient fill
-- [ ] Commit: `"gfx: gradient fills"`
+- [x] Create `src/kernel/gfx/gfx_gradient.c`
+- [x] Define `gfx_gradient_t` struct (start color, end color, direction)
+- [x] Implement `gfx_fill_gradient_rect()` — vertical + horizontal linear gradients
+- [x] Implement `gfx_fill_gradient_rounded()` — gradient with rounded corners
+- [x] Implement radial gradient fill
+- [x] Commit: `"gfx: gradient fills"`
 
 ### 1.4 Blur & Material Effects
 

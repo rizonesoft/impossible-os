@@ -115,6 +115,37 @@ void gfx_blit_alpha(gfx_surface_t *dst, int32_t dx, int32_t dy,
 void gfx_fill_rect_alpha(gfx_surface_t *s, int32_t x, int32_t y,
                           uint32_t w, uint32_t h, gfx_color_t color);
 
+/* ---- Gradients ---- */
+
+/* Gradient direction */
+typedef enum {
+    GFX_GRAD_VERTICAL,    /* top-to-bottom */
+    GFX_GRAD_HORIZONTAL   /* left-to-right */
+} gfx_grad_dir_t;
+
+/* Gradient descriptor */
+typedef struct gfx_gradient {
+    gfx_color_t   start;      /* color at position 0 */
+    gfx_color_t   end;        /* color at position 1 */
+    gfx_grad_dir_t direction; /* vertical or horizontal */
+} gfx_gradient_t;
+
+/* Fill a rectangle with a linear gradient */
+void gfx_fill_gradient_rect(gfx_surface_t *s, int32_t x, int32_t y,
+                             uint32_t w, uint32_t h,
+                             const gfx_gradient_t *grad);
+
+/* Fill a rounded rectangle with a linear gradient */
+void gfx_fill_gradient_rounded(gfx_surface_t *s, int32_t x, int32_t y,
+                                uint32_t w, uint32_t h, uint32_t radius,
+                                const gfx_gradient_t *grad);
+
+/* Fill a radial gradient (circle): center_color at cx,cy → edge_color at radius */
+void gfx_fill_radial_gradient(gfx_surface_t *s, int32_t cx, int32_t cy,
+                               uint32_t radius,
+                               gfx_color_t center_color,
+                               gfx_color_t edge_color);
+
 /* ---- Dirty Rectangle Tracker ---- */
 
 #define GFX_MAX_DIRTY  32

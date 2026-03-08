@@ -91,6 +91,21 @@ Tracks up to 32 dirty regions for partial redraws. On overflow, merges all into 
 
 **Design:** Pre-multiplied alpha (`out = src + dst × (1 − α)`), integer-only `div255()` approximation, no floating point.
 
+### Gradient Fills
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/gfx/gfx_gradient.c` | Linear and radial gradient rendering |
+
+| Type / Function | Description |
+|-----------------|-------------|
+| `gfx_gradient_t` | Struct: start color, end color, direction (V/H) |
+| `gfx_fill_gradient_rect` | Linear gradient (vertical or horizontal) |
+| `gfx_fill_gradient_rounded` | Linear gradient with rounded corners |
+| `gfx_fill_radial_gradient` | Radial gradient (center → edge) |
+
+Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at t/255).
+
 ## Framebuffer Graphics
 
 ### Key Files
