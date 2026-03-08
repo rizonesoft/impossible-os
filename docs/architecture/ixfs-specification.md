@@ -9,6 +9,14 @@ IXFS is a custom Unix-inspired filesystem designed for Impossible OS. It uses
 allocation, and supports files up to ~4 GiB via direct + single-indirect +
 double-indirect block pointers.
 
+Key design decisions:
+- **Block device abstraction** — all I/O goes through the `blkdev` layer,
+  not direct ATA calls. Works with any storage backend (ATA, AHCI, VirtIO).
+- **Block group allocator** — in-memory optimization for locality-aware
+  allocation with O(1) sequential writes.
+- **No on-disk format dependency on features** — block groups, caching, and
+  other optimizations are purely in-memory. The on-disk format is simple and stable.
+
 ## Disk Layout
 
 ```
@@ -65,13 +73,13 @@ Each inode is **128 bytes** (32 inodes per 4 KiB block).
 | 6      | 2    | `i_gid`       | Owner group ID |
 | 8      | 4    | `i_size`      | File size in bytes |
 | 12     | 4    | `i_blocks`    | Number of data blocks used |
-| 16     | 4    | `i_ctime`     | Creation timestamp (seconds since epoch) |
+| 16     | 4    | `i_ctime`     | Creation timestamp (seconds since boot) |
 | 20     | 4    | `i_mtime`     | Modification timestamp |
 | 24     | 4    | `i_atime`     | Access timestamp |
 | 28     | 48   | `i_direct[12]`| 12 direct block pointers |
 | 76     | 4    | `i_indirect`  | Single-indirect block pointer |
 | 80     | 4    | `i_dindirect` | Double-indirect block pointer |
-| 84     | 4    | `i_reserved`  | Zeroed, pads to 128 bytes |
+| 84     | 44   | `i_reserved`  | Zeroed, pads to 128 bytes |
 
 ### Type Flags (`i_mode` upper 4 bits)
 
@@ -119,28 +127,105 @@ by checking `i_mode == 0` in the inode table. The superblock's
 ## Directory Entries
 
 Directories are regular files whose data blocks contain an array of
-**64-byte** directory entries:
+**256-byte** directory entries:
 
 | Offset | Size | Field | Description |
 |--------|------|-------|-------------|
 | 0      | 4    | `d_inode` | Inode number (`0` = free/deleted entry) |
 | 4      | 252  | `d_name`  | Filename (null-terminated, max 251 chars) |
 
-- 64 entries per 4 KiB block
+- 16 entries per 4 KiB block
 - Deleted entries have `d_inode = 0`
-- No `.` or `..` entries stored (they are synthesized by the driver)
+- `.` and `..` entries are stored in directory data blocks
+
+---
+
+## Block Group Allocator (In-Memory)
+
+The block group allocator is a **purely in-memory** optimization — no
+on-disk format changes. It divides the volume into logical groups for
+locality-aware allocation.
+
+### Group Parameters
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IXFS_BLOCKS_PER_GROUP` | 32,768 | Blocks per group (128 MiB) |
+| `IXFS_MAX_BLOCK_GROUPS` | 256 | Max groups (supports 32 GiB) |
+
+### Group Descriptor (in-memory only, not stored on disk)
+
+| Field | Size | Description |
+|-------|------|-------------|
+| `bg_start` | 4 bytes | First block number in this group |
+| `bg_count` | 4 bytes | Total blocks in this group |
+| `bg_free` | 4 bytes | Number of free blocks |
+| `bg_next_free` | 4 bytes | Hint: next block to try allocating |
+
+### Allocation Algorithm
+
+1. Prefer the same group as the file's inode (locality)
+2. Start scanning from `bg_next_free` hint
+3. On allocation: advance hint to `block + 1` (O(1) sequential writes)
+4. On free: regress hint if freed block is earlier
+5. If group is full, try the next group (wraps around)
 
 ---
 
 ## Formatting
 
-`ixfs_format()` creates a fresh filesystem:
+`ixfs_format(dev, label)` creates a fresh filesystem:
 
-1. Zero all blocks
+1. Zero all metadata blocks
 2. Write superblock at block 0
 3. Initialize block bitmap (mark metadata blocks as used)
 4. Allocate inode 1 as root directory (`IXFS_S_DIR | IXFS_PERM_DIR`)
 5. Allocate one data block for root directory (empty)
+6. Initialize block group descriptors from bitmap
+
+---
+
+## Mounting
+
+`ixfs_init(dev)` mounts an existing filesystem:
+
+1. Read superblock from block 0, validate magic and version
+2. Load block bitmap into memory (`kmalloc`)
+3. Initialize block group descriptors from bitmap
+4. Read root inode and create root VFS node
+
+---
+
+## VFS Integration
+
+IXFS registers with the VFS as a filesystem driver:
+
+| VFS Operation | IXFS Function | Description |
+|---------------|---------------|-------------|
+| open | `ixfs_file_open` | Open file/directory |
+| close | `ixfs_file_close` | Close file/directory |
+| read | `ixfs_file_read` | Read file data with block pointer traversal |
+| write | `ixfs_file_write` | Write file data with block allocation |
+| readdir | `ixfs_readdir` | List directory entries (skips deleted) |
+| finddir | `ixfs_finddir` | Lookup file/directory by name |
+| create | `ixfs_create` | Create file or directory |
+| unlink | `ixfs_unlink` | Delete file or directory (empty check) |
+| rename | `ixfs_rename` | Rename file or directory in-place |
+
+### Auto-Mount
+
+IXFS partitions are detected by `partition_mount_filesystems()` and
+auto-mounted at `C:\` (system drive). This uses the `blkdev` layer —
+partition sub-devices created during boot.
+
+### First-Boot Setup
+
+On first boot (empty C:\), `firstboot_setup()` in `main.c`:
+1. Creates default directory hierarchy (`Impossible\`, `Users\`, `Programs\`)
+2. Copies initrd files from `B:\` to `C:\Impossible\System\`
+
+> This is temporary — to be replaced by an installer. Remove
+> `firstboot.c/h` and the call in `main.c` once an installer exists.
 
 ---
 
@@ -148,5 +233,22 @@ Directories are regular files whose data blocks contain an array of
 
 | File | Purpose |
 |------|---------|
-| `include/kernel/fs/ixfs.h` | On-disk structures and constants |
-| `src/kernel/fs/ixfs.c` | Driver: format, mount, VFS operations |
+| `include/kernel/fs/ixfs.h` | On-disk structures, constants, block group struct |
+| `src/kernel/fs/ixfs.c` | Driver: format, mount, block groups, VFS operations |
+| `src/kernel/fs/firstboot.c` | First-boot hierarchy + initrd copy (temporary) |
+| `include/kernel/fs/firstboot.h` | First-boot API |
+
+---
+
+## Future Enhancements (Planned)
+
+| Feature | Section | Status |
+|---------|---------|--------|
+| Extent-based allocation | §5.6 | 🔜 Planned |
+| Journaling (WAL) | §5.7 | 🔜 Planned |
+| Copy-on-Write + Snapshots | §5.8 | 🔜 Planned |
+| Sparse files | §5.9.1 | 🔜 Planned |
+| Inline small files | §5.9.2 | 🔜 Planned |
+| Per-block checksums | §5.9.3 | 🔜 Planned |
+| 64-bit block addressing | §5.9.4 | 🔜 Planned (target: 64 TiB max) |
+| Host-side mkfs-ixfs tool | §5.11 | 🔜 Planned |

@@ -488,6 +488,7 @@ Actually **256 bytes** per entry (4 + 252), giving **16 entries per block**.
 | Block alloc/free | ✅ | Bitmap-based, flushed to disk |
 | Rename | ✅ | `ixfs_rename(parent, old, new)` |
 | First-boot setup | ✅ | `firstboot_setup()` populates empty C:\ |
+| Block group allocator | ✅ | 32768 blocks/group, locality hints, O(1) sequential alloc |
 
 ### First-Boot Module
 

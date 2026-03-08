@@ -94,28 +94,137 @@ static int bitmap_test(const uint8_t *bmap, uint32_t bit)
     return (bmap[bit / 8] >> (bit % 8)) & 1;
 }
 
-/* Allocate a free block from the bitmap. Returns block number or 0 on failure. */
-static uint32_t ixfs_alloc_block(void)
+/* --- Block group state (in-memory only) --- */
+
+static struct ixfs_block_group groups[IXFS_MAX_BLOCK_GROUPS];
+static uint32_t group_count;
+
+/* Initialize block group descriptors from the bitmap.
+ * Must be called after the bitmap is loaded into memory. */
+static void ixfs_init_groups(void)
 {
-    uint32_t i;
-    for (i = sb.s_data_start; i < sb.s_total_blocks; i++) {
-        if (!bitmap_test(block_bitmap, i)) {
-            bitmap_set(block_bitmap, i);
-            sb.s_free_blocks--;
-            return i;
+    uint32_t g, b;
+    uint32_t total = sb.s_total_blocks;
+
+    group_count = (total + IXFS_BLOCKS_PER_GROUP - 1) / IXFS_BLOCKS_PER_GROUP;
+    if (group_count > IXFS_MAX_BLOCK_GROUPS)
+        group_count = IXFS_MAX_BLOCK_GROUPS;
+
+    for (g = 0; g < group_count; g++) {
+        uint32_t start = g * IXFS_BLOCKS_PER_GROUP;
+        uint32_t end = start + IXFS_BLOCKS_PER_GROUP;
+        if (end > total) end = total;
+
+        groups[g].bg_start = start;
+        groups[g].bg_count = end - start;
+        groups[g].bg_free = 0;
+        groups[g].bg_next_free = start;
+
+        /* Count free blocks and find the first free block */
+        for (b = start; b < end; b++) {
+            if (!bitmap_test(block_bitmap, b)) {
+                groups[g].bg_free++;
+                if (groups[g].bg_next_free == start ||
+                    b < groups[g].bg_next_free)
+                    groups[g].bg_next_free = b;
+            }
         }
+
+        /* If no free blocks, set hint past end */
+        if (groups[g].bg_free == 0)
+            groups[g].bg_next_free = end;
     }
+}
+
+/* Allocate a block, preferring the given block group index for locality.
+ * Pass preferred_group = 0xFFFFFFFF to allocate from any group.
+ * Returns block number or 0 on failure. */
+static uint32_t ixfs_alloc_block_near(uint32_t preferred_group)
+{
+    uint32_t tries;
+    uint32_t start_group;
+
+    if (sb.s_free_blocks == 0)
+        return 0;
+
+    /* Determine starting group */
+    start_group = (preferred_group < group_count) ? preferred_group : 0;
+
+    /* Try each group, starting from the preferred one */
+    for (tries = 0; tries < group_count; tries++) {
+        uint32_t gi = (start_group + tries) % group_count;
+        struct ixfs_block_group *bg = &groups[gi];
+        uint32_t b, end;
+
+        if (bg->bg_free == 0)
+            continue;
+
+        /* Start from the hint, wrap around within the group */
+        end = bg->bg_start + bg->bg_count;
+        b = bg->bg_next_free;
+        if (b < bg->bg_start || b >= end)
+            b = bg->bg_start;
+
+        /* Scan from hint to end of group */
+        for (; b < end; b++) {
+            if (!bitmap_test(block_bitmap, b)) {
+                bitmap_set(block_bitmap, b);
+                bg->bg_free--;
+                sb.s_free_blocks--;
+                /* Advance hint to next block */
+                bg->bg_next_free = b + 1;
+                return b;
+            }
+        }
+
+        /* Wrap: scan from group start to hint */
+        for (b = bg->bg_start; b < bg->bg_next_free && b < end; b++) {
+            if (!bitmap_test(block_bitmap, b)) {
+                bitmap_set(block_bitmap, b);
+                bg->bg_free--;
+                sb.s_free_blocks--;
+                bg->bg_next_free = b + 1;
+                return b;
+            }
+        }
+
+        /* Shouldn't reach here if bg_free > 0, but mark full just in case */
+        bg->bg_free = 0;
+        bg->bg_next_free = end;
+    }
+
     return 0;  /* no free blocks */
 }
 
-/* Free a block back to the bitmap */
+/* Convenience: allocate from any group (no locality preference) */
+static uint32_t ixfs_alloc_block(void)
+{
+    /* Default: prefer group 0 (where data starts), fallback to any */
+    uint32_t data_group = sb.s_data_start / IXFS_BLOCKS_PER_GROUP;
+    return ixfs_alloc_block_near(data_group);
+}
+
+/* Free a block back to the bitmap and update its group descriptor */
 static void ixfs_free_block(uint32_t block)
 {
-    if (block >= sb.s_data_start && block < sb.s_total_blocks) {
-        if (bitmap_test(block_bitmap, block)) {
-            bitmap_clear(block_bitmap, block);
-            sb.s_free_blocks++;
-        }
+    uint32_t gi;
+
+    if (block < sb.s_data_start || block >= sb.s_total_blocks)
+        return;
+
+    if (!bitmap_test(block_bitmap, block))
+        return;  /* already free */
+
+    bitmap_clear(block_bitmap, block);
+    sb.s_free_blocks++;
+
+    /* Update the owning group */
+    gi = block / IXFS_BLOCKS_PER_GROUP;
+    if (gi < group_count) {
+        groups[gi].bg_free++;
+        /* Move hint back if this block is earlier */
+        if (block < groups[gi].bg_next_free)
+            groups[gi].bg_next_free = block;
     }
 }
 
@@ -1006,6 +1115,9 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     /* Flush bitmap to disk */
     ixfs_flush_bitmap();
 
+    /* Initialize block group descriptors */
+    ixfs_init_groups();
+
     /* Create root directory inode (inode 1) */
     p = (uint8_t *)&root_inode;
     for (i = 0; i < sizeof(struct ixfs_inode); i++)
@@ -1109,6 +1221,9 @@ int ixfs_init(const struct blkdev *dev)
         for (j = 0; j < remaining; j++)
             block_bitmap[offset + j] = blk_buf[j];
     }
+
+    /* Initialize block group descriptors from bitmap */
+    ixfs_init_groups();
 
     /* Create root vnode */
     {

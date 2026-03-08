@@ -28,6 +28,18 @@
 #define IXFS_BLOCK_SIZE      4096         /* 4 KiB blocks */
 #define IXFS_SECTORS_PER_BLK (IXFS_BLOCK_SIZE / 512)
 
+/* Block group constants (in-memory allocation optimization) */
+#define IXFS_BLOCKS_PER_GROUP (IXFS_BLOCK_SIZE * 8)  /* 32768 blocks = 128 MiB */
+#define IXFS_MAX_BLOCK_GROUPS 256  /* supports up to 256 × 128 MiB = 32 GiB */
+
+/* In-memory block group descriptor (not stored on disk) */
+struct ixfs_block_group {
+    uint32_t bg_start;       /* first block number in this group */
+    uint32_t bg_count;       /* total blocks in this group */
+    uint32_t bg_free;        /* number of free blocks */
+    uint32_t bg_next_free;   /* hint: next block to try allocating */
+};
+
 /* Inode limits */
 #define IXFS_DIRECT_BLOCKS   12          /* direct block pointers per inode */
 #define IXFS_INDIRECT_BLOCKS 1           /* single-indirect pointers */

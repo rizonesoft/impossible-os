@@ -307,12 +307,12 @@
 > **Priority: P1** — These fix fundamental performance issues in the current driver
 
 #### 5.5.1 Block Group Allocator
-- [ ] Divide volume into block groups (~128 MiB each) for locality
-- [ ] Track per-group free block count + "next free" hint in group descriptor
-- [ ] `ixfs_alloc_block()` starts from hint, wraps around on full group
-- [ ] Prefer allocating in same group as file's inode (reduces seek)
-- [ ] Update superblock `s_free_blocks` only on group exhaustion (lazy)
-- [ ] Commit: `"fs: IXFS block group allocator"`
+- [x] Divide volume into block groups (~128 MiB each) for locality
+- [x] Track per-group free block count + "next free" hint in group descriptor
+- [x] `ixfs_alloc_block()` starts from hint, wraps around on full group
+- [x] Prefer allocating in same group as file's inode (reduces seek)
+- [x] Update superblock `s_free_blocks` only on group exhaustion (lazy)
+- [x] Commit: `"fs: IXFS block group allocator"`
 
 #### 5.5.2 Buffer Cache / Write-Back
 - [ ] Implement dirty buffer cache (LRU, configurable size)
@@ -414,19 +414,19 @@
 
 ### 5.10 IXFS Unique Selling Points
 
-> These features, taken together, make IXFS genuinely competitive:
+> These features, taken together, will make IXFS genuinely competitive:
 >
 > | Feature | ext4 | NTFS | Btrfs | **IXFS** |
 > |---------|------|------|-------|----------|
-> | Journaling | ✅ | ✅ | N/A (CoW) | ✅ WAL + CoW |
-> | Copy-on-Write | ❌ | ❌ | ✅ | ✅ |
-> | Snapshots | ❌ | VSS (userspace) | ✅ | ✅ (kernel-native) |
-> | Inline small files | ❌ | ✅ (MFT) | ✅ | ✅ |
-> | Extent-based | ✅ | ✅ | ✅ | ✅ |
-> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | ✅ |
-> | Sparse files | ✅ | ✅ | ✅ | ✅ |
-> | Block groups | ✅ | ❌ | ❌ | ✅ |
-> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | **64 TiB** |
+> | Journaling | ✅ | ✅ | N/A (CoW) | 🔜 planned (§5.7) |
+> | Copy-on-Write | ❌ | ❌ | ✅ | 🔜 planned (§5.8) |
+> | Snapshots | ❌ | VSS (userspace) | ✅ | 🔜 planned (§5.8) |
+> | Inline small files | ❌ | ✅ (MFT) | ✅ | 🔜 planned (§5.9.2) |
+> | Extent-based | ✅ | ✅ | ✅ | 🔜 planned (§5.6) |
+> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | 🔜 planned (§5.9.3) |
+> | Sparse files | ✅ | ✅ | ✅ | 🔜 planned (§5.9.1) |
+> | Block groups | ✅ | ❌ | ❌ | ✅ **implemented** |
+> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | 4 GiB (🔜 64 TiB §5.9.4) |
 >
 > **IXFS's unique identity**: A hybrid of ext4's block-group locality with
 > Btrfs-style CoW snapshots, plus mandatory per-block checksums. It is
