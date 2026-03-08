@@ -55,6 +55,20 @@
 > - Uses command slot 0 with single PRDT entry for I/O
 > - Tested: "QEMU HARDDISK" 32 MiB (65536 sectors), sector 0 read OK
 
+### 1.4 ATAPI (IDE/SATA Optical) Driver
+
+> Required for CD/DVD/Blu-ray reading. ATAPI devices appear on AHCI ports
+> with a different device signature (0xEB140101 vs 0x00000101 for disk).
+
+- [ ] Detect ATAPI device signature on AHCI ports
+- [ ] Implement SCSI INQUIRY command via AHCI ATAPI command format
+- [ ] Implement SCSI READ(10) / READ(12) — read sectors from optical media
+- [ ] Implement SCSI GET CAPACITY — determine disc size
+- [ ] Register as blkdev (e.g., "cdrom0") with 2048-byte sector size
+- [ ] QEMU flag: `-cdrom build/test-disks/optical/iso9660.iso`
+- [ ] Test: `make run-test DISK=optical/iso9660`
+- [ ] Commit: `"drivers: ATAPI optical disc driver"`
+
 ### 1.3 Block Device Abstraction Layer ✅
 
 - [x] Create `include/kernel/drivers/blkdev.h` and `src/kernel/drivers/blkdev.c`
@@ -165,6 +179,7 @@
 - [ ] Implement `ntfs_readdir(mft_entry)` — parse `$INDEX_ROOT` / `$INDEX_ALLOCATION` B+ tree
 - [ ] Recognize `$MFT`, `$MFTMirr`, `$Root` (MFT entry 5) system files
 - [ ] Add NTFS probe to partition scanner (boot sector OEM ID = "NTFS    ")
+- [ ] Test: `make run-test DISK=ntfs`
 - [ ] Commit: `"fs: NTFS read support"`
 
 ### 4.2 NTFS Write Support
@@ -201,6 +216,7 @@
 - [ ] Implement `ext2_stat(path)` — return file metadata from inode
 - [ ] VFS integration: register ext2 driver, mount to drive letter
 - [ ] Update partition scanner to log "ext2", "ext3", or "ext4" based on feature flags
+- [ ] Test: `make run-test DISK=ext2` / `ext3` / `ext4`
 - [ ] Commit: `"fs: ext2/ext3/ext4 read support"`
 
 ### 4.5 ext2/ext3/ext4 Write Support
@@ -233,6 +249,7 @@
 - [ ] Implement `exfat_stat(path)` — return file metadata
 - [ ] Add exFAT probe to partition scanner (OEM "EXFAT   " at boot sector)
 - [ ] VFS integration: register exfat driver, mount to drive letter
+- [ ] Test: `make run-test DISK=exfat`
 - [ ] Commit: `"fs: exFAT read support"`
 
 ### 4.7 exFAT Write Support
@@ -247,6 +264,37 @@
 - [ ] UpCase table validation for case-insensitive comparisons
 - [ ] Wire write ops into VFS callbacks
 - [ ] Commit: `"fs: exFAT write support"`
+
+### 4.8 ISO 9660 Read Support
+
+> ISO 9660 is the standard filesystem for CD/DVD media. Read-only by design.
+> Requires the ATAPI driver (§1.4) for real optical media, or raw block
+> access for `.iso` files attached via QEMU `-cdrom`.
+
+- [ ] Create `src/kernel/fs/iso9660.c` and `include/kernel/fs/iso9660.h`
+- [ ] Parse Primary Volume Descriptor at sector 16 (2048-byte sectors)
+- [ ] Define `struct iso9660_dir_record` (length, extent LBA, data length, flags, name)
+- [ ] Implement `iso9660_read_dir(extent_lba, size)` — parse directory records
+- [ ] Implement `iso9660_find(path)` — traverse directory tree from root
+- [ ] Implement `iso9660_read_file(extent_lba, size, buf)` — read contiguous extent
+- [ ] Handle both 8.3 names and Rock Ridge (POSIX extensions) if present
+- [ ] VFS integration: register iso9660 driver (read-only), mount to drive letter
+- [ ] Add ISO 9660 probe to partition scanner (check PVD signature `"CD001"`)
+- [ ] Test: `make run-test DISK=optical/iso9660`
+- [ ] Commit: `"fs: ISO 9660 read support"`
+
+### 4.9 Joliet / UDF Read Support
+
+> Joliet extends ISO 9660 with long Unicode filenames. UDF is the standard
+> for DVD and Blu-ray media. Both build on top of ISO 9660 infrastructure.
+
+- [ ] Joliet: parse Supplementary Volume Descriptor, decode UTF-16BE filenames
+- [ ] UDF: parse Anchor Volume Descriptor Pointer (sector 256)
+- [ ] UDF: parse Partition Descriptor, Logical Volume Descriptor
+- [ ] UDF: implement `udf_read_dir()` — parse File Identifier Descriptors
+- [ ] UDF: implement `udf_read_file()` — follow allocation descriptors
+- [ ] Test: `make run-test DISK=optical/joliet` / `optical/udf`
+- [ ] Commit: `"fs: Joliet + UDF read support"`
 
 ---
 
@@ -801,3 +849,6 @@
 | 🔵 P4 | 8.10 Snapshot Manager (CLI + GUI) | Volume shadow copy / backup |
 | 🔵 P4 | 8.11 NVMe Driver | Modern SSD support (future) |
 | 🔵 P4 | 8.12 USB Mass Storage | Hot-plug USB drives (future) |
+| 🟢 P3 | 1.4 ATAPI Driver | Optical disc reading |
+| 🟢 P3 | 4.8 ISO 9660 Read | CD/DVD filesystem |
+| 🟢 P3 | 4.9 Joliet/UDF Read | DVD/Blu-ray extensions |
