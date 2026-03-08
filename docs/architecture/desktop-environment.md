@@ -22,8 +22,9 @@ UEFI GOP framebuffer with double buffering.
 │  gfx_surface_t, primitives, alpha blend,    │
 │  rounded rect, dirty rect tracker           │
 ├─────────────────────────────────────────────┤
-│            Font Renderer (font.c)           │
-│            8×16 PSF bitmap glyphs           │
+│       TrueType Font System (font_mgr.h)    │
+│  Selawik (UI) + Cascadia Code (mono) +      │
+│  Inter (fallback) via stb_truetype           │
 ├─────────────────────────────────────────────┤
 │          Framebuffer (framebuffer.c)        │
 │  GOP linear framebuffer, double buffering   │
@@ -160,7 +161,25 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 | `ttf_measure_width` | Measure text width without drawing |
 | `ttf_line_height` | Get line height (ascent − descent + gap, scaled) |
 
-**Font slots:** UI (segoeui.ttf), Mono (consola.ttf), Title (segoeuib.ttf), Icon.
+**Font slots:**
+
+| Slot | Macro | Font | File |
+|------|-------|------|------|
+| 0 | `FONT_UI` | Selawik Regular | `selawk.ttf` |
+| 1 | `FONT_UI_BOLD` | Selawik Semibold | `selawksb.ttf` |
+| 2 | `FONT_MONO` | Cascadia Code Regular | `CascadiaCode-Regular.ttf` |
+| 3 | `FONT_MONO_BOLD` | Cascadia Code Bold | `CascadiaCode-Bold.ttf` |
+
+**Fallback chain:** If primary font not found, slots 0–1 fall back to Inter Regular/Bold, slots 2–3 fall back to Selawik.
+
+**Bundled fonts** (in `resources/fonts/`):
+
+| Font | License | Files |
+|------|---------|-------|
+| Selawik | MIT | `selawk.ttf`, `selawksb.ttf` |
+| Cascadia Code | OFL 1.1 | `CascadiaCode-Regular.ttf`, `CascadiaCode-Bold.ttf` |
+| Inter | OFL 1.1 | `Inter-Regular.ttf`, `Inter-Bold.ttf` |
+
 **Build:** Both `stb_truetype_impl.c` and `gfx_text.c` compiled with `-msse2`. FPU state protected via `fxsave`/`fxrstor`.
 
 ## Framebuffer Graphics

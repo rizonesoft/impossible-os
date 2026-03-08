@@ -31,21 +31,23 @@ typedef struct ttf_internal {
 static ttf_internal_t ttf_slots[FONT_MAX_SLOTS];
 static int ttf_mgr_ready = 0;
 
-/* Font file mapping: slot → filename on disk */
+/* Font file mapping: slot → filename on disk
+ * Primary:  Selawik (UI), Cascadia Code (mono)
+ * Fallback: Inter (UI alternative), Selawik (mono fallback) */
 static const char *ttf_filenames[FONT_MAX_SLOTS] = {
-    "segoeui.ttf",    /* FONT_SLOT_UI */
-    "consola.ttf",    /* FONT_SLOT_MONO */
-    "segoeuib.ttf",   /* FONT_SLOT_TITLE (bold) */
-    "segoeui.ttf",    /* FONT_SLOT_ICON (reuse UI) */
+    "selawk.ttf",              /* FONT_UI — Selawik Regular */
+    "selawksb.ttf",            /* FONT_UI_BOLD — Selawik Semibold */
+    "CascadiaCode-Regular.ttf",/* FONT_MONO — Cascadia Code Regular */
+    "CascadiaCode-Bold.ttf",   /* FONT_MONO_BOLD — Cascadia Code Bold */
     NULL, NULL, NULL, NULL
 };
 
 /* Fallback filenames if primary not found */
 static const char *ttf_fallbacks[FONT_MAX_SLOTS] = {
-    "arial.ttf",
-    "cour.ttf",
-    "arialbd.ttf",
-    "arial.ttf",
+    "Inter-Regular.ttf",   /* fallback UI */
+    "Inter-Bold.ttf",      /* fallback UI bold */
+    "selawk.ttf",          /* fallback mono → UI regular */
+    "selawksb.ttf",        /* fallback mono bold → UI semibold */
     NULL, NULL, NULL, NULL
 };
 

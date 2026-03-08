@@ -36,7 +36,8 @@ make all
   │    └── tools/jpg2raw → build/tools/jpg2raw
   ├── sysroot (depends on host-tools)
   │    ├── Text files (hello.txt, readme.txt)
-  │    └── JPG → RAW conversion (wallpaper, icons)
+  │    ├── JPG → RAW conversion (wallpaper, icons)
+  │    └── Font bundle → Impossible/Fonts/ (Selawik, Cascadia Code, Inter)
   ├── userland (depends on sysroot)
   │    ├── User libc (crt0.o + libc.a)
   │    ├── hello.c → hello.exe (user-mode ELF)

@@ -147,6 +147,9 @@ $(SYSROOT)/wallpaper.raw: host-tools
 	@# Convert start button icon (32x32 PNG with alpha)
 	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
 		$(SYSROOT)/start_icon.raw 32 32 2>&1
+	@# Copy bundled TrueType fonts (Selawik, Cascadia Code, Inter)
+	@cp resources/fonts/*.ttf $(SYSROOT)/Impossible/Fonts/
+	@echo "[SYSROOT] Fonts copied"
 	@echo "[SYSROOT] Assets and directory tree staged"
 
 ## userland: Build user-mode programs and copy into sysroot

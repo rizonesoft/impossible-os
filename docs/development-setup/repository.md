@@ -65,7 +65,11 @@ impossible-os/
 │   ├── jpg2raw.c              # JPG/PNG to raw BGRA converter
 │   └── make-test-disks.sh     # FS + optical test image generator
 │
-├── assets/                    # Raw image assets
+├── resources/                 # Bundled assets
+│   ├── fonts/                 # TrueType fonts (Selawik, Cascadia Code, Inter)
+│   ├── backgrounds/           # Wallpaper images
+│   ├── icons/                 # UI icons
+│   └── start/                 # Start button assets
 │
 ├── docs/                      # Project documentation
 │   └── development-setup/     # Dev environment setup guides

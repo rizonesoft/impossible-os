@@ -4,9 +4,14 @@
  * Loads TrueType fonts from C:\Impossible\Fonts\ at boot time and provides
  * a simple API for text rendering on gfx_surface_t.
  *
+ * Bundled fonts:
+ *   Selawik Regular + Semibold  (MIT)     — UI font
+ *   Cascadia Code Regular + Bold (OFL 1.1) — Monospace font
+ *   Inter Regular + Bold (OFL 1.1)        — Alternative UI font (fallback)
+ *
  * Usage:
- *   ttf_mgr_init();                                // load fonts at boot
- *   ttf_font_t *f = ttf_get(FONT_SLOT_UI, 16);    // get 16px UI font
+ *   ttf_mgr_init();                            // load fonts at boot
+ *   ttf_font_t *f = ttf_get(FONT_UI, 16);     // get 16px UI font
  *   ttf_draw_string(surface, f, 10, 10, "Hello", GFX_COLOR_WHITE);
  * ============================================================================ */
 
@@ -17,11 +22,17 @@
 
 /* --- Font slots --- */
 
-#define FONT_SLOT_UI      0   /* Primary UI font (segoeui.ttf or default) */
-#define FONT_SLOT_MONO    1   /* Monospace font (consola.ttf or default) */
-#define FONT_SLOT_TITLE   2   /* Window title font */
-#define FONT_SLOT_ICON    3   /* Icon label font */
+#define FONT_UI           0   /* UI font — Selawik Regular */
+#define FONT_UI_BOLD      1   /* UI font bold — Selawik Semibold */
+#define FONT_MONO         2   /* Monospace — Cascadia Code Regular */
+#define FONT_MONO_BOLD    3   /* Monospace bold — Cascadia Code Bold */
 #define FONT_MAX_SLOTS    8   /* Maximum loaded fonts */
+
+/* Backwards-compatible aliases */
+#define FONT_SLOT_UI      FONT_UI
+#define FONT_SLOT_MONO    FONT_MONO
+#define FONT_SLOT_TITLE   FONT_UI_BOLD
+#define FONT_SLOT_ICON    FONT_UI
 
 /* Maximum cached pixel sizes per font slot */
 #define FONT_MAX_SIZES    4
