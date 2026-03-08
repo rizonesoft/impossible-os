@@ -73,10 +73,10 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel iso grub-efi system-disk test-disks run run-debug run-log clean
+.PHONY: all _increment_build boot kernel host-tools sysroot userland iso grub-efi system-disk test-disks run run-debug run-log clean
 
-## all: Build everything (bootloader + kernel + ISO + system disk)
-all: _increment_build iso grub-efi system-disk
+## all: Build everything (kernel + userland + system disk)
+all: _increment_build kernel userland grub-efi system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_HASH))"
 
 ## _increment_build: Auto-increment the build number
@@ -110,48 +110,48 @@ $(KERNEL_BIN): $(OBJS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"
 
-## iso: Package kernel into a bootable UEFI ISO via GRUB
-iso: $(ISO_FILE)
+## host-tools: Build host utility programs (jpg2raw, etc.)
+host-tools: $(BUILD_DIR)/tools/jpg2raw
 
-$(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
-	@mkdir -p $(ISO_DIR)/boot/grub
-	@# Build jpg2raw converter (uses stb_image)
+$(BUILD_DIR)/tools/jpg2raw: tools/jpg2raw.c
 	@mkdir -p $(BUILD_DIR)/tools
-	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/jpg2raw tools/jpg2raw.c -lm -Itools
-	@# Create sysroot staging directory and test files
-	@mkdir -p $(BUILD_DIR)/sysroot
-	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/sysroot/hello.txt
-	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/sysroot/readme.txt
+	$(HOST_CC) -O2 -o $@ $< -lm -Itools
+	@echo "[TOOL] $@ built"
+
+## sysroot: Populate build/sysroot/ with system files and assets
+SYSROOT := $(BUILD_DIR)/sysroot
+sysroot: $(SYSROOT)/wallpaper.raw
+
+$(SYSROOT)/wallpaper.raw: host-tools
+	@mkdir -p $(SYSROOT)
+	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
+	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
 	@# Convert wallpaper background image to raw BGRA
 	$(BUILD_DIR)/tools/jpg2raw resources/backgrounds/background.jpg \
-		$(BUILD_DIR)/sysroot/wallpaper.raw 1280 720 2>&1
-	@cp $(BUILD_DIR)/sysroot/wallpaper.raw $(BUILD_DIR)/sysroot/bg.raw
+		$(SYSROOT)/wallpaper.raw 1280 720 2>&1
+	@cp $(SYSROOT)/wallpaper.raw $(SYSROOT)/bg.raw
 	@# Convert start button icon (32x32 PNG with alpha)
 	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
-		$(BUILD_DIR)/sysroot/start_icon.raw 32 32 2>&1
-	@# Build userland libc
+		$(SYSROOT)/start_icon.raw 32 32 2>&1
+	@echo "[SYSROOT] Assets and text files staged"
+
+## userland: Build user-mode programs and copy into sysroot
+USER_CFLAGS := -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+               -fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+               -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g
+
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/shell.exe
+
+$(SYSROOT)/hello.exe $(SYSROOT)/shell.exe: sysroot user/hello.c user/shell.c user/lib/crt0.asm \
+                                           user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
+                                           user/lib/ctype.c user/lib/math.c user/user.ld
 	@mkdir -p $(BUILD_DIR)/user/lib
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/lib/stdlib.c -o $(BUILD_DIR)/user/lib/stdlib.o
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/lib/stdio.c -o $(BUILD_DIR)/user/lib/stdio.o
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/string.c -o $(BUILD_DIR)/user/lib/string.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/stdlib.c -o $(BUILD_DIR)/user/lib/stdlib.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/stdio.c -o $(BUILD_DIR)/user/lib/stdio.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
 	x86_64-elf-ar rcs $(BUILD_DIR)/user/libc.a \
 		$(BUILD_DIR)/user/lib/string.o \
 		$(BUILD_DIR)/user/lib/stdlib.o \
@@ -160,20 +160,21 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 		$(BUILD_DIR)/user/lib/math.o
 	@echo "[LIBC] $(BUILD_DIR)/user/libc.a created"
 	@# Build user-mode ELF programs (linked against crt0 + libc)
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/hello.o $(BUILD_DIR)/user/libc.a
-	$(CC) -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-		-fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-		-mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
-		-Iuser/include -c user/shell.c -o $(BUILD_DIR)/user/shell.o
+	$(CC) $(USER_CFLAGS) -Iuser/include -c user/shell.c -o $(BUILD_DIR)/user/shell.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/shell.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/shell.o $(BUILD_DIR)/user/libc.a
-	@cp $(BUILD_DIR)/user/hello.exe $(BUILD_DIR)/sysroot/hello.exe
-	@cp $(BUILD_DIR)/user/shell.exe $(BUILD_DIR)/sysroot/shell.exe
+	@cp $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
+	@cp $(BUILD_DIR)/user/shell.exe $(SYSROOT)/shell.exe
+	@echo "[USER] hello.exe + shell.exe → sysroot"
+
+## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
+iso: $(ISO_FILE)
+
+$(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg userland
+	@mkdir -p $(ISO_DIR)/boot/grub
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.exe
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
@@ -194,7 +195,7 @@ system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
                 tools/make-system-disk.c tools/mkfs-ixfs.c \
-                $(BUILD_DIR)/sysroot/hello.txt
+                $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
