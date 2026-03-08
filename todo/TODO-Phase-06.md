@@ -287,12 +287,12 @@
 
 ### 5.4 IXFS VFS Integration
 
-- [ ] Register IXFS as a VFS filesystem type
-- [ ] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
-- [ ] Mount IXFS partition as `C:\` (system drive)
-- [ ] Migrate boot: copy initrd contents → IXFS `C:\` on first boot
-- [ ] Test: write file, reboot, verify persistence
-- [ ] Commit: `"fs: IXFS VFS integration + C:\\ mount"`
+- [x] Register IXFS as a VFS filesystem type
+- [x] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
+- [x] Mount IXFS partition as `C:\` (system drive)
+- [x] Migrate boot: copy initrd contents → IXFS `C:\` on first boot
+- [x] Test: write file, reboot, verify persistence
+- [x] Commit: `"fs: IXFS VFS integration + C:\\ mount"`
 
 ### 5.5 Performance Optimizations
 
