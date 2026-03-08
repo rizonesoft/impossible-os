@@ -100,13 +100,13 @@ make all
 
 ## 4. Kernel Boot Path Cleanup
 
-### 4.1 Remove initrd Dependency
+### 4.1 Remove initrd Dependency ✅
 
-- [ ] Remove `initrd_init()` and `vfs_mount('B', ...)` from `main.c`
-- [ ] Update VFS boot test: read `hello.txt` from `C:\` instead of `B:\`
-- [ ] Load wallpaper/icons from `D:\boot\` (FAT32 EFI partition) instead of initrd
-- [ ] Move wallpaper load after `partition_mount_filesystems()` (FAT32 available)
-- [ ] Commit: `"kernel: boot from disk, remove initrd dependency"`
+- [x] Remove `initrd_init()` and `vfs_mount('B', ...)` from `main.c`
+- [x] Update VFS boot test: read `hello.txt` from `C:\` instead of `B:\`
+- [x] Load wallpaper/icons from `C:\` (IXFS) via VFS heap-allocated buffers
+- [x] Desktop loads after `partition_mount_filesystems()` (IXFS available)
+- [x] Commit: `ba277b0` — `"kernel: boot from disk, remove initrd dependency"`
 
 ### 4.2 Remove firstboot.c
 
