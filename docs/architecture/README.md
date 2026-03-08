@@ -16,3 +16,4 @@ Comprehensive documentation of every implemented subsystem in Impossible OS.
 | [Networking](networking.md) | RTL8139, Ethernet, ARP, IPv4, ICMP, UDP, DHCP |
 | [Desktop Environment](desktop-environment.md) | Framebuffer graphics, fonts, mouse, WM, taskbar, controls |
 | [System Services](system-services.md) | Logging, RTC, ACPI, PCI |
+| [Codex Registry](codex-registry.md) | Hierarchical key-value config store (System, Hardware, User, Apps) |
