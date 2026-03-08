@@ -114,12 +114,12 @@
 
 ### 2.4 Replace Bitmap Font
 
-- [ ] Replace `font_draw_char()` calls in `desktop.c` with TrueType rendering
-- [ ] Replace font calls in `wm.c` (window titles, decorations)
-- [ ] Replace font calls in `controls.c` (buttons, labels, textboxes)
-- [ ] Keep bitmap font as fallback for early boot (pre-initrd)
-- [ ] Copy fonts from C:\ to `C:\Impossible\Fonts\` on IXFS
-- [ ] Commit: `"desktop: TrueType fonts replace bitmap"`
+- [x] Replace `font_draw_char()` calls in `desktop.c` with TrueType rendering
+- [x] Replace font calls in `wm.c` (window titles, decorations)
+- [x] Replace font calls in `controls.c` (buttons, labels, textboxes)
+- [x] Keep bitmap font as fallback for early boot (pre-initrd)
+- [x] Copy fonts from C:\ to `C:\Impossible\Fonts\` on IXFS
+- [x] Commit: `"desktop: TrueType fonts replace bitmap"`
 
 ---
 

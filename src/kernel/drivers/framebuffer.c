@@ -554,6 +554,8 @@ void fb_set_color(uint32_t fg, uint32_t bg)
 
 uint32_t fb_get_width(void)  { return fb_width; }
 uint32_t fb_get_height(void) { return fb_height; }
+uint32_t *fb_get_backbuffer(void) { return back_buf; }
+uint32_t fb_get_stride(void) { return fb_stride; }
 
 void fb_lock_compositor(void)
 {

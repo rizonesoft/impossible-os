@@ -11,7 +11,8 @@
 
 #include "desktop/controls.h"
 #include "desktop/wm.h"
-#include "desktop/font.h"
+#include "desktop/font.h"       /* bitmap font — kept as fallback */
+#include "font_mgr.h"            /* TrueType fonts — primary rendering */
 #include "kernel/drivers/framebuffer.h"
 
 /* ---- Per-window control storage ---- */
@@ -117,34 +118,28 @@ static void draw_text_centered(int handle, uint32_t rx, uint32_t ry,
                                 uint32_t rw, uint32_t rh,
                                 const char *text, uint32_t fg, uint32_t bg)
 {
-    uint32_t tw = ctrl_strlen(text) * FONT_WIDTH;
-    uint32_t th = FONT_HEIGHT;
+    uint32_t *fb = wm_get_framebuffer(handle);
+    uint32_t cw = wm_get_client_width(handle);
+    uint32_t ch = wm_get_client_height(handle);
+    int px_size = 14;
+    ttf_font_t *f;
+    int tw;
     uint32_t tx, ty;
-    uint32_t i, max_chars;
+    gfx_surface_t ws;
 
-    /* Center horizontally and vertically */
-    tx = (tw < rw) ? rx + (rw - tw) / 2 : rx + 2;
-    ty = (th < rh) ? ry + (rh - th) / 2 : ry;
+    (void)bg;  /* TTF uses alpha blending, no explicit bg */
 
-    /* Clip to rectangle width */
-    max_chars = (rw - 4) / FONT_WIDTH;
-    if (max_chars > ctrl_strlen(text))
-        max_chars = ctrl_strlen(text);
+    if (!fb || !cw || !ch) return;
 
-    for (i = 0; i < max_chars; i++) {
-        /* Draw each character via per-pixel approach into window fb */
-        const uint8_t *glyph = font_get_glyph(text[i]);
-        uint32_t py, px;
-        for (py = 0; py < FONT_HEIGHT; py++) {
-            uint8_t row = glyph[py];
-            for (px = 0; px < FONT_WIDTH; px++) {
-                uint32_t color = (row & (0x80 >> px)) ? fg : bg;
-                wm_put_pixel(handle,
-                             tx + i * FONT_WIDTH + px,
-                             ty + py, color);
-            }
-        }
-    }
+    f = ttf_get(FONT_UI, px_size);
+    if (!f) return;
+
+    tw = ttf_measure_width(f, text);
+    tx = ((uint32_t)tw < rw) ? rx + (rw - (uint32_t)tw) / 2 : rx + 2;
+    ty = (uint32_t)px_size < rh ? ry + (rh - (uint32_t)px_size) / 2 : ry;
+
+    gfx_surface_init(&ws, fb, cw, ch, cw);
+    ttf_draw_string(&ws, f, (int32_t)tx, (int32_t)ty, text, (gfx_color_t)fg);
 }
 
 /* Draw text left-aligned in a rectangle */
@@ -152,24 +147,32 @@ static void draw_text_left(int handle, uint32_t rx, uint32_t ry,
                             uint32_t rh, const char *text, uint32_t len,
                             uint32_t fg, uint32_t bg)
 {
+    uint32_t *fb = wm_get_framebuffer(handle);
+    uint32_t cw = wm_get_client_width(handle);
+    uint32_t ch = wm_get_client_height(handle);
+    int px_size = 14;
+    ttf_font_t *f;
     uint32_t ty;
+    gfx_surface_t ws;
+    char buf[256];
     uint32_t i;
 
-    ty = (FONT_HEIGHT < rh) ? ry + (rh - FONT_HEIGHT) / 2 : ry;
+    (void)bg;
 
-    for (i = 0; i < len; i++) {
-        const uint8_t *glyph = font_get_glyph(text[i]);
-        uint32_t py, px;
-        for (py = 0; py < FONT_HEIGHT; py++) {
-            uint8_t row = glyph[py];
-            for (px = 0; px < FONT_WIDTH; px++) {
-                uint32_t color = (row & (0x80 >> px)) ? fg : bg;
-                wm_put_pixel(handle,
-                             rx + i * FONT_WIDTH + px,
-                             ty + py, color);
-            }
-        }
-    }
+    if (!fb || !cw || !ch) return;
+
+    f = ttf_get(FONT_UI, px_size);
+    if (!f) return;
+
+    /* Copy text with length limit */
+    for (i = 0; i < len && i < 255; i++)
+        buf[i] = text[i];
+    buf[i] = '\0';
+
+    ty = (uint32_t)px_size < rh ? ry + (rh - (uint32_t)px_size) / 2 : ry;
+
+    gfx_surface_init(&ws, fb, cw, ch, cw);
+    ttf_draw_string(&ws, f, (int32_t)rx, (int32_t)ty, buf, (gfx_color_t)fg);
 }
 
 /* ---- Initialization ---- */

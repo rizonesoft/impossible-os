@@ -436,13 +436,15 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
 
     size_idx = cache_size_index(f->pixel_size);
 
-    /* Fast path: all ASCII at a cached size — no FPU needed */
+    /* Fast path: all ASCII at a cached size — single FPU bracket for kerning */
     if (size_idx >= 0 && slot >= 0 && slot < FONT_MAX_SLOTS) {
         ttf_internal_t *fi = (ttf_internal_t *)f;
         int32_t base_y = y + cached_ascent[slot][size_idx];
         uint32_t cr = GFX_RED(color);
         uint32_t cg = GFX_GREEN(color);
         uint32_t cb = GFX_BLUE(color);
+        fxsave_area_t fpu_state __attribute__((aligned(16)));
+        uint8_t fpu_saved = 0;
 
         for (i = 0; text[i]; i++) {
             int cp = (unsigned char)text[i];
@@ -457,16 +459,14 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                 cursor_x += ge->advance;
             } else {
                 /* Non-ASCII: fall through to stb_truetype */
-                fxsave_area_t fpu_state __attribute__((aligned(16)));
                 int width, height, xoff, yoff;
                 int advance, lsb;
                 unsigned char *bitmap;
 
-                simd_save_state(&fpu_state);
+                if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
                 bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
                                                   cp, &width, &height, &xoff, &yoff);
                 stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
-                simd_restore_state(&fpu_state);
 
                 if (bitmap) {
                     int32_t fb_y = y + (int32_t)(f->scale * (float)f->ascent) + yoff;
@@ -491,18 +491,19 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                 cursor_x += (int32_t)(f->scale * (float)advance);
             }
 
-            /* Kerning with next character (still need stb_truetype for this) */
+            /* Kerning with next character */
             if (text[i + 1]) {
-                fxsave_area_t fpu_state __attribute__((aligned(16)));
-                simd_save_state(&fpu_state);
+                if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
                 {
                     int kern = stbtt_GetCodepointKernAdvance(
                         &fi->info, cp, (unsigned char)text[i + 1]);
                     cursor_x += (int32_t)(f->scale * (float)kern);
                 }
-                simd_restore_state(&fpu_state);
             }
         }
+
+        if (fpu_saved)
+            simd_restore_state(&fpu_state);
 
         return (int)(cursor_x - x);
     }

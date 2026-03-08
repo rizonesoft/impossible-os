@@ -154,12 +154,14 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 
 | Function | Description |
 |----------|-------------|
-| `ttf_mgr_init` | Load TTF fonts from `C:\Impossible\Fonts\` into slots |
+| `ttf_mgr_init` | Load TTF fonts from `C:\Impossible\Fonts\` into slots + build glyph cache |
 | `ttf_get(slot, px)` | Return scaled font handle for a given pixel size |
-| `ttf_draw_char` | Rasterize single glyph → alpha blend onto surface |
-| `ttf_draw_string` | Render string with per-glyph rasterization + kerning |
-| `ttf_measure_width` | Measure text width without drawing |
+| `ttf_draw_char` | Render single glyph via cache or stb_truetype fallback |
+| `ttf_draw_string` | Render string with glyph cache + kerning |
+| `ttf_measure_width` | Measure text width (cached advance values) |
 | `ttf_line_height` | Get line height (ascent − descent + gap, scaled) |
+
+**Rendering architecture:** All GUI text (`desktop.c`, `wm.c`, `controls.c`) uses TrueType via `gfx_surface_t` — screen back buffer wrapped via `fb_get_backbuffer()`, per-window framebuffers wrapped inline. The 8×16 bitmap font (`font.c`/`font.h`) is retained for pre-initrd early boot console output and the terminal emulator.
 
 **Font slots:**
 

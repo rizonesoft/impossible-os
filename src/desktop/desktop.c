@@ -9,7 +9,8 @@
 
 #include "desktop/desktop.h"
 #include "kernel/drivers/framebuffer.h"
-#include "desktop/font.h"
+#include "desktop/font.h"       /* bitmap font — kept for early boot fallback */
+#include "font_mgr.h"            /* TrueType fonts — primary rendering */
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/rtc.h"
@@ -56,9 +57,11 @@ static const uint32_t menu_icon_colors[MENU_ITEM_COUNT] = {
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
 static void load_start_icon(void);
-static void draw_text(uint32_t x, uint32_t y, const char *text,
-                      uint32_t fg, uint32_t bg);
-static uint32_t text_width(const char *text);
+
+/* TrueType text helpers — wrap screen back buffer as gfx_surface_t */
+static void ttf_screen_text(int32_t x, int32_t y, const char *text,
+                            int font_slot, int px_size, gfx_color_t color);
+static int  ttf_screen_width(const char *text, int font_slot, int px_size);
 
 /* ---- String helpers ---- */
 static uint32_t slen(const char *s)
@@ -198,21 +201,24 @@ static void load_start_icon(void)
     }
 }
 
-/* ---- Text drawing helper ---- */
+/* ---- TrueType text helpers (screen framebuffer) ---- */
 
-static void draw_text(uint32_t x, uint32_t y, const char *text,
-                      uint32_t fg, uint32_t bg)
+static void ttf_screen_text(int32_t x, int32_t y, const char *text,
+                            int font_slot, int px_size, gfx_color_t color)
 {
-    uint32_t i = 0;
-    while (text[i]) {
-        font_draw_char(x + i * FONT_WIDTH, y, text[i], fg, bg);
-        i++;
-    }
+    gfx_surface_t scr;
+    ttf_font_t *f = ttf_get(font_slot, px_size);
+    if (!f) return;  /* TTF not loaded — silent skip */
+    gfx_surface_init(&scr, fb_get_backbuffer(),
+                     fb_get_width(), fb_get_height(), fb_get_stride());
+    ttf_draw_string(&scr, f, x, y, text, color);
 }
 
-static uint32_t text_width(const char *text)
+static int ttf_screen_width(const char *text, int font_slot, int px_size)
 {
-    return slen(text) * FONT_WIDTH;
+    ttf_font_t *f = ttf_get(font_slot, px_size);
+    if (!f) return (int)(slen(text) * 8);  /* fallback estimate */
+    return ttf_measure_width(f, text);
 }
 
 /* ---- Drawing functions ---- */
@@ -303,9 +309,10 @@ void desktop_draw_taskbar(void)
                 }
             }
         } else {
-            /* Fallback: text */
-            uint32_t txt_y = btn_y + (btn_h - FONT_HEIGHT) / 2;
-            draw_text(btn_x + 8, txt_y, "Start", START_BTN_TEXT, btn_color);
+            /* Fallback: text label */
+            ttf_screen_text((int32_t)(btn_x + 8),
+                            (int32_t)(btn_y + (btn_h - 14) / 2),
+                            "Start", FONT_UI_BOLD, 14, START_BTN_TEXT);
         }
     }
 
@@ -314,7 +321,6 @@ void desktop_draw_taskbar(void)
         uint32_t list_x = START_BTN_WIDTH + 10;
         uint32_t list_max_x = sw - 120;  /* Reserve space for clock */
         uint32_t btn_w = 100;
-        uint32_t txt_y = ty + (TASKBAR_HEIGHT - FONT_HEIGHT) / 2;
         extern struct wm_window windows[];  /* Declared in wm.c */
 
         for (i = 0; i < WM_MAX_WINDOWS && list_x + btn_w <= list_max_x; i++) {
@@ -330,16 +336,10 @@ void desktop_draw_taskbar(void)
             fb_fill_rect(list_x, ty + 3, btn_w, TASKBAR_HEIGHT - 6, btn_bg);
             fb_draw_rect(list_x, ty + 3, btn_w, TASKBAR_HEIGHT - 6, TASKBAR_BORDER);
 
-            /* Truncate title to fit */
-            uint32_t max_chars = (btn_w - 8) / FONT_WIDTH;
-            uint32_t title_len = slen(windows[i].title);
-            if (title_len > max_chars) title_len = max_chars;
-
-            uint32_t c;
-            for (c = 0; c < title_len; c++) {
-                font_draw_char(list_x + 4 + c * FONT_WIDTH, txt_y,
-                               windows[i].title[c], btn_fg, btn_bg);
-            }
+            /* Draw window title with TrueType */
+            ttf_screen_text((int32_t)(list_x + 4),
+                            (int32_t)(ty + (TASKBAR_HEIGHT - 12) / 2),
+                            windows[i].title, FONT_UI, 12, btn_fg);
 
             list_x += btn_w + 4;
         }
@@ -359,11 +359,12 @@ void desktop_draw_taskbar(void)
         clock_buf[4] = '0' + (char)(rtc.minute % 10);
         clock_buf[5] = '\0';
 
-        uint32_t clock_w = text_width(clock_buf);
-        uint32_t clock_x = sw - clock_w - 8;
-        uint32_t txt_y = ty + (TASKBAR_HEIGHT - FONT_HEIGHT) / 2;
+        int clock_w = ttf_screen_width(clock_buf, FONT_UI, 14);
+        uint32_t clock_x = sw - (uint32_t)clock_w - 12;
 
-        draw_text(clock_x, txt_y, clock_buf, CLOCK_COLOR, TASKBAR_COLOR);
+        ttf_screen_text((int32_t)clock_x,
+                        (int32_t)(ty + (TASKBAR_HEIGHT - 14) / 2),
+                        clock_buf, FONT_UI, 14, CLOCK_COLOR);
     }
 }
 
@@ -390,15 +391,20 @@ void desktop_draw_start_menu(void)
     /* Draw each menu item */
     for (i = 0; i < MENU_ITEM_COUNT; i++) {
         uint32_t item_y = menu_y + 4 + i * MENU_ITEM_HEIGHT;
-        uint32_t txt_y = item_y + (MENU_ITEM_HEIGHT - FONT_HEIGHT) / 2;
 
-        /* Icon */
-        font_draw_char(menu_x + 12, txt_y, menu_icons[i],
-                        menu_icon_colors[i], MENU_BG);
+        /* Icon character */
+        {
+            char icon_str[2] = { menu_icons[i], '\0' };
+            ttf_screen_text((int32_t)(menu_x + 12),
+                            (int32_t)(item_y + (MENU_ITEM_HEIGHT - 14) / 2),
+                            icon_str, FONT_UI_BOLD, 14,
+                            menu_icon_colors[i]);
+        }
 
         /* Label */
-        draw_text(menu_x + 12 + FONT_WIDTH + 8, txt_y,
-                  menu_items[i], MENU_TEXT, MENU_BG);
+        ttf_screen_text((int32_t)(menu_x + 32),
+                        (int32_t)(item_y + (MENU_ITEM_HEIGHT - 14) / 2),
+                        menu_items[i], FONT_UI, 14, MENU_TEXT);
 
         /* Separator line (except after last item) */
         if (i < MENU_ITEM_COUNT - 1) {
@@ -470,27 +476,20 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                                 "  Built with love in 2026"
                             };
                             uint32_t ln;
+                            uint32_t cw = wm_get_client_width(h);
+                            uint32_t ch = wm_get_client_height(h);
+                            gfx_surface_t ws;
                             wm_fill_rect(h, 0, 0, 350, 180, 0x001E1E2E);
+                            gfx_surface_init(&ws, fb, cw, ch, cw);
                             for (ln = 0; ln < 7; ln++) {
-                                uint32_t c = 0;
-                                while (lines[ln][c]) {
-                                    const uint8_t *glyph =
-                                        font_get_glyph(lines[ln][c]);
-                                    uint32_t py, px;
-                                    uint32_t fg_c = (ln == 0) ? 0x0088DDFF
-                                                              : 0x00C0C0D0;
-                                    for (py = 0; py < FONT_HEIGHT; py++) {
-                                        uint8_t row = glyph[py];
-                                        for (px = 0; px < FONT_WIDTH; px++) {
-                                            uint32_t clr = (row & (0x80 >> px))
-                                                ? fg_c : 0x001E1E2E;
-                                            wm_put_pixel(h,
-                                                c * FONT_WIDTH + px,
-                                                ln * (FONT_HEIGHT + 4) + 12 + py,
-                                                clr);
-                                        }
-                                    }
-                                    c++;
+                                gfx_color_t fg_c = (ln == 0) ? 0x0088DDFF
+                                                             : 0x00C0C0D0;
+                                int slot = (ln == 0) ? FONT_UI_BOLD : FONT_UI;
+                                ttf_font_t *fnt = ttf_get(slot, 14);
+                                if (fnt) {
+                                    ttf_draw_string(&ws, fnt,
+                                        8, (int32_t)(ln * 20 + 10),
+                                        lines[ln], fg_c);
                                 }
                             }
                         }

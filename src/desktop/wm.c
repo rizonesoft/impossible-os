@@ -22,6 +22,7 @@
 #include "desktop/wm.h"
 #include "kernel/drivers/framebuffer.h"
 #include "desktop/font.h"
+#include "font_mgr.h"
 #include "kernel/drivers/mouse.h"
 #include "kernel/mm/pmm.h"
 #include "desktop/desktop.h"
@@ -39,13 +40,6 @@ static uint8_t prev_buttons = 0;
 static volatile uint8_t needs_redraw = 1;
 
 /* ---- Helpers ---- */
-
-static uint32_t str_len(const char *s)
-{
-    uint32_t len = 0;
-    while (s[len]) len++;
-    return len;
-}
 
 static void str_copy(char *dst, const char *src, uint32_t max)
 {
@@ -434,8 +428,6 @@ static void draw_decorations(const struct wm_window *w)
 {
     uint32_t ow = outer_width(w);
     uint32_t tb_color;
-    int32_t text_x, text_y;
-    uint32_t title_len;
     uint32_t btn_size = WM_TITLEBAR_HEIGHT - 2 * 4;  /* button with padding */
 
     /* Safety: skip if window position is negative (would wrap uint32_t) */
@@ -449,16 +441,17 @@ static void draw_decorations(const struct wm_window *w)
     /* Draw title bar background using fb_fill_rect for speed */
     fb_fill_rect((uint32_t)w->x, (uint32_t)w->y, ow, WM_TITLEBAR_HEIGHT, tb_color);
 
-    /* Draw title text (left-aligned with padding) */
-    text_x = w->x + 8;
-    text_y = w->y + (int32_t)(WM_TITLEBAR_HEIGHT / 2 - FONT_HEIGHT / 2);
-    title_len = str_len(w->title);
+    /* Draw title text (left-aligned with padding) using TrueType */
     {
-        uint32_t i;
-        for (i = 0; i < title_len; i++) {
-            font_draw_char((uint32_t)(text_x + (int32_t)(i * FONT_WIDTH)),
-                           (uint32_t)text_y, w->title[i],
-                           WM_COLOR_TITLE_TEXT, tb_color);
+        gfx_surface_t scr;
+        ttf_font_t *tf = ttf_get(FONT_UI_BOLD, 14);
+        gfx_surface_init(&scr, fb_get_backbuffer(),
+                         fb_get_width(), fb_get_height(), fb_get_stride());
+        if (tf) {
+            ttf_draw_string(&scr, tf,
+                (int32_t)(w->x + 8),
+                (int32_t)(w->y + (WM_TITLEBAR_HEIGHT - 14) / 2),
+                w->title, WM_COLOR_TITLE_TEXT);
         }
     }
 

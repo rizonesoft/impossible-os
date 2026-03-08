@@ -70,6 +70,8 @@ void fb_swap(void);
 
 uint32_t fb_get_width(void);
 uint32_t fb_get_height(void);
+uint32_t *fb_get_backbuffer(void);
+uint32_t fb_get_stride(void);
 
 /* ---- Compositor lock ---- */
 /* When locked, fb_putchar/fb_draw_char become no-ops.
