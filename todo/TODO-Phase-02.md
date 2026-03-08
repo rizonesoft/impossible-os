@@ -11,18 +11,18 @@
 
 ### 1.1 Core Surface & Primitives
 
-- [ ] Define `gfx_surface_t` struct (pixels, width, height, stride)
-- [ ] Define `gfx_color_t` (0xAARRGGBB) with `GFX_RGBA()`, `GFX_RGB()`, `GFX_ALPHA()` macros
-- [ ] Create `include/gfx.h` with all type/API declarations
-- [ ] Create `src/kernel/gfx/gfx_core.c`
-- [ ] Implement `gfx_fill_rect(surface, x, y, w, h, color)` — solid fill
-- [ ] Implement `gfx_draw_rect(surface, x, y, w, h, thickness, color)` — outline
-- [ ] Implement `gfx_fill_rounded_rect(surface, x, y, w, h, radius, color)` — anti-aliased corners
-- [ ] Implement `gfx_draw_rounded_rect(surface, x, y, w, h, radius, thickness, color)`
-- [ ] Implement `gfx_fill_circle(surface, cx, cy, r, color)`
-- [ ] Implement `gfx_draw_line(surface, x1, y1, x2, y2, thickness, color)` — Bresenham
-- [ ] Implement dirty rectangle tracker for partial redraws
-- [ ] Commit: `"gfx: core surface and primitive drawing"`
+- [x] Define `gfx_surface_t` struct (pixels, width, height, stride)
+- [x] Define `gfx_color_t` (0xAARRGGBB) with `GFX_RGBA()`, `GFX_RGB()`, `GFX_ALPHA()` macros
+- [x] Create `include/gfx.h` with all type/API declarations
+- [x] Create `src/kernel/gfx/gfx_core.c`
+- [x] Implement `gfx_fill_rect(surface, x, y, w, h, color)` — solid fill
+- [x] Implement `gfx_draw_rect(surface, x, y, w, h, thickness, color)` — outline
+- [x] Implement `gfx_fill_rounded_rect(surface, x, y, w, h, radius, color)` — anti-aliased corners
+- [x] Implement `gfx_draw_rounded_rect(surface, x, y, w, h, radius, thickness, color)`
+- [x] Implement `gfx_fill_circle(surface, cx, cy, r, color)`
+- [x] Implement `gfx_draw_line(surface, x1, y1, x2, y2, thickness, color)` — Bresenham
+- [x] Implement dirty rectangle tracker for partial redraws
+- [x] Commit: `"gfx: core surface and primitive drawing"`
 
 ### 1.2 Alpha Blending & Compositing
 

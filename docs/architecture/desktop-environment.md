@@ -18,6 +18,10 @@ UEFI GOP framebuffer with double buffering.
 │ TextBox,       │   z-order, compositing)    │
 │ ScrollBar      │                            │
 ├────────────────┴────────────────────────────┤
+│       2D Compositing Library (gfx.h)        │
+│  gfx_surface_t, primitives, alpha blend,    │
+│  rounded rect, dirty rect tracker           │
+├─────────────────────────────────────────────┤
 │            Font Renderer (font.c)           │
 │            8×16 PSF bitmap glyphs           │
 ├─────────────────────────────────────────────┤
@@ -28,6 +32,50 @@ UEFI GOP framebuffer with double buffering.
 │   PS/2 IRQ 12       │  PS/2 IRQ 1          │
 └──────────────────────┴──────────────────────┘
 ```
+
+## 2D Compositing Library (GFX)
+
+Hardware-independent surface abstraction for all 2D rendering.
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `include/gfx.h` | Types, color macros, API declarations |
+| `src/kernel/gfx/gfx_core.c` | Primitives implementation |
+
+### Color Format
+
+| Macro | Description |
+|-------|-------------|
+| `GFX_RGBA(r,g,b,a)` | Construct 0xAARRGGBB color |
+| `GFX_RGB(r,g,b)` | Opaque color (alpha=0xFF) |
+| `GFX_ALPHA(c)` / `GFX_RED(c)` / `GFX_GREEN(c)` / `GFX_BLUE(c)` | Extract channels |
+
+### Surface API
+
+| Function | Description |
+|----------|-------------|
+| `gfx_surface_init(s, pixels, w, h, stride)` | Wrap existing buffer |
+| `gfx_surface_create(s, w, h)` | Allocate new surface (kmalloc) |
+| `gfx_surface_destroy(s)` | Free allocated surface |
+| `gfx_clear(s, color)` | Fill entire surface |
+
+### Drawing Primitives
+
+| Function | Description |
+|----------|-------------|
+| `gfx_fill_rect` | Solid filled rectangle (clipped) |
+| `gfx_draw_rect` | Outline rectangle with thickness |
+| `gfx_fill_rounded_rect` | Rounded corners (isqrt-based) |
+| `gfx_draw_rounded_rect` | Rounded outline |
+| `gfx_fill_circle` | Midpoint circle algorithm |
+| `gfx_draw_line` | Bresenham line with thickness |
+| `gfx_put_pixel` / `gfx_blend_pixel` | Single pixel (opaque / alpha-blended) |
+
+### Dirty Rectangle Tracker
+
+Tracks up to 32 dirty regions for partial redraws. On overflow, merges all into one bounding box.
 
 ## Framebuffer Graphics
 
