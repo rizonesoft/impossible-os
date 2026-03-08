@@ -20,6 +20,7 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
+#include "kernel/panic.h"
 
 /* Page table entry — 64-bit */
 typedef uint64_t pte_t;
@@ -262,31 +263,8 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
         return (uint64_t)frame;  /* page loaded from file, retry instruction */
     }
 
-    printk("\n");
-    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-    printk("=== PAGE FAULT ===\n");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-
-    printk("Faulting address: %p\n", fault_addr);
-    printk("Error code: %x\n", frame->err_code);
-
-    /* Decode the error code */
-    printk("  %s\n", (frame->err_code & 1) ? "Protection violation" : "Page not present");
-    printk("  %s\n", (frame->err_code & 2) ? "Write access" : "Read access");
-    printk("  %s\n", (frame->err_code & 4) ? "User mode" : "Kernel mode");
-    if (frame->err_code & 8)
-        printk("  Reserved bit set in page entry\n");
-    if (frame->err_code & 16)
-        printk("  Instruction fetch (NX violation)\n");
-
-    printk("RIP: %p\n", frame->rip);
-    printk("RSP: %p\n", frame->rsp);
-
-    printk("\nSystem halted.\n");
-
-    /* Halt — page faults in the kernel are fatal for now */
-    for (;;)
-        __asm__ volatile ("cli; hlt");
+    /* Unhandled page fault — show styled panic screen */
+    panic_screen(frame, frame->err_code, "PAGE_FAULT", "vmm.c", 0);
 
     return (uint64_t)frame;  /* unreachable */
 }

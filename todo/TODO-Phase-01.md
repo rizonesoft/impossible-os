@@ -120,17 +120,18 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 4.1 Styled Panic Screen
 
-- [ ] Design graphical panic screen (Impossible OS blue, sad face, error info)
-- [ ] Implement `panic_screen(error_code, rip, cr2, description)` with:
-  - [ ] Exception name and stop code
-  - [ ] Faulting address and RIP
-  - [ ] Source file + line (via `__FILE__`, `__LINE__`)
-  - [ ] Register dump (RAX–R15, RSP, RFLAGS, CR2, CR3)
-- [ ] Implement stack trace (walk RBP chain, print return addresses)
-- [ ] Auto-restart countdown (configurable via Codex `System\Recovery\AutoRestart`)
-- [ ] Dump crash info to `C:\Impossible\System\crashdump.log` (when FS is available)
-- [ ] Add `KPANIC(msg)` macro that captures file/line automatically
-- [ ] Commit: `"kernel: styled panic screen with stack trace"`
+- [x] Design graphical panic screen (Impossible OS blue, sad face, error info)
+- [x] Implement `panic_screen(error_code, rip, cr2, description)` with:
+  - [x] Exception name and stop code
+  - [x] Faulting address and RIP
+  - [x] Source file + line (via `__FILE__`, `__LINE__`)
+  - [x] Register dump (RAX–R15, RSP, RFLAGS, CR2, CR3)
+- [x] Implement stack trace (walk RBP chain, print return addresses)
+- [x] Auto-restart countdown (configurable via Codex `System\Recovery\AutoRestart`)
+- [x] Dump crash info to `C:\Impossible\System\crashdump.log` (when FS is available)
+- [x] Add `KPANIC(msg)` macro that captures file/line automatically
+- [x] Replaced default handlers in `idt.c` and `vmm.c` with `panic_screen()` calls
+- [x] Commit: `"kernel: styled panic screen with stack trace"`
 
 ---
 

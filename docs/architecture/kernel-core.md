@@ -78,13 +78,34 @@ the CPU loads `RSP0` from the TSS to switch to the kernel stack.
 | 32–47 | Hardware IRQs | PIT, keyboard, serial, mouse, NIC, etc. |
 | 48–255 | Software | Syscall (0x80), available for IPI |
 
-### Exception Handler
+### Styled Panic Screen
 
-Unhandled CPU exceptions trigger a **KERNEL PANIC** screen displaying:
-- Exception name and number
-- Error code (if applicable)
-- Register dump (RAX–R15, RIP, RSP, RFLAGS, CR2)
-- The system halts after displaying the panic
+Unhandled CPU exceptions trigger a graphical **blue panic screen** (BSOD):
+
+| Feature | Description |
+|---------|-------------|
+| Blue background | Impossible OS blue (`#003380`) with sad face emoticon |
+| Stop code | Exception name (e.g., `PAGE_FAULT`, `GENERAL_PROTECTION_FAULT`) |
+| Error info | Error code, faulting RIP, CR2 address |
+| Source location | `__FILE__:__LINE__` via `KPANIC()` macro |
+| Register dump | RAX–R15, RSP, RFLAGS, CR2, CR3, CS, SS |
+| Stack trace | RBP chain walk (up to 16 frames) |
+| Crash dump | Saved to `C:\Impossible\System\crashdump.log` |
+| Auto-restart | Countdown with progress bar (Codex: `System\Recovery\AutoRestart`, default 30s) |
+
+#### Key Files
+
+| File | Purpose |
+|------|---------|
+| `include/kernel/panic.h` | `panic_screen()` API, `KPANIC()` / `KPANIC_FRAME()` macros |
+| `src/kernel/panic.c` | Graphical panic screen, stack trace, crash dump, auto-restart |
+
+#### Usage
+
+```c
+KPANIC("out of memory");              /* Simple panic with file/line */
+KPANIC_FRAME(frame, "page fault");    /* Panic with interrupt frame */
+```
 
 ### Handler Registration
 

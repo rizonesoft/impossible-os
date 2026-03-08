@@ -9,6 +9,7 @@
 #include "kernel/gdt.h"
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/panic.h"
 
 /* IDT entry (16 bytes in Long Mode) */
 struct idt_entry {
@@ -114,27 +115,11 @@ uint64_t isr_handler(struct interrupt_frame *frame)
         return handlers[frame->int_no](frame);
     }
 
-    /* Default handler for CPU exceptions (0-31) */
+    /* Default handler for CPU exceptions (0-31) — show styled panic screen */
     if (frame->int_no < 32) {
-        printk("\n");
-        fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-        printk("=== KERNEL PANIC ===\n");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Exception %u: %s\n", frame->int_no,
-               exception_names[frame->int_no]);
-        printk("Error code: %x\n", frame->err_code);
-        printk("RIP: %p  CS: %x\n", frame->rip, frame->cs);
-        printk("RSP: %p  SS: %x\n", frame->rsp, frame->ss);
-        printk("RFLAGS: %x\n", frame->rflags);
-        printk("RAX: %p  RBX: %p\n", frame->rax, frame->rbx);
-        printk("RCX: %p  RDX: %p\n", frame->rcx, frame->rdx);
-        printk("RSI: %p  RDI: %p\n", frame->rsi, frame->rdi);
-        printk("RBP: %p\n", frame->rbp);
-
-        /* Halt on unhandled exceptions */
-        printk("\nSystem halted.\n");
-        for (;;)
-            __asm__ volatile ("cli; hlt");
+        panic_screen(frame, frame->err_code, exception_names[frame->int_no],
+                     "idt.c", 0);
+        /* panic_screen never returns */
     }
 
     return (uint64_t)frame;
