@@ -311,7 +311,7 @@ if [ ! -f "$IMG" ]; then
     elif command -v mkudffs &>/dev/null; then
         log "Creating udf.iso (UDF 1.02, via mkudffs)"
         dd if=/dev/zero of="$IMG" bs=1M count=4 2>/dev/null
-        mkudffs --media-type=dvd --vid="TEST_UDF" "$IMG" >/dev/null 2>&1
+        mkudffs --media-type=dvd --vid="TEST_UDF" "$IMG" >/dev/null 2>&1 || true
         CREATED=$((CREATED + 1))
     else
         warn "udf.iso — genisoimage or mkudffs not found (install genisoimage or udftools)"
@@ -329,7 +329,7 @@ if [ ! -f "$IMG" ]; then
     if command -v mkudffs &>/dev/null; then
         log "Creating udf250.iso (UDF 2.50)"
         dd if=/dev/zero of="$IMG" bs=1M count=8 2>/dev/null
-        mkudffs --udfrev=0x0250 --media-type=dvd --vid="TEST_UDF250" "$IMG" >/dev/null 2>&1
+        mkudffs --udfrev=0x0250 --media-type=dvd --vid="TEST_UDF250" "$IMG" >/dev/null 2>&1 || true
         CREATED=$((CREATED + 1))
     else
         warn "udf250.iso — mkudffs not found (install udftools)"
