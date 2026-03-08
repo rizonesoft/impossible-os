@@ -200,14 +200,14 @@ make all
 
 | Controller | Driver | Status | Test Disk |
 |------------|--------|--------|-----------|
-| VirtIO-blk | `virtio_blk.c` | ✅ Implemented | `system-disk.img` |
-| AHCI/SATA | `ahci.c` | ✅ Implemented | `test-disks/*.img` |
+| AHCI/SATA | `ahci.c` | ✅ Implemented | `system-disk.img` (port 0) + `test-disks/*.img` (port 1) |
+| VirtIO-blk | `virtio_blk.c` | ✅ Implemented | (available, not default) |
 | NVMe | `nvme.c` | 🔲 Future | `test-disks/*.img` |
 
-- [ ] Update `make run` QEMU flags to include all three controllers
-- [ ] Add `make run-sata` variant (system disk on AHCI, no VirtIO)
-- [ ] Add `make run-nvme` variant (system disk on NVMe, no VirtIO)
-- [ ] Commit: `"build: multi-controller QEMU configurations"`
+- [x] Add `make run-test DISK=<name>` — attaches secondary test disk on AHCI port 1
+- [x] Optical support: `make run-test DISK=optical/iso9660` (attaches via `-cdrom`)
+- [ ] ~~Add `make run-nvme`~~ — deferred until NVMe driver exists
+- [x] Commit: `"build: add run-test target for filesystem driver testing"`
 
 ---
 

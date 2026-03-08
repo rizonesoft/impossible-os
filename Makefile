@@ -73,7 +73,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel host-tools sysroot userland iso grub-efi system-disk test-disks run run-debug run-log clean
+.PHONY: all _increment_build boot kernel host-tools sysroot userland iso grub-efi system-disk test-disks run run-test run-debug run-log clean
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build kernel userland grub-efi system-disk
@@ -238,6 +238,56 @@ run: all
 		-device virtio-tablet-pci \
 		-rtc base=localtime \
 		-no-reboot
+
+## run-test: Launch QEMU with a secondary test disk on AHCI port 1
+##   Usage: make run-test DISK=fat32       (loads build/test-disks/fat32.img)
+##          make run-test DISK=ext4        (loads build/test-disks/ext4.img)
+##          make run-test DISK=optical/iso9660  (loads optical ISO via -cdrom)
+DISK ?= fat32
+TEST_DISK_PATH := $(BUILD_DIR)/test-disks/$(DISK)
+
+run-test: all test-disks
+	@if echo "$(DISK)" | grep -q "optical/"; then \
+		TEST_FILE="$(TEST_DISK_PATH).iso"; \
+	else \
+		TEST_FILE="$(TEST_DISK_PATH).img"; \
+	fi; \
+	if [ ! -f "$$TEST_FILE" ]; then \
+		echo "[ERROR] Test disk not found: $$TEST_FILE"; \
+		echo "  Available disks:"; \
+		ls $(BUILD_DIR)/test-disks/*.img 2>/dev/null | sed 's|.*/||;s|\.img||' | sed 's/^/    /'; \
+		ls $(BUILD_DIR)/test-disks/optical/*.iso 2>/dev/null | sed "s|$(BUILD_DIR)/test-disks/||;s|\.iso||" | sed 's/^/    /'; \
+		exit 1; \
+	fi; \
+	cp $(OVMF_VARS) $(OVMF_VARS_CP); \
+	if echo "$(DISK)" | grep -q "optical/"; then \
+		echo "[TEST] Attaching $$TEST_FILE as CD-ROM"; \
+		$(QEMU) \
+			-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+			-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+			-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+			-device ich9-ahci,id=ahci0 \
+			-device ide-hd,drive=disk0,bus=ahci0.0 \
+			-cdrom $$TEST_FILE \
+			-m 2G -serial stdio -vga none \
+			-device VGA,xres=1280,yres=720 \
+			-device rtl8139,netdev=net0 -netdev user,id=net0 \
+			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
+	else \
+		echo "[TEST] Attaching $$TEST_FILE on AHCI port 1"; \
+		$(QEMU) \
+			-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+			-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+			-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+			-drive id=testdisk,file=$$TEST_FILE,format=raw,if=none \
+			-device ich9-ahci,id=ahci0 \
+			-device ide-hd,drive=disk0,bus=ahci0.0 \
+			-device ide-hd,drive=testdisk,bus=ahci0.1 \
+			-m 2G -serial stdio -vga none \
+			-device VGA,xres=1280,yres=720 \
+			-device rtl8139,netdev=net0 -netdev user,id=net0 \
+			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
+	fi
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
 run-debug: all
