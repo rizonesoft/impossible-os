@@ -23,7 +23,7 @@
 #include "kernel/drivers/framebuffer.h"
 #include "desktop/font.h"
 #include "kernel/drivers/mouse.h"
-#include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "desktop/desktop.h"
 
 /* ---- Internal state ---- */
@@ -59,6 +59,14 @@ static void str_copy(char *dst, const char *src, uint32_t max)
 static void mark_dirty(void)
 {
     needs_redraw = 1;
+}
+
+/* Free N contiguous pages starting at the given physical address */
+static void pmm_free_pages(uintptr_t base, uint32_t count)
+{
+    uint32_t i;
+    for (i = 0; i < count; i++)
+        pmm_free_frame(base + i * 4096);
 }
 
 /* Public version for external callers (e.g., cursor movement) */
@@ -172,10 +180,17 @@ int wm_create_window(const char *title, int32_t x, int32_t y,
 
     w = &windows[i];
 
-    /* Allocate the client-area framebuffer */
-    w->framebuffer = (uint32_t *)kmalloc(width * height * sizeof(uint32_t));
-    if (!w->framebuffer)
-        return -1;
+    /* Allocate the client-area framebuffer from PMM (not kernel heap).
+     * Window framebuffers are large (hundreds of KB to MB) and would
+     * exhaust the small kernel heap.  PMM has 2041 MiB available. */
+    {
+        uint32_t fb_bytes = width * height * sizeof(uint32_t);
+        uint32_t fb_pages = (fb_bytes + 4095) / 4096;
+        uintptr_t fb_base = pmm_alloc_contiguous(fb_pages);
+        if (!fb_base)
+            return -1;
+        w->framebuffer = (uint32_t *)fb_base;
+    }
 
     /* Clear client area to background color */
     {
@@ -224,7 +239,9 @@ void wm_destroy_window(int handle)
         return;
 
     if (w->framebuffer) {
-        kfree(w->framebuffer);
+        uint32_t fb_bytes = w->width * w->height * sizeof(uint32_t);
+        uint32_t fb_pages = (fb_bytes + 4095) / 4096;
+        pmm_free_pages((uintptr_t)w->framebuffer, fb_pages);
         w->framebuffer = (uint32_t *)0;
     }
 
@@ -264,9 +281,14 @@ void wm_resize_window(int handle, uint32_t width, uint32_t height)
     if (!w->active)
         return;
 
-    new_fb = (uint32_t *)kmalloc(width * height * sizeof(uint32_t));
-    if (!new_fb)
-        return;
+    {
+        uint32_t new_bytes = width * height * sizeof(uint32_t);
+        uint32_t new_pages = (new_bytes + 4095) / 4096;
+        uintptr_t new_base = pmm_alloc_contiguous(new_pages);
+        if (!new_base)
+            return;
+        new_fb = (uint32_t *)new_base;
+    }
 
     /* Clear new buffer */
     {
@@ -287,7 +309,11 @@ void wm_resize_window(int handle, uint32_t width, uint32_t height)
         }
     }
 
-    kfree(w->framebuffer);
+    {
+        uint32_t old_bytes = w->width * w->height * sizeof(uint32_t);
+        uint32_t old_pages = (old_bytes + 4095) / 4096;
+        pmm_free_pages((uintptr_t)w->framebuffer, old_pages);
+    }
     w->framebuffer = new_fb;
     w->width = width;
     w->height = height;
