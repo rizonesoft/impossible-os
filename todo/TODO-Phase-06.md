@@ -231,6 +231,136 @@
 - [ ] Test: write file, reboot, verify persistence
 - [ ] Commit: `"fs: IXFS VFS integration + C:\\ mount"`
 
+### 5.5 Performance Optimizations
+
+> **Priority: P1** — These fix fundamental performance issues in the current driver
+
+#### 5.5.1 Block Group Allocator
+- [ ] Divide volume into block groups (~128 MiB each) for locality
+- [ ] Track per-group free block count + "next free" hint in group descriptor
+- [ ] `ixfs_alloc_block()` starts from hint, wraps around on full group
+- [ ] Prefer allocating in same group as file's inode (reduces seek)
+- [ ] Update superblock `s_free_blocks` only on group exhaustion (lazy)
+- [ ] Commit: `"fs: IXFS block group allocator"`
+
+#### 5.5.2 Buffer Cache / Write-Back
+- [ ] Implement dirty buffer cache (LRU, configurable size)
+- [ ] Cache recently-read blocks in memory (avoid re-reading bitmaps/inodes)
+- [ ] Batch dirty blocks and flush to disk periodically or on `sync()`
+- [ ] Mark buffers dirty on write; actual disk I/O deferred
+- [ ] Flush all dirty buffers on unmount
+- [ ] Commit: `"fs: IXFS buffer cache + write-back"`
+
+#### 5.5.3 Directory Hash Index (B-tree)
+- [ ] For directories with > 64 entries: build hash index in an extra block
+- [ ] Use FNV-1a hash of filename → bucket → chain of entry offsets
+- [ ] `finddir()` goes from O(n) → O(1) average case
+- [ ] Falls back to linear scan for small directories (< 64 entries)
+- [ ] Rebuild index on create/delete
+- [ ] Commit: `"fs: IXFS directory hash index"`
+
+#### 5.5.4 Multi-Volume Support
+- [ ] Remove static globals: wrap all state in `struct ixfs_volume`
+- [ ] Each mounted IXFS partition gets its own `ixfs_volume` instance
+- [ ] Pass volume pointer through VFS `fs_data` / `priv_data`
+- [ ] Support mounting multiple IXFS partitions simultaneously (C:\, E:\, etc.)
+- [ ] Commit: `"fs: IXFS multi-volume support"`
+
+### 5.6 Extent-Based Allocation
+
+> **Priority: P1** — Replaces the old block-pointer system entirely
+
+- [ ] Define `struct ixfs_extent { uint64_t start_block; uint32_t block_count; }` (12 bytes)
+- [ ] Replace `i_direct[12]` + `i_indirect` + `i_dindirect` with extent array in inode
+- [ ] Fit 4 inline extents directly in inode (replaces block pointers, same 52 bytes)
+- [ ] If > 4 extents needed: store extent tree in a data block (B-tree of extents)
+- [ ] Merge adjacent extents on allocation (contiguous writes = 1 extent)
+- [ ] Update `ixfs_alloc_block()` to allocate contiguous runs preferentially
+- [ ] Update `ixfs_read_file` / `ixfs_write_file` to use extent lookup
+- [ ] Max file size with 64-bit block numbers: **64 TiB** (with 4K blocks)
+- [ ] Commit: `"fs: IXFS extent-based allocation"`
+
+### 5.7 Write-Ahead Log (Journal)
+
+> **Priority: P1** — Crash safety is essential for a system partition
+
+- [ ] Reserve journal area: configurable size (default 32 MiB), stored after superblock
+- [ ] Journal record: `{ txn_id, block_number, old_data, new_data, checksum }`
+- [ ] **Metadata journaling** (default): journal only inode/bitmap/directory changes
+- [ ] Optional **full journaling**: journal data blocks too (slower but safer)
+- [ ] Transaction API: `ixfs_txn_begin()`, `ixfs_txn_write()`, `ixfs_txn_commit()`
+- [ ] On commit: write all records to journal → flush → write to final location → flush → mark txn complete
+- [ ] On mount after crash: replay incomplete transactions from journal
+- [ ] Circular journal with head/tail pointers in superblock
+- [ ] Commit: `"fs: IXFS write-ahead log (journal)"`
+
+### 5.8 Copy-on-Write (CoW) & Snapshots
+
+> **Priority: P2** — IXFS's signature feature, differentiating it from ext4/NTFS
+
+- [ ] **CoW block writes**: never overwrite a block in-place; always write to a new location
+- [ ] Update parent pointers (extent tree / inode) to point to new block
+- [ ] Old blocks remain valid until explicitly freed → enables snapshots
+- [ ] **Snapshot API**: `ixfs_snapshot_create(name)` — freeze current state by incrementing refcounts
+- [ ] **Refcounted blocks**: each block has a reference count (shared between snapshots)
+- [ ] `ixfs_free_block()` decrements refcount; only frees when refcount reaches 0
+- [ ] **Snapshot listing**: `ixfs_snapshot_list()` — enumerate available snapshots
+- [ ] **Snapshot rollback**: `ixfs_snapshot_restore(name)` — swap active tree with snapshot tree
+- [ ] **Snapshot delete**: `ixfs_snapshot_delete(name)` — decrement refcounts, free unreferenced blocks
+- [ ] Shell commands: `snapshot create <name>`, `snapshot list`, `snapshot restore <name>`
+- [ ] Commit: `"fs: IXFS copy-on-write + snapshots"`
+
+### 5.9 Advanced Features
+
+#### 5.9.1 Sparse File Support
+- [ ] Allow holes in files: extents with `start_block = 0` represent unallocated regions
+- [ ] `read()` on a hole returns zeroes without allocating blocks
+- [ ] `write()` into a hole allocates only the needed blocks
+- [ ] `ixfs_stat()` reports both logical size and actual blocks used
+- [ ] Commit: `"fs: IXFS sparse file support"`
+
+#### 5.9.2 Inline Small Files
+- [ ] Files ≤ 48 bytes: store data directly in inode's extent/pointer area (no data block needed)
+- [ ] Flag in `i_mode` or `i_flags`: `IXFS_INLINE` indicates inline data
+- [ ] Transparently promote to extent-based when file grows beyond 48 bytes
+- [ ] Significant speedup for small config files, symlinks, etc.
+- [ ] Commit: `"fs: IXFS inline small files"`
+
+#### 5.9.3 Per-Block Checksums
+- [ ] CRC32C checksum computed on every block write, stored in checksum table
+- [ ] Checksum table: dedicated blocks between bitmap and inode table
+- [ ] Verify checksum on every block read; log corruption if mismatch
+- [ ] Superblock checksum field for self-verification
+- [ ] `ixfs_scrub()` — full-volume integrity scan (background or on-demand)
+- [ ] Commit: `"fs: IXFS per-block checksums"`
+
+#### 5.9.4 64-Bit Block Addressing
+- [ ] Upgrade `s_total_blocks`, extent `start_block`, and inode pointers to `uint64_t`
+- [ ] Superblock version bump to v2
+- [ ] Maximum volume size: **64 TiB** (4K blocks × 2^44 blocks)
+- [ ] Backward-compatible: v1 volumes mountable read-only, auto-upgrade on format
+- [ ] Commit: `"fs: IXFS 64-bit block addressing"`
+
+### 5.10 IXFS Unique Selling Points
+
+> These features, taken together, make IXFS genuinely competitive:
+>
+> | Feature | ext4 | NTFS | Btrfs | **IXFS** |
+> |---------|------|------|-------|----------|
+> | Journaling | ✅ | ✅ | N/A (CoW) | ✅ WAL + CoW |
+> | Copy-on-Write | ❌ | ❌ | ✅ | ✅ |
+> | Snapshots | ❌ | VSS (userspace) | ✅ | ✅ (kernel-native) |
+> | Inline small files | ❌ | ✅ (MFT) | ✅ | ✅ |
+> | Extent-based | ✅ | ✅ | ✅ | ✅ |
+> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | ✅ |
+> | Sparse files | ✅ | ✅ | ✅ | ✅ |
+> | Block groups | ✅ | ❌ | ❌ | ✅ |
+> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | **64 TiB** |
+>
+> **IXFS's unique identity**: A hybrid of ext4's block-group locality with
+> Btrfs-style CoW snapshots, plus mandatory per-block checksums. It is
+> designed from scratch for Impossible OS with zero legacy baggage.
+
 ---
 
 ## 6. Drive Letter Mounting
