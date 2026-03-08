@@ -38,15 +38,15 @@
 
 ### 1.3 Pre-Populated Defaults
 
-- [ ] Populate `System\Display\` — Width, Height, DPI from framebuffer
-- [ ] Populate `System\Theme\` — AccentColor (#0078D4), DarkMode (1), Font (Selawik), CornerRadius (8)
-- [ ] Populate `System\Shell\` — TaskbarHeight (48), TaskbarPosition (bottom)
-- [ ] Populate `System\Network\` — Hostname, DHCP, DNS
-- [ ] Populate `Hardware\CPU\` — Vendor, Model (from CPUID)
-- [ ] Populate `Hardware\Memory\` — TotalMB (from PMM)
-- [ ] Populate `User\Default\` — Desktop, Shell defaults
-- [ ] Call `codex_populate_defaults()` from `kernel_main()` on first boot
-- [ ] Commit: `"kernel: Codex default values"`
+- [x] Populate `System\Display\` — Width, Height, DPI from framebuffer
+- [x] Populate `System\Theme\` — AccentColor (#0078D4), DarkMode (1), Font (Selawik), CornerRadius (8)
+- [x] Populate `System\Shell\` — TaskbarHeight (48), TaskbarPosition (bottom)
+- [x] Populate `System\Network\` — Hostname, DHCP, DNS
+- [x] Populate `Hardware\CPU\` — Vendor, Model (from CPUID)
+- [x] Populate `Hardware\Memory\` — TotalMB (from PMM)
+- [x] Populate `User\Default\` — Desktop, Shell defaults
+- [x] Call `codex_populate_defaults()` from `kernel_main()` on first boot
+- [x] Commit: `"kernel: Codex default values"`
 
 ### 1.4 Disk Persistence (.codex files)
 

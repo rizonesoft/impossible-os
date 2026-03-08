@@ -61,6 +61,21 @@ user preferences, and app configuration.
 - `user.codex` — User\ tree
 - `apps.codex` — Apps\ tree
 
+### Pre-Populated Defaults
+
+`codex_populate_defaults()` is called at boot. It sets 32 values across 10 keys:
+
+| Key | Values |
+|-----|--------|
+| `System\Display` | Width, Height, DPI (96), Scale (100%) |
+| `System\Theme` | AccentColor, DarkMode, Font, FontSize, CornerRadius, Wallpaper, WallpaperMode, EnableAnimations |
+| `System\Shell` | TaskbarHeight (48), TaskbarPosition (bottom), ShowClock, ShowStartButton |
+| `System\Network` | Hostname (IMPOSSIBLE-PC), DHCP (1), DNS (8.8.8.8) |
+| `System\DateTime` | Use24Hour, DateFormat, TimezoneOffset, TimezoneName, NTPEnabled |
+| `Hardware\CPU` | Vendor (CPUID leaf 0), Model (CPUID leaf 0x80000002-4) |
+| `Hardware\Memory` | TotalMB, FreeMB (from PMM) |
+| `User\Default` | HomeDir, Shell, Prompt, Wallpaper |
+
 
 ## Serial Logging
 

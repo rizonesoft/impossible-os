@@ -87,6 +87,10 @@ codex_key_t *codex_create(const char *path);
  * Returns 0 on success, -1 on failure. */
 int codex_delete_key(const char *path);
 
+/* Populate default values (System, Hardware, User).
+ * Call after codex_init() + framebuffer + PMM are ready. */
+void codex_populate_defaults(void);
+
 /* ---- API: Value accessors ---- */
 
 int codex_get_string(codex_key_t *key, const char *name, char *buf, uint32_t buf_size);

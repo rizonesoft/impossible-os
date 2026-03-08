@@ -13,6 +13,7 @@
 #include "codex.h"
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/mm/pmm.h"
 
 /* ---- Static node pools ---- */
 
@@ -485,4 +486,160 @@ codex_value_t *codex_enum_values(codex_key_t *key, uint32_t index)
         v = v->next;
     }
     return (void *)0;
+}
+
+/* ---- CPUID helper ---- */
+
+static void cpuid(uint32_t leaf, uint32_t *eax, uint32_t *ebx,
+                  uint32_t *ecx, uint32_t *edx)
+{
+    __asm__ volatile("cpuid"
+                     : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
+                     : "a"(leaf), "c"(0));
+}
+
+/* ---- Pre-populated defaults ---- */
+
+void codex_populate_defaults(void)
+{
+    codex_key_t *key;
+    uint32_t count = 0;
+
+    if (!codex_ready) return;
+
+    /* --- System\Display\ --- */
+    key = codex_create("System\\Display");
+    if (key) {
+        codex_set_int32(key, "Width",  (int32_t)fb_get_width());
+        codex_set_int32(key, "Height", (int32_t)fb_get_height());
+        codex_set_int32(key, "DPI",    96);   /* default DPI */
+        codex_set_int32(key, "Scale",  100);  /* 100% scaling */
+        count += 4;
+    }
+
+    /* --- System\Theme\ --- */
+    key = codex_create("System\\Theme");
+    if (key) {
+        codex_set_string(key, "AccentColor",  "#0078D4");
+        codex_set_bool(key, "DarkMode",       1);
+        codex_set_string(key, "Font",         "Selawik");
+        codex_set_int32(key, "FontSize",      12);
+        codex_set_int32(key, "CornerRadius",  8);
+        codex_set_string(key, "Wallpaper",    "C:\\Impossible\\Wallpapers\\default.raw");
+        codex_set_string(key, "WallpaperMode", "stretch");
+        codex_set_bool(key, "EnableAnimations", 1);
+        count += 8;
+    }
+
+    /* --- System\Shell\ --- */
+    key = codex_create("System\\Shell");
+    if (key) {
+        codex_set_int32(key, "TaskbarHeight",    48);
+        codex_set_string(key, "TaskbarPosition", "bottom");
+        codex_set_bool(key, "ShowClock",         1);
+        codex_set_bool(key, "ShowStartButton",   1);
+        count += 4;
+    }
+
+    /* --- System\Network\ --- */
+    key = codex_create("System\\Network");
+    if (key) {
+        codex_set_string(key, "Hostname", "IMPOSSIBLE-PC");
+        codex_set_bool(key, "DHCP",      1);
+        codex_set_string(key, "DNS",      "8.8.8.8");
+        count += 3;
+    }
+
+    /* --- System\DateTime\ --- */
+    key = codex_create("System\\DateTime");
+    if (key) {
+        codex_set_bool(key, "Use24Hour",       0);
+        codex_set_string(key, "DateFormat",    "MM/DD/YYYY");
+        codex_set_int32(key, "TimezoneOffset", 0);  /* UTC */
+        codex_set_string(key, "TimezoneName",  "UTC");
+        codex_set_bool(key, "NTPEnabled",      1);
+        count += 5;
+    }
+
+    /* --- Hardware\CPU\ --- */
+    key = codex_create("Hardware\\CPU");
+    if (key) {
+        char vendor[13];
+        uint32_t eax, ebx, ecx, edx;
+
+        /* CPUID leaf 0: vendor string */
+        cpuid(0, &eax, &ebx, &ecx, &edx);
+        /* Vendor string is in EBX:EDX:ECX (12 chars) */
+        {
+            uint32_t *v32 = (uint32_t *)vendor;
+            v32[0] = ebx;
+            v32[1] = edx;
+            v32[2] = ecx;
+        }
+        vendor[12] = '\0';
+        codex_set_string(key, "Vendor", vendor);
+
+        /* CPUID leaf 0x80000002-4: brand string (48 chars) */
+        {
+            char brand[49];
+            uint32_t leaf;
+            uint32_t idx = 0;
+            for (leaf = 0x80000002; leaf <= 0x80000004; leaf++) {
+                cpuid(leaf, &eax, &ebx, &ecx, &edx);
+                {
+                    uint32_t *b32 = (uint32_t *)&brand[idx];
+                    b32[0] = eax;
+                    b32[1] = ebx;
+                    b32[2] = ecx;
+                    b32[3] = edx;
+                }
+                idx += 16;
+            }
+            brand[48] = '\0';
+            /* Trim leading spaces */
+            {
+                const char *p = brand;
+                while (*p == ' ') p++;
+                codex_set_string(key, "Model", p);
+            }
+        }
+        count += 2;
+    }
+
+    /* --- Hardware\Memory\ --- */
+    key = codex_create("Hardware\\Memory");
+    if (key) {
+        uint64_t total_mb = (pmm_get_total_frames() * 4096) / (1024 * 1024);
+        uint64_t free_mb  = (pmm_get_free_frames()  * 4096) / (1024 * 1024);
+        codex_set_int64(key, "TotalMB", (int64_t)total_mb);
+        codex_set_int64(key, "FreeMB",  (int64_t)free_mb);
+        count += 2;
+    }
+
+    /* --- User\Default\ --- */
+    key = codex_create("User\\Default");
+    if (key) {
+        codex_set_string(key, "HomeDir", "C:\\Users\\Default");
+        codex_set_string(key, "Shell",   "C:\\shell.exe");
+        count += 2;
+    }
+
+    key = codex_create("User\\Default\\Shell");
+    if (key) {
+        codex_set_string(key, "Prompt", "C:\\>");
+        count += 1;
+    }
+
+    key = codex_create("User\\Default\\Desktop");
+    if (key) {
+        codex_set_string(key, "Wallpaper", "C:\\Impossible\\Wallpapers\\default.raw");
+        count += 1;
+    }
+
+    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+    printk("[OK] ");
+    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+    printk("Codex defaults populated (%u values, %u/%u pool used)\n",
+           (uint64_t)count,
+           (uint64_t)value_pool_next, (uint64_t)VALUE_POOL_SIZE);
 }

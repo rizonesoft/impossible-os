@@ -332,6 +332,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Initialize the Codex registry */
     codex_init();
+    codex_populate_defaults();
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
