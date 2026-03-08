@@ -256,8 +256,19 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
         return;
 
     mtbl = mbr_parse(sect);
-    if (!mtbl.valid)
+    if (!mtbl.valid) {
+        /* No partition table — try "super-floppy" mode:
+         * treat the entire device as a single raw partition.
+         * This handles bare FAT32/exFAT/ext2 images without MBR/GPT. */
+        int fs = probe_filesystem(dev);
+        if (fs != PART_FS_UNKNOWN) {
+            printk("[RAW] %s: no partition table, raw %s volume\n",
+                   dev->name, partition_fs_name(fs));
+            register_partition(dev, disk_idx, 1,
+                               0, dev->sector_count, "Raw Volume");
+        }
         return;
+    }
 
     /* Check for GPT (protective MBR with type 0xEE) */
     {
