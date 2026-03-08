@@ -1229,6 +1229,21 @@ int ixfs_snapshot_delete(const char *name)
     return 0;
 }
 
+/* Stat: report file metadata including sparse info */
+int ixfs_stat(struct vfs_node *node, uint32_t *logical_size,
+              uint32_t *actual_blocks)
+{
+    struct ixfs_vnode *v;
+    if (!node || !node->fs_data) return -1;
+    v = (struct ixfs_vnode *)node->fs_data;
+
+    if (logical_size)
+        *logical_size = v->inode.i_size;
+    if (actual_blocks)
+        *actual_blocks = v->inode.i_blocks;
+    return 0;
+}
+
 /* --- Internal: inode I/O --- */
 
 /* Read an inode from disk */
@@ -1472,7 +1487,8 @@ static struct ixfs_vnode *ixfs_get_vnode(struct ixfs_volume *vol, uint32_t ino)
 
 /* --- Internal: extent-based block lookup --- */
 
-/* Given a file block index, return the disk block number via extent search */
+/* Given a file block index, return the disk block number via extent search.
+ * Extents with e_start == 0 represent holes (sparse regions). */
 static uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode, uint32_t index)
 {
     uint32_t i;
@@ -1486,6 +1502,8 @@ static uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode 
 
         if (index < file_offset + count) {
             /* Block is within this extent */
+            if (inode->i_extents[i].e_start == 0)
+                return 0;  /* Hole extent: sparse region */
             return (uint32_t)(inode->i_extents[i].e_start +
                               (index - file_offset));
         }
@@ -1597,7 +1615,18 @@ static int ixfs_file_read(struct vfs_node *node, uint32_t offset,
         uint32_t to_read;
         uint32_t i;
 
-        if (disk_block == 0) break;
+        if (disk_block == 0) {
+            /* Sparse hole: return zeroes without disk I/O */
+            uint32_t to_read = IXFS_BLOCK_SIZE - blk_offset;
+            if (to_read > size - bytes_read)
+                to_read = size - bytes_read;
+            for (i = 0; i < to_read; i++)
+                buffer[bytes_read + i] = 0;
+            bytes_read += to_read;
+            blk_offset = 0;
+            blk_index++;
+            continue;
+        }
 
         if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
@@ -1649,6 +1678,18 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
 
         /* Allocate a new block if needed */
         if (disk_block == 0) {
+            /* Sparse gap: if writing past current file blocks, insert hole */
+            if (blk_index > v->inode.i_blocks) {
+                uint32_t gap = blk_index - v->inode.i_blocks;
+                uint32_t ec = v->inode.i_extent_count;
+                /* Insert hole extent (e_start=0, e_count=gap) */
+                if (ec < IXFS_INLINE_EXTENTS) {
+                    v->inode.i_extents[ec].e_start = 0;
+                    v->inode.i_extents[ec].e_count = gap;
+                    v->inode.i_extent_count = ec + 1;
+                    v->inode.i_size = blk_index * IXFS_BLOCK_SIZE;
+                }
+            }
             disk_block = ixfs_add_block_to_extent(vol, &v->inode);
             if (disk_block == 0) break;
 
@@ -2926,6 +2967,63 @@ void ixfs_test_performance(void)
             }
         } else {
             printk("  [SKIP] CoW: no refcount table\n");
+        }
+    }
+    /* --- Test 7: Sparse File Support --- */
+    {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        struct vfs_node *sfile;
+        /* Create test file via VFS */
+        if (c_root && c_root->ops && c_root->ops->create)
+            c_root->ops->create(c_root, "_sparse_test.bin", 0);
+        sfile = vfs_open("C:\\_sparse_test.bin", VFS_O_WRITE);
+        if (sfile) {
+            const char *sparse_data = "SPARSE_CONTENT!";
+            uint32_t sparse_len = 15;
+            uint32_t sparse_offset = IXFS_BLOCK_SIZE * 2; /* skip 2 blocks */
+            int wrote;
+            uint8_t rbuf[32];
+            int rd;
+            uint32_t log_sz = 0, act_blk = 0;
+
+            /* Write data at block 2, leaving blocks 0-1 as holes */
+            wrote = vfs_write(sfile, sparse_offset, sparse_len,
+                              (const uint8_t *)sparse_data);
+            pass = (wrote == (int)sparse_len);
+            printk("  [%s] Sparse: write at offset %u (%d bytes)\n",
+                   pass ? "OK" : "FAIL",
+                   (uint64_t)sparse_offset, wrote);
+            vfs_close(sfile);
+
+            /* Re-open for reading */
+            sfile = vfs_open("C:\\_sparse_test.bin", VFS_O_READ);
+            if (sfile) {
+                /* Read hole at block 0: should return zeroes */
+                uint32_t ki;
+                int all_zero = 1;
+                rd = vfs_read(sfile, 0, 16, rbuf);
+                for (ki = 0; ki < 16 && ki < (uint32_t)rd; ki++) {
+                    if (rbuf[ki] != 0)
+                        all_zero = 0;
+                }
+                pass = (rd == 16 && all_zero);
+                printk("  [%s] Sparse: hole read returns zeroes (%d bytes, zero=%s)\n",
+                       pass ? "OK" : "FAIL", rd,
+                       all_zero ? "yes" : "no");
+
+                /* Stat: logical size vs actual blocks */
+                ixfs_stat(sfile, &log_sz, &act_blk);
+                pass = (log_sz > act_blk * IXFS_BLOCK_SIZE);
+                printk("  [%s] Sparse: stat logical=%u, actual=%u blk (sparse=%s)\n",
+                       pass ? "OK" : "FAIL",
+                       (uint64_t)log_sz, (uint64_t)act_blk,
+                       (log_sz > act_blk * IXFS_BLOCK_SIZE) ? "yes" : "no");
+
+                vfs_close(sfile);
+            }
+            c_root->ops->unlink(c_root, "_sparse_test.bin");
+        } else {
+            printk("  [SKIP] Sparse: cannot create test file\n");
         }
     }
 

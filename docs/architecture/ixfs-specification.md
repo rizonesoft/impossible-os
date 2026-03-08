@@ -368,6 +368,34 @@ Each `ixfs_snapshot_entry` (64 bytes):
 
 ---
 
+## Sparse File Support
+
+IXFS supports sparse files natively through hole extents.
+
+### Hole Extents
+
+An extent with `e_start = 0` represents a **hole** — a region of the file
+containing only zeroes, with no disk blocks allocated.
+
+| Extent field | Value | Meaning |
+|-------------|-------|---------|
+| `e_start` | 0 | Hole (no disk allocation) |
+| `e_count` | N | Number of file blocks in the hole |
+
+- `ixfs_get_block()` returns 0 for blocks within hole extents
+- `ixfs_file_read()` returns zeroes for holes (no disk I/O)
+- `ixfs_file_write()` inserts a hole extent when writing past the end of mapped blocks
+- `ixfs_stat()` reports both `logical_size` and `actual_blocks` (i_blocks)
+
+Sparse files use significantly less space than their logical size:
+
+```
+logical_size = 8207 bytes (3 file blocks)
+actual_blocks = 1 block   (only the written block)
+```
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:
@@ -468,7 +496,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 | Extent-based allocation | §5.6 | ✅ Implemented |
 | Journaling (WAL) | §5.7 | ✅ Implemented |
 | Copy-on-Write + Snapshots | §5.8 | ✅ Implemented |
-| Sparse files | §5.9.1 | 🔜 Planned |
+| Sparse files | §5.9.1 | ✅ Implemented |
 | Inline small files | §5.9.2 | 🔜 Planned |
 | Per-block checksums | §5.9.3 | 🔜 Planned |
 | 64-bit block addressing | §5.9.4 | 🔜 Planned (target: 64 TiB max) |

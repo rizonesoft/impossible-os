@@ -384,11 +384,11 @@
 ### 5.9 Advanced Features
 
 #### 5.9.1 Sparse File Support
-- [ ] Allow holes in files: extents with `start_block = 0` represent unallocated regions
-- [ ] `read()` on a hole returns zeroes without allocating blocks
-- [ ] `write()` into a hole allocates only the needed blocks
-- [ ] `ixfs_stat()` reports both logical size and actual blocks used
-- [ ] Commit: `"fs: IXFS sparse file support"`
+- [x] Allow holes in files: extents with `start_block = 0` represent unallocated regions
+- [x] `read()` on a hole returns zeroes without allocating blocks
+- [x] `write()` into a hole allocates only the needed blocks
+- [x] `ixfs_stat()` reports both logical size and actual blocks used
+- [x] Commit: `"fs: IXFS sparse file support"`
 
 #### 5.9.2 Inline Small Files
 - [ ] Files ≤ 48 bytes: store data directly in inode's extent/pointer area (no data block needed)

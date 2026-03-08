@@ -194,3 +194,7 @@ int ixfs_snapshot_create(const char *name);
 int ixfs_snapshot_list(void);
 int ixfs_snapshot_restore(const char *name);
 int ixfs_snapshot_delete(const char *name);
+
+/* Stat: report file metadata including sparse info */
+int ixfs_stat(struct vfs_node *node, uint32_t *logical_size,
+              uint32_t *actual_blocks);
