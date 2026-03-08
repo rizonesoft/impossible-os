@@ -356,7 +356,7 @@ Desktop reads files from C:\
 Once we boot from a real disk (not ISO) with a pre-populated IXFS
 partition, the initrd becomes unnecessary:
 
-1. **Build** a disk image with `mkfs-ixfs --populate` (see TODO § 5.11)
+1. **Build** a disk image with `mkfs-ixfs --populate` (see TODO Section 5.11)
 2. **GRUB** reads kernel directly from the boot partition
 3. **All system files** are already on C:\ (placed by the installer)
 4. **Delete** `firstboot.c/h` and the initrd module
@@ -440,5 +440,5 @@ IXFS is the native Impossible OS filesystem, mounted at `C:\` (system drive).
 
 ### Planned Enhancements
 
-See `TODO-Phase-06.md` §5.5–5.11 for the full roadmap:
+See `TODO-Phase-06.md` Section 5.5–5.11 for the full roadmap:
 extent-based allocation, journaling, CoW/snapshots, checksums, 64-bit addressing.

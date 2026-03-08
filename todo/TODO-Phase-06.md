@@ -21,7 +21,7 @@
 - [x] Implement `virtio_blk_read(lba, count, buffer)` — 3-descriptor chain (header, data, status)
 - [x] Implement `virtio_blk_write(lba, count, buffer)` — write sectors
 - [x] Implement `virtio_blk_capacity()` — query disk size via device_cfg MMIO
-- [x] Register with VFS block device layer *(done in §1.3 as "virtio0")*
+- [x] Register with VFS block device layer *(done in Section 1.3 as "virtio0")*
 - [x] Test: read sector 0 from QEMU virtio disk (verified UEFI + BIOS boot)
 - [x] QEMU flag: `-drive file=disk.img,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0`
 - [x] Commit: `"drivers: virtio-blk modern VirtIO 1.0 transport"`
@@ -43,7 +43,7 @@
 - [x] Implement `ahci_write(port, lba, count, buffer)` — WRITE DMA EXT command
 - [x] Implement `ahci_identify(port)` — IDENTIFY DEVICE (model, serial, LBA48 capacity)
 - [x] Handle AHCI IRQ (polling-based, interrupt enable per port)
-- [x] Register with VFS block device layer *(done in §1.3 as "sata0")*
+- [x] Register with VFS block device layer *(done in Section 1.3 as "sata0")*
 - [x] Test: read drive identity and sector 0 from QEMU SATA disk
 - [x] QEMU flags: `-drive file=sata.img,format=raw,if=none,id=disk1 -device ahci,id=ahci0 -device ide-hd,drive=disk1,bus=ahci0.0`
 - [x] Commit: `"drivers: AHCI SATA disk driver"`
@@ -418,15 +418,15 @@
 >
 > | Feature | ext4 | NTFS | Btrfs | **IXFS** |
 > |---------|------|------|-------|----------|
-> | Journaling | ✅ | ✅ | N/A (CoW) | 🔜 planned (§5.7) |
-> | Copy-on-Write | ❌ | ❌ | ✅ | 🔜 planned (§5.8) |
-> | Snapshots | ❌ | VSS (userspace) | ✅ | 🔜 planned (§5.8) |
-> | Inline small files | ❌ | ✅ (MFT) | ✅ | 🔜 planned (§5.9.2) |
-> | Extent-based | ✅ | ✅ | ✅ | 🔜 planned (§5.6) |
-> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | 🔜 planned (§5.9.3) |
-> | Sparse files | ✅ | ✅ | ✅ | 🔜 planned (§5.9.1) |
+> | Journaling | ✅ | ✅ | N/A (CoW) | 🔜 planned (Section 5.7) |
+> | Copy-on-Write | ❌ | ❌ | ✅ | 🔜 planned (Section 5.8) |
+> | Snapshots | ❌ | VSS (userspace) | ✅ | 🔜 planned (Section 5.8) |
+> | Inline small files | ❌ | ✅ (MFT) | ✅ | 🔜 planned (Section 5.9.2) |
+> | Extent-based | ✅ | ✅ | ✅ | 🔜 planned (Section 5.6) |
+> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | 🔜 planned (Section 5.9.3) |
+> | Sparse files | ✅ | ✅ | ✅ | 🔜 planned (Section 5.9.1) |
 > | Block groups | ✅ | ❌ | ❌ | ✅ **implemented** |
-> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | 4 GiB (🔜 64 TiB §5.9.4) |
+> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | 4 GiB (🔜 64 TiB Section 5.9.4) |
 >
 > **IXFS's unique identity**: A hybrid of ext4's block-group locality with
 > Btrfs-style CoW snapshots, plus mandatory per-block checksums. It is

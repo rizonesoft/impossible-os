@@ -8,7 +8,7 @@
 ---
 
 ## 1. TCP Protocol
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § TCP*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  TCP*
 
 ### 1.1 TCP Header & Checksum
 
@@ -59,7 +59,7 @@
 ---
 
 ## 2. DNS Resolver
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § DNS*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  DNS*
 
 ### 2.1 DNS Query
 
@@ -92,7 +92,7 @@
 ---
 
 ## 3. BSD Sockets API
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § Sockets*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  Sockets*
 
 ### 3.1 Kernel Socket Layer
 
@@ -124,7 +124,7 @@
 ---
 
 ## 4. HTTP Client
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § HTTP*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  HTTP*
 
 ### 4.1 URL Parser
 
@@ -163,7 +163,7 @@
 ---
 
 ## 5. TLS / HTTPS
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § HTTPS, [03_certificate_store.md](research/phase_07_networking/03_certificate_store.md)*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  HTTPS, [03_certificate_store.md](research/phase_07_networking/03_certificate_store.md)*
 
 ### 5.1 TLS Library Port
 
@@ -242,7 +242,7 @@
 ---
 
 ## 7. Virtio-Net Driver
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § WiFi/Drivers*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  WiFi/Drivers*
 
 ### 7.1 Virtio Network Driver
 
@@ -261,7 +261,7 @@
 ---
 
 ## 8. Win32 Winsock Mapping
-> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) § Winsock*
+> *Research: [01_internet_wireless.md](research/phase_07_networking/01_internet_wireless.md) Section  Winsock*
 
 ### 8.1 ws2_32.dll Stubs
 
