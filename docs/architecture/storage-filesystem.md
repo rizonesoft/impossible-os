@@ -351,12 +351,15 @@ during early boot until the real disk filesystem takes over.
 | Long filenames (LFN) | ✅ (UTF-16LE assembly) |
 | File reading | ✅ |
 | `fat32_stat(path)` | ✅ (size, attributes, timestamps) |
-| Block device layer | ✅ (via `blkdev_read`, works with partition sub-devices) |
-| File writing | ❌ (read-only) |
+| Block device layer | ✅ (via `blkdev_read/write`, works with partition sub-devices) |
+| File writing | ✅ (create, write, delete, rename) |
+| Directory creation | ✅ (with `.` and `..` entries) |
+| `fat32_format()` | ✅ (BPB, FSInfo, dual FAT, root dir) |
+| FAT flush | ✅ (writes both FAT copies on every modification) |
 
-The FAT32 driver is currently read-only. It reads partitions via the
-`blkdev` abstraction layer (using partition scanner sub-blkdevs) and
-supports both 8.3 short names and LFN (Long File Name) entries.
+The FAT32 driver supports full read/write operations via the `blkdev`
+abstraction layer (using partition scanner sub-blkdevs) and supports
+both 8.3 short names and LFN (Long File Name) entries.
 
 ## IXFS — Impossible X FileSystem
 

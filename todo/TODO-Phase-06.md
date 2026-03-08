@@ -116,29 +116,29 @@
 
 ### 3.1 FAT32 Read Support
 
-- [ ] Create `src/kernel/fs/fat32.c` and `include/fat32.h`
-- [ ] Parse BPB (BIOS Parameter Block) at partition start:
-  - [ ] bytes_per_sector, sectors_per_cluster, reserved_sectors, fat_count, root_cluster
-- [ ] Calculate: FAT region start, data region start, cluster→LBA conversion
-- [ ] Implement `fat32_read_cluster_chain(start_cluster)` — follow FAT entries
-- [ ] Implement `fat32_read_dir(cluster)` — parse 32-byte directory entries
-  - [ ] Handle 8.3 short names
-  - [ ] Handle LFN (Long File Name) entries
-- [ ] Implement `fat32_read_file(path, buffer, max_size)` — traverse directory tree, read cluster chain
-- [ ] Implement `fat32_stat(path)` — return file size, attributes, timestamps
-- [ ] Commit: `"fs: FAT32 read support"`
+- [x] Create `src/kernel/fs/fat32.c` and `include/fat32.h`
+- [x] Parse BPB (BIOS Parameter Block) at partition start:
+  - [x] bytes_per_sector, sectors_per_cluster, reserved_sectors, fat_count, root_cluster
+- [x] Calculate: FAT region start, data region start, cluster→LBA conversion
+- [x] Implement `fat32_read_cluster_chain(start_cluster)` — follow FAT entries
+- [x] Implement `fat32_read_dir(cluster)` — parse 32-byte directory entries
+  - [x] Handle 8.3 short names
+  - [x] Handle LFN (Long File Name) entries
+- [x] Implement `fat32_read_file(path, buffer, max_size)` — traverse directory tree, read cluster chain
+- [x] Implement `fat32_stat(path)` — return file size, attributes, timestamps
+- [x] Commit: `"fs: FAT32 read support"`
 
 ### 3.2 FAT32 Write Support
 
-- [ ] Implement `fat32_write_file(path, data, size)` — allocate clusters, write data, update directory entry
-- [ ] Implement `fat32_create_file(dir, name)` — add directory entry, allocate first cluster
-- [ ] Implement `fat32_create_dir(dir, name)` — create directory with `.` and `..` entries
-- [ ] Implement `fat32_delete_file(path)` — mark clusters as free in FAT, clear directory entry
-- [ ] Implement `fat32_rename(old_path, new_path)` — update directory entry name
-- [ ] Implement free cluster search (scan FAT for `0x00000000` entries)
-- [ ] Implement `fat32_format(dev, label)` — write BPB, FATs, root directory
-- [ ] Flush FAT to disk after modifications (write both FAT copies)
-- [ ] Commit: `"fs: FAT32 write support"`
+- [x] Implement `fat32_write_file(path, data, size)` — allocate clusters, write data, update directory entry
+- [x] Implement `fat32_create_file(dir, name)` — add directory entry, allocate first cluster
+- [x] Implement `fat32_create_dir(dir, name)` — create directory with `.` and `..` entries
+- [x] Implement `fat32_delete_file(path)` — mark clusters as free in FAT, clear directory entry
+- [x] Implement `fat32_rename(old_path, new_path)` — update directory entry name
+- [x] Implement free cluster search (scan FAT for `0x00000000` entries)
+- [x] Implement `fat32_format(dev, label)` — write BPB, FATs, root directory
+- [x] Flush FAT to disk after modifications (write both FAT copies)
+- [x] Commit: `"fs: FAT32 write support"`
 
 ### 3.3 FAT32 VFS Integration
 
@@ -150,10 +150,47 @@
 
 ---
 
-## 4. Persistent IXFS (IXFS-on-Disk)
+## 4. NTFS Filesystem
+> *Minimal read/write NTFS driver for Windows-compatible disk access*
+
+### 4.1 NTFS Read Support
+
+- [ ] Create `src/kernel/fs/ntfs.c` and `include/kernel/fs/ntfs.h`
+- [ ] Parse NTFS boot sector: bytes_per_sector, sectors_per_cluster, MFT start cluster
+- [ ] Define `struct ntfs_mft_entry` (signature "FILE", update sequence, attribute list)
+- [ ] Parse MFT entry attributes: `$STANDARD_INFORMATION`, `$FILE_NAME`, `$DATA`
+- [ ] Implement data run decoding: parse compressed (offset, length) pairs → LBA list
+- [ ] Implement `ntfs_read_mft_entry(mft_number)` — read 1024-byte MFT record
+- [ ] Implement `ntfs_read_file(mft_entry, buffer, size)` — follow data runs, read clusters
+- [ ] Implement `ntfs_readdir(mft_entry)` — parse `$INDEX_ROOT` / `$INDEX_ALLOCATION` B+ tree
+- [ ] Recognize `$MFT`, `$MFTMirr`, `$Root` (MFT entry 5) system files
+- [ ] Add NTFS probe to partition scanner (boot sector OEM ID = "NTFS    ")
+- [ ] Commit: `"fs: NTFS read support"`
+
+### 4.2 NTFS Write Support
+
+- [ ] Implement `ntfs_write_file(mft_entry, data, size)` — write to existing data runs
+- [ ] Implement `ntfs_extend_data_run(mft_entry, clusters)` — allocate new clusters
+- [ ] Implement `ntfs_create_file(dir_mft, name)` — allocate MFT entry, add to index
+- [ ] Implement `ntfs_delete_file(dir_mft, name)` — mark MFT entry as free, free clusters
+- [ ] Implement free cluster bitmap (`$Bitmap`) read/write
+- [ ] Update `$STANDARD_INFORMATION` timestamps on file operations
+- [ ] Commit: `"fs: NTFS write support"`
+
+### 4.3 NTFS VFS Integration
+
+- [ ] Register NTFS as a VFS filesystem type
+- [ ] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete
+- [ ] Mount NTFS partition to a drive letter (e.g., `D:\`)
+- [ ] Test: read files from a Windows-formatted NTFS partition
+- [ ] Commit: `"fs: NTFS VFS integration"`
+
+---
+
+## 5. Persistent IXFS (IXFS-on-Disk)
 > *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
-### 4.1 IXFS On-Disk Format
+### 5.1 IXFS On-Disk Format
 
 - [ ] Define IXFS superblock (magic "IXFS", version, block_size, block_count, inode_count, free_block_bitmap_lba)
 - [ ] Define inode table: fixed-size inodes (name, type, size, timestamps, block pointers)
@@ -163,7 +200,7 @@
 - [ ] Write IXFS format specification document
 - [ ] Commit: `"fs: IXFS on-disk format specification"`
 
-### 4.2 IXFS Disk Operations
+### 5.2 IXFS Disk Operations
 
 - [ ] Create `src/kernel/fs/ixfs_disk.c`
 - [ ] Implement `ixfs_format(dev, label)` — write superblock, bitmaps, root directory inode
@@ -175,7 +212,7 @@
 - [ ] Implement `ixfs_write_inode(ino, inode)` — write inode to disk
 - [ ] Commit: `"fs: IXFS disk operations"`
 
-### 4.3 IXFS File Operations
+### 5.3 IXFS File Operations
 
 - [ ] Implement `ixfs_read_file(inode, offset, buf, size)` — follow block pointers, read data
 - [ ] Implement `ixfs_write_file(inode, offset, data, size)` — allocate blocks, write data
@@ -185,7 +222,7 @@
 - [ ] Implement `ixfs_readdir(dir_inode)` — list directory entries
 - [ ] Commit: `"fs: IXFS file operations"`
 
-### 4.4 IXFS VFS Integration
+### 5.4 IXFS VFS Integration
 
 - [ ] Register IXFS as a VFS filesystem type
 - [ ] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
@@ -196,9 +233,9 @@
 
 ---
 
-## 5. Drive Letter Mounting
+## 6. Drive Letter Mounting
 
-### 5.1 Auto-Mount System
+### 6.1 Auto-Mount System
 
 - [ ] After partition scanning: auto-assign drive letters
   - [ ] `C:\` — first IXFS partition (system drive)
@@ -208,7 +245,7 @@
 - [ ] Log mounts: "Mounted C:\\ (IXFS, 2.0 GB) on disk0-part1"
 - [ ] Commit: `"fs: auto-mount drive letters"`
 
-### 5.2 Manual Mount/Unmount
+### 6.2 Manual Mount/Unmount
 
 - [ ] Shell command: `mount D: /dev/disk1p1 fat32` — mount a partition
 - [ ] Shell command: `umount D:` — unmount a drive
@@ -218,10 +255,10 @@
 
 ---
 
-## 6. Disk Management GUI
+## 7. Disk Management GUI
 > *Research: [02_disk_management.md](research/phase_06_storage/02_disk_management.md)*
 
-### 6.1 Disk Management App
+### 7.1 Disk Management App
 
 - [ ] Create `src/apps/diskmgr/diskmgr.c`
 - [ ] Upper panel: table view of mounted drives (Drive, Size, Used, Free, Filesystem)
@@ -232,7 +269,7 @@
 - [ ] Read from: blkdev list + partition table + filesystem stats
 - [ ] Commit: `"apps: Disk Management layout"`
 
-### 6.2 Disk Operations
+### 7.2 Disk Operations
 
 - [ ] Create partition: select unallocated space → set size + filesystem type
 - [ ] Delete partition: select partition → confirm → delete (removes data!)
@@ -245,11 +282,11 @@
 
 ---
 
-## 7. Agent-Recommended Additions
+## 8. Agent-Recommended Additions
 
 > Items not in the research files but critical for a complete storage subsystem.
 
-### 7.1 Disk Cache (Buffer Cache)
+### 8.1 Disk Cache (Buffer Cache)
 
 - [ ] Implement block-level read cache (LRU, configurable size: 1–8 MB)
 - [ ] Cache recently read sectors to avoid repeated disk I/O
@@ -258,7 +295,7 @@
 - [ ] `cache_invalidate(dev)` — clear cache for a device (on unmount)
 - [ ] Commit: `"fs: block-level disk cache"`
 
-### 7.2 Filesystem Integrity
+### 8.2 Filesystem Integrity
 
 - [ ] `fsck_ixfs()` — basic filesystem check on IXFS
   - [ ] Validate superblock magic and version
@@ -272,7 +309,7 @@
 - [ ] Auto-check on mount if "dirty" flag is set (unclean shutdown)
 - [ ] Commit: `"fs: filesystem integrity checks (fsck)"`
 
-### 7.3 NVMe Driver (Future)
+### 8.3 NVMe Driver (Future)
 
 - [ ] *(Stretch)* Create `src/kernel/drivers/nvme.c`
 - [ ] *(Stretch)* Detect NVMe controller via PCI (class `0x01`, subclass `0x08`)
@@ -280,14 +317,14 @@
 - [ ] *(Stretch)* Implement read/write via NVMe commands (Identify, Read, Write)
 - [ ] *(Stretch)* QEMU flag: `-drive file=disk.img,format=raw,if=none,id=d0 -device nvme,drive=d0,serial=1234`
 
-### 7.4 USB Mass Storage (Future)
+### 8.4 USB Mass Storage (Future)
 
 - [ ] *(Stretch)* USB mass storage class driver (bulk-only transport)
 - [ ] *(Stretch)* SCSI command layer (INQUIRY, READ10, WRITE10)
 - [ ] *(Stretch)* Hot-plug notification: show toast "USB drive detected", auto-mount
 - [ ] *(Stretch)* Safe removal: flush + unmount + notification
 
-### 7.5 Disk I/O Metrics
+### 8.5 Disk I/O Metrics
 
 - [ ] Track read/write byte counts per block device
 - [ ] Track I/O operations per second
@@ -295,7 +332,7 @@
 - [ ] Shell command: `iostat` — show disk I/O statistics
 - [ ] Commit: `"drivers: disk I/O metrics"`
 
-### 7.6 IXFS Directory Structure (First Boot)
+### 8.6 IXFS Directory Structure (First Boot)
 
 - [ ] On first boot (fresh IXFS format), create standard directory tree:
   - [ ] `C:\Impossible\` — system root
@@ -324,18 +361,21 @@
 |----------|---------|--------|
 | ✅ Done | 1.1 VirtIO-blk Driver | Modern VirtIO 1.0 MMIO — implemented and tested |
 | ✅ Done | 1.3 Block Device Layer | Unified interface over VirtIO/AHCI |
-| 🔴 P0 | 2. Partition Tables | Required to find filesystems on disk |
+| ✅ Done | 2. Partition Tables | MBR + GPT + partition scanner |
 | 🔴 P0 | 3.1 FAT32 Read | Read USB drives, boot media |
-| 🟠 P1 | 4.1–4.4 IXFS on Disk | Persistence — files survive reboot |
-| 🟠 P1 | 5.1 Auto-Mount | Drive letters from real disks |
+| 🟠 P1 | 4.1 NTFS Read | Read Windows-formatted partitions |
+| 🟠 P1 | 5.1–5.4 IXFS on Disk | Persistence — files survive reboot |
+| 🟠 P1 | 6.1 Auto-Mount | Drive letters from real disks |
 | 🟠 P1 | 3.2 FAT32 Write | Full read/write for removable media |
-| 🟠 P1 | 7.6 IXFS Directory Structure | Standard paths on first boot |
+| 🟠 P1 | 8.6 IXFS Directory Structure | Standard paths on first boot |
 | ✅ Done | 1.2 AHCI Driver | SATA HDD/SSD — implemented and tested |
-| 🟡 P2 | 7.1 Disk Cache | Performance — reduce disk I/O |
-| 🟡 P2 | 5.2 Mount/Unmount Commands | Manual storage management |
-| 🟡 P2 | 6. Disk Management GUI | Visual partition management |
+| 🟡 P2 | 4.2 NTFS Write | Write to Windows partitions |
+| 🟡 P2 | 8.1 Disk Cache | Performance — reduce disk I/O |
+| 🟡 P2 | 6.2 Mount/Unmount Commands | Manual storage management |
+| 🟡 P2 | 7. Disk Management GUI | Visual partition management |
 | 🟢 P3 | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
-| 🟢 P3 | 7.2 Filesystem Integrity | Recovery from unclean shutdown |
-| 🟢 P3 | 7.5 Disk I/O Metrics | Performance monitoring |
-| 🔵 P4 | 7.3 NVMe Driver | Modern SSD support (future) |
-| 🔵 P4 | 7.4 USB Mass Storage | Hot-plug USB drives (future) |
+| 🟢 P3 | 4.3 NTFS VFS | Complete NTFS integration |
+| 🟢 P3 | 8.2 Filesystem Integrity | Recovery from unclean shutdown |
+| 🟢 P3 | 8.5 Disk I/O Metrics | Performance monitoring |
+| 🔵 P4 | 8.3 NVMe Driver | Modern SSD support (future) |
+| 🔵 P4 | 8.4 USB Mass Storage | Hot-plug USB drives (future) |

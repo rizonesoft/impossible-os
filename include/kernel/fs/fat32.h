@@ -52,3 +52,35 @@ struct vfs_fs_driver *fat32_get_driver(void);
 
 /* Get the root VFS node */
 struct vfs_node *fat32_get_root(void);
+
+/* ---- Write operations ---- */
+
+/* Create an empty file in the given directory cluster.
+ * Returns 0 on success, -1 on failure. */
+int fat32_create_file(uint32_t dir_cluster, const char *name);
+
+/* Create a subdirectory with "." and ".." entries.
+ * Returns 0 on success, -1 on failure. */
+int fat32_create_dir(uint32_t parent_cluster, const char *name);
+
+/* Write data to a file (overwrite mode — replaces existing content).
+ * Creates the directory entry if it doesn't exist.
+ * Returns 0 on success, -1 on failure. */
+int fat32_write_file(uint32_t dir_cluster, const char *name,
+                     const void *data, uint32_t size);
+
+/* Delete a file or directory by name from the given directory.
+ * Frees the cluster chain and marks the directory entry as deleted.
+ * Returns 0 on success, -1 if not found. */
+int fat32_delete_file(uint32_t dir_cluster, const char *name);
+
+/* Rename a file or directory within the same directory.
+ * Returns 0 on success, -1 if not found. */
+int fat32_rename(uint32_t dir_cluster,
+                 const char *old_name, const char *new_name);
+
+/* Format a block device as FAT32.
+ * Writes BPB, FSInfo, both FAT copies, and empty root directory.
+ * Returns 0 on success, -1 on failure. */
+int fat32_format(const struct blkdev *dev, const char *label);
+
