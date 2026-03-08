@@ -1084,22 +1084,29 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     /* Render terminal content to its window buffer */
                     terminal_render();
 
-                    /* Full redraw */
+                    /* Prevent preemption during draw+swap so the PIT
+                     * cannot context-switch us mid-frame.  Without this,
+                     * the 100 Hz PIT can preempt the ~5-10 ms composite
+                     * cycle, causing the old hw frame to persist while
+                     * the back buffer is half-drawn → visible flicker. */
+                    scheduler_disable();
                     wm_mark_dirty();
                     wm_composite();
                     mouse_draw_cursor();
                     fb_swap();
+                    scheduler_enable();
 
                     prev_mx = mx;
                     prev_my = my;
                     prev_mb = mb;
                     first_frame = 0;
                 } else if (cursor_moved) {
-                    /* Cursor-only move (no buttons held) — just
-                     * erase old cursor and draw at new position */
+                    /* Cursor-only move (no buttons held) */
+                    scheduler_disable();
                     mouse_restore_under();
                     mouse_draw_cursor();
                     fb_swap();
+                    scheduler_enable();
 
                     prev_mx = mx;
                     prev_my = my;

@@ -227,6 +227,31 @@ void fb_swap(void)
     /* Flush all cached back-buffer writes before copying to HW */
     __asm__ volatile ("sfence" ::: "memory");
 
+    /* Wait for VGA vertical retrace (port 0x3DA, bit 3).
+     * This synchronizes our copy with the display's vblank period,
+     * so QEMU's host display thread doesn't read a half-updated frame.
+     * The busy-wait is bounded (~16ms at 60 Hz guest refresh).  If the
+     * port returns 0xFF (no VGA ISR emulation), skip after a timeout. */
+    {
+        uint32_t timeout = 100000;  /* ~1 ms on modern CPUs */
+
+        /* Phase 1: wait for any current retrace to end */
+        while (timeout--) {
+            uint8_t st;
+            __asm__ volatile ("inb %1, %0" : "=a"(st) : "Nd"((uint16_t)0x3DA));
+            if (st == 0xFF) goto skip_vsync;  /* no VGA ISR emulation */
+            if (!(st & 0x08)) break;
+        }
+        /* Phase 2: wait for retrace to start */
+        timeout = 200000;
+        while (timeout--) {
+            uint8_t st;
+            __asm__ volatile ("inb %1, %0" : "=a"(st) : "Nd"((uint16_t)0x3DA));
+            if (st & 0x08) break;
+        }
+    }
+skip_vsync:
+
     /* Disable interrupts so HW FB is never half-updated by guest ISRs */
     __asm__ volatile ("cli");
 
