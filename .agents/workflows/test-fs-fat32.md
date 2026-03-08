@@ -12,8 +12,8 @@ description: Complete FAT32 filesystem test workflow using test disk images
 >
 > Drive letter mapping:
 >   C:\ = IXFS (system partition)
->   D:\ = FAT32 (EFI partition on system disk)
->   E:\ = FAT32 (test disk on AHCI port 1)
+>   D:\ = first non-EFI FAT32 partition (e.g., test disk)
+>   EFI partition = hidden (no drive letter, like Windows)
 
 ## Steps
 
@@ -83,10 +83,10 @@ echo "=== QEMU is still running — switch to the QEMU window for manual shell t
 Once verified, switch to the QEMU window and use the shell:
 
 ```
-dir E:\                    # List FAT32 test disk root
-type E:\test.txt           # Should print: "Hello from FAT32 test disk!"
-dir E:\subdir              # List subdirectory
-type E:\subdir\nested.txt  # Should print: "Nested file in subdirectory"
+dir D:\                    # List FAT32 test disk root
+type D:\test.txt           # Should print: "Hello from FAT32 test disk!"
+dir D:\subdir              # List subdirectory
+type D:\subdir\nested.txt  # Should print: "Nested file in subdirectory"
 ```
 
 ## Troubleshooting

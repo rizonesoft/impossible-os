@@ -206,6 +206,8 @@ static void register_partition(const struct blkdev *parent,
     pi->disk_index   = disk_idx;
     pi->part_index   = part_num;
     pi->fs_type      = PART_FS_UNKNOWN;  /* Probed after registration */
+    pi->is_efi       = (type_name && type_name[0] == 'E' && type_name[1] == 'F'
+                        && type_name[2] == 'I') ? 1 : 0;
 
     /* Build sub-blkdev */
     part_strcpy(sub.name, name, sizeof(sub.name));
@@ -313,7 +315,8 @@ void partition_scan_all(void)
 void partition_mount_filesystems(void)
 {
     int i;
-    /* C: = first IXFS (system), D:+ = FAT32 partitions */
+    /* C: = first IXFS (system), D:+ = non-EFI FAT32 partitions.
+     * EFI System Partitions are hidden (no drive letter), like Windows. */
     int ixfs_mounted = 0;
     char next_fat32_letter = 'D';
 
@@ -325,6 +328,10 @@ void partition_mount_filesystems(void)
         const struct blkdev *sub_dev;
 
         if (pi->fs_type != PART_FS_FAT32 && pi->fs_type != PART_FS_IXFS)
+            continue;
+
+        /* Skip EFI System Partition — no drive letter (like Windows) */
+        if (pi->is_efi)
             continue;
 
         /* Build sub-blkdev name: "disk0p1" */
