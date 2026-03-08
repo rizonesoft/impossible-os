@@ -151,11 +151,11 @@ make all
 
 - [x] Create `tools/make-test-disks.sh` — script to generate all test images
 - [x] `fat32.img` — FAT32 with sample files (via `mkfs.fat` + `mcopy`)
-- [x] `exfat.img` — exFAT with sample files (skipped if `exfatprogs` not installed)
+- [x] `exfat.img` — exFAT with sample files (via `mkfs.exfat`)
 - [x] `ext2.img` — ext2 with sample files (via `mkfs.ext2` + `debugfs`)
 - [x] `ext3.img` — ext3 with journal (via `mkfs.ext3` + `debugfs`)
 - [x] `ext4.img` — ext4 with extents + journal (via `mkfs.ext4` + `debugfs`)
-- [x] `ntfs.img` — NTFS with sample files (skipped if `ntfs-3g` not installed)
+- [x] `ntfs.img` — NTFS with sample files (via `mkntfs` + `ntfscp`)
 - [x] `ixfs.img` — standalone IXFS v2 (via `mkfs-ixfs`)
 - [x] `mbr.img` — MBR partition table (fallback: minimal MBR if `make-mbr` missing)
 - [x] `gpt.img` — GPT partition table (fallback: minimal GPT if `make-gpt` missing)
