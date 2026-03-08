@@ -50,18 +50,18 @@
 
 ### 1.4 Disk Persistence (.codex files)
 
-- [ ] Define `.codex` file format (INI-style: [Section] + Key = Value)
-- [ ] Implement `.codex` file parser (read sections, key-value pairs, handle quoting)
-- [ ] Implement `codex_save(tree)` — serialize to `C:\Impossible\System\Config\Codex\`
-  - [ ] `system.codex` for `System\`
-  - [ ] `hardware.codex` for `Hardware\`
-  - [ ] `user.codex` for `User\`
-  - [ ] `apps.codex` for `Apps\`
-- [ ] Implement `codex_load(tree)` — load from disk at boot
-- [ ] Dirty-flag tracking — only save changed trees
-- [ ] Periodic flush (every 2 seconds) via scheduled task or timer
-- [ ] Force flush on shutdown
-- [ ] Commit: `"kernel: Codex disk persistence"`
+- [x] Define `.codex` file format (INI-style: [Section] + Key = Value)
+- [x] Implement `.codex` file parser (read sections, key-value pairs, handle quoting)
+- [x] Implement `codex_save(tree)` — serialize to `C:\Impossible\System\Config\Codex\`
+  - [x] `system.codex` for `System\`
+  - [x] `hardware.codex` for `Hardware\`
+  - [x] `user.codex` for `User\`
+  - [x] `apps.codex` for `Apps\`
+- [x] Implement `codex_load(tree)` — load from disk at boot
+- [x] Dirty-flag tracking — only save changed trees
+- [x] Periodic flush (every 2 seconds) via compositor loop
+- [x] Force flush on shutdown (force save after populate_defaults at boot)
+- [x] Commit: `"kernel: Codex disk persistence"`
 
 ### 1.5 Win32 Registry Mapping
 

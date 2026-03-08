@@ -114,3 +114,20 @@ int codex_enum_keys(codex_key_t *key, uint32_t index, char *name, uint32_t size)
 /* Get the value at 'index' (0-based).
  * Returns pointer to the value, or NULL if index out of range. */
 codex_value_t *codex_enum_values(codex_key_t *key, uint32_t index);
+
+/* ---- API: Disk persistence ---- */
+
+/* Save all dirty root trees to .codex files in C:\Impossible\System\Config\Codex\.
+ * Returns number of files saved. */
+int codex_save(void);
+
+/* Load .codex files from disk into the in-memory tree.
+ * Call at boot before codex_populate_defaults(). Returns number of values loaded. */
+int codex_load(void);
+
+/* Flush dirty trees to disk if enough time has passed (2-second interval).
+ * Call from compositor loop or timer tick. */
+void codex_flush(void);
+
+/* Mark a root tree as dirty (called automatically by set/delete operations). */
+void codex_mark_dirty(const char *root_name);

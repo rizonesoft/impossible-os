@@ -332,7 +332,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Initialize the Codex registry */
     codex_init();
-    codex_populate_defaults();
+    codex_load();                /* load saved .codex files from disk */
+    codex_populate_defaults();   /* fill in any missing defaults */
+    codex_save();                /* persist defaults to disk on first boot */
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
@@ -1066,6 +1068,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     mouse_draw_cursor();
                     fb_swap();
                 }
+
+                /* Periodically flush dirty Codex trees to disk */
+                codex_flush();
 
                 /* Yield to other tasks instead of HLT.  HLT surrenders the
                  * entire time slice; yield() does a cooperative context switch

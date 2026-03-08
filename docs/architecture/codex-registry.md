@@ -140,15 +140,56 @@ codex_get_string(theme2, "AccentColor", color, sizeof(color));
 [OK] Codex defaults populated (32 values, 32/512 pool used)
 ```
 
-## Future: Disk Persistence (Section 1.4)
+## Disk Persistence (.codex files)
 
-`.codex` INI-style files in `C:\Impossible\System\Config\Codex\`:
-- `system.codex` — System\ tree
-- `hardware.codex` — Hardware\ tree
-- `user.codex` — User\ tree
-- `apps.codex` — Apps\ tree
+INI-style files in `C:\Impossible\System\Config\Codex\`:
 
-Once persistence is implemented, `codex_populate_defaults()` will only run
-on first boot (when no `.codex` files exist). Subsequent boots will load
-from disk. The build system will pre-generate default `.codex` files in the
-sysroot.
+| File | Root Key |
+|------|----------|
+| `system.codex` | `System\` |
+| `hardware.codex` | `Hardware\` |
+| `user.codex` | `User\` |
+| `apps.codex` | `Apps\` |
+
+### File Format
+
+```ini
+; Codex Registry — System
+; Auto-generated, do not edit manually
+
+[Display]
+Width:INT32=1280
+Height:INT32=720
+DPI:INT32=96
+
+[Theme]
+AccentColor:STRING=#0078D4
+DarkMode:BOOL=1
+Font:STRING=Selawik
+CornerRadius:INT32=8
+```
+
+Value format: `Name:TYPE=Value` where TYPE is `STRING`, `INT32`, `INT64`, `BOOL`, or `BINARY`.
+
+### Persistence API
+
+| Function | Description |
+|----------|-------------|
+| `codex_save()` | Save all dirty root trees to .codex files |
+| `codex_load()` | Load .codex files from disk at boot |
+| `codex_flush()` | Auto-save dirty trees every 2 seconds |
+| `codex_mark_dirty(root)` | Mark a root tree for save (auto-called by set/delete) |
+
+### Boot Sequence
+
+1. `codex_init()` — create root keys
+2. `codex_load()` — load saved .codex files (if they exist)
+3. `codex_populate_defaults()` — fill in any missing defaults
+4. `codex_save()` — force persist (first boot writes all defaults)
+5. Compositor loop calls `codex_flush()` every iteration (2-sec interval)
+
+### Dirty Tracking
+
+All `codex_set_*()` and `codex_delete_value()` functions automatically mark
+the owning root tree as dirty. `codex_flush()` checks the 2-second interval
+and only writes dirty trees to disk.

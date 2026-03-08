@@ -53,13 +53,15 @@ user preferences, and app configuration.
 | `codex_enum_keys(key, idx, name, sz)` | Iterate child keys |
 | `codex_enum_values(key, idx)` | Iterate values |
 
-### Disk Persistence (planned)
+### Disk Persistence
 
-`.codex` files in `C:\Impossible\System\Config\Codex\`:
+INI-style `.codex` files in `C:\Impossible\System\Config\Codex\`:
 - `system.codex` — System\ tree
 - `hardware.codex` — Hardware\ tree
 - `user.codex` — User\ tree
 - `apps.codex` — Apps\ tree
+
+Auto-saved every 2 seconds when dirty. See [codex-registry.md](codex-registry.md) for full details.
 
 ### Pre-Populated Defaults
 

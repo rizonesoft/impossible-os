@@ -14,6 +14,8 @@
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/drivers/pit.h"
 
 /* ---- Static node pools ---- */
 
@@ -29,6 +31,15 @@ static uint32_t      value_pool_next = 0;
 /* Root of the entire Codex tree */
 static codex_key_t  *codex_root = (void *)0;
 static uint8_t       codex_ready = 0;
+
+/* Dirty flags for the four root trees */
+static uint8_t dirty_system   = 0;
+static uint8_t dirty_hardware = 0;
+static uint8_t dirty_user     = 0;
+static uint8_t dirty_apps     = 0;
+static uint64_t last_flush_sec = 0;
+#define CODEX_FLUSH_INTERVAL  2   /* seconds between auto-flushes */
+#define CODEX_CONFIG_DIR  "C:\\Impossible\\System\\Config\\Codex\\"
 
 /* ---- String helpers ---- */
 
@@ -302,6 +313,9 @@ int codex_delete_key(const char *path)
     return 0;
 }
 
+/* Forward declaration — defined in persistence section below */
+static void auto_dirty(codex_key_t *key);
+
 /* ---- Value accessors ---- */
 
 int codex_get_string(codex_key_t *key, const char *name, char *buf, uint32_t buf_size)
@@ -352,6 +366,7 @@ int codex_set_string(codex_key_t *key, const char *name, const char *value)
         v->type = CODEX_STRING;
         cx_strcpy(v->data.str, value, CODEX_MAX_STRING);
         v->data_size = cx_strlen(value) + 1;
+        auto_dirty(key);
         return 0;
     }
 
@@ -361,6 +376,7 @@ int codex_set_string(codex_key_t *key, const char *name, const char *value)
     cx_strcpy(v->data.str, value, CODEX_MAX_STRING);
     v->data_size = cx_strlen(value) + 1;
     add_value(key, v);
+    auto_dirty(key);
     return 0;
 }
 
@@ -375,6 +391,7 @@ int codex_set_int32(codex_key_t *key, const char *name, int32_t value)
         v->type = CODEX_INT32;
         v->data.i32 = value;
         v->data_size = 4;
+        auto_dirty(key);
         return 0;
     }
 
@@ -383,6 +400,7 @@ int codex_set_int32(codex_key_t *key, const char *name, int32_t value)
     v->data.i32 = value;
     v->data_size = 4;
     add_value(key, v);
+    auto_dirty(key);
     return 0;
 }
 
@@ -397,6 +415,7 @@ int codex_set_int64(codex_key_t *key, const char *name, int64_t value)
         v->type = CODEX_INT64;
         v->data.i64 = value;
         v->data_size = 8;
+        auto_dirty(key);
         return 0;
     }
 
@@ -405,6 +424,7 @@ int codex_set_int64(codex_key_t *key, const char *name, int64_t value)
     v->data.i64 = value;
     v->data_size = 8;
     add_value(key, v);
+    auto_dirty(key);
     return 0;
 }
 
@@ -419,6 +439,7 @@ int codex_set_bool(codex_key_t *key, const char *name, uint8_t value)
         v->type = CODEX_BOOL;
         v->data.boolean = value ? 1 : 0;
         v->data_size = 1;
+        auto_dirty(key);
         return 0;
     }
 
@@ -427,6 +448,7 @@ int codex_set_bool(codex_key_t *key, const char *name, uint8_t value)
     v->data.boolean = value ? 1 : 0;
     v->data_size = 1;
     add_value(key, v);
+    auto_dirty(key);
     return 0;
 }
 
@@ -443,6 +465,7 @@ int codex_delete_value(codex_key_t *key, const char *name)
             *pp = doomed->next;
             doomed->name[0] = '\0';
             doomed->next = (void *)0;
+            auto_dirty(key);
             return 0;
         }
         pp = &(*pp)->next;
@@ -642,4 +665,405 @@ void codex_populate_defaults(void)
     printk("Codex defaults populated (%u values, %u/%u pool used)\n",
            (uint64_t)count,
            (uint64_t)value_pool_next, (uint64_t)VALUE_POOL_SIZE);
+}
+
+/* ============================================================================
+ * Disk Persistence — INI-style .codex files
+ *
+ * File format:
+ *   [KeyPath]
+ *   Name:STRING=value
+ *   Name:INT32=12345
+ *   Name:INT64=9876543210
+ *   Name:BOOL=1
+ *
+ * One file per root key: system.codex, hardware.codex, user.codex, apps.codex
+ * ============================================================================ */
+
+/* ---- Dirty flag helpers ---- */
+
+static uint8_t *dirty_flag_for(const char *root_name)
+{
+    if (cx_strcmp(root_name, "System") == 0)   return &dirty_system;
+    if (cx_strcmp(root_name, "Hardware") == 0) return &dirty_hardware;
+    if (cx_strcmp(root_name, "User") == 0)     return &dirty_user;
+    if (cx_strcmp(root_name, "Apps") == 0)     return &dirty_apps;
+    return (void *)0;
+}
+
+/* Walk up to find the root key name for a given key */
+static const char *root_name_for_key(codex_key_t *key)
+{
+    codex_key_t *cur = key;
+    while (cur && cur->parent && cur->parent != codex_root)
+        cur = cur->parent;
+    if (cur && cur->parent == codex_root)
+        return cur->name;
+    return (void *)0;
+}
+
+void codex_mark_dirty(const char *root_name)
+{
+    uint8_t *flag = dirty_flag_for(root_name);
+    if (flag) *flag = 1;
+}
+
+/* Auto-mark dirty from a key pointer */
+static void auto_dirty(codex_key_t *key)
+{
+    const char *rn = root_name_for_key(key);
+    if (rn) codex_mark_dirty(rn);
+}
+
+/* ---- INI Serializer ---- */
+
+/* Scratch buffer for building file content.
+ * 16 KiB should be plenty for even a large tree. */
+#define SERIALIZE_BUF_SIZE  16384
+static char serialize_buf[SERIALIZE_BUF_SIZE];
+static uint32_t ser_pos;
+
+static void ser_reset(void) { ser_pos = 0; }
+
+static void ser_putc(char c)
+{
+    if (ser_pos < SERIALIZE_BUF_SIZE - 1)
+        serialize_buf[ser_pos++] = c;
+}
+
+static void ser_puts(const char *s)
+{
+    while (*s) ser_putc(*s++);
+}
+
+/* Integer to decimal string */
+static void ser_puti64(int64_t val)
+{
+    char tmp[24];
+    int i = 0;
+    uint64_t uval;
+    int neg = 0;
+
+    if (val < 0) { neg = 1; uval = (uint64_t)(-val); }
+    else          { uval = (uint64_t)val; }
+
+    if (uval == 0) { tmp[i++] = '0'; }
+    else {
+        while (uval > 0) {
+            tmp[i++] = '0' + (char)(uval % 10);
+            uval /= 10;
+        }
+    }
+    if (neg) ser_putc('-');
+    while (i > 0) ser_putc(tmp[--i]);
+}
+
+static void ser_puti32(int32_t val) { ser_puti64((int64_t)val); }
+
+/* Type name strings */
+static const char *type_str(codex_type_t t)
+{
+    switch (t) {
+        case CODEX_STRING: return "STRING";
+        case CODEX_INT32:  return "INT32";
+        case CODEX_INT64:  return "INT64";
+        case CODEX_BOOL:   return "BOOL";
+        case CODEX_BINARY: return "BINARY";
+    }
+    return "STRING";
+}
+
+/* Serialize all values in a key, with a [Section] header.
+ * 'path' is the full path relative to the root key (e.g., "Display" or "Theme"). */
+static void serialize_key(codex_key_t *key, const char *path)
+{
+    codex_value_t *v;
+    codex_key_t *child;
+
+    /* Write values if any */
+    v = key->values;
+    if (v) {
+        ser_putc('[');
+        ser_puts(path[0] ? path : ".");
+        ser_puts("]\n");
+
+        while (v) {
+            ser_puts(v->name);
+            ser_putc(':');
+            ser_puts(type_str(v->type));
+            ser_putc('=');
+            switch (v->type) {
+                case CODEX_STRING: ser_puts(v->data.str); break;
+                case CODEX_INT32:  ser_puti32(v->data.i32); break;
+                case CODEX_INT64:  ser_puti64(v->data.i64); break;
+                case CODEX_BOOL:   ser_putc(v->data.boolean ? '1' : '0'); break;
+                case CODEX_BINARY: ser_puts("(binary)"); break;
+            }
+            ser_putc('\n');
+            v = v->next;
+        }
+        ser_putc('\n');
+    }
+
+    /* Recurse into children */
+    child = key->children;
+    while (child) {
+        char subpath[CODEX_MAX_PATH];
+        uint32_t pi = 0;
+        const char *p;
+
+        /* Build subpath */
+        p = path;
+        while (*p && pi < CODEX_MAX_PATH - 2) subpath[pi++] = *p++;
+        if (pi > 0) subpath[pi++] = '\\';
+        p = child->name;
+        while (*p && pi < CODEX_MAX_PATH - 1) subpath[pi++] = *p++;
+        subpath[pi] = '\0';
+
+        serialize_key(child, subpath);
+        child = child->sibling;
+    }
+}
+
+/* Save a single root tree to disk */
+static int save_tree(const char *root_name, const char *filename)
+{
+    codex_key_t *root_key;
+    struct vfs_node *file;
+    char path[CODEX_MAX_PATH];
+    uint32_t pi = 0;
+    const char *p;
+    int rc;
+
+    root_key = codex_open(root_name);
+    if (!root_key) return -1;
+
+    /* Build full file path */
+    p = CODEX_CONFIG_DIR;
+    while (*p && pi < CODEX_MAX_PATH - 1) path[pi++] = *p++;
+    p = filename;
+    while (*p && pi < CODEX_MAX_PATH - 1) path[pi++] = *p++;
+    path[pi] = '\0';
+
+    /* Serialize the tree */
+    ser_reset();
+    ser_puts("; Codex Registry — ");
+    ser_puts(root_name);
+    ser_puts("\n; Auto-generated, do not edit manually\n\n");
+    serialize_key(root_key, "");
+
+    /* Create and write file */
+    vfs_create(path, VFS_FILE);
+    file = vfs_open(path, VFS_O_WRITE | VFS_O_TRUNC);
+    if (!file) return -1;
+
+    rc = vfs_write(file, 0, ser_pos, (const uint8_t *)serialize_buf);
+    vfs_close(file);
+
+    return rc >= 0 ? 0 : -1;
+}
+
+int codex_save(void)
+{
+    int saved = 0;
+
+    if (!codex_ready) return 0;
+
+    if (dirty_system)   { if (save_tree("System",   "system.codex")   == 0) { dirty_system = 0;   saved++; } }
+    if (dirty_hardware) { if (save_tree("Hardware", "hardware.codex") == 0) { dirty_hardware = 0; saved++; } }
+    if (dirty_user)     { if (save_tree("User",     "user.codex")     == 0) { dirty_user = 0;     saved++; } }
+    if (dirty_apps)     { if (save_tree("Apps",     "apps.codex")     == 0) { dirty_apps = 0;     saved++; } }
+
+    return saved;
+}
+
+/* ---- INI Parser ---- */
+
+/* Parse a type string back to codex_type_t */
+static codex_type_t parse_type(const char *s)
+{
+    if (cx_strcmp(s, "INT32") == 0)  return CODEX_INT32;
+    if (cx_strcmp(s, "INT64") == 0)  return CODEX_INT64;
+    if (cx_strcmp(s, "BOOL") == 0)   return CODEX_BOOL;
+    if (cx_strcmp(s, "BINARY") == 0) return CODEX_BINARY;
+    return CODEX_STRING;
+}
+
+/* Parse a decimal integer from a string */
+static int64_t parse_int(const char *s)
+{
+    int64_t result = 0;
+    int neg = 0;
+
+    if (*s == '-') { neg = 1; s++; }
+    while (*s >= '0' && *s <= '9') {
+        result = result * 10 + (*s - '0');
+        s++;
+    }
+    return neg ? -result : result;
+}
+
+/* Load a single .codex file and populate the tree */
+static int load_file(const char *root_name, const char *filename)
+{
+    char path[CODEX_MAX_PATH];
+    uint32_t pi = 0;
+    const char *p;
+    struct vfs_node *file;
+    int n;
+    char section[CODEX_MAX_PATH];
+    uint32_t count = 0;
+
+    /* Build full file path */
+    p = CODEX_CONFIG_DIR;
+    while (*p && pi < CODEX_MAX_PATH - 1) path[pi++] = *p++;
+    p = filename;
+    while (*p && pi < CODEX_MAX_PATH - 1) path[pi++] = *p++;
+    path[pi] = '\0';
+
+    file = vfs_open(path, VFS_O_READ);
+    if (!file) return 0;
+
+    /* Read entire file into serialize_buf (reuse it as read buffer) */
+    n = vfs_read(file, 0, SERIALIZE_BUF_SIZE - 1, (uint8_t *)serialize_buf);
+    vfs_close(file);
+
+    if (n <= 0) return 0;
+    serialize_buf[n] = '\0';
+
+    /* Parse line by line */
+    section[0] = '\0';
+    {
+        char *line = serialize_buf;
+        while (*line) {
+            /* Find end of line */
+            char *eol = line;
+            while (*eol && *eol != '\n') eol++;
+
+            /* Null-terminate this line */
+            if (*eol == '\n') { *eol = '\0'; eol++; }
+
+            /* Skip empty lines and comments */
+            if (line[0] == '\0' || line[0] == ';' || line[0] == '#') {
+                line = eol;
+                continue;
+            }
+
+            /* [Section] header */
+            if (line[0] == '[') {
+                char *end = line + 1;
+                uint32_t si = 0;
+                while (*end && *end != ']' && si < CODEX_MAX_PATH - 1)
+                    section[si++] = *end++;
+                section[si] = '\0';
+                line = eol;
+                continue;
+            }
+
+            /* Name:TYPE=Value line */
+            {
+                char name[CODEX_MAX_NAME];
+                char type_s[16];
+                char *val_start;
+                uint32_t ni = 0, ti = 0;
+                codex_key_t *key;
+                char key_path[CODEX_MAX_PATH];
+                uint32_t kpi = 0;
+
+                /* Parse name */
+                p = line;
+                while (*p && *p != ':' && ni < CODEX_MAX_NAME - 1)
+                    name[ni++] = *p++;
+                name[ni] = '\0';
+                if (*p == ':') p++;
+
+                /* Parse type */
+                while (*p && *p != '=' && ti < 15)
+                    type_s[ti++] = *p++;
+                type_s[ti] = '\0';
+                if (*p == '=') p++;
+                val_start = (char *)p;
+
+                /* Build full key path: root_name\section (or just root_name if section is ".") */
+                kpi = 0;
+                p = root_name;
+                while (*p && kpi < CODEX_MAX_PATH - 1) key_path[kpi++] = *p++;
+                if (section[0] && cx_strcmp(section, ".") != 0) {
+                    key_path[kpi++] = '\\';
+                    p = section;
+                    while (*p && kpi < CODEX_MAX_PATH - 1) key_path[kpi++] = *p++;
+                }
+                key_path[kpi] = '\0';
+
+                key = codex_create(key_path);
+                if (key && name[0]) {
+                    codex_type_t type = parse_type(type_s);
+                    switch (type) {
+                        case CODEX_STRING:
+                            codex_set_string(key, name, val_start);
+                            break;
+                        case CODEX_INT32:
+                            codex_set_int32(key, name, (int32_t)parse_int(val_start));
+                            break;
+                        case CODEX_INT64:
+                            codex_set_int64(key, name, parse_int(val_start));
+                            break;
+                        case CODEX_BOOL:
+                            codex_set_bool(key, name, (val_start[0] == '1') ? 1 : 0);
+                            break;
+                        case CODEX_BINARY:
+                            break;  /* skip binary for now */
+                    }
+                    count++;
+                }
+            }
+
+            line = eol;
+        }
+    }
+
+    return (int)count;
+}
+
+int codex_load(void)
+{
+    int total = 0;
+
+    if (!codex_ready) return 0;
+    if (!vfs_is_mounted('C')) return 0;
+
+    total += load_file("System",   "system.codex");
+    total += load_file("Hardware", "hardware.codex");
+    total += load_file("User",     "user.codex");
+    total += load_file("Apps",     "apps.codex");
+
+    /* Clear dirty flags — loading shouldn't count as a change */
+    dirty_system = dirty_hardware = dirty_user = dirty_apps = 0;
+
+    if (total > 0) {
+        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+        printk("[OK] ");
+        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        printk("Codex loaded %u values from disk\n", (uint64_t)total);
+    }
+
+    return total;
+}
+
+void codex_flush(void)
+{
+    uint64_t now;
+
+    if (!codex_ready) return;
+    if (!vfs_is_mounted('C')) return;
+
+    now = uptime();
+    if (now - last_flush_sec < CODEX_FLUSH_INTERVAL)
+        return;  /* too soon */
+
+    last_flush_sec = now;
+
+    if (dirty_system || dirty_hardware || dirty_user || dirty_apps) {
+        codex_save();
+    }
 }
