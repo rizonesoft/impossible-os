@@ -103,9 +103,9 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     else
         ixfs_strcpy((char *)vol->sb.s_volume_name, "IXFS", 32);
 
-    /* Compute superblock self-checksum (CRC32C of bytes 0..103) */
+    /* Compute superblock self-checksum (CRC32C of bytes 0..111) */
     vol->sb.s_checksum = 0;  /* zero the field before computing */
-    vol->sb.s_checksum = ixfs_crc32c(&vol->sb, 104);
+    vol->sb.s_checksum = ixfs_crc32c(&vol->sb, 112);
 
     /* Write superblock */
     if (ixfs_flush_superblock(vol) != 0) {
@@ -259,10 +259,16 @@ int ixfs_init(const struct blkdev *dev)
         return -1;
     }
 
-    if (vol->sb.s_version != IXFS_VERSION) {
+    if (vol->sb.s_version == 1) {
+        /* v1 volume: mount read-only for backward compatibility */
+        vol->read_only = 1;
+        printk("[WARN] IXFS: v1 volume mounted read-only\n");
+    } else if (vol->sb.s_version != IXFS_VERSION) {
         printk("[FAIL] IXFS: unsupported version %u\n",
                (uint64_t)vol->sb.s_version);
         return -1;
+    } else {
+        vol->read_only = 0;
     }
 
     /* Load block bitmap into memory */
@@ -315,8 +321,9 @@ int ixfs_init(const struct blkdev *dev)
     /* Verify superblock self-checksum */
     {
         uint32_t saved = vol->sb.s_checksum;
+        uint32_t computed;
         vol->sb.s_checksum = 0;
-        uint32_t computed = ixfs_crc32c(&vol->sb, 104);
+        computed = ixfs_crc32c(&vol->sb, 112);
         vol->sb.s_checksum = saved;
         if (saved != 0 && computed != saved) {
             printk("[WARN] IXFS: superblock checksum mismatch "

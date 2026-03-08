@@ -210,7 +210,7 @@ int main(int argc, char *argv[])
         bpb[511] = 0xAA;
     }
 
-    /* Partition 3 (IXFS, LBA 36864): IXFS superblock */
+    /* Partition 3 (IXFS, LBA 36864): IXFS v2 superblock */
     {
         uint8_t *sb = disk + 36864ULL * SECTOR_SIZE;
         uint32_t total_sectors = 102399 - 36864 + 1;  /* 65536 sectors */
@@ -220,39 +220,41 @@ int main(int argc, char *argv[])
         /* Layout: sb(1) + bm(1) + cksum(8) + in(1) + j(16) + rc(2) + sn(1) + root(1) = 31 */
         uint32_t used = 1 + 1 + cksum_blks + 1 + 16 + 2 + 1 + 1;
 
+        /* v2 superblock: s_total_blocks and s_free_blocks are uint64_t
+         * All offsets after byte 12 shift +8 vs v1 */
         w32(sb + 0, 0x49584653);     /* s_magic = "IXFS" */
-        w32(sb + 4, 1);              /* s_version */
+        w32(sb + 4, 2);              /* s_version = 2 */
         w32(sb + 8, 4096);           /* s_block_size */
-        w32(sb + 12, total_blocks);  /* s_total_blocks */
-        w32(sb + 16, total_blocks - used); /* s_free_blocks */
-        w32(sb + 20, 128);           /* s_total_inodes */
-        w32(sb + 24, 127);           /* s_free_inodes */
-        w32(sb + 28, 1);             /* s_bitmap_start */
-        w32(sb + 32, 1);             /* s_bitmap_blocks */
-        w32(sb + 36, 2 + cksum_blks); /* s_inode_start (bm + cksum) */
-        w32(sb + 40, 1);             /* s_inode_blocks */
-        w32(sb + 44, 2 + cksum_blks + 1 + 16 + 2 + 1); /* s_data_start */
-        w32(sb + 48, 1);             /* s_root_inode */
-        memcpy(sb + 52, "Impossible OS", 13);  /* s_volume_name */
-        /* Journal fields (offset 84) */
-        w32(sb + 84, 2 + cksum_blks + 1); /* s_journal_start */
-        w32(sb + 88, 16);            /* s_journal_blocks */
-        w32(sb + 92, 0);             /* s_journal_seq */
-        /* CoW fields (offset 96) */
-        w32(sb + 96, 2 + cksum_blks + 1 + 16); /* s_refcount_start */
-        w32(sb + 100, 2);            /* s_refcount_blocks */
-        w32(sb + 104, 2 + cksum_blks + 1 + 16 + 2); /* s_snapshot_start */
-        w32(sb + 108, 0);            /* s_snapshot_count */
-        /* Checksum fields (offset 112) */
-        w32(sb + 112, 2);            /* s_checksum_start (after bitmap) */
-        w32(sb + 116, cksum_blks);   /* s_checksum_blocks */
+        w64(sb + 12, total_blocks);  /* s_total_blocks (uint64_t) */
+        w64(sb + 20, total_blocks - used); /* s_free_blocks (uint64_t) */
+        w32(sb + 28, 128);           /* s_total_inodes */
+        w32(sb + 32, 127);           /* s_free_inodes */
+        w32(sb + 36, 1);             /* s_bitmap_start */
+        w32(sb + 40, 1);             /* s_bitmap_blocks */
+        w32(sb + 44, 2 + cksum_blks); /* s_inode_start */
+        w32(sb + 48, 1);             /* s_inode_blocks */
+        w32(sb + 52, 2 + cksum_blks + 1 + 16 + 2 + 1); /* s_data_start */
+        w32(sb + 56, 1);             /* s_root_inode */
+        memcpy(sb + 60, "Impossible OS", 13);  /* s_volume_name */
+        /* Journal fields (offset 92) */
+        w32(sb + 92, 2 + cksum_blks + 1); /* s_journal_start */
+        w32(sb + 96, 16);            /* s_journal_blocks */
+        w32(sb + 100, 0);            /* s_journal_seq */
+        /* CoW fields (offset 104) */
+        w32(sb + 104, 2 + cksum_blks + 1 + 16); /* s_refcount_start */
+        w32(sb + 108, 2);            /* s_refcount_blocks */
+        w32(sb + 112, 2 + cksum_blks + 1 + 16 + 2); /* s_snapshot_start */
+        w32(sb + 116, 0);            /* s_snapshot_count */
+        /* Checksum fields (offset 120) */
+        w32(sb + 120, 2);            /* s_checksum_start */
+        w32(sb + 124, cksum_blks);   /* s_checksum_blocks */
 
-        /* Compute superblock self-checksum (CRC32C of bytes 0..103) */
+        /* Compute superblock self-checksum (CRC32C of bytes 0..111) */
         {
             uint32_t crc = 0xFFFFFFFF;
             int ci, cj;
-            w32(sb + 120, 0);  /* zero checksum field first */
-            for (ci = 0; ci < 104; ci++) {
+            w32(sb + 128, 0);  /* zero s_checksum field first */
+            for (ci = 0; ci < 112; ci++) {
                 crc ^= sb[ci];
                 for (cj = 0; cj < 8; cj++) {
                     if (crc & 1)
@@ -261,7 +263,7 @@ int main(int argc, char *argv[])
                         crc = crc >> 1;
                 }
             }
-            w32(sb + 120, crc ^ 0xFFFFFFFF); /* s_checksum */
+            w32(sb + 128, crc ^ 0xFFFFFFFF); /* s_checksum */
         }
     }
 

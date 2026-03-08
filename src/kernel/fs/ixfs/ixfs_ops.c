@@ -101,6 +101,8 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
     struct ixfs_volume *vol = v->vol;
     uint32_t bytes_written = 0;
     uint32_t blk_index, blk_offset;
+
+    if (vol->read_only) return -1;
     uint8_t *data_buf;
 
     if (!v) return -1;
@@ -444,6 +446,8 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
     struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
     struct ixfs_volume *vol = pv->vol;
     uint32_t new_ino;
+
+    if (vol->read_only) return -1;
     struct ixfs_inode new_inode;
     uint32_t dir_block;
     uint8_t *data_buf;

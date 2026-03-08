@@ -24,7 +24,7 @@
 /* --- Constants --- */
 
 #define IXFS_MAGIC           0x49584653   /* "IXFS" */
-#define IXFS_VERSION         1
+#define IXFS_VERSION         2
 #define IXFS_BLOCK_SIZE      4096         /* 4 KiB blocks */
 #define IXFS_SECTORS_PER_BLK (IXFS_BLOCK_SIZE / 512)
 
@@ -116,8 +116,8 @@ struct ixfs_superblock {
     uint32_t s_magic;              /* IXFS_MAGIC */
     uint32_t s_version;            /* filesystem version */
     uint32_t s_block_size;         /* block size in bytes (4096) */
-    uint32_t s_total_blocks;       /* total blocks on the volume */
-    uint32_t s_free_blocks;        /* number of free blocks */
+    uint64_t s_total_blocks;       /* total blocks on the volume (64-bit) */
+    uint64_t s_free_blocks;        /* number of free blocks (64-bit) */
     uint32_t s_total_inodes;       /* total inodes allocated */
     uint32_t s_free_inodes;        /* number of free inodes */
     uint32_t s_bitmap_start;       /* first block of block bitmap */
@@ -136,8 +136,8 @@ struct ixfs_superblock {
     uint32_t s_snapshot_count;     /* number of active snapshots */
     uint32_t s_checksum_start;     /* first block of checksum table */
     uint32_t s_checksum_blocks;    /* number of checksum table blocks */
-    uint32_t s_checksum;           /* CRC32C of superblock bytes [0..103] */
-    uint8_t  s_reserved[388];      /* pad to 512 bytes */
+    uint32_t s_checksum;           /* CRC32C of superblock bytes [0..111] */
+    uint8_t  s_reserved[380];      /* pad to 512 bytes */
 } __attribute__((packed));
 
 /* Inode — 128 bytes each (32 inodes per block) */
@@ -146,7 +146,7 @@ struct ixfs_inode {
     uint16_t i_links;              /* hard link count */
     uint16_t i_uid;                /* owner user ID */
     uint16_t i_gid;                /* owner group ID */
-    uint32_t i_size;               /* file size in bytes */
+    uint64_t i_size;               /* file size in bytes (64-bit) */
     uint32_t i_blocks;             /* number of data blocks used */
     uint32_t i_ctime;              /* creation time (seconds since epoch) */
     uint32_t i_mtime;              /* modification time */

@@ -560,7 +560,7 @@ void ixfs_test_performance(void)
             ixfs_flush_superblock(vol);
             saved_ck = vol->sb.s_checksum;
             vol->sb.s_checksum = 0;
-            computed_ck = ixfs_crc32c(&vol->sb, 104);
+            computed_ck = ixfs_crc32c(&vol->sb, 112);
             vol->sb.s_checksum = saved_ck;
             pass = (saved_ck != 0 && computed_ck == saved_ck);
             printk("  [%s] Checksums: superblock self-check (0x%x)\n",
@@ -574,6 +574,30 @@ void ixfs_test_performance(void)
             pass = (scrub_res == 0);
             printk("  [%s] Checksums: scrub result=%d corruptions\n",
                    pass ? "OK" : "FAIL", scrub_res);
+        }
+    }
+
+    /* --- Test 10: 64-Bit Block Addressing --- */
+    {
+        /* Subtest 1: version is 2 */
+        pass = (vol->sb.s_version == 2);
+        printk("  [%s] 64-bit: s_version=%u (expected 2)\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)vol->sb.s_version);
+
+        /* Subtest 2: s_total_blocks is 64-bit (8 bytes) */
+        pass = (sizeof(vol->sb.s_total_blocks) == 8);
+        printk("  [%s] 64-bit: sizeof(s_total_blocks)=%u (expected 8)\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)sizeof(vol->sb.s_total_blocks));
+
+        /* Subtest 3: i_size is 64-bit (8 bytes) */
+        {
+            struct ixfs_inode tmp_inode;
+            pass = (sizeof(tmp_inode.i_size) == 8);
+            printk("  [%s] 64-bit: sizeof(i_size)=%u (expected 8)\n",
+                   pass ? "OK" : "FAIL",
+                   (uint64_t)sizeof(tmp_inode.i_size));
         }
     }
 

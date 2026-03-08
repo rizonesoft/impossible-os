@@ -189,7 +189,7 @@ int ixfs_flush_superblock(struct ixfs_volume *vol)
 
     /* Recompute superblock self-checksum before writing */
     vol->sb.s_checksum = 0;
-    vol->sb.s_checksum = ixfs_crc32c(&vol->sb, 104);
+    vol->sb.s_checksum = ixfs_crc32c(&vol->sb, 112);
 
     /* Zero the buffer, copy superblock into it */
     for (i = 0; i < IXFS_BLOCK_SIZE; i++)

@@ -87,6 +87,9 @@ struct ixfs_volume {
     uint32_t                 refcount_bytes;
     struct ixfs_snapshot_entry snapshots[IXFS_MAX_SNAPSHOTS];
 
+    /* Volume state */
+    uint8_t                  read_only;        /* 1 = v1 volume, writes blocked */
+
     /* Per-block checksum state */
     uint32_t                *checksum_table;   /* CRC32C per block */
     uint32_t                 checksum_count;   /* total blocks tracked */
