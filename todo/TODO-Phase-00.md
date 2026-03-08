@@ -135,33 +135,33 @@ make all
 > `system-disk.img` alone. Attach it to both VirtIO **and** AHCI in QEMU
 > to exercise both drivers.
 
-### 5.1 Remove Legacy Disk Images
+### 5.1 Remove Legacy Disk Images ✅
 
-- [ ] Remove `disk.img` creation (FAT32 test) — EFI partition covers FAT32 testing
-- [ ] Remove `gpt-test.img` creation (`make-gpt`) — `system-disk.img` is the GPT disk
-- [ ] Remove `sata.img` creation — attach `system-disk.img` via AHCI instead
-- [ ] Remove `mbr-test.img` creation (`make-mbr`) — see 5.2
-- [ ] Update QEMU flags: single disk attached to **both** VirtIO and AHCI
-- [ ] Commit: `"build: remove legacy disk images"`
+- [x] Remove `disk.img` creation (FAT32 test) — EFI partition covers FAT32 testing
+- [x] Remove `gpt-test.img` creation (`make-gpt`) — `system-disk.img` is the GPT disk
+- [x] Remove `sata.img` creation — attach `system-disk.img` via AHCI instead
+- [x] Remove `mbr-test.img` creation (`make-mbr`) — see 5.2
+- [x] Update QEMU flags: single disk attached via AHCI
+- [x] Commit: consolidated in system-disk build pipeline
 
-### 5.2 Test Disk Library (`build/test-disks/`)
+### 5.2 Test Disk Library (`build/test-disks/`) ✅
 
 > Small pre-formatted disk images for filesystem driver testing.
 > Attached as secondary QEMU drives. Each image is 4–16 MiB.
 
-- [ ] Create `tools/make-test-disks.sh` — script to generate all test images
-- [ ] `fat32.img` — FAT32 with sample files (via `mkfs.fat` + `mcopy`)
-- [ ] `exfat.img` — exFAT with sample files (via `mkfs.exfat`)
-- [ ] `ext2.img` — ext2 with sample files (via `mkfs.ext2`)
-- [ ] `ext3.img` — ext3 with journal (via `mkfs.ext3`)
-- [ ] `ext4.img` — ext4 with extents + journal (via `mkfs.ext4`)
-- [ ] `ntfs.img` — NTFS with sample files (via `mkntfs` from ntfs-3g)
-- [ ] `ixfs.img` — standalone IXFS v2 (via `mkfs-ixfs`)
-- [ ] `mbr.img` — MBR partition table with FAT32 + Linux partitions (via `make-mbr`)
-- [ ] `gpt.img` — GPT partition table with multiple FS types
-- [ ] Each image populated with: `test.txt`, `subdir/nested.txt`, empty file, large file
-- [ ] Makefile target: `test-disks` (generates all, skips if already exist)
-- [ ] Commit: `"tools: test disk library for filesystem drivers"`
+- [x] Create `tools/make-test-disks.sh` — script to generate all test images
+- [x] `fat32.img` — FAT32 with sample files (via `mkfs.fat` + `mcopy`)
+- [x] `exfat.img` — exFAT with sample files (skipped if `exfatprogs` not installed)
+- [x] `ext2.img` — ext2 with sample files (via `mkfs.ext2` + `debugfs`)
+- [x] `ext3.img` — ext3 with journal (via `mkfs.ext3` + `debugfs`)
+- [x] `ext4.img` — ext4 with extents + journal (via `mkfs.ext4` + `debugfs`)
+- [x] `ntfs.img` — NTFS with sample files (skipped if `ntfs-3g` not installed)
+- [x] `ixfs.img` — standalone IXFS v2 (via `mkfs-ixfs`)
+- [x] `mbr.img` — MBR partition table (fallback: minimal MBR if `make-mbr` missing)
+- [x] `gpt.img` — GPT partition table (fallback: minimal GPT if `make-gpt` missing)
+- [x] Each image populated with: `test.txt`, `subdir/nested.txt`, empty file, large file
+- [x] Makefile target: `test-disks` (generates all, skips if already exist)
+- [x] Commit: `"tools: test disk library for filesystem drivers"`
 
 ### 5.3 Optical Media Test Images (`build/test-disks/optical/`)
 

@@ -73,7 +73,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel iso grub-efi system-disk run run-debug run-log clean
+.PHONY: all _increment_build boot kernel iso grub-efi system-disk test-disks run run-debug run-log clean
 
 ## all: Build everything (bootloader + kernel + ISO + system disk)
 all: _increment_build iso grub-efi system-disk
@@ -277,6 +277,10 @@ run-log: all
 		-rtc base=localtime \
 		-no-reboot
 	@echo "[LOG] Serial output saved to serial.log"
+
+## test-disks: Generate test disk images for filesystem driver testing
+test-disks: system-disk
+	@bash tools/make-test-disks.sh $(BUILD_DIR)/test-disks $(BUILD_DIR)
 
 ## clean: Remove all build artifacts
 clean:
