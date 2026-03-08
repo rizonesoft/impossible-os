@@ -1228,11 +1228,28 @@ static int fat32_file_read(struct vfs_node *node, uint32_t offset,
     return (int)bytes_read;
 }
 
+/* VFS-compatible file write: write data at offset into the file.
+ * For simplicity, this always rewrites the entire file (FAT32 doesn't
+ * support efficient partial writes without a lot more complexity). */
+static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
+                                uint32_t size, const uint8_t *buffer)
+{
+    struct fat32_file *f = (struct fat32_file *)node->fs_data;
+    (void)offset;  /* FAT32 write is always full-file overwrite */
+
+    if (!f || !buffer || size == 0)
+        return -1;
+
+    /* Use the parent directory cluster to locate this file.
+     * The root node stores the dir cluster; subdirectories use their own. */
+    return fat32_write_file(bpb.root_cluster, node->name, buffer, size);
+}
+
 static struct vfs_ops fat32_file_ops = {
     .open    = fat32_file_open,
     .close   = fat32_file_close,
     .read    = fat32_file_read,
-    .write   = (void *)0,
+    .write   = fat32_file_write_vfs,
     .readdir = (void *)0,
     .finddir = (void *)0,
     .create  = (void *)0,
@@ -1241,13 +1258,21 @@ static struct vfs_ops fat32_file_ops = {
 
 /* ---- VFS operations for FAT32 directories ---- */
 
+/* Forward declaration — needed by fat32_finddir */
+static struct vfs_ops fat32_dir_ops;
+
 static struct vfs_dirent *fat32_readdir(struct vfs_node *node, uint32_t index)
 {
-    (void)node;
+    struct fat32_file *f = (struct fat32_file *)node->fs_data;
+    uint32_t dir_cluster;
 
-    /* Lazily load root directory entries */
+    /* Determine which directory to list */
+    dir_cluster = (f && f->first_cluster >= 2)
+                ? f->first_cluster : bpb.root_cluster;
+
+    /* Lazily load directory entries */
     if (dir_file_count == 0)
-        fat32_read_dir(bpb.root_cluster);
+        fat32_read_dir(dir_cluster);
 
     if (index >= dir_file_count)
         return (struct vfs_dirent *)0;
@@ -1261,21 +1286,57 @@ static struct vfs_dirent *fat32_readdir(struct vfs_node *node, uint32_t index)
 
 static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name)
 {
+    struct fat32_file *f = (struct fat32_file *)node->fs_data;
+    uint32_t dir_cluster;
     uint32_t i;
-    (void)node;
+
+    dir_cluster = (f && f->first_cluster >= 2)
+                ? f->first_cluster : bpb.root_cluster;
 
     if (dir_file_count == 0)
-        fat32_read_dir(bpb.root_cluster);
+        fat32_read_dir(dir_cluster);
 
     for (i = 0; i < dir_file_count; i++) {
         if (fat32_strcasecmp(dir_files[i].node.name, name)) {
-            dir_files[i].node.ops = &fat32_file_ops;
+            /* Set directory ops for subdirectories, file ops for files */
+            if (dir_files[i].node.type & VFS_DIRECTORY)
+                dir_files[i].node.ops = &fat32_dir_ops;
+            else
+                dir_files[i].node.ops = &fat32_file_ops;
             dir_files[i].node.fs_data = &dir_files[i];
             return &dir_files[i].node;
         }
     }
 
     return (struct vfs_node *)0;
+}
+
+/* VFS-compatible create: called by vfs_create() */
+static int fat32_vfs_create(struct vfs_node *parent, const char *name,
+                            uint8_t type)
+{
+    struct fat32_file *f = (struct fat32_file *)parent->fs_data;
+    uint32_t dir_cluster;
+
+    dir_cluster = (f && f->first_cluster >= 2)
+                ? f->first_cluster : bpb.root_cluster;
+
+    if (type & VFS_DIRECTORY)
+        return fat32_create_dir(dir_cluster, name);
+    else
+        return fat32_create_file(dir_cluster, name);
+}
+
+/* VFS-compatible unlink: called by vfs_unlink() */
+static int fat32_vfs_unlink(struct vfs_node *parent, const char *name)
+{
+    struct fat32_file *f = (struct fat32_file *)parent->fs_data;
+    uint32_t dir_cluster;
+
+    dir_cluster = (f && f->first_cluster >= 2)
+                ? f->first_cluster : bpb.root_cluster;
+
+    return fat32_delete_file(dir_cluster, name);
 }
 
 static struct vfs_ops fat32_dir_ops = {
@@ -1285,8 +1346,8 @@ static struct vfs_ops fat32_dir_ops = {
     .write   = (void *)0,
     .readdir = fat32_readdir,
     .finddir = fat32_finddir,
-    .create  = (void *)0,
-    .unlink  = (void *)0,
+    .create  = fat32_vfs_create,
+    .unlink  = fat32_vfs_unlink,
 };
 
 static struct vfs_fs_driver fat32_driver = {

@@ -270,6 +270,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
      * Creates sub-blkdevs for each partition and probes filesystems. */
     partition_scan_all();
+    partition_mount_filesystems();
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();

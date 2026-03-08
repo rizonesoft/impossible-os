@@ -39,3 +39,7 @@ void partition_scan_all(void);
 
 /* Return a human-readable name for a filesystem type constant. */
 const char *partition_fs_name(int fs_type);
+
+/* Mount discovered filesystems (FAT32, IXFS) to VFS drive letters.
+ * Call after partition_scan_all(). */
+void partition_mount_filesystems(void);

@@ -361,6 +361,19 @@ The FAT32 driver supports full read/write operations via the `blkdev`
 abstraction layer (using partition scanner sub-blkdevs) and supports
 both 8.3 short names and LFN (Long File Name) entries.
 
+### VFS Integration
+
+FAT32 partitions are automatically mounted at boot by
+`partition_mount_filesystems()`, starting at drive letter `D:\`.
+All VFS operations are supported:
+
+- **open/close** — no-op (FAT32 has no file locks)
+- **read** — cluster chain traversal with offset seeking
+- **write** — full-file overwrite via cluster reallocation
+- **readdir/finddir** — directory scanning with LFN assembly
+- **create** — allocates first cluster, writes directory entry (files and dirs)
+- **unlink** — frees cluster chain, marks entry as `0xE5`
+
 ## IXFS — Impossible X FileSystem
 
 ### Key Files

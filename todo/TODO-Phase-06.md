@@ -142,11 +142,11 @@
 
 ### 3.3 FAT32 VFS Integration
 
-- [ ] Register FAT32 as a VFS filesystem type
-- [ ] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
-- [ ] Mount FAT32 partition to a drive letter (e.g., `D:\`)
-- [ ] Test: create file on FAT32, reboot, verify file persists
-- [ ] Commit: `"fs: FAT32 VFS integration"`
+- [x] Register FAT32 as a VFS filesystem type
+- [x] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
+- [x] Mount FAT32 partition to a drive letter (e.g., `D:\`)
+- [x] Test: create file on FAT32, reboot, verify file persists
+- [x] Commit: `"fs: FAT32 VFS integration"`
 
 ---
 
