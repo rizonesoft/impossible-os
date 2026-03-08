@@ -436,6 +436,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             }
         }
     }
+    /* IXFS Performance Tests: block groups, buffer cache, hash index */
+    ixfs_test_performance();
+
     /* Timer verification */
     printk("\n  Timer test: sleeping 1 second...\n");
     sleep_ms(1000);

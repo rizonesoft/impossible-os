@@ -210,6 +210,42 @@ Dirty cache entries are flushed to disk at these points:
 
 ---
 
+## Directory Hash Index (In-Memory)
+
+For directories with more than 64 entries, IXFS builds an in-memory hash
+index for O(1) average-case filename lookups.
+
+### Parameters
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IXFS_HASH_BUCKETS` | 128 | Number of hash buckets |
+| `IXFS_HASH_THRESHOLD` | 64 | Entries before hash index activates |
+
+### Hash Function
+
+FNV-1a (Fowler–Noll–Vo) 32-bit hash:
+- Offset basis: `0x811C9DC5`
+- Prime: `0x01000193`
+- Output modulo `IXFS_HASH_BUCKETS` gives the bucket index
+
+### Operation
+
+- **Small dirs** (≤ 64 entries): linear scan (no overhead)
+- **Large dirs** (> 64 entries): hash index built lazily on first `finddir`
+- **Lookup**: FNV-1a(name) → bucket → walk chain → verify name (handles collisions)
+- **Invalidation**: hash index freed on `create` or `unlink` → rebuilt on next `finddir`
+
+### Data Structures
+
+```
+ixfs_vnode.dir_hash → struct ixfs_dir_hash
+    bucket[128]         → head index into nodes[]
+    nodes[]             → (entry_index, next) chain
+```
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:

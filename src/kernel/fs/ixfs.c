@@ -478,6 +478,24 @@ static int ixfs_write_inode(uint32_t ino, const struct ixfs_inode *inode)
 }
 
 /* --- VFS node storage --- */
+/* --- Directory hash index (in-memory, for large directories) --- */
+
+#define IXFS_HASH_BUCKETS   128   /* number of hash buckets */
+#define IXFS_HASH_THRESHOLD 64    /* entries before hash index kicks in */
+#define IXFS_HASH_CHAIN_END 0xFFFFFFFF
+
+/* Each hash node maps a bucket chain: entry_index → next_in_chain */
+struct ixfs_hash_node {
+    uint32_t entry_index;    /* directory entry index */
+    uint32_t next;           /* index into hash_nodes[] or CHAIN_END */
+};
+
+struct ixfs_dir_hash {
+    uint32_t bucket[IXFS_HASH_BUCKETS]; /* head index into nodes[] per bucket */
+    struct ixfs_hash_node *nodes;       /* dynamically allocated chain nodes */
+    uint32_t node_count;                /* how many nodes are used */
+    uint32_t node_capacity;             /* allocated capacity */
+};
 
 #define IXFS_MAX_OPEN_NODES 64
 
@@ -485,6 +503,7 @@ struct ixfs_vnode {
     struct vfs_node    node;
     uint32_t           ino;
     struct ixfs_inode  inode;
+    struct ixfs_dir_hash *dir_hash;     /* non-NULL if hash index built */
 };
 
 static struct ixfs_vnode vnodes[IXFS_MAX_OPEN_NODES];
@@ -494,6 +513,138 @@ static struct vfs_dirent ixfs_dirent;
 /* Forward declarations */
 static struct vfs_ops ixfs_file_ops;
 static struct vfs_ops ixfs_dir_ops;
+static uint32_t ixfs_get_block(const struct ixfs_inode *inode, uint32_t index);
+
+/* --- FNV-1a hash for directory names --- */
+
+static uint32_t ixfs_fnv1a(const char *name)
+{
+    uint32_t hash = 0x811C9DC5;  /* FNV offset basis */
+    while (*name) {
+        hash ^= (uint8_t)*name++;
+        hash *= 0x01000193;      /* FNV prime */
+    }
+    return hash;
+}
+
+/* Free a directory hash index */
+static void ixfs_hash_free(struct ixfs_vnode *v)
+{
+    if (v->dir_hash) {
+        if (v->dir_hash->nodes)
+            kfree(v->dir_hash->nodes);
+        kfree(v->dir_hash);
+        v->dir_hash = (struct ixfs_dir_hash *)0;
+    }
+}
+
+/* Build a hash index for a directory vnode.
+ * Scans all directory entries and hashes their names into buckets. */
+static void ixfs_hash_build(struct ixfs_vnode *v)
+{
+    uint32_t total_entries;
+    uint32_t i, b;
+    uint8_t *data_buf;
+    struct ixfs_dir_hash *dh;
+
+    /* Free old index if any */
+    ixfs_hash_free(v);
+
+    total_entries = v->inode.i_size / sizeof(struct ixfs_dir_entry);
+    if (total_entries == 0) return;
+
+    /* Allocate hash table */
+    dh = (struct ixfs_dir_hash *)kmalloc(sizeof(struct ixfs_dir_hash));
+    if (!dh) return;
+
+    for (b = 0; b < IXFS_HASH_BUCKETS; b++)
+        dh->bucket[b] = IXFS_HASH_CHAIN_END;
+
+    /* Allocate chain nodes — one per active entry */
+    dh->nodes = (struct ixfs_hash_node *)kmalloc(
+        total_entries * sizeof(struct ixfs_hash_node));
+    if (!dh->nodes) {
+        kfree(dh);
+        return;
+    }
+    dh->node_count = 0;
+    dh->node_capacity = total_entries;
+
+    data_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+    if (!data_buf) {
+        kfree(dh->nodes);
+        kfree(dh);
+        return;
+    }
+
+    /* Scan all entries and hash them */
+    for (i = 0; i < total_entries; i++) {
+        uint32_t byte_off = i * sizeof(struct ixfs_dir_entry);
+        uint32_t blk_idx = byte_off / IXFS_BLOCK_SIZE;
+        uint32_t blk_off = byte_off % IXFS_BLOCK_SIZE;
+        uint32_t disk_block;
+        struct ixfs_dir_entry *de;
+        uint32_t bucket_idx;
+        uint32_t ni;
+
+        disk_block = ixfs_get_block(&v->inode, blk_idx);
+        if (disk_block == 0) break;
+
+        if (ixfs_read_block(disk_block, data_buf) != 0)
+            break;
+
+        de = (struct ixfs_dir_entry *)(data_buf + blk_off);
+        if (de->d_inode == 0) continue;  /* skip deleted */
+
+        /* Insert into hash table */
+        bucket_idx = ixfs_fnv1a(de->d_name) % IXFS_HASH_BUCKETS;
+        ni = dh->node_count++;
+        dh->nodes[ni].entry_index = i;
+        dh->nodes[ni].next = dh->bucket[bucket_idx];
+        dh->bucket[bucket_idx] = ni;
+    }
+
+    kfree(data_buf);
+    v->dir_hash = dh;
+}
+
+/* Lookup a name in the hash index. Returns the entry index or 0xFFFFFFFF.
+ * The caller must still read the block and verify the name (for collision). */
+static uint32_t ixfs_hash_lookup(struct ixfs_vnode *v, const char *name,
+                                 uint8_t *data_buf)
+{
+    struct ixfs_dir_hash *dh = v->dir_hash;
+    uint32_t bucket_idx;
+    uint32_t ni;
+
+    if (!dh) return IXFS_HASH_CHAIN_END;
+
+    bucket_idx = ixfs_fnv1a(name) % IXFS_HASH_BUCKETS;
+    ni = dh->bucket[bucket_idx];
+
+    while (ni != IXFS_HASH_CHAIN_END) {
+        uint32_t ei = dh->nodes[ni].entry_index;
+        uint32_t byte_off = ei * sizeof(struct ixfs_dir_entry);
+        uint32_t blk_idx = byte_off / IXFS_BLOCK_SIZE;
+        uint32_t blk_off = byte_off % IXFS_BLOCK_SIZE;
+        uint32_t disk_block;
+        struct ixfs_dir_entry *de;
+
+        disk_block = ixfs_get_block(&v->inode, blk_idx);
+        if (disk_block == 0) break;
+
+        if (ixfs_read_block(disk_block, data_buf) != 0)
+            break;
+
+        de = (struct ixfs_dir_entry *)(data_buf + blk_off);
+        if (de->d_inode != 0 && ixfs_strcmp(de->d_name, name))
+            return ei;  /* found it */
+
+        ni = dh->nodes[ni].next;
+    }
+
+    return IXFS_HASH_CHAIN_END;
+}
 
 /* Get or create a vnode for an inode number */
 static struct ixfs_vnode *ixfs_get_vnode(uint32_t ino)
@@ -513,6 +664,7 @@ static struct ixfs_vnode *ixfs_get_vnode(uint32_t ino)
 
     v = &vnodes[vnode_count];
     v->ino = ino;
+    v->dir_hash = (struct ixfs_dir_hash *)0;
 
     if (ixfs_read_inode(ino, &v->inode) != 0)
         return (struct ixfs_vnode *)0;
@@ -802,6 +954,39 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
     data_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
     if (!data_buf) return (struct vfs_node *)0;
 
+    /* Large directory: use hash index for O(1) lookup */
+    if (total_entries > IXFS_HASH_THRESHOLD) {
+        uint32_t ei;
+
+        /* Build hash index lazily on first access */
+        if (!v->dir_hash)
+            ixfs_hash_build(v);
+
+        ei = ixfs_hash_lookup(v, name, data_buf);
+        if (ei != IXFS_HASH_CHAIN_END) {
+            uint32_t byte_off = ei * sizeof(struct ixfs_dir_entry);
+            uint32_t blk_idx = byte_off / IXFS_BLOCK_SIZE;
+            uint32_t blk_off = byte_off % IXFS_BLOCK_SIZE;
+            uint32_t disk_block = ixfs_get_block(&v->inode, blk_idx);
+            struct ixfs_dir_entry *de;
+            struct ixfs_vnode *found;
+
+            if (disk_block != 0 &&
+                ixfs_read_block(disk_block, data_buf) == 0) {
+                de = (struct ixfs_dir_entry *)(data_buf + blk_off);
+                kfree(data_buf);
+                found = ixfs_get_vnode(de->d_inode);
+                if (!found) return (struct vfs_node *)0;
+                ixfs_strcpy(found->node.name, name, VFS_MAX_NAME);
+                return &found->node;
+            }
+        }
+
+        kfree(data_buf);
+        return (struct vfs_node *)0;
+    }
+
+    /* Small directory: linear scan (< 64 entries) */
     for (i = 0; i < total_entries; i++) {
         uint32_t byte_offset = i * sizeof(struct ixfs_dir_entry);
         uint32_t blk_index = byte_offset / IXFS_BLOCK_SIZE;
@@ -977,6 +1162,9 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
     ixfs_flush_bitmap();
     ixfs_flush_superblock();
 
+    /* Invalidate hash index — will rebuild on next finddir */
+    ixfs_hash_free(pv);
+
     kfree(data_buf);
     return 0;
 }
@@ -1105,6 +1293,9 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
             ixfs_write_inode(pv->ino, &pv->inode);
             ixfs_flush_bitmap();
             ixfs_flush_superblock();
+
+            /* Invalidate hash index — will rebuild on next finddir */
+            ixfs_hash_free(pv);
 
             kfree(data_buf);
             return 0;
@@ -1446,4 +1637,192 @@ int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
     } else {
         return (perm & 0x4) ? 0 : -1;
     }
+}
+
+/* ============================================================================
+ * ixfs_test_performance — Targeted tests for block groups, cache, hash index
+ * ============================================================================ */
+
+void ixfs_test_performance(void)
+{
+    int pass;
+
+    printk("\n  --- IXFS Performance Features Test ---\n");
+
+    /* --- Test 1: Block Group Allocator --- */
+    {
+        uint32_t b1, b2, b3;
+        uint32_t g1, g2, g3;
+        uint32_t saved_free = sb.s_free_blocks;
+
+        b1 = ixfs_alloc_block();
+        b2 = ixfs_alloc_block();
+        b3 = ixfs_alloc_block();
+
+        g1 = b1 / IXFS_BLOCKS_PER_GROUP;
+        g2 = b2 / IXFS_BLOCKS_PER_GROUP;
+        g3 = b3 / IXFS_BLOCKS_PER_GROUP;
+
+        /* Locality: all 3 in same group */
+        pass = (b1 != 0 && b2 != 0 && b3 != 0 && g1 == g2 && g2 == g3);
+        printk("  [%s] Block groups: alloc 3 blocks -> group %u, locality=%s\n",
+               pass ? "OK" : "FAIL", (uint64_t)g1, pass ? "yes" : "NO");
+
+        /* Hint advancement: blocks should be sequential */
+        pass = (b2 == b1 + 1 && b3 == b2 + 1);
+        printk("  [%s] Block groups: hint b%u->b%u->b%u, sequential=%s\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)b1, (uint64_t)b2, (uint64_t)b3,
+               pass ? "yes" : "NO");
+
+        /* Free and verify count restored */
+        ixfs_free_block(b1);
+        ixfs_free_block(b2);
+        ixfs_free_block(b3);
+
+        pass = (sb.s_free_blocks == saved_free);
+        printk("  [%s] Block groups: free restored (%u/%u)\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)sb.s_free_blocks, (uint64_t)saved_free);
+
+        /* Hint regression */
+        pass = (g1 < group_count && groups[g1].bg_next_free <= b1);
+        printk("  [%s] Block groups: hint regression (hint=%u, freed=%u)\n",
+               pass ? "OK" : "FAIL",
+               (uint64_t)groups[g1].bg_next_free, (uint64_t)b1);
+    }
+
+    /* --- Test 2: Buffer Cache --- */
+    {
+        uint32_t test_blk;
+        uint8_t write_buf[IXFS_BLOCK_SIZE];
+        uint8_t read_buf1[IXFS_BLOCK_SIZE];
+        uint8_t read_buf2[IXFS_BLOCK_SIZE];
+        uint32_t i;
+        int match;
+
+        test_blk = ixfs_alloc_block();
+        if (test_blk == 0) {
+            printk("  [FAIL] Cache: cannot allocate test block\n");
+        } else {
+            /* Write a known pattern via cache */
+            for (i = 0; i < IXFS_BLOCK_SIZE; i++)
+                write_buf[i] = (uint8_t)(i & 0xFF);
+            ixfs_write_block(test_blk, write_buf);
+
+            /* Two reads — both should come from cache */
+            ixfs_read_block(test_blk, read_buf1);
+            ixfs_read_block(test_blk, read_buf2);
+
+            match = 1;
+            for (i = 0; i < IXFS_BLOCK_SIZE; i++) {
+                if (read_buf1[i] != write_buf[i] ||
+                    read_buf2[i] != write_buf[i]) {
+                    match = 0;
+                    break;
+                }
+            }
+
+            printk("  [%s] Buffer cache: write->read integrity=%s (block %u)\n",
+                   match ? "OK" : "FAIL",
+                   match ? "ok" : "CORRUPTED", (uint64_t)test_blk);
+
+            /* Check dirty state */
+            {
+                struct ixfs_cache_entry *ce = ixfs_cache_find(test_blk);
+                pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 1);
+                printk("  [%s] Buffer cache: cached=%s, dirty=%s\n",
+                       pass ? "OK" : "FAIL",
+                       ce ? "yes" : "no",
+                       (ce && ce->dirty) ? "yes" : "no");
+            }
+
+            /* Flush and verify clean */
+            ixfs_cache_flush();
+            {
+                struct ixfs_cache_entry *ce = ixfs_cache_find(test_blk);
+                pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 0);
+                printk("  [%s] Buffer cache: post-flush dirty=%s\n",
+                       pass ? "OK" : "FAIL",
+                       (ce && ce->dirty) ? "yes" : "no");
+            }
+
+            ixfs_free_block(test_blk);
+        }
+    }
+
+    /* --- Test 3: Directory Hash Index --- */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root && c_root->ops && c_root->ops->create) {
+            struct vfs_node *tdir;
+            uint32_t created = 0, found = 0, i;
+            char fname[8];
+
+            c_root->ops->create(c_root, "_hashtest", VFS_DIRECTORY);
+            tdir = c_root->ops->finddir(c_root, "_hashtest");
+
+            if (!tdir) {
+                printk("  [FAIL] Hash index: cannot create _hashtest dir\n");
+            } else {
+                /* Create 70 files (exceeds threshold of 64) */
+                for (i = 0; i < 70; i++) {
+                    fname[0] = 'h'; fname[1] = 'f'; fname[2] = '_';
+                    fname[3] = (char)('0' + (i / 10));
+                    fname[4] = (char)('0' + (i % 10));
+                    fname[5] = '\0';
+                    if (tdir->ops && tdir->ops->create &&
+                        tdir->ops->create(tdir, fname, VFS_FILE) == 0)
+                        created++;
+                }
+
+                printk("  [%s] Hash index: created %u/70 files (threshold=%u)\n",
+                       created >= 65 ? "OK" : "FAIL",
+                       (uint64_t)created, (uint64_t)IXFS_HASH_THRESHOLD);
+
+                /* Lookup 7 files (every 10th) — triggers hash build */
+                for (i = 0; i < 70; i += 10) {
+                    fname[0] = 'h'; fname[1] = 'f'; fname[2] = '_';
+                    fname[3] = (char)('0' + (i / 10));
+                    fname[4] = (char)('0' + (i % 10));
+                    fname[5] = '\0';
+                    if (tdir->ops->finddir(tdir, fname))
+                        found++;
+                }
+
+                pass = (found == 7);
+                printk("  [%s] Hash index: finddir found %u/7 via hash\n",
+                       pass ? "OK" : "FAIL", (uint64_t)found);
+
+                /* Verify hash table was actually built */
+                {
+                    struct ixfs_vnode *tv;
+                    tv = (struct ixfs_vnode *)tdir->fs_data;
+                    pass = (tv && tv->dir_hash != (void *)0);
+                    if (pass) {
+                        printk("  [OK] Hash index: table built (%u nodes, %u buckets)\n",
+                               (uint64_t)tv->dir_hash->node_count,
+                               (uint64_t)IXFS_HASH_BUCKETS);
+                    } else {
+                        printk("  [FAIL] Hash index: table NOT built\n");
+                    }
+                }
+
+                /* Cleanup */
+                for (i = 0; i < 70; i++) {
+                    fname[0] = 'h'; fname[1] = 'f'; fname[2] = '_';
+                    fname[3] = (char)('0' + (i / 10));
+                    fname[4] = (char)('0' + (i % 10));
+                    fname[5] = '\0';
+                    if (tdir->ops && tdir->ops->unlink)
+                        tdir->ops->unlink(tdir, fname);
+                }
+                c_root->ops->unlink(c_root, "_hashtest");
+            }
+        }
+    } else {
+        printk("  [SKIP] Hash index: C:\\ not mounted\n");
+    }
+
+    printk("  --- IXFS Performance Tests Complete ---\n\n");
 }

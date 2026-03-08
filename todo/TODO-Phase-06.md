@@ -323,12 +323,12 @@
 - [x] Commit: `"fs: IXFS buffer cache + write-back"`
 
 #### 5.5.3 Directory Hash Index (B-tree)
-- [ ] For directories with > 64 entries: build hash index in an extra block
-- [ ] Use FNV-1a hash of filename → bucket → chain of entry offsets
-- [ ] `finddir()` goes from O(n) → O(1) average case
-- [ ] Falls back to linear scan for small directories (< 64 entries)
-- [ ] Rebuild index on create/delete
-- [ ] Commit: `"fs: IXFS directory hash index"`
+- [x] For directories with > 64 entries: build hash index in an extra block
+- [x] Use FNV-1a hash of filename → bucket → chain of entry offsets
+- [x] `finddir()` goes from O(n) → O(1) average case
+- [x] Falls back to linear scan for small directories (< 64 entries)
+- [x] Rebuild index on create/delete
+- [x] Commit: `"fs: IXFS directory hash index"`
 
 #### 5.5.4 Multi-Volume Support
 - [ ] Remove static globals: wrap all state in `struct ixfs_volume`
