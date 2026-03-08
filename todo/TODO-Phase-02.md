@@ -65,14 +65,14 @@
 
 ### 1.5 SIMD Optimization
 
-- [ ] Enable SSE2 for gfx module: compile with `-msse2` separately
-- [ ] Implement `fxsave`/`fxrstor` wrappers to protect user FPU state
-- [ ] SSE2 alpha blending — 4 pixels per cycle
-- [ ] SSE2 gradient fill — 4 pixels per cycle
-- [ ] SSE2 blur — 4 pixels per cycle
-- [ ] *(Stretch)* AVX2 paths — 8 pixels per cycle (detect at runtime with CPUID)
-- [ ] Benchmark: target <8ms full compositor frame at 1280×720
-- [ ] Commit: `"gfx: SSE2 SIMD acceleration"`
+- [x] Enable SSE2 for gfx module: compile with `-msse2` separately
+- [x] Implement `fxsave`/`fxrstor` wrappers to protect user FPU state
+- [x] SSE2 alpha blending — 4 pixels per cycle
+- [x] SSE2 gradient fill — 4 pixels per cycle
+- [x] SSE2 blur — 4 pixels per cycle
+- [x] *(Stretch)* AVX2 paths — 8 pixels per cycle (detect at runtime with CPUID)
+- [x] Benchmark: target <8ms full compositor frame at 1280×720
+- [x] Commit: `"gfx: SSE2 SIMD acceleration"`
 
 ---
 

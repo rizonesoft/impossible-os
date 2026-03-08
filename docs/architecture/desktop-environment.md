@@ -122,6 +122,25 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 | `gfx_reveal_highlight` | Radial glow at cursor (linear falloff within rect) |
 
 **Usage targets:** Acrylic → taskbar, start menu, menus. Mica → window title bars. Shadow → all windows.
+
+### SIMD Acceleration
+
+| File | Purpose |
+|------|---------|
+| `include/gfx_simd.h` | FPU state types, CPUID detection, SSE2 function signatures |
+| `src/kernel/gfx/gfx_simd.c` | SSE2 implementations (compiled with `-msse2`) |
+
+| Function | Description |
+|----------|-------------|
+| `simd_enable_sse` | Set CR0/CR4 bits for SSE support |
+| `simd_save_state` / `simd_restore_state` | `fxsave`/`fxrstor` (512-byte, 16-byte aligned) |
+| `simd_has_sse2` / `simd_has_avx2` | CPUID feature detection |
+| `simd_blend_pixels_sse2` | 4-pixel alpha blend via XMM unpack/mul/pack |
+| `simd_gradient_row_sse2` | 4-pixel gradient interpolation |
+| `simd_blur_accum_sse2` | 4-pixel blur accumulation via packed 32-bit add |
+
+**Build:** `gfx_simd.c` uses `SIMD_CFLAGS` (filters out `-mno-sse` and adds `-msse2`).
+
 ## Framebuffer Graphics
 
 ### Key Files

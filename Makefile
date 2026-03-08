@@ -356,6 +356,13 @@ clean:
 # Pattern Rules
 # ============================================================================
 
+# SSE2 SIMD module — compiled with -msse2 (overrides -mno-sse from CFLAGS)
+SIMD_CFLAGS := $(filter-out -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) -msse2
+$(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $<"
+
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
