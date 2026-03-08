@@ -177,7 +177,7 @@ Each frame:
 
 | Component | Description |
 |-----------|-------------|
-| Wallpaper | `wallpaper.raw` from initrd (fallback: gradient) |
+| Wallpaper | `wallpaper.raw` from C:\\ (fallback: gradient) |
 | Taskbar | Bottom bar: start button + window list + clock |
 | Start menu | Terminal, About, Shutdown |
 | Clock | Real-time HH:MM from CMOS RTC |

@@ -158,7 +158,7 @@
 ### 3.5 Test: Run Windows Hello World
 
 - [ ] Cross-compile test program: `x86_64-w64-mingw32-gcc -o hello.exe hello.c`
-- [ ] Include in initrd
+- [ ] Include on C:\
 - [ ] Execute: `hello.exe` in shell → should print "Hello, World!" via WriteConsoleA
 - [ ] Commit: `"kernel: run first Windows PE program"`
 
@@ -283,7 +283,7 @@
 ### 7.1 GraalVM Native Images (Approach B — Recommended First)
 
 - [ ] *(Stretch)* Compile Java programs to native ELF/PE on host using `native-image`
-- [ ] *(Stretch)* Include compiled binary in initrd
+- [ ] *(Stretch)* Include compiled binary on C:\
 - [ ] *(Stretch)* Execute like any other ELF/PE program — no JVM needed at runtime
 - [ ] *(Stretch)* Prerequisite: working ELF loader + enough syscalls (`mmap`, file I/O)
 
@@ -395,7 +395,7 @@
 
 - [ ] Cross-compile test: `clang -target x86_64-apple-macos -o hello hello.c` (on macOS host)
 - [ ] Or: hand-craft minimal Mach-O binary with `write()` + `_exit()` syscalls
-- [ ] Include in initrd
+- [ ] Include on C:\
 - [ ] Execute: `hello` → prints "Hello from macOS binary!"
 - [ ] Commit: `"kernel: run first Mach-O program"`
 

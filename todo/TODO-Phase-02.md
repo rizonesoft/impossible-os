@@ -84,7 +84,7 @@
 - [ ] Add `stb_truetype.h` to `include/` (public domain)
 - [ ] Redirect memory: `STBTT_malloc → kmalloc`, `STBTT_free → kfree`
 - [ ] Create `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h`
-- [ ] Implement `font_mgr_init()` — load fonts from initrd at boot
+- [ ] Implement `font_mgr_init()` — load fonts from C:\ at boot
 - [ ] Implement `font_get(slot, pixel_size)` — return scaled font handle
 - [ ] Implement `font_draw_char(surface, font, x, y, codepoint, color)` — rasterize + alpha blend
 - [ ] Implement `font_draw_string(surface, font, x, y, text, color)` — with kerning
@@ -97,7 +97,7 @@
 - [ ] Download **Selawik** Regular + Semibold (~380 KB total, MIT license)
 - [ ] Download **Cascadia Code** Regular + Bold (~580 KB total, OFL 1.1)
 - [ ] Place `.ttf` files in `resources/fonts/`
-- [ ] Update Makefile to copy fonts into initrd
+- [ ] Update Makefile to copy fonts into sysroot
 - [ ] Define font slots: `FONT_UI`, `FONT_UI_BOLD`, `FONT_MONO`, `FONT_MONO_BOLD`
 - [ ] Add font license files to `resources/fonts/LICENSE-*`
 - [ ] *(Stretch)* Add **Inter** as an alternative UI font
@@ -118,7 +118,7 @@
 - [ ] Replace font calls in `wm.c` (window titles, decorations)
 - [ ] Replace font calls in `controls.c` (buttons, labels, textboxes)
 - [ ] Keep bitmap font as fallback for early boot (pre-initrd)
-- [ ] Copy fonts from initrd to `C:\Impossible\Fonts\` on IXFS
+- [ ] Copy fonts from C:\ to `C:\Impossible\Fonts\` on IXFS
 - [ ] Commit: `"desktop: TrueType fonts replace bitmap"`
 
 ---
@@ -135,7 +135,7 @@
 - [ ] Implement `image_load(path)` — load from VFS, decode, RGBA→BGRA conversion
 - [ ] Implement `image_load_mem(data, size)` — decode from memory buffer
 - [ ] Implement `image_free(img)` — free decoded data
-- [ ] Test: decode a JPEG from initrd at runtime
+- [ ] Test: decode a JPEG from C:\ at runtime
 - [ ] Commit: `"kernel: runtime image decoding (stb_image)"`
 
 ### 3.2 Image Scaling
@@ -172,7 +172,7 @@
 - [ ] Define `system_icon_t` enum (~35 icons: file types, folders, drives, system)
 - [ ] Define `icon_t` struct (pixels, width, height)
 - [ ] Create `include/icon_store.h` and `src/kernel/icon_store.c`
-- [ ] Implement `icon_store_init()` — load icons from initrd directory (`icons/`)
+- [ ] Implement `icon_store_init()` — load icons from C:\ directory (`icons/`)
 - [ ] Implement `icon_get(id)` — return icon by enum ID
 - [ ] Implement `icon_get_by_name(name)` — lookup by string name
 - [ ] Implement `icon_draw(surface, icon, x, y)` — blit with alpha blending
@@ -211,7 +211,7 @@
 - [ ] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
 - [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels)
 - [ ] Create `src/kernel/drivers/cursor.c`
-- [ ] Implement `cursor_init()` — load BGRA sprites from initrd, fall back to embedded arrow
+- [ ] Implement `cursor_init()` — load BGRA sprites from C:\, fall back to embedded arrow
 - [ ] Implement `cursor_set_shape(shape)` — switch active cursor
 - [ ] Implement `cursor_get_shape()` — get current shape
 - [ ] Implement `cursor_draw(x, y)` — draw with alpha blending, save pixels underneath

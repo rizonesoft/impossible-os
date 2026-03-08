@@ -107,7 +107,7 @@ interrupt frame on the kernel stack with:
 | 4 | `SYS_FORK` | — | Duplicate process |
 | 5 | `SYS_EXEC` | filename | Replace with new program |
 | 6 | `SYS_WAITPID` | pid | Wait for child to exit |
-| 7 | `SYS_READFILE` | name, buf, size | Read initrd file |
+| 7 | `SYS_READFILE` | name, buf, size | Read file from C:\\ |
 | 8 | `SYS_READDIR` | buf, size, idx | List directory entry |
 | 9 | `SYS_GETPROCS` | buf, size | List all processes |
 | 10 | `SYS_KILL` | pid | Kill a process |

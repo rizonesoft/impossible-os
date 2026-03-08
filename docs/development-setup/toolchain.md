@@ -75,7 +75,7 @@ These are installed via `apt` (Ubuntu 24.04 packages):
 |------|---------|---------|---------|
 | NASM | 2.16.01 | `nasm` | x86-64 assembler (Intel/NASM syntax) |
 | GNU Make | 4.3 | `build-essential` | Build automation |
-| GCC (host) | 13.3.0 | `build-essential` | Host tools (e.g., `make-initrd`) |
+| GCC (host) | 13.3.0 | `build-essential` | Host tools (e.g., `mkfs-ixfs`, `jpg2raw`) |
 | xorriso | — | `xorriso` | ISO 9660 image creation |
 | mtools | — | `mtools` | FAT filesystem manipulation for ISOs |
 | grub-mkrescue | 2.12 | `grub-pc-bin grub-common` | GRUB bootable ISO creation |

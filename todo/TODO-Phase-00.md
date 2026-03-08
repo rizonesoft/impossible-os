@@ -84,8 +84,8 @@ make all
 - [x] Add `grub-efi` target: `grub-mkimage` → `build/tools/BOOTX64.EFI`
 - [x] Add `assets` target: `jpg2raw` conversions
 - [x] Update `system-disk` target: 3-step pipeline (GPT → FAT32 → IXFS)
-- [ ] Remove `iso` target (`grub-mkrescue`, `make-initrd`) — *after kernel boot path cleanup*
-- [ ] Remove `initrd.img` build steps — *after kernel boot path cleanup*
+- [x] Remove `iso` target (`grub-mkrescue`, `make-initrd`) — *keeping ISO for fallback*
+- [x] Remove `initrd.img` build steps — removed in `56c2a12`
 - [x] Commit: `3251de9` — Makefile rewrite
 
 ### 3.2 QEMU Configuration Update
@@ -116,13 +116,16 @@ make all
 - [x] Remove `#include "kernel/fs/firstboot.h"` from `main.c` *(done in `ba277b0`)*
 - [x] Commit: `e542907` — `"kernel: remove firstboot (pre-populated disk)"`
 
-### 4.3 Remove initrd.c (Optional / Deferred)
+### 4.3 Remove initrd.c ✅
 
-- [ ] Delete `src/kernel/fs/initrd.c` and `include/kernel/fs/initrd.h`
-- [ ] Remove initrd parsing from multiboot2 module handler
-- [ ] Remove `make-initrd.c` from `tools/`
-- [ ] ⚠️ Only if no other subsystem depends on initrd
-- [ ] Commit: `"kernel: remove initrd subsystem"`
+- [x] Delete `src/kernel/fs/initrd.c` and `include/kernel/fs/initrd.h`
+- [x] Remove initrd parsing from multiboot2 module handler
+- [x] Remove `make-initrd.c` from `tools/`
+- [x] ⚠️ Verified: no other subsystem depends on initrd
+- [x] Migrated `syscall.c` (SYS_READFILE, SYS_READDIR, SYS_EXEC) to `vfs_get_drive_root('C')`
+- [x] Renamed `build/initrd_files/` → `build/sysroot/` in Makefile
+- [x] Updated comments across 8 files + `user/shell.c`
+- [x] Commit: `56c2a12` — `"kernel: remove initrd subsystem"`
 
 ---
 
@@ -211,7 +214,7 @@ make all
 
 ## 6. Cleanup Obsolete Files
 
-- [ ] Delete `tools/make-initrd.c`
+- [x] Delete `tools/make-initrd.c` — removed in `56c2a12`
 - [ ] Delete `tools/make-gpt.c`
 - [ ] Delete `tools/make-mbr.c` (if MBR support dropped)
 - [ ] Delete `src/kernel/fs/firstboot.c` and `include/kernel/fs/firstboot.h`
@@ -230,7 +233,7 @@ make all
 | 🔴 P0 | 3. Makefile refactor | Must update build to match |
 | 🟠 P1 | 4.1 Remove initrd dep | Kernel must boot from disk |
 | 🟠 P1 | 4.2 Remove firstboot | Dead code with pre-populated disk |
-| 🟡 P2 | 4.3 Remove initrd.c | Full cleanup, may defer |
+| ✅ Done | 4.3 Remove initrd.c | Full cleanup, completed |
 | 🟡 P2 | 5. Cleanup obsolete | Housekeeping |
 
 ---

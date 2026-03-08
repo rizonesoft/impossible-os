@@ -32,12 +32,9 @@ make all
   │    │    ├── shell.c → shell.exe (user-mode ELF)
   │    │    └── User libc (crt0.o + libc.a)
   │    ├── Host tools
-  │    │    ├── tools/make-initrd → build/tools/make-initrd
   │    │    └── tools/jpg2raw → build/tools/jpg2raw
   │    ├── Assets
   │    │    └── JPG → RAW conversion (wallpaper, icons)
-  │    ├── Initrd
-  │    │    └── build/initrd.img (hello.txt, shell.exe, wallpaper, etc.)
   │    └── ISO
   │         └── grub-mkrescue → build/os-build.iso
   ├── grub-efi
@@ -103,20 +100,18 @@ kernel binary, producing output like:
 |----------|------|-------------|
 | Kernel | `build/kernel.exe` | Linked kernel binary (ELF format) |
 | GRUB EFI | `build/tools/BOOTX64.EFI` | Standalone GRUB EFI binary (PE32+) |
-| System Disk | `build/system-disk.img` | Pre-populated IXFS v2 image (32 MiB) |
-| Initrd | `build/initrd.img` | Initial RAM filesystem |
-| ISO | `build/os-build.iso` | Bootable UEFI ISO (GRUB + Multiboot2) |
+| System Disk | `build/system-disk.img` | Bootable GPT disk (EFI + IXFS) |
+| ISO | `build/os-build.iso` | Bootable UEFI ISO (GRUB + Multiboot2, fallback) |
 
-> **Phase 00 transition:** Once boot consolidation is complete, `initrd.img`
-> and `os-build.iso` will be removed. `system-disk.img` will be the single
-> bootable GPT disk containing the EFI partition + IXFS system partition.
+> The primary boot artifact is `system-disk.img`. The ISO is kept as a
+> fallback for environments that don't support raw disk images.
 
 ## Host Tools
 
 | Tool | Source | Output | Purpose |
 |------|--------|--------|---------|
-| `make-initrd` | `tools/make-initrd.c` | `build/tools/make-initrd` | Pack files into initrd image |
 | `jpg2raw` | `tools/jpg2raw.c` | `build/tools/jpg2raw` | Convert JPG/PNG → raw BGRA |
 | `mkfs-ixfs` | `tools/mkfs-ixfs.c` | `build/tools/mkfs-ixfs` | Create IXFS v2 disk images |
+| `make-system-disk` | `tools/make-system-disk.c` | `build/tools/make-system-disk` | Create GPT system disk |
 | `make-gpt` | `tools/make-gpt.c` | `build/tools/make-gpt` | Create GPT test disk |
 | `make-mbr` | `tools/make-mbr.c` | `build/tools/make-mbr` | Create MBR test disk |

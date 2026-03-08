@@ -39,7 +39,7 @@ include/
 ├── kernel/                # Core kernel headers
 │   ├── drivers/           # Hardware drivers (serial, keyboard, mouse, etc.)
 │   ├── mm/                # Memory management (pmm, vmm, heap)
-│   ├── fs/                # Filesystems (vfs, initrd, fat32, ixfs)
+│   ├── fs/                # Filesystems (vfs, fat32, ixfs)
 │   ├── sched/             # Scheduler (task, syscall)
 │   └── net/               # Networking (net)
 └── desktop/               # Desktop environment (wm, desktop, font, controls)

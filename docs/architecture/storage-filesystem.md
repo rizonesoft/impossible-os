@@ -296,46 +296,13 @@ to the appropriate driver's operations.
 | `vfs_readdir(node, index)` | List directory entry at index |
 | `vfs_finddir(node, name)` | Find child by name |
 
-## Initial RAM Filesystem (initrd)
+## Initial RAM Filesystem (initrd) — Removed
 
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `src/kernel/fs/initrd.c` | Initrd driver |
-| `tools/make-initrd.c` | Host tool to create initrd images |
-
-### Format
-
-Custom archive format with magic `IXRD`:
-
-```
-┌────────────┬───────────────┬───────────────┬─────┐
-│ Header     │ File entry 0  │ File entry 1  │ ... │
-│ (magic,    │ (name, offset,│               │     │
-│  count)    │  size, data)  │               │     │
-└────────────┴───────────────┴───────────────┴─────┘
-```
-
-### Contents (Current Build)
-
-| File | Description |
-|------|-------------|
-| `hello.txt` | Test text file |
-| `readme.txt` | Project readme |
-| `hello.exe` | Hello world user program |
-| `shell.exe` | Interactive shell |
-| `wallpaper.raw` | Desktop wallpaper (RAW pixels) |
-| `bg.raw` | Background gradient |
-| `start_icon.raw` | Start menu icon |
-
-The initrd is loaded by GRUB as a Multiboot2 module and mounted at `B:\`
-during boot.
-
-> **Note:** The initrd section below is kept for historical reference.
-> As of commit `ba277b0`, the kernel boots directly from disk and all system
-> files live on the IXFS partition (C:\), pre-populated by `mkfs-ixfs --populate`.
-> The initrd and firstboot modules are no longer used at runtime.
+> **Removed** in commit `56c2a12`. The initrd subsystem (`initrd.c`,
+> `initrd.h`, `make-initrd.c`) has been fully deleted. All system files now
+> live on the IXFS partition (`C:\`), pre-populated at build time by
+> `mkfs-ixfs --populate build/sysroot`. Syscalls `SYS_READFILE`,
+> `SYS_READDIR`, and `SYS_EXEC` use `vfs_get_drive_root('C')` instead.
 
 ### Boot Flow (Current — Disk Boot)
 

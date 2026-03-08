@@ -31,7 +31,7 @@ impossible-os/
 │   │   ├── elf.c              # ELF binary loader
 │   │   ├── drivers/           # Hardware drivers
 │   │   ├── mm/                # Memory management (PMM, VMM, heap)
-│   │   ├── fs/                # Filesystems (VFS, initrd, FAT32, IXFS)
+│   │   ├── fs/                # Filesystems (VFS, FAT32, IXFS)
 │   │   ├── sched/             # Scheduler, tasks, syscalls
 │   │   └── net/               # Networking (Ethernet, ARP, IP, UDP, ICMP, DHCP)
 │   │
@@ -60,7 +60,9 @@ impossible-os/
 │   └── lib/                   # User-mode libc
 │
 ├── tools/                     # Build tools
-│   └── make-initrd.c          # initrd image generator
+│   ├── make-system-disk.c     # GPT system disk builder
+│   ├── mkfs-ixfs.c            # IXFS formatter + populator
+│   └── jpg2raw.c              # JPG/PNG to raw BGRA converter
 │
 ├── assets/                    # Raw image assets
 │

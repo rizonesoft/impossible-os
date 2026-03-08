@@ -9,7 +9,7 @@ Comprehensive documentation of every implemented subsystem in Impossible OS.
 | [Bootloader](bootloader.md) | UEFI boot chain, GRUB, Multiboot2, Long Mode transition |
 | [Kernel Core](kernel-core.md) | Framebuffer console, GDT/TSS, IDT, PIC, PIT, keyboard |
 | [Memory Management](memory-management.md) | PMM (bitmap), VMM (4-level paging), heap (first-fit) |
-| [Storage & Filesystem](storage-filesystem.md) | ATA, VFS (drive letters), initrd, FAT32, IXFS |
+| [Storage & Filesystem](storage-filesystem.md) | ATA, VFS (drive letters), FAT32, IXFS |
 | [Multitasking](multitasking.md) | Scheduler, context switch, user mode, syscalls, ELF loader |
 | [C Library](libc.md) | CRT0, stdio, string, stdlib, ctype, math, syscall ABI |
 | [Shell](shell.md) | REPL, built-in commands, line editing, command history |

@@ -424,7 +424,7 @@
 - [x] Accept: output image path, volume size, label
 - [x] Write IXFS superblock, bitmaps, inode table (same layout as kernel `ixfs_format()`)
 - [x] `--populate <dir>` flag: recursively copy a host directory into the IXFS image
-- [ ] Makefile target: `build/system-disk.img` with pre-populated IXFS from `build/initrd_files/`
+- [ ] Makefile target: `build/system-disk.img` with pre-populated IXFS from `build/sysroot/`
 - [ ] Once working: remove firstboot.c/firstboot.h and the `firstboot_setup()` call from main.c
 - [x] Commit: `"tools: mkfs-ixfs host formatter"`
 
@@ -627,7 +627,7 @@
   - [ ] Each entry: relative path, expected CRC32C, expected size, version
   - [ ] Generated at build time by Makefile from system binaries
 - [ ] Scan: iterate manifest, compute CRC32C of each file, compare
-- [ ] Repair: restore corrupted files from initrd / recovery image
+- [ ] Repair: restore corrupted files from C:\ / recovery image
 - [ ] Report: files scanned, verified, corrupted, repaired
 - [ ] Commit: `"tools: sfc command"`
 

@@ -57,28 +57,22 @@ set default=0
 
 menuentry "Impossible OS" {
     multiboot2 /boot/kernel.exe
-    module2 /boot/initrd.img
     boot
 }
 ```
 
-GRUB loads the kernel via **Multiboot2** and passes the initrd as a module.
-
-> **Note:** The `module2 /boot/initrd.img` line will be removed once the
-> boot consolidation (Phase 00) is complete — all files will live on the
-> IXFS system partition.
+GRUB loads the kernel via **Multiboot2**. All system files live on the IXFS
+partition (`C:\`), pre-populated at build time by `mkfs-ixfs --populate`.
 
 ## Multiboot2 Header
 
 The header requests:
 - **Framebuffer** — 1280×720 at 32 bpp (GOP mode, no VGA text)
-- **Module alignment** — for the initrd image
 
 GRUB provides a **Multiboot2 info structure** containing:
 - Memory map (20+ entries from UEFI)
 - Framebuffer address, pitch, width, height, bpp
 - ACPI RSDP pointer (v1 or v2)
-- Module locations (initrd)
 
 ## Entry Point (`entry.asm`)
 
@@ -120,7 +114,7 @@ The entry stub:
 | Framebuffer (type 8) | Address, pitch, width, height, bpp |
 | ACPI old RSDP (type 14) | RSDP v1 physical address |
 | ACPI new RSDP (type 15) | RSDP v2 physical address |
-| Module (type 3) | Initrd start/end addresses |
+| Module (type 3) | GRUB module start/end addresses |
 | Command line (type 1) | Boot parameters |
 
 ## Disk Layout (Target — Phase 00)
