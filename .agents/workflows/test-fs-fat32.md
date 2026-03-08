@@ -78,10 +78,16 @@ echo "=== QEMU is still running — switch to the QEMU window for manual shell t
 Once verified, switch to the QEMU window and use the shell:
 
 ```
-dir D:\                    # List FAT32 test disk root
-type D:\test.txt           # Should print: "Hello from FAT32 test disk!"
-dir D:\subdir              # List subdirectory
-type D:\subdir\nested.txt  # Should print: "Nested file in subdirectory"
+dir E:\                    # List FAT32 test disk root
+  Disk 0, Partition 1: FAT32, 256 MiB (EFI System)
+  Disk 0, Partition 2: IXFS, 254 MiB (IXFS)
+[OK] VFS: mounted "FAT32" at D:\                  ← EFI partition
+[OK] VFS: mounted "IXFS" at C:\                   ← system partition
+  Disk 1, Partition 1: FAT32, 8 MiB              ← test disk
+[OK] VFS: mounted "FAT32" at E:\                  ← test disk mounted here
+type E:\test.txt           # Should print: "Hello from FAT32 test disk!"
+dir E:\subdir              # List subdirectory
+type E:\subdir\nested.txt  # Should print: "Nested file in subdirectory"
 ```
 
 ## Troubleshooting
