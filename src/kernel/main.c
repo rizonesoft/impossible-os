@@ -28,13 +28,13 @@
 #include "kernel/drivers/ahci.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/fs/vfs.h"
-#include "kernel/fs/initrd.h"
+
 #include "kernel/fs/fat32.h"
 #include "kernel/fs/ixfs.h"
 #include "kernel/fs/mbr.h"
 #include "kernel/fs/gpt.h"
 #include "kernel/fs/partition.h"
-#include "kernel/fs/firstboot.h"
+
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
@@ -187,16 +187,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* NOTE: IXFS/FAT32 partitions are now auto-mounted by
-     * partition_mount_filesystems() after partition_scan_all().
-     * See the boot sequence below (after IDT/PIC/PIT init). */
-
-    /* Step 10: Load initrd at B:\ (boot files, read-only) */
-    if (g_boot_info.module_available) {
-        uint64_t mod_size = g_boot_info.module_end - g_boot_info.module_start;
-        initrd_init(g_boot_info.module_start, mod_size);
-        vfs_mount('B', initrd_get_driver(), initrd_get_root());
-    }
+    /* NOTE: initrd is no longer used. All system files live on the
+     * IXFS partition (C:\), pre-populated by mkfs-ixfs --populate.
+     * Boot files (kernel.exe, BOOTX64.EFI) live on the EFI partition.
+     * partition_mount_filesystems() below mounts all detected volumes. */
 
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
@@ -238,10 +232,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     partition_scan_all();
     partition_mount_filesystems();
 
-    /* First-boot: populate C:\ with default hierarchy + initrd files.
-     * Only acts if C:\ is mounted and empty. Safe to call on every boot.
-     * Remove this call (and firstboot.c/h) once an installer exists. */
-    firstboot_setup();
+    /* NOTE: firstboot is no longer needed — the system disk is
+     * pre-populated with all files by mkfs-ixfs --populate. */
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();
@@ -338,9 +330,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                heap_get_used(), heap_get_free());
     }
 
-    /* VFS/initrd test: read a file from B:\ */
-    if (vfs_is_mounted('B')) {
-        struct vfs_node *f = vfs_open("B:\\hello.txt", VFS_O_READ);
+    /* VFS test: read a file from C:\ (IXFS system partition) */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *f = vfs_open("C:\\hello.txt", VFS_O_READ);
         if (f) {
             uint8_t buf[128];
             int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
@@ -349,7 +341,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
                 printk("[OK] ");
                 fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("VFS read B:\\hello.txt: \"%s\"\n", (char *)buf);
+                printk("VFS read C:\\hello.txt: \"%s\"\n", (char *)buf);
             }
             vfs_close(f);
         }
@@ -1326,35 +1318,36 @@ void user_test_func(void)
         __asm__ volatile("hlt");
 }
 
-/* --- Exec loader: kernel task that loads an ELF from initrd ---
- * This runs as a kernel task (ring 0). It reads the ELF file from the initrd,
+/* --- Exec loader: kernel task that loads an ELF from C:\ ---
+ * This runs as a kernel task (ring 0). It reads the ELF file from C:\ (IXFS),
  * then calls task_exec() to load it. task_exec() sets up a new user-mode
  * interrupt frame, so on the next schedule the task will run in ring 3
  * at the ELF entry point. */
 void exec_loader_func(void)
 {
-    struct vfs_node *root = initrd_get_root();
     struct vfs_node *file;
     uint8_t *buf;
 
-    if (!root) {
-        printk("  [ExecLoader] initrd not available\n");
+    if (!vfs_is_mounted('C')) {
+        printk("  [ExecLoader] C:\\ not mounted\n");
         return;
     }
 
-    file = vfs_finddir(root, "hello.exe");
+    file = vfs_open("C:\\hello.exe", VFS_O_READ);
     if (!file) {
-        printk("  [ExecLoader] hello.exe not found in initrd\n");
+        printk("  [ExecLoader] hello.exe not found on C:\\\n");
         return;
     }
 
     buf = (uint8_t *)kmalloc(file->size);
     if (!buf) {
         printk("  [ExecLoader] cannot allocate buffer\n");
+        vfs_close(file);
         return;
     }
 
     vfs_read(file, 0, (uint32_t)file->size, buf);
+    vfs_close(file);
 
     if (task_exec(buf, file->size) < 0) {
         printk("  [ExecLoader] exec failed\n");
@@ -1370,31 +1363,32 @@ void exec_loader_func(void)
         __asm__ volatile("hlt");
 }
 
-/* --- Shell loader: kernel task that execs shell.exe from initrd --- */
+/* --- Shell loader: kernel task that execs shell.exe from C:\ --- */
 void shell_loader_func(void)
 {
-    struct vfs_node *root = initrd_get_root();
     struct vfs_node *file;
     uint8_t *buf;
 
-    if (!root) {
-        printk("[ShellLoader] initrd not available\n");
+    if (!vfs_is_mounted('C')) {
+        printk("[ShellLoader] C:\\ not mounted\n");
         return;
     }
 
-    file = vfs_finddir(root, "shell.exe");
+    file = vfs_open("C:\\shell.exe", VFS_O_READ);
     if (!file) {
-        printk("[ShellLoader] shell.exe not found in initrd\n");
+        printk("[ShellLoader] shell.exe not found on C:\\\n");
         return;
     }
 
     buf = (uint8_t *)kmalloc(file->size);
     if (!buf) {
         printk("[ShellLoader] cannot allocate buffer\n");
+        vfs_close(file);
         return;
     }
 
     vfs_read(file, 0, (uint32_t)file->size, buf);
+    vfs_close(file);
 
     if (task_exec(buf, file->size) < 0) {
         printk("[ShellLoader] exec failed\n");

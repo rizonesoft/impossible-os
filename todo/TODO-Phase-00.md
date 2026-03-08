@@ -16,10 +16,10 @@
 
 ---
 
-## 2. Unified System Disk Builder
+## 2. Unified System Disk Builder ✅
 
-> Upgrade `make-gpt.c` (or create `tools/make-system-disk.c`) to produce a single
-> bootable GPT disk with 3 partitions.
+> Created `tools/make-system-disk.c` — produces a bootable GPT disk
+> with 2 partitions. Makefile orchestrates formatting via mkfs.fat/mcopy + mkfs-ixfs.
 
 ### 2.1 Partition Layout
 
@@ -36,36 +36,35 @@
 
 ### 2.2 EFI Partition (FAT32) Contents — Boot Only
 
-- [ ] `/EFI/BOOT/BOOTX64.EFI` — GRUB standalone binary
-- [ ] `/boot/grub/grub.cfg` — GRUB config (load kernel via multiboot2)
-- [ ] `/boot/kernel.exe` — kernel binary
-- [ ] Write FAT32 using `mtools` (`mcopy`) or raw FAT32 writer in the tool
+- [x] `/EFI/BOOT/BOOTX64.EFI` — GRUB standalone binary
+- [x] `/boot/grub/grub.cfg` — GRUB config (load kernel via multiboot2)
+- [x] `/boot/kernel.exe` — kernel binary
+- [x] Write FAT32 using `mkfs.fat --offset` + `mcopy` in Makefile
 
 > ⚠️ Only boot-critical files on the EFI partition. All assets (wallpaper,
 > icons, backgrounds) live on C:\ — loaded after IXFS mounts.
 
 ### 2.3 IXFS System Partition (C:\)
 
-- [ ] Use `mkfs-ixfs` logic to create IXFS v2 filesystem
-- [ ] Pre-populate directory hierarchy:
-  - [ ] `C:\Impossible\System\` — system files + assets
-  - [ ] `C:\Impossible\Commands\` — command-line tools
-  - [ ] `C:\Users\Default\` — default user profile
-  - [ ] `C:\Programs\` — installed applications
-  - [ ] `C:\Documents\backgrounds\` — wallpaper copies
-- [ ] Pre-populate system files: `hello.exe`, `shell.exe`, `hello.txt`, `readme.txt`
-- [ ] Pre-populate assets: `wallpaper.raw`, `bg.raw`, `start_icon.raw` → `C:\Impossible\System\`
-- [ ] Label: `"Impossible OS"`
+- [x] Use `mkfs-ixfs` logic to create IXFS v2 filesystem
+- [x] Pre-populate directory hierarchy:
+  - [x] `C:\Impossible\System\` — system files + assets
+  - [x] `C:\Impossible\Commands\` — command-line tools
+  - [x] `C:\Users\Default\` — default user profile
+  - [x] `C:\Programs\` — installed applications
+  - [x] `C:\Documents\backgrounds\` — wallpaper copies
+- [x] Pre-populate system files: `hello.exe`, `shell.exe`, `hello.txt`, `readme.txt`
+- [x] Pre-populate assets: `wallpaper.raw`, `bg.raw`, `start_icon.raw` → `C:\Impossible\System\`
+- [x] Label: `"Impossible OS"`
 
 ### 2.4 Tool Implementation
 
-- [ ] Accept CLI args: `-o output.img`, `-s total_size`, `--kernel path`, `--grub path`, `--populate dir`
-- [ ] Write GPT header + partition entries
-- [ ] Write FAT32 EFI partition with boot files
-- [ ] Write IXFS system partition with pre-populated hierarchy
-- [ ] Write empty IXFS user data partition
-- [ ] Compute protective MBR + GPT checksums
-- [ ] Commit: `"tools: unified system disk builder"`
+- [x] Accept CLI args: `-o output.img`, `-s total_size`, `--efi-size SIZE`
+- [x] Write GPT header + partition entries
+- [x] Write backup GPT at end of disk
+- [x] Generate `.info` file with partition offsets
+- [x] Compute protective MBR + GPT checksums
+- [x] Commit: `3251de9` — `"tools: unified system disk builder"`
 
 ---
 
@@ -82,21 +81,20 @@ make all
   → system-disk (assemble build/system-disk.img)
 ```
 
-- [ ] Add `grub-efi` target: `grub-mkimage` → `build/tools/BOOTX64.EFI`
-- [ ] Add `assets` target: `jpg2raw` conversions
-- [ ] Update `system-disk` target: invoke unified disk builder with all inputs
-- [ ] Remove `iso` target (`grub-mkrescue`, `make-initrd`)
-- [ ] Remove `initrd.img` build steps
-- [ ] Commit: `"build: Makefile refactor for single disk image"`
+- [x] Add `grub-efi` target: `grub-mkimage` → `build/tools/BOOTX64.EFI`
+- [x] Add `assets` target: `jpg2raw` conversions
+- [x] Update `system-disk` target: 3-step pipeline (GPT → FAT32 → IXFS)
+- [ ] Remove `iso` target (`grub-mkrescue`, `make-initrd`) — *after kernel boot path cleanup*
+- [ ] Remove `initrd.img` build steps — *after kernel boot path cleanup*
+- [x] Commit: `3251de9` — Makefile rewrite
 
 ### 3.2 QEMU Configuration Update
 
-- [ ] Remove `-cdrom $(ISO_FILE)` from QEMU flags
-- [ ] Boot from disk: `-drive file=build/system-disk.img,format=raw,if=none,id=disk0`
-- [ ] Keep OVMF UEFI firmware (boots from EFI partition on GPT disk)
-- [ ] Keep secondary SATA test disk for AHCI testing
-- [ ] Update `run`, `run-debug`, `run-log` targets
-- [ ] Commit: `"build: QEMU direct-disk boot"`
+- [x] Boot from disk: `-drive file=build/system-disk.img,format=raw,if=none,id=sysdisk`
+- [x] Keep OVMF UEFI firmware (boots from EFI partition on GPT disk)
+- [ ] Keep secondary SATA test disk for AHCI testing — *deferred to test-disks*
+- [x] Update `run`, `run-debug`, `run-log` targets
+- [x] Commit: `3251de9`
 
 ---
 

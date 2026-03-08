@@ -1,7 +1,7 @@
 /* ============================================================================
  * desktop.c — Desktop shell (wallpaper, taskbar, start menu)
  *
- * - Loads wallpaper.raw from initrd (zero-copy) and blits as background
+ * - Loads wallpaper.raw from C:\ (IXFS system partition) via VFS
  * - Draws a taskbar at the bottom with start button, window list, clock
  * - Draws a start menu popup with app launcher items
  * - Copies background images to C:\Documents\backgrounds\ on IXFS
@@ -17,15 +17,14 @@
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
-#include "kernel/fs/initrd.h"
 #include "kernel/acpi.h"
 
 /* ---- Wallpaper pixel buffer ---- */
-static const uint32_t *wallpaper_buf; /* Points directly into initrd memory */
+static uint32_t *wallpaper_buf;       /* Heap-allocated from VFS read */
 static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully */
 
 /* ---- Start icon ---- */
-static const uint32_t *start_icon_buf; /* 48x48 BGRA from initrd */
+static uint32_t *start_icon_buf;      /* Heap-allocated from VFS read */
 static uint8_t   start_icon_loaded;
 
 /* ---- Start menu state ---- */
@@ -54,7 +53,7 @@ static const uint32_t menu_icon_colors[MENU_ITEM_COUNT] = {
 
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
-static void copy_backgrounds_to_ixfs(void);
+static void load_start_icon(void);
 static void draw_text(uint32_t x, uint32_t y, const char *text,
                       uint32_t fg, uint32_t bg);
 static uint32_t text_width(const char *text);
@@ -67,97 +66,108 @@ static uint32_t slen(const char *s)
     return n;
 }
 
+/* ---- VFS file loader (reads entire file into heap buffer) ---- */
+
+static uint8_t *vfs_load_file(const char *path, uint32_t *out_size)
+{
+    struct vfs_node *f;
+    uint8_t *buf;
+    int n;
+
+    f = vfs_open(path, VFS_O_READ);
+    if (!f)
+        return (uint8_t *)0;
+
+    if (f->size == 0) {
+        vfs_close(f);
+        return (uint8_t *)0;
+    }
+
+    buf = (uint8_t *)kmalloc(f->size);
+    if (!buf) {
+        vfs_close(f);
+        return (uint8_t *)0;
+    }
+
+    n = vfs_read(f, 0, (uint32_t)f->size, buf);
+    vfs_close(f);
+
+    if (n <= 0) {
+        kfree(buf);
+        return (uint8_t *)0;
+    }
+
+    *out_size = (uint32_t)n;
+    return buf;
+}
+
 /* ---- Initialization ---- */
 
 void desktop_init(void)
 {
-    wallpaper_buf    = (const uint32_t *)0;
+    wallpaper_buf    = (uint32_t *)0;
     wallpaper_loaded = 0;
-    start_icon_buf   = (const uint32_t *)0;
+    start_icon_buf   = (uint32_t *)0;
     start_icon_loaded = 0;
     start_menu_open  = 0;
     prev_left        = 0;
 
-    /* Load the wallpaper image from initrd (zero-copy) */
+    /* Load the wallpaper image from C:\ (IXFS) */
     load_wallpaper();
 
-    /* Load start button icon from initrd (zero-copy) */
-    {
-        uint32_t icon_size = 0;
-        const uint8_t *icon_data = initrd_get_file_data("start_icon.raw", &icon_size);
-        if (icon_data && icon_size >= START_ICON_SIZE * START_ICON_SIZE * 4) {
-            start_icon_buf = (const uint32_t *)icon_data;
-            start_icon_loaded = 1;
-            printk("[OK] Start icon loaded (%ux%u, zero-copy)\n",
-                   (uint64_t)START_ICON_SIZE, (uint64_t)START_ICON_SIZE);
-        }
-    }
-
-    /* Copy background files from initrd to IXFS */
-    copy_backgrounds_to_ixfs();
+    /* Load start button icon from C:\ */
+    load_start_icon();
 }
 
-/* ---- Wallpaper loading (zero-copy from initrd) ---- */
+/* ---- Wallpaper loading (from C:\ via VFS) ---- */
 
 static void load_wallpaper(void)
 {
     uint32_t file_size = 0;
     uint32_t expected_size;
-    const uint8_t *data;
+    uint8_t *data;
 
     expected_size = WALLPAPER_WIDTH * WALLPAPER_HEIGHT * 4;
 
-    /* Get a direct pointer to the wallpaper data in initrd memory */
-    data = initrd_get_file_data("wallpaper.raw", &file_size);
+    /* Read wallpaper from C:\ (IXFS system partition) */
+    data = vfs_load_file("C:\\wallpaper.raw", &file_size);
     if (!data) {
-        printk("[DESKTOP] wallpaper.raw not found in initrd\n");
+        printk("[DESKTOP] wallpaper.raw not found on C:\\\n");
         return;
     }
 
     if (file_size < expected_size) {
         printk("[DESKTOP] wallpaper.raw too small (%u < %u)\n",
                (uint64_t)file_size, (uint64_t)expected_size);
+        kfree(data);
         return;
     }
 
-    /* Point directly at initrd memory — no copy needed */
-    wallpaper_buf = (const uint32_t *)data;
+    wallpaper_buf = (uint32_t *)data;
     wallpaper_loaded = 1;
-    printk("[OK] Desktop wallpaper loaded (%ux%u, zero-copy)\n",
-           (uint64_t)WALLPAPER_WIDTH, (uint64_t)WALLPAPER_HEIGHT);
+    printk("[OK] Desktop wallpaper loaded (%ux%u, %u bytes)\n",
+           (uint64_t)WALLPAPER_WIDTH, (uint64_t)WALLPAPER_HEIGHT,
+           (uint64_t)file_size);
 }
 
-/* ---- Copy backgrounds to IXFS (zero-copy read from initrd) ---- */
+/* ---- Start icon loading (from C:\ via VFS) ---- */
 
-static void copy_one_bg(const char *initrd_name, const char *ixfs_path)
+static void load_start_icon(void)
 {
-    uint32_t file_size = 0;
-    const uint8_t *data;
-    struct vfs_node *dst;
+    uint32_t icon_size = 0;
+    uint8_t *data;
+    uint32_t expected = START_ICON_SIZE * START_ICON_SIZE * 4;
 
-    data = initrd_get_file_data(initrd_name, &file_size);
-    if (!data || file_size == 0)
-        return;
-
-    /* Create and write directly from initrd memory — no heap buffer */
-    vfs_create(ixfs_path, VFS_FILE);
-    dst = vfs_open(ixfs_path, VFS_O_WRITE);
-    if (dst) {
-        vfs_write(dst, 0, file_size, data);
-        vfs_close(dst);
+    data = vfs_load_file("C:\\start_icon.raw", &icon_size);
+    if (data && icon_size >= expected) {
+        start_icon_buf = (uint32_t *)data;
+        start_icon_loaded = 1;
+        printk("[OK] Start icon loaded (%ux%u, %u bytes)\n",
+               (uint64_t)START_ICON_SIZE, (uint64_t)START_ICON_SIZE,
+               (uint64_t)icon_size);
+    } else if (data) {
+        kfree(data);
     }
-}
-
-static void copy_backgrounds_to_ixfs(void)
-{
-    /* Create the Documents\backgrounds directory hierarchy */
-    vfs_create("C:\\Documents", VFS_DIRECTORY);
-    vfs_create("C:\\Documents\\backgrounds", VFS_DIRECTORY);
-
-    /* Copy background directly from initrd memory to IXFS */
-    copy_one_bg("bg.raw", "C:\\Documents\\backgrounds\\background.raw");
-
-    printk("[OK] Background copied to C:\\Documents\\backgrounds\\\n");
 }
 
 /* ---- Text drawing helper ---- */
