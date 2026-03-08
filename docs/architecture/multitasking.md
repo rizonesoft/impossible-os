@@ -137,6 +137,42 @@ thread_create()
 - **Self-deadlock**: `mutex_lock()` detects if the calling thread already holds the mutex
 - **Lock ordering**: `mutex_init_ordered()` assigns a sequential order ID; locks must be acquired in ascending order to prevent ABBA deadlocks
 
+## Semaphore Synchronization
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/sched/semaphore.c` | Semaphore implementation |
+| `include/kernel/sched/semaphore.h` | `semaphore_t` struct and API |
+
+### `semaphore_t` Structure
+
+| Field | Description |
+|-------|-------------|
+| `count` | Current count (volatile `int32_t`) |
+| `waiter_tasks[]` | Wait queue — up to 16 blocked task indices |
+| `waiter_threads[]` | Corresponding thread indices |
+| `num_waiters` | Number of currently blocked waiters |
+| `name` | Debug name |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `sem_init(s, name, count)` | Initialize with an initial count |
+| `sem_wait(s)` | Decrement — blocks via `yield()` if count < 0 |
+| `sem_signal(s)` | Increment — wakes one blocked waiter |
+| `sem_trywait(s)` | Non-blocking decrement (returns 1=success, 0=would block) |
+| `sem_value(s)` | Get current count (debug) |
+| `SEM_INIT(name, count)` | Static initializer macro |
+
+### Use Cases
+
+- **Binary semaphore** (init count = 1): Mutual exclusion (like a mutex)
+- **Counting semaphore** (init count = N): Limit concurrent access to N slots
+- **Event signaling** (init count = 0): Producer signals, consumer waits
+
 ## Scheduler
 
 ### Key Files
