@@ -94,6 +94,9 @@ void wm_composite(void);
 /* Force a full redraw on the next wm_composite() call. */
 void wm_mark_dirty(void);
 
+/* Check if a redraw is pending (content changed). */
+int wm_needs_redraw(void);
+
 /* Get a window's client-area framebuffer for drawing into. */
 uint32_t *wm_get_framebuffer(int handle);
 

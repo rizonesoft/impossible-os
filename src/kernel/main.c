@@ -1015,18 +1015,25 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 uint8_t clock_tick = (cur_sec != last_clock_sec);
                 if (clock_tick) last_clock_sec = cur_sec;
 
+                /* Check if any window content changed (e.g., terminal output) */
+                uint8_t wm_dirty = wm_needs_redraw();
+
                 /* Only do work if something actually changed */
                 uint8_t need_full = first_frame || btn_changed
-                                 || (cursor_moved && mb != 0);
+                                 || (cursor_moved && mb != 0)
+                                 || wm_dirty;
 
                 if (need_full) {
                     /* Full composite needed: first frame, button change,
-                     * or dragging (cursor moved with button held) */
+                     * dragging, or window content changed */
 
                     /* Dispatch mouse */
                     if (!desktop_handle_click(mx, my, mb)) {
                         wm_handle_mouse(mx, my, mb);
                     }
+
+                    /* Render terminal content to its window buffer */
+                    terminal_render();
 
                     /* Full redraw */
                     wm_mark_dirty();
