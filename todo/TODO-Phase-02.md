@@ -81,16 +81,16 @@
 
 ### 2.1 stb_truetype Integration
 
-- [ ] Add `stb_truetype.h` to `include/` (public domain)
-- [ ] Redirect memory: `STBTT_malloc → kmalloc`, `STBTT_free → kfree`
-- [ ] Create `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h`
-- [ ] Implement `font_mgr_init()` — load fonts from C:\ at boot
-- [ ] Implement `font_get(slot, pixel_size)` — return scaled font handle
-- [ ] Implement `font_draw_char(surface, font, x, y, codepoint, color)` — rasterize + alpha blend
-- [ ] Implement `font_draw_string(surface, font, x, y, text, color)` — with kerning
-- [ ] Implement `font_measure_width(font, text)` — text width measurement
-- [ ] Implement `font_line_height(font)` — get line height
-- [ ] Commit: `"desktop: stb_truetype integration"`
+- [x] Add `stb_truetype.h` to `include/` (public domain)
+- [x] Redirect memory: `STBTT_malloc → kmalloc`, `STBTT_free → kfree`
+- [x] Create `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h`
+- [x] Implement `ttf_mgr_init()` — load fonts from `C:\Impossible\Fonts\` at boot
+- [x] Implement `ttf_get(slot, pixel_size)` — return scaled font handle
+- [x] Implement `ttf_draw_char(surface, font, x, y, codepoint, color)` — rasterize + alpha blend
+- [x] Implement `ttf_draw_string(surface, font, x, y, text, color)` — with kerning
+- [x] Implement `ttf_measure_width(font, text)` — text width measurement
+- [x] Implement `ttf_line_height(font)` — get line height
+- [x] Commit: `"desktop: stb_truetype integration"`
 
 ### 2.2 Font Bundle
 

@@ -363,6 +363,18 @@ $(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $<"
 
+# stb_truetype implementation — needs SSE2 for floating-point math
+$(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (stb_truetype)"
+
+# Font manager + text rendering — needs SSE2 for stb_truetype API calls
+$(BUILD_DIR)/kernel/gfx/gfx_text.o: $(SRC_DIR)/kernel/gfx/gfx_text.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (fonts)"
+
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)

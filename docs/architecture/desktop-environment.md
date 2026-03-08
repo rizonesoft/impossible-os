@@ -141,6 +141,28 @@ Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at
 
 **Build:** `gfx_simd.c` uses `SIMD_CFLAGS` (filters out `-mno-sse` and adds `-msse2`).
 
+### TrueType Font System
+
+| File | Purpose |
+|------|---------|
+| `include/stb_truetype.h` | Sean Barrett's public-domain TTF parser (5079 lines) |
+| `include/kernel/kmath.h` | Software float math shim (sqrt, pow, cos, acos, fabs, floor, ceil) |
+| `include/font_mgr.h` | Font manager API: slot-based loading, draw, measure |
+| `src/kernel/gfx/stb_truetype_impl.c` | Compilation unit with all stdlib→kernel redirects |
+| `src/kernel/gfx/gfx_text.c` | Font loading (VFS) + glyph rendering + kerning |
+
+| Function | Description |
+|----------|-------------|
+| `ttf_mgr_init` | Load TTF fonts from `C:\Impossible\Fonts\` into slots |
+| `ttf_get(slot, px)` | Return scaled font handle for a given pixel size |
+| `ttf_draw_char` | Rasterize single glyph → alpha blend onto surface |
+| `ttf_draw_string` | Render string with per-glyph rasterization + kerning |
+| `ttf_measure_width` | Measure text width without drawing |
+| `ttf_line_height` | Get line height (ascent − descent + gap, scaled) |
+
+**Font slots:** UI (segoeui.ttf), Mono (consola.ttf), Title (segoeuib.ttf), Icon.
+**Build:** Both `stb_truetype_impl.c` and `gfx_text.c` compiled with `-msse2`. FPU state protected via `fxsave`/`fxrstor`.
+
 ## Framebuffer Graphics
 
 ### Key Files
