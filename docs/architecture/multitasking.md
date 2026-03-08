@@ -100,6 +100,43 @@ thread_create()
       └──── woken ◄────────────┘
 ```
 
+## Mutex Synchronization
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/sched/mutex.c` | Mutex implementation |
+| `include/kernel/sched/mutex.h` | `mutex_t` struct and API |
+
+### `mutex_t` Structure
+
+| Field | Description |
+|-------|-------------|
+| `locked` | Locked flag (0/1, volatile) |
+| `owner_task` | Task index of current holder |
+| `owner_thread` | Thread index of current holder |
+| `lock_order` | Ordering ID for deadlock detection (0 = unchecked) |
+| `waiter_tasks[]` | Wait queue — up to 16 blocked threads |
+| `name` | Debug name (e.g., "heap_lock") |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `mutex_init(m, name)` | Initialize a mutex |
+| `mutex_init_ordered(m, name, order)` | Init with lock order for deadlock detection |
+| `mutex_lock(m)` | Acquire — blocks via `yield()` if locked; detects self-deadlock |
+| `mutex_unlock(m)` | Release — owner-only; wakes one waiter |
+| `mutex_trylock(m)` | Non-blocking acquire (returns 1=success, 0=fail) |
+| `mutex_is_locked(m)` | Check lock state (debug) |
+| `MUTEX_INIT(name)` | Static initializer macro |
+
+### Deadlock Detection
+
+- **Self-deadlock**: `mutex_lock()` detects if the calling thread already holds the mutex
+- **Lock ordering**: `mutex_init_ordered()` assigns a sequential order ID; locks must be acquired in ascending order to prevent ABBA deadlocks
+
 ## Scheduler
 
 ### Key Files
