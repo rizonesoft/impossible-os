@@ -187,10 +187,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 8: Initialize VFS */
     vfs_init();
 
-    /* NOTE: initrd is no longer used. All system files live on the
-     * IXFS partition (C:\), pre-populated by mkfs-ixfs --populate.
-     * Boot files (kernel.exe, BOOTX64.EFI) live on the EFI partition.
-     * partition_mount_filesystems() below mounts all detected volumes. */
+    /* All system files live on the IXFS partition (C:\), pre-populated
+     * by mkfs-ixfs --populate. Boot files (kernel.exe, BOOTX64.EFI)
+     * live on the EFI partition. partition_mount_filesystems() below
+     * mounts all detected volumes. */
 
 
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
@@ -875,14 +875,14 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("User mode test passed\n");
     }
 
-    /* === Exec test: load and run an ELF from the initrd === */
+    /* === Exec test: load and run an ELF from C:\ === */
     {
         extern void exec_loader_func(void);
 
-        printk("\n  Exec test: load hello.exe from initrd\n");
+        printk("\n  Exec test: load hello.exe from C:\\\n");
 
         /* The exec loader is a kernel task that loads the ELF binary.
-         * We use a kernel task because exec needs to read from the initrd
+         * We use a kernel task because exec needs to read from C:\
          * (which requires kernel-mode VFS access) before switching to user mode. */
         task_create(exec_loader_func, "ExecLoader");
         scheduler_enable();

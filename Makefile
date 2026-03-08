@@ -115,22 +115,20 @@ iso: $(ISO_FILE)
 
 $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	@mkdir -p $(ISO_DIR)/boot/grub
-	@# Build the initrd packer tool (host binary)
-	@mkdir -p $(BUILD_DIR)/tools
-	$(HOST_CC) -o $(BUILD_DIR)/tools/make-initrd tools/make-initrd.c
 	@# Build jpg2raw converter (uses stb_image)
+	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/jpg2raw tools/jpg2raw.c -lm -Itools
-	@# Create initrd files directory and test files
-	@mkdir -p $(BUILD_DIR)/initrd_files
-	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/initrd_files/hello.txt
-	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/initrd_files/readme.txt
+	@# Create sysroot staging directory and test files
+	@mkdir -p $(BUILD_DIR)/sysroot
+	@echo -n "Hello from Impossible OS!" > $(BUILD_DIR)/sysroot/hello.txt
+	@echo -n "IXFS root filesystem" > $(BUILD_DIR)/sysroot/readme.txt
 	@# Convert wallpaper background image to raw BGRA
 	$(BUILD_DIR)/tools/jpg2raw resources/backgrounds/background.jpg \
-		$(BUILD_DIR)/initrd_files/wallpaper.raw 1280 720 2>&1
-	@cp $(BUILD_DIR)/initrd_files/wallpaper.raw $(BUILD_DIR)/initrd_files/bg.raw
+		$(BUILD_DIR)/sysroot/wallpaper.raw 1280 720 2>&1
+	@cp $(BUILD_DIR)/sysroot/wallpaper.raw $(BUILD_DIR)/sysroot/bg.raw
 	@# Convert start button icon (32x32 PNG with alpha)
 	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
-		$(BUILD_DIR)/initrd_files/start_icon.raw 32 32 2>&1
+		$(BUILD_DIR)/sysroot/start_icon.raw 32 32 2>&1
 	@# Build userland libc
 	@mkdir -p $(BUILD_DIR)/user/lib
 	$(AS) -f elf64 -g user/lib/crt0.asm -o $(BUILD_DIR)/user/lib/crt0.o
@@ -174,18 +172,9 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 		-Iuser/include -c user/shell.c -o $(BUILD_DIR)/user/shell.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/shell.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/shell.o $(BUILD_DIR)/user/libc.a
-	@cp $(BUILD_DIR)/user/hello.exe $(BUILD_DIR)/initrd_files/hello.exe
-	@cp $(BUILD_DIR)/user/shell.exe $(BUILD_DIR)/initrd_files/shell.exe
-	$(BUILD_DIR)/tools/make-initrd -o $(BUILD_DIR)/initrd.img \
-		$(BUILD_DIR)/initrd_files/hello.txt \
-		$(BUILD_DIR)/initrd_files/readme.txt \
-		$(BUILD_DIR)/initrd_files/hello.exe \
-		$(BUILD_DIR)/initrd_files/shell.exe \
-		$(BUILD_DIR)/initrd_files/wallpaper.raw \
-		$(BUILD_DIR)/initrd_files/bg.raw \
-		$(BUILD_DIR)/initrd_files/start_icon.raw
+	@cp $(BUILD_DIR)/user/hello.exe $(BUILD_DIR)/sysroot/hello.exe
+	@cp $(BUILD_DIR)/user/shell.exe $(BUILD_DIR)/sysroot/shell.exe
 	cp $(KERNEL_BIN) $(ISO_DIR)/boot/kernel.exe
-	cp $(BUILD_DIR)/initrd.img $(ISO_DIR)/boot/initrd.img
 	cp $(BOOT_DIR)/grub.cfg $(ISO_DIR)/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
 	@echo "[ISO] $(ISO_FILE) created"
@@ -205,7 +194,7 @@ system-disk: $(SYSTEM_DISK)
 
 $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
                 tools/make-system-disk.c tools/mkfs-ixfs.c \
-                $(BUILD_DIR)/initrd_files/hello.txt
+                $(BUILD_DIR)/sysroot/hello.txt
 	@echo "[DISK] Building system disk..."
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
@@ -227,7 +216,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 		-s $(IXFS_PART_SIZE) \
 		-l "Impossible OS" \
 		--offset $(IXFS_OFFSET) \
-		--populate $(BUILD_DIR)/initrd_files
+		--populate $(BUILD_DIR)/sysroot
 	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + IXFS)"
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)

@@ -103,7 +103,7 @@ void multiboot2_parse(uintptr_t mbi_addr)
             break;
         }
 
-        /* --- module (type 3) — initrd loaded by GRUB --- */
+        /* --- module (type 3) --- */
         case MULTIBOOT2_TAG_TYPE_MODULE: {
             /* Module tag layout: type(4) + size(4) + mod_start(4) + mod_end(4) + string */
             uint32_t *mod = (uint32_t *)((uintptr_t)tag + 8);

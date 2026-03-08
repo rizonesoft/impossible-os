@@ -162,7 +162,7 @@ static void cmd_help(void)
     printf("  clear             Clear the screen\n");
     printf("  uname             System information\n");
     printf("  version           OS version\n");
-    printf("  ls                List files in initrd\n");
+    printf("  ls                List files on C:\\\n");
     printf("  cat <file>        Print file contents\n");
     printf("  ps                List running processes\n");
     printf("  kill <pid>        Terminate a process\n");
@@ -207,7 +207,7 @@ static void cmd_ls(void)
     char name[256];
     unsigned int i;
 
-    printf("  Files in initrd:\n");
+    printf("  Files on C:\\:\n");
     for (i = 0; ; i++) {
         if (sys_readdir(name, sizeof(name), i) < 0)
             break;

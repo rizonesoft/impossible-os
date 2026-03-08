@@ -3,7 +3,7 @@
  *
  * Drive letter mounting: A:\, C:\, D:\ etc.
  * Backslash path parsing: C:\Users\Default\file.txt
- * Pluggable filesystem drivers (IXFS, FAT32, initrd).
+ * Pluggable filesystem drivers (IXFS, FAT32).
  * ============================================================================ */
 
 #pragma once
@@ -63,7 +63,7 @@ struct vfs_node {
 
 /* Filesystem driver descriptor — registered by each FS implementation */
 struct vfs_fs_driver {
-    const char      *name;       /* "IXFS", "FAT32", "initrd" */
+    const char      *name;       /* "IXFS", "FAT32" */
     struct vfs_ops  *ops;        /* filesystem operations */
     void            *priv_data;  /* driver-private data */
 };

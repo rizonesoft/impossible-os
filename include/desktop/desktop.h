@@ -39,7 +39,7 @@
 
 /* ---- API ---- */
 
-/* Initialize the desktop: load wallpaper from initrd, copy backgrounds
+/* Initialize the desktop: load wallpaper from C:\, copy backgrounds
  * to IXFS Documents\backgrounds\ folder. Call after wm_init(). */
 void desktop_init(void);
 

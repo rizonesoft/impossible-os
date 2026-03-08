@@ -12,7 +12,7 @@
 #include "kernel/printk.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"
-#include "kernel/fs/initrd.h"
+
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/pit.h"
@@ -101,13 +101,13 @@ static void sys_exit(uint64_t code)
     task_exit((int32_t)code);
 }
 
-/* SYS_READFILE: read a file from the initrd by name. */
+/* SYS_READFILE: read a file from C:\ by name. */
 static int64_t sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
                             uint64_t buf_size)
 {
     const char *name = (const char *)name_ptr;
     uint8_t *buf = (uint8_t *)buf_ptr;
-    struct vfs_node *root = initrd_get_root();
+    struct vfs_node *root = vfs_get_drive_root('C');
     struct vfs_node *file;
     uint64_t to_read;
 
@@ -123,12 +123,12 @@ static int64_t sys_readfile(uint64_t name_ptr, uint64_t buf_ptr,
     return (int64_t)to_read;
 }
 
-/* SYS_READDIR: read a directory entry at index from the initrd root. */
+/* SYS_READDIR: read a directory entry at index from the C:\ root. */
 static int64_t sys_readdir(uint64_t buf_ptr, uint64_t buf_size,
                            uint64_t index)
 {
     char *buf = (char *)buf_ptr;
-    struct vfs_node *root = initrd_get_root();
+    struct vfs_node *root = vfs_get_drive_root('C');
     struct vfs_dirent *entry;
     uint64_t i;
 
@@ -213,7 +213,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         break;
     case SYS_EXEC: {
         const char *filename = (const char *)arg1;
-        struct vfs_node *root = initrd_get_root();
+        struct vfs_node *root = vfs_get_drive_root('C');
         struct vfs_node *file;
 
         if (!root || !filename) { ret = -1; break; }

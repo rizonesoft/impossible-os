@@ -2,7 +2,7 @@
  * elf.c — ELF64 binary loader
  *
  * Validates ELF headers and loads PT_LOAD segments into memory.
- * Used by exec() to run user programs from the initrd.
+ * Used by exec() to run user programs from the filesystem.
  * ============================================================================ */
 
 #include "kernel/elf.h"
