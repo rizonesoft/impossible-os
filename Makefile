@@ -124,16 +124,30 @@ sysroot: $(SYSROOT)/wallpaper.raw
 
 $(SYSROOT)/wallpaper.raw: host-tools
 	@mkdir -p $(SYSROOT)
+	@# --- Standard directory tree ---
+	@mkdir -p $(SYSROOT)/Impossible/System/Config/Codex
+	@mkdir -p $(SYSROOT)/Impossible/Bin
+	@mkdir -p $(SYSROOT)/Impossible/Fonts
+	@mkdir -p $(SYSROOT)/Impossible/Icons
+	@mkdir -p $(SYSROOT)/Impossible/Wallpapers
+	@mkdir -p $(SYSROOT)/Users/Default/Desktop
+	@mkdir -p $(SYSROOT)/Users/Default/Documents
+	@mkdir -p $(SYSROOT)/Users/Default/Downloads
+	@mkdir -p $(SYSROOT)/Users/Default/Pictures
+	@mkdir -p $(SYSROOT)/Temp
+	@mkdir -p $(SYSROOT)/Recycle
+	@mkdir -p $(SYSROOT)/Programs
 	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
 	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
 	@# Convert wallpaper background image to raw BGRA
 	$(BUILD_DIR)/tools/jpg2raw resources/backgrounds/background.jpg \
 		$(SYSROOT)/wallpaper.raw 1280 720 2>&1
 	@cp $(SYSROOT)/wallpaper.raw $(SYSROOT)/bg.raw
+	@cp $(SYSROOT)/wallpaper.raw $(SYSROOT)/Impossible/Wallpapers/default.raw
 	@# Convert start button icon (32x32 PNG with alpha)
 	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
 		$(SYSROOT)/start_icon.raw 32 32 2>&1
-	@echo "[SYSROOT] Assets and text files staged"
+	@echo "[SYSROOT] Assets and directory tree staged"
 
 ## userland: Build user-mode programs and copy into sysroot
 USER_CFLAGS := -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \

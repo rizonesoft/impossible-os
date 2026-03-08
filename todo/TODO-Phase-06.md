@@ -796,24 +796,24 @@
 
 ### 8.14 IXFS Directory Structure (First Boot)
 
-- [ ] On first boot (fresh IXFS format), create standard directory tree:
-  - [ ] `C:\Impossible\` — system root
-  - [ ] `C:\Impossible\System\` — system files
-  - [ ] `C:\Impossible\System\Config\Codex\` — Codex registry files
-  - [ ] `C:\Impossible\Bin\` — system executables
-  - [ ] `C:\Impossible\Fonts\` — system fonts
-  - [ ] `C:\Impossible\Icons\` — system icons
-  - [ ] `C:\Impossible\Wallpapers\` — wallpapers
-  - [ ] `C:\Users\Default\` — default user home
-  - [ ] `C:\Users\Default\Desktop\` — desktop shortcuts
-  - [ ] `C:\Users\Default\Documents\`
-  - [ ] `C:\Users\Default\Downloads\`
-  - [ ] `C:\Users\Default\Pictures\`
-  - [ ] `C:\Temp\` — temp files
-  - [ ] `C:\Recycle\` — recycle bin
-  - [ ] `C:\Programs\` — installed applications
-- [ ] Copy initrd contents into IXFS directories
-- [ ] Commit: `"fs: IXFS first-boot directory structure"`
+- [x] On first boot (fresh IXFS format), create standard directory tree:
+  - [x] `C:\Impossible\` — system root
+  - [x] `C:\Impossible\System\` — system files
+  - [x] `C:\Impossible\System\Config\Codex\` — Codex registry files
+  - [x] `C:\Impossible\Bin\` — system executables
+  - [x] `C:\Impossible\Fonts\` — system fonts
+  - [x] `C:\Impossible\Icons\` — system icons
+  - [x] `C:\Impossible\Wallpapers\` — wallpapers
+  - [x] `C:\Users\Default\` — default user home
+  - [x] `C:\Users\Default\Desktop\` — desktop shortcuts
+  - [x] `C:\Users\Default\Documents\`
+  - [x] `C:\Users\Default\Downloads\`
+  - [x] `C:\Users\Default\Pictures\`
+  - [x] `C:\Temp\` — temp files
+  - [x] `C:\Recycle\` — recycle bin
+  - [x] `C:\Programs\` — installed applications
+- [x] ~~Copy initrd contents into IXFS directories~~ Created at build time via Makefile sysroot target
+- [x] Commit: `"fs: IXFS first-boot directory structure"`
 
 ---
 
