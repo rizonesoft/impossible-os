@@ -17,6 +17,9 @@ void pmm_init(void);
 /* Allocate a single 4 KiB physical frame. Returns physical address, or 0 on failure */
 uintptr_t pmm_alloc_frame(void);
 
+/* Allocate N contiguous 4 KiB frames. Returns base physical address, or 0 on failure */
+uintptr_t pmm_alloc_contiguous(uint64_t count);
+
 /* Free a previously allocated frame */
 void pmm_free_frame(uintptr_t addr);
 

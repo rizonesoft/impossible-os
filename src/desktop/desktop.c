@@ -15,12 +15,13 @@
 #include "kernel/drivers/rtc.h"
 #include "desktop/wm.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
 #include "kernel/acpi.h"
 
 /* ---- Wallpaper pixel buffer ---- */
-static uint32_t *wallpaper_buf;       /* Heap-allocated from VFS read */
+static uint32_t *wallpaper_buf;       /* PMM-allocated (identity-mapped) */
 static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully */
 
 /* ---- Start icon ---- */
@@ -123,31 +124,57 @@ void desktop_init(void)
 
 static void load_wallpaper(void)
 {
-    uint32_t file_size = 0;
+    struct vfs_node *f;
     uint32_t expected_size;
-    uint8_t *data;
+    uint32_t pages_needed;
+    uintptr_t base;
 
     expected_size = WALLPAPER_WIDTH * WALLPAPER_HEIGHT * 4;
+    pages_needed = (expected_size + 4095) / 4096;
 
-    /* Read wallpaper from C:\ (IXFS system partition) */
-    data = vfs_load_file("C:\\wallpaper.raw", &file_size);
-    if (!data) {
+    /* Check if file exists */
+    f = vfs_open("C:\\wallpaper.raw", VFS_O_READ);
+    if (!f) {
         printk("[DESKTOP] wallpaper.raw not found on C:\\\n");
         return;
     }
 
-    if (file_size < expected_size) {
+    if (f->size < expected_size) {
         printk("[DESKTOP] wallpaper.raw too small (%u < %u)\n",
-               (uint64_t)file_size, (uint64_t)expected_size);
-        kfree(data);
+               (uint64_t)f->size, (uint64_t)expected_size);
+        vfs_close(f);
         return;
     }
 
-    wallpaper_buf = (uint32_t *)data;
+    /* Allocate contiguous physical frames (identity-mapped, bypasses heap) */
+    base = pmm_alloc_contiguous(pages_needed);
+    if (!base) {
+        printk("[DESKTOP] wallpaper: cannot allocate %u contiguous frames\n",
+               (uint64_t)pages_needed);
+        vfs_close(f);
+        return;
+    }
+
+    /* Read wallpaper from disk in chunks into PMM buffer */
+    {
+        uint32_t offset = 0;
+        uint8_t *buf = (uint8_t *)base;
+        while (offset < expected_size) {
+            uint32_t chunk = expected_size - offset;
+            int n;
+            if (chunk > 4096) chunk = 4096;
+            n = vfs_read(f, offset, chunk, buf + offset);
+            if (n <= 0) break;
+            offset += (uint32_t)n;
+        }
+    }
+    vfs_close(f);
+
+    wallpaper_buf = (uint32_t *)base;
     wallpaper_loaded = 1;
     printk("[OK] Desktop wallpaper loaded (%ux%u, %u bytes)\n",
            (uint64_t)WALLPAPER_WIDTH, (uint64_t)WALLPAPER_HEIGHT,
-           (uint64_t)file_size);
+           (uint64_t)expected_size);
 }
 
 /* ---- Start icon loading (from C:\ via VFS) ---- */

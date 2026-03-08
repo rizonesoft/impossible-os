@@ -212,19 +212,15 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
 	@# Step 1: Create GPT image with partition table
 	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
-	@# Step 2: Create standalone FAT32 image, populate, then paste into disk
-	@dd if=/dev/zero of=$(BUILD_DIR)/efi.img bs=1M count=256 status=none
-	mkfs.fat -F 32 $(BUILD_DIR)/efi.img
+	@# Step 2: Format EFI partition as FAT32 and copy boot files
+	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot/grub
 	@cp $(GRUB_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
 	@cp $(BOOT_DIR)/grub.cfg $(BUILD_DIR)/efi_staging/boot/grub/grub.cfg
-	mcopy -i $(BUILD_DIR)/efi.img -s $(BUILD_DIR)/efi_staging/* ::
+	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
-	@# Paste FAT32 image into GPT disk at EFI partition offset
-	dd if=$(BUILD_DIR)/efi.img of=$@ bs=512 seek=2048 conv=notrunc status=none
-	@rm -f $(BUILD_DIR)/efi.img
 	@# Step 3: Format IXFS partition and populate with system files
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \

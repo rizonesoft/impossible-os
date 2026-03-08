@@ -169,6 +169,38 @@ uintptr_t pmm_alloc_frame(void)
     return 0;   /* out of memory */
 }
 
+/* Allocate N contiguous physical frames by scanning the bitmap for a run */
+uintptr_t pmm_alloc_contiguous(uint64_t count)
+{
+    uint64_t run_start = 0;
+    uint64_t run_len = 0;
+    uint64_t f;
+
+    if (count == 0) return 0;
+    if (count == 1) return pmm_alloc_frame();
+
+    for (f = 0; f < total_frames; f++) {
+        if (bitmap_test(f)) {
+            /* Used frame — reset run */
+            run_len = 0;
+            run_start = f + 1;
+        } else {
+            run_len++;
+            if (run_len >= count) {
+                /* Found enough contiguous free frames — mark them used */
+                uint64_t i;
+                for (i = 0; i < count; i++) {
+                    bitmap_set(run_start + i);
+                    used_frames++;
+                }
+                return run_start * PMM_FRAME_SIZE;
+            }
+        }
+    }
+
+    return 0;   /* no contiguous block large enough */
+}
+
 void pmm_free_frame(uintptr_t addr)
 {
     uint64_t frame = addr / PMM_FRAME_SIZE;
