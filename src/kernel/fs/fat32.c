@@ -1,19 +1,27 @@
 /* ============================================================================
  * fat32.c — FAT32 Read-Only Filesystem Driver
  *
- * Reads a FAT32 volume from the ATA disk, parses the BPB, reads the FAT,
- * follows cluster chains, and provides VFS operations for directory listing
- * and file reading.
+ * Reads a FAT32 volume via the block device abstraction layer, parses the
+ * BPB, follows cluster chains, and provides VFS operations for directory
+ * listing and file reading.
+ *
+ * Features:
+ *   - BPB parsing and layout calculation
+ *   - Cluster chain traversal via FAT
+ *   - 8.3 short name and LFN (Long File Name) support
+ *   - VFS integration (open/close/read/readdir/finddir)
+ *   - fat32_stat() for file metadata
  *
  * Key concepts:
  *   BPB (sector 0) → describes layout
  *   FAT region → maps cluster → next cluster chain
  *   Data region → actual file/directory data
- *   Directory entries → 32 bytes each (8.3 short names)
+ *   Directory entries → 32 bytes each
+ *   LFN entries → 32 bytes each, preceding the 8.3 entry, reverse order
  * ============================================================================ */
 
 #include "kernel/fs/fat32.h"
-#include "kernel/drivers/ata.h"
+#include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
 
@@ -31,6 +39,10 @@
 #define FAT32_ATTR_ARCHIVE    0x20
 #define FAT32_ATTR_LFN        0x0F
 
+/* LFN sequence number mask and last-entry flag */
+#define LFN_SEQ_MASK    0x1F
+#define LFN_LAST_ENTRY  0x40
+
 /* On-disk directory entry (32 bytes) */
 struct fat32_dir_entry {
     uint8_t  name[11];          /* 8.3 short name */
@@ -47,9 +59,23 @@ struct fat32_dir_entry {
     uint32_t file_size;
 } __attribute__((packed));
 
+/* On-disk LFN entry (32 bytes, overlaid on dir entry) */
+struct fat32_lfn_entry {
+    uint8_t  seq;               /* Sequence number (ORed with 0x40 for last) */
+    uint16_t name1[5];          /* Characters 1-5 (UTF-16LE) */
+    uint8_t  attr;              /* Always 0x0F */
+    uint8_t  type;              /* Always 0 for LFN */
+    uint8_t  checksum;          /* Short name checksum */
+    uint16_t name2[6];          /* Characters 6-11 (UTF-16LE) */
+    uint16_t first_cluster;     /* Always 0 */
+    uint16_t name3[2];          /* Characters 12-13 (UTF-16LE) */
+} __attribute__((packed));
+
 /* Maximum directory entries we'll track */
 #define FAT32_MAX_DIR_ENTRIES 128
-#define FAT32_MAX_NAME        64
+#define FAT32_MAX_NAME        256   /* Support long filenames */
+#define FAT32_LFN_CHARS       13    /* Characters per LFN entry */
+#define FAT32_LFN_MAX_ENTRIES 20    /* Max LFN entries (260 chars / 13) */
 
 /* In-memory file/directory node */
 struct fat32_file {
@@ -60,7 +86,7 @@ struct fat32_file {
 
 /* Static storage */
 static struct fat32_bpb bpb;
-static uint32_t part_lba;               /* partition start LBA */
+static const struct blkdev *fat32_dev;   /* Block device for this volume */
 static struct fat32_file root_file;
 static struct fat32_file dir_files[FAT32_MAX_DIR_ENTRIES];
 static uint32_t dir_file_count;
@@ -69,26 +95,23 @@ static struct vfs_dirent fat32_dirent;
 /* Sector buffer */
 static uint8_t sector_buf[512];
 
-/* --- Internal: read a sector relative to partition start --- */
+/* ---- Block device I/O ---- */
+
+/* Read a single sector relative to partition start (handled by sub-blkdev) */
 static int fat32_read_sector(uint32_t sector, void *buf)
 {
-    return ata_read_sectors(part_lba + sector, 1, buf);
+    return blkdev_read(fat32_dev, sector, 1, buf);
 }
 
-/* --- Internal: read multiple sectors --- */
+/* Read multiple contiguous sectors */
 static int fat32_read_sectors_multi(uint32_t sector, uint32_t count, void *buf)
 {
-    uint32_t i;
-    uint8_t *p = (uint8_t *)buf;
-
-    for (i = 0; i < count; i++) {
-        if (ata_read_sectors(part_lba + sector + i, 1, p + i * 512) != 0)
-            return -1;
-    }
-    return 0;
+    return blkdev_read(fat32_dev, sector, count, buf);
 }
 
-/* --- Internal: get next cluster from FAT --- */
+/* ---- FAT cluster operations ---- */
+
+/* Get next cluster from FAT */
 static uint32_t fat32_next_cluster(uint32_t cluster)
 {
     uint32_t fat_offset = cluster * 4;
@@ -105,13 +128,15 @@ static uint32_t fat32_next_cluster(uint32_t cluster)
     return next;
 }
 
-/* --- Internal: get first sector of a cluster --- */
+/* Get first sector of a cluster */
 static uint32_t cluster_to_sector(uint32_t cluster)
 {
     return bpb.first_data_sector + (cluster - 2) * bpb.sectors_per_cluster;
 }
 
-/* --- Internal: convert 8.3 name to readable string --- */
+/* ---- String helpers ---- */
+
+/* Convert 8.3 short name to readable string */
 static void fat32_short_name_to_str(const uint8_t *raw, char *out)
 {
     int i, j = 0;
@@ -136,7 +161,6 @@ static void fat32_short_name_to_str(const uint8_t *raw, char *out)
     out[j] = '\0';
 }
 
-/* --- Internal: string copy --- */
 static void fat32_strcpy(char *dst, const char *src, uint32_t max)
 {
     uint32_t i;
@@ -159,18 +183,61 @@ static int fat32_strcasecmp(const char *a, const char *b)
     return *a == *b;
 }
 
-/* --- Internal: read directory entries from a cluster chain --- */
+/* ---- LFN (Long File Name) support ---- */
+
+/* Extract characters from a single LFN entry into a buffer.
+ * Each LFN entry contributes 13 UTF-16LE characters.
+ * seq_index is 0-based (0 = chars 0-12, 1 = chars 13-25, etc.) */
+static void lfn_extract_chars(const struct fat32_lfn_entry *lfn,
+                              char *name_buf, int seq_index)
+{
+    int base = seq_index * FAT32_LFN_CHARS;
+    int i;
+
+    /* name1: 5 chars at buf positions base+0..base+4 */
+    for (i = 0; i < 5; i++) {
+        uint16_t ch = lfn->name1[i];
+        if (ch == 0 || ch == 0xFFFF) return;
+        name_buf[base + i] = (ch < 128) ? (char)ch : '_';
+    }
+    /* name2: 6 chars at buf positions base+5..base+10 */
+    for (i = 0; i < 6; i++) {
+        uint16_t ch = lfn->name2[i];
+        if (ch == 0 || ch == 0xFFFF) return;
+        name_buf[base + 5 + i] = (ch < 128) ? (char)ch : '_';
+    }
+    /* name3: 2 chars at buf positions base+11..base+12 */
+    for (i = 0; i < 2; i++) {
+        uint16_t ch = lfn->name3[i];
+        if (ch == 0 || ch == 0xFFFF) return;
+        name_buf[base + 11 + i] = (ch < 128) ? (char)ch : '_';
+    }
+}
+
+/* ---- Directory reading with LFN support ---- */
+
 static void fat32_read_dir(uint32_t cluster)
 {
     uint32_t bytes_per_cluster;
     uint8_t *cluster_buf;
     uint32_t i;
 
+    /* LFN assembly state */
+    char lfn_buf[FAT32_MAX_NAME];
+    int lfn_active = 0;     /* 1 if we're collecting LFN entries */
+
     dir_file_count = 0;
     bytes_per_cluster = bpb.sectors_per_cluster * 512;
     cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
     if (!cluster_buf)
         return;
+
+    /* Zero the LFN buffer */
+    {
+        int k;
+        for (k = 0; k < FAT32_MAX_NAME; k++)
+            lfn_buf[k] = '\0';
+    }
 
     while (cluster < FAT32_EOC && cluster != FAT32_FREE) {
         uint32_t sector = cluster_to_sector(cluster);
@@ -196,20 +263,51 @@ static void fat32_read_dir(uint32_t cluster)
                 goto done;
 
             /* Deleted entry */
-            if (de->name[0] == 0xE5)
+            if (de->name[0] == 0xE5) {
+                lfn_active = 0;
                 continue;
+            }
 
-            /* Skip LFN entries and volume ID */
-            if (de->attr == FAT32_ATTR_LFN)
+            /* LFN entry — collect characters */
+            if (de->attr == FAT32_ATTR_LFN) {
+                struct fat32_lfn_entry *lfn =
+                    (struct fat32_lfn_entry *)&cluster_buf[i];
+                int seq = lfn->seq & LFN_SEQ_MASK;
+
+                if (lfn->seq & LFN_LAST_ENTRY) {
+                    /* This is the last (first encountered) LFN entry.
+                     * Clear buffer and start collecting. */
+                    int k;
+                    for (k = 0; k < FAT32_MAX_NAME; k++)
+                        lfn_buf[k] = '\0';
+                    lfn_active = 1;
+                }
+
+                if (lfn_active && seq >= 1 && seq <= FAT32_LFN_MAX_ENTRIES)
+                    lfn_extract_chars(lfn, lfn_buf, seq - 1);
+
                 continue;
-            if (de->attr & FAT32_ATTR_VOLUME_ID)
+            }
+
+            /* Volume label — skip */
+            if (de->attr & FAT32_ATTR_VOLUME_ID) {
+                lfn_active = 0;
                 continue;
+            }
 
             /* Skip . and .. */
-            if (de->name[0] == '.')
+            if (de->name[0] == '.') {
+                lfn_active = 0;
                 continue;
+            }
 
-            fat32_short_name_to_str(de->name, name);
+            /* This is a regular 8.3 entry. Use LFN name if available. */
+            if (lfn_active && lfn_buf[0] != '\0') {
+                fat32_strcpy(name, lfn_buf, FAT32_MAX_NAME);
+            } else {
+                fat32_short_name_to_str(de->name, name);
+            }
+            lfn_active = 0;
 
             fc = ((uint32_t)de->first_cluster_hi << 16)
                | (uint32_t)de->first_cluster_lo;
@@ -233,7 +331,7 @@ done:
     kfree(cluster_buf);
 }
 
-/* --- VFS operations for FAT32 files --- */
+/* ---- VFS operations for FAT32 files ---- */
 
 static int fat32_file_open(struct vfs_node *node, uint32_t flags)
 {
@@ -283,7 +381,7 @@ static int fat32_file_read(struct vfs_node *node, uint32_t offset,
     /* Read data cluster by cluster */
     while (bytes_read < size && cluster < FAT32_EOC && cluster != FAT32_FREE) {
         uint32_t sector = cluster_to_sector(cluster);
-        uint32_t i;
+        uint32_t ci;
 
         if (fat32_read_sectors_multi(sector, bpb.sectors_per_cluster,
                                      cluster_buf) != 0)
@@ -293,8 +391,8 @@ static int fat32_file_read(struct vfs_node *node, uint32_t offset,
         if (to_read > size - bytes_read)
             to_read = size - bytes_read;
 
-        for (i = 0; i < to_read; i++)
-            buffer[bytes_read + i] = cluster_buf[cluster_offset + i];
+        for (ci = 0; ci < to_read; ci++)
+            buffer[bytes_read + ci] = cluster_buf[cluster_offset + ci];
 
         bytes_read += to_read;
         cluster_offset = 0;   /* only first cluster may have an offset */
@@ -316,7 +414,7 @@ static struct vfs_ops fat32_file_ops = {
     .unlink  = (void *)0,
 };
 
-/* --- VFS operations for FAT32 directories --- */
+/* ---- VFS operations for FAT32 directories ---- */
 
 static struct vfs_dirent *fat32_readdir(struct vfs_node *node, uint32_t index)
 {
@@ -372,16 +470,175 @@ static struct vfs_fs_driver fat32_driver = {
     .priv_data = (void *)0,
 };
 
-/* --- Public API --- */
+/* ---- fat32_stat: file metadata lookup ---- */
 
-int fat32_init(uint32_t partition_lba)
+int fat32_stat(const char *path, struct fat32_stat_info *info)
+{
+    uint32_t cluster;
+    uint32_t bytes_per_cluster;
+    uint8_t *cluster_buf;
+    uint32_t i;
+    const char *component;
+    const char *next;
+    int found;
+
+    if (!info || !path)
+        return -1;
+
+    /* Start from root directory */
+    cluster = bpb.root_cluster;
+    bytes_per_cluster = bpb.sectors_per_cluster * 512;
+
+    /* Skip leading separators */
+    while (*path == '/' || *path == '\\')
+        path++;
+
+    if (*path == '\0') {
+        /* Root directory itself */
+        info->size = 0;
+        info->attributes = FAT32_ATTR_DIRECTORY;
+        info->type = VFS_DIRECTORY;
+        info->create_date = 0;
+        info->create_time = 0;
+        info->modify_date = 0;
+        info->modify_time = 0;
+        info->first_cluster = cluster;
+        return 0;
+    }
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;
+
+    component = path;
+
+    while (component && *component) {
+        char target[FAT32_MAX_NAME];
+        int ti = 0;
+
+        /* Extract current path component */
+        next = component;
+        while (*next && *next != '/' && *next != '\\')
+            next++;
+        while (component < next && ti < FAT32_MAX_NAME - 1)
+            target[ti++] = *component++;
+        target[ti] = '\0';
+
+        /* Skip separator */
+        while (*component == '/' || *component == '\\')
+            component++;
+
+        /* Search this directory for the target */
+        found = 0;
+        {
+            uint32_t cur_cluster = cluster;
+            /* LFN assembly */
+            char lfn_name[FAT32_MAX_NAME];
+            int lfn_active_s = 0;
+            int k;
+
+            for (k = 0; k < FAT32_MAX_NAME; k++)
+                lfn_name[k] = '\0';
+
+            while (cur_cluster < FAT32_EOC && cur_cluster != FAT32_FREE) {
+                uint32_t sector = cluster_to_sector(cur_cluster);
+
+                if (fat32_read_sectors_multi(sector, bpb.sectors_per_cluster,
+                                             cluster_buf) != 0)
+                    break;
+
+                for (i = 0; i < bytes_per_cluster; i += 32) {
+                    struct fat32_dir_entry *de =
+                        (struct fat32_dir_entry *)&cluster_buf[i];
+                    char ename[FAT32_MAX_NAME];
+
+                    if (de->name[0] == 0x00) goto stat_not_found;
+                    if (de->name[0] == 0xE5) { lfn_active_s = 0; continue; }
+
+                    if (de->attr == FAT32_ATTR_LFN) {
+                        struct fat32_lfn_entry *lfn =
+                            (struct fat32_lfn_entry *)&cluster_buf[i];
+                        int seq = lfn->seq & LFN_SEQ_MASK;
+                        if (lfn->seq & LFN_LAST_ENTRY) {
+                            for (k = 0; k < FAT32_MAX_NAME; k++)
+                                lfn_name[k] = '\0';
+                            lfn_active_s = 1;
+                        }
+                        if (lfn_active_s && seq >= 1 &&
+                            seq <= FAT32_LFN_MAX_ENTRIES)
+                            lfn_extract_chars(lfn, lfn_name, seq - 1);
+                        continue;
+                    }
+
+                    if (de->attr & FAT32_ATTR_VOLUME_ID) {
+                        lfn_active_s = 0; continue;
+                    }
+
+                    /* Build name */
+                    if (lfn_active_s && lfn_name[0] != '\0')
+                        fat32_strcpy(ename, lfn_name, FAT32_MAX_NAME);
+                    else
+                        fat32_short_name_to_str(de->name, ename);
+                    lfn_active_s = 0;
+
+                    if (fat32_strcasecmp(ename, target)) {
+                        uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
+                                    | (uint32_t)de->first_cluster_lo;
+
+                        if (*component == '\0') {
+                            /* This is the final component — fill info */
+                            info->size = de->file_size;
+                            info->attributes = de->attr;
+                            info->type = (de->attr & FAT32_ATTR_DIRECTORY)
+                                       ? VFS_DIRECTORY : VFS_FILE;
+                            info->create_date = de->create_date;
+                            info->create_time = de->create_time;
+                            info->modify_date = de->modify_date;
+                            info->modify_time = de->modify_time;
+                            info->first_cluster = fc;
+                            kfree(cluster_buf);
+                            return 0;
+                        }
+
+                        /* Directory — descend */
+                        if (!(de->attr & FAT32_ATTR_DIRECTORY))
+                            goto stat_not_found;
+
+                        cluster = fc;
+                        found = 1;
+                        goto next_component;
+                    }
+                }
+
+                cur_cluster = fat32_next_cluster(cur_cluster);
+            }
+        }
+
+next_component:
+        if (!found && *component != '\0')
+            goto stat_not_found;
+    }
+
+stat_not_found:
+    kfree(cluster_buf);
+    return -1;
+}
+
+/* ---- Public API ---- */
+
+int fat32_init(const struct blkdev *dev)
 {
     uint32_t root_dir_sectors;
 
-    part_lba = partition_lba;
+    if (!dev) {
+        printk("[FAIL] FAT32: null block device\n");
+        return -1;
+    }
+
+    fat32_dev = dev;
     dir_file_count = 0;
 
-    /* Read the boot sector (BPB) */
+    /* Read the boot sector (BPB) — LBA 0 relative to the sub-blkdev */
     if (fat32_read_sector(0, sector_buf) != 0) {
         printk("[FAIL] FAT32: cannot read boot sector\n");
         return -1;

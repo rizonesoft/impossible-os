@@ -347,14 +347,16 @@ during early boot until the real disk filesystem takes over.
 |---------|--------|
 | BPB parsing | ✅ |
 | FAT chain following | ✅ |
-| Directory listing | ✅ (8.3 short names) |
+| Directory listing | ✅ (8.3 short names + LFN) |
+| Long filenames (LFN) | ✅ (UTF-16LE assembly) |
 | File reading | ✅ |
+| `fat32_stat(path)` | ✅ (size, attributes, timestamps) |
+| Block device layer | ✅ (via `blkdev_read`, works with partition sub-devices) |
 | File writing | ❌ (read-only) |
-| Long filenames (LFN) | ❌ |
 
-The FAT32 driver is intentionally read-only — it only needs to read
-the EFI System Partition (`A:\`). Write support is unnecessary since the
-ESP is managed by the installer/GRUB, not the running OS.
+The FAT32 driver is currently read-only. It reads partitions via the
+`blkdev` abstraction layer (using partition scanner sub-blkdevs) and
+supports both 8.3 short names and LFN (Long File Name) entries.
 
 ## IXFS — Impossible X FileSystem
 
