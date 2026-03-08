@@ -108,13 +108,13 @@ make all
 - [x] Desktop loads after `partition_mount_filesystems()` (IXFS available)
 - [x] Commit: `ba277b0` — `"kernel: boot from disk, remove initrd dependency"`
 
-### 4.2 Remove firstboot.c
+### 4.2 Remove firstboot.c ✅
 
-- [ ] Delete `src/kernel/fs/firstboot.c`
-- [ ] Delete `include/kernel/fs/firstboot.h`
-- [ ] Remove `firstboot_setup()` call from `main.c`
-- [ ] Remove `#include "kernel/fs/firstboot.h"` from `main.c`
-- [ ] Commit: `"kernel: remove firstboot (pre-populated disk)"`
+- [x] Delete `src/kernel/fs/firstboot.c`
+- [x] Delete `include/kernel/fs/firstboot.h`
+- [x] Remove `firstboot_setup()` call from `main.c` *(done in `ba277b0`)*
+- [x] Remove `#include "kernel/fs/firstboot.h"` from `main.c` *(done in `ba277b0`)*
+- [x] Commit: `e542907` — `"kernel: remove firstboot (pre-populated disk)"`
 
 ### 4.3 Remove initrd.c (Optional / Deferred)
 

@@ -540,14 +540,15 @@ IXFS partitions are detected by `partition_mount_filesystems()` and
 auto-mounted at `C:\` (system drive). This uses the `blkdev` layer —
 partition sub-devices created during boot.
 
-### First-Boot Setup
+### Pre-Populated Disk
 
-On first boot (empty C:\), `firstboot_setup()` in `main.c`:
-1. Creates default directory hierarchy (`Impossible\`, `Users\`, `Programs\`)
-2. Copies initrd files from `B:\` to `C:\Impossible\System\`
+The system disk is built with all files in place using `mkfs-ixfs --populate`.
+The Makefile's `system-disk` target creates a GPT disk with:
+1. EFI System Partition (FAT32) — BOOTX64.EFI, kernel.exe, grub.cfg
+2. IXFS System Partition — all OS files, user profiles, programs
 
-> This is temporary — to be replaced by an installer. Remove
-> `firstboot.c/h` and the call in `main.c` once an installer exists.
+> No first-boot copy step is needed. `firstboot.c/h` have been removed
+> as of commit `e542907`.
 
 ---
 
@@ -581,9 +582,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 | File | Purpose |
 |------|---------|
 | `include/kernel/fs/ixfs.h` | On-disk structures, constants, block group struct |
-| `src/kernel/fs/ixfs.c` | Driver: format, mount, block groups, VFS operations |
-| `src/kernel/fs/firstboot.c` | First-boot hierarchy + initrd copy (temporary) |
-| `include/kernel/fs/firstboot.h` | First-boot API |
+| `src/kernel/fs/ixfs/` | Driver: core, ops, alloc, format, journal, cow, extents |
 
 ---
 

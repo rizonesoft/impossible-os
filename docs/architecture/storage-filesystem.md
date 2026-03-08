@@ -13,12 +13,12 @@ User / Kernel code
   ┌──────────────┐
   │     VFS      │  Unified API: open, read, write, readdir
   │   (vfs.c)    │  Drive letter routing: C:\, A:\, D:\
-  └──┬───┬───┬───┘
-     │   │   │
-     ▼   ▼   ▼
-  ┌─────┐ ┌─────┐ ┌─────┐
-  │IXFS │ │FAT32│ │initrd│   Filesystem drivers (pluggable vfs_ops)
-  └──┬──┘ └──┬──┘ └─────┘
+  └──┬───┬───┘
+     │   │
+     ▼   ▼
+  ┌─────┐ ┌─────┐
+  │IXFS │ │FAT32│   Filesystem drivers (pluggable vfs_ops)
+  └──┬──┘ └──┬──┘
      │       │
      ▼       ▼
   ┌──────────────────────────────┐
@@ -39,11 +39,11 @@ User / Kernel code
 | Letter | Filesystem | Partition | Purpose |
 |--------|-----------|-----------|---------|
 | `A:\` | FAT32 | EFI System Partition | UEFI boot files (read-only) |
-| `C:\` | IXFS | Root partition | OS files, user data |
+| `C:\` | IXFS | System partition | OS files, user data, programs |
 | `D:\`–`Z:\` | Any | Additional drives | USB, extra disks |
 
-During early boot (before disk drivers), the **initrd** is temporarily mounted
-at `B:\` to provide the kernel with essential files (see initrd section below).
+At boot, `partition_scan_all()` probes all block devices and
+`partition_mount_filesystems()` auto-mounts detected volumes.
 
 ## Partitioning
 
@@ -332,34 +332,25 @@ Custom archive format with magic `IXRD`:
 The initrd is loaded by GRUB as a Multiboot2 module and mounted at `B:\`
 during boot.
 
-### Why initrd Still Exists
+> **Note:** The initrd section below is kept for historical reference.
+> As of commit `ba277b0`, the kernel boots directly from disk and all system
+> files live on the IXFS partition (C:\), pre-populated by `mkfs-ixfs --populate`.
+> The initrd and firstboot modules are no longer used at runtime.
 
-The kernel needs files (wallpaper, shell, icons) **before disk drivers
-are ready**. The boot timeline is:
+### Boot Flow (Current — Disk Boot)
 
 ```
-GRUB loads kernel.elf + initrd.img from ISO
-  ↓  kernel starts — no disk drivers yet
-initrd mounted at B:\         ← only filesystem available
-  ↓  ATA/AHCI drivers init
-partition scan → IXFS detected
+OVMF loads GRUB from EFI System Partition
+  ↓  GRUB loads kernel.exe via multiboot2
+Kernel starts — VFS init
+  ↓  PCI/VirtIO/AHCI drivers init
+partition_scan_all() → IXFS detected on system-disk.img
   ↓
-IXFS mounted at C:\
+IXFS auto-mounted at C:\ (pre-populated with all files)
   ↓
-firstboot_setup() copies B:\ → C:\   (first boot only)
-  ↓
-Desktop reads files from C:\
+Desktop loads wallpaper, icons from C:\ via VFS
+Shell/exec loaders read ELFs from C:\
 ```
-
-### When initrd Can Be Removed
-
-Once we boot from a real disk (not ISO) with a pre-populated IXFS
-partition, the initrd becomes unnecessary:
-
-1. **Build** a disk image with `mkfs-ixfs --populate` (see TODO § 5.11)
-2. **GRUB** reads kernel directly from the boot partition
-3. **All system files** are already on C:\ (placed by the installer)
-4. **Delete** `firstboot.c/h` and the initrd module
 
 ## FAT32 Filesystem Driver
 
@@ -422,9 +413,8 @@ IXFS is the native Impossible OS filesystem, mounted at `C:\` (system drive).
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/fs/ixfs.c` | IXFS kernel driver (format, mount, VFS ops) |
+| `src/kernel/fs/ixfs/` | IXFS kernel driver (core, ops, alloc, format, etc.) |
 | `include/kernel/fs/ixfs.h` | On-disk structures and public API |
-| `src/kernel/fs/firstboot.c` | First-boot hierarchy + initrd copy (temporary) |
 | `docs/architecture/ixfs-specification.md` | Full on-disk format specification |
 
 ### Implemented Features
@@ -435,8 +425,7 @@ IXFS is the native Impossible OS filesystem, mounted at `C:\` (system drive).
 - **Auto-mount**: `partition_mount_filesystems()` detects IXFS and mounts at `C:\`
 - **Permissions**: Unix rwx, uid/gid, `ixfs_check_perm()`
 - **Timestamps**: created, modified, accessed
-- **First-boot setup**: `firstboot_setup()` populates empty `C:\` with default hierarchy
-  and copies initrd files to `C:\Impossible\System\`
+- **Pre-populated disk**: `mkfs-ixfs --populate` creates ready-to-boot IXFS images
 
 ### Planned Enhancements
 
