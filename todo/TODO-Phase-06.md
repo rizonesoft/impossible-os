@@ -355,15 +355,15 @@
 
 > **Priority: P1** — Crash safety is essential for a system partition
 
-- [ ] Reserve journal area: configurable size (default 32 MiB), stored after superblock
-- [ ] Journal record: `{ txn_id, block_number, old_data, new_data, checksum }`
-- [ ] **Metadata journaling** (default): journal only inode/bitmap/directory changes
-- [ ] Optional **full journaling**: journal data blocks too (slower but safer)
-- [ ] Transaction API: `ixfs_txn_begin()`, `ixfs_txn_write()`, `ixfs_txn_commit()`
-- [ ] On commit: write all records to journal → flush → write to final location → flush → mark txn complete
-- [ ] On mount after crash: replay incomplete transactions from journal
-- [ ] Circular journal with head/tail pointers in superblock
-- [ ] Commit: `"fs: IXFS write-ahead log (journal)"`
+- [x] Reserve journal area: configurable size (default 32 MiB), stored after superblock
+- [x] Journal record: `{ txn_id, block_number, old_data, new_data, checksum }`
+- [x] **Metadata journaling** (default): journal only inode/bitmap/directory changes
+- [x] Optional **full journaling**: journal data blocks too (slower but safer)
+- [x] Transaction API: `ixfs_txn_begin()`, `ixfs_txn_write()`, `ixfs_txn_commit()`
+- [x] On commit: write all records to journal → flush → write to final location → flush → mark txn complete
+- [x] On mount after crash: replay incomplete transactions from journal
+- [x] Circular journal with head/tail pointers in superblock
+- [x] Commit: `"fs: IXFS write-ahead log (journal)"`
 
 ### 5.8 Copy-on-Write (CoW) & Snapshots
 

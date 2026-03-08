@@ -274,6 +274,52 @@ efficient contiguous block management.
 
 ---
 
+## Write-Ahead Log (Journal)
+
+IXFS provides crash safety through a circular write-ahead log that journals
+metadata changes before applying them to their final disk locations.
+
+### On-Disk Layout
+
+| Area | Block(s) | Description |
+|------|----------|-------------|
+| Journal header | `s_journal_start` | Magic, head/tail pointers, sequence |
+| Journal entries | `s_journal_start+1` ... `+15` | DATA and COMMIT records |
+
+- Default: **16 blocks** (64 KiB), stored between inode table and data area
+- Circular buffer with head/tail wrapped to journal bounds
+
+### Journal Entry (4096 bytes)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `je_txn_id` | `uint32_t` | Transaction ID |
+| `je_type` | `uint32_t` | DATA (1) or COMMIT (2) |
+| `je_target` | `uint32_t` | Target disk block |
+| `je_checksum` | `uint32_t` | Additive checksum of data |
+| `je_data` | `uint8_t[4080]` | First 4080 bytes of target block |
+
+### Transaction API
+
+- `ixfs_txn_begin(vol)` — allocate new transaction ID, mark active
+- `ixfs_txn_write(vol, block, data)` — write DATA entry to journal
+- `ixfs_txn_commit(vol)` — write COMMIT record, flush to final locations
+
+### Metadata Journaling (Default)
+
+Bitmap flushes and superblock writes are automatically journaled when a
+transaction is active. This ensures inode/bitmap/superblock updates are
+atomic across crashes.
+
+### Recovery
+
+On mount, `ixfs_journal_recover()` scans from tail to head:
+- DATA entries with valid checksums → replayed to target blocks
+- COMMIT records → confirm preceding DATA entries are valid
+- Incomplete transactions (no COMMIT) → discarded
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:
@@ -372,7 +418,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 | Feature | Section | Status |
 |---------|---------|--------|
 | Extent-based allocation | §5.6 | ✅ Implemented |
-| Journaling (WAL) | §5.7 | 🔜 Planned |
+| Journaling (WAL) | §5.7 | ✅ Implemented |
 | Copy-on-Write + Snapshots | §5.8 | 🔜 Planned |
 | Sparse files | §5.9.1 | 🔜 Planned |
 | Inline small files | §5.9.2 | 🔜 Planned |

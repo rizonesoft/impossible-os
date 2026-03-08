@@ -25,10 +25,12 @@
 #define IXFS_VERSION         1
 #define IXFS_BLOCK_SIZE      4096
 #define IXFS_SECTORS_PER_BLK (IXFS_BLOCK_SIZE / 512)
-#define IXFS_DIRECT_BLOCKS   12
+#define IXFS_INLINE_EXTENTS  4
 #define IXFS_MAX_NAME        252
 #define IXFS_ROOT_INODE      1
 #define IXFS_DEFAULT_INODES  256
+#define IXFS_JOURNAL_BLOCKS  16
+#define IXFS_JOURNAL_MAGIC   0x4A584653
 
 /* Inode type + permission flags */
 #define IXFS_S_FILE          0x8000
@@ -37,6 +39,11 @@
 #define IXFS_PERM_FILE       0x01B4  /* rw-rw-r-- */
 
 /* --- On-disk structures (must match include/ixfs.h) --- */
+
+struct ixfs_extent {
+    uint64_t e_start;
+    uint32_t e_count;
+} __attribute__((packed));
 
 struct ixfs_superblock {
     uint32_t s_magic;
@@ -53,7 +60,10 @@ struct ixfs_superblock {
     uint32_t s_data_start;
     uint32_t s_root_inode;
     uint8_t  s_volume_name[32];
-    uint8_t  s_reserved[428];
+    uint32_t s_journal_start;
+    uint32_t s_journal_blocks;
+    uint32_t s_journal_seq;
+    uint8_t  s_reserved[416];
 } __attribute__((packed));
 
 struct ixfs_inode {
@@ -66,9 +76,18 @@ struct ixfs_inode {
     uint32_t i_ctime;
     uint32_t i_mtime;
     uint32_t i_atime;
-    uint32_t i_direct[IXFS_DIRECT_BLOCKS];
-    uint32_t i_indirect;
-    uint8_t  i_reserved[8];
+    struct ixfs_extent i_extents[IXFS_INLINE_EXTENTS];
+    uint8_t  i_extent_count;
+    uint8_t  i_extent_flags;
+    uint16_t i_extent_pad;
+    uint64_t i_extent_block;
+} __attribute__((packed));
+
+struct ixfs_journal_header {
+    uint32_t jh_magic;
+    uint32_t jh_head;
+    uint32_t jh_tail;
+    uint32_t jh_seq;
 } __attribute__((packed));
 
 struct ixfs_dir_entry {
@@ -166,7 +185,9 @@ static uint32_t create_dir(uint32_t parent_ino, uint32_t parent_data_block,
     inode.i_links = 1;
     inode.i_size = 2 * sizeof(struct ixfs_dir_entry);  /* . and .. */
     inode.i_blocks = 1;
-    inode.i_direct[0] = data_block;
+    inode.i_extents[0].e_start = (uint64_t)data_block;
+    inode.i_extents[0].e_count = 1;
+    inode.i_extent_count = 1;
 
     write_inode(ino, &inode);
     sb.s_free_inodes--;
@@ -274,12 +295,15 @@ int main(int argc, char *argv[])
     sb.s_bitmap_blocks = bitmap_blocks;
     sb.s_inode_start   = 1 + bitmap_blocks;
     sb.s_inode_blocks  = inode_blocks;
-    sb.s_data_start    = 1 + bitmap_blocks + inode_blocks;
+    sb.s_data_start    = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS;
     sb.s_root_inode    = IXFS_ROOT_INODE;
+    sb.s_journal_start = 1 + bitmap_blocks + inode_blocks;
+    sb.s_journal_blocks = IXFS_JOURNAL_BLOCKS;
+    sb.s_journal_seq   = 0;
     strncpy((char *)sb.s_volume_name, vol_name, 31);
 
-    /* Count used blocks: superblock + bitmap + inodes + root data */
-    used_blocks = 1 + bitmap_blocks + inode_blocks + 1;
+    /* Count used blocks: superblock + bitmap + inodes + journal + root data */
+    used_blocks = 1 + bitmap_blocks + inode_blocks + IXFS_JOURNAL_BLOCKS + 1;
     sb.s_free_blocks = total_blocks - used_blocks;
 
     /* Allocate and initialize bitmap */
@@ -317,7 +341,9 @@ int main(int argc, char *argv[])
     root_inode.i_links     = 1;
     root_inode.i_size      = 2 * sizeof(struct ixfs_dir_entry);
     root_inode.i_blocks    = 1;
-    root_inode.i_direct[0] = root_data_block;
+    root_inode.i_extents[0].e_start = (uint64_t)root_data_block;
+    root_inode.i_extents[0].e_count = 1;
+    root_inode.i_extent_count = 1;
     write_inode(IXFS_ROOT_INODE, &root_inode);
 
     /* Write root directory data (. and ..) */
@@ -337,6 +363,9 @@ int main(int argc, char *argv[])
            sb.s_inode_start, sb.s_inode_start + inode_blocks - 1,
            IXFS_DEFAULT_INODES);
     printf("  Data start:    block %u\n", sb.s_data_start);
+    printf("  Journal:       blocks %u-%u (%u blocks)\n",
+           sb.s_journal_start, sb.s_journal_start + IXFS_JOURNAL_BLOCKS - 1,
+           IXFS_JOURNAL_BLOCKS);
 
     /* Create default folder hierarchy */
     {
@@ -354,8 +383,8 @@ int main(int argc, char *argv[])
             read_block(p_block, tmp);
             memcpy(&imp_inode, tmp + p_offset, sizeof(imp_inode));
 
-            create_dir(imp_ino, imp_inode.i_direct[0], "System");
-            create_dir(imp_ino, imp_inode.i_direct[0], "Commands");
+            create_dir(imp_ino, (uint32_t)imp_inode.i_extents[0].e_start, "System");
+            create_dir(imp_ino, (uint32_t)imp_inode.i_extents[0].e_start, "Commands");
         }
 
         /* C:\Users */
@@ -369,7 +398,7 @@ int main(int argc, char *argv[])
             read_block(p_block, tmp);
             memcpy(&usr_inode, tmp + p_offset, sizeof(usr_inode));
 
-            create_dir(usr_ino, usr_inode.i_direct[0], "Default");
+            create_dir(usr_ino, (uint32_t)usr_inode.i_extents[0].e_start, "Default");
         }
 
         /* C:\Programs */
@@ -389,6 +418,22 @@ int main(int argc, char *argv[])
     memset(block_buf, 0, IXFS_BLOCK_SIZE);
     memcpy(block_buf, &sb, sizeof(sb));
     write_block(0, block_buf);
+
+    /* Initialize journal area */
+    {
+        struct ixfs_journal_header jh;
+        memset(&jh, 0, sizeof(jh));
+        jh.jh_magic = IXFS_JOURNAL_MAGIC;
+        jh.jh_head = 1;
+        jh.jh_tail = 1;
+        jh.jh_seq = 0;
+        memset(block_buf, 0, IXFS_BLOCK_SIZE);
+        memcpy(block_buf, &jh, sizeof(jh));
+        write_block(sb.s_journal_start, block_buf);
+        memset(block_buf, 0, IXFS_BLOCK_SIZE);
+        for (i = 1; i < IXFS_JOURNAL_BLOCKS; i++)
+            write_block(sb.s_journal_start + i, block_buf);
+    }
 
     printf("  Folders:       Impossible/{System,Commands}, Users/Default, Programs\n");
     printf("\n[OK] IXFS formatted: %u blocks (%u MiB), \"%s\"\n",

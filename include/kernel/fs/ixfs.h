@@ -82,6 +82,14 @@ struct ixfs_extent {
 #define IXFS_PERM_DIR        0x01ED      /* rwxrwxr-x (0775) */
 #define IXFS_PERM_READONLY   0x0124      /* r--r--r-- (0444) */
 
+/* --- Write-Ahead Log (Journal) --- */
+
+#define IXFS_JOURNAL_BLOCKS  16          /* default journal size (64 KiB) */
+#define IXFS_JOURNAL_MAGIC   0x4A584653  /* "JXFS" */
+#define IXFS_JE_DATA         1           /* journal entry: block data */
+#define IXFS_JE_COMMIT       2           /* journal entry: transaction committed */
+#define IXFS_TXN_MAX_ENTRIES 8           /* max blocks per transaction */
+
 /* --- On-Disk Structures --- */
 
 /* Superblock — always in block 0 (first 4 KiB of the partition) */
@@ -100,7 +108,10 @@ struct ixfs_superblock {
     uint32_t s_data_start;         /* first data block */
     uint32_t s_root_inode;         /* inode number of root directory */
     uint8_t  s_volume_name[32];    /* volume label (null-terminated) */
-    uint8_t  s_reserved[428];      /* pad to 512 bytes */
+    uint32_t s_journal_start;      /* first block of journal area */
+    uint32_t s_journal_blocks;     /* number of journal blocks */
+    uint32_t s_journal_seq;        /* current transaction sequence */
+    uint8_t  s_reserved[416];      /* pad to 512 bytes (428 - 12) */
 } __attribute__((packed));
 
 /* Inode — 128 bytes each (32 inodes per block) */
