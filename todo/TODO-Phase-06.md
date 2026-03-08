@@ -315,12 +315,12 @@
 - [x] Commit: `"fs: IXFS block group allocator"`
 
 #### 5.5.2 Buffer Cache / Write-Back
-- [ ] Implement dirty buffer cache (LRU, configurable size)
-- [ ] Cache recently-read blocks in memory (avoid re-reading bitmaps/inodes)
-- [ ] Batch dirty blocks and flush to disk periodically or on `sync()`
-- [ ] Mark buffers dirty on write; actual disk I/O deferred
-- [ ] Flush all dirty buffers on unmount
-- [ ] Commit: `"fs: IXFS buffer cache + write-back"`
+- [x] Implement dirty buffer cache (LRU, configurable size)
+- [x] Cache recently-read blocks in memory (avoid re-reading bitmaps/inodes)
+- [x] Batch dirty blocks and flush to disk periodically or on `sync()`
+- [x] Mark buffers dirty on write; actual disk I/O deferred
+- [x] Flush all dirty buffers on unmount
+- [x] Commit: `"fs: IXFS buffer cache + write-back"`
 
 #### 5.5.3 Directory Hash Index (B-tree)
 - [ ] For directories with > 64 entries: build hash index in an extra block

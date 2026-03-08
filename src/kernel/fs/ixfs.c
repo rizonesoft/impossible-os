@@ -52,23 +52,173 @@ static int ixfs_strcmp(const char *a, const char *b)
     return *a == *b;
 }
 
-/* --- Internal: block I/O via blkdev --- */
+/* --- Raw disk I/O (low-level, used by cache layer only) --- */
 
-/* Read a single IXFS block (4 KiB = 8 sectors) */
-static int ixfs_read_block(uint32_t block, void *buf)
+/* Read a single IXFS block directly from disk (4 KiB = 8 sectors) */
+static int ixfs_disk_read(uint32_t block, void *buf)
 {
     uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
     return blkdev_read(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
-/* Write a single IXFS block (4 KiB = 8 sectors) */
-static int ixfs_write_block(uint32_t block, const void *buf)
+/* Write a single IXFS block directly to disk (4 KiB = 8 sectors) */
+static int ixfs_disk_write(uint32_t block, const void *buf)
 {
     uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
     return blkdev_write(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
-/* Zero a block on disk */
+/* --- Buffer cache (LRU, write-back) --- */
+
+#define IXFS_CACHE_SIZE  64   /* number of cached blocks */
+
+struct ixfs_cache_entry {
+    uint32_t block;           /* block number (0xFFFFFFFF = unused) */
+    uint8_t  data[IXFS_BLOCK_SIZE];
+    uint8_t  dirty;           /* 1 = needs write-back to disk */
+    uint32_t lru_tick;        /* higher = more recently used */
+};
+
+static struct ixfs_cache_entry cache[IXFS_CACHE_SIZE];
+static uint32_t cache_tick;   /* global LRU counter */
+
+/* Initialize the cache (call on format/mount) */
+static void ixfs_cache_init(void)
+{
+    uint32_t i;
+    for (i = 0; i < IXFS_CACHE_SIZE; i++) {
+        cache[i].block = 0xFFFFFFFF;
+        cache[i].dirty = 0;
+        cache[i].lru_tick = 0;
+    }
+    cache_tick = 0;
+}
+
+/* Find a cache entry for the given block, or NULL on miss */
+static struct ixfs_cache_entry *ixfs_cache_find(uint32_t block)
+{
+    uint32_t i;
+    for (i = 0; i < IXFS_CACHE_SIZE; i++) {
+        if (cache[i].block == block) {
+            cache[i].lru_tick = ++cache_tick;
+            return &cache[i];
+        }
+    }
+    return (struct ixfs_cache_entry *)0;
+}
+
+/* Find the LRU (least recently used) entry for eviction */
+static struct ixfs_cache_entry *ixfs_cache_lru(void)
+{
+    uint32_t i;
+    uint32_t min_tick = 0xFFFFFFFF;
+    uint32_t min_idx = 0;
+
+    /* Prefer an empty slot */
+    for (i = 0; i < IXFS_CACHE_SIZE; i++) {
+        if (cache[i].block == 0xFFFFFFFF)
+            return &cache[i];
+    }
+
+    /* Otherwise evict the least recently used */
+    for (i = 0; i < IXFS_CACHE_SIZE; i++) {
+        if (cache[i].lru_tick < min_tick) {
+            min_tick = cache[i].lru_tick;
+            min_idx = i;
+        }
+    }
+    return &cache[min_idx];
+}
+
+/* Flush all dirty cache entries to disk */
+static int ixfs_cache_flush(void)
+{
+    uint32_t i;
+    int err = 0;
+    for (i = 0; i < IXFS_CACHE_SIZE; i++) {
+        if (cache[i].block != 0xFFFFFFFF && cache[i].dirty) {
+            if (ixfs_disk_write(cache[i].block, cache[i].data) != 0)
+                err = -1;
+            else
+                cache[i].dirty = 0;
+        }
+    }
+    return err;
+}
+
+/* --- Cached block I/O (used by all ixfs code) --- */
+
+/* Read a block via the cache. Returns 0 on success. */
+static int ixfs_read_block(uint32_t block, void *buf)
+{
+    struct ixfs_cache_entry *ce;
+    uint32_t i;
+
+    /* Cache hit */
+    ce = ixfs_cache_find(block);
+    if (ce) {
+        uint8_t *dst = (uint8_t *)buf;
+        const uint8_t *src = ce->data;
+        for (i = 0; i < IXFS_BLOCK_SIZE; i++)
+            dst[i] = src[i];
+        return 0;
+    }
+
+    /* Cache miss — find slot (evict LRU if needed) */
+    ce = ixfs_cache_lru();
+
+    /* Flush dirty evictee */
+    if (ce->block != 0xFFFFFFFF && ce->dirty) {
+        ixfs_disk_write(ce->block, ce->data);
+        ce->dirty = 0;
+    }
+
+    /* Read from disk into cache */
+    if (ixfs_disk_read(block, ce->data) != 0)
+        return -1;
+
+    ce->block = block;
+    ce->dirty = 0;
+    ce->lru_tick = ++cache_tick;
+
+    /* Copy to caller's buffer */
+    {
+        uint8_t *dst = (uint8_t *)buf;
+        const uint8_t *src = ce->data;
+        for (i = 0; i < IXFS_BLOCK_SIZE; i++)
+            dst[i] = src[i];
+    }
+    return 0;
+}
+
+/* Write a block via the cache (deferred — only marks dirty). */
+static int ixfs_write_block(uint32_t block, const void *buf)
+{
+    struct ixfs_cache_entry *ce;
+    uint32_t i;
+    const uint8_t *src = (const uint8_t *)buf;
+
+    /* Check if already cached */
+    ce = ixfs_cache_find(block);
+    if (!ce) {
+        /* Not cached — get a slot */
+        ce = ixfs_cache_lru();
+        if (ce->block != 0xFFFFFFFF && ce->dirty) {
+            ixfs_disk_write(ce->block, ce->data);
+        }
+        ce->block = block;
+    }
+
+    /* Copy data and mark dirty */
+    for (i = 0; i < IXFS_BLOCK_SIZE; i++)
+        ce->data[i] = src[i];
+    ce->dirty = 1;
+    ce->lru_tick = ++cache_tick;
+
+    return 0;
+}
+
+/* Zero a block (via cache — deferred to disk) */
 static int ixfs_zero_block(uint32_t block)
 {
     uint32_t i;
@@ -249,6 +399,7 @@ static int ixfs_flush_bitmap(void)
         if (ixfs_write_block(sb.s_bitmap_start + i, blk_buf) != 0)
             return -1;
     }
+    ixfs_cache_flush();  /* ensure bitmap blocks reach disk */
     return 0;
 }
 
@@ -264,7 +415,10 @@ static int ixfs_flush_superblock(void)
     for (i = 0; i < sizeof(struct ixfs_superblock); i++)
         blk_buf[i] = sp[i];
 
-    return ixfs_write_block(0, blk_buf);
+    if (ixfs_write_block(0, blk_buf) != 0)
+        return -1;
+    ixfs_cache_flush();  /* ensure superblock reaches disk */
+    return 0;
 }
 
 /* --- Internal: inode I/O --- */
@@ -1045,6 +1199,7 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     uint8_t *p;
 
     ixfs_dev = dev;
+    ixfs_cache_init();
     total_blocks = (uint32_t)(dev->sector_count / IXFS_SECTORS_PER_BLK);
 
     /* Calculate layout */
@@ -1167,6 +1322,7 @@ int ixfs_init(const struct blkdev *dev)
     uint8_t *p;
 
     ixfs_dev = dev;
+    ixfs_cache_init();
     vnode_count = 0;
 
     /* Read block 0 (superblock) */

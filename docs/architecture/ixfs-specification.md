@@ -172,6 +172,44 @@ locality-aware allocation.
 
 ---
 
+## Buffer Cache (In-Memory, Write-Back)
+
+A 64-entry LRU cache sits between the filesystem code and the raw
+`blkdev_read/write` calls. All block I/O goes through the cache.
+
+### Cache Parameters
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IXFS_CACHE_SIZE` | 64 | Number of cached 4 KiB blocks (256 KiB total) |
+
+### Cache Entry
+
+| Field | Description |
+|-------|-------------|
+| `block` | Block number (`0xFFFFFFFF` = unused slot) |
+| `data[4096]` | Cached block data |
+| `dirty` | `1` if modified but not yet written to disk |
+| `lru_tick` | LRU counter (higher = more recently used) |
+
+### Operation
+
+- **Read hit**: Returns data from cache (zero disk I/O)
+- **Read miss**: Reads from disk, inserts into cache (evicts LRU if full)
+- **Write**: Updates cache entry, marks dirty (no disk I/O)
+- **Eviction**: If evicted entry is dirty, flushes to disk first
+- **Flush**: `ixfs_cache_flush()` writes all dirty entries to disk
+- **Init**: `ixfs_cache_init()` called on format/mount, invalidates all entries
+
+### Flush Points
+
+Dirty cache entries are flushed to disk at these points:
+- `ixfs_flush_bitmap()` — after writing bitmap blocks
+- `ixfs_flush_superblock()` — after writing superblock
+- On LRU eviction of a dirty entry
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:
