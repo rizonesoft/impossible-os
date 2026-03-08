@@ -38,25 +38,6 @@ QEMU        := qemu-system-x86_64
 OVMF_CODE   := /usr/share/OVMF/OVMF_CODE_4M.fd
 OVMF_VARS   := /usr/share/OVMF/OVMF_VARS_4M.fd
 OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
-QEMU_FLAGS  := -drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
-               -drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
-               -cdrom $(ISO_FILE) \
-               -drive file=$(BUILD_DIR)/gpt-test.img,format=raw,if=none,id=disk0 \
-               -device virtio-blk-pci,drive=disk0 \
-               -drive file=$(BUILD_DIR)/sata.img,format=raw,if=none,id=disk1 \
-               -device ahci,id=ahci0 \
-               -device ide-hd,drive=disk1,bus=ahci0.0 \
-               -drive file=$(BUILD_DIR)/disk.img,format=raw,if=none,id=disk2 \
-               -device virtio-blk-pci,drive=disk2 \
-               -m 2G \
-               -serial stdio \
-               -vga none \
-               -device VGA,xres=1280,yres=720 \
-               -device rtl8139,netdev=net0 \
-               -netdev user,id=net0 \
-               -device virtio-tablet-pci \
-               -rtc base=localtime \
-               -no-reboot
 
 # --- Version Information ---
 # Read SemVer from VERSION file, auto-increment build number
@@ -209,64 +190,91 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
 	@echo "[ISO] $(ISO_FILE) created"
 
-## system-disk: Create IXFS system disk image pre-populated from initrd_files
-system-disk: $(BUILD_DIR)/system-disk.img
+## system-disk: Create bootable GPT system disk with EFI + IXFS partitions
+SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
+SYSTEM_DISK_SIZE := 512M
+EFI_SIZE := 256M
+# Partition offsets (must match make-system-disk defaults)
+# EFI: LBA 2048 = byte 1048576, size 256M = 268435456 bytes
+# IXFS: LBA 526336 = byte 269484032 (next 2048-aligned LBA after EFI end)
+EFI_OFFSET := 1048576
+IXFS_OFFSET := 269484032
+IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 269484032 - 34*512) )) )
 
-$(BUILD_DIR)/system-disk.img: $(ISO_FILE) tools/mkfs-ixfs.c
+system-disk: $(SYSTEM_DISK)
+
+$(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
+                tools/make-system-disk.c tools/mkfs-ixfs.c \
+                $(BUILD_DIR)/initrd_files/hello.txt
+	@echo "[DISK] Building system disk..."
 	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
+	@# Step 1: Create GPT image with partition table
+	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
+	@# Step 2: Format EFI partition (FAT32) and copy boot files
+	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
+	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
+	@mkdir -p $(BUILD_DIR)/efi_staging/boot/grub
+	@cp $(GRUB_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
+	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
+	@cp $(BOOT_DIR)/grub.cfg $(BUILD_DIR)/efi_staging/boot/grub/grub.cfg
+	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
+	@rm -rf $(BUILD_DIR)/efi_staging
+	@# Step 3: Format IXFS partition and populate with system files
 	$(BUILD_DIR)/tools/mkfs-ixfs \
-		-o $(BUILD_DIR)/system-disk.img \
-		-s 32M \
+		-o $@ \
+		-s $(IXFS_PART_SIZE) \
 		-l "Impossible OS" \
+		--offset $(IXFS_OFFSET) \
 		--populate $(BUILD_DIR)/initrd_files
-	@echo "[DISK] $(BUILD_DIR)/system-disk.img created (32 MiB IXFS v2)"
+	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + IXFS)"
 
-## run: Launch QEMU with the ISO (UEFI boot via OVMF)
-run: $(ISO_FILE)
+## run: Launch QEMU booting from system disk (UEFI via OVMF)
+run: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
-	@if [ ! -f $(BUILD_DIR)/disk.img ]; then \
-		qemu-img create -f raw $(BUILD_DIR)/disk.img 64M && \
-		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
-		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
-		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/sata.img ]; then \
-		qemu-img create -f raw $(BUILD_DIR)/sata.img 32M; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
-		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-mbr tools/make-mbr.c && \
-		$(BUILD_DIR)/tools/make-mbr $(BUILD_DIR)/mbr-test.img; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/gpt-test.img ]; then \
-		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-gpt tools/make-gpt.c && \
-		$(BUILD_DIR)/tools/make-gpt $(BUILD_DIR)/gpt-test.img; \
-	fi
-	$(QEMU) $(QEMU_FLAGS)
-
-## run-debug: Launch QEMU paused, waiting for GDB on port 1234
-run-debug: $(ISO_FILE)
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
-	$(QEMU) $(QEMU_FLAGS) -s -S -d int,cpu_reset
-
-## run-log: Launch QEMU with serial output captured to serial.log
-run-log: $(ISO_FILE)
-	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
-	@if [ ! -f $(BUILD_DIR)/disk.img ]; then \
-		qemu-img create -f raw $(BUILD_DIR)/disk.img 64M && \
-		mkfs.fat -F 32 $(BUILD_DIR)/disk.img && \
-		echo "Impossible OS ESP" | mcopy -i $(BUILD_DIR)/disk.img - ::readme.txt && \
-		echo "FAT32 test file" | mcopy -i $(BUILD_DIR)/disk.img - ::test.txt; \
-	fi
-	@if [ ! -f $(BUILD_DIR)/mbr-test.img ]; then \
-		$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-mbr tools/make-mbr.c && \
-		$(BUILD_DIR)/tools/make-mbr $(BUILD_DIR)/mbr-test.img; \
-	fi
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
-		-cdrom $(ISO_FILE) \
-		-drive file=$(BUILD_DIR)/disk.img,format=raw,if=ide \
+		-drive file=$(SYSTEM_DISK),format=raw,if=none,id=sysdisk \
+		-device virtio-blk-pci,drive=sysdisk \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=1280,yres=720 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
+## run-debug: Launch QEMU paused, waiting for GDB on port 1234
+run-debug: all
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	$(QEMU) \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive file=$(SYSTEM_DISK),format=raw,if=none,id=sysdisk \
+		-device virtio-blk-pci,drive=sysdisk \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=1280,yres=720 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot \
+		-s -S -d int,cpu_reset
+
+## run-log: Launch QEMU with serial output captured to serial.log
+run-log: all
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	$(QEMU) \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive file=$(SYSTEM_DISK),format=raw,if=none,id=sysdisk \
+		-device virtio-blk-pci,drive=sysdisk \
 		-m 2G \
 		-serial file:serial.log \
 		-vga none \

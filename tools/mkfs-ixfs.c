@@ -413,6 +413,7 @@ int main(int argc, char *argv[])
     const char *label = "IXFS";
     const char *populate = NULL;
     uint64_t size = 32ULL * 1024 * 1024;
+    uint64_t offset = 0;  /* byte offset into existing file */
     FILE *fp;
     uint32_t total_blocks, bitmap_blocks, inode_blocks, checksum_blocks;
     uint32_t used_blocks, i;
@@ -428,14 +429,18 @@ int main(int argc, char *argv[])
         else if (strcmp(argv[i], "--populate") == 0 &&
                  i + 1 < (uint32_t)argc)
             populate = argv[++i];
+        else if (strcmp(argv[i], "--offset") == 0 &&
+                 i + 1 < (uint32_t)argc)
+            offset = parse_size(argv[++i]);
         else if (strcmp(argv[i], "-h") == 0 ||
                  strcmp(argv[i], "--help") == 0) {
             printf("Usage: mkfs-ixfs -o FILE [-s SIZE] [-l LABEL] "
-                   "[--populate DIR]\n\n"
+                   "[--populate DIR] [--offset BYTES]\n\n"
                    "  -o FILE        Output image (required)\n"
                    "  -s SIZE        Volume size (default: 32M)\n"
                    "  -l LABEL       Volume label (default: IXFS)\n"
-                   "  --populate DIR Copy host directory into image\n");
+                   "  --populate DIR Copy host directory into image\n"
+                   "  --offset BYTES Write at offset in existing file\n");
             return 0;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
@@ -574,13 +579,34 @@ int main(int argc, char *argv[])
     memcpy(block_ptr(0), &g_sb, sizeof(g_sb));
 
     /* Write to file */
-    fp = fopen(output, "wb");
-    if (!fp) {
-        fprintf(stderr, "mkfs-ixfs: cannot create '%s': %s\n",
-                output, strerror(errno));
-        free(g_disk);
-        free(g_checksum_table);
-        return 1;
+    if (offset > 0) {
+        /* Write into existing file at offset (for GPT partition) */
+        fp = fopen(output, "r+b");
+        if (!fp) {
+            fprintf(stderr, "mkfs-ixfs: cannot open '%s' for r+w: %s\n",
+                    output, strerror(errno));
+            free(g_disk);
+            free(g_checksum_table);
+            return 1;
+        }
+        if (fseeko(fp, (off_t)offset, SEEK_SET) != 0) {
+            fprintf(stderr, "mkfs-ixfs: seek error to offset %llu\n",
+                    (unsigned long long)offset);
+            fclose(fp);
+            free(g_disk);
+            free(g_checksum_table);
+            return 1;
+        }
+    } else {
+        /* Create new standalone image */
+        fp = fopen(output, "wb");
+        if (!fp) {
+            fprintf(stderr, "mkfs-ixfs: cannot create '%s': %s\n",
+                    output, strerror(errno));
+            free(g_disk);
+            free(g_checksum_table);
+            return 1;
+        }
     }
 
     if (fwrite(g_disk, 1, (size_t)g_disk_size, fp) !=
