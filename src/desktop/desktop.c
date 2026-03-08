@@ -244,6 +244,40 @@ void desktop_draw_wallpaper(void)
     }
 }
 
+void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t rh)
+{
+    uint32_t sw = fb_get_width();
+    uint32_t sh = fb_get_height();
+
+    /* Clamp to screen */
+    if (rx < 0) { rw = (uint32_t)((int32_t)rw + rx); rx = 0; }
+    if (ry < 0) { rh = (uint32_t)((int32_t)rh + ry); ry = 0; }
+    if ((uint32_t)rx + rw > sw) rw = sw - (uint32_t)rx;
+    if ((uint32_t)ry + rh > sh) rh = sh - (uint32_t)ry;
+    if (rw == 0 || rh == 0) return;
+
+    if (wallpaper_loaded && wallpaper_buf) {
+        /* Blit only the rectangular sub-region from the wallpaper */
+        uint32_t row;
+        for (row = 0; row < rh; row++) {
+            const uint32_t *src_row = wallpaper_buf +
+                ((uint32_t)ry + row) * WALLPAPER_WIDTH + (uint32_t)rx;
+            fb_blit((uint32_t)rx, (uint32_t)ry + row,
+                    src_row, rw, 1, rw);
+        }
+    } else {
+        /* Fallback: gradient fill for the dirty region */
+        uint32_t y;
+        for (y = (uint32_t)ry; y < (uint32_t)ry + rh; y++) {
+            uint32_t r = 0x10 + (y * 0x10) / sh;
+            uint32_t g = 0x10 + (y * 0x08) / sh;
+            uint32_t b = 0x20 + (y * 0x20) / sh;
+            uint32_t color = (r << 16) | (g << 8) | b;
+            fb_fill_rect((uint32_t)rx, y, rw, 1, color);
+        }
+    }
+}
+
 void desktop_draw_taskbar(void)
 {
     uint32_t sw = fb_get_width();

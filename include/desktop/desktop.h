@@ -45,6 +45,7 @@ void desktop_init(void);
 
 /* Draw the wallpaper to the back buffer (replaces fb_fill_rect background) */
 void desktop_draw_wallpaper(void);
+void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t rh);
 
 /* Draw the taskbar at the bottom of the screen.
  * Call AFTER wm_composite() so it overlays windows. */

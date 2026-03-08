@@ -1085,15 +1085,46 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     terminal_render();
 
                     /* Prevent preemption during draw+swap so the PIT
-                     * cannot context-switch us mid-frame.  Without this,
-                     * the 100 Hz PIT can preempt the ~5-10 ms composite
-                     * cycle, causing the old hw frame to persist while
-                     * the back buffer is half-drawn → visible flicker. */
+                     * cannot context-switch us mid-frame. */
                     scheduler_disable();
-                    wm_mark_dirty();
+
+                    /* Only force a full redraw for non-drag events.
+                     * During a drag, the drag handler adds dirty rects
+                     * via mark_dirty_rect(), enabling partial repaint. */
+                    if (btn_changed || wm_dirty || clock_tick || first_frame)
+                        wm_mark_dirty();
+
                     wm_composite();
                     mouse_draw_cursor();
-                    fb_swap();
+
+                    /* Use partial swap if dirty bounds available (drag path) */
+                    {
+                        int32_t dx, dy;
+                        uint32_t dw, dh;
+                        if (wm_get_dirty_bounds(&dx, &dy, &dw, &dh)) {
+                            /* Extend dirty region to include cursor (16x16) */
+                            int32_t cx0 = (mx < dx) ? mx : dx;
+                            int32_t cy0 = (my < dy) ? my : dy;
+                            uint32_t cx1 = (uint32_t)((mx + 16 > dx + (int32_t)dw)
+                                            ? mx + 16 : dx + (int32_t)dw);
+                            uint32_t cy1 = (uint32_t)((my + 16 > dy + (int32_t)dh)
+                                            ? my + 16 : dy + (int32_t)dh);
+                            /* Also include old cursor position */
+                            if (prev_mx >= 0) {
+                                if (prev_mx < cx0) cx0 = prev_mx;
+                                if (prev_my < cy0) cy0 = prev_my;
+                                if ((uint32_t)(prev_mx + 16) > cx1)
+                                    cx1 = (uint32_t)(prev_mx + 16);
+                                if ((uint32_t)(prev_my + 16) > cy1)
+                                    cy1 = (uint32_t)(prev_my + 16);
+                            }
+                            fb_swap_rect((uint32_t)cx0, (uint32_t)cy0,
+                                         cx1 - (uint32_t)cx0,
+                                         cy1 - (uint32_t)cy0);
+                        } else {
+                            fb_swap();
+                        }
+                    }
                     scheduler_enable();
 
                     prev_mx = mx;

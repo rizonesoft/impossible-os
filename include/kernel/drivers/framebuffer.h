@@ -66,6 +66,10 @@ void fb_blit(uint32_t dst_x, uint32_t dst_y,
 /* Copy the back buffer to the hardware framebuffer */
 void fb_swap(void);
 
+/* Copy only a rectangular region of the back buffer to the hardware framebuffer.
+ * Used by the dirty-rect compositor for partial updates (much faster). */
+void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
+
 /* ---- Queries ---- */
 
 uint32_t fb_get_width(void);

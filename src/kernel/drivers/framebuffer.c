@@ -287,6 +287,54 @@ skip_vsync:
     __asm__ volatile ("sti");
 }
 
+void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
+{
+    uint32_t hw_stride;
+    uint32_t row;
+    uint32_t x1, y1;
+
+    if (!fb_ready || back_buf == hw_addr)
+        return;
+
+    hw_stride = fb_pitch / (fb_bpp / 8);
+
+    /* Clamp to screen bounds */
+    if (x >= fb_width || y >= fb_height)
+        return;
+    x1 = (x + w > fb_width)  ? fb_width  : x + w;
+    y1 = (y + h > fb_height) ? fb_height : y + h;
+    w = x1 - x;
+    h = y1 - y;
+
+    if (w == 0 || h == 0)
+        return;
+
+    __asm__ volatile ("sfence" ::: "memory");
+    __asm__ volatile ("cli");
+
+    /* Copy each row of the dirty rectangle using 64-bit moves */
+    for (row = y; row < y1; row++) {
+        uint64_t *src = (uint64_t *)(back_buf + row * fb_stride + x);
+        uint64_t *dst = (uint64_t *)(hw_addr  + row * hw_stride + x);
+        uint64_t count = (uint64_t)w / 2;  /* DWORD pairs → QWORDs */
+        if (count > 0) {
+            __asm__ volatile (
+                "rep movsq"
+                : "+S"(src), "+D"(dst), "+c"(count)
+                :
+                : "memory"
+            );
+        }
+        /* Handle odd trailing pixel */
+        if (w & 1) {
+            hw_addr[row * hw_stride + x + w - 1] =
+                back_buf[row * fb_stride + x + w - 1];
+        }
+    }
+
+    __asm__ volatile ("sti");
+}
+
 void fb_blit(uint32_t dst_x, uint32_t dst_y,
              const uint32_t *src, uint32_t w, uint32_t h, uint32_t src_pitch)
 {
