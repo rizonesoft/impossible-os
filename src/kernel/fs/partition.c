@@ -308,6 +308,17 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
                               (uint64_t)mtbl.parts[i].sector_count,
                               mbr_type_name(mtbl.parts[i].type));
         }
+    } else {
+        /* MBR signature present (0x55AA) but no usable partition entries.
+         * This happens with bare FAT32/exFAT volumes whose BPB shares
+         * the same boot signature as MBR.  Try super-floppy mode. */
+        int fs = probe_filesystem(dev);
+        if (fs != PART_FS_UNKNOWN) {
+            printk("[RAW] %s: no partition table, raw %s volume\n",
+                   dev->name, partition_fs_name(fs));
+            register_partition(dev, disk_idx, 1,
+                               0, dev->sector_count, "Raw Volume");
+        }
     }
 }
 
