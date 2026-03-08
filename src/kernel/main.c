@@ -1027,6 +1027,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             uint8_t prev_mb = 0;
             uint8_t first_frame = 1;
             uint64_t last_clock_sec = 0;
+            uint8_t last_clock_min = 0xFF;  /* force first draw */
 
             for (;;) {
                 int32_t mx, my;
@@ -1050,10 +1051,18 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 uint8_t cursor_moved = (mx != prev_mx || my != prev_my);
                 uint8_t btn_changed  = (mb != prev_mb);
 
-                /* Check if clock needs update (every second) */
+                /* Check if clock needs update (only when minute changes) */
                 uint64_t cur_sec = uptime();
-                uint8_t clock_tick = (cur_sec != last_clock_sec);
-                if (clock_tick) last_clock_sec = cur_sec;
+                uint8_t clock_tick = 0;
+                if (cur_sec != last_clock_sec) {
+                    last_clock_sec = cur_sec;
+                    struct rtc_time rtc_now;
+                    rtc_read(&rtc_now);
+                    if (rtc_now.minute != last_clock_min) {
+                        last_clock_min = rtc_now.minute;
+                        clock_tick = 1;
+                    }
+                }
 
                 /* Check if any window content changed (e.g., terminal output) */
                 uint8_t wm_dirty = wm_needs_redraw();
@@ -1061,7 +1070,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 /* Only do work if something actually changed */
                 uint8_t need_full = first_frame || btn_changed
                                  || (cursor_moved && mb != 0)
-                                 || wm_dirty;
+                                 || wm_dirty || clock_tick;
 
                 if (need_full) {
                     /* Full composite needed: first frame, button change,
@@ -1094,12 +1103,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
                     prev_mx = mx;
                     prev_my = my;
-                } else if (clock_tick) {
-                    /* Clock-only update: redraw taskbar in-place */
-                    mouse_restore_under();
-                    desktop_draw_taskbar();
-                    mouse_draw_cursor();
-                    fb_swap();
                 }
 
                 /* Periodically flush dirty Codex trees to disk */

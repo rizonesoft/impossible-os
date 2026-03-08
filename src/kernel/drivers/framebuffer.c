@@ -211,9 +211,9 @@ void fb_init(void)
 
 void fb_swap(void)
 {
-    uint32_t *src;
-    uint32_t *dst;
-    uint32_t count;
+    uint64_t *src;
+    uint64_t *dst;
+    uint64_t count;
     uint32_t hw_stride;
 
     if (!fb_ready)
@@ -224,18 +224,21 @@ void fb_swap(void)
 
     hw_stride = fb_pitch / (fb_bpp / 8);
 
-    /* Use local copies so rep movsd doesn't corrupt our global pointers */
-    src = back_buf;
-    dst = hw_addr;
+    /* Flush all cached back-buffer writes before copying to HW */
+    __asm__ volatile ("sfence" ::: "memory");
 
-    /* Disable interrupts so HW FB is never half-updated */
+    /* Disable interrupts so HW FB is never half-updated by guest ISRs */
     __asm__ volatile ("cli");
 
-    /* If strides match, copy the whole buffer in one shot */
+    /* If strides match, copy entire buffer in one shot using 64-bit moves.
+     * rep movsq is ~2× faster than rep movsd for large sequential copies,
+     * reducing the tearing window visible to QEMU's host display thread. */
     if (fb_stride == hw_stride) {
-        count = fb_stride * fb_height;
+        src = (uint64_t *)back_buf;
+        dst = (uint64_t *)hw_addr;
+        count = (uint64_t)(fb_stride * fb_height) / 2;  /* DWORD pairs → QWORDs */
         __asm__ volatile (
-            "rep movsd"
+            "rep movsq"
             : "+S"(src), "+D"(dst), "+c"(count)
             :
             : "memory"
@@ -244,12 +247,12 @@ void fb_swap(void)
         /* Different strides — copy row by row */
         uint32_t y;
         for (y = 0; y < fb_height; y++) {
-            uint32_t *row_src = back_buf + y * fb_stride;
-            uint32_t *row_dst = hw_addr  + y * hw_stride;
-            count = fb_width;
+            src = (uint64_t *)(back_buf + y * fb_stride);
+            dst = (uint64_t *)(hw_addr  + y * hw_stride);
+            count = (uint64_t)fb_width / 2;  /* DWORD pairs → QWORDs */
             __asm__ volatile (
-                "rep movsd"
-                : "+S"(row_src), "+D"(row_dst), "+c"(count)
+                "rep movsq"
+                : "+S"(src), "+D"(dst), "+c"(count)
                 :
                 : "memory"
             );
