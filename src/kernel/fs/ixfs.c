@@ -852,6 +852,55 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
     return -1;  /* file not found */
 }
 
+/* Rename a file or directory within the same parent directory */
+int ixfs_rename(struct vfs_node *parent, const char *old_name,
+               const char *new_name)
+{
+    struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
+    uint32_t total_entries;
+    uint32_t i;
+    uint8_t *data_buf;
+
+    if (!pv || !old_name || !new_name)
+        return -1;
+
+    total_entries = pv->inode.i_size / sizeof(struct ixfs_dir_entry);
+
+    data_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
+    if (!data_buf) return -1;
+
+    for (i = 0; i < total_entries; i++) {
+        uint32_t byte_off = i * sizeof(struct ixfs_dir_entry);
+        uint32_t bi = byte_off / IXFS_BLOCK_SIZE;
+        uint32_t bo = byte_off % IXFS_BLOCK_SIZE;
+        uint32_t dir_block;
+        struct ixfs_dir_entry *de;
+
+        dir_block = ixfs_get_block(&pv->inode, bi);
+        if (dir_block == 0) break;
+
+        if (ixfs_read_block(dir_block, data_buf) != 0) break;
+
+        de = (struct ixfs_dir_entry *)(data_buf + bo);
+
+        if (de->d_inode != 0 && ixfs_strcmp(de->d_name, old_name)) {
+            /* Found — update the name */
+            ixfs_strcpy(de->d_name, new_name, IXFS_MAX_NAME);
+            ixfs_write_block(dir_block, data_buf);
+
+            /* Update parent timestamps */
+            pv->inode.i_mtime = (uint32_t)uptime();
+            ixfs_write_inode(pv->ino, &pv->inode);
+
+            kfree(data_buf);
+            return 0;
+        }
+    }
+
+    kfree(data_buf);
+    return -1;  /* not found */
+}
+
 static struct vfs_ops ixfs_dir_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,

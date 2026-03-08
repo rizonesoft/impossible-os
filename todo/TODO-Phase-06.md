@@ -277,13 +277,13 @@
 
 ### 5.3 IXFS File Operations
 
-- [ ] Implement `ixfs_read_file(inode, offset, buf, size)` — follow block pointers, read data
-- [ ] Implement `ixfs_write_file(inode, offset, data, size)` — allocate blocks, write data
-- [ ] Implement `ixfs_create(dir_inode, name, type)` — add directory entry + allocate inode
-- [ ] Implement `ixfs_delete(dir_inode, name)` — free blocks + inode, remove directory entry
-- [ ] Implement `ixfs_rename(dir, old_name, new_name)` — update directory entry
-- [ ] Implement `ixfs_readdir(dir_inode)` — list directory entries
-- [ ] Commit: `"fs: IXFS file operations"`
+- [x] Implement `ixfs_read_file(inode, offset, buf, size)` — follow block pointers, read data
+- [x] Implement `ixfs_write_file(inode, offset, data, size)` — allocate blocks, write data
+- [x] Implement `ixfs_create(dir_inode, name, type)` — add directory entry + allocate inode
+- [x] Implement `ixfs_delete(dir_inode, name)` — free blocks + inode, remove directory entry
+- [x] Implement `ixfs_rename(dir, old_name, new_name)` — update directory entry
+- [x] Implement `ixfs_readdir(dir_inode)` — list directory entries
+- [x] Commit: `"fs: IXFS file operations"`
 
 ### 5.4 IXFS VFS Integration
 

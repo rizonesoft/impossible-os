@@ -129,3 +129,7 @@ struct vfs_node *ixfs_get_root(void);
 /* Permission check: returns 0 if access allowed, -1 if denied */
 int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
                     uint16_t gid, int want_write);
+
+/* Rename a file or directory in the given parent directory */
+int ixfs_rename(struct vfs_node *parent, const char *old_name,
+                const char *new_name);
