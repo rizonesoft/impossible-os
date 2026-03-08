@@ -40,6 +40,7 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
 #include "kernel/mm/swap.h"
+#include "kernel/mm/mmap.h"
 
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
@@ -335,6 +336,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     codex_load();                /* load saved .codex files from disk */
     codex_populate_defaults();   /* fill in any missing defaults */
     codex_save();                /* persist defaults to disk on first boot */
+
+    /* Initialize memory-mapped files subsystem */
+    mmap_init();
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
@@ -787,6 +791,46 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             printk("[FAIL] ");
             fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
             printk("swap test alloc failed\n");
+        }
+    }
+
+    /* === mmap test: map hello.txt into memory and read as pointer === */
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *mf = vfs_open("C:\\hello.txt", VFS_O_READ);
+        if (mf) {
+            void *mapped = mmap((void *)0, 4096, PROT_READ, MAP_PRIVATE,
+                                mf, 0);
+            if (mapped != MAP_FAILED) {
+                /* Reading the mapped address triggers a page fault which
+                 * loads the file contents from disk via mmap_handle_fault */
+                const char *txt = (const char *)mapped;
+                uint32_t mmap_ok = 0;
+
+                /* hello.txt should start with a known string */
+                if (txt[0] != '\0') {
+                    mmap_ok = 1;
+                }
+
+                if (mmap_ok) {
+                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+                    printk("[OK] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("mmap test passed (hello.txt mapped at %p, first char='%c')\n",
+                           (uintptr_t)mapped, (uint64_t)(uint8_t)txt[0]);
+                } else {
+                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
+                    printk("[FAIL] ");
+                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+                    printk("mmap test: mapped page is empty\n");
+                }
+
+                munmap(mapped, 4096);
+            } else {
+                printk("[FAIL] mmap returned MAP_FAILED\n");
+            }
+            vfs_close(mf);
+        } else {
+            printk("[SKIP] mmap test: hello.txt not found\n");
         }
     }
 

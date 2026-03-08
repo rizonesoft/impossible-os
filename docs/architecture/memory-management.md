@@ -205,3 +205,43 @@ immediately following block if it is also free, reducing fragmentation.
 
 `System\Memory\SwapSlots` — number of swap slots (default: 64).
 Can be changed at runtime; takes effect on next `swap_init()`.
+
+## Memory-Mapped Files
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/mm/mmap.c` | mmap, munmap, msync, COW fault handler |
+| `include/kernel/mm/mmap.h` | Flags, `mmap_region_t`, API |
+
+### Design
+
+| Property | Value |
+|----------|-------|
+| Loading | **Eager** — file data pre-loaded in `mmap()` call |
+| Address range | `0x1_0000_0000` – `0x1_4000_0000` (1 GiB, above identity map) |
+| Max regions | 64 (`MMAP_MAX_REGIONS`) |
+| COW | MAP_PRIVATE pages mapped read-only; write faults trigger copy |
+| Write-back | MAP_SHARED dirty pages flushed on `msync()` / `munmap()` |
+
+### Protection & Mapping Flags
+
+| Flag | Value | Description |
+|------|-------|-------------|
+| `PROT_READ` | 0x01 | Readable |
+| `PROT_WRITE` | 0x02 | Writable |
+| `PROT_EXEC` | 0x04 | Executable |
+| `MAP_SHARED` | 0x01 | Writes visible to file |
+| `MAP_PRIVATE` | 0x02 | Copy-on-write |
+| `MAP_ANON` | 0x20 | Anonymous (zero-filled) |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `mmap(addr, len, prot, flags, file, off)` | Map file/anonymous region |
+| `munmap(addr, len)` | Unmap region, flush shared pages |
+| `msync(addr, len)` | Write shared dirty pages to file |
+| `mmap_handle_fault(addr, err)` | COW handler for MAP_PRIVATE writes |
+| `SYS_MMAP` (37), `SYS_MUNMAP` (38) | Syscall wrappers |

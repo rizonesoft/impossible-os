@@ -19,6 +19,7 @@
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/mm/swap.h"
+#include "kernel/mm/mmap.h"
 
 /* Page table entry — 64-bit */
 typedef uint64_t pte_t;
@@ -254,6 +255,11 @@ static uint64_t page_fault_handler(struct interrupt_frame *frame)
     /* Try swap handler first — if the page was swapped, bring it back */
     if (swap_handle_fault(fault_addr, frame->err_code)) {
         return (uint64_t)frame;  /* page swapped in, retry instruction */
+    }
+
+    /* Try mmap handler — if the page is in an mmap'd region, load it */
+    if (mmap_handle_fault(fault_addr, frame->err_code)) {
+        return (uint64_t)frame;  /* page loaded from file, retry instruction */
     }
 
     printk("\n");

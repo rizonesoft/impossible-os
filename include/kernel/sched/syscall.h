@@ -31,6 +31,8 @@
 #define SYS_SIGNAL   34  /* sys_signal(sig, handler)      → old handler */
 #define SYS_SHMEM_CREATE 35 /* sys_shmem_create(name, size) → id / -1 */
 #define SYS_SHMEM_MAP    36 /* sys_shmem_map(id)            → ptr / 0 */
+#define SYS_MMAP         37 /* sys_mmap(addr, len, prot, flags, fd, off) → ptr */
+#define SYS_MUNMAP       38 /* sys_munmap(addr, len)         → 0 / -1 */
 
 /* File descriptors */
 #define STDOUT_FD   1

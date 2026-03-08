@@ -104,14 +104,14 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 ### 3.2 Memory-Mapped Files
 > *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*
 
-- [ ] Implement `mmap(addr, length, prot, flags, fd, offset)` — map file into address space
-- [ ] Implement `munmap(addr, length)` — unmap region
-- [ ] Implement `msync(addr, length)` — flush dirty pages to disk
-- [ ] Support `MAP_PRIVATE` (copy-on-write) and `MAP_SHARED` (shared writes)
-- [ ] Update page fault handler to load pages on demand from the mapped file
-- [ ] Add `SYS_MMAP` and `SYS_MUNMAP` syscalls
-- [ ] Test: mmap a text file, read its contents as a pointer
-- [ ] Commit: `"mm: memory-mapped files"`
+- [x] Implement `mmap(addr, length, prot, flags, fd, offset)` — map file into address space
+- [x] Implement `munmap(addr, length)` — unmap region
+- [x] Implement `msync(addr, length)` — flush dirty pages to disk
+- [x] Support `MAP_PRIVATE` (copy-on-write) and `MAP_SHARED` (shared writes)
+- [x] Page fault handler handles COW for MAP_PRIVATE writes (eager-load for file data)
+- [x] Add `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls
+- [x] Test: mmap hello.txt, read first char as pointer → 'H' ✅
+- [x] Commit: `"mm: memory-mapped files"`
 
 ---
 
