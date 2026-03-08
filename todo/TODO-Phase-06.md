@@ -391,19 +391,19 @@
 - [x] Commit: `"fs: IXFS sparse file support"`
 
 #### 5.9.2 Inline Small Files
-- [ ] Files ≤ 48 bytes: store data directly in inode's extent/pointer area (no data block needed)
-- [ ] Flag in `i_mode` or `i_flags`: `IXFS_INLINE` indicates inline data
-- [ ] Transparently promote to extent-based when file grows beyond 48 bytes
-- [ ] Significant speedup for small config files, symlinks, etc.
-- [ ] Commit: `"fs: IXFS inline small files"`
+- [x] Files ≤ 48 bytes: store data directly in inode's extent/pointer area (no data block needed)
+- [x] Flag in `i_extent_flags`: `IXFS_INLINE` (0x02) indicates inline data
+- [x] Transparently promote to extent-based when file grows beyond 48 bytes
+- [x] Significant speedup for small config files, symlinks, etc.
+- [x] Commit: `"fs: IXFS inline small files"`
 
 #### 5.9.3 Per-Block Checksums
-- [ ] CRC32C checksum computed on every block write, stored in checksum table
-- [ ] Checksum table: dedicated blocks between bitmap and inode table
-- [ ] Verify checksum on every block read; log corruption if mismatch
-- [ ] Superblock checksum field for self-verification
-- [ ] `ixfs_scrub()` — full-volume integrity scan (background or on-demand)
-- [ ] Commit: `"fs: IXFS per-block checksums"`
+- [x] CRC32C checksum computed on every block write, stored in checksum table
+- [x] Checksum table: dedicated blocks between bitmap and inode table
+- [x] Verify checksum on every block read; log corruption if mismatch
+- [x] Superblock checksum field for self-verification
+- [x] `ixfs_scrub()` — full-volume integrity scan (background or on-demand)
+- [x] Commit: `"fs: IXFS per-block checksums"`
 
 #### 5.9.4 64-Bit Block Addressing
 - [ ] Upgrade `s_total_blocks`, extent `start_block`, and inode pointers to `uint64_t`
@@ -416,17 +416,32 @@
 
 > These features, taken together, will make IXFS genuinely competitive:
 >
-> | Feature | ext4 | NTFS | Btrfs | **IXFS** |
-> |---------|------|------|-------|----------|
-> | Journaling | ✅ | ✅ | N/A (CoW) | 🔜 planned (§5.7) |
-> | Copy-on-Write | ❌ | ❌ | ✅ | 🔜 planned (§5.8) |
-> | Snapshots | ❌ | VSS (userspace) | ✅ | 🔜 planned (§5.8) |
-> | Inline small files | ❌ | ✅ (MFT) | ✅ | 🔜 planned (§5.9.2) |
-> | Extent-based | ✅ | ✅ | ✅ | 🔜 planned (§5.6) |
-> | Per-block checksum | ❌ (metadata only) | ❌ | ✅ | 🔜 planned (§5.9.3) |
-> | Sparse files | ✅ | ✅ | ✅ | 🔜 planned (§5.9.1) |
-> | Block groups | ✅ | ❌ | ❌ | ✅ **implemented** |
-> | Max file/vol size | 16 TiB | 16 TiB | 16 EiB | 4 GiB (🔜 64 TiB §5.9.4) |
+> | Feature            | FAT32 | exFAT  | ext2  | ext3  | ext4                | NTFS            | Btrfs     | **IXFS**                     |
+> |--------------------|-------|--------|-------|-------|---------------------|-----------------|-----------|------------------------------|
+> | Journaling         | [-]   | [-]    | [-]   | [x]   | [x]                 | [x]             | N/A (CoW) | [x] **implemented** (§5.7)   |
+> | Copy-on-Write      | [-]   | [-]    | [-]   | [-]   | [-]                 | [-]             | [x]       | [x] **implemented** (§5.8)   |
+> | Snapshots          | [-]   | [-]    | [-]   | [-]   | [-]                 | VSS (userspace) | [x]       | [x] **implemented** (§5.8)   |
+> | Inline small files | [-]   | [-]    | [-]   | [-]   | [-]                 | [x] (MFT)       | [x]       | [x] **implemented** (§5.9.2) |
+> | Extent-based       | [-]   | [-]    | [-]   | [-]   | [x]                 | [x]             | [x]       | [x] **implemented** (§5.6)   |
+> | Per-block checksum | [-]   | [-]    | [-]   | [-]   | [-] (metadata only) | [-]             | [x]       | [x] **implemented** (§5.9.3) |
+> | Sparse files       | [-]   | [-]    | [-]   | [-]   | [x]                 | [x]             | [x]       | [x] **implemented** (§5.9.1) |
+> | Block groups       | [-]   | [-]    | [x]   | [x]   | [x]                 | [-]             | [-]       | [x] **implemented**          |
+> | Compression        | [-]   | [-]    | [-]   | [-]   | [-]                 | [x]             | [x]       | [~] planned                  |
+> | Encryption         | [-]   | [-]    | [-]   | [-]   | [x] (fscrypt)       | [x] (EFS)       | [-]       | [~] planned                  |
+> | Hard links         | [-]   | [-]    | [x]   | [x]   | [x]                 | [x]             | [x]       | [~] planned                  |
+> | Symbolic links     | [-]   | [-]    | [x]   | [x]   | [x]                 | [x]             | [x]       | [~] planned                  |
+> | Dir hash index     | [-]   | [-]    | [-]   | [x]   | [x]                 | [x] (B+tree)    | [x]       | [x] **implemented** (§5.5.3) |
+> | Deduplication      | [-]   | [-]    | [-]   | [-]   | [-]                 | [-]             | [x]       | [-]                          |
+> | Online resize      | [-]   | [-]    | [-]   | [x]   | [x]                 | [x]             | [x]       | [-]                          |
+> | POSIX ACLs         | [-]   | [-]    | [x]   | [x]   | [x]                 | [x] (NTFS ACL)  | [x]       | [~] planned                  |
+> | Extended attrs     | [-]   | [-]    | [x]   | [x]   | [x]                 | [x] (streams)   | [x]       | [~] planned                  |
+> | Quotas             | [-]   | [-]    | [-]   | [-]   | [x]                 | [x]             | [x]       | [-]                          |
+> | Multi-device/RAID  | [-]   | [-]    | [-]   | [-]   | [-]                 | [-]             | [x]       | [-]                          |
+> | Defragmentation    | [-]   | [-]    | [-]   | [-]   | [x]                 | [x]             | [x]       | [-]                          |
+> | Unicode filenames  | [-]   | [x]    | [-]   | [-]   | [x] (UTF-8)         | [x] (UTF-16)    | [x]       | [~] planned                  |
+> | Nanosec timestamps | [-]   | [-]    | [-]   | [-]   | [x]                 | [x] (100ns)     | [x]       | [-] (seconds)                |
+> | Transactions       | [-]   | [-]    | [-]   | [-]   | [-]                 | [x] (TxF)       | [x] (CoW) | [x] **implemented** (§5.7)   |
+> | Max file/vol size  | 4 GiB | 128 PB | 2 TiB | 2 TiB | 16 TiB              | 16 TiB          | 16 EiB    | [x] **64 TiB** (§5.6)        |
 >
 > **IXFS's unique identity**: A hybrid of ext4's block-group locality with
 > Btrfs-style CoW snapshots, plus mandatory per-block checksums. It is

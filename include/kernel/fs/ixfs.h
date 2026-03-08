@@ -43,6 +43,8 @@ struct ixfs_block_group {
 /* Extent-based allocation */
 #define IXFS_INLINE_EXTENTS  4    /* extents stored directly in inode */
 #define IXFS_EXTENT_OVERFLOW 0x01 /* flag: overflow extent block in use */
+#define IXFS_INLINE          0x02 /* flag: data stored inline in inode (≤48 B) */
+#define IXFS_INLINE_MAX      48   /* max bytes for inline storage (sizeof i_extents) */
 
 /* Max blocks addressable via 4 inline extents: each can cover up to 2^32 blocks
  * With overflow tree: effectively unlimited */
@@ -132,7 +134,10 @@ struct ixfs_superblock {
     uint32_t s_refcount_blocks;    /* number of refcount blocks */
     uint32_t s_snapshot_start;     /* first block of snapshot table */
     uint32_t s_snapshot_count;     /* number of active snapshots */
-    uint8_t  s_reserved[400];      /* pad to 512 bytes */
+    uint32_t s_checksum_start;     /* first block of checksum table */
+    uint32_t s_checksum_blocks;    /* number of checksum table blocks */
+    uint32_t s_checksum;           /* CRC32C of superblock bytes [0..103] */
+    uint8_t  s_reserved[388];      /* pad to 512 bytes */
 } __attribute__((packed));
 
 /* Inode — 128 bytes each (32 inodes per block) */
@@ -198,3 +203,6 @@ int ixfs_snapshot_delete(const char *name);
 /* Stat: report file metadata including sparse info */
 int ixfs_stat(struct vfs_node *node, uint32_t *logical_size,
               uint32_t *actual_blocks);
+
+/* Scrub: full-volume integrity scan (verify all block checksums) */
+int ixfs_scrub(void);

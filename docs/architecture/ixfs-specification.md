@@ -396,6 +396,80 @@ actual_blocks = 1 block   (only the written block)
 
 ---
 
+## Inline Small Files
+
+Files ≤ 48 bytes are stored directly in the inode's `i_extents[]` area, avoiding
+block allocation entirely. This benefits small config files, symlinks, and metadata.
+
+### Inline Storage Layout
+
+When `IXFS_INLINE` (0x02) is set in `i_extent_flags`, the 48-byte `i_extents[4]`
+array is reused as raw data storage:
+
+| Inode field | Inline meaning |
+|-------------|---------------|
+| `i_extents[0..3]` | 48 bytes of file data |
+| `i_extent_flags` | `IXFS_INLINE` (0x02) set |
+| `i_extent_count` | unused (0) |
+| `i_blocks` | 0 (no disk blocks) |
+| `i_size` | actual data length (0–48) |
+
+### Transparent Promotion
+
+When a write causes `offset + size > 48`:
+
+1. Save existing inline data (up to 48 bytes)
+2. Clear `IXFS_INLINE` flag and zero the extent area
+3. Allocate a disk block via `ixfs_add_block_to_extent()`
+4. Copy saved data + new data into the block
+5. Continue with normal extent-based write for remaining data
+
+### Constants
+
+```c
+#define IXFS_INLINE      0x02   /* flag in i_extent_flags */
+#define IXFS_INLINE_MAX  48     /* max inline bytes = sizeof(i_extents) */
+```
+
+---
+
+## Per-Block Checksums
+
+CRC32C (Castagnoli) checksums are computed on every data block write and verified
+on every read from disk. This detects silent data corruption (bit rot).
+
+### Checksum Table
+
+A dedicated on-disk area stores one `uint32_t` CRC32C per block:
+
+| Property | Value |
+|----------|-------|
+| Location | Between bitmap and inode table |
+| Entry size | 4 bytes (uint32_t) |
+| Entries per block | 1024 (4096 / 4) |
+| For 8192-block volume | 8 blocks (32 KiB) |
+
+### Superblock Self-Checksum
+
+The `s_checksum` field stores CRC32C of superblock bytes 0–103. Recomputed on
+every `ixfs_flush_superblock()` call, verified at mount time.
+
+### ixfs_scrub()
+
+Full-volume integrity scan: reads every allocated data block directly from disk,
+computes CRC32C, compares against stored checksum. Returns the number of
+corrupted blocks found (0 = clean).
+
+### Constants
+
+```c
+vol->sb.s_checksum_start   /* first checksum table block */
+vol->sb.s_checksum_blocks  /* number of checksum table blocks */
+vol->sb.s_checksum         /* CRC32C of superblock bytes [0..103] */
+```
+
+---
+
 ## Formatting
 
 `ixfs_format(dev, label)` creates a fresh filesystem:
@@ -497,7 +571,7 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 | Journaling (WAL) | §5.7 | ✅ Implemented |
 | Copy-on-Write + Snapshots | §5.8 | ✅ Implemented |
 | Sparse files | §5.9.1 | ✅ Implemented |
-| Inline small files | §5.9.2 | 🔜 Planned |
-| Per-block checksums | §5.9.3 | 🔜 Planned |
+| Inline small files | §5.9.2 | ✅ Implemented |
+| Per-block checksums | §5.9.3 | ✅ Implemented |
 | 64-bit block addressing | §5.9.4 | 🔜 Planned (target: 64 TiB max) |
 | Host-side mkfs-ixfs tool | §5.11 | 🔜 Planned |
