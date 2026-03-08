@@ -146,6 +146,36 @@ void gfx_fill_radial_gradient(gfx_surface_t *s, int32_t cx, int32_t cy,
                                gfx_color_t center_color,
                                gfx_color_t edge_color);
 
+/* ---- Blur & Material Effects ---- */
+
+/* 2-pass box blur on a rectangular region (O(n) per pixel) */
+void gfx_blur_rect(gfx_surface_t *s, int32_t x, int32_t y,
+                    uint32_t w, uint32_t h, uint32_t radius);
+
+/* Acrylic effect: blur + noise + tint overlay.
+ * opacity: 0=no tint, 255=fully tinted. */
+void gfx_acrylic(gfx_surface_t *s, int32_t x, int32_t y,
+                  uint32_t w, uint32_t h,
+                  gfx_color_t tint, uint8_t opacity,
+                  uint32_t blur_radius);
+
+/* Mica effect: sample wallpaper + desaturate 80% + tint with theme color */
+void gfx_mica(gfx_surface_t *s, int32_t x, int32_t y,
+               uint32_t w, uint32_t h,
+               const gfx_surface_t *wallpaper, gfx_color_t tint);
+
+/* Multi-layer drop shadow (blurred rect composited behind element) */
+void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
+                      uint32_t w, uint32_t h, uint32_t radius,
+                      int32_t offset_x, int32_t offset_y,
+                      gfx_color_t color);
+
+/* Reveal highlight: radial glow following cursor within a bounding rect */
+void gfx_reveal_highlight(gfx_surface_t *s, int32_t rx, int32_t ry,
+                           uint32_t rw, uint32_t rh,
+                           int32_t mouse_x, int32_t mouse_y,
+                           uint32_t glow_radius, gfx_color_t highlight);
+
 /* ---- Dirty Rectangle Tracker ---- */
 
 #define GFX_MAX_DIRTY  32

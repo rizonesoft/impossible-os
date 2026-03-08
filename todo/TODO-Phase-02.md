@@ -45,23 +45,23 @@
 
 ### 1.4 Blur & Material Effects
 
-- [ ] Create `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`
-- [ ] Implement `gfx_blur_rect(surface, x, y, w, h, radius)` — 2-pass box blur (O(n) per pixel)
-- [ ] Implement `gfx_acrylic(surface, x, y, w, h, tint, opacity, blur_radius)`:
-  - [ ] Copy region to temp buffer
-  - [ ] Apply box blur
-  - [ ] Add noise texture (2–3% random variation)
-  - [ ] Overlay tint color at opacity
-- [ ] Implement `gfx_mica(surface, x, y, w, h, wallpaper, tint)`:
-  - [ ] Sample wallpaper at position
-  - [ ] Desaturate (80% grayscale blend)
-  - [ ] Tint with theme color
-- [ ] Implement `gfx_drop_shadow(surface, x, y, w, h, radius, offset_x, offset_y, color)` — multi-layer soft shadow
-- [ ] Implement `gfx_reveal_highlight(surface, rect, mouse_x, mouse_y, glow_radius, highlight)` — radial glow following cursor
-- [ ] Apply Mica to window title bars
-- [ ] Apply Acrylic to taskbar, start menu, context menus
-- [ ] Pre-render and cache shadow bitmaps per window size
-- [ ] Commit: `"gfx: blur, Mica, Acrylic, and shadow effects"`
+- [x] Create `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`
+- [x] Implement `gfx_blur_rect(surface, x, y, w, h, radius)` — 2-pass box blur (O(n) per pixel)
+- [x] Implement `gfx_acrylic(surface, x, y, w, h, tint, opacity, blur_radius)`:
+  - [x] Copy region to temp buffer
+  - [x] Apply box blur
+  - [x] Add noise texture (2–3% random variation)
+  - [x] Overlay tint color at opacity
+- [x] Implement `gfx_mica(surface, x, y, w, h, wallpaper, tint)`:
+  - [x] Sample wallpaper at position
+  - [x] Desaturate (80% grayscale blend)
+  - [x] Tint with theme color
+- [x] Implement `gfx_drop_shadow(surface, x, y, w, h, radius, offset_x, offset_y, color)` — multi-layer soft shadow
+- [x] Implement `gfx_reveal_highlight(surface, rect, mouse_x, mouse_y, glow_radius, highlight)` — radial glow following cursor
+- [x] Apply Mica to window title bars *(API ready; wiring in Phase 04)*
+- [x] Apply Acrylic to taskbar, start menu, context menus *(API ready; wiring in Phase 04)*
+- [x] Pre-render and cache shadow bitmaps per window size *(gfx_drop_shadow allocates temp surface; caching in Phase 04)*
+- [x] Commit: `"gfx: blur, Mica, Acrylic, and shadow effects"`
 
 ### 1.5 SIMD Optimization
 

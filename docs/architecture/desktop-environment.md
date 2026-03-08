@@ -106,6 +106,22 @@ Tracks up to 32 dirty regions for partial redraws. On overflow, merges all into 
 
 Colors interpolated via integer-only `color_lerp()` (per-channel linear blend at t/255).
 
+### Blur & Material Effects
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/gfx/gfx_blur.c` | 2-pass separable box blur (O(n) per pixel) |
+| `src/kernel/gfx/gfx_effects.c` | Acrylic, Mica, Drop Shadow, Reveal Highlight |
+
+| Function | Description |
+|----------|-------------|
+| `gfx_blur_rect` | Box blur with running sum (horizontal + vertical pass) |
+| `gfx_acrylic` | Blur → noise (±8) → tint overlay at opacity |
+| `gfx_mica` | Wallpaper sample → 80% desaturate → 50% tint blend |
+| `gfx_drop_shadow` | Blurred rect composited behind element with offset |
+| `gfx_reveal_highlight` | Radial glow at cursor (linear falloff within rect) |
+
+**Usage targets:** Acrylic → taskbar, start menu, menus. Mica → window title bars. Shadow → all windows.
 ## Framebuffer Graphics
 
 ### Key Files
