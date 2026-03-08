@@ -1089,9 +1089,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     scheduler_disable();
 
                     /* Only force a full redraw for non-drag events.
-                     * During a drag, the drag handler adds dirty rects
-                     * via mark_dirty_rect(), enabling partial repaint. */
-                    if (btn_changed || wm_dirty || clock_tick || first_frame)
+                     * During a drag, wm_handle_mouse() already called
+                     * mark_dirty_rect() which sets needs_redraw = 1 but
+                     * NOT wm_full_redraw.  If we checked wm_dirty here,
+                     * we'd set wm_full_redraw=1 and bypass the dirty-rect
+                     * partial repaint — defeating the entire optimization.
+                     * Content changes (terminal output) will trigger a full
+                     * redraw on the next non-drag frame via the fallback path
+                     * in wm_composite() when dirty_rects.count == 0. */
+                    if (btn_changed || clock_tick || first_frame)
                         wm_mark_dirty();
 
                     wm_composite();
