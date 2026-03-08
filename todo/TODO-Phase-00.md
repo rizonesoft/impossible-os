@@ -6,13 +6,13 @@
 
 ---
 
-## 1. Standalone GRUB EFI Binary
+## 1. Standalone GRUB EFI Binary ✅
 
-- [ ] Use `grub-mkimage` to produce `BOOTX64.EFI` with modules: `part_gpt fat normal multiboot2 boot`
-- [ ] Target: `x86_64-efi`, prefix `/boot/grub`
-- [ ] Store output in `build/tools/BOOTX64.EFI`
-- [ ] Add Makefile target: `build/tools/BOOTX64.EFI`
-- [ ] Commit: `"boot: standalone GRUB EFI binary"`
+- [x] Use `grub-mkimage` to produce `BOOTX64.EFI` with modules: `part_gpt fat normal multiboot2 boot all_video efi_gop gfxterm configfile echo search test reboot halt font loadenv`
+- [x] Target: `x86_64-efi`, prefix `/boot/grub`
+- [x] Store output in `build/tools/BOOTX64.EFI` (790 KiB PE32+)
+- [x] Add Makefile target: `grub-efi` (wired into `all`)
+- [x] Commit: `9bc69c7` — `"boot: standalone GRUB EFI binary"`
 
 ---
 
@@ -258,5 +258,5 @@ make all
 └─────────────┴───────────────────────┴───────────────────────┘
          │
          ▼
-    OVMF (UEFI) → GRUB → kernel.elf → boot
+    OVMF (UEFI) → GRUB → kernel.exe → boot
 ```

@@ -7,12 +7,13 @@
 
 ```
 OVMF (UEFI firmware)
-  → EFI System Partition on ISO
-    → GRUB 2.12 (EFI application)
-      → Multiboot2 protocol
-        → entry.asm (32-bit protected mode entry)
-          → Page tables + Long Mode setup
-            → kernel_main() (64-bit)
+  → EFI System Partition (FAT32)
+    → /EFI/BOOT/BOOTX64.EFI (GRUB standalone)
+      → /boot/grub/grub.cfg
+        → multiboot2 /boot/kernel.exe
+          → entry.asm (32-bit protected mode entry)
+            → Page tables + Long Mode setup
+              → kernel_main() (64-bit)
 ```
 
 ## Key Files
@@ -24,6 +25,30 @@ OVMF (UEFI firmware)
 | `src/boot/entry.asm` | Kernel entry: verify magic, setup Long Mode, call `kernel_main` |
 | `src/boot/linker.ld` | Linker script — kernel loaded at high address |
 
+## GRUB EFI Binary
+
+A standalone GRUB EFI binary is built via `grub-mkimage` for direct disk boot
+(no ISO or `grub-mkrescue` needed):
+
+```bash
+grub-mkimage -O x86_64-efi -o BOOTX64.EFI -p /boot/grub \
+    part_gpt fat normal multiboot2 boot \
+    all_video efi_gop gfxterm configfile echo \
+    search test reboot halt font loadenv
+```
+
+| Property | Value |
+|----------|-------|
+| Format | PE32+ (EFI application) |
+| Size | ~790 KiB |
+| Target | x86_64-efi |
+| Config prefix | `/boot/grub` |
+| Makefile target | `make grub-efi` |
+| Output | `build/tools/BOOTX64.EFI` |
+
+Installed at `/EFI/BOOT/BOOTX64.EFI` on the EFI System Partition. UEFI firmware
+discovers and loads it automatically per the UEFI specification fallback path.
+
 ## GRUB Configuration
 
 ```cfg
@@ -31,13 +56,17 @@ set timeout=3
 set default=0
 
 menuentry "Impossible OS" {
-    multiboot2 /boot/kernel.elf
+    multiboot2 /boot/kernel.exe
     module2 /boot/initrd.img
     boot
 }
 ```
 
 GRUB loads the kernel via **Multiboot2** and passes the initrd as a module.
+
+> **Note:** The `module2 /boot/initrd.img` line will be removed once the
+> boot consolidation (Phase 00) is complete — all files will live on the
+> IXFS system partition.
 
 ## Multiboot2 Header
 
@@ -94,22 +123,22 @@ The entry stub:
 | Module (type 3) | Initrd start/end addresses |
 | Command line (type 1) | Boot parameters |
 
-## ISO Creation
+## Disk Layout (Target — Phase 00)
 
-The ISO is built by `grub-mkrescue`:
+The system boots from a single GPT disk image (`build/system-disk.img`):
 
-```bash
-grub-mkrescue -o build/os-build.iso build/isodir
 ```
-
-The `isodir` layout:
+┌────────────────────────────────────────────┐
+│         system-disk.img (GPT)              │
+├──────────────┬─────────────────────────────┤
+│ Part 1       │ Part 2                      │
+│ FAT32 (EFI)  │ IXFS v2 (C:\)              │
+│ 256 MiB      │ remainder                  │
+│              │                             │
+│ /EFI/BOOT/   │ C:\Impossible\System\      │
+│  BOOTX64.EFI │ C:\Users\Default\          │
+│ /boot/       │ C:\Programs\               │
+│  kernel.exe  │ hello.exe, shell.exe       │
+│  grub.cfg    │ wallpaper.raw              │
+└──────────────┴─────────────────────────────┘
 ```
-isodir/
-└── boot/
-    ├── kernel.elf      # Kernel binary
-    ├── initrd.img      # Initial RAM filesystem
-    └── grub/
-        └── grub.cfg    # GRUB configuration
-```
-
-`grub-mkrescue` automatically adds the EFI boot partition and GRUB EFI binary.
