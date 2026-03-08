@@ -212,8 +212,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
 	@# Step 1: Create GPT image with partition table
 	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
-	@# Step 2: Format EFI partition as FAT32 and copy boot files
-	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
+	@# Step 2: Format EFI partition as FAT32 (limited to 256 MiB) and copy boot files
+	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@ $$(( 256 * 1024 * 1024 / 1024 ))
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot/grub
 	@cp $(GRUB_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
@@ -236,7 +236,9 @@ run: all
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
-		-drive file=$(SYSTEM_DISK),format=raw,if=ide \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial stdio \
 		-vga none \
@@ -253,7 +255,9 @@ run-debug: all
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
-		-drive file=$(SYSTEM_DISK),format=raw,if=ide \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial stdio \
 		-vga none \
@@ -271,7 +275,9 @@ run-log: all
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
-		-drive file=$(SYSTEM_DISK),format=raw,if=ide \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial file:serial.log \
 		-vga none \
