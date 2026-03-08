@@ -34,6 +34,7 @@
 #include "kernel/fs/mbr.h"
 #include "kernel/fs/gpt.h"
 #include "kernel/fs/partition.h"
+#include "kernel/fs/firstboot.h"
 #include "kernel/sched/task.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
@@ -236,6 +237,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * Creates sub-blkdevs for each partition and probes filesystems. */
     partition_scan_all();
     partition_mount_filesystems();
+
+    /* First-boot: populate C:\ with default hierarchy + initrd files.
+     * Only acts if C:\ is mounted and empty. Safe to call on every boot.
+     * Remove this call (and firstboot.c/h) once an installer exists. */
+    firstboot_setup();
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();

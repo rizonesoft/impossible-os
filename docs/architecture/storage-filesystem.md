@@ -329,8 +329,37 @@ Custom archive format with magic `IXRD`:
 | `bg.raw` | Background gradient |
 | `start_icon.raw` | Start menu icon |
 
-The initrd is loaded by GRUB as a Multiboot2 module and mounted at `C:\`
-during early boot until the real disk filesystem takes over.
+The initrd is loaded by GRUB as a Multiboot2 module and mounted at `B:\`
+during boot.
+
+### Why initrd Still Exists
+
+The kernel needs files (wallpaper, shell, icons) **before disk drivers
+are ready**. The boot timeline is:
+
+```
+GRUB loads kernel.elf + initrd.img from ISO
+  ↓  kernel starts — no disk drivers yet
+initrd mounted at B:\         ← only filesystem available
+  ↓  ATA/AHCI drivers init
+partition scan → IXFS detected
+  ↓
+IXFS mounted at C:\
+  ↓
+firstboot_setup() copies B:\ → C:\   (first boot only)
+  ↓
+Desktop reads files from C:\
+```
+
+### When initrd Can Be Removed
+
+Once we boot from a real disk (not ISO) with a pre-populated IXFS
+partition, the initrd becomes unnecessary:
+
+1. **Build** a disk image with `mkfs-ixfs --populate` (see TODO § 5.11)
+2. **GRUB** reads kernel directly from the boot partition
+3. **All system files** are already on C:\ (placed by the installer)
+4. **Delete** `firstboot.c/h` and the initrd module
 
 ## FAT32 Filesystem Driver
 
@@ -457,4 +486,30 @@ Actually **256 bytes** per entry (4 + 252), giving **16 entries per block**.
 | Permissions | ✅ | Unix rwx, uid/gid, `ixfs_check_perm()` |
 | Timestamps | ✅ | Created, modified, accessed |
 | Block alloc/free | ✅ | Bitmap-based, flushed to disk |
+| Rename | ✅ | `ixfs_rename(parent, old, new)` |
+| First-boot setup | ✅ | `firstboot_setup()` populates empty C:\ |
 
+### First-Boot Module
+
+> **Files**: `src/kernel/fs/firstboot.c`, `include/kernel/fs/firstboot.h`
+> **Removal**: Delete these files and the `firstboot_setup()` call in `main.c`
+
+On first boot (when C:\ is empty), `firstboot_setup()` automatically:
+
+1. Creates the default directory hierarchy:
+
+```
+C:\
+├── Impossible\
+│   ├── System\     ← initrd files copied here
+│   └── Commands\
+├── Users\
+│   └── Default\
+└── Programs\
+```
+
+2. Copies all files from `B:\` (initrd) to `C:\Impossible\System\`
+
+This is temporary — once an installer exists, the firstboot module can be
+removed entirely. The installer would create the hierarchy and copy files
+during installation instead.

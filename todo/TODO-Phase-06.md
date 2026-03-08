@@ -294,6 +294,14 @@
 - [x] Test: write file, reboot, verify persistence
 - [x] Commit: `"fs: IXFS VFS integration + C:\\ mount"`
 
+#### First-Boot Setup (temporary — remove when installer exists)
+- [x] Create `src/kernel/fs/firstboot.c` + `include/kernel/fs/firstboot.h`
+- [x] Detect empty C:\ on boot (readdir returns no entries)
+- [x] Create default hierarchy: `Impossible\System`, `Impossible\Commands`, `Users\Default`, `Programs`
+- [x] Copy all initrd files (B:\) to `C:\Impossible\System\`
+- [x] Call `firstboot_setup()` from `main.c` after `partition_mount_filesystems()`
+- [x] Commit: `"fs: first-boot setup module"`
+
 ### 5.5 Performance Optimizations
 
 > **Priority: P1** — These fix fundamental performance issues in the current driver
@@ -423,6 +431,18 @@
 > **IXFS's unique identity**: A hybrid of ext4's block-group locality with
 > Btrfs-style CoW snapshots, plus mandatory per-block checksums. It is
 > designed from scratch for Impossible OS with zero legacy baggage.
+
+### 5.11 Host-Side mkfs-ixfs Tool (Option B)
+
+> **Priority: P3** — Needed for the installer / build-time disk images
+
+- [ ] Create `tools/mkfs-ixfs.c` — standalone host tool (runs on Linux/macOS)
+- [ ] Accept: output image path, volume size, label
+- [ ] Write IXFS superblock, bitmaps, inode table (same layout as kernel `ixfs_format()`)
+- [ ] `--populate <dir>` flag: recursively copy a host directory into the IXFS image
+- [ ] Makefile target: `build/system-disk.img` with pre-populated IXFS from `build/initrd_files/`
+- [ ] Once working: remove firstboot.c/firstboot.h and the `firstboot_setup()` call from main.c
+- [ ] Commit: `"tools: mkfs-ixfs host formatter"`
 
 ---
 
