@@ -77,6 +77,20 @@ Hardware-independent surface abstraction for all 2D rendering.
 
 Tracks up to 32 dirty regions for partial redraws. On overflow, merges all into one bounding box.
 
+### Alpha Blending & Compositing
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/gfx/gfx_blend.c` | Blit, alpha-blit, alpha-filled rect |
+
+| Function | Description |
+|----------|-------------|
+| `gfx_blit(dst, dx, dy, src, sx, sy, w, h)` | Per-pixel alpha blit with full clipping |
+| `gfx_blit_alpha(dst, dx, dy, src, alpha)` | Blit with global alpha multiplier (0–255) |
+| `gfx_fill_rect_alpha(s, x, y, w, h, color)` | Alpha-filled rect from color channel |
+
+**Design:** Pre-multiplied alpha (`out = src + dst × (1 − α)`), integer-only `div255()` approximation, no floating point.
+
 ## Framebuffer Graphics
 
 ### Key Files

@@ -26,13 +26,13 @@
 
 ### 1.2 Alpha Blending & Compositing
 
-- [ ] Create `src/kernel/gfx/gfx_blend.c`
-- [ ] Implement `gfx_blit(dst, dx, dy, src, sx, sy, w, h)` — per-pixel alpha blit
-- [ ] Implement `gfx_blit_alpha(dst, dx, dy, src, alpha)` — blit with global alpha
-- [ ] Implement `gfx_fill_rect_alpha(surface, x, y, w, h, color)` — alpha from color channel
-- [ ] Use pre-multiplied alpha (50% fewer multiplies in hot path)
-- [ ] Integer-only math in blending (no floating point)
-- [ ] Commit: `"gfx: alpha blending and compositing"`
+- [x] Create `src/kernel/gfx/gfx_blend.c`
+- [x] Implement `gfx_blit(dst, dx, dy, src, sx, sy, w, h)` — per-pixel alpha blit
+- [x] Implement `gfx_blit_alpha(dst, dx, dy, src, alpha)` — blit with global alpha
+- [x] Implement `gfx_fill_rect_alpha(surface, x, y, w, h, color)` — alpha from color channel
+- [x] Use pre-multiplied alpha (50% fewer multiplies in hot path)
+- [x] Integer-only math in blending (no floating point)
+- [x] Commit: `"gfx: alpha blending and compositing"`
 
 ### 1.3 Gradients
 

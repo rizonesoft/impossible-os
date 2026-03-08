@@ -97,6 +97,24 @@ void gfx_put_pixel(gfx_surface_t *s, int32_t x, int32_t y, gfx_color_t color);
 /* Alpha-blend a pixel onto the surface */
 void gfx_blend_pixel(gfx_surface_t *s, int32_t x, int32_t y, gfx_color_t color);
 
+/* ---- Alpha blending & compositing ---- */
+
+/* Blit a region from src surface to dst surface with per-pixel alpha blending.
+ * Copies src region (sx,sy,w,h) to dst at (dx,dy). */
+void gfx_blit(gfx_surface_t *dst, int32_t dx, int32_t dy,
+              const gfx_surface_t *src, int32_t sx, int32_t sy,
+              uint32_t w, uint32_t h);
+
+/* Blit entire src surface to dst with an additional global alpha multiplier.
+ * alpha: 0 = fully transparent, 255 = fully opaque. */
+void gfx_blit_alpha(gfx_surface_t *dst, int32_t dx, int32_t dy,
+                    const gfx_surface_t *src, uint8_t alpha);
+
+/* Fill a rectangle using the alpha channel from the color.
+ * Each pixel is alpha-blended onto the existing surface content. */
+void gfx_fill_rect_alpha(gfx_surface_t *s, int32_t x, int32_t y,
+                          uint32_t w, uint32_t h, gfx_color_t color);
+
 /* ---- Dirty Rectangle Tracker ---- */
 
 #define GFX_MAX_DIRTY  32
