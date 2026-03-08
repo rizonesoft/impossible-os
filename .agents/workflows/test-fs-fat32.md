@@ -9,6 +9,11 @@ description: Complete FAT32 filesystem test workflow using test disk images
 > Fully automated: builds, generates test disks, launches QEMU with the FAT32
 > test disk on AHCI port 1, captures serial output to serial.log, verifies
 > expected boot log patterns, and leaves QEMU running for manual shell testing.
+>
+> Drive letter mapping:
+>   C:\ = IXFS (system partition)
+>   D:\ = FAT32 (EFI partition on system disk)
+>   E:\ = FAT32 (test disk on AHCI port 1)
 
 ## Steps
 
@@ -79,12 +84,6 @@ Once verified, switch to the QEMU window and use the shell:
 
 ```
 dir E:\                    # List FAT32 test disk root
-  Disk 0, Partition 1: FAT32, 256 MiB (EFI System)
-  Disk 0, Partition 2: IXFS, 254 MiB (IXFS)
-[OK] VFS: mounted "FAT32" at D:\                  ← EFI partition
-[OK] VFS: mounted "IXFS" at C:\                   ← system partition
-  Disk 1, Partition 1: FAT32, 8 MiB              ← test disk
-[OK] VFS: mounted "FAT32" at E:\                  ← test disk mounted here
 type E:\test.txt           # Should print: "Hello from FAT32 test disk!"
 dir E:\subdir              # List subdirectory
 type E:\subdir\nested.txt  # Should print: "Nested file in subdirectory"
