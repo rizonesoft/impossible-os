@@ -401,7 +401,7 @@
 
 ### 8.7 Unimplemented macOS Function Logger
 
-- [ ] Same pattern as Win32 logger (Section 9.3): log unresolved dylib symbols
+- [ ] Same pattern as Win32 logger (§9.3): log unresolved dylib symbols
 - [ ] `"UNIMPL: libSystem.B.dylib!pthread_create"`
 - [ ] Return safe default instead of crashing
 - [ ] Commit: `"macos: unimplemented function logger"`

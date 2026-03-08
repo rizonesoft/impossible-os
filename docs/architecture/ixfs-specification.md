@@ -343,11 +343,11 @@ buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
 
 | Feature | Section | Status |
 |---------|---------|--------|
-| Extent-based allocation | Section 5.6 | 🔜 Planned |
-| Journaling (WAL) | Section 5.7 | 🔜 Planned |
-| Copy-on-Write + Snapshots | Section 5.8 | 🔜 Planned |
-| Sparse files | Section 5.9.1 | 🔜 Planned |
-| Inline small files | Section 5.9.2 | 🔜 Planned |
-| Per-block checksums | Section 5.9.3 | 🔜 Planned |
-| 64-bit block addressing | Section 5.9.4 | 🔜 Planned (target: 64 TiB max) |
-| Host-side mkfs-ixfs tool | Section 5.11 | 🔜 Planned |
+| Extent-based allocation | §5.6 | 🔜 Planned |
+| Journaling (WAL) | §5.7 | 🔜 Planned |
+| Copy-on-Write + Snapshots | §5.8 | 🔜 Planned |
+| Sparse files | §5.9.1 | 🔜 Planned |
+| Inline small files | §5.9.2 | 🔜 Planned |
+| Per-block checksums | §5.9.3 | 🔜 Planned |
+| 64-bit block addressing | §5.9.4 | 🔜 Planned (target: 64 TiB max) |
+| Host-side mkfs-ixfs tool | §5.11 | 🔜 Planned |

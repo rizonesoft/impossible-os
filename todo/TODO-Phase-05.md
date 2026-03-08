@@ -8,7 +8,7 @@
 ---
 
 ## 1. UI Widget Library (Shared)
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) Section  Shared UI Widget Library*
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Shared UI Widget Library*
 
 ### 1.1 Core Widgets
 
@@ -238,7 +238,7 @@
 ---
 
 ## 5. Notepad
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) Section  Notepad*
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Notepad*
 
 ### 5.1 Text Buffer (Gap Buffer)
 
@@ -290,7 +290,7 @@
 ---
 
 ## 6. Calculator
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) Section  Calculator*
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Calculator*
 
 ### 6.1 Calculator Core
 
@@ -326,7 +326,7 @@
 ---
 
 ## 7. Paint
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) Section  Paint*
+> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Paint*
 
 ### 7.1 Canvas & Viewport
 
