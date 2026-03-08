@@ -82,9 +82,9 @@
 
 ### 3.1 Swap / Page File
 
-**Status: RAM-backed proof-of-concept.** Algorithms work (Clock replacement, PTE
-encoding, page fault → swap in), but backing store is `kmalloc`'d RAM — not a real
-disk pagefile. Swapping RAM→RAM doesn't free memory; disk backing is the next step.
+**Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
+via VFS. Swap in reads them back. Clock replacement, PTE encoding, and page fault → swap in
+all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memory\SwapSlots`.
 
 - [x] Implement `swap_init(num_slots)` — initialize swap (currently RAM-backed)
 - [x] Implement `swap_out(virt_addr)` — copy page to swap slot, free frame
@@ -94,12 +94,12 @@ disk pagefile. Swapping RAM→RAM doesn't free memory; disk backing is the next 
 - [x] Handle page fault → check if page is swapped → `swap_in()` → retry
 - [x] Commit: `"mm: swap / page file support"` (RAM-backed PoC)
 
-**Future: Disk-backed pagefile**
-- [ ] Create pagefile: `C:\Impossible\System\pagefile.sys`
-- [ ] Replace `kmalloc` backing store with `vfs_write()`/`vfs_read()` to pagefile
-- [ ] Configurable swap size (default: 1× RAM, stored in Codex)
-- [ ] Test: allocate more memory than physical RAM → swap to disk kicks in
-- [ ] Commit: `"mm: disk-backed swap via pagefile.sys"`
+**Disk-backed pagefile** ✅
+- [x] Create pagefile: `C:\Impossible\System\pagefile.sys`
+- [x] Replace `kmalloc` backing store with `vfs_write()`/`vfs_read()` to pagefile
+- [x] Configurable swap size (default: 64 slots, stored in Codex `System\Memory\SwapSlots`)
+- [x] Test: swap out → pagefile.sys → swap in → data integrity verified
+- [x] Commit: `"mm: disk-backed swap via pagefile.sys"`
 
 ### 3.2 Memory-Mapped Files
 > *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*

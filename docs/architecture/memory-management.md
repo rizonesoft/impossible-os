@@ -164,3 +164,44 @@ Each block has a header containing:
 
 `kfree()` marks the block as free and attempts to coalesce with the
 immediately following block if it is also free, reducing fragmentation.
+
+## Swap / Pagefile
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/mm/swap.c` | Disk-backed swap with Clock replacement |
+| `include/kernel/mm/swap.h` | Swap API, PTE encoding macros |
+
+### Design
+
+| Property | Value |
+|----------|-------|
+| Backing store | `C:\Impossible\System\pagefile.sys` (IXFS) |
+| Slot size | 4 KiB (one page) |
+| Max slots | 256 (configurable via Codex) |
+| Replacement | **Clock** (second-chance) algorithm |
+| PTE encoding | Present=0, Bit 1=swap flag, Bits 9-62=slot ID |
+
+### How It Works
+
+1. **Swap out**: Copy page → temp buffer → `vfs_write()` to pagefile at slot offset → free frame → encode PTE
+2. **Swap in**: Allocate new frame → `vfs_read()` from pagefile → copy to frame → map page → free slot
+3. **Page fault**: If PTE has swap marker → decode slot ID → `swap_in()` → retry instruction
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `swap_init(num_slots)` | Create pagefile, init slots (reads Codex config) |
+| `swap_out(virt_addr)` | Write page to pagefile, free physical frame |
+| `swap_in(swap_id, virt_addr)` | Read page from pagefile, map back |
+| `swap_handle_fault(addr, err)` | Handle page fault for swapped pages |
+| `swap_clock_register(virt)` | Track page for replacement |
+| `swap_clock_victim()` | Select victim via Clock algorithm |
+
+### Configuration (Codex)
+
+`System\Memory\SwapSlots` — number of swap slots (default: 64).
+Can be changed at runtime; takes effect on next `swap_init()`.

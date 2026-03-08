@@ -1,9 +1,9 @@
 /* ============================================================================
  * swap.c — Swap / Page File Support
  *
- * RAM-backed swap with Clock (second-chance) page replacement.
+ * Disk-backed swap with Clock (second-chance) page replacement.
+ * Uses pagefile.sys on the IXFS partition as the backing store.
  *
- * Swap out flow:
  *   1. Copy page contents to a swap slot
  *   2. Unmap the page (free the physical frame)
  *   3. Write SWAP_ENCODE_PTE(slot_id) into the PTE
@@ -26,9 +26,16 @@
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
+#include "kernel/fs/vfs.h"
+#include "kernel/drivers/framebuffer.h"
+#include "codex.h"
 
-/* --- Swap slot storage (RAM-backed) --- */
-uint8_t     *swap_store = (void *)0;  /* backing memory: slots * 4096 bytes */
+/* Path to the pagefile on disk */
+#define PAGEFILE_PATH  "C:\\Impossible\\System\\pagefile.sys"
+
+/* --- Swap slot storage (disk-backed via pagefile.sys) --- */
+static struct vfs_node *pagefile = (void *)0;  /* open file handle */
+static uint8_t   swap_temp_buf[SWAP_SLOT_SIZE] __attribute__((aligned(4096)));
 swap_slot_t  swap_slots[SWAP_MAX_SLOTS];
 static uint32_t     swap_num_slots = 0;
 uint32_t     swap_used = 0;
@@ -119,18 +126,47 @@ static void page_copy(void *dst, const void *src)
 void swap_init(uint32_t num_slots)
 {
     uint32_t i;
+    int32_t codex_slots;
 
     if (num_slots == 0)
         num_slots = SWAP_MAX_SLOTS;
     if (num_slots > SWAP_MAX_SLOTS)
         num_slots = SWAP_MAX_SLOTS;
 
-    /* Allocate backing store (num_slots × 4 KiB pages) */
-    swap_store = (uint8_t *)kmalloc(num_slots * SWAP_SLOT_SIZE);
-    if (!swap_store) {
-        printk("[SWAP] Failed to allocate %u KiB swap store\n",
-               (uint64_t)(num_slots * 4));
+    /* Check Codex for configured swap size */
+    {
+        codex_key_t *mem_key = codex_open("System\\Memory");
+        if (!mem_key)
+            mem_key = codex_create("System\\Memory");
+        if (mem_key) {
+            if (codex_get_int32(mem_key, "SwapSlots", &codex_slots) == 0) {
+                if (codex_slots > 0 && (uint32_t)codex_slots <= SWAP_MAX_SLOTS)
+                    num_slots = (uint32_t)codex_slots;
+            } else {
+                /* Store default value in Codex */
+                codex_set_int32(mem_key, "SwapSlots", (int32_t)num_slots);
+            }
+        }
+    }
+
+    /* Create the pagefile on disk */
+    if (!vfs_is_mounted('C')) {
+        printk("[SWAP] C: drive not mounted — swap disabled\n");
         return;
+    }
+
+    vfs_create(PAGEFILE_PATH, VFS_FILE);
+    pagefile = vfs_open(PAGEFILE_PATH, VFS_O_READ | VFS_O_WRITE);
+    if (!pagefile) {
+        printk("[SWAP] Failed to open pagefile — swap disabled\n");
+        return;
+    }
+
+    /* Pre-allocate pagefile size by writing a zero byte at the end */
+    {
+        uint8_t zero = 0;
+        uint32_t end_offset = num_slots * SWAP_SLOT_SIZE - 1;
+        vfs_write(pagefile, end_offset, 1, &zero);
     }
 
     /* Initialize slot table */
@@ -151,7 +187,10 @@ void swap_init(uint32_t num_slots)
     clock_count = 0;
     swap_inited = 1;
 
-    printk("[OK] Swap initialized: %u slots (%u KiB)\n",
+    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
+    printk("[OK] ");
+    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+    printk("Swap initialized: %u slots (%u KiB) — disk-backed pagefile.sys\n",
            (uint64_t)num_slots, (uint64_t)(num_slots * 4));
 }
 
@@ -159,9 +198,10 @@ int swap_out(uintptr_t virt_addr)
 {
     uint32_t i;
     uintptr_t phys;
-    uint8_t *slot_buf;
+    uint32_t slot_offset;
+    int rc;
 
-    if (!swap_inited)
+    if (!swap_inited || !pagefile)
         return -1;
 
     /* Find a free swap slot */
@@ -182,9 +222,14 @@ int swap_out(uintptr_t virt_addr)
         return -1;
     }
 
-    /* Copy page contents to swap slot */
-    slot_buf = swap_store + (i * SWAP_SLOT_SIZE);
-    page_copy(slot_buf, (const void *)virt_addr);
+    /* Copy page contents to temp buffer, then write to pagefile */
+    page_copy(swap_temp_buf, (const void *)virt_addr);
+    slot_offset = i * SWAP_SLOT_SIZE;
+    rc = vfs_write(pagefile, slot_offset, SWAP_SLOT_SIZE, swap_temp_buf);
+    if (rc < 0) {
+        printk("[SWAP] Failed to write slot %u to pagefile\n", (uint64_t)i);
+        return -1;
+    }
 
     /* Unmap the page and free the physical frame */
     vmm_unmap_page(virt_addr, 1);
@@ -203,9 +248,10 @@ int swap_out(uintptr_t virt_addr)
 int swap_in(uint32_t swap_id, uintptr_t virt_addr)
 {
     uintptr_t new_frame;
-    uint8_t *slot_buf;
+    uint32_t slot_offset;
+    int rc;
 
-    if (!swap_inited || swap_id >= swap_num_slots)
+    if (!swap_inited || !pagefile || swap_id >= swap_num_slots)
         return -1;
 
     if (!swap_slots[swap_id].in_use)
@@ -226,12 +272,20 @@ int swap_in(uint32_t swap_id, uintptr_t virt_addr)
         }
     }
 
+    /* Read swap slot contents from pagefile into temp buffer */
+    slot_offset = swap_id * SWAP_SLOT_SIZE;
+    rc = vfs_read(pagefile, slot_offset, SWAP_SLOT_SIZE, swap_temp_buf);
+    if (rc < 0) {
+        printk("[SWAP] Failed to read slot %u from pagefile\n", (uint64_t)swap_id);
+        pmm_free_frame(new_frame);
+        return -1;
+    }
+
     /* Map the new frame at the virtual address */
     vmm_map_page(virt_addr, new_frame, VMM_KERNEL_RW);
 
-    /* Copy swap slot contents to the new page */
-    slot_buf = swap_store + (swap_id * SWAP_SLOT_SIZE);
-    page_copy((void *)virt_addr, slot_buf);
+    /* Copy temp buffer contents to the new page */
+    page_copy((void *)virt_addr, swap_temp_buf);
 
     /* Free the swap slot */
     swap_slots[swap_id].in_use = 0;

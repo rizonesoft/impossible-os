@@ -714,63 +714,66 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* === Swap test (explicit swap out → swap in data path) === */
     {
-        uint8_t *swap_src;
-        uint8_t *swap_dst;
+        /* Allocate a test page via PMM + VMM */
+        uintptr_t test_phys = pmm_alloc_frame();
+        uintptr_t test_virt = 0x800000;  /* 8 MiB — safe test address */
         uint32_t swap_ok = 1;
         uint32_t k;
+        int slot_id;
 
-        printk("\n  Swap test: write pattern, copy to swap slot, read back, verify\n");
+        printk("\n  Swap test: write pattern, swap out to pagefile, swap in, verify\n");
 
         swap_init(64);  /* 64 slots = 256 KiB swap */
 
-        swap_src = (uint8_t *)kmalloc(4096);
-        swap_dst = (uint8_t *)kmalloc(4096);
+        if (test_phys) {
+            vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
 
-        if (swap_src && swap_dst) {
             /* Write known pattern */
-            for (k = 0; k < 4096; k++)
-                swap_src[k] = (uint8_t)(k & 0xFF);
-
-            printk("    Written 4 KiB pattern to %p\n", (uintptr_t)swap_src);
-
-            /* Copy pattern into swap slot 0 */
             {
+                uint8_t *page = (uint8_t *)test_virt;
                 for (k = 0; k < 4096; k++)
-                    swap_store[k] = swap_src[k];
-                swap_slots[0].in_use = 1;
-                swap_slots[0].virt_addr = (uintptr_t)swap_src;
-                swap_used++;
+                    page[k] = (uint8_t)(k & 0xFF);
             }
 
-            /* Zero the source (simulate frame deallocation) */
-            for (k = 0; k < 4096; k++)
-                swap_src[k] = 0;
+            printk("    Written 4 KiB pattern to virt %p\n", test_virt);
 
-            printk("    Swapped out to slot 0, source zeroed\n");
+            /* Register the page for clock tracking */
+            swap_clock_register(test_virt);
 
-            /* Read back from swap slot 0 */
-            {
-                for (k = 0; k < 4096; k++)
-                    swap_dst[k] = swap_store[k];
-                swap_slots[0].in_use = 0;
-                swap_used--;
-            }
+            /* Swap out to pagefile.sys */
+            slot_id = swap_out(test_virt);
+            if (slot_id >= 0) {
+                printk("    Swapped out to slot %d (pagefile.sys)\n", (uint64_t)(uint32_t)slot_id);
 
-            printk("    Swapped in from slot 0\n");
+                /* Swap back in */
+                if (swap_in((uint32_t)slot_id, test_virt) == 0) {
+                    printk("    Swapped in from slot %d\n", (uint64_t)(uint32_t)slot_id);
 
-            /* Verify pattern */
-            for (k = 0; k < 4096; k++) {
-                if (swap_dst[k] != (uint8_t)(k & 0xFF)) {
+                    /* Verify pattern */
+                    {
+                        uint8_t *page = (uint8_t *)test_virt;
+                        for (k = 0; k < 4096; k++) {
+                            if (page[k] != (uint8_t)(k & 0xFF)) {
+                                swap_ok = 0;
+                                break;
+                            }
+                        }
+                    }
+                } else {
                     swap_ok = 0;
-                    break;
                 }
+            } else {
+                swap_ok = 0;
             }
+
+            /* Clean up test mapping */
+            vmm_unmap_page(test_virt, 1);
 
             if (swap_ok) {
                 fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
                 printk("[OK] ");
                 fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Swap test passed (4 KiB pattern verified, %u/%u slots)\n",
+                printk("Swap test passed (4 KiB pattern verified via pagefile.sys, %u/%u slots)\n",
                        (uint64_t)swap_get_used_slots(),
                        (uint64_t)swap_get_total_slots());
             } else {
@@ -779,9 +782,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
                 printk("Swap test: mismatch at byte %u\n", (uint64_t)k);
             }
-
-            kfree(swap_src);
-            kfree(swap_dst);
         } else {
             fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
             printk("[FAIL] ");

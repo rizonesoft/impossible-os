@@ -4,9 +4,8 @@
  * Virtual memory swap subsystem. When physical memory is low, pages can be
  * "swapped out" to a backing store and retrieved on demand via page faults.
  *
- * Current backing store: RAM-based (simulated swap area). When a real disk
- * filesystem is available, the I/O functions can be replaced with
- * ATA/disk writes to C:\Impossible\System\pagefile.sys.
+ * Backing store: pagefile.sys on the IXFS partition
+ * (C:\Impossible\System\pagefile.sys). Swap I/O uses VFS read/write.
  *
  * Page replacement uses a Clock (second-chance) algorithm scanning the
  * Accessed bit in page table entries.
@@ -58,7 +57,6 @@ typedef struct clock_entry {
 } clock_entry_t;
 
 /* --- Globals (defined in swap.c) --- */
-extern uint8_t     *swap_store;
 extern swap_slot_t  swap_slots[];
 extern uint32_t     swap_used;
 
