@@ -38,6 +38,67 @@ Each task has a `struct task` containing:
 | `stack_base` | Bottom of the kernel stack |
 | `exit_status` | Return code from `sys_exit()` |
 | `parent_pid` | For `waitpid()` support |
+| `threads[]` | Per-task thread pool (`THREAD_MAX` = 16) |
+| `num_threads` | Active thread count (thread 0 = main) |
+
+## Kernel Threads
+
+Each task can spawn up to 16 threads that share the same PID and address space.
+Threads are the actual schedulable units — the scheduler picks the next ready task,
+then picks its active thread.
+
+### Thread Control Block
+
+| Field | Description |
+|-------|-------------|
+| `id` | Thread ID (unique within parent task) |
+| `state` | `THREAD_RUNNING`, `THREAD_READY`, `THREAD_BLOCKED`, `THREAD_DEAD` |
+| `rsp` | Saved stack pointer (interrupt frame) |
+| `stack_base` | Base of allocated stack (for `kfree`) |
+| `stack_size` | Allocated stack size (default: 8 KiB) |
+| `parent_task` | Index into `tasks[]` (owning task) |
+| `exit_status` | Set on `THREAD_DEAD` |
+| `join_tid` | Thread we're blocked on (`-1` = none) |
+
+### Thread API
+
+| Function | Description |
+|----------|-------------|
+| `thread_create(entry, arg, stack_size)` | Spawn a new thread in current task (returns TID) |
+| `thread_exit(status)` | Exit current thread, wake joiners |
+| `thread_join(thread_id)` | Block until target thread exits, return status |
+| `thread_yield()` | Cooperative context switch (same as `yield()`) |
+| `thread_current()` | Get current `struct thread *` |
+
+### Design
+
+| Property | Value |
+|----------|-------|
+| Max threads per task | 16 (`THREAD_MAX`) |
+| Default stack size | 8 KiB (`THREAD_STACK_SIZE`) |
+| Scheduling | Threads share the round-robin scheduler with tasks |
+| Shared state | Threads share PID, address space, and heap |
+| Thread 0 | Main thread — created implicitly by `task_create()` |
+
+### Thread Lifecycle
+
+```
+thread_create()
+      │
+      ▼
+   READY ──── scheduled ───► RUNNING
+      │                         │
+      │                    thread_exit()
+      │                         │
+      │                         ▼
+      │                       DEAD ── thread_join() collects
+      │
+      ├── thread_join(tid) ──► BLOCKED
+      │                         │
+      │                    target exits
+      │                         │
+      └──── woken ◄────────────┘
+```
 
 ## Scheduler
 
