@@ -173,6 +173,53 @@ thread_create()
 - **Counting semaphore** (init count = N): Limit concurrent access to N slots
 - **Event signaling** (init count = 0): Producer signals, consumer waits
 
+## Pipes (IPC)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/ipc/pipe.c` | Pipe implementation (202 lines) |
+| `include/kernel/ipc/pipe.h` | `pipe_t` struct and API |
+
+### `pipe_t` Structure
+
+| Field | Description |
+|-------|-------------|
+| `buf[4096]` | 4 KiB ring buffer |
+| `read_pos` | Read cursor into ring buffer |
+| `write_pos` | Write cursor into ring buffer |
+| `count` | Bytes currently in buffer |
+| `lock` | `mutex_t` — protects buffer state |
+| `readable` | `semaphore_t` — signaled when data available |
+| `writable` | `semaphore_t` — signaled when space available |
+| `read_open` | 1 if read end is open |
+| `write_open` | 1 if write end is open |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `pipe_create(fds[2])` | Allocate pipe, set `fds[0]`=read, `fds[1]`=write |
+| `pipe_write(pipe, data, len)` | Write bytes — blocks if full |
+| `pipe_read(pipe, buf, len)` | Read bytes — blocks if empty, returns 0 on EOF |
+| `pipe_close(pipe, end)` | Close one end — broken pipe on write to closed read end |
+| `SYS_PIPE` (33) | Syscall wrapper |
+
+### Data Flow
+
+```
+Writer                          Reader
+  │                               │
+  ├─ sem_wait(writable) ──────►  blocked on sem_wait(readable)
+  ├─ mutex_lock(lock)             │
+  ├─ copy byte to ring buf        │
+  ├─ mutex_unlock(lock)           │
+  ├─ sem_signal(readable) ───────► woken, reads byte
+  │                               ├─ sem_signal(writable)
+  ▼                               ▼
+```
+
 ## Scheduler
 
 ### Key Files
