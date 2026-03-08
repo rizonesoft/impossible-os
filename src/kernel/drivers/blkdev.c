@@ -113,10 +113,10 @@ void blkdev_list(void)
 
         uint64_t size_mb = (devices[i].sector_count *
                             (uint64_t)devices[i].sector_size) / (1024 * 1024);
-        printk("  %-10s %u MiB (%u sectors, %u B/sec)\n",
+        printk("  %s: %u MiB (%u sectors, %u B/sec)\n",
                devices[i].name,
                size_mb,
-               devices[i].sector_count,
+               (uint64_t)devices[i].sector_count,
                (uint64_t)devices[i].sector_size);
     }
 }
