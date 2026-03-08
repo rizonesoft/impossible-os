@@ -72,13 +72,17 @@ CFLAGS := -Wall -Wextra -Werror \
 These are installed via `apt` (Ubuntu 24.04 packages):
 
 | Tool | Version | Package | Purpose |
-|------|---------|---------|---------|
+|------|---------|---------|---------| 
 | NASM | 2.16.01 | `nasm` | x86-64 assembler (Intel/NASM syntax) |
 | GNU Make | 4.3 | `build-essential` | Build automation |
 | GCC (host) | 13.3.0 | `build-essential` | Host tools (e.g., `mkfs-ixfs`, `jpg2raw`) |
-| xorriso | — | `xorriso` | ISO 9660 image creation |
-| mtools | — | `mtools` | FAT filesystem manipulation for ISOs |
+| xorriso | — | `xorriso` | ISO 9660 image creation (test disks + ISO) |
+| mtools | — | `mtools` | FAT filesystem manipulation (mcopy, mmd) |
 | grub-mkrescue | 2.12 | `grub-pc-bin grub-common` | GRUB bootable ISO creation |
+| genisoimage | — | `genisoimage` | ISO/UDF image creation (test disks) |
+| mkudffs | — | `udftools` | UDF filesystem creation (test disks) |
+| exfatprogs | — | `exfatprogs` | exFAT filesystem creation (test disks) |
+| ntfs-3g | — | `ntfs-3g` | NTFS creation and file copy (test disks) |
 | Git | 2.43.0 | `git` | Version control |
 
 ### Install All (One Command)
@@ -88,5 +92,6 @@ sudo apt update && sudo apt install -y \
     build-essential bison flex texinfo nasm \
     libgmp3-dev libmpc-dev libmpfr-dev \
     xorriso mtools grub-pc-bin grub-common \
-    qemu-system-x86 ovmf git
+    qemu-system-x86 ovmf git \
+    genisoimage udftools exfatprogs ntfs-3g
 ```

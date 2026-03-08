@@ -62,7 +62,8 @@ impossible-os/
 ├── tools/                     # Build tools
 │   ├── make-system-disk.c     # GPT system disk builder
 │   ├── mkfs-ixfs.c            # IXFS formatter + populator
-│   └── jpg2raw.c              # JPG/PNG to raw BGRA converter
+│   ├── jpg2raw.c              # JPG/PNG to raw BGRA converter
+│   └── make-test-disks.sh     # FS + optical test image generator
 │
 ├── assets/                    # Raw image assets
 │
