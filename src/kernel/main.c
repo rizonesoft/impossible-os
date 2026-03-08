@@ -50,6 +50,7 @@
 #include "desktop/terminal.h"
 #include "kernel/acpi.h"
 #include "kernel/version.h"
+#include "codex.h"
 
 /* ---- Block device adapter wrappers ----
  * These adapt driver-specific APIs to the blkdev function pointer signature:
@@ -328,6 +329,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         printk("Heap: alloc/free/realloc test passed (used: %u, free: %u bytes)\n",
                heap_get_used(), heap_get_free());
     }
+
+    /* Initialize the Codex registry */
+    codex_init();
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {

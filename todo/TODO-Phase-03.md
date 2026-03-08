@@ -11,30 +11,30 @@
 
 ### 1.1 Core In-Memory Tree
 
-- [ ] Define `codex_type_t` enum: STRING, INT32, INT64, BINARY, BOOL
-- [ ] Define `codex_value_t` struct (name, type, data union, data_size)
-- [ ] Define `codex_key_t` struct (name, parent, children list, sibling list, values list)
-- [ ] Create `include/codex.h` and `src/kernel/codex.c`
-- [ ] Implement `codex_init()` — initialize empty tree with root keys
-- [ ] Implement `codex_open(path)` — navigate tree by backslash-separated path
-- [ ] Implement `codex_create(path)` — create key if it doesn't exist
-- [ ] Implement `codex_delete_key(path)` — remove key and all children
-- [ ] Commit: `"kernel: Codex registry tree structure"`
+- [x] Define `codex_type_t` enum: STRING, INT32, INT64, BINARY, BOOL
+- [x] Define `codex_value_t` struct (name, type, data union, data_size)
+- [x] Define `codex_key_t` struct (name, parent, children list, sibling list, values list)
+- [x] Create `include/codex.h` and `src/kernel/codex.c`
+- [x] Implement `codex_init()` — initialize empty tree with root keys
+- [x] Implement `codex_open(path)` — navigate tree by backslash-separated path
+- [x] Implement `codex_create(path)` — create key if it doesn't exist
+- [x] Implement `codex_delete_key(path)` — remove key and all children
+- [x] Commit: `"kernel: Codex registry tree structure"`
 
 ### 1.2 Value Accessors
 
-- [ ] Implement `codex_get_string(key, name, buf, buf_size)`
-- [ ] Implement `codex_get_int32(key, name, out)`
-- [ ] Implement `codex_get_int64(key, name, out)`
-- [ ] Implement `codex_get_bool(key, name, out)`
-- [ ] Implement `codex_set_string(key, name, value)`
-- [ ] Implement `codex_set_int32(key, name, value)`
-- [ ] Implement `codex_set_int64(key, name, value)`
-- [ ] Implement `codex_set_bool(key, name, value)`
-- [ ] Implement `codex_delete_value(key, name)`
-- [ ] Implement `codex_enum_keys(key, index, name, size)` — iterate subkeys
-- [ ] Implement `codex_enum_values(key, index, out)` — iterate values
-- [ ] Commit: `"kernel: Codex get/set/enum operations"`
+- [x] Implement `codex_get_string(key, name, buf, buf_size)`
+- [x] Implement `codex_get_int32(key, name, out)`
+- [x] Implement `codex_get_int64(key, name, out)`
+- [x] Implement `codex_get_bool(key, name, out)`
+- [x] Implement `codex_set_string(key, name, value)`
+- [x] Implement `codex_set_int32(key, name, value)`
+- [x] Implement `codex_set_int64(key, name, value)`
+- [x] Implement `codex_set_bool(key, name, value)`
+- [x] Implement `codex_delete_value(key, name)`
+- [x] Implement `codex_enum_keys(key, index, name, size)` — iterate subkeys
+- [x] Implement `codex_enum_values(key, index, out)` — iterate values
+- [x] Commit: `"kernel: Codex get/set/enum operations"`
 
 ### 1.3 Pre-Populated Defaults
 
