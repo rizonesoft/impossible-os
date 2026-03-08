@@ -19,6 +19,7 @@
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
 #include "kernel/acpi.h"
+#include "desktop/terminal.h"
 
 /* ---- Wallpaper pixel buffer ---- */
 static uint32_t *wallpaper_buf;       /* PMM-allocated (identity-mapped) */
@@ -443,9 +444,10 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                 wm_mark_dirty();
 
                 switch (item) {
-                case 0:  /* Terminal — launch shell */
+                case 0:  /* Terminal — open terminal window + launch shell */
                 {
                     extern void shell_loader_func(void);
+                    terminal_open();
                     task_create(shell_loader_func, "ShellLoader");
                     break;
                 }

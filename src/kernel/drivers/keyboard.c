@@ -13,6 +13,7 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/printk.h"
 #include "kernel/ipc/signal.h"
+#include "desktop/terminal.h"
 
 /* --- Port I/O --- */
 #define KB_DATA_PORT  0x60
@@ -113,10 +114,30 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
         /* Only handle key presses (bit 7 clear) */
         if (!(scancode & 0x80)) {
             switch (scancode) {
-            case 0x48: kb_buffer_push((char)KEY_UP);    break;  /* Up arrow */
-            case 0x50: kb_buffer_push((char)KEY_DOWN);  break;  /* Down arrow */
-            case 0x4B: kb_buffer_push((char)KEY_LEFT);  break;  /* Left arrow */
-            case 0x4D: kb_buffer_push((char)KEY_RIGHT); break;  /* Right arrow */
+            case 0x48:  /* Up arrow */
+                if (terminal_is_open())
+                    terminal_key_input((char)KEY_UP);
+                else
+                    kb_buffer_push((char)KEY_UP);
+                break;
+            case 0x50:  /* Down arrow */
+                if (terminal_is_open())
+                    terminal_key_input((char)KEY_DOWN);
+                else
+                    kb_buffer_push((char)KEY_DOWN);
+                break;
+            case 0x4B:  /* Left arrow */
+                if (terminal_is_open())
+                    terminal_key_input((char)KEY_LEFT);
+                else
+                    kb_buffer_push((char)KEY_LEFT);
+                break;
+            case 0x4D:  /* Right arrow */
+                if (terminal_is_open())
+                    terminal_key_input((char)KEY_RIGHT);
+                else
+                    kb_buffer_push((char)KEY_RIGHT);
+                break;
             default: break;
             }
         }
@@ -184,9 +205,13 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
         goto done;
     }
 
-    /* Push printable/control characters into the buffer */
-    if (c != 0)
-        kb_buffer_push(c);
+    /* Push printable/control characters into the appropriate buffer */
+    if (c != 0) {
+        if (terminal_is_open())
+            terminal_key_input(c);
+        else
+            kb_buffer_push(c);
+    }
 
 done:
     (void)alt_held;  /* suppress unused warning (reserved for future use) */

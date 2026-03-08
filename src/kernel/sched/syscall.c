@@ -21,6 +21,7 @@
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ipc/shmem.h"
+#include "desktop/terminal.h"
 
 /* --- Port I/O helper --- */
 static inline void outb_sc(uint16_t port, uint8_t val)
@@ -60,11 +61,19 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
         if (str[i] == '\0')
             break;
         printk("%c", (int)str[i]);
+        /* Also send to terminal window if open */
+        if (terminal_is_open())
+            terminal_putchar(str[i]);
     }
+
+    /* Re-render terminal after batch write */
+    if (terminal_is_open())
+        terminal_render();
+
     return (int64_t)i;
 }
 
-/* SYS_READ: blocking read from stdin (keyboard + serial). */
+/* SYS_READ: blocking read from stdin (keyboard + serial, or terminal). */
 static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 {
     uint64_t i;
@@ -76,9 +85,13 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
     if (!dst || len == 0)
         return 0;
 
-    /* Wait for the first byte (from keyboard OR serial) */
+    /* Wait for the first byte */
     for (;;) {
-        c = input_trygetchar();
+        if (terminal_is_open()) {
+            c = terminal_trygetchar();
+        } else {
+            c = input_trygetchar();
+        }
         if (c != 0)
             break;
         yield();
@@ -87,7 +100,10 @@ static int64_t sys_read(uint64_t fd, uint64_t buf, uint64_t len)
 
     /* Fill remaining bytes non-blocking */
     for (i = 1; i < len; i++) {
-        c = input_trygetchar();
+        if (terminal_is_open())
+            c = terminal_trygetchar();
+        else
+            c = input_trygetchar();
         if (c == 0)
             break;
         dst[i] = c;
