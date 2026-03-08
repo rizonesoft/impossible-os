@@ -220,6 +220,52 @@ Writer                          Reader
   ▼                               ▼
 ```
 
+## Signals (IPC)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `src/kernel/ipc/signal.c` | Signal delivery and dispatch |
+| `include/kernel/ipc/signal.h` | Signal constants, `signal_state` struct |
+
+### Signal Constants
+
+| Signal | Number | Default Action |
+|--------|--------|----------------|
+| `SIGINT` | 2 | Terminate (Ctrl+C) |
+| `SIGKILL` | 9 | Always terminate (uncatchable) |
+| `SIGTERM` | 15 | Clean termination |
+| `SIGCHLD` | 17 | Ignore |
+
+### Per-Task Signal State
+
+| Field | Description |
+|-------|-------------|
+| `handlers[SIG_MAX]` | Per-signal handler table (`SIG_DFL` / `SIG_IGN` / function) |
+| `pending` | Bitmask of pending signals |
+
+### API
+
+| Function | Description |
+|----------|-------------|
+| `signal_send(pid, sig)` | Send signal to task — sets pending bit, wakes blocked tasks |
+| `signal_handler(sig, handler)` | Register handler (SIGKILL uncatchable) — returns previous |
+| `signal_check()` | Dispatch pending signals (called from scheduler/yield) |
+| `signal_ctrl_c()` | Send SIGINT to foreground task (from keyboard driver) |
+| `signal_init_task(ss)` | Initialize signal state for new task |
+| `SYS_SIGNAL` (34) | Syscall wrapper |
+
+### Signal Dispatch Flow
+
+1. `signal_send()` sets bit in target's `pending` mask
+2. If target is BLOCKED/WAITING, wake it to READY
+3. `signal_check()` scans pending bits each scheduler tick
+4. SIGKILL → always terminate (ignoring handler)
+5. SIG_IGN → skip
+6. SIG_DFL → default action table
+7. Custom handler → direct call
+
 ## Scheduler
 
 ### Key Files
