@@ -221,9 +221,6 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 	@cp $(BOOT_DIR)/grub.cfg $(BUILD_DIR)/efi_staging/boot/grub/grub.cfg
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
-	@# Patch BPB total_sectors_32 (offset 32) to 524288 = 256 MiB
-	@# mkfs.fat --offset writes 510 MiB (formats to end-of-file, ignoring GPT)
-	@printf '\x00\x00\x08\x00' | dd of=$@ bs=1 seek=$$(( $(EFI_OFFSET) + 32 )) conv=notrunc status=none
 	@# Step 3: Format IXFS partition and populate with system files
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \
@@ -240,7 +237,7 @@ run: all
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
-		-device ahci,id=ahci0 \
+		-device ich9-ahci,id=ahci0 \
 		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial stdio \
@@ -259,7 +256,7 @@ run-debug: all
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
-		-device ahci,id=ahci0 \
+		-device ich9-ahci,id=ahci0 \
 		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial stdio \
@@ -279,7 +276,7 @@ run-log: all
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
-		-device ahci,id=ahci0 \
+		-device ich9-ahci,id=ahci0 \
 		-device ide-hd,drive=disk0,bus=ahci0.0 \
 		-m 2G \
 		-serial file:serial.log \

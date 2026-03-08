@@ -1549,6 +1549,10 @@ int fat32_init(const struct blkdev *dev)
     if (bpb.total_sectors == 0)
         bpb.total_sectors = *(uint32_t *)&sector_buf[32];
 
+    /* Cap to actual partition size (BPB may exceed GPT partition boundary) */
+    if (dev->sector_count > 0 && bpb.total_sectors > (uint32_t)dev->sector_count)
+        bpb.total_sectors = (uint32_t)dev->sector_count;
+
     /* Compute layout */
     bpb.first_fat_sector  = bpb.reserved_sectors;
     root_dir_sectors      = 0;   /* FAT32 has no fixed root dir */
