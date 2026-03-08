@@ -331,11 +331,11 @@
 - [x] Commit: `"fs: IXFS directory hash index"`
 
 #### 5.5.4 Multi-Volume Support
-- [ ] Remove static globals: wrap all state in `struct ixfs_volume`
-- [ ] Each mounted IXFS partition gets its own `ixfs_volume` instance
-- [ ] Pass volume pointer through VFS `fs_data` / `priv_data`
-- [ ] Support mounting multiple IXFS partitions simultaneously (C:\, E:\, etc.)
-- [ ] Commit: `"fs: IXFS multi-volume support"`
+- [x] Remove static globals: wrap all state in `struct ixfs_volume`
+- [x] Each mounted IXFS partition gets its own `ixfs_volume` instance
+- [x] Pass volume pointer through VFS `fs_data` / `priv_data`
+- [x] Support mounting multiple IXFS partitions simultaneously (C:\, E:\, etc.)
+- [x] Commit: `"fs: IXFS multi-volume support"`
 
 ### 5.6 Extent-Based Allocation
 

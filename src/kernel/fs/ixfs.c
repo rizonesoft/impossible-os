@@ -20,18 +20,70 @@
 /* Number of inodes to allocate (fixed at format time) */
 #define IXFS_DEFAULT_INODES  256
 
-/* Block device the IXFS volume resides on */
-static const struct blkdev *ixfs_dev;
+/* --- Multi-volume types and constants --- */
 
-/* In-memory superblock */
-static struct ixfs_superblock sb;
+#define IXFS_MAX_VOLUMES     4
+#define IXFS_CACHE_SIZE      64   /* cached blocks per volume */
+#define IXFS_MAX_OPEN_NODES  64   /* open vnodes per volume */
 
-/* In-memory block bitmap (loaded at mount) */
-static uint8_t *block_bitmap;
-static uint32_t bitmap_bytes;
+/* Buffer cache entry (per-volume, in-memory) */
+struct ixfs_cache_entry {
+    uint32_t block;           /* block number (0xFFFFFFFF = unused) */
+    uint8_t  data[IXFS_BLOCK_SIZE];
+    uint8_t  dirty;           /* 1 = needs write-back */
+    uint32_t lru_tick;        /* higher = more recently used */
+};
 
-/* Scratch buffer for block-level I/O (4 KiB) */
-static uint8_t blk_buf[IXFS_BLOCK_SIZE];
+/* Hash index for large directories (per-vnode, in-memory) */
+struct ixfs_hash_node {
+    uint32_t entry_index;
+    uint32_t next;
+};
+
+struct ixfs_dir_hash {
+    uint32_t bucket[128];
+    struct ixfs_hash_node *nodes;
+    uint32_t node_count;
+    uint32_t node_capacity;
+};
+
+/* Forward declaration */
+struct ixfs_volume;
+
+/* Per-file/directory in-memory node */
+struct ixfs_vnode {
+    struct vfs_node    node;
+    uint32_t           ino;
+    struct ixfs_inode  inode;
+    struct ixfs_dir_hash *dir_hash;
+    struct ixfs_volume *vol;      /* back-pointer to owning volume */
+};
+
+/* Per-volume state — one for each mounted IXFS partition */
+struct ixfs_volume {
+    int                      in_use;
+    const struct blkdev     *dev;
+    struct ixfs_superblock   sb;
+    uint8_t                 *block_bitmap;
+    uint32_t                 bitmap_bytes;
+    uint8_t                  blk_buf[IXFS_BLOCK_SIZE];
+    struct ixfs_block_group  groups[IXFS_MAX_BLOCK_GROUPS];
+    uint32_t                 group_count;
+    struct ixfs_cache_entry  cache[IXFS_CACHE_SIZE];
+    uint32_t                 cache_tick;
+    struct ixfs_vnode        vnodes[IXFS_MAX_OPEN_NODES];
+    uint32_t                 vnode_count;
+    struct vfs_dirent        dirent;
+};
+
+static struct ixfs_volume volumes[IXFS_MAX_VOLUMES];
+
+/* Forward declarations for internal functions */
+static int ixfs_disk_read(struct ixfs_volume *vol, uint32_t block, void *buf);
+static int ixfs_disk_write(struct ixfs_volume *vol, uint32_t block, const void *buf);
+static struct ixfs_cache_entry *ixfs_cache_find(struct ixfs_volume *vol, uint32_t block);
+static struct ixfs_cache_entry *ixfs_cache_lru(struct ixfs_volume *vol);
+static int ixfs_cache_flush(struct ixfs_volume *vol);
 
 /* --- Internal: string helpers --- */
 
@@ -55,60 +107,49 @@ static int ixfs_strcmp(const char *a, const char *b)
 /* --- Raw disk I/O (low-level, used by cache layer only) --- */
 
 /* Read a single IXFS block directly from disk (4 KiB = 8 sectors) */
-static int ixfs_disk_read(uint32_t block, void *buf)
+static int ixfs_disk_read(struct ixfs_volume *vol, uint32_t block, void *buf)
 {
     uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
-    return blkdev_read(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
+    return blkdev_read(vol->dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
 /* Write a single IXFS block directly to disk (4 KiB = 8 sectors) */
-static int ixfs_disk_write(uint32_t block, const void *buf)
+static int ixfs_disk_write(struct ixfs_volume *vol, uint32_t block, const void *buf)
 {
     uint64_t lba = (uint64_t)block * IXFS_SECTORS_PER_BLK;
-    return blkdev_write(ixfs_dev, lba, IXFS_SECTORS_PER_BLK, buf);
+    return blkdev_write(vol->dev, lba, IXFS_SECTORS_PER_BLK, buf);
 }
 
 /* --- Buffer cache (LRU, write-back) --- */
 
-#define IXFS_CACHE_SIZE  64   /* number of cached blocks */
-
-struct ixfs_cache_entry {
-    uint32_t block;           /* block number (0xFFFFFFFF = unused) */
-    uint8_t  data[IXFS_BLOCK_SIZE];
-    uint8_t  dirty;           /* 1 = needs write-back to disk */
-    uint32_t lru_tick;        /* higher = more recently used */
-};
-
-static struct ixfs_cache_entry cache[IXFS_CACHE_SIZE];
-static uint32_t cache_tick;   /* global LRU counter */
 
 /* Initialize the cache (call on format/mount) */
-static void ixfs_cache_init(void)
+static void ixfs_cache_init(struct ixfs_volume *vol)
 {
     uint32_t i;
     for (i = 0; i < IXFS_CACHE_SIZE; i++) {
-        cache[i].block = 0xFFFFFFFF;
-        cache[i].dirty = 0;
-        cache[i].lru_tick = 0;
+        vol->cache[i].block = 0xFFFFFFFF;
+        vol->cache[i].dirty = 0;
+        vol->cache[i].lru_tick = 0;
     }
-    cache_tick = 0;
+    vol->cache_tick = 0;
 }
 
 /* Find a cache entry for the given block, or NULL on miss */
-static struct ixfs_cache_entry *ixfs_cache_find(uint32_t block)
+static struct ixfs_cache_entry *ixfs_cache_find(struct ixfs_volume *vol, uint32_t block)
 {
     uint32_t i;
     for (i = 0; i < IXFS_CACHE_SIZE; i++) {
-        if (cache[i].block == block) {
-            cache[i].lru_tick = ++cache_tick;
-            return &cache[i];
+        if (vol->cache[i].block == block) {
+            vol->cache[i].lru_tick = ++vol->cache_tick;
+            return &vol->cache[i];
         }
     }
     return (struct ixfs_cache_entry *)0;
 }
 
 /* Find the LRU (least recently used) entry for eviction */
-static struct ixfs_cache_entry *ixfs_cache_lru(void)
+static struct ixfs_cache_entry *ixfs_cache_lru(struct ixfs_volume *vol)
 {
     uint32_t i;
     uint32_t min_tick = 0xFFFFFFFF;
@@ -116,31 +157,31 @@ static struct ixfs_cache_entry *ixfs_cache_lru(void)
 
     /* Prefer an empty slot */
     for (i = 0; i < IXFS_CACHE_SIZE; i++) {
-        if (cache[i].block == 0xFFFFFFFF)
-            return &cache[i];
+        if (vol->cache[i].block == 0xFFFFFFFF)
+            return &vol->cache[i];
     }
 
     /* Otherwise evict the least recently used */
     for (i = 0; i < IXFS_CACHE_SIZE; i++) {
-        if (cache[i].lru_tick < min_tick) {
-            min_tick = cache[i].lru_tick;
+        if (vol->cache[i].lru_tick < min_tick) {
+            min_tick = vol->cache[i].lru_tick;
             min_idx = i;
         }
     }
-    return &cache[min_idx];
+    return &vol->cache[min_idx];
 }
 
 /* Flush all dirty cache entries to disk */
-static int ixfs_cache_flush(void)
+static int ixfs_cache_flush(struct ixfs_volume *vol)
 {
     uint32_t i;
     int err = 0;
     for (i = 0; i < IXFS_CACHE_SIZE; i++) {
-        if (cache[i].block != 0xFFFFFFFF && cache[i].dirty) {
-            if (ixfs_disk_write(cache[i].block, cache[i].data) != 0)
+        if (vol->cache[i].block != 0xFFFFFFFF && vol->cache[i].dirty) {
+            if (ixfs_disk_write(vol, vol->cache[i].block, vol->cache[i].data) != 0)
                 err = -1;
             else
-                cache[i].dirty = 0;
+                vol->cache[i].dirty = 0;
         }
     }
     return err;
@@ -149,13 +190,13 @@ static int ixfs_cache_flush(void)
 /* --- Cached block I/O (used by all ixfs code) --- */
 
 /* Read a block via the cache. Returns 0 on success. */
-static int ixfs_read_block(uint32_t block, void *buf)
+static int ixfs_read_block(struct ixfs_volume *vol, uint32_t block, void *buf)
 {
     struct ixfs_cache_entry *ce;
     uint32_t i;
 
     /* Cache hit */
-    ce = ixfs_cache_find(block);
+    ce = ixfs_cache_find(vol, block);
     if (ce) {
         uint8_t *dst = (uint8_t *)buf;
         const uint8_t *src = ce->data;
@@ -165,21 +206,21 @@ static int ixfs_read_block(uint32_t block, void *buf)
     }
 
     /* Cache miss — find slot (evict LRU if needed) */
-    ce = ixfs_cache_lru();
+    ce = ixfs_cache_lru(vol);
 
     /* Flush dirty evictee */
     if (ce->block != 0xFFFFFFFF && ce->dirty) {
-        ixfs_disk_write(ce->block, ce->data);
+        ixfs_disk_write(vol, ce->block, ce->data);
         ce->dirty = 0;
     }
 
     /* Read from disk into cache */
-    if (ixfs_disk_read(block, ce->data) != 0)
+    if (ixfs_disk_read(vol, block, ce->data) != 0)
         return -1;
 
     ce->block = block;
     ce->dirty = 0;
-    ce->lru_tick = ++cache_tick;
+    ce->lru_tick = ++vol->cache_tick;
 
     /* Copy to caller's buffer */
     {
@@ -192,19 +233,19 @@ static int ixfs_read_block(uint32_t block, void *buf)
 }
 
 /* Write a block via the cache (deferred — only marks dirty). */
-static int ixfs_write_block(uint32_t block, const void *buf)
+static int ixfs_write_block(struct ixfs_volume *vol, uint32_t block, const void *buf)
 {
     struct ixfs_cache_entry *ce;
     uint32_t i;
     const uint8_t *src = (const uint8_t *)buf;
 
     /* Check if already cached */
-    ce = ixfs_cache_find(block);
+    ce = ixfs_cache_find(vol, block);
     if (!ce) {
         /* Not cached — get a slot */
-        ce = ixfs_cache_lru();
+        ce = ixfs_cache_lru(vol);
         if (ce->block != 0xFFFFFFFF && ce->dirty) {
-            ixfs_disk_write(ce->block, ce->data);
+            ixfs_disk_write(vol, ce->block, ce->data);
         }
         ce->block = block;
     }
@@ -213,18 +254,18 @@ static int ixfs_write_block(uint32_t block, const void *buf)
     for (i = 0; i < IXFS_BLOCK_SIZE; i++)
         ce->data[i] = src[i];
     ce->dirty = 1;
-    ce->lru_tick = ++cache_tick;
+    ce->lru_tick = ++vol->cache_tick;
 
     return 0;
 }
 
 /* Zero a block (via cache — deferred to disk) */
-static int ixfs_zero_block(uint32_t block)
+static int ixfs_zero_block(struct ixfs_volume *vol, uint32_t block)
 {
     uint32_t i;
     for (i = 0; i < IXFS_BLOCK_SIZE; i++)
-        blk_buf[i] = 0;
-    return ixfs_write_block(block, blk_buf);
+        vol->blk_buf[i] = 0;
+    return ixfs_write_block(vol, block, vol->blk_buf);
 }
 
 /* --- Internal: bitmap operations --- */
@@ -246,64 +287,62 @@ static int bitmap_test(const uint8_t *bmap, uint32_t bit)
 
 /* --- Block group state (in-memory only) --- */
 
-static struct ixfs_block_group groups[IXFS_MAX_BLOCK_GROUPS];
-static uint32_t group_count;
 
 /* Initialize block group descriptors from the bitmap.
  * Must be called after the bitmap is loaded into memory. */
-static void ixfs_init_groups(void)
+static void ixfs_init_groups(struct ixfs_volume *vol)
 {
     uint32_t g, b;
-    uint32_t total = sb.s_total_blocks;
+    uint32_t total = vol->sb.s_total_blocks;
 
-    group_count = (total + IXFS_BLOCKS_PER_GROUP - 1) / IXFS_BLOCKS_PER_GROUP;
-    if (group_count > IXFS_MAX_BLOCK_GROUPS)
-        group_count = IXFS_MAX_BLOCK_GROUPS;
+    vol->group_count = (total + IXFS_BLOCKS_PER_GROUP - 1) / IXFS_BLOCKS_PER_GROUP;
+    if (vol->group_count > IXFS_MAX_BLOCK_GROUPS)
+        vol->group_count = IXFS_MAX_BLOCK_GROUPS;
 
-    for (g = 0; g < group_count; g++) {
+    for (g = 0; g < vol->group_count; g++) {
         uint32_t start = g * IXFS_BLOCKS_PER_GROUP;
         uint32_t end = start + IXFS_BLOCKS_PER_GROUP;
         if (end > total) end = total;
 
-        groups[g].bg_start = start;
-        groups[g].bg_count = end - start;
-        groups[g].bg_free = 0;
-        groups[g].bg_next_free = start;
+        vol->groups[g].bg_start = start;
+        vol->groups[g].bg_count = end - start;
+        vol->groups[g].bg_free = 0;
+        vol->groups[g].bg_next_free = start;
 
         /* Count free blocks and find the first free block */
         for (b = start; b < end; b++) {
-            if (!bitmap_test(block_bitmap, b)) {
-                groups[g].bg_free++;
-                if (groups[g].bg_next_free == start ||
-                    b < groups[g].bg_next_free)
-                    groups[g].bg_next_free = b;
+            if (!bitmap_test(vol->block_bitmap, b)) {
+                vol->groups[g].bg_free++;
+                if (vol->groups[g].bg_next_free == start ||
+                    b < vol->groups[g].bg_next_free)
+                    vol->groups[g].bg_next_free = b;
             }
         }
 
         /* If no free blocks, set hint past end */
-        if (groups[g].bg_free == 0)
-            groups[g].bg_next_free = end;
+        if (vol->groups[g].bg_free == 0)
+            vol->groups[g].bg_next_free = end;
     }
 }
 
 /* Allocate a block, preferring the given block group index for locality.
  * Pass preferred_group = 0xFFFFFFFF to allocate from any group.
  * Returns block number or 0 on failure. */
-static uint32_t ixfs_alloc_block_near(uint32_t preferred_group)
+static uint32_t ixfs_alloc_block_near(struct ixfs_volume *vol, uint32_t preferred_group)
 {
     uint32_t tries;
     uint32_t start_group;
 
-    if (sb.s_free_blocks == 0)
+    if (vol->sb.s_free_blocks == 0)
         return 0;
 
     /* Determine starting group */
-    start_group = (preferred_group < group_count) ? preferred_group : 0;
+    start_group = (preferred_group < vol->group_count) ? preferred_group : 0;
 
     /* Try each group, starting from the preferred one */
-    for (tries = 0; tries < group_count; tries++) {
-        uint32_t gi = (start_group + tries) % group_count;
-        struct ixfs_block_group *bg = &groups[gi];
+    for (tries = 0; tries < vol->group_count; tries++) {
+        uint32_t gi = (start_group + tries) % vol->group_count;
+        struct ixfs_block_group *bg = &vol->groups[gi];
         uint32_t b, end;
 
         if (bg->bg_free == 0)
@@ -317,10 +356,10 @@ static uint32_t ixfs_alloc_block_near(uint32_t preferred_group)
 
         /* Scan from hint to end of group */
         for (; b < end; b++) {
-            if (!bitmap_test(block_bitmap, b)) {
-                bitmap_set(block_bitmap, b);
+            if (!bitmap_test(vol->block_bitmap, b)) {
+                bitmap_set(vol->block_bitmap, b);
                 bg->bg_free--;
-                sb.s_free_blocks--;
+                vol->sb.s_free_blocks--;
                 /* Advance hint to next block */
                 bg->bg_next_free = b + 1;
                 return b;
@@ -329,10 +368,10 @@ static uint32_t ixfs_alloc_block_near(uint32_t preferred_group)
 
         /* Wrap: scan from group start to hint */
         for (b = bg->bg_start; b < bg->bg_next_free && b < end; b++) {
-            if (!bitmap_test(block_bitmap, b)) {
-                bitmap_set(block_bitmap, b);
+            if (!bitmap_test(vol->block_bitmap, b)) {
+                bitmap_set(vol->block_bitmap, b);
                 bg->bg_free--;
-                sb.s_free_blocks--;
+                vol->sb.s_free_blocks--;
                 bg->bg_next_free = b + 1;
                 return b;
             }
@@ -347,44 +386,44 @@ static uint32_t ixfs_alloc_block_near(uint32_t preferred_group)
 }
 
 /* Convenience: allocate from any group (no locality preference) */
-static uint32_t ixfs_alloc_block(void)
+static uint32_t ixfs_alloc_block(struct ixfs_volume *vol)
 {
     /* Default: prefer group 0 (where data starts), fallback to any */
-    uint32_t data_group = sb.s_data_start / IXFS_BLOCKS_PER_GROUP;
-    return ixfs_alloc_block_near(data_group);
+    uint32_t data_group = vol->sb.s_data_start / IXFS_BLOCKS_PER_GROUP;
+    return ixfs_alloc_block_near(vol, data_group);
 }
 
 /* Free a block back to the bitmap and update its group descriptor */
-static void ixfs_free_block(uint32_t block)
+static void ixfs_free_block(struct ixfs_volume *vol, uint32_t block)
 {
     uint32_t gi;
 
-    if (block < sb.s_data_start || block >= sb.s_total_blocks)
+    if (block < vol->sb.s_data_start || block >= vol->sb.s_total_blocks)
         return;
 
-    if (!bitmap_test(block_bitmap, block))
+    if (!bitmap_test(vol->block_bitmap, block))
         return;  /* already free */
 
-    bitmap_clear(block_bitmap, block);
-    sb.s_free_blocks++;
+    bitmap_clear(vol->block_bitmap, block);
+    vol->sb.s_free_blocks++;
 
     /* Update the owning group */
     gi = block / IXFS_BLOCKS_PER_GROUP;
-    if (gi < group_count) {
-        groups[gi].bg_free++;
+    if (gi < vol->group_count) {
+        vol->groups[gi].bg_free++;
         /* Move hint back if this block is earlier */
-        if (block < groups[gi].bg_next_free)
-            groups[gi].bg_next_free = block;
+        if (block < vol->groups[gi].bg_next_free)
+            vol->groups[gi].bg_next_free = block;
     }
 }
 
 /* Flush bitmap to disk */
-static int ixfs_flush_bitmap(void)
+static int ixfs_flush_bitmap(struct ixfs_volume *vol)
 {
     uint32_t i;
-    for (i = 0; i < sb.s_bitmap_blocks; i++) {
+    for (i = 0; i < vol->sb.s_bitmap_blocks; i++) {
         uint32_t offset = i * IXFS_BLOCK_SIZE;
-        uint32_t remaining = bitmap_bytes - offset;
+        uint32_t remaining = vol->bitmap_bytes - offset;
         uint32_t j;
 
         if (remaining > IXFS_BLOCK_SIZE)
@@ -392,42 +431,42 @@ static int ixfs_flush_bitmap(void)
 
         /* Copy bitmap chunk to buffer, zero-pad */
         for (j = 0; j < remaining; j++)
-            blk_buf[j] = block_bitmap[offset + j];
+            vol->blk_buf[j] = vol->block_bitmap[offset + j];
         for (; j < IXFS_BLOCK_SIZE; j++)
-            blk_buf[j] = 0;
+            vol->blk_buf[j] = 0;
 
-        if (ixfs_write_block(sb.s_bitmap_start + i, blk_buf) != 0)
+        if (ixfs_write_block(vol, vol->sb.s_bitmap_start + i, vol->blk_buf) != 0)
             return -1;
     }
-    ixfs_cache_flush();  /* ensure bitmap blocks reach disk */
+    ixfs_cache_flush(vol);  /* ensure bitmap blocks reach disk */
     return 0;
 }
 
 /* Flush superblock to disk */
-static int ixfs_flush_superblock(void)
+static int ixfs_flush_superblock(struct ixfs_volume *vol)
 {
     uint32_t i;
-    uint8_t *sp = (uint8_t *)&sb;
+    uint8_t *sp = (uint8_t *)&vol->sb;
 
     /* Zero the buffer, copy superblock into it */
     for (i = 0; i < IXFS_BLOCK_SIZE; i++)
-        blk_buf[i] = 0;
+        vol->blk_buf[i] = 0;
     for (i = 0; i < sizeof(struct ixfs_superblock); i++)
-        blk_buf[i] = sp[i];
+        vol->blk_buf[i] = sp[i];
 
-    if (ixfs_write_block(0, blk_buf) != 0)
+    if (ixfs_write_block(vol, 0, vol->blk_buf) != 0)
         return -1;
-    ixfs_cache_flush();  /* ensure superblock reaches disk */
+    ixfs_cache_flush(vol);  /* ensure superblock reaches disk */
     return 0;
 }
 
 /* --- Internal: inode I/O --- */
 
 /* Read an inode from disk */
-static int ixfs_read_inode(uint32_t ino, struct ixfs_inode *inode)
+static int ixfs_read_inode(struct ixfs_volume *vol, uint32_t ino, struct ixfs_inode *inode)
 {
     uint32_t inodes_per_block = IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode);
-    uint32_t block = sb.s_inode_start + (ino / inodes_per_block);
+    uint32_t block = vol->sb.s_inode_start + (ino / inodes_per_block);
     uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
     uint32_t i;
     uint8_t *dst;
@@ -436,7 +475,7 @@ static int ixfs_read_inode(uint32_t ino, struct ixfs_inode *inode)
     tmp_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
     if (!tmp_buf) return -1;
 
-    if (ixfs_read_block(block, tmp_buf) != 0) {
+    if (ixfs_read_block(vol, block, tmp_buf) != 0) {
         kfree(tmp_buf);
         return -1;
     }
@@ -450,10 +489,10 @@ static int ixfs_read_inode(uint32_t ino, struct ixfs_inode *inode)
 }
 
 /* Write an inode to disk */
-static int ixfs_write_inode(uint32_t ino, const struct ixfs_inode *inode)
+static int ixfs_write_inode(struct ixfs_volume *vol, uint32_t ino, const struct ixfs_inode *inode)
 {
     uint32_t inodes_per_block = IXFS_BLOCK_SIZE / sizeof(struct ixfs_inode);
-    uint32_t block = sb.s_inode_start + (ino / inodes_per_block);
+    uint32_t block = vol->sb.s_inode_start + (ino / inodes_per_block);
     uint32_t offset = (ino % inodes_per_block) * sizeof(struct ixfs_inode);
     uint32_t i;
     const uint8_t *src;
@@ -463,7 +502,7 @@ static int ixfs_write_inode(uint32_t ino, const struct ixfs_inode *inode)
     if (!tmp_buf) return -1;
 
     /* Read the block first (to preserve other inodes in the same block) */
-    if (ixfs_read_block(block, tmp_buf) != 0) {
+    if (ixfs_read_block(vol, block, tmp_buf) != 0) {
         kfree(tmp_buf);
         return -1;
     }
@@ -472,48 +511,22 @@ static int ixfs_write_inode(uint32_t ino, const struct ixfs_inode *inode)
     for (i = 0; i < sizeof(struct ixfs_inode); i++)
         tmp_buf[offset + i] = src[i];
 
-    i = ixfs_write_block(block, tmp_buf);
+    i = ixfs_write_block(vol, block, tmp_buf);
     kfree(tmp_buf);
     return i;
 }
 
 /* --- VFS node storage --- */
-/* --- Directory hash index (in-memory, for large directories) --- */
-
-#define IXFS_HASH_BUCKETS   128   /* number of hash buckets */
-#define IXFS_HASH_THRESHOLD 64    /* entries before hash index kicks in */
+/* Directory hash index constants */
+#define IXFS_HASH_BUCKETS   128
+#define IXFS_HASH_THRESHOLD 64
 #define IXFS_HASH_CHAIN_END 0xFFFFFFFF
 
-/* Each hash node maps a bucket chain: entry_index → next_in_chain */
-struct ixfs_hash_node {
-    uint32_t entry_index;    /* directory entry index */
-    uint32_t next;           /* index into hash_nodes[] or CHAIN_END */
-};
-
-struct ixfs_dir_hash {
-    uint32_t bucket[IXFS_HASH_BUCKETS]; /* head index into nodes[] per bucket */
-    struct ixfs_hash_node *nodes;       /* dynamically allocated chain nodes */
-    uint32_t node_count;                /* how many nodes are used */
-    uint32_t node_capacity;             /* allocated capacity */
-};
-
-#define IXFS_MAX_OPEN_NODES 64
-
-struct ixfs_vnode {
-    struct vfs_node    node;
-    uint32_t           ino;
-    struct ixfs_inode  inode;
-    struct ixfs_dir_hash *dir_hash;     /* non-NULL if hash index built */
-};
-
-static struct ixfs_vnode vnodes[IXFS_MAX_OPEN_NODES];
-static uint32_t vnode_count;
-static struct vfs_dirent ixfs_dirent;
 
 /* Forward declarations */
 static struct vfs_ops ixfs_file_ops;
 static struct vfs_ops ixfs_dir_ops;
-static uint32_t ixfs_get_block(const struct ixfs_inode *inode, uint32_t index);
+static uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode, uint32_t index);
 
 /* --- FNV-1a hash for directory names --- */
 
@@ -540,7 +553,7 @@ static void ixfs_hash_free(struct ixfs_vnode *v)
 
 /* Build a hash index for a directory vnode.
  * Scans all directory entries and hashes their names into buckets. */
-static void ixfs_hash_build(struct ixfs_vnode *v)
+static void ixfs_hash_build(struct ixfs_volume *vol, struct ixfs_vnode *v)
 {
     uint32_t total_entries;
     uint32_t i, b;
@@ -587,10 +600,10 @@ static void ixfs_hash_build(struct ixfs_vnode *v)
         uint32_t bucket_idx;
         uint32_t ni;
 
-        disk_block = ixfs_get_block(&v->inode, blk_idx);
+        disk_block = ixfs_get_block(vol, &v->inode, blk_idx);
         if (disk_block == 0) break;
 
-        if (ixfs_read_block(disk_block, data_buf) != 0)
+        if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
 
         de = (struct ixfs_dir_entry *)(data_buf + blk_off);
@@ -610,7 +623,7 @@ static void ixfs_hash_build(struct ixfs_vnode *v)
 
 /* Lookup a name in the hash index. Returns the entry index or 0xFFFFFFFF.
  * The caller must still read the block and verify the name (for collision). */
-static uint32_t ixfs_hash_lookup(struct ixfs_vnode *v, const char *name,
+static uint32_t ixfs_hash_lookup(struct ixfs_volume *vol, struct ixfs_vnode *v, const char *name,
                                  uint8_t *data_buf)
 {
     struct ixfs_dir_hash *dh = v->dir_hash;
@@ -630,10 +643,10 @@ static uint32_t ixfs_hash_lookup(struct ixfs_vnode *v, const char *name,
         uint32_t disk_block;
         struct ixfs_dir_entry *de;
 
-        disk_block = ixfs_get_block(&v->inode, blk_idx);
+        disk_block = ixfs_get_block(vol, &v->inode, blk_idx);
         if (disk_block == 0) break;
 
-        if (ixfs_read_block(disk_block, data_buf) != 0)
+        if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
 
         de = (struct ixfs_dir_entry *)(data_buf + blk_off);
@@ -647,26 +660,27 @@ static uint32_t ixfs_hash_lookup(struct ixfs_vnode *v, const char *name,
 }
 
 /* Get or create a vnode for an inode number */
-static struct ixfs_vnode *ixfs_get_vnode(uint32_t ino)
+static struct ixfs_vnode *ixfs_get_vnode(struct ixfs_volume *vol, uint32_t ino)
 {
     uint32_t i;
     struct ixfs_vnode *v;
 
     /* Check if already cached */
-    for (i = 0; i < vnode_count; i++) {
-        if (vnodes[i].ino == ino)
-            return &vnodes[i];
+    for (i = 0; i < vol->vnode_count; i++) {
+        if (vol->vnodes[i].ino == ino)
+            return &vol->vnodes[i];
     }
 
     /* Create new */
-    if (vnode_count >= IXFS_MAX_OPEN_NODES)
+    if (vol->vnode_count >= IXFS_MAX_OPEN_NODES)
         return (struct ixfs_vnode *)0;
 
-    v = &vnodes[vnode_count];
+    v = &vol->vnodes[vol->vnode_count];
     v->ino = ino;
+    v->vol = vol;
     v->dir_hash = (struct ixfs_dir_hash *)0;
 
-    if (ixfs_read_inode(ino, &v->inode) != 0)
+    if (ixfs_read_inode(vol, ino, &v->inode) != 0)
         return (struct ixfs_vnode *)0;
 
     v->node.inode = ino;
@@ -683,12 +697,12 @@ static struct ixfs_vnode *ixfs_get_vnode(uint32_t ino)
         v->node.ops = &ixfs_file_ops;
     }
 
-    vnode_count++;
+    vol->vnode_count++;
     return v;
 }
 
 /* --- Internal: get block number for a given file block index --- */
-static uint32_t ixfs_get_block(const struct ixfs_inode *inode, uint32_t index)
+static uint32_t ixfs_get_block(struct ixfs_volume *vol, const struct ixfs_inode *inode, uint32_t index)
 {
     if (index < IXFS_DIRECT_BLOCKS) {
         return inode->i_direct[index];
@@ -700,10 +714,10 @@ static uint32_t ixfs_get_block(const struct ixfs_inode *inode, uint32_t index)
         uint32_t *ptrs;
         uint32_t blk;
 
-        if (ixfs_read_block(inode->i_indirect, blk_buf) != 0)
+        if (ixfs_read_block(vol, inode->i_indirect, vol->blk_buf) != 0)
             return 0;
 
-        ptrs = (uint32_t *)blk_buf;
+        ptrs = (uint32_t *)vol->blk_buf;
         blk = ptrs[index];
         return blk;
     }
@@ -729,6 +743,7 @@ static int ixfs_file_read(struct vfs_node *node, uint32_t offset,
                           uint32_t size, uint8_t *buffer)
 {
     struct ixfs_vnode *v = (struct ixfs_vnode *)node->fs_data;
+    struct ixfs_volume *vol = v->vol;
     uint32_t bytes_read = 0;
     uint32_t blk_index, blk_offset;
     uint8_t *data_buf;
@@ -746,13 +761,13 @@ static int ixfs_file_read(struct vfs_node *node, uint32_t offset,
     blk_offset = offset % IXFS_BLOCK_SIZE;
 
     while (bytes_read < size) {
-        uint32_t disk_block = ixfs_get_block(&v->inode, blk_index);
+        uint32_t disk_block = ixfs_get_block(vol, &v->inode, blk_index);
         uint32_t to_read;
         uint32_t i;
 
         if (disk_block == 0) break;
 
-        if (ixfs_read_block(disk_block, data_buf) != 0)
+        if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
 
         to_read = IXFS_BLOCK_SIZE - blk_offset;
@@ -772,7 +787,7 @@ static int ixfs_file_read(struct vfs_node *node, uint32_t offset,
     /* Update access time */
     if (bytes_read > 0) {
         v->inode.i_atime = (uint32_t)uptime();
-        ixfs_write_inode(v->ino, &v->inode);
+        ixfs_write_inode(vol, v->ino, &v->inode);
     }
 
     return (int)bytes_read;
@@ -782,6 +797,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
                            uint32_t size, const uint8_t *buffer)
 {
     struct ixfs_vnode *v = (struct ixfs_vnode *)node->fs_data;
+    struct ixfs_volume *vol = v->vol;
     uint32_t bytes_written = 0;
     uint32_t blk_index, blk_offset;
     uint8_t *data_buf;
@@ -795,13 +811,13 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
     blk_offset = offset % IXFS_BLOCK_SIZE;
 
     while (bytes_written < size) {
-        uint32_t disk_block = ixfs_get_block(&v->inode, blk_index);
+        uint32_t disk_block = ixfs_get_block(vol, &v->inode, blk_index);
         uint32_t to_write;
         uint32_t i;
 
         /* Allocate a new block if needed */
         if (disk_block == 0) {
-            disk_block = ixfs_alloc_block();
+            disk_block = ixfs_alloc_block(vol);
             if (disk_block == 0) break;
 
             /* Store in inode */
@@ -809,7 +825,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
                 v->inode.i_direct[blk_index] = disk_block;
             } else {
                 /* Would need indirect block handling for large files */
-                ixfs_free_block(disk_block);
+                ixfs_free_block(vol, disk_block);
                 break;
             }
             v->inode.i_blocks++;
@@ -819,7 +835,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
                 data_buf[i] = 0;
         } else {
             /* Read existing block for partial writes */
-            if (ixfs_read_block(disk_block, data_buf) != 0)
+            if (ixfs_read_block(vol, disk_block, data_buf) != 0)
                 break;
         }
 
@@ -830,7 +846,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
         for (i = 0; i < to_write; i++)
             data_buf[blk_offset + i] = buffer[bytes_written + i];
 
-        if (ixfs_write_block(disk_block, data_buf) != 0)
+        if (ixfs_write_block(vol, disk_block, data_buf) != 0)
             break;
 
         bytes_written += to_write;
@@ -847,9 +863,9 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
 
     /* Flush inode to disk */
     v->node.size = v->inode.i_size;
-    ixfs_write_inode(v->ino, &v->inode);
-    ixfs_flush_bitmap();
-    ixfs_flush_superblock();
+    ixfs_write_inode(vol, v->ino, &v->inode);
+    ixfs_flush_bitmap(vol);
+    ixfs_flush_superblock(vol);
 
     kfree(data_buf);
     return (int)bytes_written;
@@ -871,6 +887,7 @@ static struct vfs_ops ixfs_file_ops = {
 static struct vfs_dirent *ixfs_readdir(struct vfs_node *node, uint32_t index)
 {
     struct ixfs_vnode *v = (struct ixfs_vnode *)node->fs_data;
+    struct ixfs_volume *vol = v->vol;
     uint32_t byte_offset;
     uint32_t blk_index, blk_offset;
     uint32_t disk_block;
@@ -894,10 +911,10 @@ static struct vfs_dirent *ixfs_readdir(struct vfs_node *node, uint32_t index)
         blk_index = byte_offset / IXFS_BLOCK_SIZE;
         blk_offset = byte_offset % IXFS_BLOCK_SIZE;
 
-        disk_block = ixfs_get_block(&v->inode, blk_index);
+        disk_block = ixfs_get_block(vol, &v->inode, blk_index);
         if (disk_block == 0) break;
 
-        if (ixfs_read_block(disk_block, data_buf) != 0)
+        if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
 
         de = (struct ixfs_dir_entry *)(data_buf + blk_offset);
@@ -913,22 +930,22 @@ static struct vfs_dirent *ixfs_readdir(struct vfs_node *node, uint32_t index)
             continue;
 
         if (count == index) {
-            ixfs_strcpy(ixfs_dirent.name, de->d_name, VFS_MAX_NAME);
-            ixfs_dirent.inode = de->d_inode;
+            ixfs_strcpy(vol->dirent.name, de->d_name, VFS_MAX_NAME);
+            vol->dirent.inode = de->d_inode;
 
             /* Look up the inode to determine type */
             {
                 struct ixfs_inode tmp;
-                if (ixfs_read_inode(de->d_inode, &tmp) == 0) {
-                    ixfs_dirent.type = (tmp.i_mode & IXFS_S_DIR)
+                if (ixfs_read_inode(vol, de->d_inode, &tmp) == 0) {
+                    vol->dirent.type = (tmp.i_mode & IXFS_S_DIR)
                                      ? VFS_DIRECTORY : VFS_FILE;
                 } else {
-                    ixfs_dirent.type = VFS_FILE;
+                    vol->dirent.type = VFS_FILE;
                 }
             }
 
             kfree(data_buf);
-            return &ixfs_dirent;
+            return &vol->dirent;
         }
         count++;
     }
@@ -943,6 +960,7 @@ static struct vfs_dirent *ixfs_readdir(struct vfs_node *node, uint32_t index)
 static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
 {
     struct ixfs_vnode *v = (struct ixfs_vnode *)node->fs_data;
+    struct ixfs_volume *vol = v->vol;
     uint32_t total_entries;
     uint32_t i;
     uint8_t *data_buf;
@@ -960,22 +978,22 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
 
         /* Build hash index lazily on first access */
         if (!v->dir_hash)
-            ixfs_hash_build(v);
+            ixfs_hash_build(vol, v);
 
-        ei = ixfs_hash_lookup(v, name, data_buf);
+        ei = ixfs_hash_lookup(vol, v, name, data_buf);
         if (ei != IXFS_HASH_CHAIN_END) {
             uint32_t byte_off = ei * sizeof(struct ixfs_dir_entry);
             uint32_t blk_idx = byte_off / IXFS_BLOCK_SIZE;
             uint32_t blk_off = byte_off % IXFS_BLOCK_SIZE;
-            uint32_t disk_block = ixfs_get_block(&v->inode, blk_idx);
+            uint32_t disk_block = ixfs_get_block(vol, &v->inode, blk_idx);
             struct ixfs_dir_entry *de;
             struct ixfs_vnode *found;
 
             if (disk_block != 0 &&
-                ixfs_read_block(disk_block, data_buf) == 0) {
+                ixfs_read_block(vol, disk_block, data_buf) == 0) {
                 de = (struct ixfs_dir_entry *)(data_buf + blk_off);
                 kfree(data_buf);
-                found = ixfs_get_vnode(de->d_inode);
+                found = ixfs_get_vnode(vol, de->d_inode);
                 if (!found) return (struct vfs_node *)0;
                 ixfs_strcpy(found->node.name, name, VFS_MAX_NAME);
                 return &found->node;
@@ -994,10 +1012,10 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
         uint32_t disk_block;
         struct ixfs_dir_entry *de;
 
-        disk_block = ixfs_get_block(&v->inode, blk_index);
+        disk_block = ixfs_get_block(vol, &v->inode, blk_index);
         if (disk_block == 0) break;
 
-        if (ixfs_read_block(disk_block, data_buf) != 0)
+        if (ixfs_read_block(vol, disk_block, data_buf) != 0)
             break;
 
         de = (struct ixfs_dir_entry *)(data_buf + blk_offset);
@@ -1006,7 +1024,7 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
             struct ixfs_vnode *found;
 
             kfree(data_buf);
-            found = ixfs_get_vnode(de->d_inode);
+            found = ixfs_get_vnode(vol, de->d_inode);
             if (!found) return (struct vfs_node *)0;
 
             ixfs_strcpy(found->node.name, name, VFS_MAX_NAME);
@@ -1021,6 +1039,7 @@ static struct vfs_node *ixfs_finddir(struct vfs_node *node, const char *name)
 static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 {
     struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
+    struct ixfs_volume *vol = pv->vol;
     uint32_t new_ino;
     struct ixfs_inode new_inode;
     uint32_t dir_block;
@@ -1034,9 +1053,9 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 
     /* Find a free inode (0 = reserved, 1 = root) */
     new_ino = 0;
-    for (i = 2; i < sb.s_total_inodes; i++) {
+    for (i = 2; i < vol->sb.s_total_inodes; i++) {
         struct ixfs_inode tmp;
-        if (ixfs_read_inode(i, &tmp) == 0 && tmp.i_mode == 0) {
+        if (ixfs_read_inode(vol, i, &tmp) == 0 && tmp.i_mode == 0) {
             new_ino = i;
             break;
         }
@@ -1067,7 +1086,7 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 
     /* If directory, allocate an initial data block for . and .. */
     if (type == VFS_DIRECTORY) {
-        uint32_t blk = ixfs_alloc_block();
+        uint32_t blk = ixfs_alloc_block(vol);
         if (blk == 0) return -1;
 
         new_inode.i_direct[0] = blk;
@@ -1087,12 +1106,12 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
         de[1].d_inode = pv->ino;
         ixfs_strcpy(de[1].d_name, "..", IXFS_MAX_NAME);
 
-        ixfs_write_block(blk, data_buf);
+        ixfs_write_block(vol, blk, data_buf);
         kfree(data_buf);
     }
 
-    ixfs_write_inode(new_ino, &new_inode);
-    sb.s_free_inodes--;
+    ixfs_write_inode(vol, new_ino, &new_inode);
+    vol->sb.s_free_inodes--;
 
     /* Add directory entry to parent */
     total_entries = pv->inode.i_size / sizeof(struct ixfs_dir_entry);
@@ -1106,17 +1125,17 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
         uint32_t bi = byte_off / IXFS_BLOCK_SIZE;
         uint32_t bo = byte_off % IXFS_BLOCK_SIZE;
 
-        dir_block = ixfs_get_block(&pv->inode, bi);
+        dir_block = ixfs_get_block(vol, &pv->inode, bi);
         if (dir_block == 0) break;
 
-        if (ixfs_read_block(dir_block, data_buf) != 0) break;
+        if (ixfs_read_block(vol, dir_block, data_buf) != 0) break;
 
         de = (struct ixfs_dir_entry *)(data_buf + bo);
         if (de->d_inode == 0) {
             found_slot = (int)i;
             de->d_inode = new_ino;
             ixfs_strcpy(de->d_name, name, IXFS_MAX_NAME);
-            ixfs_write_block(dir_block, data_buf);
+            ixfs_write_block(vol, dir_block, data_buf);
             break;
         }
     }
@@ -1127,11 +1146,11 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
         uint32_t bi = byte_off / IXFS_BLOCK_SIZE;
         uint32_t bo = byte_off % IXFS_BLOCK_SIZE;
 
-        dir_block = ixfs_get_block(&pv->inode, bi);
+        dir_block = ixfs_get_block(vol, &pv->inode, bi);
 
         if (dir_block == 0 && bi < IXFS_DIRECT_BLOCKS) {
             /* Allocate a new block for the directory */
-            dir_block = ixfs_alloc_block();
+            dir_block = ixfs_alloc_block(vol);
             if (dir_block == 0) { kfree(data_buf); return -1; }
             pv->inode.i_direct[bi] = dir_block;
             pv->inode.i_blocks++;
@@ -1142,7 +1161,7 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
             kfree(data_buf);
             return -1;
         } else {
-            if (ixfs_read_block(dir_block, data_buf) != 0) {
+            if (ixfs_read_block(vol, dir_block, data_buf) != 0) {
                 kfree(data_buf);
                 return -1;
             }
@@ -1151,16 +1170,16 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
         de = (struct ixfs_dir_entry *)(data_buf + bo);
         de->d_inode = new_ino;
         ixfs_strcpy(de->d_name, name, IXFS_MAX_NAME);
-        ixfs_write_block(dir_block, data_buf);
+        ixfs_write_block(vol, dir_block, data_buf);
 
         pv->inode.i_size += sizeof(struct ixfs_dir_entry);
     }
 
     /* Flush parent inode */
     pv->node.size = pv->inode.i_size;
-    ixfs_write_inode(pv->ino, &pv->inode);
-    ixfs_flush_bitmap();
-    ixfs_flush_superblock();
+    ixfs_write_inode(vol, pv->ino, &pv->inode);
+    ixfs_flush_bitmap(vol);
+    ixfs_flush_superblock(vol);
 
     /* Invalidate hash index — will rebuild on next finddir */
     ixfs_hash_free(pv);
@@ -1172,6 +1191,7 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 static int ixfs_unlink(struct vfs_node *parent, const char *name)
 {
     struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
+    struct ixfs_volume *vol = pv->vol;
     uint32_t total_entries;
     uint32_t i;
     uint8_t *data_buf;
@@ -1190,10 +1210,10 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
         uint32_t dir_block;
         struct ixfs_dir_entry *de;
 
-        dir_block = ixfs_get_block(&pv->inode, bi);
+        dir_block = ixfs_get_block(vol, &pv->inode, bi);
         if (dir_block == 0) break;
 
-        if (ixfs_read_block(dir_block, data_buf) != 0) break;
+        if (ixfs_read_block(vol, dir_block, data_buf) != 0) break;
 
         de = (struct ixfs_dir_entry *)(data_buf + bo);
 
@@ -1203,7 +1223,7 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
             uint32_t j;
 
             /* Read the target inode */
-            if (ixfs_read_inode(target_ino, &target) != 0) {
+            if (ixfs_read_inode(vol, target_ino, &target) != 0) {
                 kfree(data_buf);
                 return -1;
             }
@@ -1221,11 +1241,11 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
                     uint32_t d_off = d_idx * sizeof(struct ixfs_dir_entry);
                     uint32_t d_bi = d_off / IXFS_BLOCK_SIZE;
                     uint32_t d_bo = d_off % IXFS_BLOCK_SIZE;
-                    uint32_t d_blk = ixfs_get_block(&target, d_bi);
+                    uint32_t d_blk = ixfs_get_block(vol, &target, d_bi);
                     struct ixfs_dir_entry *child;
 
                     if (d_blk == 0) break;
-                    if (ixfs_read_block(d_blk, dir_buf) != 0) break;
+                    if (ixfs_read_block(vol, d_blk, dir_buf) != 0) break;
 
                     child = (struct ixfs_dir_entry *)(dir_buf + d_bo);
                     if (child->d_inode == 0) continue;
@@ -1248,23 +1268,23 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
             /* Free all direct data blocks */
             for (j = 0; j < IXFS_DIRECT_BLOCKS; j++) {
                 if (target.i_direct[j] != 0)
-                    ixfs_free_block(target.i_direct[j]);
+                    ixfs_free_block(vol, target.i_direct[j]);
             }
 
             /* Free indirect block and its referenced blocks */
             if (target.i_indirect != 0) {
                 uint8_t *ind_buf = (uint8_t *)kmalloc(IXFS_BLOCK_SIZE);
                 if (ind_buf) {
-                    if (ixfs_read_block(target.i_indirect, ind_buf) == 0) {
+                    if (ixfs_read_block(vol, target.i_indirect, ind_buf) == 0) {
                         uint32_t *ptrs = (uint32_t *)ind_buf;
                         for (j = 0; j < IXFS_PTRS_PER_BLOCK; j++) {
                             if (ptrs[j] != 0)
-                                ixfs_free_block(ptrs[j]);
+                                ixfs_free_block(vol, ptrs[j]);
                         }
                     }
                     kfree(ind_buf);
                 }
-                ixfs_free_block(target.i_indirect);
+                ixfs_free_block(vol, target.i_indirect);
             }
 
             /* Zero the inode on disk */
@@ -1273,26 +1293,26 @@ static int ixfs_unlink(struct vfs_node *parent, const char *name)
                 for (j = 0; j < sizeof(struct ixfs_inode); j++)
                     p[j] = 0;
             }
-            ixfs_write_inode(target_ino, &target);
-            sb.s_free_inodes++;
+            ixfs_write_inode(vol, target_ino, &target);
+            vol->sb.s_free_inodes++;
 
             /* Clear the directory entry */
             de->d_inode = 0;
             de->d_name[0] = '\0';
-            ixfs_write_block(dir_block, data_buf);
+            ixfs_write_block(vol, dir_block, data_buf);
 
             /* Remove from vnode cache if present */
-            for (j = 0; j < vnode_count; j++) {
-                if (vnodes[j].ino == target_ino) {
-                    vnodes[j].ino = 0;
+            for (j = 0; j < vol->vnode_count; j++) {
+                if (vol->vnodes[j].ino == target_ino) {
+                    vol->vnodes[j].ino = 0;
                     break;
                 }
             }
 
             /* Flush metadata */
-            ixfs_write_inode(pv->ino, &pv->inode);
-            ixfs_flush_bitmap();
-            ixfs_flush_superblock();
+            ixfs_write_inode(vol, pv->ino, &pv->inode);
+            ixfs_flush_bitmap(vol);
+            ixfs_flush_superblock(vol);
 
             /* Invalidate hash index — will rebuild on next finddir */
             ixfs_hash_free(pv);
@@ -1311,6 +1331,7 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
                const char *new_name)
 {
     struct ixfs_vnode *pv = (struct ixfs_vnode *)parent->fs_data;
+    struct ixfs_volume *vol = pv->vol;
     uint32_t total_entries;
     uint32_t i;
     uint8_t *data_buf;
@@ -1330,21 +1351,21 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
         uint32_t dir_block;
         struct ixfs_dir_entry *de;
 
-        dir_block = ixfs_get_block(&pv->inode, bi);
+        dir_block = ixfs_get_block(vol, &pv->inode, bi);
         if (dir_block == 0) break;
 
-        if (ixfs_read_block(dir_block, data_buf) != 0) break;
+        if (ixfs_read_block(vol, dir_block, data_buf) != 0) break;
 
         de = (struct ixfs_dir_entry *)(data_buf + bo);
 
         if (de->d_inode != 0 && ixfs_strcmp(de->d_name, old_name)) {
             /* Found — update the name */
             ixfs_strcpy(de->d_name, new_name, IXFS_MAX_NAME);
-            ixfs_write_block(dir_block, data_buf);
+            ixfs_write_block(vol, dir_block, data_buf);
 
             /* Update parent timestamps */
             pv->inode.i_mtime = (uint32_t)uptime();
-            ixfs_write_inode(pv->ino, &pv->inode);
+            ixfs_write_inode(vol, pv->ino, &pv->inode);
 
             kfree(data_buf);
             return 0;
@@ -1379,6 +1400,22 @@ static struct vfs_fs_driver ixfs_driver = {
 
 int ixfs_format(const struct blkdev *dev, const char *volume_name)
 {
+    struct ixfs_volume *vol;
+    uint32_t vi;
+
+    /* Find a free volume slot */
+    vol = (struct ixfs_volume *)0;
+    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+        if (!volumes[vi].in_use) {
+            vol = &volumes[vi];
+            break;
+        }
+    }
+    if (!vol) {
+        printk("[FAIL] IXFS: no free volume slot\n");
+        return -1;
+    }
+
     uint32_t total_blocks;
     uint32_t bitmap_blocks_needed;
     uint32_t inode_blocks;
@@ -1389,8 +1426,8 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     uint32_t root_data_block;
     uint8_t *p;
 
-    ixfs_dev = dev;
-    ixfs_cache_init();
+    vol->dev = dev;
+    ixfs_cache_init(vol);
     total_blocks = (uint32_t)(dev->sector_count / IXFS_SECTORS_PER_BLK);
 
     /* Calculate layout */
@@ -1405,83 +1442,83 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
                 + 1;                   /* root directory data block */
 
     /* Build superblock */
-    p = (uint8_t *)&sb;
+    p = (uint8_t *)&vol->sb;
     for (i = 0; i < sizeof(struct ixfs_superblock); i++)
         p[i] = 0;
 
-    sb.s_magic         = IXFS_MAGIC;
-    sb.s_version       = IXFS_VERSION;
-    sb.s_block_size    = IXFS_BLOCK_SIZE;
-    sb.s_total_blocks  = total_blocks;
-    sb.s_free_blocks   = total_blocks - used_blocks;
-    sb.s_total_inodes  = IXFS_DEFAULT_INODES;
-    sb.s_free_inodes   = IXFS_DEFAULT_INODES - 2; /* inode 0 reserved, inode 1 root */
-    sb.s_bitmap_start  = 1;
-    sb.s_bitmap_blocks = bitmap_blocks_needed;
-    sb.s_inode_start   = 1 + bitmap_blocks_needed;
-    sb.s_inode_blocks  = inode_blocks;
-    sb.s_data_start    = 1 + bitmap_blocks_needed + inode_blocks;
-    sb.s_root_inode    = IXFS_ROOT_INODE;
+    vol->sb.s_magic         = IXFS_MAGIC;
+    vol->sb.s_version       = IXFS_VERSION;
+    vol->sb.s_block_size    = IXFS_BLOCK_SIZE;
+    vol->sb.s_total_blocks  = total_blocks;
+    vol->sb.s_free_blocks   = total_blocks - used_blocks;
+    vol->sb.s_total_inodes  = IXFS_DEFAULT_INODES;
+    vol->sb.s_free_inodes   = IXFS_DEFAULT_INODES - 2; /* inode 0 reserved, inode 1 root */
+    vol->sb.s_bitmap_start  = 1;
+    vol->sb.s_bitmap_blocks = bitmap_blocks_needed;
+    vol->sb.s_inode_start   = 1 + bitmap_blocks_needed;
+    vol->sb.s_inode_blocks  = inode_blocks;
+    vol->sb.s_data_start    = 1 + bitmap_blocks_needed + inode_blocks;
+    vol->sb.s_root_inode    = IXFS_ROOT_INODE;
 
     if (volume_name)
-        ixfs_strcpy((char *)sb.s_volume_name, volume_name, 32);
+        ixfs_strcpy((char *)vol->sb.s_volume_name, volume_name, 32);
     else
-        ixfs_strcpy((char *)sb.s_volume_name, "IXFS", 32);
+        ixfs_strcpy((char *)vol->sb.s_volume_name, "IXFS", 32);
 
     /* Write superblock */
-    if (ixfs_flush_superblock() != 0) {
+    if (ixfs_flush_superblock(vol) != 0) {
         printk("[FAIL] IXFS format: cannot write superblock\n");
         return -1;
     }
 
     /* Zero the bitmap blocks */
     for (i = 0; i < bitmap_blocks_needed; i++) {
-        if (ixfs_zero_block(sb.s_bitmap_start + i) != 0)
+        if (ixfs_zero_block(vol, vol->sb.s_bitmap_start + i) != 0)
             return -1;
     }
 
     /* Zero the inode table blocks */
     for (i = 0; i < inode_blocks; i++) {
-        if (ixfs_zero_block(sb.s_inode_start + i) != 0)
+        if (ixfs_zero_block(vol, vol->sb.s_inode_start + i) != 0)
             return -1;
     }
 
     /* Set up in-memory bitmap */
-    bitmap_bytes = (total_blocks + 7) / 8;
-    block_bitmap = (uint8_t *)kmalloc(bitmap_bytes);
-    if (!block_bitmap) return -1;
+    vol->bitmap_bytes = (total_blocks + 7) / 8;
+    vol->block_bitmap = (uint8_t *)kmalloc(vol->bitmap_bytes);
+    if (!vol->block_bitmap) return -1;
 
-    for (i = 0; i < bitmap_bytes; i++)
-        block_bitmap[i] = 0;
+    for (i = 0; i < vol->bitmap_bytes; i++)
+        vol->block_bitmap[i] = 0;
 
     /* Mark metadata blocks as used in bitmap */
     for (i = 0; i < used_blocks; i++)
-        bitmap_set(block_bitmap, i);
+        bitmap_set(vol->block_bitmap, i);
 
     /* Flush bitmap to disk */
-    ixfs_flush_bitmap();
+    ixfs_flush_bitmap(vol);
 
     /* Initialize block group descriptors */
-    ixfs_init_groups();
+    ixfs_init_groups(vol);
 
     /* Create root directory inode (inode 1) */
     p = (uint8_t *)&root_inode;
     for (i = 0; i < sizeof(struct ixfs_inode); i++)
         p[i] = 0;
 
-    root_data_block = sb.s_data_start; /* first data block */
+    root_data_block = vol->sb.s_data_start; /* first data block */
     root_inode.i_mode      = IXFS_S_DIR | IXFS_PERM_DIR;
     root_inode.i_links     = 1;
     root_inode.i_size      = 2 * sizeof(struct ixfs_dir_entry); /* . and .. */
     root_inode.i_blocks    = 1;
     root_inode.i_direct[0] = root_data_block;
 
-    if (ixfs_write_inode(IXFS_ROOT_INODE, &root_inode) != 0)
+    if (ixfs_write_inode(vol, IXFS_ROOT_INODE, &root_inode) != 0)
         return -1;
 
     /* Write root directory data block with . and .. */
     for (i = 0; i < IXFS_BLOCK_SIZE; i++)
-        blk_buf[i] = 0;
+        vol->blk_buf[i] = 0;
 
     p = (uint8_t *)&root_dirs[0];
     for (i = 0; i < sizeof(root_dirs); i++)
@@ -1494,90 +1531,107 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
 
     p = (uint8_t *)root_dirs;
     for (i = 0; i < sizeof(root_dirs); i++)
-        blk_buf[i] = p[i];
+        vol->blk_buf[i] = p[i];
 
-    if (ixfs_write_block(root_data_block, blk_buf) != 0)
+    if (ixfs_write_block(vol, root_data_block, vol->blk_buf) != 0)
         return -1;
 
     printk("[OK] IXFS formatted: %u blocks, %u inodes, \"%s\"\n",
            (uint64_t)total_blocks,
            (uint64_t)IXFS_DEFAULT_INODES,
-           sb.s_volume_name);
+           vol->sb.s_volume_name);
 
+    vol->in_use = 1;
     return 0;
 }
 
 int ixfs_init(const struct blkdev *dev)
 {
+    struct ixfs_volume *vol;
+    uint32_t vi;
+
+    /* Find a free volume slot */
+    vol = (struct ixfs_volume *)0;
+    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+        if (!volumes[vi].in_use) {
+            vol = &volumes[vi];
+            break;
+        }
+    }
+    if (!vol) {
+        printk("[FAIL] IXFS: no free volume slot\n");
+        return -1;
+    }
+
     uint32_t i;
     uint8_t *p;
 
-    ixfs_dev = dev;
-    ixfs_cache_init();
-    vnode_count = 0;
+    vol->dev = dev;
+    ixfs_cache_init(vol);
+    vol->vnode_count = 0;
 
     /* Read block 0 (superblock) */
-    if (ixfs_read_block(0, blk_buf) != 0) {
+    if (ixfs_read_block(vol, 0, vol->blk_buf) != 0) {
         printk("[FAIL] IXFS: cannot read superblock\n");
         return -1;
     }
 
     /* Copy superblock from buffer */
-    p = (uint8_t *)&sb;
+    p = (uint8_t *)&vol->sb;
     for (i = 0; i < sizeof(struct ixfs_superblock); i++)
-        p[i] = blk_buf[i];
+        p[i] = vol->blk_buf[i];
 
     /* Verify magic */
-    if (sb.s_magic != IXFS_MAGIC) {
+    if (vol->sb.s_magic != IXFS_MAGIC) {
         printk("[FAIL] IXFS: bad magic (0x%x, expected 0x%x)\n",
-               (uint64_t)sb.s_magic, (uint64_t)IXFS_MAGIC);
+               (uint64_t)vol->sb.s_magic, (uint64_t)IXFS_MAGIC);
         return -1;
     }
 
-    if (sb.s_version != IXFS_VERSION) {
+    if (vol->sb.s_version != IXFS_VERSION) {
         printk("[FAIL] IXFS: unsupported version %u\n",
-               (uint64_t)sb.s_version);
+               (uint64_t)vol->sb.s_version);
         return -1;
     }
 
     /* Load block bitmap into memory */
-    bitmap_bytes = (sb.s_total_blocks + 7) / 8;
-    block_bitmap = (uint8_t *)kmalloc(bitmap_bytes);
-    if (!block_bitmap) {
+    vol->bitmap_bytes = (vol->sb.s_total_blocks + 7) / 8;
+    vol->block_bitmap = (uint8_t *)kmalloc(vol->bitmap_bytes);
+    if (!vol->block_bitmap) {
         printk("[FAIL] IXFS: cannot allocate bitmap (%u bytes)\n",
-               (uint64_t)bitmap_bytes);
+               (uint64_t)vol->bitmap_bytes);
         return -1;
     }
 
-    for (i = 0; i < bitmap_bytes; i++)
-        block_bitmap[i] = 0;
+    for (i = 0; i < vol->bitmap_bytes; i++)
+        vol->block_bitmap[i] = 0;
 
-    for (i = 0; i < sb.s_bitmap_blocks; i++) {
+    for (i = 0; i < vol->sb.s_bitmap_blocks; i++) {
         uint32_t offset = i * IXFS_BLOCK_SIZE;
-        uint32_t remaining = bitmap_bytes - offset;
+        uint32_t remaining = vol->bitmap_bytes - offset;
         uint32_t j;
 
         if (remaining > IXFS_BLOCK_SIZE)
             remaining = IXFS_BLOCK_SIZE;
 
-        if (ixfs_read_block(sb.s_bitmap_start + i, blk_buf) != 0) {
-            kfree(block_bitmap);
+        if (ixfs_read_block(vol, vol->sb.s_bitmap_start + i, vol->blk_buf) != 0) {
+            kfree(vol->block_bitmap);
             return -1;
         }
 
         for (j = 0; j < remaining; j++)
-            block_bitmap[offset + j] = blk_buf[j];
+            vol->block_bitmap[offset + j] = vol->blk_buf[j];
     }
 
     /* Initialize block group descriptors from bitmap */
-    ixfs_init_groups();
+    ixfs_init_groups(vol);
 
     /* Create root vnode */
     {
-        struct ixfs_vnode *root = ixfs_get_vnode(IXFS_ROOT_INODE);
+        struct ixfs_vnode *root = ixfs_get_vnode(vol, IXFS_ROOT_INODE);
         if (!root) {
             printk("[FAIL] IXFS: cannot read root inode\n");
-            kfree(block_bitmap);
+            kfree(vol->block_bitmap);
             return -1;
         }
         ixfs_strcpy(root->node.name, "C:\\", VFS_MAX_NAME);
@@ -1585,17 +1639,18 @@ int ixfs_init(const struct blkdev *dev)
     }
 
     {
-        uint64_t vol_mb = (uint64_t)sb.s_total_blocks * IXFS_BLOCK_SIZE
+        uint64_t vol_mb = (uint64_t)vol->sb.s_total_blocks * IXFS_BLOCK_SIZE
                         / (1024 * 1024);
         printk("[OK] IXFS: \"%s\" v%u, %u MiB, %u/%u blocks free, %u inodes\n",
-               sb.s_volume_name,
-               (uint64_t)sb.s_version,
+               vol->sb.s_volume_name,
+               (uint64_t)vol->sb.s_version,
                vol_mb,
-               (uint64_t)sb.s_free_blocks,
-               (uint64_t)sb.s_total_blocks,
-               (uint64_t)sb.s_total_inodes);
+               (uint64_t)vol->sb.s_free_blocks,
+               (uint64_t)vol->sb.s_total_blocks,
+               (uint64_t)vol->sb.s_total_inodes);
     }
 
+    vol->in_use = 1;
     return 0;
 }
 
@@ -1606,9 +1661,19 @@ struct vfs_fs_driver *ixfs_get_driver(void)
 
 struct vfs_node *ixfs_get_root(void)
 {
-    if (vnode_count == 0)
+    uint32_t vi;
+    struct ixfs_volume *vol = (struct ixfs_volume *)0;
+    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+        if (volumes[vi].in_use) {
+            vol = &volumes[vi];
+            break;
+        }
+    }
+    if (!vol) return (struct vfs_node *)0;
+
+    if (vol->vnode_count == 0)
         return (struct vfs_node *)0;
-    return &vnodes[0].node;  /* root is always vnode[0] */
+    return &vol->vnodes[0].node;  /* root is always vnode[0] */
 }
 
 int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
@@ -1646,6 +1711,18 @@ int ixfs_check_perm(const struct ixfs_inode *inode, uint16_t uid,
 void ixfs_test_performance(void)
 {
     int pass;
+    uint32_t vi;
+    struct ixfs_volume *vol = (struct ixfs_volume *)0;
+    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+        if (volumes[vi].in_use) {
+            vol = &volumes[vi];
+            break;
+        }
+    }
+    if (!vol) {
+        printk("\n  [SKIP] No IXFS volume mounted\n\n");
+        return;
+    }
 
     printk("\n  --- IXFS Performance Features Test ---\n");
 
@@ -1653,11 +1730,11 @@ void ixfs_test_performance(void)
     {
         uint32_t b1, b2, b3;
         uint32_t g1, g2, g3;
-        uint32_t saved_free = sb.s_free_blocks;
+        uint32_t saved_free = vol->sb.s_free_blocks;
 
-        b1 = ixfs_alloc_block();
-        b2 = ixfs_alloc_block();
-        b3 = ixfs_alloc_block();
+        b1 = ixfs_alloc_block(vol);
+        b2 = ixfs_alloc_block(vol);
+        b3 = ixfs_alloc_block(vol);
 
         g1 = b1 / IXFS_BLOCKS_PER_GROUP;
         g2 = b2 / IXFS_BLOCKS_PER_GROUP;
@@ -1676,20 +1753,20 @@ void ixfs_test_performance(void)
                pass ? "yes" : "NO");
 
         /* Free and verify count restored */
-        ixfs_free_block(b1);
-        ixfs_free_block(b2);
-        ixfs_free_block(b3);
+        ixfs_free_block(vol, b1);
+        ixfs_free_block(vol, b2);
+        ixfs_free_block(vol, b3);
 
-        pass = (sb.s_free_blocks == saved_free);
+        pass = (vol->sb.s_free_blocks == saved_free);
         printk("  [%s] Block groups: free restored (%u/%u)\n",
                pass ? "OK" : "FAIL",
-               (uint64_t)sb.s_free_blocks, (uint64_t)saved_free);
+               (uint64_t)vol->sb.s_free_blocks, (uint64_t)saved_free);
 
         /* Hint regression */
-        pass = (g1 < group_count && groups[g1].bg_next_free <= b1);
+        pass = (g1 < vol->group_count && vol->groups[g1].bg_next_free <= b1);
         printk("  [%s] Block groups: hint regression (hint=%u, freed=%u)\n",
                pass ? "OK" : "FAIL",
-               (uint64_t)groups[g1].bg_next_free, (uint64_t)b1);
+               (uint64_t)vol->groups[g1].bg_next_free, (uint64_t)b1);
     }
 
     /* --- Test 2: Buffer Cache --- */
@@ -1701,18 +1778,18 @@ void ixfs_test_performance(void)
         uint32_t i;
         int match;
 
-        test_blk = ixfs_alloc_block();
+        test_blk = ixfs_alloc_block(vol);
         if (test_blk == 0) {
             printk("  [FAIL] Cache: cannot allocate test block\n");
         } else {
             /* Write a known pattern via cache */
             for (i = 0; i < IXFS_BLOCK_SIZE; i++)
                 write_buf[i] = (uint8_t)(i & 0xFF);
-            ixfs_write_block(test_blk, write_buf);
+            ixfs_write_block(vol, test_blk, write_buf);
 
             /* Two reads — both should come from cache */
-            ixfs_read_block(test_blk, read_buf1);
-            ixfs_read_block(test_blk, read_buf2);
+            ixfs_read_block(vol, test_blk, read_buf1);
+            ixfs_read_block(vol, test_blk, read_buf2);
 
             match = 1;
             for (i = 0; i < IXFS_BLOCK_SIZE; i++) {
@@ -1729,7 +1806,7 @@ void ixfs_test_performance(void)
 
             /* Check dirty state */
             {
-                struct ixfs_cache_entry *ce = ixfs_cache_find(test_blk);
+                struct ixfs_cache_entry *ce = ixfs_cache_find(vol, test_blk);
                 pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 1);
                 printk("  [%s] Buffer cache: cached=%s, dirty=%s\n",
                        pass ? "OK" : "FAIL",
@@ -1738,16 +1815,16 @@ void ixfs_test_performance(void)
             }
 
             /* Flush and verify clean */
-            ixfs_cache_flush();
+            ixfs_cache_flush(vol);
             {
-                struct ixfs_cache_entry *ce = ixfs_cache_find(test_blk);
+                struct ixfs_cache_entry *ce = ixfs_cache_find(vol, test_blk);
                 pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 0);
                 printk("  [%s] Buffer cache: post-flush dirty=%s\n",
                        pass ? "OK" : "FAIL",
                        (ce && ce->dirty) ? "yes" : "no");
             }
 
-            ixfs_free_block(test_blk);
+            ixfs_free_block(vol, test_blk);
         }
     }
 

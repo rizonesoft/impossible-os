@@ -303,6 +303,31 @@ On first boot (empty C:\), `firstboot_setup()` in `main.c`:
 
 ---
 
+## Multi-Volume Support
+
+IXFS supports up to 4 concurrently mounted partitions (e.g., `C:\`, `E:\`).
+All per-volume state is encapsulated in `struct ixfs_volume`.
+
+### Volume Pool
+
+| Constant | Value | Description |
+|----------|-------|-------------|
+| `IXFS_MAX_VOLUMES` | 4 | Max simultaneous IXFS mounts |
+
+### Architecture
+
+All internal functions receive `struct ixfs_volume *vol` as their first
+parameter. VFS callbacks derive the volume pointer from the vnode:
+
+```
+node->fs_data → ixfs_vnode → vnode->vol → struct ixfs_volume
+```
+
+Each volume contains: superblock, block bitmap, block group descriptors,
+buffer cache (64 entries), vnode pool (64 nodes), and a scratch buffer.
+
+---
+
 ## Implementation Files
 
 | File | Purpose |
