@@ -105,12 +105,10 @@ struct ixfs_dir_entry {
 };
 
 struct ixfs_journal_header {
-    uint32_t j_magic;
-    uint32_t j_seq;
-    uint32_t j_blocks;
-    uint32_t j_head;
-    uint32_t j_tail;
-    uint32_t j_active;
+    uint32_t jh_magic;         /* IXFS_JOURNAL_MAGIC */
+    uint32_t jh_head;          /* next free entry (1-based offset) */
+    uint32_t jh_tail;          /* oldest unfinished entry */
+    uint32_t jh_seq;           /* current sequence number */
 };
 
 #pragma pack(pop)
@@ -518,16 +516,14 @@ int main(int argc, char *argv[])
     for (i = 0; i < used_blocks; i++)
         bitmap_set(i);
 
-    /* Write journal header */
+    /* Write journal header (slot 0 = header, entries start at slot 1) */
     {
         struct ixfs_journal_header *jh =
             (struct ixfs_journal_header *)block_ptr(g_sb.s_journal_start);
-        jh->j_magic = IXFS_JOURNAL_MAGIC;
-        jh->j_seq = 0;
-        jh->j_blocks = IXFS_JOURNAL_BLOCKS;
-        jh->j_head = 0;
-        jh->j_tail = 0;
-        jh->j_active = 0;
+        jh->jh_magic = IXFS_JOURNAL_MAGIC;
+        jh->jh_head = 1;     /* next free slot (1 = first entry slot) */
+        jh->jh_tail = 1;     /* oldest entry (== head means empty) */
+        jh->jh_seq = 0;
     }
 
     /* Create root directory (inode 1) with . and .. */

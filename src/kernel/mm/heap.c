@@ -19,7 +19,7 @@
 #include "kernel/printk.h"
 
 /* Heap size constants */
-#define HEAP_INITIAL_PAGES  256      /* 256 pages = 1 MiB */
+#define HEAP_INITIAL_PAGES  2048     /* 2048 pages = 8 MiB */
 #define HEAP_PAGE_SIZE      4096
 
 /* Block header — sits before every allocation */
