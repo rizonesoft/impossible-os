@@ -1088,49 +1088,20 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                      * cannot context-switch us mid-frame. */
                     scheduler_disable();
 
-                    /* Only force a full redraw for non-drag events.
-                     * During a drag, wm_handle_mouse() already called
-                     * mark_dirty_rect() which sets needs_redraw = 1 but
-                     * NOT wm_full_redraw.  If we checked wm_dirty here,
-                     * we'd set wm_full_redraw=1 and bypass the dirty-rect
-                     * partial repaint — defeating the entire optimization.
-                     * Content changes (terminal output) will trigger a full
-                     * redraw on the next non-drag frame via the fallback path
-                     * in wm_composite() when dirty_rects.count == 0. */
+                    /* Only force a full redraw for non-drag events. */
                     if (btn_changed || clock_tick || first_frame)
                         wm_mark_dirty();
 
+                    /* Remove old cursor from back buffer before compositing.
+                     * The dirty-rect path only repaints a sub-region — any
+                     * old cursor pixels OUTSIDE that region would persist
+                     * and get copied to VRAM, causing wallpaper to show
+                     * through windows where the cursor was last frame. */
+                    mouse_restore_under();
+
                     wm_composite();
                     mouse_draw_cursor();
-
-                    /* Use partial swap if dirty bounds available (drag path) */
-                    {
-                        int32_t dx, dy;
-                        uint32_t dw, dh;
-                        if (wm_get_dirty_bounds(&dx, &dy, &dw, &dh)) {
-                            /* Extend dirty region to include cursor (16x16) */
-                            int32_t cx0 = (mx < dx) ? mx : dx;
-                            int32_t cy0 = (my < dy) ? my : dy;
-                            uint32_t cx1 = (uint32_t)((mx + 16 > dx + (int32_t)dw)
-                                            ? mx + 16 : dx + (int32_t)dw);
-                            uint32_t cy1 = (uint32_t)((my + 16 > dy + (int32_t)dh)
-                                            ? my + 16 : dy + (int32_t)dh);
-                            /* Also include old cursor position */
-                            if (prev_mx >= 0) {
-                                if (prev_mx < cx0) cx0 = prev_mx;
-                                if (prev_my < cy0) cy0 = prev_my;
-                                if ((uint32_t)(prev_mx + 16) > cx1)
-                                    cx1 = (uint32_t)(prev_mx + 16);
-                                if ((uint32_t)(prev_my + 16) > cy1)
-                                    cy1 = (uint32_t)(prev_my + 16);
-                            }
-                            fb_swap_rect((uint32_t)cx0, (uint32_t)cy0,
-                                         cx1 - (uint32_t)cx0,
-                                         cy1 - (uint32_t)cy0);
-                        } else {
-                            fb_swap();
-                        }
-                    }
+                    fb_swap();
                     scheduler_enable();
 
                     prev_mx = mx;
