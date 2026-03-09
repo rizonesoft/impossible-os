@@ -263,7 +263,7 @@ run: all
 		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
-		-device virtio-tablet-pci \
+		-usb -device usb-tablet \
 		-rtc base=localtime \
 		-no-reboot
 
@@ -300,7 +300,7 @@ run-test: all test-disks
 			-m 2G -serial stdio -vga none \
 			-device VGA,xres=1280,yres=720 \
 			-device rtl8139,netdev=net0 -netdev user,id=net0 \
-			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
+			-usb -device usb-tablet -rtc base=localtime -no-reboot; \
 	else \
 		echo "[TEST] Attaching $$TEST_FILE on AHCI port 1"; \
 		$(QEMU) \
@@ -314,7 +314,7 @@ run-test: all test-disks
 			-m 2G -serial stdio -vga none \
 			-device VGA,xres=1280,yres=720 \
 			-device rtl8139,netdev=net0 -netdev user,id=net0 \
-			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
+			-usb -device usb-tablet -rtc base=localtime -no-reboot; \
 	fi
 
 ## run-debug: Launch QEMU paused, waiting for GDB on port 1234
@@ -332,7 +332,7 @@ run-debug: all
 		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
-		-device virtio-tablet-pci \
+		-usb -device usb-tablet \
 		-rtc base=localtime \
 		-no-reboot \
 		-s -S -d int,cpu_reset
@@ -352,7 +352,7 @@ run-log: all
 		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
-		-device virtio-tablet-pci \
+		-usb -device usb-tablet \
 		-rtc base=localtime \
 		-no-reboot
 	@echo "[LOG] Serial output saved to serial.log"
