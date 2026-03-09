@@ -88,6 +88,31 @@ static int          ires_loaded;
 static uint8_t      ires_size_count;
 static uint16_t     ires_sizes[IRES_MAX_SIZES];
 
+/* ---- Name mapping for icon_get_by_name() and IRES name resolution ---- */
+
+static const char *icon_names[ICON_TOTAL_COUNT] = {
+    /* Monochrome toolbar/action */
+    "cut", "copy", "paste", "undo", "redo",
+    "save", "open", "new", "delete", "refresh",
+    "zoom_in", "zoom_out", "bold", "italic", "underline",
+    "align_left", "align_center", "align_right", "print",
+    "home", "back", "forward", "up",
+    /* Monochrome system */
+    "settings", "search", "lock", "user", "power",
+    "info", "warning", "error", "question",
+    "close", "minimize", "maximize", "restore", "menu",
+    "chevron_down", "chevron_right", "chevron_left", "chevron_up",
+    "check", "add", "subtract", "star", "heart", "share",
+    "download", "upload", "clock", "calendar",
+    "sort", "filter", "grid", "list", "link", "attach",
+    "pin", "clipboard", "fullscreen",
+    /* Color icons */
+    "folder_closed", "folder_open",
+    "file_default", "exe_default",
+    "computer", "recycle_bin_empty", "recycle_bin_full",
+    "control_deck"
+};
+
 /* ---- Internal: load IRES file from VFS ---- */
 
 static int ires_load(const char *path)
@@ -149,30 +174,52 @@ static int ires_load(const char *path)
         cursor += 2;
     }
 
-    /* Parse index entries */
+    /* Parse index entries — resolve icon IDs by name, not by hardcoded number.
+     * This decouples irespack from the kernel's enum numbering. */
     memset(ires_icons, 0, sizeof(ires_icons));
-    for (i = 0; i < (int)hdr->icon_count; i++) {
-        ires_index_entry_t *idx = (ires_index_entry_t *)cursor;
-        cursor += sizeof(ires_index_entry_t);
 
-        /* Map icon_id to our color icon array index */
-        int color_idx = (int)idx->icon_id - (int)ICON_MONO_COUNT;
-        if (color_idx < 0 || color_idx >= IRES_COLOR_COUNT) {
-            cursor += ires_size_count * sizeof(ires_size_entry_t);
-            continue;
-        }
+    /* Calculate name table base: after header + size table + all index entries */
+    {
+        uint32_t index_entry_sz = sizeof(ires_index_entry_t) +
+                                  ires_size_count * sizeof(ires_size_entry_t);
+        uint8_t *name_table_base = data + sizeof(ires_header_t) +
+                                   ires_size_count * 2 +
+                                   (uint32_t)hdr->icon_count * index_entry_sz;
 
-        for (si = 0; si < ires_size_count; si++) {
-            ires_size_entry_t *se = (ires_size_entry_t *)cursor;
-            cursor += sizeof(ires_size_entry_t);
+        for (i = 0; i < (int)hdr->icon_count; i++) {
+            ires_index_entry_t *idx = (ires_index_entry_t *)cursor;
+            cursor += sizeof(ires_index_entry_t);
 
-            if (se->data_offset != 0 && se->data_offset < size &&
-                se->width > 0 && se->height > 0) {
-                ires_icons[color_idx].sizes[si].pixels =
-                    (uint32_t *)(data + se->data_offset);
-                ires_icons[color_idx].sizes[si].width  = se->width;
-                ires_icons[color_idx].sizes[si].height = se->height;
-                ires_icons[color_idx].has_any = 1;
+            /* Resolve icon name → system_icon_t via icon_names[] */
+            const char *icon_name = (const char *)(name_table_base + idx->name_offset);
+            int color_idx = -1;
+            {
+                int k;
+                for (k = (int)ICON_MONO_COUNT; k < (int)ICON_TOTAL_COUNT; k++) {
+                    if (kstrcmp(icon_names[k], icon_name) == 0) {
+                        color_idx = k - (int)ICON_MONO_COUNT;
+                        break;
+                    }
+                }
+            }
+
+            if (color_idx < 0 || color_idx >= IRES_COLOR_COUNT) {
+                cursor += ires_size_count * sizeof(ires_size_entry_t);
+                continue;
+            }
+
+            for (si = 0; si < ires_size_count; si++) {
+                ires_size_entry_t *se = (ires_size_entry_t *)cursor;
+                cursor += sizeof(ires_size_entry_t);
+
+                if (se->data_offset != 0 && se->data_offset < size &&
+                    se->width > 0 && se->height > 0) {
+                    ires_icons[color_idx].sizes[si].pixels =
+                        (uint32_t *)(data + se->data_offset);
+                    ires_icons[color_idx].sizes[si].width  = se->width;
+                    ires_icons[color_idx].sizes[si].height = se->height;
+                    ires_icons[color_idx].has_any = 1;
+                }
             }
         }
     }
@@ -210,30 +257,6 @@ static const char *icon_font_filenames[ICON_FONT_COUNT] = {
  * Also provides fluent_all_icons[] (9500+ icons) and fluent_lookup(). */
 #include "generated/fluent_codepoints.h"
 
-/* ---- Name mapping for icon_get_by_name() ---- */
-
-static const char *icon_names[ICON_TOTAL_COUNT] = {
-    /* Monochrome toolbar/action */
-    "cut", "copy", "paste", "undo", "redo",
-    "save", "open", "new", "delete", "refresh",
-    "zoom_in", "zoom_out", "bold", "italic", "underline",
-    "align_left", "align_center", "align_right", "print",
-    "home", "back", "forward", "up",
-    /* Monochrome system */
-    "settings", "search", "lock", "user", "power",
-    "info", "warning", "error", "question",
-    "close", "minimize", "maximize", "restore", "menu",
-    "chevron_down", "chevron_right", "chevron_left", "chevron_up",
-    "check", "add", "subtract", "star", "heart", "share",
-    "download", "upload", "clock", "calendar",
-    "sort", "filter", "grid", "list", "link", "attach",
-    "pin", "clipboard", "fullscreen",
-    /* Color icons */
-    "folder_closed", "folder_open",
-    "file_default", "exe_default",
-    "computer", "recycle_bin_empty", "recycle_bin_full",
-    "control_deck"
-};
 
 /* ---- LRU Icon Cache ---- */
 

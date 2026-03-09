@@ -60,7 +60,6 @@ typedef struct __attribute__((packed)) {
 
 typedef struct {
     char     name[MAX_NAME_LEN];
-    uint16_t icon_id;
     struct {
         uint8_t *pixels;    /* BGRA pixel data */
         int      width;
@@ -69,36 +68,26 @@ typedef struct {
     } sizes[MAX_SIZES];
 } icon_data_t;
 
-/* ---- Known icon name → ID mapping ---- */
-/* Must match system_icon_t enum in icon_store.h */
+/* ---- Icon name validation (accept any known PNG) ---- */
+/* The kernel resolves icon names → system_icon_t IDs at load time via
+ * the name table.  No hardcoded enum values here — this decouples the
+ * build tool from the kernel's icon_store.h enum numbering. */
 
-typedef struct {
-    const char *name;
-    uint16_t    id;
-} icon_id_map_t;
-
-/* Enum values from icon_store.h — ICON_MONO_COUNT is 57 */
-#define ICON_MONO_COUNT 57
-
-static const icon_id_map_t known_icons[] = {
-    { "folder_closed",     ICON_MONO_COUNT + 0 },
-    { "folder_open",       ICON_MONO_COUNT + 1 },
-    { "file_default",      ICON_MONO_COUNT + 2 },
-    { "exe_default",       ICON_MONO_COUNT + 3 },
-    { "computer",          ICON_MONO_COUNT + 4 },
-    { "recycle_bin_empty",  ICON_MONO_COUNT + 5 },
-    { "recycle_bin_full",   ICON_MONO_COUNT + 6 },
-    { "control_deck",      ICON_MONO_COUNT + 7 },
-    { NULL, 0 }
+static const char *accepted_icons[] = {
+    "folder_closed", "folder_open",
+    "file_default", "exe_default",
+    "computer", "recycle_bin_empty", "recycle_bin_full",
+    "control_deck",
+    NULL
 };
 
-static uint16_t lookup_icon_id(const char *name)
+static int is_known_icon(const char *name)
 {
-    for (int i = 0; known_icons[i].name; i++) {
-        if (strcmp(name, known_icons[i].name) == 0)
-            return known_icons[i].id;
+    for (int i = 0; accepted_icons[i]; i++) {
+        if (strcmp(name, accepted_icons[i]) == 0)
+            return 1;
     }
-    return 0xFFFF;  /* unknown */
+    return 0;
 }
 
 /* ---- Supported sizes ---- */
@@ -164,9 +153,8 @@ int main(int argc, char **argv)
             char name[MAX_NAME_LEN];
             basename_no_ext(ent->d_name, name, MAX_NAME_LEN);
 
-            /* Look up icon ID */
-            uint16_t id = lookup_icon_id(name);
-            if (id == 0xFFFF) {
+            /* Skip unknown icons */
+            if (!is_known_icon(name)) {
                 fprintf(stderr, "  [SKIP] Unknown icon: %s/%s\n",
                         dir_path, ent->d_name);
                 continue;
@@ -188,7 +176,6 @@ int main(int argc, char **argv)
                 }
                 idx = icon_count++;
                 strncpy(icons[idx].name, name, MAX_NAME_LEN - 1);
-                icons[idx].icon_id = id;
             }
 
             /* Load PNG via stb_image */
@@ -297,7 +284,7 @@ int main(int argc, char **argv)
     /* Index entries */
     for (int i = 0; i < icon_count; i++) {
         ires_index_entry_t idx_entry;
-        idx_entry.icon_id      = icons[i].icon_id;
+        idx_entry.icon_id      = 0xFFFF;  /* kernel resolves by name */
         idx_entry.name_offset  = name_offsets[i];
         fwrite(&idx_entry, sizeof(idx_entry), 1, fp);
 
