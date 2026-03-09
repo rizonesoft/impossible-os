@@ -32,3 +32,6 @@ OVMF_VARS*.fd
 # Icons8 color icons (licensed, not redistributable as standalone files)
 resources/icons/color/**/*.png
 !resources/icons/color/LICENSE.md
+
+# Windows WSL zone identifiers
+*:Zone.Identifier

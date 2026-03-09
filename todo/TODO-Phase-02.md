@@ -282,10 +282,8 @@
 - [ ] Build rule: `icons.ires` from `resources/icons/color/{16,24,32,48,64,72,128,256}/*.png`
 - [ ] Color icons needed:
   - [ ] Folders: folder_closed, folder_open, folder_documents, folder_pictures, folder_music, folder_downloads
-  - [ ] File types: file_default, file_text, file_image, file_audio, file_video, file_archive, file_exe, file_code, file_pdf
-  - [ ] Drives: drive_local, drive_removable, drive_network, drive_optical
-  - [ ] Desktop: computer, recycle_bin_empty, recycle_bin_full, printer, network
-  - [ ] Apps: app_default, text_editor, media_player, settings, terminal, file_manager, calculator, paint, browser
+  - [ ] Desktop: computer, recycle_bin_empty, recycle_bin_full, control_deck
+  - [ ] Apps: app_default, text_editor, terminal, file_manager, calculator, paint
 - [ ] Install to `C:\Impossible\System\icons.ires`
 - [ ] Implement `ires_load(path)` in kernel — parse header, index, load pixel data
 - [ ] Icon theme switching via Codex `System\Theme\IconPack`
