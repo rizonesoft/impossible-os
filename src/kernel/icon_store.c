@@ -131,6 +131,7 @@ static int load_icon_font(int variant, const char *filename)
     uint8_t *data;
     int32_t bytes_read;
     int offset;
+    uint64_t frames;
 
     const char *prefix = "C:\\Impossible\\Fonts\\";
     int pi = 0, fi = 0;
@@ -146,37 +147,46 @@ static int load_icon_font(int variant, const char *filename)
     path[pi] = '\0';
 
     f = vfs_open(path, VFS_O_READ);
-    if (!f) return -1;
+    if (!f) return -1;  /* File not found */
 
     size = f->size;
     if (size == 0 || size > 16 * 1024 * 1024) {
         vfs_close(f);
-        return -1;
+        return -2;  /* Invalid size */
     }
 
-    data = (uint8_t *)kmalloc(size);
+    /* Use PMM for font data — fonts can be 1–3 MB, way too big for
+     * the 2 MiB kernel heap. See rules.md: PMM for large allocs. */
+    frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    data = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(frames);
     if (!data) {
         vfs_close(f);
-        return -1;
+        return -3;  /* Allocation failed */
     }
 
     bytes_read = vfs_read(f, 0, size, data);
     vfs_close(f);
 
     if (bytes_read <= 0) {
-        kfree(data);
-        return -1;
+        uint64_t i;
+        for (i = 0; i < frames; i++)
+            pmm_free_frame((uintptr_t)data + i * PMM_FRAME_SIZE);
+        return -4;  /* Read failed */
     }
 
     offset = stbtt_GetFontOffsetForIndex(data, 0);
     if (offset < 0) {
-        kfree(data);
-        return -1;
+        uint64_t i;
+        for (i = 0; i < frames; i++)
+            pmm_free_frame((uintptr_t)data + i * PMM_FRAME_SIZE);
+        return -5;  /* Not a valid font */
     }
 
     if (!stbtt_InitFont(&icon_fonts[variant].info, data, offset)) {
-        kfree(data);
-        return -1;
+        uint64_t i;
+        for (i = 0; i < frames; i++)
+            pmm_free_frame((uintptr_t)data + i * PMM_FRAME_SIZE);
+        return -6;  /* Font init failed */
     }
 
     icon_fonts[variant].ttf_data = data;
@@ -381,12 +391,14 @@ void icon_store_init(void)
 
     /* Load icon font variants */
     for (i = 0; i < ICON_FONT_COUNT; i++) {
-        if (load_icon_font(i, icon_font_filenames[i]) == 0) {
+        int err = load_icon_font(i, icon_font_filenames[i]);
+        if (err == 0) {
             printk("[OK] Icon font loaded: %s\n",
                    (uint64_t)(uintptr_t)icon_font_filenames[i]);
             loaded++;
         } else {
-            printk("[--] Icon font not found: %s\n",
+            printk("[--] Icon font failed (%d): %s\n",
+                   (uint64_t)err,
                    (uint64_t)(uintptr_t)icon_font_filenames[i]);
         }
     }
