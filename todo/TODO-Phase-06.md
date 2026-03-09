@@ -12,6 +12,9 @@
 
 ### 1.1 VirtIO Block Device Driver ✅
 
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/drivers/virtio_blk.c` exists with `virtio_blk_read`, `virtio_blk_write`, `virtio_blk_capacity`, VirtIO 1.0 PCI capability detection, and 3-descriptor chain I/O. Check it registers as a blkdev ("virtio0"). Verify `docs/architecture/storage-drivers.md` exists and covers VirtIO — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
+
 - [x] Create `src/kernel/drivers/virtio_blk.c` and `include/virtio_blk.h`
 - [x] Detect virtio-blk device via PCI enumeration (vendor `0x1AF4`, device `0x1001` or `0x1042`)
 - [x] Map MMIO BAR registers via modern VirtIO 1.0 PCI capabilities
@@ -33,6 +36,9 @@
 > - QEMU upgraded from 8.2.2 → 10.2.1 (built from source with GTK display)
 
 ### 1.2 AHCI (SATA) Driver ✅
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/drivers/ahci.c` exists with `ahci_read`, `ahci_write`, `ahci_identify`, ABAR mapping, port enumeration, and command list/FIS allocation. Check it registers as a blkdev ("sata0"). Verify `docs/architecture/storage-drivers.md` covers AHCI — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
 
 - [x] Create `src/kernel/drivers/ahci.c` and `include/kernel/drivers/ahci.h`
 - [x] Detect AHCI controller via PCI (class `0x01`, subclass `0x06`)
@@ -74,6 +80,9 @@
 
 ### 1.3 Block Device Abstraction Layer ✅
 
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data), `blkdev_register`, `blkdev_get`, `blkdev_read`, `blkdev_write`, `blkdev_list` exist. Verify both VirtIO and AHCI are registered via adapters. Check `docs/architecture/storage-drivers.md` covers the block device layer — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
+
 - [x] Create `include/kernel/drivers/blkdev.h` and `src/kernel/drivers/blkdev.c`
 - [x] Define `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data)
 - [x] Implement `blkdev_register(dev)` — add to global device list
@@ -98,6 +107,9 @@
 
 ### 2.1 MBR Partition Table ✅
 
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/mbr.c` parses MBR at LBA 0 with 4 partition entries, recognizes types 0x0C (FAT32), 0x83 (Linux), 0xDA (IXFS). Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
+
 - [x] Create `src/kernel/fs/mbr.c`
 - [x] Parse MBR at LBA 0: 4 partition entries at offset 446
 - [x] Define `struct mbr_entry` (status, type, start_lba, sector_count)
@@ -106,6 +118,9 @@
 - [x] Commit: `"fs: MBR partition table parsing"`
 
 ### 2.2 GPT Partition Table
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/gpt.c` detects protective MBR type 0xEE, parses GPT header at LBA 1 (signature, CRC32), parses 128-byte partition entries, and recognizes EFI SP, Basic Data, and IXFS GUIDs. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
 
 - [x] Create `src/kernel/fs/gpt.c`
 - [x] Detect GPT: check protective MBR at LBA 0 (type `0xEE`)
@@ -117,6 +132,9 @@
 - [x] Commit: `"fs: GPT partition table parsing"`
 
 ### 2.3 Partition Scanner
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/partition.c` scans each blkdev trying GPT first then MBR, creates sub-blkdevs offset by partition start LBA, auto-detects filesystem via magic bytes, and logs partitions to serial. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
 
 - [x] Create `src/kernel/fs/partition.c`
 - [x] On each registered blkdev: try GPT first, fall back to MBR
@@ -133,6 +151,9 @@
 
 ### 3.1 FAT32 Read Support
 
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/fat32.c` parses BPB, calculates FAT/data region offsets, implements `fat32_read_cluster_chain`, `fat32_read_dir` (handling both 8.3 and LFN entries), `fat32_read_file`, and `fat32_stat`. Check `docs/architecture/fat32.md` exists — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
+
 - [x] Create `src/kernel/fs/fat32.c` and `include/fat32.h`
 - [x] Parse BPB (BIOS Parameter Block) at partition start:
   - [x] bytes_per_sector, sectors_per_cluster, reserved_sectors, fat_count, root_cluster
@@ -147,6 +168,9 @@
 
 ### 3.2 FAT32 Write Support
 
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `fat32_write_file`, `fat32_create_file`, `fat32_create_dir`, `fat32_delete_file`, `fat32_rename`, free cluster search, `fat32_format`, and dual FAT flush all exist and work. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
+
 - [x] Implement `fat32_write_file(path, data, size)` — allocate clusters, write data, update directory entry
 - [x] Implement `fat32_create_file(dir, name)` — add directory entry, allocate first cluster
 - [x] Implement `fat32_create_dir(dir, name)` — create directory with `.` and `..` entries
@@ -158,6 +182,9 @@
 - [x] Commit: `"fs: FAT32 write support"`
 
 ### 3.3 FAT32 VFS Integration
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm FAT32 is registered as a VFS filesystem type with callbacks for open, close, read, write, readdir, stat, create, delete, rename. Verify it mounts to a drive letter (e.g., D:\). Test file persistence across reboots. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+
 
 - [x] Register FAT32 as a VFS filesystem type
 - [x] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
@@ -876,6 +903,9 @@
 - [ ] Commit: `"drivers: disk I/O metrics"`
 
 ### 8.14 IXFS Directory Structure (First Boot)
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm the Makefile sysroot target creates the standard directory tree (C:\Impossible\System\, C:\Impossible\Bin\, C:\Impossible\Fonts\, C:\Users\Default\, C:\Temp\, C:\Programs\, etc.) and that all paths exist after boot. Run `make clean && make all && make run` and list directories in the shell. Fix any inconsistencies in the TODO items below.
+
 
 - [x] On first boot (fresh IXFS format), create standard directory tree:
   - [x] `C:\Impossible\` — system root

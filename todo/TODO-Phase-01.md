@@ -11,7 +11,7 @@
 
 ### 1.1 Kernel Threads
 
-**Prompt:** Study the existing scheduler in `src/kernel/sched.c` and the `struct task` in `include/task.h` to understand the current single-thread-per-process model before extending it. Context switching is the heart of this work — each `thread_t` needs its own kernel stack and a saved register context (RBP, RSP, RIP, and all callee-saved registers) that gets swapped on yield or preemption via IRQ0. The scheduler's ready queue must iterate threads rather than tasks. Verify that two threads in one process can share globals without corruption by writing a test that increments a shared counter from both threads and checking the final value. After completing all items, create or update `docs/architecture/threading.md` covering the threading model and API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: kernel threads"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct and consistent: review `src/kernel/sched.c` and `include/task.h` to confirm `thread_t` struct has id, stack_ptr, stack_base, stack_size, state, parent_task fields, that `thread_create`, `thread_exit`, `thread_join`, `thread_yield` all exist and work, and that the scheduler iterates threads. Run `make clean && make all && make run` and test two threads sharing a global variable. Check that `docs/architecture/threading.md` exists and covers the threading model and API — create or update it if missing or incomplete. Fix any inconsistencies found in the TODO items below (wrong function names, missing commits, etc). Confirm the commit `"sched: kernel threads"` exists in git history.
 
 
 - [x] Define `thread_t` struct (id, stack_ptr, stack_base, stack_size, state, parent_task)
@@ -26,7 +26,7 @@
 
 ### 1.2 Mutexes
 
-**Prompt:** Build on the threading from §1.1 — mutexes protect shared state between threads. Use a compare-and-swap atomic (`__sync_lock_test_and_set`) for the fast path and a wait queue for the slow path so blocked threads sleep instead of spinning. The `mutex_lock` must disable preemption around the wait-queue manipulation itself (use `cli`/`sti` or a raw spinlock guard). Pay attention to the `mutex_unlock` wake logic — wake exactly one waiter and ensure it gets the lock before any new contender. Test by having two threads do 100K unprotected increments (expect data loss) then protected increments (expect correct sum). After completing all items, update `docs/architecture/threading.md` with the mutex API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: mutex synchronization"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review that `mutex_t` struct, `mutex_lock`, `mutex_unlock`, `mutex_trylock` exist and function correctly. Confirm the lock uses compare-and-swap with a wait queue (not busy spinning). Check that `docs/architecture/threading.md` covers the mutex API — update it if not. Run `make clean && make all && make run` and test mutexes protecting shared state between threads. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define `mutex_t` struct (locked flag, owner thread)
@@ -38,7 +38,7 @@
 
 ### 1.3 Semaphores
 
-**Prompt:** Semaphores generalize the mutex pattern to counting — `sem_wait` decrements and blocks if the count would go negative, `sem_signal` increments and wakes one waiter. Reuse the same wait-queue pattern from §1.2. The key difference is the counter can be initialized to N>1 for resource pools (e.g., a pool of 8 DMA buffers). This primitive will be used heavily by the pipe implementation in §2.1 and the audio mixer in Phase 08. After completing all items, update `docs/architecture/threading.md` with the semaphore API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: semaphore synchronization"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review that `semaphore_t` struct with count and wait queue exists, that `sem_wait`, `sem_signal`, `sem_init` all function correctly. Confirm `docs/architecture/threading.md` covers the semaphore API — update it if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define `semaphore_t` struct (count, wait queue)
@@ -54,7 +54,7 @@
 
 ### 2.1 Pipes
 
-**Prompt:** A pipe is a unidirectional byte stream backed by a 4 KiB ring buffer — study classic POSIX pipe semantics. The `pipe_create` returns two ends (read fd, write fd). Writers block when the buffer is full, readers block when empty — use the semaphores from §1.3 for this synchronization. The critical edge case is `SIGPIPE`: writing to a pipe whose read end is closed must signal the writer. This requires the file descriptor table from §12.1 to work properly, so consider implementing a minimal fd table first or using direct pipe pointers. Test by piping output between two shell commands. After completing all items, create or update `docs/architecture/ipc.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: pipe implementation"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Verify `docs/architecture/ipc.md` exists and covers pipes — create or update if missing. Run `make clean && make all && make run` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
@@ -68,7 +68,7 @@
 
 ### 2.2 Signals
 
-**Prompt:** Signals are asynchronous notifications to processes — each process needs a `pending_signals` bitmask and a handler table. The tricky part is delivery: on return from kernel to user mode (in the syscall return path or IRQ return path), check for pending signals and divert execution to the registered handler before returning to user code. `SIGKILL` must always terminate regardless of handler, `SIGTERM` should allow a clean exit, and `SIGINT` from Ctrl+C must be wired through the terminal driver. The shell's Ctrl+C handling depends on this. After completing all items, update `docs/architecture/ipc.md` with signal semantics, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: signal delivery"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm signal constants (SIGKILL=9, SIGTERM=15, SIGINT=2, SIGCHLD=17), `signal_send`, `signal_handler` functions, and `SYS_SIGNAL` syscall (34) all exist. Verify SIGINT is wired from Ctrl+C in the terminal driver, SIGCHLD fires on child exit, and SIGKILL always terminates. Check that `docs/architecture/ipc.md` covers signal semantics — update if not. Run `make clean && make all && make run` and test Ctrl+C. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define signal constants: `SIGKILL(9)`, `SIGTERM(15)`, `SIGINT(2)`, `SIGCHLD(17)`
@@ -82,7 +82,7 @@
 
 ### 2.3 Shared Memory
 
-**Prompt:** Shared memory maps identical physical pages into multiple processes' address spaces — this is the fastest IPC mechanism and becomes critical for the compositor's shared framebuffer approach in Phase 02. Use PMM to allocate the backing pages and VMM to map them into each process's page table at their requested virtual address. Named shared memory regions need a global registry (simple linked list keyed by name string). Reference counting ensures pages are freed only when all processes unmap. After completing all items, update `docs/architecture/ipc.md` with the shared memory API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: named shared memory"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35) and `SYS_SHMEM_MAP` (36) syscalls are registered. Check that `docs/architecture/ipc.md` covers the shared memory API — update if not. Run `make clean && make all && make run` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Implement `shmem_create(name, size)` — allocate named shared memory region
@@ -100,7 +100,7 @@
 
 ### 3.1 Swap / Page File
 
-**Prompt:** The swap system writes least-recently-used pages to `pagefile.sys` on disk to free physical memory. The page replacement policy (clock/second-chance algorithm) scans page tables checking the accessed bit — clear means evictable. When evicting, write the page to a free swap slot via VFS, encode the swap slot ID in the PTE (with Present=0), and free the physical frame. On page fault for a swapped page, read it back, allocate a new frame, and resume. The Codex key `System\Memory\SwapSlots` controls swap size. This is important for running multiple large applications on limited RAM. After completing all items, create or update `docs/architecture/swap.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: disk-backed swap via pagefile.sys"`.
+**Prompt:** This section is marked complete (disk-backed pagefile ✅). Verify the implementation is correct: confirm swap_init, swap_out, swap_in exist, the clock page replacement algorithm works, PTEs encode swap_id when Present=0, page faults trigger swap_in, and pagefile.sys is created at `C:\Impossible\System\pagefile.sys`. Verify Codex key `System\Memory\SwapSlots` controls size. Check that `docs/architecture/swap.md` exists and covers the swap system — create or update if missing. Run `make clean && make all && make run` and verify the boot log shows swap initialization. Fix any inconsistencies in the TODO items below.
 
 
 **Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
@@ -124,7 +124,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 3.2 Memory-Mapped Files
 
-**Prompt:** Memory-mapped files expose file contents as a virtual memory region, enabling fast I/O without explicit read/write syscalls. Start with an eager-load implementation: `mmap` allocates physical pages, reads the entire file into them, and maps them into the process. `munmap` writes dirty pages back if MAP_SHARED. The lazy (demand-paged) approach is more efficient but requires page fault handling per-page — implement it as a follow-up if time permits. MAP_PRIVATE uses copy-on-write semantics on the page fault handler. This feature is used by the ELF loader and will be needed for large file access in Phase 06. After completing all items, update `docs/architecture/swap.md` with mmap details, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: memory-mapped files"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `mmap`, `munmap`, `msync` exist, MAP_PRIVATE and MAP_SHARED work, `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls are registered. Verify the eager-load implementation reads file contents into mapped pages correctly. Check that `docs/architecture/swap.md` covers mmap details — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 > *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*
 
@@ -144,7 +144,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 4.1 Styled Panic Screen
 
-**Prompt:** The styled panic screen (BSOD equivalent) renders directly to the framebuffer, bypassing the compositor entirely — it must work even when the heap is corrupt. Use only static buffers and the PSF font renderer. Display the exception name, stop code, faulting RIP and CR2, full register dump (RAX-R15, RSP, RFLAGS, CR2, CR3), and a stack trace by walking the RBP chain until a NULL or invalid frame is hit. The auto-restart countdown uses the PIT timer directly. This replaces the default exception handlers in `idt.c` and `vmm.c`. After completing all items, update `docs/architecture/error-handling.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: styled panic screen with stack trace"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `panic_screen()` renders directly to framebuffer with exception name, stop code, faulting RIP, CR2, full register dump (RAX-R15, RSP, RFLAGS, CR2, CR3), and stack trace via RBP chain walking. Confirm auto-restart countdown uses Codex `System\Recovery\AutoRestart`. Check crash dump writes to `C:\Impossible\System\crashdump.log`. Verify `KPANIC(msg)` macro captures file/line. Confirm idt.c and vmm.c call `panic_screen()`. Check that `docs/architecture/error-handling.md` exists — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Design graphical panic screen (Impossible OS blue, sad face, error info)

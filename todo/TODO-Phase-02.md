@@ -11,7 +11,7 @@
 
 ### 1.1 Core Surface & Primitives
 
-**Prompt:** This is the foundation of all graphics work — define `gfx_surface_t` as the universal drawing target (framebuffer, off-screen buffer, window back-buffer). Every subsequent section depends on this. Study how the existing framebuffer works in `src/desktop/desktop.c` before creating the abstraction. Use `0xAARRGGBB` for the pixel format (matching VBE/VESA). Bresenham's algorithm for line drawing is simple and efficient. The dirty rectangle tracker should maintain a list of modified regions so the compositor only redraws what changed — this was key to fixing the compositor flicker (see the rules about `pmm_alloc_contiguous` for the back buffer). After completing all items, create `docs/architecture/gfx-library.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"gfx: core surface and primitive drawing"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_surface_t` struct (pixels, width, height, stride), `gfx_color_t` (0xAARRGGBB) with macros, and all drawing primitives (`gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_rounded_rect`, `gfx_draw_rounded_rect`, `gfx_fill_circle`, `gfx_draw_line`) exist in `src/kernel/gfx/gfx_core.c`. Verify the dirty rectangle tracker works. Check that `docs/architecture/gfx-library.md` exists and covers the surface/primitive API — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define `gfx_surface_t` struct (pixels, width, height, stride)
@@ -29,7 +29,7 @@
 
 ### 1.2 Alpha Blending & Compositing
 
-**Prompt:** Alpha blending is the most performance-critical code path in the entire compositor — every window pixel passes through it. Use pre-multiplied alpha (multiply RGB by A once at source, then the blend formula simplifies to `dst = src + dst * (255 - src_alpha)` per channel) which is ~50% faster than straight alpha. All math must be integer-only (`(a * b + 127) / 255` or the faster `(a * b + 128) >> 8` approximation). The `gfx_blit_alpha` with a global alpha multiplier is used for window fade animations and semi-transparent overlays. Profile with a full-screen 1280×720 blit to ensure <3ms. After completing all items, update `docs/architecture/gfx-library.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"gfx: alpha blending and compositing"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blit`, `gfx_blit_alpha`, and `gfx_fill_rect_alpha` exist in `src/kernel/gfx/gfx_blend.c`. Verify pre-multiplied alpha is used (integer-only math, no floating point). Check that `docs/architecture/gfx-library.md` covers the blending API — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_blend.c`
@@ -42,7 +42,7 @@
 
 ### 1.3 Gradients
 
-**Prompt:** Gradients add visual depth to UI elements — the taskbar, title bars, and buttons all benefit from subtle gradients. Linear gradients interpolate between two colors across the fill region (vertical or horizontal). For each pixel, compute `t = position / total` and blend: `color = start * (1-t) + end * t` per channel. Radial gradients compute `t` from distance to center. Use integer fixed-point math (e.g., 16.16) to avoid floating-point. Gradient-filled rounded rects combine this with the corner rounding from §1.1. After completing all items, update `docs/architecture/gfx-library.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"gfx: gradient fills"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_gradient_t` struct, `gfx_fill_gradient_rect()`, `gfx_fill_gradient_rounded()`, and radial gradient fill exist in `src/kernel/gfx/gfx_gradient.c`. Check that `docs/architecture/gfx-library.md` covers gradients — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_gradient.c`
@@ -54,7 +54,7 @@
 
 ### 1.4 Blur & Material Effects
 
-**Prompt:** Blur creates the frosted-glass look of Windows 11's Acrylic and Mica materials. Implement a two-pass box blur (horizontal then vertical) which is O(n) per pixel regardless of radius — much faster than a naive 2D kernel. Acrylic combines blur + noise texture (2-3% random pixel variation for visual texture) + tint color overlay. Mica samples the wallpaper at the window's position, desaturates by blending 80% toward grayscale, and applies a theme tint — it's cheaper than Acrylic because there's no blur pass. Drop shadows render as Gaussian-blurred dark rectangles behind windows. All these effects operate on temporary surfaces to avoid corrupting the source. After completing all items, update `docs/architecture/gfx-library.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"gfx: blur, Mica, Acrylic, and shadow effects"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blur_rect`, `gfx_acrylic`, `gfx_mica`, `gfx_drop_shadow`, and `gfx_reveal_highlight` exist in `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`. Verify the two-pass box blur is O(n) per pixel. Check Mica samples wallpaper, desaturates, and tints. Check that `docs/architecture/gfx-library.md` covers blur/material effects — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`
@@ -77,7 +77,7 @@
 
 ### 1.5 SIMD Optimization
 
-**Prompt:** SSE2 processes 4 pixels simultaneously using 128-bit XMM registers — this directly accelerates the bottleneck functions: alpha blending, gradient fills, and blur passes. Use `_mm_loadu_si128` / `_mm_storeu_si128` for unaligned pixel loads/stores. The alpha blend in SSE2 unpacks pixels to 16-bit lanes, multiplies, shifts, and repacks. Critical: save/restore FPU state with `fxsave`/`fxrstor` around SSE code when called from interrupt context since user-mode FPU state would otherwise be corrupted. Compile gfx files separately with `-msse2`. Detect AVX2 at runtime via CPUID before using 256-bit YMM registers. Benchmark the compositor frame time and target <8ms at 1280×720. After completing all items, update `docs/architecture/gfx-library.md` with SIMD details, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"gfx: SSE2 SIMD acceleration"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm SSE2 alpha blending, gradient fill, and blur are implemented with `_mm_loadu_si128`/`_mm_storeu_si128`. Verify `fxsave`/`fxrstor` wrappers protect user FPU state. Confirm gfx files compile with `-msse2`. Check AVX2 runtime detection via CPUID. Verify compositor frame time <8ms at 1280×720. Check that `docs/architecture/gfx-library.md` covers SIMD optimizations — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Enable SSE2 for gfx module: compile with `-msse2` separately
@@ -96,7 +96,7 @@
 
 ### 2.1 stb_truetype Integration
 
-**Prompt:** Check the codebase first — stb_truetype has been partially integrated in a previous conversation. Look for `src/libs/stb_truetype/stb_truetype_impl.c`, `include/font_mgr.h`, and `src/desktop/gfx_text.c`. If they exist, verify the build works and focus on any incomplete API functions. If not, port stb_truetype.h with kernel redirects (`STBTT_malloc → kmalloc`, `STBTT_free → kfree`, `STBTT_memcpy/memset/strlen` → kernel equivalents). The implementation file must be compiled with `-msse2 -mfpmath=sse` since stb_truetype uses floating-point. The font manager loads `.ttf` files from `C:\Impossible\Fonts\` via VFS. After completing all items, update `docs/architecture/font-rendering.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: stb_truetype integration"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_truetype.h` exists in `include/`, memory redirects (`STBTT_malloc → kmalloc`, `STBTT_free → kfree`) work, `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h` exist with `ttf_mgr_init`, `ttf_get`, `ttf_draw_char`, `ttf_draw_string`, `ttf_measure_width`, `ttf_line_height`. Verify fonts load from `C:\Impossible\Fonts\` at boot. Check that `docs/architecture/font-rendering.md` exists — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Add `stb_truetype.h` to `include/` (public domain)
@@ -112,7 +112,7 @@
 
 ### 2.2 Font Bundle
 
-**Prompt:** The fonts define the visual identity of the entire OS. Selawik is a metrically-compatible alternative to Segoe UI (Windows' system font) and is MIT-licensed. Cascadia Code is Microsoft's monospace font with ligature support, perfect for the terminal. Place `.ttf` files in `resources/fonts/` and update the Makefile's sysroot-copy step to include them. Define named font slots (FONT_UI, FONT_UI_BOLD, FONT_MONO, FONT_MONO_BOLD) mapped to these files so all UI code references slots rather than filenames. Include license files to comply with OFL 1.1. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: Selawik + Cascadia Code font bundle"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm Selawik and Cascadia Code .ttf files exist in `resources/fonts/`, the Makefile copies them to the sysroot, and font slots (FONT_UI, FONT_UI_BOLD, FONT_MONO, FONT_MONO_BOLD, FONT_UI_HEAVY) are defined. Check license files exist. Run `make clean && make all && make run` and verify fonts display correctly. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Download **Selawik** Regular + Semibold + Bold (~132 KB total, MIT license)
@@ -126,7 +126,7 @@
 
 ### 2.3 Glyph Caching
 
-**Prompt:** Rasterizing glyphs through stb_truetype is CPU-intensive — cache pre-rendered bitmaps for the printable ASCII range (32-126) at each commonly used pixel size (12, 14, 16, 20, 24px) for each font slot. The cache stores: bitmap pointer, width, height, x/y bearing offsets, and advance width per glyph. At boot, `ttf_mgr_init()` bakes all these glyphs. The hot path in `ttf_draw_char()` checks the cache first and only falls back to live rasterization for uncached sizes or non-ASCII codepoints. This should make text rendering nearly as fast as a bitmap font. After completing all items, update `docs/architecture/font-rendering.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: glyph cache for fast text rendering"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm glyph bitmaps are cached for ASCII range (32-126) at common pixel sizes. Check the `ttf_draw_char` hot path hits the cache before falling back to live rasterization. Check that `docs/architecture/font-rendering.md` covers caching — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Pre-rasterize ASCII 32–126 at common sizes (12, 14, 16, 20, 24px) at boot
@@ -138,7 +138,7 @@
 
 ### 2.4 Replace Bitmap Font
 
-**Prompt:** Search the codebase for all remaining calls to the old bitmap `font_draw_char` and `font_draw_string` (or their PSF equivalents) in `desktop.c`, `wm.c`, `controls.c`, the shell, and any other UI code. Replace them with the TrueType `ttf_draw_string` API. Keep the bitmap font renderer compiled as a fallback for the very early boot phase (before initrd is loaded and VFS is mounted, so TTF files aren't available yet). The shell/terminal should use FONT_MONO, window titles use FONT_UI_BOLD, and buttons/labels use FONT_UI. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: TrueType fonts replace bitmap"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm all old bitmap `font_draw_char`/`font_draw_string` calls in `desktop.c`, `wm.c`, `controls.c` have been replaced with TrueType `ttf_draw_string`. Verify the bitmap font is kept as early boot fallback. Check shell uses FONT_MONO, window titles use FONT_UI_BOLD, buttons use FONT_UI. Run `make clean && make all && make run` and verify TrueType fonts render correctly throughout the UI. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Replace `font_draw_char()` calls in `desktop.c` with TrueType rendering
