@@ -309,64 +309,63 @@
 
 ### 5.1 Cursor Manager
 
-**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 different shapes loaded from a `cursors.cres` (Cursor Resource) file. Each `cursor_sprite` has width, height, hotspot coordinates (the pixel that corresponds to the click position), and pixel data at three sizes (24×24, 32×32, 64×64) for HiDPI scaling. `cursor_init()` loads `C:\Impossible\System\cursors.cres` — one `vfs_read()`, all cursors parsed. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves the pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-initrd boot when VFS isn't available. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: cursor manager with multiple shapes"`.
+**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 cursor shapes loaded from Adwaita X11 cursor files (Xcur binary format). The Adwaita cursor theme (LGPL/CC-BY-SA) is pre-installed at `/usr/share/icons/Adwaita/cursors/` on the build host. At build time, selected cursor files are copied to the sysroot at `C:\Impossible\System\Cursors\`. Each Xcur file contains multiple sizes with ARGB pixel data and hotspot coordinates baked in. `cursor_init()` calls `xcur_load()` for each cursor file. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-VFS boot. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: cursor manager with Adwaita cursors"`.
 
 
 - [ ] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
-- [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels, sizes: 24/32/64)
+- [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels per size)
 - [ ] Create `src/kernel/drivers/cursor.c`
-- [ ] Implement `cres_load(path)` — parse `.cres` file, load all cursor sprites
-- [ ] Implement `cursor_init()` — load `cursors.cres` from `C:\Impossible\System\`, fall back to embedded arrow
-- [ ] Implement `cursor_set_shape(shape)` — switch active cursor
-- [ ] Implement `cursor_get_shape()` — get current shape
-- [ ] Implement `cursor_draw(x, y)` — draw with alpha blending, save pixels underneath
-- [ ] Implement `cursor_restore()` — restore saved pixels
-- [ ] Implement `cursor_get_hotspot(hx, hy)` — for click position adjustment
-- [ ] Commit: `"drivers: cursor manager with multiple shapes"`
+- [ ] Implement `xcur_load(path)` -- parse X11 cursor binary (Xcur format), extract ARGB+hotspot per size
+- [ ] Implement `cursor_init()` -- load cursor files from `C:\Impossible\System\Cursors\`, fall back to embedded arrow
+- [ ] Implement `cursor_set_shape(shape)` -- switch active cursor
+- [ ] Implement `cursor_get_shape()` -- get current shape
+- [ ] Implement `cursor_draw(x, y)` -- draw with alpha blending, save pixels underneath
+- [ ] Implement `cursor_restore()` -- restore saved pixels
+- [ ] Implement `cursor_get_hotspot(hx, hy)` -- for click position adjustment
+- [ ] Commit: `"drivers: cursor manager with Adwaita cursors"`
 
-### 5.2 Cursor Assets & CRES Format
+### 5.2 Cursor Assets (Adwaita X11 Cursors)
 
-**Prompt:** Design or source 11 cursor PNGs at three sizes (24×24, 32×32, 64×64) with transparent backgrounds for HiDPI support. The arrow is the default pointer with hotspot at top-left (1,1). The hand cursor indicates clickable elements (hotspot at fingertip). The I-beam (text cursor) has its hotspot at the middle of the vertical line. Resize cursors use cardinal directions matching the resize edge. Organize source PNGs in `resources/cursors/{24,32,64}/`. A host-side `crespack` build tool packs all sizes into a single `cursors.cres` file — format: header (magic `CRES`, version, cursor count, size count), index table (one entry per cursor: shape ID, name, hotspot_x, hotspot_y per size, pixel data offset per size), followed by packed BGRA pixel data. At runtime, `cres_load()` reads the file in one `vfs_read()` and populates the cursor cache. The fallback arrow must be embedded as a `static const uint32_t cursor_fallback[]` byte array. Install `cursors.cres` to `C:\Impossible\System\cursors.cres`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: cursor sprite pack (CRES format)"`.
+**Prompt:** Use the Adwaita cursor theme from `/usr/share/icons/Adwaita/cursors/` (LGPL/CC-BY-SA, pre-installed). These are X11 cursor binary files (Xcur format) containing ARGB pixel data, hotspot coordinates, and multiple sizes per file. At build time, copy the 11 needed cursor files to the sysroot at `C:\Impossible\System\Cursors\`. The Xcur format is: 4-byte magic (`Xcur`), 4-byte header size, 4-byte version, 4-byte TOC count, then TOC entries (type, subtype=size, position), then image chunks (header, type=0xFFFD0002, subtype=size, version, width, height, hotspot_x, hotspot_y, delay, ARGB pixels). `xcur_load()` parses this directly at runtime -- no build-time conversion needed. The fallback arrow must be embedded as a `static const uint32_t cursor_fallback[]` byte array. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"resources: Adwaita cursor integration"`.
 
 
-- [ ] Create/design cursor PNGs at 24×24, 32×32, 64×64 (transparent background):
-  - [ ] `arrow` — default pointer, hotspot (1,1)
-  - [ ] `hand` — pointing hand (links, buttons), hotspot (6,1)
-  - [ ] `text` — I-beam (text fields, terminal), hotspot (4,10)
-  - [ ] `move` — 4-way arrows (window drag), hotspot (10,10)
-  - [ ] `resize_ns` — ↕ vertical resize, hotspot (6,10)
-  - [ ] `resize_ew` — ↔ horizontal resize, hotspot (10,6)
-  - [ ] `resize_nwse` — ↘ diagonal resize, hotspot (8,8)
-  - [ ] `resize_nesw` — ↗ diagonal resize, hotspot (8,8)
-  - [ ] `wait` — hourglass/spinner, hotspot (8,12)
-  - [ ] `crosshair` — + selection, hotspot (10,10)
-  - [ ] `forbidden` — ⊘ circle-slash, hotspot (10,10)
-- [ ] Organize in `resources/cursors/{24,32,64}/`
-- [ ] Define `.cres` binary format (header + index with hotspots + BGRA pixel data, multi-size)
-- [ ] Write `tools/crespack.c` — reads PNGs, outputs `cursors.cres`
-- [ ] Install to `C:\Impossible\System\cursors.cres`
-- [ ] Embed fallback arrow as byte array for pre-initrd boot
-- [ ] Commit: `"resources: cursor sprite pack (CRES format)"`
+- [ ] Map 11 cursor shapes to Adwaita filenames:
+  - [ ] `arrow` -> `default` (or `left_ptr`)
+  - [ ] `hand` -> `pointer` (or `hand2`)
+  - [ ] `text` -> `text` (or `xterm`)
+  - [ ] `move` -> `fleur` (or `move`)
+  - [ ] `resize_ns` -> `sb_v_double_arrow` (or `ns-resize`)
+  - [ ] `resize_ew` -> `sb_h_double_arrow` (or `ew-resize`)
+  - [ ] `resize_nwse` -> `bd_double_arrow` (or `nwse-resize`)
+  - [ ] `resize_nesw` -> `fd_double_arrow` (or `nesw-resize`)
+  - [ ] `wait` -> `progress` (or `watch`)
+  - [ ] `crosshair` -> `crosshair` (or `cross`)
+  - [ ] `forbidden` -> `not-allowed` (or `no-drop`)
+- [ ] Add Makefile rule: copy 11 Adwaita cursor files to sysroot `Impossible/System/Cursors/`
+- [ ] Implement `xcur_load()` -- parse Xcur binary, extract ARGB+hotspot per size, convert ARGB->BGRA
+- [ ] Embed fallback arrow as byte array for pre-VFS boot
+- [ ] Commit: `"resources: Adwaita cursor integration"`
 
 ### 5.3 Context-Based Cursor Switching
 
-**Prompt:** The window manager must determine the correct cursor shape based on what's under the mouse pointer. Add `wm_get_cursor_context(mx, my)` that checks: is the mouse over a window edge or corner (resize cursors), over a title bar during drag (move cursor), over a text input widget (I-beam), over a button or link (hand), or over the desktop (arrow). This function is called every mouse-move event and updates the cursor shape. The compositor loop must save/restore cursor pixels around the composite step to prevent cursor artifacts. Remove the old cursor rendering from `mouse.c` entirely — mouse.c should only track position and button state. After completing all items, update `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: context-aware cursor switching"`.
+**Prompt:** The window manager must determine the correct cursor shape based on what's under the mouse pointer. Add `wm_get_cursor_context(mx, my)` that checks: is the mouse over a window edge or corner (resize cursors), over a title bar during drag (move cursor), over a text input widget (I-beam), over a button or link (hand), or over the desktop (arrow). This function is called every mouse-move event and updates the cursor shape. The compositor loop must save/restore cursor pixels around the composite step to prevent cursor artifacts. Remove the old cursor rendering from `mouse.c` entirely -- mouse.c should only track position and button state. After completing all items, update `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: context-aware cursor switching"`.
 
 
 - [ ] Remove `cursor_data[]` and rendering from `mouse.c` (keep position/button tracking)
 - [ ] Add `wm_get_cursor_context(mx, my)` in `wm.c`:
-  - [ ] Desktop/wallpaper → `CURSOR_ARROW`
-  - [ ] Start button hover → `CURSOR_HAND`
-  - [ ] Menu item hover → `CURSOR_HAND`
-  - [ ] Window title bar → `CURSOR_MOVE` (while dragging)
-  - [ ] Window edge (N/S) → `CURSOR_RESIZE_NS`
-  - [ ] Window edge (E/W) → `CURSOR_RESIZE_EW`
-  - [ ] Window corner → `CURSOR_RESIZE_NWSE` or `CURSOR_RESIZE_NESW`
-  - [ ] Text input field → `CURSOR_TEXT`
-  - [ ] System busy → `CURSOR_WAIT`
-- [ ] Update compositor loop: `cursor_restore()` → composite → `cursor_set_shape()` → `cursor_draw()`
+  - [ ] Desktop/wallpaper -> `CURSOR_ARROW`
+  - [ ] Start button hover -> `CURSOR_HAND`
+  - [ ] Menu item hover -> `CURSOR_HAND`
+  - [ ] Window title bar -> `CURSOR_MOVE` (while dragging)
+  - [ ] Window edge (N/S) -> `CURSOR_RESIZE_NS`
+  - [ ] Window edge (E/W) -> `CURSOR_RESIZE_EW`
+  - [ ] Window corner -> `CURSOR_RESIZE_NWSE` or `CURSOR_RESIZE_NESW`
+  - [ ] Text input field -> `CURSOR_TEXT`
+  - [ ] System busy -> `CURSOR_WAIT`
+- [ ] Update compositor loop: `cursor_restore()` -> composite -> `cursor_set_shape()` -> `cursor_draw()`
 - [ ] Adjust click position by hotspot offset in `wm_handle_mouse()`
 - [ ] Commit: `"desktop: context-aware cursor switching"`
+
 
 ---
 
