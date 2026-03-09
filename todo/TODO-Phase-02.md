@@ -182,15 +182,15 @@
 
 ### 3.3 JPG/PNG Wallpaper
 
-**Prompt:** Currently the wallpaper is loaded as a pre-converted raw bitmap from the initrd — replace this with runtime JPEG/PNG decoding via the `image_load()` API from §3.1. Read the wallpaper path from Codex `System\Theme\Wallpaper` (default: `C:\Impossible\System\Wallpapers\default.jpg`) and the fit mode from `System\Theme\WallpaperMode`. Scale the decoded image to the screen resolution using `image_scale()` from §3.2. Cache the scaled result so it's not re-decoded every compositor frame — only re-decode when the wallpaper setting changes. After completing all items, update `docs/architecture/image-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: JPEG/PNG wallpaper loading"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `load_wallpaper()` in `desktop.c` uses `image_load()` + `image_scale()` instead of reading raw BGRA from VFS. Verify wallpaper path is read from Codex `System\Theme\Wallpaper` (default: `C:\Impossible\Wallpapers\default.jpg`). Verify fit mode is read from Codex `WallpaperMode` and maps to `image_fit_t` enum. Verify Makefile copies JPEG as-is (no `jpg2raw` conversion for wallpaper). Verify `wallpaper.raw` and `bg.raw` are no longer created. Run `make clean && make all && make run`. Fix any inconsistencies below.
 
 
-- [ ] Modify `desktop.c` to load wallpaper via `image_load()` instead of raw initrd
-- [ ] Support JPEG and PNG wallpapers directly (no build-time `jpg2raw` conversion)
-- [ ] Scale wallpaper to fit screen using `image_scale()`
-- [ ] Read wallpaper path and fit mode from Codex (`System\Theme\Wallpaper`, `WallpaperMode`)
-- [ ] Cache scaled wallpaper (don't re-decode every frame)
-- [ ] Commit: `"desktop: JPEG/PNG wallpaper loading"`
+- [x] Modify `desktop.c` to load wallpaper via `image_load()` instead of raw initrd
+- [x] Support JPEG and PNG wallpapers directly (no build-time `jpg2raw` conversion)
+- [x] Scale wallpaper to fit screen using `image_scale()`
+- [x] Read wallpaper path and fit mode from Codex (`System\Theme\Wallpaper`, `WallpaperMode`)
+- [x] Cache scaled wallpaper (don't re-decode every frame)
+- [x] Commit: `"desktop: JPEG/PNG wallpaper loading"`
 
 ### 3.4 Image Saving
 

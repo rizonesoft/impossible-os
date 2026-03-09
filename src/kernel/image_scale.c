@@ -115,29 +115,40 @@ static void scale_bilinear(image_t *dst, const image_t *src,
             int32_t sx = (int32_t)(sx_fp >> FP_SHIFT) + src_x;
             uint32_t fx = sx_fp & (FP_ONE - 1);
 
+            /* Fast path: exact pixel boundary (no interpolation needed).
+             * Also avoids uint32_t overflow: (65536 * 65536) = 2^32 → 0. */
+            if (fx == 0 && fy == 0) {
+                dst->pixels[dy * dst->width + dx] = img_pixel(src, sx, sy);
+                continue;
+            }
+
             /* Sample 4 pixels */
-            uint32_t p00 = img_pixel(src, sx,     sy);
-            uint32_t p10 = img_pixel(src, sx + 1, sy);
-            uint32_t p01 = img_pixel(src, sx,     sy + 1);
-            uint32_t p11 = img_pixel(src, sx + 1, sy + 1);
+            {
+                uint32_t p00 = img_pixel(src, sx,     sy);
+                uint32_t p10 = img_pixel(src, sx + 1, sy);
+                uint32_t p01 = img_pixel(src, sx,     sy + 1);
+                uint32_t p11 = img_pixel(src, sx + 1, sy + 1);
 
-            /* Bilinear weights (16-bit fixed point) */
-            uint32_t w00 = ((FP_ONE - fx) * (FP_ONE - fy)) >> FP_SHIFT;
-            uint32_t w10 = (fx * (FP_ONE - fy)) >> FP_SHIFT;
-            uint32_t w01 = ((FP_ONE - fx) * fy) >> FP_SHIFT;
-            uint32_t w11 = (fx * fy) >> FP_SHIFT;
+                /* Bilinear weights (use uint64_t to prevent overflow) */
+                uint32_t ifx = FP_ONE - fx;
+                uint32_t ify = FP_ONE - fy;
+                uint32_t w00 = (uint32_t)(((uint64_t)ifx * ify) >> FP_SHIFT);
+                uint32_t w10 = (uint32_t)(((uint64_t)fx  * ify) >> FP_SHIFT);
+                uint32_t w01 = (uint32_t)(((uint64_t)ifx * fy)  >> FP_SHIFT);
+                uint32_t w11 = (uint32_t)(((uint64_t)fx  * fy)  >> FP_SHIFT);
 
-            /* Interpolate each channel */
-            uint8_t b = (uint8_t)((px_b(p00) * w00 + px_b(p10) * w10 +
-                                   px_b(p01) * w01 + px_b(p11) * w11) >> FP_SHIFT);
-            uint8_t g = (uint8_t)((px_g(p00) * w00 + px_g(p10) * w10 +
-                                   px_g(p01) * w01 + px_g(p11) * w11) >> FP_SHIFT);
-            uint8_t r = (uint8_t)((px_r(p00) * w00 + px_r(p10) * w10 +
-                                   px_r(p01) * w01 + px_r(p11) * w11) >> FP_SHIFT);
-            uint8_t a = (uint8_t)((px_a(p00) * w00 + px_a(p10) * w10 +
-                                   px_a(p01) * w01 + px_a(p11) * w11) >> FP_SHIFT);
+                /* Interpolate each channel */
+                uint8_t b = (uint8_t)((px_b(p00) * w00 + px_b(p10) * w10 +
+                                       px_b(p01) * w01 + px_b(p11) * w11) >> FP_SHIFT);
+                uint8_t g = (uint8_t)((px_g(p00) * w00 + px_g(p10) * w10 +
+                                       px_g(p01) * w01 + px_g(p11) * w11) >> FP_SHIFT);
+                uint8_t r = (uint8_t)((px_r(p00) * w00 + px_r(p10) * w10 +
+                                       px_r(p01) * w01 + px_r(p11) * w11) >> FP_SHIFT);
+                uint8_t a = (uint8_t)((px_a(p00) * w00 + px_a(p10) * w10 +
+                                       px_a(p01) * w01 + px_a(p11) * w11) >> FP_SHIFT);
 
-            dst->pixels[dy * dst->width + dx] = px_pack(b, g, r, a);
+                dst->pixels[dy * dst->width + dx] = px_pack(b, g, r, a);
+            }
         }
     }
 }

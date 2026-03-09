@@ -120,9 +120,9 @@ $(BUILD_DIR)/tools/jpg2raw: tools/jpg2raw.c
 
 ## sysroot: Populate build/sysroot/ with system files and assets
 SYSROOT := $(BUILD_DIR)/sysroot
-sysroot: $(SYSROOT)/wallpaper.raw
+sysroot: $(SYSROOT)/Impossible/Wallpapers/default.jpg
 
-$(SYSROOT)/wallpaper.raw: host-tools
+$(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@mkdir -p $(SYSROOT)
 	@# --- Standard directory tree ---
 	@mkdir -p $(SYSROOT)/Impossible/System/Config/Codex
@@ -139,11 +139,9 @@ $(SYSROOT)/wallpaper.raw: host-tools
 	@mkdir -p $(SYSROOT)/Programs
 	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
 	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
-	@# Convert wallpaper background image to raw BGRA
-	$(BUILD_DIR)/tools/jpg2raw resources/backgrounds/background.jpg \
-		$(SYSROOT)/wallpaper.raw 1280 720 2>&1
-	@cp $(SYSROOT)/wallpaper.raw $(SYSROOT)/bg.raw
-	@cp $(SYSROOT)/wallpaper.raw $(SYSROOT)/Impossible/Wallpapers/default.raw
+	@# Copy wallpaper JPEG as-is (decoded at runtime by image_load)
+	@cp resources/backgrounds/background.jpg \
+		$(SYSROOT)/Impossible/Wallpapers/default.jpg
 	@# Convert start button icon (32x32 PNG with alpha)
 	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
 		$(SYSROOT)/start_icon.raw 32 32 2>&1

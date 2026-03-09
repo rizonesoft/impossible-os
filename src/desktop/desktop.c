@@ -1,10 +1,10 @@
 /* ============================================================================
  * desktop.c — Desktop shell (wallpaper, taskbar, start menu)
  *
- * - Loads wallpaper.raw from C:\ (IXFS system partition) via VFS
+ * - Loads JPEG/PNG wallpaper from C:\ via image_load() + image_scale()
+ * - Reads wallpaper path and fit mode from Codex (System\Theme)
  * - Draws a taskbar at the bottom with start button, window list, clock
  * - Draws a start menu popup with app launcher items
- * - Copies background images to C:\Documents\backgrounds\ on IXFS
  * ============================================================================ */
 
 #include "desktop/desktop.h"
@@ -21,9 +21,11 @@
 #include "kernel/sched/task.h"
 #include "kernel/acpi.h"
 #include "desktop/terminal.h"
+#include "kernel/image.h"        /* runtime JPEG/PNG decoding + scaling */
+#include "codex.h"               /* Codex registry for wallpaper settings */
 
-/* ---- Wallpaper pixel buffer ---- */
-static uint32_t *wallpaper_buf;       /* PMM-allocated (identity-mapped) */
+/* ---- Wallpaper (decoded + scaled) ---- */
+static image_t   wallpaper_img;       /* Scaled wallpaper (PMM or kmalloc) */
 static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully */
 
 /* ---- Start icon ---- */
@@ -110,75 +112,96 @@ static uint8_t *vfs_load_file(const char *path, uint32_t *out_size)
 
 void desktop_init(void)
 {
-    wallpaper_buf    = (uint32_t *)0;
+    wallpaper_img.pixels = (uint32_t *)0;
     wallpaper_loaded = 0;
     start_icon_buf   = (uint32_t *)0;
     start_icon_loaded = 0;
     start_menu_open  = 0;
     prev_left        = 0;
 
-    /* Load the wallpaper image from C:\ (IXFS) */
+    /* Load wallpaper from Codex path (JPEG/PNG, runtime decoded) */
     load_wallpaper();
 
     /* Load start button icon from C:\ */
     load_start_icon();
 }
 
-/* ---- Wallpaper loading (from C:\ via VFS) ---- */
+/* ---- Simple string comparison ---- */
+static int str_eq(const char *a, const char *b)
+{
+    while (*a && *b && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+/* ---- Wallpaper loading (JPEG/PNG via image_load + image_scale) ---- */
 
 static void load_wallpaper(void)
 {
-    struct vfs_node *f;
-    uint32_t expected_size;
-    uint32_t pages_needed;
-    uintptr_t base;
+    codex_key_t *theme_key;
+    char wp_path[128];
+    char wp_mode_str[16];
+    image_fit_t fit_mode = IMAGE_FIT_STRETCH;
+    image_t decoded;
+    uint32_t screen_w = fb_get_width();
+    uint32_t screen_h = fb_get_height();
 
-    expected_size = WALLPAPER_WIDTH * WALLPAPER_HEIGHT * 4;
-    pages_needed = (expected_size + 4095) / 4096;
+    /* Initialize output image to zero */
+    wallpaper_img.pixels = (uint32_t *)0;
+    wallpaper_img.width  = 0;
+    wallpaper_img.height = 0;
+    wallpaper_img.alloc_size = 0;
+    wallpaper_img.from_pmm = 0;
 
-    /* Check if file exists */
-    f = vfs_open("C:\\wallpaper.raw", VFS_O_READ);
-    if (!f) {
-        printk("[DESKTOP] wallpaper.raw not found on C:\\\n");
+    /* Read wallpaper path from Codex (fall back to default) */
+    theme_key = codex_open("System\\Theme");
+    if (theme_key &&
+        codex_get_string(theme_key, "Wallpaper", wp_path, sizeof(wp_path)) == 0) {
+        /* Got path from Codex */
+    } else {
+        /* Default path */
+        const char *def = "C:\\Impossible\\Wallpapers\\default.jpg";
+        uint32_t i;
+        for (i = 0; def[i] && i < sizeof(wp_path) - 1; i++)
+            wp_path[i] = def[i];
+        wp_path[i] = '\0';
+    }
+
+    /* Read fit mode from Codex */
+    if (theme_key &&
+        codex_get_string(theme_key, "WallpaperMode", wp_mode_str,
+                         sizeof(wp_mode_str)) == 0) {
+        if (str_eq(wp_mode_str, "fill"))        fit_mode = IMAGE_FIT_FILL;
+        else if (str_eq(wp_mode_str, "fit"))    fit_mode = IMAGE_FIT_FIT;
+        else if (str_eq(wp_mode_str, "center")) fit_mode = IMAGE_FIT_CENTER;
+        else if (str_eq(wp_mode_str, "tile"))   fit_mode = IMAGE_FIT_TILE;
+        else                                    fit_mode = IMAGE_FIT_STRETCH;
+    }
+
+    /* Decode the image file (JPEG, PNG, BMP, GIF, TGA) */
+    if (image_load(&decoded, wp_path) < 0) {
+        printk("[DESKTOP] wallpaper: failed to decode '%s'\n", wp_path);
         return;
     }
 
-    if (f->size < expected_size) {
-        printk("[DESKTOP] wallpaper.raw too small (%u < %u)\n",
-               (uint64_t)f->size, (uint64_t)expected_size);
-        vfs_close(f);
-        return;
-    }
-
-    /* Allocate contiguous physical frames (identity-mapped, bypasses heap) */
-    base = pmm_alloc_contiguous(pages_needed);
-    if (!base) {
-        printk("[DESKTOP] wallpaper: cannot allocate %u contiguous frames\n",
-               (uint64_t)pages_needed);
-        vfs_close(f);
-        return;
-    }
-
-    /* Read wallpaper from disk in chunks into PMM buffer */
-    {
-        uint32_t offset = 0;
-        uint8_t *buf = (uint8_t *)base;
-        while (offset < expected_size) {
-            uint32_t chunk = expected_size - offset;
-            int n;
-            if (chunk > 4096) chunk = 4096;
-            n = vfs_read(f, offset, chunk, buf + offset);
-            if (n <= 0) break;
-            offset += (uint32_t)n;
+    /* Scale to screen resolution if needed */
+    if (decoded.width == screen_w && decoded.height == screen_h &&
+        fit_mode == IMAGE_FIT_STRETCH) {
+        /* Already exact match — use decoded image directly */
+        wallpaper_img = decoded;
+    } else {
+        if (image_scale(&wallpaper_img, &decoded,
+                        screen_w, screen_h, fit_mode) < 0) {
+            printk("[DESKTOP] wallpaper: scale failed\n");
+            image_free(&decoded);
+            return;
         }
+        image_free(&decoded);  /* Free the unscaled original */
     }
-    vfs_close(f);
 
-    wallpaper_buf = (uint32_t *)base;
     wallpaper_loaded = 1;
     printk("[OK] Desktop wallpaper loaded (%ux%u, %u bytes)\n",
-           (uint64_t)WALLPAPER_WIDTH, (uint64_t)WALLPAPER_HEIGHT,
-           (uint64_t)expected_size);
+           (uint64_t)wallpaper_img.width, (uint64_t)wallpaper_img.height,
+           (uint64_t)wallpaper_img.alloc_size);
 }
 
 /* ---- Start icon loading (from C:\ via VFS) ---- */
@@ -225,9 +248,10 @@ static int ttf_screen_width(const char *text, int font_slot, int px_size)
 
 void desktop_draw_wallpaper(void)
 {
-    if (wallpaper_loaded && wallpaper_buf) {
-        fb_blit(0, 0, wallpaper_buf,
-                WALLPAPER_WIDTH, WALLPAPER_HEIGHT, WALLPAPER_WIDTH);
+    if (wallpaper_loaded && wallpaper_img.pixels) {
+        fb_blit(0, 0, wallpaper_img.pixels,
+                wallpaper_img.width, wallpaper_img.height,
+                wallpaper_img.width);
     } else {
         /* Fallback: gradient background */
         uint32_t y;
@@ -256,12 +280,12 @@ void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t r
     if ((uint32_t)ry + rh > sh) rh = sh - (uint32_t)ry;
     if (rw == 0 || rh == 0) return;
 
-    if (wallpaper_loaded && wallpaper_buf) {
+    if (wallpaper_loaded && wallpaper_img.pixels) {
         /* Blit only the rectangular sub-region from the wallpaper */
         uint32_t row;
         for (row = 0; row < rh; row++) {
-            const uint32_t *src_row = wallpaper_buf +
-                ((uint32_t)ry + row) * WALLPAPER_WIDTH + (uint32_t)rx;
+            const uint32_t *src_row = wallpaper_img.pixels +
+                ((uint32_t)ry + row) * wallpaper_img.width + (uint32_t)rx;
             fb_blit((uint32_t)rx, (uint32_t)ry + row,
                     src_row, rw, 1, rw);
         }

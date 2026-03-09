@@ -63,6 +63,16 @@ JPEG, PNG, BMP, GIF, TGA — decoded via `stbi_load_from_memory()`.
 stb_image decodes to **RGBA** (R at byte offset 0). The framebuffer uses **BGRA**
 (`0xAARRGGBB`). `rgba_to_bgra()` swaps R↔B channels post-decode.
 
+## Wallpaper Loading
+
+`desktop.c` reads the wallpaper path from Codex `System\Theme\Wallpaper`
+(default: `C:\Impossible\Wallpapers\default.jpg`) and fit mode from `WallpaperMode`.
+
+**Pipeline:** `image_load()` → (JPEG decode + RGBA→BGRA) → `image_scale(fit_mode)` → cached `image_t`
+
+The JPEG stays compressed on disk (~200 KB). No build-time `jpg2raw` conversion needed.
+The scaled result is cached in a static `image_t` — only re-decoded on change.
+
 ## Build
 
 `image.c` compiled with `SIMD_CFLAGS` (`-msse2`) + `-isystem include/freestanding`

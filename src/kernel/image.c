@@ -23,16 +23,22 @@
 
 /* ---- Tiered allocator --------------------------------------------------- */
 
-#define LARGE_ALLOC_THRESHOLD  (64 * 1024)  /* 64 KB */
+/* Allocations ≤ 4 KB go to kmalloc (heap); > 4 KB go to PMM.
+ *
+ * Why 4 KB? PMM allocates in 4 KB page granularity — anything smaller wastes
+ * a full page. stb_image's small work buffers (Huffman tables, ~100-500 bytes)
+ * total only a few KB and are safe on the heap. The big allocations (decoded
+ * pixel buffer = w*h*4 = 3.6 MB, component buffers) go to PMM.
+ *
+ * The heap is 2 MiB. stb_image's small work buffers total ~10-20 KB.
+ * The JPEG file read buffer and decoded output use PMM via this threshold. */
+#define LARGE_ALLOC_THRESHOLD  (4 * 1024)  /* 4 KB */
 
 /*
- * Track PMM allocations: we prefix each PMM block with a small header
- * storing the allocation size so we know how many frames to free.
- *
- * For simplicity, we use a static table of recent PMM allocations.
- * This is sufficient since stb_image only has a few live allocations at once.
+ * Track PMM allocations so we know the size for free/realloc.
+ * 64 slots is plenty — stb_image typically has < 10 large allocations at once.
  */
-#define PMM_TRACK_MAX  16
+#define PMM_TRACK_MAX  64
 
 typedef struct {
     void     *ptr;
@@ -51,8 +57,8 @@ static void pmm_track_add(void *ptr, uint32_t size)
             return;
         }
     }
-    /* Table full — shouldn't happen with stb_image's allocation pattern */
-    printk("image: PMM track table full!\n");
+    /* Table full — this is a bug, log it */
+    printk("image: PMM track table full! (%u slots)\n", (uint32_t)PMM_TRACK_MAX);
 }
 
 static uint32_t pmm_track_remove(void *ptr)
@@ -75,6 +81,17 @@ static int pmm_track_is_pmm(void *ptr)
     for (i = 0; i < PMM_TRACK_MAX; i++) {
         if (pmm_track[i].ptr == ptr)
             return 1;
+    }
+    return 0;
+}
+
+/* Look up a tracked PMM allocation size without removing it */
+static uint32_t pmm_track_size(void *ptr)
+{
+    int i;
+    for (i = 0; i < PMM_TRACK_MAX; i++) {
+        if (pmm_track[i].ptr == ptr)
+            return pmm_track[i].size;
     }
     return 0;
 }
@@ -123,32 +140,23 @@ static void *stbi_realloc_wrapper(void *ptr, uint32_t new_size)
 
     if (!ptr) return stbi_malloc_wrapper(new_size);
 
-    /* Check if old pointer was PMM */
-    old_size = 0;
-    {
-        int i;
-        for (i = 0; i < PMM_TRACK_MAX; i++) {
-            if (pmm_track[i].ptr == ptr) {
-                old_size = pmm_track[i].size;
-                break;
-            }
-        }
-    }
+    /* Look up old size — check PMM track table first */
+    old_size = pmm_track_size(ptr);
 
+    /* Allocate new buffer */
     new_ptr = stbi_malloc_wrapper(new_size);
     if (!new_ptr) return (void *)0;
 
-    /* Copy old data */
+    /* Copy old data: use min(old_size, new_size) for PMM allocs.
+     * For heap allocs (old_size==0), we don't know the exact size,
+     * so copy new_size bytes (safe: realloc always grows or stays same). */
     {
-        uint32_t copy_size = old_size > 0 ? old_size : new_size;
-        if (copy_size > new_size) copy_size = new_size;
-        /* Use byte-wise copy since we can't include string.h easily */
-        {
-            uint8_t *d = (uint8_t *)new_ptr;
-            const uint8_t *s = (const uint8_t *)ptr;
-            uint32_t j;
-            for (j = 0; j < copy_size; j++) d[j] = s[j];
-        }
+        uint32_t copy_size = (old_size > 0 && old_size < new_size)
+                             ? old_size : new_size;
+        uint8_t *d = (uint8_t *)new_ptr;
+        const uint8_t *s = (const uint8_t *)ptr;
+        uint32_t j;
+        for (j = 0; j < copy_size; j++) d[j] = s[j];
     }
 
     stbi_free_wrapper(ptr);
@@ -296,6 +304,7 @@ int image_load(image_t *img, const char *path)
     uint32_t file_size;
     int32_t bytes_read;
     int result;
+    int buf_is_pmm = 0;
 
     if (!img || !path)
         return -1;
@@ -314,12 +323,25 @@ int image_load(image_t *img, const char *path)
         return -1;
     }
 
-    /* Read entire file into buffer */
-    file_buf = (uint8_t *)kmalloc(file_size);
-    if (!file_buf) {
-        printk("image: cannot alloc %u bytes for '%s'\n", file_size, path);
-        vfs_close(f);
-        return -1;
+    /* Allocate file read buffer — use PMM for large files (>64KB)
+     * to avoid exhausting the 2 MiB kernel heap. */
+    if (file_size > LARGE_ALLOC_THRESHOLD) {
+        uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uintptr_t phys = pmm_alloc_contiguous(frames);
+        if (phys == 0) {
+            printk("image: PMM alloc failed for file buf %u bytes\n", file_size);
+            vfs_close(f);
+            return -1;
+        }
+        file_buf = (uint8_t *)phys;
+        buf_is_pmm = 1;
+    } else {
+        file_buf = (uint8_t *)kmalloc(file_size);
+        if (!file_buf) {
+            printk("image: cannot alloc %u bytes for '%s'\n", file_size, path);
+            vfs_close(f);
+            return -1;
+        }
     }
 
     bytes_read = vfs_read(f, 0, file_size, file_buf);
@@ -327,15 +349,29 @@ int image_load(image_t *img, const char *path)
 
     if (bytes_read <= 0) {
         printk("image: read error on '%s' (got %d)\n", path, bytes_read);
-        kfree(file_buf);
+        if (buf_is_pmm) {
+            uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+            uint64_t fi;
+            for (fi = 0; fi < frames; fi++)
+                pmm_free_frame((uintptr_t)file_buf + fi * PMM_FRAME_SIZE);
+        } else {
+            kfree(file_buf);
+        }
         return -1;
     }
 
     /* Decode */
     result = image_load_mem(img, file_buf, file_size);
 
-    /* Free the compressed file data (always from kmalloc) */
-    kfree(file_buf);
+    /* Free the compressed file data */
+    if (buf_is_pmm) {
+        uint64_t frames = (file_size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+        uint64_t fi;
+        for (fi = 0; fi < frames; fi++)
+            pmm_free_frame((uintptr_t)file_buf + fi * PMM_FRAME_SIZE);
+    } else {
+        kfree(file_buf);
+    }
 
     if (result == 0) {
         printk("[IMG] Decoded '%s': %ux%u %s\n",

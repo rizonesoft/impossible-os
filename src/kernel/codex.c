@@ -548,7 +548,7 @@ void codex_populate_defaults(void)
         codex_set_string(key, "Font",         "Selawik");
         codex_set_int32(key, "FontSize",      12);
         codex_set_int32(key, "CornerRadius",  8);
-        codex_set_string(key, "Wallpaper",    "C:\\Impossible\\Wallpapers\\default.raw");
+        codex_set_string(key, "Wallpaper",    "C:\\Impossible\\Wallpapers\\default.jpg");
         codex_set_string(key, "WallpaperMode", "stretch");
         codex_set_bool(key, "EnableAnimations", 1);
         count += 8;
@@ -655,7 +655,7 @@ void codex_populate_defaults(void)
 
     key = codex_create("User\\Default\\Desktop");
     if (key) {
-        codex_set_string(key, "Wallpaper", "C:\\Impossible\\Wallpapers\\default.raw");
+        codex_set_string(key, "Wallpaper", "C:\\Impossible\\Wallpapers\\default.jpg");
         count += 1;
     }
 
