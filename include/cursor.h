@@ -81,3 +81,7 @@ void cursor_draw(int32_t x, int32_t y);
 /* Restore the framebuffer region under the last drawn cursor.
  * Call before compositing to undo the previous cursor blit. */
 void cursor_restore(void);
+
+/* Get the bounding rectangle of the last drawn cursor.
+ * Returns 0 if no cursor is visible, 1 otherwise. */
+int cursor_get_rect(int32_t *rx, int32_t *ry, uint32_t *rw, uint32_t *rh);

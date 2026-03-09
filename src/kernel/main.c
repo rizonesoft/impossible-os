@@ -1150,11 +1150,37 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     prev_mb = mb;
                     first_frame = 0;
                 } else if (cursor_moved) {
-                    /* Cursor-only move (no buttons held) */
+                    /* Cursor-only move (no buttons held) —
+                     * swap just the old + new cursor rects, not full screen */
                     scheduler_disable();
+
+                    /* Get old cursor rect before restore */
+                    int32_t  old_rx, old_ry;
+                    uint32_t old_rw, old_rh;
+                    int had_old = cursor_get_rect(&old_rx, &old_ry,
+                                                   &old_rw, &old_rh);
+
                     cursor_restore();
                     cursor_draw(mx, my);
-                    fb_swap();
+
+                    /* Get new cursor rect */
+                    int32_t  new_rx, new_ry;
+                    uint32_t new_rw, new_rh;
+                    int had_new = cursor_get_rect(&new_rx, &new_ry,
+                                                   &new_rw, &new_rh);
+
+                    /* Swap just the affected regions */
+                    if (had_old) {
+                        uint32_t sx = (old_rx >= 0) ? (uint32_t)old_rx : 0;
+                        uint32_t sy = (old_ry >= 0) ? (uint32_t)old_ry : 0;
+                        fb_swap_rect(sx, sy, old_rw, old_rh);
+                    }
+                    if (had_new) {
+                        uint32_t sx = (new_rx >= 0) ? (uint32_t)new_rx : 0;
+                        uint32_t sy = (new_ry >= 0) ? (uint32_t)new_ry : 0;
+                        fb_swap_rect(sx, sy, new_rw, new_rh);
+                    }
+
                     scheduler_enable();
 
                     prev_mx = mx;

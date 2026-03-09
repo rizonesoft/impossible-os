@@ -454,3 +454,14 @@ void cursor_draw(int32_t x, int32_t y)
         }
     }
 }
+
+int cursor_get_rect(int32_t *rx, int32_t *ry, uint32_t *rw, uint32_t *rh)
+{
+    if (!cursor_visible)
+        return 0;
+    if (rx) *rx = saved_x;
+    if (ry) *ry = saved_y;
+    if (rw) *rw = saved_w;
+    if (rh) *rh = saved_h;
+    return 1;
+}
