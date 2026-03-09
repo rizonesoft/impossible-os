@@ -3,8 +3,7 @@
  *
  * Handles IRQ 12 (interrupt vector 44 after PIC remap).
  * Initializes the PS/2 auxiliary device, parses 3-byte mouse packets,
- * tracks the global cursor position clamped to screen bounds, and renders
- * a 12×19 arrow cursor sprite on the framebuffer with save/restore.
+ * tracks the global cursor position clamped to screen bounds.
  *
  * PS/2 mouse protocol:
  *   Byte 0: [Y-ovf][X-ovf][Y-sign][X-sign][1][MBtn][RBtn][LBtn]
@@ -72,34 +71,6 @@ static uint8_t mouse_read(void)
     return inb(PS2_DATA_PORT);
 }
 
-/* ---- Cursor sprite (12×19 arrow) ----
- * 0 = transparent, 1 = black (outline), 2 = white (fill) */
-
-#define CURSOR_W 12
-#define CURSOR_H 19
-
-static const uint8_t cursor_data[CURSOR_H][CURSOR_W] = {
-    {1,0,0,0,0,0,0,0,0,0,0,0},
-    {1,1,0,0,0,0,0,0,0,0,0,0},
-    {1,2,1,0,0,0,0,0,0,0,0,0},
-    {1,2,2,1,0,0,0,0,0,0,0,0},
-    {1,2,2,2,1,0,0,0,0,0,0,0},
-    {1,2,2,2,2,1,0,0,0,0,0,0},
-    {1,2,2,2,2,2,1,0,0,0,0,0},
-    {1,2,2,2,2,2,2,1,0,0,0,0},
-    {1,2,2,2,2,2,2,2,1,0,0,0},
-    {1,2,2,2,2,2,2,2,2,1,0,0},
-    {1,2,2,2,2,2,2,2,2,2,1,0},
-    {1,2,2,2,2,2,2,1,1,1,1,1},
-    {1,2,2,2,1,2,2,1,0,0,0,0},
-    {1,2,2,1,0,1,2,2,1,0,0,0},
-    {1,2,1,0,0,1,2,2,1,0,0,0},
-    {1,1,0,0,0,0,1,2,2,1,0,0},
-    {1,0,0,0,0,0,1,2,2,1,0,0},
-    {0,0,0,0,0,0,0,1,2,1,0,0},
-    {0,0,0,0,0,0,0,1,1,0,0,0},
-};
-
 /* ---- Mouse state ---- */
 
 static volatile int32_t mouse_x;
@@ -111,12 +82,6 @@ static volatile uint8_t  mouse_packet[3];
 
 /* Debug counter — how many IRQ 12 interrupts we've received */
 static volatile uint32_t mouse_irq_count;
-
-/* Saved pixels under the cursor for restore */
-static uint32_t saved_under[CURSOR_H][CURSOR_W];
-static int32_t  saved_x = -1;
-static int32_t  saved_y = -1;
-static uint8_t  cursor_visible = 0;
 
 /* ---- IRQ 12 handler ---- */
 
@@ -272,82 +237,3 @@ void mouse_set_position(int32_t x, int32_t y)
     mouse_y = y;
 }
 
-/* ============================================================================
- * Cursor rendering with save/restore
- * ============================================================================ */
-
-void mouse_save_under(void)
-{
-    /* Already saved or no cursor to save under */
-    (void)0;
-}
-
-void mouse_restore_under(void)
-{
-    uint32_t px, py;
-    uint32_t scr_w, scr_h;
-
-    if (!cursor_visible)
-        return;
-
-    scr_w = fb_get_width();
-    scr_h = fb_get_height();
-
-    /* Restore saved pixels at the old cursor position */
-    for (py = 0; py < CURSOR_H; py++) {
-        for (px = 0; px < CURSOR_W; px++) {
-            if (cursor_data[py][px] == 0)
-                continue;  /* was transparent, nothing to restore */
-
-            uint32_t sx = (uint32_t)(saved_x + (int32_t)px);
-            uint32_t sy = (uint32_t)(saved_y + (int32_t)py);
-
-            if (sx < scr_w && sy < scr_h)
-                fb_put_pixel(sx, sy, saved_under[py][px]);
-        }
-    }
-
-    cursor_visible = 0;
-}
-
-void mouse_draw_cursor(void)
-{
-    int32_t cx = mouse_x;
-    int32_t cy = mouse_y;
-    uint32_t px, py;
-    uint32_t scr_w = fb_get_width();
-    uint32_t scr_h = fb_get_height();
-
-    /* Save the pixels under the new cursor position */
-    saved_x = cx;
-    saved_y = cy;
-    for (py = 0; py < CURSOR_H; py++) {
-        for (px = 0; px < CURSOR_W; px++) {
-            uint32_t sx = (uint32_t)(cx + (int32_t)px);
-            uint32_t sy = (uint32_t)(cy + (int32_t)py);
-            if (sx < scr_w && sy < scr_h)
-                saved_under[py][px] = fb_read_pixel(sx, sy);
-            else
-                saved_under[py][px] = 0;
-        }
-    }
-    cursor_visible = 1;
-
-    /* Draw the cursor on top */
-    for (py = 0; py < CURSOR_H; py++) {
-        for (px = 0; px < CURSOR_W; px++) {
-            uint8_t pix = cursor_data[py][px];
-            if (pix == 0)
-                continue;
-
-            uint32_t sx = (uint32_t)(cx + (int32_t)px);
-            uint32_t sy = (uint32_t)(cy + (int32_t)py);
-
-            if (sx >= scr_w || sy >= scr_h)
-                continue;
-
-            uint32_t color = (pix == 1) ? 0x00000000 : 0x00FFFFFF;
-            fb_put_pixel(sx, sy, color);
-        }
-    }
-}

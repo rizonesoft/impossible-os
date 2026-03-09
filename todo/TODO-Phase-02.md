@@ -312,17 +312,17 @@
 **Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 cursor shapes loaded from Adwaita X11 cursor files (Xcur binary format). The Adwaita cursor theme (LGPL/CC-BY-SA) is pre-installed at `/usr/share/icons/Adwaita/cursors/` on the build host. At build time, selected cursor files are copied to the sysroot at `C:\Impossible\System\Cursors\`. Each Xcur file contains multiple sizes with ARGB pixel data and hotspot coordinates baked in. `cursor_init()` calls `xcur_load()` for each cursor file. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-VFS boot. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: cursor manager with Adwaita cursors"`.
 
 
-- [ ] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
-- [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels per size)
-- [ ] Create `src/kernel/drivers/cursor.c`
-- [ ] Implement `xcur_load(path)` -- parse X11 cursor binary (Xcur format), extract ARGB+hotspot per size
-- [ ] Implement `cursor_init()` -- load cursor files from `C:\Impossible\System\Cursors\`, fall back to embedded arrow
-- [ ] Implement `cursor_set_shape(shape)` -- switch active cursor
-- [ ] Implement `cursor_get_shape()` -- get current shape
-- [ ] Implement `cursor_draw(x, y)` -- draw with alpha blending, save pixels underneath
-- [ ] Implement `cursor_restore()` -- restore saved pixels
-- [ ] Implement `cursor_get_hotspot(hx, hy)` -- for click position adjustment
-- [ ] Commit: `"drivers: cursor manager with Adwaita cursors"`
+- [x] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
+- [x] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels per size)
+- [x] Create `src/kernel/drivers/cursor.c`
+- [x] Implement `xcur_load(path)` -- parse X11 cursor binary (Xcur format), extract ARGB+hotspot per size
+- [x] Implement `cursor_init()` -- load cursor files from `C:\Impossible\System\Cursors\`, fall back to embedded arrow
+- [x] Implement `cursor_set_shape(shape)` -- switch active cursor
+- [x] Implement `cursor_get_shape()` -- get current shape
+- [x] Implement `cursor_draw(x, y)` -- draw with alpha blending, save pixels underneath
+- [x] Implement `cursor_restore()` -- restore saved pixels
+- [x] Implement `cursor_get_hotspot(hx, hy)` -- for click position adjustment
+- [x] Commit: `"drivers: cursor manager with Adwaita cursors"`
 
 ### 5.2 Cursor Assets (Adwaita X11 Cursors)
 

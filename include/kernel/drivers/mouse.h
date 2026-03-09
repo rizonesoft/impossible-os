@@ -1,8 +1,8 @@
 /* ============================================================================
  * mouse.h — PS/2 Mouse driver
  *
- * Handles IRQ 12, parses 3-byte mouse packets, tracks cursor position,
- * and renders a mouse cursor sprite on the framebuffer.
+ * Handles IRQ 12, parses 3-byte mouse packets, and tracks cursor position.
+ * Cursor rendering is handled by the cursor manager (cursor.h).
  * ============================================================================ */
 
 #pragma once
@@ -29,11 +29,3 @@ struct mouse_state mouse_get_state(void);
 uint32_t mouse_get_irq_count(void);
 void mouse_set_position(int32_t x, int32_t y);
 
-/* Draw / redraw the mouse cursor at its current position.
- * Call this once per frame after compositing. */
-void mouse_draw_cursor(void);
-
-/* Save and restore the framebuffer region under the cursor.
- * Call save before drawing, restore before the next redraw. */
-void mouse_save_under(void);
-void mouse_restore_under(void);

@@ -43,6 +43,7 @@
 #include "kernel/mm/mmap.h"
 
 #include "kernel/drivers/mouse.h"
+#include "cursor.h"
 #include "kernel/drivers/virtio_input.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
@@ -984,6 +985,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize icon store (loads Fluent icon fonts + color icons) */
         icon_store_init();
 
+        /* Initialize cursor manager (loads Adwaita Xcur files from sysroot) */
+        cursor_init();
+
         /* Initialize window manager */
         wm_init();
 
@@ -1083,7 +1087,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     mx = vis.x;
                     my = vis.y;
                     mb = vis.buttons;
-                    /* Update PS/2 mouse state so mouse_draw_cursor() works */
+                    /* Update PS/2 mouse state for cursor position tracking */
                     mouse_set_position(mx, my);
                 } else {
                     struct mouse_state ms = mouse_get_state();
@@ -1135,9 +1139,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     wm_mark_dirty();
 
                     /* Restore cursor, full composite, draw cursor, flip */
-                    mouse_restore_under();
+                    cursor_restore();
                     wm_composite();
-                    mouse_draw_cursor();
+                    cursor_draw(mx, my);
                     fb_swap();
                     scheduler_enable();
 
@@ -1148,8 +1152,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 } else if (cursor_moved) {
                     /* Cursor-only move (no buttons held) */
                     scheduler_disable();
-                    mouse_restore_under();
-                    mouse_draw_cursor();
+                    cursor_restore();
+                    cursor_draw(mx, my);
                     fb_swap();
                     scheduler_enable();
 
