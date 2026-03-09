@@ -91,11 +91,8 @@ void wm_focus_window(int handle);
  * Call this once per frame. The caller should call fb_swap() afterward. */
 void wm_composite(void);
 
-/* Force a full redraw on the next wm_composite() call. */
+/* Force a redraw on the next wm_composite() call. */
 void wm_mark_dirty(void);
-
-/* Get dirty bounding box for partial fb_swap. Returns 0 if full swap needed. */
-int wm_get_dirty_bounds(int32_t *x, int32_t *y, uint32_t *w, uint32_t *h);
 
 /* Check if a redraw is pending (content changed). */
 int wm_needs_redraw(void);

@@ -1088,17 +1088,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                      * cannot context-switch us mid-frame. */
                     scheduler_disable();
 
-                    /* Only force a full redraw for non-drag events. */
-                    if (btn_changed || clock_tick || first_frame)
-                        wm_mark_dirty();
+                    wm_mark_dirty();
 
-                    /* Remove old cursor from back buffer before compositing.
-                     * The dirty-rect path only repaints a sub-region — any
-                     * old cursor pixels OUTSIDE that region would persist
-                     * and get copied to VRAM, causing wallpaper to show
-                     * through windows where the cursor was last frame. */
+                    /* Restore cursor, full composite, draw cursor, flip */
                     mouse_restore_under();
-
                     wm_composite();
                     mouse_draw_cursor();
                     fb_swap();

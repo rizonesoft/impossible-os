@@ -6,9 +6,10 @@
  * onto the screen back buffer in z-order (painter's algorithm), then the
  * caller calls fb_swap() to present.
  *
- * Dirty-flag compositing: only redraws when something changed (mouse moved,
- * window moved/created/destroyed).  This eliminates flicker caused by QEMU's
- * host display thread catching a partially-drawn frame during the async read.
+ * Always-full-redraw compositing: every frame redraws the entire screen
+ * (wallpaper → windows → taskbar → start menu).  VBE page flipping ensures
+ * tear-free presentation.  This is correct by construction — no partial-
+ * repaint edge cases that cause wallpaper bleed-through.
  *
  * Features:
  *   - Window creation/destruction with dynamic framebuffer allocation
@@ -40,11 +41,6 @@ static uint8_t prev_buttons = 0;
 /* Dirty flag — when set, the compositor will redraw on next call */
 static volatile uint8_t needs_redraw = 1;
 
-/* Dirty rectangle tracker — tracks which screen regions changed.
- * When count > 0, wm_composite() can do a partial repaint. */
-static gfx_dirty_tracker_t wm_dirty_rects;
-static uint8_t wm_full_redraw = 1;  /* force full redraw on first frame */
-
 /* ---- Helpers ---- */
 
 static void str_copy(char *dst, const char *src, uint32_t max)
@@ -61,13 +57,6 @@ static void mark_dirty(void)
     needs_redraw = 1;
 }
 
-/* Mark a specific screen rectangle as dirty (for partial repaints) */
-static void mark_dirty_rect(int32_t x, int32_t y, uint32_t w, uint32_t h)
-{
-    needs_redraw = 1;
-    gfx_dirty_add(&wm_dirty_rects, x, y, w, h);
-}
-
 /* Free N contiguous pages starting at the given physical address */
 static void pmm_free_pages(uintptr_t base, uint32_t count)
 {
@@ -79,22 +68,12 @@ static void pmm_free_pages(uintptr_t base, uint32_t count)
 /* Public version for external callers (e.g., cursor movement) */
 void wm_mark_dirty(void)
 {
-    wm_full_redraw = 1;
     needs_redraw = 1;
 }
 
 int wm_needs_redraw(void)
 {
     return needs_redraw;
-}
-
-/* Get the dirty bounding box for partial fb_swap.
- * Returns 1 if there's a dirty region, 0 if a full swap is needed. */
-int wm_get_dirty_bounds(int32_t *x, int32_t *y, uint32_t *w, uint32_t *h)
-{
-    if (wm_full_redraw)
-        return 0;  /* caller should do full swap */
-    return gfx_dirty_bounds(&wm_dirty_rects, x, y, w, h);
 }
 
 /* Get the total outer width/height including decorations */
@@ -619,54 +598,11 @@ void wm_composite(void)
     /* Get sorted windows (bottom to top) */
     get_sorted_order(order, &count);
 
-    /* ---- Dirty-rect partial repaint path ---- */
-    if (!wm_full_redraw && wm_dirty_rects.count > 0) {
-        int32_t dx, dy;
-        uint32_t dw, dh;
-
-        if (gfx_dirty_bounds(&wm_dirty_rects, &dx, &dy, &dw, &dh)) {
-            /* Clamp dirty bounds to screen */
-            if (dx < 0) { dw = (uint32_t)((int32_t)dw + dx); dx = 0; }
-            if (dy < 0) { dh = (uint32_t)((int32_t)dh + dy); dy = 0; }
-
-            /* Repaint wallpaper ONLY within dirty bounds */
-            desktop_draw_wallpaper_rect(dx, dy, dw, dh);
-
-            /* Repaint ALL windows that overlap the dirty region
-             * (painter's algorithm still applies for correct z-order) */
-            for (i = 0; i < count; i++) {
-                struct wm_window *w = &windows[order[i]];
-                int32_t wx = w->x;
-                int32_t wy = w->y;
-                int32_t ww = (int32_t)outer_width(w);
-                int32_t wh = (int32_t)outer_height(w);
-
-                /* Check if window overlaps the dirty region */
-                if (wx + ww > dx && wx < dx + (int32_t)dw &&
-                    wy + wh > dy && wy < dy + (int32_t)dh) {
-                    if (w->flags & WM_FLAG_DECORATED)
-                        draw_decorations(w);
-                    blit_client(w);
-                }
-            }
-
-            /* Redraw taskbar if dirty region overlaps it */
-            {
-                uint32_t sh = fb_get_height();
-                uint32_t tb_y = sh - TASKBAR_HEIGHT;
-                if (dy + (int32_t)dh > (int32_t)tb_y) {
-                    desktop_draw_taskbar();
-                }
-            }
-        }
-
-        gfx_dirty_reset(&wm_dirty_rects);
-        return;
-    }
-
-    /* ---- Full redraw path (first frame, window create/destroy, etc.) ---- */
-    wm_full_redraw = 0;
-    gfx_dirty_reset(&wm_dirty_rects);
+    /* ---- Always full redraw ----
+     * Repaint the entire screen every frame.  VBE page flipping ensures
+     * tear-free presentation (the host display never reads a half-drawn
+     * frame).  This avoids all the subtle edge cases of partial repaints
+     * (wallpaper bleed-through, cursor residue, z-order overlap misses). */
 
     /* Draw desktop wallpaper (or fallback gradient) */
     desktop_draw_wallpaper();
@@ -738,22 +674,13 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 if (new_x + ow > sw)       new_x = sw - ow;
                 if (new_y + oh > sh)       new_y = sh - oh;
 
-                /* Mark OLD position as dirty (needs wallpaper restore) */
-                mark_dirty_rect(windows[i].x, windows[i].y,
-                                (uint32_t)ow, (uint32_t)oh);
-
                 /* Move window */
                 windows[i].x = new_x;
                 windows[i].y = new_y;
-
-                /* Mark NEW position as dirty (needs window redraw) */
-                mark_dirty_rect(new_x, new_y,
-                                (uint32_t)ow, (uint32_t)oh);
+                mark_dirty();
             }
             if (left_released) {
                 windows[i].dragging = 0;
-                /* Force full redraw on drop to clean up any artifacts */
-                wm_full_redraw = 1;
                 mark_dirty();
             }
             return;

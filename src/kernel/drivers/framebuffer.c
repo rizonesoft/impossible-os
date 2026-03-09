@@ -5,7 +5,7 @@
  * Multiboot2.  Uses an embedded 8x16 bitmap font (basic ASCII, 32-126).
  *
  * Features:
- *   - Double buffering (back buffer allocated via kmalloc)
+ *   - Double buffering (back buffer allocated via PMM)
  *   - Drawing primitives: fill_rect, draw_rect, draw_line, circles
  *   - Block copy (blit) for compositing
  * ============================================================================ */
@@ -13,6 +13,8 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/boot_info.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
+#include "kernel/printk.h"
 
 /* --- Embedded 8x16 bitmap font (ASCII 32–126) ---
  * Each character is 8 pixels wide × 16 pixels tall = 16 bytes per glyph.
@@ -196,24 +198,38 @@ void fb_init(void)
     fg_color  = FB_COLOR_FG_DEFAULT;
     bg_color  = FB_COLOR_BG_DEFAULT;
 
-    /* Allocate the back buffer via kernel heap */
-    back_buf = (uint32_t *)kmalloc(fb_width * fb_height * sizeof(uint32_t));
-    if (!back_buf) {
-        /* Fallback: draw directly to HW framebuffer (no double buffering) */
-        back_buf = hw_addr;
-        fb_stride = fb_pitch / (fb_bpp / 8);
+    /* Allocate the back buffer via PMM (contiguous physical frames).
+     * The kernel heap is only 2 MiB — far too small for a 1280×720×4 = 3.6 MiB
+     * back buffer.  PMM has 2041 MiB available and supports large contiguous
+     * allocations.  Identity mapping means phys addr == virt addr. */
+    {
+        uint32_t bb_bytes = fb_width * fb_height * sizeof(uint32_t);
+        uint32_t bb_pages = (bb_bytes + 4095) / 4096;
+        uintptr_t bb_base = pmm_alloc_contiguous(bb_pages);
+
+        if (bb_base) {
+            back_buf = (uint32_t *)bb_base;
+            printk("[OK] Framebuffer back buffer: %u KiB (%u pages) at %p\n",
+                   (uint64_t)(bb_bytes / 1024), (uint64_t)bb_pages, bb_base);
+        } else {
+            /* Fallback: draw directly to HW framebuffer (no double buffering).
+             * This WILL flicker — the host display reads VRAM while we draw. */
+            printk("[WARN] Back buffer alloc failed (%u KiB) — no double buffering!\n",
+                   (uint64_t)(bb_bytes / 1024));
+            back_buf = hw_addr;
+            fb_stride = fb_pitch / (fb_bpp / 8);
+        }
     }
 
     fb_ready = 1;
 
     /* Try to enable VBE page flipping for tear-free rendering.
-     * QEMU's Bochs VGA (0x1234:0x1111) has 16 MB VRAM and supports
-     * VBE_DISPI_INDEX_Y_OFFSET for instant display offset switching.
-     * We set virtual height = 2× physical height, creating two pages:
-     *   Page 0: rows 0 .. height-1
-     *   Page 1: rows height .. 2*height-1
-     * We copy back_buf to the INVISIBLE page, then flip to show it. */
-    {
+     * Bochs VGA supports VBE_DISPI_INDEX_Y_OFFSET for instant display
+     * offset switching.  We set virtual height = 2× physical height,
+     * creating two pages.  We copy back_buf to the INVISIBLE page,
+     * then flip to show it.  This eliminates tearing because the
+     * host display thread never reads a partially-written page. */
+    if (back_buf != hw_addr) {
         uint16_t vbe_id;
 
         /* Probe: read VBE DISPI ID */
@@ -229,9 +245,10 @@ void fb_init(void)
             __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)(fb_height * 2)),
                               "Nd"((uint16_t)0x01CF));
 
-            /* Start displaying page 0, drawing to page 1 */
             page_flip_ok = 1;
             page_current = 0;
+            printk("[OK] VBE page flip enabled (Bochs VGA %x, 2x%u virt height)\n",
+                   (uint64_t)vbe_id, (uint64_t)fb_height);
         }
     }
 
@@ -239,17 +256,16 @@ void fb_init(void)
 }
 
 /* ============================================================================
- * Double buffering — VBE page flip
+ * Double buffering — VBE page flip + direct copy fallback
  *
- * The key insight: QEMU's host display thread reads hw_addr asynchronously
- * on a separate host thread.  Any guest-side locking (cli, scheduler_disable)
- * only affects the guest CPU thread, not the host's display refresh.
- *
- * With page flipping:
- *   1. Copy back_buf → INVISIBLE page in VRAM (QEMU can't see this)
+ * All drawing goes to back_buf (in PMM memory, not VRAM).  fb_swap() copies
+ * the finished frame to VRAM.  With VBE page flipping enabled:
+ *   1. Copy back_buf → INVISIBLE VRAM page (host display can't see this)
  *   2. Atomic flip via VBE_DISPI_INDEX_Y_OFFSET (single outw instruction)
- *   3. QEMU's next display refresh reads the new, fully-written page  *
- * Result: ZERO tearing, because QEMU never reads a partially-written page.
+ *   3. Host display reads the fully-written page on next refresh = no tearing
+ *
+ * Fallback (no Bochs VGA): direct rep movsq copy to displayed VRAM.
+ * Minor tearing possible if host refresh catches the copy mid-row.
  * ============================================================================ */
 
 void fb_swap(void)
@@ -271,12 +287,11 @@ void fb_swap(void)
     __asm__ volatile ("sfence" ::: "memory");
 
     if (page_flip_ok) {
-        /* Determine which page is currently INVISIBLE (we copy there) */
+        /* Copy back_buf to the INVISIBLE VRAM page, then flip */
         target_y = (page_current == 0) ? fb_height : 0;
         dst = (uint64_t *)(hw_addr + target_y * hw_stride);
         src = (uint64_t *)back_buf;
 
-        /* Copy back_buf to the INVISIBLE page — QEMU can't see this */
         __asm__ volatile ("cli");
         if (fb_stride == hw_stride) {
             count = (uint64_t)(fb_stride * fb_height) / 2;
@@ -298,18 +313,17 @@ void fb_swap(void)
         }
         __asm__ volatile ("sti");
 
-        /* ATOMIC FLIP: switch display to the page we just wrote.
-         * This is a single I/O port write — instantaneous. */
+        /* Atomic flip: switch display to the page we just wrote */
         __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)0x09),
-                          "Nd"((uint16_t)0x01CE));  /* Y_OFFSET index */
+                          "Nd"((uint16_t)0x01CE));
         __asm__ volatile ("outw %0, %1" : : "a"((uint16_t)target_y),
-                          "Nd"((uint16_t)0x01CF));  /* Y_OFFSET value */
+                          "Nd"((uint16_t)0x01CF));
 
         page_current ^= 1;
         return;
     }
 
-    /* Fallback: direct copy to displayed buffer (tearing possible) */
+    /* Fallback: direct copy to displayed buffer */
     __asm__ volatile ("cli");
 
     if (fb_stride == hw_stride) {
