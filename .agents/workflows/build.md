@@ -8,7 +8,7 @@ description: Build the OS from source and test in QEMU
 
 ## Steps
 
-1. Run the build wrapper (default: clean + all):
+1. Incremental build (default — only recompiles changed files):
 ```bash
 bash scripts/build.sh
 ```
@@ -21,38 +21,25 @@ Expected output: `=== BUILD OK ===`
 
 3. Launch QEMU to test:
 ```bash
-make run
+bash scripts/build.sh run
 ```
 
-## Quick Rebuild (skip clean)
+## Build Modes
 
-1. Rebuild only changed files:
-```bash
-bash scripts/build.sh all
-```
+| Command | Description |
+|---------|-------------|
+| `bash scripts/build.sh` | Incremental build (fast — only changed files) |
+| `bash scripts/build.sh clean` | Full clean build (removes build/ first) |
+| `bash scripts/build.sh run` | Incremental build + launch QEMU |
+| `bash scripts/build.sh clean run` | Full clean build + launch QEMU |
 
-2. Verify:
-```bash
-tail -1 build/build.log
-```
+## Output
 
-3. Test:
-```bash
-make run
-```
-
-## Build Targets
-
-| Target | Description |
-|--------|-------------|
-| `clean` | Remove `build/` directory |
-| `all` | Compile bootloader + kernel |
-| `run` | Launch QEMU |
-| (default) | `clean all` |
-
-Usage: `bash scripts/build.sh [targets...]`
-
-Full build log: `build/build.log`
+- Per-step progress banners with timing
+- Error extraction on failure (highlights compiler errors)
+- Summary footer with per-step durations
+- Full log: `build/build.log`
+- Sentinel: `tail -1 build/build.log` → `=== BUILD OK ===` or `=== BUILD FAILED ===`
 
 ## Troubleshooting
 
