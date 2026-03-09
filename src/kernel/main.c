@@ -47,6 +47,7 @@
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
+#include "icon_store.h"
 #include "gfx.h"
 #include "kernel/drivers/pit.h"
 #include "desktop/desktop.h"
@@ -979,6 +980,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         /* Initialize TrueType font manager (loads fonts + builds glyph cache) */
         ttf_mgr_init();
+
+        /* Initialize icon store (loads Fluent icon fonts + color icons) */
+        icon_store_init();
 
         /* Initialize window manager */
         wm_init();

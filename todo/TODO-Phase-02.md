@@ -210,20 +210,20 @@
 
 ### 4.1 Icon Store Basics
 
-**Prompt:** The icon store is a centralized, hybrid icon system using two rendering backends. **Monochrome icons** (system/toolbar/file type icons — ~60 icons) are rendered from Fluent UI icon fonts (TTF) via the existing stb_truetype font system from §2. This gives resolution-independent vector rendering at any size with zero PNG storage overhead. Icons are rendered on demand, cached as BGRA bitmaps keyed by (id, size, color). **Color icons** (desktop app icons, branded icons — ~15 icons) are stored in `apps.ires` for multi-color detail at large sizes (48, 72, 128, 256). `icon_store_init()` loads the icon fonts and `apps.ires` at boot. `icon_get(id, size)` checks the cache, rasterizes from font if needed. `icon_draw()` blits with alpha blending. Foreground color is themeable via Codex `System\Theme\IconColor`. After completing all items, create `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: system icon store"`.
+**Verification:** Confirm `include/icon_store.h` defines `system_icon_t` enum (~100 icons: 60 monochrome + 40 color), `icon_bitmap_t` struct (BGRA pixels, width, height, PMM flag), and `icon_font_variant_t` enum (4 variants). Confirm `src/kernel/icon_store.c` implements: `icon_store_init()` (loads 4 Fluent icon fonts from `C:\Impossible\Fonts\`), `icon_get(id, size)` (cache check → font rasterize → BGRA tint → LRU cache), `icon_get_colored()`, `icon_get_by_name()` (linear search with `kstrcmp`), `icon_draw()` (per-pixel alpha blend), `icon_draw_scaled()`, LRU cache with 128 slots. Verify `Makefile` has explicit SSE2 rule for `icon_store.o`. Verify `main.c` calls `icon_store_init()` after `ttf_mgr_init()`. Verify `docs/architecture/icon-store.md` exists. Run `make clean && make all && make run`.
 
 
-- [ ] Define `system_icon_t` enum (~60 monochrome + ~15 color icons)
-- [ ] Define `icon_entry_t` struct (cached bitmap, source type: font glyph or IRES)
-- [ ] Create `include/icon_store.h` and `src/kernel/icon_store.c`
-- [ ] Implement `icon_store_init()` — load Fluent icon fonts + `apps.ires`
-- [ ] Implement `icon_get(id, size)` — return cached bitmap, rasterize from font on first access
-- [ ] Implement `icon_get_colored(id, size, color)` — font icons with custom tint
-- [ ] Implement `icon_get_by_name(name)` — lookup by string name
-- [ ] Implement `icon_draw(surface, icon, x, y)` — blit with alpha blending
-- [ ] Implement `icon_draw_scaled(surface, icon, x, y, target_size)` — scale for arbitrary sizes
-- [ ] Glyph cache: LRU eviction for (id, size, color) tuples to bound memory
-- [ ] Commit: `"desktop: system icon store"`
+- [x] Define `system_icon_t` enum (~60 monochrome + ~15 color icons)
+- [x] Define `icon_entry_t` struct (cached bitmap, source type: font glyph or IRES)
+- [x] Create `include/icon_store.h` and `src/kernel/icon_store.c`
+- [x] Implement `icon_store_init()` — load Fluent icon fonts + `apps.ires`
+- [x] Implement `icon_get(id, size)` — return cached bitmap, rasterize from font on first access
+- [x] Implement `icon_get_colored(id, size, color)` — font icons with custom tint
+- [x] Implement `icon_get_by_name(name)` — lookup by string name
+- [x] Implement `icon_draw(surface, icon, x, y)` — blit with alpha blending
+- [x] Implement `icon_draw_scaled(surface, icon, x, y, target_size)` — scale for arbitrary sizes
+- [x] Glyph cache: LRU eviction for (id, size, color) tuples to bound memory
+- [x] Commit: `"desktop: system icon store"`
 
 ### 4.2 Font-Based Icon Rendering
 
