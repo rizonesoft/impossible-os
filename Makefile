@@ -378,6 +378,13 @@ $(BUILD_DIR)/kernel/gfx/gfx_text.o: $(SRC_DIR)/kernel/gfx/gfx_text.c
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (fonts)"
 
+# stb_image implementation — needs SSE2 for floating-point math
+# -isystem include/freestanding provides shims for <stdlib.h>, <string.h>, etc.
+$(BUILD_DIR)/kernel/image.o: $(SRC_DIR)/kernel/image.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (stb_image)"
+
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)
