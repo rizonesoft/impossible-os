@@ -28,3 +28,7 @@ Thumbs.db
 
 # OVMF firmware copies
 OVMF_VARS*.fd
+
+# Icons8 color icons (licensed, not redistributable as standalone files)
+resources/icons/apps/**/*.png
+!resources/icons/apps/LICENSE.md
