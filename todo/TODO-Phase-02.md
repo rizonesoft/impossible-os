@@ -295,12 +295,12 @@
 **Prompt:** `.ico` files are the standard Windows icon format — a container holding multiple sizes (16, 32, 48, 256) as embedded BMP or PNG data. Third-party apps and user-created shortcuts need `.ico` support for their custom icons. The `.ico` header is 6 bytes (reserved, type=1, count), followed by 16-byte directory entries (width, height, offset, size), then image data at each offset. If the image data starts with PNG magic (`\x89PNG`), pass it to `image_load_mem()`. Otherwise parse it as a BMP DIB (headerless bitmap). `ico_load(path)` returns an `icon_entry_t` with all available sizes. This is used by File Manager, desktop shortcuts, and the Start menu for app icons. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: ICO file loader"`.
 
 
-- [ ] Implement `ico_load(path)` — parse `.ico` container, extract all sizes
-- [ ] Handle embedded PNG data (pass to `image_load_mem()`)
-- [ ] Handle embedded BMP DIB data (parse headerless bitmap)
-- [ ] Return `icon_entry_t` with available sizes populated
-- [ ] Used by: File Manager (exe icons), desktop shortcuts, Start menu app list
-- [ ] Commit: `"desktop: ICO file loader"`
+- [x] Implement `ico_load(path)` — parse `.ico` container, extract all sizes
+- [x] Handle embedded PNG data (pass to `image_load_mem()`)
+- [x] Handle embedded BMP DIB data (parse headerless bitmap)
+- [x] Return `ico_file_t` with available sizes populated
+- [x] Used by: File Manager (exe icons), desktop shortcuts, Start menu app list
+- [x] Commit: `"desktop: ICO file loader"`
 
 ---
 

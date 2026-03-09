@@ -82,23 +82,40 @@ Binary format: 16-byte header → size table → index → name table → BGRA p
 | `.txt`, `.md`, `.log`, `.cfg`, `.ini` | `ICON_TEXT_FILE` |
 | everything else     | `ICON_FILE_DEFAULT`|
 
+## ICO File Loader
+
+Parses Windows `.ico` containers for third-party app icons, desktop shortcuts, and
+Start menu entries. Supports:
+
+- **PNG entries:** Detected by `\x89PNG` magic, decoded via `image_load_mem()`
+- **BMP DIB entries:** 24bpp (BGR + AND mask) and 32bpp (BGRA) headerless bitmaps
+- **Best-size lookup:** `ico_get_best()` finds closest match to target size
+- Up to 16 entries per ICO file, max 4 MB file size
+
 ## Memory Management
 
 - Small bitmaps (≤4 KB): `kmalloc`
 - Large bitmaps (>4 KB): `pmm_alloc_contiguous()`
 - IRES file data: `pmm_alloc_contiguous()` (loaded once, pixel pointers reference this buffer)
+- ICO file data: PMM during load, freed after decoding (decoded pixels in separate allocs)
 - LRU eviction when cache is full (128 slots max)
 - Font TTF data: `kmalloc` (loaded once at boot)
 
 ## API
 
 ```c
+/* Icon store */
 icon_bitmap_t *icon_get(system_icon_t id, uint32_t size);
 icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size, gfx_color_t color);
 system_icon_t  icon_get_by_name(const char *name);
 system_icon_t  icon_for_extension(const char *ext);
 void           icon_draw(gfx_surface_t *s, const icon_bitmap_t *bmp, int32_t x, int32_t y);
 void           icon_draw_scaled(gfx_surface_t *s, system_icon_t id, int32_t x, int32_t y, uint32_t target_size);
+
+/* ICO file loader */
+int             ico_load(ico_file_t *ico, const char *path);
+icon_bitmap_t  *ico_get_best(const ico_file_t *ico, uint32_t target_size);
+void            ico_free(ico_file_t *ico);
 ```
 
 ## Files
@@ -106,7 +123,9 @@ void           icon_draw_scaled(gfx_surface_t *s, system_icon_t id, int32_t x, i
 | File | Purpose |
 |------|---------|
 | `include/icon_store.h` | Public API, enums, structs |
+| `include/ico.h` | ICO file loader API |
 | `src/kernel/icon_store.c` | Implementation (SSE2 compiled) |
+| `src/kernel/ico.c` | ICO file parser (PNG + BMP DIB) |
 | `tools/irespack.c` | Host-side IRES packer (PNG → .ires) |
 | `resources/icons/color/{size}/*.png` | Source PNGs for color icons |
 | `docs/architecture/icon-store.md` | This document |
