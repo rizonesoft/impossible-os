@@ -12,6 +12,9 @@
 
 ### 1.1 AC97 Sound Card Driver
 
+**Prompt:** AC97 is the simplest sound card to implement in QEMU. Detect the Intel ICH AC97 controller via PCI class 0x04/subclass 0x01. Map two I/O BARs: the Native Audio Mixer BAR (for codec registers like master volume, PCM out volume) and the Native Audio Bus Master BAR (for DMA control). The Bus Master uses a Buffer Descriptor List (BDL) — a ring of 32 entries, each pointing to a PCM data buffer with length and IOC (Interrupt On Completion) flags. Fill the BDL with PCM audio data, set the BDL base address register, and start playback by setting the run bit. Generate a test sine wave (440 Hz, 16-bit signed, 44100 Hz) to verify audio output. After completing all items, create `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: AC97 sound card driver"`.
+
+
 - [ ] Create `src/kernel/drivers/ac97.c` and `include/ac97.h`
 - [ ] Detect AC97 controller via PCI (class `0x04`, subclass `0x01`, or Intel ICH vendor/device)
 - [ ] Map I/O BAR (Native Audio Mixer BAR + Native Audio Bus Master BAR)
@@ -33,6 +36,9 @@
 
 ### 1.2 Audio Abstraction Layer
 
+**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Codex `System\Sound\Volume` (0-100) and `System\Sound\Mute` (BOOL). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: audio abstraction layer"`.
+
+
 - [ ] Create `src/kernel/audio.c` and `include/audio.h`
 - [ ] Define `struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn, stop_fn, volume_fn)
 - [ ] Implement `audio_init()` — detect sound card, register driver
@@ -46,6 +52,9 @@
 
 ### 1.3 Audio Mixer
 
+**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `System\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: audio mixer"`.
+
+
 - [ ] Create `src/kernel/audio_mixer.c`
 - [ ] Support multiple simultaneous audio streams (up to 8)
 - [ ] Mix streams by summing PCM samples with per-stream volume
@@ -55,6 +64,9 @@
 - [ ] Commit: `"kernel: audio mixer"`
 
 ### 1.4 System Sounds
+
+**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Sounds\` on IXFS. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Codex `System\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: system sounds"`.
+
 
 - [ ] Create `resources/sounds/` directory
 - [ ] Generate or source system sounds (WAV format, 22050 Hz, mono):
@@ -78,6 +90,9 @@
 
 ### 2.1 WAV Decoder
 
+**Prompt:** `dr_wav.h` is a public domain single-header WAV decoder (~1500 lines). Redirect its memory allocation macros to `kmalloc`/`kfree`. `audio_load_wav(path)` reads the WAV file via VFS, passes it to `drwav_init_memory()`, then decodes to 16-bit PCM. Support common formats: 8-bit unsigned, 16-bit signed, mono and stereo, sample rates 22050/44100/48000. Return a struct with the PCM buffer pointer, sample count, sample rate, and channel count. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_wav WAV decoder"`.
+
+
 - [ ] Add `dr_wav.h` to `include/` (public domain, ~1500 lines)
 - [ ] Redirect memory: `DRWAV_MALLOC → kmalloc`, `DRWAV_FREE → kfree`
 - [ ] Implement `audio_load_wav(path)` — decode WAV file to PCM int16 buffer
@@ -86,6 +101,9 @@
 - [ ] Commit: `"libs: dr_wav WAV decoder"`
 
 ### 2.2 MP3 Decoder
+
+**Prompt:** `dr_mp3.h` is a public domain single-header MP3 decoder (~3000 lines). Same integration pattern as WAV: redirect memory, decode to 16-bit PCM. MP3 files are typically MPEG-1 Layer 3 at 44100 Hz stereo. If the sound driver expects a different sample rate (e.g., 48000), resample by linear interpolation. `audio_load_mp3(path)` returns the same PCM struct as WAV. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_mp3 MP3 decoder"`.
+
 
 - [ ] Add `dr_mp3.h` to `include/` (public domain, ~3000 lines)
 - [ ] Redirect memory to kmalloc/kfree
@@ -97,6 +115,9 @@
 
 ### 2.3 OGG Vorbis Decoder
 
+**Prompt:** `stb_vorbis.c` is a public domain OGG Vorbis decoder (~5000 lines). Because it's a .c file (not header-only), create a wrapper `stb_vorbis_impl.c` similar to the stb_truetype integration from Phase 02. Redirect memory and disable stdio. Compile with SSE2 and `-ffreestanding`. `audio_load_ogg(path)` decodes the full OGG file to PCM. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: stb_vorbis OGG decoder"`.
+
+
 - [ ] Add `stb_vorbis.c` to `src/libs/` (public domain, ~5000 lines)
 - [ ] Redirect memory, disable stdio
 - [ ] Implement `audio_load_ogg(path)` — decode OGG to PCM
@@ -105,11 +126,17 @@
 
 ### 2.4 FLAC Decoder (Future)
 
+**Prompt:** `dr_flac.h` is a public domain single-header FLAC decoder (~4000 lines). FLAC is lossless audio — larger files but perfect quality. Same integration pattern as the other dr_* libraries. This is a stretch goal since WAV, MP3, and OGG cover most use cases. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_flac FLAC decoder"`.
+
+
 - [ ] *(Stretch)* Add `dr_flac.h` to `include/` (public domain, ~4000 lines)
 - [ ] *(Stretch)* Implement `audio_load_flac(path)` — lossless decode to PCM
 - [ ] Commit: `"libs: dr_flac FLAC decoder"`
 
 ### 2.5 MIDI Synthesis (Future)
+
+**Prompt:** TinySoundFont (MIT, single header) synthesizes MIDI audio using SoundFont (.sf2) instrument samples. Bundle a small General MIDI SoundFont (~5 MB). `audio_play_midi(path)` loads the MIDI file, synthesizes it to PCM via TinySoundFont, and plays via the audio system. This is a stretch goal for music creation and retro game audio. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: TinySoundFont MIDI synthesis"`.
+
 
 - [ ] *(Stretch)* Add **TinySoundFont** (MIT, single header) to `include/`
 - [ ] *(Stretch)* Bundle a small SoundFont file (~5 MB)
@@ -117,6 +144,9 @@
 - [ ] Commit: `"libs: TinySoundFont MIDI synthesis"`
 
 ### 2.6 Unified Audio Loader
+
+**Prompt:** `audio_load(path)` detects the audio format by file extension (.wav/.mp3/.ogg/.flac) and dispatches to the appropriate decoder. Returns a unified `struct audio_clip` with PCM buffer, sample_rate, channels, and total_samples. This is the single entry point for all audio loading — used by the media player, system sounds, and any future audio playback. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: unified audio file loader"`.
+
 
 - [ ] Implement `audio_load(path)` — detect format by extension, dispatch to decoder:
   - [ ] `.wav` → `audio_load_wav()`
@@ -134,6 +164,9 @@
 
 ### 3.1 USB Core
 
+**Prompt:** USB Core defines the data structures and enumeration logic shared by all USB host controllers. Define `struct usb_device` (address, speed, descriptors, endpoints, class driver), plus standard USB descriptor structs (device, config, interface, endpoint). Implement the USB enumeration sequence: reset device on port → assign address (SET_ADDRESS) → read device descriptor (GET_DESCRIPTOR) → read configuration descriptor → set configuration (SET_CONFIGURATION). After enumeration, match the device's class/subclass/protocol to a registered class driver (HID, Mass Storage, etc.). After completing all items, create `docs/architecture/usb.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: USB core and enumeration"`.
+
+
 - [ ] Create `src/kernel/drivers/usb/usb_core.c` and `include/usb.h`
 - [ ] Define USB data structures:
   - [ ] `struct usb_device` (address, speed, descriptor, endpoints, driver)
@@ -150,6 +183,9 @@
 - [ ] Commit: `"drivers: USB core and enumeration"`
 
 ### 3.2 xHCI Host Controller Driver
+
+**Prompt:** xHCI (USB 3.0) is the modern USB host controller found in all current hardware. Detect via PCI class 0x0C, subclass 0x03, prog_if 0x30. Map BAR0 for MMIO registers (capability, operational, runtime, doorbell arrays). Initialization: halt controller, reset, allocate DCBAA (Device Context Base Address Array), command ring, and event ring segments, set Max Slots Enabled, then start the controller. Handle port status change events for device attach/detach. Implement slot allocation, address device, and configure endpoint commands via the command ring. Transfers use per-endpoint Transfer Rings with TRBs (Transfer Request Blocks). Test with QEMU `-device qemu-xhci -device usb-kbd`. After completing all items, update `docs/architecture/usb.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: xHCI USB 3.0 host controller"`.
+
 
 - [ ] Create `src/kernel/drivers/usb/xhci.c` and `include/xhci.h`
 - [ ] Detect xHCI controller via PCI (class `0x0C`, subclass `0x03`, prog_if `0x30`)
@@ -170,6 +206,9 @@
 
 ### 3.3 USB HID Driver (Keyboard + Mouse)
 
+**Prompt:** USB HID (Human Interface Device) class 0x03 covers keyboards and mice. Match HID class devices during USB enumeration. Set up an interrupt IN endpoint for periodic reports. USB keyboard reports are 8 bytes: byte 0 = modifier keys (Ctrl/Shift/Alt/GUI), byte 1 = reserved, bytes 2-7 = up to 6 simultaneous keycodes. Convert USB HID keycodes (different from PS/2 scancodes) to the keyboard subsystem's scancode format. USB mouse reports contain button states + X/Y delta + wheel delta. Inject events into the existing keyboard/mouse subsystems so all apps work transparently. After completing all items, update `docs/architecture/usb.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: USB HID keyboard and mouse"`.
+
+
 - [ ] Create `src/kernel/drivers/usb/usb_hid.c`
 - [ ] Match HID class devices (class `0x03`)
 - [ ] Parse HID report descriptor (simplified — handle standard keyboard/mouse)
@@ -185,6 +224,9 @@
 - [ ] Commit: `"drivers: USB HID keyboard and mouse"`
 
 ### 3.4 USB Mass Storage Driver
+
+**Prompt:** USB Mass Storage class 0x08, subclass 0x06 (SCSI), protocol 0x50 (Bulk-Only Transport). Commands are wrapped in 31-byte CBW (Command Block Wrapper) structs sent via bulk OUT endpoint. Data transfers use bulk IN/OUT. Status is received as a 13-byte CSW (Command Status Wrapper) via bulk IN. SCSI commands: INQUIRY (0x12, identify device), READ CAPACITY (0x25, get size), READ(10) (0x28, read sectors), WRITE(10) (0x2A, write sectors). Register the USB drive as a block device, trigger partition scanning and auto-mount with a drive letter. Test with QEMU `-device usb-storage,drive=usb0`. After completing all items, update `docs/architecture/usb.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: USB mass storage (flash drives)"`.
+
 
 - [ ] Create `src/kernel/drivers/usb/usb_msc.c`
 - [ ] Match mass storage class (class `0x08`, subclass `0x06`, protocol `0x50` = Bulk-Only)
@@ -204,6 +246,9 @@
 
 ### 3.5 USB Hub Support
 
+**Prompt:** USB hubs (class 0x09) enumerate downstream ports and allow cascaded device connections. Read the hub descriptor for port count, then poll port status changes. When a new device is detected on a hub port, power it, wait for reset, then run the standard USB enumeration sequence. This is a stretch goal — most QEMU testing uses direct device connections without hubs. After completing all items, update `docs/architecture/usb.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: USB hub support"`.
+
+
 - [ ] *(Stretch)* Detect USB hub devices (class `0x09`)
 - [ ] *(Stretch)* Enumerate downstream ports
 - [ ] *(Stretch)* Handle hub port status changes → enumeration of cascaded devices
@@ -217,6 +262,9 @@
 
 ### 4.1 Intel HDA Sound Driver
 
+**Prompt:** Intel HDA (High Definition Audio) is the modern audio standard, more complex than AC97. Detect via PCI class 0x04, subclass 0x03. Map MMIO registers, initialize CORB (Command Output Ring Buffer) and RIRB (Response Input Ring Buffer) for codec communication. Enumerate codecs on the HDA link, parse the widget tree (AFG → mixer → DAC → output pin) to find the audio output path. Set up a DMA stream descriptor for PCM playback. QEMU: `-device intel-hda -device hda-duplex`. This is a stretch goal since AC97 covers QEMU testing. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: Intel HDA audio"`.
+
+
 - [ ] *(Stretch)* Create `src/kernel/drivers/hda.c`
 - [ ] *(Stretch)* Detect Intel HDA via PCI (class `0x04`, subclass `0x03`)
 - [ ] *(Stretch)* Map MMIO registers, initialize CORB/RIRB (command/response buffers)
@@ -226,6 +274,9 @@
 - [ ] Commit: `"drivers: Intel HDA audio"`
 
 ### 4.2 Media Player App
+
+**Prompt:** The Media Player is the primary audio playback app. Load files via `audio_load()` (unified loader from §2.6). Transport controls: Play/Pause toggle, Stop, Previous/Next track using the button widget from Phase 05 §1.1. A seek bar (slider widget from Phase 05 §1.4) shows playback progress and allows seeking. Volume slider with mute toggle. Display song title from filename (or ID3 metadata if parser is implemented). Register file associations for .mp3/.wav/.ogg so double-clicking opens in the media player. After completing all items, create `docs/user/media-player.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Media Player"`.
+
 
 - [ ] Create `src/apps/mediaplayer/mediaplayer.c`
 - [ ] Play audio files: WAV, MP3, OGG
@@ -237,6 +288,9 @@
 
 ### 4.3 Volume Popup (System Tray)
 
+**Prompt:** Click the 🔊 speaker icon in the system tray (Phase 04 §3.2) to show a volume slider popup. Dragging the slider calls `audio_set_volume()` in real-time. Include a mute toggle button. Hardware volume keys (Volume Up/Down on keyboard) adjust volume by 5% increments and briefly show a volume OSD (On-Screen Display) — a small overlay near the system tray that fades out after 2 seconds. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: volume control popup"`.
+
+
 - [ ] Click 🔊 tray icon → volume slider popup
 - [ ] Drag slider → `audio_set_volume()` in real-time
 - [ ] Mute toggle button
@@ -245,6 +299,9 @@
 - [ ] Commit: `"desktop: volume control popup"`
 
 ### 4.4 Sound Settings Applet
+
+**Prompt:** The `sound.spl` applet in the Settings Panel (Phase 05 §4 SPL framework) provides persistent audio configuration. Master volume slider (writes `System\Sound\Volume` to Codex), mute toggle, output device selector (dropdown, if multiple audio devices are detected), system sounds enable/disable toggle, and a "Test Sound" button that plays a short test tone. This applet uses the same audio abstraction API as the media player. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: sound settings applet"`.
+
 
 - [ ] `sound.spl` in Settings Panel:
   - [ ] Master volume slider
@@ -256,6 +313,9 @@
 
 ### 4.5 Hot-Plug Event System
 
+**Prompt:** When xHCI detects a port status change (device attach/detach), send a kernel notification event. The desktop toasts system (Phase 04 §6.3) shows "USB drive detected — D:\\ (8.0 GB, FAT32)" or "USB keyboard connected". Safe removal: add a system tray eject icon. Clicking "Safely eject D:\\" flushes all dirty buffers to the device, unmounts it, then shows "Safe to remove". This requires the USB Mass Storage driver from §3.4 and the block device layer from Phase 06. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: USB hot-plug notifications"`.
+
+
 - [ ] Kernel notification on USB device attach/detach
 - [ ] Desktop toast: "USB drive detected — D:\ (8.0 GB, FAT32)"
 - [ ] Desktop toast: "USB keyboard connected"
@@ -265,12 +325,18 @@
 
 ### 4.6 PS/2 ↔ USB Fallback
 
+**Prompt:** If USB HID keyboard/mouse are detected, prefer them over PS/2 input. If no USB HID devices are found, fall back to the current PS/2 drivers. The keyboard and mouse subsystems should abstract the input source so applications don't need to know whether input comes from PS/2 or USB. This is a seamless transition handler. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: PS/2 ↔ USB input fallback"`.
+
+
 - [ ] If USB keyboard/mouse detected, prefer USB input over PS/2
 - [ ] If no USB HID, fall back to PS/2 (current default)
 - [ ] Seamlessly switch input source without application changes
 - [ ] Commit: `"drivers: PS/2 ↔ USB input fallback"`
 
 ### 4.7 EHCI/UHCI Fallback (Legacy USB)
+
+**Prompt:** EHCI (USB 2.0, PCI prog_if 0x20) and UHCI (USB 1.1, PCI prog_if 0x00) are legacy USB host controllers. EHCI uses async and periodic schedules with Queue Head/Transfer Descriptor structures. UHCI uses a 1024-entry frame list with Transfer Descriptor chains. These are stretch goals for compatibility with older hardware — xHCI covers all modern systems and QEMU. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: EHCI/UHCI legacy USB host controllers"`.
+
 
 - [ ] *(Stretch)* Create `src/kernel/drivers/usb/ehci.c` — USB 2.0 host controller
 - [ ] *(Stretch)* Detect via PCI (class `0x0C`, subclass `0x03`, prog_if `0x20`)

@@ -13,6 +13,9 @@
 
 ### 1.1 PE Header Structures
 
+**Prompt:** PE (Portable Executable) is the Windows binary format. Define the structures per the PE/COFF spec: DOS header (e_magic "MZ", e_lfanew to PE signature), COFF header (machine=AMD64), PE32+ Optional Header (magic 0x020B, ImageBase, EntryPointRVA, SizeOfImage), section headers (name, VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData), data directories (RVA+Size for imports, relocations, etc). After completing all items, create `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: PE/COFF header structures"`.
+
+
 - [ ] Create `include/pe.h` (~80 lines)
 - [ ] Define `struct pe_dos_header` (e_magic "MZ", e_lfanew offset to PE signature)
 - [ ] Define `struct pe_coff_header` (machine, num_sections, characteristics)
@@ -23,6 +26,9 @@
 - [ ] Commit: `"kernel: PE/COFF header structures"`
 
 ### 1.2 PE Loader Core
+
+**Prompt:** `pe_load(data, size)` validates DOS "MZ" header, follows e_lfanew to PE signature, parses COFF (verify Machine==AMD64), reads PE32+ Optional Header (ImageBase, EntryPointRVA, SizeOfImage, DataDirectory imports+relocations). Allocate SizeOfImage at ImageBase, copy each section to ImageBase+VirtualAddress, zero-fill BSS. Return entry = ImageBase + AddressOfEntryPoint. After completing all items, update `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: PE loader core"`.
+
 
 - [ ] Create `src/kernel/pe.c` (~250 lines)
 - [ ] Implement `pe_load(data, size)`:
@@ -39,6 +45,9 @@
 
 ### 1.3 Tri-Format Detection
 
+**Prompt:** Create `load_binary(data, size)` that checks magic bytes: `"MZ"` → pe_load, `"\x7FELF"` → elf_load, `0xFEEDFACF` → macho_load, `0xFEEDFACE` → reject 32-bit. Update exec path to use load_binary() instead of elf_load(). All loaders return the same `struct load_result`. After completing all items, update `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: tri-format binary detection"`.
+
+
 - [ ] Create `load_binary(data, size)` in `src/kernel/task.c` (or new file)
 - [ ] Auto-detect format by magic bytes:
   - [ ] `"MZ"` (0x5A4D) → `pe_load()` — Windows PE
@@ -51,6 +60,9 @@
 - [ ] Commit: `"kernel: tri-format binary detection (ELF + PE + Mach-O)"`
 
 ### 1.4 Base Relocation
+
+**Prompt:** Parse DataDirectory[5] relocation blocks. For IMAGE_REL_BASED_DIR64 entries, add delta (actual_base - preferred_base) to 64-bit addresses. Skip type 0 padding. No relocation needed if loaded at preferred address. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: PE base relocation support"`.
+
 
 - [ ] Parse DataDirectory[5] (Base Relocation Table) from PE
 - [ ] If PE loaded at address ≠ preferred ImageBase:
@@ -66,6 +78,9 @@
 
 ### 2.1 Import Table Parser
 
+**Prompt:** Parse DataDirectory[1] Import Directory Table. Each entry has DLL name RVA, Import Lookup Table, Import Address Table. Walk ILT entries: MSB set = ordinal, otherwise Hint/Name Table entry. Log imports: `"PE imports: kernel32.dll!WriteConsoleA"`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: PE import table parser"`.
+
+
 - [ ] Parse Import Directory Table from DataDirectory[1]
 - [ ] For each DLL entry: read DLL name string, Import Lookup Table (ILT), Import Address Table (IAT)
 - [ ] For each function: read name (or ordinal) from Hint/Name Table
@@ -73,6 +88,9 @@
 - [ ] Commit: `"kernel: PE import table parser"`
 
 ### 2.2 Builtin DLL Stub Table
+
+**Prompt:** Map DLL names to (func_name, func_ptr) arrays. `pe_resolve_builtin(dll_name, func_name)` searches and returns the stub pointer. Start with kernel32, msvcrt, ntdll. Future: user32, gdi32, ws2_32, advapi32. Table must be extensible. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: builtin DLL stub table"`.
+
 
 - [ ] Define `struct win32_export` (name, func_ptr)
 - [ ] Create lookup function: `pe_resolve_builtin(dll_name, func_name)` → function pointer
@@ -88,6 +106,9 @@
 
 ### 2.3 IAT Patching
 
+**Prompt:** Patch Import Address Table: for each import, look up builtin table. If found, write stub pointer to IAT slot. If not, write `stub_unimplemented()` that logs `"UNIMPL: dll!func"` and returns 0. PE code calls stubs via normal IAT indirect calls. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: IAT patching"`.
+
+
 - [ ] For each imported function:
   - [ ] Look up in builtin DLL table first
   - [ ] If found: write stub function pointer into IAT slot
@@ -96,6 +117,9 @@
 - [ ] Commit: `"kernel: IAT patching (import resolution)"`
 
 ### 2.4 External DLL Loading (Future)
+
+**Prompt:** Stretch: search filesystem for DLLs not in builtin table (System32 dir, exe dir). Load DLL as PE, parse export table. Handle recursive DLL deps. Call DllMain(DLL_PROCESS_ATTACH). Implement LoadLibraryA/GetProcAddress for runtime loading. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: external DLL loading"`.
+
 
 - [ ] *(Stretch)* Search filesystem for DLLs not in builtin table:
   - [ ] `C:\Windows\System32\{name}`
@@ -113,12 +137,18 @@
 
 ### 3.1 Windows Type Definitions
 
+**Prompt:** Create `include/win32.h` with Windows types: HANDLE=void*, DWORD=uint32_t, BOOL=int, LPVOID=void*, LPCSTR=const char*. Constants: STD_INPUT/OUTPUT/ERROR_HANDLE, INVALID_HANDLE_VALUE, TRUE, FALSE. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Win32 type definitions"`.
+
+
 - [ ] Create `include/win32.h`
 - [ ] Define Windows types: `HANDLE`, `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `SIZE_T`, `UINT`, `LPARAM`, `WPARAM`
 - [ ] Define constants: `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE`, `INVALID_HANDLE_VALUE`, `TRUE`, `FALSE`
 - [ ] Commit: `"kernel: Win32 type definitions"`
 
 ### 3.2 kernel32.dll — Console & Process
+
+**Prompt:** First tier stubs for console Hello World: GetStdHandle maps fd 0/1/2, WriteConsoleA → sys_write, ReadConsoleA → sys_read, ExitProcess → sys_exit, GetCommandLineA returns argv, GetModuleHandleA(NULL) returns ImageBase, GetLastError/SetLastError use global error var. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: kernel32.dll console stubs"`.
+
 
 - [ ] Create `src/kernel/win32/kernel32.c`
 - [ ] `GetStdHandle(nStdHandle)` → return fd 0/1/2 as HANDLE
@@ -132,6 +162,9 @@
 - [ ] Commit: `"win32: kernel32.dll console + process stubs"`
 
 ### 3.3 msvcrt.dll — C Runtime
+
+**Prompt:** Map C stdlib: printf/puts → format + sys_write, malloc/free/calloc/realloc → kernel heap, memcpy/memmove/memset/memcmp → kernel implementations, strlen/strcpy/strcmp → kernel string functions, sprintf/snprintf → kernel printf engine, atoi/atol for conversions. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: msvcrt.dll C runtime stubs"`.
+
 
 - [ ] Create `src/kernel/win32/msvcrt.c`
 - [ ] `printf(fmt, ...)` → format + `sys_write()` to stdout
@@ -149,6 +182,9 @@
 
 ### 3.4 ntdll.dll — NT Runtime
 
+**Prompt:** Stub minimal ntdll functions: RtlInitUnicodeString (no-op), NtCurrentTeb (return static dummy TEB), RtlGetVersion (return plausible version info). Most ntdll functions can be safely stubbed as no-ops for basic compatibility. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: ntdll.dll minimal stubs"`.
+
+
 - [ ] Create `src/kernel/win32/ntdll.c`
 - [ ] `RtlInitUnicodeString()` → stub (many programs import it)
 - [ ] `NtCurrentTeb()` → stub (Thread Environment Block)
@@ -156,6 +192,9 @@
 - [ ] Commit: `"win32: ntdll.dll minimal stubs"`
 
 ### 3.5 Test: Run Windows Hello World
+
+**Prompt:** Cross-compile `x86_64-w64-mingw32-gcc -o hello.exe hello.c`, include on C:\\. Execute in shell — should print "Hello, World!" via WriteConsoleA. This is the milestone proving PE+IAT+Win32 all work. Debug via serial UNIMPL warnings. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: run first Windows PE program"`.
+
 
 - [ ] Cross-compile test program: `x86_64-w64-mingw32-gcc -o hello.exe hello.c`
 - [ ] Include on C:\
@@ -168,6 +207,9 @@
 > *Research: [01_pe_native_format.md](research/phase_10_compatibility/01_pe_native_format.md)*
 
 ### 4.1 kernel32.dll — File I/O
+
+**Prompt:** File I/O stubs: CreateFileA translates path via §4.3 then vfs_open, ReadFile/WriteFile → vfs_read/write, CloseHandle → vfs_close, GetFileSize → vfs_stat, SetFilePointer → vfs_seek. FindFirstFileA/FindNextFileA/FindClose for dir scanning. DeleteFileA → vfs_delete, CreateDirectoryA → vfs_create_dir. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: kernel32.dll file I/O stubs"`.
+
 
 - [ ] `CreateFileA(filename, access, ...)` → `vfs_open()` with Windows path translation
 - [ ] `CreateFileW(filename, access, ...)` → UTF-16 → UTF-8, then `vfs_open()`
@@ -187,6 +229,9 @@
 
 ### 4.2 kernel32.dll — Memory Management
 
+**Prompt:** VirtualAlloc maps to sys_mmap (MEM_COMMIT|MEM_RESERVE = allocate+zero), VirtualFree releases. HeapCreate/HeapAlloc/HeapFree/GetProcessHeap map to kernel heap. Add SYS_MMAP and SYS_BRK syscalls. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: kernel32.dll memory management stubs"`.
+
+
 - [ ] `VirtualAlloc(addr, size, type, protect)` → `sys_mmap()`
 - [ ] `VirtualFree(addr, size, type)` → `sys_munmap()`
 - [ ] `HeapCreate(options, initial, max)` → create heap region
@@ -197,6 +242,9 @@
 - [ ] Commit: `"win32: kernel32.dll memory management stubs"`
 
 ### 4.3 Windows Path Translation
+
+**Prompt:** `win32_path_to_vfs()` converts backslashes to forward slashes, preserves drive letters (VFS uses them). Handle relative paths via CWD. UNC paths return error. Called inside every file-related Win32 stub. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: Windows path translation"`.
+
 
 - [ ] `win32_path_to_vfs(win_path, vfs_path)` — translate Windows paths to VFS:
   - [ ] `"C:\\Users\\Derick\\file.txt"` → `"C:/Users/Derick/file.txt"`
@@ -213,12 +261,18 @@
 
 ### 5.1 Windows x64 Convention
 
+**Prompt:** Windows x64 passes args in RCX, RDX, R8, R9 (vs System V: RDI, RSI, RDX, RCX). Compile Win32 stubs with `__attribute__((ms_abi))` or use inline asm to remap. Syscalls via INT 0x80 bypass C ABI, so no conflict. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Win32 calling convention"`.
+
+
 - [ ] Win32 stubs compiled with Windows x64 convention: args in RCX, RDX, R8, R9
 - [ ] Stubs internally use inline `INT 0x80` assembly with explicit register setup
 - [ ] No automatic convention conflict since syscalls bypass C ABI
 - [ ] Commit: `"kernel: Win32 stubs with Windows x64 calling convention"`
 
 ### 5.2 Convention Thunks (Future)
+
+**Prompt:** Stretch: Win-to-SysV thunk moves RCX→RDI, RDX→RSI, R8→RDX, R9→RCX then jumps. Reverse for SysV-to-Win plus 32-byte shadow space. Only needed for cross-format interop. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: calling convention thunks"`.
+
 
 - [ ] *(Stretch)* Windows-to-SysV thunk: `mov rdi, rcx; mov rsi, rdx; mov rdx, r8; mov rcx, r9; jmp target`
 - [ ] *(Stretch)* SysV-to-Windows thunk: reverse register mapping
@@ -231,6 +285,9 @@
 
 ### 6.1 Keyboard Layout System
 
+**Prompt:** Replace hardcoded US QWERTY scancode table in `keyboard.c` with a layout system. Define `struct kbd_layout` with name, code ("en-US"), normal[128], shift[128], altgr[128] arrays. `kbd_set_layout(code)` switches active layout. Store in Codex `System\Input\KeyboardLayout`. After completing all items, create `docs/architecture/keyboard-layouts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: keyboard layout system"`.
+
+
 - [ ] Create `src/kernel/kbd_layout.c` and `include/kbd_layout.h`
 - [ ] Define `struct kbd_layout` (name, code, normal[128], shift[128], altgr[128])
 - [ ] Replace hardcoded US QWERTY scancode→ASCII table in `keyboard.c` with layout lookup
@@ -240,6 +297,9 @@
 - [ ] Commit: `"kernel: keyboard layout system"`
 
 ### 6.2 Built-in Layouts
+
+**Prompt:** Define layout tables: US QWERTY (default), UK English (£ vs $), German QWERTZ (Z/Y swap, umlauts on AltGr), French AZERTY (A/Q, Z/W swap), Spanish (ñ, accents), Dvorak (alt layout). Store as static arrays in `resources/layouts/`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: built-in keyboard layouts"`.
+
 
 - [ ] Create `resources/layouts/` directory with layout data
 - [ ] **US English (QWERTY)** — `en-US` (default)
@@ -252,6 +312,9 @@
 
 ### 6.3 Layout Switching
 
+**Prompt:** Win+Space cycles installed layouts. System tray shows 2-letter indicator ("EN", "FR", "DE"). Click indicator → layout picker popup. Settings applet for layout management. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: keyboard layout switching"`.
+
+
 - [ ] Win+Space → cycle through installed layouts
 - [ ] System tray indicator: show current layout code (`EN`, `FR`, `DE`)
 - [ ] Click tray indicator → layout picker popup
@@ -259,6 +322,9 @@
 - [ ] Commit: `"desktop: keyboard layout switching (Win+Space)"`
 
 ### 6.4 Unicode / UTF-8 Support
+
+**Prompt:** Store all text as UTF-8. Implement `utf8_encode(codepoint, buf)` and `utf8_decode(buf, codepoint_out)`. Keyboard outputs UTF-8. stb_truetype already supports Unicode codepoints. Stretch: Noto Sans fallback font for CJK. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: UTF-8 Unicode support"`.
+
 
 - [ ] Store all text strings internally as UTF-8
 - [ ] UTF-8 encode/decode helpers: `utf8_encode(codepoint, buf)`, `utf8_decode(buf, codepoint_out)`
@@ -268,6 +334,9 @@
 - [ ] Commit: `"kernel: UTF-8 Unicode support"`
 
 ### 6.5 Localization Framework (Future)
+
+**Prompt:** Stretch: per-locale .ini files at `C:\Impossible\System\Locale\{code}.ini`. `locale_get(key)` returns localized string. All UI uses locale_get() instead of hardcoded English. Start with en-US, add fr-FR/de-DE/es-ES. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: localization framework"`.
+
 
 - [ ] *(Stretch)* UI string files: `C:\Impossible\System\Locale\{code}.ini`
 - [ ] *(Stretch)* `locale_get(key)` — return localized string for current locale
@@ -282,12 +351,18 @@
 
 ### 7.1 GraalVM Native Images (Approach B — Recommended First)
 
+**Prompt:** Compile Java to native ELF/PE via GraalVM `native-image` on host. No JVM needed at runtime — runs through existing loaders. Requires ELF+syscalls (mmap, file I/O). Test with Hello World. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: GraalVM native image support"`.
+
+
 - [ ] *(Stretch)* Compile Java programs to native ELF/PE on host using `native-image`
 - [ ] *(Stretch)* Include compiled binary on C:\
 - [ ] *(Stretch)* Execute like any other ELF/PE program — no JVM needed at runtime
 - [ ] *(Stretch)* Prerequisite: working ELF loader + enough syscalls (`mmap`, file I/O)
 
 ### 7.2 Mini-JVM Bytecode Interpreter (Approach C — Educational)
+
+**Prompt:** Build minimal JVM (~2-4K lines). Parse .class format: magic 0xCAFEBABE, constant pool, methods, Code attribute. Implement ~40 opcodes: constants, arithmetic, variables, control flow, objects. Map System.out.println → sys_write. Shell: `java HelloWorld.class`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Mini-JVM"`.
+
 
 - [ ] *(Stretch)* Create `src/apps/jvm/jvm.c` (~2000-4000 lines)
 - [ ] *(Stretch)* Parse `.class` file format: magic, constant pool, methods, code attribute
@@ -305,6 +380,9 @@
 
 ### 7.3 JamVM Port (Approach A — Full JVM)
 
+**Prompt:** Port JamVM (~15K lines, GPL 2.0). Requires mmap, file I/O, threading, ZIP parsing (miniz). Most complete Java but most effort. Stretch goal — prioritize approaches B and C first. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: JamVM port"`.
+
+
 - [ ] *(Stretch)* Port JamVM interpreter (~15K lines, GPL 2.0)
 - [ ] *(Stretch)* Prerequisites: `mmap()`, file I/O, threading
 - [ ] *(Stretch)* Covers: classes, methods, strings, arrays, exceptions
@@ -319,6 +397,9 @@
 
 ### 8.1 Mach-O Header Structures
 
+**Prompt:** Define Mach-O structs: `mach_header_64` (magic 0xFEEDFACF, cputype X86_64), load commands (LC_SEGMENT_64, LC_MAIN, LC_LOAD_DYLIB, LC_SYMTAB, LC_DYSYMTAB), `segment_command_64` (vmaddr, vmsize, fileoff, filesize, nsects), `section_64` (sectname, segname, addr, size). After all items, create `docs/architecture/macho-loader.md`, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: Mach-O header structures"`.
+
+
 - [ ] Create `include/macho.h` (~80 lines)
 - [ ] Define `struct mach_header_64` (magic `0xFEEDFACF`, cputype `CPU_TYPE_X86_64`, ncmds, sizeofcmds)
 - [ ] Define `struct load_command` (cmd, cmdsize) — base for all load commands
@@ -328,6 +409,9 @@
 - [ ] Commit: `"kernel: Mach-O header structures"`
 
 ### 8.2 Mach-O Loader Core
+
+**Prompt:** `macho_load(data, size)` validates magic+cputype, walks load commands. LC_SEGMENT_64: allocate vmsize at vmaddr, copy filesize from fileoff, zero-fill remainder. LC_MAIN: entry offset from __TEXT base. Collect LC_LOAD_DYLIB names. Return entry point. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: Mach-O loader core"`.
+
 
 - [ ] Create `src/kernel/macho.c` (~300 lines)
 - [ ] Implement `macho_load(data, size)`:
@@ -344,6 +428,9 @@
 
 ### 8.3 Mach-O Dylib Import Resolution
 
+**Prompt:** Parse LC_SYMTAB + LC_DYSYMTAB for symbol/indirect tables. Patch __la_symbol_ptr entries (lazy symbol pointers) with builtin stub addresses. Map libSystem.B.dylib to our stubs. Use indirect symbol table to match stub indices to names. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: Mach-O dylib import resolution"`.
+
+
 - [ ] Parse `LC_LOAD_DYLIB` commands to find required libraries:
   - [ ] `/usr/lib/libSystem.B.dylib` — macOS system library (libc + POSIX)
   - [ ] `/usr/lib/libc++.1.dylib` — C++ standard library (future)
@@ -355,6 +442,9 @@
 - [ ] Commit: `"kernel: Mach-O dylib import resolution"`
 
 ### 8.4 libSystem.B.dylib Stubs (macOS API)
+
+**Prompt:** macOS uses System V x64 convention (same as ELF) — no register bridge needed. Stubs: write/read/_exit → sys_write/read/exit, malloc/free → kernel heap, mmap/munmap → sys_mmap, printf/puts/strlen/strcpy/strcmp/memcpy/memset, open/close/stat → VFS, getpid/abort. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"macos: libSystem.B.dylib stubs"`.
+
 
 - [ ] Create `src/kernel/macos/libsystem.c`
 - [ ] macOS uses **System V x64 calling convention** (same as ELF!) — no register bridge needed
@@ -384,6 +474,9 @@
 
 ### 8.5 macOS Path Translation
 
+**Prompt:** Translate macOS Unix paths: `/Users/name/file.txt` → `C:\Users\name\file.txt`, `/tmp/` → `C:\Temp\`, `/` → `C:\`. VFS already supports forward slashes, main work is prepending drive letter. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"macos: path translation"`.
+
+
 - [ ] Translate macOS-style paths to VFS:
   - [ ] `/Users/name/file.txt` → `C:\Users\name\file.txt`
   - [ ] `/tmp/` → `C:\Temp\`
@@ -393,6 +486,9 @@
 
 ### 8.6 Test: Run macOS Hello World
 
+**Prompt:** Cross-compile on macOS: `clang -target x86_64-apple-macos -o hello hello.c`, or hand-craft minimal Mach-O binary. Include on C:\\. Execute → should print "Hello from macOS binary!" proving tri-format works. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: run first Mach-O program"`.
+
+
 - [ ] Cross-compile test: `clang -target x86_64-apple-macos -o hello hello.c` (on macOS host)
 - [ ] Or: hand-craft minimal Mach-O binary with `write()` + `_exit()` syscalls
 - [ ] Include on C:\
@@ -400,6 +496,9 @@
 - [ ] Commit: `"kernel: run first Mach-O program"`
 
 ### 8.7 Unimplemented macOS Function Logger
+
+**Prompt:** Same as Win32 logger: log unresolved dylib symbols `"UNIMPL: libSystem.B.dylib!pthread_create"`, return safe default, track call counts. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"macos: unimplemented function logger"`.
+
 
 - [ ] Same pattern as Win32 logger (§9.3): log unresolved dylib symbols
 - [ ] `"UNIMPL: libSystem.B.dylib!pthread_create"`
@@ -413,6 +512,9 @@
 > Items not in the research files but important for a complete compatibility layer.
 
 ### 9.1 Win32 GUI Stubs — Tier 3 (Future)
+
+**Prompt:** Stretch: map Windows GUI APIs to WM. RegisterClassExW registers window class, CreateWindowExW → wm_create_window, ShowWindow makes visible. GetMessage/TranslateMessage/DispatchMessage implement message loop. MessageBoxA shows Phase 05 dialog. GDI: CreateDC wraps surface, BitBlt → gfx_blit, TextOutA → font_draw_string. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"win32: GUI stubs"`.
+
 
 - [ ] *(Stretch)* `src/kernel/win32/user32.c`:
   - [ ] `RegisterClassExW()` → register window class with WM
@@ -433,6 +535,9 @@
 
 ### 9.2 PE Resource Section Parser
 
+**Prompt:** Stretch: parse DataDirectory[2] Resource Table (3-level tree: type/name/language). Extract embedded icons for taskbar/title bar. Extract version info for file properties. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: PE resource parser"`.
+
+
 - [ ] *(Stretch)* Parse DataDirectory[2] (Resource Table)
 - [ ] *(Stretch)* Extract embedded icons for taskbar/window title
 - [ ] *(Stretch)* Extract version info for file properties dialog
@@ -440,6 +545,9 @@
 - [ ] Commit: `"kernel: PE resource section parser"`
 
 ### 9.3 Unimplemented Function Logger
+
+**Prompt:** When PE calls unimplemented stub, log `"UNIMPL: kernel32.dll!CreateThread"` to serial. Return safe default (0/NULL/FALSE). Track call counts. Shell `win32log` dumps log sorted by count to prioritize next stubs. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"win32: unimplemented function logger"`.
+
 
 - [ ] When a PE program calls an unimplemented Win32 function:
   - [ ] Log to serial: `"UNIMPL: kernel32.dll!CreateThread"`
@@ -451,6 +559,9 @@
 
 ### 9.4 ELF Dynamic Linking (Parallel Track)
 
+**Prompt:** Stretch: parse PT_DYNAMIC segment, load .so shared libraries, resolve GOT/PLT. Add SYSCALL/SYSRET for Linux-compatible syscalls. Static musl-linked binaries are the easier target. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: ELF dynamic linking"`.
+
+
 - [ ] *(Stretch)* Parse `PT_DYNAMIC` segment in ELF
 - [ ] *(Stretch)* Load `.so` shared libraries
 - [ ] *(Stretch)* Symbol resolution + GOT/PLT patching
@@ -459,6 +570,9 @@
 - [ ] Commit: `"kernel: ELF dynamic linking"`
 
 ### 9.5 Compatibility Test Suite
+
+**Prompt:** Create `tests/compat/` with pre-compiled binaries: MinGW PE Hello World, MinGW file I/O, MinGW memory allocation, Mach-O Hello World, ELF regression tests. Run all and verify expected output. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"tests: tri-format compatibility test suite"`.
+
 
 - [ ] Create `tests/compat/` directory
 - [ ] MinGW "Hello World" console program → test PE load + WriteConsoleA

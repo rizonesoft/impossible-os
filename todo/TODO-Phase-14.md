@@ -4,6 +4,9 @@
 
 ## 14.1 Installer Program
 
+**Prompt:** The ISO installer is the capstone feature: boot from ISO, partition a target disk (GPT with EFI System Partition + IXFS root), format both partitions, copy kernel/initrd/OS files, install GRUB for UEFI, and display completion. Test the full cycle in QEMU: boot ISO → install to virtual disk → reboot from disk → OS loads → ✅. After completing all items, create `docs/architecture/installer.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"installer: full OS installer"`.
+
+
 - [ ] Write `src/installer/installer.c` — runs as a special init process from the ISO
 - [ ] Display a **welcome screen** (GUI or text-mode)
 - [ ] **Disk selection** — list available drives (ATA enumeration)
@@ -20,6 +23,9 @@
 - [ ] Commit: `"installer: full OS installer"`
 
 ## 14.2 Bootable ISO Creation
+
+**Prompt:** Automate ISO creation with `scripts/make-iso.sh` using `grub-mkrescue` or `xorriso`. Verify ISO boots in QEMU. Sign with `sha256sum os-build.iso > os-build.iso.sha256`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"release: ISO build script"`.
+
 
 - [ ] Write `scripts/make-iso.sh` — automates ISO creation
 - [ ] Use `grub-mkrescue` or `xorriso` to produce `os-build.iso`

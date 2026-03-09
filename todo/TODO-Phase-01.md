@@ -11,6 +11,9 @@
 
 ### 1.1 Kernel Threads
 
+**Prompt:** Study the existing scheduler in `src/kernel/sched.c` and the `struct task` in `include/task.h` to understand the current single-thread-per-process model before extending it. Context switching is the heart of this work — each `thread_t` needs its own kernel stack and a saved register context (RBP, RSP, RIP, and all callee-saved registers) that gets swapped on yield or preemption via IRQ0. The scheduler's ready queue must iterate threads rather than tasks. Verify that two threads in one process can share globals without corruption by writing a test that increments a shared counter from both threads and checking the final value. After completing all items, create or update `docs/architecture/threading.md` covering the threading model and API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: kernel threads"`.
+
+
 - [x] Define `thread_t` struct (id, stack_ptr, stack_base, stack_size, state, parent_task)
 - [x] Implement `thread_create(entry, arg, stack_size)` — allocate stack, init context
 - [x] Implement `thread_exit(status)` — clean up, notify joiners
@@ -23,6 +26,9 @@
 
 ### 1.2 Mutexes
 
+**Prompt:** Build on the threading from §1.1 — mutexes protect shared state between threads. Use a compare-and-swap atomic (`__sync_lock_test_and_set`) for the fast path and a wait queue for the slow path so blocked threads sleep instead of spinning. The `mutex_lock` must disable preemption around the wait-queue manipulation itself (use `cli`/`sti` or a raw spinlock guard). Pay attention to the `mutex_unlock` wake logic — wake exactly one waiter and ensure it gets the lock before any new contender. Test by having two threads do 100K unprotected increments (expect data loss) then protected increments (expect correct sum). After completing all items, update `docs/architecture/threading.md` with the mutex API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: mutex synchronization"`.
+
+
 - [x] Define `mutex_t` struct (locked flag, owner thread)
 - [x] Implement `mutex_lock(m)` — block if already locked (spinlock → sleep)
 - [x] Implement `mutex_unlock(m)` — release, wake blocked thread
@@ -31,6 +37,9 @@
 - [x] Commit: `"sched: mutex synchronization"`
 
 ### 1.3 Semaphores
+
+**Prompt:** Semaphores generalize the mutex pattern to counting — `sem_wait` decrements and blocks if the count would go negative, `sem_signal` increments and wakes one waiter. Reuse the same wait-queue pattern from §1.2. The key difference is the counter can be initialized to N>1 for resource pools (e.g., a pool of 8 DMA buffers). This primitive will be used heavily by the pipe implementation in §2.1 and the audio mixer in Phase 08. After completing all items, update `docs/architecture/threading.md` with the semaphore API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"sched: semaphore synchronization"`.
+
 
 - [x] Define `semaphore_t` struct (count, wait queue)
 - [x] Implement `sem_wait(s)` — decrement, block if count < 0
@@ -45,6 +54,9 @@
 
 ### 2.1 Pipes
 
+**Prompt:** A pipe is a unidirectional byte stream backed by a 4 KiB ring buffer — study classic POSIX pipe semantics. The `pipe_create` returns two ends (read fd, write fd). Writers block when the buffer is full, readers block when empty — use the semaphores from §1.3 for this synchronization. The critical edge case is `SIGPIPE`: writing to a pipe whose read end is closed must signal the writer. This requires the file descriptor table from §12.1 to work properly, so consider implementing a minimal fd table first or using direct pipe pointers. Test by piping output between two shell commands. After completing all items, create or update `docs/architecture/ipc.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: pipe implementation"`.
+
+
 - [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
 - [x] Implement `pipe_create(fds[2])` — allocate pipe, return read/write file descriptors
 - [x] Implement `pipe_write(pipe, data, len)` — write bytes, block if full
@@ -56,6 +68,9 @@
 
 ### 2.2 Signals
 
+**Prompt:** Signals are asynchronous notifications to processes — each process needs a `pending_signals` bitmask and a handler table. The tricky part is delivery: on return from kernel to user mode (in the syscall return path or IRQ return path), check for pending signals and divert execution to the registered handler before returning to user code. `SIGKILL` must always terminate regardless of handler, `SIGTERM` should allow a clean exit, and `SIGINT` from Ctrl+C must be wired through the terminal driver. The shell's Ctrl+C handling depends on this. After completing all items, update `docs/architecture/ipc.md` with signal semantics, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: signal delivery"`.
+
+
 - [x] Define signal constants: `SIGKILL(9)`, `SIGTERM(15)`, `SIGINT(2)`, `SIGCHLD(17)`
 - [x] Implement `signal_send(pid, sig)` — deliver signal to process
 - [x] Implement `signal_handler(sig, handler)` — register user-mode handler
@@ -66,6 +81,9 @@
 - [x] Commit: `"ipc: signal delivery"`
 
 ### 2.3 Shared Memory
+
+**Prompt:** Shared memory maps identical physical pages into multiple processes' address spaces — this is the fastest IPC mechanism and becomes critical for the compositor's shared framebuffer approach in Phase 02. Use PMM to allocate the backing pages and VMM to map them into each process's page table at their requested virtual address. Named shared memory regions need a global registry (simple linked list keyed by name string). Reference counting ensures pages are freed only when all processes unmap. After completing all items, update `docs/architecture/ipc.md` with the shared memory API, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"ipc: named shared memory"`.
+
 
 - [x] Implement `shmem_create(name, size)` — allocate named shared memory region
 - [x] Implement `shmem_map(id)` — map shared region into calling process's address space
@@ -81,6 +99,9 @@
 > *Research: [02_virtual_memory_swap.md](research/phase_01_kernel_core/02_virtual_memory_swap.md)*
 
 ### 3.1 Swap / Page File
+
+**Prompt:** The swap system writes least-recently-used pages to `pagefile.sys` on disk to free physical memory. The page replacement policy (clock/second-chance algorithm) scans page tables checking the accessed bit — clear means evictable. When evicting, write the page to a free swap slot via VFS, encode the swap slot ID in the PTE (with Present=0), and free the physical frame. On page fault for a swapped page, read it back, allocate a new frame, and resume. The Codex key `System\Memory\SwapSlots` controls swap size. This is important for running multiple large applications on limited RAM. After completing all items, create or update `docs/architecture/swap.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: disk-backed swap via pagefile.sys"`.
+
 
 **Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
 via VFS. Swap in reads them back. Clock replacement, PTE encoding, and page fault → swap in
@@ -102,6 +123,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 - [x] Commit: `"mm: disk-backed swap via pagefile.sys"`
 
 ### 3.2 Memory-Mapped Files
+
+**Prompt:** Memory-mapped files expose file contents as a virtual memory region, enabling fast I/O without explicit read/write syscalls. Start with an eager-load implementation: `mmap` allocates physical pages, reads the entire file into them, and maps them into the process. `munmap` writes dirty pages back if MAP_SHARED. The lazy (demand-paged) approach is more efficient but requires page fault handling per-page — implement it as a follow-up if time permits. MAP_PRIVATE uses copy-on-write semantics on the page fault handler. This feature is used by the ELF loader and will be needed for large file access in Phase 06. After completing all items, update `docs/architecture/swap.md` with mmap details, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: memory-mapped files"`.
+
 > *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*
 
 - [x] Implement `mmap(addr, length, prot, flags, fd, offset)` — map file into address space
@@ -119,6 +143,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 > *Research: [03_error_handling_panic.md](research/phase_01_kernel_core/03_error_handling_panic.md)*
 
 ### 4.1 Styled Panic Screen
+
+**Prompt:** The styled panic screen (BSOD equivalent) renders directly to the framebuffer, bypassing the compositor entirely — it must work even when the heap is corrupt. Use only static buffers and the PSF font renderer. Display the exception name, stop code, faulting RIP and CR2, full register dump (RAX-R15, RSP, RFLAGS, CR2, CR3), and a stack trace by walking the RBP chain until a NULL or invalid frame is hit. The auto-restart countdown uses the PIT timer directly. This replaces the default exception handlers in `idt.c` and `vmm.c`. After completing all items, update `docs/architecture/error-handling.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: styled panic screen with stack trace"`.
+
 
 - [x] Design graphical panic screen (Impossible OS blue, sad face, error info)
 - [x] Implement `panic_screen(error_code, rip, cr2, description)` with:
@@ -140,6 +167,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 5.1 Generic Driver Interfaces
 
+**Prompt:** The HAL allows the kernel to work with different hardware through abstract interfaces — study how Linux's `struct block_device_operations` or `struct net_device_ops` work. Define `blk_ops` (read_sectors, write_sectors, get_capacity), `net_ops` (send_packet, get_mac), and `input_ops` (poll_event). Each real driver (AHCI in `src/kernel/drivers/ahci.c`, RTL8139 in `src/kernel/drivers/rtl8139.c`, PS/2 keyboard/mouse) registers itself by filling in these function pointers. The PCI scan should match vendor:device IDs and auto-select the right driver implementation. This abstraction is critical for Phase 08 (USB, Intel HDA) and Phase 06 (multiple block device support). After completing all items, create `docs/architecture/driver-model.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: hardware abstraction layer"`.
+
+
 - [ ] Define `blk_ops` interface: `read(dev, lba, count, buf)`, `write(...)`, `capacity(dev)`
 - [ ] Define `net_ops` interface: `send(dev, data, len)`, `set_mac(dev, mac)`, `get_mac(dev)`
 - [ ] Define `input_ops` interface: `poll(dev)`, `get_event(dev, event)`
@@ -157,6 +187,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 6.1 Unified Logging System
 
+**Prompt:** The current logging uses ad-hoc `serial_printf` and `kprintf` calls with inconsistent format — replace with a unified `klog(level, subsystem, fmt, ...)` that writes to serial with prefixes like `[OK]`, `[--]`, `[!!]`, `[??]`. Add LOG_DEBUG and LOG_FATAL levels to the existing INFO/WARN/ERROR. Store the last 1000 entries in a circular in-memory ring buffer that the debug console (Phase 13 §2.1) can read. Periodic flush to files under `C:\Impossible\System\Logs\` needs VFS write access — handle the case where the filesystem isn't yet mounted during early boot by buffering. The `sys_log()` syscall lets user-mode apps write to the system log. After completing all items, create `docs/architecture/logging.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: unified logging with disk persistence"`.
+
+
 - [ ] Add `LOG_DEBUG` and `LOG_FATAL` levels (currently: INFO, WARN, ERROR)
 - [ ] Add source/subsystem tag to all log calls (e.g., `"net"`, `"fs"`, `"mm"`)
 - [ ] Implement in-memory ring buffer (last 1000 log entries)
@@ -173,6 +206,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 > *Research: [09_environment_variables.md](research/phase_01_kernel_core/09_environment_variables.md)*
 
 ### 7.1 System & User Environment
+
+**Prompt:** Environment variables are key-value string pairs stored per-process, inherited by children, and essential for the shell's PATH-based command lookup. Store as a flat array of `"KEY=VALUE"` strings in each `struct task` (same as POSIX environ). System-wide defaults (PATH, SYSTEMROOT, TEMP, HOME, USERNAME, COMPUTERNAME) should be populated from Codex entries at boot. The `env_expand` function replaces `%VAR%` tokens in strings — this is used by the shell for command expansion and by file associations for argument templates. The shell's command lookup must search each PATH directory in order, trying the command name with and without `.exe` extension. After completing all items, create `docs/architecture/environment.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: environment variables"`.
+
 
 - [ ] Implement `env_get(name)` — look up variable by name
 - [ ] Implement `env_set(name, value)` — set/create variable
@@ -196,6 +232,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 8.1 Clean Shutdown Sequence
 
+**Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Codex registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, create `docs/architecture/shutdown.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: clean shutdown sequence"`.
+
+
 - [ ] Before ACPI shutdown:
   - [ ] Send `WM_CLOSE` to all GUI apps (save work prompt)
   - [ ] Flush all open file handles
@@ -209,6 +248,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 8.2 Sleep / Lock Screen (Future)
 
+**Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. The lock screen is simpler: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Codex credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, update `docs/architecture/shutdown.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: sleep and lock screen"`.
+
+
 - [ ] *(Stretch)* — ACPI S3 suspend to RAM
 - [ ] *(Stretch)* — Lock screen (password prompt, Codex credential check)
 
@@ -218,6 +260,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 > *Research: [07_dynamic_linking.md](research/phase_01_kernel_core/07_dynamic_linking.md)*
 
 ### 9.1 ELF Shared Libraries
+
+**Prompt:** ELF shared libraries (.so) are loaded at runtime and shared between processes — study the ELF spec sections on PT_DYNAMIC, DT_NEEDED, .dynsym/.dynstr, and GOT/PLT. The dynamic linker parses the executable's DT_NEEDED list, searches the library path (app dir → `C:\Impossible\System\` → `C:\Impossible\System\Drivers\`), loads each .so into memory, applies R_X86_64_64 and R_X86_64_PC32 relocations, and patches the GOT. The `dlopen`/`dlsym`/`dlclose` API enables runtime plugin loading. This feature directly supports Phase 10's compatibility layer where Win32 DLL stubs are loaded similarly. Start by implementing symbol resolution for the current statically-linked kernel, then extend to user-mode binaries. After completing all items, create `docs/architecture/shared-libraries.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: dynamic linker (dlopen/dlsym)"`.
+
 
 - [ ] Implement ELF `.symtab`/`.dynsym` symbol table scanner
 - [ ] Implement ELF relocations (`R_X86_64_*` types)
@@ -235,6 +280,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 10.1 Loadable Kernel Modules (.kmod)
 
+**Prompt:** Loadable kernel modules let drivers be loaded at runtime without recompiling the kernel — define .kmod as relocatable ELF objects (.o files) with exported `module_init()` and `module_cleanup()` functions. The loader reads the ELF sections, allocates kernel memory for .text/.data/.bss, applies relocations against a kernel symbol table (exported via a `EXPORT_SYMBOL` macro), and calls `module_init`. Unloading calls `module_cleanup` and frees memory. Convert the RTL8139 driver as a proof-of-concept: compile it as a separate .o, load it via `insmod rtl8139.kmod`, verify networking still works. The PCI scan at boot should be able to match vendor:device IDs to .kmod files and auto-load them. After completing all items, create `docs/architecture/kernel-modules.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: loadable kernel modules"`.
+
+
 - [ ] Define `.kmod` format (ELF relocatable objects with `init()`/`cleanup()`)
 - [ ] Implement `kmod_load(path)` — load ELF, relocate, call `init()`
 - [ ] Implement `kmod_unload(name)` — call `cleanup()`, free memory
@@ -250,6 +298,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 11.1 TrueType Font Rendering
 
+**Prompt:** TrueType rendering via stb_truetype.h has already been partially integrated (see the previous conversation on TrueType integration). Check if `src/libs/stb_truetype/stb_truetype_impl.c`, `include/font_mgr.h`, and `src/desktop/gfx_text.c` already exist in the codebase. If they do, focus on completing the remaining items (bundling fonts, anti-aliasing, replacing bitmap font usage). If not, port stb_truetype into `src/libs/stb_truetype/`, create math shims in `include/kmath.h` (floor, ceil, sqrt, fabs, cos, sin, acos, fmod, pow — using SSE2), and compile the implementation file with `-msse2 -mfpmath=sse`. The font manager loads .ttf files from `C:\Impossible\Fonts\` using VFS. After completing all items, update `docs/architecture/font-rendering.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: TrueType font rendering via stb_truetype"`.
+
+
 - [ ] Port **stb_truetype** (single header, public domain) into `src/libs/stb_truetype/`
 - [ ] Bundle **JetBrains Mono** (OFL 1.1) for terminal/code
 - [ ] Bundle **Inter** (OFL 1.1) for UI text
@@ -261,6 +312,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 11.2 Compression (miniz)
 
+**Prompt:** Port miniz (single-file, MIT license) into `src/libs/miniz/` — it provides zlib-compatible deflate/inflate and ZIP archive reading. Compile with `-ffreestanding -nostdlib` and redirect its `malloc`/`free` calls to `kmalloc`/`kfree` using `#define` overrides. miniz is needed by: IXFS transparent compression (Phase 06 §5.5), HTTP gzip content encoding (Phase 07), and the IPKG package format (Phase 12 §2.1). Test by compressing a known buffer, decompressing it, and comparing with the original. The ZIP API (`zip_open`, `zip_read_file`, `zip_close`) wraps miniz's `mz_zip_reader_*` functions. After completing all items, create `docs/architecture/compression.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: miniz compression (deflate/ZIP)"`.
+
+
 - [ ] Port **miniz** (single file, MIT) into `src/libs/miniz/`
 - [ ] Implement `deflate`/`inflate` for gzip support
 - [ ] Implement ZIP archive read: `zip_open()`, `zip_read_file()`, `zip_close()`
@@ -270,6 +324,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 11.3 Cryptography (monocypher)
 
+**Prompt:** Port monocypher (BSD-2, ~3000 lines) into `src/libs/monocypher/` — it provides ChaCha20 (stream cipher), Poly1305 (MAC), Blake2b (hash), Argon2i (password hash), X25519 (key exchange), and Ed25519 (signatures). Compile with `-ffreestanding`. This library is the cryptographic foundation for: password hashing in Phase 09 §1.2, TLS in Phase 07 §5, executable signing in Phase 09 §8, and data encryption in Phase 09 §4. The kernel CSPRNG should seed from RDRAND (via inline assembly) and use ChaCha20 to generate random bytes, exposed as a `/dev/random` equivalent. After completing all items, create `docs/architecture/crypto.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: monocypher crypto primitives"`.
+
+
 - [ ] Port **monocypher** (3000 lines, BSD-2) into `src/libs/monocypher/`
 - [ ] Expose: ChaCha20 (stream cipher), Blake2b (hash), Argon2 (password hash)
 - [ ] Expose: X25519 (key exchange), Ed25519 (signatures)
@@ -277,6 +334,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 - [ ] Commit: `"libs: monocypher crypto primitives"`
 
 ### 11.4 Math Library
+
+**Prompt:** Port essential floating-point math functions from OpenLibm or musl libc (both MIT-compatible) into `src/libs/math/`. These functions are required by stb_truetype (§11.1), any audio synthesis (Phase 08), and the TTS engine (Phase 13 §7.1). Key functions: sin, cos, tan, asin, acos, atan, atan2, exp, log, log10, pow, sqrt, fabs, ceil, floor, fmod, round. If `kmath.h` already exists from the TrueType integration, extend it rather than duplicating. Compile with `-msse2` as these need floating-point hardware. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libc: floating-point math functions"`.
+
 
 - [ ] Port `sin`, `cos`, `tan` from **OpenLibm** or **musl** (MIT)
 - [ ] Port `exp`, `log`, `log10`
@@ -286,12 +346,18 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 11.5 JSON Parser (cJSON)
 
+**Prompt:** Port cJSON (MIT, ~2000 lines) into `src/libs/cjson/` — it provides a simple DOM-style JSON parser and serializer. Redirect `malloc`/`free` to `kmalloc`/`kfree` via `cJSON_InitHooks()`. cJSON is used for: the update manifest (Phase 12 §1.1), theme definitions (Phase 04 desktop theming), NTP server lists, and any future REST API interaction. Test by parsing a JSON string like `{"version": "1.0", "name": "Impossible OS"}`, extracting values with `cJSON_GetObjectItem`, and verifying correctness. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: cJSON parser"`.
+
+
 - [ ] Port **cJSON** (MIT, ~2000 lines) into `src/libs/cjson/`
 - [ ] Test: parse a JSON config file
 - [ ] Use for: settings files, asset manifests, theme definitions
 - [ ] Commit: `"libs: cJSON parser"`
 
 ### 11.6 TCP (lwIP or Custom)
+
+**Prompt:** TCP is the transport layer for HTTP, TLS, SSH, FTP, and virtually all internet protocols in Phases 07 and 11. The existing network stack in `src/kernel/net/` already has Ethernet, ARP, IPv4, ICMP, and UDP — study those files to understand the packet flow. TCP adds: a full connection state machine (LISTEN→SYN_SENT→SYN_RCVD→ESTABLISHED→FIN_WAIT→CLOSE_WAIT→etc.), 32-bit sequence/ack numbers, checksums (pseudo-header + TCP header + payload), retransmission timers, and sliding window flow control. lwIP (~30K lines, BSD-3) is battle-tested but large — evaluate whether its complexity is justified vs. a minimal custom implementation that only needs client-side TCP (no server listen initially). Test by making a raw HTTP GET request to an httpbin endpoint through QEMU's user networking. After completing all items, create `docs/architecture/tcp.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"net: TCP implementation"`.
+
 
 - [ ] Evaluate **lwIP** (BSD-3, ~30K lines) vs. custom minimal TCP
 - [ ] Implement TCP SYN/SYN-ACK/ACK handshake
@@ -310,6 +376,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 12.1 File Descriptors & I/O Abstraction
 
+**Prompt:** File descriptors are the POSIX abstraction that unifies files, pipes, sockets, and devices behind integer handles. Each process gets an FD table (array of pointers to `struct file`). `struct file` has a type enum (FILE, PIPE, SOCKET, DEVICE), a VFS node pointer, a read/write offset, and type-specific callbacks for read/write/close. FDs 0/1/2 are stdin/stdout/stderr (wired to the terminal). `dup`/`dup2` enables I/O redirection (`cmd > file`). This is a prerequisite for pipes (§2.1) and the shell's I/O redirection. Study the existing VFS in `src/kernel/vfs.c` to understand how `vfs_open`/`vfs_read`/`vfs_write` work, then wrap them in the FD layer. After completing all items, create `docs/architecture/file-descriptors.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: file descriptor table"`.
+
+
 - [ ] Implement per-process file descriptor table (fd 0=stdin, 1=stdout, 2=stderr)
 - [ ] `open(path, flags)` → returns fd
 - [ ] `read(fd, buf, size)` / `write(fd, buf, size)` — dispatch to VFS, pipe, or device
@@ -320,6 +389,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 12.2 Process Working Directory
 
+**Prompt:** Every process needs a current working directory (CWD) stored as an absolute path string in `struct task`. All relative paths in VFS calls must be resolved against CWD by prepending it. The shell's `cd` command calls `chdir()` which validates the path exists (via VFS) then updates the task's CWD string. `getcwd()` returns the current string. Children inherit the parent's CWD on fork/exec. The shell prompt should display the CWD. This is a small but essential feature — without it, every path must be absolute. After completing all items, update `docs/architecture/file-descriptors.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: per-process working directory"`.
+
+
 - [ ] Add `cwd` field to `struct task` (default: `C:\`)
 - [ ] Implement `chdir(path)` syscall
 - [ ] Implement `getcwd(buf, size)` syscall
@@ -329,6 +401,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 12.3 Proper `brk`/`sbrk` Heap for User Programs
 
+**Prompt:** User-mode programs need their own heap separate from the kernel heap. `brk(addr)` sets the program break (top of data segment), `sbrk(increment)` extends it by N bytes. The kernel maps new pages on demand as the break increases. User-mode `malloc` implementations (dlmalloc, musl's allocator) call sbrk internally, so once this works, any standard allocator can be ported. The program break starts at the end of the BSS section (read from the ELF loader). This is needed before any non-trivial user programs can run. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: brk/sbrk heap for user processes"`.
+
+
 - [ ] Implement per-process heap via `brk`/`sbrk` syscalls
 - [ ] Replace bump allocator in user libc with `sbrk`-backed `malloc`/`free`
 - [ ] Implement `free()` with a proper free-list in user space
@@ -336,12 +411,18 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 12.4 Timer API for User Programs
 
+**Prompt:** User programs need `sleep(seconds)` and `usleep(microseconds)` for delays, and `gettimeofday()` for wall-clock time. `sleep` adds the calling thread to a timer queue sorted by wake time, then yields — the PIT IRQ handler checks the queue each tick and wakes expired entries. `gettimeofday` combines the RTC (for calendar time) with the PIT tick counter (for sub-second precision). These syscalls are needed by the compositor's vsync timing, animation loops in GUI apps, and the NTP client (Phase 03 §4.4). After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: user-mode timer syscalls"`.
+
+
 - [ ] Implement `sleep(seconds)` syscall (block task, wake on timer)
 - [ ] Implement `usleep(microseconds)` syscall
 - [ ] Implement `gettimeofday()` syscall (RTC + PIT sub-second precision)
 - [ ] Commit: `"kernel: user-mode timer syscalls"`
 
 ### 12.5 Kernel Memory Leak Detection (Debug Build)
+
+**Prompt:** This is a debug-only feature enabled by `-DKMALLOC_DEBUG` with zero overhead in release builds. Wrap `kmalloc` and `kfree` to record each allocation: caller address (via `__builtin_return_address(0)`), size, file, and line. Store records in a simple linked list. On shutdown or via a `memleak` debug command, dump all un-freed allocations showing where they were allocated. Also add `kmalloc_stats()` returning current usage, peak usage, and total allocation count — useful for the Task Manager (Phase 05 §8.1) and debug console (Phase 13 §2.2). After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: kmalloc leak detector (debug build)"`.
+
 
 - [ ] Track all `kmalloc()` calls with caller file/line (`__FILE__`, `__LINE__`)
 - [ ] On shutdown, print list of unfreed allocations

@@ -12,6 +12,9 @@
 
 ### 1.1 Core Widgets
 
+**Prompt:** The UI widget library is the foundation for every app in the OS. All widgets share a coordinate system relative to their parent window surface. Each widget struct holds position, size, visual state (normal/hover/press/disabled), and a draw function that renders to a `gfx_surface_t`. Button uses `gfx_fill_rounded_rect` with state-dependent colors (normal, hover, pressed) from the theme system. TextBox needs cursor blinking (500ms toggle via PIT ticks), character insertion/deletion, and Tab-to-next focus management. ScrollBar handles mouse wheel events and drag-to-scroll on the thumb. Build these as reusable components that apps compose — not monolithic app code. After completing all items, create `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI widget library core"`.
+
+
 - [ ] Create `include/ui.h` and `src/apps/ui/ui.c`
 - [ ] **Button** — `struct ui_button` with label, position, hover/press/disabled states
   - [ ] `ui_button_draw(surface, btn)` — rounded rect with state colors
@@ -31,6 +34,9 @@
 
 ### 1.2 Menu Bar
 
+**Prompt:** The menu bar renders as a horizontal strip at the top of a window: File, Edit, View, Help. Clicking a menu item opens a dropdown of sub-items below it (reusing the context menu rendering from Phase 04 §4.1 or building a dedicated dropdown renderer). Each sub-item shows a label + optional keyboard shortcut text (right-aligned, grayed). Alt+letter shortcuts (Alt+F for File) must be hooked into the keyboard event flow. After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI menu bar widget"`.
+
+
 - [ ] Define `struct ui_menu_bar` (list of menu items, each with dropdown items)
 - [ ] `ui_menu_bar_draw(surface, menu)` — horizontal bar (File, Edit, View, Help)
 - [ ] `ui_menu_bar_click(menu, mx, my)` — open dropdown at correct position
@@ -39,6 +45,9 @@
 - [ ] Commit: `"apps: UI menu bar widget"`
 
 ### 1.3 Dialogs
+
+**Prompt:** File dialogs are shared across all apps — implement once, reuse everywhere. The Open File Dialog shows a VFS directory listing with icons from the icon store (Phase 02 §4.1), a file type filter dropdown (e.g., "*.txt", "*.*"), and an address bar for path navigation. The Save As Dialog is similar but adds a filename input field. The Message Dialog has OK/Yes-No/OK-Cancel button variants with an icon (info/warning/error). The Color Picker draws a 2D gradient square (saturation × brightness) + a vertical hue slider + hex input. After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI dialog widgets (open/save/message)"`.
+
 
 - [ ] **Open File Dialog** — `ui_dialog_open(path_out, max_len, filter)` — VFS browser
   - [ ] File list with icons from icon store
@@ -50,6 +59,9 @@
 - [ ] Commit: `"apps: UI dialog widgets (open/save/message)"`
 
 ### 1.4 Advanced Widgets
+
+**Prompt:** These widgets extend the library for specialized apps: Slider (horizontal bar with draggable handle — used in Settings for volume/brightness), Toggle Switch (animated on/off slide — used in Settings), Progress Bar (horizontal fill — used in file operations), Tab Bar (clickable tab strip with active indicator — used in Settings, Terminal), List View (scrollable vertical list with row selection — used in File Manager detail view), Tree View (expandable/collapsible hierarchy — used in Device Manager), Status Bar (bottom info strip with sections — used in Notepad, File Manager). After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI advanced widgets (slider, toggle, tabs, tree)"`.
+
 
 - [ ] **Slider** — horizontal bar with draggable handle (for volume, brightness)
 - [ ] **Toggle Switch** — on/off slide switch (for settings)
@@ -67,6 +79,9 @@
 
 ### 2.1 File Manager Core
 
+**Prompt:** The File Manager is the primary file browsing app. The window layout has four zones: toolbar (navigation buttons + address bar), sidebar (quick access links), file area (icon grid or detail table), and status bar (item count + total size). Read directory contents via VFS `readdir()`, map each file's extension to an icon via `icon_for_extension()` from Phase 02 §4.3. Double-click a file calls `file_assoc_open()` from Phase 03 §5.1. Double-click a folder navigates into it (updating the address bar). The Back/Forward buttons maintain a navigation history stack. After completing all items, create `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager core"`.
+
+
 - [ ] Create `src/apps/filemgr/filemgr.c`
 - [ ] Window layout: toolbar + sidebar + file area + status bar
 - [ ] Navigation toolbar: Back (←), Forward (→), Up (↑), address bar
@@ -80,12 +95,18 @@
 
 ### 2.2 Sidebar
 
+**Prompt:** The sidebar provides quick navigation to common locations. Show two sections: "Quick Access" (Desktop, Documents, Downloads, Pictures — paths under `C:\Users\Default\`) and "Drives" (list all mounted drives from VFS — C:\, D:\, etc.). Clicking a sidebar item updates the file area to show that path. The sidebar uses a vertical list rendered with icons and labels. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager sidebar"`.
+
+
 - [ ] Quick Access section: Desktop, Documents, Downloads, Pictures
 - [ ] Drive section: list all mounted drives (C:\, D:\)
 - [ ] Click sidebar item → navigate to that path
 - [ ] Commit: `"apps: file manager sidebar"`
 
 ### 2.3 View Modes
+
+**Prompt:** The file area supports two view modes: Icon view (large icons in a grid with filenames below each) and Detail view (table with columns: Name, Size, Type, Date Modified). Clicking a column header in Detail view sorts by that column (toggle ascending/descending). The toolbar has view toggle buttons (icon/detail). Remember the user's preference in Codex `Apps\FileManager\ViewMode`. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager view modes"`.
+
 
 - [ ] Icon view — large icons with filename below (default)
 - [ ] Detail view — table: Name, Size, Type, Date Modified
@@ -95,6 +116,9 @@
 
 ### 2.4 File Operations
 
+**Prompt:** File operations wire into the clipboard (Phase 03 §3) and recycle bin (Phase 03 §9). Ctrl+C copies the selected file's path to the clipboard (CLIP_FILES format), Ctrl+V pastes (copy file), Ctrl+X cuts (move on paste). Delete key moves the file to the recycle bin via `trash_delete()`. F2 triggers inline rename — the filename label becomes an editable textbox. Ctrl+Shift+N creates a new folder. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager operations (create/delete/rename/copy)"`.
+
+
 - [ ] Create folder: right-click → New → Folder (or Ctrl+Shift+N)
 - [ ] Delete: select file → Delete key or right-click → Delete → moves to recycle bin
 - [ ] Rename: select file → F2 or right-click → Rename → inline text edit
@@ -103,6 +127,9 @@
 - [ ] Commit: `"apps: file manager operations (create/delete/rename/copy)"`
 
 ### 2.5 Advanced Features
+
+**Prompt:** These stretch features make the File Manager a power-user tool: search within the current folder (filter the file list as the user types), drag-and-drop files to desktop or between File Manager windows (Phase 04 §8), file/folder properties dialog (show size, path, dates, permissions), preview pane (render text/image files in a right panel), and tabs (multiple directory views in one window using the Tab Bar widget from §1.4). After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager advanced features"`.
+
 
 - [ ] *(Stretch)* Search within current folder (search bar in toolbar)
 - [ ] *(Stretch)* Drag and drop files between file manager and desktop
@@ -118,6 +145,9 @@
 
 ### 3.1 Terminal Core
 
+**Prompt:** The terminal emulator bridges the shell to a graphical window. The core data structure is a 2D grid of `terminal_cell` structs, each holding a Unicode codepoint, foreground/background colors, and attribute flags (bold, underline, inverse). The grid has `TERM_COLS × SCROLLBACK` cells. Cell dimensions are calculated from Cascadia Code monospace font metrics (Phase 02 §2). The shell process writes to the terminal via `terminal_put_char()`. Keyboard input from the WM is piped to the shell's stdin. After completing all items, create `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal emulator core"`.
+
+
 - [ ] Create `src/apps/terminal/terminal.c` and `include/terminal.h`
 - [ ] Define `struct terminal_cell` (codepoint, fg_color, bg_color, attrs: bold/underline/inverse)
 - [ ] Define `struct terminal` (grid, cursor, scroll state, ANSI parser, font, selection)
@@ -130,6 +160,9 @@
 
 ### 3.2 Character Rendering
 
+**Prompt:** `terminal_render` iterates visible rows, drawing each cell: fill background rect if non-default color, then draw the character glyph via `font_draw_char()` using Cascadia Code from the font manager (Phase 02 §2). The cursor (block/underline/bar style) blinks on a 500ms toggle driven by PIT ticks. Handle control characters: `\n` (newline + scroll if at bottom), `\r` (carriage return), `\b` (backspace), `\t` (tab to next 8-column stop). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal text rendering"`.
+
+
 - [ ] `terminal_render(t, surface)` — draw all visible cells
 - [ ] Draw cell background if non-default color
 - [ ] Draw character glyph via `font_draw_char()` (Cascadia Code)
@@ -139,6 +172,9 @@
 - [ ] Commit: `"apps: terminal text rendering"`
 
 ### 3.3 ANSI Escape Code Parser
+
+**Prompt:** The ANSI parser is a state machine: Normal state processes printable characters, ESC (`\e`) enters escape state, `[` after ESC enters CSI (Control Sequence Introducer) state where numeric parameters are collected until a final command letter. Implement the essential SGR (Select Graphic Rendition) codes: reset (0), bold (1), underline (4), inverse (7), foreground colors 30-37 and 90-97, background colors 40-47. Cursor movement codes (H, A/B/C/D) and screen clearing (2J, K) are needed for programs like vim-lite or top. Define a 16-color palette matching standard ANSI colors. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal ANSI escape codes"`.
+
 
 - [ ] Create `src/apps/terminal/ansi.c`
 - [ ] State machine: Normal → ESC (`\e`) → CSI (`[`) → parameters → command
@@ -155,6 +191,9 @@
 
 ### 3.4 Scrollback & Selection
 
+**Prompt:** Scrollback lets users review past output. The grid stores 500 history rows above the visible viewport. Mouse wheel scrolls the viewport up/down through this history. A scrollbar on the right side shows the viewport position. Text selection: click + drag highlights cells (tracked as start_row/col to end_row/col). The selection highlight inverts foreground/background colors. Ctrl+Shift+C copies the selected text to the clipboard (Phase 03 §3.1). Ctrl+Shift+V pastes clipboard text into the shell's stdin. Note: use Ctrl+Shift variants to avoid conflicting with Ctrl+C (SIGINT) in the shell. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal scrollback and copy/paste"`.
+
+
 - [ ] Scrollback buffer: 500 lines of history above the visible viewport
 - [ ] Mouse wheel → scroll up/down through history
 - [ ] Scroll bar on right side
@@ -164,6 +203,9 @@
 - [ ] Commit: `"apps: terminal scrollback and copy/paste"`
 
 ### 3.5 Codex Settings
+
+**Prompt:** Terminal appearance is configurable via Codex: `Apps\Terminal\FontName` (default "Cascadia Code"), `Apps\Terminal\FontSize` (14), `Apps\Terminal\CursorStyle` ("block"/"underline"/"bar"), `Apps\Terminal\CursorBlink` (BOOL), `Apps\Terminal\Opacity` (0-100 for Acrylic transparency), `Apps\Terminal\ScrollbackLines` (500). Read these values on terminal creation. Recalculate grid columns/rows when the window is resized (new cols = window_width / cell_w). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal settings"`.
+
 
 - [ ] Font name: `Apps\Terminal\FontName` (default "Cascadia Code")
 - [ ] Font size: `Apps\Terminal\FontSize` (default 14)
@@ -175,6 +217,9 @@
 - [ ] Commit: `"apps: terminal settings"`
 
 ### 3.6 Advanced Features (Future)
+
+**Prompt:** Stretch goals for a premium terminal: multiple tabs (tab bar at top, each tab is a separate terminal session), Acrylic transparency background (composite the desktop behind the terminal surface at reduced alpha via `gfx_acrylic()`), split panes (divide the terminal window horizontally or vertically into independent sessions), and saved color scheme profiles stored in Codex. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal advanced features"`.
+
 
 - [ ] *(Stretch)* Multiple tabs — tabbed terminal sessions
 - [ ] *(Stretch)* Acrylic transparency background via `gfx_acrylic()`
@@ -188,6 +233,9 @@
 
 ### 4.1 SPL Framework
 
+**Prompt:** SPL (Settings Panel Library) defines a standard interface for settings applets. Each applet is a single C function that responds to messages: SPL_INIT (allocate resources), SPL_GETINFO (return name/icon/category), SPL_OPEN (draw UI to provided surface), SPL_CLOSE (cleanup), SPL_SAVE (write changes to Codex). The `spl_panel_t` provides the drawing surface, mouse state, and a Codex root path. This architecture lets settings be modular — new applets can be added without changing the host app. After completing all items, create `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: SPL applet interface"`.
+
+
 - [ ] Create `include/spl.h` — SPL interface
 - [ ] Define messages: `SPL_INIT`, `SPL_GETINFO`, `SPL_OPEN`, `SPL_CLOSE`, `SPL_SAVE`
 - [ ] Define `spl_info_t` (name, description, icon_path, category, version)
@@ -196,6 +244,9 @@
 - [ ] Commit: `"apps: SPL applet interface"`
 
 ### 4.2 Settings Host App
+
+**Prompt:** The Settings app is a two-panel window: category sidebar on the left, applet content area on the right. At startup, scan `C:\Impossible\System\Settings\` for .spl files (in practice, these are compiled-in applet functions registered at init). The sidebar groups applets by category (System, Personalization, Apps, Privacy). Clicking an applet name in the sidebar calls SPL_OPEN and renders that applet's UI in the content area. A Back button returns to the applet list. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel host"`.
+
 
 - [ ] Create `src/apps/settings/settings.c`
 - [ ] UI layout: category sidebar (left) + panel area (right)
@@ -208,6 +259,9 @@
 - [ ] Commit: `"apps: Settings Panel host"`
 
 ### 4.3 Core Applets
+
+**Prompt:** Ship 9 essential applets: `about.spl` (simplest — display OS version, CPU, RAM from CPUID/PMM), `display.spl` (resolution selector, DPI scale dropdown, brightness slider), `theme.spl` (accent color picker, dark/light toggle, corner radius slider), `wallpaper.spl` (browse images in Wallpapers folder, set wallpaper, fit mode), `network.spl` (IP, DHCP toggle, DNS, hostname from network stack), `sound.spl` (volume slider, mute toggle), `datetime.spl` (timezone, 12h/24h, date format, NTP sync button), `power.spl` (screen timeout, shutdown/restart buttons), `taskbar.spl` (height, position, auto-hide). Each applet reads/writes Codex keys and calls the corresponding system functions. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel core applets"`.
+
 
 - [ ] `about.spl.c` — OS version, CPU, RAM, hardware summary (simplest applet)
 - [ ] `display.spl.c` — resolution selector, DPI scale dropdown, brightness slider
@@ -222,6 +276,9 @@
 
 ### 4.4 Additional Applets
 
+**Prompt:** Additional settings applets for less common configurations: `cursors.spl` (cursor theme, cursor size using DPI scaling from Phase 02 §8), `fonts.spl` (installed fonts list, default system font selector), `accounts.spl` (user management — future, ties into Phase 03 §11.1), `apps.spl` (installed programs list, uninstall), `storage.spl` (disk usage overview, drive info from blkdev layer). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel additional applets"`.
+
+
 - [ ] `cursors.spl.c` — cursor theme, cursor size
 - [ ] `fonts.spl.c` — installed fonts, default system font
 - [ ] `accounts.spl.c` — user management (future)
@@ -230,6 +287,9 @@
 - [ ] Commit: `"apps: Settings Panel additional applets"`
 
 ### 4.5 Win32 .cpl Mapping
+
+**Prompt:** Windows Control Panel applets (.cpl files) are DLLs that export a `CPlApplet` entry point. Map known .cpl names to SPL equivalents: `desk.cpl` → display.spl, `mmsys.cpl` → sound.spl, `sysdm.cpl` → about.spl. When a Win32 program calls `ShellExecute("desk.cpl")`, redirect to the Settings app's corresponding applet. This is a stretch goal for Win32 compatibility (Phase 10). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: CPL to SPL mapping"`.
+
 
 - [ ] *(Stretch)* CPL → SPL message translation
 - [ ] *(Stretch)* `desk.cpl` → `display.spl`, `mmsys.cpl` → `sound.spl`, etc.
@@ -242,6 +302,9 @@
 
 ### 5.1 Text Buffer (Gap Buffer)
 
+**Prompt:** The gap buffer is the most efficient data structure for text editing — insertions and deletions at the cursor are O(1). The buffer has a "gap" (unused region) that sits at the cursor position. `text_insert` drops a character into the gap (gap shrinks). `text_delete` expands the gap to "eat" the character before cursor. `text_move_cursor` shifts the gap to the new position by copying characters. Pre-allocate a reasonable buffer size (64K) and grow by doubling when the gap shrinks to zero. `text_get_line(n)` scans for the nth newline, returning a pointer and length. After completing all items, create `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad gap buffer"`.
+
+
 - [ ] Create `src/apps/notepad/notepad.c`
 - [ ] Implement gap buffer: `struct text_buffer` (buf, buf_size, gap_start, gap_end)
 - [ ] `text_insert(buf, char)` — insert at cursor (gap start)
@@ -253,6 +316,9 @@
 
 ### 5.2 Text Rendering & Cursor
 
+**Prompt:** Render visible lines from the gap buffer using `font_draw_string()` (Selawik or user-configured font from Codex). Track cursor_line and cursor_col. The I-beam cursor blinks at the insertion point (500ms toggle). Arrow keys move the cursor, adjusting line/col and scrolling the viewport if necessary. Home/End jump to line start/end. Ctrl+Home/End jump to file start/end. The scroll position (`scroll_y`) determines which line is at the top of the visible area. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad text rendering"`.
+
+
 - [ ] Define `struct notepad` state (text, cursor_line/col, scroll_y, filepath, modified)
 - [ ] Render visible lines from gap buffer using `font_draw_string()`
 - [ ] Draw blinking I-beam cursor at insertion point
@@ -262,6 +328,9 @@
 - [ ] Commit: `"apps: Notepad text rendering"`
 
 ### 5.3 File Menu
+
+**Prompt:** The File menu uses the menu bar widget from §1.2. File → New clears the buffer and resets the filepath. File → Open invokes `ui_dialog_open()` from §1.3, loads the file via VFS `read()` into the gap buffer. File → Save writes the buffer to the current filepath via VFS `write()`. File → Save As invokes `ui_dialog_save()`. Track a `modified` flag — set on any edit, cleared on save. If modified, show "Do you want to save changes?" dialog (from §1.3) before New/Open/Close. The window title shows "filename.txt — Notepad" (with asterisk if modified). After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad file operations"`.
+
 
 - [ ] Menu bar: File, Edit, View, Help
 - [ ] File → New: clear buffer, reset filepath
@@ -273,6 +342,9 @@
 - [ ] Commit: `"apps: Notepad file operations"`
 
 ### 5.4 Editing Features
+
+**Prompt:** Mouse click sets the cursor position by calculating which line/col the click coordinates map to. Text selection: click + drag or Shift+Arrow marks a start/end range, rendered with inverted colors. Ctrl+A selects all. Cut/Copy/Paste uses the system clipboard (Phase 03 §3). Vertical scrollbar for long files (from §1.1). Word wrap toggle in the View menu — when enabled, lines wrap at the window width without inserting newlines. Status bar shows line:col, encoding (UTF-8), and line ending type (CRLF/LF). Stretch goals: Find/Replace (Ctrl+F/H) with a search bar, Undo/Redo (Ctrl+Z/Y) with an action stack, line numbers in a left gutter, syntax highlighting for .c/.h files. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad editing features"`.
+
 
 - [ ] Mouse click → set cursor position
 - [ ] Select text: click + drag, or Shift+Arrow keys
@@ -294,6 +366,9 @@
 
 ### 6.1 Calculator Core
 
+**Prompt:** The Calculator app is a compact fixed-size window with a display area and a 5×4 button grid. Buttons rendered with `gfx_fill_rounded_rect()` with hover/press state colors from the theme. The display shows the current number (large font, right-aligned) and an operation preview (smaller, showing the pending expression like "42 +"). Use floating-point arithmetic via the kernel math shims (Phase 02 `kmath.h`). After completing all items, create `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator layout"`.
+
+
 - [ ] Create `src/apps/calculator/calculator.c`
 - [ ] Define `struct calculator` (display_value, operand, memory, op, flags)
 - [ ] Button grid: 5 rows × 4 columns (numbers, operators, functions)
@@ -302,6 +377,9 @@
 - [ ] Commit: `"apps: Calculator layout"`
 
 ### 6.2 Arithmetic Engine
+
+**Prompt:** The arithmetic engine handles operator precedence simply by using a two-operand model: the user enters operand1, presses an operator, enters operand2, presses = to compute. Store the pending operation and operand. C (clear) resets everything, CE (clear entry) clears only the current display without losing the pending operation. Handle division by zero gracefully (display "Error"). Accept keyboard input: numpad digits, +, -, *, /, Enter for =. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator arithmetic"`.
+
 
 - [ ] Basic operations: +, −, ×, ÷
 - [ ] = key: compute result, display
@@ -317,6 +395,9 @@
 
 ### 6.3 Memory & History
 
+**Prompt:** Memory buttons (M+, M−, MR, MC, MS) use a separate stored value that persists across calculations. Stretch goals: Scientific mode adds trig functions (sin/cos/tan — using `kmath.h` shims), log, sqrt, power, π. Programmer mode shows hex/binary/octal representations with bitwise operators (AND, OR, XOR, NOT, shifts). History lists previous calculations. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator memory and advanced modes"`.
+
+
 - [ ] Memory buttons: M+, M−, MR, MC, MS
 - [ ] *(Stretch)* Scientific mode: sin, cos, tan, log, sqrt, pow, π
 - [ ] *(Stretch)* Programmer mode: hex, binary, octal, bitwise ops
@@ -330,6 +411,9 @@
 
 ### 7.1 Canvas & Viewport
 
+**Prompt:** Paint uses a `gfx_surface_t` as its canvas (default 800×600 white). The canvas may be larger than the window — scroll bars allow panning the viewport. The window layout: tool panel on the left (vertical strip of tool icons), canvas area in the center, color palette at the bottom, and status bar showing canvas dimensions, current tool, and brush size. The undo stack stores canvas snapshots before each stroke (deep-copy the surface, max 32 levels). After completing all items, create `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint canvas and viewport"`.
+
+
 - [ ] Create `src/apps/paint/paint.c`
 - [ ] Define `struct paint` state (canvas surface, undo stack, current tool, colors, brush size)
 - [ ] Canvas: `gfx_surface_t` — default 800×600 white
@@ -338,6 +422,9 @@
 - [ ] Commit: `"apps: Paint canvas and viewport"`
 
 ### 7.2 Drawing Tools
+
+**Prompt:** All drawing tools operate on the canvas surface. Pencil draws Bresenham lines between consecutive mouse events for smooth freehand drawing. Brush stamps filled circles at each mouse position with configurable radius. Eraser draws with the background color. Line: preview a rubber-band line during drag, render on release. Rectangle/Ellipse: outline or filled, hold Shift for square/circle. Fill bucket uses BFS flood fill from the click point, replacing the target color with the selected color. Text tool: click to place, opens a text input, renders using `font_draw_string()`. Tool selection via toolbar buttons on the left panel. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint drawing tools"`.
+
 
 - [ ] **Pencil** — freehand drawing (Bresenham line between mouse events)
 - [ ] **Brush** — variable-size soft brush (filled circle stamps)
@@ -352,6 +439,9 @@
 
 ### 7.3 Color System
 
+**Prompt:** The color palette bar at the bottom shows 20 preset colors in small squares. Two overlapping squares show the current foreground (on top) and background (behind) colors. Left-click a palette color to set foreground; right-click to set background. Click the swap icon to exchange foreground/background. Stretch goal: a color picker dialog (from §1.3) for custom colors with HSV sliders and hex input. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint color palette"`.
+
+
 - [ ] Color palette bar at bottom: 20 preset colors
 - [ ] Foreground + background color indicators (click to swap)
 - [ ] Click palette color → set foreground; right-click → set background
@@ -359,6 +449,9 @@
 - [ ] Commit: `"apps: Paint color palette"`
 
 ### 7.4 Undo & File Operations
+
+**Prompt:** Before each drawing stroke, push a copy of the affected canvas region onto the undo stack (max 32 levels). Ctrl+Z pops the stack and restores. Ctrl+Y re-applies (redo stack). File → Open loads an image via `image_load()` from Phase 02 §3 (JPEG, PNG, BMP). File → Save writes as BMP via `image_save_bmp()`. File → Save As lets the user choose format (BMP or PNG if PNG save is implemented). Stretch goals: rectangle selection tool for move/copy regions, mouse wheel zoom with percentage display. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint undo and file ops"`.
+
 
 - [ ] Undo stack: save canvas snapshot before each stroke (max 32 levels)
 - [ ] Ctrl+Z → undo, Ctrl+Y → redo
@@ -378,6 +471,9 @@
 > *Research: [04_task_manager.md](research/phase_05_core_apps/04_task_manager.md)*
 
 ### 8.1 Task Manager App
+
+**Prompt:** The Task Manager opens via Ctrl+Shift+Esc (registered as a system-wide hotkey in Phase 04 §15.1). It has two tabs: Processes (table listing all threads from the scheduler with Name, CPU%, RAM, PID, Status columns — read from the scheduler's task list from Phase 01 §1) and Performance (CPU usage as a rolling 60-second line chart, RAM usage bar from PMM stats). The "End Task" button kills the selected process. Auto-update the display every 1 second. Status bar shows total process count, overall CPU%, and RAM used/total. After completing all items, create `docs/user/task-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Task Manager"`.
+
 
 - [ ] Create `src/apps/taskmgr/taskmgr.c`
 - [ ] Open via Ctrl+Shift+Esc system-wide shortcut
@@ -399,6 +495,9 @@
 
 ### 9.1 Device Manager App
 
+**Prompt:** The Device Manager displays all hardware in a tree view (from §1.4 Tree View widget): categories as parent nodes (Display adapters, Network adapters, Storage controllers, Input devices, System devices), individual devices as children. Device info comes from PCI enumeration results (vendor/device IDs, BARs, IRQs) and registered driver names. Status indicators: green check for working devices, yellow warning for no-driver, red cross for errors. Click a device to see properties (PCI address, vendor ID, device ID, IRQ, driver name). After completing all items, create `docs/user/device-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Device Manager"`.
+
+
 - [ ] Create `src/apps/devmgr/devmgr.c`
 - [ ] Define `struct device_info` (name, driver, category, vendor/device IDs, bus/slot/func, IRQ, status)
 - [ ] Tree view: categories → individual devices
@@ -419,6 +518,9 @@
 
 ### 10.1 File Operation Commands
 
+**Prompt:** Expand the shell with essential file commands. `cd` changes the current working directory (stored in shell state, passed to VFS operations). `pwd` prints it. `mkdir`/`rmdir` create/remove directories via VFS. `cp` copies a file (read source, write destination). `mv` moves/renames (if same filesystem: rename, otherwise: copy + delete). `rm` sends to recycle bin via `trash_delete()` (Phase 03 §9). `touch` creates an empty file. All commands should print error messages for invalid paths or permissions. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: file operation commands"`.
+
+
 - [ ] `cd <dir>` — change working directory
 - [ ] `pwd` — print working directory
 - [ ] `mkdir <name>` — create directory
@@ -431,6 +533,9 @@
 
 ### 10.2 System Commands
 
+**Prompt:** `whoami` reads the current username from the user account system (Phase 03 §11.1). `date` displays the current date and time using `time_now_local()` + `time_format()` from Phase 03 §4. `free` shows RAM usage from PMM stats (used/total MB). Output redirection: parse `>` to redirect stdout to a file (create/truncate) and `>>` to append. Stretch goals: tab completion (scan current directory + PATH for matching names), pipe `|` (connect stdout of one command to stdin of the next), and `&&` chaining (run next command only if previous succeeded). After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: system commands + redirection"`.
+
+
 - [ ] `whoami` — current user name
 - [ ] `date` — current date and time
 - [ ] `free` — RAM usage (used/total from PMM)
@@ -442,6 +547,9 @@
 
 ### 10.3 Network Commands
 
+**Prompt:** Stretch goals requiring the HTTP client from Phase 07 §4: `wget <url>` downloads a file (HTTP GET, save to current directory or specified path), `nslookup <host>` resolves a hostname to an IP via the DNS resolver (Phase 07 §2). These commands depend on TCP (Phase 07 §1) and DNS being implemented. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: network commands"`.
+
+
 - [ ] *(Stretch)* `wget <url>` — download file (requires HTTP client)
 - [ ] *(Stretch)* `nslookup <host>` — DNS resolve
 
@@ -451,6 +559,9 @@
 > *Research: [08_image_viewer.md](research/phase_05_core_apps/08_image_viewer.md)*
 
 ### 11.1 Image Viewer App
+
+**Prompt:** The Image Viewer opens images via file association (.jpg, .png, .bmp → imgview.exe from Phase 03 §5.2). Load the image using `image_load()` from Phase 02 §3. Fit the image to the window while preserving aspect ratio. Zoom via mouse wheel (scale up/down using `image_scale()` from Phase 02 §3.2). Pan via click+drag when zoomed past window bounds. Navigate to previous/next images in the same folder using left/right arrow keys (scan directory for image files, maintain an index). Toolbar: Previous, Next, zoom percentage, zoom in/out, fit-to-window buttons. Status bar: filename, dimensions, file size. After completing all items, create `docs/user/image-viewer.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Image Viewer"`.
+
 
 - [ ] Create `src/apps/imgview/imgview.c`
 - [ ] Load image via `image_load()` (JPEG, PNG, BMP)
@@ -471,6 +582,9 @@
 
 ### 12.1 Screenshot Capture
 
+**Prompt:** The screenshot tool captures the framebuffer content. `screenshot_capture()` copies the compositor's back buffer surface. `screenshot_window(win)` captures just the focused window's surface. Save as PNG (using `image_save_png()` if available, otherwise BMP via `image_save_bmp()`) to `C:\Users\{name}\Pictures\Screenshots\` with a timestamp filename. Copy to clipboard simultaneously. Show a notification toast (Phase 04 §3.2): "Screenshot saved". Register keyboard shortcuts in the hotkey manager (Phase 04 §15.1): PrtSc for full screen, Alt+PrtSc for active window, Win+Shift+S for region select. After completing all items, create `docs/user/screenshot.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Screenshot Tool"`.
+
+
 - [ ] Create `src/apps/screenshot/screenshot.c`
 - [ ] `screenshot_capture()` — capture full screen from compositor backbuffer
 - [ ] `screenshot_window(win)` — capture single window
@@ -486,6 +600,9 @@
 
 ### 12.2 Region Select Overlay
 
+**Prompt:** Win+Shift+S enters region select mode: dim the entire screen with a semi-transparent black overlay (alpha ~50%), then let the user click + drag a rubber-band selection rectangle. The selected region is rendered clear (undimmed) so the user can see what they're capturing. On mouse release, capture just the selected region. Press Escape to cancel. This overlay is rendered as a full-screen WM layer above all windows. After completing all items, update `docs/user/screenshot.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Screenshot region select"`.
+
+
 - [ ] Dim entire screen with semi-transparent overlay
 - [ ] Click + drag → rubber-band selection rectangle (clear region)
 - [ ] Release → capture the selected region
@@ -498,6 +615,9 @@
 > *Research: [10_archive_manager.md](research/phase_05_core_apps/10_archive_manager.md)*
 
 ### 13.1 Archive Manager App
+
+**Prompt:** The Archive Manager opens .zip files (registered via file association from Phase 03 §5). It uses the ZIP API from Phase 03 §10.2 to read archive contents. Display a file list with columns: Name, Size, Modified Date, Status. Icons from the icon store map each archived file's extension to its icon. Buttons: [Extract All] invokes `zip_extract()` after a folder selection dialog, [Add Files] invokes `zip_add_file()` after an Open File dialog, [New] creates an empty ZIP. Status bar shows item count and compressed size. After completing all items, create `docs/user/archive-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Archive Manager"`.
+
 
 - [ ] Create `src/apps/archiver/archiver.c`
 - [ ] Open `.zip` files (via file association → double-click)
@@ -518,6 +638,9 @@
 
 ### 14.1 Calendar View
 
+**Prompt:** The Calendar app shows a month grid (7 columns Mon–Sun × 5-6 week rows). The current day is highlighted with the accent color. Navigation buttons switch months. Clicking a day shows events for that day in a panel below the grid. "+ Add Event" opens a dialog with time picker, title, and color selector. Events are stored in Codex: `User\{name}\Calendar\Events\YYYY-MM-DD\{id}` with Title, Time, Color values. Also accessible by clicking the taskbar clock (Phase 03 §4.3). Uses the time API from Phase 03 §4.1 for date calculations. After completing all items, create `docs/user/calendar.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calendar"`.
+
+
 - [ ] Create `src/apps/calendar/calendar.c`
 - [ ] Month view: grid of days (Mon–Sun × weeks)
 - [ ] Current day highlighted with accent color
@@ -534,6 +657,9 @@
 > *Research: [12_system_information.md](research/phase_05_core_apps/12_system_information.md)*
 
 ### 15.1 System Info App
+
+**Prompt:** System Information is a read-only display app showing hardware and OS details. Data sources: CPUID (vendor string, brand string), `g_boot_info` (framebuffer resolution, multiboot info), PMM (total/available memory), PCI enumeration (NIC names, storage controllers), Codex (OS version, hostname, IP), and uptime from PIT ticks. This code should be reusable by the `about.spl` settings applet from §4.3. Display in a two-column table: label on left, value on right. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: System Information"`.
+
 
 - [ ] Create `src/apps/sysinfo/sysinfo.c`
 - [ ] Display:
@@ -556,6 +682,9 @@
 
 ### 16.1 Virtual Keyboard
 
+**Prompt:** The on-screen keyboard renders a full QWERTY layout as a grid of buttons. Each button click injects a keypress event into the WM's keyboard input queue (just as if a physical key were pressed). Handle modifier keys: Shift toggles between lowercase/uppercase and numbers/symbols, Caps Lock is sticky, Ctrl and Alt are momentary. Auto-show when a text input gains focus (if configured for touch mode). The keyboard window should be non-focusable (clicking it shouldn't steal focus from the target text field). After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: On-Screen Keyboard"`.
+
+
 - [ ] Create `src/apps/osk/osk.c`
 - [ ] Full QWERTY layout rendered as button grid
 - [ ] Click/tap key → inject keypress event into WM input queue
@@ -571,6 +700,9 @@
 ## 17. Utility Apps
 
 ### 17.1 Font Manager
+
+**Prompt:** The Font Manager lists all .ttf files installed in `C:\Impossible\Fonts\` using the font manager API from Phase 02 §2. For each font, render a preview line ("The quick brown fox...") at multiple sizes (12, 16, 24, 36px). An "Install" button copies a .ttf file to the fonts directory and registers it in Codex. A "Remove" button deletes the font file (but prevents removing system-required fonts like Selawik and Cascadia Code). A "Set Default" button updates `System\Theme\Font` in Codex. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Font Manager"`.
+
 > *Research: [14_font_manager.md](research/phase_05_core_apps/14_font_manager.md)*
 
 - [ ] Create `src/apps/fontmgr/fontmgr.c`
@@ -583,6 +715,9 @@
 - [ ] Commit: `"apps: Font Manager"`
 
 ### 17.2 Color Picker
+
+**Prompt:** The system-wide Color Picker activates via Win+Shift+C. The cursor changes to a crosshair/eyedropper icon (from the cursor pack, Phase 02 §5). Draw a magnified circle around the cursor showing individual pixels. On click, read the pixel color from the compositor's back buffer at the cursor position. Show a popup with the color values in RGB, HSL, and HEX (#FF5733) formats. Auto-copy the hex value to the clipboard. Maintain a history of the last 10 picked colors in Codex. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Color Picker"`.
+
 > *Research: [15_color_picker.md](research/phase_05_core_apps/15_color_picker.md)*
 
 - [ ] Create `src/apps/colorpicker/colorpicker.c`
@@ -596,6 +731,9 @@
 - [ ] Commit: `"apps: Color Picker"`
 
 ### 17.3 Sticky Notes
+
+**Prompt:** Sticky Notes are always-on-top floating windows with editable text on colored backgrounds. Each note is a small window with a simple textarea widget. A "+" button creates a new note. Color options: yellow, pink, blue, green, purple (each is a background color preset). Auto-save to Codex: `User\{name}\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`. Load all notes on app startup (which runs at boot via autostart from Phase 03 §11.4). Delete: click X on the note title bar, confirm with a dialog. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Sticky Notes"`.
+
 > *Research: [16_sticky_notes.md](research/phase_05_core_apps/16_sticky_notes.md)*
 
 - [ ] Create `src/apps/stickynotes/stickynotes.c`
@@ -616,6 +754,9 @@
 
 ### 18.1 Common App Event Loop
 
+**Prompt:** Define a standard event loop pattern that every app follows for consistency: `while (wm_get_event(&evt)) { switch (evt.type) { case KEY_DOWN: ... case MOUSE_CLICK: ... case PAINT: ... case CLOSE: ... } }`. Document this pattern so future apps are easy to implement. Standard event types: KEY_DOWN, KEY_UP, MOUSE_MOVE, MOUSE_CLICK, PAINT (window needs redraw), CLOSE (user clicked X). After completing all items, create `docs/architecture/app-pattern.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: standard app event loop pattern"`.
+
+
 - [ ] Define standard app message loop pattern: `while (wm_get_event(&evt)) { ... }`
 - [ ] Standard event types: KEY_DOWN, KEY_UP, MOUSE_MOVE, MOUSE_CLICK, PAINT, CLOSE
 - [ ] Template `app_main()` function that all apps follow
@@ -624,11 +765,17 @@
 
 ### 18.2 App Installer / Uninstaller
 
+**Prompt:** Stretch goal: a simple package format `.ipkg` (a ZIP file with a `manifest.json` describing name, version, files, and shortcuts). `install <pkg>` extracts to `C:\Programs\{name}\`, creates Start Menu shortcuts from the manifest, and registers in Codex `Apps\Installed\{name}`. `uninstall <name>` removes the files, shortcuts, and Codex entries. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: package installer"`.
+
+
 - [ ] *(Stretch)* `.ipkg` format (ZIP with manifest.json): name, version, files, shortcuts
 - [ ] *(Stretch)* `install <pkg>` → extract to `C:\Programs\{name}\`, create shortcuts
 - [ ] *(Stretch)* `uninstall <name>` → remove files, shortcuts, Codex entries
 
 ### 18.3 Help / About Dialog (Shared)
+
+**Prompt:** A generic "About {AppName}" dialog reusable by all apps via `ui_dialog_about(name, version, icon, copyright)`. Shows the app icon, name, version, and copyright text in a compact window. Every app's Help menu should have an "About" item that calls this function. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: shared About dialog"`.
+
 
 - [ ] Generic "About {AppName}" dialog (reusable by all apps)
 - [ ] Show app icon, name, version, copyright
