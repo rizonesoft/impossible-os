@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# build.sh — Build wrapper with progress display, timing, and error extraction.
+# build.sh — Build wrapper with progress bar, timing, and error extraction.
 #
 # Usage:
 #   bash scripts/build.sh              Incremental build (only changed files)
@@ -42,7 +42,9 @@ GREEN='\033[32m'
 RED='\033[31m'
 YELLOW='\033[33m'
 CYAN='\033[36m'
+WHITE='\033[37m'
 RESET='\033[0m'
+CLEAR_LINE='\033[2K'
 
 divider()  { printf '%b──────────────────────────────────────────────────%b\n' "$DIM" "$RESET"; }
 header()   { printf '%b══════════════════════════════════════════════════%b\n' "$BOLD" "$RESET"; }
@@ -52,15 +54,55 @@ elapsed() {
     local start=$1
     local now
     now=$(date +%s.%N)
-    # Use awk for floating-point subtraction
     awk "BEGIN { printf \"%.1f\", $now - $start }"
 }
 
-# Run a make target with progress banner
-# Usage: run_step <step_number> <total_steps> <label> <make_target>
+# Count source files that make will compile (for progress bar)
+count_sources() {
+    find src/ -name '*.c' -o -name '*.asm' 2>/dev/null | wc -l
+}
+
+# ── Progress bar renderer ──────────────────────────────────────────────────
+# Draws: ██████████░░░░░░░░░░  42/76  55%  [CC] gfx_core.c
+# Only shown on terminal (stderr), not in log file.
+draw_progress() {
+    local current=$1 total=$2 filename=$3
+    local bar_width=24
+
+    if [[ $total -eq 0 ]]; then return; fi
+
+    local pct=$(( current * 100 / total ))
+    local filled=$(( current * bar_width / total ))
+    local empty=$(( bar_width - filled ))
+
+    # Build the bar
+    local bar=""
+    for ((i=0; i<filled; i++)); do bar+="█"; done
+    for ((i=0; i<empty; i++));  do bar+="░"; done
+
+    # Color transitions: cyan → green as we approach 100%
+    local bar_color
+    if   [[ $pct -ge 90 ]]; then bar_color="$GREEN"
+    elif [[ $pct -ge 50 ]]; then bar_color="$CYAN"
+    else                         bar_color="$WHITE"
+    fi
+
+    # Render on stderr (terminal only) with carriage return
+    printf '\r%b%b %s %b%3d/%d  %3d%%%b  %s%b' \
+        "$CLEAR_LINE" "$bar_color" "$bar" \
+        "$BOLD" "$current" "$total" "$pct" "$RESET" \
+        "$filename" "$RESET" >&2
+}
+
+clear_progress() {
+    printf '\r%b' "$CLEAR_LINE" >&2
+}
+
+# ── Step runners ───────────────────────────────────────────────────────────
 STEP_TIMES=()
 STEP_NAMES=()
 
+# Run a make target with progress banner (no progress bar)
 run_step() {
     local num=$1 total=$2 label=$3
     shift 3
@@ -89,7 +131,64 @@ run_step() {
     return 0
 }
 
-# Print error summary from the log
+# Run kernel build with per-file progress bar
+run_kernel_step() {
+    local num=$1 total=$2
+    local step_start
+    step_start=$(date +%s.%N)
+
+    local src_total
+    src_total=$(count_sources)
+
+    divider | tee -a "$LOG"
+    printf ' %b[%d/%d]%b %bKernel%b  (%d source files)\n' \
+        "$CYAN" "$num" "$total" "$RESET" "$BOLD" "$RESET" "$src_total" | tee -a "$LOG"
+    divider | tee -a "$LOG"
+
+    local compiled=0
+    make _increment_build kernel 2>&1 | while IFS= read -r line; do
+        # Log every line
+        echo "$line" >> "$LOG"
+
+        # Check for compilation markers
+        case "$line" in
+            "[CC]"*|"[AS]"*|"[CC/SSE2]"*)
+                compiled=$((compiled + 1))
+                # Extract just the filename from e.g. "[CC] src/kernel/gfx/gfx_core.c"
+                local fname
+                fname=$(echo "$line" | sed 's/^\[.*\] //' | xargs basename 2>/dev/null || echo "$line")
+                draw_progress "$compiled" "$src_total" "$fname"
+                ;;
+            "[LD]"*|"[KERNEL]"*)
+                # Linker/kernel steps — show at 100% without incrementing count
+                draw_progress "$src_total" "$src_total" "Linking..."
+                ;;
+            *)
+                # Non-compilation lines: print normally
+                echo "$line"
+                ;;
+        esac
+    done
+    local rc=${PIPESTATUS[0]}
+
+    clear_progress
+
+    local secs
+    secs=$(elapsed "$step_start")
+
+    if [[ $rc -ne 0 ]]; then
+        printf ' %b✗ Kernel FAILED%b (%ss)\n' "$RED" "$RESET" "$secs" | tee -a "$LOG"
+        return $rc
+    fi
+
+    printf ' %b✓ Kernel%b (%ss)\n' "$GREEN" "$RESET" "$secs" | tee -a "$LOG"
+    STEP_TIMES+=("$secs")
+    STEP_NAMES+=("Kernel")
+    return 0
+}
+
+# ── Error and summary display ──────────────────────────────────────────────
+
 print_errors() {
     header | tee -a "$LOG"
     printf ' %b BUILD FAILED%b\n' "${RED}${BOLD}" "$RESET" | tee -a "$LOG"
@@ -104,7 +203,6 @@ print_errors() {
     fi
 }
 
-# Print success summary with per-step times
 print_summary() {
     local total_secs=$1
     header | tee -a "$LOG"
@@ -139,9 +237,9 @@ if $DO_CLEAN; then
     run_step $STEP $TOTAL "Clean" "clean" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 fi
 
-# Kernel
+# Kernel (with progress bar)
 STEP=$((STEP + 1))
-run_step $STEP $TOTAL "Kernel" _increment_build kernel || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+run_kernel_step $STEP $TOTAL || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # Userland
 STEP=$((STEP + 1))
