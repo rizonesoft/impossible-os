@@ -76,6 +76,7 @@ typedef struct {
 static const char *accepted_icons[] = {
     "folder_closed", "folder_open",
     "file_default", "exe_default",
+    "dll_default", "text_file",
     "computer", "recycle_bin_empty", "recycle_bin_full",
     "control_deck",
     NULL

@@ -264,12 +264,12 @@
 
 ### 4.4 File Type Mapping
 
-**Prompt:** Map file extensions to icon IDs using Codex entries under `System\FileTypes\{ext}\Icon`. The `icon_for_extension(".txt")` function looks up the extension in Codex and returns the matching `system_icon_t` enum value. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. Font-based icons are used for file types in list views (monochrome, fast). This is used everywhere files are displayed: File Manager, desktop icons, Open/Save dialogs, and the Start menu's app list. Common mappings: txt/md/log → text, c/h/py/js → code, jpg/png/bmp/gif → image, mp3/wav/ogg → audio, zip/tar/gz → archive. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: file type icon mapping"`.
+**Prompt:** Map file extensions to icon IDs. File type default icons live in `resources/icons/color/{size}/` alongside desktop icons: file_default, exe_default, default_dll, default_text. Add default_dll and default_text to `icon_store.h` enum, `icon_names[]`, and `irespack.c` accepted list. `icon_for_extension(".txt")` returns the matching `system_icon_t`. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. After completing all items, run `bash scripts/build.sh clean`, and commit as `"desktop: file type icon mapping"`.
 
 
-- [ ] Implement `icon_for_extension(ext)` — look up icon by file extension
-- [ ] Define extension → icon mapping in Codex (`System\FileTypes`)
-- [ ] Common mappings: txt/md/log → text, c/h/py/js → code, jpg/png/bmp → image, mp3/wav → audio, zip/tar → archive, exe → executable
+- [ ] Add default_dll and default_text to icon_store.h, icon_names[], irespack accepted list
+- [ ] Implement `icon_for_extension(ext)` -- look up icon by file extension
+- [ ] Initial mappings: .exe -> exe_default, .dll -> dll_default, .txt/.md/.log -> text_file, everything else -> file_default
 - [ ] Commit: `"desktop: file type icon mapping"`
 
 ### 4.5 IRES Format (Color Icons)

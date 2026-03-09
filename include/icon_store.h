@@ -110,6 +110,8 @@ typedef enum {
     ICON_FOLDER_OPEN,
     ICON_FILE_DEFAULT,
     ICON_EXE_DEFAULT,
+    ICON_DLL_DEFAULT,
+    ICON_TEXT_FILE,
     ICON_DESKTOP_COMPUTER,
     ICON_RECYCLE_BIN_EMPTY,
     ICON_RECYCLE_BIN_FULL,
@@ -178,3 +180,6 @@ gfx_color_t icon_get_theme_color(void);
 /* Set the default icon color for monochrome icons. */
 void icon_set_theme_color(gfx_color_t color);
 
+/* Look up the icon ID for a file extension (e.g. ".txt" → ICON_TEXT_FILE).
+ * Returns ICON_FILE_DEFAULT for unknown extensions. */
+system_icon_t icon_for_extension(const char *ext);

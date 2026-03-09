@@ -109,6 +109,7 @@ static const char *icon_names[ICON_TOTAL_COUNT] = {
     /* Color icons */
     "folder_closed", "folder_open",
     "file_default", "exe_default",
+    "dll_default", "text_file",
     "computer", "recycle_bin_empty", "recycle_bin_full",
     "control_deck"
 };
@@ -731,4 +732,40 @@ void icon_set_theme_color(gfx_color_t color)
     icon_theme_color = color;
     /* Note: existing cached monochrome icons retain their old color.
      * They'll be re-rendered with the new color on next cache miss. */
+}
+
+/* ---- File extension → icon mapping ---- */
+
+typedef struct {
+    const char     *ext;
+    system_icon_t   icon;
+} ext_map_entry_t;
+
+static const ext_map_entry_t ext_map[] = {
+    /* Executables / libraries */
+    { ".exe",  ICON_EXE_DEFAULT },
+    { ".dll",  ICON_DLL_DEFAULT },
+    { ".sys",  ICON_DLL_DEFAULT },
+    /* Text files */
+    { ".txt",  ICON_TEXT_FILE },
+    { ".md",   ICON_TEXT_FILE },
+    { ".log",  ICON_TEXT_FILE },
+    { ".cfg",  ICON_TEXT_FILE },
+    { ".ini",  ICON_TEXT_FILE },
+    { NULL,    ICON_FILE_DEFAULT }
+};
+
+system_icon_t icon_for_extension(const char *ext)
+{
+    int i;
+
+    if (!ext) return ICON_FILE_DEFAULT;
+
+    /* Skip leading dot if missing */
+    for (i = 0; ext_map[i].ext; i++) {
+        if (kstrcmp(ext, ext_map[i].ext) == 0)
+            return ext_map[i].icon;
+    }
+
+    return ICON_FILE_DEFAULT;
 }
