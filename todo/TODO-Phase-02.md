@@ -227,38 +227,40 @@
 
 ### 4.2 Font-Based Icon Rendering
 
-**Prompt:** Integrate the Fluent UI icon fonts with the existing stb_truetype font system from §2. Load four font variants: `FluentSystemIcons-Filled.ttf` (solid icons — primary), `FluentSystemIcons-Regular.ttf` (outlined icons — secondary/inactive states), `FluentSystemIcons-Light.ttf` (thin strokes — subtle UI hints), and `FluentSystemIcons-Resizable.ttf` (optimised for small sizes). Map `system_icon_t` enum values to Unicode codepoints using the Fluent codepoint mapping file. `icon_render_glyph(font_variant, codepoint, size, color)` rasterizes the glyph via `stbtt_GetCodepointBitmap()`, converts the alpha bitmap to BGRA with the specified foreground color, and returns a cached `icon_entry_t`. The variant can be selected per-context: Filled for toolbar buttons, Regular for menus, Light for disabled states. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: font-based icon rendering"`.
+**Verification:** Confirm `icon_get_variant()` exists in `icon_store.h` and `icon_store.c`. Confirm `icon_get_colored()` delegates to `icon_get_variant(ICON_FONT_FILLED)`. Confirm `rasterize_glyph()` selects font variant and falls back to Filled. Confirm welcome window in `main.c` renders 8-icon toolbar (cut, copy, paste, undo, redo, save, search, settings) at 20px with `icon_get_colored()` + `icon_draw()`. Run `bash scripts/build.sh clean`.
 
 
-- [ ] Load four Fluent icon fonts via font manager at boot:
-  - [ ] `FluentSystemIcons-Filled.ttf` — solid icons (toolbars, active states)
-  - [ ] `FluentSystemIcons-Regular.ttf` — outlined icons (menus, secondary)
-  - [ ] `FluentSystemIcons-Light.ttf` — thin strokes (disabled states, hints)
-  - [ ] `FluentSystemIcons-Resizable.ttf` — optimised for small sizes (16px and below)
-- [ ] Build codepoint mapping table: `system_icon_t` → Unicode Private Use Area codepoint
-- [ ] Implement `icon_render_glyph(variant, codepoint, size, color)`:
-  - [ ] Rasterize via `stbtt_GetCodepointBitmap()` at requested point size
-  - [ ] Convert alpha bitmap → BGRA with foreground color tint
-  - [ ] Cache result keyed by (codepoint, size, color, variant)
-- [ ] Variant selection per context: Filled for active, Regular for menus, Light for disabled
-- [ ] Theme integration: icon color from Codex `System\Theme\IconColor`
-- [ ] Commit: `"desktop: font-based icon rendering"`
+- [x] Load four Fluent icon fonts via font manager at boot:
+  - [x] `FluentSystemIcons-Filled.ttf` — solid icons (toolbars, active states)
+  - [x] `FluentSystemIcons-Regular.ttf` — outlined icons (menus, secondary)
+  - [x] `FluentSystemIcons-Light.ttf` — thin strokes (disabled states, hints)
+  - [x] `FluentSystemIcons-Resizable.ttf` — optimised for small sizes (16px and below)
+- [x] Build codepoint mapping table: `system_icon_t` → Unicode Private Use Area codepoint
+- [x] Implement `icon_render_glyph(variant, codepoint, size, color)`:
+  - [x] Rasterize via `stbtt_GetCodepointBitmap()` at requested point size
+  - [x] Convert alpha bitmap → BGRA with foreground color tint
+  - [x] Cache result keyed by (codepoint, size, color, variant)
+- [x] Variant selection per context: Filled for active, Regular for menus, Light for disabled
+- [x] Theme integration: icon color from Codex `System\Theme\IconColor`
+- [x] Welcome window toolbar demo: 8 icons (cut, copy, paste, undo, redo, save, search, settings)
+- [x] Commit: `"desktop: font-based icon rendering"`
 
 ### 4.3 Fluent UI Icon Assets
 
-**Prompt:** Download the four Fluent UI System Icon font files (MIT, Microsoft) from the GitHub repo (`fonts/` directory). Also source ~15 multi-color PNG icons for desktop/app use that cannot be represented as monochrome glyphs (e.g., app logos, branded folder icons with color accents). Install fonts to `C:\Impossible\Fonts\` alongside the existing text fonts. Install `apps.ires` to `C:\Impossible\System\`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: Fluent UI icon fonts and color icons"`.
+**Verification:** Confirm `resources/fonts/FluentSystemIcons-{Filled,Regular,Light,Resizable}.ttf` exist and are valid TrueType font data. Confirm `resources/icons/FluentSystemIcons-{Filled,Regular,Light,Resizable}.css` exist with codepoint mappings. Confirm `tools/gen_icon_map.sh` generates `include/generated/fluent_codepoints.h` with 60 curated + ~9500 total codepoints. Confirm fonts are copied to sysroot by Makefile (`build/sysroot/Impossible/Fonts/`). Run `bash scripts/build.sh clean`.
 
 
-- [ ] Download from https://github.com/microsoft/fluentui-system-icons/tree/main/fonts:
-  - [ ] `FluentSystemIcons-Filled.ttf`
-  - [ ] `FluentSystemIcons-Regular.ttf`
-  - [ ] `FluentSystemIcons-Light.ttf`
-  - [ ] `FluentSystemIcons-Resizable.ttf`
-- [ ] Install fonts to `C:\Impossible\Fonts\` (sysroot copy in Makefile)
-- [ ] Download Fluent codepoint mapping file for enum → Unicode translation
-- [ ] Source ~15 multi-color PNGs for desktop app icons (computer, recycle bin, etc.)
-- [ ] Organize color PNGs in `resources/icons/apps/{48,72,128,256}/`
-- [ ] Commit: `"resources: Fluent UI icon fonts and color icons"`
+- [x] Download from https://github.com/microsoft/fluentui-system-icons/tree/main/fonts:
+  - [x] `FluentSystemIcons-Filled.ttf`
+  - [x] `FluentSystemIcons-Regular.ttf`
+  - [x] `FluentSystemIcons-Light.ttf`
+  - [x] `FluentSystemIcons-Resizable.ttf`
+- [x] Install fonts to `C:\Impossible\Fonts\` (sysroot copy in Makefile)
+- [x] Download Fluent codepoint mapping files (all 4 CSS files) for enum → Unicode translation
+- [x] Create `tools/gen_icon_map.sh` — generates `include/generated/fluent_codepoints.h`
+- [ ] Source ~15 multi-color PNGs for desktop app icons (computer, recycle bin, etc.) *(deferred to §4.5 IRES)*
+- [ ] Organize color PNGs in `resources/icons/apps/{48,72,128,256}/` *(deferred to §4.5 IRES)*
+- [x] Commit: `"resources: Fluent UI icon fonts and color icons"`
 
 ### 4.4 File Type Mapping
 

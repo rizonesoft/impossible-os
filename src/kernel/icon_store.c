@@ -408,8 +408,9 @@ icon_bitmap_t *icon_get(system_icon_t id, uint32_t size)
     return icon_get_colored(id, size, icon_theme_color);
 }
 
-icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size,
-                                 gfx_color_t color)
+icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
+                                 gfx_color_t color,
+                                 icon_font_variant_t variant)
 {
     cache_entry_t *cached;
 
@@ -423,13 +424,19 @@ icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size,
 
     /* Monochrome icons: rasterize from font */
     if ((uint32_t)id < ICON_MONO_COUNT) {
-        return rasterize_glyph(id, size, color, ICON_FONT_FILLED);
+        return rasterize_glyph(id, size, color, variant);
     }
 
     /* Color icons: look up in IRES (not yet implemented — §4.5) */
     /* TODO: search IRES sizes for closest match */
 
     return (icon_bitmap_t *)0;
+}
+
+icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size,
+                                 gfx_color_t color)
+{
+    return icon_get_variant(id, size, color, ICON_FONT_FILLED);
 }
 
 system_icon_t icon_get_by_name(const char *name)

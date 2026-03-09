@@ -990,28 +990,67 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize desktop (wallpaper, taskbar, copy backgrounds to IXFS) */
         desktop_init();
 
-        /* Create a demo window */
+        /* Create a demo window with icon toolbar */
         {
-            int demo = wm_create_window("Welcome", 100, 80, 400, 250, WM_DEFAULT_FLAGS);
+            int demo = wm_create_window("Welcome", 100, 80, 460, 300, WM_DEFAULT_FLAGS);
             if (demo >= 0) {
-                /* Draw some content in the demo window */
-                wm_fill_rect(demo, 0, 0, 400, 250, 0x001E1E2E);
+                uint32_t *fb = wm_get_framebuffer(demo);
+                uint32_t cw = wm_get_client_width(demo);
+                uint32_t ch = wm_get_client_height(demo);
+                if (fb && cw && ch) {
+                    gfx_surface_t ws;
+                    ttf_font_t *fnt;
+                    gfx_surface_init(&ws, fb, cw, ch, cw);
 
-                /* Draw greeting using TrueType font into window framebuffer */
-                {
-                    uint32_t *fb = wm_get_framebuffer(demo);
-                    uint32_t cw = wm_get_client_width(demo);
-                    uint32_t ch = wm_get_client_height(demo);
-                    if (fb && cw && ch) {
-                        gfx_surface_t ws;
-                        ttf_font_t *fnt;
-                        gfx_surface_init(&ws, fb, cw, ch, cw);
-                        fnt = ttf_get(FONT_UI_BOLD, 20);
-                        if (fnt)
-                            ttf_draw_string(&ws, fnt, 20, 20,
-                                            "Welcome to Impossible OS!",
-                                            0x0088DDFF);
+                    /* Dark background */
+                    wm_fill_rect(demo, 0, 0, cw, ch, 0x001E1E2E);
+
+                    /* ---- Toolbar strip (8 icons, 20px, Filled variant) ---- */
+                    {
+                        static const system_icon_t toolbar_icons[] = {
+                            ICON_CUT, ICON_COPY, ICON_PASTE,
+                            ICON_UNDO, ICON_REDO, ICON_SAVE,
+                            ICON_SEARCH, ICON_SETTINGS
+                        };
+                        int icon_count = 8;
+                        int icon_size  = 20;
+                        int padding    = 8;
+                        int toolbar_y  = 8;
+                        int ix;
+                        uint32_t toolbar_bg = 0xFF2A2A3E;
+                        uint32_t icon_color = 0xFFCDD6F4;  /* Catppuccin text */
+
+                        /* Toolbar background */
+                        gfx_fill_rect(&ws, 0, 0, cw, icon_size + padding * 2, toolbar_bg);
+
+                        /* Render each icon */
+                        for (ix = 0; ix < icon_count; ix++) {
+                            icon_bitmap_t *bmp = icon_get_colored(
+                                toolbar_icons[ix], icon_size, icon_color);
+                            if (bmp) {
+                                int icon_x = padding + ix * (icon_size + padding);
+                                icon_draw(&ws, bmp, icon_x, toolbar_y);
+                            }
+                        }
+
+                        /* Toolbar separator line */
+                        gfx_fill_rect(&ws, 0, icon_size + padding * 2,
+                                      cw, 1, 0xFF45475A);
                     }
+
+                    /* Greeting text below toolbar */
+                    fnt = ttf_get(FONT_UI_BOLD, 20);
+                    if (fnt)
+                        ttf_draw_string(&ws, fnt, 20, 56,
+                                        "Welcome to Impossible OS!",
+                                        0x0088DDFF);
+
+                    /* Subtitle */
+                    fnt = ttf_get(FONT_UI, 14);
+                    if (fnt)
+                        ttf_draw_string(&ws, fnt, 20, 86,
+                                        "Fluent System Icons loaded from TTF",
+                                        0x00A6ADC8);
                 }
             }
         }

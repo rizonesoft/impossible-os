@@ -179,6 +179,13 @@ icon_bitmap_t *icon_get(system_icon_t id, uint32_t size);
 icon_bitmap_t *icon_get_colored(system_icon_t id, uint32_t size,
                                  gfx_color_t color);
 
+/* Get an icon bitmap with a specific font variant and color.
+ * variant: ICON_FONT_FILLED (toolbars), ICON_FONT_REGULAR (menus),
+ *          ICON_FONT_LIGHT (disabled), ICON_FONT_RESIZABLE (small). */
+icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
+                                gfx_color_t color,
+                                icon_font_variant_t variant);
+
 /* Look up an icon by string name (e.g., "folder_closed", "cut", "save").
  * Returns ICON_TOTAL_COUNT if not found. */
 system_icon_t icon_get_by_name(const char *name);
