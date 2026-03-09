@@ -210,33 +210,59 @@
 
 ### 4.1 Icon Store Basics
 
-**Prompt:** The icon store is a centralized repository of system icons (~35 icons) loaded once at boot and accessed by ID throughout the UI. Icons are 32×32 BGRA bitmaps with alpha channel for transparency. Load them from the initrd or from `C:\Impossible\System\Icons\` using `image_load()` from §3.1. The `icon_get(id)` function returns a pointer to the cached icon data — no allocation, no decoding on each call. `icon_draw_scaled` uses `image_scale()` for DPI-aware rendering. Every file type, system action, and UI element that needs an icon should go through this API. After completing all items, create `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: system icon store"`.
+**Prompt:** The icon store is a centralized, hybrid icon system using two rendering backends. **Monochrome icons** (system/toolbar/file type icons — ~60 icons) are rendered from Fluent UI icon fonts (TTF) via the existing stb_truetype font system from §2. This gives resolution-independent vector rendering at any size with zero PNG storage overhead. Icons are rendered on demand, cached as BGRA bitmaps keyed by (id, size, color). **Color icons** (desktop app icons, branded icons — ~15 icons) are stored in `apps.ires` for multi-color detail at large sizes (48, 72, 128, 256). `icon_store_init()` loads the icon fonts and `apps.ires` at boot. `icon_get(id, size)` checks the cache, rasterizes from font if needed. `icon_draw()` blits with alpha blending. Foreground color is themeable via Codex `System\Theme\IconColor`. After completing all items, create `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: system icon store"`.
 
 
-- [ ] Define `system_icon_t` enum (~35 icons: file types, folders, drives, system)
-- [ ] Define `icon_t` struct (pixels, width, height)
+- [ ] Define `system_icon_t` enum (~60 monochrome + ~15 color icons)
+- [ ] Define `icon_entry_t` struct (cached bitmap, source type: font glyph or IRES)
 - [ ] Create `include/icon_store.h` and `src/kernel/icon_store.c`
-- [ ] Implement `icon_store_init()` — load icons from C:\ directory (`icons/`)
-- [ ] Implement `icon_get(id)` — return icon by enum ID
+- [ ] Implement `icon_store_init()` — load Fluent icon fonts + `apps.ires`
+- [ ] Implement `icon_get(id, size)` — return cached bitmap, rasterize from font on first access
+- [ ] Implement `icon_get_colored(id, size, color)` — font icons with custom tint
 - [ ] Implement `icon_get_by_name(name)` — lookup by string name
 - [ ] Implement `icon_draw(surface, icon, x, y)` — blit with alpha blending
-- [ ] Implement `icon_draw_scaled(surface, icon, x, y, target_size)`
+- [ ] Implement `icon_draw_scaled(surface, icon, x, y, target_size)` — scale for arbitrary sizes
+- [ ] Glyph cache: LRU eviction for (id, size, color) tuples to bound memory
 - [ ] Commit: `"desktop: system icon store"`
 
-### 4.2 Fluent UI Icons
+### 4.2 Font-Based Icon Rendering
 
-**Prompt:** Microsoft's Fluent UI System Icons are MIT-licensed and designed for modern UIs — download the filled variants at 32×32 from the GitHub repo. Focus on ~35 essential icons covering: file types (text, image, audio, video, archive, executable, code), folders (closed, open, documents, pictures), drives (local, removable, network), and system (computer, settings, search, trash, lock, user, power, printer, info, warning, error). Convert source PNGs to 32×32 BGRA raw format using the existing `jpg2raw` build tool or via stb_image at runtime. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: Fluent UI system icons"`.
+**Prompt:** Integrate the Fluent UI icon fonts with the existing stb_truetype font system from §2. Load four font variants: `FluentSystemIcons-Filled.ttf` (solid icons — primary), `FluentSystemIcons-Regular.ttf` (outlined icons — secondary/inactive states), `FluentSystemIcons-Light.ttf` (thin strokes — subtle UI hints), and `FluentSystemIcons-Resizable.ttf` (optimised for small sizes). Map `system_icon_t` enum values to Unicode codepoints using the Fluent codepoint mapping file. `icon_render_glyph(font_variant, codepoint, size, color)` rasterizes the glyph via `stbtt_GetCodepointBitmap()`, converts the alpha bitmap to BGRA with the specified foreground color, and returns a cached `icon_entry_t`. The variant can be selected per-context: Filled for toolbar buttons, Regular for menus, Light for disabled states. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: font-based icon rendering"`.
 
 
-- [ ] Download **Fluent UI System Icons** (MIT, Microsoft) for ~35 core icons
-- [ ] Convert to 32×32 BGRA with `jpg2raw` in Makefile
-- [ ] Icons needed: file_default, file_text, file_image, file_audio, file_video, file_archive, file_exe, file_code, folder_closed, folder_open, folder_documents, folder_pictures, drive_local, drive_removable, drive_network, computer, network, settings, start_menu, trash_empty, trash_full, printer, search, lock, user, power, info, warning, error, question, app_default
-- [ ] Place source PNGs in `resources/icons/`
-- [ ] Commit: `"resources: Fluent UI system icons"`
+- [ ] Load four Fluent icon fonts via font manager at boot:
+  - [ ] `FluentSystemIcons-Filled.ttf` — solid icons (toolbars, active states)
+  - [ ] `FluentSystemIcons-Regular.ttf` — outlined icons (menus, secondary)
+  - [ ] `FluentSystemIcons-Light.ttf` — thin strokes (disabled states, hints)
+  - [ ] `FluentSystemIcons-Resizable.ttf` — optimised for small sizes (16px and below)
+- [ ] Build codepoint mapping table: `system_icon_t` → Unicode Private Use Area codepoint
+- [ ] Implement `icon_render_glyph(variant, codepoint, size, color)`:
+  - [ ] Rasterize via `stbtt_GetCodepointBitmap()` at requested point size
+  - [ ] Convert alpha bitmap → BGRA with foreground color tint
+  - [ ] Cache result keyed by (codepoint, size, color, variant)
+- [ ] Variant selection per context: Filled for active, Regular for menus, Light for disabled
+- [ ] Theme integration: icon color from Codex `System\Theme\IconColor`
+- [ ] Commit: `"desktop: font-based icon rendering"`
 
-### 4.3 File Type Mapping
+### 4.3 Fluent UI Icon Assets
 
-**Prompt:** Map file extensions to icon IDs using Codex entries under `System\FileTypes\{ext}\Icon`. The `icon_for_extension(".txt")` function looks up the extension in Codex and returns the matching `system_icon_t` enum value. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. This is used everywhere files are displayed: File Manager, desktop icons, Open/Save dialogs, and the Start menu's app list. Common mappings: txt/md/log → text, c/h/py/js → code, jpg/png/bmp/gif → image, mp3/wav/ogg → audio, zip/tar/gz → archive. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: file type icon mapping"`.
+**Prompt:** Download the four Fluent UI System Icon font files (MIT, Microsoft) from the GitHub repo (`fonts/` directory). Also source ~15 multi-color PNG icons for desktop/app use that cannot be represented as monochrome glyphs (e.g., app logos, branded folder icons with color accents). Install fonts to `C:\Impossible\Fonts\` alongside the existing text fonts. Install `apps.ires` to `C:\Impossible\System\`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: Fluent UI icon fonts and color icons"`.
+
+
+- [ ] Download from https://github.com/microsoft/fluentui-system-icons/tree/main/fonts:
+  - [ ] `FluentSystemIcons-Filled.ttf`
+  - [ ] `FluentSystemIcons-Regular.ttf`
+  - [ ] `FluentSystemIcons-Light.ttf`
+  - [ ] `FluentSystemIcons-Resizable.ttf`
+- [ ] Install fonts to `C:\Impossible\Fonts\` (sysroot copy in Makefile)
+- [ ] Download Fluent codepoint mapping file for enum → Unicode translation
+- [ ] Source ~15 multi-color PNGs for desktop app icons (computer, recycle bin, etc.)
+- [ ] Organize color PNGs in `resources/icons/apps/{48,72,128,256}/`
+- [ ] Commit: `"resources: Fluent UI icon fonts and color icons"`
+
+### 4.4 File Type Mapping
+
+**Prompt:** Map file extensions to icon IDs using Codex entries under `System\FileTypes\{ext}\Icon`. The `icon_for_extension(".txt")` function looks up the extension in Codex and returns the matching `system_icon_t` enum value. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. Font-based icons are used for file types in list views (monochrome, fast). This is used everywhere files are displayed: File Manager, desktop icons, Open/Save dialogs, and the Start menu's app list. Common mappings: txt/md/log → text, c/h/py/js → code, jpg/png/bmp/gif → image, mp3/wav/ogg → audio, zip/tar/gz → archive. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: file type icon mapping"`.
 
 
 - [ ] Implement `icon_for_extension(ext)` — look up icon by file extension
@@ -244,15 +270,36 @@
 - [ ] Common mappings: txt/md/log → text, c/h/py/js → code, jpg/png/bmp → image, mp3/wav → audio, zip/tar → archive, exe → executable
 - [ ] Commit: `"desktop: file type icon mapping"`
 
-### 4.4 Icon Pack Format (Future)
+### 4.5 IRES Format (Color Icons)
 
-**Prompt:** This is a stretch goal for a more efficient icon storage format. The `.iconpack` binary format bundles all icons into a single file: a header with magic number and icon count, followed by an index table (icon ID, offset, width, height per entry), then packed BGRA pixel data. A host-side `iconpacker` build tool creates .iconpack files from individual PNGs. Multi-size support (16, 32, 48px) allows the icon store to pick the closest size for the current DPI scale. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: icon pack format"`.
+**Prompt:** `.ires` (Icon Resource) is a custom binary format for all multi-color icons in Impossible OS — everything that needs color, shading, or visual detail beyond what monochrome font glyphs can provide. This includes colored folders (yellow closed, blue documents, green pictures), file type icons (red PDF, green spreadsheet, blue code), drive icons (HDD, USB, network with color accents), desktop icons (computer, recycle bin, printer), and app icons (text editor, media player, settings, terminal). Bundled into a single `icons.ires` with sizes 16, 24, 32, 48, 64, 72, 128, 256 for HiDPI support. Format: 16-byte header (magic `IRES`, version, icon count, size count, flags), index table (icon ID, name offset, per-size pixel data offset + dimensions), name strings, packed BGRA pixel data. A host-side `irespack` build tool creates the file at build time. At runtime, `ires_load()` reads it in one `vfs_read()`. The icon store falls back to font glyphs when a color icon is unavailable for a given ID. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: IRES color icon format"`.
 
 
-- [ ] *(Stretch)* Define `.iconpack` binary format (header + index + BGRA data)
-- [ ] *(Stretch)* Write `tools/iconpacker.c` build tool
-- [ ] *(Stretch)* Multi-size support (16×16, 32×32, 48×48)
-- [ ] *(Stretch)* Icon theme switching
+- [ ] Define `.ires` binary format spec (header + index + name table + BGRA pixel data)
+- [ ] Write `tools/irespack.c` — reads PNGs, outputs `.ires` (uses stb_image for decode)
+- [ ] Build rule: `icons.ires` from `resources/icons/color/{16,24,32,48,64,72,128,256}/*.png`
+- [ ] Color icons needed:
+  - [ ] Folders: folder_closed, folder_open, folder_documents, folder_pictures, folder_music, folder_downloads
+  - [ ] File types: file_default, file_text, file_image, file_audio, file_video, file_archive, file_exe, file_code, file_pdf
+  - [ ] Drives: drive_local, drive_removable, drive_network, drive_optical
+  - [ ] Desktop: computer, recycle_bin_empty, recycle_bin_full, printer, network
+  - [ ] Apps: app_default, text_editor, media_player, settings, terminal, file_manager, calculator, paint, browser
+- [ ] Install to `C:\Impossible\System\icons.ires`
+- [ ] Implement `ires_load(path)` in kernel — parse header, index, load pixel data
+- [ ] Icon theme switching via Codex `System\Theme\IconPack`
+- [ ] Commit: `"desktop: IRES color icon format"`
+
+### 4.6 ICO File Loader (App Compatibility)
+
+**Prompt:** `.ico` files are the standard Windows icon format — a container holding multiple sizes (16, 32, 48, 256) as embedded BMP or PNG data. Third-party apps and user-created shortcuts need `.ico` support for their custom icons. The `.ico` header is 6 bytes (reserved, type=1, count), followed by 16-byte directory entries (width, height, offset, size), then image data at each offset. If the image data starts with PNG magic (`\x89PNG`), pass it to `image_load_mem()`. Otherwise parse it as a BMP DIB (headerless bitmap). `ico_load(path)` returns an `icon_entry_t` with all available sizes. This is used by File Manager, desktop shortcuts, and the Start menu for app icons. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: ICO file loader"`.
+
+
+- [ ] Implement `ico_load(path)` — parse `.ico` container, extract all sizes
+- [ ] Handle embedded PNG data (pass to `image_load_mem()`)
+- [ ] Handle embedded BMP DIB data (parse headerless bitmap)
+- [ ] Return `icon_entry_t` with available sizes populated
+- [ ] Used by: File Manager (exe icons), desktop shortcuts, Start menu app list
+- [ ] Commit: `"desktop: ICO file loader"`
 
 ---
 
@@ -261,13 +308,14 @@
 
 ### 5.1 Cursor Manager
 
-**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 different shapes loaded from BGRA sprite files. Each `cursor_sprite` has width, height, hotspot coordinates (the pixel that corresponds to the click position), and pixel data. `cursor_draw` saves the pixels underneath the cursor before blitting (so `cursor_restore` can undo it without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-initrd boot when VFS isn't available. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: cursor manager with multiple shapes"`.
+**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 different shapes loaded from a `cursors.cres` (Cursor Resource) file. Each `cursor_sprite` has width, height, hotspot coordinates (the pixel that corresponds to the click position), and pixel data at three sizes (24×24, 32×32, 64×64) for HiDPI scaling. `cursor_init()` loads `C:\Impossible\System\cursors.cres` — one `vfs_read()`, all cursors parsed. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves the pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-initrd boot when VFS isn't available. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: cursor manager with multiple shapes"`.
 
 
 - [ ] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
-- [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels)
+- [ ] Define `cursor_sprite` struct (width, height, hotspot_x, hotspot_y, pixels, sizes: 24/32/64)
 - [ ] Create `src/kernel/drivers/cursor.c`
-- [ ] Implement `cursor_init()` — load BGRA sprites from C:\, fall back to embedded arrow
+- [ ] Implement `cres_load(path)` — parse `.cres` file, load all cursor sprites
+- [ ] Implement `cursor_init()` — load `cursors.cres` from `C:\Impossible\System\`, fall back to embedded arrow
 - [ ] Implement `cursor_set_shape(shape)` — switch active cursor
 - [ ] Implement `cursor_get_shape()` — get current shape
 - [ ] Implement `cursor_draw(x, y)` — draw with alpha blending, save pixels underneath
@@ -275,26 +323,29 @@
 - [ ] Implement `cursor_get_hotspot(hx, hy)` — for click position adjustment
 - [ ] Commit: `"drivers: cursor manager with multiple shapes"`
 
-### 5.2 Cursor Assets (11 Shapes)
+### 5.2 Cursor Assets & CRES Format
 
-**Prompt:** Design or source 11 cursor PNGs at 24×24 with transparent backgrounds. The arrow is the default pointer with hotspot at top-left (1,1). The hand cursor indicates clickable elements (hotspot at fingertip). The I-beam (text cursor) has its hotspot at the middle of the vertical line. Resize cursors use cardinal directions matching the resize edge. Use the Fluent design language for consistency with the icon set. Convert PNGs to BGRA raw format in the Makefile using `jpg2raw` or load them at runtime via stb_image. The fallback arrow must be embedded as a `static const uint32_t cursor_fallback[]` byte array. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: cursor sprite pack"`.
+**Prompt:** Design or source 11 cursor PNGs at three sizes (24×24, 32×32, 64×64) with transparent backgrounds for HiDPI support. The arrow is the default pointer with hotspot at top-left (1,1). The hand cursor indicates clickable elements (hotspot at fingertip). The I-beam (text cursor) has its hotspot at the middle of the vertical line. Resize cursors use cardinal directions matching the resize edge. Organize source PNGs in `resources/cursors/{24,32,64}/`. A host-side `crespack` build tool packs all sizes into a single `cursors.cres` file — format: header (magic `CRES`, version, cursor count, size count), index table (one entry per cursor: shape ID, name, hotspot_x, hotspot_y per size, pixel data offset per size), followed by packed BGRA pixel data. At runtime, `cres_load()` reads the file in one `vfs_read()` and populates the cursor cache. The fallback arrow must be embedded as a `static const uint32_t cursor_fallback[]` byte array. Install `cursors.cres` to `C:\Impossible\System\cursors.cres`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"resources: cursor sprite pack (CRES format)"`.
 
 
-- [ ] Create/design cursor PNGs (24×24, transparent background):
-  - [ ] `arrow.png` — default pointer, hotspot (1,1)
-  - [ ] `hand.png` — pointing hand (links, buttons), hotspot (6,1)
-  - [ ] `text.png` — I-beam (text fields, terminal), hotspot (4,10)
-  - [ ] `move.png` — 4-way arrows (window drag), hotspot (10,10)
-  - [ ] `resize_ns.png` — ↕ vertical resize, hotspot (6,10)
-  - [ ] `resize_ew.png` — ↔ horizontal resize, hotspot (10,6)
-  - [ ] `resize_nwse.png` — ↘ diagonal resize, hotspot (8,8)
-  - [ ] `resize_nesw.png` — ↗ diagonal resize, hotspot (8,8)
-  - [ ] `wait.png` — hourglass/spinner, hotspot (8,12)
-  - [ ] `crosshair.png` — + selection, hotspot (10,10)
-  - [ ] `forbidden.png` — ⊘ circle-slash, hotspot (10,10)
-- [ ] Place in `resources/cursors/`, convert in Makefile with `jpg2raw`
+- [ ] Create/design cursor PNGs at 24×24, 32×32, 64×64 (transparent background):
+  - [ ] `arrow` — default pointer, hotspot (1,1)
+  - [ ] `hand` — pointing hand (links, buttons), hotspot (6,1)
+  - [ ] `text` — I-beam (text fields, terminal), hotspot (4,10)
+  - [ ] `move` — 4-way arrows (window drag), hotspot (10,10)
+  - [ ] `resize_ns` — ↕ vertical resize, hotspot (6,10)
+  - [ ] `resize_ew` — ↔ horizontal resize, hotspot (10,6)
+  - [ ] `resize_nwse` — ↘ diagonal resize, hotspot (8,8)
+  - [ ] `resize_nesw` — ↗ diagonal resize, hotspot (8,8)
+  - [ ] `wait` — hourglass/spinner, hotspot (8,12)
+  - [ ] `crosshair` — + selection, hotspot (10,10)
+  - [ ] `forbidden` — ⊘ circle-slash, hotspot (10,10)
+- [ ] Organize in `resources/cursors/{24,32,64}/`
+- [ ] Define `.cres` binary format (header + index with hotspots + BGRA pixel data, multi-size)
+- [ ] Write `tools/crespack.c` — reads PNGs, outputs `cursors.cres`
+- [ ] Install to `C:\Impossible\System\cursors.cres`
 - [ ] Embed fallback arrow as byte array for pre-initrd boot
-- [ ] Commit: `"resources: cursor sprite pack"`
+- [ ] Commit: `"resources: cursor sprite pack (CRES format)"`
 
 ### 5.3 Context-Based Cursor Switching
 
