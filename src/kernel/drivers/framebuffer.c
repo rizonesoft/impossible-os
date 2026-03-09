@@ -625,7 +625,6 @@ void fb_scroll(void)
 
     /* Shift all rows up by one text line */
     mem_cpy32(back_buf, back_buf + row_pixels, text_area);
-
     /* Clear the last row */
     mem_set32(back_buf + text_area, bg_color, row_pixels);
 }
@@ -639,6 +638,10 @@ void fb_putchar(char c)
     case '\n':
         cursor_x = 0;
         cursor_y++;
+        /* During boot, flush back buffer to VRAM so text is visible.
+         * One bulk rep-movsq per line is fast; per-pixel MMIO is not. */
+        if (!compositor_locked && back_buf != hw_addr)
+            fb_swap();
         break;
     case '\r':
         cursor_x = 0;

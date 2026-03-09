@@ -47,3 +47,7 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - Write clear, conventional commit messages: `"scope: short description"`
 - Commit after each completed TODO item
 - Never commit build artifacts (`build/`, `*.o`, `*.bin`, `*.iso`)
+
+## Known Gotchas
+
+- **Framebuffer back buffer must use PMM, not kmalloc.** The kernel heap is 2 MiB; the back buffer for 1280×720×32bpp is 3.6 MiB. `kmalloc` fails silently → `back_buf = hw_addr` → zero double buffering → compositor flicker. Always use `pmm_alloc_contiguous()`. Boot log must show `[OK] Framebuffer back buffer:` and `[OK] VBE page flip enabled` to confirm double buffering is active. *(Fixed in commit `9722a74`)*
