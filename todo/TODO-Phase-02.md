@@ -264,13 +264,13 @@
 
 ### 4.4 File Type Mapping
 
-**Prompt:** Map file extensions to icon IDs. File type default icons live in `resources/icons/color/{size}/` alongside desktop icons: file_default, exe_default, default_dll, default_text. Add default_dll and default_text to `icon_store.h` enum, `icon_names[]`, and `irespack.c` accepted list. `icon_for_extension(".txt")` returns the matching `system_icon_t`. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. After completing all items, run `bash scripts/build.sh clean`, and commit as `"desktop: file type icon mapping"`.
+**Verification:** Confirm `icon_for_extension()` in `icon_store.c` maps file extensions to correct `system_icon_t` values. Confirm `ICON_DLL_DEFAULT` and `ICON_TEXT_FILE` exist in `icon_store.h` enum, `icon_names[]`, and `irespack.c` accepted list. Confirm `icon_for_extension(".exe")` returns `ICON_EXE_DEFAULT`, `icon_for_extension(".dll")` returns `ICON_DLL_DEFAULT`, `icon_for_extension(".txt")` returns `ICON_TEXT_FILE`, and unknown extensions return `ICON_FILE_DEFAULT`. Run `bash scripts/build.sh clean`. File type default icons live in `resources/icons/color/{size}/` alongside desktop icons: file_default, exe_default, default_dll, default_text. Add default_dll and default_text to `icon_store.h` enum, `icon_names[]`, and `irespack.c` accepted list. `icon_for_extension(".txt")` returns the matching `system_icon_t`. Fall back to `ICON_FILE_DEFAULT` for unknown extensions. After completing all items, run `bash scripts/build.sh clean`, and commit as `"desktop: file type icon mapping"`.
 
 
-- [ ] Add default_dll and default_text to icon_store.h, icon_names[], irespack accepted list
-- [ ] Implement `icon_for_extension(ext)` -- look up icon by file extension
-- [ ] Initial mappings: .exe -> exe_default, .dll -> dll_default, .txt/.md/.log -> text_file, everything else -> file_default
-- [ ] Commit: `"desktop: file type icon mapping"`
+- [x] Add dll_default and text_file to icon_store.h enum, icon_names[], irespack accepted list
+- [x] Implement `icon_for_extension(ext)` -- look up icon by file extension
+- [x] Initial mappings: .exe -> exe_default, .dll/.sys -> dll_default, .txt/.md/.log/.cfg/.ini -> text_file, everything else -> file_default
+- [x] Commit: `"desktop: file type icon mapping"` (`fe77d61`)
 
 ### 4.5 IRES Format (Color Icons)
 
