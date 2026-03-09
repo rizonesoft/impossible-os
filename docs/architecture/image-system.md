@@ -73,6 +73,16 @@ stb_image decodes to **RGBA** (R at byte offset 0). The framebuffer uses **BGRA*
 The JPEG stays compressed on disk (~200 KB). No build-time `jpg2raw` conversion needed.
 The scaled result is cached in a static `image_t` — only re-decoded on change.
 
+## Image Saving
+
+`image_save_bmp(img, path)` and `image_save_png(img, path)` write images to VFS.
+Uses `stb_image_write.h` with `STBI_WRITE_NO_STDIO` and a VFS write callback.
+
+**Pipeline:** BGRA→RGBA swap → `stbi_write_*_to_func()` → accumulate in buffer → `vfs_write()`
+
+PNG is lossless and compressed. BMP is uncompressed (larger) but simpler as fallback.
+Used by: screenshot feature (§9.4), Paint app's Save As.
+
 ## Build
 
 `image.c` compiled with `SIMD_CFLAGS` (`-msse2`) + `-isystem include/freestanding`

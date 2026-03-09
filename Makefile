@@ -383,6 +383,12 @@ $(BUILD_DIR)/kernel/image.o: $(SRC_DIR)/kernel/image.c
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_image)"
 
+# stb_image_write implementation — same flags as stb_image
+$(BUILD_DIR)/kernel/image_save.o: $(SRC_DIR)/kernel/image_save.c
+	@mkdir -p $(dir $@)
+	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
+	@echo "[CC/SSE2] $< (stb_image_write)"
+
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(dir $@)

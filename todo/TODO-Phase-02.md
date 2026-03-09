@@ -194,14 +194,14 @@
 
 ### 3.4 Image Saving
 
-**Prompt:** stb_image_write.h provides PNG and BMP saving in a single header (public domain). Like stb_image, it needs `STBI_WRITE_NO_STDIO` defined and a custom write function that calls `vfs_write`. The key consumer is the screenshot feature (§9.4) and the future Paint app's save function. PNG is preferred (lossless, smaller) but BMP is simpler as a fallback. After completing all items, update `docs/architecture/image-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: image saving (BMP/PNG)"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_image_write.h` exists in `include/`. Verify `image_save.c` defines `STBI_WRITE_NO_STDIO`, redirects `STBIW_MALLOC/FREE/REALLOC` to kernel heap, and implements `image_save_bmp()` and `image_save_png()` using `stbi_write_*_to_func` with a VFS write callback. Verify BGRA→RGBA channel swap before saving. Verify Makefile compiles `image_save.c` with SSE2 and freestanding shims. Run `make clean && make all && make run`. Fix any inconsistencies below.
 
 
-- [ ] Add `stb_image_write.h` to `include/` (public domain)
-- [ ] Implement `image_save_bmp(img, path)` — save to VFS
-- [ ] Implement `image_save_png(img, path)` — save to VFS
-- [ ] Used by: future Paint app (Save As), screenshot feature
-- [ ] Commit: `"kernel: image saving (BMP/PNG)"`
+- [x] Add `stb_image_write.h` to `include/` (public domain)
+- [x] Implement `image_save_bmp(img, path)` — save to VFS
+- [x] Implement `image_save_png(img, path)` — save to VFS
+- [x] Used by: future Paint app (Save As), screenshot feature
+- [x] Commit: `"kernel: image saving (BMP/PNG)"`
 
 ---
 

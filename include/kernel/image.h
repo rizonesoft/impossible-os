@@ -49,3 +49,13 @@ void image_free(image_t *img);
  * Returns 0 on success, -1 on failure. */
 int image_scale(image_t *dst, const image_t *src,
                 uint32_t target_w, uint32_t target_h, image_fit_t mode);
+
+/* Save an image to a VFS path as BMP (uncompressed, simple).
+ * Handles BGRA → RGBA conversion internally.
+ * Returns 0 on success, -1 on failure. */
+int image_save_bmp(const image_t *img, const char *path);
+
+/* Save an image to a VFS path as PNG (compressed, lossless).
+ * Handles BGRA → RGBA conversion internally.
+ * Returns 0 on success, -1 on failure. */
+int image_save_png(const image_t *img, const char *path);
