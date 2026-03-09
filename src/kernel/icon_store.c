@@ -61,79 +61,12 @@ static const char *icon_font_filenames[ICON_FONT_COUNT] = {
     "FluentSystemIcons-Resizable.ttf"
 };
 
-/* ---- Codepoint mapping ---- */
+/* ---- Codepoint mapping (auto-generated from Fluent CSS) ---- */
 
-/* Fluent UI System Icons use codepoints in the Unicode Private Use Area.
- * This table maps system_icon_t → Unicode codepoint for each monochrome icon.
- * These are placeholder values — the actual mapping comes from the Fluent
- * codepoint mapping file downloaded in §4.3. Until then, icons will simply
- * not render (icon_get returns NULL gracefully). */
-
-static const uint32_t icon_codepoints[ICON_MONO_COUNT] = {
-    /* Toolbar / action icons */
-    0xF33A,  /* ICON_CUT */
-    0xF32B,  /* ICON_COPY */
-    0xF2D5,  /* ICON_PASTE */
-    0xF35E,  /* ICON_UNDO */
-    0xF2EE,  /* ICON_REDO */
-    0xF30A,  /* ICON_SAVE */
-    0xF26B,  /* ICON_OPEN */
-    0xF25A,  /* ICON_NEW */
-    0xF34C,  /* ICON_DELETE */
-    0xF2F2,  /* ICON_REFRESH */
-    0xF3A6,  /* ICON_ZOOM_IN */
-    0xF3A8,  /* ICON_ZOOM_OUT */
-    0xF2B7,  /* ICON_BOLD */
-    0xF23F,  /* ICON_ITALIC */
-    0xF35A,  /* ICON_UNDERLINE */
-    0xF2A5,  /* ICON_ALIGN_LEFT */
-    0xF2A1,  /* ICON_ALIGN_CENTER */
-    0xF2A9,  /* ICON_ALIGN_RIGHT */
-    0xF2DB,  /* ICON_PRINT */
-    0xF22F,  /* ICON_HOME */
-    0xF2B1,  /* ICON_BACK */
-    0xF2C3,  /* ICON_FORWARD */
-    0xF2B5,  /* ICON_UP */
-
-    /* System UI icons */
-    0xF30C,  /* ICON_SETTINGS */
-    0xF308,  /* ICON_SEARCH */
-    0xF259,  /* ICON_LOCK */
-    0xF2D9,  /* ICON_USER */
-    0xF2DF,  /* ICON_POWER */
-    0xF237,  /* ICON_INFO */
-    0xF362,  /* ICON_WARNING */
-    0xF347,  /* ICON_ERROR */
-    0xF2E9,  /* ICON_QUESTION */
-    0xF336,  /* ICON_CLOSE */
-    0xF260,  /* ICON_MINIMIZE */
-    0xF25C,  /* ICON_MAXIMIZE */
-    0xF2F4,  /* ICON_RESTORE */
-    0xF24D,  /* ICON_MENU */
-    0xF2BE,  /* ICON_CHEVRON_DOWN */
-    0xF2C0,  /* ICON_CHEVRON_RIGHT */
-    0xF2BC,  /* ICON_CHEVRON_LEFT */
-    0xF2C2,  /* ICON_CHEVRON_UP */
-    0xF2BF,  /* ICON_CHECK */
-    0xF109,  /* ICON_ADD */
-    0xF34D,  /* ICON_SUBTRACT */
-    0xF314,  /* ICON_STAR */
-    0xF22D,  /* ICON_HEART */
-    0xF30E,  /* ICON_SHARE */
-    0xF150,  /* ICON_DOWNLOAD */
-    0xF35C,  /* ICON_UPLOAD */
-    0xF330,  /* ICON_CLOCK */
-    0xF2B9,  /* ICON_CALENDAR */
-    0xF311,  /* ICON_SORT */
-    0xF1A2,  /* ICON_FILTER */
-    0xF220,  /* ICON_GRID */
-    0xF24C,  /* ICON_LIST */
-    0xF253,  /* ICON_LINK */
-    0xF108,  /* ICON_ATTACH */
-    0xF2D7,  /* ICON_PIN */
-    0xF32C,  /* ICON_CLIPBOARD */
-    0xF1C0,  /* ICON_FULLSCREEN */
-};
+/* icon_codepoints[] is defined in the generated header.
+ * Regenerate with: bash tools/gen_icon_map.sh
+ * Also provides fluent_all_icons[] (9500+ icons) and fluent_lookup(). */
+#include "generated/fluent_codepoints.h"
 
 /* ---- Name mapping for icon_get_by_name() ---- */
 
