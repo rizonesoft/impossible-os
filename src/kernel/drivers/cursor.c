@@ -166,86 +166,86 @@ static int xcur_parse(const uint8_t *data, uint32_t file_size,
 
     out->num_sizes = 0;
 
-    /* Walk TOC entries */
-    for (uint32_t i = 0; i < toc_count && out->num_sizes < CURSOR_MAX_SIZES; i++) {
+    /* First pass: find the best-fit image chunk (closest to target size).
+     * We only keep ONE size per cursor to avoid heap exhaustion. */
+    uint32_t best_pos   = 0;
+    int32_t  best_diff  = 9999;
+    uint8_t  found_any  = 0;
+
+    for (uint32_t i = 0; i < toc_count; i++) {
         uint32_t toc_off = header_size + i * 12;
         if (toc_off + 12 > file_size)
             break;
 
         uint32_t type     = read_le32(data + toc_off);
-        /* uint32_t subtype = read_le32(data + toc_off + 4); */
+        uint32_t subtype  = read_le32(data + toc_off + 4);  /* = nominal size */
         uint32_t position = read_le32(data + toc_off + 8);
 
         if (type != XCUR_IMAGE_TYPE)
             continue;
 
-        /* Parse image chunk */
-        if (position + 36 > file_size)
-            continue;
-
-        const uint8_t *chunk = data + position;
-        /* uint32_t chunk_header = read_le32(chunk); */
-        uint32_t chunk_type = read_le32(chunk + 4);
-        /* uint32_t chunk_subtype = read_le32(chunk + 8); */
-        /* uint32_t chunk_ver = read_le32(chunk + 12); */
-        uint32_t w  = read_le32(chunk + 16);
-        uint32_t h  = read_le32(chunk + 20);
-        int32_t  hx = (int32_t)read_le32(chunk + 24);
-        int32_t  hy = (int32_t)read_le32(chunk + 28);
-        /* uint32_t delay = read_le32(chunk + 32); */
-
-        if (chunk_type != XCUR_IMAGE_TYPE)
-            continue;
-
-        /* Validate dimensions */
-        if (w == 0 || h == 0 || w > 256 || h > 256)
-            continue;
-
-        uint32_t pixel_bytes = w * h * 4;
-        if (position + 36 + pixel_bytes > file_size)
-            continue;
-
-        /* Allocate pixel buffer */
-        uint32_t *pixels;
-        if (pixel_bytes <= 4096) {
-            pixels = (uint32_t *)kmalloc(pixel_bytes);
-        } else {
-            uint32_t pages = (pixel_bytes + 4095) / 4096;
-            pixels = (uint32_t *)(uintptr_t)pmm_alloc_contiguous(pages);
+        /* Pick the size closest to XCUR_TARGET_SIZE */
+        int32_t diff = (int32_t)subtype - XCUR_TARGET_SIZE;
+        if (diff < 0) diff = -diff;
+        if (diff < best_diff) {
+            best_diff = diff;
+            best_pos  = position;
+            found_any = 1;
         }
-        if (!pixels)
-            continue;
-
-        /* Copy ARGB pixels and convert to BGRA */
-        const uint8_t *src = chunk + 36;
-        for (uint32_t p = 0; p < w * h; p++) {
-            uint8_t b = src[p * 4 + 0];  /* Xcur: BGRA in LE = ARGB bytes */
-            uint8_t g = src[p * 4 + 1];
-            uint8_t r = src[p * 4 + 2];
-            uint8_t a = src[p * 4 + 3];
-            /* Our framebuffer is BGRA: B in low byte */
-            pixels[p] = (uint32_t)b
-                      | ((uint32_t)g << 8)
-                      | ((uint32_t)r << 16)
-                      | ((uint32_t)a << 24);
-        }
-
-        cursor_image_t *img = &out->images[out->num_sizes];
-        img->width     = w;
-        img->height    = h;
-        img->hotspot_x = hx;
-        img->hotspot_y = hy;
-        img->pixels    = pixels;
-        out->num_sizes++;
-
-        /* Only keep the first frame for animated cursors (e.g. progress).
-         * All frames for the same size have the same dimensions, so
-         * we break after getting one image per unique size. We accept
-         * multiple sizes but not multiple frames. For simplicity, just
-         * collect unique sizes. */
     }
 
-    return (out->num_sizes > 0) ? 0 : -1;
+    if (!found_any)
+        return -1;
+
+    /* Second pass: decode only the best-fit image */
+    if (best_pos + 36 > file_size)
+        return -1;
+
+    const uint8_t *chunk = data + best_pos;
+    uint32_t chunk_type = read_le32(chunk + 4);
+    uint32_t w  = read_le32(chunk + 16);
+    uint32_t h  = read_le32(chunk + 20);
+    int32_t  hx = (int32_t)read_le32(chunk + 24);
+    int32_t  hy = (int32_t)read_le32(chunk + 28);
+
+    if (chunk_type != XCUR_IMAGE_TYPE)
+        return -1;
+    if (w == 0 || h == 0 || w > 256 || h > 256)
+        return -1;
+
+    uint32_t pixel_bytes = w * h * 4;
+    if (best_pos + 36 + pixel_bytes > file_size)
+        return -1;
+
+    /* Allocate pixel buffer via PMM — NEVER kmalloc for pixel data */
+    uint32_t pages = (pixel_bytes + 4095) / 4096;
+    uint32_t *pixels = (uint32_t *)(uintptr_t)pmm_alloc_contiguous(pages);
+    if (!pixels)
+        return -1;
+
+    /* Copy ARGB pixels — Xcur stores as BGRA in little-endian, which
+     * matches our framebuffer format directly (B in low byte) */
+    const uint8_t *src = chunk + 36;
+    for (uint32_t p = 0; p < w * h; p++) {
+        uint8_t b = src[p * 4 + 0];
+        uint8_t g = src[p * 4 + 1];
+        uint8_t r = src[p * 4 + 2];
+        uint8_t a = src[p * 4 + 3];
+        pixels[p] = (uint32_t)b
+                  | ((uint32_t)g << 8)
+                  | ((uint32_t)r << 16)
+                  | ((uint32_t)a << 24);
+    }
+
+    cursor_image_t *img = &out->images[0];
+    img->width     = w;
+    img->height    = h;
+    img->hotspot_x = hx;
+    img->hotspot_y = hy;
+    img->pixels    = pixels;
+    out->num_sizes = 1;
+
+    return 0;
 }
 
 /* ---- Load one cursor from VFS ---- */
