@@ -29,7 +29,7 @@ extern void *memcpy(void *dst, const void *src, __SIZE_TYPE__ n);
 /* ---- Xcur format constants ---- */
 #define XCUR_MAGIC       0x72756358  /* "Xcur" LE */
 #define XCUR_IMAGE_TYPE  0xFFFD0002
-#define XCUR_TARGET_SIZE 32          /* preferred cursor size */
+#define XCUR_TARGET_SIZE 24          /* preferred cursor size */
 #define XCUR_MAX_FILE    (512 * 1024) /* max file size: 512 KB */
 
 /* ---- Read little-endian uint32 from buffer ---- */
