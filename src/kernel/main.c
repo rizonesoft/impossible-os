@@ -1025,8 +1025,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
                         /* Render each icon */
                         for (ix = 0; ix < icon_count; ix++) {
-                            icon_bitmap_t *bmp = icon_get_colored(
-                                toolbar_icons[ix], icon_size, icon_color);
+                            icon_bitmap_t *bmp = icon_get_variant(
+                                toolbar_icons[ix], icon_size, icon_color,
+                                ICON_FONT_REGULAR);
                             if (bmp) {
                                 int icon_x = padding + ix * (icon_size + padding);
                                 icon_draw(&ws, bmp, icon_x, toolbar_y);
