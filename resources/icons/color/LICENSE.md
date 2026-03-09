@@ -23,7 +23,7 @@ If you are building Impossible OS and need the color icons:
 2. Download the icons listed in `icon_store.h` (system_icon_t enum, color section)
 3. Use the **Fluent Color** style for consistency with the monochrome Fluent icons
 4. Download at sizes: 48, 72, 128, 256px
-5. Place files in `resources/icons/apps/{size}/` directories
+5. Place files in `resources/icons/color/{size}/` directories
 
 The OS will still build and run without these icons — the icon store gracefully
 returns NULL for missing color icons, and the system falls back to monochrome

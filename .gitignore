@@ -30,5 +30,5 @@ Thumbs.db
 OVMF_VARS*.fd
 
 # Icons8 color icons (licensed, not redistributable as standalone files)
-resources/icons/apps/**/*.png
-!resources/icons/apps/LICENSE.md
+resources/icons/color/**/*.png
+!resources/icons/color/LICENSE.md
