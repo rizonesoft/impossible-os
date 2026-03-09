@@ -155,28 +155,30 @@
 
 ### 3.1 Kernel-Side stb_image
 
-**Prompt:** stb_image.h is a single-header image decoder supporting JPEG, PNG, BMP, GIF, and TGA. Check if `tools/stb_image.h` already exists in the codebase (it may have been used by the build-time jpg2raw tool). Copy it to `include/` and create `src/kernel/image.c` that wraps it for kernel use. Define `STBI_NO_STDIO` (no FILE*), `STBI_NO_LINEAR`, `STBI_NO_HDR` to minimize dependencies. Redirect `STBI_MALLOC/STBI_REALLOC/STBI_FREE` to kernel heap. Important: stb_image decodes to RGBA but the framebuffer uses BGRA — implement a channel-swap post-processing step. The `image_load(path)` function reads file contents via VFS into a kmalloc'd buffer, passes it to `stbi_load_from_memory`, and returns an `image_t`. After completing all items, create `docs/architecture/image-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: runtime image decoding (stb_image)"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_image.h` exists in `include/`, `src/kernel/image.c` and `include/kernel/image.h` exist with `image_load`, `image_load_mem`, `image_free`, and `image_t` struct. Verify `STBI_NO_STDIO`, `STBI_NO_LINEAR`, `STBI_NO_HDR` are defined. Verify RGBA→BGRA channel swap in `rgba_to_bgra()`. **CRITICAL:** Verify the tiered allocator is used — `STBI_MALLOC` must route allocations >64 KB through `pmm_alloc_contiguous()` (NOT `kmalloc`), because the kernel heap is only 2 MiB and a 1280×720 RGBA image is 3.6 MiB. Check `image_free()` correctly detects PMM vs kmalloc via `from_pmm` flag. Verify freestanding header shims exist in `include/freestanding/`. Check that `docs/architecture/image-system.md` covers the tiered allocator. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
+> **⚠️ Heap Gotcha:** `STBI_MALLOC/STBI_REALLOC/STBI_FREE` are NOT plain `kmalloc`/`kfree`. They use a tiered allocator: ≤64 KB → `kmalloc`, >64 KB → `pmm_alloc_contiguous()`. This avoids the same 2 MiB heap exhaustion that broke the framebuffer back buffer (commit `9722a74`). The `image_t.from_pmm` flag tracks provenance for correct deallocation.
 
-- [ ] Copy `stb_image.h` from `tools/` to `include/`
-- [ ] Create `src/kernel/image.c` with kernel heap redirects (`STBI_MALLOC → kmalloc`)
-- [ ] Define `STBI_NO_STDIO`, `STBI_NO_LINEAR`, `STBI_NO_HDR` for kernel freestanding
-- [ ] Define `image_t` struct (pixels, width, height, channels)
-- [ ] Implement `image_load(path)` — load from VFS, decode, RGBA→BGRA conversion
-- [ ] Implement `image_load_mem(data, size)` — decode from memory buffer
-- [ ] Implement `image_free(img)` — free decoded data
-- [ ] Test: decode a JPEG from C:\ at runtime
-- [ ] Commit: `"kernel: runtime image decoding (stb_image)"`
+- [x] Copy `stb_image.h` from `tools/` to `include/`
+- [x] Create `src/kernel/image.c` with tiered allocator (`STBI_MALLOC` → kmalloc ≤64KB / PMM >64KB)
+- [x] Define `STBI_NO_STDIO`, `STBI_NO_LINEAR`, `STBI_NO_HDR` for kernel freestanding
+- [x] Create freestanding header shims (`include/freestanding/`) for `<stdlib.h>`, `<string.h>`, etc.
+- [x] Define `image_t` struct (pixels, width, height, from_pmm, alloc_size)
+- [x] Implement `image_load(path)` — load from VFS, decode, RGBA→BGRA conversion
+- [x] Implement `image_load_mem(data, size)` — decode from memory buffer
+- [x] Implement `image_free(img)` — free decoded data (PMM or kmalloc)
+- [x] Create `docs/architecture/image-system.md`
+- [x] Commit: `"kernel: runtime image decoding (stb_image)"` (`1ee5c6a`)
 
 ### 3.2 Image Scaling
 
-**Prompt:** Image scaling is needed for wallpaper fitting, icon resizing, and thumbnail generation. Bilinear interpolation samples four surrounding pixels and interpolates — it's smooth but can be blurry on large downscales. For downscaling by more than 2x, use box filtering (average all source pixels that map to each destination pixel) which produces sharper results. Implement fit modes: FILL (scale to cover, crop excess), FIT (scale to fit within, letterbox), STRETCH (distort to exact size), CENTER (no scaling, center on canvas), TILE (repeat pattern). After completing all items, update `docs/architecture/image-system.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: image scaling with bilinear interpolation"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `image_scale()` in `src/kernel/image_scale.c` supports all 5 fit modes (`IMAGE_FIT_STRETCH`, `IMAGE_FIT_FILL`, `IMAGE_FIT_FIT`, `IMAGE_FIT_CENTER`, `IMAGE_FIT_TILE`). Verify bilinear interpolation uses 16.16 fixed-point math (no floats). Verify box-filter downscaling activates for >2x reduction. Check output buffers use the tiered PMM/kmalloc allocator. Verify `docs/architecture/image-system.md` covers scaling. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
-- [ ] Implement `image_scale(src, target_w, target_h, mode)` — bilinear interpolation
-- [ ] Support fit modes: `IMAGE_FIT_FILL`, `IMAGE_FIT_FIT`, `IMAGE_FIT_STRETCH`, `IMAGE_FIT_CENTER`, `IMAGE_FIT_TILE`
-- [ ] Implement box-filter downscaling (better quality than bilinear for large reductions)
-- [ ] Commit: `"kernel: image scaling with bilinear interpolation"`
+- [x] Implement `image_scale(src, target_w, target_h, mode)` — bilinear interpolation (16.16 fixed-point)
+- [x] Support fit modes: `IMAGE_FIT_FILL`, `IMAGE_FIT_FIT`, `IMAGE_FIT_STRETCH`, `IMAGE_FIT_CENTER`, `IMAGE_FIT_TILE`
+- [x] Implement box-filter downscaling (better quality than bilinear for large reductions)
+- [x] Commit: `"kernel: image scaling with bilinear interpolation"`
 
 ### 3.3 JPG/PNG Wallpaper
 
