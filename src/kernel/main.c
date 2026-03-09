@@ -1150,11 +1150,42 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     prev_mb = mb;
                     first_frame = 0;
                 } else if (cursor_moved) {
-                    /* Cursor-only move (no buttons held) */
+                    /* Cursor-only move (no buttons held) —
+                     * swap just the union of old + new cursor rects */
                     scheduler_disable();
+
+                    int32_t  old_rx, old_ry;
+                    uint32_t old_rw, old_rh;
+                    int had_old = cursor_get_rect(&old_rx, &old_ry,
+                                                   &old_rw, &old_rh);
+
                     cursor_restore();
                     cursor_draw(mx, my);
-                    fb_swap();
+
+                    int32_t  new_rx, new_ry;
+                    uint32_t new_rw, new_rh;
+                    cursor_get_rect(&new_rx, &new_ry, &new_rw, &new_rh);
+
+                    /* Single swap of the union bounding box */
+                    if (had_old) {
+                        int32_t ux = (old_rx < new_rx) ? old_rx : new_rx;
+                        int32_t uy = (old_ry < new_ry) ? old_ry : new_ry;
+                        int32_t ur = old_rx + (int32_t)old_rw;
+                        int32_t nr = new_rx + (int32_t)new_rw;
+                        int32_t ub = old_ry + (int32_t)old_rh;
+                        int32_t nb = new_ry + (int32_t)new_rh;
+                        if (nr > ur) ur = nr;
+                        if (nb > ub) ub = nb;
+                        if (ux < 0) ux = 0;
+                        if (uy < 0) uy = 0;
+                        fb_swap_rect((uint32_t)ux, (uint32_t)uy,
+                                     (uint32_t)(ur - ux), (uint32_t)(ub - uy));
+                    } else {
+                        uint32_t sx = (new_rx >= 0) ? (uint32_t)new_rx : 0;
+                        uint32_t sy = (new_ry >= 0) ? (uint32_t)new_ry : 0;
+                        fb_swap_rect(sx, sy, new_rw, new_rh);
+                    }
+
                     scheduler_enable();
 
                     prev_mx = mx;
