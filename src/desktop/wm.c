@@ -607,6 +607,9 @@ void wm_composite(void)
     /* Draw desktop wallpaper (or fallback gradient) */
     desktop_draw_wallpaper();
 
+    /* Draw desktop icons (Computer, Recycle Bin, Control Deck) */
+    desktop_draw_icons();
+
     /* Paint each window (painter's algorithm — back to front) */
     for (i = 0; i < count; i++) {
         struct wm_window *w = &windows[order[i]];

@@ -23,6 +23,8 @@
 #include "desktop/terminal.h"
 #include "kernel/image.h"        /* runtime JPEG/PNG decoding + scaling */
 #include "codex.h"               /* Codex registry for wallpaper settings */
+#include "icon_store.h"          /* Color icon rendering from IRES */
+#include "gfx.h"                 /* Alpha blending for icon compositing */
 
 /* ---- Wallpaper (decoded + scaled) ---- */
 static image_t   wallpaper_img;       /* Scaled wallpaper (PMM or kmalloc) */
@@ -298,6 +300,99 @@ void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t r
             uint32_t b = 0x20 + (y * 0x20) / sh;
             uint32_t color = (r << 16) | (g << 8) | b;
             fb_fill_rect((uint32_t)rx, y, rw, 1, color);
+        }
+    }
+}
+
+/* ---- Desktop icon rendering ---- */
+
+/* Desktop icon layout: column on right side, 48px icons with labels */
+#define DESKTOP_ICON_SIZE   48
+#define DESKTOP_ICON_PAD    16   /* Padding between icon grid cells */
+#define DESKTOP_ICON_MARGIN 20   /* Margin from screen edge */
+#define DESKTOP_LABEL_GAP    4   /* Gap between icon and label */
+
+typedef struct {
+    system_icon_t id;
+    const char   *label;
+} desktop_icon_item_t;
+
+static const desktop_icon_item_t desktop_icon_items[] = {
+    { ICON_DESKTOP_COMPUTER,  "Computer"     },
+    { ICON_RECYCLE_BIN_EMPTY, "Recycle Bin"  },
+    { ICON_CONTROL_DECK,      "Control Deck" },
+};
+#define DESKTOP_ICON_COUNT (sizeof(desktop_icon_items) / sizeof(desktop_icon_items[0]))
+
+void desktop_draw_icons(void)
+{
+    uint32_t sh = fb_get_height();
+    uint32_t sw = fb_get_width();
+    uint32_t cell_h = DESKTOP_ICON_SIZE + DESKTOP_LABEL_GAP + 16 + DESKTOP_ICON_PAD;
+    int32_t  start_x = (int32_t)(sw - DESKTOP_ICON_SIZE - DESKTOP_ICON_MARGIN);
+    int32_t  start_y = (int32_t)DESKTOP_ICON_MARGIN;
+    uint32_t i;
+
+    gfx_surface_t scr;
+    gfx_surface_init(&scr, fb_get_backbuffer(),
+                     sw, sh, fb_get_stride());
+
+    for (i = 0; i < DESKTOP_ICON_COUNT; i++) {
+        int32_t ix = start_x;
+        int32_t iy = start_y + (int32_t)(i * cell_h);
+
+        /* Get the color icon bitmap from IRES */
+        icon_bitmap_t *bmp = icon_get_colored(desktop_icon_items[i].id,
+                                               DESKTOP_ICON_SIZE, 0xFFFFFFFF);
+        if (bmp && bmp->pixels) {
+            /* Alpha-blend icon onto screen back buffer */
+            int32_t py, px;
+            for (py = 0; py < (int32_t)bmp->height && (iy + py) < (int32_t)sh; py++) {
+                for (px = 0; px < (int32_t)bmp->width && (ix + px) < (int32_t)sw; px++) {
+                    uint32_t src_px = bmp->pixels[py * bmp->width + px];
+                    uint8_t  alpha  = (uint8_t)(src_px >> 24);
+                    if (alpha == 0) continue;
+
+                    if (alpha == 255) {
+                        fb_put_pixel((uint32_t)(ix + px), (uint32_t)(iy + py),
+                                     src_px & 0x00FFFFFF);
+                    } else {
+                        /* Simple alpha blend */
+                        uint32_t dst_px = fb_read_pixel((uint32_t)(ix + px),
+                                                       (uint32_t)(iy + py));
+                        uint32_t sr = (src_px >> 16) & 0xFF;
+                        uint32_t sg = (src_px >>  8) & 0xFF;
+                        uint32_t sb = (src_px >>  0) & 0xFF;
+                        uint32_t dr = (dst_px >> 16) & 0xFF;
+                        uint32_t dg = (dst_px >>  8) & 0xFF;
+                        uint32_t db = (dst_px >>  0) & 0xFF;
+                        uint32_t a  = alpha;
+                        uint32_t ia = 255 - a;
+                        uint32_t rr = (sr * a + dr * ia) / 255;
+                        uint32_t rg = (sg * a + dg * ia) / 255;
+                        uint32_t rb = (sb * a + db * ia) / 255;
+                        fb_put_pixel((uint32_t)(ix + px), (uint32_t)(iy + py),
+                                     (rr << 16) | (rg << 8) | rb);
+                    }
+                }
+            }
+        }
+
+        /* Draw label text centered below icon */
+        {
+            ttf_font_t *tf = ttf_get(0, 12);
+            if (tf) {
+                int tw = ttf_measure_width(tf, desktop_icon_items[i].label);
+                int32_t tx = ix + (int32_t)DESKTOP_ICON_SIZE / 2 - tw / 2;
+                int32_t ty = iy + (int32_t)DESKTOP_ICON_SIZE + DESKTOP_LABEL_GAP;
+
+                /* Draw shadow for readability on wallpaper */
+                ttf_draw_string(&scr, tf, tx + 1, ty + 1,
+                                desktop_icon_items[i].label, 0x00000000);
+                /* Draw white text */
+                ttf_draw_string(&scr, tf, tx, ty,
+                                desktop_icon_items[i].label, 0x00FFFFFF);
+            }
         }
     }
 }

@@ -41,6 +41,148 @@ static int kstrcmp(const char *a, const char *b)
 #define ICON_CACHE_MAX      128   /* Max cached icon bitmaps (LRU) */
 #define LARGE_ALLOC_THRESH  4096  /* Bytes threshold for PMM vs kmalloc */
 
+/* ---- IRES color icon support ---- */
+
+/* Must match irespack.c format exactly */
+#define IRES_MAGIC          0x53455249  /* "IRES" little-endian */
+#define IRES_VERSION        1
+#define IRES_MAX_SIZES      16
+#define IRES_COLOR_COUNT    (ICON_COLOR_COUNT - ICON_MONO_COUNT)
+
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint16_t version;
+    uint16_t icon_count;
+    uint8_t  size_count;
+    uint8_t  reserved[3];
+    uint32_t file_size;
+} ires_header_t;
+
+typedef struct __attribute__((packed)) {
+    uint32_t data_offset;
+    uint16_t width;
+    uint16_t height;
+} ires_size_entry_t;
+
+typedef struct __attribute__((packed)) {
+    uint16_t icon_id;
+    uint16_t name_offset;
+} ires_index_entry_t;
+
+/* Runtime: per color icon, per size, store pointer + dimensions */
+typedef struct {
+    uint32_t *pixels;   /* Points into PMM-loaded IRES data */
+    uint16_t  width;
+    uint16_t  height;
+} ires_icon_size_t;
+
+typedef struct {
+    ires_icon_size_t sizes[IRES_MAX_SIZES];
+    int              has_any;  /* 1 if at least one size loaded */
+} ires_icon_t;
+
+static ires_icon_t  ires_icons[IRES_COLOR_COUNT];
+static uint8_t     *ires_file_data;    /* PMM buffer holding entire file */
+static uint32_t     ires_file_size;
+static int          ires_loaded;
+static uint8_t      ires_size_count;
+static uint16_t     ires_sizes[IRES_MAX_SIZES];
+
+/* ---- Internal: load IRES file from VFS ---- */
+
+static int ires_load(const char *path)
+{
+    struct vfs_node *f;
+    uint32_t size;
+    uint64_t frames;
+    int32_t bytes_read;
+    uint8_t *data;
+    ires_header_t *hdr;
+    uint8_t *cursor;
+    int i, si;
+
+    f = vfs_open(path, VFS_O_READ);
+    if (!f) return -1;
+
+    size = f->size;
+    if (size < sizeof(ires_header_t) || size > 32 * 1024 * 1024) {
+        vfs_close(f);
+        return -2;
+    }
+
+    /* Allocate via PMM — IRES can be several MB */
+    frames = (size + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    data = (uint8_t *)(uintptr_t)pmm_alloc_contiguous(frames);
+    if (!data) {
+        vfs_close(f);
+        return -3;
+    }
+
+    bytes_read = vfs_read(f, 0, size, data);
+    vfs_close(f);
+    if (bytes_read <= 0 || (uint32_t)bytes_read < sizeof(ires_header_t)) {
+        uint64_t fi;
+        for (fi = 0; fi < frames; fi++)
+            pmm_free_frame((uintptr_t)data + fi * PMM_FRAME_SIZE);
+        return -4;
+    }
+
+    /* Parse header */
+    hdr = (ires_header_t *)data;
+    if (hdr->magic != IRES_MAGIC || hdr->version != IRES_VERSION) {
+        uint64_t fi;
+        for (fi = 0; fi < frames; fi++)
+            pmm_free_frame((uintptr_t)data + fi * PMM_FRAME_SIZE);
+        return -5;
+    }
+
+    ires_file_data = data;
+    ires_file_size = size;
+    ires_size_count = hdr->size_count;
+    if (ires_size_count > IRES_MAX_SIZES)
+        ires_size_count = IRES_MAX_SIZES;
+
+    /* Read size table */
+    cursor = data + sizeof(ires_header_t);
+    for (si = 0; si < ires_size_count; si++) {
+        ires_sizes[si] = *(uint16_t *)cursor;
+        cursor += 2;
+    }
+
+    /* Parse index entries */
+    memset(ires_icons, 0, sizeof(ires_icons));
+    for (i = 0; i < (int)hdr->icon_count; i++) {
+        ires_index_entry_t *idx = (ires_index_entry_t *)cursor;
+        cursor += sizeof(ires_index_entry_t);
+
+        /* Map icon_id to our color icon array index */
+        int color_idx = (int)idx->icon_id - (int)ICON_MONO_COUNT;
+        if (color_idx < 0 || color_idx >= IRES_COLOR_COUNT) {
+            cursor += ires_size_count * sizeof(ires_size_entry_t);
+            continue;
+        }
+
+        for (si = 0; si < ires_size_count; si++) {
+            ires_size_entry_t *se = (ires_size_entry_t *)cursor;
+            cursor += sizeof(ires_size_entry_t);
+
+            if (se->data_offset != 0 && se->data_offset < size &&
+                se->width > 0 && se->height > 0) {
+                ires_icons[color_idx].sizes[si].pixels =
+                    (uint32_t *)(data + se->data_offset);
+                ires_icons[color_idx].sizes[si].width  = se->width;
+                ires_icons[color_idx].sizes[si].height = se->height;
+                ires_icons[color_idx].has_any = 1;
+            }
+        }
+    }
+
+    ires_loaded = 1;
+    return (int)hdr->icon_count;
+}
+
+
+
 /* ---- Icon font state ---- */
 
 typedef struct icon_font {
@@ -87,16 +229,10 @@ static const char *icon_names[ICON_TOTAL_COUNT] = {
     "sort", "filter", "grid", "list", "link", "attach",
     "pin", "clipboard", "fullscreen",
     /* Color icons */
-    "folder_closed", "folder_open", "folder_documents",
-    "folder_pictures", "folder_music", "folder_downloads",
-    "file_default", "file_text", "file_image", "file_audio",
-    "file_video", "file_archive", "file_exe", "file_code", "file_pdf",
-    "drive_local", "drive_removable", "drive_network", "drive_optical",
+    "folder_closed", "folder_open",
+    "file_default", "exe_default",
     "computer", "recycle_bin_empty", "recycle_bin_full",
-    "printer", "network",
-    "app_default", "app_text_editor", "app_media_player",
-    "app_settings", "app_terminal", "app_file_manager",
-    "app_calculator", "app_paint", "app_browser"
+    "control_deck"
 };
 
 /* ---- LRU Icon Cache ---- */
@@ -278,6 +414,56 @@ static cache_entry_t *cache_alloc(void)
     return (cache_entry_t *)0;  /* should not happen */
 }
 
+/* ---- Internal: get color icon bitmap from IRES ---- */
+
+static icon_bitmap_t *ires_get_bitmap(system_icon_t id, uint32_t size)
+{
+    int color_idx = (int)id - (int)ICON_MONO_COUNT;
+    int best_si = -1;
+    uint32_t best_diff = 0xFFFFFFFF;
+    ires_icon_size_t *is;
+    cache_entry_t *entry;
+    int si;
+
+    if (color_idx < 0 || color_idx >= IRES_COLOR_COUNT)
+        return (icon_bitmap_t *)0;
+    if (!ires_icons[color_idx].has_any)
+        return (icon_bitmap_t *)0;
+
+    /* Find closest available size */
+    for (si = 0; si < ires_size_count; si++) {
+        if (ires_icons[color_idx].sizes[si].pixels) {
+            uint32_t diff = (ires_sizes[si] > size)
+                ? ires_sizes[si] - size
+                : size - ires_sizes[si];
+            if (diff < best_diff) {
+                best_diff = diff;
+                best_si   = si;
+            }
+        }
+    }
+
+    if (best_si < 0) return (icon_bitmap_t *)0;
+    is = &ires_icons[color_idx].sizes[best_si];
+
+    /* Store in cache (pixels point into IRES file buffer — no alloc needed) */
+    entry = cache_alloc();
+    if (!entry) return (icon_bitmap_t *)0;
+
+    entry->icon_id              = id;
+    entry->size                 = size;
+    entry->color                = 0;  /* Color icons don't have tint */
+    entry->bitmap.pixels        = is->pixels;
+    entry->bitmap.width         = is->width;
+    entry->bitmap.height        = is->height;
+    entry->bitmap.alloc_size    = 0;  /* Don't free — points into IRES buffer */
+    entry->bitmap.from_pmm      = 0;
+    entry->last_access          = ++cache_access_counter;
+    entry->valid                = 1;
+
+    return &entry->bitmap;
+}
+
 /* ---- Internal: rasterize a monochrome icon from font ---- */
 
 static icon_bitmap_t *rasterize_glyph(system_icon_t id, uint32_t size,
@@ -405,14 +591,26 @@ void icon_store_init(void)
 
     simd_restore_state(&fpu_state);
 
-    /* TODO (§4.5): Load icons.ires for color icons */
-    /* ires_load("C:\\Impossible\\System\\icons.ires"); */
+    /* Load color icons from IRES file */
+    {
+        int ires_result = ires_load("C:\\Impossible\\System\\icons.ires");
+        if (ires_result > 0) {
+            printk("[OK] IRES loaded: icons.ires (%d icons, %d sizes)\n",
+                   (uint64_t)ires_result, (uint64_t)ires_size_count);
+        } else if (ires_result == -1) {
+            printk("[--] IRES not found: icons.ires\n");
+        } else {
+            printk("[--] IRES load failed (%d): icons.ires\n",
+                   (uint64_t)ires_result);
+        }
+    }
 
     icon_store_ready = 1;
 
-    printk("[OK] Icon store initialized (%d/%d font variants, cache=%d slots)\n",
+    printk("[OK] Icon store initialized (%d/%d fonts, cache=%d, color=%s)\n",
            (uint64_t)loaded, (uint64_t)ICON_FONT_COUNT,
-           (uint64_t)ICON_CACHE_MAX);
+           (uint64_t)ICON_CACHE_MAX,
+           (uint64_t)(uintptr_t)(ires_loaded ? "yes" : "no"));
 }
 
 icon_bitmap_t *icon_get(system_icon_t id, uint32_t size)
@@ -439,9 +637,10 @@ icon_bitmap_t *icon_get_variant(system_icon_t id, uint32_t size,
         return rasterize_glyph(id, size, color, variant);
     }
 
-    /* Color icons: look up in IRES (not yet implemented — §4.5) */
-    /* TODO: search IRES sizes for closest match */
-
+    /* Color icons: look up in IRES */
+    if (ires_loaded) {
+        return ires_get_bitmap(id, size);
+    }
     return (icon_bitmap_t *)0;
 }
 

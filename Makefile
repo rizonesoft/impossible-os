@@ -110,10 +110,15 @@ $(KERNEL_BIN): $(OBJS) $(LINKER_SCRIPT)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"
 
-## host-tools: Build host utility programs (jpg2raw, etc.)
-host-tools: $(BUILD_DIR)/tools/jpg2raw
+## host-tools: Build host utility programs (jpg2raw, irespack, etc.)
+host-tools: $(BUILD_DIR)/tools/jpg2raw $(BUILD_DIR)/tools/irespack
 
 $(BUILD_DIR)/tools/jpg2raw: tools/jpg2raw.c
+	@mkdir -p $(BUILD_DIR)/tools
+	$(HOST_CC) -O2 -o $@ $< -lm -Itools
+	@echo "[TOOL] $@ built"
+
+$(BUILD_DIR)/tools/irespack: tools/irespack.c
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $@ $< -lm -Itools
 	@echo "[TOOL] $@ built"
@@ -148,6 +153,14 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@# Copy bundled TrueType fonts (Selawik, Cascadia Code, Inter)
 	@cp resources/fonts/*.ttf $(SYSROOT)/Impossible/Fonts/
 	@echo "[SYSROOT] Fonts copied"
+	@# Pack color icons into IRES and copy to sysroot
+	@if ls resources/icons/color/48/*.png >/dev/null 2>&1; then \
+		$(BUILD_DIR)/tools/irespack $(BUILD_DIR)/icons.ires resources/icons/color 2>&1; \
+		cp $(BUILD_DIR)/icons.ires $(SYSROOT)/Impossible/System/icons.ires; \
+		echo "[SYSROOT] icons.ires packed and copied"; \
+	else \
+		echo "[SYSROOT] No color icons found — skipping icons.ires"; \
+	fi
 	@echo "[SYSROOT] Assets and directory tree staged"
 
 ## userland: Build user-mode programs and copy into sysroot

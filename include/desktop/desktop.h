@@ -47,6 +47,9 @@ void desktop_init(void);
 void desktop_draw_wallpaper(void);
 void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t rh);
 
+/* Draw desktop icons (Computer, Recycle Bin, Control Deck) on the wallpaper */
+void desktop_draw_icons(void);
+
 /* Draw the taskbar at the bottom of the screen.
  * Call AFTER wm_composite() so it overlays windows. */
 void desktop_draw_taskbar(void);
