@@ -131,37 +131,29 @@ echo "    uint32_t    codepoint;" >> "$OUT_FILE"
 echo "} fluent_icon_entry_t;" >> "$OUT_FILE"
 echo "" >> "$OUT_FILE"
 
-# Extract all name→codepoint pairs
+# Extract ALL name→codepoint pairs in one awk pass (fast — no per-line subshells)
 TMP="/tmp/fluent_gen_$$"
-> "$TMP"
-
-current_name=""
-while IFS= read -r line; do
-    case "$line" in
-        *ic_fluent_*_filled:before*)
-            current_name=$(echo "$line" | awk -F'ic_fluent_' '{print $2}' | awk -F'_filled' '{print $1}')
-            ;;
-        *content:*)
-            if [ -n "$current_name" ]; then
-                cp=$(echo "$line" | awk -F'"' '{print $2}' | tr -d '\\')
-                [ -n "$cp" ] && echo "${current_name}|${cp}" >> "$TMP"
-                current_name=""
-            fi
-            ;;
-    esac
-done < "$CSS_FILE"
+awk '
+    /ic_fluent_.*_filled:before/ {
+        match($0, /ic_fluent_([a-z0-9_]+)_filled/, m)
+        name = m[1]
+    }
+    name && /content:/ {
+        match($0, /"\\([0-9a-fA-F]+)"/, m)
+        if (m[1] != "") print name "|" m[1]
+        name = ""
+    }
+' "$CSS_FILE" | sort -t'|' -k1,1 > "$TMP"
 
 TOTAL=$(wc -l < "$TMP")
-sort -t'|' -k1,1 "$TMP" > "${TMP}.sorted"
 
 echo "#define FLUENT_ICON_COUNT $TOTAL" >> "$OUT_FILE"
 echo "" >> "$OUT_FILE"
 echo "/* Sorted by name for O(log n) binary search */" >> "$OUT_FILE"
 echo "static const fluent_icon_entry_t fluent_all_icons[FLUENT_ICON_COUNT] = {" >> "$OUT_FILE"
 
-while IFS='|' read -r name cp; do
-    echo "    { \"$name\", 0x${cp} }," >> "$OUT_FILE"
-done < "${TMP}.sorted"
+# Output all entries in one awk pass (no per-line echo)
+awk -F'|' '{ printf "    { \"%s\", 0x%s },\n", $1, $2 }' "$TMP" >> "$OUT_FILE"
 
 echo "};" >> "$OUT_FILE"
 
@@ -187,7 +179,7 @@ static uint32_t fluent_lookup(const char *name)
 }
 BSEARCH
 
-rm -f "$TMP" "${TMP}.sorted"
+rm -f "$TMP"
 
 LINES=$(wc -l < "$OUT_FILE")
 echo "[OK] Generated $OUT_FILE ($LINES lines, $CURATED curated + $TOTAL total icons)"
