@@ -355,6 +355,7 @@ void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
     uint32_t hw_stride;
     uint32_t row;
     uint32_t x1, y1;
+    uint32_t vram_y_offset;
 
     if (!fb_ready || back_buf == hw_addr)
         return;
@@ -372,13 +373,20 @@ void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
     if (w == 0 || h == 0)
         return;
 
+    /* When VBE page flipping is active, fb_swap() alternates between
+     * page 0 (y_offset=0) and page 1 (y_offset=fb_height).  We must
+     * write to the CURRENTLY DISPLAYED page so the update is visible. */
+    vram_y_offset = 0;
+    if (page_flip_ok)
+        vram_y_offset = (page_current == 0) ? 0 : fb_height;
+
     __asm__ volatile ("sfence" ::: "memory");
     __asm__ volatile ("cli");
 
     /* Copy each row of the dirty rectangle using 64-bit moves */
     for (row = y; row < y1; row++) {
         uint64_t *src = (uint64_t *)(back_buf + row * fb_stride + x);
-        uint64_t *dst = (uint64_t *)(hw_addr  + row * hw_stride + x);
+        uint64_t *dst = (uint64_t *)(hw_addr  + (vram_y_offset + row) * hw_stride + x);
         uint64_t count = (uint64_t)w / 2;  /* DWORD pairs → QWORDs */
         if (count > 0) {
             __asm__ volatile (
@@ -390,7 +398,7 @@ void fb_swap_rect(uint32_t x, uint32_t y, uint32_t w, uint32_t h)
         }
         /* Handle odd trailing pixel */
         if (w & 1) {
-            hw_addr[row * hw_stride + x + w - 1] =
+            hw_addr[(vram_y_offset + row) * hw_stride + x + w - 1] =
                 back_buf[row * fb_stride + x + w - 1];
         }
     }
