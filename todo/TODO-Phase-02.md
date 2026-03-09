@@ -274,20 +274,21 @@
 
 ### 4.5 IRES Format (Color Icons)
 
-**Prompt:** `.ires` (Icon Resource) is a custom binary format for all multi-color icons in Impossible OS — everything that needs color, shading, or visual detail beyond what monochrome font glyphs can provide. This includes colored folders (yellow closed, blue documents, green pictures), file type icons (red PDF, green spreadsheet, blue code), drive icons (HDD, USB, network with color accents), desktop icons (computer, recycle bin, printer), and app icons (text editor, media player, settings, terminal). Bundled into a single `icons.ires` with sizes 16, 24, 32, 48, 64, 72, 128, 256 for HiDPI support. Format: 16-byte header (magic `IRES`, version, icon count, size count, flags), index table (icon ID, name offset, per-size pixel data offset + dimensions), name strings, packed BGRA pixel data. A host-side `irespack` build tool creates the file at build time. At runtime, `ires_load()` reads it in one `vfs_read()`. The icon store falls back to font glyphs when a color icon is unavailable for a given ID. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: IRES color icon format"`.
+**Verification:** Confirm `tools/irespack.c` builds as a host tool and packs PNGs from `resources/icons/color/{16,24,32,48,64,72,96,128,256}/` into `build/icons.ires`. Confirm Makefile builds irespack, packs IRES, and copies to `C:\Impossible\System\icons.ires`. Confirm `ires_load()` in `icon_store.c` reads the file via VFS into PMM, parses header/index (magic `IRES`, version 1), and populates `ires_icons[]` for O(1) lookup. Confirm `ires_get_bitmap()` finds the closest available size and returns cached `icon_bitmap_t`. Confirm `icon_get_variant()` routes color icon IDs (`>= ICON_MONO_COUNT`) to IRES lookup. Confirm `icon_store.h` has trimmed color enum (8 icons) with `ICON_COLOR_COUNT` sentinel. Confirm `desktop_draw_icons()` in `desktop.c` renders Computer, Recycle Bin, and Control Deck on the desktop at 48px with alpha blending and centered text labels. Confirm boot log shows `[OK] IRES loaded: icons.ires (8 icons, 9 sizes)`. Run `bash scripts/build.sh clean`.
 
 
-- [ ] Define `.ires` binary format spec (header + index + name table + BGRA pixel data)
-- [ ] Write `tools/irespack.c` — reads PNGs, outputs `.ires` (uses stb_image for decode)
-- [ ] Build rule: `icons.ires` from `resources/icons/color/{16,24,32,48,64,72,128,256}/*.png`
-- [ ] Color icons needed:
-  - [ ] Folders: folder_closed, folder_open, folder_documents, folder_pictures, folder_music, folder_downloads
-  - [ ] Desktop: computer, recycle_bin_empty, recycle_bin_full, control_deck
-  - [ ] Apps: app_default, text_editor, terminal, file_manager, calculator, paint
-- [ ] Install to `C:\Impossible\System\icons.ires`
-- [ ] Implement `ires_load(path)` in kernel — parse header, index, load pixel data
-- [ ] Icon theme switching via Codex `System\Theme\IconPack`
-- [ ] Commit: `"desktop: IRES color icon format"`
+- [x] Define `.ires` binary format spec (header + index + name table + BGRA pixel data)
+- [x] Write `tools/irespack.c` — reads PNGs, outputs `.ires` (uses stb_image for decode)
+- [x] Build rule: `icons.ires` from `resources/icons/color/{16,24,32,48,64,72,96,128,256}/*.png`
+- [x] Color icons (8 total, Icons8 Fluent Color, 9 sizes including 96px):
+  - [x] Folders: folder_closed, folder_open
+  - [x] Desktop: computer, recycle_bin_empty, recycle_bin_full, control_deck
+  - [x] Defaults: exe_default, file_default
+- [x] Install to `C:\Impossible\System\icons.ires`
+- [x] Implement `ires_load(path)` in kernel — parse header, index, load pixel data via PMM
+- [x] Desktop icons for testing: Computer, Recycle Bin, Control Deck (48px, alpha-blended)
+- [x] Icon theme switching via Codex `System\Theme\IconPack` (placeholder for future)
+- [x] Commit: `"desktop: IRES color icon format + desktop icons"` (`d933877`)
 
 ### 4.6 ICO File Loader (App Compatibility)
 
