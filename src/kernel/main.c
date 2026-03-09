@@ -1081,20 +1081,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 int32_t mx, my;
                 uint8_t mb;
 
-                /* Get mouse state from the best available source */
-                if (virtio_input_available()) {
-                    struct virtio_input_state vis = virtio_input_get_state();
-                    mx = vis.x;
-                    my = vis.y;
-                    mb = vis.buttons;
-                    /* Update PS/2 mouse state for cursor position tracking */
-                    mouse_set_position(mx, my);
-                } else {
-                    struct mouse_state ms = mouse_get_state();
-                    mx = ms.x;
-                    my = ms.y;
-                    mb = ms.buttons;
-                }
+                /* Get mouse state from PS/2 driver */
+                struct mouse_state ms = mouse_get_state();
+                mx = ms.x;
+                my = ms.y;
+                mb = ms.buttons;
 
                 uint8_t cursor_moved = (mx != prev_mx || my != prev_my);
                 uint8_t btn_changed  = (mb != prev_mb);
