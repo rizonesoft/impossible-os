@@ -28,9 +28,19 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - Target architecture: **x86-64** (Long Mode)
 - Final output: an ISO file named **`os-build.iso`** in the `build/` directory
 
+## Build Script — MANDATORY
+
+- **ALWAYS** use `bash scripts/build.sh` instead of raw `make` commands
+- Incremental build: `bash scripts/build.sh`
+- Clean build: `bash scripts/build.sh clean`
+- Build + QEMU test: `bash scripts/build.sh run`
+- Clean build + QEMU: `bash scripts/build.sh clean run`
+- Verify success: `tail -1 build/build.log` → must show `=== BUILD OK ===`
+- **NEVER** run `make`, `make all`, `make clean`, or `make run` directly
+
 ## Testing Protocol
 
-- **Always** test changes via `make run` (QEMU) before committing
+- **Always** test changes via `bash scripts/build.sh run` (QEMU) before committing
 - Never push untested code to `main`
 - Use serial output (`-serial stdio`) for kernel debug logging
 
