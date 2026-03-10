@@ -556,25 +556,29 @@ static void draw_decorations(const struct wm_window *w)
         uint32_t glyph_color = focused ? WM_COLOR_BTN_GLYPH
                                         : WM_COLOR_BTN_GLYPH_DIM;
 
-        /* Close button (rightmost) */
+        /* Close button (rightmost) — flat rect, red hover */
         {
             int32_t bx = w->x + (int32_t)ow - (int32_t)WM_BTN_WIDTH;
 
             if (w->close_hover) {
+                /* Rounded rect for entire button, then square off all
+                 * corners except top-right to match window chrome shape */
                 gfx_fill_rounded_rect(&scr, (uint32_t)bx, (uint32_t)btn_y,
                                       WM_BTN_WIDTH, (uint32_t)btn_h,
                                       WM_CORNER_RADIUS, WM_COLOR_CLOSE_HOVER_BG);
+                /* Square off left side (covers top-left + bottom-left corners) */
                 gfx_fill_rect(&scr, (uint32_t)bx, (uint32_t)btn_y,
-                              WM_BTN_WIDTH / 2, (uint32_t)btn_h,
+                              WM_CORNER_RADIUS, (uint32_t)btn_h,
                               WM_COLOR_CLOSE_HOVER_BG);
-                gfx_fill_rect(&scr, (uint32_t)(bx + (int32_t)WM_BTN_WIDTH / 2),
-                              (uint32_t)(btn_y + (int32_t)WM_CORNER_RADIUS),
-                              WM_BTN_WIDTH / 2, (uint32_t)(btn_h - (int32_t)WM_CORNER_RADIUS),
+                /* Square off bottom-right corner */
+                gfx_fill_rect(&scr, (uint32_t)(bx + (int32_t)WM_BTN_WIDTH - (int32_t)WM_CORNER_RADIUS),
+                              (uint32_t)(btn_y + btn_h - (int32_t)WM_CORNER_RADIUS),
+                              WM_CORNER_RADIUS, WM_CORNER_RADIUS,
                               WM_COLOR_CLOSE_HOVER_BG);
                 glyph_color = 0xFFFFFFFF;
             }
 
-            /* × glyph — two diagonal lines via gfx_draw_line */
+            /* × glyph */
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + (btn_h - 10) / 2;
@@ -585,7 +589,7 @@ static void draw_decorations(const struct wm_window *w)
 
         glyph_color = focused ? WM_COLOR_BTN_GLYPH : WM_COLOR_BTN_GLYPH_DIM;
 
-        /* Maximize button */
+        /* Maximize button — flat rect, subtle hover */
         {
             int32_t bx = w->x + (int32_t)ow - 2 * (int32_t)WM_BTN_WIDTH;
 
@@ -595,7 +599,7 @@ static void draw_decorations(const struct wm_window *w)
                                     WM_COLOR_BTN_HOVER_BG);
             }
 
-            /* □ glyph — four lines forming a rectangle */
+            /* □ glyph */
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + (btn_h - 10) / 2;
@@ -606,7 +610,7 @@ static void draw_decorations(const struct wm_window *w)
             }
         }
 
-        /* Minimize button */
+        /* Minimize button — flat rect, subtle hover */
         {
             int32_t bx = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH;
 
@@ -616,7 +620,7 @@ static void draw_decorations(const struct wm_window *w)
                                     WM_COLOR_BTN_HOVER_BG);
             }
 
-            /* − glyph — single horizontal line */
+            /* − glyph */
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + btn_h / 2;
