@@ -20,6 +20,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
+#include "kernel/log.h"
 #include "kernel/drivers/framebuffer.h"
 
 /* ---- External libc-like functions (freestanding kernel) ---- */
@@ -351,7 +352,7 @@ static const cursor_image_t *get_active_image(void)
 /* ---- Xcur file parser ---- */
 
 static int xcur_parse(const uint8_t *data, uint32_t file_size,
-                      cursor_sprite_t *out)
+                      cursor_sprite_t *out, uint32_t *pixel_buf)
 {
     if (file_size < 16)
         return -1;
@@ -422,24 +423,19 @@ static int xcur_parse(const uint8_t *data, uint32_t file_size,
     if (best_pos + 36 + pixel_bytes > file_size)
         return -1;
 
-    /* Allocate pixel buffer via PMM — NEVER kmalloc for pixel data */
-    uint32_t pages = (pixel_bytes + 4095) / 4096;
-    uint32_t *pixels = (uint32_t *)(uintptr_t)pmm_alloc_contiguous(pages);
-    if (!pixels)
-        return -1;
-
-    /* Copy ARGB pixels — Xcur stores as BGRA in little-endian, which
-     * matches our framebuffer format directly (B in low byte) */
+    /* Copy ARGB pixels into the pre-allocated buffer.
+     * Xcur stores as BGRA in little-endian, which matches our
+     * framebuffer format directly (B in low byte) */
     const uint8_t *src = chunk + 36;
     for (uint32_t p = 0; p < w * h; p++) {
         uint8_t b = src[p * 4 + 0];
         uint8_t g = src[p * 4 + 1];
         uint8_t r = src[p * 4 + 2];
         uint8_t a = src[p * 4 + 3];
-        pixels[p] = (uint32_t)b
-                  | ((uint32_t)g << 8)
-                  | ((uint32_t)r << 16)
-                  | ((uint32_t)a << 24);
+        pixel_buf[p] = (uint32_t)b
+                     | ((uint32_t)g << 8)
+                     | ((uint32_t)r << 16)
+                     | ((uint32_t)a << 24);
     }
 
     cursor_image_t *img = &out->images[0];
@@ -447,7 +443,7 @@ static int xcur_parse(const uint8_t *data, uint32_t file_size,
     img->height    = h;
     img->hotspot_x = hx;
     img->hotspot_y = hy;
-    img->pixels    = pixels;
+    img->pixels    = pixel_buf;
     out->num_sizes = 1;
 
     return 0;
@@ -455,7 +451,8 @@ static int xcur_parse(const uint8_t *data, uint32_t file_size,
 
 /* ---- Load one cursor from VFS ---- */
 
-static int xcur_load(const char *path, cursor_sprite_t *out)
+static int xcur_load(const char *path, cursor_sprite_t *out,
+                     uint32_t *pixel_buf)
 {
     struct vfs_node *node = vfs_open(path, VFS_O_READ);
     if (!node)
@@ -490,7 +487,7 @@ static int xcur_load(const char *path, cursor_sprite_t *out)
         return -1;
     }
 
-    int rc = xcur_parse(buf, offset, out);
+    int rc = xcur_parse(buf, offset, out, pixel_buf);
 
     /* Free temp buffer */
     for (uint32_t p = 0; p < pages; p++)
@@ -520,29 +517,51 @@ void cursor_init(void)
         cursors[i].num_sizes = 1;
     }
 
+    /* Pre-allocate ALL cursor pixel buffers as one contiguous PMM block.
+     * This prevents the temp-buffer free inside xcur_load from reclaiming
+     * pixel pages (the PMM was returning the same page for every cursor). */
+    #define PIXELS_PER_CURSOR (XCUR_TARGET_SIZE * XCUR_TARGET_SIZE)
+    #define BYTES_PER_CURSOR  (PIXELS_PER_CURSOR * 4)
+    uint32_t total_pixel_pages = (CURSOR_COUNT * BYTES_PER_CURSOR + 4095) / 4096;
+    uint32_t *pixel_pool = (uint32_t *)(uintptr_t)pmm_alloc_contiguous(total_pixel_pages);
+
     /* Attempt to load Adwaita cursors from the sysroot */
     uint32_t loaded = 0;
-    for (int i = 0; i < CURSOR_COUNT; i++) {
-        cursor_sprite_t tmp;
-        memset(&tmp, 0, sizeof(tmp));
+    if (pixel_pool) {
+        for (int i = 0; i < CURSOR_COUNT; i++) {
+            cursor_sprite_t tmp;
+            memset(&tmp, 0, sizeof(tmp));
 
-        if (xcur_load(cursor_filenames[i], &tmp) == 0) {
-            cursors[i] = tmp;
-            loaded++;
+            uint32_t *slot = pixel_pool + (i * PIXELS_PER_CURSOR);
+            if (xcur_load(cursor_filenames[i], &tmp, slot) == 0) {
+                cursors[i] = tmp;
+                loaded++;
+            }
         }
-        /* If load fails and i != CURSOR_ARROW, num_sizes stays 0.
-         * get_active_image() will fall back to CURSOR_ARROW. */
     }
 
     active_shape = CURSOR_ARROW;
     printk("[OK] Cursor manager initialized (%u/%d Adwaita cursors loaded)\n",
            loaded, CURSOR_COUNT);
+
+    /* Diagnostic: dump loaded cursor info */
+    for (int i = 0; i < CURSOR_COUNT; i++) {
+        cursor_image_t *img = &cursors[i].images[0];
+        uint32_t first = img->pixels ? img->pixels[0] : 0xDEAD;
+        uint32_t mid   = img->pixels ? img->pixels[img->width * img->height / 2] : 0xDEAD;
+        printk("  [%d] %ux%u hot=%d,%d ptr=%x px=%x/%x\n",
+               i, img->width, img->height,
+               img->hotspot_x, img->hotspot_y,
+               (uint32_t)(uintptr_t)img->pixels, first, mid);
+    }
 }
 
 void cursor_set_shape(cursor_shape_t shape)
 {
-    if (shape < CURSOR_COUNT)
+    if (shape < CURSOR_COUNT && shape != active_shape) {
+        log_info("CURSOR", "shape %d -> %d\n", active_shape, shape);
         active_shape = shape;
+    }
 }
 
 cursor_shape_t cursor_get_shape(void)
