@@ -29,11 +29,11 @@
 
 ---
 
-### ~~P3. Lazy (just-in-time) glyph rasterization~~
-- **Status:** ✅ Done
-- Only sizes 12 (terminal) and 14 (title bar) eagerly rasterized at boot
-- Sizes 16, 20, 24 JIT-rasterized on first UI access via `cache_ensure_ready()`
-- `[JIT] Rasterized slot %d size %d` logged on lazy rasterization
+### P3. Lazy (just-in-time) glyph rasterization
+- **Status:** ⏪ Reverted — caused font rendering issues
+- **Impact:** Faster boot, less wasted memory for unused font sizes
+- **Effort:** Small (~50 lines)
+- **Note:** Needs investigation — JIT rasterization during draw calls may corrupt FPU state or miss cache entries. Revisit after stabilizing other gfx changes.
 
 ---
 
@@ -128,3 +128,47 @@
 - [ ] Whitelist known-safe calls (stb_truetype temps, small structs)
 - [ ] Fail or warn on new `kmalloc` calls in GFX/desktop code without a `/* kmalloc OK: ... */` comment
 - [ ] Add to CI/build pipeline
+
+---
+
+## Window Drag Responsiveness
+
+### P12. Dirty-rectangle compositor during drag
+- **Impact:** Eliminate full-screen repaint per mouse event during drag (~7.2 MB → ~200 KB per frame)
+- **Effort:** Medium (~100 lines)
+- **Files:** `wm.c`, `main.c`
+- **Prerequisites:** `gfx_dirty_tracker_t` already exists from earlier dirty-rect work
+- [ ] On drag start: record window old rect (x, y, w, h)
+- [ ] On drag move: mark old rect dirty (exposed wallpaper/windows behind)
+- [ ] Mark new rect dirty (window's new position)
+- [ ] In `wm_composite()`: only repaint dirty rects instead of full screen
+- [ ] Repaint desktop wallpaper only within dirty region (not entire 1280×720)
+- [ ] Repaint overlapping windows only if they intersect a dirty rect
+- [ ] Preserve full-redraw path for non-drag cases (window open/close, resize)
+
+### P13. Use `fb_swap_rect()` during drag instead of `fb_swap()`
+- **Impact:** Swap ~200 KB instead of 3.6 MB per drag frame
+- **Effort:** Small (~20 lines)
+- **Files:** `main.c`
+- **Depends on:** P12 (dirty rects provide the swap region)
+- [ ] When `need_full` is triggered by drag (not first frame/content change), compute union of old + new window rects
+- [ ] Call `fb_swap_rect(ux, uy, uw, uh)` instead of `fb_swap()` on line 1173
+- [ ] Keep `fb_swap()` for non-drag full composites (window open/close, first frame)
+
+### P14. Skip `terminal_render()` during drag
+- **Impact:** Avoid unnecessary terminal buffer re-render during drag
+- **Effort:** Tiny (~3 lines)
+- **Files:** `main.c`
+- [ ] Gate `terminal_render()` (line 1154) behind `wm_dirty` flag instead of `need_full`
+- [ ] Only re-render terminal when its content actually changed (new output, scroll)
+- [ ] During drag: `wm_dirty` is 0 (no content change), so terminal render is skipped
+
+### P15. Batch mouse events before compositing
+- **Impact:** 5 × 1px drags → 1 × 5px drag = 1 composite instead of 5
+- **Effort:** Small (~30 lines)
+- **Files:** `main.c`, possibly `mouse.c`
+- [ ] After reading one mouse event, drain the mouse FIFO for any additional pending events
+- [ ] Accumulate deltas: `total_dx += dx`, `total_dy += dy`; keep last button state
+- [ ] Apply accumulated delta as a single cursor move
+- [ ] Then do one composite for the batched move
+- [ ] Cap batch size (e.g., max 8 events) to avoid input lag
