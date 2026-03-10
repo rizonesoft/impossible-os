@@ -14,8 +14,11 @@
 
 #define WM_MAX_WINDOWS     32
 #define WM_TITLE_MAX       64
-#define WM_TITLEBAR_HEIGHT 24
+#define WM_TITLEBAR_HEIGHT 32
 #define WM_BORDER_WIDTH    1
+#define WM_CORNER_RADIUS   8
+#define WM_BTN_WIDTH       46     /* Windows 11 caption button width */
+#define WM_BTN_HEIGHT      32     /* same as title bar */
 #define WM_RESIZE_MARGIN   5      /* grab zone for edge/corner resize */
 
 /* Window flags */
@@ -30,14 +33,17 @@
 
 /* ---- Color palette for decorations ---- */
 
-#define WM_COLOR_TITLEBAR_ACTIVE   0x003A3A5C
-#define WM_COLOR_TITLEBAR_INACTIVE 0x002A2A3C
-#define WM_COLOR_TITLE_TEXT        0x00E0E0E0
-#define WM_COLOR_BORDER            0x00505070
-#define WM_COLOR_CLOSE_BTN         0x00FF5555
-#define WM_COLOR_CLOSE_HOVER       0x00FF7777
-#define WM_COLOR_MIN_BTN           0x00FFAA33
-#define WM_COLOR_MAX_BTN           0x0055CC55
+/* Windows 11 Dark Theme */
+#define WM_COLOR_TITLEBAR_ACTIVE   0x00202020
+#define WM_COLOR_TITLEBAR_INACTIVE 0x002D2D2D
+#define WM_COLOR_TITLE_TEXT        0x00FFFFFF
+#define WM_COLOR_TITLE_INACTIVE    0x00999999
+#define WM_COLOR_BORDER_ACTIVE     0x40757575   /* subtle translucent */
+#define WM_COLOR_BORDER_INACTIVE   0x30505050
+#define WM_COLOR_CLOSE_HOVER_BG    0x00C42B1C   /* Win11 close hover red */
+#define WM_COLOR_BTN_HOVER_BG      0x30FFFFFF   /* subtle white glow */
+#define WM_COLOR_BTN_GLYPH         0x00FFFFFF   /* button glyph color */
+#define WM_COLOR_BTN_GLYPH_DIM     0x00999999   /* inactive glyph */
 #define WM_COLOR_CLIENT_BG         0x001E1E2E
 
 /* ---- Window struct ---- */
@@ -56,6 +62,11 @@ struct wm_window {
     uint8_t  dragging;
     int32_t  drag_offset_x;
     int32_t  drag_offset_y;
+
+    /* Button hover state (for Windows 11 highlight-on-hover) */
+    uint8_t  close_hover;
+    uint8_t  min_hover;
+    uint8_t  max_hover;
 };
 
 /* ---- Lifecycle ---- */

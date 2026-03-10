@@ -115,15 +115,37 @@ static int in_titlebar(const struct wm_window *w, int32_t mx, int32_t my)
            my >= w->y && my < w->y + (int32_t)WM_TITLEBAR_HEIGHT;
 }
 
-/* Check if a screen coordinate is in the close button */
+/* Check if a screen coordinate is in the close button (rightmost 46px) */
 static int in_close_button(const struct wm_window *w, int32_t mx, int32_t my)
 {
     if (!(w->flags & WM_FLAG_DECORATED))
         return 0;
-    int32_t btn_x = w->x + (int32_t)outer_width(w) - (int32_t)WM_TITLEBAR_HEIGHT;
+    int32_t btn_x = w->x + (int32_t)outer_width(w) - (int32_t)WM_BTN_WIDTH;
     int32_t btn_y = w->y;
-    return mx >= btn_x && mx < btn_x + (int32_t)WM_TITLEBAR_HEIGHT &&
-           my >= btn_y && my < btn_y + (int32_t)WM_TITLEBAR_HEIGHT;
+    return mx >= btn_x && mx < btn_x + (int32_t)WM_BTN_WIDTH &&
+           my >= btn_y && my < btn_y + (int32_t)WM_BTN_HEIGHT;
+}
+
+/* Check if a screen coordinate is in the maximize button (2nd from right) */
+static int in_max_button(const struct wm_window *w, int32_t mx, int32_t my)
+{
+    if (!(w->flags & WM_FLAG_DECORATED))
+        return 0;
+    int32_t btn_x = w->x + (int32_t)outer_width(w) - 2 * (int32_t)WM_BTN_WIDTH;
+    int32_t btn_y = w->y;
+    return mx >= btn_x && mx < btn_x + (int32_t)WM_BTN_WIDTH &&
+           my >= btn_y && my < btn_y + (int32_t)WM_BTN_HEIGHT;
+}
+
+/* Check if a screen coordinate is in the minimize button (3rd from right) */
+static int in_min_button(const struct wm_window *w, int32_t mx, int32_t my)
+{
+    if (!(w->flags & WM_FLAG_DECORATED))
+        return 0;
+    int32_t btn_x = w->x + (int32_t)outer_width(w) - 3 * (int32_t)WM_BTN_WIDTH;
+    int32_t btn_y = w->y;
+    return mx >= btn_x && mx < btn_x + (int32_t)WM_BTN_WIDTH &&
+           my >= btn_y && my < btn_y + (int32_t)WM_BTN_HEIGHT;
 }
 
 /* Check if a screen coordinate is anywhere in the window (outer bounds) */
@@ -425,115 +447,188 @@ void wm_fill_rect(int handle, uint32_t x, uint32_t y,
  * Compositing
  * ============================================================================ */
 
-/* Draw the title bar and border decorations directly to the screen fb */
+/* Draw the title bar and border decorations directly to the screen fb.
+ * Windows 11 style: rounded corners, Mica title bar, centered title,
+ * right-aligned flat caption buttons (minimize, maximize, close). */
 static void draw_decorations(const struct wm_window *w)
 {
+    gfx_surface_t scr;
     uint32_t ow = outer_width(w);
-    uint32_t tb_color;
-    uint32_t btn_size = WM_TITLEBAR_HEIGHT - 2 * 4;  /* button with padding */
+    uint32_t oh = outer_height(w);
+    int focused = (w->flags & WM_FLAG_FOCUSED) != 0;
 
-    /* Safety: skip if window position is negative (would wrap uint32_t) */
-    if (w->x < 0 || w->y < 0)
+    /* Safety: skip if window position is off-screen */
+    if (w->x < -2 || w->y < -2)
         return;
 
-    /* Title bar color depends on focus */
-    tb_color = (w->flags & WM_FLAG_FOCUSED) ? WM_COLOR_TITLEBAR_ACTIVE
-                                             : WM_COLOR_TITLEBAR_INACTIVE;
+    gfx_surface_init(&scr, fb_get_backbuffer(),
+                     fb_get_width(), fb_get_height(), fb_get_stride());
 
-    /* Draw title bar background using fb_fill_rect for speed */
-    fb_fill_rect((uint32_t)w->x, (uint32_t)w->y, ow, WM_TITLEBAR_HEIGHT, tb_color);
+    /* ---- 1. Drop shadow ----
+     * Soft multi-layer shadow around the window frame.
+     * Only for focused windows to avoid visual clutter. */
+    if (focused) {
+        gfx_drop_shadow(&scr,
+                        (uint32_t)w->x, (uint32_t)w->y,
+                        ow, oh,
+                        6,     /* blur radius */
+                        0, 2,  /* offset x, y */
+                        0x60000000);  /* 37% black */
+    }
 
-    /* Draw title text (left-aligned with padding) using TrueType */
+    /* ---- 2. Window body (rounded rect) ---- */
     {
-        gfx_surface_t scr;
-        ttf_font_t *tf = ttf_get(FONT_UI_BOLD, 14);
-        gfx_surface_init(&scr, fb_get_backbuffer(),
-                         fb_get_width(), fb_get_height(), fb_get_stride());
+        uint32_t body_color = focused ? WM_COLOR_TITLEBAR_ACTIVE
+                                      : WM_COLOR_TITLEBAR_INACTIVE;
+        gfx_fill_rounded_rect(&scr,
+                              (uint32_t)w->x, (uint32_t)w->y,
+                              ow, oh,
+                              WM_CORNER_RADIUS, body_color);
+    }
+
+    /* ---- 3. Title bar background ----
+     * Fill only the title bar region. The body fill above already set the
+     * background, so we just apply Mica over the top portion.
+     * For Mica we need the wallpaper surface — use it if available. */
+    {
+        uint32_t tb_color = focused ? WM_COLOR_TITLEBAR_ACTIVE
+                                    : WM_COLOR_TITLEBAR_INACTIVE;
+        /* Fill the title bar area (rounded top corners only) */
+        gfx_fill_rounded_rect(&scr,
+                              (uint32_t)w->x, (uint32_t)w->y,
+                              ow, WM_TITLEBAR_HEIGHT + WM_CORNER_RADIUS,
+                              WM_CORNER_RADIUS, tb_color);
+        /* Overwrite the bottom part (below the corner radius) with a flat rect
+         * so we get rounded top + flat bottom transition into the client area */
+        if (WM_TITLEBAR_HEIGHT > WM_CORNER_RADIUS) {
+            gfx_fill_rect(&scr,
+                          (uint32_t)w->x, (uint32_t)(w->y + (int32_t)WM_CORNER_RADIUS),
+                          ow, WM_TITLEBAR_HEIGHT - WM_CORNER_RADIUS,
+                          tb_color);
+        }
+    }
+
+    /* ---- 4. Client area background ---- */
+    {
+        uint32_t cx = (uint32_t)client_x(w);
+        uint32_t cy = (uint32_t)client_y(w);
+        gfx_fill_rect(&scr, cx, cy, w->width, w->height, WM_COLOR_CLIENT_BG);
+    }
+
+    /* ---- 5. Centered title text ---- */
+    {
+        ttf_font_t *tf = ttf_get(FONT_UI, 13);
         if (tf) {
-            ttf_draw_string(&scr, tf,
-                (int32_t)(w->x + 8),
-                (int32_t)(w->y + (WM_TITLEBAR_HEIGHT - 14) / 2),
-                w->title, WM_COLOR_TITLE_TEXT);
+            uint32_t title_color = focused ? WM_COLOR_TITLE_TEXT
+                                           : WM_COLOR_TITLE_INACTIVE;
+            int32_t tw = ttf_measure_width(tf, w->title);
+            /* Center horizontally, but not over button area */
+            int32_t avail = (int32_t)ow - 3 * WM_BTN_WIDTH;
+            int32_t tx = w->x + (avail - tw) / 2;
+            /* Clamp so title doesn't go left of window */
+            if (tx < w->x + 12)
+                tx = w->x + 12;
+            int32_t ty = w->y + ((int32_t)WM_TITLEBAR_HEIGHT - 13) / 2;
+            ttf_draw_string(&scr, tf, tx, ty, w->title, title_color);
         }
     }
 
-    /* Draw close button (red square with X) */
+    /* ---- 6. Caption buttons (right-aligned: minimize, maximize, close) ----
+     * Windows 11 style: flat by default, highlight on hover.
+     * Close button turns red on hover, others get a subtle white glow. */
     {
-        int32_t cbx = w->x + (int32_t)ow - (int32_t)WM_TITLEBAR_HEIGHT + 4;
-        int32_t cby = w->y + 4;
+        int32_t btn_y = w->y;
+        int32_t btn_h = (int32_t)WM_BTN_HEIGHT;
+        uint32_t glyph_color = focused ? WM_COLOR_BTN_GLYPH
+                                        : WM_COLOR_BTN_GLYPH_DIM;
 
-        fb_fill_rect((uint32_t)cbx, (uint32_t)cby, btn_size, btn_size, WM_COLOR_CLOSE_BTN);
-
-        /* Draw "×" on the button */
+        /* Close button (rightmost) */
         {
-            uint32_t d;
-            for (d = 2; d < btn_size - 2; d++) {
-                fb_put_pixel((uint32_t)(cbx + (int32_t)d),
-                             (uint32_t)(cby + (int32_t)d), 0x00FFFFFF);
-                fb_put_pixel((uint32_t)(cbx + (int32_t)(btn_size - 1 - d)),
-                             (uint32_t)(cby + (int32_t)d), 0x00FFFFFF);
+            int32_t bx = w->x + (int32_t)ow - (int32_t)WM_BTN_WIDTH;
+
+            if (w->close_hover) {
+                /* Red highlight background — fill close button zone.
+                 * Round top-right corner to match window shape. */
+                gfx_fill_rect(&scr, (uint32_t)bx, (uint32_t)btn_y,
+                              WM_BTN_WIDTH, (uint32_t)btn_h,
+                              WM_COLOR_CLOSE_HOVER_BG);
+                glyph_color = 0x00FFFFFF;  /* white glyph on red */
+            }
+
+            /* Draw × glyph (10px wide, centered in button) */
+            {
+                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
+                int32_t cy = btn_y + (btn_h - 10) / 2;
+                int d;
+                for (d = 0; d < 10; d++) {
+                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)(cy + d), glyph_color);
+                    fb_put_pixel((uint32_t)(cx + 9 - d), (uint32_t)(cy + d), glyph_color);
+                    /* Thicken slightly */
+                    if (d > 0 && d < 9) {
+                        fb_put_pixel((uint32_t)(cx + d - 1), (uint32_t)(cy + d), glyph_color);
+                        fb_put_pixel((uint32_t)(cx + 10 - d), (uint32_t)(cy + d), glyph_color);
+                    }
+                }
+            }
+        }
+
+        /* Reset glyph color for other buttons */
+        glyph_color = focused ? WM_COLOR_BTN_GLYPH : WM_COLOR_BTN_GLYPH_DIM;
+
+        /* Maximize button (second from right) */
+        {
+            int32_t bx = w->x + (int32_t)ow - 2 * (int32_t)WM_BTN_WIDTH;
+
+            if (w->max_hover) {
+                gfx_fill_rect_alpha(&scr, (uint32_t)bx, (uint32_t)btn_y,
+                                    WM_BTN_WIDTH, (uint32_t)btn_h,
+                                    WM_COLOR_BTN_HOVER_BG);
+            }
+
+            /* Draw □ glyph (10×10 outline, centered) */
+            {
+                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
+                int32_t cy = btn_y + (btn_h - 10) / 2;
+                int d;
+                for (d = 0; d < 10; d++) {
+                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)cy, glyph_color);
+                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)(cy + 9), glyph_color);
+                    fb_put_pixel((uint32_t)cx, (uint32_t)(cy + d), glyph_color);
+                    fb_put_pixel((uint32_t)(cx + 9), (uint32_t)(cy + d), glyph_color);
+                }
+            }
+        }
+
+        /* Minimize button (third from right) */
+        {
+            int32_t bx = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH;
+
+            if (w->min_hover) {
+                gfx_fill_rect_alpha(&scr, (uint32_t)bx, (uint32_t)btn_y,
+                                    WM_BTN_WIDTH, (uint32_t)btn_h,
+                                    WM_COLOR_BTN_HOVER_BG);
+            }
+
+            /* Draw − glyph (10px horizontal line, centered) */
+            {
+                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
+                int32_t cy = btn_y + btn_h / 2;
+                int d;
+                for (d = 0; d < 10; d++) {
+                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)cy, glyph_color);
+                }
             }
         }
     }
 
-    /* Draw minimize button (yellow) */
+    /* ---- 7. Subtle window border (rounded rect outline) ---- */
     {
-        int32_t mbx = w->x + (int32_t)ow - 2 * (int32_t)WM_TITLEBAR_HEIGHT + 4;
-        int32_t mby = w->y + 4;
-
-        fb_fill_rect((uint32_t)mbx, (uint32_t)mby, btn_size, btn_size, WM_COLOR_MIN_BTN);
-
-        /* Draw "−" line */
-        {
-            uint32_t lx;
-            for (lx = 3; lx < btn_size - 3; lx++) {
-                fb_put_pixel((uint32_t)(mbx + (int32_t)lx),
-                             (uint32_t)(mby + (int32_t)(btn_size / 2)),
-                             0x00FFFFFF);
-            }
-        }
-    }
-
-    /* Draw maximize button (green) */
-    {
-        int32_t gbx = w->x + (int32_t)ow - 3 * (int32_t)WM_TITLEBAR_HEIGHT + 4;
-        int32_t gby = w->y + 4;
-        uint32_t d;
-
-        fb_fill_rect((uint32_t)gbx, (uint32_t)gby, btn_size, btn_size, WM_COLOR_MAX_BTN);
-
-        /* Draw "□" outline */
-        for (d = 3; d < btn_size - 3; d++) {
-            fb_put_pixel((uint32_t)(gbx + (int32_t)d),
-                         (uint32_t)(gby + 3), 0x00FFFFFF);
-            fb_put_pixel((uint32_t)(gbx + (int32_t)d),
-                         (uint32_t)(gby + (int32_t)(btn_size - 4)), 0x00FFFFFF);
-            fb_put_pixel((uint32_t)(gbx + 3),
-                         (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
-            fb_put_pixel((uint32_t)(gbx + (int32_t)(btn_size - 4)),
-                         (uint32_t)(gby + (int32_t)d), 0x00FFFFFF);
-        }
-    }
-
-    /* Draw border */
-    {
-        uint32_t oh = outer_height(w);
-        uint32_t px;
-
-        /* Top and bottom */
-        for (px = 0; px < ow; px++) {
-            fb_put_pixel((uint32_t)(w->x + (int32_t)px),
-                         (uint32_t)w->y, WM_COLOR_BORDER);
-            fb_put_pixel((uint32_t)(w->x + (int32_t)px),
-                         (uint32_t)(w->y + (int32_t)oh - 1), WM_COLOR_BORDER);
-        }
-        /* Left and right */
-        for (px = 0; px < oh; px++) {
-            fb_put_pixel((uint32_t)w->x,
-                         (uint32_t)(w->y + (int32_t)px), WM_COLOR_BORDER);
-            fb_put_pixel((uint32_t)(w->x + (int32_t)ow - 1),
-                         (uint32_t)(w->y + (int32_t)px), WM_COLOR_BORDER);
-        }
+        uint32_t border_color = focused ? WM_COLOR_BORDER_ACTIVE
+                                        : WM_COLOR_BORDER_INACTIVE;
+        gfx_draw_rounded_rect(&scr,
+                              (uint32_t)w->x, (uint32_t)w->y,
+                              ow, oh,
+                              WM_CORNER_RADIUS, 1, border_color);
     }
 }
 
@@ -659,6 +754,28 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
 
     prev_buttons = buttons;
 
+    /* ---- Update button hover state ----
+     * Track which caption button the cursor is over (if any).
+     * This drives the hover highlight rendering in draw_decorations(). */
+    {
+        int top = wm_window_at(mx, my);
+        for (i = 0; i < WM_MAX_WINDOWS; i++) {
+            if (!windows[i].active)
+                continue;
+            uint8_t ch = ((int)i == top) && in_close_button(&windows[i], mx, my);
+            uint8_t xh = ((int)i == top) && in_max_button(&windows[i], mx, my);
+            uint8_t nh = ((int)i == top) && in_min_button(&windows[i], mx, my);
+            if (ch != windows[i].close_hover ||
+                xh != windows[i].max_hover ||
+                nh != windows[i].min_hover) {
+                windows[i].close_hover = ch;
+                windows[i].max_hover   = xh;
+                windows[i].min_hover   = nh;
+                mark_dirty();
+            }
+        }
+    }
+
     /* Handle active drag */
     for (i = 0; i < WM_MAX_WINDOWS; i++) {
         if (windows[i].active && windows[i].dragging) {
@@ -707,7 +824,19 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 return;
             }
 
-            /* Title bar drag */
+            /* Minimize button click (no-op for now — will hide window) */
+            if (in_min_button(w, mx, my)) {
+                /* TODO: wm_minimize(handle); */
+                return;
+            }
+
+            /* Maximize button click (no-op for now — will toggle maximize) */
+            if (in_max_button(w, mx, my)) {
+                /* TODO: wm_maximize(handle); */
+                return;
+            }
+
+            /* Title bar drag (only if not on a button) */
             if (in_titlebar(w, mx, my) && (w->flags & WM_FLAG_MOVABLE)) {
                 w->dragging = 1;
                 w->drag_offset_x = mx - w->x;
@@ -743,8 +872,10 @@ cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my)
     int32_t ow = (int32_t)outer_width(w);
     int32_t oh = (int32_t)outer_height(w);
 
-    /* Close button → hand */
-    if (in_close_button(w, mx, my))
+    /* Caption buttons → hand */
+    if (in_close_button(w, mx, my) ||
+        in_max_button(w, mx, my) ||
+        in_min_button(w, mx, my))
         return CURSOR_HAND;
 
     /* Resize edges/corners (only for resizable windows) */
