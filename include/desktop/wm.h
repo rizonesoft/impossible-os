@@ -33,18 +33,18 @@
 
 /* ---- Color palette for decorations ---- */
 
-/* Windows 11 Dark Theme */
-#define WM_COLOR_TITLEBAR_ACTIVE   0x00202020
-#define WM_COLOR_TITLEBAR_INACTIVE 0x002D2D2D
-#define WM_COLOR_TITLE_TEXT        0x00FFFFFF
-#define WM_COLOR_TITLE_INACTIVE    0x00999999
-#define WM_COLOR_BORDER_ACTIVE     0x40757575   /* subtle translucent */
-#define WM_COLOR_BORDER_INACTIVE   0x30505050
-#define WM_COLOR_CLOSE_HOVER_BG    0x00C42B1C   /* Win11 close hover red */
+/* Windows 11 Dark Theme — alpha 0xFF = fully opaque */
+#define WM_COLOR_TITLEBAR_ACTIVE   0xFF202020
+#define WM_COLOR_TITLEBAR_INACTIVE 0xFF2D2D2D
+#define WM_COLOR_TITLE_TEXT        0xFFFFFFFF
+#define WM_COLOR_TITLE_INACTIVE    0xFF999999
+#define WM_COLOR_BORDER_ACTIVE     0xFFA0A0A0   /* visible 1px outline */
+#define WM_COLOR_BORDER_INACTIVE   0xFF606060
+#define WM_COLOR_CLOSE_HOVER_BG    0xFFC42B1C   /* Win11 close hover red */
 #define WM_COLOR_BTN_HOVER_BG      0x30FFFFFF   /* subtle white glow */
-#define WM_COLOR_BTN_GLYPH         0x00FFFFFF   /* button glyph color */
-#define WM_COLOR_BTN_GLYPH_DIM     0x00999999   /* inactive glyph */
-#define WM_COLOR_CLIENT_BG         0x001E1E2E
+#define WM_COLOR_BTN_GLYPH         0xFFFFFFFF   /* button glyph color */
+#define WM_COLOR_BTN_GLYPH_DIM     0xFF999999   /* inactive glyph */
+#define WM_COLOR_CLIENT_BG         0xFF1E1E2E
 
 /* ---- Window struct ---- */
 

@@ -87,7 +87,7 @@ static uint32_t outer_width(const struct wm_window *w)
 static uint32_t outer_height(const struct wm_window *w)
 {
     if (w->flags & WM_FLAG_DECORATED)
-        return w->height + WM_TITLEBAR_HEIGHT + 2 * WM_BORDER_WIDTH;
+        return w->height + WM_TITLEBAR_HEIGHT;
     return w->height;
 }
 
@@ -102,7 +102,7 @@ static int32_t client_x(const struct wm_window *w)
 static int32_t client_y(const struct wm_window *w)
 {
     if (w->flags & WM_FLAG_DECORATED)
-        return w->y + (int32_t)WM_TITLEBAR_HEIGHT + (int32_t)WM_BORDER_WIDTH;
+        return w->y + (int32_t)WM_TITLEBAR_HEIGHT;
     return w->y;
 }
 
