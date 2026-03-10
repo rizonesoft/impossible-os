@@ -16,6 +16,7 @@
 #define WM_TITLE_MAX       64
 #define WM_TITLEBAR_HEIGHT 24
 #define WM_BORDER_WIDTH    1
+#define WM_RESIZE_MARGIN   5      /* grab zone for edge/corner resize */
 
 /* Window flags */
 #define WM_FLAG_VISIBLE    0x01
@@ -120,3 +121,8 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons);
 /* Find which window is under the given screen coordinate.
  * Returns handle or -1 if none. */
 int wm_window_at(int32_t x, int32_t y);
+
+/* Determine cursor shape based on what's under the pointer.
+ * Returns the appropriate cursor_shape_t for resize edges, close button, etc. */
+#include "cursor.h"
+cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my);

@@ -717,3 +717,61 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
         }
     }
 }
+
+/* ============================================================================
+ * Cursor context — determine cursor shape from pointer position
+ * ============================================================================ */
+
+#include "cursor.h"
+
+cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my)
+{
+    uint32_t i;
+
+    /* If any window is being dragged, show move cursor */
+    for (i = 0; i < WM_MAX_WINDOWS; i++) {
+        if (windows[i].active && windows[i].dragging)
+            return CURSOR_MOVE;
+    }
+
+    /* Find topmost window under cursor */
+    int handle = wm_window_at(mx, my);
+    if (handle < 0)
+        return CURSOR_ARROW;  /* Desktop/wallpaper */
+
+    const struct wm_window *w = &windows[handle];
+    int32_t ow = (int32_t)outer_width(w);
+    int32_t oh = (int32_t)outer_height(w);
+
+    /* Close button → hand */
+    if (in_close_button(w, mx, my))
+        return CURSOR_HAND;
+
+    /* Resize edges/corners (only for resizable windows) */
+    if (w->flags & WM_FLAG_RESIZABLE) {
+        int32_t M = WM_RESIZE_MARGIN;
+
+        /* Distances from each edge */
+        int near_left   = (mx >= w->x      && mx < w->x + M);
+        int near_right  = (mx >= w->x + ow - M && mx < w->x + ow);
+        int near_top    = (my >= w->y      && my < w->y + M);
+        int near_bottom = (my >= w->y + oh - M && my < w->y + oh);
+
+        /* Corners first (5×5 corner zones) */
+        if (near_top && near_left)     return CURSOR_RESIZE_NWSE;
+        if (near_bottom && near_right) return CURSOR_RESIZE_NWSE;
+        if (near_top && near_right)    return CURSOR_RESIZE_NESW;
+        if (near_bottom && near_left)  return CURSOR_RESIZE_NESW;
+
+        /* Edges */
+        if (near_top || near_bottom)   return CURSOR_RESIZE_NS;
+        if (near_left || near_right)   return CURSOR_RESIZE_EW;
+    }
+
+    /* Title bar (not close button — already checked above) */
+    if (in_titlebar(w, mx, my))
+        return CURSOR_ARROW;
+
+    /* Client area — default arrow (widgets can override in future) */
+    return CURSOR_ARROW;
+}

@@ -61,6 +61,32 @@ Image chunks (type `0xFFFD0002`):
 | Crosshair | `CURSOR_CROSSHAIR` | `crosshair` |
 | Forbidden | `CURSOR_FORBIDDEN` | `not-allowed` |
 
+## Context-Aware Switching
+
+Every frame, the compositor determines which cursor shape to display:
+
+```
+desktop_get_cursor_context(mx, my)
+  → Start button / menu item / taskbar button → CURSOR_HAND
+  → Taskbar area → CURSOR_ARROW
+  → Not in taskbar → fall through
+
+wm_get_cursor_context(mx, my)
+  → Window dragging → CURSOR_MOVE
+  → Close button hover → CURSOR_HAND
+  → Window corner (5×5px zones) → CURSOR_RESIZE_NWSE / NESW
+  → Window edge (5px margin) → CURSOR_RESIZE_NS / EW
+  → Title bar / client / desktop → CURSOR_ARROW
+```
+
+Desktop context takes priority (checked first). If it returns `CURSOR_ARROW`,
+the WM context is checked. The result is applied via `cursor_set_shape()` before
+`cursor_draw()` in both the full-composite and cursor-only-move paths.
+
+**Grab zone:** `WM_RESIZE_MARGIN = 5` pixels. The border is only 1px, but the
+resize grab zone extends 5px inward from the outer window bounds — matching
+the feel of modern desktop environments.
+
 ## API
 
 ```c

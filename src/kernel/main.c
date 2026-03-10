@@ -1141,6 +1141,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     /* Restore cursor, full composite, draw cursor, flip */
                     cursor_restore();
                     wm_composite();
+
+                    /* Determine cursor shape from context */
+                    cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
+                    if (ctx == CURSOR_ARROW)
+                        ctx = wm_get_cursor_context(mx, my);
+                    cursor_set_shape(ctx);
+
                     cursor_draw(mx, my);
                     fb_swap();
                     scheduler_enable();
@@ -1160,6 +1167,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                                                    &old_rw, &old_rh);
 
                     cursor_restore();
+
+                    /* Update cursor shape even on cursor-only moves */
+                    cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
+                    if (ctx == CURSOR_ARROW)
+                        ctx = wm_get_cursor_context(mx, my);
+                    cursor_set_shape(ctx);
+
                     cursor_draw(mx, my);
 
                     int32_t  new_rx, new_ry;

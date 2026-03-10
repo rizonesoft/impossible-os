@@ -66,3 +66,8 @@ int desktop_in_taskbar(int32_t my);
 
 /* Get the usable desktop height (screen height minus taskbar) */
 uint32_t desktop_get_usable_height(void);
+
+/* Determine cursor shape for desktop areas (taskbar, start menu).
+ * Returns CURSOR_ARROW if not in a clickable desktop element. */
+#include "cursor.h"
+cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my);

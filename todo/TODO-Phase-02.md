@@ -351,20 +351,20 @@
 **Prompt:** The window manager must determine the correct cursor shape based on what's under the mouse pointer. Add `wm_get_cursor_context(mx, my)` that checks: is the mouse over a window edge or corner (resize cursors), over a title bar during drag (move cursor), over a text input widget (I-beam), over a button or link (hand), or over the desktop (arrow). This function is called every mouse-move event and updates the cursor shape. The compositor loop must save/restore cursor pixels around the composite step to prevent cursor artifacts. Remove the old cursor rendering from `mouse.c` entirely -- mouse.c should only track position and button state. After completing all items, update `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: context-aware cursor switching"`.
 
 
-- [ ] Remove `cursor_data[]` and rendering from `mouse.c` (keep position/button tracking)
-- [ ] Add `wm_get_cursor_context(mx, my)` in `wm.c`:
-  - [ ] Desktop/wallpaper -> `CURSOR_ARROW`
-  - [ ] Start button hover -> `CURSOR_HAND`
-  - [ ] Menu item hover -> `CURSOR_HAND`
-  - [ ] Window title bar -> `CURSOR_MOVE` (while dragging)
-  - [ ] Window edge (N/S) -> `CURSOR_RESIZE_NS`
-  - [ ] Window edge (E/W) -> `CURSOR_RESIZE_EW`
-  - [ ] Window corner -> `CURSOR_RESIZE_NWSE` or `CURSOR_RESIZE_NESW`
-  - [ ] Text input field -> `CURSOR_TEXT`
-  - [ ] System busy -> `CURSOR_WAIT`
-- [ ] Update compositor loop: `cursor_restore()` -> composite -> `cursor_set_shape()` -> `cursor_draw()`
-- [ ] Adjust click position by hotspot offset in `wm_handle_mouse()`
-- [ ] Commit: `"desktop: context-aware cursor switching"`
+- [x] Remove `cursor_data[]` and rendering from `mouse.c` (keep position/button tracking)
+- [x] Add `wm_get_cursor_context(mx, my)` in `wm.c`:
+  - [x] Desktop/wallpaper -> `CURSOR_ARROW`
+  - [x] Start button hover -> `CURSOR_HAND`
+  - [x] Menu item hover -> `CURSOR_HAND`
+  - [x] Window title bar -> `CURSOR_MOVE` (while dragging)
+  - [x] Window edge (N/S) -> `CURSOR_RESIZE_NS`
+  - [x] Window edge (E/W) -> `CURSOR_RESIZE_EW`
+  - [x] Window corner -> `CURSOR_RESIZE_NWSE` or `CURSOR_RESIZE_NESW`
+  - [x] Text input field -> `CURSOR_TEXT`
+  - [x] System busy -> `CURSOR_WAIT`
+- [x] Update compositor loop: `cursor_restore()` -> composite -> `cursor_set_shape()` -> `cursor_draw()`
+- [x] Adjust click position by hotspot offset in `wm_handle_mouse()`
+- [x] Commit: `"desktop: context-aware cursor switching"`
 
 
 ---

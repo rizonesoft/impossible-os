@@ -700,3 +700,47 @@ uint32_t desktop_get_usable_height(void)
 {
     return fb_get_height() - TASKBAR_HEIGHT;
 }
+
+/* ============================================================================
+ * Cursor context — determine cursor shape for desktop elements
+ * ============================================================================ */
+
+#include "cursor.h"
+
+cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my)
+{
+    uint32_t sh = fb_get_height();
+    uint32_t ty = sh - TASKBAR_HEIGHT;
+
+    /* Start menu items → hand */
+    if (start_menu_open) {
+        uint32_t menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 8;
+        uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h;
+        if (mx >= 0 && mx < (int32_t)MENU_WIDTH &&
+            my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT))
+            return CURSOR_HAND;
+    }
+
+    /* Taskbar area */
+    if (my >= (int32_t)ty) {
+        /* Start button → hand */
+        if (mx >= 2 && mx < (int32_t)(2 + START_BTN_WIDTH))
+            return CURSOR_HAND;
+
+        /* Window list buttons → hand */
+        uint32_t list_x = START_BTN_WIDTH + 10;
+        for (uint32_t i = 0; i < WM_MAX_WINDOWS; i++) {
+            extern struct wm_window windows[];
+            if (!windows[i].active || !(windows[i].flags & 0x01))
+                continue;
+            uint32_t btn_w = 120;
+            if (mx >= (int32_t)list_x && mx < (int32_t)(list_x + btn_w))
+                return CURSOR_HAND;
+            list_x += btn_w + 4;
+        }
+
+        return CURSOR_ARROW;  /* Taskbar but not on a button */
+    }
+
+    return CURSOR_ARROW;
+}
