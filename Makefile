@@ -261,6 +261,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
