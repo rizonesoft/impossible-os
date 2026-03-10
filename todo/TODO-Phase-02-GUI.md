@@ -762,19 +762,231 @@
 
 ## Already Completed ✅
 
-> These sections were completed in previous phases. They are included here for
-> completeness and as a cross-reference.
+> These sections were completed in previous phases. Use the verification
+> prompts to confirm each implementation is correct and consistent.
 
-- [x] **2D Compositing Library** — surfaces, primitives, alpha blending, gradients, blur, Mica, Acrylic, shadows, reveal highlight, SIMD optimization *(Phase 02 §1)*
-- [x] **TrueType Font System** — stb_truetype, font manager, glyph caching, replaced bitmap font *(Phase 02 §2)*
-- [x] **Runtime Image Decoding** — stb_image, JPEG/PNG wallpaper, image scaling *(Phase 02 §3)*
-- [x] **System Icon Store** — IRES format, Fluent UI font icons, ICO loader, file type mapping *(Phase 02 §4)*
-- [x] **Cursor Manager** — Adwaita X11 cursors, 11 shapes, embedded fallbacks *(Phase 02 §5.1–5.2)*
-- [x] **Context-Aware Cursor Switching** — wm/desktop context, resize/move/hand cursors *(Phase 02 §5.3)*
-- [x] **Dirty Rectangle Compositor** — partial redraws, fb_swap_rect *(implemented)*
-- [x] **Basic Window Manager** — create, move, resize, close, title bar, focus *(Phase 01)*
-- [x] **Basic Taskbar** — start button, clock, window buttons *(Phase 01)*
-- [x] **Basic Controls** — Button, Label, TextBox, ScrollBar *(implemented)*
+### ✅ 1. 2D Compositing Library
+
+#### ✅ 1.1 Core Surface & Primitives
+
+**Verification:** Confirm `gfx_surface_t` struct (pixels, width, height, stride), `gfx_color_t` (0xAARRGGBB) with macros, and all drawing primitives exist in `src/kernel/gfx/gfx_core.c`. Verify dirty rectangle tracker works. Check `docs/architecture/gfx-library.md` exists. Run `bash scripts/build.sh clean`.
+
+- [x] Define `gfx_surface_t` struct (pixels, width, height, stride)
+- [x] Define `gfx_color_t` (0xAARRGGBB) with `GFX_RGBA()`, `GFX_RGB()`, `GFX_ALPHA()` macros
+- [x] Create `include/gfx.h` and `src/kernel/gfx/gfx_core.c`
+- [x] `gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_rounded_rect`, `gfx_draw_rounded_rect`
+- [x] `gfx_fill_circle`, `gfx_draw_line` (Bresenham)
+- [x] Dirty rectangle tracker for partial redraws
+- [x] Commit: `"gfx: core surface and primitive drawing"`
+
+#### ✅ 1.2 Alpha Blending & Compositing
+
+**Verification:** Confirm `gfx_blit`, `gfx_blit_alpha`, `gfx_fill_rect_alpha` in `gfx_blend.c`. Verify pre-multiplied alpha, integer-only math. Run `bash scripts/build.sh clean`.
+
+- [x] `gfx_blit` (per-pixel alpha), `gfx_blit_alpha` (global alpha), `gfx_fill_rect_alpha`
+- [x] Pre-multiplied alpha, integer-only math
+- [x] Commit: `"gfx: alpha blending and compositing"`
+
+#### ✅ 1.3 Gradients
+
+**Verification:** Confirm `gfx_gradient_t`, `gfx_fill_gradient_rect()`, `gfx_fill_gradient_rounded()`, radial gradient in `gfx_gradient.c`. Run `bash scripts/build.sh clean`.
+
+- [x] `gfx_fill_gradient_rect()` (vertical + horizontal), `gfx_fill_gradient_rounded()`, radial gradient
+- [x] Commit: `"gfx: gradient fills"`
+
+#### ✅ 1.4 Blur & Material Effects
+
+**Verification:** Confirm `gfx_blur_rect`, `gfx_acrylic`, `gfx_mica`, `gfx_drop_shadow`, `gfx_reveal_highlight` in `gfx_blur.c` / `gfx_effects.c`. Run `bash scripts/build.sh clean`.
+
+- [x] `gfx_blur_rect` (2-pass box blur, O(n) per pixel)
+- [x] `gfx_acrylic` (blur + noise + tint), `gfx_mica` (wallpaper sample + desaturate + tint)
+- [x] `gfx_drop_shadow` (multi-layer soft shadow)
+- [x] `gfx_reveal_highlight` (radial glow following cursor)
+- [x] Commit: `"gfx: blur, Mica, Acrylic, and shadow effects"`
+
+#### ✅ 1.5 SIMD Optimization
+
+**Verification:** Confirm SSE2 alpha blending, gradient fill, blur with `_mm_loadu_si128`/`_mm_storeu_si128`. Verify `fxsave`/`fxrstor` wrappers. Compositor frame time <8ms at 1280×720. Run `bash scripts/build.sh clean`.
+
+- [x] SSE2: alpha blending, gradient fill, blur — 4 pixels per cycle
+- [x] `fxsave`/`fxrstor` wrappers for FPU state protection
+- [x] AVX2 paths (8 px/cycle, runtime CPUID detect)
+- [x] Commit: `"gfx: SSE2 SIMD acceleration"`
+
+---
+
+### ✅ 2. TrueType Font System
+
+#### ✅ 2.1 stb_truetype Integration
+
+**Verification:** Confirm `stb_truetype.h` in `include/`, `gfx_text.c` + `font_mgr.h` with `ttf_mgr_init`, `ttf_get`, `ttf_draw_string`, `ttf_measure_width`, `ttf_line_height`. Run `bash scripts/build.sh clean`.
+
+- [x] `stb_truetype.h` with `STBTT_malloc → kmalloc` redirect
+- [x] `ttf_mgr_init()` — load from `C:\Impossible\Fonts\`
+- [x] `ttf_get`, `ttf_draw_char`, `ttf_draw_string` (with kerning), `ttf_measure_width`, `ttf_line_height`
+- [x] Commit: `"desktop: stb_truetype integration"`
+
+#### ✅ 2.2 Font Bundle
+
+**Verification:** Confirm Selawik + Cascadia Code .ttf files in `resources/fonts/`, Makefile copies to sysroot, 5 font slots defined. Run `bash scripts/build.sh clean`.
+
+- [x] Selawik (Regular/Semibold/Bold), Cascadia Code (Regular/Bold), Inter
+- [x] Font slots: `FONT_UI`, `FONT_UI_BOLD`, `FONT_MONO`, `FONT_MONO_BOLD`, `FONT_UI_HEAVY`
+- [x] Commit: `"resources: Selawik + Cascadia Code font bundle"`
+
+#### ✅ 2.3 Glyph Caching
+
+**Verification:** Confirm ASCII 32–126 pre-rasterized at 5 common sizes. Cache hit path bypasses stb_truetype. Run `bash scripts/build.sh clean`.
+
+- [x] Pre-rasterize ASCII 32–126 at 12/14/16/20/24px, 4 font slots (~95 KB)
+- [x] Commit: `"desktop: glyph cache for fast text rendering"`
+
+#### ✅ 2.4 Replace Bitmap Font
+
+**Verification:** Confirm all `font_draw_char`/`font_draw_string` calls replaced with TrueType. Bitmap font kept for early boot. Run `bash scripts/build.sh clean`.
+
+- [x] TrueType in `desktop.c`, `wm.c`, `controls.c`
+- [x] Bitmap font fallback for pre-initrd boot
+- [x] Commit: `"desktop: TrueType fonts replace bitmap"`
+
+---
+
+### ✅ 3. Runtime Image Decoding
+
+#### ✅ 3.1 Kernel-Side stb_image
+
+**Verification:** Confirm `image_load`, `image_load_mem`, `image_free` in `image.c`. **Verify tiered allocator**: `STBI_MALLOC` routes >64KB through `pmm_alloc_contiguous()`. Run `bash scripts/build.sh clean`.
+
+- [x] `stb_image.h` with tiered allocator (≤64KB → kmalloc, >64KB → PMM)
+- [x] `image_load(path)`, `image_load_mem(data, size)`, `image_free(img)`
+- [x] RGBA→BGRA conversion, freestanding header shims
+- [x] Commit: `"kernel: runtime image decoding (stb_image)"` (`1ee5c6a`)
+
+#### ✅ 3.2 Image Scaling
+
+**Verification:** Confirm `image_scale()` supports 5 fit modes, bilinear 16.16 fixed-point, box-filter downscaling. Run `bash scripts/build.sh clean`.
+
+- [x] `image_scale(src, w, h, mode)` — FILL/FIT/STRETCH/CENTER/TILE
+- [x] Bilinear interpolation (16.16 fixed-point), box-filter downscale
+- [x] Commit: `"kernel: image scaling with bilinear interpolation"`
+
+#### ✅ 3.3 JPG/PNG Wallpaper
+
+**Verification:** Confirm `load_wallpaper()` uses `image_load()` + `image_scale()`. Wallpaper path from Codex. Run `bash scripts/build.sh clean`.
+
+- [x] JPEG/PNG wallpaper via `image_load()` + `image_scale()`
+- [x] Codex: `System\Theme\Wallpaper`, `WallpaperMode`
+- [x] Commit: `"desktop: JPEG/PNG wallpaper loading"`
+
+#### ✅ 3.4 Image Saving
+
+**Verification:** Confirm `image_save_bmp()` and `image_save_png()` in `image_save.c`. Run `bash scripts/build.sh clean`.
+
+- [x] `image_save_bmp(img, path)`, `image_save_png(img, path)`
+- [x] Commit: `"kernel: image saving (BMP/PNG)"`
+
+---
+
+### ✅ 4. System Icon Store
+
+#### ✅ 4.1 Icon Store Basics
+
+**Verification:** Confirm `icon_store_init()`, `icon_get(id, size)`, `icon_get_colored()`, `icon_get_by_name()`, `icon_draw()`, LRU cache (128 slots). Run `bash scripts/build.sh clean`.
+
+- [x] `system_icon_t` enum (~60 mono + ~15 color), `icon_bitmap_t` struct
+- [x] `icon_store_init()`, `icon_get`, `icon_get_colored`, `icon_get_by_name`, `icon_draw`, `icon_draw_scaled`
+- [x] LRU cache (128 slots)
+- [x] Commit: `"desktop: system icon store"`
+
+#### ✅ 4.2 Font-Based Icon Rendering
+
+**Verification:** Confirm 4 Fluent icon fonts loaded, `icon_get_variant()` with Filled/Regular/Light/Resizable. Run `bash scripts/build.sh clean`.
+
+- [x] 4 Fluent icon fonts: Filled, Regular, Light, Resizable
+- [x] Codepoint mapping, variant selection, theme color tint
+- [x] Commit: `"desktop: font-based icon rendering"`
+
+#### ✅ 4.3 Fluent UI Icon Assets
+
+**Verification:** Confirm 4 .ttf files in `resources/fonts/`, 4 .css files in `resources/icons/`, `gen_icon_map.sh` generates `fluent_codepoints.h`. Run `bash scripts/build.sh clean`.
+
+- [x] FluentSystemIcons-{Filled,Regular,Light,Resizable}.ttf
+- [x] `tools/gen_icon_map.sh` → `include/generated/fluent_codepoints.h`
+- [x] Commit: `"resources: Fluent UI icon fonts and color icons"`
+
+#### ✅ 4.4 File Type Mapping
+
+**Verification:** Confirm `icon_for_extension()` maps .exe → exe_default, .dll → dll_default, .txt → text_file, unknown → file_default. Run `bash scripts/build.sh clean`.
+
+- [x] `icon_for_extension(ext)` with initial mappings
+- [x] Commit: `"desktop: file type icon mapping"` (`fe77d61`)
+
+#### ✅ 4.5 IRES Format (Color Icons)
+
+**Verification:** Confirm `tools/irespack.c`, Makefile packs & copies `icons.ires`, `ires_load()` in `icon_store.c`. Desktop icons render at 48px. Run `bash scripts/build.sh clean`.
+
+- [x] `.ires` binary format, `tools/irespack.c` host tool
+- [x] 8 color icons (folder_closed/open, computer, recycle_bin_empty/full, control_deck, exe/file_default), 9 sizes
+- [x] `ires_load(path)`, desktop icons at 48px with alpha blending
+- [x] Commit: `"desktop: IRES color icon format + desktop icons"` (`d933877`)
+
+#### ✅ 4.6 ICO File Loader
+
+**Verification:** Confirm `ico_load(path)` parses .ico containers, handles embedded PNG and BMP DIB. Run `bash scripts/build.sh clean`.
+
+- [x] `ico_load(path)` — parse .ico, extract all sizes (PNG + BMP DIB)
+- [x] Commit: `"desktop: ICO file loader"`
+
+---
+
+### ✅ 5. Cursor System
+
+#### ✅ 5.1 Cursor Manager
+
+**Verification:** Confirm `cursor_init()`, `xcur_load()`, `cursor_set_shape()`, `cursor_draw()`, `cursor_restore()`, `cursor_get_hotspot()` in `cursor.c`. 11 shapes. Run `bash scripts/build.sh clean`.
+
+- [x] `cursor_shape_t` enum (11 shapes), `cursor_sprite` struct
+- [x] `xcur_load(path)` — parse X11 Xcur binary
+- [x] `cursor_init()`, `cursor_set_shape()`, `cursor_draw()`, `cursor_restore()`, `cursor_get_hotspot()`
+- [x] Embedded fallback arrow for pre-VFS boot
+- [x] Commit: `"drivers: cursor manager with Adwaita cursors"`
+
+#### ✅ 5.2 Cursor Assets (Adwaita)
+
+**Verification:** Confirm 11 Adwaita cursor files copied to sysroot (`Impossible/System/Cursors/`). Run `bash scripts/build.sh clean`.
+
+- [x] 11 mappings: arrow→default, hand→pointer, text→xterm, move→fleur, resize_ns/ew/nwse/nesw, wait→progress, crosshair, forbidden→not-allowed
+- [x] Makefile copies to sysroot, ARGB→BGRA conversion
+- [x] Commit: `"resources: Adwaita cursor integration"`
+
+#### ✅ 5.3 Context-Aware Cursor Switching
+
+**Verification:** Confirm `wm_get_cursor_context(mx, my)` in `wm.c`. Compositor loop: `cursor_restore()` → composite → `cursor_set_shape()` → `cursor_draw()`. Run `bash scripts/build.sh clean`.
+
+- [x] `wm_get_cursor_context(mx, my)` — desktop→arrow, start→hand, title bar→move, edges→resize, text→text
+- [x] Compositor cursor lifecycle, hotspot offset in `wm_handle_mouse()`
+- [x] Commit: `"desktop: context-aware cursor switching"`
+
+---
+
+### ✅ 6. Basic Controls Library
+
+**Verification:** Confirm `controls.h/c` with Button, Label, TextBox, ScrollBar. Per-window storage (32 controls × 32 windows). Event routing via `ctrl_handle_mouse()`, `ctrl_handle_key()`. Run `bash scripts/build.sh clean`.
+
+- [x] `CTRL_BUTTON` — text + click callback, hover/press states
+- [x] `CTRL_LABEL` — static text with custom color
+- [x] `CTRL_TEXTBOX` — editable text with cursor + scroll offset
+- [x] `CTRL_SCROLLBAR` — vertical/horizontal, draggable thumb
+- [x] Per-window control storage, state flags, event routing
+- [x] `ctrl_draw_all()`, `ctrl_set_text()`, `ctrl_get_text()`, `ctrl_set_focus()`
+
+---
+
+### ✅ 7. Other Completed Foundations
+
+- [x] **Dirty Rectangle Compositor** — partial redraws, `fb_swap_rect()`
+- [x] **Basic Window Manager** — create, move, resize, close, title bar, focus
+- [x] **Basic Taskbar** — start button, clock
 
 ---
 
