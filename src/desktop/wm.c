@@ -710,13 +710,14 @@ void wm_composite(void)
 
         /* Repair bottom border after blit_client overwrites it.
          * The client blit is a flat rect that covers the bottom rounded
-         * corners of the body fill.  Redraw a 1px bottom border + sides. */
+         * corners of the body fill.  Redraw borders + clip bottom corners. */
         if (w->flags & WM_FLAG_DECORATED) {
             uint32_t ow2 = outer_width(w);
             uint32_t oh2 = outer_height(w);
             int focused2 = (w->flags & WM_FLAG_FOCUSED) != 0;
             uint32_t bc = focused2 ? WM_COLOR_BORDER_ACTIVE
                                    : WM_COLOR_BORDER_INACTIVE;
+
             /* Bottom border line */
             fb_fill_rect((uint32_t)w->x, (uint32_t)(w->y + (int32_t)oh2 - 1),
                          ow2, 1, bc);
@@ -728,6 +729,49 @@ void wm_composite(void)
             fb_fill_rect((uint32_t)(w->x + (int32_t)ow2 - 1),
                          (uint32_t)(w->y + (int32_t)WM_TITLEBAR_HEIGHT),
                          1, w->height + WM_BORDER_WIDTH, bc);
+
+            /* Clip bottom corners: for each row in the bottom corner zone,
+             * overwrite pixels outside the rounded rect curve.
+             * We inline the integer sqrt since isqrt() is static in gfx_core.c. */
+            {
+                uint32_t r = WM_CORNER_RADIUS;
+                uint32_t row;
+                for (row = 0; row < r; row++) {
+                    uint32_t dy = row;
+                    uint32_t screen_y = (uint32_t)(w->y + (int32_t)oh2 - 1 - (int32_t)dy);
+                    uint32_t dist = r - dy;
+                    uint32_t dx_sq = (r * r > dist * dist) ? (r * r - dist * dist) : 0;
+                    /* Inline integer sqrt (Newton's method, max 8 iterations) */
+                    uint32_t dx = 0;
+                    if (dx_sq > 0) {
+                        uint32_t g = dx_sq;
+                        uint32_t iter;
+                        for (iter = 0; iter < 8 && g > 0; iter++) {
+                            g = (g + dx_sq / g) / 2;
+                        }
+                        dx = g;
+                        /* Correct overshoot */
+                        while (dx * dx > dx_sq) dx--;
+                    }
+                    {
+                        uint32_t inset = r - dx;
+                        uint32_t col;
+
+                        if (inset == 0) continue;
+
+                        /* Bottom-left corner */
+                        for (col = 0; col < inset; col++) {
+                            uint32_t px = (uint32_t)(w->x + (int32_t)col);
+                            fb_put_pixel(px, screen_y, 0xFF000000);
+                        }
+                        /* Bottom-right corner */
+                        for (col = 0; col < inset; col++) {
+                            uint32_t px = (uint32_t)(w->x + (int32_t)(ow2 - 1 - col));
+                            fb_put_pixel(px, screen_y, 0xFF000000);
+                        }
+                    }
+                }
+            }
         }
     }
 

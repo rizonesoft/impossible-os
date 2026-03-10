@@ -16,7 +16,7 @@
 #define WM_TITLE_MAX       64
 #define WM_TITLEBAR_HEIGHT 32
 #define WM_BORDER_WIDTH    1
-#define WM_CORNER_RADIUS   8
+#define WM_CORNER_RADIUS   6
 #define WM_BTN_WIDTH       46     /* Windows 11 caption button width */
 #define WM_BTN_HEIGHT      32     /* same as title bar */
 #define WM_RESIZE_MARGIN   5      /* grab zone for edge/corner resize */
