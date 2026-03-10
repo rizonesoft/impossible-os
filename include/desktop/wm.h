@@ -34,12 +34,12 @@
 /* ---- Color palette for decorations ---- */
 
 /* Windows 11 Dark Theme — alpha 0xFF = fully opaque */
-#define WM_COLOR_TITLEBAR_ACTIVE   0xFF202020
-#define WM_COLOR_TITLEBAR_INACTIVE 0xFF2D2D2D
+#define WM_COLOR_TITLEBAR_ACTIVE   0xFF050C0D
+#define WM_COLOR_TITLEBAR_INACTIVE 0xFF202020
 #define WM_COLOR_TITLE_TEXT        0xFFFFFFFF
 #define WM_COLOR_TITLE_INACTIVE    0xFF999999
-#define WM_COLOR_BORDER_ACTIVE     0xFF505050   /* subtle dark outline */
-#define WM_COLOR_BORDER_INACTIVE   0xFF404040
+#define WM_COLOR_BORDER_ACTIVE     0xFF3A3A3A   /* subtle dark outline */
+#define WM_COLOR_BORDER_INACTIVE   0xFF333333
 #define WM_COLOR_CLOSE_HOVER_BG    0xFFC42B1C   /* Win11 close hover red */
 #define WM_COLOR_BTN_HOVER_BG      0x30FFFFFF   /* subtle white glow */
 #define WM_COLOR_BTN_GLYPH         0xFFFFFFFF   /* button glyph color */

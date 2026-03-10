@@ -87,7 +87,7 @@ static uint32_t outer_width(const struct wm_window *w)
 static uint32_t outer_height(const struct wm_window *w)
 {
     if (w->flags & WM_FLAG_DECORATED)
-        return w->height + WM_TITLEBAR_HEIGHT;
+        return w->height + WM_TITLEBAR_HEIGHT + WM_BORDER_WIDTH;
     return w->height;
 }
 
@@ -532,7 +532,7 @@ static void draw_decorations(const struct wm_window *w)
 
     /* ---- 5. Centered title text ---- */
     {
-        ttf_font_t *tf = ttf_get(FONT_UI, 13);
+        ttf_font_t *tf = ttf_get(FONT_UI_BOLD, 14);
         if (tf) {
             uint32_t title_color = focused ? WM_COLOR_TITLE_TEXT
                                            : WM_COLOR_TITLE_INACTIVE;
@@ -544,7 +544,7 @@ static void draw_decorations(const struct wm_window *w)
                 tx = max_x - tw;
             if (tx < w->x + 12)
                 tx = w->x + 12;
-            int32_t ty = w->y + ((int32_t)WM_TITLEBAR_HEIGHT - 13) / 2;
+            int32_t ty = w->y + ((int32_t)WM_TITLEBAR_HEIGHT - 14) / 2;
             ttf_draw_string(&scr, tf, tx, ty, w->title, title_color);
         }
     }
