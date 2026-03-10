@@ -1,6 +1,8 @@
 # Impossible OS
 
-A freestanding x86-64 operating system built from scratch — UEFI bootloader through graphical desktop.
+*"You can't write a complete PC operating system from scratch — it's impossible."*
+
+Everyone says building a fully functional, feature-rich operating system is impossible. Impossible OS exists to prove them wrong. Written entirely from scratch — from UEFI bootloader to graphical desktop — with no legacy code, no Linux kernel, no borrowed foundations. Just bare metal x86-64 and a refusal to accept "impossible."
 
 ## Features (Planned)
 
