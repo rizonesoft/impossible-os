@@ -1,6 +1,9 @@
 # Production Testing (Hyper-V)
 
 > **Deferred** — run after all features are implemented and the ISO installer is complete.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ## 15.1 Hyper-V VM Setup
 

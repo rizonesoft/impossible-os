@@ -6,6 +6,9 @@
 > launch apps from a polished Start menu; manage files via context menus; and
 > interact with buttons, text fields, checkboxes, sliders, tree views, and all
 > standard GUI controls — rivalling Windows 11 in appearance and functionality.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 > **Note:** Items marked `[x]` were completed in earlier phases. Items marked
 > `[ ]` are pending. Sections are ordered by **implementation priority** —

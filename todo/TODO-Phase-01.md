@@ -3,6 +3,9 @@
 > **Goal:** Harden and extend the kernel with threading, IPC, better error handling,
 > a hardware abstraction layer, and essential runtime services. These features
 > form the foundation for everything in Phases 02–13.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 

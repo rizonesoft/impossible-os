@@ -3,6 +3,9 @@
 > **Goal:** Replace the current three-artifact boot chain (`os-build.iso` + `initrd.img` + `gpt-test.img`)
 > with a **single bootable GPT disk image** (`system-disk.img`). Eliminates ISO creation,
 > initrd packing, and first-boot file copying.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 

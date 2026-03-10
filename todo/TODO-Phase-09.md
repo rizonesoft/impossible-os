@@ -4,6 +4,9 @@
 > secure multi-user operating system with login authentication, file permissions,
 > privilege separation, password hashing, data encryption, and a UAC-like
 > elevation prompt — protecting user data and system integrity.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 

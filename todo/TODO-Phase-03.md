@@ -3,6 +3,9 @@
 > **Goal:** Build the system-level infrastructure that transforms a bare kernel into a
 > usable operating system: configuration management (Codex registry), background
 > services, clipboard, file associations, time management, and essential utilities.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 

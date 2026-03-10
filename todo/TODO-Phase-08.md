@@ -4,6 +4,9 @@
 > add a full audio subsystem (sound card driver, mixer, codec libraries, system sounds),
 > a USB host controller stack with device class drivers, and additional hardware
 > support for a complete desktop experience.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 

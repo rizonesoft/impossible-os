@@ -11,6 +11,25 @@
  *   - 5 active slots × 5 sizes × 95 chars = 2375 cached glyphs
  *   - Each entry stores a persistent bitmap + metrics (no per-frame alloc)
  *   - Uncached glyphs (non-ASCII or unusual sizes) fall through to stb_truetype
+ *
+ * ⚠️  ALLOCATION RULES — READ BEFORE MODIFYING ⚠️
+ *
+ *   The kernel heap is only 2 MiB.  Font files and glyph bitmaps are
+ *   LONG-LIVED allocations that persist for the entire kernel lifetime.
+ *
+ *   ┌─────────────────────────────────────────────────────────────────┐
+ *   │  FONT FILE DATA  → pmm_alloc_contiguous() (files can be MBs)  │
+ *   │  GLYPH BITMAPS   → pmm_alloc_contiguous() (collectively large) │
+ *   │  TEMP stb_truetype buffers → kmalloc OK (small, freed quickly) │
+ *   │  NEVER kmalloc for anything > 4 KB                             │
+ *   └─────────────────────────────────────────────────────────────────┘
+ *
+ *   Violating this causes SILENT heap exhaustion that breaks unrelated
+ *   features (hover detection, VFS nodes, task scheduling).
+ *   See rules.md "Known Gotchas" and commit 5ea919b.
+ *
+ * TODO: Migrate load_ttf_file() and glyph cache to PMM allocation.
+ *       Current code uses kmalloc (tech debt from initial implementation).
  * ============================================================================ */
 
 #include "font_mgr.h"

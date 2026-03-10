@@ -4,6 +4,9 @@
 > a capable internet-connected platform: web browser, email client, media player,
 > SSH/FTP clients, PDF viewer, remote desktop, network file sharing, and VPN —
 > transforming the OS from a standalone system into a connected workstation.
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+
 
 ---
 
