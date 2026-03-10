@@ -222,6 +222,8 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
     for (row = 0; row < (int32_t)h; row++) {
         int32_t fill_x0 = x;
         int32_t fill_x1 = x + (int32_t)w;
+        uint32_t edge_alpha = 0;
+        int is_corner_row = 0;
 
         /* Apply corner rounding */
         if ((uint32_t)row < r) {
@@ -231,20 +233,19 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
             uint32_t dx = isqrt(dx_sq);
             uint32_t inset = r - dx;
 
-            /* Anti-alias: compute sub-pixel coverage for edge pixels */
+            /* Anti-alias: sub-pixel coverage for the edge pixel */
             {
-                /* Distance from corner center to pixel edge (256 = 1.0) */
-                uint32_t dist_256 = isqrt((r * r - dy * dy) * 256 * 256 / (r * r > 0 ? r * r : 1));
-                uint32_t frac = dist_256 - (dx * 256);
-                uint32_t edge_alpha;
-
-                if (frac > 255) frac = 255;
-                edge_alpha = (sa * frac) / 256;
-                (void)edge_alpha;  /* used for AA below */
+                /* Exact distance squared * 65536 for precision */
+                uint32_t exact_dx_sq_256 = dx_sq * 256;
+                uint32_t exact_dx_256 = isqrt(exact_dx_sq_256);
+                uint32_t frac = exact_dx_256 - (dx * 16);  /* sub-pixel fraction (0-15) */
+                if (frac > 15) frac = 15;
+                edge_alpha = (sa * frac) / 16;
             }
 
             fill_x0 = x + (int32_t)inset;
             fill_x1 = x + (int32_t)(w - inset);
+            is_corner_row = 1;
         } else if ((uint32_t)row >= h - r) {
             /* Bottom corners */
             uint32_t dy = (uint32_t)row - (h - r - 1);
@@ -257,8 +258,18 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
             dx = isqrt(dx_sq);
             inset = r - dx;
 
+            /* Anti-alias for bottom corners */
+            {
+                uint32_t exact_dx_sq_256 = dx_sq * 256;
+                uint32_t exact_dx_256 = isqrt(exact_dx_sq_256);
+                uint32_t frac = exact_dx_256 - (dx * 16);
+                if (frac > 15) frac = 15;
+                edge_alpha = (sa * frac) / 16;
+            }
+
             fill_x0 = x + (int32_t)inset;
             fill_x1 = x + (int32_t)(w - inset);
+            is_corner_row = 1;
         }
 
         /* Fill the scanline */
@@ -271,6 +282,17 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
                 gfx_color_t c = GFX_RGBA(sr, sg, sb, sa);
                 for (px = fill_x0; px < fill_x1; px++)
                     gfx_blend_pixel(s, px, y + row, c);
+            }
+
+            /* Anti-alias the edge pixels of corner rows */
+            if (is_corner_row && edge_alpha > 0 && edge_alpha < sa) {
+                gfx_color_t aa_color = GFX_RGBA(sr, sg, sb, edge_alpha);
+                /* Left edge pixel (one pixel before the fill start) */
+                if (fill_x0 > x)
+                    gfx_blend_pixel(s, fill_x0 - 1, y + row, aa_color);
+                /* Right edge pixel (one pixel after the fill end) */
+                if (fill_x1 < x + (int32_t)w)
+                    gfx_blend_pixel(s, fill_x1, y + row, aa_color);
             }
         }
     }

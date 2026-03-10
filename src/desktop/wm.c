@@ -631,14 +631,21 @@ static void blit_client(const struct wm_window *w)
 {
     int32_t cx = client_x(w);
     int32_t cy = client_y(w);
+    uint32_t blit_h = w->height;
 
     /* Safety: skip if client area starts at negative coordinates */
     if (cx < 0 || cy < 0)
         return;
 
+    /* For decorated windows, reduce blit height by the corner radius
+     * so the pre-drawn rounded decoration corners at the bottom are
+     * not overwritten by the flat rectangular client blit. */
+    if ((w->flags & WM_FLAG_DECORATED) && blit_h > WM_CORNER_RADIUS)
+        blit_h -= WM_CORNER_RADIUS;
+
     /* Use fb_blit for fast row-level copy */
     fb_blit((uint32_t)cx, (uint32_t)cy,
-            w->framebuffer, w->width, w->height, w->fb_pitch);
+            w->framebuffer, w->width, blit_h, w->fb_pitch);
 }
 
 /* Sort order for compositing — sort active windows by z_order, ascending */
@@ -702,145 +709,29 @@ void wm_composite(void)
     /* Paint each window (painter's algorithm — back to front) */
     for (i = 0; i < count; i++) {
         struct wm_window *w = &windows[order[i]];
-        uint32_t saved_bl[WM_CORNER_RADIUS * WM_CORNER_RADIUS];
-        uint32_t saved_br[WM_CORNER_RADIUS * WM_CORNER_RADIUS];
-
-        /* Save bottom corner wallpaper pixels BEFORE drawing this window.
-         * These will be restored for pixels outside the rounded border. */
-        if (w->flags & WM_FLAG_DECORATED) {
-            uint32_t r = WM_CORNER_RADIUS;
-            uint32_t ow2 = outer_width(w);
-            uint32_t oh2 = outer_height(w);
-            uint32_t *bb = fb_get_backbuffer();
-            uint32_t stride = fb_get_stride();
-            uint32_t row2, col2;
-            for (row2 = 0; row2 < r; row2++) {
-                uint32_t sy = (uint32_t)(w->y + (int32_t)oh2 - (int32_t)r + (int32_t)row2);
-                for (col2 = 0; col2 < r; col2++) {
-                    /* Bottom-left */
-                    uint32_t sx_l = (uint32_t)(w->x + (int32_t)col2);
-                    saved_bl[row2 * r + col2] = bb[sy * stride + sx_l];
-                    /* Bottom-right */
-                    uint32_t sx_r = (uint32_t)(w->x + (int32_t)ow2 - (int32_t)r + (int32_t)col2);
-                    saved_br[row2 * r + col2] = bb[sy * stride + sx_r];
-                }
-            }
-        }
 
         if (w->flags & WM_FLAG_DECORATED)
             draw_decorations(w);
 
         blit_client(w);
 
-        /* Reconstruct bottom corners after blit_client.
-         * For each pixel in the bottom corner zone, decide:
-         *   - Outside outer border curve → restore saved wallpaper pixel
-         *   - Between outer and inner curves → paint border color
-         *   - Inside inner curve → leave client pixel as-is
-         * Also: re-draw the straight bottom border and side borders. */
+        /* Repair side borders after blit_client.
+         * blit_client clips bottom rows so bottom corners are already
+         * preserved from draw_decorations.  Just repair the side borders
+         * which blit_client may have partially overwritten. */
         if (w->flags & WM_FLAG_DECORATED) {
             uint32_t ow2 = outer_width(w);
-            uint32_t oh2 = outer_height(w);
             int focused2 = (w->flags & WM_FLAG_FOCUSED) != 0;
             uint32_t bc = focused2 ? WM_COLOR_BORDER_ACTIVE
                                    : WM_COLOR_BORDER_INACTIVE;
-            uint32_t r = WM_CORNER_RADIUS;
-            uint32_t r_inner = (r > 1) ? r - 1 : 0;
-            uint32_t row2, col2;
-
-            /* Straight bottom border line (between the corners) */
-            fb_fill_rect((uint32_t)(w->x + (int32_t)r),
-                         (uint32_t)(w->y + (int32_t)oh2 - 1),
-                         ow2 - 2 * r, 1, bc);
             /* Left border (client area portion) */
             fb_fill_rect((uint32_t)w->x,
                          (uint32_t)(w->y + (int32_t)WM_TITLEBAR_HEIGHT),
-                         1, w->height + WM_BORDER_WIDTH, bc);
+                         1, w->height - WM_CORNER_RADIUS + WM_BORDER_WIDTH, bc);
             /* Right border (client area portion) */
             fb_fill_rect((uint32_t)(w->x + (int32_t)ow2 - 1),
                          (uint32_t)(w->y + (int32_t)WM_TITLEBAR_HEIGHT),
-                         1, w->height + WM_BORDER_WIDTH, bc);
-
-            /* Reconstruct bottom corners pixel by pixel */
-            for (row2 = 0; row2 < r; row2++) {
-                uint32_t sy = (uint32_t)(w->y + (int32_t)oh2 - (int32_t)r + (int32_t)row2);
-                /* Distance from corner center (center is at r-1 from
-                 * the start of the corner zone) */
-                uint32_t dy = r - 1 - row2;  /* distance from bottom edge */
-
-                /* Outer radius: circle centered at (r, oh2-r) relative to window */
-                uint32_t outer_dx_sq = (r * r > dy * dy) ? (r * r - dy * dy) : 0;
-                uint32_t outer_dx = 0;
-                if (outer_dx_sq > 0) {
-                    uint32_t g2 = outer_dx_sq;
-                    uint32_t it;
-                    for (it = 0; it < 8 && g2 > 0; it++)
-                        g2 = (g2 + outer_dx_sq / g2) / 2;
-                    outer_dx = g2;
-                    while (outer_dx * outer_dx > outer_dx_sq) outer_dx--;
-                }
-                uint32_t outer_inset = r - outer_dx;
-
-                /* Inner radius: r-1, centered 1px inward */
-                uint32_t inner_inset = 0;
-                if (r_inner > 0 && dy < r_inner) {
-                    uint32_t inner_dx_sq = (r_inner * r_inner > dy * dy)
-                                         ? (r_inner * r_inner - dy * dy) : 0;
-                    uint32_t inn_dx = 0;
-                    if (inner_dx_sq > 0) {
-                        uint32_t g3 = inner_dx_sq;
-                        uint32_t it2;
-                        for (it2 = 0; it2 < 8 && g3 > 0; it2++)
-                            g3 = (g3 + inner_dx_sq / g3) / 2;
-                        inn_dx = g3;
-                        while (inn_dx * inn_dx > inner_dx_sq) inn_dx--;
-                    }
-                    inner_inset = r_inner - inn_dx;
-                } else if (dy >= r_inner) {
-                    inner_inset = r_inner;  /* fully inside border */
-                }
-
-                for (col2 = 0; col2 < r; col2++) {
-                    uint32_t dist_from_edge = col2;  /* 0 = left/right edge */
-
-                    /* ---- Bottom-left corner ---- */
-                    {
-                        uint32_t sx = (uint32_t)(w->x + (int32_t)col2);
-                        if (dist_from_edge < outer_inset) {
-                            /* Outside border → restore wallpaper */
-                            fb_put_pixel(sx, sy, saved_bl[row2 * r + col2]);
-                        } else if (dist_from_edge < outer_inset + 1) {
-                            /* Border edge pixel → border color */
-                            fb_put_pixel(sx, sy, bc);
-                        } else if (dist_from_edge < 1 + inner_inset) {
-                            /* Between border and body → border color */
-                            fb_put_pixel(sx, sy, bc);
-                        } else {
-                            /* Inside body → paint CLIENT_BG (or leave client) */
-                            /* At the very bottom row, paint border for the
-                             * straight bottom border line */
-                            if (row2 == r - 1 && dist_from_edge >= outer_inset)
-                                fb_put_pixel(sx, sy, bc);
-                        }
-                    }
-
-                    /* ---- Bottom-right corner ---- */
-                    {
-                        uint32_t sx = (uint32_t)(w->x + (int32_t)ow2 - (int32_t)r + (int32_t)col2);
-                        uint32_t rdist = r - 1 - col2;  /* distance from right edge */
-                        if (rdist < outer_inset) {
-                            fb_put_pixel(sx, sy, saved_br[row2 * r + col2]);
-                        } else if (rdist < outer_inset + 1) {
-                            fb_put_pixel(sx, sy, bc);
-                        } else if (rdist < 1 + inner_inset) {
-                            fb_put_pixel(sx, sy, bc);
-                        } else {
-                            if (row2 == r - 1 && rdist >= outer_inset)
-                                fb_put_pixel(sx, sy, bc);
-                        }
-                    }
-                }
-            }
+                         1, w->height - WM_CORNER_RADIUS + WM_BORDER_WIDTH, bc);
         }
     }
 
