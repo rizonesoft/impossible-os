@@ -38,8 +38,8 @@
 #define WM_COLOR_TITLEBAR_INACTIVE 0xFF2D2D2D
 #define WM_COLOR_TITLE_TEXT        0xFFFFFFFF
 #define WM_COLOR_TITLE_INACTIVE    0xFF999999
-#define WM_COLOR_BORDER_ACTIVE     0xFFA0A0A0   /* visible 1px outline */
-#define WM_COLOR_BORDER_INACTIVE   0xFF606060
+#define WM_COLOR_BORDER_ACTIVE     0xFF505050   /* subtle dark outline */
+#define WM_COLOR_BORDER_INACTIVE   0xFF404040
 #define WM_COLOR_CLOSE_HOVER_BG    0xFFC42B1C   /* Win11 close hover red */
 #define WM_COLOR_BTN_HOVER_BG      0x30FFFFFF   /* subtle white glow */
 #define WM_COLOR_BTN_GLYPH         0xFFFFFFFF   /* button glyph color */
