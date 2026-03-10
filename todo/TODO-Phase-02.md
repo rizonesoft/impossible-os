@@ -329,22 +329,22 @@
 **Prompt:** Use the Adwaita cursor theme from `/usr/share/icons/Adwaita/cursors/` (LGPL/CC-BY-SA, pre-installed). These are X11 cursor binary files (Xcur format) containing ARGB pixel data, hotspot coordinates, and multiple sizes per file. At build time, copy the 11 needed cursor files to the sysroot at `C:\Impossible\System\Cursors\`. The Xcur format is: 4-byte magic (`Xcur`), 4-byte header size, 4-byte version, 4-byte TOC count, then TOC entries (type, subtype=size, position), then image chunks (header, type=0xFFFD0002, subtype=size, version, width, height, hotspot_x, hotspot_y, delay, ARGB pixels). `xcur_load()` parses this directly at runtime -- no build-time conversion needed. The fallback arrow must be embedded as a `static const uint32_t cursor_fallback[]` byte array. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"resources: Adwaita cursor integration"`.
 
 
-- [ ] Map 11 cursor shapes to Adwaita filenames:
-  - [ ] `arrow` -> `default` (or `left_ptr`)
-  - [ ] `hand` -> `pointer` (or `hand2`)
-  - [ ] `text` -> `text` (or `xterm`)
-  - [ ] `move` -> `fleur` (or `move`)
-  - [ ] `resize_ns` -> `sb_v_double_arrow` (or `ns-resize`)
-  - [ ] `resize_ew` -> `sb_h_double_arrow` (or `ew-resize`)
-  - [ ] `resize_nwse` -> `bd_double_arrow` (or `nwse-resize`)
-  - [ ] `resize_nesw` -> `fd_double_arrow` (or `nesw-resize`)
-  - [ ] `wait` -> `progress` (or `watch`)
-  - [ ] `crosshair` -> `crosshair` (or `cross`)
-  - [ ] `forbidden` -> `not-allowed` (or `no-drop`)
-- [ ] Add Makefile rule: copy 11 Adwaita cursor files to sysroot `Impossible/System/Cursors/`
-- [ ] Implement `xcur_load()` -- parse Xcur binary, extract ARGB+hotspot per size, convert ARGB->BGRA
-- [ ] Embed fallback arrow as byte array for pre-VFS boot
-- [ ] Commit: `"resources: Adwaita cursor integration"`
+- [x] Map 11 cursor shapes to Adwaita filenames:
+  - [x] `arrow` -> `default` (or `left_ptr`)
+  - [x] `hand` -> `pointer` (or `hand2`)
+  - [x] `text` -> `text` (or `xterm`)
+  - [x] `move` -> `fleur` (or `move`)
+  - [x] `resize_ns` -> `sb_v_double_arrow` (or `ns-resize`)
+  - [x] `resize_ew` -> `sb_h_double_arrow` (or `ew-resize`)
+  - [x] `resize_nwse` -> `bd_double_arrow` (or `nwse-resize`)
+  - [x] `resize_nesw` -> `fd_double_arrow` (or `nesw-resize`)
+  - [x] `wait` -> `progress` (or `watch`)
+  - [x] `crosshair` -> `crosshair` (or `cross`)
+  - [x] `forbidden` -> `not-allowed` (or `no-drop`)
+- [x] Add Makefile rule: copy 11 Adwaita cursor files to sysroot `Impossible/System/Cursors/`
+- [x] Implement `xcur_load()` -- parse Xcur binary, extract ARGB+hotspot per size, convert ARGB->BGRA
+- [x] Embed fallback arrow as byte array for pre-VFS boot
+- [x] Commit: `"resources: Adwaita cursor integration"`
 
 ### 5.3 Context-Based Cursor Switching
 
