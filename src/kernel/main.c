@@ -1115,19 +1115,25 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 /* Check if any window content changed (e.g., terminal output) */
                 uint8_t wm_dirty = wm_needs_redraw();
 
-                /* Only do work if something actually changed */
-                uint8_t need_full = first_frame || btn_changed
-                                 || (cursor_moved && mb != 0)
-                                 || wm_dirty || clock_tick;
-
-                if (need_full) {
-                    /* Full composite needed: first frame, button change,
-                     * dragging, or window content changed */
-
-                    /* Dispatch mouse */
+                /* Always dispatch mouse events when cursor moves
+                 * (hover tracking needs this even without buttons) */
+                if (cursor_moved || btn_changed) {
                     if (!desktop_handle_click(mx, my, mb)) {
                         wm_handle_mouse(mx, my, mb);
                     }
+                }
+
+                /* Check if any window content changed (includes hover state) */
+                uint8_t wm_dirty2 = wm_needs_redraw();
+
+                /* Only do work if something actually changed */
+                uint8_t need_full = first_frame || btn_changed
+                                 || (cursor_moved && mb != 0)
+                                 || wm_dirty || wm_dirty2 || clock_tick;
+
+                if (need_full) {
+                    /* Full composite needed: first frame, button change,
+                     * dragging, window content, or hover state changed */
 
                     /* Render terminal content to its window buffer */
                     terminal_render();
