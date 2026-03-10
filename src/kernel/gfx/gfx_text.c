@@ -417,31 +417,59 @@ ttf_font_t *ttf_get(int slot, int pixel_size)
 }
 
 /* ---- Glyph cache helper: blit a cached glyph onto surface ---- */
-
+/*
+ * Optimized path: pre-clip column range per row, write directly to pixel
+ * buffer (no per-pixel bounds checks or function call overhead).
+ * Fast paths: skip transparent pixels, direct-write opaque pixels.
+ */
 static void blit_cached_glyph(gfx_surface_t *s, const glyph_entry_t *ge,
                                int32_t x, int32_t base_y,
                                uint32_t cr, uint32_t cg, uint32_t cb,
                                gfx_color_t color)
 {
-    int row, col;
-    int32_t py, px;
+    int row;
 
     for (row = 0; row < ge->height; row++) {
-        py = base_y + ge->yoff + row;
+        int32_t py = base_y + ge->yoff + row;
+        int32_t gx0 = x + ge->xoff;
+        int col_start, col_end, col;
+        uint32_t *dst_row;
+        const uint8_t *src_row;
+
         if (py < 0 || (uint32_t)py >= s->height) continue;
 
-        for (col = 0; col < ge->width; col++) {
-            uint32_t alpha;
-            px = x + ge->xoff + col;
-            if (px < 0 || (uint32_t)px >= s->width) continue;
+        /* Pre-clip column range to surface bounds */
+        col_start = 0;
+        col_end = ge->width;
+        if (gx0 < 0)
+            col_start = -gx0;
+        if (gx0 + col_end > (int32_t)s->width)
+            col_end = (int32_t)s->width - gx0;
+        if (col_start >= col_end) continue;
 
-            alpha = ge->bitmap[row * ge->width + col];
+        /* Direct pointer arithmetic — no per-pixel bounds check */
+        dst_row = s->pixels + (uint32_t)py * s->stride + (uint32_t)(gx0 + col_start);
+        src_row = ge->bitmap + row * ge->width + col_start;
+
+        for (col = 0; col < (col_end - col_start); col++) {
+            uint32_t alpha = src_row[col];
+
             if (alpha == 0) continue;
 
-            if (alpha == 255)
-                gfx_put_pixel(s, px, py, color);
-            else
-                gfx_blend_pixel(s, px, py, GFX_RGBA(cr, cg, cb, alpha));
+            if (alpha == 255) {
+                dst_row[col] = color;
+            } else {
+                /* Inline alpha blend — avoids gfx_blend_pixel call overhead */
+                uint32_t inv = 255 - alpha;
+                uint32_t d = dst_row[col];
+                uint32_t dr = (d >> 16) & 0xFF;
+                uint32_t dg = (d >>  8) & 0xFF;
+                uint32_t db =  d        & 0xFF;
+                dst_row[col] = 0xFF000000
+                    | (((cr * alpha + dr * inv) >> 8) << 16)
+                    | (((cg * alpha + dg * inv) >> 8) <<  8)
+                    |  ((cb * alpha + db * inv) >> 8);
+            }
         }
     }
 }

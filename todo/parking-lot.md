@@ -29,16 +29,11 @@
 
 ---
 
-### P3. Lazy (just-in-time) glyph rasterization
-- **Impact:** Faster boot, less wasted memory for unused font sizes
-- **Effort:** Small (~50 lines)
-- **Files:** `gfx_text.c`
-- [ ] Remove all `cache_rasterize_slot_size()` calls from `ttf_mgr_init()`
-- [ ] In the cache lookup path (`ttf_draw_string` → cache miss), rasterize on demand
-- [ ] Save the result to the cache/atlas for future frames
-- [ ] Only rasterize font sizes actually requested by the UI
-- [ ] Keep size 14 (title bar) and 12 (terminal) as "eager" to avoid first-frame jank
-- [ ] Log lazy rasterization events: `[JIT] Rasterized slot %d size %d`
+### ~~P3. Lazy (just-in-time) glyph rasterization~~
+- **Status:** ✅ Done
+- Only sizes 12 (terminal) and 14 (title bar) eagerly rasterized at boot
+- Sizes 16, 20, 24 JIT-rasterized on first UI access via `cache_ensure_ready()`
+- `[JIT] Rasterized slot %d size %d` logged on lazy rasterization
 
 ---
 
