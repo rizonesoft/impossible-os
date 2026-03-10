@@ -137,3 +137,13 @@ int wm_window_at(int32_t x, int32_t y);
  * Returns the appropriate cursor_shape_t for resize edges, close button, etc. */
 #include "cursor.h"
 cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my);
+
+/* ---- Drag dirty-rect API ---- */
+
+/* Returns 1 if a window is currently being dragged. */
+int wm_is_dragging(void);
+
+/* Get the dirty rect (union of old + new window positions) for the current drag.
+ * Returns 1 and fills out params if drag is active, 0 otherwise. */
+int wm_get_drag_dirty_rect(int32_t *out_x, int32_t *out_y,
+                            uint32_t *out_w, uint32_t *out_h);

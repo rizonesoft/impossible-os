@@ -1150,8 +1150,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     /* Full composite needed: first frame, button change,
                      * dragging, window content, or hover state changed */
 
-                    /* Render terminal content to its window buffer */
-                    terminal_render();
+                    /* Skip terminal re-render during drag — nothing changed */
+                    if (!wm_is_dragging()) {
+                        /* Render terminal content to its window buffer */
+                        terminal_render();
+                    }
 
                     /* Prevent preemption during draw+swap so the PIT
                      * cannot context-switch us mid-frame. */
@@ -1170,7 +1173,27 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     cursor_set_shape(ctx);
 
                     cursor_draw(mx, my);
-                    fb_swap();
+
+                    /* During drag: partial swap of only the dirty region.
+                     * Otherwise: full screen swap. */
+                    {
+                        int32_t  drx, dry;
+                        uint32_t drw, drh;
+                        if (wm_get_drag_dirty_rect(&drx, &dry, &drw, &drh)) {
+                            /* Swap the drag dirty rect (old + new window area) */
+                            fb_swap_rect((uint32_t)drx, (uint32_t)dry, drw, drh);
+                            /* Also swap cursor area (may be outside drag rect) */
+                            {
+                                int32_t  crx, cry;
+                                uint32_t crw, crh;
+                                if (cursor_get_rect(&crx, &cry, &crw, &crh))
+                                    fb_swap_rect((uint32_t)crx, (uint32_t)cry,
+                                                 crw, crh);
+                            }
+                        } else {
+                            fb_swap();
+                        }
+                    }
                     scheduler_enable();
 
                     prev_mx = mx;

@@ -41,6 +41,16 @@ static uint8_t prev_buttons = 0;
 /* Dirty flag — when set, the compositor will redraw on next call */
 static volatile uint8_t needs_redraw = 1;
 
+/* ---- Drag dirty-rect tracking ---- */
+/* During a drag, we track the union of old + new window rects so that
+ * main.c can call fb_swap_rect() on just the dirty region instead of
+ * fb_swap() for the entire screen. */
+static uint8_t  drag_active = 0;     /* 1 while any window is being dragged */
+static int32_t  drag_dirty_x = 0;
+static int32_t  drag_dirty_y = 0;
+static uint32_t drag_dirty_w = 0;
+static uint32_t drag_dirty_h = 0;
+
 /* ---- Helpers ---- */
 
 static void str_copy(char *dst, const char *src, uint32_t max)
@@ -807,9 +817,15 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 int32_t new_x = mx - windows[i].drag_offset_x;
                 int32_t new_y = my - windows[i].drag_offset_y;
 
+                /* Record old rect BEFORE moving */
+                int32_t  old_x = windows[i].x;
+                int32_t  old_y = windows[i].y;
+                uint32_t ow_px = outer_width(&windows[i]);
+                uint32_t oh_px = outer_height(&windows[i]);
+
                 /* Clamp so the window stays fully on-screen */
-                int32_t ow = (int32_t)outer_width(&windows[i]);
-                int32_t oh = (int32_t)outer_height(&windows[i]);
+                int32_t ow = (int32_t)ow_px;
+                int32_t oh = (int32_t)oh_px;
                 int32_t sw = (int32_t)fb_get_width();
                 int32_t sh = (int32_t)fb_get_height();
 
@@ -821,10 +837,33 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 /* Move window */
                 windows[i].x = new_x;
                 windows[i].y = new_y;
+
+                /* Compute union of old and new rects as dirty region */
+                {
+                    int32_t min_x = old_x < new_x ? old_x : new_x;
+                    int32_t min_y = old_y < new_y ? old_y : new_y;
+                    int32_t max_r = (old_x + ow) > (new_x + ow)
+                                  ? (old_x + ow) : (new_x + ow);
+                    int32_t max_b = (old_y + oh) > (new_y + oh)
+                                  ? (old_y + oh) : (new_y + oh);
+                    /* Clamp to screen */
+                    if (min_x < 0) min_x = 0;
+                    if (min_y < 0) min_y = 0;
+                    if (max_r > sw) max_r = sw;
+                    if (max_b > sh) max_b = sh;
+
+                    drag_active  = 1;
+                    drag_dirty_x = min_x;
+                    drag_dirty_y = min_y;
+                    drag_dirty_w = (uint32_t)(max_r - min_x);
+                    drag_dirty_h = (uint32_t)(max_b - min_y);
+                }
+
                 mark_dirty();
             }
             if (left_released) {
                 windows[i].dragging = 0;
+                drag_active = 0;
                 mark_dirty();
             }
             return;
@@ -929,4 +968,25 @@ cursor_shape_t wm_get_cursor_context(int32_t mx, int32_t my)
 
     /* Client area — default arrow (widgets can override in future) */
     return CURSOR_ARROW;
+}
+
+/* ============================================================================
+ * Drag dirty-rect query API (used by main.c for fb_swap_rect during drag)
+ * ============================================================================ */
+
+int wm_is_dragging(void)
+{
+    return drag_active;
+}
+
+int wm_get_drag_dirty_rect(int32_t *out_x, int32_t *out_y,
+                            uint32_t *out_w, uint32_t *out_h)
+{
+    if (!drag_active || drag_dirty_w == 0 || drag_dirty_h == 0)
+        return 0;
+    *out_x = drag_dirty_x;
+    *out_y = drag_dirty_y;
+    *out_w = drag_dirty_w;
+    *out_h = drag_dirty_h;
+    return 1;
 }
