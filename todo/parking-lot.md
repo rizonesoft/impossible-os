@@ -101,3 +101,40 @@
 - [ ] Add `heap_get_free()` / `heap_get_used()` functions
 - [ ] Print heap stats at end of boot: `[OK] Heap: %u KB used / %u KB total`
 - [ ] Optional: warn if heap > 75% used: `[!!] Heap pressure: %u%% used`
+
+---
+
+## Documentation & Guardrails
+
+### P9. Update guardrails to reflect PMM migration
+- **Impact:** Keep guardrail docs accurate after font system was fixed
+- **Effort:** Small (~20 min)
+- **Files:** Multiple
+- [ ] Update `gfx_text.c` header comment: remove the `TODO: Migrate` line (it's done now)
+- [ ] Update `rules.md` Known Gotchas: add the font PMM migration as a resolved example
+- [ ] Update `.agent/skills/memory-allocation/SKILL.md`: remove `gfx_text.c` from "Tech Debt" section
+- [ ] Update `.agents/workflows/add-asset.md`: add font system as a "good example" of correct PMM usage
+- [ ] Review `gfx_text.c` `load_ttf_file()` error path: add comment that PMM pages are intentionally not freed (boot-time permanent)
+- [ ] Verify `stb_truetype_impl.c` still redirects `malloc`/`free` to `kmalloc`/`kfree` (correct for small temp buffers)
+
+### P10. Create/update memory management architecture docs
+- **Impact:** Single source of truth for how memory is managed in Impossible OS
+- **Effort:** Medium (~45 min)
+- **Files:** `docs/architecture/memory-management.md` (create or update)
+- [ ] Document the two-tier allocation model (kmalloc vs PMM) with diagram
+- [ ] Document identity-mapped physical memory layout
+- [ ] List all PMM consumers with sizes: framebuffer back buffer, font files, glyph pool, window framebuffers
+- [ ] List all kmalloc consumers with typical sizes: VFS nodes, task structs, Codex values
+- [ ] Document the glyph pool bump allocator: how it works, capacity, fragmentation characteristics
+- [ ] Add a "capacity planning" section: current usage vs limits, warning thresholds
+- [ ] Cross-reference `rules.md`, `/add-asset` workflow, and `memory-allocation` skill
+- [ ] Add a Mermaid diagram showing memory regions at runtime
+
+### P11. Add build-time `kmalloc` audit check
+- **Impact:** Automated enforcement — catch violations before they ship
+- **Effort:** Small (~15 lines in build script)
+- **Files:** `scripts/build.sh` or new `scripts/lint-alloc.sh`
+- [ ] `grep -rn 'kmalloc' src/kernel/gfx/ src/desktop/ --include='*.c'` at build time
+- [ ] Whitelist known-safe calls (stb_truetype temps, small structs)
+- [ ] Fail or warn on new `kmalloc` calls in GFX/desktop code without a `/* kmalloc OK: ... */` comment
+- [ ] Add to CI/build pipeline
