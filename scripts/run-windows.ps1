@@ -18,11 +18,19 @@ $OVMF_CODE = Join-Path $BUILD "OVMF_CODE_4M.fd"
 $OVMF_VARS = Join-Path $BUILD "OVMF_VARS_4M.fd"
 $VARS_DEST = Join-Path $env:TEMP "OVMF_VARS_4M.fd"
 
-# Verify files exist
-foreach ($f in @($DISK, $OVMF_CODE, $OVMF_VARS)) {
-    if (-not (Test-Path $f)) {
-        Write-Host "Missing: $f" -ForegroundColor Red
-        Write-Host "Run 'bash scripts/build.sh clean' in WSL2 first." -ForegroundColor Yellow
+# Ensure disk image exists
+if (-not (Test-Path $DISK)) {
+    Write-Host "Missing: $DISK" -ForegroundColor Red
+    Write-Host "Run 'make all' in WSL2 first." -ForegroundColor Yellow
+    pause; exit 1
+}
+
+# Auto-copy OVMF firmware from WSL system path if not in build/
+if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
+    Write-Host "Copying OVMF firmware to build/..." -ForegroundColor Yellow
+    & wsl.exe -e bash -c "cp /usr/share/OVMF/OVMF_CODE_4M.fd ~/impossible-os/build/ && cp /usr/share/OVMF/OVMF_VARS_4M.fd ~/impossible-os/build/"
+    if (-not (Test-Path $OVMF_CODE)) {
+        Write-Host "Failed to copy OVMF." -ForegroundColor Red
         pause; exit 1
     }
 }
