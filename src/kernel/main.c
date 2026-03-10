@@ -994,6 +994,21 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize desktop (wallpaper, taskbar, copy backgrounds to IXFS) */
         desktop_init();
 
+        /* ---- Boot-time heap stats ---- */
+        {
+            uint64_t h_used  = heap_get_used();
+            uint64_t h_total = heap_get_total();
+            uint64_t pct     = h_total ? (h_used * 100) / h_total : 0;
+            printk("[OK] Heap: %u KB used / %u KB total (%u%%)\n",
+                   (h_used + 1023) / 1024,
+                   (h_total + 1023) / 1024,
+                   pct);
+            if (pct > 75) {
+                printk("[!!] Heap pressure: %u%% used — risk of silent exhaustion\n",
+                       pct);
+            }
+        }
+
         /* Create a demo window with icon toolbar */
         {
             int demo = wm_create_window("Welcome", 100, 80, 460, 300, WM_DEFAULT_FLAGS);

@@ -51,16 +51,13 @@
 
 ---
 
-### P5. SIMD alpha blending for text rendering
-- **Impact:** 4× faster text draw (blend 4 pixels per SSE2 instruction)
-- **Effort:** Medium (~60 lines)
-- **Files:** `gfx_text.c`, potentially `gfx_simd.h`
-- **Prerequisites:** Already compiled with `-msse2`, `gfx_simd.h` included
-- [ ] Identify the inner pixel loop in `ttf_draw_string()` / `ttf_draw_char()`
-- [ ] Rewrite using SSE2 intrinsics: `_mm_load_si128`, `_mm_mullo_epi16`, `_mm_srli_epi16`
-- [ ] Handle the scalar tail (when width % 4 != 0) with regular C
-- [ ] Benchmark: measure ms per `ttf_draw_string()` call before/after
-- [ ] Wrap in `#ifdef __SSE2__` for portability
+### ~~P5. Optimized text rendering (inline alpha blend)~~
+- **Status:** ✅ Done (optimized scalar — SSE2 intrinsics blocked by freestanding cross-compiler)
+- Pre-clipped column ranges per row — no per-pixel bounds checks
+- Direct pixel buffer writes — no `gfx_put_pixel`/`gfx_blend_pixel` call overhead
+- Inline alpha blend: `dst = (color*alpha + dst*inv) >> 8`
+- Fast paths: skip transparent pixels, direct-write opaque pixels
+- **Note:** True SIMD (inline asm like `gfx_simd.c`) can be added later for further 4× gain
 
 ---
 
