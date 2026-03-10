@@ -20,7 +20,6 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/heap.h"
 #include "kernel/printk.h"
-#include "kernel/log.h"
 #include "kernel/drivers/framebuffer.h"
 
 /* ---- External libc-like functions (freestanding kernel) ---- */
@@ -543,25 +542,12 @@ void cursor_init(void)
     active_shape = CURSOR_ARROW;
     printk("[OK] Cursor manager initialized (%u/%d Adwaita cursors loaded)\n",
            loaded, CURSOR_COUNT);
-
-    /* Diagnostic: dump loaded cursor info */
-    for (int i = 0; i < CURSOR_COUNT; i++) {
-        cursor_image_t *img = &cursors[i].images[0];
-        uint32_t first = img->pixels ? img->pixels[0] : 0xDEAD;
-        uint32_t mid   = img->pixels ? img->pixels[img->width * img->height / 2] : 0xDEAD;
-        printk("  [%d] %ux%u hot=%d,%d ptr=%x px=%x/%x\n",
-               i, img->width, img->height,
-               img->hotspot_x, img->hotspot_y,
-               (uint32_t)(uintptr_t)img->pixels, first, mid);
-    }
 }
 
 void cursor_set_shape(cursor_shape_t shape)
 {
-    if (shape < CURSOR_COUNT && shape != active_shape) {
-        log_info("CURSOR", "shape %d -> %d\n", active_shape, shape);
+    if (shape < CURSOR_COUNT)
         active_shape = shape;
-    }
 }
 
 cursor_shape_t cursor_get_shape(void)
