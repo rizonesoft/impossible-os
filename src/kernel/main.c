@@ -1111,6 +1111,32 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     mb = ms.buttons;
                 }
 
+                /* During drag: briefly yield then re-read to batch
+                 * additional IRQ deltas that arrived while we processed
+                 * the previous frame.  This turns 5×1px into 1×5px. */
+                if (wm_is_dragging()) {
+                    int batch;
+                    for (batch = 0; batch < 4; batch++) {
+                        int32_t nx, ny;
+                        uint8_t nb;
+                        /* Allow IRQs to fire */
+                        __asm__ volatile ("sti; hlt");
+                        /* Re-read */
+                        if (virtio_input_available()) {
+                            struct virtio_input_state vis = virtio_input_get_state();
+                            nx = vis.x; ny = vis.y; nb = vis.buttons;
+                            mouse_set_position(nx, ny);
+                        } else {
+                            struct mouse_state ms = mouse_get_state();
+                            nx = ms.x; ny = ms.y; nb = ms.buttons;
+                        }
+                        /* If no new movement, stop draining */
+                        if (nx == mx && ny == my && nb == mb)
+                            break;
+                        mx = nx; my = ny; mb = nb;
+                    }
+                }
+
                 uint8_t cursor_moved = (mx != prev_mx || my != prev_my);
                 uint8_t btn_changed  = (mb != prev_mb);
 

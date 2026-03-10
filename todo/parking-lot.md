@@ -133,35 +133,21 @@
 
 ## Window Drag Responsiveness
 
-### P12. Dirty-rectangle compositor during drag
-- **Impact:** Eliminate full-screen repaint per mouse event during drag (~7.2 MB → ~200 KB per frame)
-- **Effort:** Medium (~100 lines)
-- **Files:** `wm.c`, `main.c`
-- **Prerequisites:** `gfx_dirty_tracker_t` already exists from earlier dirty-rect work
-- [ ] On drag start: record window old rect (x, y, w, h)
-- [ ] On drag move: mark old rect dirty (exposed wallpaper/windows behind)
-- [ ] Mark new rect dirty (window's new position)
-- [ ] In `wm_composite()`: only repaint dirty rects instead of full screen
-- [ ] Repaint desktop wallpaper only within dirty region (not entire 1280×720)
-- [ ] Repaint overlapping windows only if they intersect a dirty rect
-- [ ] Preserve full-redraw path for non-drag cases (window open/close, resize)
+### ~~P12. Dirty-rectangle compositor during drag~~
+- **Status:** ✅ Done
+- Track old/new window rects, compute union as dirty region
+- `wm_is_dragging()` + `wm_get_drag_dirty_rect()` API
+- Full composite still runs (safe z-order), but only dirty region is swapped
 
-### P13. Use `fb_swap_rect()` during drag instead of `fb_swap()`
-- **Impact:** Swap ~200 KB instead of 3.6 MB per drag frame
-- **Effort:** Small (~20 lines)
-- **Files:** `main.c`
-- **Depends on:** P12 (dirty rects provide the swap region)
-- [ ] When `need_full` is triggered by drag (not first frame/content change), compute union of old + new window rects
-- [ ] Call `fb_swap_rect(ux, uy, uw, uh)` instead of `fb_swap()` on line 1173
-- [ ] Keep `fb_swap()` for non-drag full composites (window open/close, first frame)
+### ~~P13. Use `fb_swap_rect()` during drag instead of `fb_swap()`~~
+- **Status:** ✅ Done (bundled with P12)
+- `fb_swap_rect()` on drag dirty region (~200 KB vs 3.6 MB)
+- Cursor rect swapped separately (may be outside drag rect)
+- Full `fb_swap()` preserved for non-drag composites
 
-### P14. Skip `terminal_render()` during drag
-- **Impact:** Avoid unnecessary terminal buffer re-render during drag
-- **Effort:** Tiny (~3 lines)
-- **Files:** `main.c`
-- [ ] Gate `terminal_render()` (line 1154) behind `wm_dirty` flag instead of `need_full`
-- [ ] Only re-render terminal when its content actually changed (new output, scroll)
-- [ ] During drag: `wm_dirty` is 0 (no content change), so terminal render is skipped
+### ~~P14. Skip `terminal_render()` during drag~~
+- **Status:** ✅ Done (bundled with P12)
+- `terminal_render()` gated behind `!wm_is_dragging()`
 
 ### P15. Batch mouse events before compositing
 - **Impact:** 5 × 1px drags → 1 × 5px drag = 1 composite instead of 5
