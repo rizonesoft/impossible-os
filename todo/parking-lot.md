@@ -86,13 +86,11 @@
 - [ ] Migrate violations to `pmm_alloc_contiguous()`
 - [ ] Add guard comments to any remaining legitimate `kmalloc` calls
 
-### P8. Add heap usage monitoring
-- **Impact:** Early warning before silent exhaustion
-- **Effort:** Small (~30 lines)
-- **Files:** `heap.c`, `heap.h`, `main.c`
-- [ ] Add `heap_get_free()` / `heap_get_used()` functions
-- [ ] Print heap stats at end of boot: `[OK] Heap: %u KB used / %u KB total`
-- [ ] Optional: warn if heap > 75% used: `[!!] Heap pressure: %u%% used`
+### ~~P8. Add heap usage monitoring~~
+- **Status:** ✅ Done (commit `3508ca7`)
+- `heap_get_total/used/free` already existed in `heap.c`
+- Added boot-time log: `[OK] Heap: X KB used / Y KB total (Z%)`
+- Warns if >75%: `[!!] Heap pressure: Z% used — risk of silent exhaustion`
 
 ---
 
