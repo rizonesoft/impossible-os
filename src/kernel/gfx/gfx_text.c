@@ -46,7 +46,7 @@ static const char *ttf_filenames[FONT_MAX_SLOTS] = {
     "CascadiaCode-Regular.ttf",/* FONT_MONO — Cascadia Code Regular */
     "CascadiaCode-Bold.ttf",   /* FONT_MONO_BOLD — Cascadia Code Bold */
     "selawkb.ttf",             /* FONT_UI_HEAVY — Selawik Bold */
-    "FluentSystemIcons-Regular.ttf", /* FONT_FLUENT_ICONS */
+    NULL,                      /* FONT_FLUENT_ICONS — loaded via PMM later */
     NULL, NULL
 };
 
