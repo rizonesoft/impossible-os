@@ -41,47 +41,252 @@ static inline uint32_t read_le32(const uint8_t *p)
          | ((uint32_t)p[3] << 24);
 }
 
-/* ---- Embedded fallback 12×19 arrow cursor (BGRA) ----
- * Converted from the original cursor_data[] in mouse.c.
- * 0=transparent, 1=black outline, 2=white fill */
+/* ---- Embedded fallback cursors (BGRA) ----
+ * 0=transparent, 1=black outline, 2=white fill
+ * Each shape has its own pixel map, width, height, hotspot. */
 
-#define FALLBACK_W 12
-#define FALLBACK_H 19
+typedef struct {
+    const uint8_t *map;
+    uint32_t       w;
+    uint32_t       h;
+    int32_t        hx;
+    int32_t        hy;
+} fallback_def_t;
 
-static const uint8_t fallback_map[FALLBACK_H][FALLBACK_W] = {
-    {1,0,0,0,0,0,0,0,0,0,0,0},
-    {1,1,0,0,0,0,0,0,0,0,0,0},
-    {1,2,1,0,0,0,0,0,0,0,0,0},
-    {1,2,2,1,0,0,0,0,0,0,0,0},
-    {1,2,2,2,1,0,0,0,0,0,0,0},
-    {1,2,2,2,2,1,0,0,0,0,0,0},
-    {1,2,2,2,2,2,1,0,0,0,0,0},
-    {1,2,2,2,2,2,2,1,0,0,0,0},
-    {1,2,2,2,2,2,2,2,1,0,0,0},
-    {1,2,2,2,2,2,2,2,2,1,0,0},
-    {1,2,2,2,2,2,2,2,2,2,1,0},
-    {1,2,2,2,2,2,2,1,1,1,1,1},
-    {1,2,2,2,1,2,2,1,0,0,0,0},
-    {1,2,2,1,0,1,2,2,1,0,0,0},
-    {1,2,1,0,0,1,2,2,1,0,0,0},
-    {1,1,0,0,0,0,1,2,2,1,0,0},
-    {1,0,0,0,0,0,1,2,2,1,0,0},
-    {0,0,0,0,0,0,0,1,2,1,0,0},
-    {0,0,0,0,0,0,0,1,1,0,0,0},
+/* Arrow 12×19 (hotspot 0,0) */
+static const uint8_t fb_arrow[] = {
+    1,0,0,0,0,0,0,0,0,0,0,0,
+    1,1,0,0,0,0,0,0,0,0,0,0,
+    1,2,1,0,0,0,0,0,0,0,0,0,
+    1,2,2,1,0,0,0,0,0,0,0,0,
+    1,2,2,2,1,0,0,0,0,0,0,0,
+    1,2,2,2,2,1,0,0,0,0,0,0,
+    1,2,2,2,2,2,1,0,0,0,0,0,
+    1,2,2,2,2,2,2,1,0,0,0,0,
+    1,2,2,2,2,2,2,2,1,0,0,0,
+    1,2,2,2,2,2,2,2,2,1,0,0,
+    1,2,2,2,2,2,2,2,2,2,1,0,
+    1,2,2,2,2,2,2,1,1,1,1,1,
+    1,2,2,2,1,2,2,1,0,0,0,0,
+    1,2,2,1,0,1,2,2,1,0,0,0,
+    1,2,1,0,0,1,2,2,1,0,0,0,
+    1,1,0,0,0,0,1,2,2,1,0,0,
+    1,0,0,0,0,0,1,2,2,1,0,0,
+    0,0,0,0,0,0,0,1,2,1,0,0,
+    0,0,0,0,0,0,0,1,1,0,0,0,
 };
 
-static uint32_t fallback_pixels[FALLBACK_H * FALLBACK_W];
+/* Hand / pointer 12×17 (hotspot 5,1) */
+static const uint8_t fb_hand[] = {
+    0,0,0,0,0,1,1,0,0,0,0,0,
+    0,0,0,0,1,2,2,1,0,0,0,0,
+    0,0,0,0,1,2,2,1,0,0,0,0,
+    0,0,0,0,1,2,2,1,0,0,0,0,
+    0,0,0,0,1,2,2,1,1,1,0,0,
+    0,0,0,0,1,2,2,1,2,2,1,0,
+    0,1,1,0,1,2,2,1,2,2,1,0,
+    1,2,2,1,1,2,2,2,2,2,1,0,
+    1,2,2,1,2,2,2,2,2,2,1,0,
+    0,1,2,2,2,2,2,2,2,2,1,0,
+    0,0,1,2,2,2,2,2,2,2,1,0,
+    0,0,1,2,2,2,2,2,2,1,0,0,
+    0,0,0,1,2,2,2,2,2,1,0,0,
+    0,0,0,1,2,2,2,2,2,1,0,0,
+    0,0,0,1,2,2,2,2,2,1,0,0,
+    0,0,0,0,1,2,2,2,1,0,0,0,
+    0,0,0,0,0,1,1,1,0,0,0,0,
+};
 
-static void build_fallback_cursor(void)
+/* Text / I-beam 7×15 (hotspot 3,7) */
+static const uint8_t fb_text[] = {
+    0,1,1,0,1,1,0,
+    1,0,0,1,0,0,1,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    0,0,0,1,0,0,0,
+    1,0,0,1,0,0,1,
+    0,1,1,0,1,1,0,
+};
+
+/* Move / four-way arrow 15×15 (hotspot 7,7) */
+static const uint8_t fb_move[] = {
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,1,2,1,0,0,0,0,0,0,
+    0,0,0,0,0,1,2,2,2,1,0,0,0,0,0,
+    0,0,0,0,1,1,1,2,1,1,1,0,0,0,0,
+    0,0,0,0,0,0,1,2,1,0,0,0,0,0,0,
+    0,0,1,1,0,0,1,2,1,0,0,1,1,0,0,
+    0,1,2,1,1,1,1,2,1,1,1,1,2,1,0,
+    1,2,2,2,2,2,2,2,2,2,2,2,2,2,1,
+    0,1,2,1,1,1,1,2,1,1,1,1,2,1,0,
+    0,0,1,1,0,0,1,2,1,0,0,1,1,0,0,
+    0,0,0,0,0,0,1,2,1,0,0,0,0,0,0,
+    0,0,0,0,1,1,1,2,1,1,1,0,0,0,0,
+    0,0,0,0,0,1,2,2,2,1,0,0,0,0,0,
+    0,0,0,0,0,0,1,2,1,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+};
+
+/* Resize N-S (vertical double arrow) 9×16 (hotspot 4,8) */
+static const uint8_t fb_resize_ns[] = {
+    0,0,0,0,1,0,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,1,2,2,2,1,0,0,
+    0,1,2,2,2,2,2,1,0,
+    1,1,1,1,2,1,1,1,1,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,1,2,1,0,0,0,
+    1,1,1,1,2,1,1,1,1,
+    0,1,2,2,2,2,2,1,0,
+    0,0,1,2,2,2,1,0,0,
+    0,0,0,1,2,1,0,0,0,
+    0,0,0,0,1,0,0,0,0,
+};
+
+/* Resize E-W (horizontal double arrow) 16×9 (hotspot 8,4) */
+static const uint8_t fb_resize_ew[] = {
+    0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,
+    0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,
+    0,0,1,2,1,0,0,0,0,0,0,1,2,1,0,0,
+    0,1,2,2,1,1,1,1,1,1,1,1,2,2,1,0,
+    1,2,2,2,2,2,2,2,2,2,2,2,2,2,2,1,
+    0,1,2,2,1,1,1,1,1,1,1,1,2,2,1,0,
+    0,0,1,2,1,0,0,0,0,0,0,1,2,1,0,0,
+    0,0,0,1,1,0,0,0,0,0,0,1,1,0,0,0,
+    0,0,0,0,1,0,0,0,0,0,0,1,0,0,0,0,
+};
+
+/* Resize NW-SE (diagonal double arrow) 12×12 (hotspot 6,6) */
+static const uint8_t fb_resize_nwse[] = {
+    1,1,1,1,1,1,0,0,0,0,0,0,
+    1,2,2,2,2,1,0,0,0,0,0,0,
+    1,2,2,2,1,0,0,0,0,0,0,0,
+    1,2,2,2,2,1,0,0,0,0,0,0,
+    1,2,1,2,2,2,1,0,0,0,0,0,
+    1,1,0,1,2,2,2,1,0,0,0,0,
+    0,0,0,0,1,2,2,2,1,0,1,1,
+    0,0,0,0,0,1,2,2,2,1,2,1,
+    0,0,0,0,0,0,1,2,2,2,2,1,
+    0,0,0,0,0,0,0,1,2,2,2,1,
+    0,0,0,0,0,0,1,2,2,2,2,1,
+    0,0,0,0,0,0,1,1,1,1,1,1,
+};
+
+/* Resize NE-SW (diagonal double arrow) 12×12 (hotspot 6,6) */
+static const uint8_t fb_resize_nesw[] = {
+    0,0,0,0,0,0,1,1,1,1,1,1,
+    0,0,0,0,0,0,1,2,2,2,2,1,
+    0,0,0,0,0,0,0,0,1,2,2,1,
+    0,0,0,0,0,0,0,1,2,2,2,1,
+    0,0,0,0,0,0,1,2,2,2,1,1,
+    0,0,0,0,0,1,2,2,2,1,0,1,
+    1,1,0,0,1,2,2,2,1,0,0,0,
+    1,2,1,0,1,2,2,1,0,0,0,0,
+    1,2,2,1,2,2,1,0,0,0,0,0,
+    1,2,2,2,2,1,0,0,0,0,0,0,
+    1,2,2,2,2,1,0,0,0,0,0,0,
+    1,1,1,1,1,1,0,0,0,0,0,0,
+};
+
+/* Wait / hourglass 11×16 (hotspot 5,8) */
+static const uint8_t fb_wait[] = {
+    1,1,1,1,1,1,1,1,1,1,1,
+    1,2,2,2,2,2,2,2,2,2,1,
+    0,1,2,2,2,2,2,2,2,1,0,
+    0,0,1,2,2,2,2,2,1,0,0,
+    0,0,0,1,2,2,2,1,0,0,0,
+    0,0,0,0,1,2,1,0,0,0,0,
+    0,0,0,0,0,1,0,0,0,0,0,
+    0,0,0,0,1,2,1,0,0,0,0,
+    0,0,0,0,1,2,1,0,0,0,0,
+    0,0,0,0,1,2,1,0,0,0,0,
+    0,0,0,1,2,1,2,1,0,0,0,
+    0,0,1,2,1,0,1,2,1,0,0,
+    0,1,2,1,0,0,0,1,2,1,0,
+    0,1,2,2,2,2,2,2,2,1,0,
+    1,2,2,2,2,2,2,2,2,2,1,
+    1,1,1,1,1,1,1,1,1,1,1,
+};
+
+/* Crosshair 15×15 (hotspot 7,7) */
+static const uint8_t fb_crosshair[] = {
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,
+    1,1,1,1,1,0,1,2,1,0,1,1,1,1,1,
+    0,0,0,0,0,0,1,1,1,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+    0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,
+};
+
+/* Forbidden / no-entry 13×13 (hotspot 6,6) */
+static const uint8_t fb_forbidden[] = {
+    0,0,0,0,1,1,1,1,1,0,0,0,0,
+    0,0,1,1,2,2,2,2,2,1,1,0,0,
+    0,1,2,2,2,2,2,2,1,2,2,1,0,
+    0,1,2,2,2,2,2,1,2,2,2,1,0,
+    1,2,2,2,2,2,1,2,2,2,2,2,1,
+    1,2,2,2,2,1,2,2,2,2,2,2,1,
+    1,2,2,2,1,2,2,2,2,2,2,2,1,
+    1,2,2,1,2,2,2,2,2,2,2,2,1,
+    1,2,1,2,2,2,2,2,2,2,2,2,1,
+    0,1,2,2,2,2,2,2,2,2,2,1,0,
+    0,1,2,2,2,2,2,2,2,2,2,1,0,
+    0,0,1,1,2,2,2,2,2,1,1,0,0,
+    0,0,0,0,1,1,1,1,1,0,0,0,0,
+};
+
+/* ---- Fallback definitions table ---- */
+
+static const fallback_def_t fallback_defs[CURSOR_COUNT] = {
+    [CURSOR_ARROW]       = { fb_arrow,       12, 19, 0, 0 },
+    [CURSOR_HAND]        = { fb_hand,        12, 17, 5, 1 },
+    [CURSOR_TEXT]        = { fb_text,         7, 15, 3, 7 },
+    [CURSOR_MOVE]        = { fb_move,        15, 15, 7, 7 },
+    [CURSOR_RESIZE_NS]   = { fb_resize_ns,    9, 16, 4, 8 },
+    [CURSOR_RESIZE_EW]   = { fb_resize_ew,   16,  9, 8, 4 },
+    [CURSOR_RESIZE_NWSE] = { fb_resize_nwse, 12, 12, 6, 6 },
+    [CURSOR_RESIZE_NESW] = { fb_resize_nesw, 12, 12, 6, 6 },
+    [CURSOR_WAIT]        = { fb_wait,        11, 16, 5, 8 },
+    [CURSOR_CROSSHAIR]   = { fb_crosshair,   15, 15, 7, 7 },
+    [CURSOR_FORBIDDEN]   = { fb_forbidden,   13, 13, 6, 6 },
+};
+
+/* Pre-rendered BGRA pixel buffers for all fallbacks */
+#define MAX_FB_PIXELS (16 * 19)  /* largest fallback */
+static uint32_t fallback_pixels_all[CURSOR_COUNT][MAX_FB_PIXELS];
+
+static void build_fallback_cursors(void)
 {
-    for (uint32_t y = 0; y < FALLBACK_H; y++) {
-        for (uint32_t x = 0; x < FALLBACK_W; x++) {
-            uint8_t v = fallback_map[y][x];
-            uint32_t c;
-            if (v == 0)      c = 0x00000000;  /* transparent */
-            else if (v == 1) c = 0xFF000000;  /* black, full alpha */
-            else             c = 0xFFFFFFFF;  /* white, full alpha */
-            fallback_pixels[y * FALLBACK_W + x] = c;
+    for (int s = 0; s < CURSOR_COUNT; s++) {
+        const fallback_def_t *def = &fallback_defs[s];
+        uint32_t *dst = fallback_pixels_all[s];
+        uint32_t total = def->w * def->h;
+        for (uint32_t i = 0; i < total; i++) {
+            uint8_t v = def->map[i];
+            if (v == 0)      dst[i] = 0x00000000;  /* transparent */
+            else if (v == 1) dst[i] = 0xFF000000;  /* black outline */
+            else             dst[i] = 0xFFFFFFFF;  /* white fill */
         }
     }
 }
@@ -300,17 +505,20 @@ static int xcur_load(const char *path, cursor_sprite_t *out)
 
 void cursor_init(void)
 {
-    /* Build the fallback arrow from the hardcoded map */
-    build_fallback_cursor();
+    /* Build all 11 fallback cursors from the hardcoded pixel maps */
+    build_fallback_cursors();
 
-    /* Set up fallback arrow as cursor 0 */
-    cursor_image_t *fb_img = &cursors[CURSOR_ARROW].images[0];
-    fb_img->width     = FALLBACK_W;
-    fb_img->height    = FALLBACK_H;
-    fb_img->hotspot_x = 0;
-    fb_img->hotspot_y = 0;
-    fb_img->pixels    = fallback_pixels;
-    cursors[CURSOR_ARROW].num_sizes = 1;
+    /* Set up fallback for every shape */
+    for (int i = 0; i < CURSOR_COUNT; i++) {
+        const fallback_def_t *def = &fallback_defs[i];
+        cursor_image_t *img = &cursors[i].images[0];
+        img->width     = def->w;
+        img->height    = def->h;
+        img->hotspot_x = def->hx;
+        img->hotspot_y = def->hy;
+        img->pixels    = fallback_pixels_all[i];
+        cursors[i].num_sizes = 1;
+    }
 
     /* Attempt to load Adwaita cursors from the sysroot */
     uint32_t loaded = 0;
