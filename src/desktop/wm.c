@@ -574,19 +574,12 @@ static void draw_decorations(const struct wm_window *w)
                 glyph_color = 0xFFFFFFFF;
             }
 
-            /* × glyph */
+            /* × glyph — two diagonal lines via gfx_draw_line */
             {
-                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
-                int32_t cy = btn_y + (btn_h - 10) / 2;
-                int d;
-                for (d = 0; d < 10; d++) {
-                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)(cy + d), glyph_color);
-                    fb_put_pixel((uint32_t)(cx + 9 - d), (uint32_t)(cy + d), glyph_color);
-                    if (d > 0 && d < 9) {
-                        fb_put_pixel((uint32_t)(cx + d - 1), (uint32_t)(cy + d), glyph_color);
-                        fb_put_pixel((uint32_t)(cx + 10 - d), (uint32_t)(cy + d), glyph_color);
-                    }
-                }
+                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 12) / 2;
+                int32_t cy = btn_y + (btn_h - 12) / 2;
+                gfx_draw_line(&scr, cx, cy, cx + 11, cy + 11, 1, glyph_color);
+                gfx_draw_line(&scr, cx + 11, cy, cx, cy + 11, 1, glyph_color);
             }
         }
 
@@ -602,17 +595,14 @@ static void draw_decorations(const struct wm_window *w)
                                     WM_COLOR_BTN_HOVER_BG);
             }
 
-            /* □ glyph */
+            /* □ glyph — four lines forming a rectangle */
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + (btn_h - 10) / 2;
-                int d;
-                for (d = 0; d < 10; d++) {
-                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)cy, glyph_color);
-                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)(cy + 9), glyph_color);
-                    fb_put_pixel((uint32_t)cx, (uint32_t)(cy + d), glyph_color);
-                    fb_put_pixel((uint32_t)(cx + 9), (uint32_t)(cy + d), glyph_color);
-                }
+                gfx_draw_line(&scr, cx, cy, cx + 9, cy, 1, glyph_color);         /* top */
+                gfx_draw_line(&scr, cx, cy + 9, cx + 9, cy + 9, 1, glyph_color); /* bottom */
+                gfx_draw_line(&scr, cx, cy, cx, cy + 9, 1, glyph_color);         /* left */
+                gfx_draw_line(&scr, cx + 9, cy, cx + 9, cy + 9, 1, glyph_color); /* right */
             }
         }
 
@@ -626,14 +616,11 @@ static void draw_decorations(const struct wm_window *w)
                                     WM_COLOR_BTN_HOVER_BG);
             }
 
-            /* − glyph */
+            /* − glyph — single horizontal line */
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + btn_h / 2;
-                int d;
-                for (d = 0; d < 10; d++) {
-                    fb_put_pixel((uint32_t)(cx + d), (uint32_t)cy, glyph_color);
-                }
+                gfx_draw_line(&scr, cx, cy, cx + 9, cy, 1, glyph_color);
             }
         }
     }
@@ -720,6 +707,28 @@ void wm_composite(void)
             draw_decorations(w);
 
         blit_client(w);
+
+        /* Repair bottom border after blit_client overwrites it.
+         * The client blit is a flat rect that covers the bottom rounded
+         * corners of the body fill.  Redraw a 1px bottom border + sides. */
+        if (w->flags & WM_FLAG_DECORATED) {
+            uint32_t ow2 = outer_width(w);
+            uint32_t oh2 = outer_height(w);
+            int focused2 = (w->flags & WM_FLAG_FOCUSED) != 0;
+            uint32_t bc = focused2 ? WM_COLOR_BORDER_ACTIVE
+                                   : WM_COLOR_BORDER_INACTIVE;
+            /* Bottom border line */
+            fb_fill_rect((uint32_t)w->x, (uint32_t)(w->y + (int32_t)oh2 - 1),
+                         ow2, 1, bc);
+            /* Left border (client area portion) */
+            fb_fill_rect((uint32_t)w->x,
+                         (uint32_t)(w->y + (int32_t)WM_TITLEBAR_HEIGHT),
+                         1, w->height + WM_BORDER_WIDTH, bc);
+            /* Right border (client area portion) */
+            fb_fill_rect((uint32_t)(w->x + (int32_t)ow2 - 1),
+                         (uint32_t)(w->y + (int32_t)WM_TITLEBAR_HEIGHT),
+                         1, w->height + WM_BORDER_WIDTH, bc);
+        }
     }
 
     /* Draw taskbar on top of everything */
