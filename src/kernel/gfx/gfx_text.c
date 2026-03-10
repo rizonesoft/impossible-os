@@ -115,6 +115,12 @@ static glyph_entry_t glyph_cache[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES][GLYPH_CACHE_
 /* Pre-computed scaled ascent for each (slot, size_index) — avoids FPU at draw time */
 static int32_t cached_ascent[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES];
 
+/* Track which (slot, size) pairs have been rasterized (0 = not yet, 1 = done) */
+static uint8_t cache_ready[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES];
+
+/* Forward declaration — defined below, after cache_ensure_ready */
+static void cache_rasterize_slot_size(int slot, int size_idx);
+
 /* Map a pixel size to a cache size index, or -1 if not cached */
 static int cache_size_index(int pixel_size)
 {
@@ -124,6 +130,20 @@ static int cache_size_index(int pixel_size)
             return i;
     }
     return -1;
+}
+
+/* Ensure a (slot, size) pair is rasterized.  Called lazily on first access.
+ * Must be called with FPU state already saved by the caller. */
+static void cache_ensure_ready(int slot, int size_idx)
+{
+    if (cache_ready[slot][size_idx])
+        return;
+
+    cache_rasterize_slot_size(slot, size_idx);
+    cache_ready[slot][size_idx] = 1;
+
+    printk("[JIT] Rasterized slot %d size %d\n",
+           (uint64_t)slot, (uint64_t)cache_sizes[size_idx]);
 }
 
 /* Pre-rasterize all ASCII glyphs for one (slot, size) pair.
@@ -333,20 +353,30 @@ void ttf_mgr_init(void)
         printk("[--] TTF slot %d: no font found\n", (uint64_t)slot);
     }
 
-    /* Build glyph cache for all loaded slots at all cached sizes */
+    /* Eagerly rasterize only sizes 12 and 14 (used by terminal + title bar)
+     * to avoid first-frame jank.  Other sizes (16, 20, 24) are JIT-rasterized
+     * on first access via cache_ensure_ready(). */
     for (slot = 0; slot < FONT_MAX_SLOTS; slot++) {
         int si;
         if (!ttf_slots[slot].pub.loaded)
             continue;
         for (si = 0; si < GLYPH_CACHE_SIZES; si++) {
-            int gi;
+            int px = cache_sizes[si];
+            if (px != 12 && px != 14)
+                continue;  /* defer to JIT */
+
             cache_rasterize_slot_size(slot, si);
+            cache_ready[slot][si] = 1;
+
             /* Count cached glyphs and total bitmap bytes */
-            for (gi = 0; gi < GLYPH_CACHE_COUNT; gi++) {
-                glyph_entry_t *ge = &glyph_cache[slot][si][gi];
-                if (ge->bitmap) {
-                    cached_glyphs++;
-                    cache_bytes += (uint64_t)(ge->width * ge->height);
+            {
+                int gi;
+                for (gi = 0; gi < GLYPH_CACHE_COUNT; gi++) {
+                    glyph_entry_t *ge = &glyph_cache[slot][si][gi];
+                    if (ge->bitmap) {
+                        cached_glyphs++;
+                        cache_bytes += (uint64_t)(ge->width * ge->height);
+                    }
                 }
             }
         }
@@ -432,17 +462,28 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
     size_idx = cache_size_index(f->pixel_size);
     if (size_idx >= 0 && codepoint >= GLYPH_CACHE_FIRST && codepoint <= GLYPH_CACHE_LAST &&
         slot >= 0 && slot < FONT_MAX_SLOTS) {
-        int gi = codepoint - GLYPH_CACHE_FIRST;
-        const glyph_entry_t *ge = &glyph_cache[slot][size_idx][gi];
-        int32_t base_y = y + cached_ascent[slot][size_idx];
 
-        if (ge->bitmap) {
-            uint32_t cr = GFX_RED(color);
-            uint32_t cg = GFX_GREEN(color);
-            uint32_t cb = GFX_BLUE(color);
-            blit_cached_glyph(s, ge, x, base_y, cr, cg, cb, color);
+        /* JIT: ensure this (slot, size) is rasterized on first access */
+        if (!cache_ready[slot][size_idx]) {
+            fxsave_area_t jit_fpu __attribute__((aligned(16)));
+            simd_save_state(&jit_fpu);
+            cache_ensure_ready(slot, size_idx);
+            simd_restore_state(&jit_fpu);
         }
-        return ge->advance;
+
+        {
+            int gi = codepoint - GLYPH_CACHE_FIRST;
+            const glyph_entry_t *ge = &glyph_cache[slot][size_idx][gi];
+            int32_t base_y = y + cached_ascent[slot][size_idx];
+
+            if (ge->bitmap) {
+                uint32_t cr = GFX_RED(color);
+                uint32_t cg = GFX_GREEN(color);
+                uint32_t cb = GFX_BLUE(color);
+                blit_cached_glyph(s, ge, x, base_y, cr, cg, cb, color);
+            }
+            return ge->advance;
+        }
     }
 
     /* Fallback: uncached path via stb_truetype */
