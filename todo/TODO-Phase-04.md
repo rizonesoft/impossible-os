@@ -1,9 +1,15 @@
 # Phase 04 — Desktop Shell
 
-> **Goal:** Build a complete, Windows 11-quality desktop shell experience with taskbar
-> window management, start menu, context menus, notification system, window snapping,
-> virtual desktops, drag-and-drop, and polished user-facing features like boot splash,
-> screensavers, night light, and quick settings.
+> **All items from this file have been consolidated into
+> [TODO-Phase-02-GUI.md](TODO-Phase-02-GUI.md) — the master GUI TODO.**
+>
+> This includes: Taskbar Window List (§1), Start Menu (§2), System Tray &
+> Notifications (§3), Context Menus (§4), Window Snapping (§5), Virtual
+> Desktops (§6), Notification Center (§7), Drag and Drop (§8), Quick Settings
+> (§9), Boot Splash (§10), Screensaver & Lock Screen (§11), Desktop Widgets
+> (§12), Night Light (§13), Focus/DND (§14), Keyboard Shortcuts, Alt+Tab,
+> Run Dialog, Desktop Icons, Minimize/Restore All (§15).
+
 
 ---
 
