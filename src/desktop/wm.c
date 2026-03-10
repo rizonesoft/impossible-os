@@ -465,41 +465,35 @@ static void draw_decorations(const struct wm_window *w)
                      fb_get_width(), fb_get_height(), fb_get_stride());
 
     /* ---- 1. Drop shadow ----
-     * Soft multi-layer shadow around the window frame.
-     * Only for focused windows to avoid visual clutter. */
-    if (focused) {
-        gfx_drop_shadow(&scr,
-                        (uint32_t)w->x, (uint32_t)w->y,
-                        ow, oh,
-                        6,     /* blur radius */
-                        0, 2,  /* offset x, y */
-                        0x60000000);  /* 37% black */
-    }
+     * All windows get a shadow; focused windows get a more prominent one. */
+    gfx_drop_shadow(&scr,
+                    (uint32_t)w->x, (uint32_t)w->y,
+                    ow, oh,
+                    focused ? 6 : 3,     /* blur radius */
+                    0, focused ? 2 : 1,  /* offset x, y */
+                    focused ? 0x60000000 : 0x30000000);
 
-    /* ---- 2. Window body (rounded rect) ---- */
-    {
-        uint32_t body_color = focused ? WM_COLOR_TITLEBAR_ACTIVE
-                                      : WM_COLOR_TITLEBAR_INACTIVE;
-        gfx_fill_rounded_rect(&scr,
-                              (uint32_t)w->x, (uint32_t)w->y,
-                              ow, oh,
-                              WM_CORNER_RADIUS, body_color);
-    }
+    /* ---- 2. Window body (rounded rect) ----
+     * Fill with CLIENT background so the bottom rounded corners show the
+     * correct color (not the title bar color). */
+    gfx_fill_rounded_rect(&scr,
+                          (uint32_t)w->x, (uint32_t)w->y,
+                          ow, oh,
+                          WM_CORNER_RADIUS, WM_COLOR_CLIENT_BG);
 
     /* ---- 3. Title bar background ----
-     * Fill only the title bar region. The body fill above already set the
-     * background, so we just apply Mica over the top portion.
-     * For Mica we need the wallpaper surface — use it if available. */
+     * Paint the title bar region over the top of the body fill.
+     * Use a rounded rect for the top corners, then a flat rect below
+     * to create a rounded-top + flat-bottom shape. */
     {
         uint32_t tb_color = focused ? WM_COLOR_TITLEBAR_ACTIVE
                                     : WM_COLOR_TITLEBAR_INACTIVE;
-        /* Fill the title bar area (rounded top corners only) */
+        /* Rounded rect for the top portion (includes corner radius) */
         gfx_fill_rounded_rect(&scr,
                               (uint32_t)w->x, (uint32_t)w->y,
-                              ow, WM_TITLEBAR_HEIGHT + WM_CORNER_RADIUS,
+                              ow, WM_TITLEBAR_HEIGHT,
                               WM_CORNER_RADIUS, tb_color);
-        /* Overwrite the bottom part (below the corner radius) with a flat rect
-         * so we get rounded top + flat bottom transition into the client area */
+        /* Flat rect below the corners to fill the rest of the title bar */
         if (WM_TITLEBAR_HEIGHT > WM_CORNER_RADIUS) {
             gfx_fill_rect(&scr,
                           (uint32_t)w->x, (uint32_t)(w->y + (int32_t)WM_CORNER_RADIUS),
@@ -508,24 +502,20 @@ static void draw_decorations(const struct wm_window *w)
         }
     }
 
-    /* ---- 4. Client area background ---- */
-    {
-        uint32_t cx = (uint32_t)client_x(w);
-        uint32_t cy = (uint32_t)client_y(w);
-        gfx_fill_rect(&scr, cx, cy, w->width, w->height, WM_COLOR_CLIENT_BG);
-    }
-
-    /* ---- 5. Centered title text ---- */
+    /* ---- 4. Centered title text ----
+     * Center across the full window width; clamp away from edges. */
     {
         ttf_font_t *tf = ttf_get(FONT_UI, 13);
         if (tf) {
             uint32_t title_color = focused ? WM_COLOR_TITLE_TEXT
                                            : WM_COLOR_TITLE_INACTIVE;
             int32_t tw = ttf_measure_width(tf, w->title);
-            /* Center horizontally, but not over button area */
-            int32_t avail = (int32_t)ow - 3 * WM_BTN_WIDTH;
-            int32_t tx = w->x + (avail - tw) / 2;
-            /* Clamp so title doesn't go left of window */
+            int32_t tx = w->x + ((int32_t)ow - tw) / 2;
+            /* Don't overlap the buttons on the right */
+            int32_t max_x = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH - 4;
+            if (tx + tw > max_x)
+                tx = max_x - tw;
+            /* Don't go past left edge */
             if (tx < w->x + 12)
                 tx = w->x + 12;
             int32_t ty = w->y + ((int32_t)WM_TITLEBAR_HEIGHT - 13) / 2;
@@ -533,7 +523,7 @@ static void draw_decorations(const struct wm_window *w)
         }
     }
 
-    /* ---- 6. Caption buttons (right-aligned: minimize, maximize, close) ----
+    /* ---- 5. Caption buttons (right-aligned: minimize, maximize, close) ----
      * Windows 11 style: flat by default, highlight on hover.
      * Close button turns red on hover, others get a subtle white glow. */
     {
@@ -547,10 +537,18 @@ static void draw_decorations(const struct wm_window *w)
             int32_t bx = w->x + (int32_t)ow - (int32_t)WM_BTN_WIDTH;
 
             if (w->close_hover) {
-                /* Red highlight background — fill close button zone.
-                 * Round top-right corner to match window shape. */
+                /* Red highlight — use rounded rect for top-right corner */
+                gfx_fill_rounded_rect(&scr, (uint32_t)bx, (uint32_t)btn_y,
+                                      WM_BTN_WIDTH, (uint32_t)btn_h,
+                                      WM_CORNER_RADIUS, WM_COLOR_CLOSE_HOVER_BG);
+                /* Fill the left half flat (only right side needs rounding) */
                 gfx_fill_rect(&scr, (uint32_t)bx, (uint32_t)btn_y,
-                              WM_BTN_WIDTH, (uint32_t)btn_h,
+                              WM_BTN_WIDTH / 2, (uint32_t)btn_h,
+                              WM_COLOR_CLOSE_HOVER_BG);
+                /* Fill the bottom-right flat (only top-right needs rounding) */
+                gfx_fill_rect(&scr, (uint32_t)(bx + (int32_t)WM_BTN_WIDTH / 2),
+                              (uint32_t)(btn_y + (int32_t)WM_CORNER_RADIUS),
+                              WM_BTN_WIDTH / 2, (uint32_t)(btn_h - (int32_t)WM_CORNER_RADIUS),
                               WM_COLOR_CLOSE_HOVER_BG);
                 glyph_color = 0x00FFFFFF;  /* white glyph on red */
             }
@@ -621,7 +619,7 @@ static void draw_decorations(const struct wm_window *w)
         }
     }
 
-    /* ---- 7. Subtle window border (rounded rect outline) ---- */
+    /* ---- 6. Subtle window border (rounded rect outline) ---- */
     {
         uint32_t border_color = focused ? WM_COLOR_BORDER_ACTIVE
                                         : WM_COLOR_BORDER_INACTIVE;
