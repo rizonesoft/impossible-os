@@ -576,10 +576,10 @@ static void draw_decorations(const struct wm_window *w)
 
             /* × glyph — two diagonal lines via gfx_draw_line */
             {
-                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 12) / 2;
-                int32_t cy = btn_y + (btn_h - 12) / 2;
-                gfx_draw_line(&scr, cx, cy, cx + 11, cy + 11, 1, glyph_color);
-                gfx_draw_line(&scr, cx + 11, cy, cx, cy + 11, 1, glyph_color);
+                int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
+                int32_t cy = btn_y + (btn_h - 10) / 2;
+                gfx_draw_line(&scr, cx, cy, cx + 9, cy + 9, 1, glyph_color);
+                gfx_draw_line(&scr, cx + 9, cy, cx, cy + 9, 1, glyph_color);
             }
         }
 
