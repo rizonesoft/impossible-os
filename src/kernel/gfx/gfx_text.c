@@ -36,6 +36,7 @@
 #include "gfx.h"
 #include "stb_truetype.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/printk.h"
 /* Forward-declare string functions (provided by stb_truetype_impl.c weak symbols) */
@@ -44,6 +45,30 @@ extern void *memset(void *s, int c, gfx_size_t n);
 extern void *memcpy(void *dst, const void *src, gfx_size_t n);
 #include "kernel/types.h"
 #include "gfx_simd.h"
+
+/* ---- PMM bump allocator for glyph cache bitmaps ---- */
+
+/* All glyph bitmaps are sub-allocated from a single PMM block.
+ * 512 KB is generous for 5 slots × 5 sizes × 95 chars ≈ 2375 glyphs.
+ * Average glyph bitmap ≈ 100 bytes → ~237 KB needed; 512 KB gives headroom. */
+#define GLYPH_PMM_POOL_SIZE  (512 * 1024)
+#define GLYPH_PMM_PAGES      ((GLYPH_PMM_POOL_SIZE + 4095) / 4096)
+
+static uint8_t *glyph_pool_base = (void *)0;  /* PMM block base */
+static uint32_t glyph_pool_used = 0;           /* bump pointer offset */
+
+/* Allocate from the glyph PMM pool (bump allocator, never freed) */
+static uint8_t *glyph_pool_alloc(uint32_t size)
+{
+    uint8_t *ptr;
+    /* Align to 4 bytes for safety */
+    uint32_t aligned = (size + 3) & ~3u;
+    if (!glyph_pool_base || glyph_pool_used + aligned > GLYPH_PMM_POOL_SIZE)
+        return (void *)0;
+    ptr = glyph_pool_base + glyph_pool_used;
+    glyph_pool_used += aligned;
+    return ptr;
+}
 
 /* ---- Internal state ---- */
 
@@ -132,12 +157,12 @@ static void cache_rasterize_slot_size(int slot, int size_idx)
         stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
 
         if (bmp && width > 0 && height > 0) {
-            /* Allocate persistent copy (stb_truetype bitmap must be freed) */
-            ge->bitmap = (uint8_t *)kmalloc((uint32_t)(width * height));
+            /* Sub-allocate from PMM glyph pool (bump, never freed) */
+            ge->bitmap = glyph_pool_alloc((uint32_t)(width * height));
             if (ge->bitmap) {
                 memcpy(ge->bitmap, bmp, (gfx_size_t)(width * height));
             }
-            kfree(bmp);
+            kfree(bmp);  /* free stb_truetype's temp allocation */
         } else {
             ge->bitmap = (void *)0;
             if (bmp) kfree(bmp);
@@ -159,6 +184,8 @@ static int load_ttf_file(const char *path, uint8_t **out_data, uint32_t *out_siz
     struct vfs_node *f;
     uint32_t size;
     uint8_t *buf;
+    uint32_t pages;
+    uintptr_t phys;
 
     f = vfs_open(path, VFS_O_READ);
     if (!f)
@@ -170,16 +197,22 @@ static int load_ttf_file(const char *path, uint8_t **out_data, uint32_t *out_siz
         return -1;
     }
 
-    buf = (uint8_t *)kmalloc(size);
-    if (!buf) {
+    /* Allocate via PMM — font data is read-only after init and can be
+     * 50 KB to 3 MB.  NEVER use kmalloc for this (see rules.md). */
+    pages = (size + 4095) / 4096;
+    phys = pmm_alloc_contiguous(pages);
+    if (!phys) {
+        printk("[!!] PMM alloc failed for font %s (%u bytes, %u pages)\n",
+               path, size, pages);
         vfs_close(f);
         return -1;
     }
+    buf = (uint8_t *)phys;  /* identity-mapped */
 
     {
         int32_t bytes_read = vfs_read(f, 0, size, buf);
         if (bytes_read <= 0) {
-            kfree(buf);
+            /* PMM pages not freed — acceptable for boot-time assets */
             vfs_close(f);
             return -1;
         }
@@ -260,6 +293,21 @@ void ttf_mgr_init(void)
 
     memset(ttf_slots, 0, sizeof(ttf_slots));
     memset(glyph_cache, 0, sizeof(glyph_cache));
+
+    /* Allocate PMM block for glyph cache bitmaps (512 KB bump pool) */
+    {
+        uintptr_t pool_phys = pmm_alloc_contiguous(GLYPH_PMM_PAGES);
+        if (pool_phys) {
+            glyph_pool_base = (uint8_t *)pool_phys;
+            glyph_pool_used = 0;
+            printk("[OK] Glyph cache pool: %u KB via PMM (%u pages)\n",
+                   (uint64_t)(GLYPH_PMM_POOL_SIZE / 1024),
+                   (uint64_t)GLYPH_PMM_PAGES);
+        } else {
+            printk("[!!] Failed to allocate glyph cache pool (%u pages)\n",
+                   (uint64_t)GLYPH_PMM_PAGES);
+        }
+    }
 
     for (slot = 0; slot < FONT_MAX_SLOTS; slot++) {
         if (!ttf_filenames[slot])
