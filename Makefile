@@ -262,7 +262,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 run: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
-	GDK_BACKEND=x11 $(QEMU) \
+	$(QEMU) \
 		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
@@ -276,7 +276,6 @@ run: all
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
-		-display gtk \
 		-rtc base=localtime \
 		-no-reboot
 

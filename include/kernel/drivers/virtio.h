@@ -31,7 +31,6 @@ static inline void mmio_write64(volatile uint8_t *base, uint32_t off, uint64_t v
 /* ---- VirtIO PCI vendor/device IDs ---- */
 #define VIRTIO_PCI_VENDOR       0x1AF4
 #define VIRTIO_PCI_DEV_INPUT    0x1052  /* modern: 0x1040 + 18 (input) */
-#define VIRTIO_PCI_DEV_GPU      0x1050  /* modern: 0x1040 + 16 (GPU)   */
 
 /* ---- VirtIO PCI capability types ---- */
 #define VIRTIO_PCI_CAP_COMMON_CFG   1  /* Common configuration */
@@ -143,13 +142,6 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
  * Returns the descriptor index, or -1 if no free descriptors. */
 int virtq_add_buf(struct virtqueue *vq, void *buf, uint32_t len,
                   uint16_t flags);
-
-/* Add a 2-descriptor chain: cmd (device-readable) → resp (device-writable).
- * Used by VirtIO-GPU for command+response pairs.
- * Returns the head descriptor index, or -1 if not enough free descriptors. */
-int virtq_add_buf_chain(struct virtqueue *vq,
-                        void *cmd, uint32_t cmd_len,
-                        void *resp, uint32_t resp_len);
 
 /* Notify the device that new buffers are available in the given queue. */
 void virtq_kick(struct virtqueue *vq);

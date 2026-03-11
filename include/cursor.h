@@ -85,7 +85,3 @@ void cursor_restore(void);
 /* Get the bounding rectangle of the last drawn cursor.
  * Returns 0 if no cursor is visible, 1 otherwise. */
 int cursor_get_rect(int32_t *rx, int32_t *ry, uint32_t *rw, uint32_t *rh);
-
-/* Get the active cursor image (for GPU cursor upload).
- * Returns NULL if no cursor is available. */
-const cursor_image_t *cursor_get_active_image(void);
