@@ -83,15 +83,12 @@
 - **Status:** ✅ Done (bundled with P12)
 - `terminal_render()` gated behind `!wm_is_dragging()`
 
-### P15. Batch mouse events before compositing
-- **Impact:** 5 × 1px drags → 1 × 5px drag = 1 composite instead of 5
-- **Effort:** Small (~30 lines)
-- **Files:** `main.c`, possibly `mouse.c`
-- [ ] After reading one mouse event, drain the mouse FIFO for any additional pending events
-- [ ] Accumulate deltas: `total_dx += dx`, `total_dy += dy`; keep last button state
-- [ ] Apply accumulated delta as a single cursor move
-- [ ] Then do one composite for the batched move
-- [ ] Cap batch size (e.g., max 8 events) to avoid input lag
+### ~~P15. Batch mouse events before compositing~~
+- **Status:** ✅ Done (commit `8f9ec05`)
+- Extended mouse batching from drag-only to ALL cursor moves
+- Up to 4 coalesced reads per frame with `sti; hlt` between
+- Replaced `yield()` with `sti; hlt` at compositor loop end (instant IRQ wake)
+- Cursor-only fast path: `fb_swap_rect` on union of old+new cursor rects (existed prior)
 
 ---
 
