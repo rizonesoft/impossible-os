@@ -53,6 +53,7 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
 }
 
 & $QEMU `
+    -cpu Haswell `
     -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" `
     -drive "if=pflash,format=raw,file=$VARS_DEST" `
     -drive "id=disk0,file=$DISK,format=raw,if=none" `
