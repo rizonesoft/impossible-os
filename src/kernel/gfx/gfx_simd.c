@@ -316,13 +316,15 @@ void simd_enable_avx(void)
 {
     uint32_t eax, ebx, ecx, edx;
 
-    /* Check CPUID.01H:ECX bit 27 (OSXSAVE) and bit 28 (AVX) support */
+    /* Check CPUID.01H:ECX bit 26 (XSAVE hw support) and bit 28 (AVX).
+     * NOTE: bit 27 (OSXSAVE) only reads 1 AFTER CR4.OSXSAVE is set,
+     * so we must check bit 26 (hardware capability) instead. */
     eax = 1;
     __asm__ volatile ("cpuid"
         : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
         : "a"(eax));
 
-    if (!((ecx >> 27) & 1))  /* OSXSAVE not supported by CPU */
+    if (!((ecx >> 26) & 1))  /* XSAVE not supported by CPU */
         return;
     if (!((ecx >> 28) & 1))  /* AVX not supported by CPU */
         return;
