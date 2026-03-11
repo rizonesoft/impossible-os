@@ -6,30 +6,14 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
-
-### P2. Texture atlas for glyph cache
-- **Impact:** Better CPU cache locality, fewer pointer indirections
-- **Effort:** Medium (~100 lines)
-- **Files:** `gfx_text.c`, `font_mgr.h`
-- [ ] Replace per-glyph bitmaps with one atlas image per (slot, size)
-- [ ] Use `stbtt_BakeFontBitmap()` to pack all 95 ASCII chars into a single bitmap
-- [ ] Store atlas as a single PMM allocation per (slot, size) — 5 slots × 5 sizes = 25 atlases
-- [ ] Change `glyph_entry_t` to store atlas X/Y coordinates instead of `bitmap` pointer
-- [ ] Update `ttf_draw_string()` to blit from atlas region instead of standalone bitmap
-- [ ] Measure before/after draw time with FPS counter
-
-
-### P4. LRU cache for non-ASCII fallback glyphs
-- **Impact:** Prevents frame drops when displaying `é`, `ñ`, Unicode, CJK
-- **Effort:** Medium (~80 lines)
-- **Files:** `gfx_text.c`, `font_mgr.h`
-- **Depends on:** Phase 10 (Internationalization) for full benefit
-- [ ] Define `struct lru_glyph { uint32_t codepoint; int slot; int px; uint8_t *bitmap; ... }`
-- [ ] Allocate a fixed LRU ring buffer (128 entries) from PMM
-- [ ] On cache miss for non-ASCII: check LRU before calling `stbtt_GetCodepointBitmap`
-- [ ] On LRU hit: use cached bitmap directly (no FPU math)
-- [ ] On LRU miss: rasterize, store in LRU (evict oldest), draw
-- [ ] Save/restore FPU state only on actual rasterization (not LRU hit)
+### ~~P4. LRU cache for non-ASCII fallback glyphs~~
+- **Status:** ✅ Done
+- `struct lru_glyph` with hash key, metrics, inline bitmap (512 bytes max)
+- 128-entry ring buffer allocated from PMM in `ttf_mgr_init()`
+- LRU checked before `stbtt_GetCodepointBitmap` on non-ASCII codepoints
+- LRU hit: blit directly from cached bitmap (no FPU save/restore)
+- LRU miss: rasterize → insert into ring (evict oldest) → blit → cache for next time
+- FPU state saved only on actual rasterization, deferred within `ttf_draw_string`
 
 ---
 
