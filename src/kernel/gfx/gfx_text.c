@@ -57,6 +57,70 @@ extern void *memcpy(void *dst, const void *src, gfx_size_t n);
 
 static glyph_atlas_t glyph_atlases[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES];
 
+/* ---- LRU cache for non-ASCII fallback glyphs ---- */
+
+/* Ring buffer cache for glyphs outside ASCII 32-126 (e.g. é, ñ, Unicode).
+ * Avoids per-frame stbtt_GetCodepointBitmap + FPU save/restore overhead.
+ * Oversized glyphs (bitmap > LRU_BMP_MAX) bypass the cache. */
+#define LRU_SIZE       128
+#define LRU_BMP_MAX    512   /* max inline bitmap bytes per entry */
+
+typedef struct lru_glyph {
+    uint32_t key;           /* hash of (codepoint, slot, px_size), 0 = empty */
+    int16_t  width, height;
+    int16_t  xoff, yoff;
+    int16_t  advance;
+    int16_t  _pad;
+    uint8_t  bitmap[LRU_BMP_MAX];
+} lru_glyph_t;
+
+static lru_glyph_t *lru_cache;  /* PMM-allocated array of LRU_SIZE entries */
+static uint32_t lru_next;        /* ring pointer for next eviction */
+
+/* Hash (codepoint, slot, px_size) into a non-zero key */
+static uint32_t lru_key(int codepoint, int slot, int px_size)
+{
+    uint32_t h = (uint32_t)codepoint * 2654435761u;
+    h ^= (uint32_t)slot * 2246822519u;
+    h ^= (uint32_t)px_size * 3266489917u;
+    if (h == 0) h = 1;  /* 0 = empty sentinel */
+    return h;
+}
+
+/* Search LRU cache for a matching entry. O(n) linear scan is fine for 128 entries. */
+static lru_glyph_t *lru_find(uint32_t key)
+{
+    uint32_t i;
+    if (!lru_cache) return (void *)0;
+    for (i = 0; i < LRU_SIZE; i++) {
+        if (lru_cache[i].key == key)
+            return &lru_cache[i];
+    }
+    return (void *)0;
+}
+
+/* Insert a glyph into the LRU cache (evicts oldest via ring pointer).
+ * Returns the entry, or NULL if bitmap too large. */
+static lru_glyph_t *lru_insert(uint32_t key, const uint8_t *bmp,
+                                 int w, int h, int xoff, int yoff, int advance)
+{
+    lru_glyph_t *ent;
+    uint32_t bmp_bytes = (uint32_t)(w * h);
+    if (!lru_cache || bmp_bytes > LRU_BMP_MAX)
+        return (void *)0;
+    ent = &lru_cache[lru_next % LRU_SIZE];
+    lru_next++;
+    ent->key     = key;
+    ent->width   = (int16_t)w;
+    ent->height  = (int16_t)h;
+    ent->xoff    = (int16_t)xoff;
+    ent->yoff    = (int16_t)yoff;
+    ent->advance = (int16_t)advance;
+    ent->_pad    = 0;
+    memcpy(ent->bitmap, bmp, bmp_bytes);
+    return ent;
+}
+
 /* ---- Internal state ---- */
 
 /* We store stbtt_fontinfo inline (it's a small struct) */
@@ -302,6 +366,25 @@ void ttf_mgr_init(void)
      * inside cache_rasterize_slot_size via PMM) */
     memset(glyph_atlases, 0, sizeof(glyph_atlases));
 
+    /* Allocate LRU cache for non-ASCII fallback glyphs */
+    {
+        uint32_t lru_bytes = LRU_SIZE * sizeof(lru_glyph_t);
+        uint32_t lru_pages = (lru_bytes + 4095) / 4096;
+        uintptr_t lru_phys = pmm_alloc_contiguous(lru_pages);
+        if (lru_phys) {
+            lru_cache = (lru_glyph_t *)lru_phys;
+            memset(lru_cache, 0, lru_bytes);
+            lru_next = 0;
+            printk("[OK] LRU glyph cache: %u entries (%u KB, %u pages)\n",
+                   (uint64_t)LRU_SIZE,
+                   (uint64_t)(lru_bytes / 1024),
+                   (uint64_t)lru_pages);
+        } else {
+            printk("[!!] Failed to allocate LRU glyph cache\n");
+            lru_cache = (void *)0;
+        }
+    }
+
     for (slot = 0; slot < FONT_MAX_SLOTS; slot++) {
         if (!ttf_filenames[slot])
             continue;
@@ -474,49 +557,77 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
         return ge->advance;
     }
 
-    /* Fallback: uncached path via stb_truetype */
+    /* Fallback: check LRU cache, then stb_truetype */
     {
         ttf_internal_t *fi = (ttf_internal_t *)f;
-        int width, height, xoff, yoff;
-        int advance, lsb;
-        unsigned char *bitmap;
-        fxsave_area_t fpu_state __attribute__((aligned(16)));
-
         uint32_t cr = GFX_RED(color);
         uint32_t cg = GFX_GREEN(color);
         uint32_t cb = GFX_BLUE(color);
+        uint32_t lk = lru_key(codepoint, slot, f->pixel_size);
+        lru_glyph_t *lhit = lru_find(lk);
 
-        simd_save_state(&fpu_state);
-
-        bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
-                                          codepoint, &width, &height, &xoff, &yoff);
-        stbtt_GetCodepointHMetrics(&fi->info, codepoint, &advance, &lsb);
-
-        simd_restore_state(&fpu_state);
-
-        if (bitmap) {
-            int32_t base_y = y + (int32_t)(f->scale * (float)f->ascent) + yoff;
-            int row, col;
-
-            for (row = 0; row < height; row++) {
-                int32_t py = base_y + row;
-                if (py < 0 || (uint32_t)py >= s->height) continue;
-                for (col = 0; col < width; col++) {
-                    int32_t px = x + xoff + col;
-                    uint32_t alpha;
-                    if (px < 0 || (uint32_t)px >= s->width) continue;
-                    alpha = bitmap[row * width + col];
-                    if (alpha == 0) continue;
-                    if (alpha == 255)
-                        gfx_put_pixel(s, px, py, color);
-                    else
-                        gfx_blend_pixel(s, px, py, GFX_RGBA(cr, cg, cb, alpha));
-                }
-            }
-            kfree(bitmap);
+        if (lhit) {
+            /* LRU hit — blit directly, no FPU needed */
+            int32_t base_y = y + cached_ascent[slot][cache_size_index(f->pixel_size) >= 0
+                ? cache_size_index(f->pixel_size) : 0];
+            glyph_entry_t tmp_ge;
+            glyph_atlas_t tmp_atlas;
+            tmp_ge.atlas_x = 0;
+            tmp_ge.atlas_y = 0;
+            tmp_ge.width  = lhit->width;
+            tmp_ge.height = lhit->height;
+            tmp_ge.xoff   = lhit->xoff;
+            tmp_ge.yoff   = lhit->yoff;
+            tmp_atlas.pixels = lhit->bitmap;
+            tmp_atlas.width  = (uint16_t)lhit->width;
+            tmp_atlas.height = (uint16_t)lhit->height;
+            blit_cached_glyph(s, &tmp_atlas, &tmp_ge, x, base_y, cr, cg, cb, color);
+            return lhit->advance;
         }
 
-        return (int)(f->scale * (float)advance);
+        /* LRU miss — rasterize via stb_truetype */
+        {
+            int width, height, xoff, yoff;
+            int advance, lsb;
+            unsigned char *bitmap;
+            fxsave_area_t fpu_state __attribute__((aligned(16)));
+
+            simd_save_state(&fpu_state);
+            bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
+                                              codepoint, &width, &height, &xoff, &yoff);
+            stbtt_GetCodepointHMetrics(&fi->info, codepoint, &advance, &lsb);
+            simd_restore_state(&fpu_state);
+
+            if (bitmap) {
+                int adv_px = (int)(f->scale * (float)advance);
+                /* Try to cache in LRU for next time */
+                lru_insert(lk, bitmap, width, height, xoff, yoff, adv_px);
+
+                /* Blit the rasterized glyph */
+                {
+                    int32_t base_y = y + (int32_t)(f->scale * (float)f->ascent) + yoff;
+                    int row, col;
+                    for (row = 0; row < height; row++) {
+                        int32_t py = base_y + row;
+                        if (py < 0 || (uint32_t)py >= s->height) continue;
+                        for (col = 0; col < width; col++) {
+                            int32_t px = x + xoff + col;
+                            uint32_t alpha;
+                            if (px < 0 || (uint32_t)px >= s->width) continue;
+                            alpha = bitmap[row * width + col];
+                            if (alpha == 0) continue;
+                            if (alpha == 255)
+                                gfx_put_pixel(s, px, py, color);
+                            else
+                                gfx_blend_pixel(s, px, py, GFX_RGBA(cr, cg, cb, alpha));
+                        }
+                    }
+                }
+                kfree(bitmap);
+                return adv_px;
+            }
+            return (int)(f->scale * (float)advance);
+        }
     }
 }
 
@@ -556,37 +667,68 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
                 }
                 cursor_x += ge->advance;
             } else {
-                /* Non-ASCII: fall through to stb_truetype */
-                int width, height, xoff, yoff;
-                int advance, lsb;
-                unsigned char *bitmap;
+                /* Non-ASCII: check LRU, then fall through to stb_truetype */
+                {
+                    uint32_t lk = lru_key(cp, slot, f->pixel_size);
+                    lru_glyph_t *lhit = lru_find(lk);
 
-                if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
-                bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
-                                                  cp, &width, &height, &xoff, &yoff);
-                stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
+                    if (lhit) {
+                        /* LRU hit — blit from cache (no FPU needed) */
+                        glyph_entry_t tmp_ge;
+                        glyph_atlas_t tmp_atlas;
+                        tmp_ge.atlas_x = 0;
+                        tmp_ge.atlas_y = 0;
+                        tmp_ge.width  = lhit->width;
+                        tmp_ge.height = lhit->height;
+                        tmp_ge.xoff   = lhit->xoff;
+                        tmp_ge.yoff   = lhit->yoff;
+                        tmp_atlas.pixels = lhit->bitmap;
+                        tmp_atlas.width  = (uint16_t)lhit->width;
+                        tmp_atlas.height = (uint16_t)lhit->height;
+                        blit_cached_glyph(s, &tmp_atlas, &tmp_ge, cursor_x, base_y,
+                                          cr, cg, cb, color);
+                        cursor_x += lhit->advance;
+                    } else {
+                        /* LRU miss — rasterize */
+                        int width, height, xoff, yoff;
+                        int advance, lsb;
+                        unsigned char *bitmap;
 
-                if (bitmap) {
-                    int32_t fb_y = y + (int32_t)(f->scale * (float)f->ascent) + yoff;
-                    int row, col;
-                    for (row = 0; row < height; row++) {
-                        int32_t py = fb_y + row;
-                        if (py < 0 || (uint32_t)py >= s->height) continue;
-                        for (col = 0; col < width; col++) {
-                            int32_t px = cursor_x + xoff + col;
-                            uint32_t alpha;
-                            if (px < 0 || (uint32_t)px >= s->width) continue;
-                            alpha = bitmap[row * width + col];
-                            if (alpha == 0) continue;
-                            if (alpha == 255)
-                                gfx_put_pixel(s, px, py, color);
-                            else
-                                gfx_blend_pixel(s, px, py, GFX_RGBA(cr, cg, cb, alpha));
+                        if (!fpu_saved) { simd_save_state(&fpu_state); fpu_saved = 1; }
+                        bitmap = stbtt_GetCodepointBitmap(&fi->info, 0, f->scale,
+                                                          cp, &width, &height, &xoff, &yoff);
+                        stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
+
+                        if (bitmap) {
+                            int adv_px = (int)(f->scale * (float)advance);
+                            lru_insert(lk, bitmap, width, height, xoff, yoff, adv_px);
+
+                            {
+                                int32_t fb_y = y + (int32_t)(f->scale * (float)f->ascent) + yoff;
+                                int row, col;
+                                for (row = 0; row < height; row++) {
+                                    int32_t py = fb_y + row;
+                                    if (py < 0 || (uint32_t)py >= s->height) continue;
+                                    for (col = 0; col < width; col++) {
+                                        int32_t px = cursor_x + xoff + col;
+                                        uint32_t alpha;
+                                        if (px < 0 || (uint32_t)px >= s->width) continue;
+                                        alpha = bitmap[row * width + col];
+                                        if (alpha == 0) continue;
+                                        if (alpha == 255)
+                                            gfx_put_pixel(s, px, py, color);
+                                        else
+                                            gfx_blend_pixel(s, px, py, GFX_RGBA(cr, cg, cb, alpha));
+                                    }
+                                }
+                            }
+                            kfree(bitmap);
+                            cursor_x += adv_px;
+                        } else {
+                            cursor_x += (int32_t)(f->scale * (float)advance);
                         }
                     }
-                    kfree(bitmap);
                 }
-                cursor_x += (int32_t)(f->scale * (float)advance);
             }
 
             /* Kerning with next character */
