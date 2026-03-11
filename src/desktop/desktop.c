@@ -640,13 +640,66 @@ void desktop_draw_start_menu(void)
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                 SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 12);
 
+    /* ---- Luminosity boost — lift blurred dark pixels so acrylic is visible.
+     *  On dark wallpapers, blur(near-black) + dark tint = still black.
+     *  We add a small brightness offset to every pixel in the region so
+     *  the frosted glass panel is visually distinct from a flat fill. ---- */
+    {
+        int32_t r, c;
+        int32_t ax0 = menu_x > 0 ? menu_x : 0;
+        int32_t ay0 = menu_y > 0 ? menu_y : 0;
+        int32_t ax1 = menu_x + (int32_t)SM_TOTAL_W;
+        int32_t ay1 = menu_y + (int32_t)menu_h;
+        if (ax1 > (int32_t)fb_get_width())  ax1 = (int32_t)fb_get_width();
+        if (ay1 > (int32_t)fb_get_height()) ay1 = (int32_t)fb_get_height();
+        for (r = ay0; r < ay1; r++) {
+            uint32_t *dp = scr.pixels + (uint32_t)r * scr.stride;
+            for (c = ax0; c < ax1; c++) {
+                uint32_t p = dp[c];
+                uint32_t pr = ((p >> 16) & 0xFF) + 0x16;
+                uint32_t pg = ((p >>  8) & 0xFF) + 0x14;
+                uint32_t pb = ( p        & 0xFF) + 0x18;
+                if (pr > 255) pr = 255;
+                if (pg > 255) pg = 255;
+                if (pb > 255) pb = 255;
+                dp[c] = (0xFFu << 24) | (pr << 16) | (pg << 8) | pb;
+            }
+        }
+    }
+
     /* ---- Drop shadow (drawn around the now-tinted acrylic region) ---- */
     gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                      12, 0, 4, SM_SHADOW_COLOR);
 
-    /* ---- Right column overlay (slightly lighter) ---- */
-    gfx_fill_rect(&scr, right_x, menu_y,
-                   SM_RIGHT_W, menu_h, SM_BG_RIGHT);
+    /* ---- Right column overlay — alpha blended to preserve acrylic ---- */
+    {
+        int32_t r, c;
+        int32_t rx0 = right_x > 0 ? right_x : 0;
+        int32_t ry0 = menu_y > 0 ? menu_y : 0;
+        int32_t rx1 = right_x + (int32_t)SM_RIGHT_W;
+        int32_t ry1 = menu_y + (int32_t)menu_h;
+        if (rx1 > (int32_t)fb_get_width())  rx1 = (int32_t)fb_get_width();
+        if (ry1 > (int32_t)fb_get_height()) ry1 = (int32_t)fb_get_height();
+        for (r = ry0; r < ry1; r++) {
+            uint32_t *dp = scr.pixels + (uint32_t)r * scr.stride;
+            for (c = rx0; c < rx1; c++) {
+                /* Blend SM_BG_RIGHT over existing acrylic pixel */
+                uint32_t d = dp[c];
+                uint32_t sa = (SM_BG_RIGHT >> 24) & 0xFF;
+                uint32_t ia = 255 - sa;
+                uint32_t dr = ((d >> 16) & 0xFF);
+                uint32_t dg = ((d >>  8) & 0xFF);
+                uint32_t db = ( d        & 0xFF);
+                uint32_t sr = (SM_BG_RIGHT >> 16) & 0xFF;
+                uint32_t sg = (SM_BG_RIGHT >>  8) & 0xFF;
+                uint32_t sb = (SM_BG_RIGHT      ) & 0xFF;
+                uint32_t rr = (sr * sa + dr * ia + 127) / 255;
+                uint32_t rg = (sg * sa + dg * ia + 127) / 255;
+                uint32_t rb = (sb * sa + db * ia + 127) / 255;
+                dp[c] = (0xFFu << 24) | (rr << 16) | (rg << 8) | rb;
+            }
+        }
+    }
 
     /* ---- Column divider ---- */
     gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
