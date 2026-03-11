@@ -46,7 +46,7 @@ static uint8_t   start_icon_loaded;
 #define SM_PAD             10   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
 #define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
-#define SM_ACRYLIC_OP      60   /* acrylic opacity — low = wallpaper shows through */
+#define SM_ACRYLIC_OP      200  /* acrylic opacity — matches taskbar (78% tint) */
 #define SM_BG_RIGHT        0xE6282828  /* right column (slightly lighter gray) */
 #define SM_DIVIDER         0xFF3A3A3A  /* column divider              */
 #define SM_SEPARATOR       0xFF353535  /* thin separator line         */
@@ -634,30 +634,26 @@ void desktop_draw_start_menu(void)
     gfx_surface_init(&scr, fb_get_backbuffer(),
                      fb_get_width(), fb_get_height(), fb_get_stride());
 
-    /* ---- Acrylic: blur + tint the ENTIRE menu region ----
-     * Low tint opacity lets the blurred wallpaper colors show through
-     * for a visible frosted glass effect. */
+    /* ---- Acrylic: blur + tint (same as taskbar) ---- */
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 10);
+                SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 3);
 
-    /* ---- Right column: second acrylic pass — slightly more opaque ---- */
+    /* ---- Drop shadow (AFTER acrylic so it doesn't darken blur input) ---- */
+    gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                     12, 0, 4, SM_SHADOW_COLOR);
+
+    /* ---- Right column: slightly more opaque second pass ---- */
     gfx_acrylic(&scr, right_x, menu_y, SM_RIGHT_W, menu_h,
-                0xFF282828, 40, 0);  /* subtle darkening, preserves acrylic */
+                0xFF282828, 40, 0);
 
     /* ---- Column divider (1px) ---- */
     gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
                    1, menu_h - SM_PAD * 2, SM_DIVIDER);
 
-    /* ---- Border outline — MANUAL 1px edges ----
-     * DO NOT use gfx_draw_rounded_rect here!  It internally calls
-     * gfx_fill_rounded_rect which fills the ENTIRE rect with the
-     * border color, completely wiping out the acrylic effect. */
-    gfx_fill_rect(&scr, menu_x, menu_y, SM_TOTAL_W, 1, SM_DIVIDER);  /* top */
-    gfx_fill_rect(&scr, menu_x, menu_y + (int32_t)menu_h - 1,
-                   SM_TOTAL_W, 1, SM_DIVIDER);                        /* bottom */
-    gfx_fill_rect(&scr, menu_x, menu_y, 1, menu_h, SM_DIVIDER);      /* left */
-    gfx_fill_rect(&scr, menu_x + (int32_t)SM_TOTAL_W - 1, menu_y,
-                   1, menu_h, SM_DIVIDER);                             /* right */
+    /* ---- Rounded border (1px outline — gfx_draw_rounded_rect is now
+     *       properly fixed to NOT fill the interior) ---- */
+    gfx_draw_rounded_rect(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                           SM_RADIUS, 1, SM_DIVIDER);
 
     /* ================================================================
      *  LEFT COLUMN — Search bar + alphabetical pinned programs

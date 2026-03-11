@@ -305,14 +305,16 @@ void gfx_fill_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
     }
 }
 
-/* ---- Outline rounded rectangle ---- */
+/* ---- Outline rounded rectangle ----
+ * Draws only the border edges + rounded corners.
+ * DOES NOT fill the interior — safe to use on top of acrylic. */
 
 void gfx_draw_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
                             uint32_t w, uint32_t h, uint32_t radius,
                             uint32_t thickness, gfx_color_t color)
 {
-    uint32_t t;
-    uint32_t r;
+    int32_t row;
+    uint32_t r, t;
 
     if (w == 0 || h == 0 || thickness == 0)
         return;
@@ -324,40 +326,53 @@ void gfx_draw_rounded_rect(gfx_surface_t *s, int32_t x, int32_t y,
     if (t > w / 2) t = w / 2;
     if (t > h / 2) t = h / 2;
 
-    /* Draw outer rounded rect, then "erase" inner with background.
-     * For a proper outline we draw the outer shape first, then
-     * punch out the inner. Since we don't have XOR or stencil,
-     * we use the subtraction approach via two filled shapes. */
+    for (row = 0; row < (int32_t)h; row++) {
+        int32_t outer_x0 = x;
+        int32_t outer_x1 = x + (int32_t)w;
 
-    /* Outer fill */
-    gfx_fill_rounded_rect(s, x, y, w, h, r, color);
+        /* Compute outer edge inset for rounded corners */
+        if ((uint32_t)row < r) {
+            uint32_t r2 = r * 2;
+            uint32_t dy2 = r2 - (uint32_t)row * 2 - 1;
+            uint32_t r2_sq = r2 * r2;
+            uint32_t dx2_sq = (r2_sq > dy2 * dy2) ? (r2_sq - dy2 * dy2) : 0;
+            uint32_t dx2 = isqrt(dx2_sq);
+            uint32_t inset = r - dx2 / 2;
+            outer_x0 = x + (int32_t)inset;
+            outer_x1 = x + (int32_t)(w - inset);
+        } else if ((uint32_t)row >= h - r) {
+            uint32_t bot_row = (uint32_t)row - (h - r);
+            uint32_t r2 = r * 2;
+            uint32_t dy2 = bot_row * 2 + 1;
+            uint32_t r2_sq = r2 * r2;
+            uint32_t dx2_sq = (r2_sq > dy2 * dy2) ? (r2_sq - dy2 * dy2) : 0;
+            uint32_t dx2 = isqrt(dx2_sq);
+            uint32_t inset = r - dx2 / 2;
+            outer_x0 = x + (int32_t)inset;
+            outer_x1 = x + (int32_t)(w - inset);
+        }
 
-    /* Inner clear (transparent = punch hole) */
-    if (w > 2 * t && h > 2 * t) {
-        uint32_t inner_r = (r > t) ? (r - t) : 0;
-        /* We need to fill the inner area with whatever was behind.
-         * Since we can't read-back easily in a generic way, we draw
-         * the border edges individually instead. */
-
-        /* Simpler approach: draw 4 thick edges + 4 quarter-circle corners */
-        /* Top edge (between corners) */
-        gfx_fill_rect(s, x + (int32_t)r, y, w - 2 * r, t, color);
-        /* Bottom edge */
-        gfx_fill_rect(s, x + (int32_t)r, y + (int32_t)(h - t), w - 2 * r, t, color);
-        /* Left edge */
-        gfx_fill_rect(s, x, y + (int32_t)r, t, h - 2 * r, color);
-        /* Right edge */
-        gfx_fill_rect(s, x + (int32_t)(w - t), y + (int32_t)r, t, h - 2 * r, color);
-
-        /* Corner arcs: draw the rounded corner regions */
-        /* The outer fill already drew them; we just need to clear the inside.
-         * But since we already did the full fill, let's clear the center. */
-        {
-            gfx_color_t clear = GFX_RGBA(0, 0, 0, 0);
-            (void)clear;
-            (void)inner_r;
-            /* The outer fill approach works visually — keep it simple for now.
-             * A more precise outline renderer can be added in Phase 02 if needed. */
+        /* Top or bottom edge rows: fill entire span */
+        if ((uint32_t)row < t || (uint32_t)row >= h - t) {
+            if (outer_x0 < outer_x1)
+                gfx_fill_rect(s, outer_x0, y + row,
+                               (uint32_t)(outer_x1 - outer_x0), 1, color);
+        } else {
+            /* Middle rows: draw only left and right edge strips */
+            if (outer_x0 < outer_x1) {
+                /* Left edge */
+                int32_t left_end = outer_x0 + (int32_t)t;
+                if (left_end > outer_x1) left_end = outer_x1;
+                gfx_fill_rect(s, outer_x0, y + row,
+                               (uint32_t)(left_end - outer_x0), 1, color);
+                /* Right edge */
+                int32_t right_start = outer_x1 - (int32_t)t;
+                if (right_start < outer_x0) right_start = outer_x0;
+                if (right_start < left_end) right_start = left_end;
+                if (right_start < outer_x1)
+                    gfx_fill_rect(s, right_start, y + row,
+                                   (uint32_t)(outer_x1 - right_start), 1, color);
+            }
         }
     }
 }
