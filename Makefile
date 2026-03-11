@@ -272,6 +272,7 @@ run: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
+		-device VGA,xres=1280,yres=720 \
 		-device virtio-gpu-pci \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \

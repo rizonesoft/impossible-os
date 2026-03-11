@@ -217,10 +217,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     gdt_init();
 
     /* Step 6: Load IDT with exception and IRQ handlers */
+    printk("[DBG] Before IDT init\n");
     idt_init();
+    printk("[DBG] After IDT init\n");
 
     /* Step 7: Remap PIC so hardware IRQs don't conflict with CPU exceptions */
     pic_init();
+    printk("[DBG] After PIC init\n");
 
     /* Step 8: Start PIT system timer */
     pit_init();
