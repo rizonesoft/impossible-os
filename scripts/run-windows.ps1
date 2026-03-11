@@ -63,7 +63,7 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
     -serial stdio `
     -vga none `
     -device VGA,xres=1280,yres=720 `
-    -device virtio-gpu-pci `
+    -device virtio-gpu-pci,xres=1280,yres=720 `
     -device rtl8139,netdev=net0 `
     -netdev user,id=net0 `
     -device virtio-tablet-pci `
