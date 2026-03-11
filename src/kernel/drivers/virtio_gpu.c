@@ -35,7 +35,7 @@ static struct virtqueue cursorq;    /* VQ 1: cursor commands */
 static uint8_t  gpu_irq;
 static uint8_t  gpu_active;
 
-/* Display dimensions (from GET_DISPLAY_INFO) */
+/* Display dimensions (from framebuffer) */
 static uint32_t disp_width;
 static uint32_t disp_height;
 
@@ -212,16 +212,16 @@ int virtio_gpu_init(void)
         return -1;
     }
 
-    /* Register IRQ */
-    idt_register_handler(PIC1_OFFSET + gpu_irq, virtio_gpu_irq);
-    pic_unmask_irq(gpu_irq);
+    /* NOTE: Do NOT register IRQ handler yet — the polling-based init
+     * commands below would race with the IRQ handler that drains
+     * the used ring.  Register after all init commands are done. */
 
     /* Set DRIVER_OK — device is live */
     virtio_set_status(&gpu_pci,
                       VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER |
                       VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
-    /* ---- Get display info ---- */
+    /* ---- Get display info (verify GPU is responsive) ---- */
     {
         struct virtio_gpu_ctrl_hdr get_info;
         struct virtio_gpu_resp_display_info display_info;
@@ -234,19 +234,17 @@ int virtio_gpu_init(void)
         resp = gpu_ctrl_send_resp(&get_info, sizeof(get_info),
                                   &display_info, sizeof(display_info));
         if (resp != VIRTIO_GPU_RESP_OK_DISPLAY_INFO) {
-            printk("[VIRTIO-GPU] GET_DISPLAY_INFO failed (resp=0x%x)\n",
+            printk("[VIRTIO-GPU] GET_DISPLAY_INFO failed (0x%x)\n",
                    (uint64_t)resp);
             return -1;
         }
 
-        disp_width  = display_info.pmodes[0].r.width;
-        disp_height = display_info.pmodes[0].r.height;
-
-        if (disp_width == 0 || disp_height == 0) {
-            /* Fallback to framebuffer dimensions */
-            disp_width  = fb_get_width();
-            disp_height = fb_get_height();
-        }
+        /* With virtio-vga, the VGA compat layer provides the actual
+         * framebuffer resolution.  The GPU scanout may report a
+         * different default (e.g. 640x480).  Always use the
+         * framebuffer dimensions for consistency. */
+        disp_width  = fb_get_width();
+        disp_height = fb_get_height();
 
         printk("[VIRTIO-GPU] Display: %ux%u\n",
                (uint64_t)disp_width, (uint64_t)disp_height);
@@ -329,6 +327,10 @@ int virtio_gpu_init(void)
             /* Non-fatal: cursor won't work but display will */
         }
     }
+
+    /* Now safe to register IRQ handler (all polling-based init done) */
+    idt_register_handler(PIC1_OFFSET + gpu_irq, virtio_gpu_irq);
+    pic_unmask_irq(gpu_irq);
 
     gpu_active = 1;
     printk("[OK] VirtIO-GPU initialized (%ux%u, hw cursor)\n",
