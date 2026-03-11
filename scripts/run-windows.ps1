@@ -62,7 +62,8 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
     -m 2G `
     -serial stdio `
     -vga none `
-    -device virtio-vga,xres=1280,yres=720 `
+    -device VGA,xres=1280,yres=720 `
+    -device virtio-gpu-pci,max_outputs=0 `
     -device rtl8139,netdev=net0 `
     -netdev user,id=net0 `
     -device virtio-tablet-pci `
