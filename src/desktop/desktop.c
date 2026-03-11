@@ -648,9 +648,16 @@ void desktop_draw_start_menu(void)
     gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
                    1, menu_h - SM_PAD * 2, SM_DIVIDER);
 
-    /* ---- Rounded border (1px outline only) ---- */
-    gfx_draw_rounded_rect(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                           SM_RADIUS, 1, SM_DIVIDER);
+    /* ---- Border outline — MANUAL 1px edges ----
+     * DO NOT use gfx_draw_rounded_rect here!  It internally calls
+     * gfx_fill_rounded_rect which fills the ENTIRE rect with the
+     * border color, completely wiping out the acrylic effect. */
+    gfx_fill_rect(&scr, menu_x, menu_y, SM_TOTAL_W, 1, SM_DIVIDER);  /* top */
+    gfx_fill_rect(&scr, menu_x, menu_y + (int32_t)menu_h - 1,
+                   SM_TOTAL_W, 1, SM_DIVIDER);                        /* bottom */
+    gfx_fill_rect(&scr, menu_x, menu_y, 1, menu_h, SM_DIVIDER);      /* left */
+    gfx_fill_rect(&scr, menu_x + (int32_t)SM_TOTAL_W - 1, menu_y,
+                   1, menu_h, SM_DIVIDER);                             /* right */
 
     /* ================================================================
      *  LEFT COLUMN — Search bar + alphabetical pinned programs
