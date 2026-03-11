@@ -168,10 +168,10 @@ void gfx_mica(gfx_surface_t *s, int32_t x, int32_t y,
             g = (g * 51 + gray * 204) / 255;
             b = (b * 51 + gray * 204) / 255;
 
-            /* Step 3: Tint with theme color (50% blend) */
-            r = (r + tint_r) / 2;
-            g = (g + tint_g) / 2;
-            b = (b + tint_b) / 2;
+            /* Step 3: Tint with theme color (80% tint, 20% wallpaper hint) */
+            r = (r * 51 + tint_r * 204) / 255;   /* 20% desaturated wp + 80% tint */
+            g = (g * 51 + tint_g * 204) / 255;
+            b = (b * 51 + tint_b * 204) / 255;
 
             dp[col] = (0xFFu << 24) | (r << 16) | (g << 8) | b;
         }

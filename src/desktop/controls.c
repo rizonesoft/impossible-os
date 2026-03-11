@@ -1050,3 +1050,23 @@ void ctrl_set_focus(int window_handle, int ctrl_id)
 
     wm_mark_dirty();
 }
+
+void ctrl_set_enabled(int window_handle, int ctrl_id, int enabled)
+{
+    struct ctrl_window *cw = get_ctrl_window(window_handle);
+    int i;
+
+    if (!cw)
+        return;
+
+    for (i = 0; i < cw->count; i++) {
+        if (cw->controls[i].id == ctrl_id) {
+            if (enabled)
+                cw->controls[i].state |= CTRL_STATE_ENABLED;
+            else
+                cw->controls[i].state &= ~CTRL_STATE_ENABLED;
+            wm_mark_dirty();
+            return;
+        }
+    }
+}

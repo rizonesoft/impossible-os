@@ -6,15 +6,6 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
----
-
-## Font System (`src/kernel/gfx/gfx_text.c`)
-
-### ~~P1. Fix glyph cache page granularity trap~~
-- **Status:** ✅ Done (bump allocator, commit `852b27e`+)
-- Single 512 KB PMM block, sub-allocated with `glyph_pool_alloc()`
-
----
 
 ### P2. Texture atlas for glyph cache
 - **Impact:** Better CPU cache locality, fewer pointer indirections
@@ -27,15 +18,6 @@
 - [ ] Update `ttf_draw_string()` to blit from atlas region instead of standalone bitmap
 - [ ] Measure before/after draw time with FPS counter
 
----
-
-### P3. Lazy (just-in-time) glyph rasterization
-- **Status:** ⏪ Reverted — caused font rendering issues
-- **Impact:** Faster boot, less wasted memory for unused font sizes
-- **Effort:** Small (~50 lines)
-- **Note:** Needs investigation — JIT rasterization during draw calls may corrupt FPU state or miss cache entries. Revisit after stabilizing other gfx changes.
-
----
 
 ### P4. LRU cache for non-ASCII fallback glyphs
 - **Impact:** Prevents frame drops when displaying `é`, `ñ`, Unicode, CJK
@@ -158,3 +140,47 @@
 - [ ] Apply accumulated delta as a single cursor move
 - [ ] Then do one composite for the batched move
 - [ ] Cap batch size (e.g., max 8 events) to avoid input lag
+
+---
+
+## GUI Performance & GPU Acceleration
+
+### P16. Cached acrylic for dialog windows
+- **Impact:** Enables frosted glass dialogs without per-frame blur (currently too slow → jerkiness)
+- **Effort:** Medium (~150 lines)
+- **Files:** `wm.c`, `wm.h`, `gallery.c`
+- [ ] Add `WM_FLAG_DIALOG` flag to `wm.h`
+- [ ] On dialog open: snapshot wallpaper region behind window into a PMM buffer
+- [ ] Apply `gfx_acrylic()` blur ONCE to the snapshot → store as cached texture
+- [ ] Each frame: fast-blit cached acrylic texture instead of recomputing blur
+- [ ] On dialog move: re-snapshot + re-blur (only on drag end, not mid-drag)
+- [ ] On wallpaper change: invalidate cache and re-blur
+- [ ] Dialog title bar: close-only (no min/max), Mica Alt tint
+- [ ] Alpha-aware `blit_client` for dialog windows (transparent pixels show acrylic)
+
+### P17. AVX2 SIMD for blur and alpha blending
+- **Impact:** 4–8× speedup for acrylic blur, compositor blends, glyph rendering
+- **Effort:** Medium (~200 lines)
+- **Files:** `gfx_simd.c`, `gfx_effects.c`, possibly `gfx_text.c`
+- [ ] Detect AVX2 support via CPUID at boot
+- [ ] Implement `gfx_blur_box_avx2()` — process 8 pixels per iteration
+- [ ] Implement `gfx_blend_row_avx2()` — SIMD alpha blend for compositor
+- [ ] Add AVX2 path to `blit_cached_glyph()` for text rendering
+- [ ] Fallback to existing SSE2/scalar paths on older CPUs
+- [ ] Benchmark: measure FPS before/after on acrylic dialog + text-heavy windows
+
+### P18. VirtIO-GPU 2D driver
+- **Impact:** Hardware-accelerated rect fills, blits, page flips in QEMU
+- **Effort:** Large (~2,000–3,000 lines)
+- **Files:** new `src/kernel/drivers/virtio_gpu.c`, `virtio_gpu.h`
+- **Prerequisites:** P16, P17 should be done first (better ROI)
+- [ ] PCI enumeration: detect VirtIO GPU device (vendor 0x1AF4, device 0x1050)
+- [ ] Map control/cursor virtqueues via VirtIO transport
+- [ ] Implement `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D` — allocate GPU resources
+- [ ] Implement `VIRTIO_GPU_CMD_SET_SCANOUT` — bind resource to display
+- [ ] Implement `VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D` — upload pixel data
+- [ ] Implement `VIRTIO_GPU_CMD_RESOURCE_FLUSH` — present to screen (page flip)
+- [ ] Replace `fb_swap()` with VirtIO-GPU scanout flip
+- [ ] Replace `fb_fill_rect()` with GPU fill command for large rects
+- [ ] Cursor: use hardware cursor plane (eliminates cursor-in-compositor overhead)
+- [ ] Fallback: keep VBE framebuffer path for non-VirtIO environments

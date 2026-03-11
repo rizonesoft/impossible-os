@@ -53,6 +53,7 @@
 #include "kernel/drivers/pit.h"
 #include "desktop/desktop.h"
 #include "desktop/terminal.h"
+#include "desktop/gallery.h"
 #include "kernel/acpi.h"
 #include "kernel/version.h"
 #include "codex.h"
@@ -1022,7 +1023,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     gfx_surface_init(&ws, fb, cw, ch, cw);
 
                     /* Dark background */
-                    wm_fill_rect(demo, 0, 0, cw, ch, 0x001E1E2E);
+                    wm_fill_rect(demo, 0, 0, cw, ch, 0xFF202020);
 
                     /* ---- Toolbar strip (8 icons, 20px, Filled variant) ---- */
                     {
@@ -1036,8 +1037,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                         int padding    = 8;
                         int toolbar_y  = 8;
                         int ix;
-                        uint32_t toolbar_bg = 0xFF2A2A3E;
-                        uint32_t icon_color = 0xFFCDD6F4;  /* Catppuccin text */
+                        uint32_t toolbar_bg = 0xFF2D2D2D;
+                        uint32_t icon_color = 0xFFFFFFFF;  /* Win11 white */
 
                         /* Toolbar background */
                         gfx_fill_rect(&ws, 0, 0, cw, icon_size + padding * 2, toolbar_bg);
@@ -1055,7 +1056,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
                         /* Toolbar separator line */
                         gfx_fill_rect(&ws, 0, icon_size + padding * 2,
-                                      cw, 1, 0xFF45475A);
+                                      cw, 1, 0xFF383838);
                     }
 
                     /* Greeting text below toolbar */
@@ -1063,19 +1064,20 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     if (fnt)
                         ttf_draw_string(&ws, fnt, 20, 56,
                                         "Welcome to Impossible OS!",
-                                        0x0088DDFF);
+                                        0xFF60CDFF);
 
                     /* Subtitle */
                     fnt = ttf_get(FONT_UI, 14);
                     if (fnt)
                         ttf_draw_string(&ws, fnt, 20, 86,
                                         "Fluent System Icons loaded from TTF",
-                                        0x00A6ADC8);
+                                        0xFFB0B0B0);
                 }
             }
         }
 
         terminal_open();
+        gallery_open();
         task_create(shell_loader_func, "ShellLoader");
         scheduler_enable();
 
@@ -1180,6 +1182,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     if (!wm_is_dragging()) {
                         /* Render terminal content to its window buffer */
                         terminal_render();
+                        gallery_render();
                     }
 
                     /* Prevent preemption during draw+swap so the PIT

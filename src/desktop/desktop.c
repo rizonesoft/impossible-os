@@ -8,6 +8,7 @@
  * ============================================================================ */
 
 #include "desktop/desktop.h"
+#include "gfx.h"
 #include "kernel/drivers/framebuffer.h"
 #include "desktop/font.h"       /* bitmap font — kept for early boot fallback */
 #include "font_mgr.h"            /* TrueType fonts — primary rendering */
@@ -306,6 +307,51 @@ void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t r
 
 /* ---- Desktop icon rendering ---- */
 
+void desktop_copy_wallpaper_rect(uint32_t *dst, int32_t rx, int32_t ry,
+                                  uint32_t rw, uint32_t rh)
+{
+    uint32_t sw = fb_get_width();
+    uint32_t sh = fb_get_height();
+    uint32_t row, col;
+
+    if (!dst || rw == 0 || rh == 0) return;
+
+    for (row = 0; row < rh; row++) {
+        int32_t sy = ry + (int32_t)row;
+        for (col = 0; col < rw; col++) {
+            int32_t sx = rx + (int32_t)col;
+            uint32_t px;
+
+            if (wallpaper_loaded && wallpaper_img.pixels &&
+                sx >= 0 && (uint32_t)sx < sw &&
+                sy >= 0 && (uint32_t)sy < sh) {
+                px = wallpaper_img.pixels[(uint32_t)sy * wallpaper_img.width + (uint32_t)sx];
+            } else {
+                /* Fallback gradient */
+                uint32_t r = 0x10 + ((uint32_t)sy * 0x10) / sh;
+                uint32_t g = 0x10 + ((uint32_t)sy * 0x08) / sh;
+                uint32_t b = 0x20 + ((uint32_t)sy * 0x20) / sh;
+                px = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+            dst[row * rw + col] = px;
+        }
+    }
+}
+
+/* ---- Desktop icon rendering ---- */
+
+int desktop_get_wallpaper_surface(gfx_surface_t *out)
+{
+    if (!wallpaper_loaded || !wallpaper_img.pixels || !out)
+        return -1;
+    gfx_surface_init(out, wallpaper_img.pixels,
+                     wallpaper_img.width, wallpaper_img.height,
+                     wallpaper_img.width);
+    return 0;
+}
+
+/* ---- Desktop icon rendering ---- */
+
 /* Desktop icon layout: column on right side, 48px icons with labels */
 #define DESKTOP_ICON_SIZE   48
 #define DESKTOP_ICON_PAD    16   /* Padding between icon grid cells */
@@ -404,8 +450,16 @@ void desktop_draw_taskbar(void)
     uint32_t ty = sh - TASKBAR_HEIGHT;  /* taskbar top Y */
     uint32_t i;
 
-    /* Taskbar background */
-    fb_fill_rect(0, ty, sw, TASKBAR_HEIGHT, TASKBAR_COLOR);
+    /* Taskbar: apply acrylic frosted glass directly over the wallpaper
+     * pixels in the back buffer (no solid fill first — acrylic needs
+     * the wallpaper to blur, then tints with TASKBAR_COLOR). */
+    {
+        gfx_surface_t scr;
+        gfx_surface_init(&scr, fb_get_backbuffer(),
+                         fb_get_width(), fb_get_height(), fb_get_stride());
+        gfx_acrylic(&scr, 0, (int32_t)ty, sw, TASKBAR_HEIGHT,
+                    TASKBAR_COLOR, 200, 3);  /* dark tint, 78% opacity, 3px blur */
+    }
 
     /* Top border line */
     fb_fill_rect(0, ty, sw, 1, TASKBAR_BORDER);
@@ -425,7 +479,7 @@ void desktop_draw_taskbar(void)
         fb_draw_rect(btn_x, btn_y, START_BTN_WIDTH, btn_h, TASKBAR_BORDER);
 
         /* Subtle highlight on top edge for 3D effect */
-        fb_fill_rect(btn_x + 1, btn_y + 1, START_BTN_WIDTH - 2, 1, 0x004A4A7C);
+        fb_fill_rect(btn_x + 1, btn_y + 1, START_BTN_WIDTH - 2, 1, 0xFF454545);
 
         if (start_icon_loaded && start_icon_buf) {
             /* Center the 32x32 icon inside the button */
@@ -482,7 +536,7 @@ void desktop_draw_taskbar(void)
 
             /* Window button on taskbar */
             uint32_t btn_bg = (windows[i].flags & WM_FLAG_FOCUSED)
-                              ? 0x003A3A6C : 0x002A2A4C;
+                              ? 0xFF3D3D3D : 0xFF2D2D2D;
             uint32_t btn_fg = (windows[i].flags & WM_FLAG_FOCUSED)
                               ? WINLIST_ACTIVE : WINLIST_COLOR;
 
@@ -632,11 +686,11 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                             uint32_t cw = wm_get_client_width(h);
                             uint32_t ch = wm_get_client_height(h);
                             gfx_surface_t ws;
-                            wm_fill_rect(h, 0, 0, 350, 180, 0x001E1E2E);
+                            wm_fill_rect(h, 0, 0, 350, 180, 0xFF202020);
                             gfx_surface_init(&ws, fb, cw, ch, cw);
                             for (ln = 0; ln < 7; ln++) {
-                                gfx_color_t fg_c = (ln == 0) ? 0x0088DDFF
-                                                             : 0x00C0C0D0;
+                                gfx_color_t fg_c = (ln == 0) ? 0xFF60CDFF
+                                                             : 0xFFC0C0C0;
                                 int slot = (ln == 0) ? FONT_UI_BOLD : FONT_UI;
                                 ttf_font_t *fnt = ttf_get(slot, 14);
                                 if (fnt) {

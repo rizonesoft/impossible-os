@@ -9,29 +9,30 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "gfx.h"
 
 /* ---- Constants ---- */
 
 #define TASKBAR_HEIGHT     48
-#define TASKBAR_COLOR      0x00202040
-#define TASKBAR_BORDER     0x003A3A5C
+#define TASKBAR_COLOR      0xFF202020   /* taskbar background         */
+#define TASKBAR_BORDER     0xFF383838   /* taskbar top border          */
 
 #define START_ICON_SIZE    32
 #define START_BTN_WIDTH    48
-#define START_BTN_COLOR    0x003A3A5C
-#define START_BTN_HOVER    0x004A4A6C
-#define START_BTN_TEXT     0x0088DDFF
+#define START_BTN_COLOR    0xFF2D2D2D   /* start button background     */
+#define START_BTN_HOVER    0xFF3D3D3D   /* start button hover          */
+#define START_BTN_TEXT     0xFF60CDFF   /* accent blue label           */
 
-#define CLOCK_COLOR        0x00B0B0CC
-#define WINLIST_COLOR      0x00D0D0E0
-#define WINLIST_ACTIVE     0x0088DDFF
+#define CLOCK_COLOR        0xFFB0B0B0   /* clock text (secondary)      */
+#define WINLIST_COLOR      0xFFD0D0D0   /* window list text            */
+#define WINLIST_ACTIVE     0xFF60CDFF   /* active window accent       */
 
 #define MENU_WIDTH         200
 #define MENU_ITEM_HEIGHT   28
-#define MENU_BG            0x00252545
-#define MENU_HOVER         0x003A3A6C
-#define MENU_TEXT           0x00E0E0F0
-#define MENU_BORDER        0x004A4A7C
+#define MENU_BG            0xFF2D2D2D   /* menu background            */
+#define MENU_HOVER         0xFF3D3D3D   /* menu hover highlight       */
+#define MENU_TEXT           0xFFE0E0E0   /* menu text                  */
+#define MENU_BORDER        0xFF454545   /* menu border                */
 
 /* Wallpaper dimensions (must match framebuffer) */
 #define WALLPAPER_WIDTH    1280
@@ -46,6 +47,15 @@ void desktop_init(void);
 /* Draw the wallpaper to the back buffer (replaces fb_fill_rect background) */
 void desktop_draw_wallpaper(void);
 void desktop_draw_wallpaper_rect(int32_t rx, int32_t ry, uint32_t rw, uint32_t rh);
+
+/* Copy wallpaper pixels into a destination buffer (for acrylic cache).
+ * dst must be at least rw*rh uint32_t pixels. */
+void desktop_copy_wallpaper_rect(uint32_t *dst, int32_t rx, int32_t ry,
+                                  uint32_t rw, uint32_t rh);
+
+/* Get a gfx_surface_t wrapping the wallpaper image (for gfx_mica).
+ * Returns 0 on success, -1 if no wallpaper is loaded. */
+int desktop_get_wallpaper_surface(gfx_surface_t *out);
 
 /* Draw desktop icons (Computer, Recycle Bin, Control Deck) on the wallpaper */
 void desktop_draw_icons(void);

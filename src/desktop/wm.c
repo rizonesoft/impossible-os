@@ -21,6 +21,7 @@
  * ============================================================================ */
 
 #include "desktop/wm.h"
+#include "desktop/controls.h"
 #include "kernel/drivers/framebuffer.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -141,6 +142,8 @@ static int in_max_button(const struct wm_window *w, int32_t mx, int32_t my)
 {
     if (!(w->flags & WM_FLAG_DECORATED))
         return 0;
+    if (w->flags & WM_FLAG_DIALOG)
+        return 0;  /* dialogs have no max button */
     int32_t btn_x = w->x + (int32_t)outer_width(w) - 2 * (int32_t)WM_BTN_WIDTH;
     int32_t btn_y = w->y;
     return mx >= btn_x && mx < btn_x + (int32_t)WM_BTN_WIDTH &&
@@ -152,6 +155,8 @@ static int in_min_button(const struct wm_window *w, int32_t mx, int32_t my)
 {
     if (!(w->flags & WM_FLAG_DECORATED))
         return 0;
+    if (w->flags & WM_FLAG_DIALOG)
+        return 0;  /* dialogs have no min button */
     int32_t btn_x = w->x + (int32_t)outer_width(w) - 3 * (int32_t)WM_BTN_WIDTH;
     int32_t btn_y = w->y;
     return mx >= btn_x && mx < btn_x + (int32_t)WM_BTN_WIDTH &&
@@ -253,6 +258,25 @@ int wm_create_window(const char *title, int32_t x, int32_t y,
     }
     w->z_order = max_z + 1;
 
+    /* Allocate acrylic cache for dialog windows */
+    w->acrylic_cache = (uint32_t *)0;
+    w->acrylic_w = 0;
+    w->acrylic_h = 0;
+    w->acrylic_dirty = 0;
+    if (flags & WM_FLAG_DIALOG) {
+        uint32_t body_w = width + 2 * WM_BORDER_WIDTH;
+        uint32_t body_h = height + WM_TITLEBAR_HEIGHT + WM_BORDER_WIDTH;
+        uint32_t ac_bytes = body_w * body_h * sizeof(uint32_t);
+        uint32_t ac_pages = (ac_bytes + 4095) / 4096;
+        uintptr_t ac_base = pmm_alloc_contiguous(ac_pages);
+        if (ac_base) {
+            w->acrylic_cache = (uint32_t *)ac_base;
+            w->acrylic_w = body_w;
+            w->acrylic_h = body_h;
+            w->acrylic_dirty = 1;
+        }
+    }
+
     /* Auto-focus */
     wm_focus_window((int)i);
 
@@ -276,6 +300,14 @@ void wm_destroy_window(int handle)
         uint32_t fb_pages = (fb_bytes + 4095) / 4096;
         pmm_free_pages((uintptr_t)w->framebuffer, fb_pages);
         w->framebuffer = (uint32_t *)0;
+    }
+
+    /* Free acrylic cache for dialog windows */
+    if (w->acrylic_cache) {
+        uint32_t ac_bytes = w->acrylic_w * w->acrylic_h * sizeof(uint32_t);
+        uint32_t ac_pages = (ac_bytes + 4095) / 4096;
+        pmm_free_pages((uintptr_t)w->acrylic_cache, ac_pages);
+        w->acrylic_cache = (uint32_t *)0;
     }
 
     w->active = 0;
@@ -509,8 +541,7 @@ static void draw_decorations(const struct wm_window *w)
     }
 
     /* ---- 3. Body fill (inset 1px from border) ----
-     * CLIENT_BG color so bottom rounded corners match the content area.
-     * The 1px inset leaves the border visible around all edges. */
+     * Solid CLIENT_BG for all windows (including dialogs). */
     if (ow > 2 && oh > 2) {
         uint32_t inner_r = (WM_CORNER_RADIUS > 1) ? WM_CORNER_RADIUS - 1 : 0;
         gfx_fill_rounded_rect(&scr,
@@ -519,11 +550,64 @@ static void draw_decorations(const struct wm_window *w)
                               inner_r, WM_COLOR_CLIENT_BG);
     }
 
-    /* ---- 4. Title bar (painted over top of body) ---- */
+    /* ---- 4. Title bar with cached Mica tint ---- */
     {
-        uint32_t tb_color = focused ? WM_COLOR_TITLEBAR_ACTIVE
-                                    : WM_COLOR_TITLEBAR_INACTIVE;
         uint32_t inner_r = (WM_CORNER_RADIUS > 1) ? WM_CORNER_RADIUS - 1 : 0;
+        uint32_t tb_base  = focused ? WM_COLOR_TITLEBAR_ACTIVE
+                                    : WM_COLOR_TITLEBAR_INACTIVE;
+
+        /* Compute Mica tint ONCE per window position.
+         * Recompute only when mica_color == 0 (first render) or
+         * acrylic_dirty is set (after drag end / wallpaper change). */
+        if (w->mica_color == 0 || w->acrylic_dirty) {
+            gfx_surface_t wp;
+            if (desktop_get_wallpaper_surface(&wp) == 0) {
+                int32_t cx = w->x + (int32_t)(ow / 2);
+                int32_t cy = w->y + (int32_t)(WM_TITLEBAR_HEIGHT / 2);
+                uint32_t sr = 0, sg = 0, sb = 0, cnt = 0;
+                int32_t offsets[] = { -60, -30, 0, 30, 60 };
+                uint32_t oi;
+                for (oi = 0; oi < 5; oi++) {
+                    int32_t sx = cx + offsets[oi];
+                    if (sx >= 0 && (uint32_t)sx < wp.width &&
+                        cy >= 0 && (uint32_t)cy < wp.height) {
+                        uint32_t px = wp.pixels[(uint32_t)cy * wp.stride + (uint32_t)sx];
+                        sr += (px >> 16) & 0xFF;
+                        sg += (px >>  8) & 0xFF;
+                        sb +=  px        & 0xFF;
+                        cnt++;
+                    }
+                }
+                if (cnt > 0) {
+                    sr /= cnt; sg /= cnt; sb /= cnt;
+
+                    /* Light desaturation (40%) — keep most of the color */
+                    uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
+                    sr = (sr * 153 + gray * 102) / 255;  /* 60% color + 40% gray */
+                    sg = (sg * 153 + gray * 102) / 255;
+                    sb = (sb * 153 + gray * 102) / 255;
+
+                    /* Blend 75% base + 25% wallpaper color → visible Mica tint */
+                    uint32_t br = (tb_base >> 16) & 0xFF;
+                    uint32_t bg = (tb_base >>  8) & 0xFF;
+                    uint32_t bb =  tb_base        & 0xFF;
+                    br = (br * 191 + sr * 64) / 255;
+                    bg = (bg * 191 + sg * 64) / 255;
+                    bb = (bb * 191 + sb * 64) / 255;
+
+                    /* Store cached color (set alpha=0xFF, never 0x00000000) */
+                    ((struct wm_window *)w)->mica_color =
+                        0xFF000000 | (br << 16) | (bg << 8) | bb;
+                }
+            }
+            /* If no wallpaper, use base color */
+            if (w->mica_color == 0)
+                ((struct wm_window *)w)->mica_color = tb_base;
+
+            ((struct wm_window *)w)->acrylic_dirty = 0;
+        }
+
+        uint32_t tb_color = w->mica_color;
 
         /* Rounded rect for the top corners */
         gfx_fill_rounded_rect(&scr,
@@ -548,8 +632,9 @@ static void draw_decorations(const struct wm_window *w)
                                            : WM_COLOR_TITLE_INACTIVE;
             int32_t tw = ttf_measure_width(tf, w->title);
             int32_t tx = w->x + ((int32_t)ow - tw) / 2;
-            /* Don't overlap buttons */
-            int32_t max_x = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH - 4;
+            /* Don't overlap buttons — dialogs have 1 button, normal have 3 */
+            int32_t num_btns = (w->flags & WM_FLAG_DIALOG) ? 1 : 3;
+            int32_t max_x = w->x + (int32_t)ow - num_btns * (int32_t)WM_BTN_WIDTH - 4;
             if (tx + tw > max_x)
                 tx = max_x - tw;
             if (tx < w->x + 12)
@@ -599,8 +684,8 @@ static void draw_decorations(const struct wm_window *w)
 
         glyph_color = focused ? WM_COLOR_BTN_GLYPH : WM_COLOR_BTN_GLYPH_DIM;
 
-        /* Maximize button — flat rect, subtle hover */
-        {
+        /* Maximize button — skip for dialogs */
+        if (!(w->flags & WM_FLAG_DIALOG)) {
             int32_t bx = w->x + (int32_t)ow - 2 * (int32_t)WM_BTN_WIDTH;
 
             if (w->max_hover) {
@@ -613,15 +698,15 @@ static void draw_decorations(const struct wm_window *w)
             {
                 int32_t cx = bx + ((int32_t)WM_BTN_WIDTH - 10) / 2;
                 int32_t cy = btn_y + (btn_h - 10) / 2;
-                gfx_draw_line(&scr, cx, cy, cx + 9, cy, 1, glyph_color);         /* top */
-                gfx_draw_line(&scr, cx, cy + 9, cx + 9, cy + 9, 1, glyph_color); /* bottom */
-                gfx_draw_line(&scr, cx, cy, cx, cy + 9, 1, glyph_color);         /* left */
-                gfx_draw_line(&scr, cx + 9, cy, cx + 9, cy + 9, 1, glyph_color); /* right */
+                gfx_draw_line(&scr, cx, cy, cx + 9, cy, 1, glyph_color);
+                gfx_draw_line(&scr, cx, cy + 9, cx + 9, cy + 9, 1, glyph_color);
+                gfx_draw_line(&scr, cx, cy, cx, cy + 9, 1, glyph_color);
+                gfx_draw_line(&scr, cx + 9, cy, cx + 9, cy + 9, 1, glyph_color);
             }
         }
 
-        /* Minimize button — flat rect, subtle hover */
-        {
+        /* Minimize button — skip for dialogs */
+        if (!(w->flags & WM_FLAG_DIALOG)) {
             int32_t bx = w->x + (int32_t)ow - 3 * (int32_t)WM_BTN_WIDTH;
 
             if (w->min_hover) {
@@ -864,6 +949,9 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
             if (left_released) {
                 windows[i].dragging = 0;
                 drag_active = 0;
+                /* Dialog: re-snapshot acrylic at new position */
+                if (windows[i].flags & WM_FLAG_DIALOG)
+                    windows[i].acrylic_dirty = 1;
                 mark_dirty();
             }
             return;
@@ -906,6 +994,33 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 w->drag_offset_y = my - w->y;
                 return;
             }
+
+            /* Client area click — dispatch to controls */
+            {
+                int32_t cx = mx - (w->x + (int32_t)WM_BORDER_WIDTH);
+                int32_t cy = my - (w->y + (int32_t)WM_TITLEBAR_HEIGHT);
+                if (cx >= 0 && cy >= 0 &&
+                    (uint32_t)cx < w->width &&
+                    (uint32_t)cy < w->height)
+                {
+                    ctrl_handle_mouse(handle, cx, cy, buttons);
+                }
+            }
+        }
+    }
+
+    /* Also dispatch hover/drag events to controls for the focused window */
+    if (!left_pressed) {
+        for (i = 0; i < WM_MAX_WINDOWS; i++) {
+            if (!windows[i].active || !(windows[i].flags & WM_FLAG_FOCUSED))
+                continue;
+            {
+                struct wm_window *w = &windows[i];
+                int32_t cx = mx - (w->x + (int32_t)WM_BORDER_WIDTH);
+                int32_t cy = my - (w->y + (int32_t)WM_TITLEBAR_HEIGHT);
+                ctrl_handle_mouse((int)i, cx, cy, buttons);
+            }
+            break;
         }
     }
 }

@@ -52,18 +52,19 @@ typedef void (*ctrl_click_fn)(int ctrl_id, int window_handle);
 
 /* ---- Control color scheme ---- */
 
-#define CTRL_COLOR_BG          0x002A2A4C
-#define CTRL_COLOR_BG_HOVER    0x003A3A6C
-#define CTRL_COLOR_BG_PRESSED  0x001A1A3C
-#define CTRL_COLOR_BG_DISABLED 0x00222238
-#define CTRL_COLOR_BORDER      0x004A4A7C
-#define CTRL_COLOR_TEXT        0x00E0E0F0
-#define CTRL_COLOR_TEXT_DIM    0x00808098
-#define CTRL_COLOR_CURSOR      0x0088DDFF
-#define CTRL_COLOR_TEXTBOX_BG  0x00181830
-#define CTRL_COLOR_SCROLL_BG   0x00202040
-#define CTRL_COLOR_SCROLL_THUMB 0x004A4A7C
-#define CTRL_COLOR_SCROLL_HOVER 0x005A5A8C
+/* Windows 11 Dark Theme — neutral grays, accent blue */
+#define CTRL_COLOR_BG          0xFF2D2D2D   /* button/control surface    */
+#define CTRL_COLOR_BG_HOVER    0xFF3D3D3D   /* hover lift                */
+#define CTRL_COLOR_BG_PRESSED  0xFF1A1A1A   /* pressed dim               */
+#define CTRL_COLOR_BG_DISABLED 0xFF252525   /* disabled muted            */
+#define CTRL_COLOR_BORDER      0xFF454545   /* control border (subtle)   */
+#define CTRL_COLOR_TEXT        0xFFFFFFFF   /* primary text              */
+#define CTRL_COLOR_TEXT_DIM    0xFF9B9B9B   /* secondary/disabled text   */
+#define CTRL_COLOR_CURSOR      0xFF60CDFF   /* accent blue cursor        */
+#define CTRL_COLOR_TEXTBOX_BG  0xFF1A1A1A   /* input field background    */
+#define CTRL_COLOR_SCROLL_BG   0xFF252525   /* scrollbar track           */
+#define CTRL_COLOR_SCROLL_THUMB 0xFF4A4A4A  /* scrollbar thumb           */
+#define CTRL_COLOR_SCROLL_HOVER 0xFF5A5A5A  /* scrollbar thumb hover     */
 
 /* ---- Control struct ---- */
 
@@ -177,3 +178,6 @@ uint32_t ctrl_get_scroll_pos(int window_handle, int ctrl_id);
 
 /* Set focus to a specific control */
 void ctrl_set_focus(int window_handle, int ctrl_id);
+
+/* Enable or disable a control (0 = disabled, 1 = enabled) */
+void ctrl_set_enabled(int window_handle, int ctrl_id, int enabled);

@@ -32,9 +32,9 @@ static int      term_handle = -1;
 static int      term_dirty;  /* 1 = needs re-render */
 
 /* ---- Colors ---- */
-#define TERM_BG   0x001A1B26   /* dark navy */
-#define TERM_FG   0x00A9B1D6   /* soft white-blue */
-#define TERM_PROMPT_FG 0x007AA2F7  /* bright blue for prompt */
+#define TERM_BG   0xFF1A1A1A   /* Win11 dark neutral */
+#define TERM_FG   0xFFCCCCCC   /* light gray text */
+#define TERM_PROMPT_FG 0xFF60CDFF  /* Win11 accent blue prompt */
 
 /* ---- Pixel dimensions ---- */
 #define TERM_PX_WIDTH  (TERM_COLS * FONT_WIDTH)
