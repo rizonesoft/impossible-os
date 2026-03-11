@@ -36,30 +36,30 @@ static uint32_t *start_icon_buf;      /* Heap-allocated from VFS read */
 static uint8_t   start_icon_loaded;
 
 /* ---- Start Menu layout constants (Win7 two-column, Win11 dark style) ---- */
-#define SM_LEFT_W          300  /* left column width           */
-#define SM_RIGHT_W         220  /* right column width          */
+#define SM_LEFT_W          260  /* left column width (thinner)  */
+#define SM_RIGHT_W         190  /* right column width (thinner) */
 #define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W)
-#define SM_ITEM_H          32   /* item row height             */
+#define SM_ITEM_H          34   /* item row height (taller rows)*/
 #define SM_SEARCH_H        38   /* search bar height           */
 #define SM_ICON_SZ         20   /* icon size for items         */
 #define SM_BTN_SZ          36   /* bottom icon button size     */
-#define SM_PAD             8    /* inner padding               */
+#define SM_PAD             10   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
-#define SM_ACRYLIC_TINT    0xFF1A1A2E  /* deep dark blue-ish tint */
-#define SM_ACRYLIC_OP      180  /* acrylic opacity (0-255)      */
-#define SM_BG_RIGHT        0xE6222233  /* right column (slightly lighter, translucent) */
-#define SM_DIVIDER         0xFF383848  /* column divider              */
-#define SM_SEPARATOR       0xFF333344  /* thin separator line         */
+#define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
+#define SM_ACRYLIC_OP      150  /* acrylic opacity — lower = more blur visible */
+#define SM_BG_RIGHT        0xE6282828  /* right column (slightly lighter gray) */
+#define SM_DIVIDER         0xFF3A3A3A  /* column divider              */
+#define SM_SEPARATOR       0xFF353535  /* thin separator line         */
 #define SM_ACCENT          0xFF60CDFF  /* accent blue                 */
 #define SM_TEXT_PRI        0xFFE8E8E8  /* primary text                */
 #define SM_TEXT_SEC        0xFF909090  /* secondary/dimmed text       */
-#define SM_TEXT_HEADING    0xFF707090  /* heading letter (A, B...)    */
-#define SM_HOVER_BG        0xFF38384A  /* hover highlight background  */
-#define SM_SEARCH_BG       0xFF2A2A3A  /* search bar background       */
-#define SM_SEARCH_BORDER   0xFF404055  /* search bar border           */
-#define SM_SEARCH_TEXT     0xFF707085  /* search placeholder          */
-#define SM_BTN_BG          0xFF303045  /* bottom button bg            */
-#define SM_BTN_HOVER       0xFF404060  /* bottom button hover         */
+#define SM_TEXT_HEADING    0xFF707070  /* heading letter (A, B...)    */
+#define SM_HOVER_BG        0xFF3A3A3A  /* hover highlight background  */
+#define SM_SEARCH_BG       0xFF2A2A2A  /* search bar background       */
+#define SM_SEARCH_BORDER   0xFF444444  /* search bar border           */
+#define SM_SEARCH_TEXT     0xFF707070  /* search placeholder          */
+#define SM_BTN_BG          0xFF333333  /* bottom button bg            */
+#define SM_BTN_HOVER       0xFF444444  /* bottom button hover         */
 #define SM_SHADOW_COLOR    GFX_RGBA(0, 0, 0, 140)
 
 /* ---- Start menu state ---- */
