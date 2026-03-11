@@ -46,7 +46,7 @@ static uint8_t   start_icon_loaded;
 #define SM_PAD             10   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
 #define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
-#define SM_ACRYLIC_OP      150  /* acrylic opacity — lower = more blur visible */
+#define SM_ACRYLIC_OP      120  /* acrylic opacity — lower = more blur visible */
 #define SM_BG_RIGHT        0xE6282828  /* right column (slightly lighter gray) */
 #define SM_DIVIDER         0xFF3A3A3A  /* column divider              */
 #define SM_SEPARATOR       0xFF353535  /* thin separator line         */
@@ -634,13 +634,15 @@ void desktop_draw_start_menu(void)
     gfx_surface_init(&scr, fb_get_backbuffer(),
                      fb_get_width(), fb_get_height(), fb_get_stride());
 
-    /* ---- Drop shadow ---- */
-    gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                     16, 0, 6, SM_SHADOW_COLOR);
-
-    /* ---- Acrylic background (blur wallpaper + tint) ---- */
+    /* ---- Acrylic background FIRST (blur raw wallpaper beneath!) ----
+     * Must run before drop shadow so we blur the colorful wallpaper,
+     * not shadow-darkened pixels. */
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 6);
+                SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 12);
+
+    /* ---- Drop shadow (drawn around the now-tinted acrylic region) ---- */
+    gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                     12, 0, 4, SM_SHADOW_COLOR);
 
     /* ---- Right column overlay (slightly lighter) ---- */
     gfx_fill_rect(&scr, right_x, menu_y,
