@@ -637,6 +637,20 @@ void desktop_draw_start_menu(void)
     /* ---- Acrylic: blur + tint the ENTIRE menu region ----
      * Same pattern as the taskbar.  Nothing drawn on top of this
      * except the thin column divider and 1px rounded border. */
+    {
+        static uint8_t dbg;
+        if (!dbg) {
+            /* Sample 3 pixels: top-center, mid-center, bot-center of menu */
+            int32_t cx = menu_x + (int32_t)SM_TOTAL_W / 2;
+            uint32_t p1 = scr.pixels[(uint32_t)(menu_y + 10) * scr.stride + (uint32_t)cx];
+            uint32_t p2 = scr.pixels[(uint32_t)(menu_y + (int32_t)menu_h / 2) * scr.stride + (uint32_t)cx];
+            uint32_t p3 = scr.pixels[(uint32_t)(menu_y + (int32_t)menu_h - 10) * scr.stride + (uint32_t)cx];
+            printk("[SM] BEFORE acrylic: top=0x%x mid=0x%x bot=0x%x at x=%d menu_y=%d\n",
+                   (uint64_t)p1, (uint64_t)p2, (uint64_t)p3,
+                   (uint64_t)cx, (uint64_t)menu_y);
+            dbg = 1;
+        }
+    }
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                 SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 8);
 
