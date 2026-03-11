@@ -46,29 +46,16 @@ extern void *memcpy(void *dst, const void *src, gfx_size_t n);
 #include "kernel/types.h"
 #include "gfx_simd.h"
 
-/* ---- PMM bump allocator for glyph cache bitmaps ---- */
+/* ---- Per-(slot, size) texture atlas storage ---- */
 
-/* All glyph bitmaps are sub-allocated from a single PMM block.
- * 512 KB is generous for 5 slots × 5 sizes × 95 chars ≈ 2375 glyphs.
- * Average glyph bitmap ≈ 100 bytes → ~237 KB needed; 512 KB gives headroom. */
-#define GLYPH_PMM_POOL_SIZE  (512 * 1024)
-#define GLYPH_PMM_PAGES      ((GLYPH_PMM_POOL_SIZE + 4095) / 4096)
+/* Each atlas is 256×256 single-channel (64 KB).
+ * stbtt_BakeFontBitmap packs all 95 ASCII glyphs into one bitmap. */
+#define GLYPH_ATLAS_W  256
+#define GLYPH_ATLAS_H  256
+#define GLYPH_ATLAS_BYTES  (GLYPH_ATLAS_W * GLYPH_ATLAS_H)
+#define GLYPH_ATLAS_PAGES  ((GLYPH_ATLAS_BYTES + 4095) / 4096)
 
-static uint8_t *glyph_pool_base = (void *)0;  /* PMM block base */
-static uint32_t glyph_pool_used = 0;           /* bump pointer offset */
-
-/* Allocate from the glyph PMM pool (bump allocator, never freed) */
-static uint8_t *glyph_pool_alloc(uint32_t size)
-{
-    uint8_t *ptr;
-    /* Align to 4 bytes for safety */
-    uint32_t aligned = (size + 3) & ~3u;
-    if (!glyph_pool_base || glyph_pool_used + aligned > GLYPH_PMM_POOL_SIZE)
-        return (void *)0;
-    ptr = glyph_pool_base + glyph_pool_used;
-    glyph_pool_used += aligned;
-    return ptr;
-}
+static glyph_atlas_t glyph_atlases[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES];
 
 /* ---- Internal state ---- */
 
@@ -126,14 +113,19 @@ static int cache_size_index(int pixel_size)
     return -1;
 }
 
-/* Pre-rasterize all ASCII glyphs for one (slot, size) pair.
+/* Pre-rasterize all ASCII glyphs for one (slot, size) pair into a texture atlas.
+ * Uses stbtt_BakeFontBitmap() to pack all 95 chars into a single 256×256 bitmap.
  * MUST be called with FPU state already saved. */
 static void cache_rasterize_slot_size(int slot, int size_idx)
 {
     ttf_internal_t *fi = &ttf_slots[slot];
     int px = cache_sizes[size_idx];
     float scale;
-    int cp;
+    glyph_atlas_t *atlas = &glyph_atlases[slot][size_idx];
+    uintptr_t atlas_phys;
+    stbtt_bakedchar chardata[GLYPH_CACHE_COUNT];
+    int bake_result;
+    int i;
 
     if (!fi->pub.loaded)
         return;
@@ -143,35 +135,48 @@ static void cache_rasterize_slot_size(int slot, int size_idx)
     /* Store pre-computed scaled ascent */
     cached_ascent[slot][size_idx] = (int32_t)(scale * (float)fi->pub.ascent);
 
-    for (cp = GLYPH_CACHE_FIRST; cp <= GLYPH_CACHE_LAST; cp++) {
-        int gi = cp - GLYPH_CACHE_FIRST;
-        glyph_entry_t *ge = &glyph_cache[slot][size_idx][gi];
-        int width, height, xoff, yoff;
+    /* Allocate atlas bitmap via PMM (256×256 = 64 KB, single channel) */
+    atlas_phys = pmm_alloc_contiguous(GLYPH_ATLAS_PAGES);
+    if (!atlas_phys) {
+        printk("[!!] Atlas PMM alloc failed for slot %d size %dpx\n",
+               (uint64_t)slot, (uint64_t)px);
+        return;
+    }
+    atlas->pixels = (uint8_t *)atlas_phys;
+    atlas->width  = GLYPH_ATLAS_W;
+    atlas->height = GLYPH_ATLAS_H;
+
+    /* Clear atlas to all zeros (transparent) */
+    memset(atlas->pixels, 0, GLYPH_ATLAS_BYTES);
+
+    /* Bake all 95 ASCII glyphs into the atlas bitmap */
+    bake_result = stbtt_BakeFontBitmap(
+        fi->pub.ttf_data, 0, (float)px,
+        atlas->pixels, GLYPH_ATLAS_W, GLYPH_ATLAS_H,
+        GLYPH_CACHE_FIRST, GLYPH_CACHE_COUNT,
+        chardata);
+
+    if (bake_result <= 0) {
+        printk("[!!] BakeFontBitmap failed for slot %d size %dpx (result=%d)\n",
+               (uint64_t)slot, (uint64_t)px, (uint64_t)bake_result);
+    }
+
+    /* Convert stbtt_bakedchar results into glyph_entry_t atlas coords */
+    for (i = 0; i < GLYPH_CACHE_COUNT; i++) {
+        glyph_entry_t *ge = &glyph_cache[slot][size_idx][i];
+        stbtt_bakedchar *bc = &chardata[i];
         int advance, lsb;
-        unsigned char *bmp;
 
-        /* Rasterize glyph */
-        bmp = stbtt_GetCodepointBitmap(&fi->info, 0, scale,
-                                       cp, &width, &height, &xoff, &yoff);
+        ge->atlas_x = bc->x0;
+        ge->atlas_y = bc->y0;
+        ge->width   = (int16_t)(bc->x1 - bc->x0);
+        ge->height  = (int16_t)(bc->y1 - bc->y0);
+        ge->xoff    = (int16_t)(bc->xoff);
+        ge->yoff    = (int16_t)(bc->yoff);
 
-        stbtt_GetCodepointHMetrics(&fi->info, cp, &advance, &lsb);
-
-        if (bmp && width > 0 && height > 0) {
-            /* Sub-allocate from PMM glyph pool (bump, never freed) */
-            ge->bitmap = glyph_pool_alloc((uint32_t)(width * height));
-            if (ge->bitmap) {
-                memcpy(ge->bitmap, bmp, (gfx_size_t)(width * height));
-            }
-            kfree(bmp);  /* free stb_truetype's temp allocation */
-        } else {
-            ge->bitmap = (void *)0;
-            if (bmp) kfree(bmp);
-        }
-
-        ge->width   = (int16_t)width;
-        ge->height  = (int16_t)height;
-        ge->xoff    = (int16_t)xoff;
-        ge->yoff    = (int16_t)yoff;
+        /* Get integer advance from font metrics (more precise than bakedchar) */
+        stbtt_GetCodepointHMetrics(&fi->info,
+                                   GLYPH_CACHE_FIRST + i, &advance, &lsb);
         ge->advance = (int16_t)(scale * (float)advance);
         ge->_pad    = 0;
     }
@@ -294,20 +299,9 @@ void ttf_mgr_init(void)
     memset(ttf_slots, 0, sizeof(ttf_slots));
     memset(glyph_cache, 0, sizeof(glyph_cache));
 
-    /* Allocate PMM block for glyph cache bitmaps (512 KB bump pool) */
-    {
-        uintptr_t pool_phys = pmm_alloc_contiguous(GLYPH_PMM_PAGES);
-        if (pool_phys) {
-            glyph_pool_base = (uint8_t *)pool_phys;
-            glyph_pool_used = 0;
-            printk("[OK] Glyph cache pool: %u KB via PMM (%u pages)\n",
-                   (uint64_t)(GLYPH_PMM_POOL_SIZE / 1024),
-                   (uint64_t)GLYPH_PMM_PAGES);
-        } else {
-            printk("[!!] Failed to allocate glyph cache pool (%u pages)\n",
-                   (uint64_t)GLYPH_PMM_PAGES);
-        }
-    }
+    /* Initialize atlas storage (individual atlases allocated per slot/size
+     * inside cache_rasterize_slot_size via PMM) */
+    memset(glyph_atlases, 0, sizeof(glyph_atlases));
 
     for (slot = 0; slot < FONT_MAX_SLOTS; slot++) {
         if (!ttf_filenames[slot])
@@ -344,7 +338,7 @@ void ttf_mgr_init(void)
             /* Count cached glyphs and total bitmap bytes */
             for (gi = 0; gi < GLYPH_CACHE_COUNT; gi++) {
                 glyph_entry_t *ge = &glyph_cache[slot][si][gi];
-                if (ge->bitmap) {
+                if (ge->width > 0 && ge->height > 0) {
                     cached_glyphs++;
                     cache_bytes += (uint64_t)(ge->width * ge->height);
                 }
@@ -386,18 +380,23 @@ ttf_font_t *ttf_get(int slot, int pixel_size)
     return &fi->pub;
 }
 
-/* ---- Glyph cache helper: blit a cached glyph onto surface ---- */
+/* ---- Glyph cache helper: blit a cached glyph from atlas onto surface ---- */
 /*
  * Optimized path: pre-clip column range per row, write directly to pixel
  * buffer (no per-pixel bounds checks or function call overhead).
  * Fast paths: skip transparent pixels, direct-write opaque pixels.
+ * Reads glyph data from atlas bitmap at (atlas_x, atlas_y).
  */
-static void blit_cached_glyph(gfx_surface_t *s, const glyph_entry_t *ge,
+static void blit_cached_glyph(gfx_surface_t *s, const glyph_atlas_t *atlas,
+                               const glyph_entry_t *ge,
                                int32_t x, int32_t base_y,
                                uint32_t cr, uint32_t cg, uint32_t cb,
                                gfx_color_t color)
 {
     int row;
+
+    if (!atlas || !atlas->pixels || ge->width <= 0 || ge->height <= 0)
+        return;
 
     for (row = 0; row < ge->height; row++) {
         int32_t py = base_y + ge->yoff + row;
@@ -417,9 +416,11 @@ static void blit_cached_glyph(gfx_surface_t *s, const glyph_entry_t *ge,
             col_end = (int32_t)s->width - gx0;
         if (col_start >= col_end) continue;
 
-        /* Direct pointer arithmetic — no per-pixel bounds check */
+        /* Read from atlas at (atlas_x, atlas_y) offset */
         dst_row = s->pixels + (uint32_t)py * s->stride + (uint32_t)(gx0 + col_start);
-        src_row = ge->bitmap + row * ge->width + col_start;
+        src_row = atlas->pixels +
+                  ((uint32_t)ge->atlas_y + (uint32_t)row) * atlas->width +
+                  (uint32_t)ge->atlas_x + (uint32_t)col_start;
 
         for (col = 0; col < (col_end - col_start); col++) {
             uint32_t alpha = src_row[col];
@@ -462,13 +463,14 @@ int ttf_draw_char(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
         slot >= 0 && slot < FONT_MAX_SLOTS) {
         int gi = codepoint - GLYPH_CACHE_FIRST;
         const glyph_entry_t *ge = &glyph_cache[slot][size_idx][gi];
+        const glyph_atlas_t *atlas = &glyph_atlases[slot][size_idx];
         int32_t base_y = y + cached_ascent[slot][size_idx];
 
-        if (ge->bitmap) {
+        if (atlas->pixels && ge->width > 0 && ge->height > 0) {
             uint32_t cr = GFX_RED(color);
             uint32_t cg = GFX_GREEN(color);
             uint32_t cb = GFX_BLUE(color);
-            blit_cached_glyph(s, ge, x, base_y, cr, cg, cb, color);
+            blit_cached_glyph(s, atlas, ge, x, base_y, cr, cg, cb, color);
         }
         return ge->advance;
     }
@@ -535,6 +537,7 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
     /* Fast path: all ASCII at a cached size — single FPU bracket for kerning */
     if (size_idx >= 0 && slot >= 0 && slot < FONT_MAX_SLOTS) {
         ttf_internal_t *fi = (ttf_internal_t *)f;
+        const glyph_atlas_t *atlas = &glyph_atlases[slot][size_idx];
         int32_t base_y = y + cached_ascent[slot][size_idx];
         uint32_t cr = GFX_RED(color);
         uint32_t cg = GFX_GREEN(color);
@@ -546,11 +549,11 @@ int ttf_draw_string(gfx_surface_t *s, ttf_font_t *f, int32_t x, int32_t y,
             int cp = (unsigned char)text[i];
 
             if (cp >= GLYPH_CACHE_FIRST && cp <= GLYPH_CACHE_LAST) {
-                /* Cached glyph — no stb_truetype call needed */
+                /* Cached glyph — blit from atlas */
                 const glyph_entry_t *ge = &glyph_cache[slot][size_idx][cp - GLYPH_CACHE_FIRST];
 
-                if (ge->bitmap) {
-                    blit_cached_glyph(s, ge, cursor_x, base_y, cr, cg, cb, color);
+                if (atlas->pixels && ge->width > 0 && ge->height > 0) {
+                    blit_cached_glyph(s, atlas, ge, cursor_x, base_y, cr, cg, cb, color);
                 }
                 cursor_x += ge->advance;
             } else {

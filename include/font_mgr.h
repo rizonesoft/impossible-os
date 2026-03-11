@@ -49,14 +49,23 @@
 /* --- Glyph cache entry --- */
 
 typedef struct glyph_entry {
-    uint8_t *bitmap;     /* Pre-rasterized alpha bitmap (NULL if empty glyph) */
-    int16_t  width;      /* Bitmap width in pixels */
-    int16_t  height;     /* Bitmap height in pixels */
+    uint16_t atlas_x;    /* X position in atlas bitmap */
+    uint16_t atlas_y;    /* Y position in atlas bitmap */
+    int16_t  width;      /* Glyph width in pixels */
+    int16_t  height;     /* Glyph height in pixels */
     int16_t  xoff;       /* X offset from pen position */
     int16_t  yoff;       /* Y offset from baseline */
     int16_t  advance;    /* Horizontal advance in pixels (pre-scaled) */
     int16_t  _pad;       /* Padding for alignment */
 } glyph_entry_t;
+
+/* --- Per-(slot, size) texture atlas --- */
+
+typedef struct glyph_atlas {
+    uint8_t *pixels;     /* Atlas bitmap (single-channel 8bpp, PMM-allocated) */
+    uint16_t width;      /* Atlas width in pixels */
+    uint16_t height;     /* Atlas height in pixels */
+} glyph_atlas_t;
 
 /* --- Font handle --- */
 
