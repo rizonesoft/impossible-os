@@ -161,23 +161,22 @@ static void cache_rasterize_slot_size(int slot, int size_idx)
                (uint64_t)slot, (uint64_t)px, (uint64_t)bake_result);
     }
 
-    /* Convert stbtt_bakedchar results into glyph_entry_t atlas coords */
+    /* Convert stbtt_bakedchar results into glyph_entry_t atlas coords.
+     * Use proper rounding (not truncation) for float→int to avoid
+     * ~1px glyph positioning drift that causes uneven letter spacing. */
     for (i = 0; i < GLYPH_CACHE_COUNT; i++) {
         glyph_entry_t *ge = &glyph_cache[slot][size_idx][i];
         stbtt_bakedchar *bc = &chardata[i];
-        int advance, lsb;
 
         ge->atlas_x = bc->x0;
         ge->atlas_y = bc->y0;
         ge->width   = (int16_t)(bc->x1 - bc->x0);
         ge->height  = (int16_t)(bc->y1 - bc->y0);
-        ge->xoff    = (int16_t)(bc->xoff);
-        ge->yoff    = (int16_t)(bc->yoff);
-
-        /* Get integer advance from font metrics (more precise than bakedchar) */
-        stbtt_GetCodepointHMetrics(&fi->info,
-                                   GLYPH_CACHE_FIRST + i, &advance, &lsb);
-        ge->advance = (int16_t)(scale * (float)advance);
+        /* Round float offsets instead of truncating */
+        ge->xoff    = (int16_t)(bc->xoff >= 0 ? bc->xoff + 0.5f : bc->xoff - 0.5f);
+        ge->yoff    = (int16_t)(bc->yoff >= 0 ? bc->yoff + 0.5f : bc->yoff - 0.5f);
+        /* Use bakedchar's advance for consistency with baked glyph positions */
+        ge->advance = (int16_t)(bc->xadvance + 0.5f);
         ge->_pad    = 0;
     }
 }

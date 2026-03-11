@@ -386,33 +386,27 @@ static void draw_label(struct control *c)
 {
     int handle = c->window_handle;
     uint32_t fg = c->data.label.fg_color;
-    uint32_t len = ctrl_strlen(c->data.label.text);
-    uint32_t max_chars;
-    uint32_t ty;
-    uint32_t i;
+    uint32_t *fb = wm_get_framebuffer(handle);
+    uint32_t cw = wm_get_client_width(handle);
+    uint32_t ch = wm_get_client_height(handle);
+    int px_size = 14;
+    ttf_font_t *f;
+    gfx_surface_t ws;
 
-    /* Labels render transparently — only draw foreground pixels */
-    ty = (FONT_HEIGHT < c->h) ? c->y + (c->h - FONT_HEIGHT) / 2 : c->y;
+    if (!fb || !cw || !ch) return;
 
-    /* Clip to control width */
-    max_chars = c->w / FONT_WIDTH;
-    if (max_chars > len)
-        max_chars = len;
+    f = ttf_get(FONT_UI, px_size);
+    if (!f) return;
 
-    for (i = 0; i < max_chars; i++) {
-        const uint8_t *glyph = font_get_glyph(c->data.label.text[i]);
-        uint32_t py, px;
-        for (py = 0; py < FONT_HEIGHT; py++) {
-            uint8_t row = glyph[py];
-            for (px = 0; px < FONT_WIDTH; px++) {
-                if (row & (0x80 >> px)) {
-                    wm_put_pixel(handle,
-                                 c->x + i * FONT_WIDTH + px,
-                                 ty + py, fg);
-                }
-                /* Skip background pixels for transparency */
-            }
-        }
+    gfx_surface_init(&ws, fb, cw, ch, cw);
+
+    /* Vertically center text in control height */
+    {
+        uint32_t ty = (uint32_t)px_size < c->h
+                    ? c->y + (c->h - (uint32_t)px_size) / 2
+                    : c->y;
+        ttf_draw_string(&ws, f, (int32_t)c->x, (int32_t)ty,
+                        c->data.label.text, (gfx_color_t)fg);
     }
 }
 
@@ -424,6 +418,17 @@ static void draw_textbox(struct control *c)
     uint32_t bg = CTRL_COLOR_TEXTBOX_BG;
     uint32_t visible_chars;
     uint32_t draw_len;
+    int px_size = 14;
+    ttf_font_t *f = ttf_get(FONT_UI, px_size);
+    /* Average char width for cursor positioning (monospace approximation) */
+    uint32_t avg_cw = 7;  /* fallback */
+    uint32_t text_h = (uint32_t)px_size;
+
+    if (f) {
+        int mw = ttf_measure_width(f, "ABCabc123");
+        if (mw > 0) avg_cw = (uint32_t)mw / 9;
+        if (avg_cw == 0) avg_cw = 7;
+    }
 
     /* Background fill */
     wm_fill_rect(handle, c->x, c->y, c->w, c->h, bg);
@@ -442,7 +447,7 @@ static void draw_textbox(struct control *c)
     }
 
     /* Text content area: 4px padding on each side */
-    visible_chars = (c->w - 8) / FONT_WIDTH;
+    visible_chars = (c->w - 8) / avg_cw;
     if (visible_chars == 0)
         visible_chars = 1;
 
@@ -466,16 +471,25 @@ static void draw_textbox(struct control *c)
                        draw_len, CTRL_COLOR_TEXT, bg);
     }
 
-    /* Draw cursor (blinking simulated by always-on for now) */
+    /* Draw cursor using TTF-measured position */
     if (focused) {
-        uint32_t cursor_x = c->x + 4 +
-            (c->data.textbox.cursor_pos - c->data.textbox.scroll_offset)
-            * FONT_WIDTH;
-        uint32_t cursor_y = c->y + (c->h - FONT_HEIGHT) / 2;
+        /* Measure exact pixel width of text before cursor */
+        uint32_t cursor_x = c->x + 4;
+        if (f && c->data.textbox.cursor_pos > c->data.textbox.scroll_offset) {
+            char tmp[256];
+            uint32_t n = c->data.textbox.cursor_pos - c->data.textbox.scroll_offset;
+            uint32_t ti;
+            if (n > 255) n = 255;
+            for (ti = 0; ti < n; ti++)
+                tmp[ti] = c->data.textbox.text[c->data.textbox.scroll_offset + ti];
+            tmp[n] = '\0';
+            cursor_x += (uint32_t)ttf_measure_width(f, tmp);
+        }
+        uint32_t cursor_y = c->y + (c->h > text_h ? (c->h - text_h) / 2 : 0);
         uint32_t cy;
 
         if (cursor_x < c->x + c->w - 4) {
-            for (cy = cursor_y; cy < cursor_y + FONT_HEIGHT; cy++) {
+            for (cy = cursor_y; cy < cursor_y + text_h; cy++) {
                 wm_put_pixel(handle, cursor_x, cy, CTRL_COLOR_CURSOR);
             }
         }
@@ -745,13 +759,22 @@ int ctrl_handle_mouse(int window_handle, int32_t cx, int32_t cy,
 
                 case CTRL_TEXTBOX:
                 {
-                    /* Click to position cursor */
+                    /* Click to position cursor (TTF-based avg char width) */
                     int32_t rel_x = cx - (int32_t)(c->x + 4);
                     uint32_t char_pos;
+                    uint32_t avg_cw = 7;
+                    {
+                        ttf_font_t *tbf = ttf_get(FONT_UI, 14);
+                        if (tbf) {
+                            int mw = ttf_measure_width(tbf, "ABCabc123");
+                            if (mw > 0) avg_cw = (uint32_t)mw / 9;
+                            if (avg_cw == 0) avg_cw = 7;
+                        }
+                    }
 
                     if (rel_x < 0) rel_x = 0;
                     char_pos = c->data.textbox.scroll_offset +
-                               (uint32_t)rel_x / FONT_WIDTH;
+                               (uint32_t)rel_x / avg_cw;
                     if (char_pos > c->data.textbox.text_len)
                         char_pos = c->data.textbox.text_len;
                     c->data.textbox.cursor_pos = char_pos;

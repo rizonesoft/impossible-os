@@ -54,7 +54,7 @@ static void draw_section_header(int handle, int32_t x, int32_t y,
     ttf_font_t *f;
 
     if (!fb || !cw || !ch) return;
-    f = ttf_get(FONT_UI_BOLD, 13);
+    f = ttf_get(FONT_UI_BOLD, 14);
     if (!f) return;
 
     gfx_surface_init(&ws, fb, cw, ch, cw);

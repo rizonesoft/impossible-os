@@ -426,7 +426,7 @@ void desktop_draw_icons(void)
 
         /* Draw label text centered below icon */
         {
-            ttf_font_t *tf = ttf_get(0, 12);
+            ttf_font_t *tf = ttf_get(0, 14);
             if (tf) {
                 int tw = ttf_measure_width(tf, desktop_icon_items[i].label);
                 int32_t tx = ix + (int32_t)DESKTOP_ICON_SIZE / 2 - tw / 2;

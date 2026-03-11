@@ -556,9 +556,9 @@ static void draw_decorations(const struct wm_window *w)
         uint32_t tb_base  = focused ? WM_COLOR_TITLEBAR_ACTIVE
                                     : WM_COLOR_TITLEBAR_INACTIVE;
 
-        /* Compute Mica tint ONCE per window position.
-         * Recompute only when mica_color == 0 (first render) or
-         * acrylic_dirty is set (after drag end / wallpaper change). */
+        /* mica_color caches the desaturated wallpaper SAMPLE (not the final
+         * blended color) so that active vs inactive tb_base produces
+         * different results each frame without resampling the wallpaper. */
         if (w->mica_color == 0 || w->acrylic_dirty) {
             gfx_surface_t wp;
             if (desktop_get_wallpaper_surface(&wp) == 0) {
@@ -580,34 +580,36 @@ static void draw_decorations(const struct wm_window *w)
                 }
                 if (cnt > 0) {
                     sr /= cnt; sg /= cnt; sb /= cnt;
-
-                    /* Light desaturation (40%) — keep most of the color */
+                    /* Light desaturation (25%) — keep most of the hue */
                     uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
-                    sr = (sr * 153 + gray * 102) / 255;  /* 60% color + 40% gray */
-                    sg = (sg * 153 + gray * 102) / 255;
-                    sb = (sb * 153 + gray * 102) / 255;
-
-                    /* Blend 75% base + 25% wallpaper color → visible Mica tint */
-                    uint32_t br = (tb_base >> 16) & 0xFF;
-                    uint32_t bg = (tb_base >>  8) & 0xFF;
-                    uint32_t bb =  tb_base        & 0xFF;
-                    br = (br * 191 + sr * 64) / 255;
-                    bg = (bg * 191 + sg * 64) / 255;
-                    bb = (bb * 191 + sb * 64) / 255;
-
-                    /* Store cached color (set alpha=0xFF, never 0x00000000) */
+                    sr = (sr * 191 + gray * 64) / 255;
+                    sg = (sg * 191 + gray * 64) / 255;
+                    sb = (sb * 191 + gray * 64) / 255;
+                    /* Store desaturated wallpaper sample (not final blend) */
                     ((struct wm_window *)w)->mica_color =
-                        0xFF000000 | (br << 16) | (bg << 8) | bb;
+                        0xFF000000 | (sr << 16) | (sg << 8) | sb;
                 }
             }
-            /* If no wallpaper, use base color */
             if (w->mica_color == 0)
-                ((struct wm_window *)w)->mica_color = tb_base;
-
+                ((struct wm_window *)w)->mica_color = 0xFF202020;
             ((struct wm_window *)w)->acrylic_dirty = 0;
         }
 
-        uint32_t tb_color = w->mica_color;
+        /* Blend cached wallpaper sample with current focus-dependent base */
+        uint32_t tb_color;
+        {
+            uint32_t sr = (w->mica_color >> 16) & 0xFF;
+            uint32_t sg = (w->mica_color >>  8) & 0xFF;
+            uint32_t sb =  w->mica_color        & 0xFF;
+            uint32_t br = (tb_base >> 16) & 0xFF;
+            uint32_t bg = (tb_base >>  8) & 0xFF;
+            uint32_t bb =  tb_base        & 0xFF;
+            /* 60% base + 40% wallpaper sample */
+            br = (br * 153 + sr * 102) / 255;
+            bg = (bg * 153 + sg * 102) / 255;
+            bb = (bb * 153 + sb * 102) / 255;
+            tb_color = 0xFF000000 | (br << 16) | (bg << 8) | bb;
+        }
 
         /* Rounded rect for the top corners */
         gfx_fill_rounded_rect(&scr,
