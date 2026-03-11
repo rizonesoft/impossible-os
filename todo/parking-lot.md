@@ -6,39 +6,7 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
-### ~~P4. LRU cache for non-ASCII fallback glyphs~~
-- **Status:** ✅ Done
-- `struct lru_glyph` with hash key, metrics, inline bitmap (512 bytes max)
-- 128-entry ring buffer allocated from PMM in `ttf_mgr_init()`
-- LRU checked before `stbtt_GetCodepointBitmap` on non-ASCII codepoints
-- LRU hit: blit directly from cached bitmap (no FPU save/restore)
-- LRU miss: rasterize → insert into ring (evict oldest) → blit → cache for next time
-- FPU state saved only on actual rasterization, deferred within `ttf_draw_string`
 
----
-
-### ~~P5. Optimized text rendering (inline alpha blend)~~
-- **Status:** ✅ Done (optimized scalar — SSE2 intrinsics blocked by freestanding cross-compiler)
-- Pre-clipped column ranges per row — no per-pixel bounds checks
-- Direct pixel buffer writes — no `gfx_put_pixel`/`gfx_blend_pixel` call overhead
-- Inline alpha blend: `dst = (color*alpha + dst*inv) >> 8`
-- Fast paths: skip transparent pixels, direct-write opaque pixels
-- **Note:** True SIMD (inline asm like `gfx_simd.c`) can be added later for further 4× gain
-
----
-
-### P6. Signed Distance Field (SDF) rendering
-- **Impact:** One bitmap per glyph works at ALL sizes — 80% cache reduction
-- **Effort:** Large (~200 lines)
-- **Files:** `gfx_text.c`, `font_mgr.h`, new `gfx_sdf.c`
-- **Prerequisites:** P2 (atlas) should be done first for clean integration
-- [ ] Use `stbtt_GetGlyphSDF()` instead of `stbtt_GetCodepointBitmap()`
-- [ ] Generate SDF at a single reference size (e.g., 32px) per glyph
-- [ ] Store SDF atlas (one per slot, not per size)
-- [ ] Implement SDF→pixel shader: `alpha = smoothstep(0.5 - spread, 0.5 + spread, sdf_value)`
-- [ ] Smoothstep requires float — wrap in FPU save/restore
-- [ ] Test at sizes 12, 14, 16, 20, 24 — verify no quality loss
-- [ ] Measure memory savings vs bitmap approach
 
 ---
 
@@ -129,18 +97,23 @@
 
 ## GUI Performance & GPU Acceleration
 
-### P16. Cached acrylic for dialog windows
-- **Impact:** Enables frosted glass dialogs without per-frame blur (currently too slow → jerkiness)
-- **Effort:** Medium (~150 lines)
-- **Files:** `wm.c`, `wm.h`, `gallery.c`
-- [ ] Add `WM_FLAG_DIALOG` flag to `wm.h`
-- [ ] On dialog open: snapshot wallpaper region behind window into a PMM buffer
-- [ ] Apply `gfx_acrylic()` blur ONCE to the snapshot → store as cached texture
-- [ ] Each frame: fast-blit cached acrylic texture instead of recomputing blur
-- [ ] On dialog move: re-snapshot + re-blur (only on drag end, not mid-drag)
-- [ ] On wallpaper change: invalidate cache and re-blur
-- [ ] Dialog title bar: close-only (no min/max), Mica Alt tint
-- [ ] Alpha-aware `blit_client` for dialog windows (transparent pixels show acrylic)
+### P16. Cached acrylic for taskbar & start menu
+- **Impact:** Eliminates per-frame blur recomputation — currently `gfx_acrylic()` runs every composite frame for both taskbar (1280×40) and start menu (450×400+), each doing a full box blur + noise + tint
+- **Effort:** Medium (~100 lines)
+- **Files:** `desktop.c`, `wm.c`
+- **Taskbar** (fixed position, always visible):
+  - [ ] On wallpaper load/change: pre-blur the taskbar strip region → store as PMM-allocated cached texture
+  - [ ] Each frame: fast-blit cached texture instead of recomputing `gfx_acrylic()`
+  - [ ] Invalidate cache only when wallpaper changes or screen resolution changes
+- **Start menu** (fixed position when open):
+  - [ ] On menu open: snapshot + blur the menu region once → store as cached texture
+  - [ ] Each frame while open: fast-blit cached texture
+  - [ ] Invalidate on close (re-snapshot + re-blur on next open)
+  - [ ] Right column darker overlay still applied per-frame (cheap alpha blend, no blur)
+- **Invalidation triggers:**
+  - [ ] Wallpaper change → invalidate both caches
+  - [ ] Resolution change → invalidate + reallocate
+  - [ ] Window move/resize behind taskbar → optionally invalidate taskbar cache (or accept stale blur as acceptable trade-off)
 
 ### P17. AVX2 SIMD for blur and alpha blending
 - **Impact:** 4–8× speedup for acrylic blur, compositor blends, glyph rendering
