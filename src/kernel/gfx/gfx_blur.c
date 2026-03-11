@@ -11,6 +11,7 @@
 
 #include "gfx.h"
 #include "kernel/mm/heap.h"
+#include "kernel/printk.h"
 #include "kernel/types.h"
 
 /* ---- Helpers ---- */
@@ -58,7 +59,12 @@ void gfx_blur_rect(gfx_surface_t *s, int32_t x, int32_t y,
     {
         uint32_t max_dim = region_w > region_h ? region_w : region_h;
         tmp = (uint32_t *)kmalloc(max_dim * sizeof(uint32_t));
-        if (!tmp) return;
+        if (!tmp) {
+            printk("[BLUR] kmalloc FAILED (%u bytes) for %ux%u region\n",
+                   (uint64_t)(max_dim * sizeof(uint32_t)),
+                   (uint64_t)region_w, (uint64_t)region_h);
+            return;
+        }
     }
 
     /* --- Pass 1: Horizontal blur --- */
