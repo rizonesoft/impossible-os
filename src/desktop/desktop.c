@@ -39,11 +39,11 @@ static uint8_t   start_icon_loaded;
 #define SM_LEFT_W          260  /* left column width (thinner)  */
 #define SM_RIGHT_W         190  /* right column width (thinner) */
 #define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W)
-#define SM_ITEM_H          34   /* item row height (taller rows)*/
-#define SM_SEARCH_H        38   /* search bar height           */
+#define SM_ITEM_H          38   /* item row height (taller)    */
+#define SM_SEARCH_H        42   /* search bar height           */
 #define SM_ICON_SZ         20   /* icon size for items         */
 #define SM_BTN_SZ          36   /* bottom icon button size     */
-#define SM_PAD             10   /* inner padding (more air)    */
+#define SM_PAD             14   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
 #define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
 #define SM_ACRYLIC_OP      200  /* acrylic opacity — matches taskbar (78% tint) */
@@ -642,9 +642,33 @@ void desktop_draw_start_menu(void)
     gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                      12, 0, 4, SM_SHADOW_COLOR);
 
-    /* ---- Right column: slightly more opaque second pass ---- */
-    gfx_acrylic(&scr, right_x, menu_y, SM_RIGHT_W, menu_h,
-                0xFF282828, 40, 0);
+    /* ---- Right column: darker overlay via alpha blend (NOT gfx_acrylic,
+     *       which would add double noise on top of the main acrylic) ---- */
+    {
+        int32_t r, c;
+        int32_t rx0 = right_x > 0 ? right_x : 0;
+        int32_t ry0 = menu_y > 0 ? menu_y : 0;
+        int32_t rx1 = right_x + (int32_t)SM_RIGHT_W;
+        int32_t ry1 = menu_y + (int32_t)menu_h;
+        if (rx1 > (int32_t)fb_get_width())  rx1 = (int32_t)fb_get_width();
+        if (ry1 > (int32_t)fb_get_height()) ry1 = (int32_t)fb_get_height();
+        for (r = ry0; r < ry1; r++) {
+            uint32_t *dp = scr.pixels + (uint32_t)r * scr.stride;
+            for (c = rx0; c < rx1; c++) {
+                uint32_t d = dp[c];
+                /* Blend 0xB0181818 (69% opacity dark) over acrylic */
+                uint32_t sa = 0xB0;
+                uint32_t ia = 255 - sa;
+                uint32_t dr = (d >> 16) & 0xFF;
+                uint32_t dg = (d >>  8) & 0xFF;
+                uint32_t db =  d        & 0xFF;
+                dr = (0x18 * sa + dr * ia + 127) / 255;
+                dg = (0x18 * sa + dg * ia + 127) / 255;
+                db = (0x18 * sa + db * ia + 127) / 255;
+                dp[c] = (0xFFu << 24) | (dr << 16) | (dg << 8) | db;
+            }
+        }
+    }
 
     /* ---- Column divider (1px) ---- */
     gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
