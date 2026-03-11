@@ -115,16 +115,15 @@
   - [ ] Resolution change → invalidate + reallocate
   - [ ] Window move/resize behind taskbar → optionally invalidate taskbar cache (or accept stale blur as acceptable trade-off)
 
-### P17. AVX2 SIMD for blur and alpha blending
-- **Impact:** 4–8× speedup for acrylic blur, compositor blends, glyph rendering
-- **Effort:** Medium (~200 lines)
-- **Files:** `gfx_simd.c`, `gfx_effects.c`, possibly `gfx_text.c`
-- [ ] Detect AVX2 support via CPUID at boot
-- [ ] Implement `gfx_blur_box_avx2()` — process 8 pixels per iteration
-- [ ] Implement `gfx_blend_row_avx2()` — SIMD alpha blend for compositor
-- [ ] Add AVX2 path to `blit_cached_glyph()` for text rendering
-- [ ] Fallback to existing SSE2/scalar paths on older CPUs
-- [ ] Benchmark: measure FPS before/after on acrylic dialog + text-heavy windows
+### ~~P17. AVX2 SIMD for blur and alpha blending~~
+- **Status:** ✅ Done (commit `3e0cc53`)
+- `simd_enable_avx()`: enables CR4.OSXSAVE + XCR0 (x87/SSE/AVX) at boot
+- `simd_blend_pixels_avx2()`: 8 pixels/iter alpha blend via YMM registers
+- `simd_blur_accum_avx2()`: 8 pixels/iter blur accumulate
+- All functions use inline asm + `vzeroupper` for clean SSE/AVX transitions
+- `fxsave_area_t` increased to 1024 bytes / 64-byte aligned for XSAVE
+- Runtime dispatch via `simd_avx2_ok` flag; SSE2 fallback when unavailable
+- **Note:** QEMU default (`qemu64`) lacks AVX2 — use `-cpu Haswell` to test
 
 ### P18. VirtIO-GPU 2D driver
 - **Impact:** Hardware-accelerated rect fills, blits, page flips in QEMU
