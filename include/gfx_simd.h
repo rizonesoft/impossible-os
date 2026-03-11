@@ -1,9 +1,10 @@
 /* ============================================================================
- * gfx_simd.h — SSE2 SIMD acceleration for GFX primitives
+ * gfx_simd.h — SSE2 / AVX2 SIMD acceleration for GFX primitives
  *
  * When SSE2 is available, the gfx library dispatches hot-path operations
  * (alpha blending, gradient fill, blur) through these vectorized routines.
- * Each processes 4 ARGB pixels per iteration using 128-bit XMM registers.
+ * SSE2: 4 ARGB pixels per iteration using 128-bit XMM registers.
+ * AVX2: 8 ARGB pixels per iteration using 256-bit YMM registers.
  *
  * FPU State:  Call simd_save_state() / simd_restore_state() to protect
  *             user-mode FPU/SSE/AVX registers across kernel SIMD use.
@@ -15,9 +16,10 @@
 
 /* ---- FPU / SSE state save/restore ---- */
 
-/* 512-byte FXSAVE area — must be 16-byte aligned */
-typedef struct __attribute__((aligned(16))) {
-    uint8_t data[512];
+/* 512-byte FXSAVE area — must be 16-byte aligned.
+ * Also large enough for XSAVE (x87+SSE+AVX = ~832 bytes). */
+typedef struct __attribute__((aligned(64))) {
+    uint8_t data[1024];
 } fxsave_area_t;
 
 /* Save the current FPU/SSE state */
@@ -53,4 +55,21 @@ void simd_gradient_row_sse2(uint32_t *dst, uint32_t count,
 /* Horizontal blur accumulate pass, 4 pixels per iteration.
  * Sums ARGB channels from src into running accumulators. */
 void simd_blur_accum_sse2(const uint32_t *src, uint32_t count,
+                           uint32_t *sum_buf);
+
+/* ---- AVX2 accelerated operations (8 pixels per iteration) ---- */
+
+/* Runtime flag: set to 1 at boot if AVX2 is available and enabled */
+extern int simd_avx2_ok;
+
+/* Enable AVX (CR4.OSXSAVE + XCR0 bits 0,1,2).
+ * Must be called before any AVX2 function. */
+void simd_enable_avx(void);
+
+/* Alpha-blend src onto dst, 8 pixels per iteration (AVX2).
+ * Scalar fallback handles trailing pixels. */
+void simd_blend_pixels_avx2(uint32_t *dst, const uint32_t *src, uint32_t count);
+
+/* Horizontal blur accumulate pass, 8 pixels per iteration (AVX2). */
+void simd_blur_accum_avx2(const uint32_t *src, uint32_t count,
                            uint32_t *sum_buf);
