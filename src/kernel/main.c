@@ -46,6 +46,7 @@
 #include "kernel/drivers/mouse.h"
 #include "cursor.h"
 #include "kernel/drivers/virtio_input.h"
+#include "kernel/drivers/virtio_gpu.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -238,6 +239,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     rtl8139_init();
     net_init();
     virtio_input_init();  /* VirtIO tablet for absolute mouse coords */
+    virtio_gpu_init();     /* VirtIO-GPU for hardware cursor + flush */
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
@@ -997,6 +999,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize cursor manager (loads Adwaita Xcur files from sysroot) */
         cursor_init();
 
+        /* Upload initial cursor to GPU hardware cursor plane */
+        if (virtio_gpu_available()) {
+            const cursor_image_t *ci = cursor_get_active_image();
+            if (ci && ci->pixels)
+                virtio_gpu_set_cursor(ci->pixels, ci->width, ci->height,
+                                      (uint32_t)ci->hotspot_x,
+                                      (uint32_t)ci->hotspot_y);
+        }
+
         /* Initialize window manager */
         wm_init();
 
@@ -1199,36 +1210,66 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
                     wm_mark_dirty();
 
-                    /* Restore cursor, full composite, draw cursor, flip */
-                    cursor_restore();
-                    wm_composite();
-
                     /* Determine cursor shape from context */
+                    cursor_shape_t prev_shape = cursor_get_shape();
                     cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
                     if (ctx == CURSOR_ARROW)
                         ctx = wm_get_cursor_context(mx, my);
                     cursor_set_shape(ctx);
 
-                    cursor_draw(mx, my);
+                    if (virtio_gpu_available()) {
+                        /* GPU cursor: no software cursor in compositor.
+                         * Just composite the scene and flush. */
+                        wm_composite();
 
-                    /* During drag: partial swap of only the dirty region.
-                     * Otherwise: full screen swap. */
-                    {
-                        int32_t  drx, dry;
-                        uint32_t drw, drh;
-                        if (wm_get_drag_dirty_rect(&drx, &dry, &drw, &drh)) {
-                            /* Swap the drag dirty rect (old + new window area) */
-                            fb_swap_rect((uint32_t)drx, (uint32_t)dry, drw, drh);
-                            /* Also swap cursor area (may be outside drag rect) */
-                            {
-                                int32_t  crx, cry;
-                                uint32_t crw, crh;
-                                if (cursor_get_rect(&crx, &cry, &crw, &crh))
-                                    fb_swap_rect((uint32_t)crx, (uint32_t)cry,
-                                                 crw, crh);
+                        /* Re-upload cursor if shape changed */
+                        if (ctx != prev_shape) {
+                            const cursor_image_t *ci = cursor_get_active_image();
+                            if (ci && ci->pixels)
+                                virtio_gpu_set_cursor(ci->pixels,
+                                    ci->width, ci->height,
+                                    (uint32_t)ci->hotspot_x,
+                                    (uint32_t)ci->hotspot_y);
+                        }
+
+                        /* Move GPU cursor to current mouse position */
+                        virtio_gpu_move_cursor((uint32_t)mx, (uint32_t)my);
+
+                        /* Flush composited scene to display */
+                        {
+                            int32_t  drx, dry;
+                            uint32_t drw, drh;
+                            if (wm_get_drag_dirty_rect(&drx, &dry, &drw, &drh))
+                                virtio_gpu_flush_rect((uint32_t)drx,
+                                                      (uint32_t)dry, drw, drh);
+                            else
+                                virtio_gpu_flush();
+                        }
+                    } else {
+                        /* VBE fallback: software cursor */
+                        cursor_restore();
+                        wm_composite();
+
+                        cursor_draw(mx, my);
+
+                        /* During drag: partial swap of only the dirty region.
+                         * Otherwise: full screen swap. */
+                        {
+                            int32_t  drx, dry;
+                            uint32_t drw, drh;
+                            if (wm_get_drag_dirty_rect(&drx, &dry, &drw, &drh)) {
+                                fb_swap_rect((uint32_t)drx, (uint32_t)dry,
+                                             drw, drh);
+                                {
+                                    int32_t  crx, cry;
+                                    uint32_t crw, crh;
+                                    if (cursor_get_rect(&crx, &cry, &crw, &crh))
+                                        fb_swap_rect((uint32_t)crx,
+                                                     (uint32_t)cry, crw, crh);
+                                }
+                            } else {
+                                fb_swap();
                             }
-                        } else {
-                            fb_swap();
                         }
                     }
                     scheduler_enable();
@@ -1238,50 +1279,68 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     prev_mb = mb;
                     first_frame = 0;
                 } else if (cursor_moved) {
-                    /* Cursor-only move (no buttons held) —
-                     * swap just the union of old + new cursor rects */
-                    scheduler_disable();
+                    if (virtio_gpu_available()) {
+                        /* GPU cursor: just move the overlay — instant! */
+                        cursor_shape_t prev_shape = cursor_get_shape();
+                        cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
+                        if (ctx == CURSOR_ARROW)
+                            ctx = wm_get_cursor_context(mx, my);
+                        cursor_set_shape(ctx);
 
-                    int32_t  old_rx, old_ry;
-                    uint32_t old_rw, old_rh;
-                    int had_old = cursor_get_rect(&old_rx, &old_ry,
-                                                   &old_rw, &old_rh);
+                        if (ctx != prev_shape) {
+                            const cursor_image_t *ci = cursor_get_active_image();
+                            if (ci && ci->pixels)
+                                virtio_gpu_set_cursor(ci->pixels,
+                                    ci->width, ci->height,
+                                    (uint32_t)ci->hotspot_x,
+                                    (uint32_t)ci->hotspot_y);
+                        }
 
-                    cursor_restore();
-
-                    /* Update cursor shape even on cursor-only moves */
-                    cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
-                    if (ctx == CURSOR_ARROW)
-                        ctx = wm_get_cursor_context(mx, my);
-                    cursor_set_shape(ctx);
-
-                    cursor_draw(mx, my);
-
-                    int32_t  new_rx, new_ry;
-                    uint32_t new_rw, new_rh;
-                    cursor_get_rect(&new_rx, &new_ry, &new_rw, &new_rh);
-
-                    /* Single swap of the union bounding box */
-                    if (had_old) {
-                        int32_t ux = (old_rx < new_rx) ? old_rx : new_rx;
-                        int32_t uy = (old_ry < new_ry) ? old_ry : new_ry;
-                        int32_t ur = old_rx + (int32_t)old_rw;
-                        int32_t nr = new_rx + (int32_t)new_rw;
-                        int32_t ub = old_ry + (int32_t)old_rh;
-                        int32_t nb = new_ry + (int32_t)new_rh;
-                        if (nr > ur) ur = nr;
-                        if (nb > ub) ub = nb;
-                        if (ux < 0) ux = 0;
-                        if (uy < 0) uy = 0;
-                        fb_swap_rect((uint32_t)ux, (uint32_t)uy,
-                                     (uint32_t)(ur - ux), (uint32_t)(ub - uy));
+                        virtio_gpu_move_cursor((uint32_t)mx, (uint32_t)my);
                     } else {
-                        uint32_t sx = (new_rx >= 0) ? (uint32_t)new_rx : 0;
-                        uint32_t sy = (new_ry >= 0) ? (uint32_t)new_ry : 0;
-                        fb_swap_rect(sx, sy, new_rw, new_rh);
-                    }
+                        /* VBE fallback: software cursor */
+                        scheduler_disable();
 
-                    scheduler_enable();
+                        int32_t  old_rx, old_ry;
+                        uint32_t old_rw, old_rh;
+                        int had_old = cursor_get_rect(&old_rx, &old_ry,
+                                                       &old_rw, &old_rh);
+
+                        cursor_restore();
+
+                        cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
+                        if (ctx == CURSOR_ARROW)
+                            ctx = wm_get_cursor_context(mx, my);
+                        cursor_set_shape(ctx);
+
+                        cursor_draw(mx, my);
+
+                        int32_t  new_rx, new_ry;
+                        uint32_t new_rw, new_rh;
+                        cursor_get_rect(&new_rx, &new_ry, &new_rw, &new_rh);
+
+                        if (had_old) {
+                            int32_t ux = (old_rx < new_rx) ? old_rx : new_rx;
+                            int32_t uy = (old_ry < new_ry) ? old_ry : new_ry;
+                            int32_t ur = old_rx + (int32_t)old_rw;
+                            int32_t nr = new_rx + (int32_t)new_rw;
+                            int32_t ub = old_ry + (int32_t)old_rh;
+                            int32_t nb2 = new_ry + (int32_t)new_rh;
+                            if (nr > ur) ur = nr;
+                            if (nb2 > ub) ub = nb2;
+                            if (ux < 0) ux = 0;
+                            if (uy < 0) uy = 0;
+                            fb_swap_rect((uint32_t)ux, (uint32_t)uy,
+                                         (uint32_t)(ur - ux),
+                                         (uint32_t)(ub - uy));
+                        } else {
+                            uint32_t sx = (new_rx >= 0) ? (uint32_t)new_rx : 0;
+                            uint32_t sy = (new_ry >= 0) ? (uint32_t)new_ry : 0;
+                            fb_swap_rect(sx, sy, new_rw, new_rh);
+                        }
+
+                        scheduler_enable();
+                    }
 
                     prev_mx = mx;
                     prev_my = my;

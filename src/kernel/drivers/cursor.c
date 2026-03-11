@@ -678,3 +678,8 @@ int cursor_get_rect(int32_t *rx, int32_t *ry, uint32_t *rw, uint32_t *rh)
     if (rh) *rh = saved_h;
     return 1;
 }
+
+const cursor_image_t *cursor_get_active_image(void)
+{
+    return get_active_image();
+}

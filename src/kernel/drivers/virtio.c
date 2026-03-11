@@ -357,6 +357,46 @@ int virtq_add_buf(struct virtqueue *vq, void *buf, uint32_t len,
     return (int)idx;
 }
 
+int virtq_add_buf_chain(struct virtqueue *vq,
+                        void *cmd, uint32_t cmd_len,
+                        void *resp, uint32_t resp_len)
+{
+    uint16_t head, tail;
+
+    if (vq->num_free < 2)
+        return -1;
+
+    /* Grab two free descriptors */
+    head = vq->free_head;
+    vq->free_head = vq->desc[head].next;
+    vq->num_free--;
+
+    tail = vq->free_head;
+    vq->free_head = vq->desc[tail].next;
+    vq->num_free--;
+
+    /* First descriptor: command (device-readable) */
+    vq->desc[head].addr  = (uint64_t)cmd;
+    vq->desc[head].len   = cmd_len;
+    vq->desc[head].flags = VIRTQ_DESC_F_NEXT;
+    vq->desc[head].next  = tail;
+
+    /* Second descriptor: response (device-writable) */
+    vq->desc[tail].addr  = (uint64_t)resp;
+    vq->desc[tail].len   = resp_len;
+    vq->desc[tail].flags = VIRTQ_DESC_F_WRITE;
+    vq->desc[tail].next  = 0;
+
+    /* Add head to available ring */
+    uint16_t avail_idx = vq->avail->idx % vq->size;
+    vq->avail->ring[avail_idx] = head;
+
+    __asm__ volatile("mfence" ::: "memory");
+    vq->avail->idx++;
+
+    return (int)head;
+}
+
 void virtq_kick(struct virtqueue *vq)
 {
     /* Memory barrier before notify */
