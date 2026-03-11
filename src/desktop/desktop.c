@@ -36,62 +36,68 @@ static uint32_t *start_icon_buf;      /* Heap-allocated from VFS read */
 static uint8_t   start_icon_loaded;
 
 /* ---- Start Menu layout constants (Win7 two-column, Win11 dark style) ---- */
-#define SM_LEFT_W          260  /* left column width           */
-#define SM_RIGHT_W         200  /* right column width          */
-#define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W + 1) /* +1 for divider */
-#define SM_ITEM_H          30   /* item row height             */
-#define SM_SEARCH_H        36   /* search bar height           */
-#define SM_HEADER_H        56   /* right column user header    */
-#define SM_POWER_H         36   /* power button row            */
+#define SM_LEFT_W          300  /* left column width           */
+#define SM_RIGHT_W         220  /* right column width          */
+#define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W)
+#define SM_ITEM_H          32   /* item row height             */
+#define SM_SEARCH_H        38   /* search bar height           */
+#define SM_ICON_SZ         20   /* icon size for items         */
+#define SM_BTN_SZ          36   /* bottom icon button size     */
 #define SM_PAD             8    /* inner padding               */
-#define SM_RADIUS          8    /* rounded corner radius       */
-#define SM_BG_LEFT         0xF01E1E1E  /* left column (semi-transparent dark) */
-#define SM_BG_RIGHT        0xF02A2A2A  /* right column (slightly lighter)     */
-#define SM_DIVIDER         0xFF383838  /* column divider              */
-#define SM_SEPARATOR       0xFF383838  /* thin separator line         */
+#define SM_RADIUS          10   /* rounded corner radius       */
+#define SM_ACRYLIC_TINT    0xFF1A1A2E  /* deep dark blue-ish tint */
+#define SM_ACRYLIC_OP      180  /* acrylic opacity (0-255)      */
+#define SM_BG_RIGHT        0xE6222233  /* right column (slightly lighter, translucent) */
+#define SM_DIVIDER         0xFF383848  /* column divider              */
+#define SM_SEPARATOR       0xFF333344  /* thin separator line         */
 #define SM_ACCENT          0xFF60CDFF  /* accent blue                 */
 #define SM_TEXT_PRI        0xFFE8E8E8  /* primary text                */
-#define SM_TEXT_SEC        0xFFA0A0A0  /* secondary/dimmed text       */
-#define SM_HOVER_BG        0xFF383838  /* hover highlight background  */
-#define SM_SEARCH_BG       0xFF353535  /* search bar background       */
-#define SM_SEARCH_TEXT     0xFF808080  /* search placeholder          */
-#define SM_POWER_BG        0xFF2D5580  /* power button background     */
+#define SM_TEXT_SEC        0xFF909090  /* secondary/dimmed text       */
+#define SM_TEXT_HEADING    0xFF707090  /* heading letter (A, B...)    */
+#define SM_HOVER_BG        0xFF38384A  /* hover highlight background  */
+#define SM_SEARCH_BG       0xFF2A2A3A  /* search bar background       */
+#define SM_SEARCH_BORDER   0xFF404055  /* search bar border           */
+#define SM_SEARCH_TEXT     0xFF707085  /* search placeholder          */
+#define SM_BTN_BG          0xFF303045  /* bottom button bg            */
+#define SM_BTN_HOVER       0xFF404060  /* bottom button hover         */
+#define SM_SHADOW_COLOR    GFX_RGBA(0, 0, 0, 140)
 
 /* ---- Start menu state ---- */
 static uint8_t start_menu_open;
 static uint8_t prev_left;          /* Previous left-button state for edge */
-static int32_t sm_hover_col;       /* 0=left, 1=right, -1=none */
+static int32_t sm_hover_col;       /* 0=left, 1=right, 2=btn_settings, 3=btn_power, -1=none */
 static int32_t sm_hover_idx;       /* hovered item index, -1=none */
 
-/* ---- Left column: pinned programs ---- */
-#define SM_LEFT_COUNT    3
-static const char *sm_left_labels[SM_LEFT_COUNT] = {
-    "Terminal",
-    "About",
-    "Shutdown"
-};
-static const char sm_left_icons[SM_LEFT_COUNT] = {
-    '>', 'i', 'X'
-};
-static const uint32_t sm_left_icon_colors[SM_LEFT_COUNT] = {
-    0xFF44FF88,  /* green */
-    0xFF4488FF,  /* blue */
-    0xFFFF5555,  /* red */
-};
+/* ---- Left column: pinned programs (alphabetical) ---- */
+typedef struct {
+    char         letter;        /* heading letter (0 = no heading) */
+    const char  *label;
+    system_icon_t icon_id;
+} sm_left_item_t;
 
-/* ---- Right column: quick links ---- */
-#define SM_RIGHT_COUNT   7
-static const char *sm_right_labels[SM_RIGHT_COUNT] = {
-    "Documents",
-    "Pictures",
-    "Music",
-    "Downloads",
-    "Computer",
-    "Control Panel",
-    "Help"
+static const sm_left_item_t sm_left_items[] = {
+    { 'A', "About",          ICON_INFO        },
+    { 0,   "All Programs",   ICON_CHEVRON_RIGHT },
+    { 'T', "Terminal",       ICON_HOME        },
 };
-/* Separator after index 3 (after Downloads) */
-#define SM_RIGHT_SEP_AFTER  3
+#define SM_LEFT_COUNT  (sizeof(sm_left_items) / sizeof(sm_left_items[0]))
+
+/* ---- Right column: quick access ---- */
+typedef struct {
+    const char    *label;
+    system_icon_t  icon_id;
+} sm_right_item_t;
+
+static const sm_right_item_t sm_right_items[] = {
+    { "Computer",       ICON_DESKTOP_COMPUTER },
+    { "Documents",      ICON_FOLDER_CLOSED    },
+    { "Pictures",       ICON_FOLDER_CLOSED    },
+    { "Music",          ICON_FOLDER_CLOSED    },
+    { "Downloads",      ICON_DOWNLOAD         },
+    { "Control Panel",  ICON_CONTROL_DECK     },
+    { "Help",           ICON_QUESTION         },
+};
+#define SM_RIGHT_COUNT  (sizeof(sm_right_items) / sizeof(sm_right_items[0]))
 
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
@@ -611,20 +617,16 @@ void desktop_draw_taskbar(void)
 
 void desktop_draw_start_menu(void)
 {
-    uint32_t sw = fb_get_width();
     uint32_t sh = fb_get_height();
-    /* Compute total menu height: header + right items + power + search */
-    uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
-    uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H; /* items + sep + "All Programs" */
-    uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
-    uint32_t menu_h = body_h + SM_SEARCH_H;
+    /* Menu height: enough for right column content + bottom button row */
+    uint32_t right_h = SM_RIGHT_COUNT * SM_ITEM_H + SM_PAD * 2 + SM_BTN_SZ + SM_PAD;
+    uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
+    uint32_t menu_h = right_h > left_h ? right_h : left_h;
     int32_t menu_x = 2;
     int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
+    int32_t right_x = menu_x + (int32_t)SM_LEFT_W;
     gfx_surface_t scr;
     uint32_t i;
-    int32_t y_cursor;
-
-    (void)sw;
 
     if (!start_menu_open)
         return;
@@ -634,170 +636,161 @@ void desktop_draw_start_menu(void)
 
     /* ---- Drop shadow ---- */
     gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                     12, 0, 4, GFX_RGBA(0, 0, 0, 120));
+                     16, 0, 6, SM_SHADOW_COLOR);
 
-    /* ---- Acrylic background ---- */
+    /* ---- Acrylic background (blur wallpaper + tint) ---- */
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                0xFF1E1E1E, 220, 3);
+                SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 6);
+
+    /* ---- Right column overlay (slightly lighter) ---- */
+    gfx_fill_rect(&scr, right_x, menu_y,
+                   SM_RIGHT_W, menu_h, SM_BG_RIGHT);
+
+    /* ---- Column divider ---- */
+    gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
+                   1, menu_h - SM_PAD * 2, SM_DIVIDER);
 
     /* ---- Rounded border ---- */
     gfx_draw_rounded_rect(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                            SM_RADIUS, 1, SM_DIVIDER);
 
-    /* ---- Right column background (lighter) ---- */
-    {
-        int32_t rx = menu_x + (int32_t)SM_LEFT_W + 1; /* after divider */
-        gfx_fill_rect(&scr, rx, menu_y + SM_RADIUS,
-                       SM_RIGHT_W - SM_RADIUS, body_h - SM_RADIUS,
-                       SM_BG_RIGHT);
-    }
-
-    /* ---- Column divider ---- */
-    gfx_fill_rect(&scr, menu_x + (int32_t)SM_LEFT_W, menu_y + SM_PAD,
-                   1, body_h - SM_PAD * 2, SM_DIVIDER);
-
     /* ================================================================
-     *  LEFT COLUMN — Pinned programs
-     * ================================================================ */
-    y_cursor = menu_y + SM_PAD;
-
-    for (i = 0; i < SM_LEFT_COUNT; i++) {
-        int32_t item_y = y_cursor + (int32_t)(i * SM_ITEM_H);
-        int32_t text_y = item_y + (SM_ITEM_H - 14) / 2;
-
-        /* Hover highlight */
-        if (sm_hover_col == 0 && sm_hover_idx == (int32_t)i) {
-            gfx_fill_rect(&scr, menu_x + SM_PAD, item_y,
-                           SM_LEFT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
-        }
-
-        /* Icon character */
-        {
-            char icon_str[2] = { sm_left_icons[i], '\0' };
-            ttf_screen_text(menu_x + SM_PAD + 8, text_y,
-                            icon_str, FONT_UI_BOLD, 14,
-                            sm_left_icon_colors[i]);
-        }
-
-        /* Label */
-        ttf_screen_text(menu_x + SM_PAD + 30, text_y,
-                        sm_left_labels[i], FONT_UI, 14, SM_TEXT_PRI);
-    }
-
-    /* Separator after pinned */
-    {
-        int32_t sep_y = y_cursor + (int32_t)(SM_LEFT_COUNT * SM_ITEM_H);
-        gfx_fill_rect(&scr, menu_x + SM_PAD + 4, sep_y + SM_ITEM_H / 2,
-                       SM_LEFT_W - SM_PAD * 2 - 8, 1, SM_SEPARATOR);
-    }
-
-    /* "All Programs ►" */
-    {
-        int32_t ap_y = y_cursor + (int32_t)((SM_LEFT_COUNT + 1) * SM_ITEM_H);
-        int32_t ap_text_y = ap_y + (SM_ITEM_H - 14) / 2;
-
-        if (sm_hover_col == 0 && sm_hover_idx == (int32_t)SM_LEFT_COUNT) {
-            gfx_fill_rect(&scr, menu_x + SM_PAD, ap_y,
-                           SM_LEFT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
-        }
-        ttf_screen_text(menu_x + SM_PAD + 8, ap_text_y,
-                        "All Programs  \xBB", FONT_UI, 14, SM_TEXT_PRI);
-    }
-
-    /* ================================================================
-     *  RIGHT COLUMN — User header + quick links + power
+     *  LEFT COLUMN — Search bar + alphabetical pinned programs
      * ================================================================ */
     {
-        int32_t rx = menu_x + (int32_t)SM_LEFT_W + 1;
+        int32_t y = menu_y + SM_PAD;
 
-        /* User header: avatar placeholder + username */
+        /* Search bar */
         {
-            int32_t avatar_x = rx + SM_PAD + 4;
-            int32_t avatar_y = menu_y + SM_PAD + 4;
-            /* 48×48 user avatar placeholder (circle with initial) */
-            gfx_fill_rect(&scr, avatar_x, avatar_y, 48, 48, 0xFF404050);
-            /* Draw "U" initial centered in avatar */
-            ttf_screen_text(avatar_x + 16, avatar_y + 14,
-                            "U", FONT_UI_BOLD, 20, SM_ACCENT);
-            /* Username text */
-            ttf_screen_text(avatar_x + 56, avatar_y + 16,
-                            "User", FONT_UI_BOLD, 14, SM_TEXT_PRI);
+            int32_t sb_x = menu_x + SM_PAD;
+            int32_t sb_w = SM_LEFT_W - SM_PAD * 2;
+            icon_bitmap_t *search_ico = icon_get_colored(ICON_SEARCH, 16, SM_TEXT_SEC);
+
+            gfx_fill_rounded_rect(&scr, sb_x, y, (uint32_t)sb_w, SM_SEARCH_H,
+                                   4, SM_SEARCH_BG);
+            gfx_draw_rounded_rect(&scr, sb_x, y, (uint32_t)sb_w, SM_SEARCH_H,
+                                   4, 1, SM_SEARCH_BORDER);
+
+            /* Search icon */
+            if (search_ico)
+                icon_draw(&scr, search_ico, sb_x + 10, y + (SM_SEARCH_H - 16) / 2);
+
+            /* Placeholder text */
+            ttf_screen_text(sb_x + 32, y + (SM_SEARCH_H - 14) / 2,
+                            "Search programs and files", FONT_UI, 13,
+                            SM_SEARCH_TEXT);
         }
 
-        /* Separator after header */
-        gfx_fill_rect(&scr, rx + SM_PAD, menu_y + (int32_t)SM_HEADER_H - 1,
-                       SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
+        y += SM_SEARCH_H + SM_PAD;
 
-        /* Quick links */
-        y_cursor = menu_y + (int32_t)SM_HEADER_H;
-        for (i = 0; i < SM_RIGHT_COUNT; i++) {
-            int32_t item_y = y_cursor + (int32_t)(i * SM_ITEM_H);
+        /* Pinned programs with letter headings */
+        for (i = 0; i < SM_LEFT_COUNT; i++) {
+            const sm_left_item_t *item = &sm_left_items[i];
+            int32_t item_y = y + (int32_t)(i * SM_ITEM_H);
             int32_t text_y = item_y + (SM_ITEM_H - 14) / 2;
 
-            /* Separator after "Downloads" (index 3) */
-            if (i == SM_RIGHT_SEP_AFTER) {
-                gfx_fill_rect(&scr, rx + SM_PAD,
-                               item_y - 1,
-                               SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
+            /* Letter heading */
+            if (item->letter) {
+                char hdr[2] = { item->letter, '\0' };
+                ttf_screen_text(menu_x + SM_PAD + 4, text_y,
+                                hdr, FONT_UI_BOLD, 12, SM_TEXT_HEADING);
             }
+
+            /* Hover highlight */
+            if (sm_hover_col == 0 && sm_hover_idx == (int32_t)i) {
+                gfx_fill_rect(&scr, menu_x + SM_PAD, item_y,
+                               SM_LEFT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
+            }
+
+            /* Icon from icon store */
+            {
+                icon_bitmap_t *ico = icon_get_colored(item->icon_id, SM_ICON_SZ,
+                                                       SM_TEXT_PRI);
+                if (ico)
+                    icon_draw(&scr, ico, menu_x + SM_PAD + 20,
+                              item_y + (SM_ITEM_H - (int32_t)SM_ICON_SZ) / 2);
+            }
+
+            /* Label */
+            ttf_screen_text(menu_x + SM_PAD + 46, text_y,
+                            item->label, FONT_UI, 14, SM_TEXT_PRI);
+        }
+    }
+
+    /* ================================================================
+     *  RIGHT COLUMN — Quick access links + bottom buttons
+     * ================================================================ */
+    {
+        int32_t rx = right_x + 1; /* past divider */
+        int32_t y = menu_y + SM_PAD;
+
+        /* Quick access items */
+        for (i = 0; i < SM_RIGHT_COUNT; i++) {
+            const sm_right_item_t *item = &sm_right_items[i];
+            int32_t item_y = y + (int32_t)(i * SM_ITEM_H);
+            int32_t text_y = item_y + (SM_ITEM_H - 14) / 2;
 
             /* Hover highlight */
             if (sm_hover_col == 1 && sm_hover_idx == (int32_t)i) {
                 gfx_fill_rect(&scr, rx + SM_PAD, item_y,
-                               SM_RIGHT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
+                               SM_RIGHT_W - SM_PAD * 2 - 1, SM_ITEM_H, SM_HOVER_BG);
             }
 
-            /* Label (right column uses bold) */
-            ttf_screen_text(rx + SM_PAD + 8, text_y,
-                            sm_right_labels[i], FONT_UI, 14, SM_TEXT_PRI);
-        }
-
-        /* Separator before power */
-        {
-            int32_t pow_sep_y = y_cursor + (int32_t)(SM_RIGHT_COUNT * SM_ITEM_H);
-            gfx_fill_rect(&scr, rx + SM_PAD, pow_sep_y,
-                           SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
-        }
-
-        /* Power button */
-        {
-            int32_t pow_y = y_cursor + (int32_t)(SM_RIGHT_COUNT * SM_ITEM_H) + 4;
-            int32_t pow_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - 100;
-            int32_t pow_text_y = pow_y + (SM_POWER_H - 14) / 2;
-
-            /* Hover highlight on power */
-            if (sm_hover_col == 2) {
-                gfx_fill_rect(&scr, pow_x, pow_y, 96, SM_POWER_H - 8,
-                               SM_POWER_BG);
+            /* Icon */
+            {
+                icon_bitmap_t *ico = icon_get_colored(item->icon_id, SM_ICON_SZ,
+                                                       SM_TEXT_PRI);
+                if (ico)
+                    icon_draw(&scr, ico, rx + SM_PAD + 4,
+                              item_y + (SM_ITEM_H - (int32_t)SM_ICON_SZ) / 2);
             }
 
-            ttf_screen_text(pow_x + 8, pow_text_y,
-                            "Shut down", FONT_UI_BOLD, 14, SM_TEXT_PRI);
+            /* Label */
+            ttf_screen_text(rx + SM_PAD + 30, text_y,
+                            item->label, FONT_UI, 14, SM_TEXT_PRI);
         }
-    }
 
-    /* ================================================================
-     *  SEARCH BAR — Full width at bottom
-     * ================================================================ */
-    {
-        int32_t sb_y = menu_y + (int32_t)body_h;
-        /* Search bar separator */
-        gfx_fill_rect(&scr, menu_x + SM_PAD, sb_y,
-                       SM_TOTAL_W - SM_PAD * 2, 1, SM_DIVIDER);
+        /* Separator above bottom buttons */
+        {
+            int32_t sep_y = menu_y + (int32_t)menu_h - (int32_t)SM_BTN_SZ - SM_PAD - 4;
+            gfx_fill_rect(&scr, rx + SM_PAD, sep_y,
+                           SM_RIGHT_W - SM_PAD * 2 - 1, 1, SM_SEPARATOR);
+        }
 
-        /* Search bar background */
-        gfx_fill_rect(&scr, menu_x + SM_PAD, sb_y + 4,
-                       SM_TOTAL_W - SM_PAD * 2, SM_SEARCH_H - 8,
-                       SM_SEARCH_BG);
+        /* Bottom icon buttons: Settings and Power */
+        {
+            int32_t btn_y = menu_y + (int32_t)menu_h - (int32_t)SM_BTN_SZ - SM_PAD;
+            int32_t settings_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - SM_BTN_SZ * 2 - SM_PAD - 1;
+            int32_t power_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - SM_BTN_SZ - 1;
 
-        /* Search placeholder text */
-        ttf_screen_text(menu_x + SM_PAD + 30, sb_y + (SM_SEARCH_H - 14) / 2,
-                        "Search programs and files", FONT_UI, 14,
-                        SM_SEARCH_TEXT);
+            /* Settings button */
+            {
+                uint32_t btn_bg = (sm_hover_col == 2) ? SM_BTN_HOVER : SM_BTN_BG;
+                gfx_fill_rounded_rect(&scr, settings_x, btn_y,
+                                       SM_BTN_SZ, SM_BTN_SZ, 4, btn_bg);
+                {
+                    icon_bitmap_t *ico = icon_get_colored(ICON_SETTINGS, 20,
+                                                           SM_TEXT_PRI);
+                    if (ico)
+                        icon_draw(&scr, ico, settings_x + (SM_BTN_SZ - 20) / 2,
+                                  btn_y + (SM_BTN_SZ - 20) / 2);
+                }
+            }
 
-        /* Search icon */
-        ttf_screen_text(menu_x + SM_PAD + 8, sb_y + (SM_SEARCH_H - 14) / 2,
-                        "?", FONT_UI_BOLD, 14, SM_TEXT_SEC);
+            /* Power button */
+            {
+                uint32_t btn_bg = (sm_hover_col == 3) ? SM_BTN_HOVER : SM_BTN_BG;
+                gfx_fill_rounded_rect(&scr, power_x, btn_y,
+                                       SM_BTN_SZ, SM_BTN_SZ, 4, btn_bg);
+                {
+                    icon_bitmap_t *ico = icon_get_colored(ICON_POWER, 20,
+                                                           SM_TEXT_PRI);
+                    if (ico)
+                        icon_draw(&scr, ico, power_x + (SM_BTN_SZ - 20) / 2,
+                                  btn_y + (SM_BTN_SZ - 20) / 2);
+                }
+            }
+        }
     }
 }
 
@@ -823,10 +816,9 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
 
     /* Click on start menu item? */
     if (start_menu_open) {
-        uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
-        uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H;
-        uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
-        uint32_t menu_h = body_h + SM_SEARCH_H;
+        uint32_t right_h = SM_RIGHT_COUNT * SM_ITEM_H + SM_PAD * 2 + SM_BTN_SZ + SM_PAD;
+        uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
+        uint32_t menu_h = right_h > left_h ? right_h : left_h;
         int32_t menu_x = 2;
         int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
 
@@ -837,25 +829,22 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
             int32_t rel_x = mx - menu_x;
             int32_t rel_y = my - menu_y;
 
-            /* Left column click */
+            /* Left column click (programs) */
             if (rel_x < (int32_t)SM_LEFT_W) {
-                int32_t item_y_start = SM_PAD;
-                int32_t item_idx = (rel_y - item_y_start) / SM_ITEM_H;
+                int32_t items_y_start = SM_PAD + SM_SEARCH_H + SM_PAD;
+                int32_t item_idx = (rel_y - items_y_start) / SM_ITEM_H;
 
                 if (item_idx >= 0 && item_idx < (int32_t)SM_LEFT_COUNT) {
+                    const sm_left_item_t *item = &sm_left_items[item_idx];
                     start_menu_open = 0;
                     wm_mark_dirty();
 
-                    switch (item_idx) {
-                    case 0:  /* Terminal */
-                    {
+                    /* Dispatch by label name */
+                    if (item->label[0] == 'T') { /* Terminal */
                         extern void shell_loader_func(void);
                         terminal_open();
                         task_create(shell_loader_func, "ShellLoader");
-                        break;
-                    }
-                    case 1:  /* About */
-                    {
+                    } else if (item->label[0] == 'A' && item->label[1] == 'b') { /* About */
                         int h = wm_create_window("About Impossible OS",
                                                  200, 150, 350, 180,
                                                  WM_DEFAULT_FLAGS);
@@ -892,24 +881,33 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
                             wm_raise_window(h);
                             wm_focus_window(h);
                         }
-                        break;
                     }
-                    case 2:  /* Shutdown */
-                        acpi_shutdown();
-                        break;
-                    }
+                    /* "All Programs" — no-op for now */
                     return 1;
                 }
             }
 
-            /* Right column — power button area */
+            /* Right column — power button click */
             if (rel_x >= (int32_t)SM_LEFT_W) {
-                int32_t pow_y = (int32_t)SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + 4;
-                if (rel_y >= pow_y && rel_y < pow_y + (int32_t)SM_POWER_H) {
-                    start_menu_open = 0;
-                    wm_mark_dirty();
-                    acpi_shutdown();
-                    return 1;
+                int32_t btn_y = (int32_t)menu_h - (int32_t)SM_BTN_SZ - SM_PAD;
+                int32_t rx = (int32_t)SM_LEFT_W + 1;
+                int32_t power_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - SM_BTN_SZ - 1;
+                int32_t settings_x = power_x - SM_BTN_SZ - SM_PAD;
+
+                if (rel_y >= btn_y && rel_y < btn_y + (int32_t)SM_BTN_SZ) {
+                    /* Power button */
+                    if (rel_x >= power_x && rel_x < power_x + (int32_t)SM_BTN_SZ) {
+                        start_menu_open = 0;
+                        wm_mark_dirty();
+                        acpi_shutdown();
+                        return 1;
+                    }
+                    /* Settings button — placeholder */
+                    if (rel_x >= settings_x && rel_x < settings_x + (int32_t)SM_BTN_SZ) {
+                        start_menu_open = 0;
+                        wm_mark_dirty();
+                        return 1;
+                    }
                 }
             }
 
@@ -972,10 +970,9 @@ cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my)
 
     /* Start menu items → hand */
     if (start_menu_open) {
-        uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
-        uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H;
-        uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
-        uint32_t menu_h = body_h + SM_SEARCH_H;
+        uint32_t right_h = SM_RIGHT_COUNT * SM_ITEM_H + SM_PAD * 2 + SM_BTN_SZ + SM_PAD;
+        uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
+        uint32_t menu_h = right_h > left_h ? right_h : left_h;
         uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h;
         if (mx >= 0 && mx < (int32_t)SM_TOTAL_W + 2 &&
             my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT)) {
@@ -985,19 +982,29 @@ cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my)
             sm_hover_col = -1;
             sm_hover_idx = -1;
             if (rel_x < (int32_t)SM_LEFT_W) {
-                int32_t idx = (rel_y - SM_PAD) / SM_ITEM_H;
-                if (idx >= 0 && idx <= (int32_t)SM_LEFT_COUNT) {
+                int32_t items_start = SM_PAD + SM_SEARCH_H + SM_PAD;
+                int32_t idx = (rel_y - items_start) / SM_ITEM_H;
+                if (idx >= 0 && idx < (int32_t)SM_LEFT_COUNT) {
                     sm_hover_col = 0;
                     sm_hover_idx = idx;
                 }
             } else {
-                int32_t idx = (rel_y - (int32_t)SM_HEADER_H) / SM_ITEM_H;
+                int32_t idx = (rel_y - SM_PAD) / SM_ITEM_H;
                 if (idx >= 0 && idx < (int32_t)SM_RIGHT_COUNT) {
                     sm_hover_col = 1;
                     sm_hover_idx = idx;
-                } else if (rel_y >= (int32_t)(SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H)) {
-                    sm_hover_col = 2; /* power btn */
-                    sm_hover_idx = 0;
+                } else {
+                    /* Check bottom buttons */
+                    int32_t btn_y = (int32_t)menu_h - (int32_t)SM_BTN_SZ - SM_PAD;
+                    int32_t rx = (int32_t)SM_LEFT_W + 1;
+                    int32_t power_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - SM_BTN_SZ - 1;
+                    int32_t settings_x = power_x - SM_BTN_SZ - SM_PAD;
+                    if (rel_y >= btn_y && rel_y < btn_y + (int32_t)SM_BTN_SZ) {
+                        if (rel_x >= power_x)
+                            sm_hover_col = 3;
+                        else if (rel_x >= settings_x)
+                            sm_hover_col = 2;
+                    }
                 }
             }
             return CURSOR_HAND;
