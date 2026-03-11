@@ -1121,10 +1121,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     mb = ms.buttons;
                 }
 
-                /* During drag: briefly yield then re-read to batch
-                 * additional IRQ deltas that arrived while we processed
-                 * the previous frame.  This turns 5×1px into 1×5px. */
-                if (wm_is_dragging()) {
+                /* Batch mouse events: after reading, briefly yield to let
+                 * any additional IRQ deltas arrive, then re-read.
+                 * This turns 5×1px moves into 1×5px = 1 composite. */
+                {
                     int batch;
                     for (batch = 0; batch < 4; batch++) {
                         int32_t nx, ny;
@@ -1290,10 +1290,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 /* Periodically flush dirty Codex trees to disk */
                 codex_flush();
 
-                /* Yield to other tasks instead of HLT.  HLT surrenders the
-                 * entire time slice; yield() does a cooperative context switch
-                 * but keeps us in the ready queue for prompt re-scheduling. */
-                yield();
+                /* Sleep until next IRQ.  HLT wakes on mouse/keyboard/timer
+                 * instantly — much lower latency than yield() which does
+                 * a full scheduler context-switch round-trip. */
+                __asm__ volatile ("sti; hlt");
             }
         }
     }
