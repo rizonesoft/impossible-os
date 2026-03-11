@@ -263,6 +263,7 @@ run: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
+		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
