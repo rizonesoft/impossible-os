@@ -273,7 +273,6 @@ run: all
 		-serial stdio \
 		-vga none \
 		-device VGA,xres=1280,yres=720 \
-		-device virtio-gpu-pci,max_outputs=0 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
