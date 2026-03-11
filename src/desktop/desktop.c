@@ -35,29 +35,63 @@ static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully 
 static uint32_t *start_icon_buf;      /* Heap-allocated from VFS read */
 static uint8_t   start_icon_loaded;
 
+/* ---- Start Menu layout constants (Win7 two-column, Win11 dark style) ---- */
+#define SM_LEFT_W          260  /* left column width           */
+#define SM_RIGHT_W         200  /* right column width          */
+#define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W + 1) /* +1 for divider */
+#define SM_ITEM_H          30   /* item row height             */
+#define SM_SEARCH_H        36   /* search bar height           */
+#define SM_HEADER_H        56   /* right column user header    */
+#define SM_POWER_H         36   /* power button row            */
+#define SM_PAD             8    /* inner padding               */
+#define SM_RADIUS          8    /* rounded corner radius       */
+#define SM_BG_LEFT         0xF01E1E1E  /* left column (semi-transparent dark) */
+#define SM_BG_RIGHT        0xF02A2A2A  /* right column (slightly lighter)     */
+#define SM_DIVIDER         0xFF383838  /* column divider              */
+#define SM_SEPARATOR       0xFF383838  /* thin separator line         */
+#define SM_ACCENT          0xFF60CDFF  /* accent blue                 */
+#define SM_TEXT_PRI        0xFFE8E8E8  /* primary text                */
+#define SM_TEXT_SEC        0xFFA0A0A0  /* secondary/dimmed text       */
+#define SM_HOVER_BG        0xFF383838  /* hover highlight background  */
+#define SM_SEARCH_BG       0xFF353535  /* search bar background       */
+#define SM_SEARCH_TEXT     0xFF808080  /* search placeholder          */
+#define SM_POWER_BG        0xFF2D5580  /* power button background     */
+
 /* ---- Start menu state ---- */
 static uint8_t start_menu_open;
 static uint8_t prev_left;          /* Previous left-button state for edge */
+static int32_t sm_hover_col;       /* 0=left, 1=right, -1=none */
+static int32_t sm_hover_idx;       /* hovered item index, -1=none */
 
-/* ---- Menu items ---- */
-#define MENU_ITEM_COUNT 3
-
-static const char *menu_items[MENU_ITEM_COUNT] = {
+/* ---- Left column: pinned programs ---- */
+#define SM_LEFT_COUNT    3
+static const char *sm_left_labels[SM_LEFT_COUNT] = {
     "Terminal",
     "About",
     "Shutdown"
 };
-
-/* Icon characters for menu items (rendered as colored text) */
-static const char menu_icons[MENU_ITEM_COUNT] = {
+static const char sm_left_icons[SM_LEFT_COUNT] = {
     '>', 'i', 'X'
 };
-
-static const uint32_t menu_icon_colors[MENU_ITEM_COUNT] = {
-    0x0044FF88,  /* green for Terminal */
-    0x004488FF,  /* blue for About */
-    0x00FF5555,  /* red for Shutdown */
+static const uint32_t sm_left_icon_colors[SM_LEFT_COUNT] = {
+    0xFF44FF88,  /* green */
+    0xFF4488FF,  /* blue */
+    0xFFFF5555,  /* red */
 };
+
+/* ---- Right column: quick links ---- */
+#define SM_RIGHT_COUNT   7
+static const char *sm_right_labels[SM_RIGHT_COUNT] = {
+    "Documents",
+    "Pictures",
+    "Music",
+    "Downloads",
+    "Computer",
+    "Control Panel",
+    "Help"
+};
+/* Separator after index 3 (after Downloads) */
+#define SM_RIGHT_SEP_AFTER  3
 
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
@@ -577,47 +611,193 @@ void desktop_draw_taskbar(void)
 
 void desktop_draw_start_menu(void)
 {
+    uint32_t sw = fb_get_width();
     uint32_t sh = fb_get_height();
-    uint32_t menu_h;
-    uint32_t menu_x, menu_y;
+    /* Compute total menu height: header + right items + power + search */
+    uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
+    uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H; /* items + sep + "All Programs" */
+    uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
+    uint32_t menu_h = body_h + SM_SEARCH_H;
+    int32_t menu_x = 2;
+    int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
+    gfx_surface_t scr;
     uint32_t i;
+    int32_t y_cursor;
+
+    (void)sw;
 
     if (!start_menu_open)
         return;
 
-    menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 8;  /* 4px padding top/bottom */
-    menu_x = 2;
-    menu_y = sh - TASKBAR_HEIGHT - menu_h;
+    gfx_surface_init(&scr, fb_get_backbuffer(),
+                     fb_get_width(), fb_get_height(), fb_get_stride());
 
-    /* Menu background */
-    fb_fill_rect(menu_x, menu_y, MENU_WIDTH, menu_h, MENU_BG);
+    /* ---- Drop shadow ---- */
+    gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                     12, 0, 4, GFX_RGBA(0, 0, 0, 120));
 
-    /* Border */
-    fb_draw_rect(menu_x, menu_y, MENU_WIDTH, menu_h, MENU_BORDER);
+    /* ---- Acrylic background ---- */
+    gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                0xFF1E1E1E, 220, 3);
 
-    /* Draw each menu item */
-    for (i = 0; i < MENU_ITEM_COUNT; i++) {
-        uint32_t item_y = menu_y + 4 + i * MENU_ITEM_HEIGHT;
+    /* ---- Rounded border ---- */
+    gfx_draw_rounded_rect(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                           SM_RADIUS, 1, SM_DIVIDER);
+
+    /* ---- Right column background (lighter) ---- */
+    {
+        int32_t rx = menu_x + (int32_t)SM_LEFT_W + 1; /* after divider */
+        gfx_fill_rect(&scr, rx, menu_y + SM_RADIUS,
+                       SM_RIGHT_W - SM_RADIUS, body_h - SM_RADIUS,
+                       SM_BG_RIGHT);
+    }
+
+    /* ---- Column divider ---- */
+    gfx_fill_rect(&scr, menu_x + (int32_t)SM_LEFT_W, menu_y + SM_PAD,
+                   1, body_h - SM_PAD * 2, SM_DIVIDER);
+
+    /* ================================================================
+     *  LEFT COLUMN — Pinned programs
+     * ================================================================ */
+    y_cursor = menu_y + SM_PAD;
+
+    for (i = 0; i < SM_LEFT_COUNT; i++) {
+        int32_t item_y = y_cursor + (int32_t)(i * SM_ITEM_H);
+        int32_t text_y = item_y + (SM_ITEM_H - 14) / 2;
+
+        /* Hover highlight */
+        if (sm_hover_col == 0 && sm_hover_idx == (int32_t)i) {
+            gfx_fill_rect(&scr, menu_x + SM_PAD, item_y,
+                           SM_LEFT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
+        }
 
         /* Icon character */
         {
-            char icon_str[2] = { menu_icons[i], '\0' };
-            ttf_screen_text((int32_t)(menu_x + 12),
-                            (int32_t)(item_y + (MENU_ITEM_HEIGHT - 14) / 2),
+            char icon_str[2] = { sm_left_icons[i], '\0' };
+            ttf_screen_text(menu_x + SM_PAD + 8, text_y,
                             icon_str, FONT_UI_BOLD, 14,
-                            menu_icon_colors[i]);
+                            sm_left_icon_colors[i]);
         }
 
         /* Label */
-        ttf_screen_text((int32_t)(menu_x + 32),
-                        (int32_t)(item_y + (MENU_ITEM_HEIGHT - 14) / 2),
-                        menu_items[i], FONT_UI, 14, MENU_TEXT);
+        ttf_screen_text(menu_x + SM_PAD + 30, text_y,
+                        sm_left_labels[i], FONT_UI, 14, SM_TEXT_PRI);
+    }
 
-        /* Separator line (except after last item) */
-        if (i < MENU_ITEM_COUNT - 1) {
-            fb_fill_rect(menu_x + 8, item_y + MENU_ITEM_HEIGHT - 1,
-                         MENU_WIDTH - 16, 1, MENU_BORDER);
+    /* Separator after pinned */
+    {
+        int32_t sep_y = y_cursor + (int32_t)(SM_LEFT_COUNT * SM_ITEM_H);
+        gfx_fill_rect(&scr, menu_x + SM_PAD + 4, sep_y + SM_ITEM_H / 2,
+                       SM_LEFT_W - SM_PAD * 2 - 8, 1, SM_SEPARATOR);
+    }
+
+    /* "All Programs ►" */
+    {
+        int32_t ap_y = y_cursor + (int32_t)((SM_LEFT_COUNT + 1) * SM_ITEM_H);
+        int32_t ap_text_y = ap_y + (SM_ITEM_H - 14) / 2;
+
+        if (sm_hover_col == 0 && sm_hover_idx == (int32_t)SM_LEFT_COUNT) {
+            gfx_fill_rect(&scr, menu_x + SM_PAD, ap_y,
+                           SM_LEFT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
         }
+        ttf_screen_text(menu_x + SM_PAD + 8, ap_text_y,
+                        "All Programs  \xBB", FONT_UI, 14, SM_TEXT_PRI);
+    }
+
+    /* ================================================================
+     *  RIGHT COLUMN — User header + quick links + power
+     * ================================================================ */
+    {
+        int32_t rx = menu_x + (int32_t)SM_LEFT_W + 1;
+
+        /* User header: avatar placeholder + username */
+        {
+            int32_t avatar_x = rx + SM_PAD + 4;
+            int32_t avatar_y = menu_y + SM_PAD + 4;
+            /* 48×48 user avatar placeholder (circle with initial) */
+            gfx_fill_rect(&scr, avatar_x, avatar_y, 48, 48, 0xFF404050);
+            /* Draw "U" initial centered in avatar */
+            ttf_screen_text(avatar_x + 16, avatar_y + 14,
+                            "U", FONT_UI_BOLD, 20, SM_ACCENT);
+            /* Username text */
+            ttf_screen_text(avatar_x + 56, avatar_y + 16,
+                            "User", FONT_UI_BOLD, 14, SM_TEXT_PRI);
+        }
+
+        /* Separator after header */
+        gfx_fill_rect(&scr, rx + SM_PAD, menu_y + (int32_t)SM_HEADER_H - 1,
+                       SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
+
+        /* Quick links */
+        y_cursor = menu_y + (int32_t)SM_HEADER_H;
+        for (i = 0; i < SM_RIGHT_COUNT; i++) {
+            int32_t item_y = y_cursor + (int32_t)(i * SM_ITEM_H);
+            int32_t text_y = item_y + (SM_ITEM_H - 14) / 2;
+
+            /* Separator after "Downloads" (index 3) */
+            if (i == SM_RIGHT_SEP_AFTER) {
+                gfx_fill_rect(&scr, rx + SM_PAD,
+                               item_y - 1,
+                               SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
+            }
+
+            /* Hover highlight */
+            if (sm_hover_col == 1 && sm_hover_idx == (int32_t)i) {
+                gfx_fill_rect(&scr, rx + SM_PAD, item_y,
+                               SM_RIGHT_W - SM_PAD * 2, SM_ITEM_H, SM_HOVER_BG);
+            }
+
+            /* Label (right column uses bold) */
+            ttf_screen_text(rx + SM_PAD + 8, text_y,
+                            sm_right_labels[i], FONT_UI, 14, SM_TEXT_PRI);
+        }
+
+        /* Separator before power */
+        {
+            int32_t pow_sep_y = y_cursor + (int32_t)(SM_RIGHT_COUNT * SM_ITEM_H);
+            gfx_fill_rect(&scr, rx + SM_PAD, pow_sep_y,
+                           SM_RIGHT_W - SM_PAD * 2, 1, SM_SEPARATOR);
+        }
+
+        /* Power button */
+        {
+            int32_t pow_y = y_cursor + (int32_t)(SM_RIGHT_COUNT * SM_ITEM_H) + 4;
+            int32_t pow_x = rx + (int32_t)SM_RIGHT_W - SM_PAD - 100;
+            int32_t pow_text_y = pow_y + (SM_POWER_H - 14) / 2;
+
+            /* Hover highlight on power */
+            if (sm_hover_col == 2) {
+                gfx_fill_rect(&scr, pow_x, pow_y, 96, SM_POWER_H - 8,
+                               SM_POWER_BG);
+            }
+
+            ttf_screen_text(pow_x + 8, pow_text_y,
+                            "Shut down", FONT_UI_BOLD, 14, SM_TEXT_PRI);
+        }
+    }
+
+    /* ================================================================
+     *  SEARCH BAR — Full width at bottom
+     * ================================================================ */
+    {
+        int32_t sb_y = menu_y + (int32_t)body_h;
+        /* Search bar separator */
+        gfx_fill_rect(&scr, menu_x + SM_PAD, sb_y,
+                       SM_TOTAL_W - SM_PAD * 2, 1, SM_DIVIDER);
+
+        /* Search bar background */
+        gfx_fill_rect(&scr, menu_x + SM_PAD, sb_y + 4,
+                       SM_TOTAL_W - SM_PAD * 2, SM_SEARCH_H - 8,
+                       SM_SEARCH_BG);
+
+        /* Search placeholder text */
+        ttf_screen_text(menu_x + SM_PAD + 30, sb_y + (SM_SEARCH_H - 14) / 2,
+                        "Search programs and files", FONT_UI, 14,
+                        SM_SEARCH_TEXT);
+
+        /* Search icon */
+        ttf_screen_text(menu_x + SM_PAD + 8, sb_y + (SM_SEARCH_H - 14) / 2,
+                        "?", FONT_UI_BOLD, 14, SM_TEXT_SEC);
     }
 }
 
@@ -643,74 +823,98 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
 
     /* Click on start menu item? */
     if (start_menu_open) {
-        uint32_t menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 8;
-        uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h;
+        uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
+        uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H;
+        uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
+        uint32_t menu_h = body_h + SM_SEARCH_H;
+        int32_t menu_x = 2;
+        int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
 
-        if (mx >= 2 && mx < (int32_t)(2 + MENU_WIDTH) &&
-            my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT)) {
+        /* Check if click is inside the start menu bounds */
+        if (mx >= menu_x && mx < menu_x + (int32_t)SM_TOTAL_W &&
+            my >= menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT)) {
 
-            uint32_t rel_y = (uint32_t)(my - (int32_t)menu_y - 4);
-            uint32_t item = rel_y / MENU_ITEM_HEIGHT;
+            int32_t rel_x = mx - menu_x;
+            int32_t rel_y = my - menu_y;
 
-            if (item < MENU_ITEM_COUNT) {
-                start_menu_open = 0;
-                wm_mark_dirty();
+            /* Left column click */
+            if (rel_x < (int32_t)SM_LEFT_W) {
+                int32_t item_y_start = SM_PAD;
+                int32_t item_idx = (rel_y - item_y_start) / SM_ITEM_H;
 
-                switch (item) {
-                case 0:  /* Terminal — open terminal window + launch shell */
-                {
-                    extern void shell_loader_func(void);
-                    terminal_open();
-                    task_create(shell_loader_func, "ShellLoader");
-                    break;
-                }
-                case 1:  /* About */
-                {
-                    /* Create an About window */
-                    int h = wm_create_window("About Impossible OS",
-                                             200, 150, 350, 180,
-                                             WM_DEFAULT_FLAGS);
-                    if (h >= 0) {
-                        uint32_t *fb = wm_get_framebuffer(h);
-                        if (fb) {
-                            const char *lines[] = {
-                                "  Impossible OS v0.1.0",
-                                "",
-                                "  Architecture: x86-64",
-                                "  Boot: UEFI + GRUB",
-                                "  Kernel: Monolithic",
-                                "",
-                                "  Built with love in 2026"
-                            };
-                            uint32_t ln;
-                            uint32_t cw = wm_get_client_width(h);
-                            uint32_t ch = wm_get_client_height(h);
-                            gfx_surface_t ws;
-                            wm_fill_rect(h, 0, 0, 350, 180, 0xFF202020);
-                            gfx_surface_init(&ws, fb, cw, ch, cw);
-                            for (ln = 0; ln < 7; ln++) {
-                                gfx_color_t fg_c = (ln == 0) ? 0xFF60CDFF
-                                                             : 0xFFC0C0C0;
-                                int slot = (ln == 0) ? FONT_UI_BOLD : FONT_UI;
-                                ttf_font_t *fnt = ttf_get(slot, 14);
-                                if (fnt) {
-                                    ttf_draw_string(&ws, fnt,
-                                        8, (int32_t)(ln * 20 + 10),
-                                        lines[ln], fg_c);
+                if (item_idx >= 0 && item_idx < (int32_t)SM_LEFT_COUNT) {
+                    start_menu_open = 0;
+                    wm_mark_dirty();
+
+                    switch (item_idx) {
+                    case 0:  /* Terminal */
+                    {
+                        extern void shell_loader_func(void);
+                        terminal_open();
+                        task_create(shell_loader_func, "ShellLoader");
+                        break;
+                    }
+                    case 1:  /* About */
+                    {
+                        int h = wm_create_window("About Impossible OS",
+                                                 200, 150, 350, 180,
+                                                 WM_DEFAULT_FLAGS);
+                        if (h >= 0) {
+                            uint32_t *fb = wm_get_framebuffer(h);
+                            if (fb) {
+                                const char *lines[] = {
+                                    "  Impossible OS v0.1.0",
+                                    "",
+                                    "  Architecture: x86-64",
+                                    "  Boot: UEFI + GRUB",
+                                    "  Kernel: Monolithic",
+                                    "",
+                                    "  Built with love in 2026"
+                                };
+                                uint32_t ln;
+                                uint32_t cw = wm_get_client_width(h);
+                                uint32_t ch = wm_get_client_height(h);
+                                gfx_surface_t ws;
+                                wm_fill_rect(h, 0, 0, 350, 180, 0xFF202020);
+                                gfx_surface_init(&ws, fb, cw, ch, cw);
+                                for (ln = 0; ln < 7; ln++) {
+                                    gfx_color_t fg_c = (ln == 0) ? 0xFF60CDFF
+                                                                 : 0xFFC0C0C0;
+                                    int slot = (ln == 0) ? FONT_UI_BOLD : FONT_UI;
+                                    ttf_font_t *fnt = ttf_get(slot, 14);
+                                    if (fnt) {
+                                        ttf_draw_string(&ws, fnt,
+                                            8, (int32_t)(ln * 20 + 10),
+                                            lines[ln], fg_c);
+                                    }
                                 }
                             }
+                            wm_raise_window(h);
+                            wm_focus_window(h);
                         }
-                        wm_raise_window(h);
-                        wm_focus_window(h);
+                        break;
                     }
-                    break;
+                    case 2:  /* Shutdown */
+                        acpi_shutdown();
+                        break;
+                    }
+                    return 1;
                 }
-                case 2:  /* Shutdown */
-                    acpi_shutdown();
-                    break;
-                }
-                return 1;
             }
+
+            /* Right column — power button area */
+            if (rel_x >= (int32_t)SM_LEFT_W) {
+                int32_t pow_y = (int32_t)SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + 4;
+                if (rel_y >= pow_y && rel_y < pow_y + (int32_t)SM_POWER_H) {
+                    start_menu_open = 0;
+                    wm_mark_dirty();
+                    acpi_shutdown();
+                    return 1;
+                }
+            }
+
+            /* Click inside menu but not on an action — consume it */
+            return 1;
         }
 
         /* Clicked outside the menu — close it */
@@ -768,11 +972,39 @@ cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my)
 
     /* Start menu items → hand */
     if (start_menu_open) {
-        uint32_t menu_h = MENU_ITEM_COUNT * MENU_ITEM_HEIGHT + 8;
+        uint32_t right_body_h = SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_POWER_H;
+        uint32_t left_body_h = SM_LEFT_COUNT * SM_ITEM_H + SM_ITEM_H + SM_ITEM_H;
+        uint32_t body_h = right_body_h > left_body_h ? right_body_h : left_body_h;
+        uint32_t menu_h = body_h + SM_SEARCH_H;
         uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h;
-        if (mx >= 0 && mx < (int32_t)MENU_WIDTH &&
-            my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT))
+        if (mx >= 0 && mx < (int32_t)SM_TOTAL_W + 2 &&
+            my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT)) {
+            /* Update hover tracking */
+            int32_t rel_x = mx - 2;
+            int32_t rel_y = my - (int32_t)menu_y;
+            sm_hover_col = -1;
+            sm_hover_idx = -1;
+            if (rel_x < (int32_t)SM_LEFT_W) {
+                int32_t idx = (rel_y - SM_PAD) / SM_ITEM_H;
+                if (idx >= 0 && idx <= (int32_t)SM_LEFT_COUNT) {
+                    sm_hover_col = 0;
+                    sm_hover_idx = idx;
+                }
+            } else {
+                int32_t idx = (rel_y - (int32_t)SM_HEADER_H) / SM_ITEM_H;
+                if (idx >= 0 && idx < (int32_t)SM_RIGHT_COUNT) {
+                    sm_hover_col = 1;
+                    sm_hover_idx = idx;
+                } else if (rel_y >= (int32_t)(SM_HEADER_H + SM_RIGHT_COUNT * SM_ITEM_H)) {
+                    sm_hover_col = 2; /* power btn */
+                    sm_hover_idx = 0;
+                }
+            }
             return CURSOR_HAND;
+        } else {
+            sm_hover_col = -1;
+            sm_hover_idx = -1;
+        }
     }
 
     /* Taskbar area */
