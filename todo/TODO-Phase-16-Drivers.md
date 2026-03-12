@@ -441,3 +441,31 @@
 | 🔵 P4 | **Marvell mwifiex** | 88W8897, 88W8997 (Surface devices) | ~1% | GPL | Scratch |
 | 🔵 P4 | **Broadcom b43** | BCM4311, BCM4312, BCM4318 (legacy) | ~1% | GPL | Scratch |
 | | | | **~98%** | | |
+
+### USB Drivers (Depends on Phase 08 USB stack)
+
+> USB host controllers provide the transport. Device class drivers provide the functionality.
+> **tinyusb** (MIT) is the recommended source for the host controller + HID stack.
+
+#### Host Controllers
+
+| Priority | Driver | Covers | Port From | License | Method |
+|----------|--------|--------|-----------|---------|--------|
+| 🟠 P1 | **xHCI** | USB 3.x — all modern PCs (2012+) | tinyusb | MIT | Port |
+| 🟢 P3 | **EHCI** | USB 2.0 — older PCs (2001–2015) | tinyusb | MIT | Port |
+| 🔵 P4 | **OHCI/UHCI** | USB 1.1 — legacy (pre-2001) | tinyusb | MIT | Port |
+
+#### Device Class Drivers
+
+| Priority | Driver | USB Class | Devices | Port From | License | Method |
+|----------|--------|-----------|---------|-----------|---------|--------|
+| 🟠 P1 | **HID** | 0x03 | Keyboard, mouse, gamepad, touchscreen | tinyusb | MIT | Port |
+| 🟠 P1 | **Mass Storage** | 0x08 | Flash drives, external HDDs, card readers | tinyusb | MIT | Port |
+| 🟡 P2 | **Hub** | 0x09 | USB hubs, cascaded devices | tinyusb | MIT | Port |
+| 🟡 P2 | **Audio** | 0x01 | USB headsets, DACs, microphones | Scratch | — | Scratch |
+| 🟢 P3 | **CDC-ECM** | 0x02 | USB Ethernet dongles (RTL8153, AX88179) | Scratch | — | Scratch |
+| 🟢 P3 | **Video** | 0x0E | USB webcams (UVC) | Scratch | — | Scratch |
+| 🟢 P3 | **Printer** | 0x07 | USB printers | Scratch | — | Scratch |
+| 🔵 P4 | **CDC-ACM** | 0x02 | USB serial/modem (Arduino, debug) | Scratch | — | Scratch |
+| 🔵 P4 | **Bluetooth HCI** | 0xE0 | USB Bluetooth dongles | BTstack (MIT) | MIT | Port |
+| 🔵 P4 | **Wireless** | — | USB WiFi dongles (Realtek, Atheros) | Scratch | — | Scratch |
