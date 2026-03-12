@@ -126,12 +126,45 @@ try { & $VBOX setextradata $VM_NAME "VBoxInternal/Devices/pckbd/0/Config/Disable
 & $VBOX setextradata $VM_NAME "CustomVideoMode1" "1280x720x32"
 & $VBOX setextradata $VM_NAME "VBoxInternal2/EfiGraphicsResolution" "1280x720"
 
-# Attach disk
+# Attach boot disk
 & $VBOX storageattach $VM_NAME `
     --storagectl "AHCI" `
     --port 0 `
     --type hdd `
     --medium $DISK_VDI
+
+# ---- Attach test disk images (ports 1–7) ----
+$TEST_DISK_DIR = Join-Path $BUILD "test-disks"
+if (Test-Path $TEST_DISK_DIR) {
+    # Increase port count to accommodate test disks
+    & $VBOX storagectl $VM_NAME --name "AHCI" --portcount 10
+
+    $port = 1
+    $testDiskNames = @("fat32", "exfat", "ext2", "ext3", "ext4", "ntfs", "ixfs")
+    foreach ($name in $testDiskNames) {
+        $rawImg = Join-Path $TEST_DISK_DIR "$name.img"
+        $vdiImg = Join-Path $TEST_DISK_DIR "$name.vdi"
+        if (Test-Path $rawImg) {
+            # Detach + close old medium if present
+            try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port $port --medium none 2>$null } catch {}
+            try { & $VBOX closemedium disk $vdiImg 2>$null } catch {}
+            if (Test-Path $vdiImg) { Remove-Item $vdiImg -Force }
+
+            & $VBOX convertfromraw $rawImg $vdiImg --format VDI 2>$null
+            if (Test-Path $vdiImg) {
+                & $VBOX storageattach $VM_NAME `
+                    --storagectl "AHCI" `
+                    --port $port `
+                    --type hdd `
+                    --medium $vdiImg
+                Write-Host "  Port $port`: $name.vdi" -ForegroundColor DarkGray
+            }
+            $port++
+        }
+    }
+} else {
+    Write-Host "  No test disks (run: bash tools/make-test-disks.sh)" -ForegroundColor Yellow
+}
 
 # ---- Launch ----
 Write-Host ""
