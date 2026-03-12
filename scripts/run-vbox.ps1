@@ -49,14 +49,23 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 }
 
 # ---- Convert raw disk to VDI ----
-# Always re-convert to pick up latest build changes
+# Always re-convert to pick up latest build changes.
+# Must properly unregister the old VDI from VirtualBox's media registry
+# before deleting, otherwise UUID mismatch errors occur.
 Write-Host "Converting disk image to VDI..." -ForegroundColor Cyan
-if (Test-Path $DISK_VDI) {
-    # Must detach from any VM first, then delete
-    try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port 0 --medium none 2>$null } catch {}
-    try { & $VBOX closemedium disk $DISK_VDI --delete 2>$null } catch {}
-    if (Test-Path $DISK_VDI) { Remove-Item $DISK_VDI -Force }
-}
+
+# Power off VM if running
+try { & $VBOX controlvm $VM_NAME poweroff 2>$null } catch {}
+Start-Sleep -Milliseconds 500
+
+# Detach disk from VM
+try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port 0 --medium none 2>$null } catch {}
+
+# Close medium in VirtualBox registry (by path, handles UUID mismatch)
+try { & $VBOX closemedium disk $DISK_VDI 2>$null } catch {}
+
+# Delete old VDI file
+if (Test-Path $DISK_VDI) { Remove-Item $DISK_VDI -Force }
 
 & $VBOX convertfromraw $DISK_RAW $DISK_VDI --format VDI
 if (-not (Test-Path $DISK_VDI)) {

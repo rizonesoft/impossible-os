@@ -76,11 +76,15 @@ static inline void outw(uint16_t port, uint16_t val)
 /* Detected drives */
 static struct ata_drive drives[2];  /* [0] = master, [1] = slave */
 
-/* --- Wait for BSY to clear --- */
-static void ata_wait_bsy(void)
+/* --- Wait for BSY to clear (with timeout) --- */
+static int ata_wait_bsy(void)
 {
-    while (inb(ATA_STATUS) & ATA_SR_BSY)
-        ;
+    uint32_t timeout = 100000;
+    while (inb(ATA_STATUS) & ATA_SR_BSY) {
+        if (--timeout == 0)
+            return -1;  /* timed out */
+    }
+    return 0;
 }
 
 /* --- Wait for DRQ to set --- */
@@ -141,7 +145,8 @@ static void ata_identify_drive(uint8_t drive_num)
         return;  /* no drive */
 
     /* Wait for BSY to clear */
-    ata_wait_bsy();
+    if (ata_wait_bsy() < 0)
+        return;  /* timeout — no IDE controller */
 
     /* Check for non-ATA drives (ATAPI, SATA, etc.) */
     if (inb(ATA_LBA_MID) != 0 || inb(ATA_LBA_HI) != 0)
@@ -186,8 +191,11 @@ void ata_init(void)
     outb(ATA_DEV_CTRL, 0x00);    /* Clear SRST bit */
     ata_delay();
 
-    /* Wait for reset to complete */
-    ata_wait_bsy();
+    /* Wait for reset to complete (skip if no IDE controller) */
+    if (ata_wait_bsy() < 0) {
+        printk("[--] ATA master: not detected\n");
+        return;
+    }
 
     /* Identify both drives */
     ata_identify_drive(0);  /* master */
@@ -221,7 +229,8 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buffer)
         return -1;
 
     /* Wait for drive to be ready */
-    ata_wait_bsy();
+    if (ata_wait_bsy() < 0)
+        return -1;
 
     /* Select drive + LBA mode + top 4 bits of LBA */
     outb(ATA_DRIVE_HEAD, (uint8_t)(0xE0 | ((lba >> 24) & 0x0F)));
@@ -262,7 +271,8 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buffer)
     if (count == 0)
         return -1;
 
-    ata_wait_bsy();
+    if (ata_wait_bsy() < 0)
+        return -1;
 
     /* Select drive + LBA mode + top 4 bits */
     outb(ATA_DRIVE_HEAD, (uint8_t)(0xE0 | ((lba >> 24) & 0x0F)));
@@ -288,7 +298,8 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buffer)
 
     /* Flush write cache */
     outb(ATA_COMMAND, ATA_CMD_CACHE_FLUSH);
-    ata_wait_bsy();
+    if (ata_wait_bsy() < 0)
+        return -1;
 
     return 0;
 }
