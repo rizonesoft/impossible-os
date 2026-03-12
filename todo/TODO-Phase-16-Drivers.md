@@ -430,8 +430,14 @@
 | Priority | Driver | Chipsets | Laptop Coverage | License in Linux | Method |
 |----------|--------|----------|----------------|-----------------|--------|
 | 🔵 P4 | **Intel iwlwifi** | AX200, AX201, AX210, BE200 | ~35% | GPL | Scratch |
-| 🔵 P4 | **Realtek rtw89** | RTL8852AE/BE/CE | ~15% | GPL | Scratch |
-| 🔵 P4 | **Qualcomm ath11k** | WCN6855, WCN7850 | ~15% | GPL | Scratch |
-| 🔵 P4 | **Broadcom brcmfmac** | BCM4350, BCM4356 | ~10% | GPL | Scratch |
-| 🔵 P4 | **MediaTek mt76** | MT7921, MT7922 | ~10% | GPL | Scratch |
-| | | | **~85%** | | |
+| 🔵 P4 | **Realtek rtw89** | RTL8852AE/BE/CE (Wi-Fi 6/6E) | ~15% | GPL | Scratch |
+| 🔵 P4 | **Qualcomm ath11k** | WCN6855, WCN7850 (Wi-Fi 6E/7) | ~15% | GPL | Scratch |
+| 🔵 P4 | **Broadcom brcmfmac** | BCM4350, BCM4356, BCM43602 | ~10% | GPL | Scratch |
+| 🔵 P4 | **MediaTek mt76** | MT7921, MT7922 (Wi-Fi 6/6E) | ~10% | GPL | Scratch |
+| 🔵 P4 | **Qualcomm ath10k** | QCA6174, QCA9377, QCA9984 (Wi-Fi 5) | ~4% | GPL | Scratch |
+| 🔵 P4 | **Realtek rtw88** | RTL8822BE/CE, RTL8821CE (Wi-Fi 5) | ~3% | GPL | Scratch |
+| 🔵 P4 | **Ralink rt2x00** | RT3090, RT5390, RT5592 (older MediaTek) | ~2% | GPL | Scratch |
+| 🔵 P4 | **Qualcomm ath9k** | AR9285, AR9380, AR9462 (Wi-Fi 4) | ~2% | GPL | Scratch |
+| 🔵 P4 | **Marvell mwifiex** | 88W8897, 88W8997 (Surface devices) | ~1% | GPL | Scratch |
+| 🔵 P4 | **Broadcom b43** | BCM4311, BCM4312, BCM4318 (legacy) | ~1% | GPL | Scratch |
+| | | | **~98%** | | |
