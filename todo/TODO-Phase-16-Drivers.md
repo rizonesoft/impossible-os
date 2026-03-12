@@ -469,3 +469,59 @@
 | 🔵 P4 | **CDC-ACM** | 0x02 | USB serial/modem (Arduino, debug) | Scratch | — | Scratch |
 | 🔵 P4 | **Bluetooth HCI** | 0xE0 | USB Bluetooth dongles | BTstack (MIT) | MIT | Port |
 | 🔵 P4 | **Wireless** | — | USB WiFi dongles (Realtek, Atheros) | Scratch | — | Scratch |
+
+### GPU / Graphics Drivers
+
+> GPU drivers are the most complex in any OS. A full 3D driver (OpenGL/Vulkan)
+> is 100K–500K lines. For Impossible OS, the target is **modesetting + 2D acceleration
+> + hardware cursor** — enough for a polished desktop without 3D gaming.
+
+#### Virtual GPUs (for development)
+
+| Priority | Driver | Used By | Coverage | Port From | License | Method |
+|----------|--------|---------|----------|-----------|---------|--------|
+| 🟡 P2 | **VMSVGA** | VirtualBox | VBox | SerenityOS | BSD-2 | Port |
+| 🟡 P2 | **VirtIO-GPU** | QEMU | QEMU | Reverted code | MIT | Restore |
+| 🔵 P4 | **Bochs/BGA** | QEMU fallback | QEMU | Scratch (DISPI regs) | — | Scratch |
+
+#### Integrated GPUs (~80% of all PCs)
+
+| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
+|----------|--------|----------|----------|-----------|---------|--------|
+| 🟢 P3 | **Intel HD/UHD/Iris** | Gen 9 (Skylake) – Gen 12 (Alder Lake) | ~55% | Clean-room (Intel open docs) | — | Scratch |
+| 🟢 P3 | **Intel Xe (Arc iGPU)** | Meteor Lake, Lunar Lake, Arrow Lake | ~10% | Clean-room (Intel open docs) | — | Scratch |
+| 🔵 P4 | **AMD APU (Vega/RDNA)** | Ryzen 3000G–8000G, Radeon 680M/780M | ~15% | Clean-room (AMD open docs) | — | Scratch |
+| | | | **~80%** | | | |
+
+> [!TIP]
+> Intel publishes **open GPU documentation** (PRM — Programmer's Reference Manual) for all
+> their GPUs including Arc. AMD publishes open register guides for Radeon. This makes
+> clean-room implementation feasible without studying GPL code.
+
+#### Discrete GPUs (~20% of all PCs)
+
+| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
+|----------|--------|----------|----------|-----------|---------|--------|
+| 🔵 P4 | **NVIDIA GeForce** | GTX 1000, RTX 2000–5000 series | ~16% | Clean-room (nouveau RE docs) | — | Scratch |
+| 🔵 P4 | **AMD Radeon** | RX 5000–9000 (RDNA 1–4) | ~3% | Clean-room (AMD open docs) | — | Scratch |
+| 🔵 P4 | **Intel Arc** | A380, A580, A750, A770, B580 | ~1% | Clean-room (Intel open docs) | — | Scratch |
+| | | | **~20%** | | | |
+
+> [!WARNING]
+> **NVIDIA is the hardest.** They do NOT publish register documentation. The Linux `nouveau`
+> driver (GPL) is reverse-engineered. Any NVIDIA driver must be clean-room from the
+> nouveau RE docs (register dumps), NOT from nouveau source code.
+> AMD and Intel both publish **official open documentation** — much easier.
+
+#### GPU Driver Scope (what "driver" means for each level)
+
+| Level | What it provides | Complexity | Target |
+|-------|-----------------|------------|--------|
+| **Level 1: VESA/VBE fallback** | Basic framebuffer from bootloader | ✅ Done | Already have |
+| **Level 2: KMS (modesetting)** | Set resolution, refresh rate, multi-monitor | Medium | 🟢 P3 |
+| **Level 3: 2D acceleration** | Rect fill, blit, cursor, page flip | Medium | 🟢 P3 |
+| **Level 4: OpenGL (3D)** | Mesa/Gallium driver, shader compiler | Very Large | 🔵 Future |
+| **Level 5: Vulkan** | Full GPU pipeline | Massive | 🔵 Future |
+
+> For Impossible OS, **Level 3** (modesetting + 2D accel + hardware cursor) is the
+> realistic target. This provides a polished desktop without requiring a full 3D stack.
