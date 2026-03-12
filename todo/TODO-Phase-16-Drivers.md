@@ -77,19 +77,27 @@
 - [ ] Install `.kmod` files to IXFS at `C:\System\Drivers\` during disk creation
 - [ ] Commit: `"build: module compilation and installation"`
 
-### 1.4 Driver Model & PCI Match Tables
+### 1.4 Driver Model, HAL & PCI Match Tables
 
-**Prompt:** The driver model provides a standard lifecycle for PCI device drivers. `struct driver` has name, PCI match table (array of vendor/device ID pairs), probe function (called when matching device found), and remove function (called on unload). At boot, after PCI enumeration, the kernel walks all PCI devices and calls `driver_match_pci(dev)` to find a matching driver. For built-in drivers, the match table is checked at kernel init. For modules, it is checked when the module loads. `driver_register(drv)` adds a driver to the global list and scans existing PCI devices for matches. After completing all items, update `docs/architecture/modules.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: driver model with PCI match tables"`.
+> *Merged from Phase 01 §5 (Hardware Abstraction Layer)*
+
+**Prompt:** The driver model provides a standard lifecycle for device drivers and a Hardware Abstraction Layer (HAL) that allows the kernel to work with different hardware through abstract interfaces. `struct driver` has name, PCI match table (array of vendor/device ID pairs), probe function (called when matching device found), and remove function (called on unload). The HAL defines generic ops structs — `blk_ops` (read_sectors, write_sectors, capacity), `net_ops` (send_packet, get_mac), and `input_ops` (poll_event) — that each real driver fills in with function pointers. At boot, after PCI enumeration, the kernel walks all PCI devices and calls `driver_match_pci(dev)`. `driver_register(drv)` adds a driver to the global list and scans existing PCI devices for matches. After completing all items, create `docs/architecture/driver-model.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: driver model with HAL and PCI match tables"`.
 
 - [ ] Create `src/kernel/driver_model.c` and `include/kernel/driver_model.h`
 - [ ] Define `struct pci_match` (vendor_id, device_id — 0 = wildcard)
 - [ ] Define `struct driver` (name, license, match_table, probe, remove)
+- [ ] Define `blk_ops` interface: `read(dev, lba, count, buf)`, `write(...)`, `capacity(dev)`
+- [ ] Define `net_ops` interface: `send(dev, data, len)`, `set_mac(dev, mac)`, `get_mac(dev)`
+- [ ] Define `input_ops` interface: `poll(dev)`, `get_event(dev, event)`
 - [ ] Implement `driver_register(drv)` — add to global list, probe matching PCI devices
 - [ ] Implement `driver_unregister(drv)` — call remove for each matched device
 - [ ] Implement `driver_match_pci(dev)` — walk all registered drivers for a PCI device
+- [ ] Register current ATA/AHCI driver as a `blk_ops` implementation
+- [ ] Register current RTL8139 driver as a `net_ops` implementation
+- [ ] Register current keyboard/mouse as `input_ops` implementations
 - [ ] After PCI scan in `main.c`, call `driver_probe_all()` for built-in drivers
 - [ ] After module load, call `driver_register()` from `module_init()`
-- [ ] Commit: `"kernel: driver model with PCI match tables"`
+- [ ] Commit: `"kernel: driver model with HAL and PCI match tables"`
 
 ### 1.5 Auto-Load Modules at Boot
 

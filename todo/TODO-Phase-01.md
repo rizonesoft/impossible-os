@@ -166,22 +166,9 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 ---
 
 ## 5. Hardware Abstraction Layer (HAL)
-> *Research: [04_hal.md](research/phase_01_kernel_core/04_hal.md)*
 
-### 5.1 Generic Driver Interfaces
-
-**Prompt:** The HAL allows the kernel to work with different hardware through abstract interfaces — study how Linux's `struct block_device_operations` or `struct net_device_ops` work. Define `blk_ops` (read_sectors, write_sectors, get_capacity), `net_ops` (send_packet, get_mac), and `input_ops` (poll_event). Each real driver (AHCI in `src/kernel/drivers/ahci.c`, RTL8139 in `src/kernel/drivers/rtl8139.c`, PS/2 keyboard/mouse) registers itself by filling in these function pointers. The PCI scan should match vendor:device IDs and auto-select the right driver implementation. This abstraction is critical for Phase 08 (USB, Intel HDA) and Phase 06 (multiple block device support). After completing all items, create `docs/architecture/driver-model.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: hardware abstraction layer"`.
-
-
-- [ ] Define `blk_ops` interface: `read(dev, lba, count, buf)`, `write(...)`, `capacity(dev)`
-- [ ] Define `net_ops` interface: `send(dev, data, len)`, `set_mac(dev, mac)`, `get_mac(dev)`
-- [ ] Define `input_ops` interface: `poll(dev)`, `get_event(dev, event)`
-- [ ] Register current ATA driver as a `blk_ops` implementation
-- [ ] Register current RTL8139 driver as a `net_ops` implementation
-- [ ] Register current keyboard/mouse as `input_ops` implementations
-- [ ] Implement `hal_register_driver(type, ops)` and `hal_get_driver(type)`
-- [ ] PCI scan → match vendor:device → auto-select driver
-- [ ] Commit: `"kernel: hardware abstraction layer"`
+> **Moved to Phase 16 §1.4** — merged with the Driver Model & PCI Match Tables.
+> See [TODO-Phase-16-Drivers.md §1.4](TODO-Phase-16-Drivers.md#14-driver-model-hal--pci-match-tables).
 
 ---
 
@@ -453,7 +440,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 | 🟢 P3 | 2.3 Shared Memory | Advanced IPC |
 | 🟢 P3 | 3.1 Swap | Run more apps than RAM |
 | 🟢 P3 | 3.2 Memory-Mapped Files | Fast I/O, shared memory |
-| 🟢 P3 | 5. HAL | Multi-driver support |
+| 🟢 P3 | ~~5. HAL~~ | Moved to Phase 16 §1.4 |
 | 🟢 P3 | 9. Dynamic Linking | Shared libraries |
 | 🟢 P3 | 10. Kernel Modules | Runtime driver loading |
 | 🟢 P3 | 11.2–11.5 Libraries | Compression, crypto, math, JSON |
