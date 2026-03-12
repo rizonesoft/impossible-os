@@ -150,14 +150,18 @@ if (Test-Path $TEST_DISK_DIR) {
             try { & $VBOX closemedium disk $vdiImg 2>$null } catch {}
             if (Test-Path $vdiImg) { Remove-Item $vdiImg -Force }
 
-            & $VBOX convertfromraw $rawImg $vdiImg --format VDI 2>$null
+            try { & $VBOX convertfromraw $rawImg $vdiImg --format VDI 2>&1 | Out-Null } catch {}
             if (Test-Path $vdiImg) {
-                & $VBOX storageattach $VM_NAME `
-                    --storagectl "AHCI" `
-                    --port $port `
-                    --type hdd `
-                    --medium $vdiImg
-                Write-Host "  Port $port`: $name.vdi" -ForegroundColor DarkGray
+                try {
+                    & $VBOX storageattach $VM_NAME `
+                        --storagectl "AHCI" `
+                        --port $port `
+                        --type hdd `
+                        --medium $vdiImg 2>&1 | Out-Null
+                    Write-Host "  Port $port`: $name.vdi" -ForegroundColor DarkGray
+                } catch {
+                    Write-Host "  Port $port`: $name.vdi (attach failed)" -ForegroundColor Yellow
+                }
             }
             $port++
         }
