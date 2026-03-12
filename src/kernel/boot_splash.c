@@ -28,7 +28,7 @@
 #define DOT_Y_OFFSET    52      /* dots below icon bottom, in pixels */
 #define TEXT_Y_OFFSET   36      /* text below dot center, in pixels */
 
-#define NUM_DOTS        5
+#define NUM_DOTS        8
 #define DOT_SPACING     18      /* px between dot centers */
 #define DOT_MIN_R       3       /* small (resting) dot radius */
 #define DOT_MAX_R       5       /* large (active) dot radius */
@@ -188,7 +188,7 @@ static void splash_draw_text(const char *text, uint32_t color)
 /* Total cycle: last dot finishes PULSE_LEN frames after it starts,
  * which is at (NUM_DOTS-1)*STAGGER + PULSE_LEN.
  * Add a small rest gap before the wave restarts. */
-#define REST_GAP    6   /* frames of rest before the wave repeats */
+#define REST_GAP    0   /* no gap — wave wraps seamlessly */
 #define TOTAL_CYCLE ((NUM_DOTS - 1) * STAGGER + PULSE_LEN + REST_GAP)
 
 /* Smooth pulse curve: maps phase (0..PULSE_LEN-1) to intensity (0..4).
