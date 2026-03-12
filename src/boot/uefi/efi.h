@@ -3,10 +3,16 @@
  *
  * Freestanding — no gnu-efi dependency. Only the types we actually use.
  * Based on UEFI Specification 2.9.
+ *
+ * All UEFI function pointers use the Microsoft x64 calling convention
+ * (__attribute__((ms_abi))) because UEFI firmware is compiled with MSVC ABI.
  * ============================================================================ */
 
 #ifndef UEFI_EFI_H
 #define UEFI_EFI_H
+
+/* UEFI calling convention — Microsoft x64 ABI (rcx, rdx, r8, r9) */
+#define EFIAPI __attribute__((ms_abi))
 
 /* --- Base types --- */
 typedef unsigned char       BOOLEAN;
@@ -101,12 +107,12 @@ struct EFI_BOOT_SERVICES;
 struct EFI_RUNTIME_SERVICES;
 
 /* --- Simple Text Output --- */
-typedef EFI_STATUS (*EFI_TEXT_STRING)(
+typedef EFI_STATUS (EFIAPI *EFI_TEXT_STRING)(
     struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
     CHAR16 *String
 );
 
-typedef EFI_STATUS (*EFI_TEXT_CLEAR_SCREEN)(
+typedef EFI_STATUS (EFIAPI *EFI_TEXT_CLEAR_SCREEN)(
     struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This
 );
 
@@ -165,14 +171,14 @@ typedef struct {
 
 struct EFI_GRAPHICS_OUTPUT_PROTOCOL;
 
-typedef EFI_STATUS (*EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE)(
+typedef EFI_STATUS (EFIAPI *EFI_GRAPHICS_OUTPUT_PROTOCOL_QUERY_MODE)(
     struct EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
     UINT32 ModeNumber,
     UINTN *SizeOfInfo,
     EFI_GRAPHICS_OUTPUT_MODE_INFORMATION **Info
 );
 
-typedef EFI_STATUS (*EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE)(
+typedef EFI_STATUS (EFIAPI *EFI_GRAPHICS_OUTPUT_PROTOCOL_SET_MODE)(
     struct EFI_GRAPHICS_OUTPUT_PROTOCOL *This,
     UINT32 ModeNumber
 );
@@ -187,7 +193,7 @@ typedef struct EFI_GRAPHICS_OUTPUT_PROTOCOL {
 /* --- Simple File System Protocol --- */
 struct EFI_FILE_PROTOCOL;
 
-typedef EFI_STATUS (*EFI_FILE_OPEN)(
+typedef EFI_STATUS (EFIAPI *EFI_FILE_OPEN)(
     struct EFI_FILE_PROTOCOL *This,
     struct EFI_FILE_PROTOCOL **NewHandle,
     CHAR16 *FileName,
@@ -195,17 +201,17 @@ typedef EFI_STATUS (*EFI_FILE_OPEN)(
     UINT64 Attributes
 );
 
-typedef EFI_STATUS (*EFI_FILE_CLOSE)(
+typedef EFI_STATUS (EFIAPI *EFI_FILE_CLOSE)(
     struct EFI_FILE_PROTOCOL *This
 );
 
-typedef EFI_STATUS (*EFI_FILE_READ)(
+typedef EFI_STATUS (EFIAPI *EFI_FILE_READ)(
     struct EFI_FILE_PROTOCOL *This,
     UINTN *BufferSize,
     VOID *Buffer
 );
 
-typedef EFI_STATUS (*EFI_FILE_GET_INFO)(
+typedef EFI_STATUS (EFIAPI *EFI_FILE_GET_INFO)(
     struct EFI_FILE_PROTOCOL *This,
     EFI_GUID *InformationType,
     UINTN *BufferSize,
@@ -235,7 +241,7 @@ typedef struct {
 
 struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL;
 
-typedef EFI_STATUS (*EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME)(
+typedef EFI_STATUS (EFIAPI *EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_OPEN_VOLUME)(
     struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
     struct EFI_FILE_PROTOCOL **Root
 );
@@ -248,7 +254,7 @@ typedef struct EFI_SIMPLE_FILE_SYSTEM_PROTOCOL {
 #define EFI_FILE_MODE_READ  0x0000000000000001ULL
 
 /* --- Boot Services --- */
-typedef EFI_STATUS (*EFI_GET_MEMORY_MAP)(
+typedef EFI_STATUS (EFIAPI *EFI_GET_MEMORY_MAP)(
     UINTN *MemoryMapSize,
     EFI_MEMORY_DESCRIPTOR *MemoryMap,
     UINTN *MapKey,
@@ -256,47 +262,47 @@ typedef EFI_STATUS (*EFI_GET_MEMORY_MAP)(
     UINT32 *DescriptorVersion
 );
 
-typedef EFI_STATUS (*EFI_ALLOCATE_PAGES)(
+typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_PAGES)(
     EFI_ALLOCATE_TYPE Type,
     EFI_MEMORY_TYPE MemoryType,
     UINTN Pages,
     EFI_PHYSICAL_ADDRESS *Memory
 );
 
-typedef EFI_STATUS (*EFI_FREE_PAGES)(
+typedef EFI_STATUS (EFIAPI *EFI_FREE_PAGES)(
     EFI_PHYSICAL_ADDRESS Memory,
     UINTN Pages
 );
 
-typedef EFI_STATUS (*EFI_ALLOCATE_POOL)(
+typedef EFI_STATUS (EFIAPI *EFI_ALLOCATE_POOL)(
     EFI_MEMORY_TYPE PoolType,
     UINTN Size,
     VOID **Buffer
 );
 
-typedef EFI_STATUS (*EFI_FREE_POOL)(
+typedef EFI_STATUS (EFIAPI *EFI_FREE_POOL)(
     VOID *Buffer
 );
 
-typedef EFI_STATUS (*EFI_EXIT_BOOT_SERVICES)(
+typedef EFI_STATUS (EFIAPI *EFI_EXIT_BOOT_SERVICES)(
     EFI_HANDLE ImageHandle,
     UINTN MapKey
 );
 
-typedef EFI_STATUS (*EFI_LOCATE_PROTOCOL)(
+typedef EFI_STATUS (EFIAPI *EFI_LOCATE_PROTOCOL)(
     EFI_GUID *Protocol,
     VOID *Registration,
     VOID **Interface
 );
 
-typedef EFI_STATUS (*EFI_SET_WATCHDOG_TIMER)(
+typedef EFI_STATUS (EFIAPI *EFI_SET_WATCHDOG_TIMER)(
     UINTN Timeout,
     UINT64 WatchdogCode,
     UINTN DataSize,
     CHAR16 *WatchdogData
 );
 
-typedef EFI_STATUS (*EFI_STALL)(UINTN Microseconds);
+typedef EFI_STATUS (EFIAPI *EFI_STALL)(UINTN Microseconds);
 
 typedef struct EFI_BOOT_SERVICES {
     EFI_TABLE_HEADER        Hdr;

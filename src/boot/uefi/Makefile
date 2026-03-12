@@ -2,58 +2,53 @@
 # Makefile for UEFI bootloader
 #
 # Builds a freestanding PE/COFF binary (BOOTX64.EFI) without gnu-efi.
-# Uses GCC's PE/COFF output directly via -Wl,--subsystem,10
+# Uses GCC → ELF shared object → objcopy to PE/COFF.
 #
 # Usage: make -C src/boot/uefi OUTDIR=build/tools
 # ============================================================================
 
 CC      := gcc
+AS      := nasm
 LD      := ld
 OBJCOPY := objcopy
 
-CFLAGS := -target x86_64-unknown-windows \
-          -ffreestanding -fno-stack-protector -fno-stack-check \
-          -fshort-wchar -mno-red-zone -mno-mmx -mno-sse \
-          -Wall -Wextra -Werror -O2 -std=gnu11 \
-          -I.
-
-LDFLAGS := -nostdlib -Wl,-entry:efi_main -Wl,-subsystem:efi_application \
-           -fuse-ld=lld-link
-
-# Alternative: use system GCC + objcopy approach
-# This works with any GCC that can output ELF, then convert to PE
 GCC_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check \
               -fshort-wchar -mno-red-zone -fpic -fno-plt \
               -Wall -Wextra -Werror -O2 -std=gnu11 -I.
 
 OUTDIR ?= ../../../build/tools
 
-SRCS := bootx64.c
-OBJS := $(SRCS:.c=.o)
+OBJS := bootx64.o reloc.o
 
 .PHONY: all clean
 
 all: $(OUTDIR)/BOOTX64.EFI
 
-# Method: GCC → ELF shared object → objcopy to PE/COFF
-# This is the standard approach used by Linux efistub and most UEFI apps
+# Compile C source to position-independent object
 bootx64.o: bootx64.c efi.h
 	$(CC) $(GCC_CFLAGS) -c $< -o $@
 
-bootx64.so: bootx64.o
+# Assemble the PE relocation stub
+reloc.o: reloc.asm
+	$(AS) -f elf64 $< -o $@
+
+# Link as shared object with relocations preserved
+bootx64.so: $(OBJS)
 	$(LD) -shared -Bsymbolic -z noexecstack \
 	    -T uefi.lds \
-	    -o $@ $<
+	    -o $@ $(OBJS)
 
+# Convert ELF → PE/COFF
 $(OUTDIR)/BOOTX64.EFI: bootx64.so
 	@mkdir -p $(OUTDIR)
-	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic \
-	    -j .dynsym -j .rel -j .rela -j .rel.* -j .rela.* \
+	$(OBJCOPY) \
+	    -j .text -j .rodata -j .sdata -j .data \
+	    -j .dynamic -j .dynsym -j .dynstr \
+	    -j .rel -j .rela -j .rel.* -j .rela.* \
 	    -j .reloc \
 	    --target efi-app-x86_64 \
-	    --subsystem=10 \
 	    $< $@
-	@echo "[EFI] $@ created"
+	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 
 clean:
 	rm -f *.o *.so $(OUTDIR)/BOOTX64.EFI

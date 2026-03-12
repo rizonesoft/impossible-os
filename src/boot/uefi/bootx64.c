@@ -88,6 +88,33 @@ typedef struct {
     UINT64 p_align;
 } Elf64_Phdr;
 
+/* ELF section header */
+#define SHT_SYMTAB 2
+#define SHT_STRTAB 3
+
+typedef struct {
+    UINT32 sh_name;
+    UINT32 sh_type;
+    UINT64 sh_flags;
+    UINT64 sh_addr;
+    UINT64 sh_offset;
+    UINT64 sh_size;
+    UINT32 sh_link;      /* index of associated string table section */
+    UINT32 sh_info;
+    UINT64 sh_addralign;
+    UINT64 sh_entsize;
+} Elf64_Shdr;
+
+/* ELF symbol table entry */
+typedef struct {
+    UINT32 st_name;     /* index into string table */
+    UINT8  st_info;
+    UINT8  st_other;
+    UINT16 st_shndx;
+    UINT64 st_value;
+    UINT64 st_size;
+} Elf64_Sym;
+
 /* --- Globals --- */
 static EFI_SYSTEM_TABLE    *gST;
 static EFI_BOOT_SERVICES   *gBS;
@@ -402,7 +429,46 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
             efi_memset(dst + copy_size, 0, mem_size - copy_size);
     }
 
-    *entry_point = ehdr->e_entry;
+    /* Find kernel_main symbol in the ELF symbol table.
+     * The ELF entry point (_start) is 32-bit code for GRUB compatibility.
+     * Since UEFI is already in 64-bit Long Mode, we must call kernel_main
+     * directly, skipping the 32→64 mode transition in entry.asm. */
+    {
+        Elf64_Shdr *shdr = (Elf64_Shdr *)(file_buf + ehdr->e_shoff);
+        UINT16 s;
+        UINT64 km_addr = 0;
+
+        for (s = 0; s < ehdr->e_shnum; s++) {
+            if (shdr[s].sh_type == SHT_SYMTAB) {
+                Elf64_Sym *syms = (Elf64_Sym *)(file_buf + shdr[s].sh_offset);
+                UINT64 nsyms = shdr[s].sh_size / shdr[s].sh_entsize;
+                /* String table is in section shdr[s].sh_link */
+                char *strtab = (char *)(file_buf + shdr[shdr[s].sh_link].sh_offset);
+                UINT64 j;
+
+                for (j = 0; j < nsyms; j++) {
+                    char *name = strtab + syms[j].st_name;
+                    /* Compare with "kernel_main" */
+                    if (name[0]=='k' && name[1]=='e' && name[2]=='r' &&
+                        name[3]=='n' && name[4]=='e' && name[5]=='l' &&
+                        name[6]=='_' && name[7]=='m' && name[8]=='a' &&
+                        name[9]=='i' && name[10]=='n' && name[11]=='\0') {
+                        km_addr = syms[j].st_value;
+                        break;
+                    }
+                }
+                if (km_addr) break;
+            }
+        }
+
+        if (km_addr == 0) {
+            efi_print(u"[FAIL] kernel_main symbol not found in ELF\r\n");
+            return EFI_LOAD_ERROR;
+        }
+
+        *entry_point = km_addr;
+    }
+
     return EFI_SUCCESS;
 }
 
@@ -592,7 +658,7 @@ static void jump_to_kernel(UINT64 entry_point)
 /* ============================================================================
  * EFI Application Entry Point
  * ============================================================================ */
-EFI_STATUS efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
+EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable)
 {
     EFI_STATUS status;
     UINT64 kernel_entry;
