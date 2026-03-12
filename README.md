@@ -1,8 +1,8 @@
 # Impossible OS
 
-*"You can't write a complete PC operating system from scratch — it's impossible."*
+*"It always seems impossible until it's done."* — Nelson Mandela
 
-Everyone says building a fully functional, feature-rich operating system is impossible. Impossible OS exists to prove them wrong. Written entirely from scratch — from UEFI bootloader to graphical desktop — with no legacy code, no Linux kernel, no borrowed foundations. Just bare metal x86-64 and a refusal to accept "impossible."
+They said building a fully functional, feature-rich operating system from scratch was impossible — so we named it after the challenge. Impossible OS is written entirely from the ground up: a custom UEFI bootloader, a 64-bit kernel, a graphical desktop, and everything in between. No Linux kernel, no borrowed foundations, no legacy code. Just bare metal x86-64 and the stubborn belief that impossible is just a word.
 
 ## Features (Planned)
 
