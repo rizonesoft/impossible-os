@@ -246,7 +246,7 @@ static EFI_STATUS init_gop(void)
 }
 
 /* ============================================================================
- * Step 2: Boot Splash — Clean black screen + smooth spinner
+ * Step 2: Fill screen black (kernel handles the real boot splash)
  * ============================================================================ */
 
 /* Draw a filled rectangle */
@@ -258,100 +258,9 @@ static void draw_rect(UINT32 x, UINT32 y, UINT32 w, UINT32 h, UINT32 color)
             gFramebuffer[row * gFbPitch + col] = color;
 }
 
-/* Draw an anti-aliased filled circle.
- * Uses distance-from-center with a 1.5px soft edge for smooth rendering. */
-static void draw_aa_circle(INT32 cx, INT32 cy, INT32 r, UINT32 color)
+static void fill_screen_black(void)
 {
-    INT32 x, y;
-    UINT8 cr = (UINT8)(color >> 16);
-    UINT8 cg = (UINT8)(color >> 8);
-    UINT8 cb = (UINT8)(color);
-    INT32 r_outer = r + 2;  /* scan area includes AA fringe */
-
-    for (y = -r_outer; y <= r_outer; y++) {
-        for (x = -r_outer; x <= r_outer; x++) {
-            INT32 px = cx + x, py = cy + y;
-            if (px < 0 || px >= (INT32)gFbWidth ||
-                py < 0 || py >= (INT32)gFbHeight)
-                continue;
-
-            /* Squared distance * 256 for fixed-point precision */
-            INT32 d2 = x * x + y * y;
-            INT32 r2 = r * r;
-
-            UINT8 alpha;
-            if (d2 <= (r - 1) * (r - 1)) {
-                alpha = 255;  /* fully inside */
-            } else if (d2 > (r + 1) * (r + 1)) {
-                continue;     /* fully outside */
-            } else {
-                /* Anti-alias fringe: linear falloff over 2px band */
-                /* Approximate sqrt via integer math: use (r² - d²) / (2r) */
-                INT32 edge_dist = r2 - d2;  /* positive = inside */
-                if (edge_dist > 0)
-                    alpha = (UINT8)(edge_dist * 128 / r2);
-                else
-                    alpha = 0;
-                if (alpha < 20) continue;
-            }
-
-            if (alpha == 255) {
-                gFramebuffer[py * gFbPitch + px] = color | 0xFF000000;
-            } else {
-                /* Blend with background (black → simple multiply) */
-                UINT8 ob = (UINT8)((cb * alpha) / 255);
-                UINT8 og = (UINT8)((cg * alpha) / 255);
-                UINT8 or_ = (UINT8)((cr * alpha) / 255);
-                gFramebuffer[py * gFbPitch + px] =
-                    (UINT32)ob | ((UINT32)og << 8) | ((UINT32)or_ << 16);
-            }
-        }
-    }
-}
-
-/* Render the boot splash screen: black background + spinning dots */
-static void render_splash(UINT32 spinner_frame)
-{
-    UINT32 cx = gFbWidth / 2;
-    UINT32 cy = gFbHeight / 2;
-    UINT32 i;
-
-    /* Pure black background */
     draw_rect(0, 0, gFbWidth, gFbHeight, 0x000000);
-
-    /* Spinning dots ring — 12 dots in a circle, radius 40px.
-     * This mimics the Windows 11 boot spinner: a ring of dots where
-     * the "active" section is bright and the rest fades smoothly. */
-    #define SPINNER_DOTS  12
-    #define SPINNER_ORBIT 40
-    #define DOT_RADIUS    5
-
-    /* Precomputed sin/cos * SPINNER_ORBIT for 12 positions (30°increments) */
-    static const INT32 dx[SPINNER_DOTS] = {
-         0,  20,  35,  40,  35,  20,   0, -20, -35, -40, -35, -20
-    };
-    static const INT32 dy[SPINNER_DOTS] = {
-        -40, -35, -20,   0,  20,  35,  40,  35,  20,   0, -20, -35
-    };
-
-    for (i = 0; i < SPINNER_DOTS; i++) {
-        INT32 px = (INT32)cx + dx[i];
-        INT32 py = (INT32)cy + dy[i];
-
-        /* Brightness fades with distance from the active dot */
-        UINT32 dist = ((i - spinner_frame % SPINNER_DOTS) + SPINNER_DOTS) % SPINNER_DOTS;
-        UINT32 brightness;
-        if (dist == 0)      brightness = 0xFF;
-        else if (dist == 1) brightness = 0xDD;
-        else if (dist == 2) brightness = 0xAA;
-        else if (dist == 3) brightness = 0x77;
-        else if (dist == 4) brightness = 0x55;
-        else if (dist == 5) brightness = 0x33;
-        else                brightness = 0x1A;
-
-        UINT32 color = (brightness << 16) | (brightness << 8) | brightness;
-        draw_aa_circle(px, py, DOT_RADIUS, color);
-    }
 }
 
 /* ============================================================================
@@ -685,7 +594,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     UINTN map_key;
     EFI_MEMORY_DESCRIPTOR *mmap;
     UINTN map_size, desc_size;
-    UINT32 spinner_frame = 0;
 
     /* Save globals */
     gST = SystemTable;
@@ -706,8 +614,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return status;
     }
 
-    /* Step 2: Draw initial boot splash */
-    render_splash(0);
+    /* Step 2: Fill screen black (kernel draws the real splash after boot) */
+    fill_screen_black();
 
     /* Step 3: Load kernel ELF */
     efi_print(u"Loading kernel...\r\n");
@@ -715,12 +623,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] Kernel load failed\r\n");
         return status;
-    }
-
-    /* Animate spinner while we set up */
-    for (spinner_frame = 1; spinner_frame < 24; spinner_frame++) {
-        render_splash(spinner_frame);
-        gBS->Stall(60000);  /* 60ms per frame — smooth rotation */
     }
 
     /* Step 4: Find ACPI RSDP */

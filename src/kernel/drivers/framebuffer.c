@@ -27,8 +27,9 @@
 #define FONT_LAST   126
 #define FONT_GLYPHS (FONT_LAST - FONT_FIRST + 1)
 
-/* Minimal 8x16 bitmap font for ASCII 32-126 (VGA-style) */
-static const uint8_t font_data[FONT_GLYPHS][FONT_HEIGHT] = {
+/* Minimal 8x16 bitmap font for ASCII 32-126 (VGA-style).
+ * Non-static so boot_splash.c can access it for status text rendering. */
+const uint8_t kernel_font_data[FONT_GLYPHS][FONT_HEIGHT] = {
     /* 32 ' ' */ {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
     /* 33 '!' */ {0x00,0x00,0x18,0x3C,0x3C,0x3C,0x18,0x18,0x18,0x00,0x18,0x18,0x00,0x00,0x00,0x00},
     /* 34 '"' */ {0x00,0x66,0x66,0x66,0x24,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
@@ -590,7 +591,7 @@ static void fb_draw_char(uint32_t cx, uint32_t cy, char c)
     else
         glyph_index = (uint32_t)(c - FONT_FIRST);
 
-    glyph = font_data[glyph_index];
+    glyph = kernel_font_data[glyph_index];
 
     for (py = 0; py < FONT_HEIGHT; py++) {
         uint8_t row = glyph[py];

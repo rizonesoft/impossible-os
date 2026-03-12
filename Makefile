@@ -73,7 +73,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
+.PHONY: all _increment_build boot boot-icon kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build kernel userland uefi-boot system-disk
@@ -94,6 +94,12 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 
+## boot-icon: Generate boot splash icon header from PNG
+boot-icon: src/kernel/boot_splash_icon.h
+
+src/kernel/boot_splash_icon.h: resources/start/icon_48.png tools/convert_icon.py
+	@python3 tools/convert_icon.py
+
 ## boot: Assemble the bootloader
 boot: $(ASM_OBJS)
 	@echo "[BOOT] Bootloader objects built"
@@ -102,7 +108,7 @@ boot: $(ASM_OBJS)
 kernel: $(KERNEL_BIN)
 	@echo "[KERNEL] $(KERNEL_BIN) built"
 
-$(KERNEL_BIN): $(OBJS) $(LINKER_SCRIPT)
+$(KERNEL_BIN): boot-icon $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"

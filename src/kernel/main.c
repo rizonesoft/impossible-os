@@ -58,6 +58,7 @@
 #include "desktop/gallery.h"
 #include "kernel/acpi.h"
 #include "kernel/version.h"
+#include "kernel/boot_splash.h"
 #include "codex.h"
 
 /* ---- Block device adapter wrappers ----
@@ -228,6 +229,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 5: Initialize framebuffer (needs parsed boot info) */
     fb_init();
 
+    /* Boot splash: black screen + icon + animated dots + status text.
+     * Locks the compositor so printk output goes to serial only. */
+    boot_splash_init();
+    boot_splash_status("Setting up hardware...");
+
     /* Step 5: Load proper GDT with kernel/user segments and TSS */
     gdt_init();
 
@@ -250,6 +256,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     mouse_init();
 
     /* Step 10: PCI bus scan and NIC init */
+    boot_splash_tick();
+    boot_splash_status("Detecting hardware...");
     pci_scan();
     rtl8139_init();
     net_init();
@@ -261,24 +269,18 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 11b: Scan block devices for partition tables (GPT first, MBR fallback).
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
      * Creates sub-blkdevs for each partition and probes filesystems. */
+    boot_splash_tick();
+    boot_splash_status("Detecting drives...");
     partition_scan_all();
     partition_mount_filesystems();
+    boot_splash_tick();
 
 
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();
 
-    /* Step 8: Print boot banner */
-    fb_set_color(FB_COLOR_CYAN, FB_COLOR_BG_DEFAULT);
-    printk("\n");
-    printk("  ================================================\n");
-    printk("      Impossible OS\n");
-    printk("  ================================================\n");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    version_print();
-    printk("  Architecture: x86-64 (Long Mode)\n");
-    printk("  Boot: UEFI via GRUB + Multiboot2\n");
-    printk("\n");
+    boot_splash_status("Configuring network...");
+    boot_splash_tick();
 
     /* Hardware summary — klog INFO (visible on screen) */
     klog(LOG_INFO, "boot", "Multiboot2 magic verified: %x", magic);
@@ -776,24 +778,30 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     {
         extern void shell_loader_func(void);
 
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("\n  Impossible OS kernel loaded successfully!\n\n");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
+        boot_splash_tick();
+        boot_splash_status("Loading fonts...");
 
         /* Initialize TrueType font manager (loads fonts + builds glyph cache) */
         ttf_mgr_init();
 
         /* Initialize icon store (loads Fluent icon fonts + color icons) */
+        boot_splash_tick();
+        boot_splash_status("Loading resources...");
         icon_store_init();
 
         /* Initialize cursor manager (loads Adwaita Xcur files from sysroot) */
         cursor_init();
 
         /* Initialize window manager */
+        boot_splash_tick();
+        boot_splash_status("Almost ready...");
         wm_init();
 
         /* Initialize desktop (wallpaper, taskbar, copy backgrounds to IXFS) */
         desktop_init();
+
+        /* Finish boot splash — hand off screen to desktop */
+        boot_splash_finish();
 
         /* ---- Boot-time heap stats ---- */
         {
