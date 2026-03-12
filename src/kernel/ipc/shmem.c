@@ -7,6 +7,7 @@
 
 #include "kernel/ipc/shmem.h"
 #include "kernel/mm/heap.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Global shared memory table */

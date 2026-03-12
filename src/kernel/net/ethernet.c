@@ -6,6 +6,7 @@
 
 #include "kernel/net/net.h"
 #include "kernel/drivers/rtl8139.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Global network configuration */

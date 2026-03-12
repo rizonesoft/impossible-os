@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/ata.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Primary ATA bus ports */

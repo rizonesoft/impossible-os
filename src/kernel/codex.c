@@ -11,6 +11,7 @@
  * ============================================================================ */
 
 #include "codex.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/mm/pmm.h"

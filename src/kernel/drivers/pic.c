@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/pic.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Inline port I/O helpers */

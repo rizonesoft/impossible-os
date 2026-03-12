@@ -9,6 +9,7 @@
 #include "kernel/sched/syscall.h"
 #include "kernel/idt.h"
 #include "kernel/sched/task.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/serial.h"

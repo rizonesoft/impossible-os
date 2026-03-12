@@ -9,6 +9,7 @@
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/idt.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
 

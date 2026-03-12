@@ -14,6 +14,7 @@
 
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Drive mount table: one entry per drive letter A-Z */

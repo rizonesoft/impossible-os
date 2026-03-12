@@ -15,6 +15,7 @@
 #include "kernel/drivers/virtio.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/heap.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/mm/vmm.h"
 

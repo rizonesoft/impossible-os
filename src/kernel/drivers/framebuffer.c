@@ -14,6 +14,7 @@
 #include "kernel/boot_info.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* --- Embedded 8x16 bitmap font (ASCII 32–126) ---

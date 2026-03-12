@@ -23,6 +23,7 @@
 #include "kernel/fs/fat32.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* FAT32 special cluster values */

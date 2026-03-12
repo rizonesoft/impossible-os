@@ -16,6 +16,7 @@
 
 #include "kernel/mm/pmm.h"
 #include "kernel/boot_info.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Linker symbols */

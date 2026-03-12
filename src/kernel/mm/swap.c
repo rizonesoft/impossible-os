@@ -25,7 +25,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/mm/vmm.h"
 #include "kernel/mm/heap.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/framebuffer.h"
 #include "codex.h"
@@ -151,14 +151,14 @@ void swap_init(uint32_t num_slots)
 
     /* Create the pagefile on disk */
     if (!vfs_is_mounted('C')) {
-        printk("[SWAP] C: drive not mounted — swap disabled\n");
+        klog(LOG_DEBUG, "swap", "C: drive not mounted — swap disabled");
         return;
     }
 
     vfs_create(PAGEFILE_PATH, VFS_FILE);
     pagefile = vfs_open(PAGEFILE_PATH, VFS_O_READ | VFS_O_WRITE);
     if (!pagefile) {
-        printk("[SWAP] Failed to open pagefile — swap disabled\n");
+        klog(LOG_WARN, "swap", "Failed to open pagefile — swap disabled");
         return;
     }
 
@@ -187,10 +187,7 @@ void swap_init(uint32_t num_slots)
     clock_count = 0;
     swap_inited = 1;
 
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Swap initialized: %u slots (%u KiB) — disk-backed pagefile.sys\n",
+    klog(LOG_INFO, "swap", "Initialized: %u slots (%u KiB) — pagefile.sys",
            (uint64_t)num_slots, (uint64_t)(num_slots * 4));
 }
 
@@ -211,14 +208,14 @@ int swap_out(uintptr_t virt_addr)
     }
 
     if (i >= swap_num_slots) {
-        printk("[SWAP] No free swap slots\n");
+        klog(LOG_WARN, "swap", "No free swap slots");
         return -1;
     }
 
     /* Get the physical address of the page */
     phys = vmm_get_physical(virt_addr);
     if (!phys) {
-        printk("[SWAP] Cannot swap out %p: not mapped\n", virt_addr);
+        klog(LOG_WARN, "swap", "Cannot swap out %p: not mapped", virt_addr);
         return -1;
     }
 
@@ -227,7 +224,7 @@ int swap_out(uintptr_t virt_addr)
     slot_offset = i * SWAP_SLOT_SIZE;
     rc = vfs_write(pagefile, slot_offset, SWAP_SLOT_SIZE, swap_temp_buf);
     if (rc < 0) {
-        printk("[SWAP] Failed to write slot %u to pagefile\n", (uint64_t)i);
+        klog(LOG_ERROR, "swap", "Failed to write slot %u to pagefile", (uint64_t)i);
         return -1;
     }
 
@@ -267,7 +264,7 @@ int swap_in(uint32_t swap_id, uintptr_t virt_addr)
             new_frame = pmm_alloc_frame();
         }
         if (!new_frame) {
-            printk("[SWAP] Cannot swap in: out of physical memory\n");
+            klog(LOG_ERROR, "swap", "Cannot swap in: out of physical memory");
             return -1;
         }
     }
@@ -276,7 +273,7 @@ int swap_in(uint32_t swap_id, uintptr_t virt_addr)
     slot_offset = swap_id * SWAP_SLOT_SIZE;
     rc = vfs_read(pagefile, slot_offset, SWAP_SLOT_SIZE, swap_temp_buf);
     if (rc < 0) {
-        printk("[SWAP] Failed to read slot %u from pagefile\n", (uint64_t)swap_id);
+        klog(LOG_ERROR, "swap", "Failed to read slot %u from pagefile", (uint64_t)swap_id);
         pmm_free_frame(new_frame);
         return -1;
     }
@@ -323,7 +320,7 @@ int swap_handle_fault(uintptr_t fault_addr, uint64_t error_code)
     /* Decode the swap slot ID */
     swap_id = SWAP_DECODE_PTE(pte);
 
-    printk("[SWAP] Swapping in page at %p (slot %u)\n",
+    klog(LOG_DEBUG, "swap", "Swapping in page at %p (slot %u)",
            fault_addr, (uint64_t)swap_id);
 
     if (swap_in(swap_id, fault_addr) == 0)

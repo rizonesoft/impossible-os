@@ -11,6 +11,7 @@
 
 #include "kernel/ipc/signal.h"
 #include "kernel/sched/task.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 void signal_init_task(struct signal_state *ss)

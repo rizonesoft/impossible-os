@@ -13,6 +13,7 @@
  * ============================================================================ */
 
 #include "kernel/gdt.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* A single GDT entry (8 bytes) */

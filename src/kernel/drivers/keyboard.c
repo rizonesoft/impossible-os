@@ -11,6 +11,7 @@
 #include "kernel/drivers/keyboard.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/ipc/signal.h"
 #include "desktop/terminal.h"

@@ -20,6 +20,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* ---- Partition storage ---- */

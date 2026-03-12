@@ -20,6 +20,7 @@
 
 #include "kernel/ipc/pipe.h"
 #include "kernel/mm/heap.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Global pipe table */

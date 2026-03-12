@@ -16,6 +16,7 @@
 
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Heap size constants */

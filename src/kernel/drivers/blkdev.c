@@ -8,6 +8,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/blkdev.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* ---- Device registry ---- */

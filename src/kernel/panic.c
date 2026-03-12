@@ -18,6 +18,7 @@
 #include "kernel/panic.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"

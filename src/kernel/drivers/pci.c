@@ -6,7 +6,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/pci.h"
-#include "kernel/printk.h"
+#include "kernel/klog.h"
 
 /* --- Port I/O --- */
 static inline void outl(uint16_t port, uint32_t val)
@@ -134,7 +134,7 @@ void pci_scan(void)
     uint8_t cls, sub, hdr;
     int count = 0;
 
-    printk("[PCI] Scanning buses...\n");
+    klog(LOG_DEBUG, "pci", "Scanning buses...");
 
     for (bus = 0; bus < 255; bus++) {
         for (dev = 0; dev < PCI_MAX_DEV; dev++) {
@@ -147,7 +147,7 @@ void pci_scan(void)
                 cls = pci_read8(bus, dev, func, PCI_CLASS);
                 sub = pci_read8(bus, dev, func, PCI_SUBCLASS);
 
-                printk("[PCI] %u:%u.%u  %x:%x  %s\n",
+                klog(LOG_DEBUG, "pci", "%u:%u.%u  %x:%x  %s",
                        (uint64_t)bus, (uint64_t)dev, (uint64_t)func,
                        (uint64_t)vendor, (uint64_t)device,
                        pci_class_name(cls, sub));
@@ -163,7 +163,7 @@ void pci_scan(void)
         }
     }
 
-    printk("[OK] PCI: %u devices found\n", (uint64_t)count);
+    klog(LOG_INFO, "pci", "%u devices found", (uint64_t)count);
 }
 
 struct pci_device pci_find_device(uint16_t vendor_id, uint16_t device_id)

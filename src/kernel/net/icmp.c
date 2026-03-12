@@ -5,6 +5,7 @@
  * ============================================================================ */
 
 #include "kernel/net/net.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* --- Memory helpers --- */

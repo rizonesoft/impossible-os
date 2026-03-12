@@ -6,6 +6,7 @@
  * ============================================================================ */
 
 #include "kernel/version.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* Static version strings — computed at compile time from macros */

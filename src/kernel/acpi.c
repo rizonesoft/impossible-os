@@ -20,6 +20,7 @@
 
 #include "kernel/acpi.h"
 #include "kernel/boot_info.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* ---- I/O helpers ---- */

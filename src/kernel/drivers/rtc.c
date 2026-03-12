@@ -14,6 +14,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/rtc.h"
+#include "kernel/klog.h"
 #include "kernel/printk.h"
 
 /* ---- I/O port helpers ---- */
