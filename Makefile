@@ -103,7 +103,7 @@ src/kernel/boot_splash_icon.h: resources/boot/cookie-monster.png tools/convert_i
 ## boot-font: Generate embedded TTF font header for boot splash
 boot-font: src/kernel/boot_splash_font_data.h
 
-src/kernel/boot_splash_font_data.h: resources/fonts/selawk.ttf tools/convert_boot_font.py
+src/kernel/boot_splash_font_data.h: resources/fonts/selawksb.ttf tools/convert_boot_font.py
 	@python3 tools/convert_boot_font.py
 
 ## boot: Assemble the bootloader

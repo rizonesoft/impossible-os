@@ -10,8 +10,8 @@ import os
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(script_dir)
-    ttf_path = os.path.join(root, 'resources', 'fonts', 'selawk.ttf')
-    out_path = os.path.join(root, 'src', 'kernel', 'boot_splash_font.h')
+    ttf_path = os.path.join(root, 'resources', 'fonts', 'selawksb.ttf')
+    out_path = os.path.join(root, 'src', 'kernel', 'boot_splash_font_data.h')
 
     with open(ttf_path, 'rb') as f:
         data = f.read()

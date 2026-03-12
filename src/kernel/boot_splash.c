@@ -140,7 +140,7 @@ static void splash_draw_icon(void)
 
 /* Draw a status string centered horizontally at text_y using the TTF font.
  * Falls back to no-op if TTF is not yet initialized. */
-#define TEXT_HEIGHT 20  /* conservative height for 14px TTF text */
+#define TEXT_HEIGHT 24  /* conservative height for 16px TTF text */
 static void splash_draw_text(const char *text, uint32_t color)
 {
     /* Clear text area */
@@ -255,7 +255,7 @@ void boot_splash_init(void)
 
     /* Try to init TTF font for smooth text (needs heap + SIMD ready) */
     ttf_ready = 0;
-    if (boot_font_init(14) == 0)
+    if (boot_font_init(16) == 0)
         ttf_ready = 1;
 
     anim_frame = 0;

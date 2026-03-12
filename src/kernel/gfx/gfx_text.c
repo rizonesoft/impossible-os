@@ -905,6 +905,9 @@ static int boot_font_ready = 0;
 static float boot_font_scale = 0;
 static int boot_font_ascent_px = 0;
 
+/* Extra spacing between characters for cleaner boot text */
+#define BOOT_LETTER_SPACING 1
+
 int boot_font_init(int pixel_size)
 {
     int offset;
@@ -948,7 +951,7 @@ int boot_font_measure(const char *text)
     for (i = 0; text[i]; i++) {
         int advance, lsb;
         stbtt_GetCodepointHMetrics(&boot_stb_info, (unsigned char)text[i], &advance, &lsb);
-        total += (int)(boot_font_scale * (float)advance);
+        total += (int)(boot_font_scale * (float)advance) + BOOT_LETTER_SPACING;
 
         if (text[i + 1]) {
             int kern = stbtt_GetCodepointKernAdvance(
@@ -1021,7 +1024,7 @@ void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
             kfree(bitmap);
         }
 
-        cursor_x += (int32_t)(boot_font_scale * (float)advance);
+        cursor_x += (int32_t)(boot_font_scale * (float)advance) + BOOT_LETTER_SPACING;
 
         if (text[i + 1]) {
             int kern = stbtt_GetCodepointKernAdvance(
