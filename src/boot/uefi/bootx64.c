@@ -246,7 +246,7 @@ static EFI_STATUS init_gop(void)
 }
 
 /* ============================================================================
- * Step 2: Boot Splash — Render logo + spinner
+ * Step 2: Boot Splash — Clean black screen + smooth spinner
  * ============================================================================ */
 
 /* Draw a filled rectangle */
@@ -258,80 +258,100 @@ static void draw_rect(UINT32 x, UINT32 y, UINT32 w, UINT32 h, UINT32 color)
             gFramebuffer[row * gFbPitch + col] = color;
 }
 
-/* Draw a filled circle (Bresenham) */
-static void draw_circle(INT32 cx, INT32 cy, INT32 r, UINT32 color)
+/* Draw an anti-aliased filled circle.
+ * Uses distance-from-center with a 1.5px soft edge for smooth rendering. */
+static void draw_aa_circle(INT32 cx, INT32 cy, INT32 r, UINT32 color)
 {
     INT32 x, y;
-    for (y = -r; y <= r; y++)
-        for (x = -r; x <= r; x++)
-            if (x * x + y * y <= r * r) {
-                INT32 px = cx + x, py = cy + y;
-                if (px >= 0 && px < (INT32)gFbWidth &&
-                    py >= 0 && py < (INT32)gFbHeight)
-                    gFramebuffer[py * gFbPitch + px] = color;
+    UINT8 cr = (UINT8)(color >> 16);
+    UINT8 cg = (UINT8)(color >> 8);
+    UINT8 cb = (UINT8)(color);
+    INT32 r_outer = r + 2;  /* scan area includes AA fringe */
+
+    for (y = -r_outer; y <= r_outer; y++) {
+        for (x = -r_outer; x <= r_outer; x++) {
+            INT32 px = cx + x, py = cy + y;
+            if (px < 0 || px >= (INT32)gFbWidth ||
+                py < 0 || py >= (INT32)gFbHeight)
+                continue;
+
+            /* Squared distance * 256 for fixed-point precision */
+            INT32 d2 = x * x + y * y;
+            INT32 r2 = r * r;
+
+            UINT8 alpha;
+            if (d2 <= (r - 1) * (r - 1)) {
+                alpha = 255;  /* fully inside */
+            } else if (d2 > (r + 1) * (r + 1)) {
+                continue;     /* fully outside */
+            } else {
+                /* Anti-alias fringe: linear falloff over 2px band */
+                /* Approximate sqrt via integer math: use (r² - d²) / (2r) */
+                INT32 edge_dist = r2 - d2;  /* positive = inside */
+                if (edge_dist > 0)
+                    alpha = (UINT8)(edge_dist * 128 / r2);
+                else
+                    alpha = 0;
+                if (alpha < 20) continue;
             }
+
+            if (alpha == 255) {
+                gFramebuffer[py * gFbPitch + px] = color | 0xFF000000;
+            } else {
+                /* Blend with background (black → simple multiply) */
+                UINT8 ob = (UINT8)((cb * alpha) / 255);
+                UINT8 og = (UINT8)((cg * alpha) / 255);
+                UINT8 or_ = (UINT8)((cr * alpha) / 255);
+                gFramebuffer[py * gFbPitch + px] =
+                    (UINT32)ob | ((UINT32)og << 8) | ((UINT32)or_ << 16);
+            }
+        }
+    }
 }
 
-/* Simple "Impossible OS" text renderer (8×16 bitmap font embedded) */
-/* We'll draw a simple centered text using box characters instead */
-static void draw_text_centered(const char *text, UINT32 y, UINT32 color)
-{
-    /* Simple 5×7 pixel font for basic ASCII rendering */
-    UINT32 len = 0;
-    const char *p = text;
-    while (*p++) len++;
-
-    UINT32 char_w = 8;
-    UINT32 total_w = len * char_w;
-    UINT32 start_x = (gFbWidth - total_w) / 2;
-    UINT32 i;
-
-    /* We don't have a real font — just draw a subtle bar to indicate text
-     * location. The real text will appear once kernel takes over. */
-    (void)color;
-    (void)text;
-    draw_rect(start_x, y, total_w, 2, 0x404060);
-
-    /* Suppress unused warnings */
-    (void)i;
-}
-
-/* Render the boot splash screen */
+/* Render the boot splash screen: black background + spinning dots */
 static void render_splash(UINT32 spinner_frame)
 {
     UINT32 cx = gFbWidth / 2;
     UINT32 cy = gFbHeight / 2;
     UINT32 i;
 
-    /* Background: dark navy */
-    draw_rect(0, 0, gFbWidth, gFbHeight, 0x1a1a2e);
+    /* Pure black background */
+    draw_rect(0, 0, gFbWidth, gFbHeight, 0x000000);
 
-    /* Spinning dots ring — 8 dots in a circle, radius 30px */
-    /* The "active" dot is brighter, others dim */
-    for (i = 0; i < 8; i++) {
-        /* Angle: i * 45 degrees (precomputed sin/cos for 8 positions) */
-        /* sin/cos * 30 for each of 8 positions */
-        static const INT32 dx[8] = { 0, 21, 30, 21, 0, -21, -30, -21 };
-        static const INT32 dy[8] = { -30, -21, 0, 21, 30, 21, 0, -21 };
+    /* Spinning dots ring — 12 dots in a circle, radius 40px.
+     * This mimics the Windows 11 boot spinner: a ring of dots where
+     * the "active" section is bright and the rest fades smoothly. */
+    #define SPINNER_DOTS  12
+    #define SPINNER_ORBIT 40
+    #define DOT_RADIUS    5
 
+    /* Precomputed sin/cos * SPINNER_ORBIT for 12 positions (30°increments) */
+    static const INT32 dx[SPINNER_DOTS] = {
+         0,  20,  35,  40,  35,  20,   0, -20, -35, -40, -35, -20
+    };
+    static const INT32 dy[SPINNER_DOTS] = {
+        -40, -35, -20,   0,  20,  35,  40,  35,  20,   0, -20, -35
+    };
+
+    for (i = 0; i < SPINNER_DOTS; i++) {
         INT32 px = (INT32)cx + dx[i];
         INT32 py = (INT32)cy + dy[i];
 
-        /* Active dot is bright white, others fade based on distance from active */
-        UINT32 dist = ((i - spinner_frame % 8) + 8) % 8;
+        /* Brightness fades with distance from the active dot */
+        UINT32 dist = ((i - spinner_frame % SPINNER_DOTS) + SPINNER_DOTS) % SPINNER_DOTS;
         UINT32 brightness;
         if (dist == 0)      brightness = 0xFF;
-        else if (dist == 1) brightness = 0xC0;
-        else if (dist == 2) brightness = 0x80;
-        else if (dist == 3) brightness = 0x50;
-        else                brightness = 0x30;
+        else if (dist == 1) brightness = 0xDD;
+        else if (dist == 2) brightness = 0xAA;
+        else if (dist == 3) brightness = 0x77;
+        else if (dist == 4) brightness = 0x55;
+        else if (dist == 5) brightness = 0x33;
+        else                brightness = 0x1A;
 
         UINT32 color = (brightness << 16) | (brightness << 8) | brightness;
-        draw_circle(px, py, 4, color);
+        draw_aa_circle(px, py, DOT_RADIUS, color);
     }
-
-    /* "Impossible OS" text below spinner */
-    draw_text_centered("Impossible OS", cy + 60, 0xCCCCCC);
 }
 
 /* ============================================================================
@@ -697,10 +717,10 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return status;
     }
 
-    /* Animate spinner a few frames while we set up */
-    for (spinner_frame = 1; spinner_frame < 8; spinner_frame++) {
+    /* Animate spinner while we set up */
+    for (spinner_frame = 1; spinner_frame < 24; spinner_frame++) {
         render_splash(spinner_frame);
-        gBS->Stall(80000);  /* 80ms per frame */
+        gBS->Stall(60000);  /* 60ms per frame — smooth rotation */
     }
 
     /* Step 4: Find ACPI RSDP */

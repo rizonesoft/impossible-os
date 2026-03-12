@@ -136,10 +136,11 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
                 break;
 
             /* Clamp deltas to reject unreasonable jumps.
-             * Legitimate fast mouse movement rarely exceeds ±50 per
-             * PS/2 packet at 100 samples/sec.  Anything larger is
-             * likely a desync or VirtualBox mouse-integration artifact. */
-            #define MOUSE_DELTA_MAX 50
+             * PS/2 protocol uses signed 9-bit (-256..+255), but values
+             * beyond ±127 almost always indicate desync.  VirtualBox
+             * sends legitimate deltas up to ±127, so the clamp must
+             * cover the full one-byte signed range. */
+            #define MOUSE_DELTA_MAX 127
             if (dx > MOUSE_DELTA_MAX)  dx = MOUSE_DELTA_MAX;
             if (dx < -MOUSE_DELTA_MAX) dx = -MOUSE_DELTA_MAX;
             if (dy > MOUSE_DELTA_MAX)  dy = MOUSE_DELTA_MAX;
