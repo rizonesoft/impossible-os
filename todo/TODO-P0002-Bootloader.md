@@ -1,9 +1,10 @@
-# Phase 00 — Bootloader Hardening & Secure Boot
+# P0002 — Bootloader & Secure Boot
 
-> **Goal:** Harden the UEFI bootloader for real-world hardware. Implement Secure Boot
-> support via the shim chain-loading approach, sign our bootloader with a Machine Owner
-> Key (MOK), and submit our shim to Microsoft for signing. Also improve boot UX with
-> resolution auto-detection, fade-in transitions, and boot profiling.
+> **Goal:** Build a custom UEFI bootloader, implement a Windows 11-style boot splash,
+> and harden for real-world hardware with Secure Boot via the shim chain-loading approach.
+> Sign our bootloader with a Machine Owner Key (MOK) and submit our shim to Microsoft
+> for signing. Improve boot UX with resolution auto-detection, fade-in transitions,
+> and boot profiling.
 
 > [!IMPORTANT]
 > **Secure Boot Strategy:** We opt in to get our own shim signed by Microsoft via the
@@ -18,9 +19,141 @@
 
 ---
 
-## 1. Secure Boot — Shim Chain-Loading
+## 1. Custom UEFI Bootloader ✅
 
-### 1.1 Generate MOK Key Pair
+### 1.1 UEFI Boot Application
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `src/boot/uefi/bootx64.c` to confirm it implements a PE/COFF binary at `\EFI\BOOT\BOOTX64.EFI` that replaces GRUB. Confirm it uses the `ms_abi` calling convention, initializes the UEFI system table and boot services, disables the watchdog timer, and passes control to the kernel. Check that the Makefile builds `BOOTX64.EFI` as a PE binary and copies it to the EFI staging directory. Confirm the commit `"boot: custom UEFI bootloader replaces GRUB"` exists in git history. Run `bash scripts/build.sh clean` and verify the ISO boots in QEMU.
+
+- [x] Create `src/boot/uefi/bootx64.c` — UEFI boot application entry point (`efi_main`)
+- [x] Implement `ms_abi` calling convention for UEFI compatibility
+- [x] Initialize `EFI_SYSTEM_TABLE`, `EFI_BOOT_SERVICES`, `EFI_HANDLE`
+- [x] Disable UEFI watchdog timer (default 5-minute timeout)
+- [x] Create `src/boot/uefi/efi.h` — UEFI type definitions and protocol GUIDs
+- [x] Build as PE/COFF binary (`BOOTX64.EFI`) via Makefile
+- [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
+
+### 1.2 GOP Framebuffer Initialization
+
+**Prompt:** This section is marked complete. Verify that `init_gop()` in `bootx64.c` locates the `EFI_GRAPHICS_OUTPUT_PROTOCOL`, sets the video mode to 1280×720×32bpp with `PixelBlueGreenRedReserved8BitPerColor` format, and stores the framebuffer address, width, height, and pitch in the boot info struct. Confirm `fill_screen_black()` clears the framebuffer immediately after GOP init for a clean transition.
+
+- [x] Implement `init_gop()` — locate `EFI_GRAPHICS_OUTPUT_PROTOCOL` via `LocateProtocol`
+- [x] Set video mode to 1280×720×32bpp (`PixelBlueGreenRedReserved8BitPerColor`)
+- [x] Store framebuffer address, width, height, pitch in `boot_info.fb`
+- [x] Implement `fill_screen_black()` — clear screen after GOP init
+- [x] Commit: `"boot: fix UEFI bootloader — ms_abi calling convention + PE reloc + kernel_main lookup"` (`d11f61f`)
+
+### 1.3 Kernel ELF Loader
+
+**Prompt:** This section is marked complete. Verify that `load_kernel()` in `bootx64.c` reads `\boot\kernel.exe` from the EFI partition using `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses the ELF64 header, loads all `PT_LOAD` program headers into memory at their specified physical addresses, and returns the ELF entry point address. Confirm it handles both LOAD segments (code + data) and zeroes BSS.
+
+- [x] Open `\boot\kernel.exe` via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`
+- [x] Parse ELF64 header (verify magic, class, machine `EM_X86_64`)
+- [x] Load `PT_LOAD` segments into memory at specified physical addresses
+- [x] Zero BSS regions (file size < memory size)
+- [x] Return kernel entry point from ELF header
+- [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
+
+### 1.4 ACPI RSDP Discovery
+
+**Prompt:** This section is marked complete. Verify that `find_acpi_rsdp()` in `bootx64.c` searches the UEFI configuration table for the ACPI 2.0 GUID (`EFI_ACPI_20_TABLE_GUID`) and falls back to ACPI 1.0 (`EFI_ACPI_TABLE_GUID`). Confirm the RSDP address and ACPI version are stored in boot info for kernel ACPI parsing.
+
+- [x] Search UEFI config tables for `ACPI_20_TABLE_GUID` (prefer v2.0)
+- [x] Fall back to `ACPI_TABLE_GUID` (v1.0)
+- [x] Store RSDP address and version in `boot_info.acpi_rsdp_addr` / `acpi_version`
+- [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
+
+### 1.5 Memory Map & Page Tables
+
+**Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key).
+
+- [x] Implement `get_memory_map()` — call UEFI `GetMemoryMap` with retry on buffer resize
+- [x] Implement `fill_memory_map()` — convert UEFI memory descriptors to boot info entries
+- [x] Map UEFI memory types to Multiboot2 types (available, reserved, ACPI, NVS, bad)
+- [x] Call `ExitBootServices()` with the map key (retry once on `EFI_INVALID_PARAMETER`)
+- [x] Implement `setup_page_tables()` — 4-level identity mapping of 4 GiB via 2 MiB pages
+- [x] Implement `jump_to_kernel()` — set up Multiboot2 magic + boot info pointer, jump
+- [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
+
+---
+
+## 2. Boot Splash Screen ✅
+
+### 2.1 Windows 11-Style Boot Splash
+
+**Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup.
+
+- [x] Create `src/kernel/boot_splash.c` and `include/kernel/boot_splash.h`
+- [x] Implement `boot_splash_init()` — compute layout, lock compositor, draw initial splash
+- [x] Implement `boot_splash_finish()` — stop animation, clear screen, unlock compositor
+- [x] Implement `boot_splash_active()` — return whether splash is currently showing
+- [x] Black background with centered icon at ~40% vertical position
+- [x] Status text area below dots — "Starting...", "Detecting hardware...", etc.
+- [x] Lock compositor during splash (`fb_lock_compositor()`) — serial-only klog output
+- [x] Suppress klog framebuffer output during splash (`klog_set_screen_level(LOG_FATAL)`)
+- [x] Restore klog screen level to `LOG_INFO` when splash finishes
+- [x] Remove UEFI "Loading kernel..." text for clean black→splash transition
+- [x] Commit: `"boot: persistent Windows 11-style boot splash"` (`4d61756`)
+
+### 2.2 Animated Dot Wave
+
+**Prompt:** This section is marked complete. Verify the dot animation in `boot_splash.c` uses PIT timer callbacks at ~14 fps. Confirm the wave-style animation with 6 dots, pulsing radius (min 5px → max 8px), staggered phases, and smooth sine-like easing. Verify `boot_splash_start_animation()` is called after `pit_init() + sti`, and `pit_unregister_callback()` is called on finish.
+
+- [x] Implement PIT-driven animation callback at ~14 fps
+- [x] Implement wave-style dot animation (6 dots, pulsing radius)
+- [x] Dot radius range: 5px min → 8px max
+- [x] Dot spacing: 20px center-to-center
+- [x] Wave stagger: 2 frames between each dot's phase start
+- [x] Seamless wave wrap (no rest gap between cycles)
+- [x] Smooth sine-like easing using integer approximation table
+- [x] Implement `boot_splash_start_animation()` — register PIT callback
+- [x] Commit: `"boot: 6 dots (sweet spot between 5 and 8)"` (`d23af93`)
+
+### 2.3 Boot Icon Embedding
+
+**Prompt:** This section is marked complete. Verify that `tools/convert_icon.py` reads a PNG from `resources/boot/` and generates `src/kernel/boot_splash_icon.h` containing raw BGRA pixel data as a C array. Confirm the Makefile has a `boot-icon` target with the correct dependency. Verify the current icon is `boot_96.png` (96×96).
+
+- [x] Create `tools/convert_icon.py` — PNG to C header converter (BGRA pixel data)
+- [x] Implement minimal PNG decoder (IHDR, IDAT, deflate, unfilter)
+- [x] Generate `boot_splash_icon.h` with `BOOT_ICON_W`, `BOOT_ICON_H`, `boot_icon_data[]`
+- [x] Add Makefile `boot-icon` target: `resources/boot/boot_96.png → boot_splash_icon.h`
+- [x] Support alpha-blended icon rendering (BGRA → framebuffer with alpha compositing)
+- [x] Multi-resolution source PNGs: `boot_96.png`, `boot_128.png`, `boot_192.png`, `boot_256.png`, `boot_288.png`
+- [x] Commit: `"boot: new boot logo (boot_96.png) + updated start menu icon"` (`2adee94`)
+
+### 2.4 Anti-Aliased TTF Font for Status Text
+
+**Prompt:** This section is marked complete. Verify that `tools/convert_boot_font.py` embeds Selawik Semibold (`selawksb.ttf`) as a C header with pre-rasterized glyphs. Confirm the boot splash uses `boot_font_init(16)` for 16px font, `boot_font_measure()` for text width, and `boot_font_render()` for anti-aliased rendering. Verify 1px letter spacing is applied.
+
+- [x] Create `tools/convert_boot_font.py` — TTF to C header (pre-rasterized glyphs)
+- [x] Embed Selawik Semibold font at 16px size
+- [x] Implement `boot_font_init(pixel_size)` — init embedded font data
+- [x] Implement `boot_font_measure(text)` — return text width in pixels
+- [x] Implement `boot_font_render(text, x, y, color)` — render with anti-aliasing
+- [x] Add 1px letter spacing (`BOOT_LETTER_SPACING`)
+- [x] Makefile `boot-font` target: `resources/fonts/selawksb.ttf → boot_splash_font_data.h`
+- [x] Commit: `"boot: anti-aliased TTF font for splash status text"` (`dbca624`)
+
+### 2.5 Granular Boot Status Messages
+
+**Prompt:** This section is marked complete. Verify that `main.c` calls `boot_splash_status()` with descriptive messages throughout the boot sequence: "Setting up hardware...", "Detecting hardware...", "Detecting drives...", "Configuring network...", "Loading system configuration...", "Preparing desktop...", "Loading fonts...", "Loading resources...", "Almost ready...". Each message should be followed by `boot_splash_tick()`.
+
+- [x] "Setting up hardware..." — GDT, IDT, PIT, heap, PMM
+- [x] "Detecting hardware..." — PCI scan, NIC, input devices
+- [x] "Detecting drives..." — partition scan, filesystem mount
+- [x] "Configuring network..." — DHCP discover
+- [x] "Loading system configuration..." — Codex registry, kernel tests
+- [x] "Preparing desktop..." — log flush, desktop setup
+- [x] "Loading fonts..." — TTF font manager init
+- [x] "Loading resources..." — icon store, cursors
+- [x] "Almost ready..." — window manager init
+- [x] Commit: `"boot: add more granular splash status messages"` (`3e40e0f`)
+
+---
+
+## 3. Secure Boot — Shim Chain-Loading
+
+### 3.1 Generate MOK Key Pair
 
 **Prompt:** Generate a Machine Owner Key (MOK) for signing our bootloader. Use `openssl` to create an RSA-2048 key pair with a 10-year validity. The public certificate (`MOK.cer`) will be embedded in our shim build. The private key (`MOK.key`) is used to sign `BOOTX64.EFI` at build time. Store keys in a `keys/` directory (gitignored). Add a `keys/README.md` explaining the key purpose and rotation procedure. After completing all items, mark every item as `[x]`, and commit as `"boot: MOK key generation infrastructure"`.
 
@@ -36,7 +169,7 @@
 - [ ] Add `keys/MOK.key` to `.gitignore` (NEVER commit private keys)
 - [ ] Commit: `"boot: MOK key generation infrastructure"`
 
-### 1.2 Sign Bootloader with MOK
+### 3.2 Sign Bootloader with MOK
 
 **Prompt:** Use `sbsign` (from `sbsigntool` package) to sign our compiled `BOOTX64.EFI` with the MOK private key. Add a `sign-efi` target to the Makefile that runs after the EFI bootloader is built. The signed binary replaces the unsigned one. Verify the signature with `sbverify`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: sign EFI bootloader with MOK"`.
 
@@ -53,7 +186,7 @@
 - [ ] If `keys/MOK.key` is missing, skip signing (unsigned dev builds still work)
 - [ ] Commit: `"boot: sign EFI bootloader with MOK"`
 
-### 1.3 Build and Package Shim
+### 3.3 Build and Package Shim
 
 **Prompt:** Fork the [rhboot/shim](https://github.com/rhboot/shim) project. Embed our `MOK.cer` as the vendor certificate. Build `shimx64.efi` from source. Package the EFI system partition with the correct layout: `shimx64.efi` renamed to `BOOTX64.EFI` (firmware loads this first), our signed bootloader as `grubx64.efi` (shim loads this), and `mmx64.efi` (MokManager for first-boot key enrollment). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: shim packaging with vendor certificate"`.
 
@@ -70,7 +203,7 @@
 - [ ] Test in QEMU with Secure Boot enabled (OVMF + enrolled PK/KEK)
 - [ ] Commit: `"boot: shim packaging with vendor certificate"`
 
-### 1.4 Submit Shim for Microsoft Signing
+### 3.4 Submit Shim for Microsoft Signing
 
 **Prompt:** Submit our shim build to Microsoft for Secure Boot signing via the [rhboot/shim-review](https://github.com/rhboot/shim-review) process. This is free for open-source projects. The shim fork must be in a **public** GitHub repo. Microsoft reviews the shim (not our OS) and signs it with the Microsoft UEFI CA certificate. Once signed, our shim is trusted by all UEFI firmware worldwide — zero MOK enrollment needed for end users. After completing all items, mark every item as `[x]`, and commit as `"boot: Microsoft-signed shim submitted"`.
 
@@ -100,7 +233,7 @@
 | Kernel source | ❌ No | UEFI/shim never sees the kernel |
 | Impossible OS codebase | ❌ No | Completely irrelevant to Secure Boot |
 
-### 1.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
+### 3.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
 
 **Prompt:** While waiting for Microsoft to sign our shim, use Ubuntu's or Fedora's already-signed `shimx64.efi` as an interim solution. This binary is BSD-licensed and freely redistributable. The tradeoff: users will see a one-time MOK enrollment prompt on first boot (because the distro's shim has the distro's key baked in, not ours). This is the same approach used by Arch Linux. After completing all items, mark every item as `[x]`, and commit as `"boot: interim pre-signed shim with MOK enrollment"`.
 
@@ -125,9 +258,9 @@
 
 ---
 
-## 2. Resolution Auto-Detection
+## 4. Resolution Auto-Detection
 
-### 2.1 GOP Mode Negotiation
+### 4.1 GOP Mode Negotiation
 
 **Prompt:** Our bootloader currently hardcodes 1280×720. Real laptops have 1920×1080, 2560×1440, or 3840×2160 displays. Use UEFI's `EFI_GRAPHICS_OUTPUT_PROTOCOL` to enumerate all available modes and select the best one. Prefer the highest resolution that matches the native display. Pass the actual resolution and framebuffer info to the kernel via the boot info struct. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: auto-detect display resolution via GOP"`.
 
@@ -140,7 +273,7 @@
 - [ ] Test: verify correct behavior at 1080p, 1440p, 4K
 - [ ] Commit: `"boot: auto-detect display resolution via GOP"`
 
-### 2.2 HiDPI / Retina Scaling
+### 4.2 HiDPI / Retina Scaling
 
 **Prompt:** On a 4K 14" laptop, 5px dots and 16px text are microscopic. Calculate a DPI scaling factor based on resolution: 1× for ≤1080p, 2× for >1080p and ≤2160p, 3× for >2160p. Scale all boot splash elements (icon size, dot radius, dot spacing, font size, layout offsets) by this factor. Use the scaling factor in the boot params so the kernel desktop can also use it. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: HiDPI scaling for boot splash"`.
 
@@ -153,9 +286,9 @@
 
 ---
 
-## 3. Boot UX Polish
+## 5. Boot UX Polish
 
-### 3.1 Fade-In Transition
+### 5.1 Fade-In Transition
 
 **Prompt:** The Dell/HP UEFI firmware logo disappears abruptly when our bootloader takes over (black screen snap). Implement a smooth fade-in: start with a black screen and gradually increase brightness of the icon and dots over ~500ms (5 frames at 10fps). This creates a seamless transition from firmware to OS splash. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: fade-in transition for splash screen"`.
 
@@ -165,7 +298,7 @@
 - [ ] Complete fade before starting dot animation
 - [ ] Commit: `"boot: fade-in transition for splash screen"`
 
-### 3.2 Boot Profiling via Serial Timestamps
+### 5.2 Boot Profiling via Serial Timestamps
 
 **Prompt:** Add high-resolution timestamps to each boot stage in the serial log. Use `pit_get_ticks()` to calculate milliseconds since boot for each `klog()` message during init. This helps identify which init stage is slowest (font loading? wallpaper decoding? DHCP?) and optimize boot time. Format: `[  1.234] Initializing AHCI...`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: serial log timestamps for boot profiling"`.
 
@@ -175,7 +308,7 @@
 - [ ] Log total boot time: `"Boot complete in X.XXXs"`
 - [ ] Commit: `"boot: serial log timestamps for boot profiling"`
 
-### 3.3 Error Recovery Screen
+### 5.3 Error Recovery Screen
 
 **Prompt:** If the kernel panics during the boot splash phase, show a clean error screen instead of hanging or showing garbled output. Detect panics via the existing `panic()` handler — if `boot_splash_active()` is true, render a BSOD-style error screen using the embedded TTF font. Show the panic message, register dump, and a "Press any key to restart" prompt. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: error recovery screen during splash"`.
 
@@ -185,7 +318,7 @@
 - [ ] Wait for keyboard interrupt or 30-second timeout, then reboot
 - [ ] Commit: `"boot: error recovery screen during splash"`
 
-### 3.4 Parallel Init (Boot Time Optimization)
+### 5.4 Parallel Init (Boot Time Optimization)
 
 **Prompt:** Reduce boot time by overlapping slow I/O operations. While fonts are loading from disk, other non-dependent subsystems can initialize. Identify the dependency graph of init stages and parallelize independent branches. Candidate: start DHCP negotiation (which has network round-trip latency) concurrently with font loading. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: parallel initialization for faster boot"`.
 
@@ -198,7 +331,7 @@
 - [ ] Measure before/after boot times
 - [ ] Commit: `"boot: parallel initialization for faster boot"`
 
-### 3.5 Boot Menu (Recovery Mode)
+### 5.5 Boot Menu (Recovery Mode)
 
 **Prompt:** Hold Shift or F8 during boot to enter a recovery menu. The boot menu uses the same visual style as the splash (black bg, Selawik font, centered layout) and offers: Normal Boot, Safe Mode (skip modules), Recovery Console (drop to shell), Reboot. Use UEFI `SimpleTextInputEx` protocol to detect keypress during the first 2 seconds after firmware handoff. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: recovery boot menu"`.
 
@@ -215,21 +348,21 @@
 
 ---
 
-## 4. Advanced (Future)
+## 6. Advanced (Future)
 
-### 4.1 Compressed Kernel
+### 6.1 Compressed Kernel
 
 - [ ] gzip or lz4 compress the kernel ELF at build time
 - [ ] Decompress in the UEFI bootloader after loading from disk
 - [ ] Faster disk→RAM transfer (kernel is ~2 MB compressed vs ~8 MB raw)
 
-### 4.2 Measured Boot (TPM)
+### 6.2 Measured Boot (TPM)
 
 - [ ] Log each boot stage hash to TPM PCR registers
 - [ ] Enables remote attestation: "this machine booted authentic Impossible OS"
 - [ ] Requires UEFI TPM protocol access
 
-### 4.3 UEFI Boot Manager Entry
+### 6.3 UEFI Boot Manager Entry
 
 - [ ] Register Impossible OS as a permanent UEFI boot entry via `efibootmgr`
 - [ ] Users can select Impossible OS from BIOS boot menu alongside Windows/Linux
@@ -241,21 +374,23 @@
 
 | Priority | Section | Description |
 |----------|---------|-------------|
-| 🔴 P0 | 2.1 GOP Mode Negotiation | Without this, splash looks wrong on any non-720p display |
-| 🟠 P1 | 1.1 Generate MOK Key Pair | Foundation for Secure Boot |
-| 🟠 P1 | 1.2 Sign Bootloader with MOK | Enables Secure Boot testing |
-| 🟠 P1 | 1.5 Interim Pre-Signed Shim | Ship Secure Boot now (with MOK enrollment) |
-| 🟡 P2 | 2.2 HiDPI Scaling | Required for 4K laptops |
-| 🟡 P2 | 3.1 Fade-In Transition | Polish — smooth firmware→OS transition |
-| 🟡 P2 | 3.2 Boot Profiling | Developer tool — identify slow stages |
-| 🟡 P2 | 3.3 Error Recovery Screen | UX — clean panic during boot |
-| 🟢 P3 | 1.3 Build and Package Shim | Build our own shim from source |
-| 🟢 P3 | 1.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users |
-| 🟢 P3 | 3.4 Parallel Init | Performance — reduce boot time |
-| 🟢 P3 | 3.5 Boot Menu | Recovery — safe mode, console |
-| 🔵 P4 | 4.1 Compressed Kernel | Performance — smaller kernel image |
-| 🔵 P4 | 4.2 Measured Boot (TPM) | Security — attestation |
-| 🔵 P4 | 4.3 UEFI Boot Manager Entry | UX — permanent boot menu entry |
+| ✅ Done | 1.1–1.5 Custom UEFI Bootloader | Boot application, GOP, ELF loader, ACPI, page tables |
+| ✅ Done | 2.1–2.5 Boot Splash | Splash screen, dots, icon, TTF font, status messages |
+| 🔴 P0 | 4.1 GOP Mode Negotiation | Without this, splash looks wrong on any non-720p display |
+| 🟠 P1 | 3.1 Generate MOK Key Pair | Foundation for Secure Boot |
+| 🟠 P1 | 3.2 Sign Bootloader with MOK | Enables Secure Boot testing |
+| 🟠 P1 | 3.5 Interim Pre-Signed Shim | Ship Secure Boot now (with MOK enrollment) |
+| 🟡 P2 | 4.2 HiDPI Scaling | Required for 4K laptops |
+| 🟡 P2 | 5.1 Fade-In Transition | Polish — smooth firmware→OS transition |
+| 🟡 P2 | 5.2 Boot Profiling | Developer tool — identify slow stages |
+| 🟡 P2 | 5.3 Error Recovery Screen | UX — clean panic during boot |
+| 🟢 P3 | 3.3 Build and Package Shim | Build our own shim from source |
+| 🟢 P3 | 3.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users |
+| 🟢 P3 | 5.4 Parallel Init | Performance — reduce boot time |
+| 🟢 P3 | 5.5 Boot Menu | Recovery — safe mode, console |
+| 🔵 P4 | 6.1 Compressed Kernel | Performance — smaller kernel image |
+| 🔵 P4 | 6.2 Measured Boot (TPM) | Security — attestation |
+| 🔵 P4 | 6.3 UEFI Boot Manager Entry | UX — permanent boot menu entry |
 
 ---
 
