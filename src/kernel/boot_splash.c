@@ -28,7 +28,7 @@
 #define DOT_Y_OFFSET    52      /* dots below icon bottom, in pixels */
 #define TEXT_Y_OFFSET   36      /* text below dot center, in pixels */
 
-#define NUM_DOTS        8
+#define NUM_DOTS        6
 #define DOT_SPACING     18      /* px between dot centers */
 #define DOT_MIN_R       3       /* small (resting) dot radius */
 #define DOT_MAX_R       5       /* large (active) dot radius */
