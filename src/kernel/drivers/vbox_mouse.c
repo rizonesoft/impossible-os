@@ -42,6 +42,7 @@
 /* Mouse feature flags */
 #define VBOX_MOUSE_GUEST_CAN_ABSOLUTE   (1u << 0)
 #define VBOX_MOUSE_HOST_WANTS_ABSOLUTE  (1u << 1)
+#define VBOX_MOUSE_GUEST_NEEDS_HOST_CUR (1u << 2)
 #define VBOX_MOUSE_NEW_PROTOCOL         (1u << 4)
 
 /* Absolute coordinate range */
@@ -148,15 +149,13 @@ static void vbox_mouse_poll(void)
 
     vbox_send(mouse_pkt_phys);
 
-    /* Check return code */
-    if (mouse_pkt->header.rc >= 0) {
-        /* Only update if host supports absolute mode */
-        if (mouse_pkt->features & VBOX_MOUSE_HOST_WANTS_ABSOLUTE) {
-            abs_x = scale_abs(mouse_pkt->x,
-                              (int32_t)fb_get_width());
-            abs_y = scale_abs(mouse_pkt->y,
-                              (int32_t)fb_get_height());
-        }
+    /* Check return code — update position if request succeeded */
+    if (mouse_pkt->header.rc >= 0 &&
+        (mouse_pkt->x != 0 || mouse_pkt->y != 0)) {
+        abs_x = scale_abs(mouse_pkt->x,
+                          (int32_t)fb_get_width());
+        abs_y = scale_abs(mouse_pkt->y,
+                          (int32_t)fb_get_height());
     }
 }
 
@@ -273,7 +272,8 @@ int vbox_mouse_init(void)
                     sizeof(struct vbox_mouse_absolute),
                     VBOX_REQUEST_SET_MOUSE);
         mouse_pkt->features = VBOX_MOUSE_GUEST_CAN_ABSOLUTE
-                            | VBOX_MOUSE_NEW_PROTOCOL;
+                            | VBOX_MOUSE_NEW_PROTOCOL
+                            | VBOX_MOUSE_GUEST_NEEDS_HOST_CUR;
         mouse_pkt->x = 0;
         mouse_pkt->y = 0;
 
