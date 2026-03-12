@@ -346,6 +346,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
+    boot_splash_status("Loading system configuration...");
+    boot_splash_tick();
+
     /* Initialize the Codex registry */
     codex_init();
     codex_load();                /* load saved .codex files from disk */
@@ -773,6 +776,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     syscall_init();
     klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
+
+    boot_splash_status("Preparing desktop...");
+    boot_splash_tick();
 
     /* === Flush boot log to disk === */
     klog_flush_to_disk();
