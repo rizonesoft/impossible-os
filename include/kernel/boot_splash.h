@@ -11,6 +11,10 @@
  * Call immediately after fb_init(). */
 void boot_splash_init(void);
 
+/* Start the timer-driven dot animation.
+ * Call after pit_init() + sti (needs PIT interrupts running). */
+void boot_splash_start_animation(void);
+
 /* Update the status message below the dots.
  * The previous message is cleared and the new one is drawn. */
 void boot_splash_status(const char *msg);

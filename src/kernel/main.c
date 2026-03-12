@@ -266,6 +266,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
 
+    /* Start timer-driven splash animation (needs PIT IRQs running) */
+    boot_splash_start_animation();
+
     /* Step 11b: Scan block devices for partition tables (GPT first, MBR fallback).
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
      * Creates sub-blkdevs for each partition and probes filesystems. */

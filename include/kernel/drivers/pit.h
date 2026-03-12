@@ -23,3 +23,11 @@ void sleep_ms(uint32_t ms);
 
 /* Get seconds elapsed since boot */
 uint64_t uptime(void);
+
+/* Register a periodic callback that fires from the PIT IRQ handler.
+ * fn is called every 'every_n_ticks' PIT ticks (e.g., 7 = ~15 fps at 100 Hz).
+ * Only one callback can be active at a time. Use for boot splash animation. */
+void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks);
+
+/* Unregister the PIT callback. */
+void pit_unregister_callback(void);

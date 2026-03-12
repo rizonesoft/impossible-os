@@ -13,6 +13,11 @@
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
 
+/* Optional periodic callback (for boot splash animation etc.) */
+static void (*pit_callback_fn)(void) = (void *)0;
+static uint32_t pit_callback_divisor = 0;  /* call every N ticks */
+static uint32_t pit_callback_counter = 0;
+
 /* PIT I/O ports */
 #define PIT_CHANNEL0  0x40
 #define PIT_CMD       0x43
@@ -44,6 +49,16 @@ static uint32_t pit_actual_freq;
 static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
     tick_count++;
+
+    /* Fire optional callback (e.g., boot splash animation) */
+    if (pit_callback_fn) {
+        pit_callback_counter++;
+        if (pit_callback_counter >= pit_callback_divisor) {
+            pit_callback_counter = 0;
+            pit_callback_fn();
+        }
+    }
+
     pic_send_eoi(IRQ_TIMER);
 
     /* Let the scheduler decide if it's time to switch tasks */
@@ -91,4 +106,18 @@ uint64_t uptime(void)
 {
     if (pit_actual_freq == 0) return 0;  /* PIT not yet initialized */
     return tick_count / pit_actual_freq;
+}
+
+void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks)
+{
+    pit_callback_counter = 0;
+    pit_callback_divisor = every_n_ticks;
+    pit_callback_fn = fn;
+}
+
+void pit_unregister_callback(void)
+{
+    pit_callback_fn = (void *)0;
+    pit_callback_divisor = 0;
+    pit_callback_counter = 0;
 }
