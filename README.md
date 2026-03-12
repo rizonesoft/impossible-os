@@ -4,56 +4,80 @@
 
 They said building a fully functional, feature-rich operating system from scratch was impossible — so we named it after the challenge. Impossible OS is written entirely from the ground up: a custom UEFI bootloader, a 64-bit kernel, a graphical desktop, and everything in between. No Linux kernel, no borrowed foundations, no legacy code. Just bare metal x86-64 and the stubborn belief that impossible is just a word.
 
-## Features (Planned)
+## Features
 
-- **UEFI-only boot** via GRUB + Multiboot2
-- **64-bit Long Mode** kernel
-- **Preemptive multitasking** with round-robin scheduler
-- **Virtual filesystem** with FAT32 support
-- **Graphical desktop** with stacking window manager
-- **PS/2 keyboard & mouse** drivers
-- **Networking** (UDP/TCP/IP stack)
-- **OS installer** with GPT partitioning
+- **Custom UEFI bootloader** — hand-written PE/COFF boot application (no GRUB)
+- **64-bit Long Mode** kernel with identity-mapped page tables
+- **Preemptive multitasking** with round-robin scheduler, kernel threads, mutexes, and semaphores
+- **Virtual filesystem** with IXFS (custom filesystem), FAT32, GPT, and MBR support
+- **Graphical desktop** with stacking window manager, dirty-rectangle compositor, and double-buffered VSync
+- **TrueType font rendering** via stb_truetype with anti-aliased glyph caching
+- **Windows 11-style boot splash** with animated dots, embedded TTF font, and status messages
+- **AHCI & VirtIO** block device drivers (real hardware + virtual machines)
+- **PS/2 keyboard & mouse** drivers with VirtIO tablet for absolute positioning
+- **Networking** — RTL8139 NIC driver, Ethernet, ARP, IPv4, ICMP (ping), UDP, DHCP client
+- **IPC** — pipes, signals (SIGINT/SIGTERM/SIGKILL), shared memory
+- **Virtual memory** — swap/pagefile, memory-mapped files, clock page replacement
+- **Kernel panic screen** — styled BSOD with register dump, stack trace, and auto-restart
+- **Codex registry** — hierarchical key-value store with disk persistence (migrating to Win32-compatible Registry)
+- **User-mode programs** — ELF loading, syscalls, fork/exec, custom libc
+- **Multi-resolution icon system** — IRES packed icon format with 9 sizes (16px–256px)
+- **Adwaita cursors** — animated cursor support with 11 cursor types
 
 ## Build Requirements
 
 - Ubuntu 24.04 (WSL 2 recommended)
-- GCC cross-compiler (`x86_64-elf-gcc`) or system GCC with freestanding flags
+- Cross-compiler: `x86_64-elf-gcc` and `x86_64-elf-ld`
 - NASM assembler
-- GRUB + xorriso + mtools (for ISO creation)
+- `mtools` and `dosfstools` (for FAT32 EFI partition)
 - QEMU + OVMF (for UEFI testing)
+- Python 3 (for asset conversion tools)
 
 ## Quick Start
 
 ```bash
-# Build everything
-make all
+# Clean build (recommended)
+bash scripts/build.sh clean
 
-# Create bootable ISO
-make iso
+# Incremental build
+bash scripts/build.sh
 
-# Test in QEMU (UEFI)
-make run
+# Build + launch QEMU
+bash scripts/build.sh run
 
-# Clean build artifacts
-make clean
+# Clean build + QEMU
+bash scripts/build.sh clean run
 ```
+
+> [!NOTE]
+> Always use `bash scripts/build.sh` — never raw `make` commands.
+> Verify success: `tail -1 build/build.log` → must show `BUILD OK`.
 
 ## Testing
 
-- **Fast loop:** `make run` launches QEMU with OVMF UEFI firmware
-- **Production:** Attach `build/os-build.iso` to a Hyper-V Gen 2 VM
+- **Fast loop:** `bash scripts/build.sh run` launches QEMU with OVMF UEFI firmware and AHCI
+- **Serial output:** Boot log written to `build/serial.log` (`-serial file:build/serial.log`)
+- **VirtualBox:** Use `scripts/run-vbox.bat` (Windows) or configure a 64-bit EFI VM manually
 
 ## Architecture
 
 ```
 src/
-├── boot/       # GRUB config, Multiboot2 header, Long Mode entry
-├── kernel/     # Core kernel (interrupts, GDT, drivers, mm, fs, sched)
-├── libc/       # Minimal C standard library
-├── shell/      # Command-line shell
-├── desktop/    # Window manager, GUI toolkit, desktop shell
-└── installer/  # OS installer
+├── boot/uefi/  # Custom UEFI bootloader (PE/COFF, GOP, ELF loader)
+├── kernel/     # Core kernel
+│   ├── drivers/    # PCI, AHCI, VirtIO, framebuffer, keyboard, mouse, PIT, RTC
+│   ├── fs/         # VFS, IXFS, FAT32, GPT/MBR partitioning
+│   ├── gfx/        # Graphics library (blending, gradients, text rendering)
+│   ├── ipc/        # Pipes, signals, shared memory
+│   ├── mm/         # PMM, heap, virtual memory, swap, mmap
+│   ├── net/        # Ethernet, ARP, IPv4, ICMP, UDP, DHCP
+│   └── sched/      # Scheduler, threads, syscalls, user-mode
+├── desktop/    # Window manager, compositor, terminal, desktop shell
+└── installer/  # OS installer (planned)
+user/
+├── lib/        # User-mode libc (string, stdio, stdlib, ctype, math)
+├── hello.c     # Hello world test program
+└── shell.c     # User-mode shell
 ```
 
 ## 🤔 Frequently Asked Questions (FAQ)
