@@ -525,3 +525,11 @@
 
 > For Impossible OS, **Level 3** (modesetting + 2D accel + hardware cursor) is the
 > realistic target. This provides a polished desktop without requiring a full 3D stack.
+
+### Input Devices
+
+| Stage | Input Method | Coverage | Status |
+|-------|-------------|----------|--------|
+| Now | PS/2 mouse/keyboard | ~100% (via legacy emulation) | ✅ Working |
+| Phase 08 | USB HID (xHCI + HID class) | ~100% (native USB) | TODO |
+| Future | Touchscreen, gamepad, stylus | niche | TODO |
