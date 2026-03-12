@@ -279,6 +279,15 @@ run: all
 		-rtc base=localtime \
 		-no-reboot
 
+## vbox: Build, convert to VDI, and launch in VirtualBox
+vbox: all
+	@echo "Converting raw disk to VDI..."
+	@rm -f $(BUILD_DIR)/system-disk.vdi
+	@qemu-img convert -f raw -O vdi $(SYSTEM_DISK) $(BUILD_DIR)/system-disk.vdi
+	@echo "VDI created: $(BUILD_DIR)/system-disk.vdi"
+	@echo ""
+	@echo "To launch in VirtualBox, run:  scripts/run-vbox.bat"
+
 ## run-test: Launch QEMU with a secondary test disk on AHCI port 1
 ##   Usage: make run-test DISK=fat32       (loads build/test-disks/fat32.img)
 ##          make run-test DISK=ext4        (loads build/test-disks/ext4.img)
