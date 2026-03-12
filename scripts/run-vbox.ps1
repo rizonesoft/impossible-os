@@ -98,7 +98,7 @@ if ($vmExists) {
     --keyboard ps2 `
     --audio-driver none `
     --uart1 "0x3F8" "4" `
-    --uart-mode1 disconnected `
+    --uart-mode1 file "$BUILD\serial.log" `
     --boot1 disk `
     --boot2 none `
     --boot3 none `
@@ -120,7 +120,8 @@ Write-Host ""
 Write-Host "Launching Impossible OS in VirtualBox..." -ForegroundColor Green
 Write-Host "  VM: $VM_NAME" -ForegroundColor DarkGray
 Write-Host "  Disk: $DISK_VDI" -ForegroundColor DarkGray
-Write-Host "  Display: VBoxVGA 1280x720" -ForegroundColor DarkGray
+Write-Host "  Display: VMSVGA 1280x720 (UEFI)" -ForegroundColor DarkGray
+Write-Host "  Serial log: $BUILD\serial.log" -ForegroundColor DarkGray
 Write-Host ""
 
 & $VBOX startvm $VM_NAME
