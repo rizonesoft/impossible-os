@@ -201,170 +201,56 @@
 
 ## 3. Network Drivers (Modules)
 
-> **Coverage target: 95%+ of all desktop/laptop Ethernet NICs.**
-> Wired Ethernet is dominated by Intel and Realtek. Three driver families
-> (Intel e1000e, Realtek RTL8111, Intel igc) cover ~80% of all devices.
-> Adding Broadcom and Qualcomm reaches ~95%.
+### 3.1 Intel e1000 NIC
 
-### Wired Ethernet — Coverage Summary
-
-| # | Driver | Chipsets | Coverage | Port From | License | Method |
-|---|--------|----------|----------|-----------|---------|--------|
-| 3.1 | **Intel e1000/e1000e** | 82540, 82574, I217–I219 | ~35% | FreeBSD `em(4)` / SerenityOS | BSD-2 | Port |
-| 3.2 | **Realtek RTL8111/8168** | RTL8111B–H, RTL8169 | ~30% | FreeBSD `re(4)` | BSD-2 | Port |
-| 3.3 | **Intel igc** | I225-V, I226-V (2.5GbE) | ~10% | FreeBSD `igc(4)` | BSD-2 | Port |
-| 3.4 | **Realtek RTL8125** | RTL8125B/BG (2.5GbE) | ~5% | FreeBSD `re(4)` | BSD-2 | Port |
-| 3.5 | **Broadcom tg3** | BCM5751–BCM57765 | ~5% | FreeBSD `bge(4)` | BSD-2 | Port |
-| 3.6 | **Qualcomm Atheros alx** | AR8161, Killer E2200 | ~3% | Datasheet (GPL in Linux) | — | Scratch |
-| 3.7 | **Intel ixgbe** | X520/X540/X550 (10GbE) | ~2% | FreeBSD `ix(4)` | BSD-2 | Port |
-| 3.8 | **RTL8139** | RTL8139C/D (100Mbps) | ~1% | Already have | Scratch | Convert |
-| 3.9 | **VirtIO-net** | QEMU/KVM paravirtual | VMs | SerenityOS | BSD-2 | Port |
-| | | | **~91%+** | | | |
-
-> [!TIP]
-> The first 3 drivers alone (Intel e1000e + Realtek RTL8111 + Intel igc) cover **~75%** of all wired NICs.
-
-### 3.1 Intel e1000/e1000e — ~35% of all NICs
-
-**Prompt:** The Intel e1000/e1000e family covers the most widely deployed Ethernet controllers. The e1000 variant (82540EM, `0x100E`) is VirtualBox's default NIC. The e1000e variant (I217/I218/I219) is built into every Intel motherboard since Haswell (2013). Detect via PCI vendor `0x8086`. Map MMIO BAR0. Initialize: reset device, read MAC from EEPROM or RAL/RAH, configure TX/RX descriptor rings (256 entries), enable TX/RX. Port from FreeBSD `em(4)` (BSD-2) or SerenityOS (BSD-2). After completing all items, create `docs/architecture/e1000.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel e1000/e1000e NIC module"`.
+**Prompt:** The Intel e1000 (82540EM) is the default NIC in VirtualBox and is extremely common in real hardware. Detect via PCI vendor `0x8086`, device `0x100E` (82540EM), `0x100F` (82545EM), `0x153A` (I217-LM), `0x10D3` (82574L). Map MMIO BAR0. Initialize: reset device, read MAC from EEPROM or RAL/RAH registers, configure TX/RX descriptor rings (16 entries each), enable TX/RX. TX: build descriptor with buffer pointer + length + EOP flag, update TDT tail. RX: pre-populate descriptors with buffers, poll/IRQ on RDH advance, pass frames to `ethernet_receive()`. Port from SerenityOS `E1000NetworkAdapter` (BSD-2). After completing all items, create `docs/architecture/e1000.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel e1000 NIC module"`.
 
 - [ ] Create `src/modules/e1000/e1000.c`
-- [ ] Port from: **FreeBSD** `sys/dev/e1000/` (BSD-2) or **SerenityOS** (BSD-2)
-- [ ] PCI match table (vendor `0x8086`):
-  - [ ] `0x100E` — 82540EM (VirtualBox, QEMU)
-  - [ ] `0x100F` — 82545EM (VMware)
-  - [ ] `0x10D3` — 82574L (common server/desktop)
-  - [ ] `0x153A` — I217-LM (Haswell)
-  - [ ] `0x15A2` — I218-LM (Broadwell)
-  - [ ] `0x15B8` — I219-V (Skylake)
-  - [ ] `0x15BC` — I219-V (Cannon Lake)
-  - [ ] `0x0D4F` — I219-V (Comet Lake)
-  - [ ] `0x15F3` — I225-LM (Tiger Lake)
+- [ ] Port from: **SerenityOS** `Kernel/Net/Intel/E1000NetworkAdapter.cpp` (BSD-2-Clause)
+- [ ] PCI match table: `{ 0x8086, 0x100E }`, `{ 0x8086, 0x100F }`, `{ 0x8086, 0x153A }`, `{ 0x8086, 0x10D3 }`
 - [ ] Map MMIO BAR0
-- [ ] Reset device (CTRL.RST bit, wait)
+- [ ] Reset device (set CTRL.RST bit, wait)
 - [ ] Read MAC address from EEPROM or RAL/RAH registers
-- [ ] Configure TX ring (256 entries, `pmm_alloc_contiguous()` for DMA)
-- [ ] Configure RX ring (256 entries, `pmm_alloc_contiguous()` for DMA)
+- [ ] Configure TX ring:
+  - [ ] Allocate TX descriptor array (16 entries) + TX buffers
+  - [ ] Set TDBAL/TDBAH (base address), TDLEN (length), TDH/TDT (head/tail)
+- [ ] Configure RX ring:
+  - [ ] Allocate RX descriptor array (16 entries) + RX buffers
+  - [ ] Set RDBAL/RDBAH, RDLEN, RDH/RDT
+  - [ ] Enable RX (RCTL.EN)
 - [ ] Implement `e1000_send(frame, length)` — write TX descriptor, bump TDT
 - [ ] Handle e1000 IRQ → process RX descriptors → `ethernet_receive()`
 - [ ] Register with network stack
-- [ ] Test in VirtualBox (default NIC) and QEMU (`-device e1000`)
-- [ ] Commit: `"drivers: Intel e1000/e1000e NIC module"`
+- [ ] Test in VirtualBox (default NIC is e1000)
+- [ ] Commit: `"drivers: Intel e1000 NIC module"`
 
-### 3.2 Realtek RTL8111/8168 — ~30% of all NICs
+### 3.2 VirtIO-net NIC
 
-**Prompt:** The Realtek RTL8111/8168 is the most common gigabit NIC in consumer PCs. Nearly every non-Intel motherboard (AMD, budget Intel) ships with a Realtek NIC. Detect via PCI vendor `0x10EC`, devices `0x8168` (RTL8111B–H) and `0x8169` (RTL8169). Uses DMA descriptor rings. Port from FreeBSD `re(4)` driver (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Realtek RTL8111 gigabit NIC module"`.
-
-- [ ] Create `src/modules/rtl8111/rtl8111.c`
-- [ ] Port from: **FreeBSD** `sys/dev/re/` (BSD-2-Clause)
-- [ ] PCI match (vendor `0x10EC`):
-  - [ ] `0x8168` — RTL8111B/C/D/E/F/G/H (GbE, most common)
-  - [ ] `0x8169` — RTL8169 (older model)
-  - [ ] `0x8136` — RTL8101E/RTL8102E (Fast Ethernet variant)
-- [ ] Map MMIO BAR, reset chip, read MAC
-- [ ] Configure TX/RX descriptor rings (256 entries) with DMA
-- [ ] Implement send/receive with ring management
-- [ ] Handle IRQ → process RX ring → `ethernet_receive()`
-- [ ] Register with network stack
-- [ ] Commit: `"drivers: Realtek RTL8111 gigabit NIC module"`
-
-### 3.3 Intel igc (I225/I226) — ~10% of all NICs
-
-**Prompt:** The Intel I225-V/I226-V are 2.5 Gigabit Ethernet controllers on modern desktops (Intel 12th–14th gen, Z690/Z790 boards). Rapidly growing as 2.5GbE becomes standard. Detect via PCI vendor `0x8086`. Similar to e1000e with 2.5G extensions. Port from FreeBSD `igc(4)` (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel I225/I226 2.5GbE NIC module"`.
-
-- [ ] Create `src/modules/igc/igc.c`
-- [ ] Port from: **FreeBSD** `sys/dev/igc/` (BSD-2-Clause)
-- [ ] PCI match (vendor `0x8086`): `0x15F2` (I225-IT), `0x15F3` (I225-LM), `0x125B` (I226-LM), `0x125C` (I226-V)
-- [ ] MMIO register access (e1000e-like with 2.5G extensions)
-- [ ] TX/RX advanced descriptor rings
-- [ ] Register with network stack
-- [ ] Commit: `"drivers: Intel I225/I226 2.5GbE NIC module"`
-
-### 3.4 Realtek RTL8125 2.5GbE — ~5% of all NICs
-
-**Prompt:** The Realtek RTL8125B is the budget 2.5GbE controller on AMD B550/B650/X670 boards and gaming motherboards. Detect via PCI vendor `0x10EC`, device `0x8125`. Port from FreeBSD `re(4)` which already supports RTL8125 (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Realtek RTL8125 2.5GbE NIC module"`.
-
-- [ ] Create `src/modules/rtl8125/rtl8125.c`
-- [ ] Port from: **FreeBSD** `sys/dev/re/` (BSD-2, has RTL8125 support)
-- [ ] PCI match (vendor `0x10EC`): `0x8125` (RTL8125B), `0x3000` (Killer E3000)
-- [ ] Extended descriptor format for 2.5GbE
-- [ ] Register with network stack
-- [ ] Commit: `"drivers: Realtek RTL8125 2.5GbE NIC module"`
-
-### 3.5 Broadcom tg3 — ~5% of all NICs
-
-**Prompt:** Broadcom BCM57xx NICs are in Dell, HP, and Lenovo enterprise desktops/laptops. Port from FreeBSD `bge(4)` (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Broadcom tg3 NIC module"`.
-
-- [ ] Create `src/modules/bge/bge.c`
-- [ ] Port from: **FreeBSD** `sys/dev/bge/` (BSD-2-Clause)
-- [ ] PCI match (vendor `0x14E4`): `0x1677` (BCM5751), `0x167A` (BCM5754), `0x1681` (BCM5761), `0x16B4` (BCM57765)
-- [ ] MMIO, TX/RX ring with producer/consumer model
-- [ ] Register with network stack
-- [ ] Commit: `"drivers: Broadcom tg3 NIC module"`
-
-### 3.6 Qualcomm Atheros alx — ~3% of all NICs
-
-**Prompt:** Qualcomm Atheros AR8161/Killer E2200 NICs found in gaming motherboards and some laptops. **GPL-only in Linux** — no BSD driver exists. Must be clean-room implementation from the AR816x datasheet. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Qualcomm Atheros alx NIC module"`.
-
-- [ ] Create `src/modules/alx/alx.c`
-- [ ] **Clean-room implementation** from public datasheet
-- [ ] PCI match (vendor `0x1969`): `0x1091` (AR8161), `0x10A1` (AR8171), `0xE091` (Killer E2200), `0xE0A1` (Killer E2400)
-- [ ] TX/RX DMA ring from datasheet register docs
-- [ ] Register with network stack
-- [ ] Commit: `"drivers: Qualcomm Atheros alx NIC module"`
-
-### 3.7 Intel ixgbe 10GbE — ~2% of all NICs (Stretch)
-
-**Prompt:** Intel X520/X540/X550 10GbE controllers for workstations and enthusiast PCs. Port from FreeBSD `ix(4)` (BSD-2). Stretch goal — 10GbE is rare in consumer PCs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel ixgbe 10GbE NIC module"`.
-
-- [ ] *(Stretch)* Create `src/modules/ixgbe/ixgbe.c`
-- [ ] *(Stretch)* Port from: **FreeBSD** `sys/dev/ixgbe/` (BSD-2)
-- [ ] *(Stretch)* PCI match (vendor `0x8086`): `0x10FB` (X520), `0x1528` (X540), `0x1563` (X550)
-- [ ] Commit: `"drivers: Intel ixgbe 10GbE NIC module"`
-
-### 3.8 RTL8139 — ~1% (convert to module)
-
-> Already implemented as built-in. Convert to module as proof-of-concept (see §1.6).
-
-### 3.9 VirtIO-net — VMs only
-
-**Prompt:** VirtIO-net is the paravirtual NIC for QEMU/KVM. Detect via PCI vendor `0x1AF4`, device `0x1000`. Two virtqueues: RX (queue 0) and TX (queue 1). Port from SerenityOS (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VirtIO-net NIC module"`.
+**Prompt:** VirtIO-net is the paravirtual NIC for QEMU/KVM — much faster than RTL8139. Detect via PCI vendor `0x1AF4`, device `0x1000`. Reuse the VirtIO MMIO transport from `virtio.c`. Initialize two virtqueues: RX (queue 0) and TX (queue 1). Pre-populate RX queue with empty buffers. TX: build Ethernet frame, submit via descriptor chain, kick queue. RX interrupt: process used buffers, pass to `ethernet_receive()`. Read MAC from device config space. After completing all items, create `docs/architecture/virtio-net.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VirtIO-net NIC module"`.
 
 - [ ] Create `src/modules/virtio_net/virtio_net.c`
-- [ ] PCI match: `{ 0x1AF4, 0x1000 }` (transitional), `{ 0x1AF4, 0x1041 }` (modern)
-- [ ] Reuse VirtIO transport from `virtio.c`
-- [ ] RX/TX virtqueues, MAC from device config
-- [ ] Handle IRQ → `ethernet_receive()`
+- [ ] PCI match: `{ 0x1AF4, 0x1000 }` (transitional) and `{ 0x1AF4, 0x1041 }` (modern)
+- [ ] Reuse VirtIO transport from `virtio.c` (negotiate features, init virtqueues)
+- [ ] Initialize RX virtqueue (queue 0) — pre-populate with empty buffers
+- [ ] Initialize TX virtqueue (queue 1)
+- [ ] Read MAC address from device config space
+- [ ] Implement `virtio_net_send(frame, len)` — add to TX queue, kick
+- [ ] Handle IRQ → process RX used buffers → `ethernet_receive()`
+- [ ] Register with network stack
 - [ ] QEMU flag: `-device virtio-net-pci,netdev=net0`
 - [ ] Commit: `"drivers: VirtIO-net NIC module"`
 
-### WiFi — Coverage Summary (Stretch / Future Phase)
+### 3.3 Realtek RTL8169 Gigabit NIC
 
-> [!WARNING]
-> **All major WiFi drivers are GPL-only in Linux.** Every WiFi driver must be a
-> **clean-room implementation** from hardware datasheets. WiFi also requires a
-> full **802.11 MAC layer** and **WPA supplicant** (~10K+ lines each).
-> Recommend deferring WiFi and using USB WiFi dongles as interim solution.
+**Prompt:** The RTL8169 is a very common gigabit Ethernet controller found in budget motherboards and PCIe NICs. Detect via PCI vendor `0x10EC`, device `0x8169` (RTL8169), `0x8168` (RTL8111). Similar to RTL8139 but with DMA descriptor rings instead of a fixed buffer. Port from FreeBSD `re(4)` driver or SerenityOS RTL8168 driver (BSD-2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: RTL8169 gigabit NIC module"`.
 
-| Driver | Chipsets | Laptop Coverage | License in Linux | Method |
-|--------|----------|----------------|-----------------|--------|
-| **Intel iwlwifi** | AX200, AX201, AX210, BE200 | ~35% | GPL | Scratch |
-| **Realtek rtw89** | RTL8852AE/BE/CE | ~15% | GPL | Scratch |
-| **Qualcomm ath11k** | WCN6855, WCN7850 | ~15% | GPL | Scratch |
-| **Broadcom brcmfmac** | BCM4350, BCM4356 | ~10% | GPL | Scratch |
-| **MediaTek mt76** | MT7921, MT7922 | ~10% | GPL | Scratch |
-| | | **~85%** | | |
-
-### 3.10 802.11 WiFi Framework (Stretch)
-
-**Prompt:** WiFi requires a complete 802.11 MAC layer: frame parsing, BSS scanning, WPA2-PSK 4-way handshake (HMAC-SHA1 + AES-CCMP), association. Implement as shared library for all WiFi chipset drivers. Large undertaking (~5K–10K lines). After completing all items, run `bash scripts/build.sh clean`, and commit as `"net: 802.11 WiFi MAC framework"`.
-
-- [ ] *(Stretch)* Create `src/kernel/net/wifi80211.c` and `include/kernel/net/wifi80211.h`
-- [ ] *(Stretch)* 802.11 frame parsing (management, control, data)
-- [ ] *(Stretch)* BSS scanning — probe requests, beacon parsing
-- [ ] *(Stretch)* WPA2-PSK 4-way handshake (EAPOL) + AES-CCMP
-- [ ] *(Stretch)* Association/reassociation
-- [ ] Commit: `"net: 802.11 WiFi MAC framework"`
+- [ ] Create `src/modules/rtl8169/rtl8169.c`
+- [ ] Port from: **FreeBSD** `sys/dev/re/` (BSD-2) or **SerenityOS** (BSD-2)
+- [ ] PCI match: `{ 0x10EC, 0x8169 }`, `{ 0x10EC, 0x8168 }`
+- [ ] MMIO or I/O BAR access
+- [ ] TX/RX descriptor rings with DMA
+- [ ] Register with network stack
+- [ ] Commit: `"drivers: RTL8169 gigabit NIC module"`
 
 ---
 
@@ -496,21 +382,49 @@
 | 🔴 P0 | 1.5 Auto-Load at Boot | Foundation — scan C:\System\Drivers\ on boot |
 | 🟠 P1 | 1.6 RTL8139 as Module | Proof of concept — validate entire pipeline |
 | 🟠 P1 | 2.1 NVMe (built-in) | Real hardware SSD support |
-| 🟠 P1 | 3.1 Intel e1000/e1000e | ~35% of all NICs + VirtualBox default NIC |
-| 🟠 P1 | 3.2 Realtek RTL8111 | ~30% of all NICs — most common consumer NIC |
-| 🟡 P2 | 3.3 Intel igc (I225/I226) | ~10% of all NICs — modern 2.5GbE |
-| 🟡 P2 | 3.9 VirtIO-net Module | Fast QEMU networking |
+| 🟠 P1 | 3.1 Intel e1000 Module | VirtualBox networking |
 | 🟡 P2 | 4.1 VMSVGA Module | VirtualBox GPU + cursor + acceleration |
 | 🟡 P2 | 4.2 VirtIO-GPU Module | QEMU GPU (restore reverted code) |
+| 🟡 P2 | 3.2 VirtIO-net Module | Fast QEMU networking |
 | 🟡 P2 | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core |
-| 🟢 P3 | 3.4 RTL8125 2.5GbE | ~5% of all NICs — AMD motherboards |
-| 🟢 P3 | 3.5 Broadcom tg3 | ~5% of all NICs — Dell/HP/Lenovo enterprise |
-| 🟢 P3 | 3.6 Qualcomm alx | ~3% of all NICs — Killer gaming NICs |
 | 🟢 P3 | 6.1 VirtIO-input Module | Convert existing code |
+| 🟢 P3 | 3.3 RTL8169 Module | Common real-world NIC |
 | 🟢 P3 | 2.3 HPET Timer (built-in) | High-precision timing |
 | 🟢 P3 | 7.1 License Tracking | Attribution compliance |
-| 🔵 P4 | 3.7 Intel ixgbe 10GbE | ~2% — enthusiast/server only |
-| 🔵 P4 | 3.10 WiFi Framework | Complex — defer until wired is complete |
 | 🔵 P4 | 4.3 Bochs/BGA Module | Simple fallback display |
 | 🔵 P4 | 5.1 Audio as Modules | Convert Phase 08 drivers to modules |
 
+---
+
+## NIC Driver Porting Roadmap (~95% Device Coverage)
+
+> **Target: 90–98% of all desktop/laptop wired Ethernet NICs.**
+> The first 3 drivers alone cover ~75% of all devices.
+
+### Wired Ethernet
+
+| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
+|----------|--------|----------|----------|-----------|---------|--------|
+| 🟠 P1 | **Intel e1000/e1000e** | 82540, 82574, I217, I218, I219 | ~35% | FreeBSD `em(4)` / SerenityOS | BSD-2 | Port |
+| 🟠 P1 | **Realtek RTL8111** | RTL8111B/C/D/E/F/G/H, RTL8168, RTL8169 | ~30% | FreeBSD `re(4)` | BSD-2 | Port |
+| 🟡 P2 | **Intel igc** | I225-V, I226-V (2.5GbE) | ~10% | FreeBSD `igc(4)` | BSD-2 | Port |
+| 🟢 P3 | **Realtek RTL8125** | RTL8125B/BG (2.5GbE) | ~5% | FreeBSD `re(4)` | BSD-2 | Port |
+| 🟢 P3 | **Broadcom tg3** | BCM5751, BCM5754, BCM5761, BCM57765 | ~5% | FreeBSD `bge(4)` | BSD-2 | Port |
+| 🟢 P3 | **Qualcomm Atheros alx** | AR8161, AR8171, Killer E2200/E2400 | ~3% | Datasheet (GPL in Linux) | — | Scratch |
+| 🔵 P4 | **Intel ixgbe** | X520, X540, X550 (10GbE) | ~2% | FreeBSD `ix(4)` | BSD-2 | Port |
+| — | **RTL8139** | RTL8139C/D (100Mbps) | ~1% | Already have | MIT | Convert |
+| — | **VirtIO-net** | QEMU/KVM paravirtual | VMs | SerenityOS | BSD-2 | Port |
+| | | | **~91%+** | | | |
+
+### WiFi (Stretch — requires 802.11 MAC + WPA supplicant infrastructure)
+
+> All major WiFi drivers are **GPL-only** in Linux. Each requires clean-room implementation from datasheets.
+
+| Priority | Driver | Chipsets | Laptop Coverage | License in Linux | Method |
+|----------|--------|----------|----------------|-----------------|--------|
+| 🔵 P4 | **Intel iwlwifi** | AX200, AX201, AX210, BE200 | ~35% | GPL | Scratch |
+| 🔵 P4 | **Realtek rtw89** | RTL8852AE/BE/CE | ~15% | GPL | Scratch |
+| 🔵 P4 | **Qualcomm ath11k** | WCN6855, WCN7850 | ~15% | GPL | Scratch |
+| 🔵 P4 | **Broadcom brcmfmac** | BCM4350, BCM4356 | ~10% | GPL | Scratch |
+| 🔵 P4 | **MediaTek mt76** | MT7921, MT7922 | ~10% | GPL | Scratch |
+| | | | **~85%** | | |
