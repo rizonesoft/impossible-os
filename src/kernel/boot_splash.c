@@ -29,19 +29,19 @@
 #define TEXT_Y_OFFSET   36      /* text below dot center, in pixels */
 
 #define NUM_DOTS        5
-#define DOT_SPACING     24      /* px between dot centers */
-#define DOT_MIN_R       2       /* small dot radius */
-#define DOT_MAX_R       5       /* large dot radius */
+#define DOT_SPACING     18      /* px between dot centers */
+#define DOT_MIN_R       3       /* small (resting) dot radius */
+#define DOT_MAX_R       5       /* large (active) dot radius */
 
-/* Animation: each dot cycles through 12 frames of pulse */
-#define PULSE_FRAMES    12
+/* Animation: each dot cycles through 16 frames of pulse */
+#define PULSE_FRAMES    16
 
 /* PSF font dimensions (must match framebuffer.c) */
 #define FONT_W 8
 #define FONT_H 16
 
-/* PIT callback rate: every 7 ticks at 100 Hz = ~14.3 fps */
-#define ANIM_TICK_DIVISOR 7
+/* PIT callback rate: every 10 ticks at 100 Hz = 10 fps */
+#define ANIM_TICK_DIVISOR 10
 
 /* ---- State ---- */
 static volatile uint8_t  splash_on;
@@ -193,9 +193,10 @@ static void splash_draw_dots(void)
                    - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
         int32_t y = (int32_t)dot_cy;
 
-        /* Phase for this dot (offset by i*3 frames for wider wave) */
+        /* Phase for this dot (offset by i*3 frames).
+         * With 5 dots and 16-frame cycle: phases 0,3,6,9,12 — all distinct. */
         uint32_t frame = anim_frame;
-        int32_t phase = ((int32_t)frame - (int32_t)i * 3 + 120) % PULSE_FRAMES;
+        int32_t phase = ((int32_t)frame - (int32_t)i * 3 + 160) % PULSE_FRAMES;
 
         /* Size curve: triangle wave over PULSE_FRAMES */
         int32_t half = PULSE_FRAMES / 2;

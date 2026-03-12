@@ -97,7 +97,7 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds
 ## boot-icon: Generate boot splash icon header from PNG
 boot-icon: src/kernel/boot_splash_icon.h
 
-src/kernel/boot_splash_icon.h: resources/start/icon_48.png tools/convert_icon.py
+src/kernel/boot_splash_icon.h: resources/boot/cookie-monster.png tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
 ## boot: Assemble the bootloader
