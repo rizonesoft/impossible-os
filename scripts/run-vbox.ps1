@@ -118,6 +118,8 @@ if ($vmExists) {
 #   1. Pointer jumping 100-200px
 #   2. Mouse hitting a "wall" at ~40% of desktop
 #   3. Mouse escaping VM window without host key
+# Clear stale key from earlier attempts, then set correct one:
+try { & $VBOX setextradata $VM_NAME "VBoxInternal/Devices/pckbd/0/Config/DisableMouseIntegration" 2>$null } catch {}
 & $VBOX setextradata $VM_NAME "GUI/Input/MachineMouseIntegration" "false"
 
 # Set resolution hint for the VMSVGA adapter
