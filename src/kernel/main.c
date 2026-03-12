@@ -754,6 +754,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
 
+    /* === Flush boot log to disk === */
+    klog_flush_to_disk();
+
     /* === Launch the shell === */
     {
         extern void shell_loader_func(void);

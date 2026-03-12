@@ -269,7 +269,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
             if (t && t->state != TASK_DEAD) {
                 t->state = TASK_DEAD;
                 t->exit_status = -1;
-                printk("[KILL] Task %u killed\n", (uint64_t)arg1);
+                klog(LOG_DEBUG, "sys", "Task %u killed", (uint64_t)arg1);
                 ret = 0;
             } else {
                 ret = -1;
@@ -327,8 +327,27 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
         ret = (int64_t)(uint64_t)ptr;
         break;
     }
+    case SYS_LOG: {
+        /* arg1 = level (0-4), arg2 = msg pointer, arg3 = msg length */
+        log_level_t lvl = (log_level_t)arg1;
+        const char *msg = (const char *)arg2;
+        uint32_t len = (uint32_t)arg3;
+        if (lvl > LOG_FATAL || !msg || len == 0) { ret = -1; break; }
+        if (len > 120) len = 120;
+        /* Copy to temp buffer and null-terminate */
+        {
+            char tmp[128];
+            uint32_t k;
+            for (k = 0; k < len && msg[k]; k++)
+                tmp[k] = msg[k];
+            tmp[k] = '\0';
+            klog(lvl, "user", "%s", tmp);
+        }
+        ret = 0;
+        break;
+    }
     default:
-        printk("[WARN] Unknown syscall %u from PID %u\n",
+        klog(LOG_WARN, "sys", "Unknown syscall %u from PID %u",
                syscall_nr, (uint64_t)task_current()->pid);
         ret = -1;
         break;

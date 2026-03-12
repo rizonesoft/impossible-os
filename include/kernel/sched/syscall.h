@@ -27,6 +27,7 @@
 #define SYS_SHUTDOWN 14  /* sys_shutdown()             → no return */
 #define SYS_PING     15  /* sys_ping(ip_addr)           → 0 / -1 */
 #define SYS_NETINFO  16  /* sys_netinfo(buf, size)       → 0 */
+#define SYS_LOG      17  /* sys_log(level, msg, len)     → 0 / -1 */
 #define SYS_PIPE     33  /* sys_pipe(fds)                → 0 / -1 */
 #define SYS_SIGNAL   34  /* sys_signal(sig, handler)      → old handler */
 #define SYS_SHMEM_CREATE 35 /* sys_shmem_create(name, size) → id / -1 */

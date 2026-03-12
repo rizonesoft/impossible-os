@@ -47,3 +47,7 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
  * Default: LOG_INFO (i.e., DEBUG is serial-only).
  * Set to LOG_DEBUG to show everything on screen. */
 void klog_set_screen_level(log_level_t min_level);
+
+/* Flush ring buffer entries to C:\Impossible\System\Logs\kernel.log.
+ * Call after VFS is mounted. Appends only new entries since last flush. */
+void klog_flush_to_disk(void);
