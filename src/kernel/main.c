@@ -47,6 +47,7 @@
 #include "kernel/drivers/mouse.h"
 #include "cursor.h"
 #include "kernel/drivers/virtio_input.h"
+#include "kernel/drivers/vbox_mouse.h"
 #include "desktop/wm.h"
 #include "desktop/font.h"
 #include "font_mgr.h"
@@ -262,6 +263,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     rtl8139_init();
     net_init();
     virtio_input_init();  /* VirtIO tablet for absolute mouse coords */
+    vbox_mouse_init();    /* VBox VMMDev absolute mouse (if in VirtualBox) */
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
@@ -915,13 +917,25 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 int32_t mx, my;
                 uint8_t mb;
 
-                /* Get mouse state from the best available source */
+                /* Get mouse state from the best available source:
+                 *   1. VirtIO tablet (QEMU) — absolute coordinates
+                 *   2. VBox VMMDev mouse (VirtualBox) — absolute coordinates
+                 *   3. PS/2 mouse (fallback) — relative deltas */
                 if (virtio_input_available()) {
                     struct virtio_input_state vis = virtio_input_get_state();
                     mx = vis.x;
                     my = vis.y;
                     mb = vis.buttons;
                     /* Update PS/2 mouse state for cursor position tracking */
+                    mouse_set_position(mx, my);
+                } else if (vbox_mouse_available()) {
+                    /* VBox gives absolute position but NOT buttons.
+                     * Merge position from VBox + buttons from PS/2. */
+                    struct mouse_state vb = vbox_mouse_get_state();
+                    struct mouse_state ps = mouse_get_state();
+                    mx = vb.x;
+                    my = vb.y;
+                    mb = ps.buttons;
                     mouse_set_position(mx, my);
                 } else {
                     struct mouse_state ms = mouse_get_state();
@@ -944,6 +958,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                         if (virtio_input_available()) {
                             struct virtio_input_state vis = virtio_input_get_state();
                             nx = vis.x; ny = vis.y; nb = vis.buttons;
+                            mouse_set_position(nx, ny);
+                        } else if (vbox_mouse_available()) {
+                            struct mouse_state vb = vbox_mouse_get_state();
+                            struct mouse_state ps = mouse_get_state();
+                            nx = vb.x; ny = vb.y; nb = ps.buttons;
                             mouse_set_position(nx, ny);
                         } else {
                             struct mouse_state ms = mouse_get_state();

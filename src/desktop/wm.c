@@ -925,6 +925,13 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 windows[i].x = new_x;
                 windows[i].y = new_y;
 
+                /* Recalculate drag offset after clamping.
+                 * Without this, dragging into an edge makes the offset
+                 * stale — when the cursor reverses direction the window
+                 * jumps by the accumulated clamped distance. */
+                windows[i].drag_offset_x = mx - new_x;
+                windows[i].drag_offset_y = my - new_y;
+
                 /* Compute union of old and new rects as dirty region */
                 {
                     int32_t min_x = old_x < new_x ? old_x : new_x;
