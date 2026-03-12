@@ -56,6 +56,29 @@ src/
 └── installer/  # OS installer
 ```
 
+## 🤔 Frequently Asked Questions (FAQ)
+
+**Is it actually possible to write a custom OS entirely from scratch?**
+Technically, no. Practically, also no. But we're doing it anyway. 
+
+**Can a solo developer really compete against a 500+ person corporate engineering team?**
+Absolutely not. But why let a little thing like impossible odds get in the way? We're giving it a go anyway. 
+
+**Will this work seamlessly like Windows 11?**
+Highly unlikely. We might not even have a functioning classic control panel right away, but that isn't going to stop us from trying to build a better experience from the ground up.
+
+**Do we really need yet another operating system in the world?**
+No. The market is completely saturated. But here it is anyway. Enjoy.
+
+**Is Impossible OS stable enough for daily use?**
+If your definition of "daily use" involves sudden kernel panics and debugging C++ at 3 AM, then yes, it's perfect. Otherwise, proceed with extreme caution.
+
+**When will it be finished?**
+Sometime between next month and the end of time. Good software takes time; impossible software takes just a little bit longer. 
+
+**Are we stupid or something?**
+No. We just have a severe, incurable allergy to people telling us something is "impossible."
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
