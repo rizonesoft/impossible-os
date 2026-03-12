@@ -412,9 +412,12 @@
 | 🟢 P3 | **Broadcom tg3** | BCM5751, BCM5754, BCM5761, BCM57765 | ~5% | FreeBSD `bge(4)` | BSD-2 | Port |
 | 🟢 P3 | **Qualcomm Atheros alx** | AR8161, AR8171, Killer E2200/E2400 | ~3% | Datasheet (GPL in Linux) | — | Scratch |
 | 🔵 P4 | **Intel ixgbe** | X520, X540, X550 (10GbE) | ~2% | FreeBSD `ix(4)` | BSD-2 | Port |
+| 🔵 P4 | **Marvell/Aquantia AQC** | AQC107, AQC108, AQC113 (2.5G/5G/10G) | ~1.5% | FreeBSD `atlantic(4)` | BSD-2 | Port |
+| 🔵 P4 | **Intel i210/i211** | I210-AT, I211-AT (server/NAS boards) | ~1% | FreeBSD `igb(4)` | BSD-2 | Port |
+| 🔵 P4 | **Broadcom bnxt** | BCM57301, BCM57414 (NetXtreme-E) | ~0.5% | FreeBSD `bnxt(4)` | BSD-2 | Port |
 | — | **RTL8139** | RTL8139C/D (100Mbps) | ~1% | Already have | MIT | Convert |
 | — | **VirtIO-net** | QEMU/KVM paravirtual | VMs | SerenityOS | BSD-2 | Port |
-| | | | **~91%+** | | | |
+| | | | **~95%+** | | | |
 
 ### WiFi (Stretch — requires 802.11 MAC + WPA supplicant infrastructure)
 
