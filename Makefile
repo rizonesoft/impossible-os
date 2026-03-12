@@ -73,7 +73,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build kernel userland uefi-boot system-disk
@@ -100,6 +100,12 @@ boot-icon: src/kernel/boot_splash_icon.h
 src/kernel/boot_splash_icon.h: resources/boot/cookie-monster.png tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
+## boot-font: Generate embedded TTF font header for boot splash
+boot-font: src/kernel/boot_splash_font_data.h
+
+src/kernel/boot_splash_font_data.h: resources/fonts/selawk.ttf tools/convert_boot_font.py
+	@python3 tools/convert_boot_font.py
+
 ## boot: Assemble the bootloader
 boot: $(ASM_OBJS)
 	@echo "[BOOT] Bootloader objects built"
@@ -108,7 +114,7 @@ boot: $(ASM_OBJS)
 kernel: $(KERNEL_BIN)
 	@echo "[KERNEL] $(KERNEL_BIN) built"
 
-$(KERNEL_BIN): boot-icon $(OBJS) $(LINKER_SCRIPT)
+$(KERNEL_BIN): boot-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"

@@ -885,3 +885,150 @@ int ttf_line_height(ttf_font_t *f)
 
     return (int)(f->scale * (float)(f->ascent - f->descent + f->line_gap));
 }
+
+/* ============================================================================
+ * Boot splash font API — used before font_mgr_init()
+ *
+ * These functions use an embedded TTF font (Selawik Regular, 44 KB) and
+ * render anti-aliased text directly to the framebuffer via fb_put_pixel().
+ * They are called from boot_splash.c which is compiled without SSE2, so
+ * all FPU work stays inside this SSE2-compiled translation unit.
+ * ============================================================================ */
+
+#include "boot_splash_font.h"
+#include "kernel/drivers/framebuffer.h"
+#include "gfx_simd.h"
+
+/* Dedicated stbtt_fontinfo for the embedded boot font */
+static stbtt_fontinfo boot_stb_info;
+static int boot_font_ready = 0;
+static float boot_font_scale = 0;
+static int boot_font_ascent_px = 0;
+
+int boot_font_init(int pixel_size)
+{
+    int offset;
+    int ascent_raw, descent_raw, linegap_raw;
+    fxsave_area_t fpu_state __attribute__((aligned(16)));
+
+    simd_save_state(&fpu_state);
+
+    offset = stbtt_GetFontOffsetForIndex(boot_font_data, 0);
+    if (offset < 0) {
+        simd_restore_state(&fpu_state);
+        return -1;
+    }
+
+    if (!stbtt_InitFont(&boot_stb_info, boot_font_data, offset)) {
+        simd_restore_state(&fpu_state);
+        return -1;
+    }
+
+    boot_font_scale = stbtt_ScaleForPixelHeight(&boot_stb_info, (float)pixel_size);
+    stbtt_GetFontVMetrics(&boot_stb_info, &ascent_raw, &descent_raw, &linegap_raw);
+    boot_font_ascent_px = (int)(boot_font_scale * (float)ascent_raw);
+
+    simd_restore_state(&fpu_state);
+
+    boot_font_ready = 1;
+    return 0;
+}
+
+int boot_font_measure(const char *text)
+{
+    int total = 0;
+    int i;
+    fxsave_area_t fpu_state __attribute__((aligned(16)));
+
+    if (!boot_font_ready || !text)
+        return 0;
+
+    simd_save_state(&fpu_state);
+
+    for (i = 0; text[i]; i++) {
+        int advance, lsb;
+        stbtt_GetCodepointHMetrics(&boot_stb_info, (unsigned char)text[i], &advance, &lsb);
+        total += (int)(boot_font_scale * (float)advance);
+
+        if (text[i + 1]) {
+            int kern = stbtt_GetCodepointKernAdvance(
+                &boot_stb_info, (unsigned char)text[i], (unsigned char)text[i + 1]);
+            total += (int)(boot_font_scale * (float)kern);
+        }
+    }
+
+    simd_restore_state(&fpu_state);
+    return total;
+}
+
+void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
+{
+    int i;
+    int32_t cursor_x = x;
+    uint32_t scr_w, scr_h;
+    uint8_t cr, cg, cb;
+    fxsave_area_t fpu_state __attribute__((aligned(16)));
+
+    if (!boot_font_ready || !text)
+        return;
+
+    scr_w = fb_get_width();
+    scr_h = fb_get_height();
+    cr = (uint8_t)(color >> 16);
+    cg = (uint8_t)(color >> 8);
+    cb = (uint8_t)(color);
+
+    simd_save_state(&fpu_state);
+
+    for (i = 0; text[i]; i++) {
+        int codepoint = (unsigned char)text[i];
+        int width, height, xoff, yoff;
+        int advance, lsb;
+        unsigned char *bitmap;
+
+        bitmap = stbtt_GetCodepointBitmap(&boot_stb_info, 0, boot_font_scale,
+                                           codepoint, &width, &height, &xoff, &yoff);
+        stbtt_GetCodepointHMetrics(&boot_stb_info, codepoint, &advance, &lsb);
+
+        if (bitmap) {
+            int32_t base_y = y + boot_font_ascent_px + yoff;
+            int row, col;
+
+            for (row = 0; row < height; row++) {
+                int32_t py = base_y + row;
+                if (py < 0 || (uint32_t)py >= scr_h) continue;
+
+                for (col = 0; col < width; col++) {
+                    int32_t px = cursor_x + xoff + col;
+                    uint32_t alpha;
+                    if (px < 0 || (uint32_t)px >= scr_w) continue;
+
+                    alpha = bitmap[row * width + col];
+                    if (alpha == 0) continue;
+
+                    if (alpha == 255) {
+                        fb_put_pixel((uint32_t)px, (uint32_t)py, color);
+                    } else {
+                        /* Blend onto black background (simple multiply) */
+                        uint8_t ob = (uint8_t)((cb * alpha) / 255);
+                        uint8_t og = (uint8_t)((cg * alpha) / 255);
+                        uint8_t or_ = (uint8_t)((cr * alpha) / 255);
+                        fb_put_pixel((uint32_t)px, (uint32_t)py,
+                            (uint32_t)ob | ((uint32_t)og << 8) | ((uint32_t)or_ << 16));
+                    }
+                }
+            }
+            kfree(bitmap);
+        }
+
+        cursor_x += (int32_t)(boot_font_scale * (float)advance);
+
+        if (text[i + 1]) {
+            int kern = stbtt_GetCodepointKernAdvance(
+                &boot_stb_info, codepoint, (unsigned char)text[i + 1]);
+            cursor_x += (int32_t)(boot_font_scale * (float)kern);
+        }
+    }
+
+    simd_restore_state(&fpu_state);
+}
