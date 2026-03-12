@@ -113,6 +113,13 @@ if ($vmExists) {
     --boot3 none `
     --boot4 none
 
+# Disable mouse integration — without Guest Additions, VirtualBox's
+# absolute-to-relative coordinate conversion causes:
+#   1. Pointer jumping 100-200px
+#   2. Mouse hitting a "wall" at ~40% of desktop
+#   3. Mouse escaping VM window without host key
+& $VBOX setextradata $VM_NAME "VBoxInternal/Devices/pckbd/0/Config/DisableMouseIntegration" "1"
+
 # Set resolution hint for the VMSVGA adapter
 & $VBOX setextradata $VM_NAME "CustomVideoMode1" "1280x720x32"
 & $VBOX setextradata $VM_NAME "VBoxInternal2/EfiGraphicsResolution" "1280x720"

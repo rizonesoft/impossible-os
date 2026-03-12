@@ -134,6 +134,16 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
             if (mouse_packet[0] & 0xC0)
                 break;
 
+            /* Clamp deltas to reject unreasonable jumps.
+             * Legitimate fast mouse movement rarely exceeds ±50 per
+             * PS/2 packet at 100 samples/sec.  Anything larger is
+             * likely a desync or VirtualBox mouse-integration artifact. */
+            #define MOUSE_DELTA_MAX 50
+            if (dx > MOUSE_DELTA_MAX)  dx = MOUSE_DELTA_MAX;
+            if (dx < -MOUSE_DELTA_MAX) dx = -MOUSE_DELTA_MAX;
+            if (dy > MOUSE_DELTA_MAX)  dy = MOUSE_DELTA_MAX;
+            if (dy < -MOUSE_DELTA_MAX) dy = -MOUSE_DELTA_MAX;
+
             /* PS/2 Y-axis is inverted */
             mouse_x += dx;
             mouse_y -= dy;
