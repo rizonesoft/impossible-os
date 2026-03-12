@@ -177,18 +177,20 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 6.1 Unified Logging System
 
-**Prompt:** The current logging uses ad-hoc `serial_printf` and `kprintf` calls with inconsistent format — replace with a unified `klog(level, subsystem, fmt, ...)` that writes to serial with prefixes like `[OK]`, `[--]`, `[!!]`, `[??]`. Add LOG_DEBUG and LOG_FATAL levels to the existing INFO/WARN/ERROR. Store the last 1000 entries in a circular in-memory ring buffer that the debug console (Phase 13 §2.1) can read. Periodic flush to files under `C:\Impossible\System\Logs\` needs VFS write access — handle the case where the filesystem isn't yet mounted during early boot by buffering. The `sys_log()` syscall lets user-mode apps write to the system log. After completing all items, create `docs/architecture/logging.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: unified logging with disk persistence"`.
+**Prompt:** Verify the unified logging system implementation. The codebase has `klog.h`/`klog.c` with 5 levels (DEBUG → FATAL), subsystem tags, 1000-entry ring buffer, serial+framebuffer output with colored prefixes, and FATAL auto-halt. `klog_flush.c` writes to `C:\Impossible\System\Logs\kernel.log`. `SYS_LOG` syscall (#17) lets user-mode apps log. Per-subsystem log file splitting (network.log, boot.log) is not yet implemented — all entries go to a single kernel.log. After completing remaining items, update `docs/architecture/logging.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: per-subsystem log files"`.
 
+**Implementation files:** `include/kernel/klog.h`, `src/kernel/klog.c`, `src/kernel/klog_flush.c`, `include/kernel/log.h` (legacy, serial-only)
 
-- [ ] Add `LOG_DEBUG` and `LOG_FATAL` levels (currently: INFO, WARN, ERROR)
-- [ ] Add source/subsystem tag to all log calls (e.g., `"net"`, `"fs"`, `"mm"`)
-- [ ] Implement in-memory ring buffer (last 1000 log entries)
-- [ ] Implement periodic flush to disk:
-  - [ ] `C:\Impossible\System\Logs\kernel.log`
-  - [ ] `C:\Impossible\System\Logs\network.log`
-  - [ ] `C:\Impossible\System\Logs\boot.log`
-- [ ] Add `sys_log()` syscall for user-mode apps to log
-- [ ] Commit: `"kernel: unified logging with disk persistence"`
+- [x] Add `LOG_DEBUG` and `LOG_FATAL` levels (currently: INFO, WARN, ERROR) — `klog.h` lines 20-26
+- [x] Add source/subsystem tag to all log calls (e.g., `"net"`, `"fs"`, `"mm"`) — used throughout `main.c`
+- [x] Implement in-memory ring buffer (last 1000 log entries) — `klog.c` `klog_ring[KLOG_RING_SIZE]`
+- [/] Implement periodic flush to disk:
+  - [x] `C:\Impossible\System\Logs\kernel.log` — `klog_flush.c`, called from `main.c`
+  - [ ] `C:\Impossible\System\Logs\network.log` — not yet (all logs go to kernel.log)
+  - [ ] `C:\Impossible\System\Logs\boot.log` — not yet (all logs go to kernel.log)
+- [x] Add `sys_log()` syscall for user-mode apps to log — `SYS_LOG=17` in `syscall.h`/`syscall.c`
+- [x] Commit: `"kernel: unified logging with disk persistence"`
+
 
 ---
 
