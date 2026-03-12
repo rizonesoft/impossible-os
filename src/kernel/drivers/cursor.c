@@ -541,7 +541,7 @@ void cursor_init(void)
     }
 
     active_shape = CURSOR_ARROW;
-    printk("[OK] Cursor manager initialized (%u/%d Adwaita cursors loaded)\n",
+    klog(LOG_INFO, "gfx", "Cursor manager initialized (%u/%d Adwaita cursors loaded)",
            loaded, CURSOR_COUNT);
 }
 

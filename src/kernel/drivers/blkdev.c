@@ -35,13 +35,13 @@ static void blk_strncpy(char *dst, const char *src, uint32_t n)
 int blkdev_register(const struct blkdev *dev)
 {
     if (num_devices >= BLKDEV_MAX) {
-        printk("[BLKDEV] Registry full (%d devices)\n",
+        klog(LOG_DEBUG, "blk", "Registry full (%d devices)",
                (uint64_t)BLKDEV_MAX);
         return -1;
     }
 
     if (!dev || !dev->name[0] || !dev->read) {
-        printk("[BLKDEV] Invalid device registration\n");
+        klog(LOG_DEBUG, "blk", "Invalid device registration");
         return -1;
     }
 
@@ -103,18 +103,18 @@ void blkdev_list(void)
     int i;
 
     if (num_devices == 0) {
-        printk("[BLKDEV] No block devices registered\n");
+        klog(LOG_DEBUG, "blk", "No block devices registered");
         return;
     }
 
-    printk("[BLKDEV] %u block device(s):\n", (uint64_t)num_devices);
+    klog(LOG_DEBUG, "blk", "%u block device(s):", (uint64_t)num_devices);
     for (i = 0; i < num_devices; i++) {
         if (!devices[i].active)
             continue;
 
         uint64_t size_mb = (devices[i].sector_count *
                             (uint64_t)devices[i].sector_size) / (1024 * 1024);
-        printk("  %s: %u MiB (%u sectors, %u B/sec)\n",
+        klog(LOG_DEBUG, "blk", "  %s: %u MiB (%u sectors, %u B/sec)",
                devices[i].name,
                size_mb,
                (uint64_t)devices[i].sector_count,

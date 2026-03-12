@@ -80,7 +80,7 @@ static void ensure_bar_mapped(uint64_t bar_addr, uint8_t bar_idx,
     if (bar_size == 0 || bar_size > 0x100000)
         bar_size = 0x10000;  /* Default to 64 KiB if probe fails */
 
-    printk("[VIRTIO] Mapping BAR%u: phys 0x%x, size 0x%x\n",
+    klog(LOG_DEBUG, "virtio", "Mapping BAR%u: phys 0x%x, size 0x%x",
            (uint64_t)bar_idx, bar_addr, (uint64_t)bar_size);
 
     map_mmio_range(bar_addr, bar_size);
@@ -143,7 +143,7 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
     /* Check if device has capabilities list */
     status = pci_read16(bus, pci_dev, func, PCI_STATUS_REG);
     if (!(status & PCI_STATUS_CAP)) {
-        printk("[VIRTIO] Device has no PCI capabilities\n");
+        klog(LOG_DEBUG, "virtio", "Device has no PCI capabilities");
         return -1;
     }
 
@@ -168,7 +168,7 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
 
             if (bar_val & 0x01) {
                 /* I/O space BAR — shouldn't happen for modern transport */
-                printk("[VIRTIO] Unexpected I/O BAR %u for cap type %u\n",
+                klog(LOG_DEBUG, "virtio", "Unexpected I/O BAR %u for cap type %u",
                        (uint64_t)bar, (uint64_t)cap_type);
                 goto next_cap;
             }
@@ -193,7 +193,7 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
             case VIRTIO_PCI_CAP_COMMON_CFG:
                 dev->common_cfg = mmio;
                 found_common = 1;
-                printk("[VIRTIO]   Common cfg: BAR%u+0x%x (len %u)\n",
+                klog(LOG_DEBUG, "virtio", "  Common cfg: BAR%u+0x%x (len %u)",
                        (uint64_t)bar, (uint64_t)offset, (uint64_t)length);
                 break;
 
@@ -203,7 +203,7 @@ int virtio_pci_init(struct virtio_pci_dev *dev,
                 dev->notify_off_multiplier = pci_read32(bus, pci_dev, func,
                                                          cap_off + 16);
                 found_notify = 1;
-                printk("[VIRTIO]   Notify: BAR%u+0x%x (mult %u)\n",
+                klog(LOG_DEBUG, "virtio", "  Notify: BAR%u+0x%x (mult %u)",
                        (uint64_t)bar, (uint64_t)offset,
                        (uint64_t)dev->notify_off_multiplier);
                 break;
@@ -230,7 +230,7 @@ next_cap:
     }
 
     if (!found_common || !found_notify || !found_isr) {
-        printk("[VIRTIO] Missing required caps: common=%u notify=%u isr=%u\n",
+        klog(LOG_DEBUG, "virtio", "Missing required caps: common=%u notify=%u isr=%u",
                (uint64_t)found_common, (uint64_t)found_notify,
                (uint64_t)found_isr);
         return -1;
@@ -267,7 +267,7 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
     /* 2. Read queue size (number of descriptors, power of 2) */
     qsz = mmio_read16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_SIZE));
     if (qsz == 0) {
-        printk("[VIRTIO] Queue %u has size 0\n", (uint64_t)queue_idx);
+        klog(LOG_DEBUG, "virtio", "Queue %u has size 0", (uint64_t)queue_idx);
         return -1;
     }
 
@@ -284,7 +284,7 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
 
     desc_mem = (uint8_t *)kmalloc((size_t)total);
     if (!desc_mem) {
-        printk("[VIRTIO] Cannot allocate %u bytes for queue %u\n",
+        klog(LOG_DEBUG, "virtio", "Cannot allocate %u bytes for queue %u",
                (uint64_t)total, (uint64_t)queue_idx);
         return -1;
     }
@@ -320,7 +320,7 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
     /* 8. Enable the queue */
     mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_ENABLE), 1);
 
-    printk("[VIRTIO] Queue %u: size=%u, desc=0x%x, notify_off=%u\n",
+    klog(LOG_DEBUG, "virtio", "Queue %u: size=%u, desc=0x%x, notify_off=%u",
            (uint64_t)queue_idx, (uint64_t)qsz,
            (uint64_t)(uint64_t)desc_mem, (uint64_t)vq->notify_off);
 

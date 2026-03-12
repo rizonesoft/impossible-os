@@ -67,7 +67,7 @@ void pit_init(void)
     /* Unmask IRQ 0 on the PIC */
     pic_unmask_irq(IRQ_TIMER);
 
-    printk("[OK] PIT timer: %u Hz (divisor %u)\n",
+    klog(LOG_INFO, "timer", "PIT timer: %u Hz (divisor %u)",
            (uint64_t)pit_actual_freq, (uint64_t)pit_divisor);
 }
 

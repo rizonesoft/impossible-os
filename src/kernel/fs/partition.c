@@ -234,12 +234,14 @@ static void register_partition(const struct blkdev *parent,
     /* Log: "Disk 0, Partition 1: FAT32, 16 MiB" */
     {
         uint64_t mb = sector_count * 512 / (1024 * 1024);
-        printk("  Disk %u, Partition %u: %s, %u MiB",
-               (uint64_t)disk_idx, (uint64_t)part_num,
-               partition_fs_name(pi->fs_type), mb);
         if (type_name && type_name[0])
-            printk(" (%s)", type_name);
-        printk("\n");
+            klog(LOG_DEBUG, "blk", "Disk %u, Partition %u: %s, %u MiB (%s)",
+                 (uint64_t)disk_idx, (uint64_t)part_num,
+                 partition_fs_name(pi->fs_type), mb, type_name);
+        else
+            klog(LOG_DEBUG, "blk", "Disk %u, Partition %u: %s, %u MiB",
+                 (uint64_t)disk_idx, (uint64_t)part_num,
+                 partition_fs_name(pi->fs_type), mb);
     }
 
     part_count++;
@@ -263,7 +265,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
          * This handles bare FAT32/exFAT/ext2 images without MBR/GPT. */
         int fs = probe_filesystem(dev);
         if (fs != PART_FS_UNKNOWN) {
-            printk("[RAW] %s: no partition table, raw %s volume\n",
+            klog(LOG_DEBUG, "blk", "%s: no partition table, raw %s volume",
                    dev->name, partition_fs_name(fs));
             register_partition(dev, disk_idx, 1,
                                0, dev->sector_count, "Raw Volume");
@@ -285,7 +287,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             struct gpt_table gtbl = gpt_parse(dev, sect);
             if (gtbl.valid && gtbl.count > 0) {
                 int gi;
-                printk("[GPT] %s: %u partition(s)\n",
+                klog(LOG_DEBUG, "blk", "%s: %u partition(s)",
                        dev->name, (uint64_t)gtbl.count);
                 for (gi = 0; gi < gtbl.count; gi++) {
                     uint64_t sectors = gtbl.parts[gi].end_lba
@@ -301,7 +303,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
 
     /* MBR partitions */
     if (mtbl.count > 0) {
-        printk("[MBR] %s: %u partition(s)\n",
+        klog(LOG_DEBUG, "blk", "%s: MBR %u partition(s)",
                dev->name, (uint64_t)mtbl.count);
         for (i = 0; i < mtbl.count; i++) {
             register_partition(dev, disk_idx, i + 1,
@@ -374,14 +376,14 @@ void partition_mount_filesystems(void)
 
         if (pi->fs_type == PART_FS_IXFS && !ixfs_mounted) {
             if (ixfs_init(sub_dev) != 0) {
-                printk("[WARN] IXFS: failed to init %s\n", name);
+                klog(LOG_WARN, "blk", "IXFS: failed to init %s", name);
                 continue;
             }
             vfs_mount('C', ixfs_get_driver(), ixfs_get_root());
             ixfs_mounted = 1;
         } else if (pi->fs_type == PART_FS_FAT32) {
             if (fat32_init(sub_dev) != 0) {
-                printk("[WARN] FAT32: failed to init %s\n", name);
+                klog(LOG_WARN, "blk", "FAT32: failed to init %s", name);
                 continue;
             }
             if (next_fat32_letter <= 'Z') {

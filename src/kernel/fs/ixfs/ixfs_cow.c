@@ -257,7 +257,7 @@ int ixfs_snapshot_create(const char *name)
         }
     }
     if (si == IXFS_MAX_SNAPSHOTS) {
-        printk("[FAIL] IXFS snapshot: no free slot (max %u)\n",
+        klog(LOG_ERROR, "ixfs", "IXFS snapshot: no free slot (max %u)",
                (uint64_t)IXFS_MAX_SNAPSHOTS);
         return -1;
     }
@@ -265,7 +265,7 @@ int ixfs_snapshot_create(const char *name)
     /* Allocate a block for saving the inode table */
     saved_block = ixfs_alloc_block(vol);
     if (saved_block == 0) {
-        printk("[FAIL] IXFS snapshot: cannot allocate inode backup block\n");
+        klog(LOG_ERROR, "ixfs", "IXFS snapshot: cannot allocate inode backup block");
         return -1;
     }
 
@@ -306,7 +306,7 @@ int ixfs_snapshot_create(const char *name)
     ixfs_refcount_flush(vol);
     ixfs_flush_superblock(vol);
 
-    printk("[OK] IXFS snapshot \"%s\" created (slot %u, block %u)\n",
+    klog(LOG_DEBUG, "ixfs", "IXFS snapshot \"%s\" created (slot %u, block %u)",
            name, (uint64_t)si, (uint64_t)saved_block);
     return 0;
 }
@@ -362,7 +362,7 @@ int ixfs_snapshot_restore(const char *name)
         }
     }
     if (si == IXFS_MAX_SNAPSHOTS) {
-        printk("[FAIL] IXFS snapshot \"%s\" not found\n", name);
+        klog(LOG_ERROR, "ixfs", "IXFS snapshot \"%s\" not found", name);
         return -1;
     }
 
@@ -386,7 +386,7 @@ int ixfs_snapshot_restore(const char *name)
         vol->vnodes[i].node.size = vol->vnodes[i].inode.i_size;
     }
 
-    printk("[OK] IXFS snapshot \"%s\" restored\n", name);
+    klog(LOG_DEBUG, "ixfs", "IXFS snapshot \"%s\" restored", name);
     return 0;
 }
 
@@ -415,7 +415,7 @@ int ixfs_snapshot_delete(const char *name)
         }
     }
     if (si == IXFS_MAX_SNAPSHOTS) {
-        printk("[FAIL] IXFS snapshot \"%s\" not found\n", name);
+        klog(LOG_ERROR, "ixfs", "IXFS snapshot \"%s\" not found", name);
         return -1;
     }
 
@@ -443,7 +443,7 @@ int ixfs_snapshot_delete(const char *name)
     ixfs_refcount_flush(vol);
     ixfs_flush_superblock(vol);
 
-    printk("[OK] IXFS snapshot \"%s\" deleted\n", name);
+    klog(LOG_DEBUG, "ixfs", "IXFS snapshot \"%s\" deleted", name);
     return 0;
 }
 

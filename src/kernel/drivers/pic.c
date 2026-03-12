@@ -80,7 +80,7 @@ void pic_init(void)
     /* Unmask cascade IRQ2 so slave PIC can reach the CPU */
     pic_unmask_irq(IRQ_CASCADE);
 
-    printk("[OK] PIC remapped (IRQ 0-7 → INT 32-39, IRQ 8-15 → INT 40-47)\n");
+    klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 → INT 32-39, IRQ 8-15 → INT 40-47)");
 
     (void)mask1;
     (void)mask2;

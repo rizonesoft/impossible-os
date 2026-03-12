@@ -237,7 +237,7 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
 
         file = vfs_finddir(root, filename);
         if (!file) {
-            printk("[EXEC] File not found: %s\n", filename);
+            klog(LOG_DEBUG, "sys", "File not found: %s", filename);
             ret = -1;
             break;
         }
@@ -341,5 +341,5 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
 void syscall_init(void)
 {
     idt_register_handler(0x80, syscall_handler);
-    printk("[OK] Syscall handler registered (INT 0x80)\n");
+    klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80)");
 }

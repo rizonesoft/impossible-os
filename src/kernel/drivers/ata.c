@@ -194,7 +194,7 @@ void ata_init(void)
 
     /* Wait for reset to complete (skip if no IDE controller) */
     if (ata_wait_bsy() < 0) {
-        printk("[--] ATA master: not detected\n");
+        klog(LOG_WARN, "ata", "ATA master: not detected");
         return;
     }
 
@@ -204,15 +204,15 @@ void ata_init(void)
 
     if (drives[0].present) {
         uint64_t size_mb = (uint64_t)drives[0].sectors * ATA_SECTOR_SIZE / (1024 * 1024);
-        printk("[OK] ATA master: \"%s\" (%u MiB, %u sectors)\n",
+        klog(LOG_DEBUG, "ata", "ATA master: \"%s\" (%u MiB, %u sectors)",
                drives[0].model, size_mb, (uint64_t)drives[0].sectors);
     } else {
-        printk("[--] ATA master: not detected\n");
+        klog(LOG_WARN, "ata", "ATA master: not detected");
     }
 
     if (drives[1].present) {
         uint64_t size_mb = (uint64_t)drives[1].sectors * ATA_SECTOR_SIZE / (1024 * 1024);
-        printk("[OK] ATA slave: \"%s\" (%u MiB, %u sectors)\n",
+        klog(LOG_DEBUG, "ata", "ATA slave: \"%s\" (%u MiB, %u sectors)",
                drives[1].model, size_mb, (uint64_t)drives[1].sectors);
     }
 }

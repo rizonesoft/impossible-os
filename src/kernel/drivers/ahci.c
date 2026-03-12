@@ -244,7 +244,7 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
         tfd = port_read(pregs, AHCI_PxTFD);
         if (tfd & (AHCI_PxTFD_ERR | AHCI_PxTFD_BSY)) {
             if (tfd & AHCI_PxTFD_ERR) {
-                printk("[AHCI] Port %u: TFD error 0x%x\n",
+                klog(LOG_DEBUG, "ahci", "Port %u: TFD error 0x%x",
                        (uint64_t)p->port_num, (uint64_t)tfd);
                 return -1;
             }
@@ -253,7 +253,7 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
     }
 
     if (timeout == 0) {
-        printk("[AHCI] Port %u: command timeout\n",
+        klog(LOG_DEBUG, "ahci", "Port %u: command timeout",
                (uint64_t)p->port_num);
         return -1;
     }
@@ -261,7 +261,7 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
     /* Check final TFD for errors */
     tfd = port_read(pregs, AHCI_PxTFD);
     if (tfd & AHCI_PxTFD_ERR) {
-        printk("[AHCI] Port %u: command error TFD=0x%x\n",
+        klog(LOG_DEBUG, "ahci", "Port %u: command error TFD=0x%x",
                (uint64_t)p->port_num, (uint64_t)tfd);
         return -1;
     }
@@ -477,14 +477,14 @@ int ahci_init(void)
     }
 
     if (!found) {
-        printk("[--] AHCI: no controller found\n");
+        klog(LOG_WARN, "ahci", "AHCI: no controller found");
         return -1;
     }
 
     /* Adjust: the loop increments after break, so fix the values */
     if (!found) return -1;
 
-    printk("[AHCI] Found controller at PCI %u:%u.%u\n",
+    klog(LOG_DEBUG, "ahci", "Found controller at PCI %u:%u.%u",
            (uint64_t)bus, (uint64_t)slot, (uint64_t)func);
 
     /* Enable bus mastering, memory space, and interrupt disable */
@@ -500,7 +500,7 @@ int ahci_init(void)
     abar_addr = (uint64_t)(bar5 & 0xFFFFF000);
 
     if (abar_addr == 0) {
-        printk("[AHCI] BAR5 is zero — no ABAR\n");
+        klog(LOG_DEBUG, "ahci", "BAR5 is zero — no ABAR");
         return -1;
     }
 
@@ -508,11 +508,11 @@ int ahci_init(void)
     ahci_map_mmio(abar_addr, 0x2000);
     abar = (volatile uint8_t *)abar_addr;
 
-    printk("[AHCI] ABAR at 0x%x\n", abar_addr);
+    klog(LOG_DEBUG, "ahci", "ABAR at 0x%x", abar_addr);
 
     /* Read version */
     ver = ahci_read32(abar, AHCI_VS);
-    printk("[AHCI] Version %u.%u\n",
+    klog(LOG_DEBUG, "ahci", "Version %u.%u",
            (uint64_t)((ver >> 16) & 0xFFFF),
            (uint64_t)(ver & 0xFFFF));
 
@@ -526,13 +526,13 @@ int ahci_init(void)
     {
         uint32_t max_ports = (cap & AHCI_CAP_NP_MASK) + 1;
         uint32_t max_slots = ((cap & AHCI_CAP_NCS_MASK) >> AHCI_CAP_NCS_SHIFT) + 1;
-        printk("[AHCI] Ports: %u, Command slots: %u\n",
+        klog(LOG_DEBUG, "ahci", "Ports: %u, Command slots: %u",
                (uint64_t)max_ports, (uint64_t)max_slots);
     }
 
     /* Read ports implemented */
     pi = ahci_read32(abar, AHCI_PI);
-    printk("[AHCI] Ports implemented: 0x%x\n", (uint64_t)pi);
+    klog(LOG_DEBUG, "ahci", "Ports implemented: 0x%x", (uint64_t)pi);
 
     /* Clear global interrupt status */
     ahci_write32(abar, AHCI_IS, ahci_read32(abar, AHCI_IS));
@@ -556,14 +556,14 @@ int ahci_init(void)
             /* Drive detected — try IDENTIFY */
             if (ahci_do_identify(&ports[drive_idx]) == 0) {
                 uint64_t size_mb = ports[drive_idx].sectors / 2048;
-                printk("[OK] AHCI port %u: \"%s\" (%u MiB, %u sectors)\n",
+                klog(LOG_DEBUG, "ahci", "AHCI port %u: \"%s\" (%u MiB, %u sectors)",
                        (uint64_t)port_num,
                        ports[drive_idx].model,
                        size_mb,
                        ports[drive_idx].sectors);
                 num_drives++;
             } else {
-                printk("[AHCI] Port %u: IDENTIFY failed\n",
+                klog(LOG_DEBUG, "ahci", "Port %u: IDENTIFY failed",
                        (uint64_t)port_num);
                 ports[drive_idx].active = 0;
             }
@@ -571,12 +571,12 @@ int ahci_init(void)
     }
 
     if (num_drives == 0) {
-        printk("[--] AHCI: no SATA drives detected\n");
+        klog(LOG_WARN, "ahci", "AHCI: no SATA drives detected");
         return -1;
     }
 
     initialized = 1;
-    printk("[OK] AHCI: %u SATA drive(s) initialized\n",
+    klog(LOG_DEBUG, "ahci", "AHCI: %u SATA drive(s) initialized",
            (uint64_t)num_drives);
 
     return 0;

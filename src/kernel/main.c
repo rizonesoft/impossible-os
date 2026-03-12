@@ -751,7 +751,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 #else
     /* Initialize syscalls (needed even without tests) */
     syscall_init();
-    klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80)");
     klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
 

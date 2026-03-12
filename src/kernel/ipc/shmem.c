@@ -55,7 +55,7 @@ int shmem_create(const char *name, uint32_t size)
     /* Check if name already exists */
     for (i = 0; i < SHMEM_MAX; i++) {
         if (regions[i].in_use && shmem_strcmp(regions[i].name, name) == 0) {
-            printk("[SHMEM] Region \"%s\" already exists (id=%u)\n",
+            klog(LOG_DEBUG, "ipc", "Region \"%s\" already exists (id=%u)",
                    name, (uint64_t)i);
             return (int)i;  /* return existing region */
         }
@@ -68,14 +68,14 @@ int shmem_create(const char *name, uint32_t size)
     }
 
     if (i >= SHMEM_MAX) {
-        printk("[SHMEM] No free region slots\n");
+        klog(LOG_DEBUG, "ipc", "No free region slots");
         return -1;
     }
 
     /* Allocate backing memory */
     mem = kmalloc(size);
     if (!mem) {
-        printk("[SHMEM] Failed to allocate %u bytes\n", (uint64_t)size);
+        klog(LOG_DEBUG, "ipc", "Failed to allocate %u bytes", (uint64_t)size);
         return -1;
     }
 
@@ -94,7 +94,7 @@ int shmem_create(const char *name, uint32_t size)
     regions[i].refcount = 1;  /* creator counts as first user */
     regions[i].in_use = 1;
 
-    printk("[OK] SHMEM \"%s\" created (id=%u, %u bytes at 0x%x)\n",
+    klog(LOG_DEBUG, "ipc", "SHMEM \"%s\" created (id=%u, %u bytes at 0x%x)",
            name, (uint64_t)i, (uint64_t)size, (uint64_t)(uintptr_t)mem);
 
     return (int)i;
@@ -145,7 +145,7 @@ void shmem_unmap(int id)
 
     /* Free if no more users */
     if (regions[id].refcount == 0) {
-        printk("[SHMEM] Region \"%s\" (id=%u) freed\n",
+        klog(LOG_DEBUG, "ipc", "Region \"%s\" (id=%u) freed",
                regions[id].name, (uint64_t)id);
         kfree(regions[id].base);
         regions[id].base = (void *)0;

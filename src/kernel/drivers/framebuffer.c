@@ -210,7 +210,7 @@ void fb_init(void)
 
         if (bb_base) {
             back_buf = (uint32_t *)bb_base;
-            printk("[OK] Framebuffer back buffer: %u KiB (%u pages) at %p\n",
+            klog(LOG_INFO, "gfx", "Framebuffer back buffer: %u KiB (%u pages) at %p",
                    (uint64_t)(bb_bytes / 1024), (uint64_t)bb_pages, bb_base);
         } else {
             /* Fallback: draw directly to HW framebuffer (no double buffering).
@@ -248,7 +248,7 @@ void fb_init(void)
 
             page_flip_ok = 1;
             page_current = 0;
-            printk("[OK] VBE page flip enabled (Bochs VGA %x, 2x%u virt height)\n",
+            klog(LOG_INFO, "gfx", "VBE page flip enabled (Bochs VGA %x, 2x%u virt height)",
                    (uint64_t)vbe_id, (uint64_t)fb_height);
         }
     }

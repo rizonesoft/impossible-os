@@ -79,7 +79,7 @@ void dhcp_discover(void)
              &pkt, total_len);
 
     dhcp_state = 1;
-    printk("[DHCP] Discover sent\n");
+    klog(LOG_DEBUG, "net", "Discover sent");
 }
 
 /* --- Send DHCP Request --- */
@@ -120,7 +120,7 @@ static void dhcp_request(void)
              &pkt, total_len);
 
     dhcp_state = 2;
-    printk("[DHCP] Request sent for %u.%u.%u.%u\n",
+    klog(LOG_DEBUG, "net", "Request sent for %u.%u.%u.%u",
            (uint64_t)(dhcp_offered_ip & 0xFF),
            (uint64_t)((dhcp_offered_ip >> 8) & 0xFF),
            (uint64_t)((dhcp_offered_ip >> 16) & 0xFF),
@@ -204,7 +204,7 @@ void dhcp_handle(const void *data, uint32_t len)
 
         dhcp_offered_ip = pkt->yiaddr;
 
-        printk("[DHCP] Offer: %u.%u.%u.%u\n",
+        klog(LOG_DEBUG, "net", "Offer: %u.%u.%u.%u",
                (uint64_t)(dhcp_offered_ip & 0xFF),
                (uint64_t)((dhcp_offered_ip >> 8) & 0xFF),
                (uint64_t)((dhcp_offered_ip >> 16) & 0xFF),
@@ -221,17 +221,15 @@ void dhcp_handle(const void *data, uint32_t len)
         net_cfg.configured = 1;
         dhcp_state = 0;
 
-        printk("[OK] DHCP: IP %u.%u.%u.%u",
+        klog(LOG_INFO, "net", "DHCP: IP %u.%u.%u.%u, GW %u.%u.%u.%u, DNS %u.%u.%u.%u",
                (uint64_t)(net_cfg.ip & 0xFF),
                (uint64_t)((net_cfg.ip >> 8) & 0xFF),
                (uint64_t)((net_cfg.ip >> 16) & 0xFF),
-               (uint64_t)((net_cfg.ip >> 24) & 0xFF));
-        printk(", GW %u.%u.%u.%u",
+               (uint64_t)((net_cfg.ip >> 24) & 0xFF),
                (uint64_t)(net_cfg.gateway & 0xFF),
                (uint64_t)((net_cfg.gateway >> 8) & 0xFF),
                (uint64_t)((net_cfg.gateway >> 16) & 0xFF),
-               (uint64_t)((net_cfg.gateway >> 24) & 0xFF));
-        printk(", DNS %u.%u.%u.%u\n",
+               (uint64_t)((net_cfg.gateway >> 24) & 0xFF),
                (uint64_t)(net_cfg.dns & 0xFF),
                (uint64_t)((net_cfg.dns >> 8) & 0xFF),
                (uint64_t)((net_cfg.dns >> 16) & 0xFF),

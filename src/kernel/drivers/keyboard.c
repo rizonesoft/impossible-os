@@ -232,7 +232,7 @@ void keyboard_init(void)
     /* Unmask IRQ 1 on the PIC */
     pic_unmask_irq(IRQ_KEYBOARD);
 
-    printk("[OK] PS/2 keyboard initialized (US QWERTY)\n");
+    klog(LOG_DEBUG, "input", "PS/2 keyboard initialized (US QWERTY)");
 }
 
 char keyboard_getchar(void)

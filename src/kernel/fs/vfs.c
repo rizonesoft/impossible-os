@@ -145,7 +145,7 @@ void vfs_init(void)
         mounts[i].root = (struct vfs_node *)0;
     }
 
-    printk("[OK] VFS initialized (26 drive letters A:\\ - Z:\\)\n");
+    klog(LOG_INFO, "vfs", "VFS initialized (26 drive letters A:\\ - Z:\\)");
 }
 
 int vfs_mount(char drive_letter, struct vfs_fs_driver *driver, struct vfs_node *root_node)
@@ -173,7 +173,7 @@ int vfs_mount(char drive_letter, struct vfs_fs_driver *driver, struct vfs_node *
             root_node->fs_data = driver->priv_data;
     }
 
-    printk("[OK] VFS: mounted \"%s\" at %c:\\\n",
+    klog(LOG_INFO, "vfs", "VFS: mounted \"%s\" at %c:\\",
            driver->name, mounts[idx].letter);
 
     return 0;

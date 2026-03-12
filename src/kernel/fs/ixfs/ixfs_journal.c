@@ -134,7 +134,7 @@ int ixfs_journal_recover(struct ixfs_volume *vol)
     ixfs_disk_write(vol, journal_base, hdr_buf);
 
     if (replayed > 0)
-        printk("[OK] IXFS journal: replayed %u entries\n",
+        klog(LOG_DEBUG, "ixfs", "IXFS journal: replayed %u entries",
                (uint64_t)replayed);
 
     vol->txn.active = 0;

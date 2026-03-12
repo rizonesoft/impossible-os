@@ -221,7 +221,7 @@ void mouse_init(void)
     idt_register_handler(44, mouse_irq_handler);
     pic_unmask_irq(IRQ_MOUSE);
 
-    printk("[OK] PS/2 mouse initialized (IRQ 12)\n");
+    klog(LOG_DEBUG, "input", "PS/2 mouse initialized (IRQ 12)");
 }
 
 /* ============================================================================

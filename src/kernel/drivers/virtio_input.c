@@ -174,13 +174,13 @@ int virtio_input_init(void)
     /* Find the VirtIO input device on PCI bus (modern ID) */
     pci = pci_find_device(VIRTIO_PCI_VENDOR, VIRTIO_PCI_DEV_INPUT);
     if (!pci.found) {
-        printk("[VIRTIO-INPUT] No virtio-input device found\n");
+        klog(LOG_DEBUG, "virtio", "No virtio-input device found");
         return -1;
     }
 
     irq_line = pci.irq_line;
 
-    printk("[VIRTIO-INPUT] Found at PCI %u:%u.%u, IRQ %u\n",
+    klog(LOG_DEBUG, "virtio", "Found at PCI %u:%u.%u, IRQ %u",
            (uint64_t)pci.bus, (uint64_t)pci.dev, (uint64_t)pci.func,
            (uint64_t)irq_line);
 
@@ -189,7 +189,7 @@ int virtio_input_init(void)
 
     /* ---- Discover VirtIO MMIO regions via PCI capabilities ---- */
     if (virtio_pci_init(&pci_dev, pci.bus, pci.dev, pci.func) < 0) {
-        printk("[VIRTIO-INPUT] Failed to parse PCI capabilities\n");
+        klog(LOG_DEBUG, "virtio", "Failed to parse PCI capabilities");
         return -1;
     }
 
@@ -226,14 +226,14 @@ int virtio_input_init(void)
 
     /* Verify FEATURES_OK is still set */
     if (!(virtio_get_status(&pci_dev) & VIRTIO_STATUS_FEATURES_OK)) {
-        printk("[VIRTIO-INPUT] Device did not accept features\n");
+        klog(LOG_DEBUG, "virtio", "Device did not accept features");
         virtio_set_status(&pci_dev, VIRTIO_STATUS_FAILED);
         return -1;
     }
 
     /* 6. Set up eventq (VQ 0) */
     if (virtq_init(&eventq, &pci_dev, 0) < 0) {
-        printk("[VIRTIO-INPUT] Failed to init eventq\n");
+        klog(LOG_DEBUG, "virtio", "Failed to init eventq");
         virtio_set_status(&pci_dev, VIRTIO_STATUS_FAILED);
         return -1;
     }
@@ -256,7 +256,7 @@ int virtio_input_init(void)
                       VIRTIO_STATUS_FEATURES_OK | VIRTIO_STATUS_DRIVER_OK);
 
     active = 1;
-    printk("[OK] VirtIO input initialized (tablet mode, IRQ %u)\n",
+    klog(LOG_DEBUG, "virtio", "VirtIO input initialized (tablet mode, IRQ %u)",
            (uint64_t)irq_line);
 
     return 0;

@@ -28,7 +28,7 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
         }
     }
     if (!vol) {
-        printk("[FAIL] IXFS: no free volume slot\n");
+        klog(LOG_ERROR, "ixfs", "IXFS: no free volume slot");
         return -1;
     }
 
@@ -109,7 +109,7 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
 
     /* Write superblock */
     if (ixfs_flush_superblock(vol) != 0) {
-        printk("[FAIL] IXFS format: cannot write superblock\n");
+        klog(LOG_ERROR, "ixfs", "IXFS format: cannot write superblock");
         return -1;
     }
 
@@ -207,7 +207,7 @@ int ixfs_format(const struct blkdev *dev, const char *volume_name)
     if (ixfs_write_block(vol, root_data_block, vol->blk_buf) != 0)
         return -1;
 
-    printk("[OK] IXFS formatted: %u blocks, %u inodes, \"%s\"\n",
+    klog(LOG_DEBUG, "ixfs", "IXFS formatted: %u blocks, %u inodes, \"%s\"",
            (uint64_t)total_blocks,
            (uint64_t)IXFS_DEFAULT_INODES,
            vol->sb.s_volume_name);
@@ -230,7 +230,7 @@ int ixfs_init(const struct blkdev *dev)
         }
     }
     if (!vol) {
-        printk("[FAIL] IXFS: no free volume slot\n");
+        klog(LOG_ERROR, "ixfs", "IXFS: no free volume slot");
         return -1;
     }
 
@@ -243,7 +243,7 @@ int ixfs_init(const struct blkdev *dev)
 
     /* Read block 0 (superblock) */
     if (ixfs_read_block(vol, 0, vol->blk_buf) != 0) {
-        printk("[FAIL] IXFS: cannot read superblock\n");
+        klog(LOG_ERROR, "ixfs", "IXFS: cannot read superblock");
         return -1;
     }
 
@@ -254,7 +254,7 @@ int ixfs_init(const struct blkdev *dev)
 
     /* Verify magic */
     if (vol->sb.s_magic != IXFS_MAGIC) {
-        printk("[FAIL] IXFS: bad magic (0x%x, expected 0x%x)\n",
+        klog(LOG_ERROR, "ixfs", "IXFS: bad magic (0x%x, expected 0x%x)",
                (uint64_t)vol->sb.s_magic, (uint64_t)IXFS_MAGIC);
         return -1;
     }
@@ -264,7 +264,7 @@ int ixfs_init(const struct blkdev *dev)
         vol->read_only = 1;
         printk("[WARN] IXFS: v1 volume mounted read-only\n");
     } else if (vol->sb.s_version != IXFS_VERSION) {
-        printk("[FAIL] IXFS: unsupported version %u\n",
+        klog(LOG_ERROR, "ixfs", "IXFS: unsupported version %u",
                (uint64_t)vol->sb.s_version);
         return -1;
     } else {
@@ -275,7 +275,7 @@ int ixfs_init(const struct blkdev *dev)
     vol->bitmap_bytes = (vol->sb.s_total_blocks + 7) / 8;
     vol->block_bitmap = (uint8_t *)kmalloc(vol->bitmap_bytes);
     if (!vol->block_bitmap) {
-        printk("[FAIL] IXFS: cannot allocate bitmap (%u bytes)\n",
+        klog(LOG_ERROR, "ixfs", "IXFS: cannot allocate bitmap (%u bytes)",
                (uint64_t)vol->bitmap_bytes);
         return -1;
     }
@@ -336,7 +336,7 @@ int ixfs_init(const struct blkdev *dev)
     {
         struct ixfs_vnode *root = ixfs_get_vnode(vol, IXFS_ROOT_INODE);
         if (!root) {
-            printk("[FAIL] IXFS: cannot read root inode\n");
+            klog(LOG_ERROR, "ixfs", "IXFS: cannot read root inode");
             kfree(vol->block_bitmap);
             return -1;
         }
@@ -347,7 +347,7 @@ int ixfs_init(const struct blkdev *dev)
     {
         uint64_t vol_mb = (uint64_t)vol->sb.s_total_blocks * IXFS_BLOCK_SIZE
                         / (1024 * 1024);
-        printk("[OK] IXFS: \"%s\" v%u, %u MiB, %u/%u blocks free, %u inodes\n",
+        klog(LOG_DEBUG, "ixfs", "IXFS: \"%s\" v%u, %u MiB, %u/%u blocks free, %u inodes",
                vol->sb.s_volume_name,
                (uint64_t)vol->sb.s_version,
                vol_mb,

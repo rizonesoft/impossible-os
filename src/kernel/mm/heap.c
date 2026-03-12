@@ -82,7 +82,7 @@ void heap_init(void)
      * Since we're identity-mapped, phys addr == virt addr. */
     heap_base = pmm_alloc_frame();
     if (heap_base == 0) {
-        printk("[FAIL] Heap: out of physical memory\n");
+        klog(LOG_ERROR, "mm", "Heap: out of physical memory");
         return;
     }
 
@@ -92,7 +92,7 @@ void heap_init(void)
     for (i = 1; i < HEAP_INITIAL_PAGES; i++) {
         uintptr_t frame = pmm_alloc_frame();
         if (frame == 0) {
-            printk("[FAIL] Heap: out of physical memory at page %u\n",
+            klog(LOG_ERROR, "mm", "Heap: out of physical memory at page %u",
                    (uint64_t)i);
             break;
         }
@@ -120,7 +120,7 @@ void heap_init(void)
     heap_start_block->is_free = 1;
     heap_start_block->next = (struct block_header *)0;
 
-    printk("[OK] Kernel heap: %u KiB at %p\n",
+    klog(LOG_INFO, "mm", "Kernel heap: %u KiB at %p",
            (uint64_t)(total_heap_size / 1024),
            heap_base);
 }

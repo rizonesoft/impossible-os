@@ -280,6 +280,6 @@ void vmm_init(void)
     /* Register the page fault handler (ISR 14) */
     idt_register_handler(14, page_fault_handler);
 
-    printk("[OK] VMM initialized (PML4 at %p, page fault handler registered)\n",
+    klog(LOG_INFO, "mm", "VMM initialized (PML4 at %p, page fault handler registered)",
            (uint64_t)(uintptr_t)kernel_pml4);
 }

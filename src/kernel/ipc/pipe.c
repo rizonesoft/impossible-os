@@ -50,7 +50,7 @@ int pipe_create(int fds[2])
     }
 
     if (i >= PIPE_MAX) {
-        printk("[PIPE] No free pipe slots\n");
+        klog(LOG_DEBUG, "ipc", "No free pipe slots");
         return -1;
     }
 
@@ -70,7 +70,7 @@ int pipe_create(int fds[2])
     fds[0] = (int)i;  /* read end */
     fds[1] = (int)i;  /* write end */
 
-    printk("[OK] Pipe %u created\n", (uint64_t)i);
+    klog(LOG_DEBUG, "ipc", "Pipe %u created", (uint64_t)i);
     return 0;
 }
 
@@ -90,7 +90,7 @@ int32_t pipe_write(int pipe_id, const void *data, uint32_t len)
 
     /* Check if read end is closed — broken pipe */
     if (!p->read_open) {
-        printk("[PIPE] Broken pipe (write to closed read end)\n");
+        klog(LOG_DEBUG, "ipc", "Broken pipe (write to closed read end)");
         return -1;  /* SIGPIPE equivalent */
     }
 
@@ -197,6 +197,6 @@ void pipe_close(int pipe_id, int end)
     /* Free pipe if both ends are closed */
     if (!p->read_open && !p->write_open) {
         p->in_use = 0;
-        printk("[PIPE] Pipe %u destroyed\n", (uint64_t)pipe_id);
+        klog(LOG_DEBUG, "ipc", "Pipe %u destroyed", (uint64_t)pipe_id);
     }
 }

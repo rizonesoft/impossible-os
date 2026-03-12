@@ -11,6 +11,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/printk.h"
+#include "kernel/klog.h"
 
 /* Number of inodes to allocate (fixed at format time) */
 #define IXFS_DEFAULT_INODES  256

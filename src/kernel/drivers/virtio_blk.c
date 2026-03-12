@@ -82,7 +82,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
     /* Allocate 3 descriptors from the virtqueue free list */
     if (blk_vq.num_free < 3) {
-        printk("[VIRTIO-BLK] No free descriptors\n");
+        klog(LOG_DEBUG, "virtio", "No free descriptors");
         return -1;
     }
 
@@ -152,7 +152,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     }
 
     if (timeout == 0) {
-        printk("[VIRTIO-BLK] I/O timeout (avail=%u, used=%u, status=%x)\n",
+        klog(LOG_DEBUG, "virtio", "I/O timeout (avail=%u, used=%u, status=%x)",
                (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx,
                (uint64_t)status_byte);
         /* Free descriptors */
@@ -234,11 +234,11 @@ int virtio_blk_init(void)
     }
 
     if (!found) {
-        printk("[VIRTIO-BLK] No virtio-blk device found\n");
+        klog(LOG_DEBUG, "virtio", "No virtio-blk device found");
         return -1;
     }
 
-    printk("[VIRTIO-BLK] Found at PCI %u:%u.%u (devID=%x)\n",
+    klog(LOG_DEBUG, "virtio", "Found at PCI %u:%u.%u (devID=%x)",
            (uint64_t)dev.bus, (uint64_t)dev.dev, (uint64_t)dev.func,
            (uint64_t)dev.device_id);
 
@@ -254,7 +254,7 @@ int virtio_blk_init(void)
 
     /* Initialize modern PCI transport (walk capabilities, map BARs) */
     if (virtio_pci_init(&blk_dev, dev.bus, dev.dev, dev.func) != 0) {
-        printk("[VIRTIO-BLK] Failed to init modern PCI transport\n");
+        klog(LOG_DEBUG, "virtio", "Failed to init modern PCI transport");
         return -1;
     }
 
@@ -271,7 +271,7 @@ int virtio_blk_init(void)
 
     /* Step 4: Read and negotiate features */
     feat_lo = read_device_features(0);
-    printk("[VIRTIO-BLK] Device features[0]: %x\n", (uint64_t)feat_lo);
+    klog(LOG_DEBUG, "virtio", "Device features[0]: %x", (uint64_t)feat_lo);
 
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
     {
@@ -290,7 +290,7 @@ int virtio_blk_init(void)
     {
         uint8_t cur = virtio_get_status(&blk_dev);
         if (!(cur & VIRTIO_STATUS_FEATURES_OK)) {
-            printk("[VIRTIO-BLK] FEATURES_OK not accepted by device\n");
+            klog(LOG_DEBUG, "virtio", "FEATURES_OK not accepted by device");
             virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
             return -1;
         }
@@ -298,7 +298,7 @@ int virtio_blk_init(void)
 
     /* Step 6: Set up virtqueue 0 (request queue) */
     if (virtq_init(&blk_vq, &blk_dev, 0) != 0) {
-        printk("[VIRTIO-BLK] Failed to init request queue\n");
+        klog(LOG_DEBUG, "virtio", "Failed to init request queue");
         virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
         return -1;
     }
@@ -340,7 +340,7 @@ int virtio_blk_init(void)
         }
     }
 
-    printk("[OK] VirtIO-blk: %u MiB (%u sectors)\n",
+    klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors)",
            (uint64_t)(disk_capacity / 2048),
            (uint64_t)disk_capacity);
 

@@ -31,37 +31,37 @@ static int elf_validate(const struct elf64_header *hdr, uint64_t size)
 {
     /* Check magic */
     if (*(uint32_t *)hdr->e_ident != ELF_MAGIC) {
-        printk("[ELF] Bad magic\n");
+        klog(LOG_DEBUG, "elf", "Bad magic");
         return 0;
     }
 
     /* Must be 64-bit */
     if (hdr->e_ident[4] != ELFCLASS64) {
-        printk("[ELF] Not 64-bit (class %u)\n", (uint64_t)hdr->e_ident[4]);
+        klog(LOG_DEBUG, "elf", "Not 64-bit (class %u)", (uint64_t)hdr->e_ident[4]);
         return 0;
     }
 
     /* Must be little-endian */
     if (hdr->e_ident[5] != ELFDATA2LSB) {
-        printk("[ELF] Not little-endian\n");
+        klog(LOG_DEBUG, "elf", "Not little-endian");
         return 0;
     }
 
     /* Must be executable */
     if (hdr->e_type != ET_EXEC) {
-        printk("[ELF] Not executable (type %u)\n", (uint64_t)hdr->e_type);
+        klog(LOG_DEBUG, "elf", "Not executable (type %u)", (uint64_t)hdr->e_type);
         return 0;
     }
 
     /* Must be x86-64 */
     if (hdr->e_machine != EM_X86_64) {
-        printk("[ELF] Not x86-64 (machine %u)\n", (uint64_t)hdr->e_machine);
+        klog(LOG_DEBUG, "elf", "Not x86-64 (machine %u)", (uint64_t)hdr->e_machine);
         return 0;
     }
 
     /* Program headers must fit in the file */
     if (hdr->e_phoff + (uint64_t)hdr->e_phnum * hdr->e_phentsize > size) {
-        printk("[ELF] Program headers exceed file size\n");
+        klog(LOG_DEBUG, "elf", "Program headers exceed file size");
         return 0;
     }
 
@@ -78,7 +78,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     uint64_t load_end = 0;
 
     if (size < sizeof(struct elf64_header)) {
-        printk("[ELF] File too small\n");
+        klog(LOG_DEBUG, "elf", "File too small");
         return result;
     }
 
@@ -97,7 +97,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
 
         /* Validate segment fits in file */
         if (phdr->p_offset + phdr->p_filesz > size) {
-            printk("[ELF] Segment %u exceeds file size\n", (uint64_t)i);
+            klog(LOG_DEBUG, "elf", "Segment %u exceeds file size", (uint64_t)i);
             return result;
         }
 
@@ -121,12 +121,12 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
         if (phdr->p_vaddr + phdr->p_memsz > load_end)
             load_end = phdr->p_vaddr + phdr->p_memsz;
 
-        printk("[ELF] Loaded segment: vaddr=%p filesz=%u memsz=%u\n",
+        klog(LOG_DEBUG, "elf", "Loaded segment: vaddr=%p filesz=%u memsz=%u",
                phdr->p_vaddr, phdr->p_filesz, phdr->p_memsz);
     }
 
     if (load_end == 0) {
-        printk("[ELF] No PT_LOAD segments found\n");
+        klog(LOG_DEBUG, "elf", "No PT_LOAD segments found");
         return result;
     }
 
@@ -135,7 +135,7 @@ struct elf_load_result elf_load(const uint8_t *data, uint64_t size)
     result.load_end = load_end;
     result.success = 1;
 
-    printk("[ELF] Entry point: %p (loaded %p - %p)\n",
+    klog(LOG_DEBUG, "elf", "Entry point: %p (loaded %p - %p)",
            result.entry, result.load_base, result.load_end);
 
     return result;

@@ -251,7 +251,7 @@ int acpi_init(void)
 
     acpi_ready = 1;
 
-    printk("[OK] ACPI: FADT at %p, PM1a_CNT=%x, SLP_TYPa=%u\n",
+    klog(LOG_INFO, "acpi", "ACPI: FADT at %p, PM1a_CNT=%x, SLP_TYPa=%u",
            (uint64_t)(uintptr_t)fadt, (uint64_t)pm1a_cnt_port,
            (uint64_t)slp_typa);
 

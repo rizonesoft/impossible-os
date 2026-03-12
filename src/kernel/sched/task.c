@@ -49,7 +49,7 @@ static void task_wrapper(void)
 
     /* Task finished — mark as dead */
     tasks[current_task].state = TASK_DEAD;
-    printk("[SCHED] Task %u (\"%s\") exited\n",
+    klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited",
            (uint64_t)tasks[current_task].pid,
            tasks[current_task].name ? tasks[current_task].name : "?");
 
@@ -159,7 +159,7 @@ void task_init(void)
     /* Initialize signal state for PID 0 */
     signal_init_task(&tasks[0].signals);
 
-    printk("[OK] Scheduler initialized (PID 0 = main, quantum = %u ticks)\n",
+    klog(LOG_DEBUG, "sched", "Scheduler initialized (PID 0 = main, quantum = %u ticks)",
            (uint64_t)SCHED_QUANTUM);
 
     /* Register the yield software interrupt handler (INT 0x81) */
@@ -173,7 +173,7 @@ int task_create(task_entry_t entry, const char *name)
     uint64_t *sp;
 
     if (num_tasks >= TASK_MAX) {
-        printk("[FAIL] task_create: max tasks reached\n");
+        klog(LOG_ERROR, "sched", "task_create: max tasks reached");
         return -1;
     }
 
@@ -182,7 +182,7 @@ int task_create(task_entry_t entry, const char *name)
     /* Allocate task stack */
     stack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!stack) {
-        printk("[FAIL] task_create: cannot allocate stack\n");
+        klog(LOG_ERROR, "sched", "task_create: cannot allocate stack");
         return -1;
     }
 
@@ -257,7 +257,7 @@ int task_create(task_entry_t entry, const char *name)
     signal_init_task(&tasks[pid].signals);
     num_tasks++;
 
-    printk("[OK] Task %u (\"%s\") created (kernel)\n",
+    klog(LOG_DEBUG, "sched", "Task %u (\"%s\") created (kernel)",
            (uint64_t)pid, name ? name : "?");
 
     return (int)pid;
@@ -270,7 +270,7 @@ int task_create_user(task_entry_t entry, const char *name)
     uint64_t *sp;
 
     if (num_tasks >= TASK_MAX) {
-        printk("[FAIL] task_create_user: max tasks reached\n");
+        klog(LOG_ERROR, "sched", "task_create_user: max tasks reached");
         return -1;
     }
 
@@ -279,14 +279,14 @@ int task_create_user(task_entry_t entry, const char *name)
     /* Allocate kernel stack (for interrupt/syscall handling) */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
-        printk("[FAIL] task_create_user: cannot allocate kernel stack\n");
+        klog(LOG_ERROR, "sched", "task_create_user: cannot allocate kernel stack");
         return -1;
     }
 
     /* Allocate user stack */
     ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
     if (!ustack) {
-        printk("[FAIL] task_create_user: cannot allocate user stack\n");
+        klog(LOG_ERROR, "sched", "task_create_user: cannot allocate user stack");
         /* TODO: free kstack */
         return -1;
     }
@@ -352,7 +352,7 @@ int task_create_user(task_entry_t entry, const char *name)
     signal_init_task(&tasks[pid].signals);
     num_tasks++;
 
-    printk("[OK] Task %u (\"%s\") created (user mode)\n",
+    klog(LOG_DEBUG, "sched", "Task %u (\"%s\") created (user mode)",
            (uint64_t)pid, name ? name : "?");
 
     return (int)pid;
@@ -534,7 +534,7 @@ int task_fork(struct interrupt_frame *frame)
     uint64_t parent_pid_val = current_task;
 
     if (num_tasks >= TASK_MAX) {
-        printk("[FAIL] task_fork: max tasks reached\n");
+        klog(LOG_ERROR, "sched", "task_fork: max tasks reached");
         return -1;
     }
 
@@ -543,14 +543,14 @@ int task_fork(struct interrupt_frame *frame)
     /* Allocate kernel stack for child */
     kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!kstack) {
-        printk("[FAIL] task_fork: cannot allocate kernel stack\n");
+        klog(LOG_ERROR, "sched", "task_fork: cannot allocate kernel stack");
         return -1;
     }
 
     /* Allocate user stack for child */
     ustack = (uint8_t *)kmalloc(USER_STACK_SIZE);
     if (!ustack) {
-        printk("[FAIL] task_fork: cannot allocate user stack\n");
+        klog(LOG_ERROR, "sched", "task_fork: cannot allocate user stack");
         return -1;
     }
 
@@ -596,7 +596,7 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].exec_pending = 0;
     num_tasks++;
 
-    printk("[FORK] PID %u forked -> child PID %u\n",
+    klog(LOG_DEBUG, "sched", "PID %u forked -> child PID %u",
            (uint64_t)parent_pid_val, (uint64_t)child_pid);
 
     /* Parent gets child_pid as return value */
@@ -613,7 +613,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     /* Load the ELF binary */
     elf = elf_load(data, size);
     if (!elf.success) {
-        printk("[EXEC] Failed to load ELF\n");
+        klog(LOG_DEBUG, "sched", "Failed to load ELF");
         return -1;
     }
 
@@ -621,7 +621,7 @@ int task_exec(const uint8_t *data, uint64_t size)
      * because the calling function (exec_loader_func) is still on it. */
     new_kstack = (uint8_t *)kmalloc(TASK_STACK_SIZE);
     if (!new_kstack) {
-        printk("[EXEC] Cannot allocate kernel stack\n");
+        klog(LOG_DEBUG, "sched", "Cannot allocate kernel stack");
         return -1;
     }
 
@@ -631,7 +631,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     }
     tasks[pid].user_stack_base = (uint8_t *)kmalloc(USER_STACK_SIZE);
     if (!tasks[pid].user_stack_base) {
-        printk("[EXEC] Cannot allocate user stack\n");
+        klog(LOG_DEBUG, "sched", "Cannot allocate user stack");
         kfree(new_kstack);
         return -1;
     }
@@ -674,7 +674,7 @@ int task_exec(const uint8_t *data, uint64_t size)
     tasks[pid].kernel_rsp = (uint64_t)(new_kstack + TASK_STACK_SIZE);
     tasks[pid].exec_pending = 1;  /* prevent scheduler from overwriting this frame */
 
-    printk("[EXEC] PID %u -> entry %p\n",
+    klog(LOG_DEBUG, "sched", "PID %u -> entry %p",
            (uint64_t)pid, elf.entry);
 
     return 0;
@@ -688,7 +688,7 @@ void task_exit(int32_t status)
     tasks[pid].state = TASK_DEAD;
     tasks[pid].exit_status = status;
 
-    printk("[SCHED] Task %u (\"%s\") exited with status %d\n",
+    klog(LOG_DEBUG, "sched", "Task %u (\"%s\") exited with status %d",
            (uint64_t)pid,
            tasks[pid].name ? tasks[pid].name : "?",
            (uint64_t)(uint32_t)status);
@@ -717,13 +717,13 @@ int32_t task_waitpid(uint32_t child_pid)
 {
     /* Validate child PID */
     if (child_pid >= num_tasks || child_pid == current_task) {
-        printk("[WAIT] Invalid child PID %u\n", (uint64_t)child_pid);
+        klog(LOG_DEBUG, "sched", "Invalid child PID %u", (uint64_t)child_pid);
         return -1;
     }
 
     /* Verify this is actually our child */
     if (tasks[child_pid].parent_pid != current_task) {
-        printk("[WAIT] PID %u is not a child of PID %u\n",
+        klog(LOG_DEBUG, "sched", "PID %u is not a child of PID %u",
                (uint64_t)child_pid, (uint64_t)current_task);
         return -1;
     }
@@ -810,7 +810,7 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     uint64_t *sp;
 
     if (t->num_threads >= THREAD_MAX) {
-        printk("[FAIL] thread_create: max threads reached (PID %u)\n",
+        klog(LOG_ERROR, "sched", "thread_create: max threads reached (PID %u)",
                (uint64_t)t->pid);
         return -1;
     }
@@ -822,7 +822,7 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     /* Allocate thread stack */
     stack = (uint8_t *)kmalloc(stack_size);
     if (!stack) {
-        printk("[FAIL] thread_create: cannot allocate stack\n");
+        klog(LOG_ERROR, "sched", "thread_create: cannot allocate stack");
         return -1;
     }
 
@@ -872,7 +872,7 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].join_tid = -1;
     t->num_threads++;
 
-    printk("[OK] Thread %u created in task %u (\"%s\")\n",
+    klog(LOG_DEBUG, "sched", "Thread %u created in task %u (\"%s\")",
            (uint64_t)tid, (uint64_t)t->pid,
            t->name ? t->name : "?");
 
@@ -888,7 +888,7 @@ void thread_exit(int32_t status)
     thr->state = THREAD_DEAD;
     thr->exit_status = status;
 
-    printk("[SCHED] Thread %u (task %u \"%s\") exited with status %d\n",
+    klog(LOG_DEBUG, "sched", "Thread %u (task %u \"%s\") exited with status %d",
            (uint64_t)thr->id, (uint64_t)t->pid,
            t->name ? t->name : "?",
            (uint64_t)(uint32_t)status);
@@ -919,7 +919,7 @@ int32_t thread_join(uint32_t thread_id)
 
     /* Validate thread ID */
     if (thread_id >= t->num_threads || thread_id == current_thread) {
-        printk("[THREAD] Invalid thread ID %u for join\n",
+        klog(LOG_DEBUG, "sched", "Invalid thread ID %u for join",
                (uint64_t)thread_id);
         return -1;
     }

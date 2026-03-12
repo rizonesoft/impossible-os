@@ -16,11 +16,11 @@ void ixfs_test_performance(void)
         }
     }
     if (!vol) {
-        printk("\n  [SKIP] No IXFS volume mounted\n\n");
+        klog(LOG_DEBUG, "test", "No IXFS volume mounted");
         return;
     }
 
-    printk("\n  --- IXFS Performance Features Test ---\n");
+    klog(LOG_DEBUG, "test", "--- IXFS Performance Features Test ---");
 
     /* --- Test 1: Block Group Allocator --- */
     {
@@ -38,19 +38,19 @@ void ixfs_test_performance(void)
 
         /* Locality: all 3 in same group */
         pass = (b1 != 0 && b2 != 0 && b3 != 0 && g1 == g2 && g2 == g3);
-        printk("  [%s] Block groups: alloc 3 blocks -> group %u, locality=%s\n",
+        klog(LOG_DEBUG, "test", "Block groups: alloc 3 blocks -> group %u, locality=%s",
                pass ? "OK" : "FAIL", (uint64_t)g1, pass ? "yes" : "NO");
 
         /* Hint advancement: blocks should be sequential */
         pass = (b2 == b1 + 1 && b3 == b2 + 1);
-        printk("  [%s] Block groups: hint b%u->b%u->b%u, sequential=%s\n",
+        klog(LOG_DEBUG, "test", "Block groups: hint b%u->b%u->b%u, sequential=%s",
                pass ? "OK" : "FAIL",
                (uint64_t)b1, (uint64_t)b2, (uint64_t)b3,
                pass ? "yes" : "NO");
 
         /* All allocated blocks must be >= data_start */
         pass = (b1 >= vol->sb.s_data_start);
-        printk("  [%s] Block groups: data_start guard (b1=%u >= %u)\n",
+        klog(LOG_DEBUG, "test", "Block groups: data_start guard (b1=%u >= %u)",
                pass ? "OK" : "FAIL",
                (uint64_t)b1, (uint64_t)vol->sb.s_data_start);
 
@@ -60,7 +60,7 @@ void ixfs_test_performance(void)
         ixfs_free_block(vol, b3);
 
         pass = (vol->sb.s_free_blocks == saved_free);
-        printk("  [%s] Block groups: free restored (%u/%u)\n",
+        klog(LOG_DEBUG, "test", "Block groups: free restored (%u/%u)",
                pass ? "OK" : "FAIL",
                (uint64_t)vol->sb.s_free_blocks, (uint64_t)saved_free);
     }
@@ -76,7 +76,7 @@ void ixfs_test_performance(void)
 
         test_blk = ixfs_alloc_block(vol);
         if (test_blk == 0) {
-            printk("  [FAIL] Cache: cannot allocate test block\n");
+            klog(LOG_DEBUG, "test", "FAIL: Cache: cannot allocate test block");
         } else {
             /* Write a known pattern via cache */
             for (i = 0; i < IXFS_BLOCK_SIZE; i++)
@@ -96,7 +96,7 @@ void ixfs_test_performance(void)
                 }
             }
 
-            printk("  [%s] Buffer cache: write->read integrity=%s (block %u)\n",
+            klog(LOG_DEBUG, "test", "Buffer cache: write->read integrity=%s (block %u)",
                    match ? "OK" : "FAIL",
                    match ? "ok" : "CORRUPTED", (uint64_t)test_blk);
 
@@ -104,7 +104,7 @@ void ixfs_test_performance(void)
             {
                 struct ixfs_cache_entry *ce = ixfs_cache_find(vol, test_blk);
                 pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 1);
-                printk("  [%s] Buffer cache: cached=%s, dirty=%s\n",
+                klog(LOG_DEBUG, "test", "Buffer cache: cached=%s, dirty=%s",
                        pass ? "OK" : "FAIL",
                        ce ? "yes" : "no",
                        (ce && ce->dirty) ? "yes" : "no");
@@ -115,7 +115,7 @@ void ixfs_test_performance(void)
             {
                 struct ixfs_cache_entry *ce = ixfs_cache_find(vol, test_blk);
                 pass = (ce != (struct ixfs_cache_entry *)0 && ce->dirty == 0);
-                printk("  [%s] Buffer cache: post-flush dirty=%s\n",
+                klog(LOG_DEBUG, "test", "Buffer cache: post-flush dirty=%s",
                        pass ? "OK" : "FAIL",
                        (ce && ce->dirty) ? "yes" : "no");
             }
@@ -136,7 +136,7 @@ void ixfs_test_performance(void)
             tdir = c_root->ops->finddir(c_root, "_hashtest");
 
             if (!tdir) {
-                printk("  [FAIL] Hash index: cannot create _hashtest dir\n");
+                klog(LOG_DEBUG, "test", "FAIL: Hash index: cannot create _hashtest dir");
             } else {
                 /* Create 70 files (exceeds threshold of 64) */
                 for (i = 0; i < 70; i++) {
@@ -149,7 +149,7 @@ void ixfs_test_performance(void)
                         created++;
                 }
 
-                printk("  [%s] Hash index: created %u/70 files (threshold=%u)\n",
+                klog(LOG_DEBUG, "test", "Hash index: created %u/70 files (threshold=%u)",
                        created >= 65 ? "OK" : "FAIL",
                        (uint64_t)created, (uint64_t)IXFS_HASH_THRESHOLD);
 
@@ -164,7 +164,7 @@ void ixfs_test_performance(void)
                 }
 
                 pass = (found == 7);
-                printk("  [%s] Hash index: finddir found %u/7 via hash\n",
+                klog(LOG_DEBUG, "test", "Hash index: finddir found %u/7 via hash",
                        pass ? "OK" : "FAIL", (uint64_t)found);
 
                 /* Verify hash table was actually built */
@@ -173,11 +173,11 @@ void ixfs_test_performance(void)
                     tv = (struct ixfs_vnode *)tdir->fs_data;
                     pass = (tv && tv->dir_hash != (void *)0);
                     if (pass) {
-                        printk("  [OK] Hash index: table built (%u nodes, %u buckets)\n",
+                        klog(LOG_DEBUG, "test", "Hash index: table built (%u nodes, %u buckets)\n",
                                (uint64_t)tv->dir_hash->node_count,
                                (uint64_t)IXFS_HASH_BUCKETS);
                     } else {
-                        printk("  [FAIL] Hash index: table NOT built\n");
+                        klog(LOG_DEBUG, "test", "FAIL: Hash index: table NOT built");
                     }
                 }
 
@@ -194,7 +194,7 @@ void ixfs_test_performance(void)
             }
         }
     } else {
-        printk("  [SKIP] Hash index: C:\\ not mounted\n");
+        klog(LOG_DEBUG, "test", "Hash index: C:\\ not mounted");
     }
 
     /* --- Test 4: Extent-Based Allocation --- */
@@ -203,7 +203,7 @@ void ixfs_test_performance(void)
         if (c_root && c_root->ops && c_root->ops->create) {
             int rc = c_root->ops->create(c_root, "_extent_test.dat", VFS_FILE);
             if (rc != 0) {
-                printk("  [FAIL] Extents: cannot create test file\n");
+                klog(LOG_DEBUG, "test", "FAIL: Extents: cannot create test file");
             } else {
                 struct vfs_node *f = vfs_open("C:\\_extent_test.dat", VFS_O_WRITE);
                 if (f) {
@@ -226,14 +226,11 @@ void ixfs_test_performance(void)
                         fv = (struct ixfs_vnode *)f->fs_data;
                         pass = (fv->inode.i_extent_count == 1 &&
                                 fv->inode.i_extents[0].e_count == 5);
-                        printk("  [%s] Extents: 5 blocks merged into %u extent(s)",
-                               pass ? "OK" : "FAIL",
-                               (uint64_t)fv->inode.i_extent_count);
-                        printk(" (count=%u)\n",
+                        klog(LOG_DEBUG, "test", "Extents: 5 blocks merged into %u extent(s) (count=%u)",
+                               (uint64_t)fv->inode.i_extent_count,
                                (uint64_t)fv->inode.i_extents[0].e_count);
 
-                        printk("  [OK] Extents: 64-bit block addressing");
-                        printk(" (start=%u, max 64 TiB)\n",
+                        klog(LOG_DEBUG, "test", "Extents: 64-bit block addressing (start=%u, max 64 TiB)",
                                (uint64_t)fv->inode.i_extents[0].e_start);
 
                         /* Verify data integrity */
@@ -248,7 +245,7 @@ void ixfs_test_performance(void)
                                     }
                                 }
                             } else { ok = 0; }
-                            printk("  [%s] Extents: read-back data integrity\n",
+                            klog(LOG_DEBUG, "test", "Extents: read-back data integrity",
                                    ok ? "OK" : "FAIL");
                         }
                         vfs_close(f);
@@ -293,10 +290,8 @@ void ixfs_test_performance(void)
                 ixfs_disk_read(vol, j_start, jbuf);
                 jh = (struct ixfs_journal_header *)jbuf;
                 pass = (jh->jh_magic == IXFS_JOURNAL_MAGIC);
-                printk("  [%s] Journal: header magic=0x%x",
-                       pass ? "OK" : "FAIL",
-                       (uint64_t)jh->jh_magic);
-                printk(" (area=%u blocks at block %u)\n",
+                klog(LOG_DEBUG, "test", "Journal: header magic=0x%x (area=%u blocks at block %u)",
+                       (uint64_t)jh->jh_magic,
                        (uint64_t)j_blocks,
                        (uint64_t)j_start);
 
@@ -306,7 +301,7 @@ void ixfs_test_performance(void)
                     ixfs_txn_begin(vol);
                     pass = (vol->txn.active == 1 &&
                             vol->txn.txn_id == pre_seq + 1);
-                    printk("  [%s] Journal: txn_begin (id=%u, active=%s)\n",
+                    klog(LOG_DEBUG, "test", "Journal: txn_begin (id=%u, active=%s)",
                            pass ? "OK" : "FAIL",
                            (uint64_t)vol->txn.txn_id,
                            vol->txn.active ? "yes" : "no");
@@ -315,13 +310,13 @@ void ixfs_test_performance(void)
                     ixfs_txn_commit(vol);
                     pass = (vol->txn.active == 0 &&
                             vol->sb.s_journal_seq == pre_seq + 1);
-                    printk("  [%s] Journal: txn_commit (seq=%u, active=%s)\n",
+                    klog(LOG_DEBUG, "test", "Journal: txn_commit (seq=%u, active=%s)",
                            pass ? "OK" : "FAIL",
                            (uint64_t)vol->sb.s_journal_seq,
                            vol->txn.active ? "yes" : "no");
                 }
             } else {
-                printk("  [SKIP] Journal: no journal area on this volume\n");
+                klog(LOG_DEBUG, "test", "Journal: no journal area on this volume");
             }
             kfree(jbuf);
         }
@@ -338,7 +333,7 @@ void ixfs_test_performance(void)
                     vol->refcount_table[i2] == 0)
                     rc_ok = 0;
             }
-            printk("  [%s] CoW: refcount table initialized (%u blocks tracked)\n",
+            klog(LOG_DEBUG, "test", "CoW: refcount table initialized (%u blocks tracked)",
                    rc_ok ? "OK" : "FAIL",
                    (uint64_t)vol->refcount_bytes);
 
@@ -348,7 +343,7 @@ void ixfs_test_performance(void)
                 int create_ok = ixfs_snapshot_create("test_snap");
                 pass = (create_ok == 0 &&
                         vol->sb.s_snapshot_count == pre_count + 1);
-                printk("  [%s] Snapshot: create \"test_snap\" (count=%u)\n",
+                klog(LOG_DEBUG, "test", "Snapshot: create \"test_snap\" (count=%u)",
                        pass ? "OK" : "FAIL",
                        (uint64_t)vol->sb.s_snapshot_count);
             }
@@ -357,7 +352,7 @@ void ixfs_test_performance(void)
             {
                 int n = ixfs_snapshot_list();
                 pass = (n >= 1);
-                printk("  [%s] Snapshot: list found %d snapshot(s)\n",
+                klog(LOG_DEBUG, "test", "Snapshot: list found %d snapshot(s)",
                        pass ? "OK" : "FAIL", n);
             }
 
@@ -367,12 +362,12 @@ void ixfs_test_performance(void)
                 int del_ok = ixfs_snapshot_delete("test_snap");
                 pass = (del_ok == 0 &&
                         vol->sb.s_snapshot_count == pre_count - 1);
-                printk("  [%s] Snapshot: delete \"test_snap\" (count=%u)\n",
+                klog(LOG_DEBUG, "test", "Snapshot: delete \"test_snap\" (count=%u)",
                        pass ? "OK" : "FAIL",
                        (uint64_t)vol->sb.s_snapshot_count);
             }
         } else {
-            printk("  [SKIP] CoW: no refcount table\n");
+            klog(LOG_DEBUG, "test", "CoW: no refcount table");
         }
     }
     /* --- Test 7: Sparse File Support --- */
@@ -396,7 +391,7 @@ void ixfs_test_performance(void)
             wrote = vfs_write(sfile, sparse_offset, sparse_len,
                               (const uint8_t *)sparse_data);
             pass = (wrote == (int)sparse_len);
-            printk("  [%s] Sparse: write at offset %u (%d bytes)\n",
+            klog(LOG_DEBUG, "test", "Sparse: write at offset %u (%d bytes)",
                    pass ? "OK" : "FAIL",
                    (uint64_t)sparse_offset, wrote);
             vfs_close(sfile);
@@ -413,14 +408,14 @@ void ixfs_test_performance(void)
                         all_zero = 0;
                 }
                 pass = (rd == 16 && all_zero);
-                printk("  [%s] Sparse: hole read returns zeroes (%d bytes, zero=%s)\n",
+                klog(LOG_DEBUG, "test", "Sparse: hole read returns zeroes (%d bytes, zero=%s)",
                        pass ? "OK" : "FAIL", rd,
                        all_zero ? "yes" : "no");
 
                 /* Stat: logical size vs actual blocks */
                 ixfs_stat(sfile, &log_sz, &act_blk);
                 pass = (log_sz > act_blk * IXFS_BLOCK_SIZE);
-                printk("  [%s] Sparse: stat logical=%u, actual=%u blk (sparse=%s)\n",
+                klog(LOG_DEBUG, "test", "Sparse: stat logical=%u, actual=%u blk (sparse=%s)",
                        pass ? "OK" : "FAIL",
                        (uint64_t)log_sz, (uint64_t)act_blk,
                        (log_sz > act_blk * IXFS_BLOCK_SIZE) ? "yes" : "no");
@@ -429,7 +424,7 @@ void ixfs_test_performance(void)
             }
             c_root->ops->unlink(c_root, "_sparse_test.bin");
         } else {
-            printk("  [SKIP] Sparse: cannot create test file\n");
+            klog(LOG_DEBUG, "test", "Sparse: cannot create test file");
         }
     }
     /* --- Test 8: Inline Small Files --- */
@@ -455,7 +450,7 @@ void ixfs_test_performance(void)
                         pass = (iv->inode.i_extent_flags & IXFS_INLINE) &&
                                (iv->inode.i_blocks == 0) &&
                                (iv->inode.i_size == small_len);
-                        printk("  [%s] Inline: write %u B, flag=INLINE, blocks=%u\n",
+                        klog(LOG_DEBUG, "test", "Inline: write %u B, flag=INLINE, blocks=%u",
                                pass ? "OK" : "FAIL",
                                (uint64_t)small_len,
                                (uint64_t)iv->inode.i_blocks);
@@ -473,7 +468,7 @@ void ixfs_test_performance(void)
                                     }
                                 }
                             } else { match2 = 0; }
-                            printk("  [%s] Inline: read-back integrity=%s\n",
+                            klog(LOG_DEBUG, "test", "Inline: read-back integrity=%s",
                                    match2 ? "OK" : "FAIL",
                                    match2 ? "ok" : "CORRUPTED");
                         }
@@ -493,7 +488,7 @@ void ixfs_test_performance(void)
                                 pass = !(iv->inode.i_extent_flags & IXFS_INLINE) &&
                                        (iv->inode.i_blocks > 0) &&
                                        (iv->inode.i_size == big_len);
-                                printk("  [%s] Inline: promotion at %u B, blocks=%u\n",
+                                klog(LOG_DEBUG, "test", "Inline: promotion at %u B, blocks=%u",
                                        pass ? "OK" : "FAIL",
                                        (uint64_t)big_len,
                                        (uint64_t)iv->inode.i_blocks);
@@ -511,7 +506,7 @@ void ixfs_test_performance(void)
                                             }
                                         }
                                     } else { match3 = 0; }
-                                    printk("  [%s] Inline: post-promotion read=%s\n",
+                                    klog(LOG_DEBUG, "test", "Inline: post-promotion read=%s",
                                            match3 ? "OK" : "FAIL",
                                            match3 ? "ok" : "CORRUPTED");
                                 }
@@ -529,7 +524,7 @@ void ixfs_test_performance(void)
         /* Subtest 1: checksum table loaded */
         pass = (vol->checksum_table != (uint32_t *)0 &&
                 vol->checksum_count == vol->sb.s_total_blocks);
-        printk("  [%s] Checksums: table loaded (%u entries)\n",
+        klog(LOG_DEBUG, "test", "Checksums: table loaded (%u entries)",
                pass ? "OK" : "FAIL",
                (uint64_t)vol->checksum_count);
 
@@ -544,7 +539,7 @@ void ixfs_test_performance(void)
                         tbuf[qi] = (uint8_t)(qi & 0xFF);
                     ixfs_write_block(vol, test_blk, tbuf);
                     pass = (vol->checksum_table[test_blk] != 0);
-                    printk("  [%s] Checksums: write updated crc=0x%x\n",
+                    klog(LOG_DEBUG, "test", "Checksums: write updated crc=0x%x",
                            pass ? "OK" : "FAIL",
                            (uint64_t)vol->checksum_table[test_blk]);
                     kfree(tbuf);
@@ -563,7 +558,7 @@ void ixfs_test_performance(void)
             computed_ck = ixfs_crc32c(&vol->sb, 112);
             vol->sb.s_checksum = saved_ck;
             pass = (saved_ck != 0 && computed_ck == saved_ck);
-            printk("  [%s] Checksums: superblock self-check (0x%x)\n",
+            klog(LOG_DEBUG, "test", "Checksums: superblock self-check (0x%x)",
                    pass ? "OK" : "FAIL",
                    (uint64_t)saved_ck);
         }
@@ -572,7 +567,7 @@ void ixfs_test_performance(void)
         {
             int scrub_res = ixfs_scrub();
             pass = (scrub_res == 0);
-            printk("  [%s] Checksums: scrub result=%d corruptions\n",
+            klog(LOG_DEBUG, "test", "Checksums: scrub result=%d corruptions",
                    pass ? "OK" : "FAIL", scrub_res);
         }
     }
@@ -581,13 +576,13 @@ void ixfs_test_performance(void)
     {
         /* Subtest 1: version is 2 */
         pass = (vol->sb.s_version == 2);
-        printk("  [%s] 64-bit: s_version=%u (expected 2)\n",
+        klog(LOG_DEBUG, "test", "64-bit: s_version=%u (expected 2)",
                pass ? "OK" : "FAIL",
                (uint64_t)vol->sb.s_version);
 
         /* Subtest 2: s_total_blocks is 64-bit (8 bytes) */
         pass = (sizeof(vol->sb.s_total_blocks) == 8);
-        printk("  [%s] 64-bit: sizeof(s_total_blocks)=%u (expected 8)\n",
+        klog(LOG_DEBUG, "test", "64-bit: sizeof(s_total_blocks)=%u (expected 8)",
                pass ? "OK" : "FAIL",
                (uint64_t)sizeof(vol->sb.s_total_blocks));
 
@@ -595,11 +590,11 @@ void ixfs_test_performance(void)
         {
             struct ixfs_inode tmp_inode;
             pass = (sizeof(tmp_inode.i_size) == 8);
-            printk("  [%s] 64-bit: sizeof(i_size)=%u (expected 8)\n",
+            klog(LOG_DEBUG, "test", "64-bit: sizeof(i_size)=%u (expected 8)",
                    pass ? "OK" : "FAIL",
                    (uint64_t)sizeof(tmp_inode.i_size));
         }
     }
 
-    printk("  --- IXFS Performance Tests Complete ---\n\n");
+    klog(LOG_DEBUG, "test", "--- IXFS Performance Tests Complete ---");
 }

@@ -126,7 +126,7 @@ void gdt_init(void)
     gdt_flush((uint64_t)(uintptr_t)&gdtr);
     tss_flush(GDT_TSS_SEG);
 
-    printk("[OK] GDT loaded (%u entries, TSS at %p)\n",
+    klog(LOG_INFO, "cpu", "GDT loaded (%u entries, TSS at %p)",
            (uint64_t)GDT_NUM_ENTRIES, tss_base);
 }
 

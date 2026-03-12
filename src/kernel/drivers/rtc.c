@@ -77,7 +77,7 @@ void rtc_init(void)
 {
     struct rtc_time t;
     rtc_read(&t);
-    printk("[OK] RTC: %u-%u-%u %u:%u:%u\n",
+    klog(LOG_INFO, "rtc", "RTC: %u-%u-%u %u:%u:%u",
            (uint64_t)t.year, (uint64_t)t.month, (uint64_t)t.day,
            (uint64_t)t.hour, (uint64_t)t.minute, (uint64_t)t.second);
 }

@@ -148,7 +148,7 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
     }
 
     if (status & (INT_RER | INT_TER | INT_RX_OVERFLOW)) {
-        printk("[RTL8139] Error: ISR=0x%x\n", (uint64_t)status);
+        klog(LOG_DEBUG, "net", "Error: ISR=0x%x", (uint64_t)status);
     }
 
     /* Acknowledge all handled interrupts */
@@ -168,11 +168,11 @@ int rtl8139_init(void)
     /* Find the RTL8139 on the PCI bus */
     pci = pci_find_device(RTL8139_VENDOR_ID, RTL8139_DEVICE_ID);
     if (!pci.found) {
-        printk("[RTL8139] NIC not found on PCI bus\n");
+        klog(LOG_DEBUG, "net", "NIC not found on PCI bus");
         return -1;
     }
 
-    printk("[RTL8139] Found at PCI %u:%u.%u, IRQ %u\n",
+    klog(LOG_DEBUG, "net", "Found at PCI %u:%u.%u, IRQ %u",
            (uint64_t)pci.bus, (uint64_t)pci.dev,
            (uint64_t)pci.func, (uint64_t)pci.irq_line);
 
@@ -180,7 +180,7 @@ int rtl8139_init(void)
     io_base = (uint16_t)(pci.bar[0] & ~0x3);
     irq_line = pci.irq_line;
 
-    printk("[RTL8139] I/O base: 0x%x\n", (uint64_t)io_base);
+    klog(LOG_DEBUG, "net", "I/O base: 0x%x", (uint64_t)io_base);
 
     /* Enable PCI bus mastering (required for DMA) */
     pci_enable_bus_mastering(&pci);
@@ -196,7 +196,7 @@ int rtl8139_init(void)
             break;
     }
     if (i >= 100000) {
-        printk("[RTL8139] Reset timeout!\n");
+        klog(LOG_DEBUG, "net", "Reset timeout!");
         return -1;
     }
 
@@ -204,7 +204,7 @@ int rtl8139_init(void)
     for (i = 0; i < 6; i++)
         mac_addr[i] = inb_nic(io_base + REG_MAC0 + i);
 
-    printk("[RTL8139] MAC: %x:%x:%x:%x:%x:%x\n",
+    klog(LOG_DEBUG, "net", "MAC: %x:%x:%x:%x:%x:%x",
            (uint64_t)mac_addr[0], (uint64_t)mac_addr[1],
            (uint64_t)mac_addr[2], (uint64_t)mac_addr[3],
            (uint64_t)mac_addr[4], (uint64_t)mac_addr[5]);
@@ -212,7 +212,7 @@ int rtl8139_init(void)
     /* 4. Allocate Rx buffer (must be physically contiguous) */
     rx_buffer = (uint8_t *)kmalloc(RX_BUF_SIZE);
     if (!rx_buffer) {
-        printk("[RTL8139] Cannot allocate Rx buffer\n");
+        klog(LOG_DEBUG, "net", "Cannot allocate Rx buffer");
         return -1;
     }
     /* Zero the buffer */
@@ -224,7 +224,7 @@ int rtl8139_init(void)
     for (i = 0; i < TX_DESC_COUNT; i++) {
         tx_buffers[i] = (uint8_t *)kmalloc(TX_BUF_SIZE);
         if (!tx_buffers[i]) {
-            printk("[RTL8139] Cannot allocate Tx buffer %d\n", (uint64_t)i);
+            klog(LOG_DEBUG, "net", "Cannot allocate Tx buffer %d", (uint64_t)i);
             return -1;
         }
     }
@@ -255,7 +255,7 @@ int rtl8139_init(void)
 
     rx_ready = 0;
 
-    printk("[OK] RTL8139 NIC initialized (IRQ %u)\n", (uint64_t)irq_line);
+    klog(LOG_DEBUG, "net", "RTL8139 NIC initialized (IRQ %u)", (uint64_t)irq_line);
     return 0;
 }
 
@@ -307,7 +307,7 @@ uint32_t rtl8139_receive(void *buf, uint32_t buf_size)
     /* Validate status */
     if (!(hdr->status & RX_ROK)) {
         /* Bad packet — skip it */
-        printk("[RTL8139] Bad Rx packet, status=0x%x\n",
+        klog(LOG_DEBUG, "net", "Bad Rx packet, status=0x%x",
                (uint64_t)hdr->status);
         /* Reset read pointer */
         rx_offset = inw_nic(io_base + REG_CBR) % RX_BUF_SIZE;

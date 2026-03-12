@@ -136,7 +136,7 @@ void arp_handle(const void *data, uint32_t len)
         }
     } else if (op == ARP_OP_REPLY) {
         /* Already learned above — just log */
-        printk("[ARP] Reply: %u.%u.%u.%u\n",
+        klog(LOG_DEBUG, "net", "Reply: %u.%u.%u.%u",
                (uint64_t)(pkt->sender_ip & 0xFF),
                (uint64_t)((pkt->sender_ip >> 8) & 0xFF),
                (uint64_t)((pkt->sender_ip >> 16) & 0xFF),

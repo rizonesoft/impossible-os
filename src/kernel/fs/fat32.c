@@ -772,7 +772,7 @@ int fat32_format(const struct blkdev *dev, const char *label)
 
     total_sectors = (uint32_t)dev->sector_count;
     if (total_sectors < 65536) {
-        printk("[FAIL] FAT32: volume too small (%u sectors)\n",
+        klog(LOG_ERROR, "fat32", "FAT32: volume too small (%u sectors)",
                (uint64_t)total_sectors);
         return -1;
     }
@@ -927,7 +927,7 @@ int fat32_format(const struct blkdev *dev, const char *label)
         }
     }
 
-    printk("[OK] FAT32: formatted %u MiB (%u clusters, %u sec/cluster)\n",
+    klog(LOG_DEBUG, "fat32", "FAT32: formatted %u MiB (%u clusters, %u sec/cluster)",
            (uint64_t)total_sectors * 512 / (1024 * 1024),
            (uint64_t)total_clusters,
            (uint64_t)spc);
@@ -1518,7 +1518,7 @@ int fat32_init(const struct blkdev *dev)
     uint32_t root_dir_sectors;
 
     if (!dev) {
-        printk("[FAIL] FAT32: null block device\n");
+        klog(LOG_ERROR, "fat32", "FAT32: null block device");
         return -1;
     }
 
@@ -1527,13 +1527,13 @@ int fat32_init(const struct blkdev *dev)
 
     /* Read the boot sector (BPB) — LBA 0 relative to the sub-blkdev */
     if (fat32_read_sector(0, sector_buf) != 0) {
-        printk("[FAIL] FAT32: cannot read boot sector\n");
+        klog(LOG_ERROR, "fat32", "FAT32: cannot read boot sector");
         return -1;
     }
 
     /* Verify boot signature */
     if (sector_buf[510] != 0x55 || sector_buf[511] != 0xAA) {
-        printk("[FAIL] FAT32: invalid boot signature\n");
+        klog(LOG_ERROR, "fat32", "FAT32: invalid boot signature");
         return -1;
     }
 
@@ -1563,7 +1563,7 @@ int fat32_init(const struct blkdev *dev)
 
     /* Validate */
     if (bpb.bytes_per_sector != 512) {
-        printk("[FAIL] FAT32: unsupported sector size %u\n",
+        klog(LOG_ERROR, "fat32", "FAT32: unsupported sector size %u",
                (uint64_t)bpb.bytes_per_sector);
         return -1;
     }
@@ -1581,7 +1581,7 @@ int fat32_init(const struct blkdev *dev)
 
     {
         uint64_t vol_mb = (uint64_t)bpb.total_sectors * 512 / (1024 * 1024);
-        printk("[OK] FAT32: %u MiB, %u sectors/cluster, root cluster %u\n",
+        klog(LOG_DEBUG, "fat32", "FAT32: %u MiB, %u sectors/cluster, root cluster %u",
                vol_mb,
                (uint64_t)bpb.sectors_per_cluster,
                (uint64_t)bpb.root_cluster);

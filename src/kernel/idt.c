@@ -183,5 +183,5 @@ void idt_init(void)
     idtr.base  = (uint64_t)(uintptr_t)&idt;
     __asm__ volatile ("lidt %0" : : "m"(idtr));
 
-    printk("[OK] IDT loaded (256 entries, ISR 0-31, IRQ 32-47)\n");
+    klog(LOG_INFO, "cpu", "IDT loaded (256 entries, ISR 0-31, IRQ 32-47)");
 }

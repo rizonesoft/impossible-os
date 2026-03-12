@@ -138,7 +138,7 @@ void pmm_init(void)
     /* Bitmap itself */
     pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
 
-    printk("[OK] PMM: %u MiB total, %u MiB free (%u/%u frames)\n",
+    klog(LOG_INFO, "mm", "PMM: %u MiB total, %u MiB free (%u/%u frames)",
            (uint64_t)(total_frames * PMM_FRAME_SIZE / (1024 * 1024)),
            (uint64_t)((total_frames - used_frames) * PMM_FRAME_SIZE / (1024 * 1024)),
            total_frames - used_frames,

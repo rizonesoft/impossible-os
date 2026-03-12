@@ -226,7 +226,7 @@ void codex_init(void)
     /* Allocate the invisible root node */
     codex_root = alloc_key("Codex");
     if (!codex_root) {
-        printk("[FAIL] Codex: cannot allocate root\n");
+        klog(LOG_ERROR, "codex", "Codex: cannot allocate root");
         return;
     }
 
@@ -238,7 +238,7 @@ void codex_init(void)
         codex_key_t *apps_key     = alloc_key("Apps");
 
         if (!system_key || !hardware_key || !user_key || !apps_key) {
-            printk("[FAIL] Codex: cannot allocate root keys\n");
+            klog(LOG_ERROR, "codex", "Codex: cannot allocate root keys");
             return;
         }
 
@@ -250,10 +250,7 @@ void codex_init(void)
 
     codex_ready = 1;
 
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Codex registry initialized (pool: %u keys, %u values)\n",
+    klog(LOG_DEBUG, "codex", "Codex registry initialized (pool: %u keys, %u values)",
            (uint64_t)KEY_POOL_SIZE, (uint64_t)VALUE_POOL_SIZE);
 }
 
@@ -660,10 +657,7 @@ void codex_populate_defaults(void)
         count += 1;
     }
 
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Codex defaults populated (%u values, %u/%u pool used)\n",
+    klog(LOG_DEBUG, "codex", "Codex defaults populated (%u values, %u/%u pool used)",
            (uint64_t)count,
            (uint64_t)value_pool_next, (uint64_t)VALUE_POOL_SIZE);
 }
@@ -1042,10 +1036,7 @@ int codex_load(void)
     dirty_system = dirty_hardware = dirty_user = dirty_apps = 0;
 
     if (total > 0) {
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Codex loaded %u values from disk\n", (uint64_t)total);
+        klog(LOG_DEBUG, "codex", "Codex loaded %u values from disk", (uint64_t)total);
     }
 
     return total;
