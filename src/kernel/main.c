@@ -109,7 +109,14 @@ static int blkdev_ata_write(uint64_t lba, uint32_t count, const void *buf,
 /* External: Multiboot2 parser */
 extern void multiboot2_parse(uintptr_t mbi_addr);
 
-/* Kernel entry point */
+/* UEFI boot magic — our custom bootloader passes this instead of Multiboot2 */
+#define UEFI_BOOT_MAGIC 0x55454649ULL  /* "UEFI" */
+
+/* Kernel entry point
+ *   magic = MULTIBOOT2_BOOTLOADER_MAGIC (0x36D76289) for GRUB
+ *           or UEFI_BOOT_MAGIC (0x55454649) for our UEFI bootloader
+ *   mbi   = Multiboot2 info pointer (GRUB) or boot_info pointer (UEFI)
+ */
 void kernel_main(uint64_t magic, uint64_t mbi)
 {
     uint32_t i;
@@ -118,14 +125,22 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 1: Initialize serial (always works, even without display) */
     serial_init();
 
-    /* Step 2: Verify Multiboot2 magic */
-    if (magic != MULTIBOOT2_BOOTLOADER_MAGIC) {
-        serial_write("[FAIL] Invalid Multiboot2 magic!\n");
+    /* Step 2: Parse boot info based on bootloader type */
+    if (magic == UEFI_BOOT_MAGIC) {
+        /* UEFI path: boot_info is already filled by our bootloader */
+        struct boot_info *src = (struct boot_info *)(uintptr_t)mbi;
+        uint8_t *d = (uint8_t *)&g_boot_info;
+        const uint8_t *s = (const uint8_t *)src;
+        for (i = 0; i < sizeof(struct boot_info); i++)
+            d[i] = s[i];
+        serial_write("[UEFI] Boot info received from Impossible OS bootloader\n");
+    } else if (magic == MULTIBOOT2_BOOTLOADER_MAGIC) {
+        /* Multiboot2 path: parse GRUB's info structure */
+        multiboot2_parse((uintptr_t)mbi);
+    } else {
+        serial_write("[FAIL] Unknown bootloader magic!\n");
         goto halt;
     }
-
-    /* Step 3: Parse Multiboot2 info structure */
-    multiboot2_parse((uintptr_t)mbi);
 
     /* Step 4: Initialize physical memory manager (needs parsed memory map) */
     pmm_init();

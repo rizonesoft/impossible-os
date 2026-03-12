@@ -73,10 +73,10 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot kernel host-tools sysroot userland iso grub-efi system-disk test-disks run run-test run-debug run-log clean
+.PHONY: all _increment_build boot kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
 
 ## all: Build everything (kernel + userland + system disk)
-all: _increment_build kernel userland grub-efi system-disk
+all: _increment_build kernel userland uefi-boot system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_HASH))"
 
 ## _increment_build: Auto-increment the build number
@@ -84,17 +84,14 @@ _increment_build:
 	@expr $$(cat $(BUILD_NUM_FILE) 2>/dev/null || echo 0) + 1 > $(BUILD_NUM_FILE)
 	@echo "[BUILD] #$$(cat $(BUILD_NUM_FILE))"
 
-## grub-efi: Build standalone GRUB EFI binary for direct disk boot
-GRUB_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
-GRUB_MODULES := part_gpt fat normal multiboot2 boot \
-                all_video efi_gop gfxterm configfile echo \
-                search test reboot halt font loadenv
+## uefi-boot: Build custom UEFI bootloader (replaces GRUB)
+UEFI_EFI := $(BUILD_DIR)/tools/BOOTX64.EFI
 
-grub-efi: $(GRUB_EFI)
+uefi-boot: $(UEFI_EFI)
 
-$(GRUB_EFI):
+$(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds
 	@mkdir -p $(BUILD_DIR)/tools
-	grub-mkimage -O x86_64-efi -o $@ -p /boot/grub $(GRUB_MODULES)
+	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
 
 ## boot: Assemble the bootloader
@@ -231,7 +228,7 @@ IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 269484032 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
+$(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) \
                 tools/make-system-disk.c tools/mkfs-ixfs.c \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."
@@ -243,10 +240,9 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(GRUB_EFI) $(BOOT_DIR)/grub.cfg \
 	@# Step 2: Format EFI partition as FAT32 and copy boot files
 	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
-	@mkdir -p $(BUILD_DIR)/efi_staging/boot/grub
-	@cp $(GRUB_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
+	@mkdir -p $(BUILD_DIR)/efi_staging/boot
+	@cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
-	@cp $(BOOT_DIR)/grub.cfg $(BUILD_DIR)/efi_staging/boot/grub/grub.cfg
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
 	@# Step 3: Format IXFS partition and populate with system files

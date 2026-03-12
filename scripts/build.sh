@@ -247,7 +247,7 @@ run_step $STEP $TOTAL "Userland" "userland" || { print_errors; echo "=== BUILD F
 
 # EFI
 STEP=$((STEP + 1))
-run_step $STEP $TOTAL "EFI Boot" "grub-efi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # System Disk
 STEP=$((STEP + 1))
