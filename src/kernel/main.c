@@ -12,6 +12,7 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/printk.h"
+#include "kernel/klog.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
@@ -138,9 +139,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 6b: Enable AVX2 SIMD if supported */
     simd_enable_avx();
     if (simd_avx2_ok)
-        printk("[OK] AVX2 SIMD enabled (8 pixels/iter)\n");
+        klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
-        printk("[--] AVX2 not available, using SSE2 fallback\n");
+        klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
 
     /* Step 7: Initialize ATA disk driver */
     ata_init();
@@ -264,48 +265,31 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     printk("  Boot: UEFI via GRUB + Multiboot2\n");
     printk("\n");
 
-    /* Step 6: Print status */
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Multiboot2 magic verified: %x\n", magic);
-
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Running in 64-bit Long Mode\n");
+    /* Hardware summary — klog INFO (visible on screen) */
+    klog(LOG_INFO, "boot", "Multiboot2 magic verified: %x", magic);
+    klog(LOG_INFO, "boot", "Running in 64-bit Long Mode");
 
     if (g_boot_info.fb_available) {
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Framebuffer: %ux%ux%u at %p\n",
+        klog(LOG_INFO, "gfx", "Framebuffer: %ux%ux%u at %p",
                (uint64_t)g_boot_info.fb.width,
                (uint64_t)g_boot_info.fb.height,
                (uint64_t)g_boot_info.fb.bpp,
                (uint64_t)g_boot_info.fb.addr);
     }
 
-    /* Step 7: Memory map */
-    printk("\n");
-    fb_set_color(FB_COLOR_YELLOW, FB_COLOR_BG_DEFAULT);
-    printk("--- Memory Map (%u entries) ---\n", (uint64_t)g_boot_info.mmap_count);
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-
+    /* Memory summary */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
         if (g_boot_info.mmap[i].type == 1) {
             total_ram += g_boot_info.mmap[i].length;
         }
     }
-    printk("  Total available RAM: %u MiB\n",
-           (uint64_t)(total_ram / (1024 * 1024)));
+    klog(LOG_INFO, "mm", "Total RAM: %u MiB (%u entries)",
+         (uint64_t)(total_ram / (1024 * 1024)),
+         (uint64_t)g_boot_info.mmap_count);
 
-    /* Step 8: ACPI */
+    /* ACPI */
     if (g_boot_info.acpi_available) {
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("ACPI RSDP v%u at %p\n",
+        klog(LOG_INFO, "acpi", "RSDP v%u at %p",
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
 
@@ -337,11 +321,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         kfree(b);
         kfree(c);
 
-        fb_set_color(ok ? FB_COLOR_GREEN : FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-        printk("[%s] ", ok ? "OK" : "FAIL");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Heap: alloc/free/realloc test passed (used: %u, free: %u bytes)\n",
-               heap_get_used(), heap_get_free());
+        klog(ok ? LOG_INFO : LOG_ERROR, "mm",
+             "Heap: %s (used: %u, free: %u bytes)",
+             ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
     /* Initialize the Codex registry */
@@ -361,10 +343,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
             if (n > 0) {
                 buf[n] = '\0';
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("VFS read C:\\hello.txt: \"%s\"\n", (char *)buf);
+                klog(LOG_DEBUG, "test", "VFS read C:\\hello.txt: \"%s\"", (char *)buf);
             }
             vfs_close(f);
         }
@@ -374,10 +353,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     if (vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
-            /* Create a file */
             int rc = c_root->ops->create(c_root, "test.txt", VFS_FILE);
             if (rc == 0) {
-                /* Write data to the file */
                 struct vfs_node *f = vfs_open("C:\\test.txt", VFS_O_WRITE);
                 if (f) {
                     const char *msg = "IXFS is working!";
@@ -387,37 +364,27 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     vfs_close(f);
                 }
 
-                /* Read it back */
                 f = vfs_open("C:\\test.txt", VFS_O_READ);
                 if (f) {
                     uint8_t buf[64];
                     int n = vfs_read(f, 0, sizeof(buf) - 1, buf);
                     if (n > 0) {
                         buf[n] = '\0';
-                        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                        printk("[OK] ");
-                        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                        printk("IXFS CRUD: C:\\test.txt = \"%s\"\n",
-                               (char *)buf);
+                        klog(LOG_DEBUG, "test", "IXFS CRUD: C:\\test.txt = \"%s\"", (char *)buf);
                     }
                     vfs_close(f);
                 }
 
-                /* Delete it */
                 if (c_root->ops->unlink) {
                     c_root->ops->unlink(c_root, "test.txt");
                     f = vfs_open("C:\\test.txt", VFS_O_READ);
-                    fb_set_color(f ? FB_COLOR_RED : FB_COLOR_GREEN,
-                                 FB_COLOR_BG_DEFAULT);
-                    printk("[%s] ", f ? "FAIL" : "OK");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("IXFS delete: C:\\test.txt %s\n",
-                           f ? "still exists!" : "removed");
+                    klog(f ? LOG_ERROR : LOG_DEBUG, "test",
+                         "IXFS delete: C:\\test.txt %s", f ? "still exists!" : "removed");
                     if (f) vfs_close(f);
                 }
             }
         } else {
-            printk("  IXFS: no c_root or no create op\n");
+            klog(LOG_DEBUG, "test", "IXFS: no c_root or no create op");
         }
     }
 
@@ -425,28 +392,16 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     if (vfs_is_mounted('C')) {
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root && c_root->ops && c_root->ops->create) {
-            /* mkdir */
             int rc = c_root->ops->create(c_root, "TestDir", VFS_DIRECTORY);
             if (rc == 0) {
-                /* Verify it shows up in readdir */
                 struct vfs_dirent *de = vfs_readdir(c_root, 0);
-                if (de && de->type & VFS_DIRECTORY) {
-                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                    printk("[OK] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("IXFS mkdir: C:\\%s\n", de->name);
-                }
+                if (de && de->type & VFS_DIRECTORY)
+                    klog(LOG_DEBUG, "test", "IXFS mkdir: C:\\%s", de->name);
 
-                /* rmdir (empty dir) */
                 if (c_root->ops->unlink) {
                     rc = c_root->ops->unlink(c_root, "TestDir");
-                    de = vfs_readdir(c_root, 0);
-                    fb_set_color(rc == 0 ? FB_COLOR_GREEN : FB_COLOR_RED,
-                                 FB_COLOR_BG_DEFAULT);
-                    printk("[%s] ", rc == 0 ? "OK" : "FAIL");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("IXFS rmdir: C:\\TestDir %s\n",
-                           rc == 0 ? "removed" : "failed");
+                    klog(rc == 0 ? LOG_DEBUG : LOG_ERROR, "test",
+                         "IXFS rmdir: C:\\TestDir %s", rc == 0 ? "removed" : "failed");
                 }
             }
         }
@@ -455,13 +410,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     ixfs_test_performance();
 
     /* Timer verification */
-    printk("\n  Timer test: sleeping 1 second...\n");
+    klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");
     sleep_ms(1000);
-    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-    printk("[OK] ");
-    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-    printk("Timer working! Ticks: %u, Uptime: %u sec\n",
-           pit_get_ticks(), uptime());
+    klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
+         pit_get_ticks(), uptime());
 
     /* === Cooperative threading test === */
     task_init();
@@ -472,7 +424,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(thread_a_func, "ThreadA");
         task_create(thread_b_func, "ThreadB");
 
-        printk("\n  Cooperative test: two threads alternate via yield()\n");
+        klog(LOG_DEBUG, "test", "Cooperative: two threads alternate via yield()");
 
         /* Main thread yields to let both threads run */
         yield();
@@ -482,11 +434,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         yield();
         yield();
 
-        /* Both threads should have finished by now */
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Cooperative threading test passed\n");
+        klog(LOG_DEBUG, "test", "Cooperative threading test passed");
     }
 
     /* === Preemptive scheduling test === */
@@ -497,7 +445,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         task_create(preempt_a_func, "PreemptA");
         task_create(preempt_b_func, "PreemptB");
 
-        printk("\n  Preemptive test: threads run without yield()\n");
+        klog(LOG_DEBUG, "test", "Preemptive: threads run without yield()");
         scheduler_enable();
 
         /* Main thread sleeps while the preemptive threads run */
@@ -505,10 +453,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         scheduler_disable();
 
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Preemptive scheduling test passed\n");
+        klog(LOG_DEBUG, "test", "Preemptive scheduling test passed");
     }
 
     /* === Kernel thread test (shared globals) === */
@@ -520,36 +465,22 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         int32_t status_a, status_b;
 
         thread_shared_counter = 0;
-        printk("\n  Thread test: two threads sharing a global counter\n");
 
         tid_a = thread_create(thread_inc_func, (void *)"ThreadA", 0);
         tid_b = thread_create(thread_inc_func, (void *)"ThreadB", 0);
 
         if (tid_a >= 0 && tid_b >= 0) {
-            /* Join both threads — blocks until each exits */
             status_a = thread_join((uint32_t)tid_a);
             status_b = thread_join((uint32_t)tid_b);
             (void)status_a;
             (void)status_b;
 
-            if (thread_shared_counter == 10) {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Kernel thread test passed (counter=%u)\n",
-                       (uint64_t)thread_shared_counter);
-            } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Kernel thread test: expected 10, got %u\n",
-                       (uint64_t)thread_shared_counter);
-            }
+            klog(thread_shared_counter == 10 ? LOG_DEBUG : LOG_ERROR, "test",
+                 "Kernel thread test: counter=%u (%s)",
+                 (uint64_t)thread_shared_counter,
+                 thread_shared_counter == 10 ? "passed" : "FAIL");
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("thread_create failed\n");
+            klog(LOG_ERROR, "test", "thread_create failed");
         }
     }
 
@@ -561,7 +492,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         int mtid_a, mtid_b;
 
         mutex_shared_counter = 0;
-        printk("\n  Mutex test: two threads racing on a protected counter\n");
 
         mtid_a = thread_create(mutex_inc_func, (void *)"MutexA", 0);
         mtid_b = thread_create(mutex_inc_func, (void *)"MutexB", 0);
@@ -570,24 +500,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             thread_join((uint32_t)mtid_a);
             thread_join((uint32_t)mtid_b);
 
-            if (mutex_shared_counter == 200) {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Mutex test passed (counter=%u)\n",
-                       (uint64_t)mutex_shared_counter);
-            } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Mutex test: expected 200, got %u\n",
-                       (uint64_t)mutex_shared_counter);
-            }
+            klog(mutex_shared_counter == 200 ? LOG_DEBUG : LOG_ERROR, "test",
+                 "Mutex test: counter=%u (%s)",
+                 (uint64_t)mutex_shared_counter,
+                 mutex_shared_counter == 200 ? "passed" : "FAIL");
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("mutex thread_create failed\n");
+            klog(LOG_ERROR, "test", "mutex thread_create failed");
         }
     }
 
@@ -602,7 +520,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         sem_produced = 0;
         sem_consumed = 0;
-        printk("\n  Semaphore test: producer-consumer synchronization\n");
 
         stid_c = thread_create(sem_consumer_func, (void *)0, 0);
         stid_p = thread_create(sem_producer_func, (void *)0, 0);
@@ -611,24 +528,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             thread_join((uint32_t)stid_p);
             thread_join((uint32_t)stid_c);
 
-            if (sem_consumed == 5) {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Semaphore test passed (consumed=%u)\n",
-                       (uint64_t)sem_consumed);
-            } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Semaphore test: expected 5, got %u\n",
-                       (uint64_t)sem_consumed);
-            }
+            klog(sem_consumed == 5 ? LOG_DEBUG : LOG_ERROR, "test",
+                 "Semaphore test: consumed=%u (%s)",
+                 (uint64_t)sem_consumed,
+                 sem_consumed == 5 ? "passed" : "FAIL");
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("semaphore thread_create failed\n");
+            klog(LOG_ERROR, "test", "semaphore thread_create failed");
         }
     }
 
@@ -644,10 +549,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         pipe_init();
         pipe_test_ok = 0;
-        printk("\n  Pipe test: writer thread sends data to reader thread\n");
 
         if (pipe_create(pipe_fds) == 0) {
-            pipe_test_id = pipe_fds[0];  /* same ID for both ends */
+            pipe_test_id = pipe_fds[0];
 
             ptid_r = thread_create(pipe_reader_func, (void *)0, 0);
             ptid_w = thread_create(pipe_writer_func, (void *)0, 0);
@@ -656,28 +560,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 thread_join((uint32_t)ptid_w);
                 thread_join((uint32_t)ptid_r);
 
-                if (pipe_test_ok) {
-                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                    printk("[OK] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("Pipe test passed\n");
-                } else {
-                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                    printk("[FAIL] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("Pipe test: data mismatch\n");
-                }
+                klog(pipe_test_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                     "Pipe test: %s", pipe_test_ok ? "passed" : "data mismatch");
             } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("pipe thread_create failed\n");
+                klog(LOG_ERROR, "test", "pipe thread_create failed");
             }
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("pipe_create failed\n");
+            klog(LOG_ERROR, "test", "pipe_create failed");
         }
     }
 
@@ -691,7 +580,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         int shm_tw, shm_tr;
 
         shmem_test_ok = 0;
-        printk("\n  Shared memory test: two threads sharing a named counter\n");
 
         shm_id = shmem_create("test_counter", sizeof(uint32_t));
         if (shm_id >= 0) {
@@ -702,30 +590,16 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 thread_join((uint32_t)shm_tw);
                 thread_join((uint32_t)shm_tr);
 
-                if (shmem_test_ok) {
-                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                    printk("[OK] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("Shared memory test passed\n");
-                } else {
-                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                    printk("[FAIL] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("Shared memory test: counter != 200\n");
-                }
+                klog(shmem_test_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                     "Shared memory test: %s",
+                     shmem_test_ok ? "passed" : "counter != 200");
             } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("shmem thread_create failed\n");
+                klog(LOG_ERROR, "test", "shmem thread_create failed");
             }
 
-            shmem_unmap(shm_id);  /* creator unmaps too */
+            shmem_unmap(shm_id);
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("shmem_create failed\n");
+            klog(LOG_ERROR, "test", "shmem_create failed");
         }
     }
 
@@ -737,8 +611,6 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         uint32_t swap_ok = 1;
         uint32_t k;
         int slot_id;
-
-        printk("\n  Swap test: write pattern, swap out to pagefile, swap in, verify\n");
 
         swap_init(64);  /* 64 slots = 256 KiB swap */
 
@@ -752,28 +624,16 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     page[k] = (uint8_t)(k & 0xFF);
             }
 
-            printk("    Written 4 KiB pattern to virt %p\n", test_virt);
-
-            /* Register the page for clock tracking */
             swap_clock_register(test_virt);
 
-            /* Swap out to pagefile.sys */
             slot_id = swap_out(test_virt);
             if (slot_id >= 0) {
-                printk("    Swapped out to slot %d (pagefile.sys)\n", (uint64_t)(uint32_t)slot_id);
-
-                /* Swap back in */
                 if (swap_in((uint32_t)slot_id, test_virt) == 0) {
-                    printk("    Swapped in from slot %d\n", (uint64_t)(uint32_t)slot_id);
-
-                    /* Verify pattern */
-                    {
-                        uint8_t *page = (uint8_t *)test_virt;
-                        for (k = 0; k < 4096; k++) {
-                            if (page[k] != (uint8_t)(k & 0xFF)) {
-                                swap_ok = 0;
-                                break;
-                            }
+                    uint8_t *page = (uint8_t *)test_virt;
+                    for (k = 0; k < 4096; k++) {
+                        if (page[k] != (uint8_t)(k & 0xFF)) {
+                            swap_ok = 0;
+                            break;
                         }
                     }
                 } else {
@@ -783,27 +643,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 swap_ok = 0;
             }
 
-            /* Clean up test mapping */
             vmm_unmap_page(test_virt, 1);
 
-            if (swap_ok) {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Swap test passed (4 KiB pattern verified via pagefile.sys, %u/%u slots)\n",
-                       (uint64_t)swap_get_used_slots(),
-                       (uint64_t)swap_get_total_slots());
-            } else {
-                fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                printk("[FAIL] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("Swap test: mismatch at byte %u\n", (uint64_t)k);
-            }
+            klog(swap_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                 "Swap test: %s (%u/%u slots)",
+                 swap_ok ? "passed" : "FAIL",
+                 (uint64_t)swap_get_used_slots(),
+                 (uint64_t)swap_get_total_slots());
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("swap test alloc failed\n");
+            klog(LOG_ERROR, "test", "swap test alloc failed");
         }
     }
 
@@ -814,36 +662,21 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             void *mapped = mmap((void *)0, 4096, PROT_READ, MAP_PRIVATE,
                                 mf, 0);
             if (mapped != MAP_FAILED) {
-                /* Reading the mapped address triggers a page fault which
-                 * loads the file contents from disk via mmap_handle_fault */
                 const char *txt = (const char *)mapped;
-                uint32_t mmap_ok = 0;
+                uint32_t mmap_ok = (txt[0] != '\0') ? 1 : 0;
 
-                /* hello.txt should start with a known string */
-                if (txt[0] != '\0') {
-                    mmap_ok = 1;
-                }
-
-                if (mmap_ok) {
-                    fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                    printk("[OK] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("mmap test passed (hello.txt mapped at %p, first char='%c')\n",
-                           (uintptr_t)mapped, (uint64_t)(uint8_t)txt[0]);
-                } else {
-                    fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-                    printk("[FAIL] ");
-                    fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                    printk("mmap test: mapped page is empty\n");
-                }
+                klog(mmap_ok ? LOG_DEBUG : LOG_ERROR, "test",
+                     "mmap test: %s (mapped at %p, first='%c')",
+                     mmap_ok ? "passed" : "FAIL",
+                     (uintptr_t)mapped, (uint64_t)(uint8_t)txt[0]);
 
                 munmap(mapped, 4096);
             } else {
-                printk("[FAIL] mmap returned MAP_FAILED\n");
+                klog(LOG_ERROR, "test", "mmap returned MAP_FAILED");
             }
             vfs_close(mf);
         } else {
-            printk("[SKIP] mmap test: hello.txt not found\n");
+            klog(LOG_DEBUG, "test", "mmap test: hello.txt not found (skipped)");
         }
     }
 
@@ -853,37 +686,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         uint32_t vt;
         int vrc;
 
-        printk("\n  VirtIO-blk test: reading sector 0\n");
-
         for (vt = 0; vt < 512; vt++)
             sect0[vt] = 0;
 
         vrc = virtio_blk_read(0, 1, sect0);
         if (vrc == 0) {
-            /* Print first 16 bytes as hex */
-            printk("    Sector 0 bytes: ");
-            for (vt = 0; vt < 16; vt++)
-                printk("%x ", (uint64_t)sect0[vt]);
-            printk("\n");
-
-            /* Check MBR signature (0x55AA at offset 510-511) */
-            if (sect0[510] == 0x55 && sect0[511] == 0xAA) {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("VirtIO-blk: sector 0 read OK (MBR signature found)\n");
-            } else {
-                fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-                printk("[OK] ");
-                fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-                printk("VirtIO-blk: sector 0 read OK (%u sectors total)\n",
-                       (uint64_t)virtio_blk_capacity());
-            }
+            klog(LOG_DEBUG, "test", "VirtIO-blk: sector 0 read OK (%u sectors)",
+                 (uint64_t)virtio_blk_capacity());
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("VirtIO-blk: sector 0 read failed\n");
+            klog(LOG_ERROR, "test", "VirtIO-blk: sector 0 read failed");
         }
     }
     /* === AHCI sector 0 test === */
@@ -892,28 +703,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         uint32_t at;
         int arc;
 
-        printk("\n  AHCI test: reading sector 0\n");
-
         for (at = 0; at < 512; at++)
             asect0[at] = 0;
 
         arc = ahci_read(0, 0, 1, asect0);
         if (arc == 0) {
-            printk("    Sector 0 bytes: ");
-            for (at = 0; at < 16; at++)
-                printk("%x ", (uint64_t)asect0[at]);
-            printk("\n");
-
-            fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-            printk("[OK] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("AHCI: sector 0 read OK (%u sectors total)\n",
-                   (uint64_t)ahci_capacity(0));
+            klog(LOG_DEBUG, "test", "AHCI: sector 0 read OK (%u sectors)",
+                 (uint64_t)ahci_capacity(0));
         } else {
-            fb_set_color(FB_COLOR_RED, FB_COLOR_BG_DEFAULT);
-            printk("[FAIL] ");
-            fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-            printk("AHCI: sector 0 read failed\n");
+            klog(LOG_ERROR, "test", "AHCI: sector 0 read failed");
         }
     }
     /* === User mode test === (SKIPPED — hangs due to ring 3 transition issue) */
@@ -923,61 +721,38 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         syscall_init();
         task_create_user(user_test_func, "UserTest");
-
-        printk("\n  User mode test: ring 3 program calls sys_write\n");
         scheduler_enable();
-
-        /* Main thread sleeps while user task runs */
         sleep_ms(500);
-
         scheduler_disable();
-
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("User mode test passed\n");
+        klog(LOG_DEBUG, "test", "User mode test passed");
     }
 
     /* === Exec test: load and run an ELF from C:\ === */
     {
         extern void exec_loader_func(void);
 
-        printk("\n  Exec test: load hello.exe from C:\\\n");
-
-        /* The exec loader is a kernel task that loads the ELF binary.
-         * We use a kernel task because exec needs to read from C:\
-         * (which requires kernel-mode VFS access) before switching to user mode. */
         task_create(exec_loader_func, "ExecLoader");
         scheduler_enable();
         sleep_ms(500);
         scheduler_disable();
-
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Exec test passed\n");
+        klog(LOG_DEBUG, "test", "Exec test passed");
     }
 
     /* === Fork test: fork a user process, child prints, parent waits === */
     {
         extern void fork_test_func(void);
 
-        printk("\n  Fork test: fork + waitpid\n");
         task_create_user(fork_test_func, "ForkTest");
         scheduler_enable();
         sleep_ms(800);
         scheduler_disable();
-
-        fb_set_color(FB_COLOR_GREEN, FB_COLOR_BG_DEFAULT);
-        printk("[OK] ");
-        fb_set_color(FB_COLOR_FG_DEFAULT, FB_COLOR_BG_DEFAULT);
-        printk("Fork test passed\n");
+        klog(LOG_DEBUG, "test", "Fork test passed");
     }
 #else
     /* Initialize syscalls (needed even without tests) */
     syscall_init();
-    printk("[OK] Syscall handler registered (INT 0x80)\n");
-    printk("[--] User mode / exec / fork tests skipped\n");
+    klog(LOG_INFO, "sys", "Syscall handler registered (INT 0x80)");
+    klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
 
     /* === Launch the shell === */
@@ -1605,19 +1380,19 @@ void shell_loader_func(void)
     uint8_t *buf;
 
     if (!vfs_is_mounted('C')) {
-        printk("[ShellLoader] C:\\ not mounted\n");
+        klog(LOG_WARN, "shell", "C:\\ not mounted");
         return;
     }
 
     file = vfs_open("C:\\shell.exe", VFS_O_READ);
     if (!file) {
-        printk("[ShellLoader] shell.exe not found on C:\\\n");
+        klog(LOG_WARN, "shell", "shell.exe not found on C:\\");
         return;
     }
 
     buf = (uint8_t *)kmalloc(file->size);
     if (!buf) {
-        printk("[ShellLoader] cannot allocate buffer\n");
+        klog(LOG_ERROR, "shell", "cannot allocate buffer");
         vfs_close(file);
         return;
     }
@@ -1626,7 +1401,7 @@ void shell_loader_func(void)
     vfs_close(file);
 
     if (task_exec(buf, file->size) < 0) {
-        printk("[ShellLoader] exec failed\n");
+        klog(LOG_ERROR, "shell", "exec failed");
         kfree(buf);
         return;
     }
