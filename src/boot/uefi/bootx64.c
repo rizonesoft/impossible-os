@@ -618,7 +618,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     fill_screen_black();
 
     /* Step 3: Load kernel ELF */
-    efi_print(u"Loading kernel...\r\n");
+    /* (No screen text — kernel boot splash handles all visuals) */
     status = load_kernel(&kernel_entry);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] Kernel load failed\r\n");
