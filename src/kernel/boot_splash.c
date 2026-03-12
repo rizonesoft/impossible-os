@@ -177,7 +177,14 @@ static void splash_draw_text(const char *text, uint32_t color)
     }
 }
 
-/* Draw the 5 horizontal dots with current animation state */
+/* Draw the 5 horizontal dots with current animation state.
+ *
+ * Windows 11 style: exactly ONE dot pulses at a time, left to right.
+ * Each dot gets FRAMES_PER_DOT frames to grow→shrink, then the next
+ * dot takes over. Total cycle = NUM_DOTS * FRAMES_PER_DOT frames. */
+#define FRAMES_PER_DOT  6  /* frames for one dot's grow→shrink cycle */
+#define TOTAL_CYCLE     (NUM_DOTS * FRAMES_PER_DOT)  /* 30 frames */
+
 static void splash_draw_dots(void)
 {
     /* Clear dot area */
@@ -187,36 +194,40 @@ static void splash_draw_dots(void)
     uint32_t area_y = dot_cy - DOT_MAX_R - 4;
     splash_fill_rect(area_x, area_y, area_w, area_h, 0x000000);
 
+    /* Which dot is currently active? */
+    uint32_t frame = anim_frame;
+    uint32_t cycle_pos = frame % TOTAL_CYCLE;
+    uint32_t active_dot = cycle_pos / FRAMES_PER_DOT;
+    uint32_t sub_frame = cycle_pos % FRAMES_PER_DOT;
+
+    /* Sub-frame maps to a triangle: 0→1→2→3→2→1 (grow then shrink) */
+    int32_t half = FRAMES_PER_DOT / 2;  /* = 3 */
+    int32_t intensity;
+    if ((int32_t)sub_frame < half)
+        intensity = (int32_t)sub_frame;        /* 0, 1, 2 */
+    else
+        intensity = FRAMES_PER_DOT - 1 - (int32_t)sub_frame;  /* 2, 1, 0 */
+
     for (uint32_t i = 0; i < NUM_DOTS; i++) {
         int32_t x = (int32_t)dot_cx
                    + (int32_t)(i * DOT_SPACING)
                    - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
         int32_t y = (int32_t)dot_cy;
 
-        /* Phase for this dot (offset by i*3 frames).
-         * With 5 dots and 16-frame cycle: phases 0,3,6,9,12 — all distinct. */
-        uint32_t frame = anim_frame;
-        int32_t phase = ((int32_t)frame - (int32_t)i * 3 + 160) % PULSE_FRAMES;
-
-        /* Size curve: triangle wave over PULSE_FRAMES */
-        int32_t half = PULSE_FRAMES / 2;
-        int32_t size_idx;
-        if (phase < half)
-            size_idx = phase;
-        else
-            size_idx = PULSE_FRAMES - 1 - phase;
-
-        /* Map size_idx (0..5) to radius (DOT_MIN_R..DOT_MAX_R) */
-        int32_t r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * size_idx / (half - 1);
-        if (r < DOT_MIN_R) r = DOT_MIN_R;
-        if (r > DOT_MAX_R) r = DOT_MAX_R;
-
-        /* Brightness also pulses: dim when small, bright when large */
+        int32_t r;
         uint32_t brightness;
-        if (size_idx <= 1)      brightness = 0x44;
-        else if (size_idx == 2) brightness = 0x88;
-        else if (size_idx == 3) brightness = 0xBB;
-        else                    brightness = 0xFF;
+
+        if (i == active_dot) {
+            /* This dot is pulsing: map intensity 0..2 to radius + brightness */
+            r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / (half - 1);
+            if (intensity == 0)      brightness = 0x66;
+            else if (intensity == 1) brightness = 0xCC;
+            else                     brightness = 0xFF;
+        } else {
+            /* Resting dot: small and dim */
+            r = DOT_MIN_R;
+            brightness = 0x44;
+        }
 
         uint32_t color = (brightness << 16) | (brightness << 8) | brightness;
         splash_draw_dot(x, y, r, color);
