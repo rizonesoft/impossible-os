@@ -415,9 +415,13 @@
 | 🔵 P4 | **Marvell/Aquantia AQC** | AQC107, AQC108, AQC113 (2.5G/5G/10G) | ~1.5% | FreeBSD `atlantic(4)` | BSD-2 | Port |
 | 🔵 P4 | **Intel i210/i211** | I210-AT, I211-AT (server/NAS boards) | ~1% | FreeBSD `igb(4)` | BSD-2 | Port |
 | 🔵 P4 | **Broadcom bnxt** | BCM57301, BCM57414 (NetXtreme-E) | ~0.5% | FreeBSD `bnxt(4)` | BSD-2 | Port |
+| 🔵 P4 | **Marvell Yukon** | 88E8040, 88E8056, 88E8058 (older laptops) | ~0.5% | FreeBSD `msk(4)` | BSD-2 | Port |
+| 🔵 P4 | **Qualcomm atl1c** | AR8131, AR8132, AR8152 (older Atheros) | ~0.5% | OpenBSD `alc(4)` | ISC | Port |
+| 🔵 P4 | **Realtek RTL8153** | RTL8153, RTL8156 (USB 3.0 GbE dongles) | ~0.5% | Scratch (USB CDC-ECM) | — | Scratch |
+| 🔵 P4 | **ASIX AX88179** | AX88179, AX88772 (USB Ethernet dongles) | ~0.5% | FreeBSD `axge(4)` | BSD-2 | Port |
 | — | **RTL8139** | RTL8139C/D (100Mbps) | ~1% | Already have | MIT | Convert |
 | — | **VirtIO-net** | QEMU/KVM paravirtual | VMs | SerenityOS | BSD-2 | Port |
-| | | | **~95%+** | | | |
+| | | | **~98%+** | | | |
 
 ### WiFi (Stretch — requires 802.11 MAC + WPA supplicant infrastructure)
 
