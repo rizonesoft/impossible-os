@@ -87,12 +87,13 @@ if ($vmExists) {
 }
 
 # ---- VM Settings ----
+# VMSVGA is required for UEFI guests (VBoxVGA has no EFI GOP support)
 & $VBOX modifyvm $VM_NAME `
     --memory 2048 `
     --cpus 1 `
     --firmware efi `
-    --graphicscontroller vboxvga `
-    --vram 64 `
+    --graphicscontroller vmsvga `
+    --vram 128 `
     --mouse ps2 `
     --keyboard ps2 `
     --audio-driver none `
@@ -102,6 +103,10 @@ if ($vmExists) {
     --boot2 none `
     --boot3 none `
     --boot4 none
+
+# Set resolution hint for the VMSVGA adapter
+& $VBOX setextradata $VM_NAME "CustomVideoMode1" "1280x720x32"
+& $VBOX setextradata $VM_NAME "VBoxInternal2/EfiGraphicsResolution" "1280x720"
 
 # Attach disk
 & $VBOX storageattach $VM_NAME `
