@@ -184,7 +184,7 @@ static void splash_draw_text(const char *text, uint32_t color)
  * starts growing WHILE the previous one is still shrinking.
  * This overlap creates the smooth "wave" effect seen in Windows 11. */
 #define PULSE_LEN   8   /* frames for one dot's full grow→peak→shrink */
-#define STAGGER     4   /* frames offset between consecutive dots */
+#define STAGGER     2   /* frames offset between consecutive dots (starts: 0,2,4,6,8) */
 /* Total cycle: last dot finishes PULSE_LEN frames after it starts,
  * which is at (NUM_DOTS-1)*STAGGER + PULSE_LEN.
  * Add a small rest gap before the wave restarts. */
