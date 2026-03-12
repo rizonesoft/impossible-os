@@ -177,13 +177,25 @@ static void splash_draw_text(const char *text, uint32_t color)
     }
 }
 
-/* Draw the 5 horizontal dots with current animation state.
+/* Draw the 5 horizontal dots with a smooth wave animation.
  *
- * Windows 11 style: exactly ONE dot pulses at a time, left to right.
- * Each dot gets FRAMES_PER_DOT frames to grow→shrink, then the next
- * dot takes over. Total cycle = NUM_DOTS * FRAMES_PER_DOT frames. */
-#define FRAMES_PER_DOT  6  /* frames for one dot's grow→shrink cycle */
-#define TOTAL_CYCLE     (NUM_DOTS * FRAMES_PER_DOT)  /* 30 frames */
+ * Each dot has a pulse window of PULSE_LEN frames (grow → peak → shrink).
+ * Consecutive dots are staggered by STAGGER frames, so the next dot
+ * starts growing WHILE the previous one is still shrinking.
+ * This overlap creates the smooth "wave" effect seen in Windows 11. */
+#define PULSE_LEN   8   /* frames for one dot's full grow→peak→shrink */
+#define STAGGER     4   /* frames offset between consecutive dots */
+/* Total cycle: last dot finishes PULSE_LEN frames after it starts,
+ * which is at (NUM_DOTS-1)*STAGGER + PULSE_LEN.
+ * Add a small rest gap before the wave restarts. */
+#define REST_GAP    6   /* frames of rest before the wave repeats */
+#define TOTAL_CYCLE ((NUM_DOTS - 1) * STAGGER + PULSE_LEN + REST_GAP)
+
+/* Smooth pulse curve: maps phase (0..PULSE_LEN-1) to intensity (0..4).
+ * Shape: ramp up → hold peak → ramp down.
+ *   phase: 0  1  2  3  4  5  6  7
+ *   value: 0  2  4  4  4  2  1  0  */
+static const int32_t pulse_curve[8] = { 0, 2, 4, 4, 4, 2, 1, 0 };
 
 static void splash_draw_dots(void)
 {
@@ -194,19 +206,8 @@ static void splash_draw_dots(void)
     uint32_t area_y = dot_cy - DOT_MAX_R - 4;
     splash_fill_rect(area_x, area_y, area_w, area_h, 0x000000);
 
-    /* Which dot is currently active? */
     uint32_t frame = anim_frame;
     uint32_t cycle_pos = frame % TOTAL_CYCLE;
-    uint32_t active_dot = cycle_pos / FRAMES_PER_DOT;
-    uint32_t sub_frame = cycle_pos % FRAMES_PER_DOT;
-
-    /* Sub-frame maps to a triangle: 0→1→2→3→2→1 (grow then shrink) */
-    int32_t half = FRAMES_PER_DOT / 2;  /* = 3 */
-    int32_t intensity;
-    if ((int32_t)sub_frame < half)
-        intensity = (int32_t)sub_frame;        /* 0, 1, 2 */
-    else
-        intensity = FRAMES_PER_DOT - 1 - (int32_t)sub_frame;  /* 2, 1, 0 */
 
     for (uint32_t i = 0; i < NUM_DOTS; i++) {
         int32_t x = (int32_t)dot_cx
@@ -214,20 +215,23 @@ static void splash_draw_dots(void)
                    - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
         int32_t y = (int32_t)dot_cy;
 
-        int32_t r;
-        uint32_t brightness;
+        /* This dot's phase within the wave */
+        int32_t dot_start = (int32_t)i * STAGGER;
+        int32_t phase = (int32_t)cycle_pos - dot_start;
 
-        if (i == active_dot) {
-            /* This dot is pulsing: map intensity 0..2 to radius + brightness */
-            r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / (half - 1);
-            if (intensity == 0)      brightness = 0x66;
-            else if (intensity == 1) brightness = 0xCC;
-            else                     brightness = 0xFF;
-        } else {
-            /* Resting dot: small and dim */
-            r = DOT_MIN_R;
-            brightness = 0x44;
+        int32_t intensity = 0;  /* 0 = resting */
+        if (phase >= 0 && phase < PULSE_LEN) {
+            intensity = pulse_curve[phase];
         }
+
+        /* Map intensity (0..4) to radius and brightness */
+        int32_t r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / 4;
+        uint32_t brightness;
+        if (intensity == 0)      brightness = 0x44;  /* resting */
+        else if (intensity == 1) brightness = 0x77;
+        else if (intensity == 2) brightness = 0xAA;
+        else if (intensity == 3) brightness = 0xDD;
+        else                     brightness = 0xFF;  /* peak */
 
         uint32_t color = (brightness << 16) | (brightness << 8) | brightness;
         splash_draw_dot(x, y, r, color);
