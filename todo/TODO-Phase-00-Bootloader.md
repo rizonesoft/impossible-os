@@ -1,4 +1,4 @@
-# Phase 17 — Bootloader & Secure Boot
+# Phase 00 — Bootloader Hardening & Secure Boot
 
 > **Goal:** Harden the UEFI bootloader for real-world hardware. Implement Secure Boot
 > support via the shim chain-loading approach, sign our bootloader with a Machine Owner
