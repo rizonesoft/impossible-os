@@ -174,7 +174,7 @@ void icon_draw(gfx_surface_t *s, const icon_bitmap_t *bmp,
 void icon_draw_scaled(gfx_surface_t *s, system_icon_t id,
                        int32_t x, int32_t y, uint32_t target_size);
 
-/* Get the current default icon color (from Codex theme). */
+/* Get the current default icon color (from Registry theme). */
 gfx_color_t icon_get_theme_color(void);
 
 /* Set the default icon color for monochrome icons. */

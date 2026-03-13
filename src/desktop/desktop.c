@@ -2,7 +2,7 @@
  * desktop.c — Desktop shell (wallpaper, taskbar, start menu)
  *
  * - Loads JPEG/PNG wallpaper from C:\ via image_load() + image_scale()
- * - Reads wallpaper path and fit mode from Codex (System\Theme)
+ * - Reads wallpaper path and fit mode from Registry (HKLM\SYSTEM\Theme)
  * - Draws a taskbar at the bottom with start button, window list, clock
  * - Draws a start menu popup with app launcher items
  * ============================================================================ */
@@ -174,7 +174,7 @@ void desktop_init(void)
     start_menu_open  = 0;
     prev_left        = 0;
 
-    /* Load wallpaper from Codex path (JPEG/PNG, runtime decoded) */
+    /* Load wallpaper from Registry path (JPEG/PNG, runtime decoded) */
     load_wallpaper();
 
     /* Load start button icon from C:\ */

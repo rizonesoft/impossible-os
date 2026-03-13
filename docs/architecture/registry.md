@@ -254,13 +254,4 @@ This makes key lookup case-insensitive (matching Windows behavior).
 
 ---
 
-## Legacy: Codex (to be removed)
-
-| File | Purpose |
-|------|---------|\
-| `include/codex.h` | Type definitions, structs, API declarations |
-| `src/kernel/codex.c` | In-memory tree implementation |
-
-The Codex uses linked-list children (O(n) lookup), 256-key / 512-value pools,
-and INI-style `.codex` persistence files. It will be fully replaced once the
-Registry API layer (§1.2+) and migration are complete.
+*Legacy Codex code (`codex.h`, `codex.c`) was removed in §3.3 after full migration to the Win32-compatible Registry API.*

@@ -214,13 +214,15 @@
 
 ### 3.3 Delete Old Codex Code
 
-**Prompt:** After all call sites are migrated and defaults re-mapped, delete the old Codex files. Remove `include/codex.h` and `src/kernel/codex.c`. Verify no remaining references to `codex_` functions or `#include "codex.h"` exist in the codebase. Remove the Codex "Legacy" section from `docs/architecture/registry.md`. Run `bash scripts/build.sh clean` and confirm zero warnings. Commit as `"registry: remove legacy codex code"`.
+**Prompt:** Verify the Codex cleanup. Confirm `include/codex.h` and `src/kernel/codex.c` no longer exist. Grep for `codex_` in all `.c` and `.h` files — only architectural comments in `registry.h` should remain. Confirm the Legacy Codex section in `docs/architecture/registry.md` has been replaced with a tombstone note. Confirm stale "Codex" comments in `panic.h`, `icon_store.h`, and `desktop.c` have been updated to say "Registry". Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Delete `include/codex.h`
-- [ ] Delete `src/kernel/codex.c`
-- [ ] Grep codebase for any remaining `codex_` references
-- [ ] Remove Codex "Legacy" section from `docs/architecture/registry.md`
-- [ ] Commit: `"registry: remove legacy codex code"`
+- [x] Delete `include/codex.h`
+- [x] Delete `src/kernel/codex.c`
+- [x] Grep codebase for any remaining `codex_` references
+- [x] Remove Codex "Legacy" section from `docs/architecture/registry.md`
+- [x] Clean stale Codex comments in `panic.h`, `icon_store.h`, `desktop.c`
+- [x] Commit: `"registry: remove legacy codex code"`
+
 
 ---
 

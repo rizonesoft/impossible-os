@@ -7,7 +7,7 @@
  *   - Source file + line (via __FILE__, __LINE__)
  *   - Full register dump (RAX–R15, RSP, RFLAGS, CR2, CR3)
  *   - Stack trace (RBP chain walk)
- *   - Auto-restart countdown (configurable via Codex)
+ *   - Auto-restart countdown (configurable via Registry)
  *   - Crash dump to C:\Impossible\System\crashdump.log
  * ============================================================================ */
 
