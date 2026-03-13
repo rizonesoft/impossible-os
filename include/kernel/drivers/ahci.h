@@ -88,10 +88,18 @@
 #define FIS_TYPE_PIO_SETUP  0x5F   /* PIO Setup FIS */
 
 /* ---- ATA commands ---- */
-#define ATA_CMD_IDENTIFY     0xEC
-#define ATA_CMD_READ_DMA_EX  0x25   /* READ DMA EXT (LBA48) */
-#define ATA_CMD_WRITE_DMA_EX 0x35   /* WRITE DMA EXT (LBA48) */
-#define ATA_CMD_CACHE_FLUSH_EX 0xEA /* CACHE FLUSH EXT */
+#define ATA_CMD_IDENTIFY         0xEC
+#define ATA_CMD_IDENTIFY_PACKET  0xA1   /* IDENTIFY PACKET DEVICE (ATAPI) */
+#define ATA_CMD_PACKET           0xA0   /* PACKET command (ATAPI) */
+#define ATA_CMD_READ_DMA_EX      0x25   /* READ DMA EXT (LBA48) */
+#define ATA_CMD_WRITE_DMA_EX     0x35   /* WRITE DMA EXT (LBA48) */
+#define ATA_CMD_CACHE_FLUSH_EX   0xEA   /* CACHE FLUSH EXT */
+
+/* ---- SCSI commands (used inside ATAPI PACKET) ---- */
+#define SCSI_TEST_UNIT_READY  0x00
+#define SCSI_INQUIRY          0x12
+#define SCSI_READ_CAPACITY    0x25   /* READ CAPACITY (10) */
+#define SCSI_READ_10          0x28   /* READ (10) */
 
 /* ---- FIS: Register Host to Device (20 bytes) ---- */
 struct fis_reg_h2d {
@@ -150,10 +158,12 @@ struct ahci_cmd_tbl {
 
 /* ---- AHCI port state ---- */
 struct ahci_port {
-    uint8_t  active;       /* 1 if SATA drive attached */
+    uint8_t  active;       /* 1 if drive attached */
     uint8_t  port_num;     /* Physical port number */
+    uint8_t  is_atapi;     /* 1 if ATAPI (optical) device */
     uint32_t sig;          /* Port signature */
-    uint64_t sectors;      /* Total sector count (from IDENTIFY) */
+    uint32_t sector_size;  /* Bytes per sector (512 for HDD, 2048 for optical) */
+    uint64_t sectors;      /* Total sector count */
     char     model[41];    /* Model string (null-terminated) */
     char     serial[21];   /* Serial number (null-terminated) */
     volatile uint8_t *regs; /* Port register base (MMIO) */
@@ -165,21 +175,18 @@ struct ahci_port {
 /* Max ports supported */
 #define AHCI_MAX_PORTS  32
 
-/* ---- API ---- */
+/* ---- API: SATA drives ---- */
 
-/* Initialize the AHCI driver and detect SATA drives. Returns 0 on success. */
+/* Initialize the AHCI driver and detect SATA/ATAPI devices. */
 int ahci_init(void);
 
-/* Read 'count' sectors starting at LBA into 'buffer'.
- * port_idx is the index into detected ports (0-based).
- * Returns 0 on success, -1 on error. */
+/* Read 'count' 512-byte sectors starting at LBA into 'buffer'. */
 int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer);
 
-/* Write 'count' sectors starting at LBA from 'buffer'.
- * Returns 0 on success, -1 on error. */
+/* Write 'count' 512-byte sectors starting at LBA from 'buffer'. */
 int ahci_write(int port_idx, uint64_t lba, uint32_t count, const void *buffer);
 
-/* Get total capacity in 512-byte sectors for a given port. */
+/* Get total capacity in 512-byte sectors for a given SATA port. */
 uint64_t ahci_capacity(int port_idx);
 
 /* Check if any AHCI device was detected and initialized. */
@@ -187,3 +194,17 @@ int ahci_present(void);
 
 /* Get number of detected SATA drives. */
 int ahci_drive_count(void);
+
+/* ---- API: ATAPI (optical) devices ---- */
+
+/* Get number of detected ATAPI devices. */
+int ahci_atapi_count(void);
+
+/* Read 'count' 2048-byte sectors starting at LBA from ATAPI device. */
+int ahci_atapi_read(int atapi_idx, uint64_t lba, uint32_t count, void *buffer);
+
+/* Get total capacity in 2048-byte sectors for an ATAPI device. */
+uint64_t ahci_atapi_capacity(int atapi_idx);
+
+/* Get sector size for an ATAPI device (typically 2048). */
+uint32_t ahci_atapi_sector_size(int atapi_idx);

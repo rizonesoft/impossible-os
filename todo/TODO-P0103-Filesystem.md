@@ -65,20 +65,16 @@
 
 ### 1.4 ATAPI (IDE/SATA Optical) Driver
 
-**Prompt:** ATAPI devices appear on AHCI ports with device signature `0xEB140101` (vs `0x00000101` for disk). Reuse the existing AHCI infrastructure from `ahci.c` but send SCSI PACKET commands instead of ATA commands. Key SCSI commands: INQUIRY (0x12, device identification), READ(10) (0x28, read sectors), GET CAPACITY (0x25, disc size). ATAPI uses 2048-byte sectors (not 512). Register as a blkdev (e.g., "cdrom0") with `sector_size = 2048`. Test with `qemu -cdrom test.iso`. After completing all items, update `docs/architecture/storage-drivers.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: ATAPI optical disc driver"`.
+**Verification prompt:** Verify ATAPI optical disc driver correctness: 1) `ahci.c port_init()` accepts `AHCI_SIG_ATAPI` (`0xEB140101`) and sets `is_atapi=1`, `sector_size=2048`. 2) `atapi_do_identify()` uses `ATA_CMD_IDENTIFY_PACKET` (`0xA1`). 3) `atapi_read_capacity()` sends SCSI READ CAPACITY (`0x25`) and parses big-endian response. 4) `atapi_do_read()` sends SCSI READ(10) (`0x28`) with correct CDB layout. 5) `atapi_packet_cmd()` sets bit 5 (ATAPI) in command header flags and copies 12-byte CDB to `acmd[]`. 6) `main.c` registers ATAPI devices as `cdrom0` with `sector_size=2048` and `write=NULL`. 7) Makefile optical tests use `-device ide-cd,bus=ahci0.1`. Run `bash scripts/build.sh clean` and verify `BUILD OK`. Check `docs/architecture/storage-filesystem.md` has ATAPI section. Verify commit `"drivers: ATAPI optical disc driver"` exists.
 
-
-> Required for CD/DVD/Blu-ray reading. ATAPI devices appear on AHCI ports
-> with a different device signature (0xEB140101 vs 0x00000101 for disk).
-
-- [ ] Detect ATAPI device signature on AHCI ports
-- [ ] Implement SCSI INQUIRY command via AHCI ATAPI command format
-- [ ] Implement SCSI READ(10) / READ(12) — read sectors from optical media
-- [ ] Implement SCSI GET CAPACITY — determine disc size
-- [ ] Register as blkdev (e.g., "cdrom0") with 2048-byte sector size
-- [ ] QEMU flag: `-cdrom build/test-disks/optical/iso9660.iso`
-- [ ] Test: `make run-test DISK=optical/iso9660`
-- [ ] Commit: `"drivers: ATAPI optical disc driver"`
+- [x] Detect ATAPI device signature on AHCI ports
+- [x] Implement SCSI INQUIRY command via AHCI ATAPI command format
+- [x] Implement SCSI READ(10) / READ(12) — read sectors from optical media
+- [x] Implement SCSI GET CAPACITY — determine disc size
+- [x] Register as blkdev (e.g., "cdrom0") with 2048-byte sector size
+- [x] QEMU flag: `-device ide-cd,drive=cdrom0,bus=ahci0.1`
+- [x] Test: `make run-test DISK=optical/iso9660`
+- [x] Commit: `"drivers: ATAPI optical disc driver"`
 
 ### 1.3 Block Device Abstraction Layer ✅
 

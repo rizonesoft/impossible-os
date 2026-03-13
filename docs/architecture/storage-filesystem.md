@@ -213,8 +213,42 @@ Example boot output:
 | `ahci_write(port, lba, count, buf)` | Write sectors via WRITE DMA EXT |
 | `ahci_identify(port)` | Get model, serial, capacity |
 | `ahci_capacity(port)` | Total sectors for given port |
-| `ahci_present()` | Check if any SATA drive initialized |
+| `ahci_present()` | Check if any SATA/ATAPI device initialized |
 | `ahci_drive_count()` | Number of detected SATA drives |
+| `ahci_atapi_count()` | Number of detected ATAPI (optical) devices |
+| `ahci_atapi_read(idx, lba, count, buf)` | Read 2048-byte sectors via SCSI READ(10) |
+| `ahci_atapi_capacity(idx)` | Total 2048-byte sectors on disc |
+| `ahci_atapi_sector_size(idx)` | Sector size (typically 2048) |
+
+### ATAPI (Optical Disc) Support
+
+ATAPI devices (CD/DVD/Blu-ray drives) appear on AHCI ports with signature
+`0xEB140101` (vs `0x00000101` for SATA disks). The driver detects this during
+port enumeration and uses SCSI packet commands instead of ATA commands.
+
+| Property | Value |
+|----------|-------|
+| Detection | AHCI port signature `0xEB140101` |
+| Identify | `ATA_CMD_IDENTIFY_PACKET` (`0xA1`) |
+| Command model | SCSI CDBs via `ATA_CMD_PACKET` (`0xA0`), using `acmd[16]` in command table |
+| Sector size | 2048 bytes (standard optical media) |
+| Read-only | Write callback is NULL |
+| blkdev name | `cdrom0`, `cdrom1`, etc. |
+
+**SCSI Commands Used:**
+
+| Command | Opcode | Purpose |
+|---------|--------|---------|
+| TEST UNIT READY | `0x00` | Check if disc is present |
+| INQUIRY | `0x12` | Device identification |
+| READ CAPACITY (10) | `0x25` | Get disc size and block size |
+| READ (10) | `0x28` | Read sectors from disc |
+
+**QEMU flags:**
+```
+-drive id=cdrom0,file=test.iso,format=raw,if=none,media=cdrom
+-device ide-cd,drive=cdrom0,bus=ahci0.1
+```
 
 ## Block Device Abstraction Layer
 

@@ -94,6 +94,13 @@ static int blkdev_ahci_write(uint64_t lba, uint32_t count, const void *buf,
     return ahci_write(port_idx, lba, count, (void *)buf);
 }
 
+static int blkdev_atapi_read(uint64_t lba, uint32_t count, void *buf,
+                              void *driver_data)
+{
+    int atapi_idx = (int)(uintptr_t)driver_data;
+    return ahci_atapi_read(atapi_idx, lba, count, buf);
+}
+
 static int blkdev_ata_read(uint64_t lba, uint32_t count, void *buf,
                             void *driver_data)
 {
@@ -211,6 +218,22 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 bd.read  = blkdev_ahci_read;
                 bd.write = blkdev_ahci_write;
                 bd.driver_data  = (void *)(uintptr_t)di;
+                blkdev_register(&bd);
+            }
+        }
+
+        /* AHCI / ATAPI (optical) devices */
+        {
+            int ai;
+            for (ai = 0; ai < ahci_atapi_count(); ai++) {
+                bd = (struct blkdev){0};
+                bd.name[0]='c'; bd.name[1]='d'; bd.name[2]='r'; bd.name[3]='o';
+                bd.name[4]='m'; bd.name[5]='0' + (char)ai; bd.name[6]='\0';
+                bd.sector_size  = ahci_atapi_sector_size(ai);
+                bd.sector_count = ahci_atapi_capacity(ai);
+                bd.read  = blkdev_atapi_read;
+                bd.write = NULL;  /* Optical media is read-only */
+                bd.driver_data  = (void *)(uintptr_t)ai;
                 blkdev_register(&bd);
             }
         }

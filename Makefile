@@ -318,14 +318,15 @@ run-test: all test-disks
 	fi; \
 	cp $(OVMF_VARS) $(OVMF_VARS_CP); \
 	if echo "$(DISK)" | grep -q "optical/"; then \
-		echo "[TEST] Attaching $$TEST_FILE as CD-ROM"; \
+		echo "[TEST] Attaching $$TEST_FILE as ATAPI CD-ROM on AHCI port 1"; \
 		$(QEMU) \
 			-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 			-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 			-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+			-drive id=cdrom0,file=$$TEST_FILE,format=raw,if=none,media=cdrom \
 			-device ich9-ahci,id=ahci0 \
 			-device ide-hd,drive=disk0,bus=ahci0.0 \
-			-cdrom $$TEST_FILE \
+			-device ide-cd,drive=cdrom0,bus=ahci0.1 \
 			-m 2G -serial stdio -vga none \
 			-device VGA,xres=1280,yres=720 \
 			-device rtl8139,netdev=net0 -netdev user,id=net0 \
