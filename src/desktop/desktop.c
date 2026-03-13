@@ -45,7 +45,7 @@ static uint8_t   start_icon_loaded;
 #define SM_RIGHT_ICON_SZ   32   /* icon size for right column (IRES native) */
 #define SM_BTN_SZ          36   /* bottom icon button size     */
 #define SM_PAD             14   /* inner padding (more air)    */
-#define SM_RADIUS          10   /* rounded corner radius       */
+#define SM_RADIUS          8    /* rounded corner radius       */
 #define SM_ACRYLIC_TINT    0xFF202020  /* neutral dark gray (matches taskbar) */
 #define SM_ACRYLIC_OP      200  /* acrylic opacity — matches taskbar (78% tint) */
 #define SM_BG_RIGHT        0xE6282828  /* right column (slightly lighter gray) */
