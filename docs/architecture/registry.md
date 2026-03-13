@@ -118,6 +118,17 @@ HKCR (HKEY_CLASSES_ROOT) → merged view of HKLM\SOFTWARE\Classes
 | `ERROR_MORE_DATA` | 234 | Buffer too small |
 | `ERROR_NO_MORE_ITEMS` | 259 | Enumeration complete |
 
+### Win32 Value Operations (§2.2)
+
+| Function | Description |
+|----------|-------------|
+| `RegSetValueEx(hKey, name, 0, type, data, size)` | Create/update value; empty name = "(Default)" |
+| `RegQueryValueEx(hKey, name, 0, &type, data, &size)` | Read value; `ERROR_MORE_DATA` if small buffer |
+| `RegGetValue(hKey, subKey, name, flags, &type, data, &size)` | Open+query+auto-expand EXPAND_SZ |
+| `RegDeleteValue(hKey, name)` | Remove named value |
+
+**RRF flags** for `RegGetValue`: `RRF_RT_REG_SZ`, `RRF_RT_REG_DWORD`, `RRF_RT_REG_QWORD`, `RRF_RT_REG_BINARY`, `RRF_RT_ANY`, `RRF_NOEXPAND`.
+
 ### Value Types
 
 | Constant | Value | Description |

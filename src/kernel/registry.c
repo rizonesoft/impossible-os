@@ -128,7 +128,7 @@ static reg_key_t *reg_alloc_key(const char *name)
     return k;
 }
 
-static reg_value_t __attribute__((unused)) *reg_alloc_value(const char *name, uint32_t type)
+static reg_value_t *reg_alloc_value(const char *name, uint32_t type)
 {
     reg_value_t *v;
 
@@ -957,4 +957,247 @@ long RegDeleteTree(HKEY hKey, const char *lpSubKey)
     reg_remove_child(target->parent, target);
 
     return ERROR_SUCCESS;
+}
+
+/* ============================================================================
+ * §2.2  Win32-Compatible Value Operations
+ * ============================================================================ */
+
+/* ---- Helper: memcpy ---- */
+
+static void reg_memcpy(void *dst, const void *src, uint32_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    uint32_t i;
+    for (i = 0; i < n; i++)
+        d[i] = s[i];
+}
+
+/* ---- Helper: find value by name in a key ---- */
+
+static reg_value_t *reg_find_value_in_key(reg_key_t *key, const char *name)
+{
+    reg_value_t *v;
+    if (!key) return (reg_value_t *)0;
+
+    v = key->values;
+    while (v) {
+        /* Compare: empty name matches empty name (default value) */
+        if ((!name || name[0] == '\0') && v->name[0] == '\0')
+            return v;
+        if (name && reg_stricmp(v->name, name) == 0)
+            return v;
+        v = v->next;
+    }
+    return (reg_value_t *)0;
+}
+
+/* ---- RegSetValueEx ---- */
+
+long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
+                   uint32_t dwType, const uint8_t *lpData, uint32_t cbData)
+{
+    reg_key_t *key;
+    reg_value_t *v;
+    const char *vname;
+
+    (void)Reserved;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    if (cbData > REG_MAX_VALUE_SIZE)
+        return ERROR_INVALID_PARAMETER;
+
+    /* NULL or empty = default value (stored with empty name) */
+    vname = (lpValueName && lpValueName[0] != '\0') ? lpValueName : "";
+
+    /* Find existing or allocate new */
+    v = reg_find_value_in_key(key, vname);
+    if (!v) {
+        v = reg_alloc_value(vname, dwType);
+        if (!v)
+            return ERROR_OUTOFMEMORY;
+        /* Add to key's value list */
+        v->next = key->values;
+        key->values = v;
+        key->value_count++;
+    }
+
+    /* Update value */
+    v->type = dwType;
+    v->data_size = cbData;
+    if (lpData && cbData > 0)
+        reg_memcpy(v->data, lpData, cbData);
+
+    /* Timestamp */
+    key->last_write_time = reg_now();
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegQueryValueEx ---- */
+
+long RegQueryValueEx(HKEY hKey, const char *lpValueName,
+                     uint32_t *lpReserved,
+                     uint32_t *lpType, uint8_t *lpData,
+                     uint32_t *lpcbData)
+{
+    reg_key_t *key;
+    reg_value_t *v;
+
+    (void)lpReserved;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    v = reg_find_value_in_key(key, lpValueName);
+    if (!v)
+        return ERROR_FILE_NOT_FOUND;
+
+    /* Return type if requested */
+    if (lpType)
+        *lpType = v->type;
+
+    /* Return size / data */
+    if (lpcbData) {
+        if (!lpData) {
+            /* Caller just wants the required size */
+            *lpcbData = v->data_size;
+            return ERROR_SUCCESS;
+        }
+        if (*lpcbData < v->data_size) {
+            *lpcbData = v->data_size;
+            return ERROR_MORE_DATA;
+        }
+        reg_memcpy(lpData, v->data, v->data_size);
+        *lpcbData = v->data_size;
+    } else if (lpData) {
+        /* No size pointer but data pointer — copy what we can */
+        reg_memcpy(lpData, v->data, v->data_size);
+    }
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegGetValue ---- */
+
+long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
+                 uint32_t dwFlags, uint32_t *pdwType,
+                 void *pvData, uint32_t *pcbData)
+{
+    reg_key_t *base;
+    reg_key_t *target;
+    reg_value_t *v;
+    uint32_t type;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+
+    /* Walk to sub-key if specified */
+    if (lpSubKey && lpSubKey[0] != '\0')
+        target = reg_walk_path(base, lpSubKey, 0);
+    else
+        target = base;
+
+    if (!target)
+        return ERROR_FILE_NOT_FOUND;
+
+    v = reg_find_value_in_key(target, lpValue);
+    if (!v)
+        return ERROR_FILE_NOT_FOUND;
+
+    type = v->type;
+
+    /* Type filtering */
+    if ((dwFlags & RRF_RT_ANY) != RRF_RT_ANY && dwFlags != 0) {
+        int ok = 0;
+        if ((dwFlags & RRF_RT_REG_SZ)        && type == REG_SZ)        ok = 1;
+        if ((dwFlags & RRF_RT_REG_EXPAND_SZ) && type == REG_EXPAND_SZ) ok = 1;
+        if ((dwFlags & RRF_RT_REG_BINARY)    && type == REG_BINARY)    ok = 1;
+        if ((dwFlags & RRF_RT_REG_DWORD)     && type == REG_DWORD)     ok = 1;
+        if ((dwFlags & RRF_RT_REG_QWORD)     && type == REG_QWORD)     ok = 1;
+        /* REG_SZ flag also accepts REG_EXPAND_SZ (auto-expanded) */
+        if ((dwFlags & RRF_RT_REG_SZ) && type == REG_EXPAND_SZ)        ok = 1;
+        if (!ok)
+            return ERROR_FILE_NOT_FOUND;
+    }
+
+    if (pdwType)
+        *pdwType = type;
+
+    /* Auto-expand REG_EXPAND_SZ unless RRF_NOEXPAND */
+    if (type == REG_EXPAND_SZ && !(dwFlags & RRF_NOEXPAND) && pvData && pcbData) {
+        char expanded[REG_MAX_VALUE_SIZE];
+        uint32_t exp_len = reg_expand_sz((const char *)v->data, expanded,
+                                          REG_MAX_VALUE_SIZE);
+        if (exp_len == 0)
+            return ERROR_FILE_NOT_FOUND;
+
+        if (*pcbData < exp_len) {
+            *pcbData = exp_len;
+            return ERROR_MORE_DATA;
+        }
+        reg_memcpy(pvData, expanded, exp_len);
+        *pcbData = exp_len;
+        if (pdwType)
+            *pdwType = REG_SZ;  /* expanded result is plain string */
+        return ERROR_SUCCESS;
+    }
+
+    /* Normal copy */
+    if (pcbData) {
+        if (!pvData) {
+            *pcbData = v->data_size;
+            return ERROR_SUCCESS;
+        }
+        if (*pcbData < v->data_size) {
+            *pcbData = v->data_size;
+            return ERROR_MORE_DATA;
+        }
+        reg_memcpy(pvData, v->data, v->data_size);
+        *pcbData = v->data_size;
+    }
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegDeleteValue ---- */
+
+long RegDeleteValue(HKEY hKey, const char *lpValueName)
+{
+    reg_key_t *key;
+    reg_value_t **pp;
+    const char *vname;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    vname = (lpValueName && lpValueName[0] != '\0') ? lpValueName : "";
+
+    pp = &key->values;
+    while (*pp) {
+        int match;
+        if (vname[0] == '\0')
+            match = ((*pp)->name[0] == '\0');
+        else
+            match = (reg_stricmp((*pp)->name, vname) == 0);
+
+        if (match) {
+            reg_value_t *doomed = *pp;
+            *pp = doomed->next;
+            doomed->name[0] = '\0';
+            doomed->next = (reg_value_t *)0;
+            key->value_count--;
+            key->last_write_time = reg_now();
+            return ERROR_SUCCESS;
+        }
+        pp = &(*pp)->next;
+    }
+    return ERROR_FILE_NOT_FOUND;
 }

@@ -249,3 +249,34 @@ long RegDeleteKey(HKEY hKey, const char *lpSubKey);
 
 /* Recursively delete a sub-key and all its children + values. */
 long RegDeleteTree(HKEY hKey, const char *lpSubKey);
+
+/* ---- RegGetValue flags (RRF_*) ---- */
+
+#define RRF_RT_REG_SZ        0x00000002   /* Accept REG_SZ results         */
+#define RRF_RT_REG_EXPAND_SZ 0x00000004   /* Accept REG_EXPAND_SZ          */
+#define RRF_RT_REG_BINARY    0x00000008   /* Accept REG_BINARY             */
+#define RRF_RT_REG_DWORD     0x00000010   /* Accept REG_DWORD              */
+#define RRF_RT_REG_QWORD     0x00000040   /* Accept REG_QWORD              */
+#define RRF_RT_ANY           0x0000FFFF   /* Accept any type               */
+#define RRF_NOEXPAND         0x10000000   /* Don't expand REG_EXPAND_SZ    */
+
+/* ---- Win32-Compatible Value Operations (§2.2) ---- */
+
+/* Set or create a named value under hKey.
+ * NULL/empty valueName = default "(Default)" value. */
+long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
+                   uint32_t dwType, const uint8_t *lpData, uint32_t cbData);
+
+/* Query a named value.  If buffer too small, sets *lpcbData to required
+ * size and returns ERROR_MORE_DATA.  If lpData is NULL, just returns size. */
+long RegQueryValueEx(HKEY hKey, const char *lpValueName, uint32_t *lpReserved,
+                     uint32_t *lpType, uint8_t *lpData, uint32_t *lpcbData);
+
+/* Convenience: open subKey + query value + optional REG_EXPAND_SZ expansion.
+ * dwFlags: RRF_RT_* for type filtering, RRF_NOEXPAND to skip expansion. */
+long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
+                 uint32_t dwFlags, uint32_t *pdwType,
+                 void *pvData, uint32_t *pcbData);
+
+/* Delete a named value from hKey. */
+long RegDeleteValue(HKEY hKey, const char *lpValueName);

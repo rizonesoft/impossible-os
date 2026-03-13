@@ -111,24 +111,24 @@
 
 ### 2.2 Value Operations
 
-**Prompt:** Implement the Win32 value read/write operations. `RegSetValueEx(hKey, valueName, reserved, type, data, dataSize)` creates or updates a named value under `hKey`. If `valueName` is NULL or empty string, it sets the key's default "(Default)" value. `RegQueryValueEx(hKey, valueName, reserved, &type, data, &dataSize)` reads a value — if the buffer is too small, it sets `*dataSize` to the required size and returns `ERROR_MORE_DATA`. `RegGetValue` is a convenience wrapper that can auto-expand `REG_EXPAND_SZ` strings. `RegDeleteValue` removes a named value. Mark the containing root tree as dirty after every write. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: value operations (get, set, delete)"`. Update `README.md` if it contains stale or incorrect references to registry value operations. Create or update documentation in `docs/` covering the value operation API, ERROR_MORE_DATA handling, and default values.
+**Prompt:** Verify the Win32 value operations implementation. Confirm `registry.h` declares `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue` with correct Win32 signatures, and `RRF_*` flags (`RRF_RT_REG_SZ`, `RRF_RT_REG_EXPAND_SZ`, `RRF_RT_REG_BINARY`, `RRF_RT_REG_DWORD`, `RRF_RT_REG_QWORD`, `RRF_RT_ANY`, `RRF_NOEXPAND`). In `registry.c`, verify: `reg_find_value_in_key` matches empty name for default values. `RegSetValueEx` creates or updates values, stores data via `reg_memcpy`, updates `last_write_time`. `RegQueryValueEx` returns `ERROR_MORE_DATA` when `*lpcbData < v->data_size`, returns size when `lpData=NULL`. `RegGetValue` walks subkey, filters by `RRF_RT_*` type flags, auto-expands `REG_EXPAND_SZ` via `reg_expand_sz` unless `RRF_NOEXPAND`, sets `*pdwType=REG_SZ` after expansion. `RegDeleteValue` unlinks value from chain and decrements `value_count`. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Implement `RegSetValueEx(hKey, valueName, reserved, type, data, dataSize)`:
-  - [ ] Create value if it doesn't exist, update if it does
-  - [ ] Support all `REG_*` types
-  - [ ] Handle NULL/empty valueName as "(Default)" value
-  - [ ] Mark hive as dirty
-  - [ ] Update key's `last_write_time`
-- [ ] Implement `RegQueryValueEx(hKey, valueName, reserved, &type, data, &dataSize)`:
-  - [ ] Return `ERROR_MORE_DATA` if buffer too small (set required size)
-  - [ ] Return `ERROR_FILE_NOT_FOUND` if value doesn't exist
-  - [ ] If `data` is NULL, just return the required size
-- [ ] Implement `RegGetValue(hKey, subKey, valueName, flags, &type, data, &dataSize)`:
-  - [ ] Combines open + query in one call
-  - [ ] `RRF_RT_REG_SZ` flag: auto-expand `REG_EXPAND_SZ`
-  - [ ] `RRF_NOEXPAND` flag: return unexpanded string
-- [ ] Implement `RegDeleteValue(hKey, valueName)` — remove named value
-- [ ] Commit: `"registry: value operations (get, set, delete)"`
+- [x] Implement `RegSetValueEx(hKey, valueName, reserved, type, data, dataSize)`:
+  - [x] Create value if it doesn't exist, update if it does
+  - [x] Support all `REG_*` types
+  - [x] Handle NULL/empty valueName as "(Default)" value
+  - [x] Mark hive as dirty
+  - [x] Update key's `last_write_time`
+- [x] Implement `RegQueryValueEx(hKey, valueName, reserved, &type, data, &dataSize)`:
+  - [x] Return `ERROR_MORE_DATA` if buffer too small (set required size)
+  - [x] Return `ERROR_FILE_NOT_FOUND` if value doesn't exist
+  - [x] If `data` is NULL, just return the required size
+- [x] Implement `RegGetValue(hKey, subKey, valueName, flags, &type, data, &dataSize)`:
+  - [x] Combines open + query in one call
+  - [x] `RRF_RT_REG_SZ` flag: auto-expand `REG_EXPAND_SZ`
+  - [x] `RRF_NOEXPAND` flag: return unexpanded string
+- [x] Implement `RegDeleteValue(hKey, valueName)` — remove named value
+- [x] Commit: `"registry: value operations (get, set, delete)"`
 
 ### 2.3 Enumeration
 
