@@ -182,6 +182,7 @@ void gfx_mica(gfx_surface_t *s, int32_t x, int32_t y,
 
 void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
                       uint32_t w, uint32_t h, uint32_t radius,
+                      uint32_t corner_radius,
                       int32_t offset_x, int32_t offset_y,
                       gfx_color_t color)
 {
@@ -209,12 +210,13 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
     /* Clear to transparent */
     gfx_clear(&shadow, GFX_COLOR_TRANSPARENT);
 
-    /* Draw the shadow shape as a WHITE rect — after blur, the red channel
-     * becomes the gradient intensity (0 at edges, 255 at center).
-     * We then multiply by master_a during compositing. */
-    gfx_fill_rect(&shadow, (int32_t)radius, (int32_t)radius, w, h, 0xFFFFFFFF);
+    /* Draw the shadow shape as a WHITE rounded rect to match window corners.
+     * After blur, the red channel becomes the gradient intensity. */
+    gfx_fill_rounded_rect(&shadow, (int32_t)radius, (int32_t)radius,
+                          w, h, corner_radius, 0xFFFFFFFF);
 
-    /* Blur the shadow */
+    /* Double blur pass for smoother Gaussian-like falloff */
+    gfx_blur_rect(&shadow, 0, 0, shadow_w, shadow_h, radius);
     gfx_blur_rect(&shadow, 0, 0, shadow_w, shadow_h, radius);
 
     /* Blit the blurred shadow onto the target surface with alpha */

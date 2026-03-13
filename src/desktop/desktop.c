@@ -640,7 +640,7 @@ void desktop_draw_start_menu(void)
 
     /* ---- Drop shadow (AFTER acrylic so it doesn't darken blur input) ---- */
     gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                     12, 0, 4, SM_SHADOW_COLOR);
+                     12, SM_RADIUS, 0, 4, SM_SHADOW_COLOR);
 
     /* ---- Right column: darker overlay via alpha blend (NOT gfx_acrylic,
      *       which would add double noise on top of the main acrylic) ---- */

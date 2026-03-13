@@ -524,6 +524,7 @@ static void draw_decorations(const struct wm_window *w)
                     (uint32_t)w->x, (uint32_t)w->y,
                     ow, oh,
                     focused ? 10 : 5,
+                    WM_CORNER_RADIUS,
                     0, focused ? 3 : 2,
                     focused ? 0x78000000 : 0x40000000);
 
@@ -950,14 +951,22 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                 windows[i].drag_offset_x = mx - new_x;
                 windows[i].drag_offset_y = my - new_y;
 
-                /* Compute union of old and new rects as dirty region */
+                /* Compute union of old and new rects as dirty region.
+                 * Expand by shadow margin (blur radius + y-offset) so the
+                 * shadow doesn't leave trails outside the dirty rect. */
                 {
+                    int32_t shadow_margin = 10 * 2 + 3;  /* radius*2 + max offset */
                     int32_t min_x = old_x < new_x ? old_x : new_x;
                     int32_t min_y = old_y < new_y ? old_y : new_y;
                     int32_t max_r = (old_x + ow) > (new_x + ow)
                                   ? (old_x + ow) : (new_x + ow);
                     int32_t max_b = (old_y + oh) > (new_y + oh)
                                   ? (old_y + oh) : (new_y + oh);
+                    /* Expand for shadow */
+                    min_x -= shadow_margin;
+                    min_y -= shadow_margin;
+                    max_r += shadow_margin;
+                    max_b += shadow_margin;
                     /* Clamp to screen */
                     if (min_x < 0) min_x = 0;
                     if (min_y < 0) min_y = 0;

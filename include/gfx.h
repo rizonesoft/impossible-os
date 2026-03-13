@@ -164,9 +164,10 @@ void gfx_mica(gfx_surface_t *s, int32_t x, int32_t y,
                uint32_t w, uint32_t h,
                const gfx_surface_t *wallpaper, gfx_color_t tint);
 
-/* Multi-layer drop shadow (blurred rect composited behind element) */
+/* Multi-layer drop shadow (blurred rounded rect composited behind element) */
 void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
                       uint32_t w, uint32_t h, uint32_t radius,
+                      uint32_t corner_radius,
                       int32_t offset_x, int32_t offset_y,
                       gfx_color_t color);
 
