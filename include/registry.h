@@ -215,6 +215,10 @@ reg_key_t *reg_resolve_hkcu(void);
  *  and will be handled by RegQueryValueEx in a future step.) */
 reg_key_t *reg_resolve_hkcr(void);
 
+/* Populate factory-default values in the registry tree.
+ * Maps old Codex paths to Win32-style paths under HKLM/HKU. */
+void registry_populate_defaults(void);
+
 /* ---- Handle pool ---- */
 
 #define REG_HANDLE_POOL_SIZE  128   /* Max simultaneously open handles */

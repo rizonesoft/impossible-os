@@ -164,6 +164,25 @@ Index-based enumeration scans hash buckets linearly (`reg_get_child_by_index`). 
 
 **Migrated files:** `main.c`, `panic.c`, `swap.c`, `desktop.c`.
 
+### Default Value Mapping (§3.2)
+
+`registry_populate_defaults()` populates 32 factory defaults at boot:
+
+| Old Codex Path | Win32 Registry Path | Values |
+|---------------|---------------------|--------|
+| `System\Display` | `HKLM\SYSTEM\Display` | Width, Height, DPI, Scale |
+| `System\Theme` | `HKLM\SYSTEM\Theme` | AccentColor, DarkMode, Font, FontSize, CornerRadius, Wallpaper, WallpaperMode, EnableAnimations |
+| `System\Shell` | `HKLM\SYSTEM\Shell` | TaskbarHeight, TaskbarPosition, ShowClock, ShowStartButton |
+| `System\Network` | `HKLM\SYSTEM\Network` | Hostname, DHCP, DNS |
+| `System\DateTime` | `HKLM\SYSTEM\DateTime` | Use24Hour, DateFormat, TimezoneOffset, TimezoneName, NTPEnabled |
+| `System\Recovery` | `HKLM\SYSTEM\Recovery` | AutoRestart |
+| `System\Memory` | `HKLM\SYSTEM\Memory` | SwapSlots |
+| `Hardware\CPU` | `HKLM\HARDWARE\CPU` | Vendor, Model |
+| `Hardware\Memory` | `HKLM\HARDWARE\Memory` | TotalMB, FreeMB |
+| `User\Default` | `HKU\Default` | HomeDir, Shell |
+| `User\Default\Shell` | `HKU\Default\Shell` | Prompt |
+| `User\Default\Desktop` | `HKU\Default\Desktop` | Wallpaper |
+
 ### Value Types
 
 | Constant | Value | Description |

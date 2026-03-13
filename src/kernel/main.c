@@ -348,11 +348,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
-    boot_splash_status("Loading system configuration...");
+    boot_splash_status("Loading registry...");
     boot_splash_tick();
 
     /* Initialize the Windows-compatible Registry */
     registry_init();
+    registry_populate_defaults();
 
     /* Initialize memory-mapped files subsystem */
     mmap_init();

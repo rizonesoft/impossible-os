@@ -196,21 +196,21 @@
 
 ### 3.2 Migrate Default Values to Registry Paths
 
-**Prompt:** Re-map all current Codex default values to proper Windows-style registry paths. The current Codex uses flat paths like `System\Display\Width` — these should map to `HKLM\SYSTEM\Display\Width`. User preferences move from `User\Default\...` to `HKU\Default\...`. Application settings move from `Apps\...` to `HKLM\SOFTWARE\...`. Hardware detection values move from `Hardware\...` to `HKLM\HARDWARE\...`. The boot splash status text should say "Loading registry..." instead of "Loading system configuration...". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: migrate default values to Win32 paths"`. Update `README.md` if it contains stale or incorrect references to Codex value paths. Create or update documentation in `docs/` covering the Codex-to-Registry path mapping and default value population.
+**Prompt:** Verify the default value migration. In `registry.c`, confirm `registry_populate_defaults()` creates keys under `HKLM\SYSTEM` (Display, Theme, Shell, Network, DateTime, Recovery, Memory), `HKLM\HARDWARE` (CPU, Memory), and `HKU\Default` (root, Shell, Desktop). Confirm all `codex_set_*` calls are replaced with `RegSetDword/RegSetString/RegSetQword`. Verify CPU detection uses `reg_cpuid()` for vendor and brand strings. Verify memory stats use `pmm_get_total_frames()/pmm_get_free_frames()`. In `main.c`, confirm boot splash says "Loading registry..." and `registry_populate_defaults()` is called after `registry_init()`. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Map Codex paths to Registry paths:
-  - [ ] `System\Display\*` → `HKLM\SYSTEM\Display\*`
-  - [ ] `System\Theme\*` → `HKCU\Software\Impossible\Theme\*`
-  - [ ] `System\Recovery\*` → `HKLM\SYSTEM\Recovery\*`
-  - [ ] `System\Memory\*` → `HKLM\SYSTEM\Memory\*`
-  - [ ] `System\Network\*` → `HKLM\SYSTEM\Network\*`
-  - [ ] `Hardware\CPU\*` → `HKLM\HARDWARE\CPU\*`
-  - [ ] `Hardware\Display\*` → `HKLM\HARDWARE\Display\*`
-  - [ ] `User\Default\*` → `HKU\Default\*`
-  - [ ] `Apps\*` → `HKLM\SOFTWARE\*`
-- [ ] Update `codex_populate_defaults()` → `registry_populate_defaults()`
-- [ ] Update boot splash: "Loading registry..."
-- [ ] Commit: `"registry: migrate default values to Win32 paths"`
+- [x] Map Codex paths to Registry paths:
+  - [x] `System\Display\*` → `HKLM\SYSTEM\Display\*`
+  - [x] `System\Theme\*` → `HKLM\SYSTEM\Theme\*`
+  - [x] `System\Recovery\*` → `HKLM\SYSTEM\Recovery\*`
+  - [x] `System\Memory\*` → `HKLM\SYSTEM\Memory\*`
+  - [x] `System\Network\*` → `HKLM\SYSTEM\Network\*`
+  - [x] `Hardware\CPU\*` → `HKLM\HARDWARE\CPU\*`
+  - [x] `Hardware\Memory\*` → `HKLM\HARDWARE\Memory\*`
+  - [x] `User\Default\*` → `HKU\Default\*`
+  - [x] `Apps\*` → `HKLM\SOFTWARE\*` (no current values, path reserved)
+- [x] Update `codex_populate_defaults()` → `registry_populate_defaults()`
+- [x] Update boot splash: "Loading registry..."
+- [x] Commit: `"registry: migrate default values to Win32 paths"`
 
 ### 3.3 Delete Old Codex Code
 

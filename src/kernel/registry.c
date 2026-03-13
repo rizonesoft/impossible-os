@@ -1508,3 +1508,197 @@ long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
     RegCloseKey(hKey);
     return rc;
 }
+
+/* ============================================================================
+ * §3.2  Populate Factory Defaults (Win32 paths)
+ * ============================================================================ */
+
+/* CPUID helper */
+static void reg_cpuid(uint32_t leaf, uint32_t *eax, uint32_t *ebx,
+                      uint32_t *ecx, uint32_t *edx)
+{
+    __asm__ volatile ("cpuid"
+        : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
+        : "a"(leaf));
+}
+
+/* External: framebuffer dimensions */
+extern uint32_t fb_get_width(void);
+extern uint32_t fb_get_height(void);
+
+/* External: PMM stats */
+extern uint64_t pmm_get_total_frames(void);
+extern uint64_t pmm_get_free_frames(void);
+
+void registry_populate_defaults(void)
+{
+    HKEY hKey = (HKEY)0;
+    uint32_t disp;
+    uint32_t count = 0;
+
+    if (!registry_ready) return;
+
+    /* --- HKLM\SYSTEM\Display --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Display", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "Width",  fb_get_width());
+        RegSetDword(hKey, "Height", fb_get_height());
+        RegSetDword(hKey, "DPI",    96);
+        RegSetDword(hKey, "Scale",  100);
+        RegCloseKey(hKey);
+        count += 4;
+    }
+
+    /* --- HKLM\SYSTEM\Theme --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Theme", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "AccentColor",  "#0078D4");
+        RegSetDword(hKey, "DarkMode",       1);
+        RegSetString(hKey, "Font",         "Selawik");
+        RegSetDword(hKey, "FontSize",      12);
+        RegSetDword(hKey, "CornerRadius",  8);
+        RegSetString(hKey, "Wallpaper",    "C:\\Impossible\\Wallpapers\\default.jpg");
+        RegSetString(hKey, "WallpaperMode", "stretch");
+        RegSetDword(hKey, "EnableAnimations", 1);
+        RegCloseKey(hKey);
+        count += 8;
+    }
+
+    /* --- HKLM\SYSTEM\Shell --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Shell", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "TaskbarHeight",    48);
+        RegSetString(hKey, "TaskbarPosition", "bottom");
+        RegSetDword(hKey, "ShowClock",         1);
+        RegSetDword(hKey, "ShowStartButton",   1);
+        RegCloseKey(hKey);
+        count += 4;
+    }
+
+    /* --- HKLM\SYSTEM\Network --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Network", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "Hostname", "IMPOSSIBLE-PC");
+        RegSetDword(hKey, "DHCP",      1);
+        RegSetString(hKey, "DNS",      "8.8.8.8");
+        RegCloseKey(hKey);
+        count += 3;
+    }
+
+    /* --- HKLM\SYSTEM\DateTime --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\DateTime", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "Use24Hour",       0);
+        RegSetString(hKey, "DateFormat",    "MM/DD/YYYY");
+        RegSetDword(hKey, "TimezoneOffset", 0);
+        RegSetString(hKey, "TimezoneName",  "UTC");
+        RegSetDword(hKey, "NTPEnabled",      1);
+        RegCloseKey(hKey);
+        count += 5;
+    }
+
+    /* --- HKLM\SYSTEM\Recovery --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Recovery", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "AutoRestart", 30);
+        RegCloseKey(hKey);
+        count += 1;
+    }
+
+    /* --- HKLM\SYSTEM\Memory --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Memory", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetDword(hKey, "SwapSlots", 64);
+        RegCloseKey(hKey);
+        count += 1;
+    }
+
+    /* --- HKLM\HARDWARE\CPU --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\CPU", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        {
+            char vendor[13];
+            uint32_t eax, ebx, ecx, edx;
+            reg_cpuid(0, &eax, &ebx, &ecx, &edx);
+            {
+                uint32_t *v32 = (uint32_t *)vendor;
+                v32[0] = ebx;
+                v32[1] = edx;
+                v32[2] = ecx;
+            }
+            vendor[12] = '\0';
+            RegSetString(hKey, "Vendor", vendor);
+        }
+        {
+            char brand[49];
+            uint32_t leaf, idx = 0;
+            uint32_t eax, ebx, ecx, edx;
+            for (leaf = 0x80000002; leaf <= 0x80000004; leaf++) {
+                reg_cpuid(leaf, &eax, &ebx, &ecx, &edx);
+                {
+                    uint32_t *b32 = (uint32_t *)&brand[idx];
+                    b32[0] = eax; b32[1] = ebx;
+                    b32[2] = ecx; b32[3] = edx;
+                }
+                idx += 16;
+            }
+            brand[48] = '\0';
+            {
+                const char *p = brand;
+                while (*p == ' ') p++;
+                RegSetString(hKey, "Model", p);
+            }
+        }
+        RegCloseKey(hKey);
+        count += 2;
+    }
+
+    /* --- HKLM\HARDWARE\Memory --- */
+    if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\Memory", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        uint64_t total_mb = (pmm_get_total_frames() * 4096) / (1024 * 1024);
+        uint64_t free_mb  = (pmm_get_free_frames()  * 4096) / (1024 * 1024);
+        RegSetQword(hKey, "TotalMB", total_mb);
+        RegSetQword(hKey, "FreeMB",  free_mb);
+        RegCloseKey(hKey);
+        count += 2;
+    }
+
+    /* --- HKU\Default --- */
+    if (RegCreateKeyEx(HKEY_USERS, "Default", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "HomeDir", "C:\\Users\\Default");
+        RegSetString(hKey, "Shell",   "C:\\shell.exe");
+        RegCloseKey(hKey);
+        count += 2;
+    }
+
+    if (RegCreateKeyEx(HKEY_USERS, "Default\\Shell", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "Prompt", "C:\\>");
+        RegCloseKey(hKey);
+        count += 1;
+    }
+
+    if (RegCreateKeyEx(HKEY_USERS, "Default\\Desktop", 0,
+                       (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                       &hKey, &disp) == ERROR_SUCCESS) {
+        RegSetString(hKey, "Wallpaper", "C:\\Impossible\\Wallpapers\\default.jpg");
+        RegCloseKey(hKey);
+        count += 1;
+    }
+
+    klog(LOG_DEBUG, "registry", "Registry defaults populated (%u values)",
+           (uint64_t)count);
+}
