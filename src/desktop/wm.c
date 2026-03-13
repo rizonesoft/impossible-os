@@ -586,11 +586,11 @@ static void draw_decorations(const struct wm_window *w)
                 }
                 if (cnt > 0) {
                     sr /= cnt; sg /= cnt; sb /= cnt;
-                    /* 60% desaturation — 40% of original hue preserved */
+                    /* 65% desaturation — 35% of original hue preserved */
                     uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
-                    sr = (sr * 102 + gray * 153) / 255;
-                    sg = (sg * 102 + gray * 153) / 255;
-                    sb = (sb * 102 + gray * 153) / 255;
+                    sr = (sr * 89 + gray * 166) / 255;
+                    sg = (sg * 89 + gray * 166) / 255;
+                    sb = (sb * 89 + gray * 166) / 255;
                     ((struct wm_window *)w)->mica_color =
                         0xFF000000 | (sr << 16) | (sg << 8) | sb;
                 }
@@ -609,7 +609,7 @@ static void draw_decorations(const struct wm_window *w)
             uint32_t mg = (w->mica_color >>  8) & 0xFF;
             uint32_t mb =  w->mica_color        & 0xFF;
             uint32_t lum = (77 * mr + 150 * mg + 29 * mb) >> 8;
-            uint32_t target = 32;   /* closer to black, subtle tint */
+            uint32_t target = 28;   /* very dark, subtle tint */
 
             if (lum > 5) {
                 mr = mr * target / lum;
