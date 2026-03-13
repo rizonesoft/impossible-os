@@ -38,8 +38,8 @@
 /* ---- Color palette for decorations ---- */
 
 /* Windows 11 Dark Theme — neutral grays */
-#define WM_COLOR_TITLEBAR_ACTIVE   0xFF202020   /* active title bar          */
-#define WM_COLOR_TITLEBAR_INACTIVE 0xFF383838   /* inactive title bar (lighter) */
+#define WM_COLOR_TITLEBAR_ACTIVE   0xFF202020   /* active fallback (Mica overrides) */
+#define WM_COLOR_TITLEBAR_INACTIVE 0xFF383838   /* inactive: flat gray, no Mica    */
 #define WM_COLOR_TITLE_TEXT        0xFFFFFFFF   /* active title text         */
 #define WM_COLOR_TITLE_INACTIVE    0xFF999999   /* inactive title text       */
 #define WM_COLOR_BORDER_ACTIVE     0xFF3A3A3A   /* subtle dark outline       */

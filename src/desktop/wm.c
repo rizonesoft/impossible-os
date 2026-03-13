@@ -550,15 +550,21 @@ static void draw_decorations(const struct wm_window *w)
                               inner_r, WM_COLOR_CLIENT_BG);
     }
 
-    /* ---- 4. Title bar with cached Mica tint ---- */
+    /* ---- 4. Title bar — Win11-style Mica ----
+     *
+     * Active:   wallpaper sample → 50% desaturate → scale luminance to 38.
+     *           Proportional scaling preserves the hue while guaranteeing
+     *           the bar is always dark and the tint is always visible.
+     *
+     * Inactive: flat neutral gray (WM_COLOR_TITLEBAR_INACTIVE), no Mica.
+     *           Always lighter than the active bar — no wallpaper tint.
+     */
     {
         uint32_t inner_r = (WM_CORNER_RADIUS > 1) ? WM_CORNER_RADIUS - 1 : 0;
-        uint32_t tb_base  = focused ? WM_COLOR_TITLEBAR_ACTIVE
-                                    : WM_COLOR_TITLEBAR_INACTIVE;
+        uint32_t tb_color;
 
-        /* mica_color caches the desaturated wallpaper SAMPLE (not the final
-         * blended color) so that active vs inactive tb_base produces
-         * different results each frame without resampling the wallpaper. */
+        /* Cache the desaturated wallpaper sample (shared across focus states,
+         * resampled when window moves or wallpaper changes). */
         if (w->mica_color == 0 || w->acrylic_dirty) {
             gfx_surface_t wp;
             if (desktop_get_wallpaper_surface(&wp) == 0) {
@@ -580,35 +586,48 @@ static void draw_decorations(const struct wm_window *w)
                 }
                 if (cnt > 0) {
                     sr /= cnt; sg /= cnt; sb /= cnt;
-                    /* Light desaturation (25%) — keep most of the hue */
+                    /* 50% desaturation — strong mute, but keeps enough hue
+                     * for the tint to be clearly visible after scaling */
                     uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
-                    sr = (sr * 191 + gray * 64) / 255;
-                    sg = (sg * 191 + gray * 64) / 255;
-                    sb = (sb * 191 + gray * 64) / 255;
-                    /* Store desaturated wallpaper sample (not final blend) */
+                    sr = (sr * 128 + gray * 127) / 255;
+                    sg = (sg * 128 + gray * 127) / 255;
+                    sb = (sb * 128 + gray * 127) / 255;
                     ((struct wm_window *)w)->mica_color =
                         0xFF000000 | (sr << 16) | (sg << 8) | sb;
                 }
             }
             if (w->mica_color == 0)
-                ((struct wm_window *)w)->mica_color = 0xFF202020;
+                ((struct wm_window *)w)->mica_color = 0xFF262626;
             ((struct wm_window *)w)->acrylic_dirty = 0;
         }
 
-        /* Blend cached wallpaper sample with current focus-dependent base */
-        uint32_t tb_color;
-        {
-            uint32_t sr = (w->mica_color >> 16) & 0xFF;
-            uint32_t sg = (w->mica_color >>  8) & 0xFF;
-            uint32_t sb =  w->mica_color        & 0xFF;
-            uint32_t br = (tb_base >> 16) & 0xFF;
-            uint32_t bg = (tb_base >>  8) & 0xFF;
-            uint32_t bb =  tb_base        & 0xFF;
-            /* 60% base + 40% wallpaper sample */
-            br = (br * 153 + sr * 102) / 255;
-            bg = (bg * 153 + sg * 102) / 255;
-            bb = (bb * 153 + sb * 102) / 255;
-            tb_color = 0xFF000000 | (br << 16) | (bg << 8) | bb;
+        if (focused) {
+            /* Active: scale mica sample to fixed dark luminance.
+             * Proportional scaling preserves hue ratios (the tint)
+             * while clamping brightness so the bar is always darker
+             * than the inactive bar and the tint is always visible. */
+            uint32_t mr = (w->mica_color >> 16) & 0xFF;
+            uint32_t mg = (w->mica_color >>  8) & 0xFF;
+            uint32_t mb =  w->mica_color        & 0xFF;
+            uint32_t lum = (77 * mr + 150 * mg + 29 * mb) >> 8;
+            uint32_t target = 38;   /* dark, but tint clearly visible */
+
+            if (lum > 5) {
+                mr = mr * target / lum;
+                mg = mg * target / lum;
+                mb = mb * target / lum;
+                if (mr > 255) mr = 255;
+                if (mg > 255) mg = 255;
+                if (mb > 255) mb = 255;
+            } else {
+                /* Near-black wallpaper — neutral dark fallback */
+                mr = mg = mb = target;
+            }
+            tb_color = 0xFF000000 | (mr << 16) | (mg << 8) | mb;
+        } else {
+            /* Inactive: flat neutral gray, no wallpaper tint.
+             * Always lighter than the active Mica bar. */
+            tb_color = WM_COLOR_TITLEBAR_INACTIVE;
         }
 
         /* Rounded rect for the top corners */
