@@ -150,6 +150,20 @@ Index-based enumeration scans hash buckets linearly (`reg_get_child_by_index`). 
 
 `RegGetString` accepts both `REG_SZ` and `REG_EXPAND_SZ`. `RegSetString` includes the null terminator. `RegReadKeyValue` always closes the handle, even on query failure.
 
+### Codex → Registry Migration (§3.1)
+
+| Old Codex API | New Registry API |
+|---------------|------------------|
+| `codex_init()` | `registry_init()` |
+| `codex_open(path)` | `RegOpenKeyEx(HKLM, path, ...)` |
+| `codex_create(path)` | `RegCreateKeyEx(HKLM, path, ...)` |
+| `codex_get_string()` | `RegGetString()` |
+| `codex_get_int32()` | `RegGetDword()` |
+| `codex_set_string()` | `RegSetString()` |
+| `codex_set_int32()` | `RegSetDword()` |
+
+**Migrated files:** `main.c`, `panic.c`, `swap.c`, `desktop.c`.
+
 ### Value Types
 
 | Constant | Value | Description |

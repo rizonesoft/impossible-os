@@ -9,7 +9,7 @@
  *   - Full register dump
  *   - Stack trace via RBP chain walk
  *   - Crash dump to C:\Impossible\System\crashdump.log
- *   - Auto-restart countdown (configurable via Codex)
+ *   - Auto-restart countdown (configurable via Registry)
  *
  * The blue screen uses direct framebuffer rendering (no compositor)
  * to ensure it works even when the graphics stack is broken.
@@ -22,7 +22,7 @@
 #include "kernel/printk.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"
-#include "codex.h"
+#include "registry.h"
 
 /* --- Constants --- */
 
@@ -286,7 +286,7 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     uint64_t rbp;
     uint32_t depth;
     int32_t restart_secs = 0;
-    int32_t codex_restart;
+    uint32_t reg_restart;
 
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
@@ -426,23 +426,32 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     fb_swap();
 
     /* === Auto-restart countdown === */
-    /* Check Codex for auto-restart preference */
+    /* Check Registry for auto-restart preference */
     {
-        codex_key_t *recovery_key = codex_open("System\\Recovery");
-        if (recovery_key) {
-            if (codex_get_int32(recovery_key, "AutoRestart", &codex_restart) == 0) {
-                restart_secs = codex_restart;
+        HKEY hRecovery = (HKEY)0;
+        long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Recovery",
+                               0, KEY_READ, &hRecovery);
+        if (rc == ERROR_SUCCESS) {
+            if (RegGetDword(hRecovery, "AutoRestart", &reg_restart)
+                == ERROR_SUCCESS) {
+                restart_secs = (int32_t)reg_restart;
             } else {
                 restart_secs = DEFAULT_RESTART_SECS;
-                /* Store the default for future reference */
-                codex_set_int32(recovery_key, "AutoRestart", DEFAULT_RESTART_SECS);
+                RegSetDword(hRecovery, "AutoRestart",
+                            (uint32_t)DEFAULT_RESTART_SECS);
             }
+            RegCloseKey(hRecovery);
         } else {
             /* Create the key with defaults */
-            recovery_key = codex_create("System\\Recovery");
-            if (recovery_key) {
-                codex_set_int32(recovery_key, "AutoRestart", DEFAULT_RESTART_SECS);
+            uint32_t disp;
+            rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Recovery",
+                                0, (const char *)0, 0, KEY_ALL_ACCESS,
+                                (void *)0, &hRecovery, &disp);
+            if (rc == ERROR_SUCCESS) {
+                RegSetDword(hRecovery, "AutoRestart",
+                            (uint32_t)DEFAULT_RESTART_SECS);
                 restart_secs = DEFAULT_RESTART_SECS;
+                RegCloseKey(hRecovery);
             }
         }
     }

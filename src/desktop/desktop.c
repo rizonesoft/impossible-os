@@ -23,7 +23,7 @@
 #include "kernel/acpi.h"
 #include "desktop/terminal.h"
 #include "kernel/image.h"        /* runtime JPEG/PNG decoding + scaling */
-#include "codex.h"               /* Codex registry for wallpaper settings */
+#include "registry.h"           /* Registry for wallpaper settings */
 #include "icon_store.h"          /* Color icon rendering from IRES */
 #include "gfx.h"                 /* Alpha blending for icon compositing */
 
@@ -192,7 +192,7 @@ static int str_eq(const char *a, const char *b)
 
 static void load_wallpaper(void)
 {
-    codex_key_t *theme_key;
+    HKEY hTheme = (HKEY)0;
     char wp_path[128];
     char wp_mode_str[16];
     image_fit_t fit_mode = IMAGE_FIT_STRETCH;
@@ -207,30 +207,35 @@ static void load_wallpaper(void)
     wallpaper_img.alloc_size = 0;
     wallpaper_img.from_pmm = 0;
 
-    /* Read wallpaper path from Codex (fall back to default) */
-    theme_key = codex_open("System\\Theme");
-    if (theme_key &&
-        codex_get_string(theme_key, "Wallpaper", wp_path, sizeof(wp_path)) == 0) {
-        /* Got path from Codex */
-    } else {
-        /* Default path */
-        const char *def = "C:\\Impossible\\Wallpapers\\default.jpg";
-        uint32_t i;
-        for (i = 0; def[i] && i < sizeof(wp_path) - 1; i++)
-            wp_path[i] = def[i];
-        wp_path[i] = '\0';
+    /* Read wallpaper path from Registry (fall back to default) */
+    {
+        long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Theme",
+                               0, KEY_READ, &hTheme);
+        if (rc == ERROR_SUCCESS &&
+            RegGetString(hTheme, "Wallpaper", wp_path, sizeof(wp_path))
+            == ERROR_SUCCESS) {
+            /* Got path from Registry */
+        } else {
+            /* Default path */
+            const char *def = "C:\\Impossible\\Wallpapers\\default.jpg";
+            uint32_t i;
+            for (i = 0; def[i] && i < sizeof(wp_path) - 1; i++)
+                wp_path[i] = def[i];
+            wp_path[i] = '\0';
+        }
     }
 
-    /* Read fit mode from Codex */
-    if (theme_key &&
-        codex_get_string(theme_key, "WallpaperMode", wp_mode_str,
-                         sizeof(wp_mode_str)) == 0) {
+    /* Read fit mode from Registry */
+    if (hTheme &&
+        RegGetString(hTheme, "WallpaperMode", wp_mode_str,
+                     sizeof(wp_mode_str)) == ERROR_SUCCESS) {
         if (str_eq(wp_mode_str, "fill"))        fit_mode = IMAGE_FIT_FILL;
         else if (str_eq(wp_mode_str, "fit"))    fit_mode = IMAGE_FIT_FIT;
         else if (str_eq(wp_mode_str, "center")) fit_mode = IMAGE_FIT_CENTER;
         else if (str_eq(wp_mode_str, "tile"))   fit_mode = IMAGE_FIT_TILE;
         else                                    fit_mode = IMAGE_FIT_STRETCH;
     }
+    if (hTheme) RegCloseKey(hTheme);
 
     /* Decode the image file (JPEG, PNG, BMP, GIF, TGA) */
     if (image_load(&decoded, wp_path) < 0) {

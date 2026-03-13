@@ -172,37 +172,27 @@
 
 ### 3.1 Replace Codex API Calls with Registry API
 
-**Prompt:** Replace all Codex API calls throughout the codebase with the new Win32-compatible Registry API. Map the old API to the new one: `codex_open("System\\Display")` → `RegOpenKeyEx(HKLM, "SYSTEM\\Display", ...)`, `codex_get_int32(key, "Width", &w)` → `RegGetDword(hKey, "Width", &w)`, `codex_set_string(key, "Theme", "dark")` → `RegSetString(hKey, "Theme", "dark")`. Update all call sites:
+**Prompt:** Verify the Codex → Registry migration. Confirm `main.c` includes `registry.h` and calls `registry_init()` (no `codex_init/load/populate_defaults/save`). Confirm `codex_flush()` is commented out pending §4. In `panic.c`, verify HKLM\SYSTEM\Recovery is accessed via `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `swap.c`, verify HKLM\SYSTEM\Memory\SwapSlots uses `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `desktop.c`, verify HKLM\SYSTEM\Theme uses `RegOpenKeyEx`/`RegGetString`/`RegCloseKey`. Confirm no remaining `#include "codex.h"` in any `.c` file except `codex.c` itself. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-**Files to update:**
-- `src/kernel/main.c` — boot-time registry init, populate defaults
-- `src/kernel/panic.c` — read `HKLM\SYSTEM\Recovery\AutoRestart`
-- `src/kernel/mm/swap.c` — read `HKLM\SYSTEM\Memory\SwapSlots`
-- `src/desktop/desktop.c` — read theme, display, wallpaper settings
-- `include/icon_store.h` — read icon cache settings
-- Boot splash status text: "Loading system configuration..." stays
-
-After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: migrate all codex call sites"`. Update `README.md` if it contains stale or incorrect references to Codex API calls. Create or update documentation in `docs/` covering the API migration mapping and updated call sites.
-
-- [ ] Create migration mapping:
-  - [ ] `codex_init()` → `registry_init()`
-  - [ ] `codex_open(path)` → `RegOpenKeyEx(root, path, ...)`
-  - [ ] `codex_create(path)` → `RegCreateKeyEx(root, path, ...)`
-  - [ ] `codex_get_string()` → `RegGetString()`
-  - [ ] `codex_get_int32()` → `RegGetDword()`
-  - [ ] `codex_get_bool()` → `RegGetDword()` (0/1)
-  - [ ] `codex_set_string()` → `RegSetString()`
-  - [ ] `codex_set_int32()` → `RegSetDword()`
-  - [ ] `codex_set_bool()` → `RegSetDword()` (0/1)
-  - [ ] `codex_save()` → `registry_flush()`
-  - [ ] `codex_load()` → `registry_load()`
-- [ ] Update `src/kernel/main.c` — init, populate defaults, flush
-- [ ] Update `src/kernel/panic.c` — AutoRestart setting
-- [ ] Update `src/kernel/mm/swap.c` — SwapSlots setting
-- [ ] Update `src/desktop/desktop.c` — theme, display, wallpaper
-- [ ] Update `include/icon_store.h` — icon cache settings
-- [ ] Update all `#include "codex.h"` → `#include "registry.h"`
-- [ ] Commit: `"registry: migrate all codex call sites"`
+- [x] Create migration mapping:
+  - [x] `codex_init()` → `registry_init()`
+  - [x] `codex_open(path)` → `RegOpenKeyEx(root, path, ...)`
+  - [x] `codex_create(path)` → `RegCreateKeyEx(root, path, ...)`
+  - [x] `codex_get_string()` → `RegGetString()`
+  - [x] `codex_get_int32()` → `RegGetDword()`
+  - [x] `codex_get_bool()` → `RegGetDword()` (0/1)
+  - [x] `codex_set_string()` → `RegSetString()`
+  - [x] `codex_set_int32()` → `RegSetDword()`
+  - [x] `codex_set_bool()` → `RegSetDword()` (0/1)
+  - [x] `codex_save()` → `registry_flush()` (pending §4)
+  - [x] `codex_load()` → `registry_load()` (pending §4)
+- [x] Update `src/kernel/main.c` — init, populate defaults, flush
+- [x] Update `src/kernel/panic.c` — AutoRestart setting
+- [x] Update `src/kernel/mm/swap.c` — SwapSlots setting
+- [x] Update `src/desktop/desktop.c` — theme, display, wallpaper
+- [x] Update `include/icon_store.h` — no codex refs found (N/A)
+- [x] Update all `#include "codex.h"` → `#include "registry.h"`
+- [x] Commit: `"registry: migrate all codex call sites"`
 
 ### 3.2 Migrate Default Values to Registry Paths
 

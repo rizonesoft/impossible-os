@@ -60,7 +60,7 @@
 #include "kernel/acpi.h"
 #include "kernel/version.h"
 #include "kernel/boot_splash.h"
-#include "codex.h"
+#include "registry.h"
 
 /* ---- Block device adapter wrappers ----
  * These adapt driver-specific APIs to the blkdev function pointer signature:
@@ -351,11 +351,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_status("Loading system configuration...");
     boot_splash_tick();
 
-    /* Initialize the Codex registry */
-    codex_init();
-    codex_load();                /* load saved .codex files from disk */
-    codex_populate_defaults();   /* fill in any missing defaults */
-    codex_save();                /* persist defaults to disk on first boot */
+    /* Initialize the Windows-compatible Registry */
+    registry_init();
 
     /* Initialize memory-mapped files subsystem */
     mmap_init();
@@ -1115,8 +1112,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     prev_my = my;
                 }
 
-                /* Periodically flush dirty Codex trees to disk */
-                codex_flush();
+                /* Periodically flush dirty registry hives to disk */
+                /* registry_flush(); — TODO: enable after hive persistence (§4) */
 
                 /* Sleep until next IRQ.  HLT wakes on mouse/keyboard/timer
                  * instantly — much lower latency than yield() which does

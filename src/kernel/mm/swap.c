@@ -28,7 +28,7 @@
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/framebuffer.h"
-#include "codex.h"
+#include "registry.h"
 
 /* Path to the pagefile on disk */
 #define PAGEFILE_PATH  "C:\\Impossible\\System\\pagefile.sys"
@@ -126,26 +126,33 @@ static void page_copy(void *dst, const void *src)
 void swap_init(uint32_t num_slots)
 {
     uint32_t i;
-    int32_t codex_slots;
+    uint32_t reg_slots;
 
     if (num_slots == 0)
         num_slots = SWAP_MAX_SLOTS;
     if (num_slots > SWAP_MAX_SLOTS)
         num_slots = SWAP_MAX_SLOTS;
 
-    /* Check Codex for configured swap size */
+    /* Check Registry for configured swap size */
     {
-        codex_key_t *mem_key = codex_open("System\\Memory");
-        if (!mem_key)
-            mem_key = codex_create("System\\Memory");
-        if (mem_key) {
-            if (codex_get_int32(mem_key, "SwapSlots", &codex_slots) == 0) {
-                if (codex_slots > 0 && (uint32_t)codex_slots <= SWAP_MAX_SLOTS)
-                    num_slots = (uint32_t)codex_slots;
+        HKEY hMem = (HKEY)0;
+        uint32_t disp;
+        long rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Memory",
+                               0, KEY_READ, &hMem);
+        if (rc != ERROR_SUCCESS) {
+            rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "SYSTEM\\Memory",
+                                0, (const char *)0, 0, KEY_ALL_ACCESS,
+                                (void *)0, &hMem, &disp);
+        }
+        if (rc == ERROR_SUCCESS) {
+            if (RegGetDword(hMem, "SwapSlots", &reg_slots) == ERROR_SUCCESS) {
+                if (reg_slots > 0 && reg_slots <= SWAP_MAX_SLOTS)
+                    num_slots = reg_slots;
             } else {
-                /* Store default value in Codex */
-                codex_set_int32(mem_key, "SwapSlots", (int32_t)num_slots);
+                /* Store default value in Registry */
+                RegSetDword(hMem, "SwapSlots", num_slots);
             }
+            RegCloseKey(hMem);
         }
     }
 
