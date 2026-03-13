@@ -86,28 +86,28 @@
 
 ### 2.1 Key Operations
 
-**Prompt:** Implement the core Win32 registry key operations. `RegOpenKeyEx(hKey, subKey, options, access, &result)` opens a sub-key relative to `hKey`, walking the path by backslash separators, and returns a handle with the requested access mode. `RegCreateKeyEx` creates the key if it doesn't exist (and sets `*disposition` to `REG_CREATED_NEW_KEY` or `REG_OPENED_EXISTING_KEY`). `RegCloseKey` releases the handle. `RegDeleteKey` removes a key and all its values (but not child keys — that's `RegDeleteTree`). `RegDeleteTree` recursively deletes a key and all its children. Return codes follow Windows: `ERROR_SUCCESS (0)`, `ERROR_FILE_NOT_FOUND (2)`, `ERROR_ACCESS_DENIED (5)`, `ERROR_INVALID_HANDLE (6)`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: key operations (open, create, close, delete)"`. Update `README.md` if it contains stale or incorrect references to registry key operations. Create or update documentation in `docs/` covering the key operation API, error codes, and REG_LINK redirection.
+**Prompt:** Verify the Win32-compatible key operations implementation. Confirm `registry.h` declares `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree` with correct Win32 signatures. Confirm `REG_HANDLE_POOL_SIZE=128`, `REG_CREATED_NEW_KEY=1`, `REG_OPENED_EXISTING_KEY=2`. In `registry.c`, verify: handle pool (`reg_handle_pool[128]`, `reg_handle_used[128]`), `reg_alloc_handle`/`reg_free_handle` for handle lifecycle, `reg_is_predefined` checks sentinel range `0x80000000–0x80000005`, `reg_resolve_key` handles HKCU→`reg_resolve_hkcu()` and HKCR→`reg_resolve_hkcr()` redirection. Verify `reg_walk_path` walks backslash-separated paths with `REG_LINK` following. Verify `RegOpenKeyEx` returns `ERROR_FILE_NOT_FOUND` for missing keys. Verify `RegCreateKeyEx` sets disposition and updates `parent->last_write_time`. Verify `RegCloseKey` is no-op for predefined handles. Verify `RegDeleteKey` returns `ERROR_ACCESS_DENIED` if child_count>0. Verify `RegDeleteTree` recursively deletes via `reg_delete_subtree`. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Implement `RegOpenKeyEx(hKey, subKey, options, access, &result)`:
-  - [ ] Walk backslash-separated path from hKey
-  - [ ] Handle `REG_LINK` transparent redirection
-  - [ ] Store access mode in returned handle
-  - [ ] Return `ERROR_FILE_NOT_FOUND` if key doesn't exist
-- [ ] Implement `RegCreateKeyEx(hKey, subKey, reserved, class, options, access, security, &result, &disposition)`:
-  - [ ] Create intermediate keys as needed
-  - [ ] Set disposition: `REG_CREATED_NEW_KEY` or `REG_OPENED_EXISTING_KEY`
-  - [ ] Update parent's last-write time
-- [ ] Implement `RegCloseKey(hKey)` — release handle resources
-- [ ] Implement `RegDeleteKey(hKey, subKey)` — delete key + values (not children)
-- [ ] Implement `RegDeleteTree(hKey, subKey)` — recursive delete
-- [ ] Define error codes:
-  - [ ] `ERROR_SUCCESS          = 0`
-  - [ ] `ERROR_FILE_NOT_FOUND   = 2`
-  - [ ] `ERROR_ACCESS_DENIED    = 5`
-  - [ ] `ERROR_INVALID_HANDLE   = 6`
-  - [ ] `ERROR_MORE_DATA        = 234`
-  - [ ] `ERROR_NO_MORE_ITEMS    = 259`
-- [ ] Commit: `"registry: key operations (open, create, close, delete)"`
+- [x] Implement `RegOpenKeyEx(hKey, subKey, options, access, &result)`:
+  - [x] Walk backslash-separated path from hKey
+  - [x] Handle `REG_LINK` transparent redirection
+  - [x] Store access mode in returned handle
+  - [x] Return `ERROR_FILE_NOT_FOUND` if key doesn't exist
+- [x] Implement `RegCreateKeyEx(hKey, subKey, reserved, class, options, access, security, &result, &disposition)`:
+  - [x] Create intermediate keys as needed
+  - [x] Set disposition: `REG_CREATED_NEW_KEY` or `REG_OPENED_EXISTING_KEY`
+  - [x] Update parent's last-write time
+- [x] Implement `RegCloseKey(hKey)` — release handle resources
+- [x] Implement `RegDeleteKey(hKey, subKey)` — delete key + values (not children)
+- [x] Implement `RegDeleteTree(hKey, subKey)` — recursive delete
+- [x] Define error codes:
+  - [x] `ERROR_SUCCESS          = 0`
+  - [x] `ERROR_FILE_NOT_FOUND   = 2`
+  - [x] `ERROR_ACCESS_DENIED    = 5`
+  - [x] `ERROR_INVALID_HANDLE   = 6`
+  - [x] `ERROR_MORE_DATA        = 234`
+  - [x] `ERROR_NO_MORE_ITEMS    = 259`
+- [x] Commit: `"registry: key operations (open, create, close, delete)"`
 
 ### 2.2 Value Operations
 

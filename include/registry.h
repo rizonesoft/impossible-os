@@ -214,3 +214,38 @@ reg_key_t *reg_resolve_hkcu(void);
  * (Merged view with HKCU\SOFTWARE\Classes is transparent
  *  and will be handled by RegQueryValueEx in a future step.) */
 reg_key_t *reg_resolve_hkcr(void);
+
+/* ---- Handle pool ---- */
+
+#define REG_HANDLE_POOL_SIZE  128   /* Max simultaneously open handles */
+
+/* ---- Disposition constants (RegCreateKeyEx) ---- */
+
+#define REG_CREATED_NEW_KEY      0x00000001
+#define REG_OPENED_EXISTING_KEY  0x00000002
+
+/* ---- Win32-Compatible Key Operations (§2.1) ---- */
+
+/* Open a sub-key relative to hKey.  Walks backslash-separated path.
+ * Follows REG_LINK keys transparently.
+ * Returns ERROR_SUCCESS on success, ERROR_FILE_NOT_FOUND if not found. */
+long RegOpenKeyEx(HKEY hKey, const char *lpSubKey, uint32_t ulOptions,
+                  uint32_t samDesired, HKEY *phkResult);
+
+/* Create or open a sub-key.  Creates intermediate keys as needed.
+ * *lpdwDisposition set to REG_CREATED_NEW_KEY or REG_OPENED_EXISTING_KEY.
+ * lpClass, lpSecurityAttributes, and dwReserved are ignored (Win32 compat). */
+long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
+                    const char *lpClass, uint32_t dwOptions,
+                    uint32_t samDesired, void *lpSecurityAttributes,
+                    HKEY *phkResult, uint32_t *lpdwDisposition);
+
+/* Close an open key handle.  Predefined handles (HKLM etc.) are no-ops. */
+long RegCloseKey(HKEY hKey);
+
+/* Delete a sub-key and all its values (key must have no child keys).
+ * Returns ERROR_ACCESS_DENIED if child keys exist (use RegDeleteTree). */
+long RegDeleteKey(HKEY hKey, const char *lpSubKey);
+
+/* Recursively delete a sub-key and all its children + values. */
+long RegDeleteTree(HKEY hKey, const char *lpSubKey);

@@ -577,3 +577,384 @@ const char *reg_key_get_link_target(const reg_key_t *key)
     }
     return (const char *)0;
 }
+
+/* ============================================================================
+ * §2.1  Win32-Compatible Key Operations
+ * ============================================================================ */
+
+/* ---- Handle pool ---- */
+
+static reg_handle_t reg_handle_pool[REG_HANDLE_POOL_SIZE];
+static uint8_t      reg_handle_used[REG_HANDLE_POOL_SIZE];
+
+static HKEY reg_alloc_handle(reg_key_t *key, uint32_t access)
+{
+    uint32_t i;
+    for (i = 0; i < REG_HANDLE_POOL_SIZE; i++) {
+        if (!reg_handle_used[i]) {
+            reg_handle_used[i] = 1;
+            reg_handle_pool[i].key    = key;
+            reg_handle_pool[i].access = access;
+            return &reg_handle_pool[i];
+        }
+    }
+    return (HKEY)0;
+}
+
+static void reg_free_handle(HKEY hkey)
+{
+    uint32_t i;
+    if (!hkey) return;
+    for (i = 0; i < REG_HANDLE_POOL_SIZE; i++) {
+        if (&reg_handle_pool[i] == hkey) {
+            reg_handle_used[i] = 0;
+            reg_handle_pool[i].key    = (reg_key_t *)0;
+            reg_handle_pool[i].access = 0;
+            return;
+        }
+    }
+}
+
+/* ---- Predefined handle check ---- */
+
+static int reg_is_predefined(HKEY hkey)
+{
+    uintptr_t v = (uintptr_t)hkey;
+    return (v >= 0x80000000UL && v <= 0x80000005UL);
+}
+
+/* ---- Resolve HKEY to reg_key_t* ---- */
+
+/* Handles predefined sentinels (including HKCU/HKCR redirection)
+ * and user-allocated handles. */
+static reg_key_t *reg_resolve_key(HKEY hkey)
+{
+    if (!hkey) return (reg_key_t *)0;
+
+    if (reg_is_predefined(hkey)) {
+        /* HKCU redirects to HKU\{user} */
+        if (hkey == HKEY_CURRENT_USER)
+            return reg_resolve_hkcu();
+        /* HKCR redirects to HKLM\SOFTWARE\Classes */
+        if (hkey == HKEY_CLASSES_ROOT)
+            return reg_resolve_hkcr();
+        return reg_resolve_predefined(hkey);
+    }
+
+    /* User-allocated handle */
+    return hkey->key;
+}
+
+/* ---- Path walker ---- */
+
+/* Walk a backslash-separated path from 'start'.
+ * If 'create' is non-zero, create missing keys along the way.
+ * Follows REG_LINK keys transparently.
+ * Returns the final key, or NULL if not found / alloc failed. */
+static reg_key_t *reg_walk_path(reg_key_t *start, const char *path, int create)
+{
+    reg_key_t *cur = start;
+    char component[REG_MAX_KEY_NAME + 1];
+    uint32_t ci;
+    const char *p;
+
+    if (!start || !path || path[0] == '\0')
+        return start;
+
+    p = path;
+    if (*p == '\\') p++;  /* skip leading backslash */
+
+    while (cur) {
+        ci = 0;
+        while (*p && *p != '\\' && ci < REG_MAX_KEY_NAME)
+            component[ci++] = *p++;
+        component[ci] = '\0';
+
+        if (ci == 0) break;  /* trailing backslash or empty */
+
+        /* Follow REG_LINK if present */
+        if (cur->flags & REG_FLAG_LINK) {
+            const char *target = reg_key_get_link_target(cur);
+            if (target) {
+                /* Resolve link: walk from appropriate root.
+                 * For simplicity, links are absolute paths from HKLM. */
+                cur = reg_walk_path(reg_root_hklm, target, 0);
+                if (!cur) return (reg_key_t *)0;
+            }
+        }
+
+        {
+            reg_key_t *child = reg_find_child(cur, component);
+            if (child) {
+                cur = child;
+            } else if (create) {
+                child = reg_create_child(cur, component);
+                if (!child) return (reg_key_t *)0;
+                cur = child;
+            } else {
+                return (reg_key_t *)0;
+            }
+        }
+
+        if (*p == '\\') p++;
+    }
+
+    /* Final REG_LINK resolution */
+    if (cur && (cur->flags & REG_FLAG_LINK)) {
+        const char *target = reg_key_get_link_target(cur);
+        if (target)
+            cur = reg_walk_path(reg_root_hklm, target, 0);
+    }
+
+    return cur;
+}
+
+/* ---- PIT ticks for timestamps ---- */
+
+extern uint64_t pit_get_ticks(void);
+
+static uint64_t reg_now(void)
+{
+    return pit_get_ticks();
+}
+
+/* ---- RegOpenKeyEx ---- */
+
+long RegOpenKeyEx(HKEY hKey, const char *lpSubKey, uint32_t ulOptions,
+                  uint32_t samDesired, HKEY *phkResult)
+{
+    reg_key_t *base, *target;
+    HKEY handle;
+
+    (void)ulOptions;
+
+    if (!phkResult)
+        return ERROR_INVALID_PARAMETER;
+
+    *phkResult = (HKEY)0;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+
+    /* NULL or empty subkey = open the base key itself */
+    if (!lpSubKey || lpSubKey[0] == '\0')
+        target = base;
+    else
+        target = reg_walk_path(base, lpSubKey, 0);
+
+    if (!target)
+        return ERROR_FILE_NOT_FOUND;
+
+    handle = reg_alloc_handle(target, samDesired);
+    if (!handle)
+        return ERROR_OUTOFMEMORY;
+
+    *phkResult = handle;
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegCreateKeyEx ---- */
+
+long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
+                    const char *lpClass, uint32_t dwOptions,
+                    uint32_t samDesired, void *lpSecurityAttributes,
+                    HKEY *phkResult, uint32_t *lpdwDisposition)
+{
+    reg_key_t *base, *target, *pre_existing;
+    HKEY handle;
+
+    (void)dwReserved;
+    (void)lpClass;
+    (void)dwOptions;
+    (void)lpSecurityAttributes;
+
+    if (!phkResult)
+        return ERROR_INVALID_PARAMETER;
+
+    *phkResult = (HKEY)0;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+
+    /* Check if already exists before creating */
+    pre_existing = (!lpSubKey || lpSubKey[0] == '\0')
+        ? base : reg_walk_path(base, lpSubKey, 0);
+
+    /* Create (or find) the key */
+    if (!lpSubKey || lpSubKey[0] == '\0')
+        target = base;
+    else
+        target = reg_walk_path(base, lpSubKey, 1);
+
+    if (!target)
+        return ERROR_OUTOFMEMORY;
+
+    /* Update parent's last-write time */
+    if (target->parent)
+        target->parent->last_write_time = reg_now();
+
+    if (lpdwDisposition) {
+        *lpdwDisposition = pre_existing
+            ? REG_OPENED_EXISTING_KEY
+            : REG_CREATED_NEW_KEY;
+    }
+
+    handle = reg_alloc_handle(target, samDesired);
+    if (!handle)
+        return ERROR_OUTOFMEMORY;
+
+    *phkResult = handle;
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegCloseKey ---- */
+
+long RegCloseKey(HKEY hKey)
+{
+    /* Predefined handles are never closed */
+    if (!hKey || reg_is_predefined(hKey))
+        return ERROR_SUCCESS;
+
+    reg_free_handle(hKey);
+    return ERROR_SUCCESS;
+}
+
+/* ---- Key deletion helpers ---- */
+
+/* Remove a child key from its parent's hash buckets. */
+static void reg_remove_child(reg_key_t *parent, reg_key_t *child)
+{
+    reg_key_t **pp;
+    uint32_t b;
+
+    if (!parent || !child) return;
+
+    b = reg_bucket(child->name);
+    pp = &parent->children[b];
+    while (*pp) {
+        if (*pp == child) {
+            *pp = child->hash_next;
+            child->hash_next = (reg_key_t *)0;
+            child->parent = (reg_key_t *)0;
+            parent->child_count--;
+            return;
+        }
+        pp = &(*pp)->hash_next;
+    }
+}
+
+/* Free all values from a key (marks them as unused). */
+static void reg_free_values(reg_key_t *key)
+{
+    reg_value_t *v, *next;
+    if (!key) return;
+
+    v = key->values;
+    while (v) {
+        next = v->next;
+        v->name[0] = '\0';
+        v->next = (reg_value_t *)0;
+        v = next;
+    }
+    key->values = (reg_value_t *)0;
+    key->value_count = 0;
+}
+
+/* ---- RegDeleteKey ---- */
+
+long RegDeleteKey(HKEY hKey, const char *lpSubKey)
+{
+    reg_key_t *base, *target;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+
+    if (!lpSubKey || lpSubKey[0] == '\0')
+        return ERROR_INVALID_PARAMETER;
+
+    target = reg_walk_path(base, lpSubKey, 0);
+    if (!target)
+        return ERROR_FILE_NOT_FOUND;
+
+    /* Win32 behavior: cannot delete key with child keys */
+    if (target->child_count > 0)
+        return ERROR_ACCESS_DENIED;
+
+    /* Free values and unlink from parent */
+    reg_free_values(target);
+    reg_remove_child(target->parent, target);
+
+    /* Mark key slot as freed */
+    target->name[0] = '\0';
+    target->flags = 0;
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegDeleteTree ---- */
+
+/* Recursively delete all children of a key. */
+static void reg_delete_subtree(reg_key_t *key)
+{
+    uint32_t b;
+
+    if (!key) return;
+
+    /* Recurse into all children via hash buckets */
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            reg_key_t *next = c->hash_next;
+            reg_delete_subtree(c);
+            c = next;
+        }
+        key->children[b] = (reg_key_t *)0;
+    }
+    key->child_count = 0;
+
+    /* Free own values */
+    reg_free_values(key);
+
+    /* Mark as freed */
+    key->name[0] = '\0';
+    key->flags = 0;
+}
+
+long RegDeleteTree(HKEY hKey, const char *lpSubKey)
+{
+    reg_key_t *base, *target;
+
+    base = reg_resolve_key(hKey);
+    if (!base)
+        return ERROR_INVALID_HANDLE;
+
+    /* If subKey is NULL, delete all children of hKey (but not hKey itself) */
+    if (!lpSubKey || lpSubKey[0] == '\0') {
+        uint32_t b;
+        for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+            reg_key_t *c = base->children[b];
+            while (c) {
+                reg_key_t *next = c->hash_next;
+                reg_delete_subtree(c);
+                c = next;
+            }
+            base->children[b] = (reg_key_t *)0;
+        }
+        base->child_count = 0;
+        reg_free_values(base);
+        return ERROR_SUCCESS;
+    }
+
+    target = reg_walk_path(base, lpSubKey, 0);
+    if (!target)
+        return ERROR_FILE_NOT_FOUND;
+
+    /* Delete entire subtree, then unlink from parent */
+    reg_delete_subtree(target);
+    reg_remove_child(target->parent, target);
+
+    return ERROR_SUCCESS;
+}

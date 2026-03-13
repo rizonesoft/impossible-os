@@ -91,6 +91,33 @@ HKCR (HKEY_CLASSES_ROOT) → merged view of HKLM\SOFTWARE\Classes
 | `reg_find_child(parent, name)` | Case-insensitive lookup in hash buckets |
 | `reg_create_child(parent, name)` | Find-or-create convenience wrapper |
 
+### Win32 Key Operations (§2.1)
+
+| Function | Description |
+|----------|-------------|
+| `RegOpenKeyEx(hKey, subKey, opts, access, &result)` | Open sub-key, walk path, follow REG_LINK |
+| `RegCreateKeyEx(hKey, subKey, ...)` | Create-or-open with disposition tracking |
+| `RegCloseKey(hKey)` | Release handle (no-op for predefined) |
+| `RegDeleteKey(hKey, subKey)` | Delete leaf key + values (fails if children exist) |
+| `RegDeleteTree(hKey, subKey)` | Recursive delete of entire subtree |
+
+**Handle pool:** 128 slots (`REG_HANDLE_POOL_SIZE`). Predefined handles (HKLM, etc.) use sentinel addresses and are never pooled.
+
+**Path walker:** `reg_walk_path()` splits on `\`, follows `REG_LINK` keys transparently, optionally creates missing intermediates.
+
+**Error codes:**
+
+| Code | Value | Meaning |
+|------|-------|---------|
+| `ERROR_SUCCESS` | 0 | Operation succeeded |
+| `ERROR_FILE_NOT_FOUND` | 2 | Key not found |
+| `ERROR_ACCESS_DENIED` | 5 | Cannot delete key with children |
+| `ERROR_INVALID_HANDLE` | 6 | Bad HKEY |
+| `ERROR_OUTOFMEMORY` | 14 | Pool exhausted |
+| `ERROR_INVALID_PARAMETER` | 87 | NULL required parameter |
+| `ERROR_MORE_DATA` | 234 | Buffer too small |
+| `ERROR_NO_MORE_ITEMS` | 259 | Enumeration complete |
+
 ### Value Types
 
 | Constant | Value | Description |
