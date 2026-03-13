@@ -288,7 +288,7 @@
 
 ### 6.1 Keyboard Layout System
 
-**Prompt:** Replace hardcoded US QWERTY scancode table in `keyboard.c` with a layout system. Define `struct kbd_layout` with name, code ("en-US"), normal[128], shift[128], altgr[128] arrays. `kbd_set_layout(code)` switches active layout. Store in Codex `System\Input\KeyboardLayout`. After completing all items, create `docs/architecture/keyboard-layouts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: keyboard layout system"`.
+**Prompt:** Replace hardcoded US QWERTY scancode table in `keyboard.c` with a layout system. Define `struct kbd_layout` with name, code ("en-US"), normal[128], shift[128], altgr[128] arrays. `kbd_set_layout(code)` switches active layout. Store in Registry `System\Input\KeyboardLayout`. After completing all items, create `docs/architecture/keyboard-layouts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: keyboard layout system"`.
 
 
 - [ ] Create `src/kernel/kbd_layout.c` and `include/kbd_layout.h`
@@ -296,7 +296,7 @@
 - [ ] Replace hardcoded US QWERTY scancode→ASCII table in `keyboard.c` with layout lookup
 - [ ] `kbd_set_layout(code)` — switch active layout
 - [ ] `kbd_get_layout()` — return current layout code
-- [ ] Codex: `System\Input\KeyboardLayout = "en-US"`
+- [ ] Registry: `System\Input\KeyboardLayout = "en-US"`
 - [ ] Commit: `"kernel: keyboard layout system"`
 
 ### 6.2 Built-in Layouts

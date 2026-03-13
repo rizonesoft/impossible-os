@@ -446,13 +446,13 @@
 
 ### 10.5 Browser Bookmarks & History
 
-**Prompt:** Bookmarks: save URL + title, show in sidebar. History: store visited URLs with timestamps. Address bar auto-complete from bookmarks + history. Store in Codex: `User\{name}\Browser\Bookmarks` and `History`. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"apps: browser bookmarks and history"`.
+**Prompt:** Bookmarks: save URL + title, show in sidebar. History: store visited URLs with timestamps. Address bar auto-complete from bookmarks + history. Store in Registry: `HKU\{name}\Software\Impossible\Browser\Bookmarks` and `History`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: browser bookmarks and history"`.
 
 
 - [ ] Bookmarks: save URL + title, display in sidebar
 - [ ] History: store visited URLs with timestamps
 - [ ] Address bar auto-complete from bookmarks + history
-- [ ] Both stored in Codex: `User\{name}\Browser\Bookmarks`, `User\{name}\Browser\History`
+- [ ] Both stored in Registry: `HKU\{name}\Software\Impossible\Browser\Bookmarks`, `HKU\{name}\Software\Impossible\Browser\History`
 - [ ] Commit: `"apps: browser bookmarks and history"`
 
 ---

@@ -21,17 +21,17 @@
 > Foundation: every visual element references the theme instead of hardcoded hex
 > colors. Must be done first so all subsequent code uses themed colors.
 
-**Prompt:** Centralize all UI colors into a `theme_t` struct with named fields: background, foreground, accent, border, shadow, titlebar_active, titlebar_inactive, button_bg, button_hover, selection, error, warning. Load theme colors from Codex under `System\Theme\*`. Provide two built-in presets: Dark (dark backgrounds, light text, blue accent) and Light (light backgrounds, dark text). Every drawing function in `desktop.c`, `wm.c`, and `controls.c` must reference `theme_get()->field` instead of hardcoded hex colors. The accent color should be applied to focused controls, active title bars, and selection highlights. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: theme system"`. Update `README.md` if it contains stale or incorrect references to theming. Create or update documentation in `docs/` covering the theme_t struct, color presets, and Codex theme keys.
+**Prompt:** Centralize all UI colors into a `theme_t` struct with named fields: background, foreground, accent, border, shadow, titlebar_active, titlebar_inactive, button_bg, button_hover, selection, error, warning. Load theme colors from the Registry under `HKCU\Software\Impossible\Theme\*`. Provide two built-in presets: Dark (dark backgrounds, light text, blue accent) and Light (light backgrounds, dark text). Every drawing function in `desktop.c`, `wm.c`, and `controls.c` must reference `theme_get()->field` instead of hardcoded hex colors. The accent color should be applied to focused controls, active title bars, and selection highlights. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: theme system"`. Update `README.md` if it contains stale or incorrect references to theming. Create or update documentation in `docs/` covering the theme_t struct, color presets, and Registry theme keys.
 
 
 - [ ] Define `theme_t` struct with all UI colors (bg, fg, accent, border, shadow, titlebar, button states, etc.)
 - [ ] Create `include/desktop/theme.h` and `src/desktop/theme.c`
-- [ ] Load theme from Codex (`System\Theme\*`)
+- [ ] Load theme from Registry (`HKCU\Software\Impossible\Theme\*`)
 - [ ] Built-in Dark mode preset (default)
 - [ ] Built-in Light mode preset
 - [ ] All drawing functions in `desktop.c`, `wm.c`, `controls.c` reference `theme_get()->field`
 - [ ] Apply accent color to focused controls, active title bars, selection highlights
-- [ ] Codex: `System\Theme\DarkMode` (BOOL), `System\Theme\AccentColor` (UINT32)
+- [ ] Registry: `HKCU\Software\Impossible\Theme\DarkMode` (REG_DWORD), `HKCU\Software\Impossible\Theme\AccentColor` (REG_DWORD)
 - [ ] Commit: `"desktop: theme system"`
 
 ---
@@ -129,7 +129,7 @@
 
 ### 2.7 TreeView
 
-**Prompt:** Add `CTRL_TREEVIEW`. A hierarchical tree with expand/collapse triangles. Each node has: icon, label, parent pointer, children list, expanded flag, selected flag, and user data pointer. Clicking the triangle (▸/▾) toggles expand/collapse. Clicking the label selects the node. Arrow keys: up/down move selection, right expands, left collapses. Render with indentation (16px per level). Used by: File Manager navigation pane, Registry/Codex editor, Settings category tree. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tree view"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the tree view API, node management, expand/collapse, and keyboard navigation.
+**Prompt:** Add `CTRL_TREEVIEW`. A hierarchical tree with expand/collapse triangles. Each node has: icon, label, parent pointer, children list, expanded flag, selected flag, and user data pointer. Clicking the triangle (▸/▾) toggles expand/collapse. Clicking the label selects the node. Arrow keys: up/down move selection, right expands, left collapses. Render with indentation (16px per level). Used by: File Manager navigation pane, Registry editor, Settings category tree. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tree view"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the tree view API, node management, expand/collapse, and keyboard navigation.
 
 
 - [ ] Add `CTRL_TREEVIEW` type
@@ -251,7 +251,7 @@
 
 ### 3.2 Window Transition Animations *(from Phase 02 §6.2)*
 
-**Prompt:** Each window state change should have a smooth animation: open (scale 90%→100% + fade in, 200ms ease-out-cubic), close (scale 100%→90% + fade out, 150ms), minimize (shrink toward the window's taskbar button position, 250ms), restore (reverse of minimize), maximize (expand to fill screen, 200ms). Use the tween engine from §3.1 — each animation creates tweens for the window's x, y, width, height, and opacity. The compositor must render animating windows at their interpolated position/size each frame. Add a Codex setting `System\Theme\EnableAnimations` (default: true) and `System\Theme\AnimationSpeed` (multiplier, default: 1.0). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window transition animations"`. Update `README.md` if it contains stale or incorrect references to animations. Create or update documentation in `docs/` covering window animation types, Codex settings, and reduce-motion option.
+**Prompt:** Each window state change should have a smooth animation: open (scale 90%→100% + fade in, 200ms ease-out-cubic), close (scale 100%→90% + fade out, 150ms), minimize (shrink toward the window's taskbar button position, 250ms), restore (reverse of minimize), maximize (expand to fill screen, 200ms). Use the tween engine from §3.1 — each animation creates tweens for the window's x, y, width, height, and opacity. The compositor must render animating windows at their interpolated position/size each frame. Add a Registry setting `HKCU\Software\Impossible\Theme\EnableAnimations` (default: true) and `HKCU\Software\Impossible\Theme\AnimationSpeed` (multiplier, default: 1.0). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window transition animations"`. Update `README.md` if it contains stale or incorrect references to animations. Create or update documentation in `docs/` covering window animation types, Registry settings, and reduce-motion option.
 
 
 - [ ] Create `src/kernel/wm_anim.c`
@@ -263,7 +263,7 @@
 - [ ] *(Stretch)* Snap left/right: slide + resize to half (200ms)
 - [ ] *(Stretch)* Focus switch: subtle scale pulse (100ms)
 - [ ] Menu popup: scale Y 0→100% from top (150ms)
-- [ ] Codex: `System\Theme\EnableAnimations`, `System\Theme\AnimationSpeed`
+- [ ] Registry: `HKCU\Software\Impossible\Theme\EnableAnimations`, `HKCU\Software\Impossible\Theme\AnimationSpeed`
 - [ ] "Reduce motion" option disables all animations
 - [ ] Commit: `"desktop: window transition animations"`
 
@@ -411,7 +411,7 @@
 - [ ] Hover button 500ms → all other windows 10% opacity
 - [ ] Mouse leaves → restore all to 100%
 - [ ] Far-right corner: hover = peek all, click = toggle minimize all
-- [ ] Codex: `System\Shell\EnablePeek`
+- [ ] Registry: `HKCU\Software\Impossible\Shell\EnablePeek`
 - [ ] Commit: `"desktop: window peek (Aero Peek)"`
 
 ---
@@ -447,10 +447,10 @@
 
 ### 7.2 Start Menu Data *(from Phase 04 §2.2)*
 
-**Prompt:** Load pinned apps from Codex, scan installed apps from filesystem for All Programs list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu data loading"`. Update `README.md` if it contains stale or incorrect references to the Start menu. Create or update documentation in `docs/` covering pinned app loading, app scanning, and alphabetical grouping.
+**Prompt:** Load pinned apps from the Registry, scan installed apps from filesystem for All Programs list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu data loading"`. Update `README.md` if it contains stale or incorrect references to the Start menu. Create or update documentation in `docs/` covering pinned app loading, app scanning, and alphabetical grouping.
 
 
-- [ ] Load pinned apps from Codex `User\{name}\Shell\PinnedApps`
+- [ ] Load pinned apps from Registry `HKU\{name}\Software\Impossible\Shell\PinnedApps`
 - [ ] Scan installed apps from `C:\Impossible\Bin\` and `C:\Programs\`
 - [ ] Build alphabetical "All Programs" list with folder grouping
 - [ ] Right-column quick links → map to filesystem paths (Documents → `C:\Users\{name}\Documents\`, etc.)
@@ -510,7 +510,7 @@
 - [ ] Slide-in panel from right edge
 - [ ] Past notifications: grouped by source, icon + title + msg + timestamp
 - [ ] Dismiss individual (X) or "Clear all"
-- [ ] Store last 100 in Codex `System\Shell\NotifyHistory`
+- [ ] Store last 100 in Registry `HKLM\SYSTEM\Shell\NotifyHistory`
 - [ ] Open: click 🔔 / Close: click outside or Escape
 - [ ] Commit: `"desktop: notification center"`
 
@@ -540,7 +540,7 @@
 
 - [ ] Define hotkey table (key combo → action callback)
 - [ ] Register shortcuts: Win (Start), Win+E (Files), Win+L (Lock), Win+D (Desktop), Win+R (Run), Alt+Tab (Switch), Alt+F4 (Close), PrtSc (Screenshot)
-- [ ] Allow user-defined shortcuts via Codex `System\Shell\Hotkeys\`
+- [ ] Allow user-defined shortcuts via Registry `HKCU\Software\Impossible\Shell\Hotkeys\`
 - [ ] Commit: `"desktop: keyboard shortcut manager"`
 
 ### 10.2 Alt+Tab Task Switcher *(from Phase 04 §15.2)*
@@ -562,7 +562,7 @@
 
 - [ ] Win+R → small dialog with text field
 - [ ] Type command/path → execute
-- [ ] History (last 20, Codex `User\Default\Shell\RunHistory`)
+- [ ] History (last 20, Registry `HKU\Default\Software\Impossible\Shell\RunHistory`)
 - [ ] Auto-complete from PATH
 - [ ] Commit: `"desktop: Win+R run dialog"`
 
@@ -617,12 +617,12 @@
 
 ### 14.1 DPI System *(from Phase 02 §8.1)*
 
-**Prompt:** DPI scaling multiplies all UI dimensions by a scale factor. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: DPI scaling system"`. Update `README.md` if it contains stale or incorrect references to DPI scaling. Create or update documentation in `docs/` covering the DPI macro, auto-detection, and Codex settings.
+**Prompt:** DPI scaling multiplies all UI dimensions by a scale factor. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: DPI scaling system"`. Update `README.md` if it contains stale or incorrect references to DPI scaling. Create or update documentation in `docs/` covering the DPI macro, auto-detection, and Registry settings.
 
 
 - [ ] Create `include/dpi.h` with `DPI(px)` macro: `(pixels * scale / 100)`
 - [ ] `dpi_get_scale()`, `dpi_auto_detect()` (≥3840→200%, ≥2560→150%, else 100%)
-- [ ] Store in Codex: `System\Display\Scale`, `System\Display\AutoScale`
+- [ ] Store in Registry: `HKLM\SYSTEM\Display\Scale`, `HKLM\SYSTEM\Display\AutoScale`
 - [ ] Commit: `"display: DPI scaling system"`
 
 ### 14.2 DPI-Aware UI *(from Phase 02 §8.2)*
@@ -658,7 +658,7 @@
 
 ## 16. Night Light *(from Phase 04 §13)*
 
-**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: night light"`. Update `README.md` if it contains stale or incorrect references to night light. Create or update documentation in `docs/` covering the night light algorithm, scheduling, and Codex settings.
+**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: night light"`. Update `README.md` if it contains stale or incorrect references to night light. Create or update documentation in `docs/` covering the night light algorithm, scheduling, and Registry settings.
 
 
 - [ ] Create `src/kernel/display/nightlight.c`
@@ -666,7 +666,7 @@
 - [ ] Apply in compositor final blit step
 - [ ] Gradual transition over 30 minutes
 - [ ] Schedule: auto on/off by time (e.g., 9PM → 7AM)
-- [ ] Codex: `System\Display\NightLight`, `NightLightIntensity`, `NightLightStart/End`
+- [ ] Registry: `HKLM\SYSTEM\Display\NightLight`, `NightLightIntensity`, `NightLightStart/End`
 - [ ] Commit: `"display: night light""`
 
 ---
@@ -682,7 +682,7 @@
 - [ ] Auto-activate during fullscreen apps or scheduled hours
 - [ ] Badge on tray bell with suppressed count
 - [ ] When DND ends: summary "You missed N notifications"
-- [ ] Codex: `System\Shell\FocusMode`, `FocusScheduleStart/End`
+- [ ] Registry: `HKCU\Software\Impossible\Shell\FocusMode`, `FocusScheduleStart/End`
 - [ ] Commit: `"desktop: focus / do not disturb"`
 
 ---
@@ -713,7 +713,7 @@
 - [ ] Idle detection, configurable timeout
 - [ ] Dismiss on any input
 - [ ] Built-in: Blank, Starfield, Matrix, Bouncing Logo, Clock
-- [ ] Codex: `System\Screensaver\IdleTimeout`, `System\Screensaver\Type`
+- [ ] Registry: `HKCU\Software\Impossible\Screensaver\IdleTimeout`, `HKCU\Software\Impossible\Screensaver\Type`
 - [ ] Commit: `"desktop: screensaver system"`
 
 ### 19.2 Lock Screen *(from Phase 04 §11.3)*
@@ -726,7 +726,7 @@
 - [ ] Large clock + date, user avatar + name
 - [ ] Password input field + [Unlock →] button
 - [ ] Win+L shortcut, auto-lock after screensaver
-- [ ] Codex: `System\Screensaver\RequirePassword`
+- [ ] Registry: `HKCU\Software\Impossible\Screensaver\RequirePassword`
 - [ ] Commit: `"desktop: lock screen"`
 
 ---

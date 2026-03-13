@@ -16,52 +16,52 @@
 
 ### 1.1 High Contrast Mode
 
-**Prompt:** Define a high contrast color theme in Codex (black bg, white fg, yellow accent, cyan links, red errors). `accessibility_set_high_contrast(enabled)` swaps the entire UI color palette. All widgets must respect theme colors. Codex: `System\Accessibility\HighContrast = 0`. After all items, create `docs/architecture/accessibility.md`, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: high contrast mode"`.
+**Prompt:** Define a high contrast color theme in Registry (black bg, white fg, yellow accent, cyan links, red errors). `accessibility_set_high_contrast(enabled)` swaps the entire UI color palette. All widgets must respect theme colors. Registry: `HKLM\SYSTEM\Accessibility\HighContrast = 0`. After all items, create `docs/architecture/accessibility.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: high contrast mode"`.
 
 
 - [ ] Create `src/desktop/accessibility.c` and `include/accessibility.h`
-- [ ] Define high contrast theme in Codex:
+- [ ] Define high contrast theme in Registry:
   - [ ] Background: `#000000`, Foreground: `#FFFFFF`, Accent: `#FFFF00`, Links: `#00FFFF`, Errors: `#FF0000`
 - [ ] `accessibility_set_high_contrast(enabled)` — swap entire UI color palette
 - [ ] All widgets (buttons, text, menus) use theme colors when high contrast is active
-- [ ] Codex: `System\Accessibility\HighContrast = 0`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\HighContrast = 0`
 - [ ] Commit: `"desktop: high contrast mode"`
 
 ### 1.2 Large Text / DPI Scaling
 
-**Prompt:** DPI override forces 150%/200%/250%/300% scale on all rendering: fonts, window chrome, icons, cursor, widgets. Codex: `System\Accessibility\DPIScale = 100`. Scale factor applies at compositor level. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: DPI scaling override"`.
+**Prompt:** DPI override forces 150%/200%/250%/300% scale on all rendering: fonts, window chrome, icons, cursor, widgets. Registry: `HKLM\SYSTEM\Accessibility\DPIScale = 100`. Scale factor applies at compositor level. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: DPI scaling override"`.
 
 
 - [ ] DPI override: force 150%, 200%, 250%, 300% scale
 - [ ] Scale all font rendering by DPI factor
 - [ ] Scale window chrome, icons, cursor, widgets
-- [ ] Codex: `System\Accessibility\DPIScale = 100`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\DPIScale = 100`
 - [ ] Commit: `"desktop: DPI scaling override"`
 
 ### 1.3 Sticky Keys
 
-**Prompt:** 5× Shift toggles Sticky Keys. When active, modifier keys (Shift, Ctrl, Alt) stay pressed until next non-modifier key. Visual indicator in system tray. Codex: `System\Accessibility\StickyKeys = 0`. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: sticky keys"`.
+**Prompt:** 5× Shift toggles Sticky Keys. When active, modifier keys (Shift, Ctrl, Alt) stay pressed until next non-modifier key. Visual indicator in system tray. Registry: `HKLM\SYSTEM\Accessibility\StickyKeys = 0`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: sticky keys"`.
 
 
 - [ ] 5× Shift → toggle Sticky Keys on/off
 - [ ] When active: modifier keys (Shift, Ctrl, Alt) stay pressed until next key
 - [ ] Visual indicator: modifier key status in system tray
-- [ ] Codex: `System\Accessibility\StickyKeys = 0`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\StickyKeys = 0`
 - [ ] Commit: `"desktop: sticky keys"`
 
 ### 1.4 Cursor Accessibility
 
-**Prompt:** Large cursor sizes: 48px and 64px (default 32px). Cursor color options: white+black border or inverse. Codex: `System\Accessibility\CursorSize = 32`. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: large cursor option"`.
+**Prompt:** Large cursor sizes: 48px and 64px (default 32px). Cursor color options: white+black border or inverse. Registry: `HKLM\SYSTEM\Accessibility\CursorSize = 32`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: large cursor option"`.
 
 
 - [ ] Large cursor option: 48px, 64px (default 32px)
 - [ ] Cursor color: white with black border (default) or inverse
-- [ ] Codex: `System\Accessibility\CursorSize = 32`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\CursorSize = 32`
 - [ ] Commit: `"desktop: large cursor option"`
 
 ### 1.5 Magnifier
 
-**Prompt:** Win+Plus zooms in (2×/4×/6×/8×), Win+Minus zooms out, Win+Escape closes. Magnifier follows cursor, rendering from compositor backbuffer. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: screen magnifier"`.
+**Prompt:** Win+Plus zooms in (2×/4×/6×/8×), Win+Minus zooms out, Win+Escape closes. Magnifier follows cursor, rendering from compositor backbuffer. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: screen magnifier"`.
 
 
 - [ ] Win+Plus → zoom in (2×, 4×, 6×, 8×)
@@ -73,22 +73,22 @@
 
 ### 1.6 Mouse Keys
 
-**Prompt:** Numpad controls cursor: 4/6 left/right, 2/8 down/up, diagonals on 7/9/1/3, 5=click, +=double-click, 0=press, .=release. Codex: `System\Accessibility\MouseKeys = 0`. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: mouse keys"`.
+**Prompt:** Numpad controls cursor: 4/6 left/right, 2/8 down/up, diagonals on 7/9/1/3, 5=click, +=double-click, 0=press, .=release. Registry: `HKLM\SYSTEM\Accessibility\MouseKeys = 0`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: mouse keys"`.
 
 
 - [ ] Numpad keys move cursor when activated:
   - [ ] 4/6 — left/right, 2/8 — down/up, 7/9/1/3 — diagonal
   - [ ] 5 — click, + — double-click, 0 — press, . — release
-- [ ] Codex: `System\Accessibility\MouseKeys = 0`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\MouseKeys = 0`
 - [ ] Commit: `"desktop: mouse keys (numpad cursor control)"`
 
 ### 1.7 Reduced Motion & Color Blind Mode
 
-**Prompt:** Reduced motion: disable all UI animations (window transitions). Codex: `System\Accessibility\ReducedMotion = 0`. Stretch: color blind simulation via color matrix transform at compositor level (Deuteranopia, Protanopia, Tritanopia). After all items, mark `[x]`, run `make clean && make all && make run`, commit `"desktop: reduced motion + color blind modes"`.
+**Prompt:** Reduced motion: disable all UI animations (window transitions). Registry: `HKLM\SYSTEM\Accessibility\ReducedMotion = 0`. Stretch: color blind simulation via color matrix transform at compositor level (Deuteranopia, Protanopia, Tritanopia). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: reduced motion + color blind modes"`.
 
 
 - [ ] Reduced motion: disable all UI animations (window open/close/minimize transitions)
-- [ ] Codex: `System\Accessibility\ReducedMotion = 0`
+- [ ] Registry: `HKLM\SYSTEM\Accessibility\ReducedMotion = 0`
 - [ ] *(Stretch)* Color blind simulation modes:
   - [ ] Deuteranopia (red-green), Protanopia (red-green), Tritanopia (blue-yellow)
   - [ ] Apply color matrix transform at compositor level
@@ -118,7 +118,7 @@
 
 ### 2.1 Debug Console (F12)
 
-**Prompt:** F12 toggles a semi-transparent overlay panel. Tabs: Kernel (real-time printk with timestamps + subsystem filter), Memory, Network, Syscalls. Command input at bottom. Codex: `System\Developer\DebugConsole = 0`. After all items, create `docs/architecture/developer-tools.md`, mark `[x]`, run `make clean && make all && make run`, commit `"debug: F12 debug console overlay"`.
+**Prompt:** F12 toggles a semi-transparent overlay panel. Tabs: Kernel (real-time printk with timestamps + subsystem filter), Memory, Network, Syscalls. Command input at bottom. Registry: `HKLM\SYSTEM\Developer\DebugConsole = 0`. After all items, create `docs/architecture/developer-tools.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: F12 debug console overlay"`.
 
 
 - [ ] Create `src/kernel/debug/debug_console.c`
@@ -128,7 +128,7 @@
 - [ ] Scrollable log, newest at bottom
 - [ ] Filter by subsystem: wm, fs, net, mem, drv
 - [ ] Command input line at bottom: type commands (e.g., `mem`, `ps`, `net`)
-- [ ] Codex: `System\Developer\DebugConsole = 0`
+- [ ] Registry: `HKLM\SYSTEM\Developer\DebugConsole = 0`
 - [ ] Commit: `"debug: F12 debug console overlay"`
 
 ### 2.2 Memory Inspector
@@ -158,10 +158,10 @@
 
 ### 2.4 Performance Profiler
 
-**Prompt:** FPS counter overlay (Codex: `System\Developer\ShowFPS = 0`) shows `60 FPS | 16.7ms`. Frame time bar chart (last 120 frames). Syscall timing averages. IPC throughput (msg/sec). After all items, mark `[x]`, run `make clean && make all && make run`, commit `"debug: performance profiler + FPS overlay"`.
+**Prompt:** FPS counter overlay (Registry: `HKLM\SYSTEM\Developer\ShowFPS = 0`) shows `60 FPS | 16.7ms`. Frame time bar chart (last 120 frames). Syscall timing averages. IPC throughput (msg/sec). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: performance profiler + FPS overlay"`.
 
 
-- [ ] FPS counter overlay (Codex: `System\Developer\ShowFPS = 0`)
+- [ ] FPS counter overlay (Registry: `HKLM\SYSTEM\Developer\ShowFPS = 0`)
   - [ ] Show in corner: `60 FPS | 16.7ms`
 - [ ] Frame time graph: last 120 frames as bar chart
 - [ ] Syscall timing: average time per syscall type
@@ -343,7 +343,7 @@
   - [ ] Read window title on focus change
   - [ ] Read menu items on navigation
   - [ ] Read notification toasts
-- [ ] *(Stretch)* Toggle: Codex `System\Accessibility\ScreenReader = 0`
+- [ ] *(Stretch)* Toggle: Registry `HKLM\SYSTEM\Accessibility\ScreenReader = 0`
 - [ ] Commit: `"desktop: screen reader"`
 
 ### 7.3 Upgrade to espeak-ng (Future)
@@ -394,7 +394,7 @@
 
 ### 9.1 Telemetry Collection
 
-**Prompt:** OFF by default, opt-in only. Collect: OS version, crash dumps (anonymized), boot time, hardware info, feature usage counts. No personal data. Store in `C:\Impossible\System\Diagnostics\telemetry.log`. Codex: `System\Privacy\Telemetry = 0` (0=off, 1=basic, 2=full). After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: telemetry collection (opt-in)"`.
+**Prompt:** OFF by default, opt-in only. Collect: OS version, crash dumps (anonymized), boot time, hardware info, feature usage counts. No personal data. Store in `C:\Impossible\System\Diagnostics\telemetry.log`. Registry: `HKLM\SYSTEM\Privacy\Telemetry = 0` (0=off, 1=basic, 2=full). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: telemetry collection (opt-in)"`.
 
 
 - [ ] Create `src/kernel/telemetry.c` and `include/telemetry.h`
@@ -407,7 +407,7 @@
   - [ ] Feature usage counts (which apps launched, which settings changed)
 - [ ] **No personal data**: no files, passwords, browsing history, usernames
 - [ ] Store locally: `C:\Impossible\System\Diagnostics\telemetry.log`
-- [ ] Codex: `System\Privacy\Telemetry = 0` (0=off, 1=basic, 2=full)
+- [ ] Registry: `HKLM\SYSTEM\Privacy\Telemetry = 0` (0=off, 1=basic, 2=full)
 - [ ] Commit: `"kernel: telemetry collection (opt-in)"`
 
 ### 9.2 Diagnostic Report
@@ -428,11 +428,11 @@
 
 ### 10.1 Screen Time Limits
 
-**Prompt:** Set max daily usage (minutes) per child user via Codex `User\{child}\ParentalControls\ScreenTimeLimit`. Track active time per session. 15-minute warning. Auto-lock when limit hit with parent extension option. After all items, create `docs/architecture/parental-controls.md`, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: screen time limits"`.
+**Prompt:** Set max daily usage (minutes) per child user via Registry `HKU\{child}\ParentalControls\ScreenTimeLimit`. Track active time per session. 15-minute warning. Auto-lock when limit hit with parent extension option. After all items, create `docs/architecture/parental-controls.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: screen time limits"`.
 
 
 - [ ] Create `src/kernel/parental.c` and `include/parental.h`
-- [ ] Set max daily usage (minutes): Codex `User\{child}\ParentalControls\ScreenTimeLimit = 120`
+- [ ] Set max daily usage (minutes): Registry `HKU\{child}\ParentalControls\ScreenTimeLimit = 120`
 - [ ] Track active time per user session
 - [ ] 15-minute warning before limit reached
 - [ ] Auto-lock when limit hit: "Screen time limit reached. Ask a parent to extend."
@@ -440,22 +440,22 @@
 
 ### 10.2 Time Scheduling
 
-**Prompt:** Set allowed hours per child (e.g., 3 PM-8 PM weekdays). Codex: `AllowedStart`/`AllowedEnd`. Auto-lock outside allowed hours. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: time scheduling"`.
+**Prompt:** Set allowed hours per child (e.g., 3 PM-8 PM weekdays). Registry: `HKU\{child}\ParentalControls\AllowedStart`/`HKU\{child}\ParentalControls\AllowedEnd`. Auto-lock outside allowed hours. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: time scheduling"`.
 
 
 - [ ] Set allowed hours: e.g., only 3 PM – 8 PM on weekdays
-- [ ] Codex: `User\{child}\ParentalControls\AllowedStart = 15:00`
-- [ ] Codex: `User\{child}\ParentalControls\AllowedEnd = 20:00`
+- [ ] Registry: `HKU\{child}\ParentalControls\AllowedStart = 15:00`
+- [ ] Registry: `HKU\{child}\ParentalControls\AllowedEnd = 20:00`
 - [ ] Auto-lock outside allowed hours
 - [ ] Commit: `"kernel: time scheduling"`
 
 ### 10.3 App Blocking
 
-**Prompt:** Block specific apps by executable name via Codex `BlockedApps` list. Check on process exec — if blocked, deny + show message. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: app blocking"`.
+**Prompt:** Block specific apps by executable name via Registry `HKU\{child}\ParentalControls\BlockedApps` list. Check on process exec — if blocked, deny + show message. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: app blocking"`.
 
 
 - [ ] Block list of specific apps by executable name
-- [ ] Codex: `User\{child}\ParentalControls\BlockedApps = "browser.exe,ssh.exe"`
+- [ ] Registry: `HKU\{child}\ParentalControls\BlockedApps = "browser.exe,ssh.exe"`
 - [ ] Check on process exec: if app is blocked → deny + show message
 - [ ] Commit: `"kernel: app blocking"`
 
@@ -501,13 +501,13 @@
 
 ### 11.2 Power Management Profiles
 
-**Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Codex: `System\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: power management profiles"`.
+**Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
 
 
 - [ ] Power profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep)
 - [ ] Profiles control: display sleep timeout, CPU throttling (if applicable)
 - [ ] `power.spl` settings applet
-- [ ] Codex: `System\Power\Profile = "Balanced"`
+- [ ] Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`
 - [ ] Commit: `"kernel: power management profiles"`
 
 ### 11.3 Scripting Engine (Macro/Automation)

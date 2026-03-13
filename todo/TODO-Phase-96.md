@@ -15,7 +15,7 @@
 
 ### 1.1 Update Check API
 
-**Prompt:** The update system provides a mechanism for keeping Impossible OS current. `update_check()` does an HTTP GET to the update server URL, parses the JSON/INI response for version, download URL, and SHA-256 hash, then compares with the current version stored in Codex `System\Version`. If an update is available, populate `struct update_info` with version, URL, hash, size, type (hotfix/minor/major), and description. After completing all items, create `docs/architecture/updates.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: update check API"`.
+**Prompt:** The update system provides a mechanism for keeping Impossible OS current. `update_check()` does an HTTP GET to the update server URL, parses the JSON/INI response for version, download URL, and SHA-256 hash, then compares with the current version stored in Registry `HKLM\SYSTEM\Version`. If an update is available, populate `struct update_info` with version, URL, hash, size, type (hotfix/minor/major), and description. After completing all items, create `docs/architecture/updates.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update check API"`.
 
 
 - [ ] Create `src/apps/updater/updater.c` and `include/update.h`
@@ -23,7 +23,7 @@
 - [ ] Implement `update_check(info)`:
   - [ ] HTTP GET to update server: `https://impossible-os.dev/api/version`
   - [ ] Parse JSON/INI response: latest version, download URL, SHA-256 hash
-  - [ ] Compare with current version (Codex: `System\Version`)
+  - [ ] Compare with current version (Registry: `HKLM\SYSTEM\Version`)
   - [ ] Return: update available (yes/no) + info
 - [ ] Commit: `"apps: update check API"`
 
@@ -43,15 +43,15 @@
 
 ### 1.3 Update Application
 
-**Prompt:** `update_apply(path)` first creates a restore point (§3.1) for rollback safety, then extracts the .ipkg ZIP via miniz, replaces system files in `C:\Impossible\System\`, and updates Codex version/timestamp. Handle three update types: hotfix (<100 KB single file), minor (1-5 MB), major (10+ MB kernel changes). Prompt restart. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: update apply + auto-restore-point"`.
+**Prompt:** `update_apply(path)` first creates a restore point (§3.1) for rollback safety, then extracts the .ipkg ZIP via miniz, replaces system files in `C:\Impossible\System\`, and updates Registry version/timestamp. Handle three update types: hotfix (<100 KB single file), minor (1-5 MB), major (10+ MB kernel changes). Prompt restart. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update apply + auto-restore-point"`.
 
 
 - [ ] Implement `update_apply(path)`:
   - [ ] **Create restore point first** (via `restore_create()`)
   - [ ] Extract `.ipkg` update package (ZIP format)
   - [ ] Replace system files in `C:\Impossible\System\`
-  - [ ] Update Codex: `System\Version` → new version
-  - [ ] Update Codex: `System\Update\LastUpdate` → timestamp
+  - [ ] Update Registry: `HKLM\SYSTEM\Version` → new version
+  - [ ] Update Registry: `HKLM\SYSTEM\Update\LastUpdate` → timestamp
 - [ ] Handle update types:
   - [ ] **Hotfix**: single file replacement (<100 KB)
   - [ ] **Minor update**: bug fixes, small features (1–5 MB)
@@ -61,14 +61,14 @@
 
 ### 1.4 Update Settings
 
-**Prompt:** `update.spl` settings applet: manual check button, auto-check toggle with frequency (daily/weekly/never, Codex `System\Update\AutoCheck`), update channel (stable/beta), last check timestamp, and update history. Auto-check at boot runs as a background task with a notification toast: "System update available (v0.3.0)" with [Install]. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: update settings applet"`.
+**Prompt:** `update.spl` settings applet: manual check button, auto-check toggle with frequency (daily/weekly/never, Registry `HKLM\SYSTEM\Update\AutoCheck`), update channel (stable/beta), last check timestamp, and update history. Auto-check at boot runs as a background task with a notification toast: "System update available (v0.3.0)" with [Install]. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update settings applet"`.
 
 
 - [ ] `update.spl` settings applet:
   - [ ] "Check for updates" button (manual check)
-  - [ ] Auto-check toggle (Codex: `System\Update\AutoCheck`)
+  - [ ] Auto-check toggle (Registry: `HKLM\SYSTEM\Update\AutoCheck`)
   - [ ] Check frequency: daily / weekly / never
-  - [ ] Update channel: stable / beta (Codex: `System\Update\Channel`)
+  - [ ] Update channel: stable / beta (Registry: `HKLM\SYSTEM\Update\Channel`)
   - [ ] Last check timestamp display
   - [ ] Update history (list of installed updates)
 - [ ] Auto-check at boot (if enabled): background task checks for updates silently
@@ -82,18 +82,18 @@
 
 ### 2.1 IPKG Package Format
 
-**Prompt:** Define `.ipkg` as a ZIP archive containing: `manifest.ini` (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop), `install.ini` (file destinations, Codex entries, shortcuts, file associations), and `files/` directory with the app executable + libraries + data. After completing all items, create `docs/architecture/package-format.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: IPKG package format specification"`.
+**Prompt:** Define `.ipkg` as a ZIP archive containing: `manifest.ini` (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop), `install.ini` (file destinations, Registry entries, shortcuts, file associations), and `files/` directory with the app executable + libraries + data. After completing all items, create `docs/architecture/package-format.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: IPKG package format specification"`.
 
 
 - [ ] Define `.ipkg` format (ZIP archive containing):
   - [ ] `manifest.ini` — app metadata (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop)
-  - [ ] `install.ini` — file destinations, Codex entries, shortcuts
+  - [ ] `install.ini` — file destinations, Registry entries, shortcuts
   - [ ] `files/` — app executable + libraries + data
 - [ ] Commit: `"apps: IPKG package format specification"`
 
 ### 2.2 App Installer
 
-**Prompt:** Parse `.ipkg` via miniz ZIP extraction, read manifest.ini and install.ini. Installer UI: welcome screen with app name/version/icon, install path selection, progress bar. Install process: create dir (e.g., `C:\Programs\MyApp\`), extract files, write Codex entries, create Start Menu/Desktop shortcuts, register in Codex `System\Apps\{name}\*`. Create a restore point before install. After completing all items, update `docs/architecture/package-format.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: app installer"`.
+**Prompt:** Parse `.ipkg` via miniz ZIP extraction, read manifest.ini and install.ini. Installer UI: welcome screen with app name/version/icon, install path selection, progress bar. Install process: create dir (e.g., `C:\Programs\MyApp\`), extract files, write Registry entries, create Start Menu/Desktop shortcuts, register in Registry `HKLM\SOFTWARE\{name}\*`. Create a restore point before install. After completing all items, update `docs/architecture/package-format.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: app installer"`.
 
 
 - [ ] Create `src/apps/installer/installer.c`
@@ -105,27 +105,27 @@
 - [ ] Install process:
   - [ ] Create install directory (e.g., `C:\Programs\MyApp\`)
   - [ ] Extract files from `files/` → install directory
-  - [ ] Write Codex entries from `[Registry]` section
-  - [ ] Create Start Menu shortcut (if `StartMenu = 1`)
-  - [ ] Create Desktop shortcut (if `Desktop = 1`)
-  - [ ] Register in Codex: `System\Apps\{name}\Version`, `System\Apps\{name}\InstallPath`
+  - [ ] Write Registry entries from `[Registry]` section
+  - [ ] Create Start Menu shortcut (`.lnk` in `C:\Users\{name}\AppData\StartMenu\`)
+  - [ ] Create Desktop shortcut if specified
+  - [ ] Register in Registry: `HKLM\SOFTWARE\{name}\Version`, `HKLM\SOFTWARE\{name}\InstallPath`
 - [ ] **Create restore point before install**
 - [ ] Commit: `"apps: app installer"`
 
 ### 2.3 App Uninstaller
 
-**Prompt:** Read `System\Apps\{name}\InstallPath` from Codex, reverse the install: delete files, remove Codex entries, remove shortcuts. Confirmation dialog: "Uninstall {App Name}?". Clean up empty directories. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: app uninstaller"`.
+**Prompt:** Read `HKLM\SOFTWARE\{name}\InstallPath` from Registry, reverse the install: delete files, remove Registry entries, remove shortcuts. Confirmation dialog: "Uninstall {App Name}?". Clean up empty directories. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: app uninstaller"`.
 
 
-- [ ] Read `System\Apps\{name}\InstallPath` from Codex
-- [ ] Reverse install: delete files, remove Codex entries, remove shortcuts
+- [ ] Read `HKLM\SOFTWARE\{name}\InstallPath` from Registry
+- [ ] Reverse install: delete files, remove Registry entries, remove shortcuts
 - [ ] Confirmation dialog: "Uninstall {App Name}? This will remove the application."
 - [ ] Clean up empty directories after file removal
 - [ ] Commit: `"apps: app uninstaller"`
 
 ### 2.4 Add/Remove Programs UI
 
-**Prompt:** `apps.spl` settings applet listing all installed apps (name, version, size, install date) with [Uninstall] button per app and search/filter. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Add/Remove Programs"`.
+**Prompt:** `apps.spl` settings applet listing all installed apps (name, version, size, install date) with [Uninstall] button per app and search/filter. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Add/Remove Programs"`.
 
 
 - [ ] `apps.spl` settings applet (or integrated in Settings Panel)
@@ -136,7 +136,7 @@
 
 ### 2.5 IPKG Build Tool (Host-Side)
 
-**Prompt:** `tools/ipkg_create.c` runs on the build host, packing a directory into a `.ipkg` ZIP with manifest + install instructions. Usage: `./ipkg_create --name "My App" --version "1.0.0" --dir ./myapp/ --output myapp.ipkg`. Validates manifest first. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"tools: IPKG package build tool"`.
+**Prompt:** `tools/ipkg_create.c` runs on the build host, packing a directory into a `.ipkg` ZIP with manifest + install instructions. Usage: `./ipkg_create --name "My App" --version "1.0.0" --dir ./myapp/ --output myapp.ipkg`. Validates manifest first. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: IPKG package build tool"`.
 
 
 - [ ] Create `tools/ipkg_create.c` (runs on build host, not on OS)
@@ -147,11 +147,11 @@
 
 ### 2.6 File Associations from Packages
 
-**Prompt:** `install.ini` `[Associations]` section maps extensions to executables. Installer registers associations in Codex `System\FileAssoc\{ext}\Program`. Uninstaller reverses them. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: package file associations"`.
+**Prompt:** `install.ini` `[Associations]` section maps extensions to executables. Installer registers associations in Registry `HKCR\{ext}\Program`. Uninstaller reverses them. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: package file associations"`.
 
 
 - [ ] `install.ini` `[Associations]` section: `.txt = myapp.exe`, etc.
-- [ ] Installer registers file associations in Codex: `System\FileAssoc\{ext}\Program`
+- [ ] Installer registers file associations in Registry: `HKCR\{ext}\Program`
 - [ ] Uninstaller removes associations
 - [ ] Commit: `"apps: package file associations"`
 
@@ -162,14 +162,14 @@
 
 ### 3.1 Restore Point Creation
 
-**Prompt:** `restore_create(description)` creates `C:\Impossible\System\Restore\{timestamp}\` with: `manifest.ini` (timestamp, description, OS version), `codex_backup/` (all Codex files), and `system_files.tar` (snapshot of changed system files). After completing all items, create `docs/architecture/system-restore.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: restore point creation"`.
+**Prompt:** `restore_create(description)` creates `C:\Impossible\System\Restore\{timestamp}\` with: `manifest.ini` (timestamp, description, OS version), `registry_backup/` (all Registry hive files), and `system_files.tar` (snapshot of changed system files). After completing all items, create `docs/architecture/system-restore.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: restore point creation"`.
 
 
 - [ ] Create `src/kernel/restore.c` and `include/restore.h`
 - [ ] Implement `restore_create(description)`:
   - [ ] Create directory: `C:\Impossible\System\Restore\{timestamp}\`
   - [ ] Write `manifest.ini`: timestamp, description, OS version
-  - [ ] Back up all Codex files → `codex_backup/`
+  - [ ] Back up all Registry hive files → `registry_backup/`
   - [ ] Snapshot changed system files → `system_files.tar` (simple tar-like archive)
 - [ ] Define `struct restore_point` (id, timestamp, description, size)
 - [ ] Commit: `"kernel: restore point creation"`
@@ -186,13 +186,13 @@
 
 ### 3.3 System Rollback
 
-**Prompt:** `restore_apply(restore_id)` restores Codex files from backup and system files from tar archive, updates Codex timestamp, and prompts restart. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: system rollback"`.
+**Prompt:** `restore_apply(restore_id)` restores Registry hive files from backup and system files from tar archive, updates Registry timestamp, and prompts restart. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system rollback"`.
 
 
 - [ ] Implement `restore_apply(restore_id)`:
-  - [ ] Restore Codex files from `codex_backup/`
+  - [ ] Restore Registry hive files from `registry_backup/`
   - [ ] Restore system files from `system_files.tar`
-  - [ ] Update Codex: `System\Restore\LastRestore` → timestamp
+  - [ ] Update Registry: `HKLM\SYSTEM\Restore\LastRestore` → timestamp
   - [ ] Prompt restart
 - [ ] Commit: `"kernel: system rollback"`
 
@@ -246,7 +246,7 @@
 
 ### 4.2 Recovery Shell
 
-**Prompt:** Minimal text-mode shell with basic commands (ls, cd, cat, cp, mv, rm), disk tools (fsck, fdisk), Codex tools (codex-reset, codex-get, codex-set), and file backup (backup src dst). No GUI, serial-capable. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"recovery: text-mode shell"`.
+**Prompt:** Minimal text-mode shell with basic commands (ls, cd, cat, cp, mv, rm), disk tools (fsck, fdisk), Registry tools (reg-reset, reg-query, reg-set), and file backup (backup src dst). No GUI, serial-capable. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: text-mode shell"`.
 
 
 - [ ] Minimal text-mode shell (no GUI, serial-capable)
@@ -254,12 +254,12 @@
 - [ ] Disk tools:
   - [ ] `fsck` — check and repair filesystem
   - [ ] `fdisk` — view partition table
-- [ ] Codex tools:
-  - [ ] `codex-reset` — restore Codex to factory defaults
-  - [ ] `codex-get` / `codex-set` — read/write Codex values
+- [ ] Registry tools:
+  - [ ] `reg-reset` — restore Registry to factory defaults
+  - [ ] `reg-query` / `reg-set` — read/write Registry values
 - [ ] File backup:
   - [ ] `backup C:\Users\ D:\` — copy user files to USB drive
-- [ ] Commit: `"recovery: text-mode shell with disk/codex tools"`
+- [ ] Commit: `"recovery: text-mode shell with disk/registry tools"`
 
 ### 4.3 Factory Reset
 
@@ -312,7 +312,7 @@
 
 ### 5.2 Scheduled Tasks
 
-**Prompt:** Simple task scheduler: `struct scheduled_task` with name, interval, last_run, callback. `scheduler_add()` registers tasks. Run at boot + periodically. Schedule: auto-update check, disk cleanup, restore point creation. Codex under `System\Scheduler\*`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: scheduled task system"`.
+**Prompt:** Simple task scheduler: `struct scheduled_task` with name, interval, last_run, callback. `scheduler_add()` registers tasks. Run at boot + periodically. Schedule: auto-update check, disk cleanup, restore point creation. Registry under `HKLM\SYSTEM\Scheduler\*`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: scheduled task system"`.
 
 
 - [ ] Simple task scheduler: run actions at specified times
@@ -320,7 +320,7 @@
 - [ ] Define `struct scheduled_task` (name, interval, last_run, callback)
 - [ ] `scheduler_add(name, interval, callback)` — register task
 - [ ] Run matching tasks at boot and periodically
-- [ ] Codex: `System\Scheduler\{name}\Interval`, `System\Scheduler\{name}\LastRun`
+- [ ] Registry: `HKLM\SYSTEM\Scheduler\{name}\Interval`, `HKLM\SYSTEM\Scheduler\{name}\LastRun`
 - [ ] Commit: `"kernel: scheduled task system"`
 
 ### 5.3 Event Log
@@ -348,7 +348,7 @@
 
 ### 5.5 First-Boot Setup Wizard
 
-**Prompt:** Runs on first boot or after factory reset: Welcome screen, set timezone/region, set keyboard layout, create first user (name + password), choose wallpaper, optional update check, [Finish] boots to desktop. Codex `System\FirstBoot = 0` skips on subsequent boots. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: first-boot setup wizard"`.
+**Prompt:** Runs on first boot or after factory reset: Welcome screen, set timezone/region, set keyboard layout, create first user (name + password), choose wallpaper, optional update check, [Finish] boots to desktop. Registry `HKLM\SYSTEM\FirstBoot = 0` skips on subsequent boots. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: first-boot setup wizard"`.
 
 
 - [ ] Runs on very first boot (fresh install) or after factory reset:
@@ -359,7 +359,7 @@
   - [ ] Choose wallpaper
   - [ ] Optional: check for updates
   - [ ] [Finish] → boot to desktop
-- [ ] Flag in Codex: `System\FirstBoot = 0` (skip wizard on subsequent boots)
+- [ ] Flag in Registry: `HKLM\SYSTEM\FirstBoot = 0` (skip wizard on subsequent boots)
 - [ ] Commit: `"desktop: first-boot setup wizard"`
 
 ### 5.6 Safe Mode Boot

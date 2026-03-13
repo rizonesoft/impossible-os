@@ -103,12 +103,12 @@
 
 ### 3.1 Swap / Page File
 
-**Prompt:** This section is marked complete (disk-backed pagefile ✅). Verify the implementation is correct: confirm swap_init, swap_out, swap_in exist, the clock page replacement algorithm works, PTEs encode swap_id when Present=0, page faults trigger swap_in, and pagefile.sys is created at `C:\Impossible\System\pagefile.sys`. Verify Codex key `System\Memory\SwapSlots` controls size. Run `bash scripts/build.sh clean` and verify the boot log shows swap initialization. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to virtual memory or swap. Create or update documentation in `docs/` covering the swap system, pagefile.sys, clock replacement, and PTE encoding.
+**Prompt:** This section is marked complete (disk-backed pagefile ✅). Verify the implementation is correct: confirm swap_init, swap_out, swap_in exist, the clock page replacement algorithm works, PTEs encode swap_id when Present=0, page faults trigger swap_in, and pagefile.sys is created at `C:\Impossible\System\pagefile.sys`. Verify Registry key `HKLM\SYSTEM\Memory\SwapSlots` controls size. Run `bash scripts/build.sh clean` and verify the boot log shows swap initialization. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to virtual memory or swap. Create or update documentation in `docs/` covering the swap system, pagefile.sys, clock replacement, and PTE encoding.
 
 
 **Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
 via VFS. Swap in reads them back. Clock replacement, PTE encoding, and page fault → swap in
-all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memory\SwapSlots`.
+all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYSTEM\Memory\SwapSlots`.
 
 - [x] Implement `swap_init(num_slots)` — initialize swap (currently RAM-backed)
 - [x] Implement `swap_out(virt_addr)` — copy page to swap slot, free frame
@@ -121,7 +121,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 **Disk-backed pagefile** ✅
 - [x] Create pagefile: `C:\Impossible\System\pagefile.sys`
 - [x] Replace `kmalloc` backing store with `vfs_write()`/`vfs_read()` to pagefile
-- [x] Configurable swap size (default: 64 slots, stored in Codex `System\Memory\SwapSlots`)
+- [x] Configurable swap size (default: 64 slots, stored in Registry `HKLM\SYSTEM\Memory\SwapSlots`)
 - [x] Test: swap out → pagefile.sys → swap in → data integrity verified
 - [x] Commit: `"mm: disk-backed swap via pagefile.sys"`
 
@@ -147,7 +147,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 4.1 Styled Panic Screen
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `panic_screen()` renders directly to framebuffer with exception name, stop code, faulting RIP, CR2, full register dump (RAX-R15, RSP, RFLAGS, CR2, CR3), and stack trace via RBP chain walking. Confirm auto-restart countdown uses Codex `System\Recovery\AutoRestart`. Check crash dump writes to `C:\Impossible\System\crashdump.log`. Verify `KPANIC(msg)` macro captures file/line. Confirm idt.c and vmm.c call `panic_screen()`. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to error handling or panic screens. Create or update documentation in `docs/` covering the panic screen, crash dump format, auto-restart, and stack trace walking.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `panic_screen()` renders directly to framebuffer with exception name, stop code, faulting RIP, CR2, full register dump (RAX-R15, RSP, RFLAGS, CR2, CR3), and stack trace via RBP chain walking. Confirm auto-restart countdown uses Registry `HKLM\SYSTEM\Recovery\AutoRestart`. Check crash dump writes to `C:\Impossible\System\crashdump.log`. Verify `KPANIC(msg)` macro captures file/line. Confirm idt.c and vmm.c call `panic_screen()`. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to error handling or panic screens. Create or update documentation in `docs/` covering the panic screen, crash dump format, auto-restart, and stack trace walking.
 
 
 - [x] Design graphical panic screen (Impossible OS blue, sad face, error info)
@@ -157,7 +157,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
   - [x] Source file + line (via `__FILE__`, `__LINE__`)
   - [x] Register dump (RAX–R15, RSP, RFLAGS, CR2, CR3)
 - [x] Implement stack trace (walk RBP chain, print return addresses)
-- [x] Auto-restart countdown (configurable via Codex `System\Recovery\AutoRestart`)
+- [x] Auto-restart countdown (configurable via Registry `HKLM\SYSTEM\Recovery\AutoRestart`)
 - [x] Dump crash info to `C:\Impossible\System\crashdump.log` (when FS is available)
 - [x] Add `KPANIC(msg)` macro that captures file/line automatically
 - [x] Replaced default handlers in `idt.c` and `vmm.c` with `panic_screen()` calls
@@ -199,7 +199,7 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 7.1 System & User Environment
 
-**Prompt:** Environment variables are key-value string pairs stored per-process, inherited by children, and essential for the shell's PATH-based command lookup. Store as a flat array of `"KEY=VALUE"` strings in each `struct task` (same as POSIX environ). System-wide defaults (PATH, SYSTEMROOT, TEMP, HOME, USERNAME, COMPUTERNAME) should be populated from Codex entries at boot. The `env_expand` function replaces `%VAR%` tokens in strings — this is used by the shell for command expansion and by file associations for argument templates. The shell's command lookup must search each PATH directory in order, trying the command name with and without `.exe` extension. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: environment variables"`. Update `README.md` if it contains stale or incorrect references to environment variables or PATH. Create or update documentation in `docs/` covering environment variable storage, per-process inheritance, env_expand, and PATH-based command lookup.
+**Prompt:** Environment variables are key-value string pairs stored per-process, inherited by children, and essential for the shell's PATH-based command lookup. Store as a flat array of `"KEY=VALUE"` strings in each `struct task` (same as POSIX environ). System-wide defaults (PATH, SYSTEMROOT, TEMP, HOME, USERNAME, COMPUTERNAME) should be populated from Registry entries at boot. The `env_expand` function replaces `%VAR%` tokens in strings — this is used by the shell for command expansion and by file associations for argument templates. The shell's command lookup must search each PATH directory in order, trying the command name with and without `.exe` extension. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: environment variables"`. Update `README.md` if it contains stale or incorrect references to environment variables or PATH. Create or update documentation in `docs/` covering environment variable storage, per-process inheritance, env_expand, and PATH-based command lookup.
 
 
 - [ ] Implement `env_get(name)` — look up variable by name
@@ -224,13 +224,13 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 8.1 Clean Shutdown Sequence
 
-**Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Codex registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: clean shutdown sequence"`. Update `README.md` if it contains stale or incorrect references to shutdown or power management. Create or update documentation in `docs/` covering the shutdown sequence, ACPI power-off, and graceful app termination.
+**Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: clean shutdown sequence"`. Update `README.md` if it contains stale or incorrect references to shutdown or power management. Create or update documentation in `docs/` covering the shutdown sequence, ACPI power-off, and graceful app termination.
 
 
 - [ ] Before ACPI shutdown:
   - [ ] Send `WM_CLOSE` to all GUI apps (save work prompt)
   - [ ] Flush all open file handles
-  - [ ] Flush Codex registry to disk
+  - [ ] Flush Registry to disk
   - [ ] Stop network services (release DHCP lease)
   - [ ] Unmount all filesystems
   - [ ] Sync disk caches
@@ -240,11 +240,11 @@ all work end-to-end with disk I/O. Swap size configurable via Codex `System\Memo
 
 ### 8.2 Sleep / Lock Screen (Future)
 
-**Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. The lock screen is simpler: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Codex credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: sleep and lock screen"`. Update `README.md` if it contains stale or incorrect references to sleep or lock screen. Create or update documentation in `docs/` covering ACPI S3 suspend, waking vector, and lock screen UI flow.
+**Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. The lock screen is simpler: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Registry credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: sleep and lock screen"`. Update `README.md` if it contains stale or incorrect references to sleep or lock screen. Create or update documentation in `docs/` covering ACPI S3 suspend, waking vector, and lock screen UI flow.
 
 
 - [ ] *(Stretch)* — ACPI S3 suspend to RAM
-- [ ] *(Stretch)* — Lock screen (password prompt, Codex credential check)
+- [ ] *(Stretch)* — Lock screen (password prompt, Registry credential check)
 
 ---
 

@@ -135,21 +135,21 @@
 
 ### 7.1 Acceleration Curves
 
-**Prompt:** Implement mouse acceleration in the input processing layer (between raw deltas and cursor movement). For PS/2 relative mode: apply a non-linear acceleration curve so slow movements are precise and fast movements cover more distance. Use a simple polynomial: `accel_delta = delta * (1.0 + speed * acceleration_factor)` where `speed = sqrt(dx² + dy²)`. Implement using fixed-point integer math (no FPU). Store acceleration settings in the Codex registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: mouse acceleration curves"`. Update `README.md` if it contains stale or incorrect references to mouse movement or acceleration. Create or update documentation in `docs/` covering the acceleration curve algorithm, fixed-point math implementation, and Codex configuration.
+**Prompt:** Implement mouse acceleration in the input processing layer (between raw deltas and cursor movement). For PS/2 relative mode: apply a non-linear acceleration curve so slow movements are precise and fast movements cover more distance. Use a simple polynomial: `accel_delta = delta * (1.0 + speed * acceleration_factor)` where `speed = sqrt(dx² + dy²)`. Implement using fixed-point integer math (no FPU). Store acceleration settings in the Registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: mouse acceleration curves"`. Update `README.md` if it contains stale or incorrect references to mouse movement or acceleration. Create or update documentation in `docs/` covering the acceleration curve algorithm, fixed-point math implementation, and Registry configuration.
 
 - [ ] Create `src/kernel/input/mouse_accel.c` and `include/kernel/input/mouse_accel.h`
 - [ ] Implement fixed-point acceleration: `accel = 1.0 + speed * factor` (16.16 fixed point)
 - [ ] Apply acceleration to PS/2 deltas before cursor position update
 - [ ] Skip acceleration for absolute sources (VirtIO, VBox — already pixel-accurate)
-- [ ] Default acceleration factor: 1.5 (configurable via Codex)
+- [ ] Default acceleration factor: 1.5 (configurable via Registry)
 - [ ] Commit: `"input: mouse acceleration curves"`
 
 ### 7.2 Configurable DPI / Sensitivity
 
-**Prompt:** Add a sensitivity multiplier to the input layer. Sensitivity is a simple linear scale factor applied to mouse deltas: `effective_delta = raw_delta * sensitivity`. Default sensitivity is 1.0 (stored as integer 100 = 1.00×). Range: 0.1× (10) to 3.0× (300). Read from Codex path `System\Input\MouseSensitivity`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: configurable mouse sensitivity"`. Update `README.md` if it contains stale or incorrect references to mouse sensitivity. Create or update documentation in `docs/` covering the sensitivity multiplier, Codex integration, and valid range.
+**Prompt:** Add a sensitivity multiplier to the input layer. Sensitivity is a simple linear scale factor applied to mouse deltas: `effective_delta = raw_delta * sensitivity`. Default sensitivity is 1.0 (stored as integer 100 = 1.00×). Range: 0.1× (10) to 3.0× (300). Read from Registry path `HKLM\SYSTEM\Input\MouseSensitivity`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: configurable mouse sensitivity"`. Update `README.md` if it contains stale or incorrect references to mouse sensitivity. Create or update documentation in `docs/` covering the sensitivity multiplier, Registry integration, and valid range.
 
 - [ ] Add sensitivity multiplier (16.16 fixed point)
-- [ ] Read from Codex: `System\Input\MouseSensitivity` (default: 100 = 1.0×)
+- [ ] Read from Registry: `HKLM\SYSTEM\Input\MouseSensitivity` (default: 100 = 1.0×)
 - [ ] Range: 10 (0.1×) to 300 (3.0×)
 - [ ] Apply to both X and Y deltas independently
 - [ ] Commit: `"input: configurable mouse sensitivity"`
@@ -255,7 +255,7 @@
 | 🔴 P0 | 6.1 Packet Resync | Prevent jitter from lost PS/2 bytes |
 | 🟠 P1 | 5.1 Explorer 5-Button | Side buttons for browser back/forward |
 | 🟠 P1 | 7.1 Acceleration | Non-linear curves for precise + fast mouse |
-| 🟠 P1 | 7.2 Sensitivity | Configurable DPI multiplier via Codex |
+| 🟠 P1 | 7.2 Sensitivity | Configurable DPI multiplier via Registry |
 | 🟡 P2 | 8.1 USB EHCI | USB 2.0 host controller — needed for real hardware |
 | 🟡 P2 | 8.2 USB HID Mouse | USB mouse class driver over EHCI |
 | 🟡 P2 | 10.1 VBox Extended | Display resize, clipboard, shared folders |

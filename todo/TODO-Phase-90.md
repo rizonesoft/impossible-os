@@ -542,15 +542,15 @@
 
 ### 6.1 Auto-Mount System
 
-**Prompt:** After the partition scanner discovers all partitions, assign drive letters automatically: C:\ is always the first IXFS partition (the system drive), then D:\, E:\, etc. for additional partitions in discovery order. The existing `vfs_mount()` needs to support real disk-backed partitions (not just the initrd). Store mount configuration in Codex: `System\Storage\Drive\{letter}\Device` and `Filesystem`. Log each mount to serial: "Mounted C:\\ (IXFS, 2.0 GB) on sata0-part1". After completing all items, update `docs/architecture/vfs.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"fs: auto-mount drive letters"`.
+**Prompt:** After the partition scanner discovers all partitions, assign drive letters automatically: C:\ is always the first IXFS partition (the system drive), then D:\, E:\, etc. for additional partitions in discovery order. The existing `vfs_mount()` needs to support real disk-backed partitions (not just the initrd). Store mount configuration in Registry: `HKLM\SYSTEM\Storage\Drive\{letter}\Device` and `Filesystem`. Log each mount to serial: "Mounted C:\ (IXFS, 2.0 GB) on sata0-part1". After completing all items, update `docs/architecture/vfs.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"fs: auto-mount drive letters"`.
 
 
 - [ ] After partition scanning: auto-assign drive letters
   - [ ] `C:\` — first IXFS partition (system drive)
   - [ ] `D:\`, `E:\`, etc. — additional partitions in order
 - [ ] Update existing `vfs_mount()` to support real disk partitions (not just initrd)
-- [ ] Store mount configuration in Codex: `System\Storage\Drive\{letter}\Device`, `Filesystem`
-- [ ] Log mounts: "Mounted C:\\ (IXFS, 2.0 GB) on disk0-part1"
+- [ ] Store mount configuration in Registry: `HKLM\SYSTEM\Storage\Drive\{letter}\Device`, `Filesystem`
+- [ ] Log mounts: "Mounted C:\ (IXFS, 2.0 GB) on disk0-part1"
 - [ ] Commit: `"fs: auto-mount drive letters"`
 
 ### 6.2 Manual Mount/Unmount
@@ -585,7 +585,7 @@
 
 ### 7.2 Disk Operations
 
-**Prompt:** Disk operations are high-risk and need confirmation dialogs. Create partition: select unallocated space, specify size and filesystem type (FAT32 or IXFS), write a new GPT/MBR entry, then format. Delete partition: remove the partition table entry (WARNING: destroys all data). Format: rewrite the filesystem structures (`fat32_format()` or `ixfs_format()`). Change drive letter: update the VFS mount point and Codex entry. View usage: show a pie chart or bar of used vs. free space. Stretch goals: partition resize (complex — requires filesystem-aware shrink/grow) and SMART status for AHCI drives. After completing all items, update `docs/user/disk-management.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Disk Management operations"`.
+**Prompt:** Disk operations are high-risk and need confirmation dialogs. Create partition: select unallocated space, specify size and filesystem type (FAT32 or IXFS), write a new GPT/MBR entry, then format. Delete partition: remove the partition table entry (WARNING: destroys all data). Format: rewrite the filesystem structures (`fat32_format()` or `ixfs_format()`). Change drive letter: update the VFS mount point and Registry entry. View usage: show a pie chart or bar of used vs. free space. Stretch goals: partition resize (complex — requires filesystem-aware shrink/grow) and SMART status for AHCI drives. After completing all items, update `docs/user/disk-management.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Disk Management operations"`.
 
 
 - [ ] Create partition: select unallocated space → set size + filesystem type
@@ -719,7 +719,7 @@
 
 ### 8.5 File & Data Recovery
 
-**Prompt:** Recovery scans for deleted files that haven't been overwritten. For IXFS: scan the inode table for inodes with `i_links == 0` whose data blocks are still unallocated (block bitmap shows them free). Recover filenames from directory entry scans (entries with zeroed inode pointers). Assign a confidence score: high (all blocks intact), medium (some blocks overwritten), low (mostly gone). For FAT32: scan for directory entries with the 0xE5 deletion marker, follow the FAT chain if the first cluster is still intact. Data carving: scan raw blocks for magic bytes (JPEG: FFD8FF, PNG: 89504E47, PDF: 25504446, ZIP: 504B0304). The GUI provides a wizard: select drive → scan → results table → select files → choose destination. After completing all items, create `docs/user/recovery.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"tools: recover command"` and `"apps: Recovery Wizard GUI"`.
+**Prompt:** Recovery scans for deleted files that haven't been overwritten. For IXFS: scan the inode table for inodes with `i_links == 0` whose data blocks are still unallocated (block bitmap shows them free). Recover filenames from directory entry scans (entries with zeroed inode pointers). Assign a confidence score: high (all blocks intact), medium (some blocks overwritten), low (mostly gone). For FAT32: scan for directory entries with the 0xE5 deletion marker, follow the FAT chain if the first cluster is still intact. Data carving: scan raw blocks for magic bytes (JPEG: FFD8FF, PNG: 89504E47, PDF: 25504D46, ZIP: 504B0304). The GUI provides a wizard: select drive → scan → results table → select files → choose destination. After completing all items, create `docs/user/recovery.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"tools: recover command"` and `"apps: Recovery Wizard GUI"`.
 
 
 > **Priority: P3** — Essential safety net for accidental deletion
@@ -851,7 +851,7 @@
 
 ### 8.10 Volume Shadow Copy / Backup
 
-**Prompt:** This builds on the existing IXFS snapshot infrastructure (§5.8). The CLI `snapshot` commands wrap `ixfs_snapshot_create/list/restore/delete`. `snapshot diff` compares two snapshots to show files added/modified/deleted (walk both extent trees, compare inodes). The GUI shows a timeline of snapshots sorted chronologically, with Create/Restore/Delete buttons and confirmation dialogs. A diff viewer shows changed files. Auto-snapshot scheduling (daily/weekly) stores the schedule in Codex `System\Storage\SnapshotSchedule`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"tools: snapshot command"` and `"apps: Snapshot Manager GUI"`.
+**Prompt:** This builds on the existing IXFS snapshot infrastructure (§5.8). The CLI `snapshot` commands wrap `ixfs_snapshot_create/list/restore/delete`. `snapshot diff` compares two snapshots to show files added/modified/deleted (walk both extent trees, compare inodes). The GUI shows a timeline of snapshots sorted chronologically, with Create/Restore/Delete buttons and confirmation dialogs. A diff viewer shows changed files. Auto-snapshot scheduling (daily/weekly) stores the schedule in Registry `HKLM\SYSTEM\Storage\SnapshotSchedule`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"tools: snapshot command"` and `"apps: Snapshot Manager GUI"`.
 
 
 > **Priority: P4** — Leverages existing IXFS snapshot infrastructure
@@ -913,7 +913,7 @@
 - [x] On first boot (fresh IXFS format), create standard directory tree:
   - [x] `C:\Impossible\` — system root
   - [x] `C:\Impossible\System\` — system files
-  - [x] `C:\Impossible\System\Config\Codex\` — Codex registry files
+  - [x] `C:\Impossible\System\Config\Registry\` — Registry hive files
   - [x] `C:\Impossible\Bin\` — system executables
   - [x] `C:\Impossible\Fonts\` — system fonts
   - [x] `C:\Impossible\Icons\` — system icons

@@ -48,7 +48,7 @@
 - [ ] Document the two-tier allocation model (kmalloc vs PMM) with diagram
 - [ ] Document identity-mapped physical memory layout
 - [ ] List all PMM consumers with sizes: framebuffer back buffer, font files, glyph pool, window framebuffers
-- [ ] List all kmalloc consumers with typical sizes: VFS nodes, task structs, Codex values
+- [ ] List all kmalloc consumers with typical sizes: VFS nodes, task structs, Registry values
 - [ ] Document the glyph pool bump allocator: how it works, capacity, fragmentation characteristics
 - [ ] Add a "capacity planning" section: current usage vs limits, warning thresholds
 - [ ] Cross-reference `rules.md`, `/add-asset` workflow, and `memory-allocation` skill

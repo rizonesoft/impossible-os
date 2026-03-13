@@ -185,13 +185,13 @@
 
 ### 3.3 JPG/PNG Wallpaper
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `load_wallpaper()` in `desktop.c` uses `image_load()` + `image_scale()` instead of reading raw BGRA from VFS. Verify wallpaper path is read from Codex `System\Theme\Wallpaper` (default: `C:\Impossible\Wallpapers\default.jpg`). Verify fit mode is read from Codex `WallpaperMode` and maps to `image_fit_t` enum. Verify Makefile copies JPEG as-is (no `jpg2raw` conversion for wallpaper). Verify `wallpaper.raw` and `bg.raw` are no longer created. Run `make clean && make all && make run`. Fix any inconsistencies below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `load_wallpaper()` in `desktop.c` uses `image_load()` + `image_scale()` instead of reading raw BGRA from VFS. Verify wallpaper path is read from Registry `HKCU\Software\Impossible\Theme\Wallpaper` (default: `C:\Impossible\Wallpapers\default.jpg`). Verify fit mode is read from Registry `WallpaperMode` and maps to `image_fit_t` enum. Verify Makefile copies JPEG as-is (no `jpg2raw` conversion for wallpaper). Verify `wallpaper.raw` and `bg.raw` are no longer created. Run `bash scripts/build.sh clean`. Fix any inconsistencies below.
 
 
 - [x] Modify `desktop.c` to load wallpaper via `image_load()` instead of raw initrd
 - [x] Support JPEG and PNG wallpapers directly (no build-time `jpg2raw` conversion)
 - [x] Scale wallpaper to fit screen using `image_scale()`
-- [x] Read wallpaper path and fit mode from Codex (`System\Theme\Wallpaper`, `WallpaperMode`)
+- [x] Read wallpaper path and fit mode from Registry (`HKCU\Software\Impossible\Theme\Wallpaper`, `WallpaperMode`)
 - [x] Cache scaled wallpaper (don't re-decode every frame)
 - [x] Commit: `"desktop: JPEG/PNG wallpaper loading"`
 
@@ -244,7 +244,7 @@
   - [x] Convert alpha bitmap → BGRA with foreground color tint
   - [x] Cache result keyed by (codepoint, size, color, variant)
 - [x] Variant selection per context: Filled for active, Regular for menus, Light for disabled
-- [x] Theme integration: icon color from Codex `System\Theme\IconColor`
+- [x] Theme integration: icon color from Registry `HKCU\Software\Impossible\Theme\IconColor`
 - [x] Welcome window toolbar demo: 8 icons (cut, copy, paste, undo, redo, save, search, settings)
 - [x] Commit: `"desktop: font-based icon rendering"`
 
@@ -290,7 +290,7 @@
 - [x] Install to `C:\Impossible\System\icons.ires`
 - [x] Implement `ires_load(path)` in kernel — parse header, index, load pixel data via PMM
 - [x] Desktop icons for testing: Computer, Recycle Bin, Control Deck (48px, alpha-blended)
-- [x] Icon theme switching via Codex `System\Theme\IconPack` (placeholder for future)
+- [x] Icon theme switching via Registry `HKCU\Software\Impossible\Theme\IconPack` (placeholder for future)
 - [x] Commit: `"desktop: IRES color icon format + desktop icons"` (`d933877`)
 
 ### 4.6 ICO File Loader (App Compatibility)

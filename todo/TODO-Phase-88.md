@@ -1,7 +1,7 @@
 # Phase 03 — System Services
 
 > **Goal:** Build the system-level infrastructure that transforms a bare kernel into a
-> usable operating system: configuration management (Codex registry), background
+> usable operating system: configuration management (Registry), background
 > services, clipboard, file associations, time management, and essential utilities.
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
@@ -9,107 +9,107 @@
 
 ---
 
-## 1. Codex Registry System
+## 1. Registry System
 > *Research: [01_codex_registry.md](research/phase_03_system_services/01_codex_registry.md)*
 
 ### 1.1 Core In-Memory Tree
 
-**Prompt:** The Codex registry is the central configuration store for the entire OS — study `include/codex.h` and `src/kernel/codex.c` which already implement the core tree. Keys are tree nodes connected by backslash-separated paths (like `System\Display\Width`). Each key holds named values of different types (STRING, INT32, BOOL, etc.). The root keys are System, Hardware, User, and Apps. Verify the existing implementation handles: path traversal via `codex_open`, key creation, deletion, and enumeration. If any items are already done, confirm they work correctly by reading/writing test values. After completing all items, create or update `docs/architecture/codex.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Codex registry tree structure"`.
+**Prompt:** The Registry is the central configuration store for the entire OS — study `include/registry.h` and `src/kernel/registry.c` which implement the core tree. Keys are tree nodes connected by backslash-separated paths (like `HKLM\SYSTEM\Display\Width`). Each key holds named values of different types (REG_SZ, REG_DWORD, REG_QWORD, etc.). The root keys are HKLM, HKCU, HKU, and HKCR. Verify the existing implementation handles: path traversal via `RegOpenKeyEx`, key creation, deletion, and enumeration. If any items are already done, confirm they work correctly by reading/writing test values. After completing all items, create or update `docs/architecture/registry.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Registry tree structure"`.
 
 
-- [x] Define `codex_type_t` enum: STRING, INT32, INT64, BINARY, BOOL
-- [x] Define `codex_value_t` struct (name, type, data union, data_size)
-- [x] Define `codex_key_t` struct (name, parent, children list, sibling list, values list)
-- [x] Create `include/codex.h` and `src/kernel/codex.c`
-- [x] Implement `codex_init()` — initialize empty tree with root keys
-- [x] Implement `codex_open(path)` — navigate tree by backslash-separated path
-- [x] Implement `codex_create(path)` — create key if it doesn't exist
-- [x] Implement `codex_delete_key(path)` — remove key and all children
-- [x] Commit: `"kernel: Codex registry tree structure"`
+- [x] Define `reg_value_type_t` enum: REG_SZ, REG_DWORD, REG_QWORD, REG_BINARY, REG_NONE
+- [x] Define `reg_value_t` struct (name, type, data union, data_size)
+- [x] Define `reg_key_t` struct (name, parent, children list, sibling list, values list)
+- [x] Create `include/registry.h` and `src/kernel/registry.c`
+- [x] Implement `registry_init()` — initialize empty tree with root keys
+- [x] Implement `RegOpenKeyEx(hKey, subKey, ...)` — navigate tree by backslash-separated path
+- [x] Implement `RegCreateKeyEx(hKey, subKey, ...)` — create key if it doesn't exist
+- [x] Implement `RegDeleteKey(hKey, subKey)` — remove key and all children
+- [x] Commit: `"kernel: Registry tree structure"`
 
 ### 1.2 Value Accessors
 
-**Prompt:** Type-safe accessor functions prevent misuse of the registry — `codex_get_string` should fail gracefully if the stored value is INT32, not STRING. Each getter returns a status code (success/not_found/wrong_type). The `codex_enum_values` and `codex_enum_keys` iterators are essential for the `codex` shell command (§1.6) and for Win32 `RegEnumKeyEx`/`RegEnumValue` compatibility (§1.5). Verify all existing accessors work correctly by running test read/write cycles. After completing all items, update `docs/architecture/codex.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Codex get/set/enum operations"`.
+**Prompt:** Type-safe accessor functions prevent misuse of the registry — `RegGetString` should fail gracefully if the stored value is REG_DWORD, not REG_SZ. Each getter returns an error code (ERROR_SUCCESS/ERROR_FILE_NOT_FOUND/ERROR_MORE_DATA). The `RegEnumValue` and `RegEnumKeyEx` iterators are essential for the `regedit` shell command (§1.6) and for Win32 compatibility. Verify all existing accessors work correctly by running test read/write cycles. After completing all items, update `docs/architecture/registry.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Registry get/set/enum operations"`.
 
 
-- [x] Implement `codex_get_string(key, name, buf, buf_size)`
-- [x] Implement `codex_get_int32(key, name, out)`
-- [x] Implement `codex_get_int64(key, name, out)`
-- [x] Implement `codex_get_bool(key, name, out)`
-- [x] Implement `codex_set_string(key, name, value)`
-- [x] Implement `codex_set_int32(key, name, value)`
-- [x] Implement `codex_set_int64(key, name, value)`
-- [x] Implement `codex_set_bool(key, name, value)`
-- [x] Implement `codex_delete_value(key, name)`
-- [x] Implement `codex_enum_keys(key, index, name, size)` — iterate subkeys
-- [x] Implement `codex_enum_values(key, index, out)` — iterate values
-- [x] Commit: `"kernel: Codex get/set/enum operations"`
+- [x] Implement `RegGetString(hKey, valueName, buf, bufSize)`
+- [x] Implement `RegGetDword(hKey, valueName, &value)`
+- [x] Implement `RegGetQword(hKey, valueName, &value)`
+- [x] Implement `RegQueryValueEx(hKey, valueName, &type, data, &dataSize)` — generic
+- [x] Implement `RegSetString(hKey, valueName, str)`
+- [x] Implement `RegSetDword(hKey, valueName, value)`
+- [x] Implement `RegSetQword(hKey, valueName, value)`
+- [x] Implement `RegSetValueEx(hKey, valueName, type, data, dataSize)` — generic
+- [x] Implement `RegDeleteValue(hKey, valueName)`
+- [x] Implement `RegEnumKeyEx(hKey, index, name, &nameSize, ...)` — iterate subkeys
+- [x] Implement `RegEnumValue(hKey, index, name, &nameSize, &type, data, &dataSize)` — iterate values
+- [x] Commit: `"kernel: Registry get/set/enum operations"`
 
 ### 1.3 Pre-Populated Defaults
 
-**Prompt:** Default values ensure the OS boots to a sane state even on first run. Populate from hardware detection results: framebuffer resolution into `System\Display\`, CPUID brand string into `Hardware\CPU\`, PMM total memory into `Hardware\Memory\`. Theme defaults (accent color, dark mode, corner radius) define the look of every UI element. Shell defaults (taskbar height, position) control layout. Call `codex_populate_defaults()` only on first boot — check for a sentinel key like `System\FirstBootDone` to avoid overwriting user changes on subsequent boots. After completing all items, update `docs/architecture/codex.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Codex default values"`.
+**Prompt:** Default values ensure the OS boots to a sane state even on first run. Populate from hardware detection results: framebuffer resolution into `HKLM\SYSTEM\Display\`, CPUID brand string into `HKLM\HARDWARE\CPU\`, PMM total memory into `HKLM\HARDWARE\Memory\`. Theme defaults (accent color, dark mode, corner radius) define the look of every UI element. Shell defaults (taskbar height, position) control layout. Call `registry_populate_defaults()` only on first boot — check for a sentinel key like `HKLM\SYSTEM\FirstBootDone` to avoid overwriting user changes on subsequent boots. After completing all items, update `docs/architecture/registry.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Registry default values"`.
 
 
-- [x] Populate `System\Display\` — Width, Height, DPI from framebuffer
-- [x] Populate `System\Theme\` — AccentColor (#0078D4), DarkMode (1), Font (Selawik), CornerRadius (8)
-- [x] Populate `System\Shell\` — TaskbarHeight (48), TaskbarPosition (bottom)
-- [x] Populate `System\Network\` — Hostname, DHCP, DNS
-- [x] Populate `Hardware\CPU\` — Vendor, Model (from CPUID)
-- [x] Populate `Hardware\Memory\` — TotalMB (from PMM)
-- [x] Populate `User\Default\` — Desktop, Shell defaults
-- [x] Call `codex_populate_defaults()` from `kernel_main()` on first boot
-- [x] Commit: `"kernel: Codex default values"`
+- [x] Populate `HKLM\SYSTEM\Display\` — Width, Height, DPI from framebuffer
+- [x] Populate `HKCU\Software\Impossible\Theme\` — AccentColor (#0078D4), DarkMode (1), Font (Selawik), CornerRadius (8)
+- [x] Populate `HKLM\SYSTEM\Shell\` — TaskbarHeight (48), TaskbarPosition (bottom)
+- [x] Populate `HKLM\SYSTEM\Network\` — Hostname, DHCP, DNS
+- [x] Populate `HKLM\HARDWARE\CPU\` — Vendor, Model (from CPUID)
+- [x] Populate `HKLM\HARDWARE\Memory\` — TotalMB (from PMM)
+- [x] Populate `HKU\Default\` — Desktop, Shell defaults
+- [x] Call `registry_populate_defaults()` from `kernel_main()` on first boot
+- [x] Commit: `"kernel: Registry default values"`
 
-### 1.4 Disk Persistence (.codex files)
+### 1.4 Disk Persistence (.hive files)
 
-**Prompt:** Without disk persistence, all Codex changes are lost on reboot. The .codex file format is INI-style (`[Section]` + `Key = Value` pairs) for human readability. Save to `C:\Impossible\System\Config\Codex\` with separate files per root key (system.codex, hardware.codex, user.codex, apps.codex). Use a dirty-flag on each root key — only serialize keys that changed. The periodic flush (every 2 seconds) runs in the compositor loop or a timer callback. Force-flush on shutdown (§8.1 of Phase 01) is critical to prevent data loss. Test by setting a value, rebooting (QEMU reset), and verifying the value persisted. After completing all items, update `docs/architecture/codex.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: Codex disk persistence"`.
+**Prompt:** Without disk persistence, all Registry changes are lost on reboot. The .hive file format is a binary format with a 4096-byte header (magic, version, checksum, timestamps). Save to `C:\Impossible\System\Config\Registry\` with separate files per root key (SYSTEM.hive, SOFTWARE.hive, HARDWARE.hive, DEFAULT.hive). Use a dirty-flag on each root key — only serialize keys that changed. The periodic flush (every 2 seconds) runs in the compositor loop or a timer callback. Force-flush on shutdown (§8.1 of Phase 01) is critical to prevent data loss. Test by setting a value, rebooting (QEMU reset), and verifying the value persisted. After completing all items, update `docs/architecture/registry.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Registry disk persistence"`.
 
 
-- [x] Define `.codex` file format (INI-style: [Section] + Key = Value)
-- [x] Implement `.codex` file parser (read sections, key-value pairs, handle quoting)
-- [x] Implement `codex_save(tree)` — serialize to `C:\Impossible\System\Config\Codex\`
-  - [x] `system.codex` for `System\`
-  - [x] `hardware.codex` for `Hardware\`
-  - [x] `user.codex` for `User\`
-  - [x] `apps.codex` for `Apps\`
-- [x] Implement `codex_load(tree)` — load from disk at boot
+- [x] Define `.hive` file format (binary with 4096-byte header)
+- [x] Implement hive file parser (read keys, values, handle types)
+- [x] Implement `registry_save(root)` — serialize to `C:\Impossible\System\Config\Registry\`
+  - [x] `SYSTEM.hive` for `HKLM\SYSTEM`
+  - [x] `HARDWARE.hive` for `HKLM\HARDWARE`
+  - [x] `SOFTWARE.hive` for `HKLM\SOFTWARE`
+  - [x] `DEFAULT.hive` for `HKU\Default`
+- [x] Implement `registry_load(root)` — load from disk at boot
 - [x] Dirty-flag tracking — only save changed trees
 - [x] Periodic flush (every 2 seconds) via compositor loop
 - [x] Force flush on shutdown (force save after populate_defaults at boot)
-- [x] Commit: `"kernel: Codex disk persistence"`
+- [x] Commit: `"kernel: Registry disk persistence"`
 
 ### 1.5 Win32 Registry Mapping
 
-**Prompt:** Windows apps access the registry via `RegOpenKeyEx`/`RegQueryValueEx`/`RegSetValueEx` — map these to Codex operations by translating hive paths (HKEY_LOCAL_MACHINE\SOFTWARE → System\, HKEY_CURRENT_USER → User\Default\). Each Win32 registry type maps to a Codex type: REG_SZ → STRING, REG_DWORD → INT32, REG_BINARY → BINARY. Add these stubs to the `advapi32.dll` builtin table in the Win32 compatibility layer (Phase 10). `RegCloseKey` is a no-op since Codex doesn't use per-key handles. This is important for running real Windows programs that read/write configuration. After completing all items, update `docs/architecture/codex.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: registry API stubs mapping to Codex"`.
+**Prompt:** Windows apps access the registry via `RegOpenKeyEx`/`RegQueryValueEx`/`RegSetValueEx` — these map directly to the native Registry API since both use the same Win32-compatible interface. The hive paths (HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER, etc.) are identical. Each Win32 registry type maps directly: REG_SZ, REG_DWORD, REG_BINARY, etc. Add these stubs to the `advapi32.dll` builtin table in the Win32 compatibility layer (Phase 10). After completing all items, update `docs/architecture/registry.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: registry API stubs"`.
 
 
-- [ ] Map Windows hives to Codex paths:
-  - [ ] `HKEY_LOCAL_MACHINE\SOFTWARE` → `System\`
-  - [ ] `HKEY_LOCAL_MACHINE\HARDWARE` → `Hardware\`
-  - [ ] `HKEY_CURRENT_USER` → `User\Default\`
-  - [ ] `HKEY_CURRENT_USER\Software\{App}` → `Apps\{App}\`
-  - [ ] `HKEY_CLASSES_ROOT` → `System\FileTypes\`
-- [ ] Implement `RegOpenKeyExA/W` → `codex_open(mapped_path)`
-- [ ] Implement `RegCreateKeyExA/W` → `codex_create(mapped_path)`
-- [ ] Implement `RegQueryValueExA/W` → `codex_get_*()` with type mapping (REG_SZ→STRING, REG_DWORD→INT32)
-- [ ] Implement `RegSetValueExA/W` → `codex_set_*()`
+- [ ] Map Windows hives to Registry paths:
+  - [ ] `HKEY_LOCAL_MACHINE\SOFTWARE` → `HKLM\SOFTWARE`
+  - [ ] `HKEY_LOCAL_MACHINE\HARDWARE` → `HKLM\HARDWARE`
+  - [ ] `HKEY_CURRENT_USER` → `HKCU` (redirects to `HKU\{user}`)
+  - [ ] `HKEY_CURRENT_USER\Software\{App}` → `HKCU\Software\{App}`
+  - [ ] `HKEY_CLASSES_ROOT` → `HKCR` (merged view)
+- [ ] Implement `RegOpenKeyExA/W` → `RegOpenKeyEx(mapped_root, mapped_path, ...)`
+- [ ] Implement `RegCreateKeyExA/W` → `RegCreateKeyEx(mapped_root, mapped_path, ...)`
+- [ ] Implement `RegQueryValueExA/W` → `RegQueryValueEx()` with type mapping
+- [ ] Implement `RegSetValueExA/W` → `RegSetValueEx()`
 - [ ] Implement `RegDeleteKeyA/W`, `RegDeleteValueA/W`
 - [ ] Implement `RegEnumKeyExA/W`, `RegEnumValueA/W`
-- [ ] `RegCloseKey` → no-op
+- [ ] `RegCloseKey` → `RegCloseKey()`
 - [ ] Add to `advapi32.dll` builtin stub table
-- [ ] Commit: `"win32: registry API stubs mapping to Codex"`
+- [ ] Commit: `"win32: registry API stubs"`
 
-### 1.6 Codex Shell Command
+### 1.6 Regedit Shell Command
 
-**Prompt:** The `codex` shell command provides direct CLI access for debugging and configuration. Subcommands: `codex list System\Theme` lists all values, `codex get System\Theme\DarkMode` reads one, `codex set System\Theme\DarkMode 0` modifies one, `codex tree System` dumps the entire subtree. Add this as a built-in shell command alongside existing commands. Use `codex_enum_keys`/`codex_enum_values` for the `list` and `tree` subcommands. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: codex command"`.
+**Prompt:** The `regedit` shell command provides direct CLI access for debugging and configuration. Subcommands: `regedit list HKLM\SYSTEM\Theme` lists all values, `regedit query HKLM\SYSTEM\Theme DarkMode` reads one, `regedit set HKLM\SYSTEM\Theme DarkMode REG_DWORD 0` modifies one, `regedit tree HKLM\SYSTEM` dumps the entire subtree. Add this as a built-in shell command alongside existing commands. Use `RegEnumKeyEx`/`RegEnumValue` for the `list` and `tree` subcommands. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: regedit command"`.
 
 
-- [ ] `codex list System\Theme` — show all values in a key
-- [ ] `codex get System\Theme\DarkMode` — show a single value
-- [ ] `codex set System\Theme\DarkMode 0` — set a value
-- [ ] `codex tree System` — print key tree
+- [ ] `regedit list HKLM\SYSTEM\Theme` — show all values in a key
+- [ ] `regedit query HKLM\SYSTEM\Theme DarkMode` — show a single value
+- [ ] `regedit set HKLM\SYSTEM\Theme DarkMode REG_DWORD 0` — set a value
+- [ ] `regedit tree HKLM\SYSTEM` — print key tree
 - [ ] Add to shell built-in commands
-- [ ] Commit: `"shell: codex command"`
+- [ ] Commit: `"shell: regedit command"`
 
 ---
 
@@ -118,7 +118,7 @@
 
 ### 2.1 Service Manager
 
-**Prompt:** The service manager provides start/stop/restart lifecycle for background daemons. Each service is tracked by a `struct service` with state + PID. `svc_start` forks and execs the service binary (or creates a kernel thread for kernel-level services). `svc_stop` sends SIGTERM (from Phase 01 §2.2) and waits, then SIGKILL if necessary. Service definitions are stored in Codex under `System\Services\{name}\`. Consider whether services should be kernel threads (simpler, but runs in kernel space) or separate processes (more isolated, but requires user-mode exec). Start with kernel threads since the process model may not be fully mature. After completing all items, create `docs/architecture/services.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: service manager"`.
+**Prompt:** The service manager provides start/stop/restart lifecycle for background daemons. Each service is tracked by a `struct service` with state + PID. `svc_start` forks and execs the service binary (or creates a kernel thread for kernel-level services). `svc_stop` sends SIGTERM (from Phase 01 §2.2) and waits, then SIGKILL if necessary. Service definitions are stored in the Registry under `HKLM\SYSTEM\Services\{name}\`. Consider whether services should be kernel threads (simpler, but runs in kernel space) or separate processes (more isolated, but requires user-mode exec). Start with kernel threads since the process model may not be fully mature. After completing all items, create `docs/architecture/services.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: service manager"`.
 
 
 - [ ] Define `svc_state_t` enum: STOPPED, RUNNING, STARTING
@@ -133,14 +133,14 @@
 
 ### 2.2 Built-In Services
 
-**Prompt:** Register core OS services that start automatically at boot. `netd` manages the network stack (DHCP renewal, ARP cache), `ntpd` runs NTP time sync, `codexd` handles periodic Codex dirty-flag flushes to disk, `indexd` rebuilds the file search index. Each service's config lives in Codex: `System\Services\{name}\AutoStart` (BOOL), `System\Services\{name}\ExePath` (STRING). Services start after kernel init is complete and the filesystem is mounted. Dependency ordering matters: netd must start before ntpd. After completing all items, update `docs/architecture/services.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: built-in services"`.
+**Prompt:** Register core OS services that start automatically at boot. `netd` manages the network stack (DHCP renewal, ARP cache), `ntpd` runs NTP time sync, `registryd` handles periodic Registry dirty-flag flushes to disk, `indexd` rebuilds the file search index. Each service's config lives in the Registry: `HKLM\SYSTEM\Services\{name}\AutoStart` (REG_DWORD), `HKLM\SYSTEM\Services\{name}\ExePath` (REG_SZ). Services start after kernel init is complete and the filesystem is mounted. Dependency ordering matters: netd must start before ntpd. After completing all items, update `docs/architecture/services.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: built-in services"`.
 
 
 - [ ] Register `netd` — network stack (DHCP, ARP) — auto-start
 - [ ] Register `ntpd` — NTP time sync — auto-start after network
-- [ ] Register `codexd` — Codex dirty-flag flush — auto-start
+- [ ] Register `registryd` — Registry dirty-flag flush — auto-start
 - [ ] Register `indexd` — file search indexer — auto-start
-- [ ] Store service config in Codex: `System\Services\{name}\AutoStart`, `System\Services\{name}\ExePath`
+- [ ] Store service config in Registry: `HKLM\SYSTEM\Services\{name}\AutoStart`, `HKLM\SYSTEM\Services\{name}\ExePath`
 - [ ] Auto-start services at boot (after kernel init)
 - [ ] Commit: `"kernel: built-in services"`
 
@@ -199,7 +199,7 @@
 
 ### 3.4 Clipboard History
 
-**Prompt:** Clipboard history keeps the last 25 entries in a ring buffer — each entry is a deep copy of the clipboard data plus metadata (format, timestamp, source app name). Win+V opens a popup that lists recent entries with previews (first line of text, or "Image" for non-text). Clicking an entry sets it as the current clipboard content and sends a paste event to the focused control. The popup is a WM window with a vertical scrollable list. Configurable via Codex: `System\Clipboard\HistoryEnabled` (BOOL), `System\Clipboard\MaxItems` (INT32, default 25). After completing all items, update `docs/architecture/clipboard.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: clipboard history (Win+V)"`.
+**Prompt:** Clipboard history keeps the last 25 entries in a ring buffer — each entry is a deep copy of the clipboard data plus metadata (format, timestamp, source app name). Win+V opens a popup that lists recent entries with previews (first line of text, or "Image" for non-text). Clicking an entry sets it as the current clipboard content and sends a paste event to the focused control. The popup is a WM window with a vertical scrollable list. Configurable via Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled` (REG_DWORD), `HKLM\SYSTEM\Clipboard\MaxItems` (REG_DWORD, default 25). After completing all items, update `docs/architecture/clipboard.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: clipboard history (Win+V)"`.
 
 
 - [ ] Create `src/desktop/clip_history.c`
@@ -208,7 +208,7 @@
 - [ ] Win+V keyboard shortcut → show clipboard history popup
 - [ ] Click an entry → paste it (set as current clipboard, send paste to focused control)
 - [ ] "Clear all" button → empty history
-- [ ] Codex: `System\Clipboard\HistoryEnabled`, `System\Clipboard\MaxItems`
+- [ ] Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled`, `HKLM\SYSTEM\Clipboard\MaxItems`
 - [ ] Commit: `"desktop: clipboard history (Win+V)"`
 
 ---
@@ -233,13 +233,13 @@
 - [ ] Implement `time_to_datetime(ts, tz_offset)` — Unix timestamp → broken-down struct
 - [ ] Implement `datetime_to_time(dt)` — broken-down → Unix timestamp
 - [ ] Implement `time_set(new_time)` — called by NTP to adjust clock
-- [ ] Implement `time_set_timezone(offset_minutes)` — from Codex
+- [ ] Implement `time_set_timezone(offset_minutes)` — from Registry
 - [ ] Add `SYS_TIME` syscall (number 17) — return Unix timestamp
 - [ ] Commit: `"kernel: wall-clock time system"`
 
 ### 4.2 Time Formatting
 
-**Prompt:** `time_format` implements strftime-style formatting with specifiers: `%H` (24h hour), `%I` (12h hour), `%M` (minutes), `%S` (seconds), `%p` (AM/PM), `%Y` (year), `%m` (month), `%d` (day). Walk the format string character by character, replacing `%X` tokens with formatted values from the datetime struct. Read user preferences from Codex: `System\DateTime\Use24Hour` (BOOL), `System\DateTime\DateFormat` (STRING, e.g., "YYYY-MM-DD" or "MM/DD/YYYY"). These preferences drive the taskbar clock (§4.3) and file timestamps throughout the UI. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: time formatting"`.
+**Prompt:** `time_format` implements strftime-style formatting with specifiers: `%H` (24h hour), `%I` (12h hour), `%M` (minutes), `%S` (seconds), `%p` (AM/PM), `%Y` (year), `%m` (month), `%d` (day). Walk the format string character by character, replacing `%X` tokens with formatted values from the datetime struct. Read user preferences from Registry: `HKLM\SYSTEM\DateTime\Use24Hour` (REG_DWORD), `HKLM\SYSTEM\DateTime\DateFormat` (REG_SZ, e.g., "YYYY-MM-DD" or "MM/DD/YYYY"). These preferences drive the taskbar clock (§4.3) and file timestamps throughout the UI. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: time formatting"`.
 
 
 - [ ] Implement `time_format(dt, buf, size, fmt)` with format specifiers:
@@ -251,7 +251,7 @@
   - [ ] `%Y` — 4-digit year
   - [ ] `%m` — month (01–12)
   - [ ] `%d` — day (01–31)
-- [ ] Read format preferences from Codex: `System\DateTime\Use24Hour`, `System\DateTime\DateFormat`
+- [ ] Read format preferences from Registry: `HKLM\SYSTEM\DateTime\Use24Hour`, `HKLM\SYSTEM\DateTime\DateFormat`
 - [ ] Commit: `"kernel: time formatting"`
 
 ### 4.3 Taskbar Clock Enhancement
@@ -260,14 +260,14 @@
 
 
 - [ ] Draw two lines on right side of taskbar: time (large) + date (small)
-- [ ] Display in configured format (12h/24h, date format from Codex)
+- [ ] Display in configured format (12h/24h, date format from Registry)
 - [ ] Update every second (compare PIT ticks)
 - [ ] *(Stretch)* Click clock → open calendar popup or Date & Time settings
 - [ ] Commit: `"desktop: enhanced taskbar clock"`
 
 ### 4.4 NTP Client
 
-**Prompt:** NTP synchronizes the system clock with internet time servers. Send an SNTPv4 packet (48 bytes) to a time server via UDP port 123. The response contains a transmit timestamp in NTP format (seconds since 1900-01-01 — subtract 2208988800 to convert to Unix epoch). Use hardcoded Google NTP IPs (216.239.35.0, .4, .8, .12) since DNS may not be available yet. Hook into the UDP receive path to route port-123 responses to `ntp_handle_response()`. Auto-sync after DHCP completes at boot. The NTP offset adjusts `time_now()` from §4.1 without modifying the RTC. Store config in Codex: `System\DateTime\NTPEnabled`, `System\DateTime\NTPServer`. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"net: NTP time sync client"`.
+**Prompt:** NTP synchronizes the system clock with internet time servers. Send an SNTPv4 packet (48 bytes) to a time server via UDP port 123. The response contains a transmit timestamp in NTP format (seconds since 1900-01-01 — subtract 2208988800 to convert to Unix epoch). Use hardcoded Google NTP IPs (216.239.35.0, .4, .8, .12) since DNS may not be available yet. Hook into the UDP receive path to route port-123 responses to `ntp_handle_response()`. Auto-sync after DHCP completes at boot. The NTP offset adjusts `time_now()` from §4.1 without modifying the RTC. Store config in Registry: `HKLM\SYSTEM\DateTime\NTPEnabled`, `HKLM\SYSTEM\DateTime\NTPServer`. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: NTP time sync client"`.
 
 
 - [ ] Create `src/kernel/net/ntp.c`
@@ -277,16 +277,16 @@
 - [ ] Hook into UDP receive: route port 123 to `ntp_handle_response()`
 - [ ] Auto-sync after DHCP completes at boot
 - [ ] Periodic re-sync every 60 minutes (via scheduled task)
-- [ ] Store NTP config in Codex: `System\DateTime\NTPEnabled`, `System\DateTime\NTPServer`
+- [ ] Store NTP config in Registry: `HKLM\SYSTEM\DateTime\NTPEnabled`, `HKLM\SYSTEM\DateTime\NTPServer`
 - [ ] Commit: `"net: NTP time sync client"`
 
 ### 4.5 Timezone
 
-**Prompt:** Timezones are stored as a signed integer offset in minutes from UTC (e.g., SAST is UTC+2 = +120 minutes, EST is UTC-5 = -300 minutes). Store in Codex: `System\DateTime\TimezoneOffset` (INT32) and `System\DateTime\TimezoneName` (STRING). `time_now_local()` from §4.1 adds the offset to UTC time. The default should be UTC+0 until configured. A stretch goal is a timezone selector dropdown in the Settings Panel showing common timezone names and their offsets. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: timezone support"`.
+**Prompt:** Timezones are stored as a signed integer offset in minutes from UTC (e.g., SAST is UTC+2 = +120 minutes, EST is UTC-5 = -300 minutes). Store in Registry: `HKLM\SYSTEM\DateTime\TimezoneOffset` (REG_DWORD) and `HKLM\SYSTEM\DateTime\TimezoneName` (REG_SZ). `time_now_local()` from §4.1 adds the offset to UTC time. The default should be UTC+0 until configured. A stretch goal is a timezone selector dropdown in the Settings Panel showing common timezone names and their offsets. After completing all items, update `docs/architecture/time.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: timezone support"`.
 
 
-- [ ] Store timezone in Codex: `System\DateTime\TimezoneOffset` (minutes from UTC)
-- [ ] Store timezone name: `System\DateTime\TimezoneName` (e.g., "SAST")
+- [ ] Store timezone in Registry: `HKLM\SYSTEM\DateTime\TimezoneOffset` (minutes from UTC)
+- [ ] Store timezone name: `HKLM\SYSTEM\DateTime\TimezoneName` (e.g., "SAST")
 - [ ] Default: detect from locale or set UTC+0
 - [ ] *(Stretch)* Timezone selector in Settings Panel
 - [ ] Commit: `"kernel: timezone support"`
@@ -298,11 +298,11 @@
 
 ### 5.1 Extension-to-App Mapping
 
-**Prompt:** File associations map extensions to applications — when a user double-clicks `readme.txt`, the OS looks up `.txt` in Codex to find the associated app (`notepad.exe`) and launches it with the file path as argv[1]. `file_assoc_get_app(".txt")` reads `System\FileTypes\.txt\App`, `file_assoc_get_icon(".txt")` reads the icon name. `file_assoc_open(filepath)` extracts the extension, finds the app, and calls `task_exec(app, filepath)`. This is used by the File Manager, desktop icon double-click, and shortcut execution. After completing all items, create `docs/architecture/file-associations.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: file associations"`.
+**Prompt:** File associations map extensions to applications — when a user double-clicks `readme.txt`, the OS looks up `.txt` in the Registry to find the associated app (`notepad.exe`) and launches it with the file path as argv[1]. `file_assoc_get_app(".txt")` reads `HKCR\.txt\(Default)` to get the prog ID, then looks up the command. `file_assoc_get_icon(".txt")` reads the icon name. `file_assoc_open(filepath)` extracts the extension, finds the app, and calls `task_exec(app, filepath)`. This is used by the File Manager, desktop icon double-click, and shortcut execution. After completing all items, create `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: file associations"`.
 
 
 - [ ] Create `include/file_assoc.h` and `src/kernel/file_assoc.c`
-- [ ] Implement `file_assoc_get_app(ext)` — look up Codex `System\FileTypes\.{ext}\App`
+- [ ] Implement `file_assoc_get_app(ext)` — look up Registry `HKCR\.{ext}\(Default)` → prog ID → command
 - [ ] Implement `file_assoc_get_icon(ext)` — look up icon name for extension
 - [ ] Implement `file_assoc_set(ext, app_path)` — set/change default app
 - [ ] Implement `file_assoc_open(filepath)` — extract extension, find app, exec with filepath as argument
@@ -310,10 +310,10 @@
 
 ### 5.2 Default Associations
 
-**Prompt:** Register sensible defaults in Codex on first boot so common file types open correctly out of the box. Map text file extensions (.txt, .md, .log) to Notepad, source code (.c, .h, .py, .js) to Notepad (or a code editor if available), images (.jpg, .png, .bmp) to Image Viewer, and archives (.zip) to the archive handler. Also map icon names for each extension type so the icon store (Phase 02 §4.3) displays the correct icon. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: default file associations"`.
+**Prompt:** Register sensible defaults in the Registry on first boot so common file types open correctly out of the box. Map text file extensions (.txt, .md, .log) to Notepad, source code (.c, .h, .py, .js) to Notepad (or a code editor if available), images (.jpg, .png, .bmp) to Image Viewer, and archives (.zip) to the archive handler. Also map icon names for each extension type so the icon store (Phase 02 §4.3) displays the correct icon. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: default file associations"`.
 
 
-- [ ] Register defaults in Codex on first boot:
+- [ ] Register defaults in Registry (HKCR) on first boot:
   - [ ] `.txt`, `.md`, `.log` → `notepad.exe`, icon `file_text`
   - [ ] `.c`, `.h`, `.py`, `.js` → `notepad.exe`, icon `file_code`
   - [ ] `.jpg`, `.png`, `.bmp` → `imgview.exe`, icon `file_image`
@@ -323,11 +323,11 @@
 
 ### 5.3 "Open With..." Dialog (Future)
 
-**Prompt:** This stretch goal adds a dialog that appears when right-clicking a file and choosing "Open With..." — it lists all installed applications, lets the user choose one, and optionally sets it as the default via a checkbox that updates the Codex association. The dialog needs to enumerate all executables in `C:\Impossible\Bin\` and `C:\Programs\`. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: open with dialog"`.
+**Prompt:** This stretch goal adds a dialog that appears when right-clicking a file and choosing "Open With..." — it lists all installed applications, lets the user choose one, and optionally sets it as the default via a checkbox that updates the Registry association. The dialog needs to enumerate all executables in `C:\Impossible\Bin\` and `C:\Programs\`. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: open with dialog"`.
 
 
 - [ ] *(Stretch)* Show list of installed apps for any file type
-- [ ] *(Stretch)* "Always use this app" checkbox → updates Codex
+- [ ] *(Stretch)* "Always use this app" checkbox → updates Registry
 - [ ] *(Stretch)* Right-click context menu entry
 
 ---
@@ -420,14 +420,14 @@
 
 ### 8.2 Built-In Scheduled Tasks
 
-**Prompt:** Register default system tasks: NTP sync every 60 minutes (depends on §4.4), Codex dirty-flag flush every 2 seconds (already done via compositor loop, consolidate here), search index rebuild every 30 minutes (§6.1), and log rotation every 24 hours. Store task definitions in Codex: `System\Scheduler\Tasks\{name}\Interval` (INT32, seconds), `System\Scheduler\Tasks\{name}\Enabled` (BOOL). This allows users to enable/disable or adjust intervals through the Codex shell command. After completing all items, update `docs/architecture/scheduler.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: built-in scheduled tasks"`.
+**Prompt:** Register default system tasks: NTP sync every 60 minutes (depends on §4.4), Registry dirty-flag flush every 2 seconds (already done via compositor loop, consolidate here), search index rebuild every 30 minutes (§6.1), and log rotation every 24 hours. Store task definitions in Registry: `HKLM\SYSTEM\Scheduler\Tasks\{name}\Interval` (REG_DWORD, seconds), `HKLM\SYSTEM\Scheduler\Tasks\{name}\Enabled` (REG_DWORD). This allows users to enable/disable or adjust intervals through the regedit shell command. After completing all items, update `docs/architecture/scheduler.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: built-in scheduled tasks"`.
 
 
 - [ ] NTP sync — every 60 minutes
-- [ ] Codex flush — every 2 seconds (dirty-flag)
+- [ ] Registry flush — every 2 seconds (dirty-flag)
 - [ ] Search index rebuild — every 30 minutes
 - [ ] Log rotate — every 24 hours (trim old entries)
-- [ ] Store tasks in Codex: `System\Scheduler\Tasks\{name}\*`
+- [ ] Store tasks in Registry: `HKLM\SYSTEM\Scheduler\Tasks\{name}\*`
 - [ ] Commit: `"kernel: built-in scheduled tasks"`
 
 ---
@@ -460,13 +460,13 @@
 
 ### 9.3 Desktop Integration
 
-**Prompt:** The Recycle Bin desktop icon dynamically shows empty or full state based on `trash_count()`. Right-clicking it shows a context menu (Phase 02 §9.2) with "Open Recycle Bin" and "Empty Recycle Bin". The File Manager's Delete action calls `trash_delete()` instead of permanent delete. Add a Codex setting `System\Recycle\MaxSize` (default 1 GB) — when the total trash size exceeds this limit, auto-purge the oldest items until under the limit. After completing all items, update `docs/architecture/recycle-bin.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: recycle bin integration"`.
+**Prompt:** The Recycle Bin desktop icon dynamically shows empty or full state based on `trash_count()`. Right-clicking it shows a context menu (Phase 02 §9.2) with "Open Recycle Bin" and "Empty Recycle Bin". The File Manager's Delete action calls `trash_delete()` instead of permanent delete. Add a Registry setting `HKLM\SYSTEM\Recycle\MaxSize` (default 1 GB) — when the total trash size exceeds this limit, auto-purge the oldest items until under the limit. After completing all items, update `docs/architecture/recycle-bin.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: recycle bin integration"`.
 
 
 - [ ] Desktop icon: `ICON_TRASH_EMPTY` when bin is empty, `ICON_TRASH_FULL` when items present
 - [ ] Right-click trash icon → "Open Recycle Bin", "Empty Recycle Bin"
 - [ ] File manager "Delete" action → `trash_delete()` instead of permanent delete
-- [ ] Codex: `System\Recycle\MaxSize` — auto-purge oldest when limit reached (default 1 GB)
+- [ ] Registry: `HKLM\SYSTEM\Recycle\MaxSize` — auto-purge oldest when limit reached (default 1 GB)
 - [ ] Commit: `"desktop: recycle bin integration"`
 
 ---
@@ -513,12 +513,12 @@
 
 ### 11.1 User Account System
 
-**Prompt:** A basic user account system tracks the current user with a username, UID, home directory, and password hash. Create a default "Default" user on first boot with home directory `C:\Users\Default\`. Per-user Codex subtrees (User\{username}\) allow different settings per user. This is foundational for Phase 09 (full security) but a minimal version is needed now for file permissions and HOME environment variable. Password verification uses monocypher's Argon2 hash (Phase 01 §11.3) but can be deferred until Phase 09. After completing all items, create `docs/architecture/user-accounts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: user account system"`.
+**Prompt:** A basic user account system tracks the current user with a username, UID, home directory, and password hash. Create a default "Default" user on first boot with home directory `C:\Users\Default\`. Per-user Registry subtrees (HKU\{username}\) allow different settings per user. This is foundational for Phase 09 (full security) but a minimal version is needed now for file permissions and HOME environment variable. Password verification uses monocypher's Argon2 hash (Phase 01 §11.3) but can be deferred until Phase 09. After completing all items, create `docs/architecture/user-accounts.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: user account system"`.
 
 
 - [ ] Define `struct user_account` (username, uid, home_dir, password_hash)
 - [ ] Create default user "Default" on first boot
-- [ ] Per-user Codex trees (`User\{username}\`)
+- [ ] Per-user Registry trees (`HKU\{username}\`)
 - [ ] Per-user home directories (`C:\Users\{username}\`)
 - [ ] Current user tracked in kernel (for file permissions, environment)
 - [ ] *(Stretch)* Login screen at boot
@@ -527,12 +527,12 @@
 
 ### 11.2 Win32 System Info APIs
 
-**Prompt:** Many Windows programs call `GetSystemInfo`, `GetVersionEx`, `GetComputerName`, `GetUserName`, `GetTempPath`, `GetSystemDirectory`, and `GetWindowsDirectory` during startup. These are simple stubs that return values from Codex or hardcoded paths. `GetSystemInfo` returns CPU count (1), page size (4096), architecture (x86-64). `GetVersionEx` returns an OS version mimicking Windows 10 (major=10, minor=0) so programs don't refuse to run. Add to the `kernel32.dll` builtin stub table. After completing all items, update `docs/architecture/win32-stubs.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: system info API stubs"`.
+**Prompt:** Many Windows programs call `GetSystemInfo`, `GetVersionEx`, `GetComputerName`, `GetUserName`, `GetTempPath`, `GetSystemDirectory`, and `GetWindowsDirectory` during startup. These are simple stubs that return values from the Registry or hardcoded paths. `GetSystemInfo` returns CPU count (1), page size (4096), architecture (x86-64). `GetVersionEx` returns an OS version mimicking Windows 10 (major=10, minor=0) so programs don't refuse to run. Add to the `kernel32.dll` builtin stub table. After completing all items, update `docs/architecture/win32-stubs.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: system info API stubs"`.
 
 
 - [ ] `GetSystemInfo()` — CPU count, page size, architecture
-- [ ] `GetVersionExA/W()` — OS version from Codex/VERSION file
-- [ ] `GetComputerNameA()` — from Codex `System\Network\Hostname`
+- [ ] `GetVersionExA/W()` — OS version from Registry/VERSION file
+- [ ] `GetComputerNameA()` — from Registry `HKLM\SYSTEM\Network\Hostname`
 - [ ] `GetUserNameA()` — from current user
 - [ ] `GetTempPathA()` — return `C:\Temp\`
 - [ ] `GetSystemDirectoryA()` — return `C:\Impossible\System\`
@@ -553,13 +553,13 @@
 
 ### 11.4 Autostart / Startup Programs
 
-**Prompt:** After the desktop is fully initialized, scan `C:\Users\{name}\AppData\Startup\` for .lnk files (§7.1) and execute each shortcut's target. Also check Codex: `System\Boot\Run` for commands to run every boot, and `System\Boot\RunOnce` for commands to run once then auto-delete the entry. RunOnce is useful for post-install setup or one-time migrations. The Task Manager (Phase 05 §8.1) should have a "Startup" tab listing autostart entries with enable/disable toggles. After completing all items, create `docs/architecture/autostart.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: startup program execution"`.
+**Prompt:** After the desktop is fully initialized, scan `C:\Users\{name}\AppData\Startup\` for .lnk files (§7.1) and execute each shortcut's target. Also check Registry: `HKLM\SYSTEM\Boot\Run` for commands to run every boot, and `HKLM\SYSTEM\Boot\RunOnce` for commands to run once then auto-delete the entry. RunOnce is useful for post-install setup or one-time migrations. The Task Manager (Phase 05 §8.1) should have a "Startup" tab listing autostart entries with enable/disable toggles. After completing all items, create `docs/architecture/autostart.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: startup program execution"`.
 
 
 - [ ] Scan `C:\Users\{name}\AppData\Startup\` for `.lnk` files at boot
 - [ ] Execute each shortcut after desktop is fully initialized
-- [ ] Codex: `System\Boot\RunOnce` — list of commands to run once then remove
-- [ ] Codex: `System\Boot\Run` — list of commands to run every boot
+- [ ] Registry: `HKLM\SYSTEM\Boot\RunOnce` — list of commands to run once then remove
+- [ ] Registry: `HKLM\SYSTEM\Boot\Run` — list of commands to run every boot
 - [ ] Commit: `"kernel: startup program execution"`
 
 ---
@@ -568,9 +568,9 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1. Codex Registry | Foundation — all other services store config here |
+| 🔴 P0 | 1. Registry System | Foundation — all other services store config here |
 | 🔴 P0 | 4.1–4.2 Time System | Wall-clock time for timestamps, logs, scheduler |
-| 🔴 P0 | 8. Scheduled Tasks | Powers Codex flush, NTP sync, log rotate |
+| 🔴 P0 | 8. Scheduled Tasks | Powers Registry flush, NTP sync, log rotate |
 | 🟠 P1 | 2. Services/Daemons | Background processes infrastructure |
 | 🟠 P1 | 3.1–3.2 Clipboard | Essential UX (copy/paste) |
 | 🟠 P1 | 5. File Associations | Double-click opens correct app |

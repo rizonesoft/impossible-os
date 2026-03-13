@@ -108,7 +108,7 @@
 
 ### 2.3 View Modes
 
-**Prompt:** The file area supports two view modes: Icon view (large icons in a grid with filenames below each) and Detail view (table with columns: Name, Size, Type, Date Modified). Clicking a column header in Detail view sorts by that column (toggle ascending/descending). The toolbar has view toggle buttons (icon/detail). Remember the user's preference in Codex `Apps\FileManager\ViewMode`. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager view modes"`.
+**Prompt:** The file area supports two view modes: Icon view (large icons in a grid with filenames below each) and Detail view (table with columns: Name, Size, Type, Date Modified). Clicking a column header in Detail view sorts by that column (toggle ascending/descending). The toolbar has view toggle buttons (icon/detail). Remember the user's preference in Registry `HKCU\Software\Impossible\FileManager\ViewMode`. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: file manager view modes"`.
 
 
 - [ ] Icon view — large icons with filename below (default)
@@ -200,14 +200,14 @@
 - [ ] Scrollback buffer: 500 lines of history above the visible viewport
 - [ ] Mouse wheel → scroll up/down through history
 - [ ] Scroll bar on right side
-- [ ] Mouse click + drag → text selection (highlighted)
+- [ ] Mouse click + drag → text selection
 - [ ] Ctrl+Shift+C → copy selection to clipboard
 - [ ] Ctrl+Shift+V → paste from clipboard to shell stdin
 - [ ] Commit: `"apps: terminal scrollback and copy/paste"`
 
-### 3.5 Codex Settings
+### 3.5 Registry Settings
 
-**Prompt:** Terminal appearance is configurable via Codex: `Apps\Terminal\FontName` (default "Cascadia Code"), `Apps\Terminal\FontSize` (14), `Apps\Terminal\CursorStyle` ("block"/"underline"/"bar"), `Apps\Terminal\CursorBlink` (BOOL), `Apps\Terminal\Opacity` (0-100 for Acrylic transparency), `Apps\Terminal\ScrollbackLines` (500). Read these values on terminal creation. Recalculate grid columns/rows when the window is resized (new cols = window_width / cell_w). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal settings"`.
+**Prompt:** Terminal appearance is configurable via Registry: `HKCU\Software\Impossible\Terminal\FontName` (default "Cascadia Code"), `HKCU\Software\Impossible\Terminal\FontSize` (14), `HKCU\Software\Impossible\Terminal\CursorStyle` ("block"/"underline"/"bar"), `HKCU\Software\Impossible\Terminal\CursorBlink` (REG_DWORD), `HKCU\Software\Impossible\Terminal\Opacity` (0-100 for Acrylic transparency), `HKCU\Software\Impossible\Terminal\ScrollbackLines` (500). Read these values on terminal creation. Recalculate grid columns/rows when the window is resized (new cols = window_width / cell_w). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal settings"`.
 
 
 - [ ] Font name: `Apps\Terminal\FontName` (default "Cascadia Code")
@@ -221,7 +221,7 @@
 
 ### 3.6 Advanced Features (Future)
 
-**Prompt:** Stretch goals for a premium terminal: multiple tabs (tab bar at top, each tab is a separate terminal session), Acrylic transparency background (composite the desktop behind the terminal surface at reduced alpha via `gfx_acrylic()`), split panes (divide the terminal window horizontally or vertically into independent sessions), and saved color scheme profiles stored in Codex. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal advanced features"`.
+**Prompt:** Stretch goals for a premium terminal: multiple tabs (tab bar at top, each tab is a separate terminal session), Acrylic transparency background (composite the desktop behind the terminal surface at reduced alpha via `gfx_acrylic()`), split panes (divide the terminal window horizontally or vertically into independent sessions), and saved color scheme profiles stored in Registry. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal advanced features"`.
 
 
 - [ ] *(Stretch)* Multiple tabs — tabbed terminal sessions
@@ -236,13 +236,13 @@
 
 ### 4.1 SPL Framework
 
-**Prompt:** SPL (Settings Panel Library) defines a standard interface for settings applets. Each applet is a single C function that responds to messages: SPL_INIT (allocate resources), SPL_GETINFO (return name/icon/category), SPL_OPEN (draw UI to provided surface), SPL_CLOSE (cleanup), SPL_SAVE (write changes to Codex). The `spl_panel_t` provides the drawing surface, mouse state, and a Codex root path. This architecture lets settings be modular — new applets can be added without changing the host app. After completing all items, create `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: SPL applet interface"`.
+**Prompt:** SPL (Settings Panel Library) defines a standard interface for settings applets. Each applet is a single C function that responds to messages: SPL_INIT (allocate resources), SPL_GETINFO (return name/icon/category), SPL_OPEN (draw UI to provided surface), SPL_CLOSE (cleanup), SPL_SAVE (write changes to Registry). The `spl_panel_t` provides the drawing surface, mouse state, and a Registry root path. This architecture lets settings be modular — new applets can be added without changing the host app. After completing all items, create `docs/architecture/settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: SPL applet interface"`.
 
 
 - [ ] Create `include/spl.h` — SPL interface
 - [ ] Define messages: `SPL_INIT`, `SPL_GETINFO`, `SPL_OPEN`, `SPL_CLOSE`, `SPL_SAVE`
 - [ ] Define `spl_info_t` (name, description, icon_path, category, version)
-- [ ] Define `spl_panel_t` (surface, width, height, mouse state, codex_root)
+- [ ] Define `spl_panel_t` (surface, width, height, mouse state, registry_root)
 - [ ] Define `spl_applet_fn` function pointer type
 - [ ] Commit: `"apps: SPL applet interface"`
 
@@ -263,7 +263,7 @@
 
 ### 4.3 Core Applets
 
-**Prompt:** Ship 9 essential applets: `about.spl` (simplest — display OS version, CPU, RAM from CPUID/PMM), `display.spl` (resolution selector, DPI scale dropdown, brightness slider), `theme.spl` (accent color picker, dark/light toggle, corner radius slider), `wallpaper.spl` (browse images in Wallpapers folder, set wallpaper, fit mode), `network.spl` (IP, DHCP toggle, DNS, hostname from network stack), `sound.spl` (volume slider, mute toggle), `datetime.spl` (timezone, 12h/24h, date format, NTP sync button), `power.spl` (screen timeout, shutdown/restart buttons), `taskbar.spl` (height, position, auto-hide). Each applet reads/writes Codex keys and calls the corresponding system functions. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel core applets"`.
+**Prompt:** Ship 9 essential applets: `about.spl` (simplest — display OS version, CPU, RAM from CPUID/PMM), `display.spl` (resolution selector, DPI scale dropdown, brightness slider), `theme.spl` (accent color picker, dark/light toggle, corner radius slider), `wallpaper.spl` (browse images in Wallpapers folder, set wallpaper, fit mode), `network.spl` (IP, DHCP toggle, DNS, hostname from network stack), `sound.spl` (volume slider, mute toggle), `datetime.spl` (timezone, 12h/24h, date format, NTP sync button), `power.spl` (screen timeout, shutdown/restart buttons), `taskbar.spl` (height, position, auto-hide). Each applet reads/writes Registry keys and calls the corresponding system functions. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Settings Panel core applets"`.
 
 
 - [ ] `about.spl.c` — OS version, CPU, RAM, hardware summary (simplest applet)
@@ -319,7 +319,7 @@
 
 ### 5.2 Text Rendering & Cursor
 
-**Prompt:** Render visible lines from the gap buffer using `font_draw_string()` (Selawik or user-configured font from Codex). Track cursor_line and cursor_col. The I-beam cursor blinks at the insertion point (500ms toggle). Arrow keys move the cursor, adjusting line/col and scrolling the viewport if necessary. Home/End jump to line start/end. Ctrl+Home/End jump to file start/end. The scroll position (`scroll_y`) determines which line is at the top of the visible area. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad text rendering"`.
+**Prompt:** Render visible lines from the gap buffer using `font_draw_string()` (Selawik or user-configured font from Registry). Track cursor_line and cursor_col. The I-beam cursor blinks at the insertion point (500ms toggle). Arrow keys move the cursor, adjusting line/col and scrolling the viewport if necessary. Home/End jump to line start/end. Ctrl+Home/End jump to file start/end. The scroll position (`scroll_y`) determines which line is at the top of the visible area. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad text rendering"`.
 
 
 - [ ] Define `struct notepad` state (text, cursor_line/col, scroll_y, filepath, modified)
@@ -641,7 +641,7 @@
 
 ### 14.1 Calendar View
 
-**Prompt:** The Calendar app shows a month grid (7 columns Mon–Sun × 5-6 week rows). The current day is highlighted with the accent color. Navigation buttons switch months. Clicking a day shows events for that day in a panel below the grid. "+ Add Event" opens a dialog with time picker, title, and color selector. Events are stored in Codex: `User\{name}\Calendar\Events\YYYY-MM-DD\{id}` with Title, Time, Color values. Also accessible by clicking the taskbar clock (Phase 03 §4.3). Uses the time API from Phase 03 §4.1 for date calculations. After completing all items, create `docs/user/calendar.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calendar"`.
+**Prompt:** The Calendar app shows a month grid (7 columns Mon–Sun × 5-6 week rows). The current day is highlighted with the accent color. Navigation buttons switch months. Clicking a day shows events for that day in a panel below the grid. "+ Add Event" opens a dialog with time picker, title, and color selector. Events are stored in Registry: `HKU\{name}\Software\Impossible\Calendar\Events\YYYY-MM-DD\{id}` with Title, Time, Color values. Also accessible by clicking the taskbar clock (Phase 03 §4.3). Uses the time API from Phase 03 §4.1 for date calculations. After completing all items, create `docs/user/calendar.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Calendar"`.
 
 
 - [ ] Create `src/apps/calendar/calendar.c`
@@ -650,7 +650,7 @@
 - [ ] Navigation: ◀ / ▶ buttons to switch months
 - [ ] Events for selected day shown below calendar grid
 - [ ] [+ Add Event] → dialog: time, title, color
-- [ ] Events stored in Codex: `User\{name}\Calendar\Events\{date}\*`
+- [ ] Events stored in Registry: `HKU\{name}\Software\Impossible\Calendar\Events\{date}\*`
 - [ ] Also accessible: click taskbar clock → opens calendar
 - [ ] Commit: `"apps: Calendar"`
 
@@ -661,7 +661,7 @@
 
 ### 15.1 System Info App
 
-**Prompt:** System Information is a read-only display app showing hardware and OS details. Data sources: CPUID (vendor string, brand string), `g_boot_info` (framebuffer resolution, multiboot info), PMM (total/available memory), PCI enumeration (NIC names, storage controllers), Codex (OS version, hostname, IP), and uptime from PIT ticks. This code should be reusable by the `about.spl` settings applet from §4.3. Display in a two-column table: label on left, value on right. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: System Information"`.
+**Prompt:** System Information is a read-only display app showing hardware and OS details. Data sources: CPUID (vendor string, brand string), `g_boot_info` (framebuffer resolution, multiboot info), PMM (total/available memory), PCI enumeration (NIC names, storage controllers), Registry (OS version, hostname, IP), and uptime from PIT ticks. This code should be reusable by the `about.spl` settings applet from §4.3. Display in a two-column table: label on left, value on right. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: System Information"`.
 
 
 - [ ] Create `src/apps/sysinfo/sysinfo.c`
@@ -674,7 +674,7 @@
   - [ ] Network: NIC name, IP address
   - [ ] Storage: drive name, total size
   - [ ] Boot: Multiboot2 via GRUB2
-- [ ] Data from: CPUID, `g_boot_info`, PMM, PCI, Codex
+- [ ] Data from: CPUID, `g_boot_info`, PMM, PCI, Registry
 - [ ] Reusable by `about.spl` in Settings Panel
 - [ ] Commit: `"apps: System Information"`
 
@@ -704,7 +704,7 @@
 
 ### 17.1 Font Manager
 
-**Prompt:** The Font Manager lists all .ttf files installed in `C:\Impossible\Fonts\` using the font manager API from Phase 02 §2. For each font, render a preview line ("The quick brown fox...") at multiple sizes (12, 16, 24, 36px). An "Install" button copies a .ttf file to the fonts directory and registers it in Codex. A "Remove" button deletes the font file (but prevents removing system-required fonts like Selawik and Cascadia Code). A "Set Default" button updates `System\Theme\Font` in Codex. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Font Manager"`.
+**Prompt:** The Font Manager lists all .ttf files installed in `C:\Impossible\Fonts\` using the font manager API from Phase 02 §2. For each font, render a preview line ("The quick brown fox...") at multiple sizes (12, 16, 24, 36px). An "Install" button copies a .ttf file to the fonts directory and registers it in Registry. A "Remove" button deletes the font file (but prevents removing system-required fonts like Selawik and Cascadia Code). A "Set Default" button updates `HKCU\Software\Impossible\Theme\Font` in Registry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Font Manager"`.
 
 > *Research: [14_font_manager.md](research/phase_05_core_apps/14_font_manager.md)*
 
@@ -712,14 +712,14 @@
 - [ ] List installed `.ttf` files from `C:\Impossible\Fonts\`
 - [ ] Preview each font: "The quick brown fox jumps over the lazy dog"
 - [ ] Preview at different sizes (12, 16, 24, 36px)
-- [ ] Install new font: copy `.ttf` to fonts directory + register in Codex
+- [ ] Install new font: copy `.ttf` to fonts directory + register in Registry
 - [ ] Remove font (cannot remove system default)
 - [ ] Set default system font / monospace font
 - [ ] Commit: `"apps: Font Manager"`
 
 ### 17.2 Color Picker
 
-**Prompt:** The system-wide Color Picker activates via Win+Shift+C. The cursor changes to a crosshair/eyedropper icon (from the cursor pack, Phase 02 §5). Draw a magnified circle around the cursor showing individual pixels. On click, read the pixel color from the compositor's back buffer at the cursor position. Show a popup with the color values in RGB, HSL, and HEX (#FF5733) formats. Auto-copy the hex value to the clipboard. Maintain a history of the last 10 picked colors in Codex. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Color Picker"`.
+**Prompt:** The system-wide Color Picker activates via Win+Shift+C. The cursor changes to a crosshair/eyedropper icon (from the cursor pack, Phase 02 §5). Draw a magnified circle around the cursor showing individual pixels. On click, read the pixel color from the compositor's back buffer at the cursor position. Show a popup with the color values in RGB, HSL, and HEX (#FF5733) formats. Auto-copy the hex value to the clipboard. Maintain a history of the last 10 picked colors in Registry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Color Picker"`.
 
 > *Research: [15_color_picker.md](research/phase_05_core_apps/15_color_picker.md)*
 
@@ -735,7 +735,7 @@
 
 ### 17.3 Sticky Notes
 
-**Prompt:** Sticky Notes are always-on-top floating windows with editable text on colored backgrounds. Each note is a small window with a simple textarea widget. A "+" button creates a new note. Color options: yellow, pink, blue, green, purple (each is a background color preset). Auto-save to Codex: `User\{name}\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`. Load all notes on app startup (which runs at boot via autostart from Phase 03 §11.4). Delete: click X on the note title bar, confirm with a dialog. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Sticky Notes"`.
+**Prompt:** Sticky Notes are always-on-top floating windows with editable text on colored backgrounds. Each note is a small window with a simple textarea widget. A "+" button creates a new note. Color options: yellow, pink, blue, green, purple (each is a background color preset). Auto-save to Registry: `HKU\{name}\Software\Impossible\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`. Load all notes on app startup (which runs at boot via autostart from Phase 03 §11.4). Delete: click X on the note title bar, confirm with a dialog. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Sticky Notes"`.
 
 > *Research: [16_sticky_notes.md](research/phase_05_core_apps/16_sticky_notes.md)*
 
@@ -744,7 +744,7 @@
 - [ ] Click "+" to create new note
 - [ ] Resizable colored rectangles with editable text
 - [ ] Color options: yellow, pink, blue, green, purple
-- [ ] Auto-save to Codex: `User\{name}\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`
+- [ ] Auto-save to Registry: `HKU\{name}\Software\Impossible\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`
 - [ ] Persist across reboots (load at startup)
 - [ ] Delete: click X on note → confirm
 - [ ] Commit: `"apps: Sticky Notes"`
@@ -768,12 +768,12 @@
 
 ### 18.2 App Installer / Uninstaller
 
-**Prompt:** Stretch goal: a simple package format `.ipkg` (a ZIP file with a `manifest.json` describing name, version, files, and shortcuts). `install <pkg>` extracts to `C:\Programs\{name}\`, creates Start Menu shortcuts from the manifest, and registers in Codex `Apps\Installed\{name}`. `uninstall <name>` removes the files, shortcuts, and Codex entries. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: package installer"`.
+**Prompt:** Stretch goal: a simple package format `.ipkg` (a ZIP file with a `manifest.json` describing name, version, files, and shortcuts). `install <pkg>` extracts to `C:\Programs\{name}\`, creates Start Menu shortcuts from the manifest, and registers in Registry `HKLM\SOFTWARE\Installed\{name}`. `uninstall <name>` removes the files, shortcuts, and Registry entries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: package installer"`.
 
 
 - [ ] *(Stretch)* `.ipkg` format (ZIP with manifest.json): name, version, files, shortcuts
 - [ ] *(Stretch)* `install <pkg>` → extract to `C:\Programs\{name}\`, create shortcuts
-- [ ] *(Stretch)* `uninstall <name>` → remove files, shortcuts, Codex entries
+- [ ] *(Stretch)* `uninstall <name>` → remove files, shortcuts, Registry entries
 
 ### 18.3 Help / About Dialog (Shared)
 

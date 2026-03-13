@@ -142,7 +142,7 @@
 - [x] "Detecting hardware..." — PCI scan, NIC, input devices
 - [x] "Detecting drives..." — partition scan, filesystem mount
 - [x] "Configuring network..." — DHCP discover
-- [x] "Loading system configuration..." — Codex registry, kernel tests
+- [x] "Loading system configuration..." — Registry, kernel tests
 - [x] "Preparing desktop..." — log flush, desktop setup
 - [x] "Loading fonts..." — TTF font manager init
 - [x] "Loading resources..." — icon store, cursors

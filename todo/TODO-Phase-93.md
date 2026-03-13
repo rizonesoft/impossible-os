@@ -15,7 +15,7 @@
 
 ### 1.1 User Account System
 
-**Prompt:** The user account system is the foundation for all security features. Define `struct user_account` with uid, username, display_name, password_hash (never plaintext), privilege_level (ADMIN/USER/GUEST), avatar_path, home_dir, and auto_login flag. Privilege levels control access: ADMIN has full access, USER can read/write own files and read system files, GUEST is read-only with a temporary session. Store user data in Codex under `User\{name}\*`. Create a default Admin account on first boot with a configurable password. After completing all items, create `docs/architecture/security.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: user account system"`.
+**Prompt:** The user account system is the foundation for all security features. Define `struct user_account` with uid, username, display_name, password_hash (never plaintext), privilege_level (ADMIN/USER/GUEST), avatar_path, home_dir, and auto_login flag. Privilege levels control access: ADMIN has full access, USER can read/write own files and read system files, GUEST is read-only with a temporary session. Store user data in Registry under `HKU\{name}\*`. Create a default Admin account on first boot with a configurable password. After completing all items, create `docs/architecture/security.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: user account system"`.
 
 
 - [ ] Create `src/kernel/auth.c` and `include/auth.h`
@@ -24,7 +24,7 @@
   - [ ] `PRIV_ADMIN` (0) — full access to all files and system settings
   - [ ] `PRIV_USER` (1) — own files + read system files
   - [ ] `PRIV_GUEST` (2) — read-only access, temporary session
-- [ ] User storage in Codex: `User\{name}\PasswordHash`, `User\{name}\Privilege`, `User\{name}\Avatar`, `User\{name}\AutoLogin`
+- [ ] User storage in Registry: `HKU\{name}\PasswordHash`, `HKU\{name}\Privilege`, `HKU\{name}\Avatar`, `HKU\{name}\AutoLogin`
 - [ ] Create default admin account on first boot: "Admin" with configurable password
 - [ ] Create optional Guest account (no password, read-only)
 - [ ] Commit: `"kernel: user account system"`
@@ -98,16 +98,16 @@
 
 ### 2.2 Login Flow
 
-**Prompt:** The login flow runs after the boot splash and before the desktop compositor starts. If multiple accounts exist, show user avatars side-by-side (click to select). Type password and press Enter or click Sign in. On success: call `auth_login()`, load the user's profile (wallpaper, pinned apps, Codex settings), and start the desktop. On failure: animate a horizontal shake on the password field, show "Incorrect password" text in red, clear the input. Lock out after 5 consecutive failed attempts with a 30-second cooldown timer displayed on screen. Auto-login: if only one account and `AutoLogin = 1` in Codex, skip the login screen entirely. After completing all items, update `docs/architecture/login.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: login flow"`.
+**Prompt:** The login flow runs after the boot splash and before the desktop compositor starts. If multiple accounts exist, show user avatars side-by-side (click to select). Type password and press Enter or click Sign in. On success: call `auth_login()`, load the user's profile (wallpaper, pinned apps, Registry settings), and start the desktop. On failure: animate a horizontal shake on the password field, show "Incorrect password" text in red, clear the input. Lock out after 5 consecutive failed attempts with a 30-second cooldown timer displayed on screen. Auto-login: if only one account and `AutoLogin = 1` in Registry, skip the login screen entirely. After completing all items, update `docs/architecture/login.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: login flow"`.
 
 
 - [ ] Pre-boot: show login screen after boot splash
 - [ ] Select user (if multiple accounts): click avatar to switch
 - [ ] Type password → click Sign in (or press Enter)
-- [ ] On success: load desktop with user's profile (wallpaper, pinned apps, Codex settings)
+- [ ] On success: load desktop with user's profile (wallpaper, pinned apps, Registry settings)
 - [ ] On failure: shake password field, show "Incorrect password", clear input
 - [ ] Lock out after 5 failed attempts (30-second cooldown)
-- [ ] Auto-login option: skip login for single user (Codex `User\{name}\AutoLogin = 1`)
+- [ ] Auto-login option: skip login for single user (Registry `HKU\{name}\AutoLogin = 1`)
 - [ ] Commit: `"desktop: login flow"`
 
 ### 2.3 User Switching
@@ -262,7 +262,7 @@
 - [ ] *(Stretch)* Boot-time password prompt before mounting encrypted partition
 - [ ] *(Stretch)* Encrypt/decrypt sectors transparently
 - [ ] *(Stretch)* Key stored in LUKS-like header on disk (never plaintext)
-- [ ] *(Stretch)* Codex: `System\Security\EncryptionEnabled`
+- [ ] *(Stretch)* Registry: `HKLM\SYSTEM\Security\EncryptionEnabled`
 - [ ] Commit: `"kernel: full disk encryption"`
 
 ---
@@ -273,13 +273,13 @@
 
 ### 6.1 Session Management
 
-**Prompt:** Track login sessions: each login creates a session with user reference, login timestamp, and unique session ID. Configurable idle timeout: auto-lock the screen (Phase 04 §12) after N minutes of no keyboard/mouse input. Track failed login attempts with timestamps for the lockout feature. Maintain an audit log in Codex `System\Security\AuditLog` recording login/logout events with timestamps and usernames. Shell commands: `who` shows current user and session info, `last` shows login history. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: session management and audit log"`.
+**Prompt:** Track login sessions: each login creates a session with user reference, login timestamp, and unique session ID. Configurable idle timeout: auto-lock the screen (Phase 04 §12) after N minutes of no keyboard/mouse input. Track failed login attempts with timestamps for the lockout feature. Maintain an audit log in Registry `HKLM\SYSTEM\Security\AuditLog` recording login/logout events with timestamps and usernames. Shell commands: `who` shows current user and session info, `last` shows login history. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: session management and audit log"`.
 
 
 - [ ] Track login sessions: user, login time, session ID
 - [ ] Session timeout: auto-lock after configurable idle period
 - [ ] Track failed login attempts with timestamps
-- [ ] Audit log: store login/logout events in Codex `System\Security\AuditLog`
+- [ ] Audit log: store login/logout events in Registry `HKLM\SYSTEM\Security\AuditLog`
 - [ ] Shell command: `who` — show current logged-in user + session info
 - [ ] Shell command: `last` — show login history
 - [ ] Commit: `"kernel: session management and audit log"`
@@ -338,7 +338,7 @@
 
 ### 6.6 Security Settings Applet
 
-**Prompt:** The `security.spl` settings applet consolidates security configuration: firewall enable/disable toggle with rule summary (from Phase 07 §6), drive encryption status (from §5), password policy settings (minimum length, require uppercase/number/symbol), screen lock timeout (minutes of inactivity before auto-lock), and login attempt lockout threshold (number of failed attempts before cooldown). All settings stored in Codex under `System\Security\*`. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: security settings applet"`.
+**Prompt:** The `security.spl` settings applet consolidates security configuration: firewall enable/disable toggle with rule summary (from Phase 07 §6), drive encryption status (from §5), password policy settings (minimum length, require uppercase/number/symbol), screen lock timeout (minutes of inactivity before auto-lock), and login attempt lockout threshold (number of failed attempts before cooldown). All settings stored in Registry under `HKLM\SYSTEM\Security\*`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: security settings applet"`.
 
 
 - [ ] `security.spl` in Settings Panel:
@@ -351,7 +351,7 @@
 
 ### 6.7 Sudo / Run-As
 
-**Prompt:** The `sudo <command>` shell command runs a command with admin privileges. If the current user is admin, prompt for their password to confirm identity. If standard user, prompt for the admin password. Cache credentials for 5 minutes (configurable in Codex `System\Security\SudoTimeout`) so repeated sudo commands don't re-prompt. Stretch goal: add a "Run as administrator" option to the right-click context menu (Phase 04 §4) for GUI applications. After completing all items, update `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: sudo command"`.
+**Prompt:** The `sudo <command>` shell command runs a command with admin privileges. If the current user is admin, prompt for their password to confirm identity. If standard user, prompt for the admin password. Cache credentials for 5 minutes (configurable in Registry `HKLM\SYSTEM\Security\SudoTimeout`) so repeated sudo commands don't re-prompt. Stretch goal: add a "Run as administrator" option to the right-click context menu (Phase 04 §4) for GUI applications. After completing all items, update `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: sudo command"`.
 
 
 - [ ] Shell command: `sudo <command>` — run command with admin privileges

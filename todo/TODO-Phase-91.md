@@ -282,7 +282,7 @@
 
 ### 6.3 Default Rules
 
-**Prompt:** Provide sensible default rules for a consumer OS: allow all outbound traffic (user-initiated connections should always work), block all inbound traffic except established TCP connections (stateful — requires connection tracking from §9.2), allow inbound ICMP (so ping works), allow inbound DHCP (UDP ports 67/68), allow inbound DNS responses (UDP port 53), and allow inbound NTP responses (UDP port 123). These defaults should be loaded at boot from Codex or hardcoded as fallback. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"net: firewall default rules"`.
+**Prompt:** Provide sensible default rules for a consumer OS: allow all outbound traffic (user-initiated connections should always work), block all inbound traffic except established TCP connections (stateful — requires connection tracking from §9.2), allow inbound ICMP (so ping works), allow inbound DHCP (UDP ports 67/68), allow inbound DNS responses (UDP port 53), and allow inbound NTP responses (UDP port 123). These defaults should be loaded at boot from the Registry or hardcoded as fallback. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall default rules"`.
 
 
 - [ ] Allow all outbound traffic
@@ -295,10 +295,10 @@
 
 ### 6.4 Firewall Management
 
-**Prompt:** Persist firewall configuration in Codex: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.spl` settings applet (Phase 05 §4 SPL framework) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"net: firewall management"`.
+**Prompt:** Persist firewall configuration in Registry: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.spl` settings applet (Phase 05 §4 SPL framework) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"net: firewall management"`.
 
 
-- [ ] Store rules in Codex: `System\Network\Firewall\Enabled`, `System\Network\Firewall\Rules`
+- [ ] Store rules in Registry: `System\Network\Firewall\Enabled`, `System\Network\Firewall\Rules`
 - [ ] `firewall.spl` settings panel applet — toggle firewall, view/add/remove rules
 - [ ] Shell command: `fw list` — show all rules
 - [ ] Shell command: `fw add <direction> <protocol> <port> <action>` — add rule

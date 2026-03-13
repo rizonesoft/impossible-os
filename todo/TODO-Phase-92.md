@@ -39,7 +39,7 @@
 
 ### 1.2 Audio Abstraction Layer
 
-**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Codex `System\Sound\Volume` (0-100) and `System\Sound\Mute` (BOOL). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: audio abstraction layer"`.
+**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio abstraction layer"`.
 
 
 - [ ] Create `src/kernel/audio.c` and `include/audio.h`
@@ -49,13 +49,13 @@
 - [ ] Implement `audio_set_volume(volume)` — 0–100 scale
 - [ ] Implement `audio_get_volume()` — read current volume
 - [ ] Implement `audio_is_playing()` — check playback state
-- [ ] Store volume in Codex: `System\Sound\Volume`, `System\Sound\Mute`
+- [ ] Store volume in Registry: `HKLM\SYSTEM\Sound\Volume`, `HKLM\SYSTEM\Sound\Mute`
 - [ ] Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls
 - [ ] Commit: `"kernel: audio abstraction layer"`
 
 ### 1.3 Audio Mixer
 
-**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `System\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: audio mixer"`.
+**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `HKLM\SYSTEM\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio mixer"`.
 
 
 - [ ] Create `src/kernel/audio_mixer.c`
@@ -63,12 +63,12 @@
 - [ ] Mix streams by summing PCM samples with per-stream volume
 - [ ] Clamp mixed output to prevent clipping
 - [ ] Master volume applied after mixing
-- [ ] Mute support (Codex `System\Sound\Mute`)
+- [ ] Mute support (Registry `HKLM\SYSTEM\Sound\Mute`)
 - [ ] Commit: `"kernel: audio mixer"`
 
 ### 1.4 System Sounds
 
-**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Sounds\` on IXFS. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Codex `System\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: system sounds"`.
+**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Sounds\` on IXFS. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Registry `HKLM\SYSTEM\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system sounds"`.
 
 
 - [ ] Create `resources/sounds/` directory
@@ -83,7 +83,7 @@
 - [ ] Play startup chime after boot splash finishes
 - [ ] Play error sound with error dialogs
 - [ ] Play notification sound with toast notifications
-- [ ] Codex: `System\Sound\SystemSounds = 1` (enable/disable)
+- [ ] Registry: `HKLM\SYSTEM\Sound\SystemSounds = 1` (enable/disable)
 - [ ] Commit: `"kernel: system sounds"`
 
 ---
@@ -303,7 +303,7 @@
 
 ### 4.4 Sound Settings Applet
 
-**Prompt:** The `sound.spl` applet in the Settings Panel (Phase 05 §4 SPL framework) provides persistent audio configuration. Master volume slider (writes `System\Sound\Volume` to Codex), mute toggle, output device selector (dropdown, if multiple audio devices are detected), system sounds enable/disable toggle, and a "Test Sound" button that plays a short test tone. This applet uses the same audio abstraction API as the media player. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: sound settings applet"`.
+**Prompt:** The `sound.spl` applet in the Settings Panel (Phase 05 §4 SPL framework) provides persistent audio configuration. Master volume slider (writes `HKLM\SYSTEM\Sound\Volume` to Registry), mute toggle, output device selector (dropdown, if multiple audio devices are detected), system sounds enable/disable toggle, and a "Test Sound" button that plays a short test tone. This applet uses the same audio abstraction API as the media player. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: sound settings applet"`.
 
 
 - [ ] `sound.spl` in Settings Panel:
@@ -358,7 +358,7 @@
 
 ### 5.1 SLAB Allocator
 
-**Prompt:** The SLAB allocator creates pre-sized object caches for frequently-allocated kernel structures. Each cache holds fixed-size slots (e.g., 128-byte `vfs_node_t`, 256-byte `task_t`, 64-byte `codex_value_t`). New slabs are allocated from PMM on demand. Allocation is O(1) — pop from a free list. Benefits: zero internal fragmentation, cache-line friendly, no general-purpose heap overhead. Linux uses SLUB (a simplified SLAB variant). Create `slab_cache_create(name, obj_size)`, `slab_alloc(cache)`, `slab_free(cache, ptr)`. Migrate VFS nodes, task structs, and Codex values off the general heap. After completing all items, create `docs/architecture/slab-allocator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"mm: SLAB allocator"`.
+**Prompt:** The SLAB allocator creates pre-sized object caches for frequently-allocated kernel structures. Each cache holds fixed-size slots (e.g., 128-byte `vfs_node_t`, 256-byte `task_t`, 64-byte `reg_value_t`). New slabs are allocated from PMM on demand. Allocation is O(1) — pop from a free list. Benefits: zero internal fragmentation, cache-line friendly, no general-purpose heap overhead. Linux uses SLUB (a simplified SLAB variant). Create `slab_cache_create(name, obj_size)`, `slab_alloc(cache)`, `slab_free(cache, ptr)`. Migrate VFS nodes, task structs, and Registry values off the general heap. After completing all items, create `docs/architecture/slab-allocator.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: SLAB allocator"`.
 
 
 - [ ] Create `src/kernel/mm/slab.c` and `include/kernel/mm/slab.h`
@@ -368,7 +368,7 @@
 - [ ] Auto-grow: allocate new slab pages from PMM when cache is exhausted
 - [ ] Migrate `vfs_node_t` allocations to SLAB cache
 - [ ] Migrate `task_t` allocations to SLAB cache
-- [ ] Migrate `codex_value_t` / `codex_key_t` to SLAB cache
+- [ ] Migrate `reg_value_t` / `reg_key_t` to SLAB cache
 - [ ] Debug: `/proc/slabinfo`-style stats (cache name, active, total, slab pages)
 - [ ] Commit: `"mm: SLAB allocator"`
 
