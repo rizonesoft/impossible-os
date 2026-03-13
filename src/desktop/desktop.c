@@ -27,6 +27,17 @@
 #include "icon_store.h"          /* Color icon rendering from IRES */
 #include "gfx.h"                 /* Alpha blending for icon compositing */
 
+/* Integer square root — local copy matching gfx_core.c (isqrt is static) */
+static uint32_t isqrt_u(uint32_t n)
+{
+    uint32_t x, x1;
+    if (n == 0) return 0;
+    x = n;
+    x1 = (x + 1) / 2;
+    while (x1 < x) { x = x1; x1 = (x + n / x) / 2; }
+    return x;
+}
+
 /* ---- Wallpaper (decoded + scaled) ---- */
 static image_t   wallpaper_img;       /* Scaled wallpaper (PMM or kmalloc) */
 static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully */
@@ -847,52 +858,96 @@ void desktop_draw_start_menu(void)
                            SM_RADIUS, 1, SM_DIVIDER);
 
     /* ---- Clip ALL content to rounded corners (LAST step) ----
-     * Uses saved backbuffer pixels (not wallpaper) so windows behind
-     * the start menu are correctly preserved at corners. */
+     * Uses the same isqrt-based sub-pixel AA as gfx_fill_rounded_rect.
+     * Per scanline: compute arc inset, restore saved backbuffer outside,
+     * blend edge pixels at 16x sub-pixel precision. */
     {
-        int32_t r, c;
-        int32_t cr = (int32_t)SM_RADIUS;
-        int32_t r2 = cr * 2 - 1;
-        int32_t r2_sq = r2 * r2;
+        int32_t row;
+        uint32_t cr = SM_RADIUS;
 
-        for (r = 0; r < cr; r++) {
-            for (c = 0; c < cr; c++) {
-                int32_t base_dx = (cr - 1 - c) * 2;
-                int32_t base_dy = (cr - 1 - r) * 2;
-                int inside = 0;
-                int sub;
-                uint32_t idx = (uint32_t)(r * cr + c);
-                for (sub = 0; sub < 4; sub++) {
-                    int32_t sx = base_dx + (sub & 1);
-                    int32_t sy = base_dy + (sub >> 1);
-                    if (sx * sx + sy * sy <= r2_sq) inside++;
+        for (row = 0; row < (int32_t)cr; row++) {
+            /* Compute arc inset for this row (top corners) */
+            uint32_t r2 = cr * 2;
+            uint32_t dy2 = r2 - (uint32_t)row * 2 - 1;
+            uint32_t r2_sq = r2 * r2;
+            uint32_t dx2_sq = (r2_sq > dy2 * dy2) ? (r2_sq - dy2 * dy2) : 0;
+            uint32_t dx2 = isqrt_u(dx2_sq);
+            uint32_t inset = cr - dx2 / 2;
+
+            /* Edge alpha at 16x precision (same as gfx_fill_rounded_rect) */
+            uint32_t edge_alpha;
+            {
+                uint32_t dx16_sq = dx2_sq * 64;
+                uint32_t dx16 = isqrt_u(dx16_sq);
+                uint32_t dx_whole_16 = (dx2 / 2) * 16;
+                uint32_t subfrac = dx16 - dx_whole_16;
+                if (subfrac > 15) subfrac = 15;
+                edge_alpha = subfrac;  /* 0..15 */
+            }
+
+            /* For each of the 4 corners, restore pixels outside the arc */
+            /* Process both top row and corresponding bottom row */
+            int32_t top_y = menu_y + row;
+            int32_t bot_y = menu_y + (int32_t)menu_h - 1 - row;
+            int32_t col;
+
+            for (col = 0; col < (int32_t)inset; col++) {
+                uint32_t save_idx = (uint32_t)(row * (int32_t)cr + col);
+
+                /* Top-left */
+                {
+                    int32_t px = menu_x + col, py = top_y;
+                    if (px >= 0 && (uint32_t)px < scr.width &&
+                        py >= 0 && (uint32_t)py < scr.height)
+                        scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = corner_save[0][save_idx];
                 }
-                if (inside == 4) continue;
+                /* Top-right */
+                {
+                    int32_t px = menu_x + (int32_t)SM_TOTAL_W - 1 - col, py = top_y;
+                    if (px >= 0 && (uint32_t)px < scr.width &&
+                        py >= 0 && (uint32_t)py < scr.height)
+                        scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = corner_save[1][save_idx];
+                }
+                /* Bottom-left */
+                {
+                    int32_t px = menu_x + col, py = bot_y;
+                    if (px >= 0 && (uint32_t)px < scr.width &&
+                        py >= 0 && (uint32_t)py < scr.height)
+                        scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = corner_save[2][save_idx];
+                }
+                /* Bottom-right */
+                {
+                    int32_t px = menu_x + (int32_t)SM_TOTAL_W - 1 - col, py = bot_y;
+                    if (px >= 0 && (uint32_t)px < scr.width &&
+                        py >= 0 && (uint32_t)py < scr.height)
+                        scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = corner_save[3][save_idx];
+                }
+            }
 
-                #define CORNER_AA(PX, PY, SAVED) do { \
+            /* Anti-alias the edge pixel (at col == inset - 1, blend with save) */
+            if (edge_alpha > 0 && edge_alpha < 16 && inset > 0) {
+                uint32_t save_idx = (uint32_t)(row * (int32_t)cr + (int32_t)inset - 1);
+                uint32_t menu_a = edge_alpha * 16;  /* 0..240 */
+                uint32_t bg_a = 256 - menu_a;
+
+                #define BLEND_EDGE(PX, PY, SAVED) do { \
                     if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
                         (PY) >= 0 && (uint32_t)(PY) < scr.height) { \
+                        uint32_t _mp = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
                         uint32_t _bg = (SAVED); \
-                        if (inside == 0) { \
-                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _bg; \
-                        } else { \
-                            uint32_t _mp = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
-                            uint32_t _a = (uint32_t)inside * 64; \
-                            uint32_t _ia = 256 - _a; \
-                            uint32_t _or = ((((_mp >> 16) & 0xFF) * _a + ((_bg >> 16) & 0xFF) * _ia) >> 8); \
-                            uint32_t _og = ((((_mp >> 8) & 0xFF) * _a + ((_bg >> 8) & 0xFF) * _ia) >> 8); \
-                            uint32_t _ob = (((_mp & 0xFF) * _a + (_bg & 0xFF) * _ia) >> 8); \
-                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = \
-                                (0xFFu << 24) | (_or << 16) | (_og << 8) | _ob; \
-                        } \
+                        uint32_t _or = ((((_mp >> 16) & 0xFF) * menu_a + ((_bg >> 16) & 0xFF) * bg_a) >> 8); \
+                        uint32_t _og = ((((_mp >> 8) & 0xFF) * menu_a + ((_bg >> 8) & 0xFF) * bg_a) >> 8); \
+                        uint32_t _ob = (((_mp & 0xFF) * menu_a + (_bg & 0xFF) * bg_a) >> 8); \
+                        scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = \
+                            (0xFFu << 24) | (_or << 16) | (_og << 8) | _ob; \
                     } \
                 } while (0)
 
-                CORNER_AA(menu_x + c, menu_y + r, corner_save[0][idx]);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + r, corner_save[1][idx]);
-                CORNER_AA(menu_x + c, menu_y + (int32_t)menu_h - 1 - r, corner_save[2][idx]);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + (int32_t)menu_h - 1 - r, corner_save[3][idx]);
-                #undef CORNER_AA
+                BLEND_EDGE(menu_x + (int32_t)inset - 1, top_y, corner_save[0][save_idx]);
+                BLEND_EDGE(menu_x + (int32_t)SM_TOTAL_W - (int32_t)inset, top_y, corner_save[1][save_idx]);
+                BLEND_EDGE(menu_x + (int32_t)inset - 1, bot_y, corner_save[2][save_idx]);
+                BLEND_EDGE(menu_x + (int32_t)SM_TOTAL_W - (int32_t)inset, bot_y, corner_save[3][save_idx]);
+                #undef BLEND_EDGE
             }
         }
     }
