@@ -3,7 +3,7 @@
 # Prerequisites:
 #   1. Install VirtualBox: https://www.virtualbox.org/
 #   2. Build in WSL2 first: bash scripts/build.sh clean
-#   3. Generate test disks in WSL2: bash scripts/test-fs/test-fs.sh gen
+#   3. Test disks are auto-generated via WSL2 if missing
 #
 # Usage:
 #   .\scripts\test-fs\test-fs.ps1                     List available test disks
@@ -12,10 +12,6 @@
 #   .\scripts\test-fs\test-fs.ps1 optical/iso9660     Attach ISO as DVD drive + launch
 #   .\scripts\test-fs\test-fs.ps1 optical/udf         Attach UDF ISO as DVD drive + launch
 #   .\scripts\test-fs\test-fs.ps1 detach              Remove test disk, launch with system disk only
-#
-# Test disk images are generated in WSL2 via tools/make-test-disks.sh.
-# This script converts .img -> .vdi (or uses .iso directly for optical)
-# and attaches them to the ImpossibleOS VM on AHCI port 1.
 
 param(
     [Parameter(Position=0)]
@@ -82,7 +78,7 @@ function Show-TestDisks {
         $found = $true
     }
     if (-not $found) {
-        Write-Host "   (none -- run in WSL2: bash scripts/test-fs/test-fs.sh gen)" -ForegroundColor DarkGray
+        Write-Host "   (none -- run gen-test-disk.bat to generate)" -ForegroundColor DarkGray
     }
 
     Write-Host ""
@@ -96,7 +92,7 @@ function Show-TestDisks {
         $found = $true
     }
     if (-not $found) {
-        Write-Host "   (none -- run in WSL2: bash scripts/test-fs/test-fs.sh gen)" -ForegroundColor DarkGray
+        Write-Host "   (none -- run gen-test-disk.bat to generate)" -ForegroundColor DarkGray
     }
 
     Write-Host ""
@@ -132,22 +128,28 @@ function Generate-TestDisk {
         Read-Host "Press Enter to exit"; exit 1
     }
 
-    # Convert project path for WSL
-    $wslProject = wsl.exe wslpath -u ($PROJECT -replace '\\\\wsl.localhost\\Ubuntu', '')
-    if (-not $wslProject -or $wslProject -eq "") {
-        $wslProject = wsl.exe wslpath -u "$PROJECT"
+    # Convert Windows UNC path to WSL path directly
+    # \\wsl.localhost\Ubuntu\home\user\project -> /home/user/project
+    $wslPath = $PROJECT
+    if ($wslPath -match '^\\\\wsl') {
+        # Strip \\wsl.localhost\DistroName prefix, keep the rest
+        $wslPath = $wslPath -replace '^\\\\wsl\.[^\\]+\\[^\\]+', ''
     }
+    $wslPath = $wslPath -replace '\\', '/'
+    Write-Host "WSL path: $wslPath" -ForegroundColor DarkGray
 
     # Determine which image file to delete for regeneration
     if ($DiskName -like "optical/*") {
-        $imgFile = "build/test-disks/$DiskName.iso"
+        $delFile = "build/test-disks/$DiskName.iso"
     } else {
-        $imgFile = "build/test-disks/$DiskName.img"
+        $delFile = "build/test-disks/$DiskName.img"
     }
 
     # Build + generate via WSL2
     Write-Host "Building OS and generating $DiskName..." -ForegroundColor Cyan
-    wsl.exe -e bash -c "cd $wslProject && bash scripts/build.sh 2>&1 | tail -3 && rm -f '$imgFile' && bash tools/make-test-disks.sh build/test-disks build"
+    $cmd = "cd '$wslPath' && bash scripts/build.sh 2>&1 | tail -3 && rm -f '$delFile' && bash tools/make-test-disks.sh build/test-disks build"
+    Write-Host "CMD: $cmd" -ForegroundColor DarkGray
+    wsl.exe bash -c $cmd
     Write-Host ""
 }
 

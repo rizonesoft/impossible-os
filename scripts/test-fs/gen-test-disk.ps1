@@ -4,9 +4,6 @@
 #   .\scripts\test-fs\gen-test-disk.ps1              Generate ALL test disks
 #   .\scripts\test-fs\gen-test-disk.ps1 fat32         Generate only FAT32
 #   .\scripts\test-fs\gen-test-disk.ps1 optical/iso9660  Generate only ISO 9660
-#
-# This script calls into WSL2 to build the OS (if needed) and run
-# tools/make-test-disks.sh to create the requested disk image(s).
 
 param(
     [Parameter(Position=0)]
@@ -17,6 +14,7 @@ $ErrorActionPreference = "Continue"
 
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
 $PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
+$TEST_DIR   = Join-Path $PROJECT "build\test-disks"
 
 Write-Host ""
 Write-Host "==================================================" -ForegroundColor White
@@ -30,53 +28,46 @@ if (-not (Get-Command "wsl.exe" -ErrorAction SilentlyContinue)) {
     Read-Host "Press Enter to exit"; exit 1
 }
 
-# Convert Windows path to WSL path
-$WSL_PROJECT = wsl.exe wslpath -u ($PROJECT -replace '\\\\wsl.localhost\\Ubuntu', '')
-if (-not $WSL_PROJECT -or $WSL_PROJECT -eq "") {
-    # Fallback: try to detect from the project path
-    $WSL_PROJECT = wsl.exe wslpath -u "$PROJECT"
+# Convert Windows UNC path to WSL path directly
+# \\wsl.localhost\Ubuntu\home\user\project -> /home/user/project
+$wslPath = $PROJECT
+if ($wslPath -match '^\\\\wsl') {
+    $wslPath = $wslPath -replace '^\\\\wsl\.[^\\]+\\[^\\]+', ''
 }
+$wslPath = $wslPath -replace '\\', '/'
 
-Write-Host "Project (WSL): $WSL_PROJECT" -ForegroundColor DarkGray
+Write-Host "Project:  $PROJECT" -ForegroundColor DarkGray
+Write-Host "WSL path: $wslPath" -ForegroundColor DarkGray
+Write-Host ""
 
 if ($Disk -eq "all") {
     Write-Host "Generating ALL test disk images..." -ForegroundColor Yellow
     Write-Host ""
 
-    # Build first, then generate all test disks
-    wsl.exe -e bash -c "cd $WSL_PROJECT && bash scripts/build.sh 2>&1 | tail -3 && echo '' && bash tools/make-test-disks.sh build/test-disks build"
+    $cmd = "cd '$wslPath' && bash scripts/build.sh 2>&1 | tail -3 && echo '' && bash tools/make-test-disks.sh build/test-disks build"
+    wsl.exe bash -c $cmd
 
 } else {
-    # Generate only the requested disk
     Write-Host "Target: $Disk" -ForegroundColor Yellow
     Write-Host ""
 
-    # Build first
-    Write-Host "Building OS (if needed)..." -ForegroundColor DarkGray
-    wsl.exe -e bash -c "cd $WSL_PROJECT && bash scripts/build.sh 2>&1 | tail -3"
-
     # Determine the image file to delete so it gets regenerated
     if ($Disk -like "optical/*") {
-        $imgFile = "build/test-disks/$Disk.iso"
+        $delFile = "build/test-disks/$Disk.iso"
+        $checkPath = Join-Path $TEST_DIR "$Disk.iso"
     } else {
-        $imgFile = "build/test-disks/$Disk.img"
+        $delFile = "build/test-disks/$Disk.img"
+        $checkPath = Join-Path $TEST_DIR "$Disk.img"
     }
 
-    # Delete the existing image so make-test-disks.sh regenerates it
-    Write-Host "Regenerating $Disk..." -ForegroundColor Cyan
-    wsl.exe -e bash -c "cd $WSL_PROJECT && rm -f '$imgFile' && bash tools/make-test-disks.sh build/test-disks build"
-}
+    # Build + delete old + regenerate
+    Write-Host "Building OS and regenerating $Disk..." -ForegroundColor Cyan
+    $cmd = "cd '$wslPath' && bash scripts/build.sh 2>&1 | tail -3 && rm -f '$delFile' && bash tools/make-test-disks.sh build/test-disks build"
+    wsl.exe bash -c $cmd
 
-Write-Host ""
+    Write-Host ""
 
-# Verify the disk was created
-if ($Disk -ne "all") {
-    if ($Disk -like "optical/*") {
-        $checkPath = Join-Path $PROJECT "build\test-disks\$Disk.iso"
-    } else {
-        $checkPath = Join-Path $PROJECT "build\test-disks\$Disk.img"
-    }
-
+    # Verify
     if (Test-Path $checkPath) {
         $size = "{0:N1} MB" -f ((Get-Item $checkPath).Length / 1MB)
         Write-Host "OK: $Disk ($size)" -ForegroundColor Green
