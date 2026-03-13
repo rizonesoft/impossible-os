@@ -196,7 +196,7 @@
 
 ## 5. File Associations
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations, "Open With" dialog.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations, "Open With" dialog.
 
 ---
 
@@ -242,7 +242,7 @@
 
 ## 7. Shortcut Files (.lnk)
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §2** — Shortcut format, API, icon integration, desktop & Start Menu rendering.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §2** — Shortcut format, API, icon integration, desktop & Start Menu rendering.
 
 ---
 
@@ -302,7 +302,7 @@
 
 ### 9.3 Desktop Integration
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.
 
 ---
 

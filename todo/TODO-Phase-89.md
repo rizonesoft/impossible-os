@@ -80,7 +80,7 @@
 
 ### 2.1 File Manager Core
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
 
 ### 2.2 Sidebar
 
@@ -676,7 +676,7 @@
 
 ### 17.1 Font Manager
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §6** — Font Manager app, `.ttf` listing, font preview, install/remove, set default system font.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §6** — Font Manager app, `.ttf` listing, font preview, install/remove, set default system font.
 
 ### 17.2 Color Picker
 

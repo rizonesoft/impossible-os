@@ -67,7 +67,7 @@
 
 ### 1.4 System Sounds
 
-> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §4** — WAV system sounds (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/` directory, install to IXFS.
+> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §4** — WAV system sounds (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/` directory, install to IXFS.
 
 ---
 

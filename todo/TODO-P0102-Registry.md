@@ -345,7 +345,7 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 ### 7.2 File Associations (HKCR)
 
-> **See [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
+> **See [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
 
 ---
 
