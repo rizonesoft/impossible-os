@@ -189,7 +189,7 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
     uint32_t shadow_w, shadow_h;
     uint32_t pad;
     int32_t row, col;
-    uint32_t sr, sg, sb;
+    uint32_t sr, sg, sb, master_a;
 
     if (w == 0 || h == 0) return;
 
@@ -200,6 +200,7 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
     sr = GFX_RED(color);
     sg = GFX_GREEN(color);
     sb = GFX_BLUE(color);
+    master_a = GFX_ALPHA(color);   /* master opacity from alpha byte */
 
     /* Create a temporary surface for the shadow */
     if (gfx_surface_create(&shadow, shadow_w, shadow_h) != 0)
@@ -208,8 +209,10 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
     /* Clear to transparent */
     gfx_clear(&shadow, GFX_COLOR_TRANSPARENT);
 
-    /* Draw the shadow shape (solid rect at center of padded area) */
-    gfx_fill_rect(&shadow, (int32_t)radius, (int32_t)radius, w, h, color);
+    /* Draw the shadow shape as a WHITE rect — after blur, the red channel
+     * becomes the gradient intensity (0 at edges, 255 at center).
+     * We then multiply by master_a during compositing. */
+    gfx_fill_rect(&shadow, (int32_t)radius, (int32_t)radius, w, h, 0xFFFFFFFF);
 
     /* Blur the shadow */
     gfx_blur_rect(&shadow, 0, 0, shadow_w, shadow_h, radius);
@@ -232,12 +235,13 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
             for (col = dx0; col < dx1; col++) {
                 int32_t scol = col - sx;
                 uint32_t sp;
-                uint32_t sa;
+                uint32_t intensity, sa;
 
                 if (scol < 0 || (uint32_t)scol >= shadow_w) continue;
 
                 sp = shadow.pixels[(uint32_t)srow * shadow.stride + (uint32_t)scol];
-                sa = (sp >> 16) & 0xFF;  /* Use the red channel as alpha proxy */
+                intensity = (sp >> 16) & 0xFF;  /* red channel = blur intensity */
+                sa = div255(intensity * master_a);  /* scale by master opacity */
 
                 if (sa > 0) {
                     /* Blend shadow color at this alpha level */
