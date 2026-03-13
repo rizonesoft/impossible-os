@@ -4,79 +4,10 @@ This phase covers the system-level services and hardware drivers that polish
 the OS: the Codex registry, structured logging, real-time clock, ACPI power
 management, and PCI bus enumeration.
 
-## Codex Registry
+### Codex / Registry
 
-The **Codex** is Impossible OS's hierarchical key-value configuration store —
-equivalent to the Windows Registry. It stores system settings, hardware info,
-user preferences, and app configuration.
-
-### Key Files
-
-| File | Purpose |
-|------|---------|
-| `include/codex.h` | Type definitions, structs, API declarations |
-| `src/kernel/codex.c` | In-memory tree implementation |
-
-### Architecture
-
-- **Static pools** — 256 keys + 512 values, no heap allocation required
-- **Tree structure** — `codex_key_t` nodes with parent/children/sibling pointers
-- **Typed values** — `codex_value_t` with `STRING`, `INT32`, `INT64`, `BINARY`, `BOOL`
-- **Path notation** — backslash-separated: `System\Theme\DarkMode`
-
-### Root Keys (created by `codex_init()`)
-
-| Key | Purpose |
-|-----|---------|
-| `System\` | OS configuration (display, theme, shell, network) |
-| `Hardware\` | Detected hardware (CPU, memory, devices) |
-| `User\` | Per-user settings |
-| `Apps\` | Per-application settings |
-
-### API
-
-| Function | Description |
-|----------|-------------|
-| `codex_init()` | Create root keys (called at boot) |
-| `codex_open(path)` | Navigate to key by path |
-| `codex_create(path)` | Create key (+ intermediates) |
-| `codex_delete_key(path)` | Delete key and all children |
-| `codex_get_string(key, name, buf, sz)` | Read string value |
-| `codex_get_int32(key, name, out)` | Read 32-bit int |
-| `codex_get_int64(key, name, out)` | Read 64-bit int |
-| `codex_get_bool(key, name, out)` | Read boolean |
-| `codex_set_string(key, name, val)` | Write string value |
-| `codex_set_int32(key, name, val)` | Write 32-bit int |
-| `codex_set_int64(key, name, val)` | Write 64-bit int |
-| `codex_set_bool(key, name, val)` | Write boolean |
-| `codex_delete_value(key, name)` | Remove a value |
-| `codex_enum_keys(key, idx, name, sz)` | Iterate child keys |
-| `codex_enum_values(key, idx)` | Iterate values |
-
-### Disk Persistence
-
-INI-style `.codex` files in `C:\Impossible\System\Config\Codex\`:
-- `system.codex` — System\ tree
-- `hardware.codex` — Hardware\ tree
-- `user.codex` — User\ tree
-- `apps.codex` — Apps\ tree
-
-Auto-saved every 2 seconds when dirty. See [codex-registry.md](codex-registry.md) for full details.
-
-### Pre-Populated Defaults
-
-`codex_populate_defaults()` is called at boot. It sets 32 values across 10 keys:
-
-| Key | Values |
-|-----|--------|
-| `System\Display` | Width, Height, DPI (96), Scale (100%) |
-| `System\Theme` | AccentColor, DarkMode, Font, FontSize, CornerRadius, Wallpaper, WallpaperMode, EnableAnimations |
-| `System\Shell` | TaskbarHeight (48), TaskbarPosition (bottom), ShowClock, ShowStartButton |
-| `System\Network` | Hostname (IMPOSSIBLE-PC), DHCP (1), DNS (8.8.8.8) |
-| `System\DateTime` | Use24Hour, DateFormat, TimezoneOffset, TimezoneName, NTPEnabled |
-| `Hardware\CPU` | Vendor (CPUID leaf 0), Model (CPUID leaf 0x80000002-4) |
-| `Hardware\Memory` | TotalMB, FreeMB (from PMM) |
-| `User\Default` | HomeDir, Shell, Prompt, Wallpaper |
+> **See [registry.md](registry.md)** — Full documentation of the configuration
+> store (current Codex implementation and planned Win32 Registry migration).
 
 
 ## Serial Logging

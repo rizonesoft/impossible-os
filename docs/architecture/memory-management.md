@@ -180,7 +180,7 @@ immediately following block if it is also free, reducing fragmentation.
 |----------|-------|
 | Backing store | `C:\Impossible\System\pagefile.sys` (IXFS) |
 | Slot size | 4 KiB (one page) |
-| Max slots | 256 (configurable via Codex) |
+| Max slots | 256 (configurable via Codex/Registry) |
 | Replacement | **Clock** (second-chance) algorithm |
 | PTE encoding | Present=0, Bit 1=swap flag, Bits 9-62=slot ID |
 
