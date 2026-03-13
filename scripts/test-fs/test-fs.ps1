@@ -1,20 +1,20 @@
-# test-fs.ps1 — Filesystem test harness for VirtualBox on Windows
+# test-fs.ps1 -- Filesystem test harness for VirtualBox on Windows
 #
 # Prerequisites:
 #   1. Install VirtualBox: https://www.virtualbox.org/
 #   2. Build in WSL2 first: bash scripts/build.sh clean
-#   3. Generate test disks in WSL2: bash scripts/test-fs.sh gen
+#   3. Generate test disks in WSL2: bash scripts/test-fs/test-fs.sh gen
 #
 # Usage:
-#   .\scripts\test-fs.ps1                     List available test disks
-#   .\scripts\test-fs.ps1 fat32               Attach FAT32 on AHCI port 1 + launch
-#   .\scripts\test-fs.ps1 ntfs                Attach NTFS on AHCI port 1 + launch
-#   .\scripts\test-fs.ps1 optical/iso9660     Attach ISO as DVD drive + launch
-#   .\scripts\test-fs.ps1 optical/udf         Attach UDF ISO as DVD drive + launch
-#   .\scripts\test-fs.ps1 detach              Remove test disk, launch with system disk only
+#   .\scripts\test-fs\test-fs.ps1                     List available test disks
+#   .\scripts\test-fs\test-fs.ps1 fat32               Attach FAT32 on AHCI port 1 + launch
+#   .\scripts\test-fs\test-fs.ps1 ntfs                Attach NTFS on AHCI port 1 + launch
+#   .\scripts\test-fs\test-fs.ps1 optical/iso9660     Attach ISO as DVD drive + launch
+#   .\scripts\test-fs\test-fs.ps1 optical/udf         Attach UDF ISO as DVD drive + launch
+#   .\scripts\test-fs\test-fs.ps1 detach              Remove test disk, launch with system disk only
 #
 # Test disk images are generated in WSL2 via tools/make-test-disks.sh.
-# This script converts .img → .vdi (or uses .iso directly for optical)
+# This script converts .img -> .vdi (or uses .iso directly for optical)
 # and attaches them to the ImpossibleOS VM on AHCI port 1.
 
 param(
@@ -22,7 +22,7 @@ param(
     [string]$Disk = ""
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 
 # ---- Paths ----
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -33,13 +33,19 @@ $DISK_VDI   = Join-Path $BUILD "system-disk.vdi"
 
 $VM_NAME    = "ImpossibleOS"
 
+# Debug: show resolved paths
+Write-Host "Project:  $PROJECT" -ForegroundColor DarkGray
+Write-Host "Build:    $BUILD" -ForegroundColor DarkGray
+Write-Host "Test dir: $TEST_DIR" -ForegroundColor DarkGray
+Write-Host ""
+
 # ---- Find VBoxManage ----
 $VBOX = "VBoxManage.exe"
 if (-not (Get-Command $VBOX -ErrorAction SilentlyContinue)) {
     $VBOX = "C:\Program Files\Oracle\VirtualBox\VBoxManage.exe"
     if (-not (Test-Path $VBOX)) {
         Write-Host "VBoxManage not found. Install VirtualBox." -ForegroundColor Red
-        pause; exit 1
+        Read-Host "Press Enter to exit"; exit 1
     }
 }
 
@@ -62,9 +68,9 @@ function Ensure-PortCount {
 # ---- List available test disks ----
 function Show-TestDisks {
     Write-Host ""
-    Write-Host "══════════════════════════════════════════════════" -ForegroundColor White
+    Write-Host "==================================================" -ForegroundColor White
     Write-Host " Available test disks" -ForegroundColor Cyan
-    Write-Host "══════════════════════════════════════════════════" -ForegroundColor White
+    Write-Host "==================================================" -ForegroundColor White
     Write-Host ""
 
     Write-Host " Block devices (AHCI port 1):" -ForegroundColor White
@@ -76,7 +82,7 @@ function Show-TestDisks {
         $found = $true
     }
     if (-not $found) {
-        Write-Host "   (none — run in WSL2: bash scripts/test-fs.sh gen)" -ForegroundColor DarkGray
+        Write-Host "   (none -- run in WSL2: bash scripts/test-fs/test-fs.sh gen)" -ForegroundColor DarkGray
     }
 
     Write-Host ""
@@ -90,15 +96,15 @@ function Show-TestDisks {
         $found = $true
     }
     if (-not $found) {
-        Write-Host "   (none — run in WSL2: bash scripts/test-fs.sh gen)" -ForegroundColor DarkGray
+        Write-Host "   (none -- run in WSL2: bash scripts/test-fs/test-fs.sh gen)" -ForegroundColor DarkGray
     }
 
     Write-Host ""
-    Write-Host "──────────────────────────────────────────────────" -ForegroundColor DarkGray
-    Write-Host " Usage:  .\scripts\test-fs.ps1 <disk_name>" -ForegroundColor White
-    Write-Host " Example: .\scripts\test-fs.ps1 fat32" -ForegroundColor White
-    Write-Host "          .\scripts\test-fs.ps1 optical/iso9660" -ForegroundColor White
-    Write-Host "──────────────────────────────────────────────────" -ForegroundColor DarkGray
+    Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
+    Write-Host " Usage:  .\scripts\test-fs\test-fs.ps1 <disk_name>" -ForegroundColor White
+    Write-Host " Example: .\scripts\test-fs\test-fs.ps1 fat32" -ForegroundColor White
+    Write-Host "          .\scripts\test-fs\test-fs.ps1 optical/iso9660" -ForegroundColor White
+    Write-Host "--------------------------------------------------" -ForegroundColor DarkGray
 }
 
 # ---- Detach any test media from port 1 ----
@@ -123,11 +129,11 @@ function Attach-BlockDisk {
 
     if (-not (Test-Path $imgPath)) {
         Write-Host "Test disk not found: $imgPath" -ForegroundColor Red
-        Write-Host "Run in WSL2: bash scripts/test-fs.sh gen" -ForegroundColor Yellow
-        pause; exit 1
+        Write-Host "Run in WSL2: bash scripts/test-fs/test-fs.sh gen" -ForegroundColor Yellow
+        Read-Host "Press Enter to exit"; exit 1
     }
 
-    Write-Host "Converting $DiskName.img → $DiskName.vdi ..." -ForegroundColor Cyan
+    Write-Host "Converting $DiskName.img -> $DiskName.vdi ..." -ForegroundColor Cyan
 
     # Unregister old VDI
     try { & $VBOX closemedium disk $vdiPath 2>$null } catch {}
@@ -136,7 +142,7 @@ function Attach-BlockDisk {
     & $VBOX convertfromraw $imgPath $vdiPath --format VDI
     if (-not (Test-Path $vdiPath)) {
         Write-Host "Failed to convert disk image." -ForegroundColor Red
-        pause; exit 1
+        Read-Host "Press Enter to exit"; exit 1
     }
 
     Detach-TestDisk
@@ -159,8 +165,8 @@ function Attach-OpticalDisk {
 
     if (-not (Test-Path $isoPath)) {
         Write-Host "Test ISO not found: $isoPath" -ForegroundColor Red
-        Write-Host "Run in WSL2: bash scripts/test-fs.sh gen" -ForegroundColor Yellow
-        pause; exit 1
+        Write-Host "Run in WSL2: bash scripts/test-fs/test-fs.sh gen" -ForegroundColor Yellow
+        Read-Host "Press Enter to exit"; exit 1
     }
 
     Detach-TestDisk
@@ -193,9 +199,9 @@ function Start-TestVM {
     } catch {}
 
     Write-Host ""
-    Write-Host "══════════════════════════════════════════════════" -ForegroundColor White
-    Write-Host " Filesystem Test — VirtualBox" -ForegroundColor Cyan
-    Write-Host "══════════════════════════════════════════════════" -ForegroundColor White
+    Write-Host "==================================================" -ForegroundColor White
+    Write-Host " Filesystem Test -- VirtualBox" -ForegroundColor Cyan
+    Write-Host "==================================================" -ForegroundColor White
     Write-Host "  VM:        $VM_NAME" -ForegroundColor DarkGray
     Write-Host "  Test disk: $DiskLabel" -ForegroundColor DarkGray
     Write-Host "  Mode:      $Mode" -ForegroundColor DarkGray
@@ -206,34 +212,43 @@ function Start-TestVM {
 }
 
 # ---- Main ----
-if (-not (Test-VMExists)) {
-    Write-Host "VM '$VM_NAME' not found." -ForegroundColor Red
-    Write-Host "Run .\scripts\run-vbox.ps1 first to create the VM." -ForegroundColor Yellow
-    pause; exit 1
-}
+try {
+    if (-not (Test-VMExists)) {
+        Write-Host "VM '$VM_NAME' not found." -ForegroundColor Red
+        Write-Host "Run .\scripts\run-vbox.ps1 first to create the VM." -ForegroundColor Yellow
+        Read-Host "Press Enter to exit"; exit 1
+    }
 
-if (-not (Test-Path $DISK_VDI)) {
-    Write-Host "System disk not found: $DISK_VDI" -ForegroundColor Red
-    Write-Host "Run .\scripts\run-vbox.ps1 first to convert the system disk." -ForegroundColor Yellow
-    pause; exit 1
-}
+    if (-not (Test-Path $DISK_VDI)) {
+        Write-Host "System disk not found: $DISK_VDI" -ForegroundColor Red
+        Write-Host "Run .\scripts\run-vbox.ps1 first to convert the system disk." -ForegroundColor Yellow
+        Read-Host "Press Enter to exit"; exit 1
+    }
 
-if ($Disk -eq "" -or $Disk -eq "list") {
-    Show-TestDisks
-    exit 0
-}
+    if ($Disk -eq "" -or $Disk -eq "list") {
+        Show-TestDisks
+        exit 0
+    }
 
-if ($Disk -eq "detach") {
-    Detach-TestDisk
-    Write-Host "Test disk detached." -ForegroundColor Green
-    Start-TestVM "none (system disk only)" "AHCI port 0 only"
-    exit 0
-}
+    if ($Disk -eq "detach") {
+        Detach-TestDisk
+        Write-Host "Test disk detached." -ForegroundColor Green
+        Start-TestVM "none (system disk only)" "AHCI port 0 only"
+        exit 0
+    }
 
-if ($Disk -like "optical/*") {
-    Attach-OpticalDisk $Disk
-    Start-TestVM $Disk "IDE DVD drive"
-} else {
-    Attach-BlockDisk $Disk
-    Start-TestVM $Disk "AHCI port 1"
+    if ($Disk -like "optical/*") {
+        Attach-OpticalDisk $Disk
+        Start-TestVM $Disk "IDE DVD drive"
+    } else {
+        Attach-BlockDisk $Disk
+        Start-TestVM $Disk "AHCI port 1"
+    }
+} catch {
+    Write-Host "" -ForegroundColor Red
+    Write-Host "ERROR: $_" -ForegroundColor Red
+    Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
+    Write-Host ""
+    Read-Host "Press Enter to exit"
+    exit 1
 }
