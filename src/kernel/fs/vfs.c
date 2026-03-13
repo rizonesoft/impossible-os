@@ -456,6 +456,33 @@ int vfs_stat(const char *path, struct vfs_stat *st)
     return 0;
 }
 
+int vfs_truncate(const char *path, uint64_t new_size)
+{
+    const char *rest;
+    int idx;
+    struct vfs_node *node;
+
+    if (!path)
+        return -1;
+
+    idx = parse_drive(path, &rest);
+    if (idx < 0 || !mounts[idx].mounted)
+        return -1;
+
+    node = walk_path(mounts[idx].root, rest);
+    if (!node)
+        return -1;
+
+    /* Can only truncate files, not directories */
+    if (node->type & VFS_DIRECTORY)
+        return -1;
+
+    if (!node->ops || !node->ops->truncate)
+        return -1;
+
+    return node->ops->truncate(node, new_size);
+}
+
 struct vfs_node *vfs_get_drive_root(char drive_letter)
 {
     int idx = drive_index(drive_letter);

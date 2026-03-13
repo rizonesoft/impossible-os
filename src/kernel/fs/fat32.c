@@ -755,6 +755,94 @@ ren_not_found:
     return -1;
 }
 
+/* Truncate a file to new_size bytes. If new_size == 0, free entire chain.
+ * If smaller than current, free trailing clusters. */
+int fat32_truncate(uint32_t dir_cluster, const char *name, uint32_t new_size)
+{
+    uint32_t bytes_per_cluster = bpb.sectors_per_cluster * 512;
+    uint8_t *cluster_buf;
+    uint8_t short_name[11];
+    uint32_t cur_cluster = dir_cluster;
+
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;
+
+    fat32_make_short_name(name, short_name);
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t sector = cluster_to_sector(cur_cluster);
+        uint32_t i;
+
+        if (fat32_read_sectors_multi(sector, bpb.sectors_per_cluster,
+                                     cluster_buf) != 0)
+            break;
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            struct fat32_dir_entry *de =
+                (struct fat32_dir_entry *)&cluster_buf[i];
+            int j, match;
+
+            if (de->name[0] == 0x00) goto trunc_not_found;
+            if (de->name[0] == 0xE5) continue;
+            if (de->attr == FAT32_ATTR_LFN) continue;
+            if (de->attr & FAT32_ATTR_VOLUME_ID) continue;
+
+            match = 1;
+            for (j = 0; j < 11; j++) {
+                if (de->name[j] != short_name[j]) { match = 0; break; }
+            }
+
+            if (match) {
+                uint32_t fc = ((uint32_t)de->first_cluster_hi << 16)
+                            | (uint32_t)de->first_cluster_lo;
+
+                if (new_size == 0) {
+                    /* Truncate-to-zero: free entire chain */
+                    if (fc >= 2)
+                        fat32_free_chain(fc);
+                    de->first_cluster_hi = 0;
+                    de->first_cluster_lo = 0;
+                } else if (new_size < de->file_size && fc >= 2) {
+                    /* Partial truncate: keep clusters for new_size */
+                    uint32_t clusters_needed =
+                        (new_size + bytes_per_cluster - 1) / bytes_per_cluster;
+                    uint32_t walk = fc;
+                    uint32_t ci;
+
+                    for (ci = 1; ci < clusters_needed; ci++) {
+                        uint32_t next = fat32_get_fat_entry(walk);
+                        if (next < 2 || next >= FAT32_EOC) break;
+                        walk = next;
+                    }
+                    /* Free everything after the last kept cluster */
+                    {
+                        uint32_t tail = fat32_get_fat_entry(walk);
+                        fat32_set_fat_entry(walk, 0x0FFFFFFF); /* EOC */
+                        if (tail >= 2 && tail < FAT32_EOC)
+                            fat32_free_chain(tail);
+                    }
+                }
+
+                /* Update size in directory entry */
+                de->file_size = new_size;
+                fat32_write_sectors_multi(sector, bpb.sectors_per_cluster,
+                                          cluster_buf);
+
+                dir_file_count = 0;  /* invalidate cache */
+                kfree(cluster_buf);
+                return 0;
+            }
+        }
+
+        cur_cluster = fat32_get_fat_entry(cur_cluster);
+    }
+
+trunc_not_found:
+    kfree(cluster_buf);
+    return -1;
+}
+
 int fat32_format(const struct blkdev *dev, const char *label)
 {
     uint8_t boot[512];
@@ -1246,6 +1334,10 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
     return fat32_write_file(bpb.root_cluster, node->name, buffer, size);
 }
 
+/* Forward declarations for file ops */
+static int fat32_vfs_stat(struct vfs_node *node, struct vfs_stat *st);
+static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size);
+
 static struct vfs_ops fat32_file_ops = {
     .open    = fat32_file_open,
     .close   = fat32_file_close,
@@ -1256,7 +1348,8 @@ static struct vfs_ops fat32_file_ops = {
     .create  = (void *)0,
     .unlink  = (void *)0,
     .rename  = (void *)0,
-    .stat    = (void *)0,
+    .stat    = fat32_vfs_stat,
+    .truncate = fat32_vfs_truncate,
 };
 
 /* ---- VFS operations for FAT32 directories ---- */
@@ -1372,6 +1465,29 @@ static int fat32_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
     return 0;
 }
 
+/* VFS-compatible truncate: called by vfs_truncate() */
+static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size)
+{
+    struct fat32_file *f = (struct fat32_file *)node->fs_data;
+    uint32_t dir_cluster;
+
+    /* Only truncate files, not directories */
+    if (node->type & VFS_DIRECTORY)
+        return -1;
+
+    /* Find the parent directory cluster — we need to update the dir entry.
+     * For FAT32, the parent dir_cluster is stored in the root context,
+     * so we use the root cluster as a starting point. */
+    dir_cluster = bpb.root_cluster;
+
+    /* If the file has a name, truncate via directory scan */
+    if (node->name[0])
+        return fat32_truncate(dir_cluster, node->name, (uint32_t)new_size);
+
+    (void)f;
+    return -1;
+}
+
 static struct vfs_ops fat32_dir_ops = {
     .open    = fat32_file_open,
     .close   = (void *)0,
@@ -1383,6 +1499,7 @@ static struct vfs_ops fat32_dir_ops = {
     .unlink  = fat32_vfs_unlink,
     .rename  = fat32_vfs_rename,
     .stat    = fat32_vfs_stat,
+    .truncate = (void *)0,   /* directories can't be truncated */
 };
 
 static struct vfs_fs_driver fat32_driver = {

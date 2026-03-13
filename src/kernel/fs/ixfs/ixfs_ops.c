@@ -276,6 +276,10 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
     return (int)bytes_written;
 }
 
+/* Forward declarations for file ops */
+static int ixfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st);
+static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size);
+
 struct vfs_ops ixfs_file_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,
@@ -286,7 +290,8 @@ struct vfs_ops ixfs_file_ops = {
     .create  = (void *)0,
     .unlink  = (void *)0,
     .rename  = (void *)0,
-    .stat    = (void *)0,
+    .stat    = ixfs_vfs_stat,
+    .truncate = ixfs_vfs_truncate,
 };
 
 /* --- VFS directory operations --- */
@@ -787,6 +792,86 @@ static int ixfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
     return 0;
 }
 
+/* VFS-compatible truncate: called by vfs_truncate() */
+static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size)
+{
+    struct ixfs_vnode *v;
+    struct ixfs_volume *vol;
+    uint32_t vi;
+
+    if (!node || !node->fs_data)
+        return -1;
+
+    /* Only truncate files */
+    if (node->type & VFS_DIRECTORY)
+        return -1;
+
+    v = (struct ixfs_vnode *)node->fs_data;
+
+    /* Find the volume */
+    vol = (struct ixfs_volume *)0;
+    for (vi = 0; vi < IXFS_MAX_VOLUMES; vi++) {
+        if (volumes[vi].in_use) {
+            vol = &volumes[vi];
+            break;
+        }
+    }
+    if (!vol)
+        return -1;
+
+    if (new_size == 0) {
+        /* Truncate-to-zero: free all extents */
+        ixfs_free_all_extents(vol, &v->inode);
+        v->inode.i_size = 0;
+    } else if (new_size < v->inode.i_size) {
+        /* Partial truncate: free trailing blocks */
+        uint32_t new_blocks = ((uint32_t)new_size + IXFS_BLOCK_SIZE - 1)
+                            / IXFS_BLOCK_SIZE;
+        uint32_t old_blocks = v->inode.i_blocks;
+        uint32_t blk;
+
+        /* Free blocks beyond new_blocks */
+        for (blk = new_blocks; blk < old_blocks; blk++) {
+            uint32_t disk_blk = ixfs_get_block(vol, &v->inode, blk);
+            if (disk_blk > 0)
+                ixfs_free_block(vol, disk_blk);
+        }
+
+        /* Update extent metadata */
+        {
+            uint32_t kept = 0;
+            uint32_t ei;
+            for (ei = 0; ei < v->inode.i_extent_count; ei++) {
+                uint32_t ext_count = v->inode.i_extents[ei].e_count;
+                if (kept + ext_count <= new_blocks) {
+                    kept += ext_count;
+                } else {
+                    /* Trim this extent */
+                    uint32_t keep = new_blocks - kept;
+                    v->inode.i_extents[ei].e_count = keep;
+                    /* Zero remaining extents */
+                    for (ei++; ei < v->inode.i_extent_count; ei++) {
+                        v->inode.i_extents[ei].e_start = 0;
+                        v->inode.i_extents[ei].e_count = 0;
+                    }
+                    break;
+                }
+            }
+        }
+
+        v->inode.i_size = new_size;
+        v->inode.i_blocks = new_blocks;
+    } else {
+        /* Extend: just update size (sparse file) */
+        v->inode.i_size = new_size;
+    }
+
+    v->inode.i_mtime = (uint32_t)uptime();
+    node->size = v->inode.i_size;
+    ixfs_write_inode(vol, v->ino, &v->inode);
+    return 0;
+}
+
 struct vfs_ops ixfs_dir_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,
@@ -798,4 +883,5 @@ struct vfs_ops ixfs_dir_ops = {
     .unlink  = ixfs_unlink,
     .rename  = ixfs_rename,
     .stat    = ixfs_vfs_stat,
+    .truncate = (void *)0,  /* directories can't be truncated */
 };
