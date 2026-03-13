@@ -12,67 +12,10 @@
 
 ## 1. UI Widget Library (Shared)
 
-### 1.1 Core Widgets
-
-**Prompt:** The UI widget library is the foundation for every app in the OS. All widgets share a coordinate system relative to their parent window surface. Each widget struct holds position, size, visual state (normal/hover/press/disabled), and a draw function that renders to a `gfx_surface_t`. Button uses `gfx_fill_rounded_rect` with state-dependent colors (normal, hover, pressed) from the theme system. TextBox needs cursor blinking (500ms toggle via PIT ticks), character insertion/deletion, and Tab-to-next focus management. ScrollBar handles mouse wheel events and drag-to-scroll on the thumb. Build these as reusable components that apps compose — not monolithic app code. After completing all items, create `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI widget library core"`.
-
-
-- [ ] Create `include/ui.h` and `src/apps/ui/ui.c`
-- [ ] **Button** — `struct ui_button` with label, position, hover/press/disabled states
-  - [ ] `ui_button_draw(surface, btn)` — rounded rect with state colors
-  - [ ] `ui_button_hit(btn, mx, my)` — hit test
-- [ ] **Text Input** — `struct ui_textbox` with text, cursor_pos, focused
-  - [ ] `ui_textbox_draw(surface, tb)` — bordered input with blinking cursor
-  - [ ] `ui_textbox_key(tb, key)` — handle typing, backspace, delete, arrows
-  - [ ] Focus management (click to focus, Tab to next)
-- [ ] **Scroll Bar** — `struct ui_scrollbar` with value, max, page_size, vertical/horizontal
-  - [ ] `ui_scrollbar_draw(surface, sb)` — track + thumb
-  - [ ] Mouse drag support for thumb
-  - [ ] Mouse wheel scrolling
-- [ ] **Label** — static text rendering with alignment (left/center/right)
-- [ ] **Checkbox** — `[ ]` / `[✓]` toggle with label text
-- [ ] **Dropdown / ComboBox** — collapsed value + expandable option list
-- [ ] Commit: `"apps: UI widget library core"`
-
-### 1.2 Menu Bar
-
-**Prompt:** The menu bar renders as a horizontal strip at the top of a window: File, Edit, View, Help. Clicking a menu item opens a dropdown of sub-items below it (reusing the context menu rendering from Phase 04 §4.1 or building a dedicated dropdown renderer). Each sub-item shows a label + optional keyboard shortcut text (right-aligned, grayed). Alt+letter shortcuts (Alt+F for File) must be hooked into the keyboard event flow. After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI menu bar widget"`.
-
-
-- [ ] Define `struct ui_menu_bar` (list of menu items, each with dropdown items)
-- [ ] `ui_menu_bar_draw(surface, menu)` — horizontal bar (File, Edit, View, Help)
-- [ ] `ui_menu_bar_click(menu, mx, my)` — open dropdown at correct position
-- [ ] Dropdown items: label, shortcut text, separator, callback
-- [ ] Keyboard shortcuts: Alt+F for File, Escape to close
-- [ ] Commit: `"apps: UI menu bar widget"`
-
-### 1.3 Dialogs
-
-**Prompt:** File dialogs are shared across all apps — implement once, reuse everywhere. The Open File Dialog shows a VFS directory listing with icons from the icon store (Phase 02 §4.1), a file type filter dropdown (e.g., "*.txt", "*.*"), and an address bar for path navigation. The Save As Dialog is similar but adds a filename input field. The Message Dialog has OK/Yes-No/OK-Cancel button variants with an icon (info/warning/error). The Color Picker draws a 2D gradient square (saturation × brightness) + a vertical hue slider + hex input. After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI dialog widgets (open/save/message)"`.
-
-
-- [ ] **Open File Dialog** — `ui_dialog_open(path_out, max_len, filter)` — VFS browser
-  - [ ] File list with icons from icon store
-  - [ ] Filter by extension (e.g., "*.txt", "*.png")
-  - [ ] Navigate directories, address bar
-- [ ] **Save As Dialog** — `ui_dialog_save(path_out, max_len, filter)` — similar with filename input
-- [ ] **Message Dialog** — `ui_dialog_message(title, msg, type)` — OK / Yes/No / OK/Cancel
-- [ ] **Color Picker Dialog** — gradient square + hue slider + hex input
-- [ ] Commit: `"apps: UI dialog widgets (open/save/message)"`
-
-### 1.4 Advanced Widgets
-
-**Prompt:** These widgets extend the library for specialized apps: Slider (horizontal bar with draggable handle — used in Settings for volume/brightness), Toggle Switch (animated on/off slide — used in Settings), Progress Bar (horizontal fill — used in file operations), Tab Bar (clickable tab strip with active indicator — used in Settings, Terminal), List View (scrollable vertical list with row selection — used in File Manager detail view), Tree View (expandable/collapsible hierarchy — used in Device Manager), Status Bar (bottom info strip with sections — used in Notepad, File Manager). After completing all items, update `docs/architecture/ui-widgets.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: UI advanced widgets (slider, toggle, tabs, tree)"`.
-
-
-- [ ] **Slider** — horizontal bar with draggable handle (for volume, brightness)
-- [ ] **Toggle Switch** — on/off slide switch (for settings)
-- [ ] **Progress Bar** — horizontal fill bar (for operations)
-- [ ] **Tab Bar** — horizontal tab strip with click-to-switch
-- [ ] **List View** — scrollable vertical list with selection
-- [ ] **Tree View** — expandable/collapsible hierarchical list (for device manager)
-- [ ] **Status Bar** — bottom information bar (line/col, file size, tool name)
-- [ ] Commit: `"apps: UI advanced widgets (slider, toggle, tabs, tree)"`
+> **Moved to [TODO-P0202-GUI.md §2](TODO-P0202-GUI.md)** — Extended Widget Toolkit
+> (checkbox, radio, dropdown, slider, progress bar, tabs, list view, tree view,
+> toolbar, menu bar, status bar, groupbox, tooltips, dialog system).
+> Existing basic controls (Button, Label, TextBox, ScrollBar) are in `controls.c`.
 
 ---
 

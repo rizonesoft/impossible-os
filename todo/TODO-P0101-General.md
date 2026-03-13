@@ -279,17 +279,9 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ### 11.1 TrueType Font Rendering
 
-**Prompt:** TrueType rendering via stb_truetype.h has already been partially integrated (see the previous conversation on TrueType integration). Check if `src/libs/stb_truetype/stb_truetype_impl.c`, `include/font_mgr.h`, and `src/desktop/gfx_text.c` already exist in the codebase. If they do, focus on completing the remaining items (bundling fonts, anti-aliasing, replacing bitmap font usage). If not, port stb_truetype into `src/libs/stb_truetype/`, create math shims in `include/kmath.h` (floor, ceil, sqrt, fabs, cos, sin, acos, fmod, pow — using SSE2), and compile the implementation file with `-msse2 -mfpmath=sse`. The font manager loads .ttf files from `C:\Impossible\Fonts\` using VFS. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: TrueType font rendering via stb_truetype"`. Update `README.md` if it contains stale or incorrect references to font rendering. Create or update documentation in `docs/` covering the stb_truetype integration, kmath shims, font manager API, and glyph caching.
-
-
-- [ ] Port **stb_truetype** (single header, public domain) into `src/libs/stb_truetype/`
-- [ ] Bundle **JetBrains Mono** (OFL 1.1) for terminal/code
-- [ ] Bundle **Inter** (OFL 1.1) for UI text
-- [ ] Create `font_ttf_render(font, codepoint, size, bitmap)` API
-- [ ] Replace bitmap font in desktop/terminal with TrueType rendering
-- [ ] Support font sizes: 8pt, 10pt, 12pt, 14pt, 16pt
-- [ ] Add font anti-aliasing (grayscale blending)
-- [ ] Commit: `"desktop: TrueType font rendering via stb_truetype"`
+> **Completed — see [TODO-P0201-UI-Framework.md §2](TODO-P0201-UI-Framework.md).**
+> stb_truetype integrated, Selawik + Cascadia Code bundled, glyph caching, bitmap font replaced.
+> All items verified and committed.
 
 ### 11.2 Compression (miniz)
 
