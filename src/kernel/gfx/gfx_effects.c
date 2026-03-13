@@ -194,7 +194,9 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
 
     if (w == 0 || h == 0) return;
 
-    pad = radius * 2;
+    /* Margin on each side: radius*2 gives the double blur pass enough room
+     * to fully fade to zero without clipping at the surface boundary. */
+    pad = radius * 4;
     shadow_w = w + pad;
     shadow_h = h + pad;
 
@@ -210,9 +212,9 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
     /* Clear to transparent */
     gfx_clear(&shadow, GFX_COLOR_TRANSPARENT);
 
-    /* Draw the shadow shape as a WHITE rounded rect to match window corners.
-     * After blur, the red channel becomes the gradient intensity. */
-    gfx_fill_rounded_rect(&shadow, (int32_t)radius, (int32_t)radius,
+    /* Draw the shadow shape as a WHITE rounded rect, centered in the
+     * padded surface.  After blur, the red channel becomes intensity. */
+    gfx_fill_rounded_rect(&shadow, (int32_t)(radius * 2), (int32_t)(radius * 2),
                           w, h, corner_radius, 0xFFFFFFFF);
 
     /* Double blur pass for smoother Gaussian-like falloff */
@@ -221,8 +223,8 @@ void gfx_drop_shadow(gfx_surface_t *s, int32_t x, int32_t y,
 
     /* Blit the blurred shadow onto the target surface with alpha */
     {
-        int32_t sx = x + offset_x - (int32_t)radius;
-        int32_t sy = y + offset_y - (int32_t)radius;
+        int32_t sx = x + offset_x - (int32_t)(radius * 2);
+        int32_t sy = y + offset_y - (int32_t)(radius * 2);
 
         int32_t dx0 = clamp_i(sx, 0, (int32_t)s->width);
         int32_t dy0 = clamp_i(sy, 0, (int32_t)s->height);

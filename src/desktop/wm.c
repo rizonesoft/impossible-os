@@ -955,7 +955,7 @@ void wm_handle_mouse(int32_t mx, int32_t my, uint8_t buttons)
                  * Expand by shadow margin (blur radius + y-offset) so the
                  * shadow doesn't leave trails outside the dirty rect. */
                 {
-                    int32_t shadow_margin = 10 * 2 + 3;  /* radius*2 + max offset */
+                    int32_t shadow_margin = 10 * 4 + 3;  /* radius*4 + max offset */
                     int32_t min_x = old_x < new_x ? old_x : new_x;
                     int32_t min_y = old_y < new_y ? old_y : new_y;
                     int32_t max_r = (old_x + ow) > (new_x + ow)
