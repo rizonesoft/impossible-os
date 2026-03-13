@@ -23,26 +23,26 @@
 
 ### 1.1 Registry Data Structures
 
-**Prompt:** Define the core data structures for the Registry. A registry key (`reg_key_t`) has a name (max 255 chars), parent pointer, child hash map (FNV-1a based, for O(1) lookup), values list, last-write timestamp (PIT ticks), and security flags. A registry value (`reg_value_t`) has a name, type (`REG_*` enum), data buffer, and data size. Registry handles (`HKEY`) are opaque pointers to open key references with access-mode tracking. Use static pools initially (512 keys, 1024 values) like the current Codex, but design the structures so they can later be backed by memory-mapped hive files. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: core data structures"`. Update `README.md` if it contains stale or incorrect references to the Codex or registry. Create or update documentation in `docs/` covering the reg_key_t and reg_value_t structs, HKEY handle system, and static pool sizes.
+**Prompt:** Verify the correctness and consistency of the Registry core data structures (commit `d44a791`). Confirm that `include/registry.h` defines `reg_key_t` with a 256-char name, parent pointer, 16-bucket FNV-1a child hash map (`children[REG_CHILD_BUCKETS]`), `hash_next` collision chain, `child_count`, `values` linked list, `value_count`, `last_write_time`, and `flags`. Confirm `reg_value_t` has a 256-char name, `type` (uint32_t), `data[REG_MAX_VALUE_SIZE]` buffer, `data_size`, and `next` pointer. Confirm `HKEY` is defined as `reg_handle_t*` wrapping `reg_key_t*` + access mode, and that `HKEY_LOCAL_MACHINE` through `HKEY_CURRENT_CONFIG` use sentinel addresses `0x80000000`–`0x80000005`. Confirm `src/kernel/registry.c` defines static pools `reg_key_pool[512]` and `reg_value_pool[1024]`, FNV-1a hash function (`reg_fnv1a`) with case-insensitive folding, pool allocators `reg_alloc_key`/`reg_alloc_value`, `reg_resolve_predefined()` mapping, and `registry_init()` creating all 5 root keys. Run `bash scripts/build.sh clean` and confirm zero warnings. Verify `docs/architecture/registry.md` documents the §1.1 structures.
 
-- [ ] Define `reg_key_t` struct:
-  - [ ] `name[256]` — key name
-  - [ ] `parent` pointer — parent key
-  - [ ] `children` — hash map of child keys (FNV-1a hash → `reg_key_t*`)
-  - [ ] `child_count` — number of child keys
-  - [ ] `values` — linked list of `reg_value_t`
-  - [ ] `value_count` — number of values
-  - [ ] `last_write_time` — timestamp of last modification
-  - [ ] `flags` — access control flags
-- [ ] Define `reg_value_t` struct:
-  - [ ] `name[256]` — value name (empty string = default value)
-  - [ ] `type` — `REG_*` type code
-  - [ ] `data[REGISTRY_MAX_VALUE_SIZE]` — value data buffer
-  - [ ] `data_size` — actual bytes used
-  - [ ] `next` — linked list pointer
-- [ ] Define `HKEY` as opaque handle type (internally: pointer + access mode)
-- [ ] Define static pools: `key_pool[512]`, `value_pool[1024]`
-- [ ] Commit: `"registry: core data structures"`
+- [x] Define `reg_key_t` struct:
+  - [x] `name[256]` — key name
+  - [x] `parent` pointer — parent key
+  - [x] `children` — hash map of child keys (FNV-1a hash → `reg_key_t*`)
+  - [x] `child_count` — number of child keys
+  - [x] `values` — linked list of `reg_value_t`
+  - [x] `value_count` — number of values
+  - [x] `last_write_time` — timestamp of last modification
+  - [x] `flags` — access control flags
+- [x] Define `reg_value_t` struct:
+  - [x] `name[256]` — value name (empty string = default value)
+  - [x] `type` — `REG_*` type code
+  - [x] `data[REGISTRY_MAX_VALUE_SIZE]` — value data buffer
+  - [x] `data_size` — actual bytes used
+  - [x] `next` — linked list pointer
+- [x] Define `HKEY` as opaque handle type (internally: pointer + access mode)
+- [x] Define static pools: `key_pool[512]`, `value_pool[1024]`
+- [x] Commit: `"registry: core data structures"` (`d44a791`)
 
 ### 1.2 Value Types
 
