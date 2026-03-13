@@ -609,7 +609,7 @@ static void draw_decorations(const struct wm_window *w)
             uint32_t mg = (w->mica_color >>  8) & 0xFF;
             uint32_t mb =  w->mica_color        & 0xFF;
             uint32_t lum = (77 * mr + 150 * mg + 29 * mb) >> 8;
-            uint32_t target = 28;   /* very dark, subtle tint */
+            uint32_t target = 20;   /* near-black, subtle tint */
 
             if (lum > 5) {
                 mr = mr * target / lum;
