@@ -136,7 +136,9 @@ static int32_t scale_abs(int32_t val, int32_t screen_max)
                      / (uint64_t)VBOX_ABS_MAX);
 }
 
-/* Poll for latest mouse position from VMMDev */
+/* Poll for latest mouse position from VMMDev.
+ * Called ONLY from the IRQ handler — the device only fills in
+ * coordinates when there is a pending mouse event. */
 static void vbox_mouse_poll(void)
 {
     /* Prepare a GetMouse request */
@@ -149,9 +151,9 @@ static void vbox_mouse_poll(void)
 
     vbox_send(mouse_pkt_phys);
 
-    /* Check return code — update position if request succeeded */
-    if (mouse_pkt->header.rc >= 0 &&
-        (mouse_pkt->x != 0 || mouse_pkt->y != 0)) {
+    /* Update position if request succeeded.
+     * VMMDev returns absolute coords scaled 0–0xFFFF. */
+    if (mouse_pkt->header.rc >= 0) {
         abs_x = scale_abs(mouse_pkt->x,
                           (int32_t)fb_get_width());
         abs_y = scale_abs(mouse_pkt->y,
@@ -294,7 +296,8 @@ int vbox_mouse_init(void)
     idt_register_handler(PIC1_OFFSET + irq_line, vbox_irq_handler);
     pic_unmask_irq(irq_line);
 
-    /* Enable all VMMDev interrupts */
+    /* Enable all VMMDev interrupts via the MMIO region.
+     * Offset [3] (uint32_t index 3 = byte offset 12) is the IRQ mask. */
     if (vmmdev_mem)
         vmmdev_mem[3] = 0xFFFFFFFF;
 
@@ -313,10 +316,9 @@ struct mouse_state vbox_mouse_get_state(void)
 {
     struct mouse_state s;
 
-    /* Poll for latest position */
-    if (active)
-        vbox_mouse_poll();
-
+    /* Return cached position updated by IRQ handler.
+     * Do NOT poll here — VMMDev only returns coordinates when
+     * there is a pending event triggered by an interrupt. */
     s.x = abs_x;
     s.y = abs_y;
     s.buttons = 0;  /* VMMDev does NOT provide buttons — merge with PS/2 */
