@@ -41,7 +41,8 @@ static uint8_t   start_icon_loaded;
 #define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W)
 #define SM_ITEM_H          38   /* item row height (taller)    */
 #define SM_SEARCH_H        42   /* search bar height           */
-#define SM_ICON_SZ         20   /* icon size for items         */
+#define SM_ICON_SZ         20   /* icon size for left items    */
+#define SM_RIGHT_ICON_SZ   24   /* icon size for right column  */
 #define SM_BTN_SZ          36   /* bottom icon button size     */
 #define SM_PAD             14   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
@@ -623,7 +624,7 @@ void desktop_draw_start_menu(void)
     uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
     uint32_t menu_h = right_h > left_h ? right_h : left_h;
     int32_t menu_x = 2;
-    int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
+    int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h - 10;
     int32_t right_x = menu_x + (int32_t)SM_LEFT_W;
     gfx_surface_t scr;
     uint32_t i;
@@ -666,6 +667,45 @@ void desktop_draw_start_menu(void)
                 dg = (0x18 * sa + dg * ia + 127) / 255;
                 db = (0x18 * sa + db * ia + 127) / 255;
                 dp[c] = (0xFFu << 24) | (dr << 16) | (dg << 8) | db;
+            }
+        }
+    }
+
+    /* ---- Clip acrylic to rounded corners ----
+     * The acrylic + dark overlay filled a rectangular area.  Repaint
+     * wallpaper pixels into the 4 corner regions that fall outside
+     * the rounded rect so the background follows SM_RADIUS. */
+    {
+        int32_t r, c;
+        int32_t cr = (int32_t)SM_RADIUS;
+        for (r = 0; r < cr; r++) {
+            for (c = 0; c < cr; c++) {
+                /* Distance from corner center to this pixel */
+                int32_t dx = cr - 1 - c;
+                int32_t dy = cr - 1 - r;
+                if (dx * dx + dy * dy > (cr - 1) * (cr - 1)) {
+                    /* Pixel is outside rounded corner — restore wallpaper */
+                    int32_t coords[4][2] = {
+                        { menu_x + c,                              menu_y + r },
+                        { menu_x + (int32_t)SM_TOTAL_W - 1 - c,    menu_y + r },
+                        { menu_x + c,                              menu_y + (int32_t)menu_h - 1 - r },
+                        { menu_x + (int32_t)SM_TOTAL_W - 1 - c,    menu_y + (int32_t)menu_h - 1 - r }
+                    };
+                    uint32_t ci;
+                    for (ci = 0; ci < 4; ci++) {
+                        int32_t px = coords[ci][0];
+                        int32_t py = coords[ci][1];
+                        if (px >= 0 && (uint32_t)px < scr.width &&
+                            py >= 0 && (uint32_t)py < scr.height) {
+                            uint32_t wp = 0xFF000000;
+                            if (wallpaper_loaded && wallpaper_img.pixels &&
+                                (uint32_t)px < wallpaper_img.width &&
+                                (uint32_t)py < wallpaper_img.height)
+                                wp = wallpaper_img.pixels[(uint32_t)py * wallpaper_img.width + (uint32_t)px];
+                            scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = wp;
+                        }
+                    }
+                }
             }
         }
     }
@@ -763,11 +803,11 @@ void desktop_draw_start_menu(void)
 
             /* Icon */
             {
-                icon_bitmap_t *ico = icon_get_colored(item->icon_id, SM_ICON_SZ,
+                icon_bitmap_t *ico = icon_get_colored(item->icon_id, SM_RIGHT_ICON_SZ,
                                                        SM_TEXT_PRI);
                 if (ico)
                     icon_draw(&scr, ico, rx + SM_PAD + 4,
-                              item_y + (SM_ITEM_H - (int32_t)SM_ICON_SZ) / 2);
+                              item_y + (SM_ITEM_H - (int32_t)SM_RIGHT_ICON_SZ) / 2);
             }
 
             /* Label */
@@ -845,7 +885,7 @@ int desktop_handle_click(int32_t mx, int32_t my, uint8_t buttons)
         uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
         uint32_t menu_h = right_h > left_h ? right_h : left_h;
         int32_t menu_x = 2;
-        int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h;
+        int32_t menu_y = (int32_t)(sh - TASKBAR_HEIGHT) - (int32_t)menu_h - 10;
 
         /* Check if click is inside the start menu bounds */
         if (mx >= menu_x && mx < menu_x + (int32_t)SM_TOTAL_W &&
@@ -998,7 +1038,7 @@ cursor_shape_t desktop_get_cursor_context(int32_t mx, int32_t my)
         uint32_t right_h = SM_RIGHT_COUNT * SM_ITEM_H + SM_PAD * 2 + SM_BTN_SZ + SM_PAD;
         uint32_t left_h = SM_SEARCH_H + SM_PAD + SM_LEFT_COUNT * SM_ITEM_H + SM_PAD * 2;
         uint32_t menu_h = right_h > left_h ? right_h : left_h;
-        uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h;
+        uint32_t menu_y = sh - TASKBAR_HEIGHT - menu_h - 10;
         if (mx >= 0 && mx < (int32_t)SM_TOTAL_W + 2 &&
             my >= (int32_t)menu_y && my < (int32_t)(sh - TASKBAR_HEIGHT)) {
             /* Update hover tracking */
