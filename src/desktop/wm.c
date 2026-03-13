@@ -586,12 +586,13 @@ static void draw_decorations(const struct wm_window *w)
                 }
                 if (cnt > 0) {
                     sr /= cnt; sg /= cnt; sb /= cnt;
-                    /* 50% desaturation — strong mute, but keeps enough hue
-                     * for the tint to be clearly visible after scaling */
+                    /* 80% desaturation — very subtle tint like Win11 Mica.
+                     * Only 20% of the original hue survives, creating a
+                     * barely-perceptible wallpaper hint after luminance scaling. */
                     uint32_t gray = (77 * sr + 150 * sg + 29 * sb) >> 8;
-                    sr = (sr * 128 + gray * 127) / 255;
-                    sg = (sg * 128 + gray * 127) / 255;
-                    sb = (sb * 128 + gray * 127) / 255;
+                    sr = (sr * 51 + gray * 204) / 255;
+                    sg = (sg * 51 + gray * 204) / 255;
+                    sb = (sb * 51 + gray * 204) / 255;
                     ((struct wm_window *)w)->mica_color =
                         0xFF000000 | (sr << 16) | (sg << 8) | sb;
                 }
