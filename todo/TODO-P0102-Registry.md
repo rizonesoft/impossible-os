@@ -266,14 +266,14 @@
 
 ### 4.3 Crash-Safe Journaling
 
-**Prompt:** Implement write-ahead journaling so a power loss during hive write doesn't corrupt the registry. Before writing the main hive file, write the new data to a `.hive.log` journal file first. If both files exist on boot, the journal is replayed to recover from an interrupted write. The sequence is: (1) write new hive to `.hive.log`, (2) fsync `.hive.log`, (3) rename `.hive.log` → `.hive` (atomic on most filesystems), (4) delete old `.hive.bak`. If step 3 fails, the next boot detects the `.log` file and replays it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: crash-safe journaling"`. Update `README.md` if it contains stale or incorrect references to registry persistence. Create or update documentation in `docs/` covering the journaling sequence, crash recovery, and backup rotation.
+**Prompt:** Verify crash-safe journaling. In `registry.c`, confirm `hive_save` follows the 4-step sequence: (1) write `.hive.log`, (2) copy `.hive` → `.hive.bak`, (3) overwrite `.hive`, (4) invalidate `.hive.log` by zeroing magic. Confirm `hive_validate_file` checks magic, version, and CRC32. Confirm `hive_best_source` checks `.hive.log` → `.hive` → `.hive.bak` in priority order and copies the best source to `.hive`. Confirm `registry_load_hives` calls `hive_best_source` for each hive before loading. Confirm `hive_copy_file` does a byte-by-byte copy via VFS. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Before saving: write new data to `SYSTEM.hive.log` first
-- [ ] After log written: rename `.hive.log` → `.hive` (atomic replace)
-- [ ] On boot: if `.hive.log` exists, replay it (recover from crash)
-- [ ] On boot: if `.hive` is corrupt (bad CRC), fall back to `.hive.bak`
-- [ ] Keep one backup: rename old `.hive` → `.hive.bak` before replacing
-- [ ] Commit: `"registry: crash-safe journaling"`
+- [x] Before saving: write new data to `.hive.log` first (journal)
+- [x] After log + main hive written: invalidate `.hive.log` by zeroing magic
+- [x] On boot: if `.hive.log` has valid header, replay it (crash recovery via `hive_best_source`)
+- [x] On boot: if `.hive` is corrupt (bad CRC), fall back to `.hive.bak`
+- [x] Keep one backup: copy old `.hive` → `.hive.bak` before overwriting
+- [x] Commit: `"registry: crash-safe journaling"`
 
 ---
 

@@ -1884,20 +1884,77 @@ static int hive_serialize_key(hive_buf_t *buf, reg_key_t *key)
     return 0;
 }
 
-/* ---- hive_save ---- */
+/* ---- String helpers for journal paths ---- */
+
+static void hive_str_append(char *dst, uint32_t cap,
+                            const char *base, const char *suffix)
+{
+    uint32_t i = 0, j;
+    for (j = 0; base[j] && i < cap - 1; j++)
+        dst[i++] = base[j];
+    for (j = 0; suffix[j] && i < cap - 1; j++)
+        dst[i++] = suffix[j];
+    dst[i] = '\0';
+}
+
+/* ---- File copy helper (for .hive → .hive.bak backup) ---- */
+
+static int hive_copy_file(const char *src_path, const char *dst_path)
+{
+    struct vfs_node *src, *dst;
+    uint8_t copy_buf[512];
+    uint32_t offset = 0;
+    int n;
+
+    src = vfs_open(src_path, HIVE_VFS_O_READ);
+    if (!src) return -1;
+
+    vfs_create(dst_path, 1);
+    dst = vfs_open(dst_path, HIVE_VFS_O_WRITE);
+    if (!dst) { vfs_close(src); return -1; }
+
+    while ((n = vfs_read(src, offset, sizeof(copy_buf), copy_buf)) > 0) {
+        vfs_write(dst, offset, (uint32_t)n, copy_buf);
+        offset += (uint32_t)n;
+    }
+
+    vfs_close(src);
+    vfs_close(dst);
+    return 0;
+}
+
+/* ---- Invalidate a journal file by zeroing its magic ---- */
+
+static void hive_invalidate_log(const char *log_path)
+{
+    struct vfs_node *f = vfs_open(log_path, HIVE_VFS_O_WRITE);
+    if (f) {
+        uint32_t zero = 0;
+        vfs_write(f, 0, 4, (const uint8_t *)&zero);
+        vfs_close(f);
+    }
+}
+
+/* ---- hive_save (journal-safe) ---- */
 
 int hive_save(reg_key_t *root, const char *filepath)
 {
     uint32_t total_keys = 0, total_values = 0;
-    uint32_t buf_pages, buf_size;
+    uint32_t buf_pages, buf_size, total_write;
     uintptr_t buf_phys;
     uint8_t *buf_ptr;
     hive_header_t *hdr;
     hive_buf_t ser;
     struct vfs_node *f;
+    char log_path[160];
+    char bak_path[160];
 
     if (!root || !filepath) return -1;
     if (!vfs_is_mounted(filepath[0])) return -1;
+
+    /* Build journal and backup paths */
+    hive_str_append(log_path, sizeof(log_path), filepath, ".log");
+    hive_str_append(bak_path, sizeof(bak_path), filepath, ".bak");
 
     /* Count tree size */
     hive_count(root, &total_keys, &total_values);
@@ -1930,15 +1987,14 @@ int hive_save(reg_key_t *root, const char *filepath)
 
     if (hive_serialize_key(&ser, root) < 0) {
         klog(LOG_ERROR, "hive", "Serialization overflow for '%s'", filepath);
-        pmm_free_frame(buf_phys);
-        return -1;
+        goto fail_free;
     }
 
     /* Fill header */
     hdr = (hive_header_t *)buf_ptr;
     hdr->magic        = HIVE_MAGIC;
     hdr->version      = HIVE_VERSION;
-    hdr->checksum     = 0;  /* computed below */
+    hdr->checksum     = 0;
     hdr->timestamp    = pit_get_ticks();
     hdr->total_keys   = total_keys;
     hdr->total_values = total_values;
@@ -1954,28 +2010,49 @@ int hive_save(reg_key_t *root, const char *filepath)
         hdr->root_name[i] = '\0';
     }
 
-    /* Compute CRC32 over the header (with checksum field zeroed) */
+    /* Compute CRC32 */
     hdr->checksum = hive_crc32(buf_ptr, HIVE_HEADER_SIZE);
 
-    /* Write to file */
-    vfs_create(filepath, 1);  /* VFS_FILE */
+    total_write = HIVE_HEADER_SIZE + ser.pos;
+
+    /* === STEP 1: Write new data to .hive.log (journal) === */
+    vfs_create(log_path, 1);
+    f = vfs_open(log_path, HIVE_VFS_O_WRITE);
+    if (!f) {
+        klog(LOG_ERROR, "hive", "Cannot open journal '%s'", log_path);
+        goto fail_free;
+    }
+    {
+        int rc = vfs_write(f, 0, total_write, buf_ptr);
+        vfs_close(f);
+        if (rc < 0) {
+            klog(LOG_ERROR, "hive", "Journal write failed for '%s'", log_path);
+            goto fail_free;
+        }
+    }
+
+    /* === STEP 2: Backup old .hive → .hive.bak === */
+    hive_copy_file(filepath, bak_path);
+
+    /* === STEP 3: Overwrite .hive with new data === */
+    vfs_create(filepath, 1);
     f = vfs_open(filepath, HIVE_VFS_O_WRITE);
     if (!f) {
         klog(LOG_ERROR, "hive", "Cannot open '%s' for writing", filepath);
-        pmm_free_frame(buf_phys);
-        return -1;
+        /* Journal is valid — next boot will recover */
+        goto fail_free;
     }
-
     {
-        uint32_t total_write = HIVE_HEADER_SIZE + ser.pos;
         int rc = vfs_write(f, 0, total_write, buf_ptr);
         vfs_close(f);
         if (rc < 0) {
             klog(LOG_ERROR, "hive", "Write failed for '%s'", filepath);
-            pmm_free_frame(buf_phys);
-            return -1;
+            goto fail_free;
         }
     }
+
+    /* === STEP 4: Invalidate journal (write succeeded) === */
+    hive_invalidate_log(log_path);
 
     /* Free PMM buffer */
     {
@@ -1986,9 +2063,77 @@ int hive_save(reg_key_t *root, const char *filepath)
 
     klog(LOG_DEBUG, "hive", "Saved '%s': %u keys, %u values (%u bytes)",
          filepath, (uint64_t)total_keys, (uint64_t)total_values,
-         (uint64_t)(HIVE_HEADER_SIZE + ser.pos));
+         (uint64_t)total_write);
 
     return 0;
+
+fail_free:
+    {
+        uint32_t p;
+        for (p = 0; p < buf_pages; p++)
+            pmm_free_frame(buf_phys + p * 4096);
+    }
+    return -1;
+}
+
+/* ---- Journal recovery ---- */
+
+/* Check if a hive file has a valid header (magic + version + CRC32) */
+static int hive_validate_file(const char *path)
+{
+    struct vfs_node *f;
+    hive_header_t hdr;
+    uint32_t saved_crc, computed_crc;
+    int rc;
+
+    f = vfs_open(path, HIVE_VFS_O_READ);
+    if (!f) return -1;
+
+    rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)&hdr);
+    vfs_close(f);
+    if (rc < (int)HIVE_HEADER_SIZE) return -1;
+    if (hdr.magic != HIVE_MAGIC) return -1;
+    if (hdr.version != HIVE_VERSION) return -1;
+
+    saved_crc = hdr.checksum;
+    hdr.checksum = 0;
+    computed_crc = hive_crc32((const uint8_t *)&hdr, HIVE_HEADER_SIZE);
+    if (computed_crc != saved_crc) return -1;
+
+    return 0;  /* valid */
+}
+
+/* Try to recover from a journal or backup file.
+ * Priority: .hive.log (crash during write) → .hive → .hive.bak
+ * Returns the best path to load from, or NULL if none are valid. */
+static const char *hive_best_source(const char *filepath,
+                                     char *log_path, char *bak_path)
+{
+    hive_str_append(log_path, 160, filepath, ".log");
+    hive_str_append(bak_path, 160, filepath, ".bak");
+
+    /* 1. Check journal — if valid, a crash happened mid-write */
+    if (hive_validate_file(log_path) == 0) {
+        klog(LOG_WARN, "hive", "Recovering from journal: %s", log_path);
+        /* Copy journal to main hive to complete the interrupted write */
+        hive_copy_file(log_path, filepath);
+        hive_invalidate_log(log_path);
+        return filepath;
+    }
+
+    /* 2. Check main hive */
+    if (hive_validate_file(filepath) == 0)
+        return filepath;
+
+    /* 3. Fall back to backup */
+    if (hive_validate_file(bak_path) == 0) {
+        klog(LOG_WARN, "hive", "Main hive corrupt, using backup: %s", bak_path);
+        hive_copy_file(bak_path, filepath);
+        return filepath;
+    }
+
+    /* Nothing usable */
+    return (const char *)0;
 }
 
 /* ---- Deserialization ---- */
@@ -2365,15 +2510,22 @@ void registry_load_hives(void)
 
     for (i = 0; i < REG_HIVE_COUNT; i++) {
         reg_key_t *sub = hive_get_subkey(i);
+        const char *src;
+        char log_path[160], bak_path[160];
+        int rc;
+
         if (!sub) continue;
 
-        int rc = hive_load(hive_table[i].path, sub);
+        /* Journal recovery: find best valid source */
+        src = hive_best_source(hive_table[i].path, log_path, bak_path);
+        if (!src) continue;  /* No valid hive — use defaults */
+
+        rc = hive_load(src, sub);
         if (rc > 0) {
             loaded++;
             klog(LOG_DEBUG, "registry", "Loaded hive: %s (%d values)",
                  hive_table[i].path, rc);
         }
-        /* rc == -1: corrupt or missing — silently use defaults */
     }
 
     klog(LOG_INFO, "registry", "Hive load complete: %u/%u hives loaded",

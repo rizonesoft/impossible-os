@@ -293,3 +293,22 @@ Hive files are stored under `C:\Impossible\System\Config\Registry\`:
 **Dirty tracking:** `registry_mark_dirty(key)` walks up the parent chain to find the root sub-key and sets the corresponding `hive_desc_t.dirty` flag. Called automatically from `RegSetValueEx` and `RegDeleteValue`.
 
 **Flush:** `registry_flush()` writes only dirty hives, called from the compositor loop. `registry_save_all()` writes all hives unconditionally (for clean shutdown). `registry_load_hives()` loads all hive files at boot (missing files silently skipped).
+
+### Crash-Safe Journaling (§4.3)
+
+Write-ahead journaling prevents corruption from power loss during a hive write:
+
+1. **Write** new data to `.hive.log` (journal file)
+2. **Backup** old `.hive` → `.hive.bak` (copy via VFS)
+3. **Overwrite** `.hive` with new data
+4. **Invalidate** `.hive.log` by zeroing its magic bytes
+
+**Boot recovery** (`hive_best_source`) checks in priority order:
+
+| Priority | File | Meaning |
+|----------|------|---------|
+| 1 | `.hive.log` (valid header) | Crash during step 3 — journal replayed |
+| 2 | `.hive` (valid header) | Normal case |
+| 3 | `.hive.bak` (valid header) | Main hive corrupt — backup restored |
+
+Validation uses `hive_validate_file()` which checks magic (`REGH`), version, and CRC32.
