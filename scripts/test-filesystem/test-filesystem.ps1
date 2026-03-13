@@ -105,14 +105,9 @@ function Show-TestDisks {
 
 # ---- Detach any test media from port 1 ----
 function Detach-TestDisk {
-    # Power off if running
     try { & $VBOX controlvm $VM_NAME poweroff 2>$null } catch {}
     Start-Sleep -Milliseconds 500
-
-    # Detach AHCI port 1 (HDD test disk)
     try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port 1 --medium none 2>$null } catch {}
-
-    # Detach IDE DVD if present
     try { & $VBOX storageattach $VM_NAME --storagectl "IDE" --port 0 --device 0 --medium none 2>$null } catch {}
 }
 
@@ -128,28 +123,25 @@ function Generate-TestDisk {
         Read-Host "Press Enter to exit"; exit 1
     }
 
-    # Convert Windows UNC path to WSL path directly
+    # Convert Windows UNC path to WSL path
     # \\wsl.localhost\Ubuntu\home\user\project -> /home/user/project
     $wslPath = $PROJECT
     if ($wslPath -match '^\\\\wsl') {
-        # Strip \\wsl.localhost\DistroName prefix, keep the rest
         $wslPath = $wslPath -replace '^\\\\wsl\.[^\\]+\\[^\\]+', ''
     }
     $wslPath = $wslPath -replace '\\', '/'
     Write-Host "WSL path: $wslPath" -ForegroundColor DarkGray
 
-    # Determine which image file to delete for regeneration
+    # Delete existing image so make-test-disks.sh regenerates it
     if ($DiskName -like "optical/*") {
         $delFile = "build/test-disks/$DiskName.iso"
     } else {
         $delFile = "build/test-disks/$DiskName.img"
     }
 
-    # Build + generate via WSL2
-    Write-Host "Building OS and generating $DiskName..." -ForegroundColor Cyan
-    $cmd = "cd '$wslPath' && bash scripts/build.sh 2>&1 | tail -3 && rm -f '$delFile' && bash tools/make-test-disks.sh build/test-disks build"
-    Write-Host "CMD: $cmd" -ForegroundColor DarkGray
-    wsl.exe bash -c $cmd
+    # Only generate test disks (skip full kernel build -- must be done in WSL first)
+    Write-Host "Generating $DiskName..." -ForegroundColor Cyan
+    wsl.exe bash -c "cd '$wslPath' && rm -f '$delFile' && bash tools/make-test-disks.sh build/test-disks build"
     Write-Host ""
 }
 
@@ -167,6 +159,7 @@ function Attach-BlockDisk {
 
     if (-not (Test-Path $imgPath)) {
         Write-Host "Failed to generate test disk: $imgPath" -ForegroundColor Red
+        Write-Host "Build the OS first in WSL2: bash scripts/build.sh" -ForegroundColor Yellow
         Read-Host "Press Enter to exit"; exit 1
     }
 
@@ -207,6 +200,7 @@ function Attach-OpticalDisk {
 
     if (-not (Test-Path $isoPath)) {
         Write-Host "Failed to generate test ISO: $isoPath" -ForegroundColor Red
+        Write-Host "Build the OS first in WSL2: bash scripts/build.sh" -ForegroundColor Yellow
         Read-Host "Press Enter to exit"; exit 1
     }
 
@@ -230,7 +224,6 @@ function Attach-OpticalDisk {
 function Start-TestVM {
     param([string]$DiskLabel, [string]$Mode)
 
-    # Ensure system disk is attached on port 0
     try {
         & $VBOX storageattach $VM_NAME `
             --storagectl "AHCI" `

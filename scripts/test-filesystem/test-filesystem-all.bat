@@ -25,7 +25,7 @@ echo                             11 - NTFS
 echo                             12 - IXFS
 echo.
 echo  Double-click a numbered .bat file to launch that test.
-echo  Generate test disks first in WSL2: bash scripts/test-fs.sh gen
+echo  Generate test disks first in WSL2: bash scripts/test-filesystem.sh gen
 echo.
-powershell -ExecutionPolicy Bypass -File "%~dp0test-fs.ps1" list
+powershell -ExecutionPolicy Bypass -File "%~dp0test-filesystem.ps1" list
 pause
