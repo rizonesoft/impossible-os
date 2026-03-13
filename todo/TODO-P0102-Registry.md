@@ -1,4 +1,4 @@
-# Phase 01 — Registry System (Windows-Compatible)
+# P0102 — Registry System (Windows-Compatible)
 
 > **Goal:** Replace the Codex registry with a full Windows-compatible **Registry** system
 > using the same API surface as Win32 (`RegOpenKeyEx`, `RegSetValueEx`, etc.), the same

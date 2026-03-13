@@ -1,4 +1,4 @@
-# Phase GUI — Complete Desktop & GUI System
+# P0201 — Complete Desktop & GUI System
 
 > **Goal:** Build a complete, Windows 11-quality desktop shell with a full widget
 > toolkit, modern visuals, and rich interactivity. After completing every item

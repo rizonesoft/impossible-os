@@ -1,4 +1,4 @@
-# Phase 01 — Kernel Core Enhancements
+# P0101 — Kernel Core Enhancements
 
 > **Goal:** Harden and extend the kernel with threading, IPC, better error handling,
 > a hardware abstraction layer, and essential runtime services. These features

@@ -19,6 +19,62 @@
 
 ---
 
+## Code Organisation
+
+> [!IMPORTANT]
+> **Hypervisor code lives in `src/kernel/hypervisor/`, NOT `src/kernel/drivers/`.**
+> `drivers/` is for real hardware that exists on bare metal (PS/2, AHCI, RTL8139).
+> `hypervisor/` is for virtual hardware that only exists inside VMs.
+> This matches Linux: `drivers/virt/vboxguest/`, `drivers/virtio/`, `drivers/hv/`.
+
+```
+src/kernel/
+├── drivers/              ← Hardware drivers (bare metal)
+│   ├── mouse.c            ← PS/2 mouse (real hardware)
+│   ├── keyboard.c
+│   ├── ahci.c
+│   ├── rtl8139.c
+│   └── ...
+│
+├── hypervisor/           ← Guest additions / hypervisor abstraction
+│   ├── detect.c           ← CPUID + PCI probe → VBox? KVM? Hyper-V? Bare metal?
+│   ├── hv.c               ← Unified interface dispatch table
+│   │
+│   ├── vbox/              ← VirtualBox backend
+│   │   ├── vbox_guest.c       ← VMMDev init, IRQ handler, event dispatch
+│   │   ├── vbox_mouse.c       ← Absolute mouse (moved from drivers/)
+│   │   ├── vbox_display.c     ← Display auto-resize
+│   │   ├── vbox_hgcm.c        ← HGCM client connection
+│   │   ├── vbox_sf.c          ← Shared folders via HGCM
+│   │   └── vbox_clip.c        ← Shared clipboard via HGCM
+│   │
+│   ├── virtio/            ← QEMU/KVM backend
+│   │   ├── virtio_input.c     ← Tablet (moved from drivers/)
+│   │   ├── virtio_gpu.c       ← Display resize
+│   │   └── virtio_9p.c        ← Shared folders
+│   │
+│   └── hyperv/            ← Hyper-V backend (future)
+│       ├── vmbus.c
+│       └── hv_mouse.c
+
+include/kernel/
+├── drivers/              ← Hardware driver headers
+│   └── mouse.h
+├── hypervisor/           ← Hypervisor headers
+│   ├── detect.h
+│   ├── hv.h              ← Unified interface
+│   └── vbox/
+│       ├── vbox_mouse.h
+│       └── ...
+```
+
+> [!TIP]
+> **Migration:** Existing `vbox_mouse.c` and `virtio_input.c` will move from `drivers/`
+> to `hypervisor/vbox/` and `hypervisor/virtio/` respectively. The Makefile uses `find`
+> for source discovery, so the move is seamless — no Makefile changes needed.
+
+---
+
 ## 1. VirtualBox — VMMDev Mouse Integration ✅
 
 ### 1.1 VBoxGuest Absolute Mouse
