@@ -523,9 +523,9 @@ static void draw_decorations(const struct wm_window *w)
     gfx_drop_shadow(&scr,
                     (uint32_t)w->x, (uint32_t)w->y,
                     ow, oh,
-                    focused ? 6 : 3,
-                    0, focused ? 2 : 1,
-                    focused ? 0x60000000 : 0x30000000);
+                    focused ? 10 : 5,
+                    0, focused ? 3 : 2,
+                    focused ? 0x78000000 : 0x40000000);
 
     /* ---- 2. Border (filled rounded rect in border color) ----
      * gfx_draw_rounded_rect is broken (it does a full fill), so we draw
