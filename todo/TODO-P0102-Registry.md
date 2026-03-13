@@ -150,16 +150,16 @@
 
 ### 2.4 Convenience Helpers
 
-**Prompt:** Add typed convenience wrappers that simplify common registry access patterns. These wrap `RegQueryValueEx`/`RegSetValueEx` with type-safe signatures: `RegGetDword(hKey, valueName, &dword)`, `RegSetDword(hKey, valueName, dword)`, `RegGetString(hKey, valueName, buf, bufSize)`, `RegSetString(hKey, valueName, str)`, `RegGetQword(hKey, valueName, &qword)`. Also add a one-shot `RegReadKeyValue(rootKey, path, valueName, type, buf, size)` that opens, reads, and closes in one call — this covers 80% of registry access patterns. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: convenience helpers"`. Update `README.md` if it contains stale or incorrect references to registry helpers. Create or update documentation in `docs/` covering the typed convenience API and one-shot RegReadKeyValue pattern.
+**Prompt:** Verify the typed convenience helpers. Confirm `registry.h` declares `RegGetDword/RegSetDword`, `RegGetString/RegSetString`, `RegGetQword/RegSetQword`, and `RegReadKeyValue`. In `registry.c`, verify `RegGetDword` calls `RegQueryValueEx` with `sizeof(uint32_t)` and validates `type==REG_DWORD`. Verify `RegGetString` accepts both `REG_SZ` and `REG_EXPAND_SZ`. Verify `RegSetString` includes the null terminator in size (`reg_strlen+1`). Verify `RegReadKeyValue` performs `RegOpenKeyEx` + `RegQueryValueEx` + `RegCloseKey` in sequence, properly closing the handle even on query failure. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] `RegGetDword(hKey, valueName, &value)` — read `REG_DWORD`
-- [ ] `RegSetDword(hKey, valueName, value)` — write `REG_DWORD`
-- [ ] `RegGetString(hKey, valueName, buf, bufSize)` — read `REG_SZ`
-- [ ] `RegSetString(hKey, valueName, str)` — write `REG_SZ`
-- [ ] `RegGetQword(hKey, valueName, &value)` — read `REG_QWORD`
-- [ ] `RegSetQword(hKey, valueName, value)` — write `REG_QWORD`
-- [ ] `RegReadKeyValue(root, path, valueName, type, buf, size)` — one-shot open+read+close
-- [ ] Commit: `"registry: convenience helpers"`
+- [x] `RegGetDword(hKey, valueName, &value)` — read `REG_DWORD`
+- [x] `RegSetDword(hKey, valueName, value)` — write `REG_DWORD`
+- [x] `RegGetString(hKey, valueName, buf, bufSize)` — read `REG_SZ`
+- [x] `RegSetString(hKey, valueName, str)` — write `REG_SZ`
+- [x] `RegGetQword(hKey, valueName, &value)` — read `REG_QWORD`
+- [x] `RegSetQword(hKey, valueName, value)` — write `REG_QWORD`
+- [x] `RegReadKeyValue(root, path, valueName, type, buf, size)` — one-shot open+read+close
+- [x] Commit: `"registry: convenience helpers"`
 
 ---
 

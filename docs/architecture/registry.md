@@ -139,6 +139,17 @@ HKCR (HKEY_CLASSES_ROOT) → merged view of HKLM\SOFTWARE\Classes
 
 Index-based enumeration scans hash buckets linearly (`reg_get_child_by_index`). Returns `ERROR_NO_MORE_ITEMS` when exhausted.
 
+### Convenience Helpers (§2.4)
+
+| Function | Description |
+|----------|-------------|
+| `RegGetDword/RegSetDword` | Read/write `REG_DWORD` (uint32_t) |
+| `RegGetString/RegSetString` | Read/write `REG_SZ` (null-terminated string) |
+| `RegGetQword/RegSetQword` | Read/write `REG_QWORD` (uint64_t) |
+| `RegReadKeyValue(root, path, name, ...)` | One-shot open + query + close |
+
+`RegGetString` accepts both `REG_SZ` and `REG_EXPAND_SZ`. `RegSetString` includes the null terminator. `RegReadKeyValue` always closes the handle, even on query failure.
+
 ### Value Types
 
 | Constant | Value | Description |

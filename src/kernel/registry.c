@@ -1400,3 +1400,111 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
 
     return ERROR_SUCCESS;
 }
+
+/* ============================================================================
+ * §2.4  Typed Convenience Helpers
+ * ============================================================================ */
+
+/* ---- REG_DWORD ---- */
+
+long RegGetDword(HKEY hKey, const char *lpValueName, uint32_t *pValue)
+{
+    uint32_t type = 0;
+    uint32_t size = sizeof(uint32_t);
+    long rc;
+
+    if (!pValue)
+        return ERROR_INVALID_PARAMETER;
+
+    rc = RegQueryValueEx(hKey, lpValueName, (uint32_t *)0, &type,
+                         (uint8_t *)pValue, &size);
+    if (rc != ERROR_SUCCESS)
+        return rc;
+    if (type != REG_DWORD)
+        return ERROR_FILE_NOT_FOUND;
+    return ERROR_SUCCESS;
+}
+
+long RegSetDword(HKEY hKey, const char *lpValueName, uint32_t dwValue)
+{
+    return RegSetValueEx(hKey, lpValueName, 0, REG_DWORD,
+                         (const uint8_t *)&dwValue, sizeof(uint32_t));
+}
+
+/* ---- REG_SZ ---- */
+
+long RegGetString(HKEY hKey, const char *lpValueName,
+                  char *lpBuf, uint32_t cbBuf)
+{
+    uint32_t type = 0;
+    uint32_t size = cbBuf;
+    long rc;
+
+    if (!lpBuf || cbBuf == 0)
+        return ERROR_INVALID_PARAMETER;
+
+    rc = RegQueryValueEx(hKey, lpValueName, (uint32_t *)0, &type,
+                         (uint8_t *)lpBuf, &size);
+    if (rc != ERROR_SUCCESS)
+        return rc;
+    if (type != REG_SZ && type != REG_EXPAND_SZ)
+        return ERROR_FILE_NOT_FOUND;
+    return ERROR_SUCCESS;
+}
+
+long RegSetString(HKEY hKey, const char *lpValueName, const char *lpString)
+{
+    uint32_t len;
+
+    if (!lpString)
+        return ERROR_INVALID_PARAMETER;
+
+    len = reg_strlen(lpString) + 1;  /* include null terminator */
+    return RegSetValueEx(hKey, lpValueName, 0, REG_SZ,
+                         (const uint8_t *)lpString, len);
+}
+
+/* ---- REG_QWORD ---- */
+
+long RegGetQword(HKEY hKey, const char *lpValueName, uint64_t *pValue)
+{
+    uint32_t type = 0;
+    uint32_t size = sizeof(uint64_t);
+    long rc;
+
+    if (!pValue)
+        return ERROR_INVALID_PARAMETER;
+
+    rc = RegQueryValueEx(hKey, lpValueName, (uint32_t *)0, &type,
+                         (uint8_t *)pValue, &size);
+    if (rc != ERROR_SUCCESS)
+        return rc;
+    if (type != REG_QWORD)
+        return ERROR_FILE_NOT_FOUND;
+    return ERROR_SUCCESS;
+}
+
+long RegSetQword(HKEY hKey, const char *lpValueName, uint64_t qwValue)
+{
+    return RegSetValueEx(hKey, lpValueName, 0, REG_QWORD,
+                         (const uint8_t *)&qwValue, sizeof(uint64_t));
+}
+
+/* ---- One-shot read ---- */
+
+long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
+                     const char *lpValueName, uint32_t *lpType,
+                     uint8_t *lpData, uint32_t *lpcbData)
+{
+    HKEY hKey;
+    long rc;
+
+    rc = RegOpenKeyEx(hRootKey, lpPath, 0, KEY_READ, &hKey);
+    if (rc != ERROR_SUCCESS)
+        return rc;
+
+    rc = RegQueryValueEx(hKey, lpValueName, (uint32_t *)0, lpType,
+                         lpData, lpcbData);
+    RegCloseKey(hKey);
+    return rc;
+}

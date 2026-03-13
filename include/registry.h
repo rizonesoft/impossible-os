@@ -308,3 +308,24 @@ long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
                      uint32_t *lpcValues, uint32_t *lpcbMaxValueNameLen,
                      uint32_t *lpcbMaxValueLen, uint32_t *lpcbSecurityDescriptor,
                      uint64_t *lpftLastWriteTime);
+
+/* ---- Typed Convenience Helpers (§2.4) ---- */
+
+/* Read/write REG_DWORD (uint32_t) */
+long RegGetDword(HKEY hKey, const char *lpValueName, uint32_t *pValue);
+long RegSetDword(HKEY hKey, const char *lpValueName, uint32_t dwValue);
+
+/* Read/write REG_SZ (null-terminated string) */
+long RegGetString(HKEY hKey, const char *lpValueName,
+                  char *lpBuf, uint32_t cbBuf);
+long RegSetString(HKEY hKey, const char *lpValueName, const char *lpString);
+
+/* Read/write REG_QWORD (uint64_t) */
+long RegGetQword(HKEY hKey, const char *lpValueName, uint64_t *pValue);
+long RegSetQword(HKEY hKey, const char *lpValueName, uint64_t qwValue);
+
+/* One-shot: open key, read value, close key.
+ * Combines RegOpenKeyEx + RegQueryValueEx + RegCloseKey. */
+long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
+                     const char *lpValueName, uint32_t *lpType,
+                     uint8_t *lpData, uint32_t *lpcbData);
