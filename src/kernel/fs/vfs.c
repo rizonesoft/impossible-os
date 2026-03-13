@@ -218,6 +218,7 @@ struct vfs_node *vfs_open(const char *path, uint32_t flags)
             return (struct vfs_node *)0;
     }
 
+    node->ref_count++;
     return node;
 }
 
@@ -225,6 +226,9 @@ int vfs_close(struct vfs_node *node)
 {
     if (!node)
         return -1;
+
+    if (node->ref_count > 0)
+        node->ref_count--;
 
     if (node->ops && node->ops->close)
         return node->ops->close(node);
@@ -345,6 +349,13 @@ int vfs_unlink(const char *path)
 
     if (!parent || !parent->ops || !parent->ops->unlink)
         return -1;
+
+    /* Prevent deletion of open files */
+    if (parent->ops->finddir) {
+        struct vfs_node *target = parent->ops->finddir(parent, name);
+        if (target && target->ref_count > 0)
+            return -1;  /* file is still open */
+    }
 
     return parent->ops->unlink(parent, name);
 }

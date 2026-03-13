@@ -2047,6 +2047,7 @@ int hive_save(reg_key_t *root, const char *filepath)
             }
         }
         hive_invalidate_log(log_path);
+        vfs_unlink(log_path);   /* clean up stale journal */
     }
 
     /* Free PMM buffer */

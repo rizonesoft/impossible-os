@@ -58,6 +58,7 @@ struct vfs_node {
     uint32_t         inode;      /* inode number (FS-specific) */
     uint64_t         size;       /* file size in bytes */
     uint32_t         flags;      /* open flags */
+    uint32_t         ref_count;  /* open reference count (>0 = in use) */
     struct vfs_ops  *ops;        /* filesystem operations */
     void            *fs_data;    /* filesystem-private data */
     struct vfs_node *parent;     /* parent directory */
