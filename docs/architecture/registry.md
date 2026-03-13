@@ -278,3 +278,18 @@ Each root tree is stored as a separate `.hive` file with a 4096-byte page-aligne
 **Value record:** `[name_len:u16][name:N][type:u32][data_size:u32][data:N]`
 
 Keys are serialized depth-first. CRC32 uses table-less bit-by-bit computation (polynomial 0xEDB88320). Corrupt files return -1 and log a warning — the caller falls back to defaults.
+
+### Hive Disk Layout (§4.2)
+
+Hive files are stored under `C:\Impossible\System\Config\Registry\`:
+
+| File | Root Key |
+|------|----------|
+| `SYSTEM.hive` | `HKLM\SYSTEM` |
+| `SOFTWARE.hive` | `HKLM\SOFTWARE` |
+| `HARDWARE.hive` | `HKLM\HARDWARE` |
+| `DEFAULT.hive` | `HKU\Default` |
+
+**Dirty tracking:** `registry_mark_dirty(key)` walks up the parent chain to find the root sub-key and sets the corresponding `hive_desc_t.dirty` flag. Called automatically from `RegSetValueEx` and `RegDeleteValue`.
+
+**Flush:** `registry_flush()` writes only dirty hives, called from the compositor loop. `registry_save_all()` writes all hives unconditionally (for clean shutdown). `registry_load_hives()` loads all hive files at boot (missing files silently skipped).

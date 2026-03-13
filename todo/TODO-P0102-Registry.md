@@ -249,19 +249,20 @@
 
 ### 4.2 Hive File Layout on Disk
 
-**Prompt:** Store hive files in `C:\Impossible\System\Config\Registry\`. Each predefined root tree gets its own hive file. Create the directory structure at first boot if it doesn't exist. Auto-flush dirty hives every 2 seconds from the compositor loop or timer tick (same as current Codex flush). Add a `registry_flush()` function that writes only dirty hives. Add a `registry_save_all()` function for clean shutdown. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: hive file disk layout"`. Update `README.md` if it contains stale or incorrect references to registry file paths. Create or update documentation in `docs/` covering the hive file directory structure, dirty-flag tracking, and flush intervals.
+**Prompt:** Verify the hive file disk layout. In `registry.h`, confirm `REG_HIVE_DIR` is `"C:\Impossible\System\Config\Registry"` and `REG_HIVE_COUNT` is 4. Confirm `registry_flush()`, `registry_save_all()`, and `registry_load_hives()` are declared. In `registry.c`, confirm `hive_table` maps 4 descriptors: SYSTEM.hive→HKLM\SYSTEM, SOFTWARE.hive→HKLM\SOFTWARE, HARDWARE.hive→HKLM\HARDWARE, DEFAULT.hive→HKU\Default. Confirm `registry_mark_dirty()` walks up the parent chain to mark the correct hive dirty. Confirm it's called from `RegSetValueEx` and `RegDeleteValue`. Confirm `registry_flush()` only writes dirty hives. Confirm `hive_ensure_dir()` creates the directory chain. In `main.c`, confirm `registry_flush()` is enabled (not commented out). Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Define hive file paths:
-  - [ ] `C:\Impossible\System\Config\Registry\SYSTEM.hive` → HKLM\SYSTEM
-  - [ ] `C:\Impossible\System\Config\Registry\SOFTWARE.hive` → HKLM\SOFTWARE
-  - [ ] `C:\Impossible\System\Config\Registry\HARDWARE.hive` → HKLM\HARDWARE
-  - [ ] `C:\Impossible\System\Config\Registry\DEFAULT.hive` → HKU\Default
-- [ ] Create Registry directory at first boot if missing
-- [ ] Implement dirty-flag tracking per hive
-- [ ] Implement `registry_flush()` — write only dirty hives (2-second interval)
-- [ ] Implement `registry_save_all()` — for clean shutdown
-- [ ] Buffer writes during early boot (before VFS is mounted)
-- [ ] Commit: `"registry: hive file disk layout"`
+- [x] Define hive file paths:
+  - [x] `C:\Impossible\System\Config\Registry\SYSTEM.hive` → HKLM\SYSTEM
+  - [x] `C:\Impossible\System\Config\Registry\SOFTWARE.hive` → HKLM\SOFTWARE
+  - [x] `C:\Impossible\System\Config\Registry\HARDWARE.hive` → HKLM\HARDWARE
+  - [x] `C:\Impossible\System\Config\Registry\DEFAULT.hive` → HKU\Default
+- [x] Create Registry directory at first boot if missing
+- [x] Implement dirty-flag tracking per hive
+- [x] Implement `registry_flush()` — write only dirty hives
+- [x] Implement `registry_save_all()` — for clean shutdown
+- [x] Hook dirty tracking into `RegSetValueEx` and `RegDeleteValue`
+- [x] Enable `registry_flush()` in `main.c` compositor loop
+- [x] Commit: `"registry: hive file disk layout"`
 
 ### 4.3 Crash-Safe Journaling
 

@@ -1114,7 +1114,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 }
 
                 /* Periodically flush dirty registry hives to disk */
-                /* registry_flush(); — TODO: enable after hive persistence (§4) */
+                registry_flush();
 
                 /* Sleep until next IRQ.  HLT wakes on mouse/keyboard/timer
                  * instantly — much lower latency than yield() which does

@@ -63,6 +63,9 @@ static reg_key_t   *reg_root_hkcc;    /* HKEY_CURRENT_CONFIG */
 
 static uint8_t      registry_ready = 0;
 
+/* Forward declaration (defined in §4.2) */
+void registry_mark_dirty(reg_key_t *key);
+
 /* ---- FNV-1a hash (32-bit) ---- */
 
 /* Used for O(1) child key lookup within a parent's hash buckets.
@@ -1035,6 +1038,9 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
     /* Timestamp */
     key->last_write_time = reg_now();
 
+    /* Mark hive dirty for periodic flush */
+    registry_mark_dirty(key);
+
     return ERROR_SUCCESS;
 }
 
@@ -1195,6 +1201,7 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
             doomed->next = (reg_value_t *)0;
             key->value_count--;
             key->last_write_time = reg_now();
+            registry_mark_dirty(key);
             return ERROR_SUCCESS;
         }
         pp = &(*pp)->next;
@@ -2208,4 +2215,167 @@ fail:
             pmm_free_frame(data_phys + p * 4096);
     }
     return -1;
+}
+
+/* ============================================================================
+ * §4.2  Hive File Disk Layout
+ *
+ * Each HKLM sub-tree and HKU\Default gets its own .hive file under
+ * C:\Impossible\System\Config\Registry\
+ *
+ * Dirty flags are set by RegSetValueEx / RegDeleteValue and cleared
+ * after a successful hive_save.
+ * ============================================================================ */
+
+/* Hive descriptor: maps a root sub-key to a file path + dirty flag */
+typedef struct {
+    const char *path;        /* Hive file path on disk */
+    reg_key_t **root_ptr;    /* Pointer to the root sub-key pointer */
+    const char *sub_name;    /* Sub-key name under its parent */
+    reg_key_t **parent_ptr;  /* Parent root key pointer */
+    uint8_t     dirty;       /* 1 = needs flush */
+} hive_desc_t;
+
+static hive_desc_t hive_table[REG_HIVE_COUNT] = {
+    { REG_HIVE_DIR "\\SYSTEM.hive",   (reg_key_t **)0, "SYSTEM",   (reg_key_t **)0, 0 },
+    { REG_HIVE_DIR "\\SOFTWARE.hive", (reg_key_t **)0, "SOFTWARE", (reg_key_t **)0, 0 },
+    { REG_HIVE_DIR "\\HARDWARE.hive", (reg_key_t **)0, "HARDWARE", (reg_key_t **)0, 0 },
+    { REG_HIVE_DIR "\\DEFAULT.hive",  (reg_key_t **)0, "Default",  (reg_key_t **)0, 0 },
+};
+
+/* Late init: wire up hive_table pointers after registry_init() */
+static uint8_t hive_table_inited = 0;
+
+static void hive_table_init(void)
+{
+    if (hive_table_inited) return;
+
+    /* HKLM sub-keys */
+    hive_table[0].parent_ptr = &reg_root_hklm;
+    hive_table[1].parent_ptr = &reg_root_hklm;
+    hive_table[2].parent_ptr = &reg_root_hklm;
+    /* HKU sub-key */
+    hive_table[3].parent_ptr = &reg_root_hku;
+
+    hive_table_inited = 1;
+}
+
+/* Find the sub-key pointer for a hive descriptor */
+static reg_key_t *hive_get_subkey(uint32_t idx)
+{
+    if (!hive_table[idx].parent_ptr || !*hive_table[idx].parent_ptr)
+        return (reg_key_t *)0;
+    return reg_find_child(*hive_table[idx].parent_ptr, hive_table[idx].sub_name);
+}
+
+/* ---- Dirty-flag tracking ---- */
+
+/* Mark the hive containing a key as dirty.
+ * Walks up the parent chain to find which root sub-key the key belongs to. */
+void registry_mark_dirty(reg_key_t *key)
+{
+    reg_key_t *cur = key;
+    uint32_t i;
+
+    if (!hive_table_inited) return;
+
+    /* Walk to depth-1 child of a root key */
+    while (cur && cur->parent && cur->parent->parent)
+        cur = cur->parent;
+
+    /* cur is now a direct child of a root key — match it to a hive */
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        reg_key_t *sub = hive_get_subkey(i);
+        if (sub && sub == cur) {
+            hive_table[i].dirty = 1;
+            return;
+        }
+    }
+}
+
+/* ---- Directory creation helper ---- */
+
+static void hive_ensure_dir(void)
+{
+    /* Create each path component if needed */
+    vfs_create("C:\\Impossible", 0);                          /* directory */
+    vfs_create("C:\\Impossible\\System", 0);
+    vfs_create("C:\\Impossible\\System\\Config", 0);
+    vfs_create("C:\\Impossible\\System\\Config\\Registry", 0);
+}
+
+/* ---- registry_flush ---- */
+
+void registry_flush(void)
+{
+    uint32_t i;
+
+    if (!registry_ready || !hive_table_inited) return;
+    if (!vfs_is_mounted('C')) return;
+
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        if (!hive_table[i].dirty) continue;
+
+        reg_key_t *sub = hive_get_subkey(i);
+        if (!sub) continue;
+
+        if (hive_save(sub, hive_table[i].path) == 0) {
+            hive_table[i].dirty = 0;
+            klog(LOG_DEBUG, "registry", "Flushed hive: %s", hive_table[i].path);
+        }
+    }
+}
+
+/* ---- registry_save_all ---- */
+
+void registry_save_all(void)
+{
+    uint32_t i;
+
+    if (!registry_ready) return;
+    if (!vfs_is_mounted('C')) return;
+
+    hive_table_init();
+    hive_ensure_dir();
+
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        reg_key_t *sub = hive_get_subkey(i);
+        if (!sub) continue;
+
+        if (hive_save(sub, hive_table[i].path) == 0) {
+            hive_table[i].dirty = 0;
+        }
+    }
+
+    klog(LOG_DEBUG, "registry", "All hives saved to disk");
+}
+
+/* ---- registry_load_hives ---- */
+
+void registry_load_hives(void)
+{
+    uint32_t i;
+    uint32_t loaded = 0;
+
+    if (!registry_ready) return;
+    if (!vfs_is_mounted('C')) return;
+
+    hive_table_init();
+    hive_ensure_dir();
+
+    for (i = 0; i < REG_HIVE_COUNT; i++) {
+        reg_key_t *sub = hive_get_subkey(i);
+        if (!sub) continue;
+
+        int rc = hive_load(hive_table[i].path, sub);
+        if (rc > 0) {
+            loaded++;
+            klog(LOG_DEBUG, "registry", "Loaded hive: %s (%d values)",
+                 hive_table[i].path, rc);
+        }
+        /* rc == -1: corrupt or missing — silently use defaults */
+    }
+
+    klog(LOG_INFO, "registry", "Hive load complete: %u/%u hives loaded",
+         (uint64_t)loaded, (uint64_t)REG_HIVE_COUNT);
 }

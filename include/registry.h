@@ -364,3 +364,19 @@ int hive_save(reg_key_t *root, const char *filepath);
  * Returns number of values loaded, or -1 on error.
  * On corrupt file: logs warning, returns -1 (caller uses defaults). */
 int hive_load(const char *filepath, reg_key_t *root);
+
+/* ---- Hive Disk Layout (§4.2) ---- */
+
+#define REG_HIVE_DIR   "C:\\Impossible\\System\\Config\\Registry"
+#define REG_HIVE_COUNT 4    /* SYSTEM, SOFTWARE, HARDWARE, DEFAULT */
+
+/* Flush dirty hives to disk (called periodically from compositor loop).
+ * Only writes hives whose dirty flag is set. */
+void registry_flush(void);
+
+/* Save all hives to disk unconditionally (for clean shutdown). */
+void registry_save_all(void);
+
+/* Load all hive files from disk into the registry tree.
+ * Called after VFS is mounted. Missing files are silently skipped. */
+void registry_load_hives(void);
