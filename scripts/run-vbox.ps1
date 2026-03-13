@@ -133,11 +133,10 @@ try { & $VBOX setextradata $VM_NAME "VBoxInternal/Devices/pckbd/0/Config/Disable
     --type hdd `
     --medium $DISK_VDI
 
-
-# NOTE: Test disk images are in build/test-disks/ (run: bash tools/make-test-disks.sh)
-# Attach manually when testing:
-#   VBoxManage convertfromraw build/test-disks/fat32.img build/test-disks/fat32.vdi --format VDI
-#   VBoxManage storageattach ImpossibleOS --storagectl "AHCI" --port 1 --type hdd --medium build/test-disks/fat32.vdi
+# Detach any stale test disk from port 1 (left by test-filesystem scripts)
+try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port 1 --medium none 2>$null } catch {}
+# Detach any stale DVD (left by optical test scripts)
+try { & $VBOX storageattach $VM_NAME --storagectl "IDE" --port 0 --device 0 --medium none 2>$null } catch {}
 
 # ---- Launch ----
 Write-Host ""
