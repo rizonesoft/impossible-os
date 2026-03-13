@@ -280,3 +280,31 @@ long RegGetValue(HKEY hKey, const char *lpSubKey, const char *lpValue,
 
 /* Delete a named value from hKey. */
 long RegDeleteValue(HKEY hKey, const char *lpValueName);
+
+/* ---- Win32-Compatible Enumeration (§2.3) ---- */
+
+/* Enumerate child keys by 0-based index.
+ * Returns key name, name size, and last write time.
+ * Returns ERROR_NO_MORE_ITEMS when index >= child count. */
+long RegEnumKeyEx(HKEY hKey, uint32_t dwIndex, char *lpName,
+                  uint32_t *lpcchName, uint32_t *lpReserved,
+                  char *lpClass, uint32_t *lpcchClass,
+                  uint64_t *lpftLastWriteTime);
+
+/* Enumerate values by 0-based index.
+ * Returns value name, type, and data.
+ * Returns ERROR_NO_MORE_ITEMS when index >= value count.
+ * Returns ERROR_MORE_DATA if data buffer too small. */
+long RegEnumValue(HKEY hKey, uint32_t dwIndex, char *lpValueName,
+                  uint32_t *lpcchValueName, uint32_t *lpReserved,
+                  uint32_t *lpType, uint8_t *lpData, uint32_t *lpcbData);
+
+/* Query key metadata: sub-key count, value count, max name/data sizes,
+ * and last write time.  Any output pointer may be NULL. */
+long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
+                     uint32_t *lpReserved, uint32_t *lpcSubKeys,
+                     uint32_t *lpcbMaxSubKeyLen,
+                     uint32_t *lpcbMaxClassLen,
+                     uint32_t *lpcValues, uint32_t *lpcbMaxValueNameLen,
+                     uint32_t *lpcbMaxValueLen, uint32_t *lpcbSecurityDescriptor,
+                     uint64_t *lpftLastWriteTime);

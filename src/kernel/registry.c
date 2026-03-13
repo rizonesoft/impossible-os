@@ -22,7 +22,7 @@
 
 /* ---- String helpers ---- */
 
-static uint32_t __attribute__((unused)) reg_strlen(const char *s)
+static uint32_t reg_strlen(const char *s)
 {
     uint32_t len = 0;
     while (s[len]) len++;
@@ -1200,4 +1200,203 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
         pp = &(*pp)->next;
     }
     return ERROR_FILE_NOT_FOUND;
+}
+
+/* ============================================================================
+ * §2.3  Win32-Compatible Enumeration
+ * ============================================================================ */
+
+/* ---- Helper: get child key by 0-based index ---- */
+/* Iterates through all hash buckets linearly. O(n) but children are few. */
+static reg_key_t *reg_get_child_by_index(reg_key_t *key, uint32_t index)
+{
+    uint32_t cur = 0;
+    uint32_t b;
+
+    if (!key) return (reg_key_t *)0;
+
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            if (cur == index)
+                return c;
+            cur++;
+            c = c->hash_next;
+        }
+    }
+    return (reg_key_t *)0;
+}
+
+/* ---- Helper: get value by 0-based index ---- */
+static reg_value_t *reg_get_value_by_index(reg_key_t *key, uint32_t index)
+{
+    uint32_t cur = 0;
+    reg_value_t *v;
+
+    if (!key) return (reg_value_t *)0;
+
+    v = key->values;
+    while (v) {
+        if (cur == index)
+            return v;
+        cur++;
+        v = v->next;
+    }
+    return (reg_value_t *)0;
+}
+
+/* ---- RegEnumKeyEx ---- */
+
+long RegEnumKeyEx(HKEY hKey, uint32_t dwIndex, char *lpName,
+                  uint32_t *lpcchName, uint32_t *lpReserved,
+                  char *lpClass, uint32_t *lpcchClass,
+                  uint64_t *lpftLastWriteTime)
+{
+    reg_key_t *key, *child;
+    uint32_t name_len;
+
+    (void)lpReserved;
+    (void)lpClass;
+    (void)lpcchClass;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    child = reg_get_child_by_index(key, dwIndex);
+    if (!child)
+        return ERROR_NO_MORE_ITEMS;
+
+    name_len = reg_strlen(child->name);
+
+    if (lpName && lpcchName) {
+        if (*lpcchName <= name_len) {
+            *lpcchName = name_len + 1;
+            return ERROR_MORE_DATA;
+        }
+        reg_strcpy(lpName, child->name, *lpcchName);
+        *lpcchName = name_len;
+    }
+
+    if (lpftLastWriteTime)
+        *lpftLastWriteTime = child->last_write_time;
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegEnumValue ---- */
+
+long RegEnumValue(HKEY hKey, uint32_t dwIndex, char *lpValueName,
+                  uint32_t *lpcchValueName, uint32_t *lpReserved,
+                  uint32_t *lpType, uint8_t *lpData, uint32_t *lpcbData)
+{
+    reg_key_t *key;
+    reg_value_t *v;
+    uint32_t name_len;
+
+    (void)lpReserved;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    v = reg_get_value_by_index(key, dwIndex);
+    if (!v)
+        return ERROR_NO_MORE_ITEMS;
+
+    /* Value name */
+    name_len = reg_strlen(v->name);
+    if (lpValueName && lpcchValueName) {
+        if (*lpcchValueName <= name_len) {
+            *lpcchValueName = name_len + 1;
+            return ERROR_MORE_DATA;
+        }
+        reg_strcpy(lpValueName, v->name, *lpcchValueName);
+        *lpcchValueName = name_len;
+    }
+
+    /* Type */
+    if (lpType)
+        *lpType = v->type;
+
+    /* Data */
+    if (lpcbData) {
+        if (lpData) {
+            if (*lpcbData < v->data_size) {
+                *lpcbData = v->data_size;
+                return ERROR_MORE_DATA;
+            }
+            reg_memcpy(lpData, v->data, v->data_size);
+        }
+        *lpcbData = v->data_size;
+    }
+
+    return ERROR_SUCCESS;
+}
+
+/* ---- RegQueryInfoKey ---- */
+
+long RegQueryInfoKey(HKEY hKey, char *lpClass, uint32_t *lpcchClass,
+                     uint32_t *lpReserved, uint32_t *lpcSubKeys,
+                     uint32_t *lpcbMaxSubKeyLen,
+                     uint32_t *lpcbMaxClassLen,
+                     uint32_t *lpcValues, uint32_t *lpcbMaxValueNameLen,
+                     uint32_t *lpcbMaxValueLen, uint32_t *lpcbSecurityDescriptor,
+                     uint64_t *lpftLastWriteTime)
+{
+    reg_key_t *key;
+    uint32_t b;
+
+    (void)lpClass;
+    (void)lpcchClass;
+    (void)lpReserved;
+    (void)lpcbMaxClassLen;
+    (void)lpcbSecurityDescriptor;
+
+    key = reg_resolve_key(hKey);
+    if (!key)
+        return ERROR_INVALID_HANDLE;
+
+    if (lpcSubKeys)
+        *lpcSubKeys = key->child_count;
+
+    if (lpcValues)
+        *lpcValues = key->value_count;
+
+    if (lpftLastWriteTime)
+        *lpftLastWriteTime = key->last_write_time;
+
+    /* Compute max sub-key name length */
+    if (lpcbMaxSubKeyLen) {
+        uint32_t max_len = 0;
+        for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+            reg_key_t *c = key->children[b];
+            while (c) {
+                uint32_t len = reg_strlen(c->name);
+                if (len > max_len) max_len = len;
+                c = c->hash_next;
+            }
+        }
+        *lpcbMaxSubKeyLen = max_len;
+    }
+
+    /* Compute max value name length and max value data size */
+    if (lpcbMaxValueNameLen || lpcbMaxValueLen) {
+        uint32_t max_name = 0, max_data = 0;
+        reg_value_t *v = key->values;
+        while (v) {
+            if (lpcbMaxValueNameLen) {
+                uint32_t len = reg_strlen(v->name);
+                if (len > max_name) max_name = len;
+            }
+            if (lpcbMaxValueLen) {
+                if (v->data_size > max_data) max_data = v->data_size;
+            }
+            v = v->next;
+        }
+        if (lpcbMaxValueNameLen) *lpcbMaxValueNameLen = max_name;
+        if (lpcbMaxValueLen)     *lpcbMaxValueLen = max_data;
+    }
+
+    return ERROR_SUCCESS;
 }

@@ -129,6 +129,16 @@ HKCR (HKEY_CLASSES_ROOT) → merged view of HKLM\SOFTWARE\Classes
 
 **RRF flags** for `RegGetValue`: `RRF_RT_REG_SZ`, `RRF_RT_REG_DWORD`, `RRF_RT_REG_QWORD`, `RRF_RT_REG_BINARY`, `RRF_RT_ANY`, `RRF_NOEXPAND`.
 
+### Enumeration (§2.3)
+
+| Function | Description |
+|----------|-------------|
+| `RegEnumKeyEx(hKey, idx, name, &size, ...)` | Get child key name by 0-based index |
+| `RegEnumValue(hKey, idx, name, &size, ...)` | Get value name, type, and data by index |
+| `RegQueryInfoKey(hKey, ...)` | Key stats: child/value counts, max name/data sizes |
+
+Index-based enumeration scans hash buckets linearly (`reg_get_child_by_index`). Returns `ERROR_NO_MORE_ITEMS` when exhausted.
+
 ### Value Types
 
 | Constant | Value | Description |

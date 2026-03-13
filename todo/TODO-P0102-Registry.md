@@ -132,21 +132,21 @@
 
 ### 2.3 Enumeration
 
-**Prompt:** Implement key and value enumeration — required for listing all settings, iterating config, and building a `regedit` tool. `RegEnumKeyEx(hKey, index, name, &nameSize, reserved, class, &classSize, &lastWriteTime)` returns the name of the child key at `index` (0-based). Returns `ERROR_NO_MORE_ITEMS` when index exceeds child count. `RegEnumValue(hKey, index, name, &nameSize, reserved, &type, data, &dataSize)` returns the value at `index`. `RegQueryInfoKey` returns stats about a key: number of sub-keys, max sub-key name length, number of values, max value name length, max value data size, last write time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: enumeration (keys, values, info)"`. Update `README.md` if it contains stale or incorrect references to registry enumeration. Create or update documentation in `docs/` covering the enumeration API, index-based iteration, and RegQueryInfoKey output.
+**Prompt:** Verify the enumeration implementation. Confirm `registry.h` declares `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` with correct Win32 signatures. In `registry.c`, verify `reg_get_child_by_index` scans all 16 hash buckets linearly to map 0-based index to child key. Verify `reg_get_value_by_index` walks the value linked list. Verify `RegEnumKeyEx` returns child name and `last_write_time`, `ERROR_NO_MORE_ITEMS` when index out of range, `ERROR_MORE_DATA` if name buffer too small. Verify `RegEnumValue` returns value name, type, and data with same error handling. Verify `RegQueryInfoKey` returns `child_count`, `value_count`, `last_write_time`, and computes max sub-key name length and max value name/data sizes by iterating. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Implement `RegEnumKeyEx(hKey, index, name, &nameSize, ...)`:
-  - [ ] Return child key name at given index
-  - [ ] Return `ERROR_NO_MORE_ITEMS` when index out of range
-  - [ ] Fill `lastWriteTime` from key metadata
-- [ ] Implement `RegEnumValue(hKey, index, name, &nameSize, reserved, &type, data, &dataSize)`:
-  - [ ] Return value name, type, and data at given index
-  - [ ] Return `ERROR_NO_MORE_ITEMS` when index out of range
-  - [ ] Return `ERROR_MORE_DATA` if data buffer too small
-- [ ] Implement `RegQueryInfoKey(hKey, ...)`:
-  - [ ] Return: sub-key count, max sub-key name length
-  - [ ] Return: value count, max value name length, max value data size
-  - [ ] Return: last write time
-- [ ] Commit: `"registry: enumeration (keys, values, info)"`
+- [x] Implement `RegEnumKeyEx(hKey, index, name, &nameSize, ...)`:
+  - [x] Return child key name at given index
+  - [x] Return `ERROR_NO_MORE_ITEMS` when index out of range
+  - [x] Fill `lastWriteTime` from key metadata
+- [x] Implement `RegEnumValue(hKey, index, name, &nameSize, reserved, &type, data, &dataSize)`:
+  - [x] Return value name, type, and data at given index
+  - [x] Return `ERROR_NO_MORE_ITEMS` when index out of range
+  - [x] Return `ERROR_MORE_DATA` if data buffer too small
+- [x] Implement `RegQueryInfoKey(hKey, ...)`:
+  - [x] Return: sub-key count, max sub-key name length
+  - [x] Return: value count, max value name length, max value data size
+  - [x] Return: last write time
+- [x] Commit: `"registry: enumeration (keys, values, info)"`
 
 ### 2.4 Convenience Helpers
 
@@ -165,17 +165,12 @@
 
 ## 3. Codex → Registry Migration
 
-### 3.1 Rename All Source Files
+> **Note:** The Registry implementation (`registry.h`, `registry.c`) was built as new files
+> alongside the existing Codex system (§1–2). This section covers migrating all Codex
+> call sites to the new Registry API, re-mapping default values to Win32 paths, and
+> deleting the old Codex code.
 
-**Prompt:** Rename the Codex source files to Registry. `include/codex.h` becomes `include/registry.h`. `src/kernel/codex.c` becomes `src/kernel/registry.c`. Update the Makefile to compile `registry.c` instead of `codex.c`. All `#include "codex.h"` becomes `#include "registry.h"`. This is a mechanical rename — the internal implementation is rewritten in §3.2. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: rename codex → registry (files)"`. Update `README.md` if it contains stale or incorrect references to Codex. Create or update documentation in `docs/` covering the Codex → Registry migration and file rename mapping.
-
-- [ ] Rename `include/codex.h` → `include/registry.h`
-- [ ] Rename `src/kernel/codex.c` → `src/kernel/registry.c`
-- [ ] Update Makefile: compile `registry.c` instead of `codex.c`
-- [ ] Update all `#include "codex.h"` → `#include "registry.h"`
-- [ ] Commit: `"registry: rename codex → registry (files)"`
-
-### 3.2 Replace Codex API with Registry API
+### 3.1 Replace Codex API Calls with Registry API
 
 **Prompt:** Replace all Codex API calls throughout the codebase with the new Win32-compatible Registry API. Map the old API to the new one: `codex_open("System\\Display")` → `RegOpenKeyEx(HKLM, "SYSTEM\\Display", ...)`, `codex_get_int32(key, "Width", &w)` → `RegGetDword(hKey, "Width", &w)`, `codex_set_string(key, "Theme", "dark")` → `RegSetString(hKey, "Theme", "dark")`. Update all call sites:
 
@@ -206,10 +201,10 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 - [ ] Update `src/kernel/mm/swap.c` — SwapSlots setting
 - [ ] Update `src/desktop/desktop.c` — theme, display, wallpaper
 - [ ] Update `include/icon_store.h` — icon cache settings
-- [ ] Delete old Codex files after migration verified
+- [ ] Update all `#include "codex.h"` → `#include "registry.h"`
 - [ ] Commit: `"registry: migrate all codex call sites"`
 
-### 3.3 Migrate Default Values to Registry Paths
+### 3.2 Migrate Default Values to Registry Paths
 
 **Prompt:** Re-map all current Codex default values to proper Windows-style registry paths. The current Codex uses flat paths like `System\Display\Width` — these should map to `HKLM\SYSTEM\Display\Width`. User preferences move from `User\Default\...` to `HKU\Default\...`. Application settings move from `Apps\...` to `HKLM\SOFTWARE\...`. Hardware detection values move from `Hardware\...` to `HKLM\HARDWARE\...`. The boot splash status text should say "Loading registry..." instead of "Loading system configuration...". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: migrate default values to Win32 paths"`. Update `README.md` if it contains stale or incorrect references to Codex value paths. Create or update documentation in `docs/` covering the Codex-to-Registry path mapping and default value population.
 
@@ -226,6 +221,16 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 - [ ] Update `codex_populate_defaults()` → `registry_populate_defaults()`
 - [ ] Update boot splash: "Loading registry..."
 - [ ] Commit: `"registry: migrate default values to Win32 paths"`
+
+### 3.3 Delete Old Codex Code
+
+**Prompt:** After all call sites are migrated and defaults re-mapped, delete the old Codex files. Remove `include/codex.h` and `src/kernel/codex.c`. Verify no remaining references to `codex_` functions or `#include "codex.h"` exist in the codebase. Remove the Codex "Legacy" section from `docs/architecture/registry.md`. Run `bash scripts/build.sh clean` and confirm zero warnings. Commit as `"registry: remove legacy codex code"`.
+
+- [ ] Delete `include/codex.h`
+- [ ] Delete `src/kernel/codex.c`
+- [ ] Grep codebase for any remaining `codex_` references
+- [ ] Remove Codex "Legacy" section from `docs/architecture/registry.md`
+- [ ] Commit: `"registry: remove legacy codex code"`
 
 ---
 
