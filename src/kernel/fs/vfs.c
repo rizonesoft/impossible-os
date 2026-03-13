@@ -425,6 +425,37 @@ int vfs_rename(const char *old_path, const char *new_path)
     return old_parent->ops->rename(old_parent, old_name, new_name);
 }
 
+int vfs_stat(const char *path, struct vfs_stat *st)
+{
+    const char *rest;
+    int idx;
+    struct vfs_node *node;
+
+    if (!path || !st)
+        return -1;
+
+    idx = parse_drive(path, &rest);
+    if (idx < 0 || !mounts[idx].mounted)
+        return -1;
+
+    node = walk_path(mounts[idx].root, rest);
+    if (!node)
+        return -1;
+
+    /* Call FS-specific stat if available */
+    if (node->ops && node->ops->stat)
+        return node->ops->stat(node, st);
+
+    /* Fallback: populate from node fields */
+    st->size   = node->size;
+    st->type   = node->type;
+    st->ctime  = 0;
+    st->mtime  = 0;
+    st->atime  = 0;
+    st->blocks = 0;
+    return 0;
+}
+
 struct vfs_node *vfs_get_drive_root(char drive_letter)
 {
     int idx = drive_index(drive_letter);

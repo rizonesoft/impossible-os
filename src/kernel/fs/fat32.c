@@ -1256,6 +1256,7 @@ static struct vfs_ops fat32_file_ops = {
     .create  = (void *)0,
     .unlink  = (void *)0,
     .rename  = (void *)0,
+    .stat    = (void *)0,
 };
 
 /* ---- VFS operations for FAT32 directories ---- */
@@ -1354,6 +1355,23 @@ static int fat32_vfs_rename(struct vfs_node *parent, const char *old_name,
     return fat32_rename(dir_cluster, old_name, new_name);
 }
 
+/* VFS-compatible stat: called by vfs_stat() */
+static int fat32_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
+{
+    struct fat32_file *f;
+    if (!node || !st)
+        return -1;
+
+    f = (struct fat32_file *)node->fs_data;
+    st->size   = f ? (uint64_t)f->file_size : 0;
+    st->type   = node->type;
+    st->ctime  = 0;  /* FAT timestamps not cached in memory */
+    st->mtime  = 0;
+    st->atime  = 0;
+    st->blocks = 0;
+    return 0;
+}
+
 static struct vfs_ops fat32_dir_ops = {
     .open    = fat32_file_open,
     .close   = (void *)0,
@@ -1364,6 +1382,7 @@ static struct vfs_ops fat32_dir_ops = {
     .create  = fat32_vfs_create,
     .unlink  = fat32_vfs_unlink,
     .rename  = fat32_vfs_rename,
+    .stat    = fat32_vfs_stat,
 };
 
 static struct vfs_fs_driver fat32_driver = {

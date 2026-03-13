@@ -286,6 +286,7 @@ struct vfs_ops ixfs_file_ops = {
     .create  = (void *)0,
     .unlink  = (void *)0,
     .rename  = (void *)0,
+    .stat    = (void *)0,
 };
 
 /* --- VFS directory operations --- */
@@ -769,6 +770,23 @@ int ixfs_rename(struct vfs_node *parent, const char *old_name,
     return -1;  /* not found */
 }
 
+/* VFS-compatible stat: called by vfs_stat() */
+static int ixfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
+{
+    struct ixfs_vnode *v;
+    if (!node || !st || !node->fs_data)
+        return -1;
+
+    v = (struct ixfs_vnode *)node->fs_data;
+    st->size   = v->inode.i_size;
+    st->type   = node->type;
+    st->ctime  = v->inode.i_ctime;
+    st->mtime  = v->inode.i_mtime;
+    st->atime  = v->inode.i_atime;
+    st->blocks = v->inode.i_blocks;
+    return 0;
+}
+
 struct vfs_ops ixfs_dir_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,
@@ -779,4 +797,5 @@ struct vfs_ops ixfs_dir_ops = {
     .create  = ixfs_create,
     .unlink  = ixfs_unlink,
     .rename  = ixfs_rename,
+    .stat    = ixfs_vfs_stat,
 };

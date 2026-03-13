@@ -37,6 +37,16 @@ struct vfs_dirent {
     uint8_t  type;   /* VFS_FILE or VFS_DIRECTORY */
 };
 
+/* File metadata (returned by vfs_stat) */
+struct vfs_stat {
+    uint64_t size;       /* file size in bytes */
+    uint8_t  type;       /* VFS_FILE or VFS_DIRECTORY */
+    uint32_t ctime;      /* creation time (seconds since boot) */
+    uint32_t mtime;      /* modification time */
+    uint32_t atime;      /* access time */
+    uint32_t blocks;     /* number of disk blocks used */
+};
+
 /* Filesystem driver operations — implemented by each FS (IXFS, FAT32, etc.) */
 struct vfs_ops {
     int      (*open)(struct vfs_node *node, uint32_t flags);
@@ -49,6 +59,7 @@ struct vfs_ops {
     int      (*unlink)(struct vfs_node *parent, const char *name);
     int      (*rename)(struct vfs_node *parent, const char *old_name,
                        const char *new_name);
+    int      (*stat)(struct vfs_node *node, struct vfs_stat *st);
 };
 
 /* VFS node — represents a file, directory, or mountpoint */
@@ -109,6 +120,9 @@ int vfs_unlink(const char *path);
 
 /* Rename a file or directory (both paths must be on the same drive) */
 int vfs_rename(const char *old_path, const char *new_path);
+
+/* Get file/directory metadata without opening */
+int vfs_stat(const char *path, struct vfs_stat *st);
 
 /* Get the root node of a mounted drive */
 struct vfs_node *vfs_get_drive_root(char drive_letter);
