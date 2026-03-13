@@ -291,39 +291,7 @@
 
 ## 5. File Associations
 
-### 5.1 Extension-to-App Mapping
-
-**Prompt:** File associations map extensions to applications — when a user double-clicks `readme.txt`, the OS looks up `.txt` in the Registry to find the associated app (`notepad.exe`) and launches it with the file path as argv[1]. `file_assoc_get_app(".txt")` reads `HKCR\.txt\(Default)` to get the prog ID, then looks up the command. `file_assoc_get_icon(".txt")` reads the icon name. `file_assoc_open(filepath)` extracts the extension, finds the app, and calls `task_exec(app, filepath)`. This is used by the File Manager, desktop icon double-click, and shortcut execution. After completing all items, create `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: file associations"`.
-
-
-- [ ] Create `include/file_assoc.h` and `src/kernel/file_assoc.c`
-- [ ] Implement `file_assoc_get_app(ext)` — look up Registry `HKCR\.{ext}\(Default)` → prog ID → command
-- [ ] Implement `file_assoc_get_icon(ext)` — look up icon name for extension
-- [ ] Implement `file_assoc_set(ext, app_path)` — set/change default app
-- [ ] Implement `file_assoc_open(filepath)` — extract extension, find app, exec with filepath as argument
-- [ ] Commit: `"kernel: file associations"`
-
-### 5.2 Default Associations
-
-**Prompt:** Register sensible defaults in the Registry on first boot so common file types open correctly out of the box. Map text file extensions (.txt, .md, .log) to Notepad, source code (.c, .h, .py, .js) to Notepad (or a code editor if available), images (.jpg, .png, .bmp) to Image Viewer, and archives (.zip) to the archive handler. Also map icon names for each extension type so the icon store (Phase 02 §4.3) displays the correct icon. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: default file associations"`.
-
-
-- [ ] Register defaults in Registry (HKCR) on first boot:
-  - [ ] `.txt`, `.md`, `.log` → `notepad.exe`, icon `file_text`
-  - [ ] `.c`, `.h`, `.py`, `.js` → `notepad.exe`, icon `file_code`
-  - [ ] `.jpg`, `.png`, `.bmp` → `imgview.exe`, icon `file_image`
-  - [ ] `.exe` → (self), icon `file_exe`
-  - [ ] `.zip` → (archive handler), icon `file_archive`
-- [ ] Commit: `"kernel: default file associations"`
-
-### 5.3 "Open With..." Dialog (Future)
-
-**Prompt:** This stretch goal adds a dialog that appears when right-clicking a file and choosing "Open With..." — it lists all installed applications, lets the user choose one, and optionally sets it as the default via a checkbox that updates the Registry association. The dialog needs to enumerate all executables in `C:\Impossible\Bin\` and `C:\Programs\`. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: open with dialog"`.
-
-
-- [ ] *(Stretch)* Show list of installed apps for any file type
-- [ ] *(Stretch)* "Always use this app" checkbox → updates Registry
-- [ ] *(Stretch)* Right-click context menu entry
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations, "Open With" dialog.
 
 ---
 
@@ -369,29 +337,7 @@
 
 ## 7. Shortcut Files (.lnk)
 
-### 7.1 Shortcut Format & API
-
-**Prompt:** Shortcut files (.lnk) are small files that point to a target executable with arguments, a working directory, a custom icon, and a description. Use an INI-style format for simplicity and human readability: `[Shortcut]` section with `Target=`, `Arguments=`, `Icon=`, `WorkingDir=`, `Description=` keys. `shortcut_create` writes this file, `shortcut_read` parses it, `shortcut_execute` reads the target and calls the process exec function. The File Manager should render .lnk files with an overlay arrow on their icon and show the description as the label. After completing all items, create `docs/architecture/shortcuts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: shortcut file (.lnk) support"`.
-
-
-- [ ] Define `struct shortcut` (target, arguments, icon_path, working_dir, description)
-- [ ] Create `include/shortcut.h` and `src/kernel/shortcut.c`
-- [ ] Define `.lnk` file format (INI-style: [Shortcut] section with Target, Arguments, Icon, WorkingDir, Description)
-- [ ] Implement `shortcut_create(lnk_path, shortcut)` — write .lnk file
-- [ ] Implement `shortcut_read(lnk_path, shortcut)` — parse .lnk file
-- [ ] Implement `shortcut_execute(lnk_path)` — read target + exec with arguments
-- [ ] Commit: `"kernel: shortcut file (.lnk) support"`
-
-### 7.2 Desktop & Start Menu Integration
-
-**Prompt:** Desktop icons are rendered from .lnk files in `C:\Users\{name}\Desktop\`. The Start menu reads .lnk files from `C:\Users\{name}\AppData\StartMenu\`. On first boot, create default shortcuts for Terminal, Notepad, and Settings. Double-clicking a .lnk file on the desktop calls `shortcut_execute()`. The desktop renderer must detect .lnk files and use their custom icon (from the Icon field) + description (as the label text) instead of the default file icon. After completing all items, update `docs/architecture/shortcuts.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: shortcut integration"`.
-
-
-- [ ] Desktop renders `.lnk` files with their custom icon + description as label
-- [ ] Double-click `.lnk` on desktop → `shortcut_execute()`
-- [ ] Start Menu reads `.lnk` files from `C:\Users\{name}\AppData\StartMenu\`
-- [ ] Create default shortcuts on first boot (Terminal, Notepad, Settings)
-- [ ] Commit: `"desktop: shortcut integration"`
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §2** — Shortcut format, API, icon integration, desktop & Start Menu rendering.
 
 ---
 
@@ -451,14 +397,7 @@
 
 ### 9.3 Desktop Integration
 
-**Prompt:** The Recycle Bin desktop icon dynamically shows empty or full state based on `trash_count()`. Right-clicking it shows a context menu (Phase 02 §9.2) with "Open Recycle Bin" and "Empty Recycle Bin". The File Manager's Delete action calls `trash_delete()` instead of permanent delete. Add a Registry setting `HKLM\SYSTEM\Recycle\MaxSize` (default 1 GB) — when the total trash size exceeds this limit, auto-purge the oldest items until under the limit. After completing all items, update `docs/architecture/recycle-bin.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: recycle bin integration"`.
-
-
-- [ ] Desktop icon: `ICON_TRASH_EMPTY` when bin is empty, `ICON_TRASH_FULL` when items present
-- [ ] Right-click trash icon → "Open Recycle Bin", "Empty Recycle Bin"
-- [ ] File manager "Delete" action → `trash_delete()` instead of permanent delete
-- [ ] Registry: `HKLM\SYSTEM\Recycle\MaxSize` — auto-purge oldest when limit reached (default 1 GB)
-- [ ] Commit: `"desktop: recycle bin integration"`
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.
 
 ---
 

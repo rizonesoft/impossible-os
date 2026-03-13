@@ -67,23 +67,7 @@
 
 ### 1.4 System Sounds
 
-**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Sounds\` on IXFS. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Registry `HKLM\SYSTEM\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system sounds"`.
-
-
-- [ ] Create `resources/sounds/` directory
-- [ ] Generate or source system sounds (WAV format, 22050 Hz, mono):
-  - [ ] `startup.wav` — OS boot chime
-  - [ ] `click.wav` — button click feedback
-  - [ ] `error.wav` — error alert
-  - [ ] `notify.wav` — notification toast
-  - [ ] `shutdown.wav` — shutdown sound
-  - [ ] `recycle.wav` — empty recycle bin
-- [ ] Install to `C:\Impossible\Sounds\` on IXFS
-- [ ] Play startup chime after boot splash finishes
-- [ ] Play error sound with error dialogs
-- [ ] Play notification sound with toast notifications
-- [ ] Registry: `HKLM\SYSTEM\Sound\SystemSounds = 1` (enable/disable)
-- [ ] Commit: `"kernel: system sounds"`
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §4** — WAV system sounds (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/` directory, install to IXFS.
 
 ---
 

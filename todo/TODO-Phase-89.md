@@ -80,19 +80,7 @@
 
 ### 2.1 File Manager Core
 
-**Prompt:** The File Manager is the primary file browsing app. The window layout has four zones: toolbar (navigation buttons + address bar), sidebar (quick access links), file area (icon grid or detail table), and status bar (item count + total size). Read directory contents via VFS `readdir()`, map each file's extension to an icon via `icon_for_extension()` from Phase 02 §4.3. Double-click a file calls `file_assoc_open()` from Phase 03 §5.1. Double-click a folder navigates into it (updating the address bar). The Back/Forward buttons maintain a navigation history stack. After completing all items, create `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager core"`.
-
-
-- [ ] Create `src/apps/filemgr/filemgr.c`
-- [ ] Window layout: toolbar + sidebar + file area + status bar
-- [ ] Navigation toolbar: Back (←), Forward (→), Up (↑), address bar
-- [ ] Address bar shows current path (`C:\Users\Default\Documents`)
-- [ ] File area: read directory via VFS, display files/folders
-- [ ] Icons from icon store: `icon_for_extension()` for each file
-- [ ] Double-click file → `file_assoc_open()` (open with associated app)
-- [ ] Double-click folder → navigate into it
-- [ ] Status bar: item count, folder/file breakdown, total size
-- [ ] Commit: `"apps: file manager core"`
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
 
 ### 2.2 Sidebar
 
@@ -688,17 +676,7 @@
 
 ### 17.1 Font Manager
 
-**Prompt:** The Font Manager lists all .ttf files installed in `C:\Impossible\Fonts\` using the font manager API from Phase 02 §2. For each font, render a preview line ("The quick brown fox...") at multiple sizes (12, 16, 24, 36px). An "Install" button copies a .ttf file to the fonts directory and registers it in Registry. A "Remove" button deletes the font file (but prevents removing system-required fonts like Selawik and Cascadia Code). A "Set Default" button updates `HKCU\Software\Impossible\Theme\Font` in Registry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Font Manager"`.
-
-
-- [ ] Create `src/apps/fontmgr/fontmgr.c`
-- [ ] List installed `.ttf` files from `C:\Impossible\Fonts\`
-- [ ] Preview each font: "The quick brown fox jumps over the lazy dog"
-- [ ] Preview at different sizes (12, 16, 24, 36px)
-- [ ] Install new font: copy `.ttf` to fonts directory + register in Registry
-- [ ] Remove font (cannot remove system default)
-- [ ] Set default system font / monospace font
-- [ ] Commit: `"apps: Font Manager"`
+> **Moved to [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §6** — Font Manager app, `.ttf` listing, font preview, install/remove, set default system font.
 
 ### 17.2 Color Picker
 
