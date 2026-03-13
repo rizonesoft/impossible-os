@@ -120,6 +120,37 @@ function Detach-TestDisk {
     try { & $VBOX storageattach $VM_NAME --storagectl "IDE" --port 0 --device 0 --medium none 2>$null } catch {}
 }
 
+# ---- Auto-generate a missing test disk via WSL2 ----
+function Generate-TestDisk {
+    param([string]$DiskName)
+
+    Write-Host "Test disk '$DiskName' not found. Generating via WSL2..." -ForegroundColor Yellow
+    Write-Host ""
+
+    if (-not (Get-Command "wsl.exe" -ErrorAction SilentlyContinue)) {
+        Write-Host "WSL2 not found. Cannot auto-generate test disks." -ForegroundColor Red
+        Read-Host "Press Enter to exit"; exit 1
+    }
+
+    # Convert project path for WSL
+    $wslProject = wsl.exe wslpath -u ($PROJECT -replace '\\\\wsl.localhost\\Ubuntu', '')
+    if (-not $wslProject -or $wslProject -eq "") {
+        $wslProject = wsl.exe wslpath -u "$PROJECT"
+    }
+
+    # Determine which image file to delete for regeneration
+    if ($DiskName -like "optical/*") {
+        $imgFile = "build/test-disks/$DiskName.iso"
+    } else {
+        $imgFile = "build/test-disks/$DiskName.img"
+    }
+
+    # Build + generate via WSL2
+    Write-Host "Building OS and generating $DiskName..." -ForegroundColor Cyan
+    wsl.exe -e bash -c "cd $wslProject && bash scripts/build.sh 2>&1 | tail -3 && rm -f '$imgFile' && bash tools/make-test-disks.sh build/test-disks build"
+    Write-Host ""
+}
+
 # ---- Attach block device test disk ----
 function Attach-BlockDisk {
     param([string]$DiskName)
@@ -127,9 +158,13 @@ function Attach-BlockDisk {
     $imgPath  = Join-Path $TEST_DIR "$DiskName.img"
     $vdiPath  = Join-Path $TEST_DIR "$DiskName.vdi"
 
+    # Auto-generate if missing
     if (-not (Test-Path $imgPath)) {
-        Write-Host "Test disk not found: $imgPath" -ForegroundColor Red
-        Write-Host "Run in WSL2: bash scripts/test-fs/test-fs.sh gen" -ForegroundColor Yellow
+        Generate-TestDisk $DiskName
+    }
+
+    if (-not (Test-Path $imgPath)) {
+        Write-Host "Failed to generate test disk: $imgPath" -ForegroundColor Red
         Read-Host "Press Enter to exit"; exit 1
     }
 
@@ -163,9 +198,13 @@ function Attach-OpticalDisk {
 
     $isoPath = Join-Path $TEST_DIR "$IsoName.iso"
 
+    # Auto-generate if missing
     if (-not (Test-Path $isoPath)) {
-        Write-Host "Test ISO not found: $isoPath" -ForegroundColor Red
-        Write-Host "Run in WSL2: bash scripts/test-fs/test-fs.sh gen" -ForegroundColor Yellow
+        Generate-TestDisk $IsoName
+    }
+
+    if (-not (Test-Path $isoPath)) {
+        Write-Host "Failed to generate test ISO: $isoPath" -ForegroundColor Red
         Read-Host "Press Enter to exit"; exit 1
     }
 
