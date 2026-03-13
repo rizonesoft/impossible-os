@@ -230,22 +230,22 @@
 
 ### 4.1 Hive File Format
 
-**Prompt:** Design a binary hive file format for disk persistence. Each root tree is stored as a separate `.hive` file. The file starts with a 4096-byte header containing: magic (`"REGH"`), format version (1), checksum (CRC32 of header), timestamp, root key name, total key count, total value count. After the header, keys and values are serialized sequentially: each key is stored as `[name_len][name][value_count][child_count]`, each value as `[name_len][name][type][data_size][data]`. Child keys follow their parent (depth-first order). This flat format is simple to load (single pass read) but can be replaced with a B-tree cell format later for random access. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: hive file format"`. Update `README.md` if it contains stale or incorrect references to registry persistence. Create or update documentation in `docs/` covering the hive file header, serialization format, and CRC32 validation.
+**Prompt:** Verify the hive file format implementation. In `registry.h`, confirm `hive_header_t` is defined as a packed struct with `magic` (HIVE_MAGIC = 0x48474552), `version` (1), `checksum` (CRC32), `timestamp`, `root_name[64]`, `total_keys`, `total_values`, `data_offset`, `data_size`, and `padding` to 4096 bytes. Confirm `hive_save` and `hive_load` are declared. In `registry.c`, confirm `hive_crc32` implements table-less CRC32 with polynomial 0xEDB88320. Confirm `hive_serialize_key` writes depth-first key records as `[name_len:u16][name:N][value_count:u16][child_count:u16]` and value records as `[name_len:u16][name:N][type:u32][data_size:u32][data:N]`. Confirm `hive_save` uses PMM for the buffer, fills the header, computes CRC32, and writes via VFS. Confirm `hive_load` validates magic, version, and CRC32, and returns -1 with a klog warning on corrupt files. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Define hive file header struct (4096 bytes):
-  - [ ] Magic: `"REGH"` (4 bytes)
-  - [ ] Version: `1` (uint32)
-  - [ ] Checksum: CRC32 of header (uint32)
-  - [ ] Timestamp: PIT ticks at save time (uint64)
-  - [ ] Root key name (64 bytes)
-  - [ ] Total key count (uint32)
-  - [ ] Total value count (uint32)
-  - [ ] Reserved padding to 4096 bytes
-- [ ] Implement `hive_save(root_key, filepath)` — serialize tree to file
-- [ ] Implement `hive_load(filepath, &root_key)` — deserialize file into tree
-- [ ] Add CRC32 checksum validation on load
-- [ ] Handle corrupt hive: log warning, skip file, use defaults
-- [ ] Commit: `"registry: hive file format"`
+- [x] Define hive file header struct (4096 bytes):
+  - [x] Magic: `"REGH"` (4 bytes)
+  - [x] Version: `1` (uint32)
+  - [x] Checksum: CRC32 of header (uint32)
+  - [x] Timestamp: PIT ticks at save time (uint64)
+  - [x] Root key name (64 bytes)
+  - [x] Total key count (uint32)
+  - [x] Total value count (uint32)
+  - [x] Reserved padding to 4096 bytes
+- [x] Implement `hive_save(root_key, filepath)` — serialize tree to file
+- [x] Implement `hive_load(filepath, &root_key)` — deserialize file into tree
+- [x] Add CRC32 checksum validation on load
+- [x] Handle corrupt hive: log warning, skip file, use defaults
+- [x] Commit: `"registry: hive file format"`
 
 ### 4.2 Hive File Layout on Disk
 

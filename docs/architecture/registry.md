@@ -255,3 +255,26 @@ This makes key lookup case-insensitive (matching Windows behavior).
 ---
 
 *Legacy Codex code (`codex.h`, `codex.c`) was removed in §3.3 after full migration to the Win32-compatible Registry API.*
+
+### Hive File Format (§4.1)
+
+Each root tree is stored as a separate `.hive` file with a 4096-byte page-aligned header:
+
+| Offset | Size | Field | Description |
+|--------|------|-------|-------------|
+| 0 | 4 | `magic` | `"REGH"` (0x48474552) |
+| 4 | 4 | `version` | Format version (currently 1) |
+| 8 | 4 | `checksum` | CRC32 of entire header (field zeroed during computation) |
+| 12 | 4 | reserved | — |
+| 16 | 8 | `timestamp` | PIT ticks at save time |
+| 24 | 64 | `root_name` | NUL-terminated root key name |
+| 88 | 4 | `total_keys` | Number of keys in file |
+| 92 | 4 | `total_values` | Number of values in file |
+| 96 | 4 | `data_offset` | Offset to first key record (always 4096) |
+| 100 | 4 | `data_size` | Total size of key+value data |
+| 104 | 3992 | padding | Reserved (zero-filled) |
+
+**Key record:** `[name_len:u16][name:N][value_count:u16][child_count:u16]`
+**Value record:** `[name_len:u16][name:N][type:u32][data_size:u32][data:N]`
+
+Keys are serialized depth-first. CRC32 uses table-less bit-by-bit computation (polynomial 0xEDB88320). Corrupt files return -1 and log a warning — the caller falls back to defaults.

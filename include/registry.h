@@ -333,3 +333,34 @@ long RegSetQword(HKEY hKey, const char *lpValueName, uint64_t qwValue);
 long RegReadKeyValue(HKEY hRootKey, const char *lpPath,
                      const char *lpValueName, uint32_t *lpType,
                      uint8_t *lpData, uint32_t *lpcbData);
+
+/* ---- Hive File Format (§4.1) ---- */
+
+#define HIVE_MAGIC         0x48474552U   /* "REGH" in little-endian */
+#define HIVE_VERSION       1
+#define HIVE_HEADER_SIZE   4096
+#define HIVE_ROOT_NAME_MAX 64
+
+/* On-disk hive file header (4096 bytes, page-aligned) */
+typedef struct __attribute__((packed)) {
+    uint32_t magic;                          /* HIVE_MAGIC ("REGH") */
+    uint32_t version;                        /* Format version (1) */
+    uint32_t checksum;                       /* CRC32 of header (with this field zeroed) */
+    uint32_t reserved0;
+    uint64_t timestamp;                      /* PIT ticks at save time */
+    char     root_name[HIVE_ROOT_NAME_MAX];  /* Root key name (e.g. "SYSTEM") */
+    uint32_t total_keys;                     /* Number of keys in file */
+    uint32_t total_values;                   /* Number of values in file */
+    uint32_t data_offset;                    /* Offset to first key record */
+    uint32_t data_size;                      /* Total size of key+value data */
+    uint8_t  padding[HIVE_HEADER_SIZE - 96]; /* Pad to 4096 bytes */
+} hive_header_t;
+
+/* Serialize a root key tree to a hive file on disk.
+ * Returns 0 on success, -1 on error. */
+int hive_save(reg_key_t *root, const char *filepath);
+
+/* Deserialize a hive file into an existing root key tree.
+ * Returns number of values loaded, or -1 on error.
+ * On corrupt file: logs warning, returns -1 (caller uses defaults). */
+int hive_load(const char *filepath, reg_key_t *root);

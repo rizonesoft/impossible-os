@@ -1702,3 +1702,510 @@ void registry_populate_defaults(void)
     klog(LOG_DEBUG, "registry", "Registry defaults populated (%u values)",
            (uint64_t)count);
 }
+
+/* ============================================================================
+ * §4.1  Hive File Format — Disk Persistence
+ *
+ * Each root tree (SYSTEM, HARDWARE, etc.) is stored as a separate .hive file.
+ * Format: [4096-byte header] [key/value records in depth-first order]
+ *
+ * Key record:   [name_len:u16][name:N][value_count:u16][child_count:u16]
+ * Value record: [name_len:u16][name:N][type:u32][data_size:u32][data:N]
+ *
+ * Uses PMM for the serialization buffer (can be > 4 KiB).
+ * ============================================================================ */
+
+/* External: VFS file I/O */
+extern struct vfs_node *vfs_open(const char *path, int flags);
+extern int  vfs_read(struct vfs_node *f, uint32_t off, uint32_t size, uint8_t *buf);
+extern int  vfs_write(struct vfs_node *f, uint32_t off, uint32_t size, const uint8_t *buf);
+extern void vfs_close(struct vfs_node *f);
+extern int  vfs_create(const char *path, int type);
+extern int  vfs_is_mounted(char drive);
+
+/* External: PMM contiguous allocation */
+extern uintptr_t pmm_alloc_contiguous(uint32_t num_pages);
+extern void      pmm_free_frame(uintptr_t addr);
+
+/* External: PIT ticks for timestamp */
+extern uint64_t pit_get_ticks(void);
+
+/* VFS flags (avoid pulling in the full header) */
+#define HIVE_VFS_O_READ  0x01
+#define HIVE_VFS_O_WRITE 0x02
+
+/* ---- CRC32 (table-less, bit-by-bit) ---- */
+
+static uint32_t hive_crc32(const uint8_t *data, uint32_t len)
+{
+    uint32_t crc = 0xFFFFFFFF;
+    uint32_t i, j;
+    for (i = 0; i < len; i++) {
+        crc ^= data[i];
+        for (j = 0; j < 8; j++) {
+            if (crc & 1)
+                crc = (crc >> 1) ^ 0xEDB88320;
+            else
+                crc >>= 1;
+        }
+    }
+    return ~crc;
+}
+
+/* ---- Serialization buffer helpers ---- */
+
+typedef struct {
+    uint8_t *buf;
+    uint32_t pos;
+    uint32_t cap;
+} hive_buf_t;
+
+static int hive_buf_write_u16(hive_buf_t *b, uint16_t v)
+{
+    if (b->pos + 2 > b->cap) return -1;
+    b->buf[b->pos++] = (uint8_t)(v & 0xFF);
+    b->buf[b->pos++] = (uint8_t)((v >> 8) & 0xFF);
+    return 0;
+}
+
+static int hive_buf_write_u32(hive_buf_t *b, uint32_t v)
+{
+    if (b->pos + 4 > b->cap) return -1;
+    b->buf[b->pos++] = (uint8_t)(v & 0xFF);
+    b->buf[b->pos++] = (uint8_t)((v >>  8) & 0xFF);
+    b->buf[b->pos++] = (uint8_t)((v >> 16) & 0xFF);
+    b->buf[b->pos++] = (uint8_t)((v >> 24) & 0xFF);
+    return 0;
+}
+
+static int hive_buf_write_bytes(hive_buf_t *b, const uint8_t *data, uint32_t len)
+{
+    uint32_t i;
+    if (b->pos + len > b->cap) return -1;
+    for (i = 0; i < len; i++)
+        b->buf[b->pos++] = data[i];
+    return 0;
+}
+
+static int hive_buf_read_u16(hive_buf_t *b, uint16_t *v)
+{
+    if (b->pos + 2 > b->cap) return -1;
+    *v = (uint16_t)b->buf[b->pos]
+       | ((uint16_t)b->buf[b->pos + 1] << 8);
+    b->pos += 2;
+    return 0;
+}
+
+static int hive_buf_read_u32(hive_buf_t *b, uint32_t *v)
+{
+    if (b->pos + 4 > b->cap) return -1;
+    *v = (uint32_t)b->buf[b->pos]
+       | ((uint32_t)b->buf[b->pos + 1] << 8)
+       | ((uint32_t)b->buf[b->pos + 2] << 16)
+       | ((uint32_t)b->buf[b->pos + 3] << 24);
+    b->pos += 4;
+    return 0;
+}
+
+static int hive_buf_read_bytes(hive_buf_t *b, uint8_t *out, uint32_t len)
+{
+    uint32_t i;
+    if (b->pos + len > b->cap) return -1;
+    for (i = 0; i < len; i++)
+        out[i] = b->buf[b->pos++];
+    return 0;
+}
+
+/* ---- Depth-first serialization ---- */
+
+/* Count total keys and values in a subtree */
+static void hive_count(reg_key_t *key, uint32_t *nkeys, uint32_t *nvals)
+{
+    uint32_t b;
+    reg_value_t *v;
+
+    (*nkeys)++;
+
+    for (v = key->values; v; v = v->next)
+        (*nvals)++;
+
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            hive_count(c, nkeys, nvals);
+            c = c->hash_next;
+        }
+    }
+}
+
+/* Serialize one key and its values, then recurse into children */
+static int hive_serialize_key(hive_buf_t *buf, reg_key_t *key)
+{
+    uint16_t name_len = (uint16_t)reg_strlen(key->name);
+    uint16_t val_count = (uint16_t)key->value_count;
+    uint16_t child_count = (uint16_t)key->child_count;
+    reg_value_t *v;
+    uint32_t b;
+
+    /* Write key record: [name_len][name][value_count][child_count] */
+    if (hive_buf_write_u16(buf, name_len) < 0) return -1;
+    if (hive_buf_write_bytes(buf, (const uint8_t *)key->name, name_len) < 0) return -1;
+    if (hive_buf_write_u16(buf, val_count) < 0) return -1;
+    if (hive_buf_write_u16(buf, child_count) < 0) return -1;
+
+    /* Write values: [name_len][name][type][data_size][data] */
+    for (v = key->values; v; v = v->next) {
+        uint16_t vname_len = (uint16_t)reg_strlen(v->name);
+        if (hive_buf_write_u16(buf, vname_len) < 0) return -1;
+        if (hive_buf_write_bytes(buf, (const uint8_t *)v->name, vname_len) < 0) return -1;
+        if (hive_buf_write_u32(buf, v->type) < 0) return -1;
+        if (hive_buf_write_u32(buf, v->data_size) < 0) return -1;
+        if (v->data_size > 0) {
+            if (hive_buf_write_bytes(buf, v->data, v->data_size) < 0) return -1;
+        }
+    }
+
+    /* Recurse into children (depth-first across all hash buckets) */
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = key->children[b];
+        while (c) {
+            if (hive_serialize_key(buf, c) < 0) return -1;
+            c = c->hash_next;
+        }
+    }
+
+    return 0;
+}
+
+/* ---- hive_save ---- */
+
+int hive_save(reg_key_t *root, const char *filepath)
+{
+    uint32_t total_keys = 0, total_values = 0;
+    uint32_t buf_pages, buf_size;
+    uintptr_t buf_phys;
+    uint8_t *buf_ptr;
+    hive_header_t *hdr;
+    hive_buf_t ser;
+    struct vfs_node *f;
+
+    if (!root || !filepath) return -1;
+    if (!vfs_is_mounted(filepath[0])) return -1;
+
+    /* Count tree size */
+    hive_count(root, &total_keys, &total_values);
+
+    /* Estimate buffer: header + ~256 bytes per key + ~768 bytes per value */
+    buf_size = HIVE_HEADER_SIZE + total_keys * 256 + total_values * 768;
+    if (buf_size < HIVE_HEADER_SIZE + 4096)
+        buf_size = HIVE_HEADER_SIZE + 4096;
+    buf_pages = (buf_size + 4095) / 4096;
+
+    /* Allocate buffer from PMM (not kmalloc — can be large) */
+    buf_phys = pmm_alloc_contiguous(buf_pages);
+    if (!buf_phys) {
+        klog(LOG_ERROR, "hive", "Failed to alloc %u pages for hive save", (uint64_t)buf_pages);
+        return -1;
+    }
+    buf_ptr = (uint8_t *)buf_phys;
+
+    /* Zero the header area */
+    {
+        uint32_t i;
+        for (i = 0; i < HIVE_HEADER_SIZE; i++)
+            buf_ptr[i] = 0;
+    }
+
+    /* Serialize key/value data after header */
+    ser.buf = buf_ptr + HIVE_HEADER_SIZE;
+    ser.pos = 0;
+    ser.cap = buf_pages * 4096 - HIVE_HEADER_SIZE;
+
+    if (hive_serialize_key(&ser, root) < 0) {
+        klog(LOG_ERROR, "hive", "Serialization overflow for '%s'", filepath);
+        pmm_free_frame(buf_phys);
+        return -1;
+    }
+
+    /* Fill header */
+    hdr = (hive_header_t *)buf_ptr;
+    hdr->magic        = HIVE_MAGIC;
+    hdr->version      = HIVE_VERSION;
+    hdr->checksum     = 0;  /* computed below */
+    hdr->timestamp    = pit_get_ticks();
+    hdr->total_keys   = total_keys;
+    hdr->total_values = total_values;
+    hdr->data_offset  = HIVE_HEADER_SIZE;
+    hdr->data_size    = ser.pos;
+
+    /* Copy root name */
+    {
+        uint32_t i;
+        const char *n = root->name;
+        for (i = 0; i < HIVE_ROOT_NAME_MAX - 1 && n[i]; i++)
+            hdr->root_name[i] = n[i];
+        hdr->root_name[i] = '\0';
+    }
+
+    /* Compute CRC32 over the header (with checksum field zeroed) */
+    hdr->checksum = hive_crc32(buf_ptr, HIVE_HEADER_SIZE);
+
+    /* Write to file */
+    vfs_create(filepath, 1);  /* VFS_FILE */
+    f = vfs_open(filepath, HIVE_VFS_O_WRITE);
+    if (!f) {
+        klog(LOG_ERROR, "hive", "Cannot open '%s' for writing", filepath);
+        pmm_free_frame(buf_phys);
+        return -1;
+    }
+
+    {
+        uint32_t total_write = HIVE_HEADER_SIZE + ser.pos;
+        int rc = vfs_write(f, 0, total_write, buf_ptr);
+        vfs_close(f);
+        if (rc < 0) {
+            klog(LOG_ERROR, "hive", "Write failed for '%s'", filepath);
+            pmm_free_frame(buf_phys);
+            return -1;
+        }
+    }
+
+    /* Free PMM buffer */
+    {
+        uint32_t p;
+        for (p = 0; p < buf_pages; p++)
+            pmm_free_frame(buf_phys + p * 4096);
+    }
+
+    klog(LOG_DEBUG, "hive", "Saved '%s': %u keys, %u values (%u bytes)",
+         filepath, (uint64_t)total_keys, (uint64_t)total_values,
+         (uint64_t)(HIVE_HEADER_SIZE + ser.pos));
+
+    return 0;
+}
+
+/* ---- Deserialization ---- */
+
+static int hive_deserialize_key(hive_buf_t *buf, reg_key_t *parent,
+                                uint32_t *loaded_values)
+{
+    uint16_t name_len, val_count, child_count;
+    char name[REG_MAX_KEY_NAME];
+    reg_key_t *key;
+    uint16_t vi, ci;
+
+    /* Read key record */
+    if (hive_buf_read_u16(buf, &name_len) < 0) return -1;
+    if (name_len >= REG_MAX_KEY_NAME) return -1;
+    if (hive_buf_read_bytes(buf, (uint8_t *)name, name_len) < 0) return -1;
+    name[name_len] = '\0';
+    if (hive_buf_read_u16(buf, &val_count) < 0) return -1;
+    if (hive_buf_read_u16(buf, &child_count) < 0) return -1;
+
+    /* Create or find the key under parent */
+    key = reg_find_child(parent, name);
+    if (!key)
+        key = reg_create_child(parent, name);
+    if (!key) return -1;
+
+    /* Read values */
+    for (vi = 0; vi < val_count; vi++) {
+        uint16_t vname_len;
+        char vname[REG_MAX_VALUE_NAME];
+        uint32_t vtype, vdata_size;
+
+        if (hive_buf_read_u16(buf, &vname_len) < 0) return -1;
+        if (vname_len >= REG_MAX_VALUE_NAME) return -1;
+        if (hive_buf_read_bytes(buf, (uint8_t *)vname, vname_len) < 0) return -1;
+        vname[vname_len] = '\0';
+        if (hive_buf_read_u32(buf, &vtype) < 0) return -1;
+        if (hive_buf_read_u32(buf, &vdata_size) < 0) return -1;
+
+        if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
+            uint8_t vdata[REG_MAX_VALUE_SIZE];
+            if (hive_buf_read_bytes(buf, vdata, vdata_size) < 0) return -1;
+            RegSetValueEx((HKEY)(uintptr_t)key, vname, 0, vtype,
+                          vdata, vdata_size);
+            (*loaded_values)++;
+        } else if (vdata_size == 0) {
+            RegSetValueEx((HKEY)(uintptr_t)key, vname, 0, vtype,
+                          (const uint8_t *)0, 0);
+            (*loaded_values)++;
+        } else {
+            /* Skip oversized values */
+            buf->pos += vdata_size;
+        }
+    }
+
+    /* Recurse into children */
+    for (ci = 0; ci < child_count; ci++) {
+        if (hive_deserialize_key(buf, key, loaded_values) < 0)
+            return -1;
+    }
+
+    return 0;
+}
+
+/* ---- hive_load ---- */
+
+int hive_load(const char *filepath, reg_key_t *root)
+{
+    struct vfs_node *f;
+    hive_header_t hdr_obj;
+    hive_header_t *hdr = &hdr_obj;
+    uint32_t saved_crc, computed_crc;
+    uint32_t buf_pages;
+    uintptr_t data_phys;
+    uint8_t *data_ptr;
+    hive_buf_t deser;
+    uint32_t loaded_values = 0;
+    int rc;
+
+    if (!filepath || !root) return -1;
+    if (!vfs_is_mounted(filepath[0])) return -1;
+
+    /* Open the hive file */
+    f = vfs_open(filepath, HIVE_VFS_O_READ);
+    if (!f) return -1;  /* File doesn't exist — not an error, just no saved data */
+
+    /* Read header */
+    rc = vfs_read(f, 0, HIVE_HEADER_SIZE, (uint8_t *)hdr);
+    if (rc < (int)HIVE_HEADER_SIZE) {
+        klog(LOG_WARN, "hive", "Short read on '%s' header (%d bytes)", filepath, rc);
+        vfs_close(f);
+        return -1;
+    }
+
+    /* Validate magic */
+    if (hdr->magic != HIVE_MAGIC) {
+        klog(LOG_WARN, "hive", "Bad magic in '%s': %x (expected REGH)", filepath,
+             (uint64_t)hdr->magic);
+        vfs_close(f);
+        return -1;
+    }
+
+    /* Validate version */
+    if (hdr->version != HIVE_VERSION) {
+        klog(LOG_WARN, "hive", "Unsupported hive version %u in '%s'",
+             (uint64_t)hdr->version, filepath);
+        vfs_close(f);
+        return -1;
+    }
+
+    /* Validate CRC32 */
+    saved_crc = hdr->checksum;
+    hdr->checksum = 0;
+    computed_crc = hive_crc32((const uint8_t *)hdr, HIVE_HEADER_SIZE);
+    if (computed_crc != saved_crc) {
+        klog(LOG_WARN, "hive", "CRC32 mismatch in '%s': file=%x computed=%x",
+             filepath, (uint64_t)saved_crc, (uint64_t)computed_crc);
+        vfs_close(f);
+        return -1;
+    }
+
+    /* Sanity check data size */
+    if (hdr->data_size == 0 || hdr->data_size > 1024 * 1024) {
+        klog(LOG_WARN, "hive", "Invalid data size %u in '%s'",
+             (uint64_t)hdr->data_size, filepath);
+        vfs_close(f);
+        return -1;
+    }
+
+    /* Allocate buffer for key/value data from PMM */
+    buf_pages = (hdr->data_size + 4095) / 4096;
+    data_phys = pmm_alloc_contiguous(buf_pages);
+    if (!data_phys) {
+        klog(LOG_ERROR, "hive", "Failed to alloc %u pages for hive load", (uint64_t)buf_pages);
+        vfs_close(f);
+        return -1;
+    }
+    data_ptr = (uint8_t *)data_phys;
+
+    /* Read key/value data */
+    rc = vfs_read(f, HIVE_HEADER_SIZE, hdr->data_size, data_ptr);
+    vfs_close(f);
+    if (rc < (int)hdr->data_size) {
+        klog(LOG_WARN, "hive", "Short data read in '%s': got %d, expected %u",
+             filepath, rc, (uint64_t)hdr->data_size);
+        {
+            uint32_t p;
+            for (p = 0; p < buf_pages; p++)
+                pmm_free_frame(data_phys + p * 4096);
+        }
+        return -1;
+    }
+
+    /* Deserialize into the tree */
+    deser.buf = data_ptr;
+    deser.pos = 0;
+    deser.cap = hdr->data_size;
+
+    /* The root key itself is the first record — but we already have the root,
+     * so we deserialize as if root's children start from the file. */
+    {
+        uint16_t root_name_len, root_val_count, root_child_count;
+        uint16_t vi, ci;
+
+        /* Read the root key record (skip it, we already have the root) */
+        if (hive_buf_read_u16(&deser, &root_name_len) < 0) goto fail;
+        deser.pos += root_name_len;  /* skip name (already known) */
+        if (hive_buf_read_u16(&deser, &root_val_count) < 0) goto fail;
+        if (hive_buf_read_u16(&deser, &root_child_count) < 0) goto fail;
+
+        /* Read root's values */
+        for (vi = 0; vi < root_val_count; vi++) {
+            uint16_t vname_len;
+            char vname[REG_MAX_VALUE_NAME];
+            uint32_t vtype, vdata_size;
+
+            if (hive_buf_read_u16(&deser, &vname_len) < 0) goto fail;
+            if (vname_len >= REG_MAX_VALUE_NAME) goto fail;
+            if (hive_buf_read_bytes(&deser, (uint8_t *)vname, vname_len) < 0) goto fail;
+            vname[vname_len] = '\0';
+            if (hive_buf_read_u32(&deser, &vtype) < 0) goto fail;
+            if (hive_buf_read_u32(&deser, &vdata_size) < 0) goto fail;
+
+            if (vdata_size > 0 && vdata_size <= REG_MAX_VALUE_SIZE) {
+                uint8_t vdata[REG_MAX_VALUE_SIZE];
+                if (hive_buf_read_bytes(&deser, vdata, vdata_size) < 0) goto fail;
+                RegSetValueEx((HKEY)(uintptr_t)root, vname, 0, vtype,
+                              vdata, vdata_size);
+                loaded_values++;
+            } else if (vdata_size == 0) {
+                RegSetValueEx((HKEY)(uintptr_t)root, vname, 0, vtype,
+                              (const uint8_t *)0, 0);
+                loaded_values++;
+            } else {
+                deser.pos += vdata_size;
+            }
+        }
+
+        /* Deserialize children */
+        for (ci = 0; ci < root_child_count; ci++) {
+            if (hive_deserialize_key(&deser, root, &loaded_values) < 0)
+                goto fail;
+        }
+    }
+
+    /* Free PMM buffer */
+    {
+        uint32_t p;
+        for (p = 0; p < buf_pages; p++)
+            pmm_free_frame(data_phys + p * 4096);
+    }
+
+    klog(LOG_DEBUG, "hive", "Loaded '%s': %u keys, %u values",
+         filepath, (uint64_t)hdr->total_keys, (uint64_t)loaded_values);
+
+    return (int)loaded_values;
+
+fail:
+    klog(LOG_WARN, "hive", "Corrupt data in '%s' at offset %u",
+         filepath, (uint64_t)deser.pos);
+    {
+        uint32_t p;
+        for (p = 0; p < buf_pages; p++)
+            pmm_free_frame(data_phys + p * 4096);
+    }
+    return -1;
+}
