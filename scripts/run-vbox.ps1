@@ -133,8 +133,10 @@ try { & $VBOX setextradata $VM_NAME "VBoxInternal/Devices/pckbd/0/Config/Disable
     --type hdd `
     --medium $DISK_VDI
 
-# Detach any stale test disk from port 1 (left by test-filesystem scripts)
-try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port 1 --medium none 2>$null } catch {}
+# Detach any stale test disks from ports 1+ (left by test-filesystem scripts)
+for ($p = 1; $p -le 15; $p++) {
+    try { & $VBOX storageattach $VM_NAME --storagectl "AHCI" --port $p --medium none 2>$null } catch {}
+}
 # Detach any stale DVD (left by optical test scripts)
 try { & $VBOX storageattach $VM_NAME --storagectl "IDE" --port 0 --device 0 --medium none 2>$null } catch {}
 
