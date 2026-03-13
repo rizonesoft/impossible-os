@@ -47,6 +47,8 @@ struct vfs_ops {
     struct vfs_node *(*finddir)(struct vfs_node *node, const char *name);
     int      (*create)(struct vfs_node *parent, const char *name, uint8_t type);
     int      (*unlink)(struct vfs_node *parent, const char *name);
+    int      (*rename)(struct vfs_node *parent, const char *old_name,
+                       const char *new_name);
 };
 
 /* VFS node — represents a file, directory, or mountpoint */
@@ -103,6 +105,9 @@ int vfs_create(const char *path, uint8_t type);
 
 /* Delete a file or directory */
 int vfs_unlink(const char *path);
+
+/* Rename a file or directory (both paths must be on the same drive) */
+int vfs_rename(const char *old_path, const char *new_path);
 
 /* Get the root node of a mounted drive */
 struct vfs_node *vfs_get_drive_root(char drive_letter);

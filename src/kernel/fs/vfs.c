@@ -349,6 +349,71 @@ int vfs_unlink(const char *path)
     return parent->ops->unlink(parent, name);
 }
 
+int vfs_rename(const char *old_path, const char *new_path)
+{
+    const char *old_rest, *new_rest;
+    int old_idx, new_idx;
+    struct vfs_node *old_parent, *new_parent;
+    const char *old_name, *new_name;
+    const char *p;
+    char parent_path[VFS_MAX_PATH];
+    uint32_t len;
+
+    /* Both paths must be on the same drive */
+    old_idx = parse_drive(old_path, &old_rest);
+    new_idx = parse_drive(new_path, &new_rest);
+    if (old_idx < 0 || new_idx < 0 || old_idx != new_idx)
+        return -1;
+    if (!mounts[old_idx].mounted)
+        return -1;
+
+    /* Split old_path into parent + name */
+    old_name = old_rest;
+    p = old_rest;
+    while (*p) {
+        if (*p == '\\' || *p == '/')
+            old_name = p + 1;
+        p++;
+    }
+    len = (uint32_t)(old_name - old_rest);
+    if (len > 0) {
+        str_copy(parent_path, old_rest, len < VFS_MAX_PATH ? len + 1 : VFS_MAX_PATH);
+        parent_path[len > 0 ? len - 1 : 0] = '\0';
+        old_parent = walk_path(mounts[old_idx].root, parent_path);
+    } else {
+        old_parent = mounts[old_idx].root;
+    }
+
+    /* Split new_path into parent + name */
+    new_name = new_rest;
+    p = new_rest;
+    while (*p) {
+        if (*p == '\\' || *p == '/')
+            new_name = p + 1;
+        p++;
+    }
+    len = (uint32_t)(new_name - new_rest);
+    if (len > 0) {
+        str_copy(parent_path, new_rest, len < VFS_MAX_PATH ? len + 1 : VFS_MAX_PATH);
+        parent_path[len > 0 ? len - 1 : 0] = '\0';
+        new_parent = walk_path(mounts[new_idx].root, parent_path);
+    } else {
+        new_parent = mounts[new_idx].root;
+    }
+
+    if (!old_parent || !new_parent)
+        return -1;
+
+    /* Both must be in the same directory (cross-directory rename not yet supported) */
+    if (old_parent != new_parent)
+        return -1;
+
+    if (!old_parent->ops || !old_parent->ops->rename)
+        return -1;
+
+    return old_parent->ops->rename(old_parent, old_name, new_name);
+}
+
 struct vfs_node *vfs_get_drive_root(char drive_letter)
 {
     int idx = drive_index(drive_letter);

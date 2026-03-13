@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "registry.h"
+#include "kernel/fs/vfs.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -1722,14 +1723,6 @@ void registry_populate_defaults(void)
  * Uses PMM for the serialization buffer (can be > 4 KiB).
  * ============================================================================ */
 
-/* External: VFS file I/O */
-extern struct vfs_node *vfs_open(const char *path, int flags);
-extern int  vfs_read(struct vfs_node *f, uint32_t off, uint32_t size, uint8_t *buf);
-extern int  vfs_write(struct vfs_node *f, uint32_t off, uint32_t size, const uint8_t *buf);
-extern void vfs_close(struct vfs_node *f);
-extern int  vfs_create(const char *path, int type);
-extern int  vfs_is_mounted(char drive);
-
 /* External: PMM contiguous allocation */
 extern uintptr_t pmm_alloc_contiguous(uint32_t num_pages);
 extern void      pmm_free_frame(uintptr_t addr);
@@ -1737,9 +1730,9 @@ extern void      pmm_free_frame(uintptr_t addr);
 /* External: PIT ticks for timestamp */
 extern uint64_t pit_get_ticks(void);
 
-/* VFS flags (avoid pulling in the full header) */
-#define HIVE_VFS_O_READ  0x01
-#define HIVE_VFS_O_WRITE 0x02
+/* VFS flags shorthand */
+#define HIVE_VFS_O_READ  VFS_O_READ
+#define HIVE_VFS_O_WRITE VFS_O_WRITE
 
 /* ---- CRC32 (table-less, bit-by-bit) ---- */
 
@@ -2034,25 +2027,27 @@ int hive_save(reg_key_t *root, const char *filepath)
     /* === STEP 2: Backup old .hive → .hive.bak === */
     hive_copy_file(filepath, bak_path);
 
-    /* === STEP 3: Overwrite .hive with new data === */
-    vfs_create(filepath, 1);
-    f = vfs_open(filepath, HIVE_VFS_O_WRITE);
-    if (!f) {
-        klog(LOG_ERROR, "hive", "Cannot open '%s' for writing", filepath);
-        /* Journal is valid — next boot will recover */
-        goto fail_free;
-    }
-    {
-        int rc = vfs_write(f, 0, total_write, buf_ptr);
-        vfs_close(f);
-        if (rc < 0) {
-            klog(LOG_ERROR, "hive", "Write failed for '%s'", filepath);
+    /* === STEP 3: Atomic rename .hive.log → .hive === */
+    if (vfs_rename(log_path, filepath) != 0) {
+        klog(LOG_ERROR, "hive", "Rename '%s' → '%s' failed, falling back to copy",
+             log_path, filepath);
+        /* Fallback: overwrite .hive with new data (pre-vfs_rename behaviour) */
+        vfs_create(filepath, 1);
+        f = vfs_open(filepath, HIVE_VFS_O_WRITE);
+        if (!f) {
+            klog(LOG_ERROR, "hive", "Cannot open '%s' for writing", filepath);
             goto fail_free;
         }
+        {
+            int rc = vfs_write(f, 0, total_write, buf_ptr);
+            vfs_close(f);
+            if (rc < 0) {
+                klog(LOG_ERROR, "hive", "Write failed for '%s'", filepath);
+                goto fail_free;
+            }
+        }
+        hive_invalidate_log(log_path);
     }
-
-    /* === STEP 4: Invalidate journal (write succeeded) === */
-    hive_invalidate_log(log_path);
 
     /* Free PMM buffer */
     {

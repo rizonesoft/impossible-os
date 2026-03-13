@@ -285,6 +285,7 @@ struct vfs_ops ixfs_file_ops = {
     .finddir = (void *)0,
     .create  = (void *)0,
     .unlink  = (void *)0,
+    .rename  = (void *)0,
 };
 
 /* --- VFS directory operations --- */
@@ -777,4 +778,5 @@ struct vfs_ops ixfs_dir_ops = {
     .finddir = ixfs_finddir,
     .create  = ixfs_create,
     .unlink  = ixfs_unlink,
+    .rename  = ixfs_rename,
 };

@@ -1255,6 +1255,7 @@ static struct vfs_ops fat32_file_ops = {
     .finddir = (void *)0,
     .create  = (void *)0,
     .unlink  = (void *)0,
+    .rename  = (void *)0,
 };
 
 /* ---- VFS operations for FAT32 directories ---- */
@@ -1340,6 +1341,19 @@ static int fat32_vfs_unlink(struct vfs_node *parent, const char *name)
     return fat32_delete_file(dir_cluster, name);
 }
 
+/* VFS-compatible rename: called by vfs_rename() */
+static int fat32_vfs_rename(struct vfs_node *parent, const char *old_name,
+                            const char *new_name)
+{
+    struct fat32_file *f = (struct fat32_file *)parent->fs_data;
+    uint32_t dir_cluster;
+
+    dir_cluster = (f && f->first_cluster >= 2)
+                ? f->first_cluster : bpb.root_cluster;
+
+    return fat32_rename(dir_cluster, old_name, new_name);
+}
+
 static struct vfs_ops fat32_dir_ops = {
     .open    = fat32_file_open,
     .close   = (void *)0,
@@ -1349,6 +1363,7 @@ static struct vfs_ops fat32_dir_ops = {
     .finddir = fat32_finddir,
     .create  = fat32_vfs_create,
     .unlink  = fat32_vfs_unlink,
+    .rename  = fat32_vfs_rename,
 };
 
 static struct vfs_fs_driver fat32_driver = {
