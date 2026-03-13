@@ -668,67 +668,6 @@ void desktop_draw_start_menu(void)
         }
     }
 
-    /* ---- Clip acrylic to rounded corners with 2×2 super-sampled AA ----
-     * For each pixel in the corner region, sample 4 sub-pixel points.
-     * Fully-outside pixels → restore wallpaper.
-     * Edge pixels (partial coverage) → blend menu pixel with wallpaper.
-     * All integer math — no floats needed. */
-    {
-        int32_t r, c;
-        int32_t cr = (int32_t)SM_RADIUS;
-        /* Threshold in 2x-scaled space: circle of radius (cr*2 - 1) */
-        int32_t r2 = cr * 2 - 1;
-        int32_t r2_sq = r2 * r2;
-
-        for (r = 0; r < cr; r++) {
-            for (c = 0; c < cr; c++) {
-                /* Count how many of 4 sub-pixel samples are inside the arc */
-                int32_t base_dx = (cr - 1 - c) * 2;
-                int32_t base_dy = (cr - 1 - r) * 2;
-                int inside = 0;
-                int sub;
-                for (sub = 0; sub < 4; sub++) {
-                    int32_t sx = base_dx + (sub & 1);
-                    int32_t sy = base_dy + (sub >> 1);
-                    if (sx * sx + sy * sy <= r2_sq) inside++;
-                }
-                /* inside: 4=fully inside arc, 0=fully outside */
-                if (inside == 4) continue;  /* fully inside — keep menu pixel */
-
-                /* Helper macro for blending or restoring wallpaper */
-                #define CORNER_AA(PX, PY) do { \
-                    if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
-                        (PY) >= 0 && (uint32_t)(PY) < scr.height) { \
-                        uint32_t _wp = 0xFF000000; \
-                        if (wallpaper_loaded && wallpaper_img.pixels && \
-                            (uint32_t)(PX) < wallpaper_img.width && \
-                            (uint32_t)(PY) < wallpaper_img.height) \
-                            _wp = wallpaper_img.pixels[(uint32_t)(PY) * wallpaper_img.width + (uint32_t)(PX)]; \
-                        if (inside == 0) { \
-                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _wp; \
-                        } else { \
-                            /* Blend: inside/4 menu + (4-inside)/4 wallpaper */ \
-                            uint32_t _mp = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
-                            uint32_t _a = (uint32_t)inside * 64; /* 64,128,192 */ \
-                            uint32_t _ia = 256 - _a; \
-                            uint32_t _or = ((((_mp >> 16) & 0xFF) * _a + ((_wp >> 16) & 0xFF) * _ia) >> 8); \
-                            uint32_t _og = ((((_mp >> 8) & 0xFF) * _a + ((_wp >> 8) & 0xFF) * _ia) >> 8); \
-                            uint32_t _ob = (((_mp & 0xFF) * _a + (_wp & 0xFF) * _ia) >> 8); \
-                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = \
-                                (0xFFu << 24) | (_or << 16) | (_og << 8) | _ob; \
-                        } \
-                    } \
-                } while (0)
-
-                CORNER_AA(menu_x + c, menu_y + r);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + r);
-                CORNER_AA(menu_x + c, menu_y + (int32_t)menu_h - 1 - r);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + (int32_t)menu_h - 1 - r);
-                #undef CORNER_AA
-            }
-        }
-    }
-
     /* ---- Column divider (1px) ---- */
     gfx_fill_rect(&scr, right_x, menu_y + SM_PAD,
                    1, menu_h - SM_PAD * 2, SM_DIVIDER);
@@ -868,6 +807,60 @@ void desktop_draw_start_menu(void)
                         icon_draw(&scr, ico, power_x + (SM_BTN_SZ - 20) / 2,
                                   btn_y + (SM_BTN_SZ - 20) / 2);
                 }
+            }
+        }
+    }
+
+    /* ---- Clip ALL content to rounded corners (LAST step) ----
+     * 2×2 super-sampled AA: 4 sub-pixel samples per corner pixel.
+     * Runs after ALL drawing so no artifact can survive. */
+    {
+        int32_t r, c;
+        int32_t cr = (int32_t)SM_RADIUS;
+        int32_t r2 = cr * 2 - 1;
+        int32_t r2_sq = r2 * r2;
+
+        for (r = 0; r < cr; r++) {
+            for (c = 0; c < cr; c++) {
+                int32_t base_dx = (cr - 1 - c) * 2;
+                int32_t base_dy = (cr - 1 - r) * 2;
+                int inside = 0;
+                int sub;
+                for (sub = 0; sub < 4; sub++) {
+                    int32_t sx = base_dx + (sub & 1);
+                    int32_t sy = base_dy + (sub >> 1);
+                    if (sx * sx + sy * sy <= r2_sq) inside++;
+                }
+                if (inside == 4) continue;
+
+                #define CORNER_AA(PX, PY) do { \
+                    if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
+                        (PY) >= 0 && (uint32_t)(PY) < scr.height) { \
+                        uint32_t _wp = 0xFF000000; \
+                        if (wallpaper_loaded && wallpaper_img.pixels && \
+                            (uint32_t)(PX) < wallpaper_img.width && \
+                            (uint32_t)(PY) < wallpaper_img.height) \
+                            _wp = wallpaper_img.pixels[(uint32_t)(PY) * wallpaper_img.width + (uint32_t)(PX)]; \
+                        if (inside == 0) { \
+                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _wp; \
+                        } else { \
+                            uint32_t _mp = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
+                            uint32_t _a = (uint32_t)inside * 64; \
+                            uint32_t _ia = 256 - _a; \
+                            uint32_t _or = ((((_mp >> 16) & 0xFF) * _a + ((_wp >> 16) & 0xFF) * _ia) >> 8); \
+                            uint32_t _og = ((((_mp >> 8) & 0xFF) * _a + ((_wp >> 8) & 0xFF) * _ia) >> 8); \
+                            uint32_t _ob = (((_mp & 0xFF) * _a + (_wp & 0xFF) * _ia) >> 8); \
+                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = \
+                                (0xFFu << 24) | (_or << 16) | (_og << 8) | _ob; \
+                        } \
+                    } \
+                } while (0)
+
+                CORNER_AA(menu_x + c, menu_y + r);
+                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + r);
+                CORNER_AA(menu_x + c, menu_y + (int32_t)menu_h - 1 - r);
+                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + (int32_t)menu_h - 1 - r);
+                #undef CORNER_AA
             }
         }
     }
