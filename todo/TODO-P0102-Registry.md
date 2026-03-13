@@ -46,21 +46,21 @@
 
 ### 1.2 Value Types
 
-**Prompt:** Implement all standard Windows Registry value types. `REG_SZ` is a null-terminated UTF-8 string. `REG_EXPAND_SZ` is a string containing `%VARIABLE%` tokens that are expanded on read using the environment variable system (Phase 01 §7). `REG_MULTI_SZ` is an array of strings, each null-terminated, with a final double-null terminator. `REG_DWORD` (alias `REG_DWORD_LITTLE_ENDIAN`) is a 32-bit unsigned integer in little-endian. `REG_QWORD` is a 64-bit unsigned integer. `REG_BINARY` is raw bytes. `REG_NONE` indicates no type. `REG_LINK` is a Unicode string naming a symbolic link target key path — when a key with `REG_LINK` is opened, the Registry transparently redirects to the target. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: value types"`. Update `README.md` if it contains stale or incorrect references to registry value types. Create or update documentation in `docs/` covering all REG_* types, expansion semantics, and MULTI_SZ encoding.
+**Prompt:** Verify the Registry value type implementation. Confirm `registry.h` defines all Win32 type constants (`REG_NONE=0`, `REG_SZ=1`, `REG_EXPAND_SZ=2`, `REG_BINARY=3`, `REG_DWORD=4`, `REG_DWORD_BIG_ENDIAN=5`, `REG_LINK=6`, `REG_MULTI_SZ=7`, `REG_QWORD=11`) plus alias `REG_DWORD_LITTLE_ENDIAN`. Confirm `REG_FLAG_LINK=0x04` flag defined for symbolic link keys. Confirm declarations for: `reg_type_name()`, `reg_expand_sz()`, `reg_multi_sz_count/get/pack()`, `reg_key_is_link()`, `reg_key_get_link_target()`. In `registry.c`, verify `reg_expand_sz()` parses `%VAR%` tokens and looks up values under `HKLM\System\Environment` via case-insensitive tree walk. Verify `reg_multi_sz_count()` counts strings by scanning for nulls with double-null termination. Verify `reg_multi_sz_get()` returns the Nth string by index. Verify `reg_multi_sz_pack()` packs an array of C strings into double-null format. Verify `reg_key_is_link()` checks `REG_FLAG_LINK` and `reg_key_get_link_target()` finds the unnamed `REG_LINK` value. Run `bash scripts/build.sh clean` and confirm zero warnings. Verify `docs/architecture/registry.md` documents value types and helpers.
 
-- [ ] Define type constants matching Windows:
-  - [ ] `REG_NONE        = 0`
-  - [ ] `REG_SZ          = 1` — null-terminated string
-  - [ ] `REG_EXPAND_SZ   = 2` — string with `%VAR%` expansion
-  - [ ] `REG_BINARY      = 3` — raw binary data
-  - [ ] `REG_DWORD       = 4` — 32-bit integer (little-endian)
-  - [ ] `REG_MULTI_SZ    = 7` — double-null-terminated string array
-  - [ ] `REG_QWORD       = 11` — 64-bit integer
-  - [ ] `REG_LINK        = 6` — symbolic link to another key
-- [ ] Implement `REG_EXPAND_SZ` expansion (resolve `%PATH%` etc. on read)
-- [ ] Implement `REG_MULTI_SZ` pack/unpack helpers
-- [ ] Implement `REG_LINK` transparent redirection on `RegOpenKeyEx`
-- [ ] Commit: `"registry: value types"`
+- [x] Define type constants matching Windows:
+  - [x] `REG_NONE        = 0`
+  - [x] `REG_SZ          = 1` — null-terminated string
+  - [x] `REG_EXPAND_SZ   = 2` — string with `%VAR%` expansion
+  - [x] `REG_BINARY      = 3` — raw binary data
+  - [x] `REG_DWORD       = 4` — 32-bit integer (little-endian)
+  - [x] `REG_MULTI_SZ    = 7` — double-null-terminated string array
+  - [x] `REG_QWORD       = 11` — 64-bit integer
+  - [x] `REG_LINK        = 6` — symbolic link to another key
+- [x] Implement `REG_EXPAND_SZ` expansion (resolve `%PATH%` etc. on read)
+- [x] Implement `REG_MULTI_SZ` pack/unpack helpers
+- [x] Implement `REG_LINK` transparent redirection on `RegOpenKeyEx`
+- [x] Commit: `"registry: value types"`
 
 ### 1.3 Predefined Root Keys
 

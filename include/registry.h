@@ -129,3 +129,57 @@ void registry_init(void);
 uint32_t reg_keys_used(void);
 uint32_t reg_values_used(void);
 
+/* ---- Value type aliases ---- */
+
+#define REG_DWORD_LITTLE_ENDIAN  REG_DWORD   /* Explicit alias (Win32) */
+
+/* ---- Link key flag ---- */
+
+#define REG_FLAG_LINK       0x04   /* Key is a symbolic link (REG_LINK) */
+
+/* ---- Value type helpers ---- */
+
+/* Return a human-readable name for a REG_* type code (e.g., "REG_SZ").
+ * Returns "REG_UNKNOWN" for unrecognized types. */
+const char *reg_type_name(uint32_t type);
+
+/* Expand %VARIABLE% tokens in 'src' (REG_EXPAND_SZ semantics).
+ * Looks up variables via the registry under HKLM\System\Environment.
+ * Writes the expanded string to 'dst' (max 'dst_size' bytes).
+ * Returns the number of bytes written (including null terminator),
+ * or 0 on error / buffer too small. */
+uint32_t reg_expand_sz(const char *src, char *dst, uint32_t dst_size);
+
+/* ---- REG_MULTI_SZ helpers ----
+ *
+ * REG_MULTI_SZ encoding: each string is null-terminated, followed by
+ * the next string. The entire sequence ends with a double null:
+ *   "foo\0bar\0baz\0\0"
+ */
+
+/* Count the number of strings in a MULTI_SZ buffer.
+ * 'data' must be double-null-terminated. */
+uint32_t reg_multi_sz_count(const uint8_t *data, uint32_t data_size);
+
+/* Get the Nth string (0-based) from a MULTI_SZ buffer.
+ * Returns a pointer into 'data', or NULL if index out of range. */
+const char *reg_multi_sz_get(const uint8_t *data, uint32_t data_size,
+                              uint32_t index);
+
+/* Pack an array of strings into MULTI_SZ format.
+ * 'strings' is an array of 'count' null-terminated strings.
+ * Writes packed data to 'out' (max 'out_size' bytes).
+ * Returns total bytes written (including final double-null),
+ * or 0 if buffer too small. */
+uint32_t reg_multi_sz_pack(const char **strings, uint32_t count,
+                            uint8_t *out, uint32_t out_size);
+
+/* ---- REG_LINK helpers ---- */
+
+/* Check if a key is a symbolic link (has REG_FLAG_LINK set). */
+int reg_key_is_link(const reg_key_t *key);
+
+/* Get the link target path from a link key.
+ * The target path is stored as the default (unnamed) value of type REG_LINK.
+ * Returns pointer to the path string, or NULL if not a link. */
+const char *reg_key_get_link_target(const reg_key_t *key);

@@ -61,10 +61,43 @@
 | `REG_SZ` | 1 | Null-terminated string |
 | `REG_EXPAND_SZ` | 2 | String with `%VAR%` expansion |
 | `REG_BINARY` | 3 | Raw binary data |
-| `REG_DWORD` | 4 | 32-bit unsigned integer |
+| `REG_DWORD` | 4 | 32-bit unsigned integer (alias: `REG_DWORD_LITTLE_ENDIAN`) |
+| `REG_DWORD_BIG_ENDIAN` | 5 | 32-bit big-endian (rare) |
 | `REG_LINK` | 6 | Symbolic link to another key |
 | `REG_MULTI_SZ` | 7 | Double-null-terminated string array |
 | `REG_QWORD` | 11 | 64-bit unsigned integer |
+
+### Value Type Helpers (§1.2)
+
+| Function | Description |
+|----------|-------------|
+| `reg_type_name(type)` | Human-readable name for a `REG_*` code |
+| `reg_expand_sz(src, dst, size)` | Expand `%VAR%` tokens from `HKLM\System\Environment` |
+| `reg_multi_sz_count(data, size)` | Count strings in MULTI_SZ buffer |
+| `reg_multi_sz_get(data, size, idx)` | Get Nth string from MULTI_SZ buffer |
+| `reg_multi_sz_pack(strs, count, out, size)` | Pack string array into MULTI_SZ format |
+| `reg_key_is_link(key)` | Check if key has `REG_FLAG_LINK` |
+| `reg_key_get_link_target(key)` | Get link target path from unnamed `REG_LINK` value |
+
+#### REG_EXPAND_SZ Expansion
+
+Parses `%VARIABLE%` tokens and replaces them with values from
+`HKLM\System\Environment`. If a variable is not found, the original
+`%VARIABLE%` text is preserved. Case-insensitive variable matching.
+
+#### REG_MULTI_SZ Encoding
+
+```
+"string1\0string2\0string3\0\0"
+```
+
+Each string is null-terminated. The entire sequence ends with a double null.
+
+#### REG_LINK Redirection
+
+A key with `REG_FLAG_LINK` set contains an unnamed value of type `REG_LINK`
+whose data is the backslash-separated target key path. When `RegOpenKeyEx`
+encounters a link key, it transparently redirects to the target.
 
 ### Static Pools
 

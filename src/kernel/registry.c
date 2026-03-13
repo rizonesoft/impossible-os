@@ -200,3 +200,256 @@ uint32_t reg_values_used(void)
 {
     return reg_value_pool_next;
 }
+
+/* ============================================================================
+ * Value Type Helpers
+ * ============================================================================ */
+
+/* ---- Type name for debug/display ---- */
+
+const char *reg_type_name(uint32_t type)
+{
+    switch (type) {
+        case REG_NONE:             return "REG_NONE";
+        case REG_SZ:               return "REG_SZ";
+        case REG_EXPAND_SZ:        return "REG_EXPAND_SZ";
+        case REG_BINARY:           return "REG_BINARY";
+        case REG_DWORD:            return "REG_DWORD";
+        case REG_DWORD_BIG_ENDIAN: return "REG_DWORD_BIG_ENDIAN";
+        case REG_LINK:             return "REG_LINK";
+        case REG_MULTI_SZ:         return "REG_MULTI_SZ";
+        case REG_QWORD:            return "REG_QWORD";
+        default:                   return "REG_UNKNOWN";
+    }
+}
+
+/* ---- REG_EXPAND_SZ expansion ---- */
+
+/* Case-insensitive compare for variable names */
+static int reg_stricmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        uint8_t ca = (uint8_t)*a, cb = (uint8_t)*b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (int)ca - (int)cb;
+        a++; b++;
+    }
+    uint8_t ca = (uint8_t)*a, cb = (uint8_t)*b;
+    if (ca >= 'A' && ca <= 'Z') ca += 32;
+    if (cb >= 'A' && cb <= 'Z') cb += 32;
+    return (int)ca - (int)cb;
+}
+
+/* Look up an environment variable in the registry.
+ * Searches HKLM\System\Environment for a value matching 'var_name'.
+ * Returns pointer to string data, or NULL if not found.
+ * Note: this does NOT use RegOpenKeyEx (not yet implemented) — it walks
+ * the tree directly using the root key pointers. */
+static const char *reg_lookup_env_var(const char *var_name)
+{
+    reg_key_t *sys, *env;
+    reg_value_t *v;
+    uint32_t b;
+
+    if (!reg_root_hklm || !var_name)
+        return (const char *)0;
+
+    /* Walk HKLM -> System -> Environment */
+    sys = (reg_key_t *)0;
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = reg_root_hklm->children[b];
+        while (c) {
+            if (reg_stricmp(c->name, "System") == 0) { sys = c; break; }
+            c = c->hash_next;
+        }
+        if (sys) break;
+    }
+    if (!sys) return (const char *)0;
+
+    env = (reg_key_t *)0;
+    for (b = 0; b < REG_CHILD_BUCKETS; b++) {
+        reg_key_t *c = sys->children[b];
+        while (c) {
+            if (reg_stricmp(c->name, "Environment") == 0) { env = c; break; }
+            c = c->hash_next;
+        }
+        if (env) break;
+    }
+    if (!env) return (const char *)0;
+
+    /* Search values for matching name */
+    v = env->values;
+    while (v) {
+        if (reg_stricmp(v->name, var_name) == 0 &&
+            (v->type == REG_SZ || v->type == REG_EXPAND_SZ))
+            return (const char *)v->data;
+        v = v->next;
+    }
+    return (const char *)0;
+}
+
+uint32_t reg_expand_sz(const char *src, char *dst, uint32_t dst_size)
+{
+    uint32_t di = 0;
+    const char *p = src;
+
+    if (!src || !dst || dst_size == 0)
+        return 0;
+
+    while (*p && di < dst_size - 1) {
+        if (*p == '%') {
+            /* Extract variable name between %...% */
+            const char *start = p + 1;
+            const char *end = start;
+            while (*end && *end != '%') end++;
+
+            if (*end == '%' && end > start) {
+                /* Found %VARNAME% — extract and look up */
+                char var_name[REG_MAX_VALUE_NAME + 1];
+                uint32_t vlen = (uint32_t)(end - start);
+                uint32_t vi;
+
+                if (vlen > REG_MAX_VALUE_NAME) vlen = REG_MAX_VALUE_NAME;
+                for (vi = 0; vi < vlen; vi++)
+                    var_name[vi] = start[vi];
+                var_name[vlen] = '\0';
+
+                {
+                    const char *val = reg_lookup_env_var(var_name);
+                    if (val) {
+                        /* Copy expanded value */
+                        while (*val && di < dst_size - 1)
+                            dst[di++] = *val++;
+                    } else {
+                        /* Variable not found — keep original %VARNAME% */
+                        const char *orig = p;
+                        while (orig <= end && di < dst_size - 1)
+                            dst[di++] = *orig++;
+                    }
+                }
+                p = end + 1;
+            } else {
+                /* No closing % — copy literal */
+                dst[di++] = *p++;
+            }
+        } else {
+            dst[di++] = *p++;
+        }
+    }
+    dst[di] = '\0';
+    return di + 1;
+}
+
+/* ---- REG_MULTI_SZ helpers ---- */
+
+uint32_t reg_multi_sz_count(const uint8_t *data, uint32_t data_size)
+{
+    uint32_t count = 0;
+    uint32_t i = 0;
+
+    if (!data || data_size == 0)
+        return 0;
+
+    while (i < data_size) {
+        if (data[i] == '\0') {
+            /* Check for double-null (end of MULTI_SZ) */
+            if (i + 1 >= data_size || data[i + 1] == '\0')
+                break;
+            count++;
+            i++;
+        } else {
+            i++;
+        }
+    }
+    /* Count the last string (before the double-null) */
+    if (i > 0 && data[0] != '\0')
+        count++;
+    return count;
+}
+
+uint32_t reg_multi_sz_get_idx; /* suppress -Wunused warnings via linkage */
+
+const char *reg_multi_sz_get(const uint8_t *data, uint32_t data_size,
+                              uint32_t index)
+{
+    uint32_t cur = 0;
+    uint32_t i = 0;
+
+    if (!data || data_size == 0)
+        return (const char *)0;
+
+    while (i < data_size) {
+        if (cur == index)
+            return (const char *)&data[i];
+
+        /* Skip past current string */
+        while (i < data_size && data[i] != '\0')
+            i++;
+        i++;  /* skip the null terminator */
+
+        /* Double-null = end */
+        if (i >= data_size || data[i] == '\0')
+            break;
+        cur++;
+    }
+    return (const char *)0;
+}
+
+uint32_t reg_multi_sz_pack(const char **strings, uint32_t count,
+                            uint8_t *out, uint32_t out_size)
+{
+    uint32_t pos = 0;
+    uint32_t i;
+
+    if (!strings || !out || out_size == 0)
+        return 0;
+
+    for (i = 0; i < count; i++) {
+        const char *s = strings[i];
+        if (!s) continue;
+
+        /* Copy string including null terminator */
+        while (*s) {
+            if (pos >= out_size - 2)  /* need room for final double-null */
+                return 0;
+            out[pos++] = (uint8_t)*s++;
+        }
+        if (pos >= out_size - 1)
+            return 0;
+        out[pos++] = '\0';  /* null terminator for this string */
+    }
+
+    /* Final null for double-null termination */
+    if (pos >= out_size)
+        return 0;
+    out[pos++] = '\0';
+
+    return pos;
+}
+
+/* ---- REG_LINK helpers ---- */
+
+int reg_key_is_link(const reg_key_t *key)
+{
+    if (!key) return 0;
+    return (key->flags & REG_FLAG_LINK) != 0;
+}
+
+const char *reg_key_get_link_target(const reg_key_t *key)
+{
+    reg_value_t *v;
+
+    if (!key || !(key->flags & REG_FLAG_LINK))
+        return (const char *)0;
+
+    /* The link target is stored as the default (unnamed) value
+     * with type REG_LINK */
+    v = key->values;
+    while (v) {
+        if (v->name[0] == '\0' && v->type == REG_LINK)
+            return (const char *)v->data;
+        v = v->next;
+    }
+    return (const char *)0;
+}
