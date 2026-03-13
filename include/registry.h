@@ -64,9 +64,11 @@
 
 /* ---- Security / key flags ---- */
 
-#define REG_FLAG_VOLATILE   0x01   /* Key not persisted to disk */
-#define REG_FLAG_READONLY   0x02   /* Key is read-only          */
-#define REG_FLAG_ALLOCATED  0x80   /* Pool slot is in use       */
+#define REG_FLAG_VOLATILE       0x01   /* Key not persisted to disk           */
+#define REG_FLAG_READONLY       0x02   /* Key is read-only                    */
+#define REG_FLAG_HKCU_REDIRECT  0x08   /* HKCU: redirects to HKU\{user}       */
+#define REG_FLAG_HKCR_MERGED    0x10   /* HKCR: merged HKLM+HKCU Classes view */
+#define REG_FLAG_ALLOCATED      0x80   /* Pool slot is in use                 */
 
 /* ---- Registry value ---- */
 
@@ -180,6 +182,35 @@ uint32_t reg_multi_sz_pack(const char **strings, uint32_t count,
 int reg_key_is_link(const reg_key_t *key);
 
 /* Get the link target path from a link key.
- * The target path is stored as the default (unnamed) value of type REG_LINK.
+ * The target is stored as the default (unnamed) value of type REG_LINK.
  * Returns pointer to the path string, or NULL if not a link. */
 const char *reg_key_get_link_target(const reg_key_t *key);
+
+/* ---- Child key management ---- */
+
+/* Add a child key to a parent using FNV-1a hash buckets.
+ * Sets child->parent. Returns 0 on success, -1 on error. */
+int reg_add_child(reg_key_t *parent, reg_key_t *child);
+
+/* Find a child key by name (case-insensitive).
+ * Returns pointer to child, or NULL if not found. */
+reg_key_t *reg_find_child(reg_key_t *parent, const char *name);
+
+/* Allocate and add a new child key to parent. Convenience wrapper.
+ * Returns pointer to new key, or NULL on failure. */
+reg_key_t *reg_create_child(reg_key_t *parent, const char *name);
+
+/* ---- HKCU / HKCR redirection ---- */
+
+/* Set the current user name for HKCU → HKU\{user} redirection.
+ * Must be called during user login. Max 255 chars. */
+void reg_set_current_user(const char *username);
+
+/* Resolve HKCU: returns the HKU\{current_user} key.
+ * If no user is set, returns HKU\Default. */
+reg_key_t *reg_resolve_hkcu(void);
+
+/* Resolve HKCR: returns the HKLM\SOFTWARE\Classes key.
+ * (Merged view with HKCU\SOFTWARE\Classes is transparent
+ *  and will be handled by RegQueryValueEx in a future step.) */
+reg_key_t *reg_resolve_hkcr(void);

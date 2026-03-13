@@ -53,6 +53,44 @@
 | `HKEY_USERS` | `0x80000003` | `HKEY_USERS` |
 | `HKEY_CURRENT_CONFIG` | `0x80000005` | `HKEY_CURRENT_CONFIG` |
 
+### Default Key Tree (§1.3)
+
+Created by `registry_init()`:
+
+```
+HKLM (HKEY_LOCAL_MACHINE)
+ ├── SYSTEM
+ ├── SOFTWARE
+ │    └── Classes        ← HKCR backing store
+ └── HARDWARE
+
+HKU (HKEY_USERS)
+ └── Default
+
+HKCU (HKEY_CURRENT_USER) → redirects to HKU\{current_user}
+HKCR (HKEY_CLASSES_ROOT) → merged view of HKLM\SOFTWARE\Classes
+```
+
+### HKCU Redirection
+
+- `reg_set_current_user(username)` — sets the current user (default: `"Default"`)
+- `reg_resolve_hkcu()` — returns `HKU\{user}` key (auto-creates if missing)
+- HKCU has `REG_FLAG_HKCU_REDIRECT` flag set
+
+### HKCR Merged View
+
+- `reg_resolve_hkcr()` — returns `HKLM\SOFTWARE\Classes`
+- HKCR has `REG_FLAG_HKCR_MERGED` flag set
+- Merged lookup (HKCU\SOFTWARE\Classes overlay) handled at query time
+
+### Child Key Management
+
+| Function | Description |
+|----------|-------------|
+| `reg_add_child(parent, child)` | Insert child into parent's FNV-1a buckets |
+| `reg_find_child(parent, name)` | Case-insensitive lookup in hash buckets |
+| `reg_create_child(parent, name)` | Find-or-create convenience wrapper |
+
 ### Value Types
 
 | Constant | Value | Description |

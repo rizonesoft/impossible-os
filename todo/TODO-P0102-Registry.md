@@ -64,21 +64,21 @@
 
 ### 1.3 Predefined Root Keys
 
-**Prompt:** Create the predefined root key handles that match Windows. `HKEY_LOCAL_MACHINE` (HKLM) contains system-wide hardware and software configuration — its children are `SYSTEM`, `SOFTWARE`, `HARDWARE`. `HKEY_CURRENT_USER` (HKCU) is a per-user view that redirects to `HKEY_USERS\{current_username}`. `HKEY_USERS` (HKU) contains a sub-key for each user profile. `HKEY_CLASSES_ROOT` (HKCR) is a merged view of `HKLM\SOFTWARE\Classes` and `HKCU\SOFTWARE\Classes` — this is where file associations live (`.txt → notepad`, `.jpg → image viewer`). These root handles are global constants, pre-allocated at init time, and never closed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`. Update `README.md` if it contains stale or incorrect references to Codex or registry root keys. Create or update documentation in `docs/` covering predefined root keys, HKCU redirection, and HKCR merged view.
+**Prompt:** Verify the predefined root key implementation. Confirm `registry_init()` creates 5 root keys (HKLM, HKCU, HKCR, HKU, HKCC) and sets `REG_FLAG_HKCU_REDIRECT` on HKCU and `REG_FLAG_HKCR_MERGED` on HKCR. Confirm default sub-keys: `HKLM\SYSTEM`, `HKLM\SOFTWARE`, `HKLM\HARDWARE`, `HKLM\SOFTWARE\Classes`, `HKU\Default`. Verify `reg_add_child()` inserts via FNV-1a bucket, `reg_find_child()` does case-insensitive lookup, `reg_create_child()` returns existing or allocates new. Verify `reg_set_current_user()` stores username, `reg_resolve_hkcu()` returns `HKU\{user}` (auto-creates if missing), `reg_resolve_hkcr()` returns `HKLM\SOFTWARE\Classes`. Verify boot log shows `Registry initialized (pool: X/512 keys, 0/1024 values)`. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
-- [ ] Create predefined root key handles:
-  - [ ] `HKEY_LOCAL_MACHINE` (HKLM) — system-wide config
-  - [ ] `HKEY_CURRENT_USER` (HKCU) — current user (redirects to HKU\{user})
-  - [ ] `HKEY_USERS` (HKU) — all user profiles
-  - [ ] `HKEY_CLASSES_ROOT` (HKCR) — merged file associations view
-- [ ] Create default sub-keys under HKLM:
-  - [ ] `HKLM\SYSTEM` — boot config, drivers, services
-  - [ ] `HKLM\SOFTWARE` — installed software settings
-  - [ ] `HKLM\HARDWARE` — detected hardware info
-- [ ] Create default user profile: `HKU\Default`
-- [ ] Implement HKCU → HKU\{username} redirection
-- [ ] Implement HKCR merged view (HKLM\SOFTWARE\Classes + HKCU\SOFTWARE\Classes)
-- [ ] Commit: `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`
+- [x] Create predefined root key handles:
+  - [x] `HKEY_LOCAL_MACHINE` (HKLM) — system-wide config
+  - [x] `HKEY_CURRENT_USER` (HKCU) — current user (redirects to HKU\{user})
+  - [x] `HKEY_USERS` (HKU) — all user profiles
+  - [x] `HKEY_CLASSES_ROOT` (HKCR) — merged file associations view
+- [x] Create default sub-keys under HKLM:
+  - [x] `HKLM\SYSTEM` — boot config, drivers, services
+  - [x] `HKLM\SOFTWARE` — installed software settings
+  - [x] `HKLM\HARDWARE` — detected hardware info
+- [x] Create default user profile: `HKU\Default`
+- [x] Implement HKCU → HKU\{username} redirection
+- [x] Implement HKCR merged view (HKLM\SOFTWARE\Classes + HKCU\SOFTWARE\Classes)
+- [x] Commit: `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`
 
 ---
 

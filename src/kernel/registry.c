@@ -87,12 +87,15 @@ static uint32_t reg_fnv1a(const char *name)
 }
 
 /* Compute bucket index from hash */
-static uint32_t __attribute__((unused)) reg_bucket(const char *name)
+static uint32_t reg_bucket(const char *name)
 {
     return reg_fnv1a(name) & (REG_CHILD_BUCKETS - 1);
 }
 
 /* ---- Pool allocators ---- */
+
+/* Forward declare — defined in value type helpers section below */
+static int reg_stricmp(const char *a, const char *b);
 
 static reg_key_t *reg_alloc_key(const char *name)
 {
@@ -159,10 +162,111 @@ reg_key_t *reg_resolve_predefined(HKEY hkey)
     return (reg_key_t *)0;
 }
 
+/* ---- Child key management ---- */
+
+int reg_add_child(reg_key_t *parent, reg_key_t *child)
+{
+    uint32_t b;
+
+    if (!parent || !child)
+        return -1;
+
+    b = reg_bucket(child->name);
+    child->hash_next = parent->children[b];
+    parent->children[b] = child;
+    child->parent = parent;
+    parent->child_count++;
+    return 0;
+}
+
+reg_key_t *reg_find_child(reg_key_t *parent, const char *name)
+{
+    uint32_t b;
+    reg_key_t *c;
+
+    if (!parent || !name)
+        return (reg_key_t *)0;
+
+    b = reg_bucket(name);
+    c = parent->children[b];
+    while (c) {
+        if (reg_stricmp(c->name, name) == 0)
+            return c;
+        c = c->hash_next;
+    }
+    return (reg_key_t *)0;
+}
+
+reg_key_t *reg_create_child(reg_key_t *parent, const char *name)
+{
+    reg_key_t *existing;
+    reg_key_t *child;
+
+    if (!parent || !name)
+        return (reg_key_t *)0;
+
+    /* Return existing if already present */
+    existing = reg_find_child(parent, name);
+    if (existing)
+        return existing;
+
+    child = reg_alloc_key(name);
+    if (!child)
+        return (reg_key_t *)0;
+
+    reg_add_child(parent, child);
+    return child;
+}
+
+/* ---- HKCU / HKCR redirection ---- */
+
+static char reg_current_user[REG_MAX_KEY_NAME + 1] = "Default";
+
+void reg_set_current_user(const char *username)
+{
+    if (username)
+        reg_strcpy(reg_current_user, username, REG_MAX_KEY_NAME + 1);
+}
+
+reg_key_t *reg_resolve_hkcu(void)
+{
+    /* HKCU redirects to HKU\{current_user} */
+    reg_key_t *user_key;
+
+    if (!reg_root_hku)
+        return (reg_key_t *)0;
+
+    user_key = reg_find_child(reg_root_hku, reg_current_user);
+    if (!user_key) {
+        /* Auto-create the user profile key */
+        user_key = reg_create_child(reg_root_hku, reg_current_user);
+    }
+    return user_key;
+}
+
+reg_key_t *reg_resolve_hkcr(void)
+{
+    reg_key_t *sw, *classes;
+
+    if (!reg_root_hklm)
+        return (reg_key_t *)0;
+
+    /* HKCR is primarily HKLM\SOFTWARE\Classes.
+     * Merged view with HKCU is handled transparently at query time. */
+    sw = reg_find_child(reg_root_hklm, "SOFTWARE");
+    if (!sw)
+        return (reg_key_t *)0;
+
+    classes = reg_find_child(sw, "Classes");
+    return classes;
+}
+
 /* ---- Initialization ---- */
 
 void registry_init(void)
 {
+    reg_key_t *sw;
+
     /* Zero pools */
     reg_memset(reg_key_pool, 0, sizeof(reg_key_pool));
     reg_memset(reg_value_pool, 0, sizeof(reg_value_pool));
@@ -182,11 +286,31 @@ void registry_init(void)
         return;
     }
 
+    /* Set redirection flags */
+    reg_root_hkcu->flags |= REG_FLAG_HKCU_REDIRECT;
+    reg_root_hkcr->flags |= REG_FLAG_HKCR_MERGED;
+
+    /* ---- Default sub-keys under HKLM ---- */
+    reg_create_child(reg_root_hklm, "SYSTEM");
+    sw = reg_create_child(reg_root_hklm, "SOFTWARE");
+    reg_create_child(reg_root_hklm, "HARDWARE");
+
+    /* HKLM\SOFTWARE\Classes — the primary HKCR backing store */
+    if (sw)
+        reg_create_child(sw, "Classes");
+
+    /* ---- Default user profile under HKU ---- */
+    reg_create_child(reg_root_hku, "Default");
+
+    /* Initialize HKCU default user */
+    reg_strcpy(reg_current_user, "Default", REG_MAX_KEY_NAME + 1);
+
     registry_ready = 1;
 
     klog(LOG_DEBUG, "registry",
-         "Registry initialized (pool: %u keys, %u values)",
-         (uint64_t)REG_KEY_POOL_SIZE, (uint64_t)REG_VALUE_POOL_SIZE);
+         "Registry initialized (pool: %u/%u keys, %u/%u values)",
+         (uint64_t)reg_key_pool_next, (uint64_t)REG_KEY_POOL_SIZE,
+         (uint64_t)reg_value_pool_next, (uint64_t)REG_VALUE_POOL_SIZE);
 }
 
 /* ---- Pool statistics ---- */
