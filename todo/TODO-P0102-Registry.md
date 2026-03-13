@@ -320,23 +320,32 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 ---
 
-## 7. File Associations (HKCR)
+## 7. Win32 Compatibility Layer
+> *Merged from Phase 03 §1.5 (Win32 Registry Mapping)*
 
-### 7.1 File Extension → Application Mapping
+### 7.1 advapi32.dll Registry Stubs
 
-**Prompt:** `HKEY_CLASSES_ROOT` stores file associations — the mapping from file extensions to applications. When a user double-clicks a `.txt` file in the file manager, the shell looks up `HKCR\.txt\(Default)` to get the prog ID (e.g., `"txtfile"`), then reads `HKCR\txtfile\shell\open\command\(Default)` to get the command line (e.g., `"C:\Programs\notepad.exe "%1"`). Populate default associations for built-in types. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: file associations (HKCR)"`. Update `README.md` if it contains stale or incorrect references to file associations. Create or update documentation in `docs/` covering HKCR file association lookup, prog ID resolution, and command-line expansion.
+**Prompt:** Windows apps access the registry via `RegOpenKeyExA/W` / `RegQueryValueExA/W` / `RegSetValueExA/W` — these must be wrapped as A/W (ANSI/Wide) variants and registered in the `advapi32.dll` builtin stub table in the Win32 compatibility layer (Phase 10). The hive paths (`HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`, etc.) map directly to the native Registry root keys. Each Win32 registry type maps 1:1 to our `REG_*` types. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: registry API stubs"`. Create or update documentation in `docs/` covering the Win32-to-native registry mapping.
 
-- [ ] Populate default file associations:
-  - [ ] `HKCR\.txt` → `txtfile` → `notepad.exe "%1"`
-  - [ ] `HKCR\.exe` → `exefile` → `"%1" %*`
-  - [ ] `HKCR\.jpg` → `jpegfile` → `imageview.exe "%1"`
-  - [ ] `HKCR\.png` → `pngfile` → `imageview.exe "%1"`
-  - [ ] `HKCR\.bmp` → `bmpfile` → `imageview.exe "%1"`
-- [ ] Implement `registry_get_assoc(extension, cmd_buf, buf_size)`:
-  - [ ] Look up `HKCR\{ext}\(Default)` → prog ID
-  - [ ] Look up `HKCR\{progID}\shell\open\command\(Default)` → command
-  - [ ] Expand `%1` with the file path
-- [ ] Commit: `"registry: file associations (HKCR)"`
+- [ ] Map Windows hives to Registry paths:
+  - [ ] `HKEY_LOCAL_MACHINE\SOFTWARE` → `HKLM\SOFTWARE`
+  - [ ] `HKEY_LOCAL_MACHINE\HARDWARE` → `HKLM\HARDWARE`
+  - [ ] `HKEY_CURRENT_USER` → `HKCU` (redirects to `HKU\{user}`)
+  - [ ] `HKEY_CURRENT_USER\Software\{App}` → `HKCU\Software\{App}`
+  - [ ] `HKEY_CLASSES_ROOT` → `HKCR` (merged view)
+- [ ] Implement `RegOpenKeyExA/W` → `RegOpenKeyEx(mapped_root, mapped_path, ...)`
+- [ ] Implement `RegCreateKeyExA/W` → `RegCreateKeyEx(mapped_root, mapped_path, ...)`
+- [ ] Implement `RegQueryValueExA/W` → `RegQueryValueEx()` with type mapping
+- [ ] Implement `RegSetValueExA/W` → `RegSetValueEx()`
+- [ ] Implement `RegDeleteKeyA/W`, `RegDeleteValueA/W`
+- [ ] Implement `RegEnumKeyExA/W`, `RegEnumValueA/W`
+- [ ] `RegCloseKey` → `RegCloseKey()`
+- [ ] Add to `advapi32.dll` builtin stub table
+- [ ] Commit: `"win32: registry API stubs"`
+
+### 7.2 File Associations (HKCR)
+
+> **See [TODO-P0301-Resources.md](TODO-P0301-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
 
 ---
 
@@ -382,21 +391,21 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 | Priority | Section | Description |
 |----------|---------|-------------|
-| 🔴 P0 | 1.1 Data Structures | Foundation — everything depends on this |
+| 🔴 P0 | 3.1 Rename Files | Codex → Registry file rename (unblocks everything) |
+| 🔴 P0 | 3.2 Replace API | Migrate all Codex call sites to Registry API |
+| 🔴 P0 | 1.1 Data Structures | Registry engine foundation |
 | 🔴 P0 | 1.2 Value Types | Must support all REG_* types |
 | 🔴 P0 | 1.3 Root Keys | HKLM, HKCU, HKU, HKCR |
 | 🔴 P0 | 2.1 Key Operations | Core API: open, create, close, delete |
 | 🔴 P0 | 2.2 Value Operations | Core API: get, set, delete values |
-| 🔴 P0 | 3.1 Rename Files | Codex → Registry file rename |
-| 🔴 P0 | 3.2 Replace API | Migrate all codex call sites |
-| 🔴 P0 | 3.3 Migrate Defaults | Re-map values to Win32 paths |
+| 🔴 P0 | 3.3 Migrate Defaults | Re-map Codex defaults to Win32 paths |
 | 🟠 P1 | 2.3 Enumeration | Needed for regedit + iteration |
 | 🟠 P1 | 2.4 Convenience Helpers | Simplify common access patterns |
 | 🟠 P1 | 4.1 Hive File Format | Binary disk persistence |
 | 🟠 P1 | 4.2 Disk Layout | File paths + auto-flush |
 | 🟡 P2 | 5.1 Change Notifications | Real-time settings updates |
 | 🟡 P2 | 6.1 Syscalls | User-mode app access |
-| 🟡 P2 | 7.1 File Associations | Double-click → open with app |
+| 🟡 P2 | 7.1 Win32 Stubs | advapi32.dll registry wrappers |
 | 🟡 P2 | 8.1 Regedit Command | Debugging + inspection |
 | 🟢 P3 | 4.3 Crash-Safe Journaling | Power-loss protection |
 | 🔵 P4 | 9.1 Hash Map Lookup | O(1) performance |
