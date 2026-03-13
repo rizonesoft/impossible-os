@@ -14,6 +14,11 @@ Comprehensive documentation of every implemented subsystem in Impossible OS.
 | [C Library](libc.md) | CRT0, stdio, string, stdlib, ctype, math, syscall ABI |
 | [Shell](shell.md) | REPL, built-in commands, line editing, command history |
 | [Networking](networking.md) | RTL8139, Ethernet, ARP, IPv4, ICMP, UDP, DHCP |
-| [Desktop Environment](desktop-environment.md) | Framebuffer graphics, fonts, mouse, WM, taskbar, controls |
+| [Desktop Environment](desktop-environment.md) | Framebuffer, mouse, WM, taskbar, controls |
+| [GFX Library](gfx-library.md) | Surface model, primitives, blending, blur/Acrylic/Mica, SIMD, TrueType fonts |
+| [Icon Store](icon-store.md) | Fluent icons, IRES format, file type mapping, ICO loader |
+| [Image System](image-system.md) | stb_image, tiered allocator, scaling, wallpaper, BMP/PNG saving |
+| [Cursor System](cursor-system.md) | Adwaita cursors, Xcur parsing, context-aware switching |
 | [System Services](system-services.md) | Logging, RTC, ACPI, PCI |
-| [Codex Registry](codex-registry.md) | Hierarchical key-value config store (System, Hardware, User, Apps) |
+| [Registry](registry.md) | Configuration store (Codex → Win32 Registry migration) |
+| [IXFS Specification](ixfs-specification.md) | On-disk format spec for Impossible X FileSystem |
