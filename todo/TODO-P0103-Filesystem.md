@@ -194,6 +194,54 @@
 
 ---
 
+### 3.5 VFS File Operations
+
+> **Goal:** Extend the VFS layer with missing file operations required by the registry
+> hive journaling system and future shell utilities. Currently, VFS supports `open`,
+> `read`, `write`, `close`, and `create` — but lacks `rename`, `delete`, `stat`, and
+> `truncate`. These are needed for atomic file swaps, cleanup, and general POSIX-like
+> file management.
+
+#### 3.5.1 File Rename ✅
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `vfs_rename(old_path, new_path)` exists in `vfs.h` and `vfs.c`, dispatches to `vfs_ops.rename` callback. Confirm `ixfs_rename` is wired into `ixfs_dir_ops` and `fat32_vfs_rename` into `fat32_dir_ops`. Confirm `registry.c` `hive_save()` uses `vfs_rename(log_path, filepath)` for atomic journal swap with fallback to copy+overwrite. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
+
+- [x] Add `vfs_rename(old_path, new_path)` to VFS interface
+- [x] Implement FAT32 rename (update directory entry)
+- [x] Handle cross-directory rename within same filesystem
+- [x] Update registry journaling to use atomic rename
+- [x] Commit: `"vfs: file rename"`
+
+#### 3.5.2 File Delete ✅
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `vfs_unlink(path)` exists in `vfs.h` and `vfs.c`, dispatches to `vfs_ops.unlink` callback. Confirm `ref_count` field in `vfs_node` is incremented on `vfs_open` and decremented on `vfs_close`. Confirm `vfs_unlink` checks `ref_count > 0` via `finddir` before deletion and returns -1 if file is open. Confirm `ixfs_unlink` checks for non-empty directories. Confirm `fat32_vfs_unlink` marks entry 0xE5 and frees cluster chain. Confirm `registry.c` calls `vfs_unlink(log_path)` to clean up journal in the fallback path. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
+
+- [x] Add `vfs_delete(path)` to VFS interface
+- [x] Implement FAT32 delete (mark entry 0xE5, free clusters)
+- [x] Prevent deletion of open files
+- [x] Update registry journaling to delete old `.hive.log` after successful save
+- [x] Commit: `"vfs: file delete"`
+
+#### 3.5.3 File Stat ✅
+
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `struct vfs_stat` is defined in `vfs.h` with `size`, `type`, `ctime`, `mtime`, `atime`, `blocks`. Confirm `stat` callback exists in `vfs_ops`. Confirm `vfs_stat(path, &st)` in `vfs.c` walks the path and dispatches to `ops->stat` with a fallback to node fields. Confirm `ixfs_vfs_stat` populates from inode fields (`i_size`, `i_ctime`, `i_mtime`, `i_atime`, `i_blocks`). Confirm `fat32_vfs_stat` populates from `fat32_file` fields. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
+
+- [x] Define `vfs_stat_t` struct (size, type, timestamps)
+- [x] Add `vfs_stat(path, &st)` to VFS interface
+- [x] Implement FAT32 stat (read directory entry metadata)
+- [x] Commit: `"vfs: file stat"`
+
+#### 3.5.4 File Truncate
+
+**Prompt:** Implement `vfs_truncate(const char *path, uint32_t new_size)` to resize a file. If `new_size` is 0, the file becomes empty (free all clusters). If smaller than current, free trailing clusters. This is needed to properly reset journal files and for future text editors. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vfs: file truncate"`. Create or update documentation in `docs/` covering the truncate API.
+
+- [ ] Add `vfs_truncate(path, new_size)` to VFS interface
+- [ ] Implement FAT32 truncate (free/allocate clusters)
+- [ ] Handle truncate-to-zero (free entire cluster chain)
+- [ ] Commit: `"vfs: file truncate"`
+
+---
+
 ## 4. External Filesystem Drivers
 > *Read/write drivers for NTFS, ext2/ext3/ext4, and exFAT*
 
@@ -234,7 +282,7 @@
 
 
 - [ ] Register NTFS as a VFS filesystem type
-- [ ] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete
+- [ ] Implement VFS callbacks: open, close, read, write, readdir, finddir, stat, create, delete, rename, truncate
 - [ ] Mount NTFS partition to a drive letter (e.g., `D:\`)
 - [ ] Test: read files from a Windows-formatted NTFS partition
 - [ ] Commit: `"fs: NTFS VFS integration"`
@@ -272,8 +320,9 @@
 - [ ] Implement `ext2_create(dir_inode, name, type)` — allocate inode + dir entry
 - [ ] Implement `ext2_delete(dir_inode, name)` — free blocks/inode, unlink dir entry
 - [ ] Implement `ext2_rename(dir, old_name, new_name)`
+- [ ] Implement `ext2_truncate(inode, new_size)` — free/allocate blocks
 - [ ] Update block group descriptor free counts + superblock free counts
-- [ ] Wire write ops into VFS callbacks
+- [ ] Wire write ops into VFS callbacks: open, close, read, write, readdir, finddir, stat, create, delete, rename, truncate
 - [ ] Commit: `"fs: ext2/ext3/ext4 write support"`
 
 ### 4.6 exFAT Read Support
@@ -312,8 +361,9 @@
 - [ ] Implement `exfat_create_dir(parent, name)` — create directory with dot entries
 - [ ] Implement `exfat_delete_file(dir, name)` — free clusters, mark entries as deleted (0x05/0x40/0x41)
 - [ ] Implement `exfat_rename(dir, old, new)` — update File Name entries
+- [ ] Implement `exfat_truncate(dir, name, new_size)` — free/allocate clusters
 - [ ] UpCase table validation for case-insensitive comparisons
-- [ ] Wire write ops into VFS callbacks
+- [ ] Wire write ops into VFS callbacks: open, close, read, write, readdir, finddir, stat, create, delete, rename, truncate
 - [ ] Commit: `"fs: exFAT write support"`
 
 ### 4.8 ISO 9660 Read Support
@@ -333,6 +383,7 @@
 - [ ] Implement `iso9660_read_file(extent_lba, size, buf)` — read contiguous extent
 - [ ] Handle both 8.3 names and Rock Ridge (POSIX extensions) if present
 - [ ] VFS integration: register iso9660 driver (read-only), mount to drive letter
+  - [ ] Implement VFS callbacks: open, close, read, readdir, finddir, stat (no write/create/delete/rename/truncate — read-only FS)
 - [ ] Add ISO 9660 probe to partition scanner (check PVD signature `"CD001"`)
 - [ ] Test: `make run-test DISK=optical/iso9660`
 - [ ] Commit: `"fs: ISO 9660 read support"`
@@ -350,6 +401,7 @@
 - [ ] UDF: parse Partition Descriptor, Logical Volume Descriptor
 - [ ] UDF: implement `udf_read_dir()` — parse File Identifier Descriptors
 - [ ] UDF: implement `udf_read_file()` — follow allocation descriptors
+- [ ] VFS integration: register UDF driver (read-only), implement open, close, read, readdir, finddir, stat
 - [ ] Test: `make run-test DISK=optical/joliet` / `optical/udf`
 - [ ] Commit: `"fs: Joliet + UDF read support"`
 
@@ -934,6 +986,7 @@
 | ✅ Done | 1.3 Block Device Layer | Unified interface over VirtIO/AHCI |
 | ✅ Done | 2. Partition Tables | MBR + GPT + partition scanner |
 | 🔴 P0 | 3.1 FAT32 Read | Read USB drives, boot media |
+| 🟠 P1 | 3.5 VFS File Operations | rename, delete, stat, truncate — needed by registry + shell |
 | 🟠 P1 | 4.1 NTFS Read | Read Windows-formatted partitions |
 | 🟠 P1 | 5.1–5.4 IXFS on Disk | Persistence — files survive reboot |
 | 🟠 P1 | 6.1 Auto-Mount | Drive letters from real disks |
@@ -944,10 +997,10 @@
 | 🟡 P2 | 8.1 Disk Cache | Performance — reduce disk I/O |
 | 🟡 P2 | 6.2 Mount/Unmount Commands | Manual storage management |
 | 🟡 P2 | 7. Disk Management GUI | Visual partition management |
-| � P2 | 8.2 CheckDisk (CLI + GUI) | Filesystem integrity after crashes |
+| 🟡 P2 | 8.2 CheckDisk (CLI + GUI) | Filesystem integrity after crashes |
 | 🟡 P2 | 8.3 Partition Manager (CLI + GUI) | Disk partitioning |
 | 🟡 P2 | 8.6 System File Checker (CLI + GUI) | OS integrity validation |
-| �🟢 P3 | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
+| 🟢 P3 | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
 | 🟢 P3 | 4.3 NTFS VFS | Complete NTFS integration |
 | 🟢 P3 | 8.4 Defrag/TRIM (CLI + GUI) | Performance optimization |
 | 🟢 P3 | 8.5 File/Data Recovery (CLI + GUI) | Accidental deletion safety net |
