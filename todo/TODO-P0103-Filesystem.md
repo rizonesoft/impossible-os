@@ -231,14 +231,14 @@
 - [x] Implement FAT32 stat (read directory entry metadata)
 - [x] Commit: `"vfs: file stat"`
 
-#### 3.5.4 File Truncate
+#### 3.5.4 File Truncate ✅
 
-**Prompt:** Implement `vfs_truncate(const char *path, uint32_t new_size)` to resize a file. If `new_size` is 0, the file becomes empty (free all clusters). If smaller than current, free trailing clusters. This is needed to properly reset journal files and for future text editors. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vfs: file truncate"`. Create or update documentation in `docs/` covering the truncate API.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `truncate` callback exists in `vfs_ops`. Confirm `vfs_truncate(path, new_size)` in `vfs.c` walks the path, rejects directories, and dispatches to `ops->truncate`. Confirm `fat32_truncate(dir_cluster, name, new_size)` handles truncate-to-zero (frees chain + clears first_cluster in dir entry) and partial truncate (walks chain, marks EOC, frees tail). Confirm `ixfs_vfs_truncate` uses `ixfs_free_all_extents()` for truncate-to-zero and per-block freeing with extent trimming for partial truncate. Both update file size and flush inode/dir entry. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-- [ ] Add `vfs_truncate(path, new_size)` to VFS interface
-- [ ] Implement FAT32 truncate (free/allocate clusters)
-- [ ] Handle truncate-to-zero (free entire cluster chain)
-- [ ] Commit: `"vfs: file truncate"`
+- [x] Add `vfs_truncate(path, new_size)` to VFS interface
+- [x] Implement FAT32 truncate (free/allocate clusters)
+- [x] Handle truncate-to-zero (free entire cluster chain)
+- [x] Commit: `"vfs: file truncate"`
 
 ---
 

@@ -21,6 +21,7 @@ The VFS provides a unified file operations interface for all filesystem drivers
 | `vfs_unlink(path)` | Delete file/directory (blocks if `ref_count > 0`) |
 | `vfs_rename(old_path, new_path)` | Rename within same drive + directory |
 | `vfs_stat(path, &st)` | Get file metadata without opening |
+| `vfs_truncate(path, new_size)` | Resize file (free trailing clusters/extents) |
 | `vfs_readdir(dir, index)` | Enumerate directory entries |
 | `vfs_finddir(dir, name)` | Look up named entry in directory |
 | `vfs_mount(letter, driver, root)` | Mount filesystem at drive letter |
@@ -61,6 +62,7 @@ struct vfs_ops {
     int      (*unlink)(parent, name);
     int      (*rename)(parent, old_name, new_name);
     int      (*stat)(node, &st);
+    int      (*truncate)(node, new_size);
 };
 ```
 
