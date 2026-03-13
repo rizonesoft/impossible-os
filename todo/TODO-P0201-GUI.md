@@ -21,7 +21,7 @@
 > Foundation: every visual element references the theme instead of hardcoded hex
 > colors. Must be done first so all subsequent code uses themed colors.
 
-**Prompt:** Centralize all UI colors into a `theme_t` struct with named fields: background, foreground, accent, border, shadow, titlebar_active, titlebar_inactive, button_bg, button_hover, selection, error, warning. Load theme colors from Codex under `System\Theme\*`. Provide two built-in presets: Dark (dark backgrounds, light text, blue accent) and Light (light backgrounds, dark text). Every drawing function in `desktop.c`, `wm.c`, and `controls.c` must reference `theme_get()->field` instead of hardcoded hex colors. The accent color should be applied to focused controls, active title bars, and selection highlights. After completing all items, create `docs/architecture/theme-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: theme system"`.
+**Prompt:** Centralize all UI colors into a `theme_t` struct with named fields: background, foreground, accent, border, shadow, titlebar_active, titlebar_inactive, button_bg, button_hover, selection, error, warning. Load theme colors from Codex under `System\Theme\*`. Provide two built-in presets: Dark (dark backgrounds, light text, blue accent) and Light (light backgrounds, dark text). Every drawing function in `desktop.c`, `wm.c`, and `controls.c` must reference `theme_get()->field` instead of hardcoded hex colors. The accent color should be applied to focused controls, active title bars, and selection highlights. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: theme system"`. Update `README.md` if it contains stale or incorrect references to theming. Create or update documentation in `docs/` covering the theme_t struct, color presets, and Codex theme keys.
 
 
 - [ ] Define `theme_t` struct with all UI colors (bg, fg, accent, border, shadow, titlebar, button states, etc.)
@@ -44,7 +44,7 @@
 
 ### 2.1 Checkbox & Radio Button
 
-**Prompt:** Add `CTRL_CHECKBOX` and `CTRL_RADIO` to the controls library. A checkbox is a 16×16 square with a checkmark glyph when checked, plus a text label to the right. A radio button is a 16×16 circle with a filled inner circle when selected. Radio buttons within the same group (identified by `group_id`) are mutually exclusive — selecting one deselects the others. Both support checked/unchecked/disabled states. Use `gfx_fill_rounded_rect` for the checkbox background and `gfx_fill_circle` for the radio. Both need hover highlights and focus indicators. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: checkbox and radio button"`.
+**Prompt:** Add `CTRL_CHECKBOX` and `CTRL_RADIO` to the controls library. A checkbox is a 16×16 square with a checkmark glyph when checked, plus a text label to the right. A radio button is a 16×16 circle with a filled inner circle when selected. Radio buttons within the same group (identified by `group_id`) are mutually exclusive — selecting one deselects the others. Both support checked/unchecked/disabled states. Use `gfx_fill_rounded_rect` for the checkbox background and `gfx_fill_circle` for the radio. Both need hover highlights and focus indicators. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: checkbox and radio button"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the checkbox and radio button API, group exclusion, and rendering.
 
 
 - [ ] Add `CTRL_CHECKBOX` type to `enum ctrl_type`
@@ -59,7 +59,7 @@
 
 ### 2.2 Dropdown / ComboBox
 
-**Prompt:** Add `CTRL_DROPDOWN` (combo box). It looks like a text field with a down-arrow button on the right. Clicking it opens a popup list of items (rendered as a small floating window above all others). Use the WM or a special overlay to draw the popup so it can extend beyond the parent window's bounds. Support up to 32 items. Keyboard: up/down to navigate, Enter to select, Escape to close. The currently selected item's text shows in the control. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: dropdown combobox"`.
+**Prompt:** Add `CTRL_DROPDOWN` (combo box). It looks like a text field with a down-arrow button on the right. Clicking it opens a popup list of items (rendered as a small floating window above all others). Use the WM or a special overlay to draw the popup so it can extend beyond the parent window's bounds. Support up to 32 items. Keyboard: up/down to navigate, Enter to select, Escape to close. The currently selected item's text shows in the control. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: dropdown combobox"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the dropdown API, popup rendering, and keyboard navigation.
 
 
 - [ ] Add `CTRL_DROPDOWN` type
@@ -73,7 +73,7 @@
 
 ### 2.3 Slider
 
-**Prompt:** Add `CTRL_SLIDER` (track bar). A horizontal or vertical track with a draggable thumb. The track is a thin rounded rect, the thumb is a filled circle. Value ranges from `min_value` to `max_value`. Dragging the thumb updates the value and calls the `on_change` callback in real-time. Click on the track (away from thumb) to jump the value. Support both horizontal and vertical orientations. Used for volume, brightness, and settings. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: slider"`.
+**Prompt:** Add `CTRL_SLIDER` (track bar). A horizontal or vertical track with a draggable thumb. The track is a thin rounded rect, the thumb is a filled circle. Value ranges from `min_value` to `max_value`. Dragging the thumb updates the value and calls the `on_change` callback in real-time. Click on the track (away from thumb) to jump the value. Support both horizontal and vertical orientations. Used for volume, brightness, and settings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: slider"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the slider API, orientation, and value change callback.
 
 
 - [ ] Add `CTRL_SLIDER` type
@@ -87,7 +87,7 @@
 
 ### 2.4 Progress Bar
 
-**Prompt:** Add `CTRL_PROGRESSBAR`. A rounded rectangle that fills from left to right like Windows 11's progress bars. Supports determinate mode (0–100% with a set value) and indeterminate mode (an animated marquee block that slides back and forth). The filled portion uses the theme's accent color with a subtle gradient. Use `gfx_fill_rounded_rect` for both the track and the fill. The indeterminate animation uses the tween engine (§3.1). After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: progress bar"`.
+**Prompt:** Add `CTRL_PROGRESSBAR`. A rounded rectangle that fills from left to right like Windows 11's progress bars. Supports determinate mode (0–100% with a set value) and indeterminate mode (an animated marquee block that slides back and forth). The filled portion uses the theme's accent color with a subtle gradient. Use `gfx_fill_rounded_rect` for both the track and the fill. The indeterminate animation uses the tween engine (§3.1). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: progress bar"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the progress bar API, determinate/indeterminate modes, and tween integration.
 
 
 - [ ] Add `CTRL_PROGRESSBAR` type
@@ -100,7 +100,7 @@
 
 ### 2.5 Tab Control
 
-**Prompt:** Add `CTRL_TABSTRIP`. A row of clickable tab headers at the top of a pane. Each tab has a label and optional icon. Clicking a tab switches the visible content area. The active tab has a thick accent-color underline. Tabs can be added/removed dynamically. The tab strip sends a callback when the selection changes so the host can swap what's drawn in the content area below. Used by: terminal (future tabs), Settings Panel, File Manager properties. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: tab strip"`.
+**Prompt:** Add `CTRL_TABSTRIP`. A row of clickable tab headers at the top of a pane. Each tab has a label and optional icon. Clicking a tab switches the visible content area. The active tab has a thick accent-color underline. Tabs can be added/removed dynamically. The tab strip sends a callback when the selection changes so the host can swap what's drawn in the content area below. Used by: terminal (future tabs), Settings Panel, File Manager properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tab strip"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the tab strip API, dynamic tab management, and selection callbacks.
 
 
 - [ ] Add `CTRL_TABSTRIP` type
@@ -113,7 +113,7 @@
 
 ### 2.6 ListView
 
-**Prompt:** Add `CTRL_LISTVIEW`. Displays a scrollable list of items. Two view modes: details (columns with header row — icon, name, size, date) and icon grid (large icons with label below, used for desktops and icon views). Each item has: icon ID, primary text, secondary text, and a user pointer. Selection: single-click selects (highlight row), double-click activates (opens/runs). Multi-select with Ctrl+click and Shift+click. Column headers are clickable for sorting (ascending/descending toggle). Scrolls vertically with a scrollbar. Used by: File Manager, Settings app list, Start menu app list. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: list view"`.
+**Prompt:** Add `CTRL_LISTVIEW`. Displays a scrollable list of items. Two view modes: details (columns with header row — icon, name, size, date) and icon grid (large icons with label below, used for desktops and icon views). Each item has: icon ID, primary text, secondary text, and a user pointer. Selection: single-click selects (highlight row), double-click activates (opens/runs). Multi-select with Ctrl+click and Shift+click. Column headers are clickable for sorting (ascending/descending toggle). Scrolls vertically with a scrollbar. Used by: File Manager, Settings app list, Start menu app list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: list view"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the list view API, view modes, sorting, and multi-select.
 
 
 - [ ] Add `CTRL_LISTVIEW` type
@@ -129,7 +129,7 @@
 
 ### 2.7 TreeView
 
-**Prompt:** Add `CTRL_TREEVIEW`. A hierarchical tree with expand/collapse triangles. Each node has: icon, label, parent pointer, children list, expanded flag, selected flag, and user data pointer. Clicking the triangle (▸/▾) toggles expand/collapse. Clicking the label selects the node. Arrow keys: up/down move selection, right expands, left collapses. Render with indentation (16px per level). Used by: File Manager navigation pane, Registry/Codex editor, Settings category tree. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: tree view"`.
+**Prompt:** Add `CTRL_TREEVIEW`. A hierarchical tree with expand/collapse triangles. Each node has: icon, label, parent pointer, children list, expanded flag, selected flag, and user data pointer. Clicking the triangle (▸/▾) toggles expand/collapse. Clicking the label selects the node. Arrow keys: up/down move selection, right expands, left collapses. Render with indentation (16px per level). Used by: File Manager navigation pane, Registry/Codex editor, Settings category tree. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tree view"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the tree view API, node management, expand/collapse, and keyboard navigation.
 
 
 - [ ] Add `CTRL_TREEVIEW` type
@@ -145,7 +145,7 @@
 
 ### 2.8 Toolbar
 
-**Prompt:** Add `CTRL_TOOLBAR`. A horizontal strip of icon buttons, usually placed immediately below the menu bar or title bar. Each toolbar button has: icon, optional tooltip text, click callback, toggle flag (stays pressed until clicked again), separator flag (draws a thin vertical line). Buttons are drawn as flat icons that gain a rounded highlight on hover and a pressed state on click. Toolbars can overflow with a `>>` chevron that opens a dropdown of hidden buttons. Used by: File Manager (back/forward/up/copy/paste/delete), Notepad (new/open/save), any app. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: toolbar"`.
+**Prompt:** Add `CTRL_TOOLBAR`. A horizontal strip of icon buttons, usually placed immediately below the menu bar or title bar. Each toolbar button has: icon, optional tooltip text, click callback, toggle flag (stays pressed until clicked again), separator flag (draws a thin vertical line). Buttons are drawn as flat icons that gain a rounded highlight on hover and a pressed state on click. Toolbars can overflow with a `>>` chevron that opens a dropdown of hidden buttons. Used by: File Manager (back/forward/up/copy/paste/delete), Notepad (new/open/save), any app. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: toolbar"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the toolbar API, button types, toggle state, and overflow chevron.
 
 
 - [ ] Add `CTRL_TOOLBAR` type
@@ -159,7 +159,7 @@
 
 ### 2.9 Menu Bar
 
-**Prompt:** Add `CTRL_MENUBAR`. A horizontal bar at the top of a window with top-level menu items (File, Edit, View, Help). Clicking a menu item opens a dropdown context menu (reusing the context menu system from §5). Keyboard: Alt activates the menu bar, arrow keys navigate between menus, accelerator keys (underlined letter) jump to a menu. Each menu item has a label, optional keyboard accelerator text (e.g., "Ctrl+S"), optional checkmark, optional submenu. Used by: Notepad, File Manager, Calculator, any standard app. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: menu bar"`.
+**Prompt:** Add `CTRL_MENUBAR`. A horizontal bar at the top of a window with top-level menu items (File, Edit, View, Help). Clicking a menu item opens a dropdown context menu (reusing the context menu system from §5). Keyboard: Alt activates the menu bar, arrow keys navigate between menus, accelerator keys (underlined letter) jump to a menu. Each menu item has a label, optional keyboard accelerator text (e.g., "Ctrl+S"), optional checkmark, optional submenu. Used by: Notepad, File Manager, Calculator, any standard app. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: menu bar"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the menu bar API, keyboard activation, and accelerator display.
 
 
 - [ ] Add `CTRL_MENUBAR` type
@@ -174,7 +174,7 @@
 
 ### 2.10 Status Bar
 
-**Prompt:** Add `CTRL_STATUSBAR`. A thin bar at the bottom of a window, divided into sections (panes). Each pane shows text and/or an icon. The first pane is the default help/status text. Other panes show things like cursor position (ln/col), file encoding, zoom level, etc. Panes have configurable widths (fixed pixels or stretchy). Used by: Notepad (line/col, encoding), File Manager (item count, selection size), Terminal (connection status). After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: status bar"`.
+**Prompt:** Add `CTRL_STATUSBAR`. A thin bar at the bottom of a window, divided into sections (panes). Each pane shows text and/or an icon. The first pane is the default help/status text. Other panes show things like cursor position (ln/col), file encoding, zoom level, etc. Panes have configurable widths (fixed pixels or stretchy). Used by: Notepad (line/col, encoding), File Manager (item count, selection size), Terminal (connection status). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: status bar"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the status bar API, pane layout, and text updates.
 
 
 - [ ] Add `CTRL_STATUSBAR` type
@@ -187,7 +187,7 @@
 
 ### 2.11 GroupBox & Separator
 
-**Prompt:** Add `CTRL_GROUPBOX` — a labeled rectangle that visually groups related controls. The label sits in the top-left corner with the border line interrupted around it. Also add `CTRL_SEPARATOR` — a simple horizontal or vertical dividing line with themed color. Both are purely visual, no interaction. Used by: Settings applets (group settings into sections), dialogs. After completing all items, update `docs/architecture/controls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"controls: groupbox and separator"`.
+**Prompt:** Add `CTRL_GROUPBOX` — a labeled rectangle that visually groups related controls. The label sits in the top-left corner with the border line interrupted around it. Also add `CTRL_SEPARATOR` — a simple horizontal or vertical dividing line with themed color. Both are purely visual, no interaction. Used by: Settings applets (group settings into sections), dialogs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: groupbox and separator"`. Update `README.md` if it contains stale or incorrect references to controls. Create or update documentation in `docs/` covering the groupbox and separator rendering.
 
 
 - [ ] Add `CTRL_GROUPBOX` type with label text
@@ -197,7 +197,7 @@
 
 ### 2.12 Tooltip Support *(from Phase 02 §9.5)*
 
-**Prompt:** Tooltips appear after hovering over a UI element for 500ms and display helpful text near the cursor. Implement a simple tooltip manager: controls register tooltip text via `tooltip_set(ctrl_id, text)`. A global timer tracks hover duration — when it exceeds 500ms without mouse movement, render a small rounded-rect popup (semi-transparent dark background, white text, drop shadow) near the cursor position. Auto-dismiss when the mouse moves. Add tooltips to all window buttons ("Close", "Minimize", "Maximize"), taskbar buttons (window title), toolbar buttons, and system tray icons. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: tooltip support"`.
+**Prompt:** Tooltips appear after hovering over a UI element for 500ms and display helpful text near the cursor. Implement a simple tooltip manager: controls register tooltip text via `tooltip_set(ctrl_id, text)`. A global timer tracks hover duration — when it exceeds 500ms without mouse movement, render a small rounded-rect popup (semi-transparent dark background, white text, drop shadow) near the cursor position. Auto-dismiss when the mouse moves. Add tooltips to all window buttons ("Close", "Minimize", "Maximize"), taskbar buttons (window title), toolbar buttons, and system tray icons. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: tooltip support"`. Update `README.md` if it contains stale or incorrect references to tooltips. Create or update documentation in `docs/` covering the tooltip manager, hover timing, and rendering.
 
 
 - [ ] Hover delay (500ms) → show tooltip near cursor
@@ -209,7 +209,7 @@
 
 ### 2.13 Dialog System *(NEW — missing from all TODOs)*
 
-**Prompt:** Implement a common dialog system for standard OS dialogs: Message Box (info/warning/error/question with OK/Cancel/Yes/No buttons), Input Dialog (prompt + text field + OK/Cancel), File Open/Save dialog (directory tree + file list + filename text field + filters), and Color Picker (hue wheel + saturation/value square + hex input). `dialog_msgbox(title, msg, type)` blocks the caller and returns the button pressed. `dialog_file_open(filter)` returns a file path. Dialogs are modal — they disable the parent window while open. Render with the standard WM chrome, centered on screen. Used everywhere: save prompts, error messages, file selection. After completing all items, create `docs/architecture/dialogs.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: common dialog system"`.
+**Prompt:** Implement a common dialog system for standard OS dialogs: Message Box (info/warning/error/question with OK/Cancel/Yes/No buttons), Input Dialog (prompt + text field + OK/Cancel), File Open/Save dialog (directory tree + file list + filename text field + filters), and Color Picker (hue wheel + saturation/value square + hex input). `dialog_msgbox(title, msg, type)` blocks the caller and returns the button pressed. `dialog_file_open(filter)` returns a file path. Dialogs are modal — they disable the parent window while open. Render with the standard WM chrome, centered on screen. Used everywhere: save prompts, error messages, file selection. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: common dialog system"`. Update `README.md` if it contains stale or incorrect references to dialogs. Create or update documentation in `docs/` covering the dialog API, modal behavior, and each dialog type.
 
 
 - [ ] Create `src/desktop/dialogs.c` and `include/desktop/dialogs.h`
@@ -234,7 +234,7 @@
 
 ### 3.1 Tween Engine *(from Phase 02 §6.1)*
 
-**Prompt:** The animation engine provides time-based interpolation (tweening) for smooth UI transitions. A `gfx_tween_t` stores: start value, end value, current value, duration in ms, elapsed time, and an easing function pointer. `gfx_tween_update(delta_ms)` advances the tween by the frame delta time and recomputes the current value using the easing function. Easing functions take `t` (0.0→1.0) and return a shaped `t`: linear is identity, ease-out-cubic is `1 - (1-t)^3` (starts fast, decelerates), ease-in-quad is `t^2` (starts slow, accelerates). The compositor calls `gfx_tween_update` each frame with the frame delta. After completing all items, create `docs/architecture/animations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: animation engine with easing"`.
+**Prompt:** The animation engine provides time-based interpolation (tweening) for smooth UI transitions. A `gfx_tween_t` stores: start value, end value, current value, duration in ms, elapsed time, and an easing function pointer. `gfx_tween_update(delta_ms)` advances the tween by the frame delta time and recomputes the current value using the easing function. Easing functions take `t` (0.0→1.0) and return a shaped `t`: linear is identity, ease-out-cubic is `1 - (1-t)^3` (starts fast, decelerates), ease-in-quad is `t^2` (starts slow, accelerates). The compositor calls `gfx_tween_update` each frame with the frame delta. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"gfx: animation engine with easing"`. Update `README.md` if it contains stale or incorrect references to animations. Create or update documentation in `docs/` covering the tween engine, easing functions, and compositor integration.
 
 
 - [ ] Create `src/kernel/gfx/gfx_animate.c`
@@ -251,7 +251,7 @@
 
 ### 3.2 Window Transition Animations *(from Phase 02 §6.2)*
 
-**Prompt:** Each window state change should have a smooth animation: open (scale 90%→100% + fade in, 200ms ease-out-cubic), close (scale 100%→90% + fade out, 150ms), minimize (shrink toward the window's taskbar button position, 250ms), restore (reverse of minimize), maximize (expand to fill screen, 200ms). Use the tween engine from §3.1 — each animation creates tweens for the window's x, y, width, height, and opacity. The compositor must render animating windows at their interpolated position/size each frame. Add a Codex setting `System\Theme\EnableAnimations` (default: true) and `System\Theme\AnimationSpeed` (multiplier, default: 1.0). After completing all items, update `docs/architecture/animations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: window transition animations"`.
+**Prompt:** Each window state change should have a smooth animation: open (scale 90%→100% + fade in, 200ms ease-out-cubic), close (scale 100%→90% + fade out, 150ms), minimize (shrink toward the window's taskbar button position, 250ms), restore (reverse of minimize), maximize (expand to fill screen, 200ms). Use the tween engine from §3.1 — each animation creates tweens for the window's x, y, width, height, and opacity. The compositor must render animating windows at their interpolated position/size each frame. Add a Codex setting `System\Theme\EnableAnimations` (default: true) and `System\Theme\AnimationSpeed` (multiplier, default: 1.0). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window transition animations"`. Update `README.md` if it contains stale or incorrect references to animations. Create or update documentation in `docs/` covering window animation types, Codex settings, and reduce-motion option.
 
 
 - [ ] Create `src/kernel/wm_anim.c`
@@ -273,7 +273,7 @@
 
 ### 4.1 Window Minimize & Maximize *(NEW — partially missing)*
 
-**Prompt:** Add full minimize/maximize/restore support to the window manager. `wm_minimize(handle)` hides the window, `wm_maximize(handle)` saves the pre-max position and resizes to fill the usable desktop area (screen minus taskbar), `wm_restore(handle)` returns to the saved position. The maximize button in the title bar should toggle between maximize and restore. Double-clicking the title bar also toggles maximize. Add minimize and maximize buttons to the window title bar alongside the close button. After completing all items, update `docs/architecture/window-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: window minimize and maximize"`.
+**Prompt:** Add full minimize/maximize/restore support to the window manager. `wm_minimize(handle)` hides the window, `wm_maximize(handle)` saves the pre-max position and resizes to fill the usable desktop area (screen minus taskbar), `wm_restore(handle)` returns to the saved position. The maximize button in the title bar should toggle between maximize and restore. Double-clicking the title bar also toggles maximize. Add minimize and maximize buttons to the window title bar alongside the close button. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window minimize and maximize"`. Update `README.md` if it contains stale or incorrect references to window management. Create or update documentation in `docs/` covering minimize/maximize/restore API, title bar buttons, and double-click toggle.
 
 
 - [ ] Add `wm_minimize(handle)` — hide window, mark as minimized
@@ -286,7 +286,7 @@
 
 ### 4.2 Keyboard Window Snapping *(from Phase 04 §5.1)*
 
-**Prompt:** Window snapping allows quick tiling of windows. Win+Left snaps the focused window to the left half of the screen, Win+Right to the right half, Win+Up maximizes, Win+Down restores or minimizes. Store the window's pre-snap position so restoring returns it to its original size. Use the animation engine (§3.1) to smoothly tween the snap transition. After completing all items, create `docs/architecture/window-snapping.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard window snapping"`.
+**Prompt:** Window snapping allows quick tiling of windows. Win+Left snaps the focused window to the left half of the screen, Win+Right to the right half, Win+Up maximizes, Win+Down restores or minimizes. Store the window's pre-snap position so restoring returns it to its original size. Use the animation engine (§3.1) to smoothly tween the snap transition. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard window snapping"`. Update `README.md` if it contains stale or incorrect references to window snapping. Create or update documentation in `docs/` covering snap keyboard shortcuts, pre-snap position storage, and animation.
 
 
 - [ ] Create `src/kernel/wm_snap.c`
@@ -299,7 +299,7 @@
 
 ### 4.3 Edge Snapping (Mouse) *(from Phase 04 §5.2)*
 
-**Prompt:** When dragging a window, detect if the cursor hits a screen edge and show a snap preview. After completing all items, update `docs/architecture/window-snapping.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: edge snap with preview"`.
+**Prompt:** When dragging a window, detect if the cursor hits a screen edge and show a snap preview. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: edge snap with preview"`. Update `README.md` if it contains stale or incorrect references to window snapping. Create or update documentation in `docs/` covering edge detection, snap preview overlay rendering, and quarter-screen zones.
 
 
 - [ ] Drag to top edge → maximize preview overlay
@@ -310,7 +310,7 @@
 
 ### 4.4 Snap Layouts *(from Phase 04 §5.3)*
 
-**Prompt:** Hovering over a window's maximize button shows a popup with visual layout options: 50/50 left-right, 50/50 top-bottom, 66/33 wide-narrow, and 33/33/33 three columns. This mimics Windows 11's Snap Layouts feature. After completing all items, update `docs/architecture/window-snapping.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: snap layouts on maximize hover"`.
+**Prompt:** Hovering over a window's maximize button shows a popup with visual layout options: 50/50 left-right, 50/50 top-bottom, 66/33 wide-narrow, and 33/33/33 three columns. This mimics Windows 11's Snap Layouts feature. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: snap layouts on maximize hover"`. Update `README.md` if it contains stale or incorrect references to snap layouts. Create or update documentation in `docs/` covering snap layout options, maximize button hover, and zone filling.
 
 
 - [ ] Hover maximize button → show snap layout popup
@@ -320,7 +320,7 @@
 
 ### 4.5 Window Minimize/Restore All *(from Phase 04 §15.5)*
 
-**Prompt:** Win+M minimizes all windows. Win+Shift+M restores all previously-minimized windows. Win+D toggles between minimize-all and restore-all (show desktop toggle). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: minimize/restore all windows"`.
+**Prompt:** Win+M minimizes all windows. Win+Shift+M restores all previously-minimized windows. Win+D toggles between minimize-all and restore-all (show desktop toggle). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: minimize/restore all windows"`. Update `README.md` if it contains stale or incorrect references to window shortcuts. Create or update documentation in `docs/` covering Win+M, Win+Shift+M, and Win+D behavior.
 
 
 - [ ] Win+M → minimize all windows
@@ -337,7 +337,7 @@
 
 ### 5.1 Generic Context Menu Engine *(from Phase 04 §4.1)*
 
-**Prompt:** Build a generic reusable context menu system: `context_menu_show(x, y, items, count)` renders a floating menu with Acrylic blur background, rounded corners, and drop shadow. Each `menu_item` has: label, optional icon, callback, optional submenu pointer, separator flag, disabled flag, and checked flag. Handle keyboard navigation, submenu open on hover, and auto-close when clicking outside. After completing all items, create `docs/architecture/context-menus.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: context menu system"`.
+**Prompt:** Build a generic reusable context menu system: `context_menu_show(x, y, items, count)` renders a floating menu with Acrylic blur background, rounded corners, and drop shadow. Each `menu_item` has: label, optional icon, callback, optional submenu pointer, separator flag, disabled flag, and checked flag. Handle keyboard navigation, submenu open on hover, and auto-close when clicking outside. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: context menu system"`. Update `README.md` if it contains stale or incorrect references to context menus. Create or update documentation in `docs/` covering the context menu API, submenu handling, and keyboard navigation.
 
 
 - [ ] Define `struct menu_item` (label, icon, callback, submenu, separator, disabled, checked)
@@ -352,7 +352,7 @@
 
 ### 5.2 Desktop Context Menu *(from Phase 04 §4.2)*
 
-**Prompt:** Right-clicking the desktop wallpaper shows a context menu with: View submenu, Sort By submenu, Refresh, New submenu (Folder, Text Document, Shortcut), Paste, Display Settings, Personalize. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop right-click menu"`.
+**Prompt:** Right-clicking the desktop wallpaper shows a context menu with: View submenu, Sort By submenu, Refresh, New submenu (Folder, Text Document, Shortcut), Paste, Display Settings, Personalize. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop right-click menu"`. Update `README.md` if it contains stale or incorrect references to desktop menus. Create or update documentation in `docs/` covering the desktop context menu items and submenus.
 
 
 - [ ] Right-click desktop → context menu:
@@ -366,7 +366,7 @@
 
 ### 5.3 File Context Menu *(from Phase 04 §4.3)*
 
-**Prompt:** Right-clicking a file icon shows: Open, Open With, Cut/Copy/Paste, Delete, Rename, Properties. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: file context menu"`.
+**Prompt:** Right-clicking a file icon shows: Open, Open With, Cut/Copy/Paste, Delete, Rename, Properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: file context menu"`. Update `README.md` if it contains stale or incorrect references to file menus. Create or update documentation in `docs/` covering the file context menu items and action dispatch.
 
 
 - [ ] Right-click file → context menu:
@@ -382,7 +382,7 @@
 
 ### 6.1 Taskbar Window List *(from Phase 04 §1.1)*
 
-**Prompt:** The taskbar shows a button for each open window. Clicking a window button focuses/raises it. Clicking the active window's button minimizes it (toggle). The active button gets an accent underline. After completing all items, create `docs/architecture/taskbar.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar window list"`.
+**Prompt:** The taskbar shows a button for each open window. Clicking a window button focuses/raises it. Clicking the active window's button minimizes it (toggle). The active button gets an accent underline. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar window list"`. Update `README.md` if it contains stale or incorrect references to the taskbar. Create or update documentation in `docs/` covering the taskbar window list, active button rendering, and flash behavior.
 
 
 - [ ] Define `struct taskbar_entry` (window ptr, title, icon, active, flashing)
@@ -396,7 +396,7 @@
 
 ### 6.2 Taskbar Button Context Menu *(from Phase 04 §1.2)*
 
-**Prompt:** Right-clicking a taskbar button shows Close, Maximize/Restore, Minimize. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar button context menu"`.
+**Prompt:** Right-clicking a taskbar button shows Close, Maximize/Restore, Minimize. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar button context menu"`. Update `README.md` if it contains stale or incorrect references to taskbar menus. Create or update documentation in `docs/` covering the taskbar button context menu items.
 
 
 - [ ] Right-click button → Close, Maximize/Restore, Minimize
@@ -405,7 +405,7 @@
 
 ### 6.3 Window Peek (Aero Peek) *(from Phase 04 §1.3)*
 
-**Prompt:** Hovering a taskbar button for 500ms makes all other windows 10% opacity. "Show Desktop" button at far-right corner. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: window peek (Aero Peek)"`.
+**Prompt:** Hovering a taskbar button for 500ms makes all other windows 10% opacity. "Show Desktop" button at far-right corner. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window peek (Aero Peek)"`. Update `README.md` if it contains stale or incorrect references to Aero Peek. Create or update documentation in `docs/` covering the peek functionality, hover timing, and show desktop toggle.
 
 
 - [ ] Hover button 500ms → all other windows 10% opacity
@@ -447,7 +447,7 @@
 
 ### 7.2 Start Menu Data *(from Phase 04 §2.2)*
 
-**Prompt:** Load pinned apps from Codex, scan installed apps from filesystem for All Programs list. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu data loading"`.
+**Prompt:** Load pinned apps from Codex, scan installed apps from filesystem for All Programs list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu data loading"`. Update `README.md` if it contains stale or incorrect references to the Start menu. Create or update documentation in `docs/` covering pinned app loading, app scanning, and alphabetical grouping.
 
 
 - [ ] Load pinned apps from Codex `User\{name}\Shell\PinnedApps`
@@ -459,7 +459,7 @@
 
 ### 7.3 Start Menu Interaction *(from Phase 04 §2.3)*
 
-**Prompt:** Toggle open/close on Start click or Win key. Launch apps, navigate All Programs, power submenu, search filtering. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu interaction"`.
+**Prompt:** Toggle open/close on Start click or Win key. Launch apps, navigate All Programs, power submenu, search filtering. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu interaction"`. Update `README.md` if it contains stale or incorrect references to the Start menu. Create or update documentation in `docs/` covering Start menu interaction, All Programs navigation, power actions, and search filtering.
 
 
 - [ ] Start button / Win key → toggle menu
@@ -478,7 +478,7 @@
 
 ### 8.1 System Tray Icons *(from Phase 04 §3.1)*
 
-**Prompt:** System tray: volume, network, notification bell icons. Each clickable with popups. After completing all items, create `docs/architecture/system-tray.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: system tray icons"`.
+**Prompt:** System tray: volume, network, notification bell icons. Each clickable with popups. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: system tray icons"`. Update `README.md` if it contains stale or incorrect references to the system tray. Create or update documentation in `docs/` covering the system tray API, icon types, and popup behavior.
 
 
 - [ ] Create `src/desktop/systray.c`
@@ -490,7 +490,7 @@
 
 ### 8.2 Notification Toasts *(from Phase 02 §9.3 + Phase 04 §3.2)*
 
-**Prompt:** Toast notifications slide in from bottom-right. Auto-dismiss after timeout, stack vertically. After completing all items, create `docs/architecture/notifications.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: notification toasts"`.
+**Prompt:** Toast notifications slide in from bottom-right. Auto-dismiss after timeout, stack vertically. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: notification toasts"`. Update `README.md` if it contains stale or incorrect references to notifications. Create or update documentation in `docs/` covering the notification API, slide animation, auto-dismiss, and stacking.
 
 
 - [ ] Create `src/desktop/notify.c`
@@ -503,7 +503,7 @@
 
 ### 8.3 Notification Center *(from Phase 04 §7)*
 
-**Prompt:** Slide-in panel from right edge with notification history. After completing all items, create `docs/architecture/notification-center.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: notification center"`.
+**Prompt:** Slide-in panel from right edge with notification history. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: notification center"`. Update `README.md` if it contains stale or incorrect references to notifications. Create or update documentation in `docs/` covering the notification center panel, history storage, and dismiss actions.
 
 
 - [ ] Create `src/desktop/notify_center.c`
@@ -518,7 +518,7 @@
 
 ## 9. Desktop Icons & Shortcuts *(from Phase 04 §15.4)*
 
-**Prompt:** Desktop icons rendered in a grid layout. Default: "This PC", "Recycle Bin", user shortcuts. Single-click selects, double-click opens. Labels with text shadow for readability. After completing all items, create `docs/architecture/desktop-icons.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop icon grid"`.
+**Prompt:** Desktop icons rendered in a grid layout. Default: "This PC", "Recycle Bin", user shortcuts. Single-click selects, double-click opens. Labels with text shadow for readability. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop icon grid"`. Update `README.md` if it contains stale or incorrect references to desktop icons. Create or update documentation in `docs/` covering the icon grid layout, default icons, shortcut handling, and drag reorder.
 
 
 - [ ] Render icons on desktop surface (grid-aligned)
@@ -535,7 +535,7 @@
 
 ### 10.1 Keyboard Shortcut Manager *(from Phase 04 §15.1)*
 
-**Prompt:** Centralize all system-wide keyboard shortcuts in a hotkey table. After completing all items, create `docs/architecture/keyboard-shortcuts.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard shortcut manager"`.
+**Prompt:** Centralize all system-wide keyboard shortcuts in a hotkey table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard shortcut manager"`. Update `README.md` if it contains stale or incorrect references to keyboard shortcuts. Create or update documentation in `docs/` covering the hotkey table, registration API, and user-defined shortcuts.
 
 
 - [ ] Define hotkey table (key combo → action callback)
@@ -545,7 +545,7 @@
 
 ### 10.2 Alt+Tab Task Switcher *(from Phase 04 §15.2)*
 
-**Prompt:** Alt+Tab overlay with window thumbnails. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Alt+Tab task switcher"`.
+**Prompt:** Alt+Tab overlay with window thumbnails. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Alt+Tab task switcher"`. Update `README.md` if it contains stale or incorrect references to task switching. Create or update documentation in `docs/` covering the Alt+Tab overlay, thumbnail rendering, and focus handling.
 
 
 - [ ] Alt+Tab → centered overlay with window thumbnails
@@ -557,7 +557,7 @@
 
 ### 10.3 Run Dialog (Win+R) *(from Phase 04 §15.3)*
 
-**Prompt:** Small dialog with "Open:" text field, execute command/path. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win+R run dialog"`.
+**Prompt:** Small dialog with "Open:" text field, execute command/path. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Win+R run dialog"`. Update `README.md` if it contains stale or incorrect references to the Run dialog. Create or update documentation in `docs/` covering the Run dialog, command execution, history, and auto-complete.
 
 
 - [ ] Win+R → small dialog with text field
@@ -572,7 +572,7 @@
 
 ### 11.1 Core System *(from Phase 04 §8.1)*
 
-**Prompt:** Drag-and-drop with state tracking, visual feedback, and drop delivery. After completing all items, create `docs/architecture/drag-drop.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: drag-and-drop system"`.
+**Prompt:** Drag-and-drop with state tracking, visual feedback, and drop delivery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: drag-and-drop system"`. Update `README.md` if it contains stale or incorrect references to drag and drop. Create or update documentation in `docs/` covering the drag state machine, visual feedback, drop targets, and data formats.
 
 
 - [ ] Define `drag_state_t` (active, format, data, cursor, drag_icon, source_window)
@@ -588,7 +588,7 @@
 
 ## 12. Quick Settings Panel *(from Phase 04 §9)*
 
-**Prompt:** Popup panel with toggle grid + volume/brightness sliders. After completing all items, create `docs/architecture/quick-settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: quick settings panel"`.
+**Prompt:** Popup panel with toggle grid + volume/brightness sliders. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: quick settings panel"`. Update `README.md` if it contains stale or incorrect references to quick settings. Create or update documentation in `docs/` covering the quick settings panel, toggle grid, and slider controls.
 
 
 - [ ] Create `src/desktop/quick_settings.c`
@@ -603,7 +603,7 @@
 
 ## 13. Screenshot Capture *(from Phase 02 §9.4)*
 
-**Prompt:** Capture framebuffer to PNG on Print Screen key. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: screenshot capture"`.
+**Prompt:** Capture framebuffer to PNG on Print Screen key. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: screenshot capture"`. Update `README.md` if it contains stale or incorrect references to screenshots. Create or update documentation in `docs/` covering the screenshot capture, image saving, and notification.
 
 
 - [ ] PrtSc key → save framebuffer to `C:\Users\Default\Screenshots\screenshot_{timestamp}.png`
@@ -617,7 +617,7 @@
 
 ### 14.1 DPI System *(from Phase 02 §8.1)*
 
-**Prompt:** DPI scaling multiplies all UI dimensions by a scale factor. After completing all items, create `docs/architecture/dpi-scaling.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"display: DPI scaling system"`.
+**Prompt:** DPI scaling multiplies all UI dimensions by a scale factor. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: DPI scaling system"`. Update `README.md` if it contains stale or incorrect references to DPI scaling. Create or update documentation in `docs/` covering the DPI macro, auto-detection, and Codex settings.
 
 
 - [ ] Create `include/dpi.h` with `DPI(px)` macro: `(pixels * scale / 100)`
@@ -627,7 +627,7 @@
 
 ### 14.2 DPI-Aware UI *(from Phase 02 §8.2)*
 
-**Prompt:** Replace all hardcoded pixel sizes with `DPI()` calls. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: DPI-aware layout"`.
+**Prompt:** Replace all hardcoded pixel sizes with `DPI()` calls. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: DPI-aware layout"`. Update `README.md` if it contains stale or incorrect references to DPI. Create or update documentation in `docs/` covering the DPI conversion for each component.
 
 
 - [ ] `desktop.c`: taskbar height `DPI(48)`, button padding, menu sizes
@@ -641,7 +641,7 @@
 
 ## 15. Virtual Desktops *(from Phase 04 §6)*
 
-**Prompt:** Virtual desktops with up to 8 workspaces. After completing all items, create `docs/architecture/virtual-desktops.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: virtual desktop manager"`.
+**Prompt:** Virtual desktops with up to 8 workspaces. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: virtual desktop manager"`. Update `README.md` if it contains stale or incorrect references to virtual desktops. Create or update documentation in `docs/` covering the virtual desktop API, keyboard shortcuts, and taskbar integration.
 
 
 - [ ] Create `src/kernel/wm_vdesktop.c`
@@ -658,7 +658,7 @@
 
 ## 16. Night Light *(from Phase 04 §13)*
 
-**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, create `docs/architecture/night-light.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"display: night light"`.
+**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: night light"`. Update `README.md` if it contains stale or incorrect references to night light. Create or update documentation in `docs/` covering the night light algorithm, scheduling, and Codex settings.
 
 
 - [ ] Create `src/kernel/display/nightlight.c`
@@ -673,7 +673,7 @@
 
 ## 17. Focus / Do Not Disturb *(from Phase 04 §14)*
 
-**Prompt:** Suppress notifications during focused work. After completing all items, create `docs/architecture/focus-mode.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: focus / do not disturb"`.
+**Prompt:** Suppress notifications during focused work. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: focus / do not disturb"`. Update `README.md` if it contains stale or incorrect references to focus mode. Create or update documentation in `docs/` covering the focus mode API, DND levels, and scheduled activation.
 
 
 - [ ] Create `src/desktop/focus_mode.c`
@@ -689,7 +689,7 @@
 
 ## 18. Boot Splash Screen *(from Phase 04 §10)*
 
-**Prompt:** Graphical boot splash with logo and progress bar. After completing all items, create `docs/architecture/boot-splash.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: graphical boot splash"`.
+**Prompt:** Graphical boot splash with logo and progress bar. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: graphical boot splash"`. Update `README.md` if it contains stale or incorrect references to boot splash. Create or update documentation in `docs/` covering the boot splash API, progress milestones, and F8 boot menu.
 
 
 - [ ] Create `src/kernel/boot_splash.c`
@@ -705,7 +705,7 @@
 
 ### 19.1 Screensaver System *(from Phase 04 §11.1–11.2)*
 
-**Prompt:** Idle detection + screensaver API + 5 built-in screensavers. After completing all items, create `docs/architecture/screensaver.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: screensaver system"`.
+**Prompt:** Idle detection + screensaver API + 5 built-in screensavers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: screensaver system"`. Update `README.md` if it contains stale or incorrect references to screensavers. Create or update documentation in `docs/` covering the screensaver API, idle detection, and built-in screensavers.
 
 
 - [ ] Create `src/desktop/screensaver.c`
@@ -718,7 +718,7 @@
 
 ### 19.2 Lock Screen *(from Phase 04 §11.3)*
 
-**Prompt:** Full-screen lock with blurred wallpaper, clock, password input. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: lock screen"`.
+**Prompt:** Full-screen lock with blurred wallpaper, clock, password input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: lock screen"`. Update `README.md` if it contains stale or incorrect references to lock screen. Create or update documentation in `docs/` covering the lock screen, password input, and auto-lock behavior.
 
 
 - [ ] Create `src/desktop/lockscreen.c`
@@ -733,7 +733,7 @@
 
 ## 20. Desktop Widgets *(from Phase 04 §12)*
 
-**Prompt:** Desktop widgets are floating panels above wallpaper, below windows. After completing all items, create `docs/architecture/widgets.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: widget framework"`.
+**Prompt:** Desktop widgets are floating panels above wallpaper, below windows. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: widget framework"`. Update `README.md` if it contains stale or incorrect references to widgets. Create or update documentation in `docs/` covering the widget API, built-in widgets, and draggable positioning.
 
 
 - [ ] Create `src/desktop/widgets.c`
@@ -749,7 +749,7 @@
 
 ### 21.1 Dynamic Resolution *(from Phase 02 §8.3)*
 
-**Prompt:** VESA/VBE mode enumeration and resolution switching. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"display: resolution management"`.
+**Prompt:** VESA/VBE mode enumeration and resolution switching. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: resolution management"`. Update `README.md` if it contains stale or incorrect references to display resolution. Create or update documentation in `docs/` covering VESA/VBE mode enumeration, current mode query, and runtime switching.
 
 
 - [ ] `display_enum_modes()` — query VESA/VBE modes
@@ -768,7 +768,7 @@
 
 ## 22. Software OpenGL *(from Phase 02 §7)*
 
-**Prompt:** TinyGL (software OpenGL 1.1) for 3D rendering. After completing all items, create `docs/architecture/opengl.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: TinyGL software OpenGL 1.1"`.
+**Prompt:** TinyGL (software OpenGL 1.1) for 3D rendering. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"gfx: TinyGL software OpenGL 1.1"`. Update `README.md` if it contains stale or incorrect references to OpenGL. Create or update documentation in `docs/` covering TinyGL integration, supported GL functions, and framebuffer rendering.
 
 
 - [ ] Port TinyGL (~5000 lines, Zlib license) to Impossible OS framebuffer
