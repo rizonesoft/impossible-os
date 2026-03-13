@@ -10,7 +10,6 @@
 ---
 
 ## 1. Registry System
-> *Research: [01_codex_registry.md](research/phase_03_system_services/01_codex_registry.md)*
 
 ### 1.1 Core In-Memory Tree
 
@@ -114,7 +113,6 @@
 ---
 
 ## 2. Background Services / Daemons
-> *Research: [02_services_daemons.md](research/phase_03_system_services/02_services_daemons.md)*
 
 ### 2.1 Service Manager
 
@@ -157,7 +155,6 @@
 ---
 
 ## 3. Clipboard
-> *Research: [03_clipboard.md](research/phase_03_system_services/03_clipboard.md), [08_clipboard_history.md](research/phase_03_system_services/08_clipboard_history.md)*
 
 ### 3.1 System Clipboard
 
@@ -214,7 +211,6 @@
 ---
 
 ## 4. Clock & Time System
-> *Research: [05_clock_time_sync.md](research/phase_03_system_services/05_clock_time_sync.md)*
 
 > **Note:** CMOS RTC driver already exists (`rtc.c`). This section extends it with
 > proper time tracking, formatting, timezone, and NTP sync.
@@ -294,7 +290,6 @@
 ---
 
 ## 5. File Associations
-> *Research: [04_file_associations.md](research/phase_03_system_services/04_file_associations.md)*
 
 ### 5.1 Extension-to-App Mapping
 
@@ -333,7 +328,6 @@
 ---
 
 ## 6. Search & File Indexing
-> *Research: [06_search_indexing.md](research/phase_03_system_services/06_search_indexing.md)*
 
 ### 6.1 Search Index
 
@@ -374,7 +368,6 @@
 ---
 
 ## 7. Shortcut Files (.lnk)
-> *Research: [07_shortcut_files.md](research/phase_03_system_services/07_shortcut_files.md)*
 
 ### 7.1 Shortcut Format & API
 
@@ -403,7 +396,6 @@
 ---
 
 ## 8. Scheduled Tasks
-> *Research: [09_scheduled_tasks.md](research/phase_03_system_services/09_scheduled_tasks.md)*
 
 ### 8.1 Task Scheduler
 
@@ -433,7 +425,6 @@
 ---
 
 ## 9. Recycle Bin
-> *Research: [10_recycle_bin.md](research/phase_03_system_services/10_recycle_bin.md)*
 
 ### 9.1 Recycle Bin Core
 
@@ -472,7 +463,6 @@
 ---
 
 ## 10. ZIP Compression
-> *Research: [11_zip_compression.md](research/phase_03_system_services/11_zip_compression.md)*
 
 ### 10.1 miniz Integration
 

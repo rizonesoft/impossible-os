@@ -11,7 +11,6 @@
 ---
 
 ## 1. Disk Drivers
-> *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
 ### 1.1 VirtIO Block Device Driver ✅
 
@@ -106,7 +105,6 @@
 ---
 
 ## 2. Partition Table Support
-> *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
 ### 2.1 MBR Partition Table ✅
 
@@ -150,7 +148,6 @@
 ---
 
 ## 3. FAT32 Filesystem
-> *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
 ### 3.1 FAT32 Read Support
 
@@ -359,7 +356,6 @@
 ---
 
 ## 5. Persistent IXFS (IXFS-on-Disk)
-> *Research: [01_disk_persistent_fs.md](research/phase_06_storage/01_disk_persistent_fs.md)*
 
 ### 5.1 IXFS On-Disk Format
 
@@ -567,7 +563,6 @@
 ---
 
 ## 7. Disk Management GUI
-> *Research: [02_disk_management.md](research/phase_06_storage/02_disk_management.md)*
 
 ### 7.1 Disk Management App
 

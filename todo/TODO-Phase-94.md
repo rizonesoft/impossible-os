@@ -12,7 +12,6 @@
 ---
 
 ## 1. PE Binary Loader
-> *Research: [01_pe_native_format.md](research/phase_10_compatibility/01_pe_native_format.md), [02_dual_format_subsystem.md](research/phase_10_compatibility/02_dual_format_subsystem.md)*
 
 ### 1.1 PE Header Structures
 
@@ -77,7 +76,6 @@
 ---
 
 ## 2. Import Resolution & DLL System
-> *Research: [01_pe_native_format.md](research/phase_10_compatibility/01_pe_native_format.md), [02_dual_format_subsystem.md](research/phase_10_compatibility/02_dual_format_subsystem.md)*
 
 ### 2.1 Import Table Parser
 
@@ -136,7 +134,6 @@
 ---
 
 ## 3. Win32 API Stubs — Tier 1 (Console)
-> *Research: [01_pe_native_format.md](research/phase_10_compatibility/01_pe_native_format.md)*
 
 ### 3.1 Windows Type Definitions
 
@@ -207,7 +204,6 @@
 ---
 
 ## 4. Win32 API Stubs — Tier 2 (File I/O & Memory)
-> *Research: [01_pe_native_format.md](research/phase_10_compatibility/01_pe_native_format.md)*
 
 ### 4.1 kernel32.dll — File I/O
 
@@ -260,7 +256,6 @@
 ---
 
 ## 5. Calling Convention Bridge
-> *Research: [02_dual_format_subsystem.md](research/phase_10_compatibility/02_dual_format_subsystem.md)*
 
 ### 5.1 Windows x64 Convention
 
@@ -284,7 +279,6 @@
 ---
 
 ## 6. Keyboard Layouts & Internationalization
-> *Research: [03_keyboard_i18n.md](research/phase_10_compatibility/03_keyboard_i18n.md)*
 
 ### 6.1 Keyboard Layout System
 
@@ -350,7 +344,6 @@
 ---
 
 ## 7. Java Runtime (Optional)
-> *Research: [04_java_runtime.md](research/phase_10_compatibility/04_java_runtime.md)*
 
 ### 7.1 GraalVM Native Images (Approach B — Recommended First)
 

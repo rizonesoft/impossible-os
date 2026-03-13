@@ -11,7 +11,6 @@
 ---
 
 ## 1. System Updates
-> *Research: [01_system_updates.md](research/phase_12_system_maintenance/01_system_updates.md)*
 
 ### 1.1 Update Check API
 
@@ -78,7 +77,6 @@
 ---
 
 ## 2. App Installer & Package Manager
-> *Research: [04_app_installer.md](research/phase_12_system_maintenance/04_app_installer.md)*
 
 ### 2.1 IPKG Package Format
 
@@ -158,7 +156,6 @@
 ---
 
 ## 3. System Restore
-> *Research: [03_system_restore.md](research/phase_12_system_maintenance/03_system_restore.md)*
 
 ### 3.1 Restore Point Creation
 
@@ -222,7 +219,6 @@
 ---
 
 ## 4. Recovery Environment
-> *Research: [02_recovery_environment.md](research/phase_12_system_maintenance/02_recovery_environment.md)*
 
 ### 4.1 Recovery Boot Menu
 

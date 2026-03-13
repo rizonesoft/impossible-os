@@ -11,7 +11,6 @@
 ---
 
 ## 1. Web Browser
-> *Research: [01_web_browser.md](research/phase_11_advanced_apps/01_web_browser.md)*
 
 ### 1.1 Phase 1: Text-Only Browser (~500 lines)
 
@@ -85,7 +84,6 @@
 ---
 
 ## 2. Email Client
-> *Research: [02_email_client.md](research/phase_11_advanced_apps/02_email_client.md)*
 
 ### 2.1 Email Protocols
 
@@ -126,7 +124,6 @@
 ---
 
 ## 3. Media Player
-> *Research: [03_media_player.md](research/phase_11_advanced_apps/03_media_player.md)*
 
 ### 3.1 Media Player App
 
@@ -182,7 +179,6 @@
 ---
 
 ## 4. SSH Client
-> *Research: [04_ssh_client.md](research/phase_11_advanced_apps/04_ssh_client.md)*
 
 ### 4.1 SSH Protocol Implementation
 
@@ -222,7 +218,6 @@
 ---
 
 ## 5. FTP Client
-> *Research: [05_ftp_client.md](research/phase_11_advanced_apps/05_ftp_client.md)*
 
 ### 5.1 FTP Protocol
 
@@ -261,7 +256,6 @@
 ---
 
 ## 6. PDF Viewer
-> *Research: [06_pdf_viewer.md](research/phase_11_advanced_apps/06_pdf_viewer.md)*
 
 ### 6.1 Minimal PDF Parser
 
@@ -305,7 +299,6 @@
 ---
 
 ## 7. Remote Desktop
-> *Research: [07_remote_desktop.md](research/phase_11_advanced_apps/07_remote_desktop.md)*
 
 ### 7.1 Remote Desktop Protocol (Custom or VNC)
 
@@ -346,7 +339,6 @@
 ---
 
 ## 8. Network Shares (SMB/NFS)
-> *Research: [08_network_shares.md](research/phase_11_advanced_apps/08_network_shares.md)*
 
 ### 8.1 Network File Sharing Protocol
 
@@ -378,7 +370,6 @@
 ---
 
 ## 9. VPN Client
-> *Research: [09_vpn_client.md](research/phase_11_advanced_apps/09_vpn_client.md)*
 
 ### 9.1 WireGuard VPN
 

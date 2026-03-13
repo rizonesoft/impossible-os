@@ -10,7 +10,6 @@
 ---
 
 ## 1. Threading & Synchronization
-> *Research: [01_threading_ipc.md](research/phase_01_kernel_core/01_threading_ipc.md)*
 
 ### 1.1 Kernel Threads
 
@@ -53,7 +52,6 @@
 ---
 
 ## 2. Inter-Process Communication (IPC)
-> *Research: [01_threading_ipc.md](research/phase_01_kernel_core/01_threading_ipc.md)*
 
 ### 2.1 Pipes
 
@@ -99,7 +97,6 @@
 ---
 
 ## 3. Virtual Memory Enhancements
-> *Research: [02_virtual_memory_swap.md](research/phase_01_kernel_core/02_virtual_memory_swap.md)*
 
 ### 3.1 Swap / Page File
 
@@ -129,7 +126,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `mmap`, `munmap`, `msync` exist, MAP_PRIVATE and MAP_SHARED work, `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls are registered. Verify the eager-load implementation reads file contents into mapped pages correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to memory mapping. Create or update documentation in `docs/` covering mmap semantics, MAP_PRIVATE/MAP_SHARED, and COW fault handling.
 
-> *Research: [08_mmap_files.md](research/phase_01_kernel_core/08_mmap_files.md)*
 
 - [x] Implement `mmap(addr, length, prot, flags, fd, offset)` — map file into address space
 - [x] Implement `munmap(addr, length)` — unmap region
@@ -143,7 +139,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 4. Error Handling & Kernel Panic
-> *Research: [03_error_handling_panic.md](research/phase_01_kernel_core/03_error_handling_panic.md)*
 
 ### 4.1 Styled Panic Screen
 
@@ -173,7 +168,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 6. System Logging Enhancements
-> *Research: [06_system_logs.md](research/phase_01_kernel_core/06_system_logs.md)*
 
 ### 6.1 Unified Logging System
 
@@ -195,7 +189,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 7. Environment Variables
-> *Research: [09_environment_variables.md](research/phase_01_kernel_core/09_environment_variables.md)*
 
 ### 7.1 System & User Environment
 
@@ -220,7 +213,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 8. Power Management Enhancements
-> *Research: [11_power_management.md](research/phase_01_kernel_core/11_power_management.md)*
 
 ### 8.1 Clean Shutdown Sequence
 
@@ -249,7 +241,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 9. Dynamic Linking
-> *Research: [07_dynamic_linking.md](research/phase_01_kernel_core/07_dynamic_linking.md)*
 
 ### 9.1 ELF Shared Libraries
 
@@ -268,7 +259,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 10. Kernel Modules
-> *Research: [05_kernel_modules.md](research/phase_01_kernel_core/05_kernel_modules.md)*
 
 ### 10.1 Loadable Kernel Modules (.kmod)
 
@@ -286,7 +276,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ---
 
 ## 11. General Utilities & Libraries
-> *Research: [10_general_utilities.md](research/phase_01_kernel_core/10_general_utilities.md)*
 
 ### 11.1 TrueType Font Rendering
 

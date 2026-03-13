@@ -11,7 +11,6 @@
 ---
 
 ## 1. User Accounts & Authentication
-> *Research: [01_user_accounts_login.md](research/phase_09_security/01_user_accounts_login.md)*
 
 ### 1.1 User Account System
 
@@ -78,7 +77,6 @@
 ---
 
 ## 2. Login Screen
-> *Research: [01_user_accounts_login.md](research/phase_09_security/01_user_accounts_login.md)*
 
 ### 2.1 Login Screen UI
 
@@ -124,7 +122,6 @@
 ---
 
 ## 3. File Permissions
-> *Research: [02_security_permissions.md](research/phase_09_security/02_security_permissions.md)*
 
 ### 3.1 Permission Model
 
@@ -185,7 +182,6 @@
 ---
 
 ## 4. Privilege Elevation (UAC-like)
-> *Research: [02_security_permissions.md](research/phase_09_security/02_security_permissions.md)*
 
 ### 4.1 Elevation Prompt
 
@@ -218,7 +214,6 @@
 ---
 
 ## 5. Disk Encryption
-> *Research: [03_disk_encryption.md](research/phase_09_security/03_disk_encryption.md)*
 
 ### 5.1 Cryptographic Primitives
 

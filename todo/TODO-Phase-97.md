@@ -12,7 +12,6 @@
 ---
 
 ## 1. Accessibility
-> *Research: [01_accessibility.md](research/phase_13_longterm/01_accessibility.md)*
 
 ### 1.1 High Contrast Mode
 
@@ -114,7 +113,6 @@
 ---
 
 ## 2. Developer Tools
-> *Research: [02_developer_tools.md](research/phase_13_longterm/02_developer_tools.md)*
 
 ### 2.1 Debug Console (F12)
 
@@ -179,7 +177,6 @@
 ---
 
 ## 3. Bluetooth
-> *Research: [03_bluetooth.md](research/phase_13_longterm/03_bluetooth.md)*
 
 ### 3.1 Bluetooth Stack
 
@@ -208,7 +205,6 @@
 ---
 
 ## 4. Touch & Gesture Support
-> *Research: [04_touch_gestures.md](research/phase_13_longterm/04_touch_gestures.md)*
 
 ### 4.1 Touch Input Driver
 
@@ -246,7 +242,6 @@
 ---
 
 ## 5. Printer Support
-> *Research: [05_printer_support.md](research/phase_13_longterm/05_printer_support.md)*
 
 ### 5.1 PDF Export (Print-to-PDF)
 
@@ -281,7 +276,6 @@
 ---
 
 ## 6. Gamepad / Joystick Support
-> *Research: [06_gamepad_joystick.md](research/phase_13_longterm/06_gamepad_joystick.md)*
 
 ### 6.1 Gamepad Driver
 
@@ -315,7 +309,6 @@
 ---
 
 ## 7. Text-to-Speech
-> *Research: [07_text_to_speech.md](research/phase_13_longterm/07_text_to_speech.md)*
 
 ### 7.1 TTS Engine
 
@@ -355,7 +348,6 @@
 ---
 
 ## 8. Multi-User Sessions
-> *Research: [08_multi_user_sessions.md](research/phase_13_longterm/08_multi_user_sessions.md)*
 
 ### 8.1 Session Management
 
@@ -390,7 +382,6 @@
 ---
 
 ## 9. Telemetry & Diagnostics
-> *Research: [09_telemetry.md](research/phase_13_longterm/09_telemetry.md)*
 
 ### 9.1 Telemetry Collection
 
@@ -424,7 +415,6 @@
 ---
 
 ## 10. Parental Controls
-> *Research: [10_parental_controls.md](research/phase_13_longterm/10_parental_controls.md)*
 
 ### 10.1 Screen Time Limits
 

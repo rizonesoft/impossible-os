@@ -10,7 +10,6 @@
 ---
 
 ## 1. 2D Compositing Library
-> *Research: [01_2d_compositor.md](research/phase_02_ui_framework/01_2d_compositor.md)*
 
 ### 1.1 Core Surface & Primitives
 
@@ -95,7 +94,6 @@
 ---
 
 ## 2. TrueType Font System
-> *Research: [02_font_system.md](research/phase_02_ui_framework/02_font_system.md)*
 
 ### 2.1 stb_truetype Integration
 
@@ -154,7 +152,6 @@
 ---
 
 ## 3. Runtime Image Decoding
-> *Research: [04_image_formats.md](research/phase_02_ui_framework/04_image_formats.md), [05_runtime_image_decoding.md](research/phase_02_ui_framework/05_runtime_image_decoding.md)*
 
 ### 3.1 Kernel-Side stb_image
 
@@ -209,7 +206,6 @@
 ---
 
 ## 4. System Icon Store
-> *Research: [06_icon_store.md](research/phase_02_ui_framework/06_icon_store.md)*
 
 ### 4.1 Icon Store Basics
 
@@ -308,7 +304,6 @@
 ---
 
 ## 5. Cursor Pack
-> *Research: [07_cursor_pack.md](research/phase_02_ui_framework/07_cursor_pack.md)*
 
 ### 5.1 Cursor Manager
 

@@ -11,7 +11,6 @@
 ---
 
 ## 1. Audio System — Sound Card Driver
-> *Research: [01_audio_system.md](research/phase_08_hardware/01_audio_system.md)*
 
 ### 1.1 AC97 Sound Card Driver
 
@@ -89,7 +88,6 @@
 ---
 
 ## 2. Audio Codec Libraries
-> *Research: [02_audio_libraries.md](research/phase_08_hardware/02_audio_libraries.md)*
 
 ### 2.1 WAV Decoder
 
@@ -163,7 +161,6 @@
 ---
 
 ## 3. USB Support
-> *Research: [03_usb_support.md](research/phase_08_hardware/03_usb_support.md)*
 
 ### 3.1 USB Core
 

@@ -11,7 +11,6 @@
 ---
 
 ## 1. UI Widget Library (Shared)
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Shared UI Widget Library*
 
 ### 1.1 Core Widgets
 
@@ -78,7 +77,6 @@
 ---
 
 ## 2. File Manager
-> *Research: [01_file_manager.md](research/phase_05_core_apps/01_file_manager.md)*
 
 ### 2.1 File Manager Core
 
@@ -144,7 +142,6 @@
 ---
 
 ## 3. Terminal Emulator
-> *Research: [02_terminal.md](research/phase_05_core_apps/02_terminal.md)*
 
 ### 3.1 Terminal Core
 
@@ -232,7 +229,6 @@
 ---
 
 ## 4. Settings Panel
-> *Research: [03_settings_panel.md](research/phase_05_core_apps/03_settings_panel.md)*
 
 ### 4.1 SPL Framework
 
@@ -301,7 +297,6 @@
 ---
 
 ## 5. Notepad
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Notepad*
 
 ### 5.1 Text Buffer (Gap Buffer)
 
@@ -365,7 +360,6 @@
 ---
 
 ## 6. Calculator
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Calculator*
 
 ### 6.1 Calculator Core
 
@@ -410,7 +404,6 @@
 ---
 
 ## 7. Paint
-> *Research: [07_builtin_apps.md](research/phase_05_core_apps/07_builtin_apps.md) § Paint*
 
 ### 7.1 Canvas & Viewport
 
@@ -471,7 +464,6 @@
 ---
 
 ## 8. Task Manager
-> *Research: [04_task_manager.md](research/phase_05_core_apps/04_task_manager.md)*
 
 ### 8.1 Task Manager App
 
@@ -494,7 +486,6 @@
 ---
 
 ## 9. Device Manager
-> *Research: [05_device_manager.md](research/phase_05_core_apps/05_device_manager.md)*
 
 ### 9.1 Device Manager App
 
@@ -517,7 +508,6 @@
 ---
 
 ## 10. Shell Commands (Expanded)
-> *Research: [06_shell_commands.md](research/phase_05_core_apps/06_shell_commands.md)*
 
 ### 10.1 File Operation Commands
 
@@ -559,7 +549,6 @@
 ---
 
 ## 11. Image Viewer
-> *Research: [08_image_viewer.md](research/phase_05_core_apps/08_image_viewer.md)*
 
 ### 11.1 Image Viewer App
 
@@ -581,7 +570,6 @@
 ---
 
 ## 12. Screenshot Tool
-> *Research: [09_screenshot_tool.md](research/phase_05_core_apps/09_screenshot_tool.md)*
 
 ### 12.1 Screenshot Capture
 
@@ -615,7 +603,6 @@
 ---
 
 ## 13. Archive Manager
-> *Research: [10_archive_manager.md](research/phase_05_core_apps/10_archive_manager.md)*
 
 ### 13.1 Archive Manager App
 
@@ -637,7 +624,6 @@
 ---
 
 ## 14. Calendar App
-> *Research: [11_calendar_app.md](research/phase_05_core_apps/11_calendar_app.md)*
 
 ### 14.1 Calendar View
 
@@ -657,7 +643,6 @@
 ---
 
 ## 15. System Information
-> *Research: [12_system_information.md](research/phase_05_core_apps/12_system_information.md)*
 
 ### 15.1 System Info App
 
@@ -681,7 +666,6 @@
 ---
 
 ## 16. On-Screen Keyboard
-> *Research: [13_onscreen_keyboard.md](research/phase_05_core_apps/13_onscreen_keyboard.md)*
 
 ### 16.1 Virtual Keyboard
 
@@ -706,7 +690,6 @@
 
 **Prompt:** The Font Manager lists all .ttf files installed in `C:\Impossible\Fonts\` using the font manager API from Phase 02 §2. For each font, render a preview line ("The quick brown fox...") at multiple sizes (12, 16, 24, 36px). An "Install" button copies a .ttf file to the fonts directory and registers it in Registry. A "Remove" button deletes the font file (but prevents removing system-required fonts like Selawik and Cascadia Code). A "Set Default" button updates `HKCU\Software\Impossible\Theme\Font` in Registry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Font Manager"`.
 
-> *Research: [14_font_manager.md](research/phase_05_core_apps/14_font_manager.md)*
 
 - [ ] Create `src/apps/fontmgr/fontmgr.c`
 - [ ] List installed `.ttf` files from `C:\Impossible\Fonts\`
@@ -721,7 +704,6 @@
 
 **Prompt:** The system-wide Color Picker activates via Win+Shift+C. The cursor changes to a crosshair/eyedropper icon (from the cursor pack, Phase 02 §5). Draw a magnified circle around the cursor showing individual pixels. On click, read the pixel color from the compositor's back buffer at the cursor position. Show a popup with the color values in RGB, HSL, and HEX (#FF5733) formats. Auto-copy the hex value to the clipboard. Maintain a history of the last 10 picked colors in Registry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Color Picker"`.
 
-> *Research: [15_color_picker.md](research/phase_05_core_apps/15_color_picker.md)*
 
 - [ ] Create `src/apps/colorpicker/colorpicker.c`
 - [ ] Activate with Win+Shift+C
@@ -737,7 +719,6 @@
 
 **Prompt:** Sticky Notes are always-on-top floating windows with editable text on colored backgrounds. Each note is a small window with a simple textarea widget. A "+" button creates a new note. Color options: yellow, pink, blue, green, purple (each is a background color preset). Auto-save to Registry: `HKU\{name}\Software\Impossible\StickyNotes\{id}\Text`, `Color`, `X`, `Y`, `W`, `H`. Load all notes on app startup (which runs at boot via autostart from Phase 03 §11.4). Delete: click X on the note title bar, confirm with a dialog. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Sticky Notes"`.
 
-> *Research: [16_sticky_notes.md](research/phase_05_core_apps/16_sticky_notes.md)*
 
 - [ ] Create `src/apps/stickynotes/stickynotes.c`
 - [ ] Floating desktop notes (always-on-top windows)
