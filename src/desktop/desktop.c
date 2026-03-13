@@ -41,8 +41,8 @@ static uint8_t   start_icon_loaded;
 #define SM_TOTAL_W         (SM_LEFT_W + SM_RIGHT_W)
 #define SM_ITEM_H          38   /* item row height (taller)    */
 #define SM_SEARCH_H        42   /* search bar height           */
-#define SM_ICON_SZ         20   /* icon size for left items    */
-#define SM_RIGHT_ICON_SZ   24   /* icon size for right column  */
+#define SM_ICON_SZ         16   /* icon size for left items (IRES native) */
+#define SM_RIGHT_ICON_SZ   32   /* icon size for right column (IRES native) */
 #define SM_BTN_SZ          36   /* bottom icon button size     */
 #define SM_PAD             14   /* inner padding (more air)    */
 #define SM_RADIUS          10   /* rounded corner radius       */
@@ -639,9 +639,6 @@ void desktop_draw_start_menu(void)
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                 SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 3);
 
-    /* ---- Drop shadow (AFTER acrylic so it doesn't darken blur input) ---- */
-    gfx_drop_shadow(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
-                     12, SM_RADIUS, 0, 4, SM_SHADOW_COLOR);
 
     /* ---- Right column: darker overlay via alpha blend (NOT gfx_acrylic,
      *       which would add double noise on top of the main acrylic) ---- */
@@ -672,39 +669,48 @@ void desktop_draw_start_menu(void)
     }
 
     /* ---- Clip acrylic to rounded corners ----
-     * The acrylic + dark overlay filled a rectangular area.  Repaint
-     * wallpaper pixels into the 4 corner regions that fall outside
-     * the rounded rect so the background follows SM_RADIUS. */
+     * Repaint wallpaper pixels that fall outside the rounded rect
+     * so the background follows SM_RADIUS.  Uses float distance
+     * for smooth anti-aliased edges. */
     {
         int32_t r, c;
         int32_t cr = (int32_t)SM_RADIUS;
         for (r = 0; r < cr; r++) {
             for (c = 0; c < cr; c++) {
-                /* Distance from corner center to this pixel */
-                int32_t dx = cr - 1 - c;
-                int32_t dy = cr - 1 - r;
-                if (dx * dx + dy * dy > (cr - 1) * (cr - 1)) {
+                /* Signed distance from corner arc (negative = inside) */
+                float dx = (float)(cr - 1 - c);
+                float dy = (float)(cr - 1 - r);
+                float dist = dx * dx + dy * dy;
+                float edge = (float)((cr - 1) * (cr - 1));
+                if (dist > edge) {
                     /* Pixel is outside rounded corner — restore wallpaper */
-                    int32_t coords[4][2] = {
-                        { menu_x + c,                              menu_y + r },
-                        { menu_x + (int32_t)SM_TOTAL_W - 1 - c,    menu_y + r },
-                        { menu_x + c,                              menu_y + (int32_t)menu_h - 1 - r },
-                        { menu_x + (int32_t)SM_TOTAL_W - 1 - c,    menu_y + (int32_t)menu_h - 1 - r }
-                    };
-                    uint32_t ci;
-                    for (ci = 0; ci < 4; ci++) {
-                        int32_t px = coords[ci][0];
-                        int32_t py = coords[ci][1];
-                        if (px >= 0 && (uint32_t)px < scr.width &&
-                            py >= 0 && (uint32_t)py < scr.height) {
-                            uint32_t wp = 0xFF000000;
-                            if (wallpaper_loaded && wallpaper_img.pixels &&
-                                (uint32_t)px < wallpaper_img.width &&
-                                (uint32_t)py < wallpaper_img.height)
-                                wp = wallpaper_img.pixels[(uint32_t)py * wallpaper_img.width + (uint32_t)px];
-                            scr.pixels[(uint32_t)py * scr.stride + (uint32_t)px] = wp;
-                        }
-                    }
+                    int32_t px_tl = menu_x + c;
+                    int32_t py_tl = menu_y + r;
+                    int32_t px_tr = menu_x + (int32_t)SM_TOTAL_W - 1 - c;
+                    int32_t py_tr = menu_y + r;
+                    int32_t px_bl = menu_x + c;
+                    int32_t py_bl = menu_y + (int32_t)menu_h - 1 - r;
+                    int32_t px_br = menu_x + (int32_t)SM_TOTAL_W - 1 - c;
+                    int32_t py_br = menu_y + (int32_t)menu_h - 1 - r;
+
+                    /* Helper: restore wallpaper pixel */
+                    #define RESTORE_WP(PX, PY) do { \
+                        if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
+                            (PY) >= 0 && (uint32_t)(PY) < scr.height) { \
+                            uint32_t _wp = 0xFF000000; \
+                            if (wallpaper_loaded && wallpaper_img.pixels && \
+                                (uint32_t)(PX) < wallpaper_img.width && \
+                                (uint32_t)(PY) < wallpaper_img.height) \
+                                _wp = wallpaper_img.pixels[(uint32_t)(PY) * wallpaper_img.width + (uint32_t)(PX)]; \
+                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _wp; \
+                        } \
+                    } while (0)
+
+                    RESTORE_WP(px_tl, py_tl);
+                    RESTORE_WP(px_tr, py_tr);
+                    RESTORE_WP(px_bl, py_bl);
+                    RESTORE_WP(px_br, py_br);
+                    #undef RESTORE_WP
                 }
             }
         }
@@ -777,7 +783,7 @@ void desktop_draw_start_menu(void)
             }
 
             /* Label */
-            ttf_screen_text(menu_x + SM_PAD + 46, text_y,
+            ttf_screen_text(menu_x + SM_PAD + 38, text_y,
                             item->label, FONT_UI, 14, SM_TEXT_PRI);
         }
     }
@@ -811,7 +817,7 @@ void desktop_draw_start_menu(void)
             }
 
             /* Label */
-            ttf_screen_text(rx + SM_PAD + 30, text_y,
+            ttf_screen_text(rx + SM_PAD + 40, text_y,
                             item->label, FONT_UI, 14, SM_TEXT_PRI);
         }
 
