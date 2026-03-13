@@ -23,7 +23,7 @@
 
 ### 1.1 UEFI Boot Application
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `src/boot/uefi/bootx64.c` to confirm it implements a PE/COFF binary at `\EFI\BOOT\BOOTX64.EFI` that replaces GRUB. Confirm it uses the `ms_abi` calling convention, initializes the UEFI system table and boot services, disables the watchdog timer, and passes control to the kernel. Check that the Makefile builds `BOOTX64.EFI` as a PE binary and copies it to the EFI staging directory. Confirm the commit `"boot: custom UEFI bootloader replaces GRUB"` exists in git history. Run `bash scripts/build.sh clean` and verify the ISO boots in QEMU.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `src/boot/uefi/bootx64.c` to confirm it implements a PE/COFF binary at `\EFI\BOOT\BOOTX64.EFI` that replaces GRUB. Confirm it uses the `ms_abi` calling convention, initializes the UEFI system table and boot services, disables the watchdog timer, and passes control to the kernel. Check that the Makefile builds `BOOTX64.EFI` as a PE binary and copies it to the EFI staging directory. Confirm the commit `"boot: custom UEFI bootloader replaces GRUB"` exists in git history. Run `bash scripts/build.sh clean` and verify the ISO boots in QEMU. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the UEFI bootloader or GRUB. Create or update documentation in `docs/` covering the custom UEFI boot application architecture.
 
 - [x] Create `src/boot/uefi/bootx64.c` — UEFI boot application entry point (`efi_main`)
 - [x] Implement `ms_abi` calling convention for UEFI compatibility
@@ -35,7 +35,7 @@
 
 ### 1.2 GOP Framebuffer Initialization
 
-**Prompt:** This section is marked complete. Verify that `init_gop()` in `bootx64.c` locates the `EFI_GRAPHICS_OUTPUT_PROTOCOL`, sets the video mode to 1280×720×32bpp with `PixelBlueGreenRedReserved8BitPerColor` format, and stores the framebuffer address, width, height, and pitch in the boot info struct. Confirm `fill_screen_black()` clears the framebuffer immediately after GOP init for a clean transition.
+**Prompt:** This section is marked complete. Verify that `init_gop()` in `bootx64.c` locates the `EFI_GRAPHICS_OUTPUT_PROTOCOL`, sets the video mode to 1280×720×32bpp with `PixelBlueGreenRedReserved8BitPerColor` format, and stores the framebuffer address, width, height, and pitch in the boot info struct. Confirm `fill_screen_black()` clears the framebuffer immediately after GOP init for a clean transition. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to GOP or framebuffer initialization. Create or update documentation in `docs/` covering GOP mode selection and framebuffer setup.
 
 - [x] Implement `init_gop()` — locate `EFI_GRAPHICS_OUTPUT_PROTOCOL` via `LocateProtocol`
 - [x] Set video mode to 1280×720×32bpp (`PixelBlueGreenRedReserved8BitPerColor`)
@@ -45,7 +45,7 @@
 
 ### 1.3 Kernel ELF Loader
 
-**Prompt:** This section is marked complete. Verify that `load_kernel()` in `bootx64.c` reads `\boot\kernel.exe` from the EFI partition using `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses the ELF64 header, loads all `PT_LOAD` program headers into memory at their specified physical addresses, and returns the ELF entry point address. Confirm it handles both LOAD segments (code + data) and zeroes BSS.
+**Prompt:** This section is marked complete. Verify that `load_kernel()` in `bootx64.c` reads `\boot\kernel.exe` from the EFI partition using `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses the ELF64 header, loads all `PT_LOAD` program headers into memory at their specified physical addresses, and returns the ELF entry point address. Confirm it handles both LOAD segments (code + data) and zeroes BSS. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to kernel loading. Create or update documentation in `docs/` covering the ELF64 kernel loading process.
 
 - [x] Open `\boot\kernel.exe` via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`
 - [x] Parse ELF64 header (verify magic, class, machine `EM_X86_64`)
@@ -56,7 +56,7 @@
 
 ### 1.4 ACPI RSDP Discovery
 
-**Prompt:** This section is marked complete. Verify that `find_acpi_rsdp()` in `bootx64.c` searches the UEFI configuration table for the ACPI 2.0 GUID (`EFI_ACPI_20_TABLE_GUID`) and falls back to ACPI 1.0 (`EFI_ACPI_TABLE_GUID`). Confirm the RSDP address and ACPI version are stored in boot info for kernel ACPI parsing.
+**Prompt:** This section is marked complete. Verify that `find_acpi_rsdp()` in `bootx64.c` searches the UEFI configuration table for the ACPI 2.0 GUID (`EFI_ACPI_20_TABLE_GUID`) and falls back to ACPI 1.0 (`EFI_ACPI_TABLE_GUID`). Confirm the RSDP address and ACPI version are stored in boot info for kernel ACPI parsing. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to ACPI discovery. Create or update documentation in `docs/` covering ACPI RSDP discovery and boot info handoff.
 
 - [x] Search UEFI config tables for `ACPI_20_TABLE_GUID` (prefer v2.0)
 - [x] Fall back to `ACPI_TABLE_GUID` (v1.0)
@@ -65,7 +65,7 @@
 
 ### 1.5 Memory Map & Page Tables
 
-**Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key).
+**Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to memory mapping or page tables. Create or update documentation in `docs/` covering the UEFI memory map, page table setup, and ExitBootServices flow.
 
 - [x] Implement `get_memory_map()` — call UEFI `GetMemoryMap` with retry on buffer resize
 - [x] Implement `fill_memory_map()` — convert UEFI memory descriptors to boot info entries
@@ -81,7 +81,7 @@
 
 ### 2.1 Windows 11-Style Boot Splash
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup.
+**Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the boot splash. Create or update documentation in `docs/` covering the boot splash architecture and lifecycle.
 
 - [x] Create `src/kernel/boot_splash.c` and `include/kernel/boot_splash.h`
 - [x] Implement `boot_splash_init()` — compute layout, lock compositor, draw initial splash
@@ -97,7 +97,7 @@
 
 ### 2.2 Animated Dot Wave
 
-**Prompt:** This section is marked complete. Verify the dot animation in `boot_splash.c` uses PIT timer callbacks at ~14 fps. Confirm the wave-style animation with 6 dots, pulsing radius (min 5px → max 8px), staggered phases, and smooth sine-like easing. Verify `boot_splash_start_animation()` is called after `pit_init() + sti`, and `pit_unregister_callback()` is called on finish.
+**Prompt:** This section is marked complete. Verify the dot animation in `boot_splash.c` uses PIT timer callbacks at ~14 fps. Confirm the wave-style animation with 6 dots, pulsing radius (min 5px → max 8px), staggered phases, and smooth sine-like easing. Verify `boot_splash_start_animation()` is called after `pit_init() + sti`, and `pit_unregister_callback()` is called on finish. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the dot animation. Create or update documentation in `docs/` covering the PIT-driven animation system and wave parameters.
 
 - [x] Implement PIT-driven animation callback at ~14 fps
 - [x] Implement wave-style dot animation (6 dots, pulsing radius)
@@ -111,7 +111,7 @@
 
 ### 2.3 Boot Icon Embedding
 
-**Prompt:** This section is marked complete. Verify that `tools/convert_icon.py` reads a PNG from `resources/boot/` and generates `src/kernel/boot_splash_icon.h` containing raw BGRA pixel data as a C array. Confirm the Makefile has a `boot-icon` target with the correct dependency. Verify the current icon is `boot_96.png` (96×96).
+**Prompt:** This section is marked complete. Verify that `tools/convert_icon.py` reads a PNG from `resources/boot/` and generates `src/kernel/boot_splash_icon.h` containing raw BGRA pixel data as a C array. Confirm the Makefile has a `boot-icon` target with the correct dependency. Verify the current icon is `boot_96.png` (96×96). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot icon embedding. Create or update documentation in `docs/` covering the PNG-to-C-header icon pipeline and supported resolutions.
 
 - [x] Create `tools/convert_icon.py` — PNG to C header converter (BGRA pixel data)
 - [x] Implement minimal PNG decoder (IHDR, IDAT, deflate, unfilter)
@@ -123,7 +123,7 @@
 
 ### 2.4 Anti-Aliased TTF Font for Status Text
 
-**Prompt:** This section is marked complete. Verify that `tools/convert_boot_font.py` embeds Selawik Semibold (`selawksb.ttf`) as a C header with pre-rasterized glyphs. Confirm the boot splash uses `boot_font_init(16)` for 16px font, `boot_font_measure()` for text width, and `boot_font_render()` for anti-aliased rendering. Verify 1px letter spacing is applied.
+**Prompt:** This section is marked complete. Verify that `tools/convert_boot_font.py` embeds Selawik Semibold (`selawksb.ttf`) as a C header with pre-rasterized glyphs. Confirm the boot splash uses `boot_font_init(16)` for 16px font, `boot_font_measure()` for text width, and `boot_font_render()` for anti-aliased rendering. Verify 1px letter spacing is applied. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot fonts. Create or update documentation in `docs/` covering the TTF-to-C-header font pipeline, the boot font API, and anti-aliased rendering.
 
 - [x] Create `tools/convert_boot_font.py` — TTF to C header (pre-rasterized glyphs)
 - [x] Embed Selawik Semibold font at 16px size
@@ -136,7 +136,7 @@
 
 ### 2.5 Granular Boot Status Messages
 
-**Prompt:** This section is marked complete. Verify that `main.c` calls `boot_splash_status()` with descriptive messages throughout the boot sequence: "Setting up hardware...", "Detecting hardware...", "Detecting drives...", "Configuring network...", "Loading system configuration...", "Preparing desktop...", "Loading fonts...", "Loading resources...", "Almost ready...". Each message should be followed by `boot_splash_tick()`.
+**Prompt:** This section is marked complete. Verify that `main.c` calls `boot_splash_status()` with descriptive messages throughout the boot sequence: "Setting up hardware...", "Detecting hardware...", "Detecting drives...", "Configuring network...", "Loading system configuration...", "Preparing desktop...", "Loading fonts...", "Loading resources...", "Almost ready...". Each message should be followed by `boot_splash_tick()`. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot status messages. Create or update documentation in `docs/` covering the boot sequence stages and splash status message flow.
 
 - [x] "Setting up hardware..." — GDT, IDT, PIT, heap, PMM
 - [x] "Detecting hardware..." — PCI scan, NIC, input devices
@@ -155,7 +155,7 @@
 
 ### 3.1 Generate MOK Key Pair
 
-**Prompt:** Generate a Machine Owner Key (MOK) for signing our bootloader. Use `openssl` to create an RSA-2048 key pair with a 10-year validity. The public certificate (`MOK.cer`) will be embedded in our shim build. The private key (`MOK.key`) is used to sign `BOOTX64.EFI` at build time. Store keys in a `keys/` directory (gitignored). Add a `keys/README.md` explaining the key purpose and rotation procedure. After completing all items, mark every item as `[x]`, and commit as `"boot: MOK key generation infrastructure"`.
+**Prompt:** Generate a Machine Owner Key (MOK) for signing our bootloader. Use `openssl` to create an RSA-2048 key pair with a 10-year validity. The public certificate (`MOK.cer`) will be embedded in our shim build. The private key (`MOK.key`) is used to sign `BOOTX64.EFI` at build time. Store keys in a `keys/` directory (gitignored). Add a `keys/README.md` explaining the key purpose and rotation procedure. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: MOK key generation infrastructure"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or key management. Create or update documentation in `docs/` covering the MOK key generation process, key storage, and rotation procedure.
 
 - [ ] Create `keys/` directory (add to `.gitignore`)
 - [ ] Generate MOK key pair:
@@ -171,7 +171,7 @@
 
 ### 3.2 Sign Bootloader with MOK
 
-**Prompt:** Use `sbsign` (from `sbsigntool` package) to sign our compiled `BOOTX64.EFI` with the MOK private key. Add a `sign-efi` target to the Makefile that runs after the EFI bootloader is built. The signed binary replaces the unsigned one. Verify the signature with `sbverify`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: sign EFI bootloader with MOK"`.
+**Prompt:** Use `sbsign` (from `sbsigntool` package) to sign our compiled `BOOTX64.EFI` with the MOK private key. Add a `sign-efi` target to the Makefile that runs after the EFI bootloader is built. The signed binary replaces the unsigned one. Verify the signature with `sbverify`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: sign EFI bootloader with MOK"`. Update `README.md` if it contains stale or incorrect references to bootloader signing. Create or update documentation in `docs/` covering the EFI signing process and build integration.
 
 - [ ] Install `sbsigntool` (system package)
 - [ ] Add Makefile target `sign-efi`:
@@ -188,7 +188,7 @@
 
 ### 3.3 Build and Package Shim
 
-**Prompt:** Fork the [rhboot/shim](https://github.com/rhboot/shim) project. Embed our `MOK.cer` as the vendor certificate. Build `shimx64.efi` from source. Package the EFI system partition with the correct layout: `shimx64.efi` renamed to `BOOTX64.EFI` (firmware loads this first), our signed bootloader as `grubx64.efi` (shim loads this), and `mmx64.efi` (MokManager for first-boot key enrollment). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: shim packaging with vendor certificate"`.
+**Prompt:** Fork the [rhboot/shim](https://github.com/rhboot/shim) project. Embed our `MOK.cer` as the vendor certificate. Build `shimx64.efi` from source. Package the EFI system partition with the correct layout: `shimx64.efi` renamed to `BOOTX64.EFI` (firmware loads this first), our signed bootloader as `grubx64.efi` (shim loads this), and `mmx64.efi` (MokManager for first-boot key enrollment). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: shim packaging with vendor certificate"`. Update `README.md` if it contains stale or incorrect references to the shim or EFI partition layout. Create or update documentation in `docs/` covering the shim build process, EFI partition layout, and the chain-loading flow.
 
 - [ ] Fork `rhboot/shim` into public `impossible-os-shim` repo
 - [ ] Embed our `MOK.cer` as vendor certificate (in `Makefile`: `VENDOR_CERT_FILE`)
@@ -205,7 +205,7 @@
 
 ### 3.4 Submit Shim for Microsoft Signing
 
-**Prompt:** Submit our shim build to Microsoft for Secure Boot signing via the [rhboot/shim-review](https://github.com/rhboot/shim-review) process. This is free for open-source projects. The shim fork must be in a **public** GitHub repo. Microsoft reviews the shim (not our OS) and signs it with the Microsoft UEFI CA certificate. Once signed, our shim is trusted by all UEFI firmware worldwide — zero MOK enrollment needed for end users. After completing all items, mark every item as `[x]`, and commit as `"boot: Microsoft-signed shim submitted"`.
+**Prompt:** Submit our shim build to Microsoft for Secure Boot signing via the [rhboot/shim-review](https://github.com/rhboot/shim-review) process. This is free for open-source projects. The shim fork must be in a **public** GitHub repo. Microsoft reviews the shim (not our OS) and signs it with the Microsoft UEFI CA certificate. Once signed, our shim is trusted by all UEFI firmware worldwide — zero MOK enrollment needed for end users. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: Microsoft-signed shim submitted"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or the shim submission. Create or update documentation in `docs/` covering the Microsoft shim-review submission process, timeline, and requirements.
 
 **Requirements for shim-review submission:**
 - [ ] Public GitHub repo with our shim fork
@@ -235,7 +235,7 @@
 
 ### 3.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
 
-**Prompt:** While waiting for Microsoft to sign our shim, use Ubuntu's or Fedora's already-signed `shimx64.efi` as an interim solution. This binary is BSD-licensed and freely redistributable. The tradeoff: users will see a one-time MOK enrollment prompt on first boot (because the distro's shim has the distro's key baked in, not ours). This is the same approach used by Arch Linux. After completing all items, mark every item as `[x]`, and commit as `"boot: interim pre-signed shim with MOK enrollment"`.
+**Prompt:** While waiting for Microsoft to sign our shim, use Ubuntu's or Fedora's already-signed `shimx64.efi` as an interim solution. This binary is BSD-licensed and freely redistributable. The tradeoff: users will see a one-time MOK enrollment prompt on first boot (because the distro's shim has the distro's key baked in, not ours). This is the same approach used by Arch Linux. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: interim pre-signed shim with MOK enrollment"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or MOK enrollment. Create or update documentation in `docs/` covering the interim shim approach, MOK enrollment user flow, and install guide instructions.
 
 - [ ] Download Ubuntu's signed `shimx64.efi.signed` from the `shim-signed` package
 - [ ] Download Ubuntu's `mmx64.efi.signed` (MokManager)
@@ -262,7 +262,7 @@
 
 ### 4.1 GOP Mode Negotiation
 
-**Prompt:** Our bootloader currently hardcodes 1280×720. Real laptops have 1920×1080, 2560×1440, or 3840×2160 displays. Use UEFI's `EFI_GRAPHICS_OUTPUT_PROTOCOL` to enumerate all available modes and select the best one. Prefer the highest resolution that matches the native display. Pass the actual resolution and framebuffer info to the kernel via the boot info struct. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: auto-detect display resolution via GOP"`.
+**Prompt:** Our bootloader currently hardcodes 1280×720. Real laptops have 1920×1080, 2560×1440, or 3840×2160 displays. Use UEFI's `EFI_GRAPHICS_OUTPUT_PROTOCOL` to enumerate all available modes and select the best one. Prefer the highest resolution that matches the native display. Pass the actual resolution and framebuffer info to the kernel via the boot info struct. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: auto-detect display resolution via GOP"`. Update `README.md` if it contains stale or incorrect references to display resolution or hardcoded 720p. Create or update documentation in `docs/` covering GOP mode enumeration, resolution auto-detection, and display scaling.
 
 - [ ] Enumerate all GOP modes via `gop->QueryMode()`
 - [ ] Filter for 32bpp modes with `PixelBlueGreenRedReserved8BitPerColor` format
@@ -275,7 +275,7 @@
 
 ### 4.2 HiDPI / Retina Scaling
 
-**Prompt:** On a 4K 14" laptop, 5px dots and 16px text are microscopic. Calculate a DPI scaling factor based on resolution: 1× for ≤1080p, 2× for >1080p and ≤2160p, 3× for >2160p. Scale all boot splash elements (icon size, dot radius, dot spacing, font size, layout offsets) by this factor. Use the scaling factor in the boot params so the kernel desktop can also use it. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: HiDPI scaling for boot splash"`.
+**Prompt:** On a 4K 14" laptop, 5px dots and 16px text are microscopic. Calculate a DPI scaling factor based on resolution: 1× for ≤1080p, 2× for >1080p and ≤2160p, 3× for >2160p. Scale all boot splash elements (icon size, dot radius, dot spacing, font size, layout offsets) by this factor. Use the scaling factor in the boot params so the kernel desktop can also use it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: HiDPI scaling for boot splash"`. Update `README.md` if it contains stale or incorrect references to display scaling or DPI. Create or update documentation in `docs/` covering the HiDPI scaling system, scale factor calculation, and per-element scaling rules.
 
 - [ ] Calculate scale factor: `scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1`
 - [ ] Scale boot splash constants: `DOT_MIN_R`, `DOT_MAX_R`, `DOT_SPACING`, font size
@@ -290,7 +290,7 @@
 
 ### 5.1 Fade-In Transition
 
-**Prompt:** The Dell/HP UEFI firmware logo disappears abruptly when our bootloader takes over (black screen snap). Implement a smooth fade-in: start with a black screen and gradually increase brightness of the icon and dots over ~500ms (5 frames at 10fps). This creates a seamless transition from firmware to OS splash. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: fade-in transition for splash screen"`.
+**Prompt:** The Dell/HP UEFI firmware logo disappears abruptly when our bootloader takes over (black screen snap). Implement a smooth fade-in: start with a black screen and gradually increase brightness of the icon and dots over ~500ms (5 frames at 10fps). This creates a seamless transition from firmware to OS splash. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: fade-in transition for splash screen"`. Update `README.md` if it contains stale or incorrect references to boot transitions. Create or update documentation in `docs/` covering the fade-in transition implementation and timing.
 
 - [ ] Add `splash_fade_in()` function in `boot_splash.c`
 - [ ] Render icon + dots at 20% → 40% → 60% → 80% → 100% brightness
@@ -300,7 +300,7 @@
 
 ### 5.2 Boot Profiling via Serial Timestamps
 
-**Prompt:** Add high-resolution timestamps to each boot stage in the serial log. Use `pit_get_ticks()` to calculate milliseconds since boot for each `klog()` message during init. This helps identify which init stage is slowest (font loading? wallpaper decoding? DHCP?) and optimize boot time. Format: `[  1.234] Initializing AHCI...`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: serial log timestamps for boot profiling"`.
+**Prompt:** Add high-resolution timestamps to each boot stage in the serial log. Use `pit_get_ticks()` to calculate milliseconds since boot for each `klog()` message during init. This helps identify which init stage is slowest (font loading? wallpaper decoding? DHCP?) and optimize boot time. Format: `[  1.234] Initializing AHCI...`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: serial log timestamps for boot profiling"`. Update `README.md` if it contains stale or incorrect references to boot logging or profiling. Create or update documentation in `docs/` covering the boot profiling system, timestamp format, and how to interpret serial log timings.
 
 - [ ] Add `boot_timestamp()` helper: returns ms since kernel start
 - [ ] Prefix all `klog()` output with `[%6d.%03d]` timestamp
@@ -310,7 +310,7 @@
 
 ### 5.3 Error Recovery Screen
 
-**Prompt:** If the kernel panics during the boot splash phase, show a clean error screen instead of hanging or showing garbled output. Detect panics via the existing `panic()` handler — if `boot_splash_active()` is true, render a BSOD-style error screen using the embedded TTF font. Show the panic message, register dump, and a "Press any key to restart" prompt. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: error recovery screen during splash"`.
+**Prompt:** If the kernel panics during the boot splash phase, show a clean error screen instead of hanging or showing garbled output. Detect panics via the existing `panic()` handler — if `boot_splash_active()` is true, render a BSOD-style error screen using the embedded TTF font. Show the panic message, register dump, and a "Press any key to restart" prompt. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: error recovery screen during splash"`. Update `README.md` if it contains stale or incorrect references to error handling or panics. Create or update documentation in `docs/` covering the boot error recovery screen, panic detection during splash, and the user-facing error display.
 
 - [ ] In `panic()`, check if `boot_splash_active()` is true
 - [ ] If active: clear screen to dark blue, render error text with boot_font_render
@@ -320,7 +320,7 @@
 
 ### 5.4 Parallel Init (Boot Time Optimization)
 
-**Prompt:** Reduce boot time by overlapping slow I/O operations. While fonts are loading from disk, other non-dependent subsystems can initialize. Identify the dependency graph of init stages and parallelize independent branches. Candidate: start DHCP negotiation (which has network round-trip latency) concurrently with font loading. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: parallel initialization for faster boot"`.
+**Prompt:** Reduce boot time by overlapping slow I/O operations. While fonts are loading from disk, other non-dependent subsystems can initialize. Identify the dependency graph of init stages and parallelize independent branches. Candidate: start DHCP negotiation (which has network round-trip latency) concurrently with font loading. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: parallel initialization for faster boot"`. Update `README.md` if it contains stale or incorrect references to boot time or initialization order. Create or update documentation in `docs/` covering the parallel init system, dependency graph, and measured boot time improvements.
 
 - [ ] Profile current boot: identify the 3 slowest init stages
 - [ ] Build dependency graph: which stages can overlap?
@@ -333,7 +333,7 @@
 
 ### 5.5 Boot Menu (Recovery Mode)
 
-**Prompt:** Hold Shift or F8 during boot to enter a recovery menu. The boot menu uses the same visual style as the splash (black bg, Selawik font, centered layout) and offers: Normal Boot, Safe Mode (skip modules), Recovery Console (drop to shell), Reboot. Use UEFI `SimpleTextInputEx` protocol to detect keypress during the first 2 seconds after firmware handoff. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: recovery boot menu"`.
+**Prompt:** Hold Shift or F8 during boot to enter a recovery menu. The boot menu uses the same visual style as the splash (black bg, Selawik font, centered layout) and offers: Normal Boot, Safe Mode (skip modules), Recovery Console (drop to shell), Reboot. Use UEFI `SimpleTextInputEx` protocol to detect keypress during the first 2 seconds after firmware handoff. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: recovery boot menu"`. Update `README.md` if it contains stale or incorrect references to boot modes or recovery options. Create or update documentation in `docs/` covering the recovery boot menu, key detection, available boot modes, and the user-facing menu UI.
 
 - [ ] Detect Shift/F8 keypress in UEFI bootloader (before ExitBootServices)
 - [ ] If key held: set `boot_mode = RECOVERY` in boot params
