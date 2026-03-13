@@ -635,10 +635,41 @@ void desktop_draw_start_menu(void)
     gfx_surface_init(&scr, fb_get_backbuffer(),
                      fb_get_width(), fb_get_height(), fb_get_stride());
 
+    /* ---- Save corner regions from backbuffer BEFORE acrylic ----
+     * When a window is behind the start menu, the backbuffer contains
+     * composited window content — not raw wallpaper.  We must restore
+     * these pixels (not wallpaper) when clipping corners at the end. */
+    uint32_t corner_save[4][SM_RADIUS * SM_RADIUS];  /* TL, TR, BL, BR */
+    {
+        int32_t r, c;
+        for (r = 0; r < (int32_t)SM_RADIUS; r++) {
+            for (c = 0; c < (int32_t)SM_RADIUS; c++) {
+                int32_t tl_x = menu_x + c, tl_y = menu_y + r;
+                int32_t tr_x = menu_x + (int32_t)SM_TOTAL_W - 1 - c, tr_y = menu_y + r;
+                int32_t bl_x = menu_x + c, bl_y = menu_y + (int32_t)menu_h - 1 - r;
+                int32_t br_x = menu_x + (int32_t)SM_TOTAL_W - 1 - c;
+                int32_t br_y = menu_y + (int32_t)menu_h - 1 - r;
+                uint32_t idx = (uint32_t)(r * (int32_t)SM_RADIUS + c);
+
+                #define SAVE_PX(buf, PX, PY) do { \
+                    if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
+                        (PY) >= 0 && (uint32_t)(PY) < scr.height) \
+                        (buf) = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
+                    else (buf) = 0xFF000000; \
+                } while (0)
+
+                SAVE_PX(corner_save[0][idx], tl_x, tl_y);
+                SAVE_PX(corner_save[1][idx], tr_x, tr_y);
+                SAVE_PX(corner_save[2][idx], bl_x, bl_y);
+                SAVE_PX(corner_save[3][idx], br_x, br_y);
+                #undef SAVE_PX
+            }
+        }
+    }
+
     /* ---- Acrylic: blur + tint (same as taskbar) ---- */
     gfx_acrylic(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
                 SM_ACRYLIC_TINT, SM_ACRYLIC_OP, 3);
-
 
     /* ---- Right column: darker overlay via alpha blend (NOT gfx_acrylic,
      *       which would add double noise on top of the main acrylic) ---- */
@@ -811,9 +842,13 @@ void desktop_draw_start_menu(void)
         }
     }
 
+    /* ---- Rounded border (drawn before corner clip so it gets clipped) ---- */
+    gfx_draw_rounded_rect(&scr, menu_x, menu_y, SM_TOTAL_W, menu_h,
+                           SM_RADIUS, 1, SM_DIVIDER);
+
     /* ---- Clip ALL content to rounded corners (LAST step) ----
-     * 2×2 super-sampled AA: 4 sub-pixel samples per corner pixel.
-     * Runs after ALL drawing so no artifact can survive. */
+     * Uses saved backbuffer pixels (not wallpaper) so windows behind
+     * the start menu are correctly preserved at corners. */
     {
         int32_t r, c;
         int32_t cr = (int32_t)SM_RADIUS;
@@ -826,6 +861,7 @@ void desktop_draw_start_menu(void)
                 int32_t base_dy = (cr - 1 - r) * 2;
                 int inside = 0;
                 int sub;
+                uint32_t idx = (uint32_t)(r * cr + c);
                 for (sub = 0; sub < 4; sub++) {
                     int32_t sx = base_dx + (sub & 1);
                     int32_t sy = base_dy + (sub >> 1);
@@ -833,33 +869,29 @@ void desktop_draw_start_menu(void)
                 }
                 if (inside == 4) continue;
 
-                #define CORNER_AA(PX, PY) do { \
+                #define CORNER_AA(PX, PY, SAVED) do { \
                     if ((PX) >= 0 && (uint32_t)(PX) < scr.width && \
                         (PY) >= 0 && (uint32_t)(PY) < scr.height) { \
-                        uint32_t _wp = 0xFF000000; \
-                        if (wallpaper_loaded && wallpaper_img.pixels && \
-                            (uint32_t)(PX) < wallpaper_img.width && \
-                            (uint32_t)(PY) < wallpaper_img.height) \
-                            _wp = wallpaper_img.pixels[(uint32_t)(PY) * wallpaper_img.width + (uint32_t)(PX)]; \
+                        uint32_t _bg = (SAVED); \
                         if (inside == 0) { \
-                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _wp; \
+                            scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = _bg; \
                         } else { \
                             uint32_t _mp = scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)]; \
                             uint32_t _a = (uint32_t)inside * 64; \
                             uint32_t _ia = 256 - _a; \
-                            uint32_t _or = ((((_mp >> 16) & 0xFF) * _a + ((_wp >> 16) & 0xFF) * _ia) >> 8); \
-                            uint32_t _og = ((((_mp >> 8) & 0xFF) * _a + ((_wp >> 8) & 0xFF) * _ia) >> 8); \
-                            uint32_t _ob = (((_mp & 0xFF) * _a + (_wp & 0xFF) * _ia) >> 8); \
+                            uint32_t _or = ((((_mp >> 16) & 0xFF) * _a + ((_bg >> 16) & 0xFF) * _ia) >> 8); \
+                            uint32_t _og = ((((_mp >> 8) & 0xFF) * _a + ((_bg >> 8) & 0xFF) * _ia) >> 8); \
+                            uint32_t _ob = (((_mp & 0xFF) * _a + (_bg & 0xFF) * _ia) >> 8); \
                             scr.pixels[(uint32_t)(PY) * scr.stride + (uint32_t)(PX)] = \
                                 (0xFFu << 24) | (_or << 16) | (_og << 8) | _ob; \
                         } \
                     } \
                 } while (0)
 
-                CORNER_AA(menu_x + c, menu_y + r);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + r);
-                CORNER_AA(menu_x + c, menu_y + (int32_t)menu_h - 1 - r);
-                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + (int32_t)menu_h - 1 - r);
+                CORNER_AA(menu_x + c, menu_y + r, corner_save[0][idx]);
+                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + r, corner_save[1][idx]);
+                CORNER_AA(menu_x + c, menu_y + (int32_t)menu_h - 1 - r, corner_save[2][idx]);
+                CORNER_AA(menu_x + (int32_t)SM_TOTAL_W - 1 - c, menu_y + (int32_t)menu_h - 1 - r, corner_save[3][idx]);
                 #undef CORNER_AA
             }
         }
