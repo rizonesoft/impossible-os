@@ -1,4 +1,4 @@
-# Phase 02 — UI Framework
+# P0201 — UI Framework
 
 > **Goal:** Transform the basic framebuffer desktop into a modern, Windows 11-quality
 > graphical experience with compositing effects, TrueType fonts, image decoding,
@@ -62,16 +62,15 @@
 - [x] Create `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`
 - [x] Implement `gfx_blur_rect(surface, x, y, w, h, radius)` — 2-pass box blur (O(n) per pixel)
 - [x] Implement `gfx_acrylic(surface, x, y, w, h, tint, opacity, blur_radius)`:
-  - [x] Copy region to temp buffer
-  - [x] Apply box blur
-  - [x] Add noise texture (2–3% random variation)
-  - [x] Overlay tint color at opacity
+  - [x] In-place box blur on the region (no temp buffer copy needed)
+  - [x] Add noise texture (xorshift32 PRNG, ±8 per channel)
+  - [x] Overlay tint color at opacity (`out = blur × (1-opacity) + tint × opacity`)
 - [x] Implement `gfx_mica(surface, x, y, w, h, wallpaper, tint)`:
-  - [x] Sample wallpaper at position
-  - [x] Desaturate (80% grayscale blend)
-  - [x] Tint with theme color
-- [x] Implement `gfx_drop_shadow(surface, x, y, w, h, radius, offset_x, offset_y, color)` — multi-layer soft shadow
-- [x] Implement `gfx_reveal_highlight(surface, rect, mouse_x, mouse_y, glow_radius, highlight)` — radial glow following cursor
+  - [x] Sample wallpaper at position (dark fallback if out of bounds)
+  - [x] Desaturate (80% grayscale blend, luma = `77R + 150G + 29B >> 8`)
+  - [x] Tint (20% desaturated + 80% theme color)
+- [x] Implement `gfx_drop_shadow(surface, x, y, w, h, radius, offset_x, offset_y, color)` — temp surface + blur + alpha blit (red channel as alpha proxy)
+- [x] Implement `gfx_reveal_highlight(surface, rx, ry, rw, rh, mouse_x, mouse_y, glow_radius, highlight)` — radial glow with linear falloff, integer `isqrt()`
 - [x] Apply Mica to window title bars *(API ready; wiring in Phase 04)*
 - [x] Apply Acrylic to taskbar, start menu, context menus *(API ready; wiring in Phase 04)*
 - [x] Pre-render and cache shadow bitmaps per window size *(gfx_drop_shadow allocates temp surface; caching in Phase 04)*
