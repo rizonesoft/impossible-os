@@ -531,13 +531,28 @@
 
 ### 9.2 PE Resource Section Parser
 
-**Prompt:** Stretch: parse DataDirectory[2] Resource Table (3-level tree: type/name/language). Extract embedded icons for taskbar/title bar. Extract version info for file properties. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"kernel: PE resource parser"`.
+> **Promoted from Stretch** — required for extracting icons from third-party `.exe`
+> and `.dll` files (taskbar icons, title bar icons, File Manager icons). Also needed
+> by §9.5 (Shell Icon API) for `ExtractIconEx` and `LoadIcon`.
+
+**Prompt:** Parse DataDirectory[2] Resource Table — it's a 3-level tree: Level 1 = resource type (RT_ICON=3, RT_GROUP_ICON=14, RT_VERSION=16, RT_STRING=6), Level 2 = resource name/ID, Level 3 = language. Implement `pe_find_resource(pe_data, type, id)` that walks the tree and returns a pointer+size to the resource data. For RT_GROUP_ICON, parse the GRPICONDIR structure to find the best-matching size, then load the corresponding RT_ICON entry. For RT_VERSION, parse VS_VERSIONINFO → VS_FIXEDFILEINFO to extract FileVersion, ProductName, CompanyName. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE resource section parser"`. Create or update documentation in `docs/architecture/pe-loader.md`.
 
 
-- [ ] *(Stretch)* Parse DataDirectory[2] (Resource Table)
-- [ ] *(Stretch)* Extract embedded icons for taskbar/window title
-- [ ] *(Stretch)* Extract version info for file properties dialog
-- [ ] *(Stretch)* Extract string tables for localization
+- [ ] Implement `pe_find_resource(pe_data, resource_type, resource_id)` → pointer + size
+  - [ ] Walk 3-level resource directory tree (type → name → language)
+  - [ ] Handle both integer IDs and string names
+- [ ] RT_GROUP_ICON / RT_ICON extraction:
+  - [ ] Parse GRPICONDIR structure (count, entries with width/height/bpp/id)
+  - [ ] Find best-matching size from available entries
+  - [ ] Load corresponding RT_ICON data (BMP DIB or PNG)
+  - [ ] Return `icon_bitmap_t` compatible with icon store
+- [ ] RT_VERSION extraction:
+  - [ ] Parse VS_VERSIONINFO → VS_FIXEDFILEINFO
+  - [ ] Extract: FileVersion, ProductName, CompanyName, FileDescription
+  - [ ] Used by: File Manager properties dialog, taskbar tooltips
+- [ ] RT_STRING extraction (stretch):
+  - [ ] Parse string table blocks (16 strings per block)
+  - [ ] Used by: localization, app-defined text
 - [ ] Commit: `"kernel: PE resource section parser"`
 
 ### 9.3 Unimplemented Function Logger
@@ -565,7 +580,39 @@
 - [ ] *(Stretch)* Run static musl-linked Linux binaries
 - [ ] Commit: `"kernel: ELF dynamic linking"`
 
-### 9.5 Compatibility Test Suite
+### 9.5 Win32 Shell Icon API *(from P0201 §4.8)*
+
+> **Moved from P0201** — these Win32 API stubs depend on the PE loader (§1),
+> builtin DLL table (§2.2), IAT patching (§2.3), and PE resource parser (§9.2).
+> The icon index mapping table in P0201 §4.7 provides the data; this section
+> provides the API that Win32 apps call.
+
+**Prompt:** Implement Win32 Shell icon API functions as builtin stubs in `src/kernel/win32/shell32.c`. These are registered in the builtin DLL stub table (§2.2) under `"shell32.dll"`. `ExtractIconEx` uses the PE resource parser (§9.2) for third-party `.exe`/`.dll` files and `ico_load()` for `.ico` files — for system DLLs (shell32, imageres) it uses `win32_icon_lookup()` from P0201 §4.7 to resolve indices to `system_icon_t` and returns icons from IRES. `SHGetFileInfo` delegates to `icon_for_extension()` for file type icons. `SHGetStockIconInfo` uses the SHSTOCKICONID mapping from P0201 §4.7. `LoadIcon`/`LoadImage` extract from PE resource sections. All return `HICON` handles (opaque pointers to `icon_bitmap_t`). After completing all items, update `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: shell32.dll icon API stubs"`.
+
+
+- [ ] Define `HICON` type in `include/win32.h` (opaque handle to cached `icon_bitmap_t`)
+- [ ] Create `src/kernel/win32/shell32.c`
+- [ ] Implement `ExtractIconExA(path, index, phiconLarge, phiconSmall, nIcons)`:
+  - [ ] If path is system DLL (shell32, imageres) → `win32_icon_lookup()` → `icon_get()`
+  - [ ] If path ends in `.ico` → use `ico_load()` (P0201 §4.6)
+  - [ ] If path ends in `.dll`/`.exe` → PE resource parser (§9.2) for RT_GROUP_ICON at index
+  - [ ] Return large (32×32) and small (16×16) icon handles
+- [ ] Implement `SHGetFileInfoA(path, dwFileAttributes, psfi, cbFileInfo, uFlags)`:
+  - [ ] `SHGFI_ICON` flag → return icon for file type via `icon_for_extension()`
+  - [ ] `SHGFI_TYPENAME` flag → return type description (e.g., "Text Document")
+  - [ ] `SHGFI_DISPLAYNAME` flag → return filename
+  - [ ] For `.exe`/`.dll` → extract embedded icon from PE resources (§9.2)
+- [ ] Implement `SHGetStockIconInfo(siid, uFlags, psii)`:
+  - [ ] Use SHSTOCKICONID → `system_icon_t` mapping from P0201 §4.7
+  - [ ] Return HICON handle at requested size
+- [ ] Implement `LoadIconA(hInstance, lpIconName)` / `LoadImageA(hInst, name, IMAGE_ICON, cx, cy, flags)`:
+  - [ ] Extract icon from the PE module's resource section (§9.2)
+  - [ ] Support both integer resource IDs (`MAKEINTRESOURCE`) and string names
+- [ ] Implement `DestroyIcon(hIcon)` — release cached icon handle
+- [ ] Register all functions in `builtin_shell32[]` export table (§2.2)
+- [ ] Commit: `"win32: shell32.dll icon API stubs"`
+
+### 9.6 Compatibility Test Suite
 
 **Prompt:** Create `tests/compat/` with pre-compiled binaries: MinGW PE Hello World, MinGW file I/O, MinGW memory allocation, Mach-O Hello World, ELF regression tests. Run all and verify expected output. After all items, mark `[x]`, run `make clean && make all && make run`, commit `"tests: tri-format compatibility test suite"`.
 
@@ -600,10 +647,11 @@
 | 🟡 P2 | 1.4 Base Relocation | Load PE at non-preferred addresses |
 | 🟡 P2 | 6.3 Layout Switching | Win+Space, system tray indicator |
 | 🟢 P3 | 5.1 Calling Convention | Proper x64 register mapping |
-| 🟢 P3 | 9.5 Compatibility Tests | Tri-format regression testing |
+| 🟢 P3 | 9.6 Compatibility Tests | Tri-format regression testing |
 | 🟢 P3 | 2.4 External DLL Loading | Load real PE DLLs |
 | 🟢 P3 | 6.5 Localization | Multi-language UI |
 | 🔵 P4 | 9.1 Win32 GUI Stubs | Windows GUI programs (long-term) |
-| 🔵 P4 | 9.2 PE Resource Parser | Icons, version info |
+| 🔵 P4 | 9.2 PE Resource Parser | Icons from third-party .exe/.dll (promoted from Stretch) |
+| 🔵 P4 | 9.5 Shell Icon API | ExtractIcon, SHGetFileInfo, LoadIcon (from P0201) |
 | 🔵 P4 | 9.4 ELF Dynamic Linking | .so shared libraries |
 | 🔵 P4 | 7. Java Runtime | JVM support (educational/future) |

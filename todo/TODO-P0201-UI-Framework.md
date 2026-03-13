@@ -300,63 +300,40 @@
 - [x] Used by: File Manager (exe icons), desktop shortcuts, Start menu app list
 - [x] Commit: `"desktop: ICO file loader"`
 
-### 4.7 Win32 Icon DLL Resources (shell32.dll, imageres.dll)
+### 4.7 Win32 Icon Index Mapping Table
 
-> **Migration:** The current IRES format works for Impossible OS's own icons, but
-> Windows apps extract icons via `LoadIcon(shell32.dll, index)`,
-> `ExtractIcon(imageres.dll, index)`, etc. To support native Windows apps we need
-> real PE DLLs with embedded icon resources at the correct standard indices. Icons
-> we don't have yet get a transparent blank placeholder so index lookups never fail.
+> **Why:** Windows apps request icons by DLL name + index (e.g., shell32.dll index 3
+> = folder). The icon *data* stays in IRES (already working). This section just
+> builds the **mapping table** so that when Phase 10's Win32 builtin stubs call
+> `ExtractIcon("shell32.dll", 3)`, the stub can look up `ICON_FOLDER_CLOSED` in
+> our icon store. No real PE DLLs are built — Phase 10 §2.2 uses a builtin stub
+> table that intercepts `LoadLibrary("shell32.dll")` and provides kernel-side
+> function pointers directly.
 
-**Prompt:** Create minimal PE DLL stubs for `shell32.dll` and `imageres.dll` that contain RT_GROUP_ICON / RT_ICON resources at the standard Windows icon indices. Build a host tool `tools/iconres.c` that takes the existing IRES color PNGs + Fluent font-rendered monochrome icons and packages them into PE resource sections. Map our existing icons to Windows standard indices (e.g., shell32 index 3 = folder closed, index 4 = folder open, index 1 = file default, index 2 = exe default, index 32 = recycle bin empty, index 31 = recycle bin full). For indices we don't have icons for, embed a 1×1 transparent PNG as a blank placeholder. Install the DLLs to `C:\Impossible\System\` at build time. The kernel's PE loader must be able to parse RT_GROUP_ICON resources from these DLLs (§4.8 provides the API). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 icon resource DLLs (shell32, imageres)"`.
+**Prompt:** Create `include/win32_icons.h` with a mapping table that translates Windows standard icon indices (shell32.dll, imageres.dll) to Impossible OS `system_icon_t` enum values. Research the top ~50 most-used icon indices from each DLL and document them. For indices we don't have icons for, map to `ICON_FILE_DEFAULT` as a fallback. Provide `win32_icon_lookup(dll_name, index)` → returns `system_icon_t`. Also define the `SHSTOCKICONID` → `system_icon_t` mapping for `SHGetStockIconInfo`. This is a pure data table with no PE dependency — the actual Win32 API stubs that call this table are in [Phase 10 §9.5](TODO-Phase-94.md). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 icon index mapping table"`.
 
 
 - [ ] Research Windows shell32.dll standard icon indices (document top ~50 used by apps)
 - [ ] Research Windows imageres.dll standard icon indices (document top ~50 used by apps)
-- [ ] Create `tools/iconres.c` — host tool that builds PE DLLs with RT_GROUP_ICON / RT_ICON resources
-  - [ ] Input: existing IRES PNGs from `resources/icons/color/` + rendered Fluent glyphs
-  - [ ] Output: minimal PE DLL with `.rsrc` section containing icon resources
-  - [ ] Generate blank 1×1 transparent placeholder for unmapped indices
-- [ ] Define icon index mapping table: `system_icon_t` ↔ shell32.dll index ↔ imageres.dll index
-  - [ ] shell32.dll: index 1 = file_default, 2 = exe_default, 3 = folder_closed, 4 = folder_open, 32 = recycle_bin_empty, 31 = recycle_bin_full, ...
-  - [ ] imageres.dll: index 2 = file_default, 3 = folder_closed, 15 = computer, ...
-- [ ] Build rule in Makefile: `build/sysroot/Impossible/System/shell32.dll` from `tools/iconres`
-- [ ] Build rule in Makefile: `build/sysroot/Impossible/System/imageres.dll` from `tools/iconres`
-- [ ] Implement PE resource parser in kernel: `pe_find_resource(pe_data, RT_GROUP_ICON, id)` → returns icon data
-- [ ] Wire `icon_store.c` to fall back to DLL resource lookup when IRES doesn't have the requested index
-- [ ] Verify: `icon_get(ICON_FOLDER_CLOSED, 32)` returns the same bitmap whether sourced from IRES or shell32.dll
-- [ ] Commit: `"desktop: Win32 icon resource DLLs (shell32, imageres)"`
-
-### 4.8 Win32 Shell Icon API
-
-**Prompt:** Windows apps use Shell32 API functions to retrieve system icons. Implement the following as kernel-side stubs (later exposed via the Win32 compatibility layer in Phase 10): `ExtractIconEx(path, index, &large, &small, count)` — loads icon from a PE DLL's RT_ICON resources or from an .ico file at the given path. `SHGetFileInfo(path, attrs, &info, size, flags)` — returns the icon for a file type (delegates to `icon_for_extension()` for file type icons, or extracts the embedded icon from .exe/.dll PE files). `SHGetStockIconInfo(id, flags, &info)` — returns stock system icons by SHSTOCKICONID (maps to our `system_icon_t` enum). `LoadIcon(hInstance, id)` / `LoadImage(hInstance, id, IMAGE_ICON, cx, cy, flags)` — loads an icon resource from a PE module. These functions return `HICON` handles (opaque pointers to `icon_bitmap_t`). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 shell icon API stubs"`.
-
-
-- [ ] Define `HICON` type (opaque handle to cached `icon_bitmap_t`)
-- [ ] Implement `ExtractIconEx(path, index, phiconLarge, phiconSmall, nIcons)`:
-  - [ ] If path ends in `.ico` → use `ico_load()` from §4.6
-  - [ ] If path ends in `.dll`/`.exe` → parse PE resource section for RT_GROUP_ICON at index
-  - [ ] Return large (32×32) and small (16×16) icon handles
-- [ ] Implement `SHGetFileInfo(path, dwFileAttributes, psfi, cbFileInfo, uFlags)`:
-  - [ ] `SHGFI_ICON` flag → return icon for file type via `icon_for_extension()`
-  - [ ] `SHGFI_TYPENAME` flag → return type description (e.g., "Text Document")
-  - [ ] `SHGFI_DISPLAYNAME` flag → return filename
-  - [ ] For `.exe`/`.dll` → extract embedded icon from PE resources
-- [ ] Implement `SHGetStockIconInfo(siid, uFlags, psii)`:
-  - [ ] Map `SHSTOCKICONID` values to `system_icon_t` enum
+- [ ] Create `include/win32_icons.h`:
+  - [ ] Define `struct win32_icon_map` (dll_id, win32_index, system_icon_t)
+  - [ ] shell32.dll mappings: index 1 → ICON_FILE_DEFAULT, 2 → ICON_EXE_DEFAULT, 3 → ICON_FOLDER_CLOSED, 4 → ICON_FOLDER_OPEN, 31 → ICON_RECYCLE_BIN_FULL, 32 → ICON_RECYCLE_BIN_EMPTY, ...
+  - [ ] imageres.dll mappings: index 2 → ICON_FILE_DEFAULT, 3 → ICON_FOLDER_CLOSED, 15 → ICON_COMPUTER, ...
+  - [ ] Unmapped indices → `ICON_FILE_DEFAULT` fallback
+- [ ] Implement `win32_icon_lookup(dll_id, index)` → returns `system_icon_t` enum value
+- [ ] Define `SHSTOCKICONID` → `system_icon_t` mapping:
   - [ ] SIID_DOCNOASSOC (0) → ICON_FILE_DEFAULT
   - [ ] SIID_FOLDER (3) → ICON_FOLDER_CLOSED
   - [ ] SIID_FOLDEROPEN (4) → ICON_FOLDER_OPEN
   - [ ] SIID_RECYCLER (31) → ICON_RECYCLE_BIN_EMPTY
   - [ ] SIID_RECYCLERFULL (32) → ICON_RECYCLE_BIN_FULL
   - [ ] SIID_DESKTOPPC (94) → ICON_COMPUTER
-  - [ ] Return HICON handle at requested size
-- [ ] Implement `LoadIcon(hInstance, lpIconName)` / `LoadImage(hInst, name, IMAGE_ICON, cx, cy, flags)`:
-  - [ ] Extract icon from the PE module's resource section
-  - [ ] Support both integer resource IDs and string names
-- [ ] Implement `DestroyIcon(hIcon)` — release cached icon handle
-- [ ] Register all functions in the Win32 stub export table (for `GetProcAddress` resolution)
-- [ ] Commit: `"desktop: Win32 shell icon API stubs"`
+- [ ] Wire into `icon_store.c`: `icon_get_win32(dll_id, index, size)` → `win32_icon_lookup()` → `icon_get()`
+- [ ] Commit: `"desktop: Win32 icon index mapping table"`
+
+> **Win32 Shell Icon API** (ExtractIconEx, SHGetFileInfo, SHGetStockIconInfo,
+> LoadIcon, LoadImage, DestroyIcon) → **moved to [Phase 10 §9.5](TODO-Phase-94.md)**
+> because these stubs depend on the PE loader, IAT patching, and builtin DLL table.
 
 ---
 
