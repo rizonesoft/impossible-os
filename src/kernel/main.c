@@ -123,6 +123,41 @@ extern void multiboot2_parse(uintptr_t mbi_addr);
 
 /* ---- Directory tree dump (serial-only) ---- */
 
+/* Format a uint64_t with comma separators into buf (e.g. 604696 → "604,696").
+ * Returns number of chars written. buf must be at least 26 bytes. */
+static uint32_t format_size_commas(uint64_t val, char *buf)
+{
+    char raw[20];
+    int rn = 0, bi = 0, digits, groups, rem;
+
+    if (val == 0) { buf[0] = '0'; buf[1] = '\0'; return 1; }
+
+    while (val > 0) { raw[rn++] = '0' + (char)(val % 10); val /= 10; }
+
+    digits = rn;
+    groups = (digits - 1) / 3;  /* number of commas to insert */
+    rem    = digits - groups * 3;  /* digits before first comma */
+    if (rem == 0) { rem = 3; groups--; }
+
+    /* Write digits with commas */
+    {
+        int ri = rn - 1;
+        int g;
+        for (g = 0; g < rem && ri >= 0; g++)
+            buf[bi++] = raw[ri--];
+        while (ri >= 0) {
+            buf[bi++] = ',';
+            buf[bi++] = raw[ri--];
+            if (ri >= 0) buf[bi++] = raw[ri--];
+            if (ri >= 0) buf[bi++] = raw[ri--];
+        }
+    }
+    buf[bi] = '\0';
+    return (uint32_t)bi;
+}
+
+#define TREE_PATH_COL  60  /* Column width for path before size/DIR */
+
 /* Recursively dump a directory tree to serial log for diagnostics.
  * parent_path: accumulated path so far (e.g. "C:\Impossible"),
  * node: directory vfs_node, depth: indent level.
@@ -133,15 +168,8 @@ static uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
     uint32_t idx = 0;
     uint32_t total = 0;
     struct vfs_dirent *de;
-    /* Indent buffer: 2 spaces per depth level, max 20 levels */
-    char indent[42];
-    uint32_t k;
 
     if (depth > 20) return 0;
-
-    for (k = 0; k < depth * 2 && k < 40; k++)
-        indent[k] = ' ';
-    indent[k] = '\0';
 
     while ((de = vfs_readdir(node, idx)) != 0) {
         /* Build full path: parent_path + "\" + name */
@@ -152,18 +180,36 @@ static uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
         if (pi > 0 && full_path[pi - 1] != '\\')
             full_path[pi++] = '\\';
         while (de->name[ni] && pi < 254) full_path[pi++] = de->name[ni++];
-        full_path[pi] = '\0';
 
         if (de->type & VFS_DIRECTORY) {
-            klog(LOG_DEBUG, "tree", "%s%s\\", indent, full_path);
+            /* Append trailing backslash for directories */
+            if (pi < 254) full_path[pi++] = '\\';
+            full_path[pi] = '\0';
+
+            /* Build aligned line: path padded to TREE_PATH_COL, then <DIR> */
+            {
+                char line[128];
+                uint32_t li = 0, p;
+                for (p = 0; full_path[p] && li < 120; p++)
+                    line[li++] = full_path[p];
+                while (li < TREE_PATH_COL && li < 120)
+                    line[li++] = ' ';
+                line[li++] = '<'; line[li++] = 'D'; line[li++] = 'I';
+                line[li++] = 'R'; line[li++] = '>';
+                line[li] = '\0';
+                klog(LOG_DEBUG, "tree", "%s", line);
+            }
 
             /* Recurse into subdirectory */
             {
+                full_path[pi - 1] = '\0';  /* remove trailing \ for recursion */
                 struct vfs_node *sub = vfs_finddir(node, de->name);
                 if (sub)
                     total += dump_dir_tree(full_path, sub, depth + 1);
             }
         } else {
+            full_path[pi] = '\0';
+
             /* Get file size via stat if available */
             struct vfs_stat st;
             uint64_t fsize = 0;
@@ -174,8 +220,34 @@ static uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
                         fsize = st.size;
                 }
             }
-            klog(LOG_DEBUG, "tree", "%s%s (%u B)", indent, full_path,
-                 fsize);
+
+            /* Build aligned line: path padded to TREE_PATH_COL, then size */
+            {
+                char line[128];
+                char size_buf[26];
+                uint32_t li = 0, p, sn, pad;
+
+                for (p = 0; full_path[p] && li < 120; p++)
+                    line[li++] = full_path[p];
+
+                sn = format_size_commas(fsize, size_buf);
+
+                /* Right-justify: pad to align size + " B" at column 72 */
+                {
+                    uint32_t target = TREE_PATH_COL + 12;
+                    uint32_t needed = sn + 2;  /* size + " B" */
+                    uint32_t fill = (target > li + needed) ?
+                                    target - li - needed : 1;
+                    for (pad = 0; pad < fill && li < 120; pad++)
+                        line[li++] = ' ';
+                }
+
+                for (p = 0; size_buf[p] && li < 124; p++)
+                    line[li++] = size_buf[p];
+                line[li++] = ' '; line[li++] = 'B';
+                line[li] = '\0';
+                klog(LOG_DEBUG, "tree", "%s", line);
+            }
         }
         total++;
         idx++;
