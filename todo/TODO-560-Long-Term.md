@@ -491,7 +491,7 @@
 
 ### 11.2 Power Management Profiles
 
-> **Moved to [TODO-P0004-Power-Management.md](TODO-P0004-Power-Management.md) §8** — Power profiles
+> **Moved to [TODO-100-Power-Management.md](TODO-100-Power-Management.md) §8** — Power profiles
 > (Balanced, Performance, Power Saver), display timeout, CPU throttling.
 
 ### 11.3 Scripting Engine (Macro/Automation)
@@ -538,3 +538,67 @@
 | 🔵 P4 | 5.2–5.3 Network/USB Printing | Complex hardware |
 | 🔵 P4 | 7.2–7.3 Screen Reader + espeak | Advanced TTS |
 | 🔵 P4 | 11.2–11.4 Power Profiles + Scripting + Help | Future polish |
+
+---
+
+## Moved from P1101 (Advanced Apps)
+
+
+> *(Stretch)* VNC/custom protocol, server, client. Kept in this file.
+
+- [ ] *(Stretch)* Remote desktop protocol (VNC or custom)
+- [ ] *(Stretch)* Server: capture compositor, compress, send
+- [ ] *(Stretch)* Client: connect, recv frame, forward input
+- [ ] Commit: `"apps: remote desktop (VNC client + server)"`
+
+---
+
+## 8. Network Shares (SMB/NFS)
+
+> *(Stretch)* LAN file sharing with drive letter mounting.
+
+- [ ] *(Stretch)* Choose: NFS / SMB2 / custom HTTP
+- [ ] *(Stretch)* Mount remote share as drive letter (Z:\)
+- [ ] *(Stretch)* File Manager: browse `\\server\share`
+- [ ] *(Stretch)* Shell: `net use Z: \\server\share`
+- [ ] Commit: `"fs: mount network shares as drive letters"`
+
+---
+
+## 9. VPN Client
+
+> *(Stretch)* WireGuard over UDP with Curve25519 + ChaCha20.
+
+- [ ] *(Stretch)* WireGuard protocol via monocypher
+- [ ] *(Stretch)* TUN virtual interface, route traffic
+- [ ] *(Stretch)* Settings applet + system tray icon
+- [ ] Commit: `"net: WireGuard VPN client"`
+
+---
+
+## 10. Agent-Recommended Additions
+
+- [ ] Download Manager (centralized download tracking)
+- [ ] *(Stretch)* BitTorrent client
+- [ ] *(Stretch)* IRC chat client
+- [ ] Browser bookmarks & history (address bar auto-complete)
+- [ ] *(Stretch)* Text-to-speech (accessibility)
+
+---
+
+## Priority Order
+
+
+## Software OpenGL (from 120-Theme §22)
+
+---
+
+## Already Completed ✅
+
+- [x] **2D Compositing Library** — surfaces, primitives, alpha blending, gradients, blur, Mica, Acrylic, shadows, reveal highlight, SIMD optimization *(Phase 02 §1)*
+- [x] **TrueType Font System** — stb_truetype, font manager, glyph caching, replaced bitmap font *(Phase 02 §2)*
+- [x] **Runtime Image Decoding** — stb_image, JPEG/PNG wallpaper, image scaling *(Phase 02 §3)*
+- [x] **System Icon Store** — IRES format, Fluent UI font icons, ICO loader, file type mapping *(Phase 02 §4)*
+- [x] **Cursor Manager** — Adwaita X11 cursors, 11 shapes, embedded fallbacks *(Phase 02 §5.1–5.2)*
+- [x] **Context-Aware Cursor Switching** — wm/desktop context, resize/move/hand cursors *(Phase 02 §5.3)*
+- [x] **Dirty Rectangle Compositor** — partial redraws, fb_swap_rect *(implemented)*

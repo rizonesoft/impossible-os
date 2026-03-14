@@ -163,7 +163,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ## 5. Hardware Abstraction Layer (HAL)
 
 > **Moved to Phase 16 §1.4** — merged with the Driver Model & PCI Match Tables.
-> See [TODO-P1601-Drivers.md §1.4](TODO-P1601-Drivers.md).
+> See [TODO-080-Drivers.md §1.4](TODO-080-Drivers.md).
 
 ---
 
@@ -214,7 +214,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ## 8. Power Management Enhancements
 
-> **Moved to [TODO-P0004-Power-Management.md](TODO-P0004-Power-Management.md)** — Clean shutdown,
+> **Moved to [TODO-100-Power-Management.md](TODO-100-Power-Management.md)** — Clean shutdown,
 > restart, sleep, hibernate, power profiles, ACPI integration, and Start Menu power actions.
 > All consolidated into one implementation-ordered document.
 
@@ -259,7 +259,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ### 11.1 TrueType Font Rendering
 
-> **Completed — see [TODO-P0201-UI-Framework.md §2](TODO-P0201-UI-Framework.md).**
+> **Completed — see [TODO-110-UI-Framework.md §2](TODO-110-UI-Framework.md).**
 > stb_truetype integrated, Selawik + Cascadia Code bundled, glyph caching, bitmap font replaced.
 > All items verified and committed.
 

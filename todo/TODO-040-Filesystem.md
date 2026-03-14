@@ -290,8 +290,8 @@
 
 > [!IMPORTANT]
 > **Cross-references:**
-> - Win32 native exports: `TODO-P0105-Native.md` §5–6
-> - Native programs call this API directly: `TODO-P0105-Native.md`
+> - Win32 native exports: `TODO-510-Native-Win32.md` §5–6
+> - Native programs call this API directly: `TODO-510-Native-Win32.md`
 
 #### 3.6.1 Handle Table & Type Definitions
 

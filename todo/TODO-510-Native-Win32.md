@@ -15,7 +15,7 @@
 > user-mode TSS/GDT/syscall path first.
 
 > [!NOTE]
-> **Consolidated from P1503.** The former `TODO-P1503-Win32.md` has been merged
+> **Consolidated from P1503.** The former `TODO-510-Native-Win32.md` has been merged
 > here because Impossible OS implements Win32 **natively** — there is no separate
 > "compatibility layer." The PE loader, DLL system, and Win32 API stubs are all
 > part of the native OS interface.
@@ -408,10 +408,10 @@
 
 
 - [ ] `InitCommonControlsEx` → no-op (controls always available)
-- [ ] `CreateStatusWindow` → `ctrl_create_statusbar()` (P0202 §2.10)
-- [ ] `CreateToolbarEx` → `ctrl_create_toolbar()` (P0202 §2.8)
+- [ ] `CreateStatusWindow` → `ctrl_create_statusbar()` (120-Theme §2.10)
+- [ ] `CreateToolbarEx` → `ctrl_create_toolbar()` (120-Theme §2.8)
 - [ ] `CreateUpDownControl` → map to slider
-- [ ] ListView, TreeView → `ctrl_create_listview/treeview` (P0202 §2.6–2.7)
+- [ ] ListView, TreeView → `ctrl_create_listview/treeview` (120-Theme §2.6–2.7)
 - [ ] Commit: `"win32: common controls"`
 
 ---
@@ -584,6 +584,6 @@
 | PE resource parser | Weeks | PE loader |
 | Shell icon API | Weeks | PE resources, icon system |
 | GDI subset | Months | WM, gfx, full message loop |
-| Common controls | Months | GDI, widget toolkit (P0202) |
+| Common controls | Months | GDI, widget toolkit (120-Theme) |
 | **Total (core: PE + kernel32)** | **~4–6 weeks** | |
 | **Total (full with GDI)** | **~6–9 months** | |

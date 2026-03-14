@@ -85,7 +85,7 @@
 
 ## 7. Recovery Settings in `power.spl` (Future)
 
-> **Depends on:** §3, Settings Panel (TODO-P0501-Core-Apps.md §4)
+> **Depends on:** §3, Settings Panel (TODO-310-Terminal.md §4)
 
 - [ ] Add "Recovery" section to `power.spl` settings applet:
   - [ ] Toggle: "Automatically restart after a system failure" (on/off)

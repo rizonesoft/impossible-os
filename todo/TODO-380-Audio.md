@@ -7,14 +7,14 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
 **Related TODOs:**
-- **P1601** §5 — Sound card hardware drivers (AC97, Intel HDA)
+- **080-Drivers** §5 — Sound card hardware drivers (AC97, Intel HDA)
 - **P0302** §4 — System sound WAV files (startup chime, click, error, etc.)
 
 ---
 
 ## 1. Sound Card Drivers
 
-> **Moved to [TODO-P1601-Drivers.md](TODO-P1601-Drivers.md) §5** — AC97 sound
+> **Moved to [TODO-080-Drivers.md](TODO-080-Drivers.md) §5** — AC97 sound
 > card driver (§5.1), Intel HDA stretch (§5.2), and module conversion (§5.3).
 > The hardware driver provides `ac97_play()`, `ac97_stop()`, `ac97_set_volume()`.
 
@@ -22,7 +22,7 @@
 
 ## 2. Audio Abstraction Layer
 
-> **Depends on:** P1601 §5.1 (AC97 driver)
+> **Depends on:** 080-Drivers §5.1 (AC97 driver)
 
 **Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio abstraction layer"`.
 
@@ -57,7 +57,7 @@
 
 ## 4. System Sounds
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §4** — WAV system sounds
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §4** — WAV system sounds
 > (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/`
 > directory, install to IXFS.
 
@@ -132,7 +132,7 @@
 
 ## 6. Media Player App
 
-> *Moved from [TODO-P0801-USB.md](TODO-P0801-USB.md) §4.2 and [TODO-P1101-Advanced-Apps.md](TODO-P1101-Advanced-Apps.md) §3*
+> *Moved from [TODO-080-Drivers.md](TODO-080-Drivers.md) §4.2 and [TODO-560-Long-Term.md](TODO-560-Long-Term.md) §3*
 
 - [ ] Create `src/apps/mediaplayer/mediaplayer.c`
 - [ ] Audio playback via `audio_play()`, load via `audio_load()` (WAV, MP3, OGG, FLAC)
@@ -172,7 +172,7 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | **P1601 §5.1** AC97 Driver | Audio hardware foundation (see P1601) |
+| 🔴 P0 | **080-Drivers §5.1** AC97 Driver | Audio hardware foundation (see 080-Drivers) |
 | 🔴 P0 | §2 Audio Abstraction | Unified API over drivers |
 | 🔴 P0 | §5.1 WAV Decoder | Simplest format — system sounds |
 | 🟠 P1 | §3 Audio Mixer | Multiple simultaneous sounds |
@@ -188,7 +188,7 @@
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/drivers/ac97.c` | AC97 driver (see P1601 §5.1) |
+| `src/kernel/drivers/ac97.c` | AC97 driver (see 080-Drivers §5.1) |
 | `src/kernel/audio.c` | [NEW] Audio abstraction layer |
 | `include/audio.h` | [NEW] Audio API header |
 | `src/kernel/audio_mixer.c` | [NEW] Multi-stream PCM mixer |

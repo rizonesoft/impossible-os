@@ -189,7 +189,7 @@
 
 ### 8.1 Font Manager
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §6** — Font Manager app, `.ttf` listing, font preview, install/remove, set default system font.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §6** — Font Manager app, `.ttf` listing, font preview, install/remove, set default system font.
 
 ### 8.2 Color Picker
 

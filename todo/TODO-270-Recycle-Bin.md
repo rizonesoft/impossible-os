@@ -33,4 +33,4 @@
 
 ## 3. Desktop Integration
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.

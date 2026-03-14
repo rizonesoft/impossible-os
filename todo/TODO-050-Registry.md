@@ -343,7 +343,7 @@
 
 ### 7.2 File Associations (HKCR)
 
-> **See [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
+> **See [TODO-240-Resources.md](TODO-240-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
 
 ---
 

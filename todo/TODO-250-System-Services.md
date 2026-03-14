@@ -11,7 +11,7 @@
 
 ## 1. Registry System
 
-> **See [TODO-P0102-Registry.md](TODO-P0102-Registry.md)** — Full Registry implementation spec
+> **See [TODO-050-Registry.md](TODO-050-Registry.md)** — Full Registry implementation spec
 > (Codex→Registry migration, Win32 API, data structures, hive files, persistence,
 > change notifications, syscalls, Win32 stubs, regedit CLI).
 
@@ -61,54 +61,54 @@
 
 ## 3. Clipboard
 
-> **Moved to [TODO-P0007-Clipboard.md](TODO-P0007-Clipboard.md)** — System clipboard,
+> **Moved to [TODO-230-Clipboard.md](TODO-230-Clipboard.md)** — System clipboard,
 > Ctrl+C/X/V shortcuts, Win32 API mapping, clipboard history (Win+V).
 
 ---
 
 ## 4. Clock & Time System
 
-> **Moved to [TODO-P0203-Clock.md](TODO-P0203-Clock.md)** — Kernel time API,
+> **Moved to [TODO-210-Clock.md](TODO-210-Clock.md)** — Kernel time API,
 > time formatting, taskbar clock, NTP client, timezone support.
 
 ---
 
 ## 5. File Associations
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations, "Open With" dialog.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations, "Open With" dialog.
 
 ---
 
 ## 6. Search & File Indexing
 
-> **Moved to [TODO-P0008-Search.md](TODO-P0008-Search.md)** — Search index,
+> **Moved to [TODO-260-Search.md](TODO-260-Search.md)** — Search index,
 > query API, Start Menu / File Manager / shell integration.
 
 ---
 
 ## 7. Shortcut Files (.lnk)
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §2** — Shortcut format, API, icon integration, desktop & Start Menu rendering.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §2** — Shortcut format, API, icon integration, desktop & Start Menu rendering.
 
 ---
 
 ## 8. Scheduled Tasks
 
-> **Moved to [TODO-P0009-Scheduler.md](TODO-P0009-Scheduler.md)** — Task scheduler,
+> **Moved to [TODO-290-Scheduler.md](TODO-290-Scheduler.md)** — Task scheduler,
 > built-in tasks (NTP sync, Registry flush, search index, log rotate).
 
 ---
 
 ## 9. Recycle Bin
 
-> **Moved to [TODO-P0010-Recycle-Bin.md](TODO-P0010-Recycle-Bin.md)** — Trash core,
+> **Moved to [TODO-270-Recycle-Bin.md](TODO-270-Recycle-Bin.md)** — Trash core,
 > metadata files, desktop integration (via P0302).
 
 ---
 
 ## 10. ZIP Compression
 
-> **Moved to [TODO-P0011-ZIP.md](TODO-P0011-ZIP.md)** — miniz integration,
+> **Moved to [TODO-280-ZIP.md](TODO-280-ZIP.md)** — miniz integration,
 > ZIP API, shell commands (zip/unzip).
 
 ---
@@ -117,7 +117,7 @@
 
 ### 11.1 User Account System
 
-> **See [TODO-P2301-Security-Accounts.md](TODO-P2301-Security-Accounts.md)** — Full multi-user
+> **See [TODO-300-Security-Accounts.md](TODO-300-Security-Accounts.md)** — Full multi-user
 > security with login, permissions, UAC, and encryption.
 
 A minimal version is needed here for file permissions and HOME environment variable:
@@ -167,16 +167,16 @@ A minimal version is needed here for file permissions and HOME environment varia
 | 🔴 P0 | **P0203** §1–2 Time System | Wall-clock time for timestamps, logs, scheduler |
 | 🔴 P0 | §8 Scheduled Tasks | Powers Registry flush, NTP sync, log rotate |
 | 🟠 P1 | §2 Services/Daemons | Background processes infrastructure |
-| 🟠 P1 | **P0007** §1–2 Clipboard | Essential UX — see `TODO-P0007-Clipboard.md` |
+| 🟠 P1 | **P0007** §1–2 Clipboard | Essential UX — see `TODO-230-Clipboard.md` |
 | 🟠 P1 | §5 File Associations | Double-click opens correct app |
 | 🟠 P1 | §7 Shortcut Files | Desktop/Start Menu proper UX |
 | 🟡 P2 | **P0203** §4 NTP Client | Accurate time |
-| 🟡 P2 | **P0010** Recycle Bin | Safe deletion — see `TODO-P0010-Recycle-Bin.md` |
-| 🟡 P2 | **P0011** ZIP | Archive support — see `TODO-P0011-ZIP.md` |
+| 🟡 P2 | **P0010** Recycle Bin | Safe deletion — see `TODO-270-Recycle-Bin.md` |
+| 🟡 P2 | **P0011** ZIP | Archive support — see `TODO-280-ZIP.md` |
 | 🟡 P2 | §11.4 Autostart | Startup programs |
 | 🟢 P3 | **P0007** §3–4 Clipboard History + Win32 | Polish features |
-| 🟢 P3 | **P0008** Search & Indexing | File discovery — see `TODO-P0008-Search.md` |
-| 🟢 P3 | **P0009** Scheduled Tasks | Automation — see `TODO-P0009-Scheduler.md` |
+| 🟢 P3 | **P0008** Search & Indexing | File discovery — see `TODO-260-Search.md` |
+| 🟢 P3 | **P0009** Scheduled Tasks | Automation — see `TODO-290-Scheduler.md` |
 | 🟢 P3 | §11.1 User Accounts | Multi-user (see P2301) |
 | 🔵 P4 | §11.2 Win32 System Info | Compatibility APIs |
 | 🔵 P4 | §11.3 Notification Service | Desktop integration |

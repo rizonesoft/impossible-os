@@ -8,9 +8,9 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
 > [!IMPORTANT]
-> **Consolidated from:** TODO-P0101-General.md §8, TODO-P0202-GUI.md §7.3,
-> TODO-P0501-Core-Apps.md §4.3 (power.spl), TODO-P1201-Long-Term.md §11.2,
-> TODO-P0103-Filesystem.md §8.1 (cache_flush), TODO-P2501-Installer-ISO.md §2 (Test 8).
+> **Consolidated from:** TODO-020-Kernel-General.md §8, TODO-120-Theme.md §7.3,
+> TODO-310-Terminal.md §4.3 (power.spl), TODO-560-Long-Term.md §11.2,
+> TODO-040-Filesystem.md §8.1 (cache_flush), TODO-550-Installer-ISO.md §2 (Test 8).
 > The original sections in those files should be replaced with cross-references
 > pointing here.
 
@@ -40,7 +40,7 @@
 ## 2. Clean Shutdown Sequence
 
 > **Depends on:** §1 (ACPI power-off/reboot)
-> **Originally:** TODO-P0101-General.md §8.1
+> **Originally:** TODO-020-Kernel-General.md §8.1
 
 **Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: clean shutdown sequence"`. Update `README.md` if it contains stale or incorrect references to shutdown or power management. Create or update documentation in `docs/` covering the shutdown sequence, ACPI power-off, and graceful app termination.
 
@@ -76,7 +76,7 @@
 ## 4. Start Menu Power Submenu
 
 > **Depends on:** §2 (clean shutdown sequence)
-> **Originally:** TODO-P0202-GUI.md §7.3 (Start Menu Interaction)
+> **Originally:** TODO-120-Theme.md §7.3 (Start Menu Interaction)
 
 **Prompt:** The Power button (⏻) in the Start Menu's bottom-right area opens a fly-out submenu with: Shut Down, Restart, Sleep, Lock. Each action calls the corresponding kernel function. Sleep and Lock may be grayed out until those features are implemented in §7. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu power actions"`.
 
@@ -92,8 +92,8 @@
 
 ## 5. Power Settings Applet (`power.spl`)
 
-> **Depends on:** §2 (shutdown/reboot), Settings Panel framework (TODO-P0501-Core-Apps.md §4)
-> **Originally:** TODO-P0501-Core-Apps.md §4.3 (Core Applets — power.spl)
+> **Depends on:** §2 (shutdown/reboot), Settings Panel framework (TODO-310-Terminal.md §4)
+> **Originally:** TODO-310-Terminal.md §4.3 (Core Applets — power.spl)
 
 **Prompt:** The `power.spl` settings applet provides a UI for power settings: screen timeout slider, shutdown/restart buttons, and sleep settings. Each setting reads/writes Registry keys under `HKLM\SYSTEM\Power\`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: power settings applet"`.
 
@@ -111,10 +111,10 @@
 ## 6. Disk Cache Integration
 
 > **Depends on:** §2 (shutdown calls `cache_flush()`)
-> **Originally:** TODO-P0103-Filesystem.md §8.1 (Disk Cache)
+> **Originally:** TODO-040-Filesystem.md §8.1 (Disk Cache)
 
 > [!NOTE]
-> The disk cache itself is implemented in TODO-P0103-Filesystem.md §8.1. This
+> The disk cache itself is implemented in TODO-040-Filesystem.md §8.1. This
 > section only documents the **shutdown integration** — `cache_flush()` must be
 > called during the clean shutdown sequence in §2 to write all dirty blocks.
 
@@ -127,7 +127,7 @@
 ## 7. Sleep & Hibernate (Future)
 
 > **Depends on:** §1 (ACPI), §2 (clean shutdown for state-save)
-> **Originally:** TODO-P0101-General.md §8.2
+> **Originally:** TODO-020-Kernel-General.md §8.2
 
 **Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. Hibernate (S4) writes all physical memory to `C:\Impossible\System\hiberfil.sys`, then powers off — on boot, the bootloader detects the file and restores memory. The lock screen is related: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Registry credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: sleep and hibernate"`. Create or update documentation in `docs/` covering ACPI S3 suspend, S4 hibernate, waking vector, and lock screen UI flow.
 
@@ -150,7 +150,7 @@
 ## 8. Power Management Profiles
 
 > **Depends on:** §5 (power.spl), §7 (sleep)
-> **Originally:** TODO-P1201-Long-Term.md §11.2
+> **Originally:** TODO-560-Long-Term.md §11.2
 
 **Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
 
@@ -166,7 +166,7 @@
 ## 9. Hyper-V Power Validation
 
 > **Depends on:** §2 (shutdown), §7 (sleep — if implemented)
-> **Originally:** TODO-P2501-Installer-ISO.md §2 (Test 8)
+> **Originally:** TODO-550-Installer-ISO.md §2 (Test 8)
 
 - [ ] **Test:** Graceful ACPI shutdown from shell (`shutdown` command)
 - [ ] **Test:** Graceful ACPI reboot from shell (`reboot` command)

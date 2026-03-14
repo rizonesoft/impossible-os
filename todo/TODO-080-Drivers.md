@@ -1,4 +1,4 @@
-# P1601 — Driver System & Hardware Modules
+# 080-Drivers — Driver System & Hardware Modules
 
 > **Goal:** Build a loadable kernel module system so drivers can be loaded from disk
 > at boot time. Classify all drivers as **built-in** (boot-critical) or **module**
@@ -314,7 +314,7 @@
 ## 5. Audio Drivers (Modules)
 
 > **Audio subsystem** (abstraction layer, mixer, codec libraries, unified loader)
-> is in **[TODO-P0006-Audio.md](TODO-P0006-Audio.md)**. This section covers the
+> is in **[TODO-380-Audio.md](TODO-380-Audio.md)**. This section covers the
 > **hardware drivers** that talk to the sound card.
 
 ### 5.1 AC97 Sound Card Driver
@@ -381,7 +381,7 @@
 
 ## 7. USB Drivers (Modules)
 
-> *Moved from [TODO-P0801-USB.md](TODO-P0801-USB.md) §3–4*
+> *Moved from [TODO-080-Drivers.md](TODO-080-Drivers.md) §3–4*
 
 ### 7.1 USB Core
 

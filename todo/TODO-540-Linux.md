@@ -2,7 +2,7 @@
 
 > **Goal:** Run simple Linux ELF binaries on Impossible OS via a POSIX/Linux
 > syscall translation layer. This is a **compatibility layer** — PE/Win32 is the
-> native and default binary format (see `TODO-P0105-Native-Win32.md`). ELF
+> native and default binary format (see `TODO-510-Native-Win32.md`). ELF
 > support allows running statically-linked Linux CLI tools (busybox, coreutils)
 > and opens the door to porting Linux software.
 

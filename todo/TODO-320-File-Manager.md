@@ -12,7 +12,7 @@
 
  File Manager Core
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
 
 ### 1.2 Sidebar
 
@@ -63,7 +63,7 @@
 
 ### 2.1 File Manager Core
 
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
+> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §5** — File Manager icon integration, `icon_for_extension()` usage, `file_assoc_open()` wiring.
 
 ### 2.2 Sidebar
 
