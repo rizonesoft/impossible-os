@@ -273,35 +273,6 @@ static void splash_timer_callback(void)
  * Public API
  * ============================================================================ */
 
-/* Spin-wait for approximately 'ms' milliseconds using RDTSC.
- *
- * WHY NOT sleep_ms()?
- * boot_splash_init() is called BEFORE pit_init(), so the PIT tick counter
- * is zero and never advances — sleep_ms() would return immediately.
- * RDTSC is always available in x86-64 long mode and needs no initialization.
- *
- * Calibration: 300,000 cycles ≈ 100µs at 3 GHz → 3,000,000 cycles ≈ 1ms.
- * At 1 GHz this overestimates by 3× (fade takes 1.5s instead of 0.5s).
- * At 5 GHz this underestimates by ~1.7× (fade takes ~300ms).
- * Acceptable for a cosmetic transition — exact timing is not critical. */
-#define RDTSC_CYCLES_PER_MS  3000000ULL  /* ~3 GHz assumption */
-
-static void splash_delay_ms(uint32_t ms)
-{
-    uint64_t start_lo, start_hi, now_lo, now_hi;
-    uint64_t start, now;
-    uint64_t target_cycles = (uint64_t)ms * RDTSC_CYCLES_PER_MS;
-
-    /* Correct 64-bit RDTSC: =A in x86-64 mode only captures RAX (low 32 bits).
-     * Use separate =a / =d constraints to get EDX:EAX as a proper 64-bit value. */
-    __asm__ volatile ("rdtsc" : "=a"(start_lo), "=d"(start_hi));
-    start = (start_hi << 32) | start_lo;
-    do {
-        __asm__ volatile ("rdtsc" : "=a"(now_lo), "=d"(now_hi));
-        now = (now_hi << 32) | now_lo;
-    } while ((now - start) < target_cycles);
-}
-
 void boot_splash_init(void)
 {
     scr_w = fb_get_width();
@@ -345,7 +316,7 @@ void boot_splash_init(void)
         splash_draw_icon_faded(fade_levels[fi]);
         splash_draw_dots_faded(fade_levels[fi]);
         fb_swap();
-        splash_delay_ms(100);
+        sleep_ms(100);
     }
 
     /* Final frame: add status text at full brightness */

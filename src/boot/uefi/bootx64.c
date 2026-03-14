@@ -245,26 +245,9 @@ static EFI_STATUS init_gop(void)
     return EFI_SUCCESS;
 }
 
-/* ============================================================================
- * Step 2: Fill screen black (kernel handles the real boot splash)
- * ============================================================================ */
-
-/* Draw a filled rectangle */
-static void draw_rect(UINT32 x, UINT32 y, UINT32 w, UINT32 h, UINT32 color)
-{
-    UINT32 row, col;
-    for (row = y; row < y + h && row < gFbHeight; row++)
-        for (col = x; col < x + w && col < gFbWidth; col++)
-            gFramebuffer[row * gFbPitch + col] = color;
-}
-
-static void fill_screen_black(void)
-{
-    draw_rect(0, 0, gFbWidth, gFbHeight, 0x000000);
-}
 
 /* ============================================================================
- * Step 3: Load kernel ELF from FAT32
+ * Step 2: Load kernel ELF from FAT32
  * ============================================================================ */
 static EFI_STATUS load_kernel(UINT64 *entry_point)
 {
@@ -613,9 +596,6 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         efi_print(u"[FAIL] Graphics initialization failed\r\n");
         return status;
     }
-
-    /* Step 2: Fill screen black (kernel draws the real splash after boot) */
-    fill_screen_black();
 
     /* Step 3: Load kernel ELF */
     /* (No screen text — kernel boot splash handles all visuals) */

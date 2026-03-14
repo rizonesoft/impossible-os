@@ -393,34 +393,24 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * mounts all detected volumes. */
 
 
-    /* Step 5: Initialize framebuffer (needs parsed boot info) */
+    /* Step 5: Load GDT, IDT, PIC, PIT — must happen before boot splash
+     * so that sleep_ms() works correctly during the fade-in animation. */
+    gdt_init();
+    idt_init();
+    pic_init();
+    pit_init();
+    rtc_init();
+    keyboard_init();
+    mouse_init();
+
+    /* Step 6: Initialize framebuffer (needs parsed boot info) */
     fb_init();
 
     /* Boot splash: black screen + icon + animated dots + status text.
-     * Locks the compositor so printk output goes to serial only. */
+     * Locks the compositor so printk output goes to serial only.
+     * PIT is now initialized so sleep_ms() works in the fade-in. */
     boot_splash_init();
     boot_splash_status("Setting up hardware...");
-
-    /* Step 5: Load proper GDT with kernel/user segments and TSS */
-    gdt_init();
-
-    /* Step 6: Load IDT with exception and IRQ handlers */
-    idt_init();
-
-    /* Step 7: Remap PIC so hardware IRQs don't conflict with CPU exceptions */
-    pic_init();
-
-    /* Step 8: Start PIT system timer */
-    pit_init();
-
-    /* Step 8b: Initialize CMOS real-time clock */
-    rtc_init();
-
-    /* Step 9: Initialize PS/2 keyboard */
-    keyboard_init();
-
-    /* Step 10a: Initialize PS/2 mouse */
-    mouse_init();
 
     /* Step 10: PCI bus scan and NIC init */
     boot_splash_tick();
@@ -428,14 +418,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     pci_scan();
     rtl8139_init();
     net_init();
-    virtio_input_init();  /* VirtIO tablet for absolute mouse coords */
-    vbox_mouse_init();    /* VBox VMMDev absolute mouse (if in VirtualBox) */
+    virtio_input_init();
+    vbox_mouse_init();
 
     /* Step 11: Enable interrupts */
     __asm__ volatile ("sti");
 
     /* Start timer-driven splash animation (needs PIT IRQs running) */
     boot_splash_start_animation();
+
 
     /* Step 11b: Scan block devices for partition tables (GPT first, MBR fallback).
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
