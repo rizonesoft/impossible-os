@@ -81,35 +81,8 @@
 
 ## 6. Search & File Indexing
 
-### 6.1 Search Index
-
-**Prompt:** The search index provides fast filename lookup without scanning the entire filesystem on each query. Walk the VFS tree recursively, recording each file/folder name and full path in a sorted index. Rebuild in a background thread at boot and periodically (every 30 minutes). Keep the index in memory, flush to disk for persistence. After completing all items, create `docs/architecture/search.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: file search indexer"`.
-
-
-- [ ] Define `struct search_result` (path, match, type [FILE/FOLDER/APP/SETTING], modified)
-- [ ] Create `src/kernel/search.c`
-- [ ] Implement `search_index_rebuild()` — walk VFS tree, index file/folder names
-- [ ] Store index in `C:\Impossible\System\Cache\search.idx` (flat file: path + name)
-- [ ] Run index rebuild in background thread on boot + periodically (30 min)
-- [ ] Commit: `"kernel: file search indexer"`
-
-### 6.2 Search Query
-
-- [ ] Implement `search_query(query, results, max)` — substring match on index
-- [ ] Search sources:
-  - [ ] File names (from index)
-  - [ ] App names (scan `C:\Impossible\Bin\` + `C:\Programs\`)
-  - [ ] *(Stretch)* File contents (scan text files — slow path)
-  - [ ] *(Stretch)* Settings panel names
-- [ ] Add `SYS_SEARCH` syscall
-- [ ] Commit: `"kernel: search query API"`
-
-### 6.3 Integration
-
-- [ ] *(Stretch)* Start menu search bar → type to search apps + files
-- [ ] *(Stretch)* File manager search bar → filter current directory
-- [ ] *(Stretch)* Shell `find <query>` command
-- [ ] Commit: `"desktop: search integration"`
+> **Moved to [TODO-P0008-Search.md](TODO-P0008-Search.md)** — Search index,
+> query API, Start Menu / File Manager / shell integration.
 
 ---
 
@@ -121,84 +94,22 @@
 
 ## 8. Scheduled Tasks
 
-### 8.1 Task Scheduler
-
-**Prompt:** The task scheduler runs registered commands at specified intervals. Each `struct sched_task` has a name, command string, interval in seconds, next_run timestamp, and enabled flag. `sched_task_tick()` is called by the PIT timer handler every second — it checks each task's next_run against current time and executes due tasks. After completing all items, create `docs/architecture/scheduler.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: task scheduler"`.
-
-
-- [ ] Define `struct sched_task` (name, command, arguments, interval_seconds, next_run, enabled)
-- [ ] Create `src/kernel/scheduler_tasks.c`
-- [ ] Implement `sched_task_add(task)` — register a scheduled task
-- [ ] Implement `sched_task_remove(name)` — unregister
-- [ ] Implement `sched_task_tick()` — called by timer, check if any tasks are due
-- [ ] Hook `sched_task_tick()` into PIT timer (check every second)
-- [ ] Commit: `"kernel: task scheduler"`
-
-### 8.2 Built-In Scheduled Tasks
-
-- [ ] NTP sync — every 60 minutes
-- [ ] Registry flush — every 2 seconds (dirty-flag)
-- [ ] Search index rebuild — every 30 minutes
-- [ ] Log rotate — every 24 hours (trim old entries)
-- [ ] Store tasks in Registry: `HKLM\SYSTEM\Scheduler\Tasks\{name}\*`
-- [ ] Commit: `"kernel: built-in scheduled tasks"`
+> **Moved to [TODO-P0009-Scheduler.md](TODO-P0009-Scheduler.md)** — Task scheduler,
+> built-in tasks (NTP sync, Registry flush, search index, log rotate).
 
 ---
 
 ## 9. Recycle Bin
 
-### 9.1 Recycle Bin Core
-
-**Prompt:** The recycle bin makes file deletion recoverable. `trash_delete(path)` moves the file to `C:\Recycle\` and saves metadata. `trash_restore(trash_name)` moves it back. `trash_empty()` permanently deletes everything. User-initiated deletions go to the recycle bin; only explicit "Delete permanently" uses VFS permanent delete. After completing all items, create `docs/architecture/recycle-bin.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: recycle bin"`.
-
-
-- [ ] Create `src/kernel/trash.c`
-- [ ] Implement `trash_delete(path)` — move file to `C:\Recycle\`, save metadata
-- [ ] Implement `trash_restore(trash_name)` — move back to original path (from metadata)
-- [ ] Implement `trash_empty()` — permanently delete all files in recycle
-- [ ] Implement `trash_count()` — number of items
-- [ ] Implement `trash_size()` — total bytes used
-- [ ] Commit: `"kernel: recycle bin"`
-
-### 9.2 Metadata Files
-
-- [ ] Create `.meta` file for each trashed item in `C:\Recycle\_meta\`
-- [ ] Store: OriginalPath, DeletedAt (Unix timestamp), Size
-- [ ] INI format for easy parsing
-- [ ] Commit: `"kernel: recycle bin metadata"`
-
-### 9.3 Desktop Integration
-
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §3** — Recycle Bin desktop icon states (`ICON_TRASH_EMPTY`/`ICON_TRASH_FULL`), context menu, auto-purge.
+> **Moved to [TODO-P0010-Recycle-Bin.md](TODO-P0010-Recycle-Bin.md)** — Trash core,
+> metadata files, desktop integration (via P0302).
 
 ---
 
 ## 10. ZIP Compression
 
-### 10.1 miniz Integration
-
-- [ ] Port **miniz** (MIT, single file, ~4000 lines) into `src/libs/miniz/`
-- [ ] Redirect memory: `mz_malloc → kmalloc`, `mz_free → kfree`
-- [ ] Commit: `"libs: miniz compression library"`
-
-### 10.2 ZIP API
-
-**Prompt:** The ZIP API wraps miniz into a simpler kernel API. `zip_create(path, files, count)` creates a new ZIP archive. `zip_extract(path, dest)` extracts all files to a destination. `zip_list(path, names, max)` lists contents. `zip_add_file(path, file)` appends a file. After completing all items, create `docs/architecture/zip.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ZIP archive support"`.
-
-
-- [ ] Create `include/zip.h` and `src/kernel/zip.c` (wrapper around miniz)
-- [ ] Implement `zip_create(zip_path, files[], count)` — create ZIP from files
-- [ ] Implement `zip_extract(zip_path, dest_dir)` — extract all files
-- [ ] Implement `zip_list(zip_path, names, max)` — list archive contents
-- [ ] Implement `zip_add_file(zip_path, file_path)` — add file to existing ZIP
-- [ ] Commit: `"kernel: ZIP archive support"`
-
-### 10.3 Shell & UI Integration
-
-- [ ] Shell commands: `zip archive.zip file1 file2`, `unzip archive.zip`
-- [ ] *(Stretch)* Right-click → "Compress to ZIP"
-- [ ] *(Stretch)* Right-click `.zip` → "Extract here" / "Extract to..."
-- [ ] Commit: `"shell: zip/unzip commands"`
+> **Moved to [TODO-P0011-ZIP.md](TODO-P0011-ZIP.md)** — miniz integration,
+> ZIP API, shell commands (zip/unzip).
 
 ---
 
@@ -260,11 +171,13 @@ A minimal version is needed here for file permissions and HOME environment varia
 | 🟠 P1 | §5 File Associations | Double-click opens correct app |
 | 🟠 P1 | §7 Shortcut Files | Desktop/Start Menu proper UX |
 | 🟡 P2 | **P0203** §4 NTP Client | Accurate time |
-| 🟡 P2 | §9 Recycle Bin | Safe deletion |
-| 🟡 P2 | §10 ZIP Compression | Archive support |
+| 🟡 P2 | **P0010** Recycle Bin | Safe deletion — see `TODO-P0010-Recycle-Bin.md` |
+| 🟡 P2 | **P0011** ZIP | Archive support — see `TODO-P0011-ZIP.md` |
 | 🟡 P2 | §11.4 Autostart | Startup programs |
 | 🟢 P3 | **P0007** §3–4 Clipboard History + Win32 | Polish features |
-| 🟢 P3 | §6 Search & Indexing | File discovery |
+| 🟢 P3 | **P0008** Search & Indexing | File discovery — see `TODO-P0008-Search.md` |
+| 🟢 P3 | **P0009** Scheduled Tasks | Automation — see `TODO-P0009-Scheduler.md` |
 | 🟢 P3 | §11.1 User Accounts | Multi-user (see P2301) |
 | 🔵 P4 | §11.2 Win32 System Info | Compatibility APIs |
 | 🔵 P4 | §11.3 Notification Service | Desktop integration |
+
