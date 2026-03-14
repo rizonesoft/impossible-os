@@ -59,7 +59,7 @@ Our bootloader loads our own kernel and nothing else.
 
 ## Shim Version
 
-- **rhboot/shim v15.8** (upstream, unmodified)
+- **rhboot/shim v16.1** (upstream, unmodified)
 - Architecture: x86_64
 - Built: 2026-03-14
 - `VENDOR_CERT_FILE`: `MOK.cer` (RSA-2048, CN=Impossible OS Secure Boot Key)
@@ -77,10 +77,20 @@ SHA256 fingerprint: D3:6B:BA:F0:FD:56:D8:5D:B9:F6:9E:3F:29:73:C4:51:47:7A:C3:B3:
 
 ## Reproducible Build
 
+> **Note:** Shim builds are not bit-for-bit reproducible due to host paths embedded
+> in DWARF debug info. The Dockerfile demonstrates the build process and parameters
+> used; the resulting binary hash may differ from `shimx64.efi` in this submission.
+> The submitted binary was built on Ubuntu 24.04 with gcc 13, using
+> `VENDOR_CERT_FILE=vendor-cert/MOK.cer ARCH=x86_64`.
+
 ```bash
 docker build -t impossible-os-shim .
 docker run --rm impossible-os-shim sha256sum /output/shimx64.efi
-# Expected: d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f
+```
+
+The SHA256 of the submitted `shimx64.efi` is:
+```
+d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f
 ```
 
 ## EFI Partition Layout (on ESP)

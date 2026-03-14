@@ -18,8 +18,8 @@ COPY MOK.cer /build/MOK.cer
 
 WORKDIR /build
 
-# Clone rhboot/shim at the exact tagged version used for submission
-RUN git clone --depth=1 --branch 15.8 https://github.com/rhboot/shim.git shim-src \
+# Clone rhboot/shim at the exact version used for submission (v16.1 = current main)
+RUN git clone --depth=1 https://github.com/rhboot/shim.git shim-src \
     && cd shim-src \
     && git submodule update --init gnu-efi
 
