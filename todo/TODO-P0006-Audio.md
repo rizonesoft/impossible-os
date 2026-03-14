@@ -1,44 +1,28 @@
 # P0006 — Audio System
 
-> **Goal:** Full audio subsystem — sound card driver, abstraction layer, mixer,
-> codec libraries (WAV/MP3/OGG/FLAC), system sounds, and unified audio API.
+> **Goal:** Audio subsystem — abstraction layer, mixer, codec libraries
+> (WAV/MP3/OGG/FLAC), system sounds, and unified audio API.
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
 **Related TODOs:**
+- **P1601** §5 — Sound card hardware drivers (AC97, Intel HDA)
 - **P0302** §4 — System sound WAV files (startup chime, click, error, etc.)
-- **P1601** — Drivers (Phase-92 covers USB, Intel HDA as stretch)
 
 ---
 
-## 1. AC97 Sound Card Driver
+## 1. Sound Card Drivers
 
-**Prompt:** AC97 is the simplest sound card to implement in QEMU. Detect the Intel ICH AC97 controller via PCI class 0x04/subclass 0x01. Map two I/O BARs: the Native Audio Mixer BAR (for codec registers like master volume, PCM out volume) and the Native Audio Bus Master BAR (for DMA control). The Bus Master uses a Buffer Descriptor List (BDL) — a ring of 32 entries, each pointing to a PCM data buffer with length and IOC (Interrupt On Completion) flags. Fill the BDL with PCM audio data, set the BDL base address register, and start playback by setting the run bit. Generate a test sine wave (440 Hz, 16-bit signed, 44100 Hz) to verify audio output. After completing all items, create `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: AC97 sound card driver"`.
-
-
-- [ ] Create `src/kernel/drivers/ac97.c` and `include/ac97.h`
-- [ ] Detect AC97 controller via PCI (class `0x04`, subclass `0x01`, or Intel ICH vendor/device)
-- [ ] Map I/O BAR (Native Audio Mixer BAR + Native Audio Bus Master BAR)
-- [ ] Initialize AC97 codec:
-  - [ ] Cold reset via Bus Master control register
-  - [ ] Read codec ready status
-  - [ ] Set master volume, PCM out volume
-- [ ] Configure Bus Master for PCM out:
-  - [ ] Allocate DMA buffer (ring of Buffer Descriptor List entries)
-  - [ ] Each BDL entry: pointer to PCM data + length + flags (IOC)
-  - [ ] Set BDL base address register
-- [ ] Implement `ac97_play(pcm_data, samples, sample_rate)` — fill DMA buffers, start playback
-- [ ] Implement `ac97_stop()` — halt DMA playback
-- [ ] Implement `ac97_set_volume(volume)` — write mixer register (0–100%)
-- [ ] Handle AC97 IRQ: buffer completion → refill with next chunk
-- [ ] QEMU flag: `-device AC97` (or `-soundhw ac97`)
-- [ ] Test: play a short PCM tone (sine wave 440 Hz) to verify audio output
-- [ ] Commit: `"drivers: AC97 sound card driver"`
+> **Moved to [TODO-P1601-Drivers.md](TODO-P1601-Drivers.md) §5** — AC97 sound
+> card driver (§5.1), Intel HDA stretch (§5.2), and module conversion (§5.3).
+> The hardware driver provides `ac97_play()`, `ac97_stop()`, `ac97_set_volume()`.
 
 ---
 
 ## 2. Audio Abstraction Layer
+
+> **Depends on:** P1601 §5.1 (AC97 driver)
 
 **Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio abstraction layer"`.
 
@@ -150,8 +134,8 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | §1 AC97 Sound Card | Audio hardware foundation |
-| 🔴 P0 | §2 Audio Abstraction | Unified API for all audio |
+| 🔴 P0 | **P1601 §5.1** AC97 Driver | Audio hardware foundation (see P1601) |
+| 🔴 P0 | §2 Audio Abstraction | Unified API over drivers |
 | 🔴 P0 | §5.1 WAV Decoder | Simplest format — system sounds |
 | 🟠 P1 | §3 Audio Mixer | Multiple simultaneous sounds |
 | 🟠 P1 | §5.2 MP3 Decoder | Most common music format |
@@ -166,8 +150,7 @@
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/drivers/ac97.c` | [NEW] AC97 sound card driver |
-| `include/ac97.h` | [NEW] AC97 register definitions |
+| `src/kernel/drivers/ac97.c` | AC97 driver (see P1601 §5.1) |
 | `src/kernel/audio.c` | [NEW] Audio abstraction layer |
 | `include/audio.h` | [NEW] Audio API header |
 | `src/kernel/audio_mixer.c` | [NEW] Multi-stream PCM mixer |
@@ -175,18 +158,3 @@
 | `include/dr_mp3.h` | [NEW] MP3 decoder (public domain) |
 | `src/libs/stb_vorbis_impl.c` | [NEW] OGG Vorbis decoder wrapper |
 | `docs/architecture/audio.md` | [NEW] Audio system documentation |
-
----
-
-## Effort Estimates
-
-| Component | Effort | Dependencies |
-|-----------|--------|-------------|
-| AC97 driver | Weeks | PCI, DMA, IRQ |
-| Audio abstraction | Days | AC97 driver |
-| Audio mixer | Days | Audio abstraction |
-| WAV decoder | Days | VFS file I/O |
-| MP3 decoder | Days | VFS file I/O |
-| OGG decoder | Days | VFS file I/O |
-| Unified loader | Days | All decoders |
-| **Total (core)** | **~2–3 weeks** | |

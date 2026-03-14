@@ -313,16 +313,55 @@
 
 ## 5. Audio Drivers (Modules)
 
-> Note: Audio drivers (AC97, Intel HDA) and the audio subsystem are defined in
-> **Phase 08**. The following are additional audio drivers not covered there.
+> **Audio subsystem** (abstraction layer, mixer, codec libraries, unified loader)
+> is in **[TODO-P0006-Audio.md](TODO-P0006-Audio.md)**. This section covers the
+> **hardware drivers** that talk to the sound card.
 
-### 5.1 VirtualBox AC97 / Intel HDA
+### 5.1 AC97 Sound Card Driver
 
-> These are covered by Phase 08 §1.1 (AC97) and §4.1 (Intel HDA).
-> Build them as loadable modules using the module system from §1.
+**Prompt:** AC97 is the simplest sound card to implement in QEMU. Detect the Intel ICH AC97 controller via PCI class 0x04/subclass 0x01. Map two I/O BARs: the Native Audio Mixer BAR (for codec registers like master volume, PCM out volume) and the Native Audio Bus Master BAR (for DMA control). The Bus Master uses a Buffer Descriptor List (BDL) — a ring of 32 entries, each pointing to a PCM data buffer with length and IOC (Interrupt On Completion) flags. Fill the BDL with PCM audio data, set the BDL base address register, and start playback by setting the run bit. Generate a test sine wave (440 Hz, 16-bit signed, 44100 Hz) to verify audio output. After completing all items, create `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: AC97 sound card driver"`.
 
-- [ ] Convert AC97 driver (Phase 08 §1.1) to loadable module format
-- [ ] Convert Intel HDA driver (Phase 08 §4.1) to loadable module format
+
+- [ ] Create `src/kernel/drivers/ac97.c` and `include/ac97.h`
+- [ ] Detect AC97 controller via PCI (class `0x04`, subclass `0x01`, or Intel ICH vendor/device)
+- [ ] Map I/O BAR (Native Audio Mixer BAR + Native Audio Bus Master BAR)
+- [ ] Initialize AC97 codec:
+  - [ ] Cold reset via Bus Master control register
+  - [ ] Read codec ready status
+  - [ ] Set master volume, PCM out volume
+- [ ] Configure Bus Master for PCM out:
+  - [ ] Allocate DMA buffer (ring of Buffer Descriptor List entries)
+  - [ ] Each BDL entry: pointer to PCM data + length + flags (IOC)
+  - [ ] Set BDL base address register
+- [ ] Implement `ac97_play(pcm_data, samples, sample_rate)` — fill DMA buffers, start playback
+- [ ] Implement `ac97_stop()` — halt DMA playback
+- [ ] Implement `ac97_set_volume(volume)` — write mixer register (0–100%)
+- [ ] Handle AC97 IRQ: buffer completion → refill with next chunk
+- [ ] PCI match table: `{ 0x8086, 0x2415 }` (ICH), `{ 0x8086, 0x2425 }`, etc.
+- [ ] QEMU flag: `-device AC97` (or `-soundhw ac97`)
+- [ ] Test: play a short PCM tone (sine wave 440 Hz) to verify audio output
+- [ ] Commit: `"drivers: AC97 sound card driver"`
+
+### 5.2 Intel HDA Sound Driver *(Stretch)*
+
+**Prompt:** Intel HDA (High Definition Audio) is the modern audio standard, more complex than AC97. Detect via PCI class 0x04, subclass 0x03. Map MMIO registers, initialize CORB (Command Output Ring Buffer) and RIRB (Response Input Ring Buffer) for codec communication. Enumerate codecs on the HDA link, parse the widget tree (AFG → mixer → DAC → output pin) to find the audio output path. Set up a DMA stream descriptor for PCM playback. QEMU: `-device intel-hda -device hda-duplex`. This is a stretch goal since AC97 covers QEMU testing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel HDA audio"`.
+
+
+- [ ] *(Stretch)* Create `src/kernel/drivers/hda.c` and `include/hda.h`
+- [ ] *(Stretch)* Detect Intel HDA via PCI (class `0x04`, subclass `0x03`)
+- [ ] *(Stretch)* Map MMIO registers, initialize CORB/RIRB (command/response buffers)
+- [ ] *(Stretch)* Enumerate codecs, parse widget tree, configure DAC path
+- [ ] *(Stretch)* DMA stream setup for PCM playback
+- [ ] *(Stretch)* PCI match table for common devices
+- [ ] *(Stretch)* QEMU: `-device intel-hda -device hda-duplex`
+- [ ] Commit: `"drivers: Intel HDA audio"`
+
+### 5.3 Convert to Loadable Modules
+
+> After the module system (§1) is complete, convert these drivers to `.kmod` files.
+
+- [ ] Convert AC97 driver to loadable module format
+- [ ] Convert Intel HDA driver to loadable module format
 
 ---
 

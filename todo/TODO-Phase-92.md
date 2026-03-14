@@ -120,16 +120,8 @@
 
 ### 4.1 Intel HDA Sound Driver
 
-**Prompt:** Intel HDA (High Definition Audio) is the modern audio standard, more complex than AC97. Detect via PCI class 0x04, subclass 0x03. Map MMIO registers, initialize CORB (Command Output Ring Buffer) and RIRB (Response Input Ring Buffer) for codec communication. Enumerate codecs on the HDA link, parse the widget tree (AFG → mixer → DAC → output pin) to find the audio output path. Set up a DMA stream descriptor for PCM playback. QEMU: `-device intel-hda -device hda-duplex`. This is a stretch goal since AC97 covers QEMU testing. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: Intel HDA audio"`.
-
-
-- [ ] *(Stretch)* Create `src/kernel/drivers/hda.c`
-- [ ] *(Stretch)* Detect Intel HDA via PCI (class `0x04`, subclass `0x03`)
-- [ ] *(Stretch)* Map MMIO registers, initialize CORB/RIRB (command/response buffers)
-- [ ] *(Stretch)* Enumerate codecs, parse widget tree, configure DAC path
-- [ ] *(Stretch)* DMA stream setup for PCM playback
-- [ ] *(Stretch)* QEMU: `-device intel-hda -device hda-duplex`
-- [ ] Commit: `"drivers: Intel HDA audio"`
+> **Moved to [TODO-P1601-Drivers.md](TODO-P1601-Drivers.md) §5.2** — Intel HDA
+> stretch driver with CORB/RIRB, widget tree, DMA stream setup.
 
 ### 4.2 Media Player App
 
