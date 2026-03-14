@@ -183,15 +183,17 @@ static void efi_print_hex(UINT64 val)
  * Step 1: Initialize GOP (Graphics Output Protocol)
  *
  * Enumerate all available modes, filter for 32bpp BGRA/RGBA formats, and select
- * the highest resolution (largest pixel count = width × height).  This allows the
- * OS to run at the native display resolution on real hardware (1080p, 1440p, 4K)
- * without any hardcoded fallbacks.
+ * the highest resolution (largest pixel count = width × height) that produces a
+ * valid (non-zero) framebuffer after SetMode().
  *
- * All resolution info is passed to the kernel via g_boot_info_ptr->fb so that
- * fb_init() can set up the correct back-buffer size and stride.
+ * Why the fallback loop?  Some UEFI firmware (OVMF in QEMU/VirtualBox) reports
+ * very large GOP modes but returns a zero FrameBufferBase after SetMode — i.e.
+ * the mode is logically valid but the virtual GPU can't back it with real VRAM.
+ * We sort modes by pixel count descending and try each in turn until we get a
+ * non-zero framebuffer address.  The first working mode wins.
  * ============================================================================ */
 
-/* Helper: efi_print a decimal number (for resolution logging) */
+/* Helper: efi_print a decimal number (used for resolution logging) */
 static void efi_print_dec(UINT32 val)
 {
     CHAR16 buf[12];
@@ -208,15 +210,34 @@ static void efi_print_dec(UINT32 val)
     efi_print(&buf[i + 1]);
 }
 
+/* Simple insertion-sort: sort mode_ids by pixel_counts descending (N ≤ 64) */
+#define MAX_CANDIDATE_MODES 64
+
+static void sort_modes_desc(UINT32 *mode_ids, UINT32 *pixel_counts, UINT32 n)
+{
+    UINT32 i, j, tmp_id, tmp_px;
+    for (i = 1; i < n; i++) {
+        tmp_id = mode_ids[i];
+        tmp_px = pixel_counts[i];
+        j = i;
+        while (j > 0 && pixel_counts[j - 1] < tmp_px) {
+            mode_ids[j]    = mode_ids[j - 1];
+            pixel_counts[j] = pixel_counts[j - 1];
+            j--;
+        }
+        mode_ids[j]    = tmp_id;
+        pixel_counts[j] = tmp_px;
+    }
+}
+
 static EFI_STATUS init_gop(void)
 {
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
     EFI_STATUS status;
-    UINT32 i;
-    UINT32 best_mode      = 0;
-    UINT32 best_pixels    = 0;   /* width × height of best mode found so far */
-    BOOLEAN found_32bpp   = 0;
+    UINT32 i, n_candidates;
+    UINT32 candidate_ids[MAX_CANDIDATE_MODES];
+    UINT32 candidate_px[MAX_CANDIDATE_MODES];
 
     status = gBS->LocateProtocol(&gop_guid, (VOID *)0, (VOID **)&gop);
     if (EFI_ERROR(status)) {
@@ -224,47 +245,70 @@ static EFI_STATUS init_gop(void)
         return status;
     }
 
-    /* Enumerate all modes — pick highest-resolution 32bpp mode.
-     * We accept both BGR and RGB pixel orders; the kernel renders BGRA so
-     * BGR is preferred but both produce correct colours on real hardware. */
-    for (i = 0; i < gop->Mode->MaxMode; i++) {
+    /* Pass 1: collect all 32bpp packed-pixel modes into a candidate list */
+    n_candidates = 0;
+    for (i = 0; i < gop->Mode->MaxMode && n_candidates < MAX_CANDIDATE_MODES; i++) {
         UINTN info_size;
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-        UINT32 pixels;
 
         status = gop->QueryMode(gop, i, &info_size, &info);
         if (EFI_ERROR(status))
             continue;
 
-        /* Only accept 32bpp packed-pixel formats */
+        /* Only accept 32bpp packed-pixel layouts the kernel can write directly */
         if (info->PixelFormat != PixelBlueGreenRedReserved &&
             info->PixelFormat != PixelRedGreenBlueReserved)
             continue;
 
-        pixels = info->HorizontalResolution * info->VerticalResolution;
-        if (pixels > best_pixels) {
-            best_pixels  = pixels;
-            best_mode    = i;
-            found_32bpp  = 1;
-        }
+        candidate_ids[n_candidates] = i;
+        candidate_px[n_candidates]  = info->HorizontalResolution *
+                                      info->VerticalResolution;
+        n_candidates++;
     }
 
-    if (!found_32bpp) {
-        /* No 32bpp mode found — keep whatever the firmware already set */
-        best_mode = gop->Mode->Mode;
+    /* Sort candidates highest-resolution first */
+    if (n_candidates > 1)
+        sort_modes_desc(candidate_ids, candidate_px, n_candidates);
+
+    /* Pass 2: try each candidate from highest to lowest until we get a
+     * non-zero FrameBufferBase.  Some OVMF builds claim huge modes but
+     * return base=0 after SetMode (VirtualBox, certain QEMU configs). */
+    for (i = 0; i < n_candidates; i++) {
+        status = gop->SetMode(gop, candidate_ids[i]);
+        if (EFI_ERROR(status))
+            continue;  /* mode failed — try next */
+
+        if (gop->Mode->FrameBufferBase == 0)
+            continue;  /* invalid framebuffer — try next */
+
+        /* Working mode found */
+        goto mode_set;
+    }
+
+    /* No candidate worked (or no 32bpp modes at all) — use current mode
+     * as-is.  If FrameBufferBase is still 0 here, GOP is fundamentally
+     * broken on this firmware and we cannot continue. */
+    if (n_candidates == 0) {
         efi_print(u"[WARN] No 32bpp GOP mode found, using current mode\r\n");
+        if (gop->Mode->FrameBufferBase == 0) {
+            efi_print(u"[FAIL] GOP framebuffer base is 0 — cannot boot\r\n");
+            return EFI_UNSUPPORTED;
+        }
+        goto mode_set;
     }
 
-    /* Set the selected mode */
-    status = gop->SetMode(gop, best_mode);
-    if (EFI_ERROR(status)) {
-        efi_print(u"[FAIL] GOP SetMode failed\r\n");
-        return status;
+    /* All candidates had base=0 — try setting the current mode explicitly */
+    efi_print(u"[WARN] All 32bpp modes returned base=0, using current mode\r\n");
+    status = gop->SetMode(gop, gop->Mode->Mode);
+    if (EFI_ERROR(status) || gop->Mode->FrameBufferBase == 0) {
+        efi_print(u"[FAIL] GOP framebuffer base is 0 — cannot boot\r\n");
+        return EFI_UNSUPPORTED;
     }
 
-    /* Log chosen resolution to UEFI console (visible before kernel takes over) */
+mode_set:
+    /* Log chosen resolution to UEFI console */
     efi_print(u"[GOP] Mode ");
-    efi_print_dec(best_mode);
+    efi_print_dec(gop->Mode->Mode);
     efi_print(u": ");
     efi_print_dec(gop->Mode->Info->HorizontalResolution);
     efi_print(u"x");
@@ -283,12 +327,11 @@ static EFI_STATUS init_gop(void)
     g_boot_info_ptr->fb.width  = gFbWidth;
     g_boot_info_ptr->fb.height = gFbHeight;
     g_boot_info_ptr->fb.bpp    = 32;
-    g_boot_info_ptr->fb.type   = 1;   /* RGB direct colour */
+    g_boot_info_ptr->fb.type   = 1;    /* RGB direct colour */
     g_boot_info_ptr->fb_available = 1;
 
     return EFI_SUCCESS;
 }
-
 
 /* ============================================================================
  * Step 2: Fill screen black (kernel handles the real boot splash)
