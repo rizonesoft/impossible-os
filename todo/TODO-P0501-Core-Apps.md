@@ -1,4 +1,4 @@
-# Phase 05 — Core Applications
+# P0501 — Core Applications
 
 > **Goal:** Deliver a suite of essential GUI applications that make Impossible OS
 > a usable daily environment: file manager, terminal emulator, settings panel,
@@ -27,7 +27,7 @@
 
 ### 2.2 Sidebar
 
-**Prompt:** The sidebar provides quick navigation to common locations. Show two sections: "Quick Access" (Desktop, Documents, Downloads, Pictures — paths under `C:\Users\Default\`) and "Drives" (list all mounted drives from VFS — C:\, D:\, etc.). Clicking a sidebar item updates the file area to show that path. The sidebar uses a vertical list rendered with icons and labels. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager sidebar"`.
+**Prompt:** The sidebar provides quick navigation to common locations. Show two sections: "Quick Access" (Desktop, Documents, Downloads, Pictures — paths under `C:\Users\Default\`) and "Drives" (list all mounted drives from VFS — C:\, D:\, etc.). Clicking a sidebar item updates the file area to show that path. The sidebar uses a vertical list rendered with icons and labels. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: file manager sidebar"`.
 
 
 - [ ] Quick Access section: Desktop, Documents, Downloads, Pictures
@@ -48,7 +48,7 @@
 
 ### 2.4 File Operations
 
-**Prompt:** File operations wire into the clipboard (Phase 03 §3) and recycle bin (Phase 03 §9). Ctrl+C copies the selected file's path to the clipboard (CLIP_FILES format), Ctrl+V pastes (copy file), Ctrl+X cuts (move on paste). Delete key moves the file to the recycle bin via `trash_delete()`. F2 triggers inline rename — the filename label becomes an editable textbox. Ctrl+Shift+N creates a new folder. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager operations (create/delete/rename/copy)"`.
+**Prompt:** File operations wire into the clipboard (Phase 03 §3) and recycle bin (Phase 03 §9). Ctrl+C copies the selected file's path to the clipboard (CLIP_FILES format), Ctrl+V pastes (copy file), Ctrl+X cuts (move on paste). Delete key moves the file to the recycle bin via `trash_delete()`. F2 triggers inline rename — the filename label becomes an editable textbox. Ctrl+Shift+N creates a new folder. After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: file manager operations (create/delete/rename/copy)"`.
 
 
 - [ ] Create folder: right-click → New → Folder (or Ctrl+Shift+N)
@@ -60,7 +60,7 @@
 
 ### 2.5 Advanced Features
 
-**Prompt:** These stretch features make the File Manager a power-user tool: search within the current folder (filter the file list as the user types), drag-and-drop files to desktop or between File Manager windows (Phase 04 §8), file/folder properties dialog (show size, path, dates, permissions), preview pane (render text/image files in a right panel), and tabs (multiple directory views in one window using the Tab Bar widget from §1.4). After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: file manager advanced features"`.
+**Prompt:** These stretch features make the File Manager a power-user tool: search within the current folder (filter the file list as the user types), drag-and-drop files to desktop or between File Manager windows (Phase 04 §8), file/folder properties dialog (show size, path, dates, permissions), preview pane (render text/image files in a right panel), and tabs (multiple directory views in one window using the Tab Bar widget from §1.4). After completing all items, update `docs/architecture/file-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: file manager advanced features"`.
 
 
 - [ ] *(Stretch)* Search within current folder (search bar in toolbar)
@@ -76,7 +76,7 @@
 
 ### 3.1 Terminal Core
 
-**Prompt:** The terminal emulator bridges the shell to a graphical window. The core data structure is a 2D grid of `terminal_cell` structs, each holding a Unicode codepoint, foreground/background colors, and attribute flags (bold, underline, inverse). The grid has `TERM_COLS × SCROLLBACK` cells. Cell dimensions are calculated from Cascadia Code monospace font metrics (Phase 02 §2). The shell process writes to the terminal via `terminal_put_char()`. Keyboard input from the WM is piped to the shell's stdin. After completing all items, create `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal emulator core"`.
+**Prompt:** The terminal emulator bridges the shell to a graphical window. The core data structure is a 2D grid of `terminal_cell` structs, each holding a Unicode codepoint, foreground/background colors, and attribute flags (bold, underline, inverse). The grid has `TERM_COLS × SCROLLBACK` cells. Cell dimensions are calculated from Cascadia Code monospace font metrics (Phase 02 §2). The shell process writes to the terminal via `terminal_put_char()`. Keyboard input from the WM is piped to the shell's stdin. After completing all items, create `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal emulator core"`.
 
 
 - [ ] Create `src/apps/terminal/terminal.c` and `include/terminal.h`
@@ -91,7 +91,7 @@
 
 ### 3.2 Character Rendering
 
-**Prompt:** `terminal_render` iterates visible rows, drawing each cell: fill background rect if non-default color, then draw the character glyph via `font_draw_char()` using Cascadia Code from the font manager (Phase 02 §2). The cursor (block/underline/bar style) blinks on a 500ms toggle driven by PIT ticks. Handle control characters: `\n` (newline + scroll if at bottom), `\r` (carriage return), `\b` (backspace), `\t` (tab to next 8-column stop). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal text rendering"`.
+**Prompt:** `terminal_render` iterates visible rows, drawing each cell: fill background rect if non-default color, then draw the character glyph via `font_draw_char()` using Cascadia Code from the font manager (Phase 02 §2). The cursor (block/underline/bar style) blinks on a 500ms toggle driven by PIT ticks. Handle control characters: `\n` (newline + scroll if at bottom), `\r` (carriage return), `\b` (backspace), `\t` (tab to next 8-column stop). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal text rendering"`.
 
 
 - [ ] `terminal_render(t, surface)` — draw all visible cells
@@ -104,7 +104,7 @@
 
 ### 3.3 ANSI Escape Code Parser
 
-**Prompt:** The ANSI parser is a state machine: Normal state processes printable characters, ESC (`\e`) enters escape state, `[` after ESC enters CSI (Control Sequence Introducer) state where numeric parameters are collected until a final command letter. Implement the essential SGR (Select Graphic Rendition) codes: reset (0), bold (1), underline (4), inverse (7), foreground colors 30-37 and 90-97, background colors 40-47. Cursor movement codes (H, A/B/C/D) and screen clearing (2J, K) are needed for programs like vim-lite or top. Define a 16-color palette matching standard ANSI colors. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal ANSI escape codes"`.
+**Prompt:** The ANSI parser is a state machine: Normal state processes printable characters, ESC (`\e`) enters escape state, `[` after ESC enters CSI (Control Sequence Introducer) state where numeric parameters are collected until a final command letter. Implement the essential SGR (Select Graphic Rendition) codes: reset (0), bold (1), underline (4), inverse (7), foreground colors 30-37 and 90-97, background colors 40-47. Cursor movement codes (H, A/B/C/D) and screen clearing (2J, K) are needed for programs like vim-lite or top. Define a 16-color palette matching standard ANSI colors. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal ANSI escape codes"`.
 
 
 - [ ] Create `src/apps/terminal/ansi.c`
@@ -122,7 +122,7 @@
 
 ### 3.4 Scrollback & Selection
 
-**Prompt:** Scrollback lets users review past output. The grid stores 500 history rows above the visible viewport. Mouse wheel scrolls the viewport up/down through this history. A scrollbar on the right side shows the viewport position. Text selection: click + drag highlights cells (tracked as start_row/col to end_row/col). The selection highlight inverts foreground/background colors. Ctrl+Shift+C copies the selected text to the clipboard (Phase 03 §3.1). Ctrl+Shift+V pastes clipboard text into the shell's stdin. Note: use Ctrl+Shift variants to avoid conflicting with Ctrl+C (SIGINT) in the shell. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: terminal scrollback and copy/paste"`.
+**Prompt:** Scrollback lets users review past output. The grid stores 500 history rows above the visible viewport. Mouse wheel scrolls the viewport up/down through this history. A scrollbar on the right side shows the viewport position. Text selection: click + drag highlights cells (tracked as start_row/col to end_row/col). The selection highlight inverts foreground/background colors. Ctrl+Shift+C copies the selected text to the clipboard (Phase 03 §3.1). Ctrl+Shift+V pastes clipboard text into the shell's stdin. Note: use Ctrl+Shift variants to avoid conflicting with Ctrl+C (SIGINT) in the shell. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal scrollback and copy/paste"`.
 
 
 - [ ] Scrollback buffer: 500 lines of history above the visible viewport
@@ -175,7 +175,7 @@
 
 ### 4.2 Settings Host App
 
-**Prompt:** The Settings app is a two-panel window: category sidebar on the left, applet content area on the right. At startup, scan `C:\Impossible\System\Settings\` for .spl files (in practice, these are compiled-in applet functions registered at init). The sidebar groups applets by category (System, Personalization, Apps, Privacy). Clicking an applet name in the sidebar calls SPL_OPEN and renders that applet's UI in the content area. A Back button returns to the applet list. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel host"`.
+**Prompt:** The Settings app is a two-panel window: category sidebar on the left, applet content area on the right. At startup, scan `C:\Impossible\System\Settings\` for .spl files (in practice, these are compiled-in applet functions registered at init). The sidebar groups applets by category (System, Personalization, Apps, Privacy). Clicking an applet name in the sidebar calls SPL_OPEN and renders that applet's UI in the content area. A Back button returns to the applet list. After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Settings Panel host"`.
 
 
 - [ ] Create `src/apps/settings/settings.c`
@@ -206,7 +206,7 @@
 
 ### 4.4 Additional Applets
 
-**Prompt:** Additional settings applets for less common configurations: `cursors.spl` (cursor theme, cursor size using DPI scaling from Phase 02 §8), `fonts.spl` (installed fonts list, default system font selector), `accounts.spl` (user management — future, ties into Phase 03 §11.1), `apps.spl` (installed programs list, uninstall), `storage.spl` (disk usage overview, drive info from blkdev layer). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Settings Panel additional applets"`.
+**Prompt:** Additional settings applets for less common configurations: `cursors.spl` (cursor theme, cursor size using DPI scaling from Phase 02 §8), `fonts.spl` (installed fonts list, default system font selector), `accounts.spl` (user management — future, ties into Phase 03 §11.1), `apps.spl` (installed programs list, uninstall), `storage.spl` (disk usage overview, drive info from blkdev layer). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Settings Panel additional applets"`.
 
 
 - [ ] `cursors.spl.c` — cursor theme, cursor size
@@ -218,7 +218,7 @@
 
 ### 4.5 Win32 .cpl Mapping
 
-**Prompt:** Windows Control Panel applets (.cpl files) are DLLs that export a `CPlApplet` entry point. Map known .cpl names to SPL equivalents: `desk.cpl` → display.spl, `mmsys.cpl` → sound.spl, `sysdm.cpl` → about.spl. When a Win32 program calls `ShellExecute("desk.cpl")`, redirect to the Settings app's corresponding applet. This is a stretch goal for Win32 compatibility (Phase 10). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"win32: CPL to SPL mapping"`.
+**Prompt:** Windows Control Panel applets (.cpl files) are DLLs that export a `CPlApplet` entry point. Map known .cpl names to SPL equivalents: `desk.cpl` → display.spl, `mmsys.cpl` → sound.spl, `sysdm.cpl` → about.spl. When a Win32 program calls `ShellExecute("desk.cpl")`, redirect to the Settings app's corresponding applet. This is a stretch goal for Win32 compatibility (Phase 10). After completing all items, update `docs/architecture/settings.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: CPL to SPL mapping"`.
 
 
 - [ ] *(Stretch)* CPL → SPL message translation
@@ -231,7 +231,7 @@
 
 ### 5.1 Text Buffer (Gap Buffer)
 
-**Prompt:** The gap buffer is the most efficient data structure for text editing — insertions and deletions at the cursor are O(1). The buffer has a "gap" (unused region) that sits at the cursor position. `text_insert` drops a character into the gap (gap shrinks). `text_delete` expands the gap to "eat" the character before cursor. `text_move_cursor` shifts the gap to the new position by copying characters. Pre-allocate a reasonable buffer size (64K) and grow by doubling when the gap shrinks to zero. `text_get_line(n)` scans for the nth newline, returning a pointer and length. After completing all items, create `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad gap buffer"`.
+**Prompt:** The gap buffer is the most efficient data structure for text editing — insertions and deletions at the cursor are O(1). The buffer has a "gap" (unused region) that sits at the cursor position. `text_insert` drops a character into the gap (gap shrinks). `text_delete` expands the gap to "eat" the character before cursor. `text_move_cursor` shifts the gap to the new position by copying characters. Pre-allocate a reasonable buffer size (64K) and grow by doubling when the gap shrinks to zero. `text_get_line(n)` scans for the nth newline, returning a pointer and length. After completing all items, create `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad gap buffer"`.
 
 
 - [ ] Create `src/apps/notepad/notepad.c`
@@ -258,7 +258,7 @@
 
 ### 5.3 File Menu
 
-**Prompt:** The File menu uses the menu bar widget from §1.2. File → New clears the buffer and resets the filepath. File → Open invokes `ui_dialog_open()` from §1.3, loads the file via VFS `read()` into the gap buffer. File → Save writes the buffer to the current filepath via VFS `write()`. File → Save As invokes `ui_dialog_save()`. Track a `modified` flag — set on any edit, cleared on save. If modified, show "Do you want to save changes?" dialog (from §1.3) before New/Open/Close. The window title shows "filename.txt — Notepad" (with asterisk if modified). After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad file operations"`.
+**Prompt:** The File menu uses the menu bar widget from §1.2. File → New clears the buffer and resets the filepath. File → Open invokes `ui_dialog_open()` from §1.3, loads the file via VFS `read()` into the gap buffer. File → Save writes the buffer to the current filepath via VFS `write()`. File → Save As invokes `ui_dialog_save()`. Track a `modified` flag — set on any edit, cleared on save. If modified, show "Do you want to save changes?" dialog (from §1.3) before New/Open/Close. The window title shows "filename.txt — Notepad" (with asterisk if modified). After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad file operations"`.
 
 
 - [ ] Menu bar: File, Edit, View, Help
@@ -272,7 +272,7 @@
 
 ### 5.4 Editing Features
 
-**Prompt:** Mouse click sets the cursor position by calculating which line/col the click coordinates map to. Text selection: click + drag or Shift+Arrow marks a start/end range, rendered with inverted colors. Ctrl+A selects all. Cut/Copy/Paste uses the system clipboard (Phase 03 §3). Vertical scrollbar for long files (from §1.1). Word wrap toggle in the View menu — when enabled, lines wrap at the window width without inserting newlines. Status bar shows line:col, encoding (UTF-8), and line ending type (CRLF/LF). Stretch goals: Find/Replace (Ctrl+F/H) with a search bar, Undo/Redo (Ctrl+Z/Y) with an action stack, line numbers in a left gutter, syntax highlighting for .c/.h files. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Notepad editing features"`.
+**Prompt:** Mouse click sets the cursor position by calculating which line/col the click coordinates map to. Text selection: click + drag or Shift+Arrow marks a start/end range, rendered with inverted colors. Ctrl+A selects all. Cut/Copy/Paste uses the system clipboard (Phase 03 §3). Vertical scrollbar for long files (from §1.1). Word wrap toggle in the View menu — when enabled, lines wrap at the window width without inserting newlines. Status bar shows line:col, encoding (UTF-8), and line ending type (CRLF/LF). Stretch goals: Find/Replace (Ctrl+F/H) with a search bar, Undo/Redo (Ctrl+Z/Y) with an action stack, line numbers in a left gutter, syntax highlighting for .c/.h files. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad editing features"`.
 
 
 - [ ] Mouse click → set cursor position
@@ -294,7 +294,7 @@
 
 ### 6.1 Calculator Core
 
-**Prompt:** The Calculator app is a compact fixed-size window with a display area and a 5×4 button grid. Buttons rendered with `gfx_fill_rounded_rect()` with hover/press state colors from the theme. The display shows the current number (large font, right-aligned) and an operation preview (smaller, showing the pending expression like "42 +"). Use floating-point arithmetic via the kernel math shims (Phase 02 `kmath.h`). After completing all items, create `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator layout"`.
+**Prompt:** The Calculator app is a compact fixed-size window with a display area and a 5×4 button grid. Buttons rendered with `gfx_fill_rounded_rect()` with hover/press state colors from the theme. The display shows the current number (large font, right-aligned) and an operation preview (smaller, showing the pending expression like "42 +"). Use floating-point arithmetic via the kernel math shims (Phase 02 `kmath.h`). After completing all items, create `docs/user/calculator.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Calculator layout"`.
 
 
 - [ ] Create `src/apps/calculator/calculator.c`
@@ -306,7 +306,7 @@
 
 ### 6.2 Arithmetic Engine
 
-**Prompt:** The arithmetic engine handles operator precedence simply by using a two-operand model: the user enters operand1, presses an operator, enters operand2, presses = to compute. Store the pending operation and operand. C (clear) resets everything, CE (clear entry) clears only the current display without losing the pending operation. Handle division by zero gracefully (display "Error"). Accept keyboard input: numpad digits, +, -, *, /, Enter for =. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator arithmetic"`.
+**Prompt:** The arithmetic engine handles operator precedence simply by using a two-operand model: the user enters operand1, presses an operator, enters operand2, presses = to compute. Store the pending operation and operand. C (clear) resets everything, CE (clear entry) clears only the current display without losing the pending operation. Handle division by zero gracefully (display "Error"). Accept keyboard input: numpad digits, +, -, *, /, Enter for =. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Calculator arithmetic"`.
 
 
 - [ ] Basic operations: +, −, ×, ÷
@@ -323,7 +323,7 @@
 
 ### 6.3 Memory & History
 
-**Prompt:** Memory buttons (M+, M−, MR, MC, MS) use a separate stored value that persists across calculations. Stretch goals: Scientific mode adds trig functions (sin/cos/tan — using `kmath.h` shims), log, sqrt, power, π. Programmer mode shows hex/binary/octal representations with bitwise operators (AND, OR, XOR, NOT, shifts). History lists previous calculations. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Calculator memory and advanced modes"`.
+**Prompt:** Memory buttons (M+, M−, MR, MC, MS) use a separate stored value that persists across calculations. Stretch goals: Scientific mode adds trig functions (sin/cos/tan — using `kmath.h` shims), log, sqrt, power, π. Programmer mode shows hex/binary/octal representations with bitwise operators (AND, OR, XOR, NOT, shifts). History lists previous calculations. After completing all items, update `docs/user/calculator.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Calculator memory and advanced modes"`.
 
 
 - [ ] Memory buttons: M+, M−, MR, MC, MS
@@ -338,7 +338,7 @@
 
 ### 7.1 Canvas & Viewport
 
-**Prompt:** Paint uses a `gfx_surface_t` as its canvas (default 800×600 white). The canvas may be larger than the window — scroll bars allow panning the viewport. The window layout: tool panel on the left (vertical strip of tool icons), canvas area in the center, color palette at the bottom, and status bar showing canvas dimensions, current tool, and brush size. The undo stack stores canvas snapshots before each stroke (deep-copy the surface, max 32 levels). After completing all items, create `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint canvas and viewport"`.
+**Prompt:** Paint uses a `gfx_surface_t` as its canvas (default 800×600 white). The canvas may be larger than the window — scroll bars allow panning the viewport. The window layout: tool panel on the left (vertical strip of tool icons), canvas area in the center, color palette at the bottom, and status bar showing canvas dimensions, current tool, and brush size. The undo stack stores canvas snapshots before each stroke (deep-copy the surface, max 32 levels). After completing all items, create `docs/user/paint.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Paint canvas and viewport"`.
 
 
 - [ ] Create `src/apps/paint/paint.c`
@@ -350,7 +350,7 @@
 
 ### 7.2 Drawing Tools
 
-**Prompt:** All drawing tools operate on the canvas surface. Pencil draws Bresenham lines between consecutive mouse events for smooth freehand drawing. Brush stamps filled circles at each mouse position with configurable radius. Eraser draws with the background color. Line: preview a rubber-band line during drag, render on release. Rectangle/Ellipse: outline or filled, hold Shift for square/circle. Fill bucket uses BFS flood fill from the click point, replacing the target color with the selected color. Text tool: click to place, opens a text input, renders using `font_draw_string()`. Tool selection via toolbar buttons on the left panel. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint drawing tools"`.
+**Prompt:** All drawing tools operate on the canvas surface. Pencil draws Bresenham lines between consecutive mouse events for smooth freehand drawing. Brush stamps filled circles at each mouse position with configurable radius. Eraser draws with the background color. Line: preview a rubber-band line during drag, render on release. Rectangle/Ellipse: outline or filled, hold Shift for square/circle. Fill bucket uses BFS flood fill from the click point, replacing the target color with the selected color. Text tool: click to place, opens a text input, renders using `font_draw_string()`. Tool selection via toolbar buttons on the left panel. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Paint drawing tools"`.
 
 
 - [ ] **Pencil** — freehand drawing (Bresenham line between mouse events)
@@ -366,7 +366,7 @@
 
 ### 7.3 Color System
 
-**Prompt:** The color palette bar at the bottom shows 20 preset colors in small squares. Two overlapping squares show the current foreground (on top) and background (behind) colors. Left-click a palette color to set foreground; right-click to set background. Click the swap icon to exchange foreground/background. Stretch goal: a color picker dialog (from §1.3) for custom colors with HSV sliders and hex input. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint color palette"`.
+**Prompt:** The color palette bar at the bottom shows 20 preset colors in small squares. Two overlapping squares show the current foreground (on top) and background (behind) colors. Left-click a palette color to set foreground; right-click to set background. Click the swap icon to exchange foreground/background. Stretch goal: a color picker dialog (from §1.3) for custom colors with HSV sliders and hex input. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Paint color palette"`.
 
 
 - [ ] Color palette bar at bottom: 20 preset colors
@@ -377,7 +377,7 @@
 
 ### 7.4 Undo & File Operations
 
-**Prompt:** Before each drawing stroke, push a copy of the affected canvas region onto the undo stack (max 32 levels). Ctrl+Z pops the stack and restores. Ctrl+Y re-applies (redo stack). File → Open loads an image via `image_load()` from Phase 02 §3 (JPEG, PNG, BMP). File → Save writes as BMP via `image_save_bmp()`. File → Save As lets the user choose format (BMP or PNG if PNG save is implemented). Stretch goals: rectangle selection tool for move/copy regions, mouse wheel zoom with percentage display. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Paint undo and file ops"`.
+**Prompt:** Before each drawing stroke, push a copy of the affected canvas region onto the undo stack (max 32 levels). Ctrl+Z pops the stack and restores. Ctrl+Y re-applies (redo stack). File → Open loads an image via `image_load()` from Phase 02 §3 (JPEG, PNG, BMP). File → Save writes as BMP via `image_save_bmp()`. File → Save As lets the user choose format (BMP or PNG if PNG save is implemented). Stretch goals: rectangle selection tool for move/copy regions, mouse wheel zoom with percentage display. After completing all items, update `docs/user/paint.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Paint undo and file ops"`.
 
 
 - [ ] Undo stack: save canvas snapshot before each stroke (max 32 levels)
@@ -398,7 +398,7 @@
 
 ### 8.1 Task Manager App
 
-**Prompt:** The Task Manager opens via Ctrl+Shift+Esc (registered as a system-wide hotkey in Phase 04 §15.1). It has two tabs: Processes (table listing all threads from the scheduler with Name, CPU%, RAM, PID, Status columns — read from the scheduler's task list from Phase 01 §1) and Performance (CPU usage as a rolling 60-second line chart, RAM usage bar from PMM stats). The "End Task" button kills the selected process. Auto-update the display every 1 second. Status bar shows total process count, overall CPU%, and RAM used/total. After completing all items, create `docs/user/task-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Task Manager"`.
+**Prompt:** The Task Manager opens via Ctrl+Shift+Esc (registered as a system-wide hotkey in Phase 04 §15.1). It has two tabs: Processes (table listing all threads from the scheduler with Name, CPU%, RAM, PID, Status columns — read from the scheduler's task list from Phase 01 §1) and Performance (CPU usage as a rolling 60-second line chart, RAM usage bar from PMM stats). The "End Task" button kills the selected process. Auto-update the display every 1 second. Status bar shows total process count, overall CPU%, and RAM used/total. After completing all items, create `docs/user/task-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Task Manager"`.
 
 
 - [ ] Create `src/apps/taskmgr/taskmgr.c`
@@ -420,7 +420,7 @@
 
 ### 9.1 Device Manager App
 
-**Prompt:** The Device Manager displays all hardware in a tree view (from §1.4 Tree View widget): categories as parent nodes (Display adapters, Network adapters, Storage controllers, Input devices, System devices), individual devices as children. Device info comes from PCI enumeration results (vendor/device IDs, BARs, IRQs) and registered driver names. Status indicators: green check for working devices, yellow warning for no-driver, red cross for errors. Click a device to see properties (PCI address, vendor ID, device ID, IRQ, driver name). After completing all items, create `docs/user/device-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Device Manager"`.
+**Prompt:** The Device Manager displays all hardware in a tree view (from §1.4 Tree View widget): categories as parent nodes (Display adapters, Network adapters, Storage controllers, Input devices, System devices), individual devices as children. Device info comes from PCI enumeration results (vendor/device IDs, BARs, IRQs) and registered driver names. Status indicators: green check for working devices, yellow warning for no-driver, red cross for errors. Click a device to see properties (PCI address, vendor ID, device ID, IRQ, driver name). After completing all items, create `docs/user/device-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Device Manager"`.
 
 
 - [ ] Create `src/apps/devmgr/devmgr.c`
@@ -442,7 +442,7 @@
 
 ### 10.1 File Operation Commands
 
-**Prompt:** Expand the shell with essential file commands. `cd` changes the current working directory (stored in shell state, passed to VFS operations). `pwd` prints it. `mkdir`/`rmdir` create/remove directories via VFS. `cp` copies a file (read source, write destination). `mv` moves/renames (if same filesystem: rename, otherwise: copy + delete). `rm` sends to recycle bin via `trash_delete()` (Phase 03 §9). `touch` creates an empty file. All commands should print error messages for invalid paths or permissions. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: file operation commands"`.
+**Prompt:** Expand the shell with essential file commands. `cd` changes the current working directory (stored in shell state, passed to VFS operations). `pwd` prints it. `mkdir`/`rmdir` create/remove directories via VFS. `cp` copies a file (read source, write destination). `mv` moves/renames (if same filesystem: rename, otherwise: copy + delete). `rm` sends to recycle bin via `trash_delete()` (Phase 03 §9). `touch` creates an empty file. All commands should print error messages for invalid paths or permissions. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: file operation commands"`.
 
 
 - [ ] `cd <dir>` — change working directory
@@ -457,7 +457,7 @@
 
 ### 10.2 System Commands
 
-**Prompt:** `whoami` reads the current username from the user account system (Phase 03 §11.1). `date` displays the current date and time using `time_now_local()` + `time_format()` from Phase 03 §4. `free` shows RAM usage from PMM stats (used/total MB). Output redirection: parse `>` to redirect stdout to a file (create/truncate) and `>>` to append. Stretch goals: tab completion (scan current directory + PATH for matching names), pipe `|` (connect stdout of one command to stdin of the next), and `&&` chaining (run next command only if previous succeeded). After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: system commands + redirection"`.
+**Prompt:** `whoami` reads the current username from the user account system (Phase 03 §11.1). `date` displays the current date and time using `time_now_local()` + `time_format()` from Phase 03 §4. `free` shows RAM usage from PMM stats (used/total MB). Output redirection: parse `>` to redirect stdout to a file (create/truncate) and `>>` to append. Stretch goals: tab completion (scan current directory + PATH for matching names), pipe `|` (connect stdout of one command to stdin of the next), and `&&` chaining (run next command only if previous succeeded). After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: system commands + redirection"`.
 
 
 - [ ] `whoami` — current user name
@@ -471,7 +471,7 @@
 
 ### 10.3 Network Commands
 
-**Prompt:** Stretch goals requiring the HTTP client from Phase 07 §4: `wget <url>` downloads a file (HTTP GET, save to current directory or specified path), `nslookup <host>` resolves a hostname to an IP via the DNS resolver (Phase 07 §2). These commands depend on TCP (Phase 07 §1) and DNS being implemented. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"shell: network commands"`.
+**Prompt:** Stretch goals requiring the HTTP client from Phase 07 §4: `wget <url>` downloads a file (HTTP GET, save to current directory or specified path), `nslookup <host>` resolves a hostname to an IP via the DNS resolver (Phase 07 §2). These commands depend on TCP (Phase 07 §1) and DNS being implemented. After completing all items, add to `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: network commands"`.
 
 
 - [ ] *(Stretch)* `wget <url>` — download file (requires HTTP client)
@@ -483,7 +483,7 @@
 
 ### 11.1 Image Viewer App
 
-**Prompt:** The Image Viewer opens images via file association (.jpg, .png, .bmp → imgview.exe from Phase 03 §5.2). Load the image using `image_load()` from Phase 02 §3. Fit the image to the window while preserving aspect ratio. Zoom via mouse wheel (scale up/down using `image_scale()` from Phase 02 §3.2). Pan via click+drag when zoomed past window bounds. Navigate to previous/next images in the same folder using left/right arrow keys (scan directory for image files, maintain an index). Toolbar: Previous, Next, zoom percentage, zoom in/out, fit-to-window buttons. Status bar: filename, dimensions, file size. After completing all items, create `docs/user/image-viewer.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Image Viewer"`.
+**Prompt:** The Image Viewer opens images via file association (.jpg, .png, .bmp → imgview.exe from Phase 03 §5.2). Load the image using `image_load()` from Phase 02 §3. Fit the image to the window while preserving aspect ratio. Zoom via mouse wheel (scale up/down using `image_scale()` from Phase 02 §3.2). Pan via click+drag when zoomed past window bounds. Navigate to previous/next images in the same folder using left/right arrow keys (scan directory for image files, maintain an index). Toolbar: Previous, Next, zoom percentage, zoom in/out, fit-to-window buttons. Status bar: filename, dimensions, file size. After completing all items, create `docs/user/image-viewer.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Image Viewer"`.
 
 
 - [ ] Create `src/apps/imgview/imgview.c`
@@ -504,7 +504,7 @@
 
 ### 12.1 Screenshot Capture
 
-**Prompt:** The screenshot tool captures the framebuffer content. `screenshot_capture()` copies the compositor's back buffer surface. `screenshot_window(win)` captures just the focused window's surface. Save as PNG (using `image_save_png()` if available, otherwise BMP via `image_save_bmp()`) to `C:\Users\{name}\Pictures\Screenshots\` with a timestamp filename. Copy to clipboard simultaneously. Show a notification toast (Phase 04 §3.2): "Screenshot saved". Register keyboard shortcuts in the hotkey manager (Phase 04 §15.1): PrtSc for full screen, Alt+PrtSc for active window, Win+Shift+S for region select. After completing all items, create `docs/user/screenshot.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Screenshot Tool"`.
+**Prompt:** The screenshot tool captures the framebuffer content. `screenshot_capture()` copies the compositor's back buffer surface. `screenshot_window(win)` captures just the focused window's surface. Save as PNG (using `image_save_png()` if available, otherwise BMP via `image_save_bmp()`) to `C:\Users\{name}\Pictures\Screenshots\` with a timestamp filename. Copy to clipboard simultaneously. Show a notification toast (Phase 04 §3.2): "Screenshot saved". Register keyboard shortcuts in the hotkey manager (Phase 04 §15.1): PrtSc for full screen, Alt+PrtSc for active window, Win+Shift+S for region select. After completing all items, create `docs/user/screenshot.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Screenshot Tool"`.
 
 
 - [ ] Create `src/apps/screenshot/screenshot.c`
@@ -522,7 +522,7 @@
 
 ### 12.2 Region Select Overlay
 
-**Prompt:** Win+Shift+S enters region select mode: dim the entire screen with a semi-transparent black overlay (alpha ~50%), then let the user click + drag a rubber-band selection rectangle. The selected region is rendered clear (undimmed) so the user can see what they're capturing. On mouse release, capture just the selected region. Press Escape to cancel. This overlay is rendered as a full-screen WM layer above all windows. After completing all items, update `docs/user/screenshot.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Screenshot region select"`.
+**Prompt:** Win+Shift+S enters region select mode: dim the entire screen with a semi-transparent black overlay (alpha ~50%), then let the user click + drag a rubber-band selection rectangle. The selected region is rendered clear (undimmed) so the user can see what they're capturing. On mouse release, capture just the selected region. Press Escape to cancel. This overlay is rendered as a full-screen WM layer above all windows. After completing all items, update `docs/user/screenshot.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Screenshot region select"`.
 
 
 - [ ] Dim entire screen with semi-transparent overlay
@@ -537,7 +537,7 @@
 
 ### 13.1 Archive Manager App
 
-**Prompt:** The Archive Manager opens .zip files (registered via file association from Phase 03 §5). It uses the ZIP API from Phase 03 §10.2 to read archive contents. Display a file list with columns: Name, Size, Modified Date, Status. Icons from the icon store map each archived file's extension to its icon. Buttons: [Extract All] invokes `zip_extract()` after a folder selection dialog, [Add Files] invokes `zip_add_file()` after an Open File dialog, [New] creates an empty ZIP. Status bar shows item count and compressed size. After completing all items, create `docs/user/archive-manager.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: Archive Manager"`.
+**Prompt:** The Archive Manager opens .zip files (registered via file association from Phase 03 §5). It uses the ZIP API from Phase 03 §10.2 to read archive contents. Display a file list with columns: Name, Size, Modified Date, Status. Icons from the icon store map each archived file's extension to its icon. Buttons: [Extract All] invokes `zip_extract()` after a folder selection dialog, [Add Files] invokes `zip_add_file()` after an Open File dialog, [New] creates an empty ZIP. Status bar shows item count and compressed size. After completing all items, create `docs/user/archive-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Archive Manager"`.
 
 
 - [ ] Create `src/apps/archiver/archiver.c`
@@ -600,7 +600,7 @@
 
 ### 16.1 Virtual Keyboard
 
-**Prompt:** The on-screen keyboard renders a full QWERTY layout as a grid of buttons. Each button click injects a keypress event into the WM's keyboard input queue (just as if a physical key were pressed). Handle modifier keys: Shift toggles between lowercase/uppercase and numbers/symbols, Caps Lock is sticky, Ctrl and Alt are momentary. Auto-show when a text input gains focus (if configured for touch mode). The keyboard window should be non-focusable (clicking it shouldn't steal focus from the target text field). After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: On-Screen Keyboard"`.
+**Prompt:** The on-screen keyboard renders a full QWERTY layout as a grid of buttons. Each button click injects a keypress event into the WM's keyboard input queue (just as if a physical key were pressed). Handle modifier keys: Shift toggles between lowercase/uppercase and numbers/symbols, Caps Lock is sticky, Ctrl and Alt are momentary. Auto-show when a text input gains focus (if configured for touch mode). The keyboard window should be non-focusable (clicking it shouldn't steal focus from the target text field). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: On-Screen Keyboard"`.
 
 
 - [ ] Create `src/apps/osk/osk.c`
@@ -659,7 +659,7 @@
 
 ### 18.1 Common App Event Loop
 
-**Prompt:** Define a standard event loop pattern that every app follows for consistency: `while (wm_get_event(&evt)) { switch (evt.type) { case KEY_DOWN: ... case MOUSE_CLICK: ... case PAINT: ... case CLOSE: ... } }`. Document this pattern so future apps are easy to implement. Standard event types: KEY_DOWN, KEY_UP, MOUSE_MOVE, MOUSE_CLICK, PAINT (window needs redraw), CLOSE (user clicked X). After completing all items, create `docs/architecture/app-pattern.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: standard app event loop pattern"`.
+**Prompt:** Define a standard event loop pattern that every app follows for consistency: `while (wm_get_event(&evt)) { switch (evt.type) { case KEY_DOWN: ... case MOUSE_CLICK: ... case PAINT: ... case CLOSE: ... } }`. Document this pattern so future apps are easy to implement. Standard event types: KEY_DOWN, KEY_UP, MOUSE_MOVE, MOUSE_CLICK, PAINT (window needs redraw), CLOSE (user clicked X). After completing all items, create `docs/architecture/app-pattern.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: standard app event loop pattern"`.
 
 
 - [ ] Define standard app message loop pattern: `while (wm_get_event(&evt)) { ... }`
@@ -679,7 +679,7 @@
 
 ### 18.3 Help / About Dialog (Shared)
 
-**Prompt:** A generic "About {AppName}" dialog reusable by all apps via `ui_dialog_about(name, version, icon, copyright)`. Shows the app icon, name, version, and copyright text in a compact window. Every app's Help menu should have an "About" item that calls this function. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: shared About dialog"`.
+**Prompt:** A generic "About {AppName}" dialog reusable by all apps via `ui_dialog_about(name, version, icon, copyright)`. Shows the app icon, name, version, and copyright text in a compact window. Every app's Help menu should have an "About" item that calls this function. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: shared About dialog"`.
 
 
 - [ ] Generic "About {AppName}" dialog (reusable by all apps)

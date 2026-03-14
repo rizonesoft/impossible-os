@@ -9,7 +9,7 @@
 
 > [!IMPORTANT]
 > **Consolidated from:** TODO-P0101-General.md §8, TODO-P0202-GUI.md §7.3,
-> TODO-Phase-89.md §4.3 (power.spl), TODO-Phase-97.md §11.2,
+> TODO-P0501-Core-Apps.md §4.3 (power.spl), TODO-P1201-Long-Term.md §11.2,
 > TODO-P0103-Filesystem.md §8.1 (cache_flush), TODO-P2501-Installer-ISO.md §2 (Test 8).
 > The original sections in those files should be replaced with cross-references
 > pointing here.
@@ -92,8 +92,8 @@
 
 ## 5. Power Settings Applet (`power.spl`)
 
-> **Depends on:** §2 (shutdown/reboot), Settings Panel framework (TODO-Phase-89.md §4)
-> **Originally:** TODO-Phase-89.md §4.3 (Core Applets — power.spl)
+> **Depends on:** §2 (shutdown/reboot), Settings Panel framework (TODO-P0501-Core-Apps.md §4)
+> **Originally:** TODO-P0501-Core-Apps.md §4.3 (Core Applets — power.spl)
 
 **Prompt:** The `power.spl` settings applet provides a UI for power settings: screen timeout slider, shutdown/restart buttons, and sleep settings. Each setting reads/writes Registry keys under `HKLM\SYSTEM\Power\`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: power settings applet"`.
 
@@ -150,7 +150,7 @@
 ## 8. Power Management Profiles
 
 > **Depends on:** §5 (power.spl), §7 (sleep)
-> **Originally:** TODO-Phase-97.md §11.2
+> **Originally:** TODO-P1201-Long-Term.md §11.2
 
 **Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
 

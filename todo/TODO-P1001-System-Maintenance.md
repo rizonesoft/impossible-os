@@ -1,4 +1,4 @@
-# Phase 12 — System Maintenance & Recovery
+# P1001 — System Maintenance & Recovery
 
 > **Goal:** Make Impossible OS self-maintaining and resilient: automatic system
 > updates with verification, a package manager for installing/uninstalling apps,
@@ -28,7 +28,7 @@
 
 ### 1.2 Update Download & Verification
 
-**Prompt:** `update_download(info, path)` does HTTP GET to the download URL and saves to `C:\Temp\update.ipkg` with progress reporting (bytes/total). `update_verify(path, expected_hash)` computes SHA-256 via monocypher and compares with the expected hash, rejecting corrupted or tampered downloads. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: update download + SHA-256 verification"`.
+**Prompt:** `update_download(info, path)` does HTTP GET to the download URL and saves to `C:\Temp\update.ipkg` with progress reporting (bytes/total). `update_verify(path, expected_hash)` computes SHA-256 via monocypher and compares with the expected hash, rejecting corrupted or tampered downloads. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update download + SHA-256 verification"`.
 
 
 - [ ] Implement `update_download(info, path)`:
@@ -173,7 +173,7 @@
 
 ### 3.2 Restore Point Management
 
-**Prompt:** `restore_list()` returns all restore points sorted by date. `restore_cleanup(keep_count)` deletes oldest, keeps last N (default 5). Auto-cleanup when disk space is low. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: restore point management"`.
+**Prompt:** `restore_list()` returns all restore points sorted by date. `restore_cleanup(keep_count)` deletes oldest, keeps last N (default 5). Auto-cleanup when disk space is low. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: restore point management"`.
 
 
 - [ ] Implement `restore_list(out, max)` — list all restore points (sorted by date)
@@ -195,7 +195,7 @@
 
 ### 3.4 Automatic Restore Points
 
-**Prompt:** Automatically create restore points before OS updates (from updater) and before app installs (from installer). Manual creation via Settings → System → "Create restore point" button. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: automatic restore points"`.
+**Prompt:** Automatically create restore points before OS updates (from updater) and before app installs (from installer). Manual creation via Settings → System → "Create restore point" button. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: automatic restore points"`.
 
 
 - [ ] Auto-create before OS update (from updater)
@@ -205,7 +205,7 @@
 
 ### 3.5 Restore UI
 
-**Prompt:** Settings → System → "System Restore" panel lists restore points with date, description, and size. [Restore] with confirmation, [Create] for manual, [Delete] to remove specific. Also accessible from Recovery Environment. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: system restore UI"`.
+**Prompt:** Settings → System → "System Restore" panel lists restore points with date, description, and size. [Restore] with confirmation, [Create] for manual, [Delete] to remove specific. Also accessible from Recovery Environment. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: system restore UI"`.
 
 
 - [ ] Settings → System → "System Restore" panel:
@@ -222,7 +222,7 @@
 
 ### 4.1 Recovery Boot Menu
 
-**Prompt:** Hold F8 at boot to enter Recovery Environment (intercept in bootloader/early kernel). Text-mode menu: Reset to factory, System Restore, Command Prompt, Startup Repair, Reinstall OS, Boot from USB. After completing all items, create `docs/architecture/recovery.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"recovery: boot menu"`.
+**Prompt:** Hold F8 at boot to enter Recovery Environment (intercept in bootloader/early kernel). Text-mode menu: Reset to factory, System Restore, Command Prompt, Startup Repair, Reinstall OS, Boot from USB. After completing all items, create `docs/architecture/recovery.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: boot menu"`.
 
 
 - [ ] Create `src/recovery/recovery.c`
@@ -259,7 +259,7 @@
 
 ### 4.3 Factory Reset
 
-**Prompt:** Wipe all user data + app installs, restore system files from recovery partition or ISO, recreate default directories + first-boot setup. Requires typed "YES" confirmation. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"recovery: factory reset"`.
+**Prompt:** Wipe all user data + app installs, restore system files from recovery partition or ISO, recreate default directories + first-boot setup. Requires typed "YES" confirmation. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: factory reset"`.
 
 
 - [ ] Wipe all user data + app installs
@@ -270,7 +270,7 @@
 
 ### 4.4 Startup Repair
 
-**Prompt:** Re-install bootloader (GRUB config regen), repair MBR/GPT headers, verify kernel binary integrity via checksum. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"recovery: startup repair"`.
+**Prompt:** Re-install bootloader (GRUB config regen), repair MBR/GPT headers, verify kernel binary integrity via checksum. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: startup repair"`.
 
 
 - [ ] Re-install bootloader (GRUB config regeneration)
@@ -292,7 +292,7 @@
 
 ### 5.1 Disk Cleanup
 
-**Prompt:** Scan deletable files: C:\Temp\, C:\Recycle\, old restore points, cached update packages, app logs. Display space savings per category. [Clean up] button deletes selected categories. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"apps: disk cleanup utility"`.
+**Prompt:** Scan deletable files: C:\Temp\, C:\Recycle\, old restore points, cached update packages, app logs. Display space savings per category. [Clean up] button deletes selected categories. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: disk cleanup utility"`.
 
 
 - [ ] Create `src/apps/cleanup/cleanup.c`
@@ -321,7 +321,7 @@
 
 ### 5.3 Event Log
 
-**Prompt:** System-wide event logging with types INFO/WARNING/ERROR/SECURITY. Log: install/uninstall, updates, login/logout, crashes, permission denied. Store in `C:\Impossible\System\Logs\events.log` (rolling, max 1 MB). Event Viewer settings applet with filters. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: system event log"`.
+**Prompt:** System-wide event logging with types INFO/WARNING/ERROR/SECURITY. Log: install/uninstall, updates, login/logout, crashes, permission denied. Store in `C:\Impossible\System\Logs\events.log` (rolling, max 1 MB). Event Viewer settings applet with filters. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system event log"`.
 
 
 - [ ] System-wide event logging (beyond serial debug log)
@@ -333,7 +333,7 @@
 
 ### 5.4 Crash Dump & Bug Reporter
 
-**Prompt:** On kernel panic: save crash dump (registers, stack trace, last 100 serial lines, loaded drivers) to `C:\Impossible\System\CrashDumps\`. Next boot: "System shut down unexpectedly. View crash report?" Stretch: opt-in server submission. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: crash dump and reporting"`.
+**Prompt:** On kernel panic: save crash dump (registers, stack trace, last 100 serial lines, loaded drivers) to `C:\Impossible\System\CrashDumps\`. Next boot: "System shut down unexpectedly. View crash report?" Stretch: opt-in server submission. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: crash dump and reporting"`.
 
 
 - [ ] On kernel panic: save crash dump to `C:\Impossible\System\CrashDumps\`
@@ -360,7 +360,7 @@
 
 ### 5.6 Safe Mode Boot
 
-**Prompt:** Boot with minimal drivers (no network, audio, USB), basic VGA resolution, skip auto-start apps. Used to fix driver issues or uninstall problematic apps. Select from Recovery menu or hold Shift at boot. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: safe mode boot"`.
+**Prompt:** Boot with minimal drivers (no network, audio, USB), basic VGA resolution, skip auto-start apps. Used to fix driver issues or uninstall problematic apps. Select from Recovery menu or hold Shift at boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: safe mode boot"`.
 
 
 - [ ] Boot with minimal drivers (no network, no audio, no USB)
