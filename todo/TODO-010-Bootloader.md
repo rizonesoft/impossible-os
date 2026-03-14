@@ -367,8 +367,8 @@ GOP mode. This works universally in QEMU, VirtualBox, and on real hardware. Do N
 
 After completing all items, mark every item as `[x]`, update this prompt to a
 verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"boot: EDID-based GOP resolution auto-detection"`. Update `README.md` and create or
-update `docs/` covering the EDID protocol, GOP mode matching, and the emulator fallback.
+`"boot: EDID-based GOP resolution auto-detection"`. Update `README.md` and add notes
+directly in this TODO section covering the EDID protocol, GOP mode matching, and the emulator fallback.
 
 > [!NOTE]
 > `fb_init()` already reads `g_boot_info.fb.{width,height,pitch}` dynamically —
@@ -485,7 +485,7 @@ Note: `icon_store_init()` ∥ `cursor_init()` parallelization deferred — VFS/F
 
 ### 6.1 Measured Boot (TPM)
 
-**Prompt:** Implement TPM Measured Boot so each boot stage is hashed into TPM PCR registers, enabling tamper detection and future remote attestation. Realistic scope is **Tier 2** (extend PCRs with kernel hash in `bootx64.c`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: TPM measured boot (Tier 2 — PCR extend)"`. Create documentation in `docs/` covering the PCR layout, measurement chain, testing procedure, and the Tier 3 remote attestation roadmap.
+**Prompt:** Implement TPM Measured Boot so each boot stage is hashed into TPM PCR registers, enabling tamper detection and future remote attestation. Realistic scope is **Tier 2** (extend PCRs with kernel hash in `bootx64.c`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: TPM measured boot (Tier 2 — PCR extend)"`. Add notes directly in this TODO section covering the PCR layout, measurement chain, testing procedure, and the Tier 3 remote attestation roadmap.
 
 **Trust chain:**
 `CPU → Firmware (PCR0–7) → UEFI Secure Boot (PCR8–9) → BOOTX64.EFI (PCR4, done by firmware) → kernel.elf (PCR8, done by us)`
@@ -538,7 +538,7 @@ Alternative: VirtualBox ≥ 6.1 supports virtual TPM 2.0 (Settings → System �
 - **Registration** happens in `bootx64.c` **before `ExitBootServices()`** — all Boot Services are fully available here, eliminating any Runtime Services support risk. Idempotent: scans existing `Boot####` entries and skips if already registered. NVRAM is written exactly once, on the very first boot after install.
 - **Removal** happens from within the running kernel via UEFI Runtime Services `SetVariable(DataSize=0)` — called only when the user explicitly runs a removal command (e.g. `bootmgr --remove` in the shell). Not called on every boot. Risk profile matches what Windows, GRUB, and systemd-boot all do.
 
-After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: self-register UEFI boot entry"`. Create documentation in `docs/` covering the boot entry format, registration flow, removal procedure, and `efibootmgr` manual fallback.
+After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: self-register UEFI boot entry"`. Add notes directly in this TODO section covering the boot entry format, registration flow, removal procedure, and `efibootmgr` manual fallback.
 
 > **Constraints:**
 > - Only meaningful on real hardware — QEMU's OVMF NVRAM is per-session and not preserved
@@ -558,27 +558,143 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 ---
 
+## 7. Missing Features vs Windows Boot Manager & GRUB
+
+---
+
+### 7.1 Boot Configuration File
+
+**Prompt:** Windows Boot Manager reads BCD (Boot Configuration Data); GRUB reads `grub.cfg`; systemd-boot reads `loader.conf`. Impossible OS has no equivalent — boot parameters are hardcoded. Add `\EFI\ImpossibleOS\boot.conf` — a simple `key=value` ini file read by `bootx64.c` before loading the kernel. Configurable: kernel path, kernel cmdline, splash timeout, default boot mode, serial debug on/off. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: boot.conf configuration file"`. Add notes directly in this TODO section.
+
+
+- [ ] Define `boot.conf` ini format: `key=value`, `#` comments, blank lines ignored
+- [ ] Implement `parse_boot_conf()` in `bootx64.c` — read from EFI partition via `EFI_SIMPLE_FILE_SYSTEM`
+- [ ] Parse keys: `kernel=`, `cmdline=`, `splash_timeout=`, `boot_mode=`, `serial_debug=`
+- [ ] Pass parsed cmdline string to kernel in boot params
+- [ ] Graceful fallback: if `boot.conf` absent, use hardcoded defaults
+- [ ] Ship a default `boot.conf` in the ISO
+- [ ] Commit: `"boot: boot.conf configuration file"`
+
+---
+
+### 7.2 Multi-OS Detection & Boot Menu
+
+**Prompt:** Windows Boot Manager auto-detects other OSes on the disk (Linux EFI entries, other Windows installs). GRUB has `os-prober`. Impossible OS currently shows no other OSes. Scan EFI partition for known bootloaders at boot, and if others are found, offer a timed boot menu. Detection: search for `\EFI\Microsoft\Boot\bootmgfw.efi` (Windows), `\EFI\ubuntu\grubx64.efi`, `\EFI\fedora\grubx64.efi`, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: multi-OS detection and boot menu"`. Add notes directly in this TODO section.
+
+
+- [ ] Scan root EFI partition `\EFI\` subdirectories for `*.efi` files
+- [ ] Identify known bootloaders by path (Windows, Ubuntu, Fedora, etc.)
+- [ ] If other OSes found AND hold-key not pressed: show timed boot menu (5s default)
+- [ ] Menu: highlight default entry, keyboard navigation (↑↓ + Enter), timeout countdown
+- [ ] If no other OS found: skip menu entirely, boot immediately
+- [ ] Chain-load selected EFI binary via `LoadImage` + `StartImage`
+- [ ] Store default OS preference in `boot.conf` (§7.1)
+- [ ] Commit: `"boot: multi-OS detection and boot menu"`
+
+---
+
+### 7.3 A/B (Dual-Slot) Boot
+
+**Prompt:** Android, ChromeOS, and modern embedded Linux systems use A/B dual-slot boot — two complete OS copies, updated alternately so a failed update never bricks the device. Boot slot A normally; on consecutive boot failures, auto-switch to slot B (last known good). This is a **major differentiator** — Windows and desktop Linux do NOT have native A/B boot. Store the active slot and failure counter in UEFI NVRAM. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: A/B dual-slot boot"`. Add notes directly in this TODO section.
+
+> **Beats:** Windows 11 (no A/B), desktop Linux (no A/B natively — only Atomic/immutable distros)
+
+
+- [ ] Define NVRAM variable `ImpossibleOS_BootSlot` (A or B) and `ImpossibleOS_BootFailCount`
+- [ ] On boot: read active slot; load kernel from `\boot\kernel_A.exe` or `\boot\kernel_B.exe`
+- [ ] On successful boot: kernel resets `BootFailCount = 0` via UEFI Runtime SetVariable
+- [ ] On failure (3 consecutive boots without reset): auto-switch slot, reset counter
+- [ ] Kernel shell command: `bootslot --swap` to manually switch active slot
+- [ ] Updater writes new kernel to inactive slot before swapping (safe update path)
+- [ ] Commit: `"boot: A/B dual-slot boot"`
+
+---
+
+### 7.4 Firmware Compatibility Check
+
+**Prompt:** At boot, validate that the firmware meets minimum requirements before loading the kernel. Check: UEFI version ≥ 2.5 (required for EFI_GRAPHICS_OUTPUT_PROTOCOL v2), available RAM ≥ 256 MiB, x86-64 CPU (already guaranteed by EFI mode), and GPU framebuffer accessible (FrameBufferBase ≠ 0 after GOP SetMode). On failure, print a human-readable UEFI console error and halt rather than showing a confusing crash later. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: firmware compatibility check"`. Add notes directly in this TODO section.
+
+
+- [ ] Check UEFI revision: `gST->Hdr.Revision >= EFI_2_50_SYSTEM_TABLE_REVISION`
+- [ ] Check available RAM ≥ 256 MiB from memory map (sum `EfiConventionalMemory` entries)
+- [ ] Check GOP framebuffer: `FrameBufferBase != 0` after `SetMode()`
+- [ ] On any failure: print diagnostic to UEFI console, call `gBS->Exit()` cleanly
+- [ ] Pass firmware version string to kernel in boot params for display in system info
+- [ ] Commit: `"boot: firmware compatibility check"`
+
+---
+
+### 7.5 Auto-Recovery After Crash Dump
+
+**Prompt:** When the kernel writes a crash dump (see §5.3 / `panic.c`), the next boot should detect it and offer to: send the dump, view it, or clear it and boot normally. Windows does this automatically (Windows Error Reporting). Linux has `kdump` + `makedumpfile`. Impossible OS already writes `C:\Impossible\System\crashdump.log` — we just need the bootloader to detect it and adjust boot behaviour. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: crash dump detection and recovery menu"`. Add notes directly in this TODO section.
+
+> **Note:** The bootloader cannot read the FAT32 system disk — check is done in early kernel before the desktop, after VFS mounts.
+
+
+- [ ] In `main.c` early boot (after VFS mount, before desktop): check for `C:\Impossible\System\crashdump.log`
+- [ ] If found: show recovery screen with options: View dump / Send to Rizonesoft / Clear and boot normally
+- [ ] "View dump" → open crash log in a minimal text viewer (no desktop needed)
+- [ ] "Send" → HTTP POST to crash reporting endpoint (requires network up)
+- [ ] "Clear" → delete log, boot normally
+- [ ] Store crash count in registry `SYSTEM\CrashDump\Count` — auto-enter Safe Mode after 3 consecutive crashes
+- [ ] Commit: `"boot: crash dump detection and recovery menu"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                          | Description                                              |
-|----------|----------------------------------|----------------------------------------------------------|
-| ✅ Done   | 1.1–1.5 Custom UEFI Bootloader   | Boot application, GOP, ELF loader, ACPI, page tables     |
-| ✅ Done   | 2.1–2.5 Boot Splash              | Splash screen, dots, icon, TTF font, status messages     |
-| 🔴 P0     | 4.1 GOP Mode Negotiation         | Without this, splash looks wrong on any non-720p display |
-| 🟠 P1     | 3.1 Generate MOK Key Pair        | Foundation for Secure Boot                               |
-| 🟠 P1     | 3.2 Sign Bootloader with MOK     | Enables Secure Boot testing                              |
-| 🟠 P1     | 3.5 Interim Pre-Signed Shim      | Ship Secure Boot now (with MOK enrollment)               |
-| 🟡 P2     | 4.2 HiDPI Scaling                | Required for 4K laptops                                  |
-| 🟡 P2     | 5.1 Fade-In Transition           | Polish — smooth firmware→OS transition                   |
-| 🟡 P2     | 5.2 Boot Profiling               | Developer tool — identify slow stages                    |
-| 🟡 P2     | 5.3 Error Recovery Screen        | UX — clean panic during boot                             |
-| 🟢 P3     | 3.3 Build and Package Shim       | Build our own shim from source                           |
-| 🟢 P3     | 3.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users                   |
-| 🟢 P3     | 5.4 Parallel Init                | Performance — reduce boot time                           |
-| 🟢 P3     | 5.5 Boot Menu                    | Recovery — safe mode, console                            |
-| 🔵 P4     | 6.1 Compressed Kernel            | Performance — smaller kernel image                       |
-| 🔵 P4     | 6.2 Measured Boot (TPM)          | Security — attestation                                   |
-| 🔵 P4     | 6.3 UEFI Boot Manager Entry      | UX — permanent boot menu entry                           |
+| Priority | Section                          | Description                                                       |
+|----------|----------------------------------|-------------------------------------------------------------------|
+| ✅ Done   | 1.1–1.5 Custom UEFI Bootloader   | Boot application, GOP, ELF loader, ACPI, page tables              |
+| ✅ Done   | 2.1–2.5 Boot Splash              | Splash screen, dots, icon, TTF font, status messages              |
+| ✅ Done   | 3.1 Generate MOK Key Pair        | RSA-2048 MOK key generated, committed                             |
+| ✅ Done   | 3.2 Sign Bootloader with MOK     | sbsigntool signing wired into build.sh                            |
+| ✅ Done   | 3.3 Build and Package Shim       | shim built from rhboot/shim v16.1                                 |
+| ✅ Done   | 5.1 Fade-In Transition           | 5-frame fade-in implemented                                       |
+| ✅ Done   | 5.2 Boot Profiling               | Serial timestamps + phase markers in main.c                       |
+| ✅ Done   | 5.3 Error Recovery Screen        | Panic screen with BSOD, crash dump, 30s countdown                 |
+| ✅ Done   | 5.4 Parallel Init                | DHCP fire-and-forget before partition scan                        |
+| 🔴 P0     | 4.1 GOP Mode Negotiation         | Without this, splash wrong on any non-720p display                |
+| 🟠 P1     | 7.1 Boot Config File             | `boot.conf` — stop hardcoding kernel path and cmdline             |
+| 🟠 P1     | 3.5 Interim Pre-Signed Shim      | Ship Secure Boot now (with MOK enrollment)                        |
+| 🟠 P1     | 5.5 Boot Menu                    | Recovery — safe mode, console                                     |
+| 🟠 P1     | 7.4 Firmware Compatibility Check | Fail fast with clear error instead of cryptic crash               |
+| 🟠 P1     | 7.5 Crash Dump Auto-Recovery     | Detect and offer options after panic                              |
+| 🟡 P2     | 4.2 HiDPI Scaling                | Required for 4K laptops                                           |
+| 🟡 P2     | 7.2 Multi-OS Detection           | Detect other OSes, show timed boot menu                           |
+| 🟡 P2     | 6.2 Measured Boot (TPM)          | Security — attestation                                            |
+| 🟡 P2     | 6.3 UEFI Boot Manager Entry      | UX — permanent firmware boot menu entry                           |
+| 🟢 P3     | 3.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users                            |
+| 🔵 Future | 7.3 A/B Dual-Slot Boot           | Impossible OS differentiator — safe updates, beats Win11 + Linux  |
+
+---
+
+## OS Comparison
+
+| Feature                           | Windows Boot Manager       | GRUB / systemd-boot        | Impossible OS                         |
+|-----------------------------------|----------------------------|----------------------------|---------------------------------------|
+| Custom UEFI boot application      | ✅ `bootmgfw.efi`          | ✅ `grubx64.efi`           | ✅ §1 Done                            |
+| Boot splash screen                | ✅ Windows 11 spinner      | ⚠️ Basic text / theme      | ✅ §2 Done — animated dots, TTF font  |
+| Secure Boot (signed)              | ✅ Microsoft CA            | ✅ Distro shim             | ✅ §3 Done — MOK + shim pending MSFT  |
+| EDID resolution auto-detect       | ✅                         | ✅ GRUB modes              | ⬜ §4.1 P0                            |
+| HiDPI / Retina scaling            | ✅                         | ⚠️ Limited                 | ⬜ §4.2 P2                            |
+| Fade-in transition                | ✅ Smooth                  | ❌                          | ✅ §5.1 Done                          |
+| Boot profiling / timestamps       | ✅ ETW traces              | ⚠️ Serial only             | ✅ §5.2 Done — serial phase markers   |
+| Error recovery screen (BSOD)      | ✅ BSOD + WinRE            | ❌                          | ✅ §5.3 Done                          |
+| Parallel init                     | ✅ Parallel service start  | ❌                          | ✅ §5.4 Done — async DHCP             |
+| Recovery boot menu (F8/Shift)     | ✅ WinRE                   | ✅ GRUB menu               | ⬜ §5.5 P1                            |
+| Measured Boot / TPM               | ✅ Full TPM 2.0            | ✅ GRUB TPM                | ⬜ §6.2 P2                            |
+| UEFI boot manager entry           | ✅ Automatic               | ✅ `grub-install`          | ⬜ §6.3 P2                            |
+| Boot config file                  | ✅ BCD store               | ✅ `grub.cfg`              | ⬜ §7.1 P1                            |
+| Multi-OS detection                | ✅ BCD auto-detect         | ✅ `os-prober`             | ⬜ §7.2 P2                            |
+| Firmware compatibility check      | ✅ (implicit)              | ❌                          | ⬜ §7.4 P1 — **Impossible OS only**   |
+| Crash dump auto-recovery          | ✅ WER + WinRE             | ❌                          | ⬜ §7.5 P1                            |
+| **A/B dual-slot boot**            | ❌                         | ❌ (only Atomic OSes)       | ⬜ **§7.3 Future — beats both**       |
+| **Anti-aliased TTF boot font**    | ✅                         | ⚠️ Bitmap fonts            | ✅ **Done — Selawik Semibold 16px**   |
+| **Boot profiling serial log**     | ❌ (ETW only, no serial)   | ❌                          | ✅ **Done — beats both**              |
+
+> **After P0+P1 items:** Impossible OS matches Windows Boot Manager feature-for-feature on single hardware.
+> **After A/B boot (§7.3):** Exceeds both Windows 11 and desktop Linux — a differentiator unique to Impossible OS.
 
 ---
 
