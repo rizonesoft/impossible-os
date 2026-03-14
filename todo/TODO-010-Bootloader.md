@@ -431,13 +431,21 @@ update `docs/` covering the EDID protocol, GOP mode matching, and the emulator f
 
 ### 5.3 Error Recovery Screen
 
-**Prompt:** If the kernel panics during the boot splash phase, show a clean error screen instead of hanging or showing garbled output. Detect panics via the existing `panic()` handler — if `boot_splash_active()` is true, render a BSOD-style error screen using the embedded TTF font. Show the panic message, register dump, and a "Press any key to restart" prompt. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: error recovery screen during splash"`. Update `README.md` if it contains stale or incorrect references to error handling or panics. Create or update documentation in `docs/` covering the boot error recovery screen, panic detection during splash, and the user-facing error display.
+**Prompt:** ✅ VERIFICATION — Boot error recovery screen is implemented in `src/kernel/panic.c`. Verify:
+(1) `panic_screen()` calls `if (boot_splash_active()) boot_splash_finish()` at the very start (before `cli`);
+(2) Screen is filled with `PANIC_BG_COLOR` (0x00003380 — deep Impossible-OS blue);
+(3) BSOD icon is drawn via `draw_bsod_icon()` using the embedded `bsod_icon_pixels` bitmap;
+(4) Displayed text includes: title ("Your Impossible OS ran into a problem..."), stop code, description, source file:line, full register dump (RAX–RSP, CR2, CR3), stack trace;
+(5) Crash dump written to `C:\Impossible\System\crashdump.log` via VFS;
+(6) 30-second auto-restart countdown with progress bar (configurable via Registry `SYSTEM\Recovery\AutoRestart`);
+(7) Restart attempted via ACPI reset (port 0xCF9), then triple-fault fallback;
+(8) `bash scripts/build.sh clean` produces `=== BUILD OK ===`.
 
-- [ ] In `panic()`, check if `boot_splash_active()` is true
-- [ ] If active: clear screen to dark blue, render error text with boot_font_render
-- [ ] Show: "Impossible OS encountered an error", panic message, register dump
-- [ ] Wait for keyboard interrupt or 30-second timeout, then reboot
-- [ ] Commit: `"boot: error recovery screen during splash"`
+- [x] In `panic()`, check if `boot_splash_active()` is true → line 301 of `panic.c`
+- [x] Clear screen to dark blue (`PANIC_BG_COLOR = 0x003380`), render BSOD icon and error text
+- [x] Show: title, stop code, description, register dump (all GPRs + CR2/CR3 + CS/SS), stack trace
+- [x] 30s countdown with progress bar; restart via ACPI (0xCF9) or triple fault; crash dump to disk
+- [x] Commit: `"boot: error recovery screen during splash"`
 
 ### 5.4 Parallel Init (Boot Time Optimization)
 
