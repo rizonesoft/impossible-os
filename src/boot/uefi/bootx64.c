@@ -233,6 +233,18 @@ static EFI_STATUS init_gop(void)
     gFbHeight = gop->Mode->Info->VerticalResolution;
     gFbPitch  = gop->Mode->Info->PixelsPerScanLine;
 
+    /* Zero the framebuffer immediately after SetMode().
+     * In QEMU the VRAM is uninitialized at this moment (random pixels =
+     * static noise).  On real hardware this is usually already zeroed by
+     * the UEFI firmware, but zeroing it here is harmless and guarantees a
+     * clean black frame before any further drawing occurs. */
+    {
+        UINTN sz = (UINTN)gFbHeight * (UINTN)gFbPitch;
+        UINTN i;
+        for (i = 0; i < sz; i++)
+            gFramebuffer[i] = 0x00000000;
+    }
+
     /* Fill boot_info framebuffer */
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
     g_boot_info_ptr->fb.pitch  = gop->Mode->Info->PixelsPerScanLine * 4;
