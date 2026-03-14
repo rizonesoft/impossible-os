@@ -400,26 +400,26 @@
 
 | Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
 |---------------------------------|----------------------------|----------------------------|-------------------------------------|
-| Kernel Threads                  | ✅ `KTHREAD`               | ✅ `task_struct`           | ✅ §1 Done                          |
-| Mutexes                         | ✅ `KMUTEX`                | ✅ `mutex_t`               | ✅ §2 Done                          |
-| Semaphores                      | ✅ `KSEMAPHORE`            | ✅ `semaphore`             | ✅ §3 Done                          |
-| Read-Write Locks                | ✅ `ERESOURCE`             | ✅ `rwlock_t`              | ✅ §4 Done                          |
-| Condition Variables             | ✅ (user-mode)             | ✅ `wait_queue`            | ✅ §5 Done                          |
-| Spinlocks (IRQ-safe)            | ✅ `KSPIN_LOCK`            | ✅ `spinlock_t`            | ⬜ §6 P0                            |
-| Atomic Operations               | ✅ `Interlocked*`          | ✅ `atomic_t`              | ⬜ §7 P0                            |
-| Wait/Event Objects              | ✅ `KEVENT`                | ✅ `completion`            | ⬜ §8 P1                            |
-| Work Queues                     | ✅ DPC + work items        | ✅ `workqueue_struct`      | ⬜ §9 P1                            |
-| Memory Barriers                 | ✅ `KeMemoryBarrier`       | ✅ `mb()`/`rmb()`/`wmb()` | ⬜ §10 P0                           |
-| Priority Inheritance            | ⚠️ Heuristic only         | ⚠️ Opt-in `rt_mutex`      | ⬜ §11+17 **Default on all mutexes** |
-| Seqlocks                        | ❌                         | ✅ `seqlock_t`             | ⬜ §12 P2                           |
-| RCU                             | ❌                         | ✅ `rcu_*`                 | ⬜ §13 P2                           |
-| SMP / Per-CPU                   | ✅ Full NUMA               | ✅ Full NUMA               | ⬜ §14 Future                       |
-| Futexes                         | ✅ (user-mode)             | ✅ `futex()`               | ⬜ §15 P1                           |
-| Lock Validator                  | ✅ Driver Verifier         | ✅ `lockdep`               | ⬜ §16 P2                           |
-| **PI on by default**            | ❌ Heuristic               | ❌ Opt-in only             | ⬜ **§17 — Impossible OS only**     |
-| **Wait-on-multiple**            | ✅ `WaitForMultiple`       | ❌ FDs only                | ⬜ **§18 — beats Linux**            |
-| **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent            | ⬜ **§19 — Impossible OS only**     |
-| **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only         | ⬜ **§20 — Impossible OS only**     |
-| **Named lock browser**          | ❌                         | ❌ File locks only         | ⬜ **§21 — Impossible OS only**     |
+| Kernel Threads                  | ✅ `KTHREAD`               | ✅ `task_struct`           | ✅ §1 Done                           |
+| Mutexes                         | ✅ `KMUTEX`                | ✅ `mutex_t`               | ✅ §2 Done                           |
+| Semaphores                      | ✅ `KSEMAPHORE`            | ✅ `semaphore`             | ✅ §3 Done                           |
+| Read-Write Locks                | ✅ `ERESOURCE`             | ✅ `rwlock_t`              | ✅ §4 Done                           |
+| Condition Variables             | ✅ (user-mode)             | ✅ `wait_queue`            | ✅ §5 Done                           |
+| Spinlocks (IRQ-safe)            | ✅ `KSPIN_LOCK`            | ✅ `spinlock_t`            | ⬜ §6 P0                             |
+| Atomic Operations               | ✅ `Interlocked*`          | ✅ `atomic_t`              | ⬜ §7 P0                             |
+| Wait/Event Objects              | ✅ `KEVENT`                | ✅ `completion`            | ⬜ §8 P1                             |
+| Work Queues                     | ✅ DPC + work items        | ✅ `workqueue_struct`      | ⬜ §9 P1                             |
+| Memory Barriers                 | ✅ `KeMemoryBarrier`       | ✅ `mb()`/`rmb()`/`wmb()`  | ⬜ §10 P0                            |
+| Priority Inheritance            | ⚠️ Heuristic only          | ⚠️ Opt-in `rt_mutex`       | ⬜ §11+17 **Default on all mutexes** |
+| Seqlocks                        | ❌                         | ✅ `seqlock_t`             | ⬜ §12 P2                            |
+| RCU                             | ❌                         | ✅ `rcu_*`                 | ⬜ §13 P2                            |
+| SMP / Per-CPU                   | ✅ Full NUMA               | ✅ Full NUMA               | ⬜ §14 Future                        |
+| Futexes                         | ✅ (user-mode)             | ✅ `futex()`               | ⬜ §15 P1                            |
+| Lock Validator                  | ✅ Driver Verifier         | ✅ `lockdep`               | ⬜ §16 P2                            |
+| **PI on by default**            | ❌ Heuristic               | ❌ Opt-in only             | ⬜ **§17 — Impossible OS only**      |
+| **Wait-on-multiple**            | ✅ `WaitForMultiple`       | ❌ FDs only                | ⬜ **§18 — beats Linux**             |
+| **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent            | ⬜ **§19 — Impossible OS only**      |
+| **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only         | ⬜ **§20 — Impossible OS only**      |
+| **Named lock browser**          | ❌                         | ❌ File locks only         | ⬜ **§21 — Impossible OS only**      |
 
 > **After §17–21:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
