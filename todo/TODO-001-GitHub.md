@@ -15,13 +15,13 @@
 
 ### 1.1 Create Public Bootloader Repo
 
-**Prompt:** Verified (2026-03-14). `https://github.com/rizonesoft/impossible-os-bootloader` exists and is public. The repo is currently empty — README.md and LICENSE files have been prepared at `/tmp/bootloader-init/` and need to be pushed. Run: `cd /tmp/bootloader-init && git push -u origin main` in a terminal with GitHub credentials. After pushing, mark the remaining items `[x]`.
+**Prompt:** Verified (2026-03-14). `https://github.com/rizonesoft/impossible-os-bootloader` is public with `README.md` and `LICENSE` committed as `"chore: initial bootloader public repo"`. Both repos are correctly set up. No further action needed.
 
 - [x] `rizonesoft/impossible-os` — Private — kernel, desktop, drivers, apps (this repo)
 - [x] `rizonesoft/impossible-os-bootloader` — Public — bootloader for Secure Boot signing and community audit
-- [ ] Add `README.md` to bootloader repo explaining its purpose *(files ready at `/tmp/bootloader-init/`, push manually)*
-- [ ] Add `LICENSE` file to bootloader repo *(files ready at `/tmp/bootloader-init/`, push manually)*
-- [ ] Commit to bootloader repo: `"chore: initial bootloader public repo"`
+- [x] Add `README.md` to bootloader repo explaining its purpose
+- [x] Add `LICENSE` file to bootloader repo
+- [x] Commit to bootloader repo: `"chore: initial bootloader public repo"`
 
 ---
 
