@@ -38,3 +38,6 @@ resources/icons/color/**/*.png
 
 # Secure Boot keys — private key must NEVER be committed
 keys/MOK.key
+
+# UEFI compiled binaries
+src/boot/uefi/*.so
