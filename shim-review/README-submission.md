@@ -5,7 +5,8 @@ This is the shim-review submission for **Impossible OS**, a custom x86-64 operat
 system built entirely from scratch (custom UEFI bootloader, 64-bit kernel, graphical
 desktop — no Linux, no GRUB).
 
-Source: https://github.com/rizonesoft/impossible-os
+- **Bootloader repo:** https://github.com/rizonesoft/impossible-os-bootloader
+- **Shim fork:** https://github.com/rizonesoft/impossible-os-shim
 
 ## Submission Checklist
 
@@ -42,7 +43,9 @@ N/A — first submission, no prior verified contacts.
 
 **Name:** Rizonesoft  
 **Contact:** Derick Payne \<derick@rizonetech.com\>  
-**Project:** Impossible OS — https://github.com/rizonesoft/impossible-os
+**Project:** Impossible OS  
+**Bootloader:** https://github.com/rizonesoft/impossible-os-bootloader  
+**Shim source:** https://github.com/rizonesoft/impossible-os-shim
 
 ## What is this used for?
 
@@ -85,6 +88,6 @@ docker run --rm impossible-os-shim sha256sum /output/shimx64.efi
 ```
 EFI/BOOT/
   ├── BOOTX64.EFI    ← shimx64.efi (this submission)
-  ├── grubx64.efi    ← Impossible OS bootloader, signed with MOK.key
+  ├── grubx64.efi    ← Impossible OS bootloader (signed with MOK.key)
   └── mmx64.efi      ← MokManager (first-boot enrollment)
 ```
