@@ -253,6 +253,8 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg userland
 SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
 SYSTEM_DISK_SIZE := 512M
 EFI_SIZE := 256M
+# Shim binaries — built by bash scripts/build-shim.sh
+SHIM_DIR := shim
 # Partition offsets (must match make-system-disk defaults)
 # EFI: LBA 2048 = byte 1048576, size 256M = 268435456 bytes
 # IXFS: LBA 526336 = byte 269484032 (next 2048-aligned LBA after EFI end)
@@ -275,7 +277,18 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
 	@mkdir -p $(BUILD_DIR)/efi_staging/boot
-	@cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI
+	@# --- EFI chain-load layout ---
+	@# Shim chain-load (Secure Boot path): shim → grubx64.efi → kernel
+	@# Fallback (dev/no-shim builds):      BOOTX64.EFI directly → kernel
+	@if [ -f "$(SHIM_DIR)/shimx64.efi" ]; then \
+		echo "[DISK] Shim found — using Secure Boot chain-load layout"; \
+		cp $(SHIM_DIR)/shimx64.efi $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
+		cp $(UEFI_EFI)             $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
+		cp $(SHIM_DIR)/mmx64.efi  $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
+	else \
+		echo "[DISK] No shim — using direct boot (run scripts/build-shim.sh for Secure Boot)"; \
+		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
+	fi
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
