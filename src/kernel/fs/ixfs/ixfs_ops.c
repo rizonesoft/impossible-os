@@ -279,6 +279,7 @@ static int ixfs_file_write(struct vfs_node *node, uint32_t offset,
 /* Forward declarations for file ops */
 static int ixfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st);
 static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size);
+static int ixfs_vfs_flush(struct vfs_node *node);
 
 struct vfs_ops ixfs_file_ops = {
     .open    = ixfs_file_open,
@@ -292,6 +293,11 @@ struct vfs_ops ixfs_file_ops = {
     .rename  = (void *)0,
     .stat    = ixfs_vfs_stat,
     .truncate = ixfs_vfs_truncate,
+    .mkdir   = (void *)0,
+    .rmdir   = (void *)0,
+    .set_attr = (void *)0,
+    .set_times = (void *)0,
+    .flush   = ixfs_vfs_flush,
 };
 
 /* --- VFS directory operations --- */
@@ -872,6 +878,73 @@ static int ixfs_vfs_truncate(struct vfs_node *node, uint64_t new_size)
     return 0;
 }
 
+/* VFS-compatible mkdir: creates a directory via ixfs_create */
+static int ixfs_vfs_mkdir(struct vfs_node *parent, const char *name)
+{
+    return ixfs_create(parent, name, VFS_DIRECTORY);
+}
+
+/* VFS-compatible rmdir: ixfs_unlink already checks for empty directories */
+static int ixfs_vfs_rmdir(struct vfs_node *parent, const char *name)
+{
+    return ixfs_unlink(parent, name);
+}
+
+/* VFS-compatible set_attr: update permission bits in inode i_mode */
+static int ixfs_vfs_set_attr(struct vfs_node *node, uint32_t attributes)
+{
+    struct ixfs_vnode *v;
+    if (!node || !node->fs_data)
+        return -1;
+
+    v = (struct ixfs_vnode *)node->fs_data;
+
+    /* Update lower 12 bits (permissions), preserve type bits */
+    v->inode.i_mode = (v->inode.i_mode & IXFS_S_TYPEMASK)
+                    | (uint16_t)(attributes & 0x0FFF);
+    v->inode.i_mtime = (uint32_t)uptime();
+    ixfs_write_inode(v->vol, v->ino, &v->inode);
+    return 0;
+}
+
+/* VFS-compatible set_times: update inode timestamps selectively */
+static int ixfs_vfs_set_times(struct vfs_node *node,
+                              const filetime_t *ctime_p,
+                              const filetime_t *mtime_p,
+                              const filetime_t *atime_p)
+{
+    struct ixfs_vnode *v;
+    if (!node || !node->fs_data)
+        return -1;
+
+    v = (struct ixfs_vnode *)node->fs_data;
+
+    if (ctime_p)
+        v->inode.i_ctime = ctime_p->seconds;
+    if (mtime_p)
+        v->inode.i_mtime = mtime_p->seconds;
+    if (atime_p)
+        v->inode.i_atime = atime_p->seconds;
+
+    ixfs_write_inode(v->vol, v->ino, &v->inode);
+    return 0;
+}
+
+/* VFS-compatible flush: flush bitmap and superblock to disk */
+static int ixfs_vfs_flush(struct vfs_node *node)
+{
+    struct ixfs_vnode *v;
+    if (!node || !node->fs_data)
+        return -1;
+
+    v = (struct ixfs_vnode *)node->fs_data;
+    ixfs_txn_begin(v->vol);
+    ixfs_flush_bitmap(v->vol);
+    ixfs_flush_superblock(v->vol);
+    ixfs_txn_commit(v->vol);
+    return 0;
+}
+
 struct vfs_ops ixfs_dir_ops = {
     .open    = ixfs_file_open,
     .close   = ixfs_file_close,
@@ -883,5 +956,10 @@ struct vfs_ops ixfs_dir_ops = {
     .unlink  = ixfs_unlink,
     .rename  = ixfs_rename,
     .stat    = ixfs_vfs_stat,
-    .truncate = (void *)0,  /* directories can't be truncated */
+    .truncate = (void *)0,
+    .mkdir   = ixfs_vfs_mkdir,
+    .rmdir   = ixfs_vfs_rmdir,
+    .set_attr = ixfs_vfs_set_attr,
+    .set_times = ixfs_vfs_set_times,
+    .flush   = ixfs_vfs_flush,
 };

@@ -47,6 +47,11 @@ struct vfs_stat {
     uint32_t blocks;     /* number of disk blocks used */
 };
 
+/* Timestamp for set_times callback (NULL = don't change) */
+typedef struct {
+    uint32_t seconds;    /* seconds since boot */
+} filetime_t;
+
 /* Filesystem driver operations — implemented by each FS (IXFS, FAT32, etc.) */
 struct vfs_ops {
     int      (*open)(struct vfs_node *node, uint32_t flags);
@@ -61,6 +66,12 @@ struct vfs_ops {
                        const char *new_name);
     int      (*stat)(struct vfs_node *node, struct vfs_stat *st);
     int      (*truncate)(struct vfs_node *node, uint64_t new_size);
+    int      (*mkdir)(struct vfs_node *parent, const char *name);
+    int      (*rmdir)(struct vfs_node *parent, const char *name);
+    int      (*set_attr)(struct vfs_node *node, uint32_t attributes);
+    int      (*set_times)(struct vfs_node *node, const filetime_t *ctime,
+                          const filetime_t *mtime, const filetime_t *atime);
+    int      (*flush)(struct vfs_node *node);
 };
 
 /* VFS node — represents a file, directory, or mountpoint */
