@@ -35,3 +35,6 @@ resources/icons/color/**/*.png
 
 # Windows WSL zone identifiers
 *:Zone.Identifier
+
+# Secure Boot keys — private key must NEVER be committed
+keys/MOK.key
