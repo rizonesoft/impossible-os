@@ -160,6 +160,105 @@
 - [ ] Apply `barrier()` in `spinlock.h` and `atomic.h` acquire/release paths
 - [ ] Commit: `"kernel: memory barriers"`
 
+
+---
+
+## 11. Priority Inheritance (Mutex Enhancement)
+
+**Prompt:** Priority inversion happens when a low-priority thread holds a mutex that a high-priority thread needs, while a medium-priority thread preempts it — the high-priority thread is effectively blocked by the medium one. Priority inheritance fixes this: when a high-priority thread blocks on a mutex, the lock owner's priority is temporarily boosted to match. Implement as an extension to `mutex_t` — add a `priority_ceiling` field; on block, boost the owner's thread priority to `max(owner_prio, waiter_prio)`; on unlock, restore the original priority. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: mutex priority inheritance"`. Create or update documentation in `docs/` covering the priority inversion problem and the inheritance solution.
+
+
+- [ ] Add `base_priority` field to `thread_t` (saved original priority before boost)
+- [ ] Add `priority` (current effective priority) field to `thread_t`
+- [ ] Update scheduler to select highest-priority READY thread (priority-aware)
+- [ ] In `mutex_lock()`: if blocked, boost lock owner's priority to waiter's priority
+- [ ] In `mutex_unlock()`: restore owner's priority to `base_priority`
+- [ ] Handle cascaded inheritance (A waits on B, B waits on C → C gets A's priority)
+- [ ] Commit: `"sched: mutex priority inheritance"`
+
+---
+
+## 12. Seqlocks (Ultra-Fast Read Path)
+
+**Prompt:** Seqlocks allow readers to proceed without taking any lock at all — they read a monotonically-incrementing sequence counter before and after the read; if the counter changed (writer was active), they retry. Writers increment the counter before and after modifying data (odd = write in progress). This gives O(1) reads with zero locking overhead for read-mostly data that changes rarely (e.g., system clock, jiffies, uptime counter). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: seqlocks"`. Create or update documentation in `docs/` covering seqlock semantics and use cases.
+
+
+- [ ] Define `seqlock_t` (spinlock + volatile uint64_t sequence counter)
+- [ ] Implement `seqlock_write_lock(sl)` / `seqlock_write_unlock(sl)` — inc counter odd/even
+- [ ] Implement `seqlock_read_begin(sl)` — return current sequence (retry if odd)
+- [ ] Implement `seqlock_read_retry(sl, seq)` — return true if sequence changed
+- [ ] Usage pattern: `do { seq = seqlock_read_begin(sl); ... } while (seqlock_read_retry(sl, seq))`
+- [ ] Use for: system uptime counter, jiffies, cached RTC time
+- [ ] Commit: `"sched: seqlocks"`
+
+---
+
+## 13. RCU — Read-Copy-Update
+
+**Prompt:** RCU is Linux's most powerful scalability primitive — readers hold no lock at all (zero overhead), writers atomically publish a new version of a data structure by updating a pointer, then wait for all current readers to finish before freeing the old version. Implement a simplified single-core RCU: `rcu_read_lock()` / `rcu_read_unlock()` disable preemption (on single-core this is sufficient); `synchronize_rcu()` blocks until all RCU read-side critical sections complete; `rcu_assign_pointer(ptr, new)` / `rcu_dereference(ptr)` handle pointer publishing with barriers. Use for: VFS dentry cache, network route table, loaded module list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: RCU (single-core)"`. Create or update documentation in `docs/` covering RCU concepts, the grace period, and safe usage patterns.
+
+> **Scope:** Single-core simplified RCU only. Full SMP RCU (quiescent-state tracking per CPU) is deferred to the SMP phase.
+
+
+- [ ] Implement `rcu_read_lock()` — disable preemption (single-core: disable scheduler)
+- [ ] Implement `rcu_read_unlock()` — re-enable preemption
+- [ ] Implement `synchronize_rcu()` — wait for all in-progress RCU read sections to exit
+- [ ] Implement `rcu_assign_pointer(ptr, new)` — write barrier + pointer store
+- [ ] Implement `rcu_dereference(ptr)` — read barrier + pointer load
+- [ ] Use for: VFS path cache, route table, module list (replace rwlock where read-dominant)
+- [ ] Commit: `"sched: RCU (single-core)"`
+
+---
+
+## 14. SMP Support (Future)
+
+**Prompt:** SMP (symmetric multi-processing) allows multiple CPU cores to run kernel threads simultaneously. This requires: per-CPU data structures (no false sharing), IPI (inter-processor interrupt) for TLB shootdown and cross-CPU wakeups, CPU-aware lock primitives (spinlock must use `LOCK` prefix on x86 SMP), NUMA-aware memory allocation, and a load-balancing scheduler. This is a large future milestone — do not start until the single-core kernel is stable and the full feature set is implemented.
+
+> **Prerequisite:** §7 Atomic Operations and §10 Memory Barriers must be complete before any SMP work begins.
+
+
+- [ ] Parse ACPI MADT to discover all CPUs and APICs
+- [ ] Initialize secondary CPUs (AP startup via SIPI IPI)
+- [ ] Implement per-CPU data (`per_cpu(var, cpu)` macro using GS segment)
+- [ ] Add `LOCK` prefix to atomic ops and spinlocks for SMP correctness
+- [ ] Implement IPI: `send_ipi_single(cpu)`, `send_ipi_all_but_self()`
+- [ ] TLB shootdown IPI: flush remote CPU page tables on `munmap`/`mprotect`
+- [ ] SMP-aware scheduler: run queue per CPU, load balancing via work stealing
+- [ ] Commit series: `"smp: AP bringup"`, `"smp: per-CPU data"`, `"smp: scheduler"`
+
+---
+
+## 15. Futexes (User-Space Fast Mutex)
+
+**Prompt:** Futexes (fast userspace mutexes) allow user-mode mutex/condvar implementations to avoid syscalls in the uncontended case. The kernel only gets involved when a thread actually needs to sleep or wake. `SYS_FUTEX_WAIT(addr, expected)` — if `*addr == expected`, sleep on that address. `SYS_FUTEX_WAKE(addr, n)` — wake up to N threads sleeping on that address. User-mode pthreads, C++ `std::mutex`, and Go's runtime all use futexes under the hood. Prerequisite: §1 File Descriptors (for per-process futex table) and §3 User-Mode Heap. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: futex syscall"`. Create or update documentation in `docs/` covering futex semantics and a user-mode mutex example.
+
+
+- [ ] Define per-process futex wait table (hash map of address → wait queue)
+- [ ] Implement `SYS_FUTEX_WAIT(uaddr, expected)` — atomic check-and-sleep
+- [ ] Implement `SYS_FUTEX_WAKE(uaddr, n)` — wake up to N waiters
+- [ ] Implement `SYS_FUTEX_WAKE_OP` — combined wake + atomic operation (for condvar)
+- [ ] Port or write a user-mode mutex using futexes (for `user/lib/`)
+- [ ] Test: two user threads contend on a futex mutex, verify no deadlock
+- [ ] Commit: `"kernel: futex syscall"`
+
+---
+
+## 16. Lock Dependency Validator (Debug Build)
+
+**Prompt:** A lock dependency validator (like Linux `lockdep` or Windows Driver Verifier) detects potential deadlocks at runtime by building a directed graph of lock acquisition order. Every time a lock is acquired, the validator records which locks the current thread already holds. If the new acquisition would create a cycle in the dependency graph (A→B and B→A acquired in different threads), it fires a warning immediately — before the actual deadlock occurs. Enable with `-DLOCKDEP` at build time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: lock dependency validator"`. Create or update documentation in `docs/` covering lockdep usage, interpreting warnings, and adding annotations.
+
+> **Debug only:** Zero overhead in release builds (`#ifdef LOCKDEP`). Only active in debug/testing builds.
+
+
+- [ ] Define lock class: unique ID per lock type (not per instance), registered at first lock
+- [ ] Per-thread held-locks stack: record each acquired lock's class ID
+- [ ] On `mutex_lock()` / `rwlock_write_lock()`: check if acquiring class creates a cycle with held stack
+- [ ] Dependency graph: directed edges from held-class → acquiring-class; detect cycles (DFS)
+- [ ] On cycle detected: `printk("[LOCKDEP] Potential deadlock: ...")` with full held-locks stack
+- [ ] Apply to: `mutex_t`, `rwlock_t`, `spinlock_t` (condvar and semaphore excluded — different semantics)
+- [ ] All state inside `#ifdef LOCKDEP` guards — zero overhead in release
+- [ ] Commit: `"debug: lock dependency validator"`
+
 ---
 
 ## Priority Order
@@ -174,5 +273,11 @@
 | 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                |
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting             |
 | 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers    |
+| 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks    |
 | 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores |
 | 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                |
+| 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature    |
+| 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed             |
+| 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list           |
+| 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only       |
+| 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable     |
