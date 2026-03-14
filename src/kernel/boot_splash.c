@@ -111,8 +111,10 @@ static void splash_draw_dot(int32_t cx, int32_t cy, int32_t r, uint32_t color)
     }
 }
 
-/* Draw the 48×48 icon with alpha blending (on black bg → just multiply) */
-static void splash_draw_icon(void)
+/* Draw the 48×48 icon with alpha-blending, optionally dimmed by fade/255.
+ * fade=255 → full brightness (normal render); fade<255 → dimmed for fade-in.
+ * On a black background, each channel is: pixel_rgb * pixel_alpha / 255 * fade / 255. */
+static void splash_draw_icon_faded(uint8_t fade)
 {
     for (uint32_t py = 0; py < BOOT_ICON_H; py++) {
         for (uint32_t px = 0; px < BOOT_ICON_W; px++) {
@@ -124,20 +126,15 @@ static void splash_draw_icon(void)
             uint32_t sy = icon_y + py;
             if (sx >= scr_w || sy >= scr_h) continue;
 
-            if (a == 255) {
-                fb_put_pixel(sx, sy, pixel);
-            } else {
-                uint8_t b = (uint8_t)((pixel & 0xFF) * a / 255);
-                uint8_t g = (uint8_t)(((pixel >> 8) & 0xFF) * a / 255);
-                uint8_t r = (uint8_t)(((pixel >> 16) & 0xFF) * a / 255);
-                fb_put_pixel(sx, sy,
-                    (uint32_t)b | ((uint32_t)g << 8) | ((uint32_t)r << 16));
-            }
+            /* Pre-multiply by per-pixel alpha, then dim by fade */
+            uint8_t b = (uint8_t)((pixel & 0xFF) * a / 255 * fade / 255);
+            uint8_t g = (uint8_t)(((pixel >> 8) & 0xFF) * a / 255 * fade / 255);
+            uint8_t r = (uint8_t)(((pixel >> 16) & 0xFF) * a / 255 * fade / 255);
+            fb_put_pixel(sx, sy,
+                (uint32_t)b | ((uint32_t)g << 8) | ((uint32_t)r << 16));
         }
     }
 }
-
-
 
 /* Draw a status string centered horizontally at text_y using the TTF font.
  * Falls back to no-op if TTF is not yet initialized. */
@@ -217,6 +214,45 @@ static void splash_draw_dots(void)
     }
 }
 
+/* Like splash_draw_dots() but scales dot brightness by fade/255.
+ * Clears the dot area first before drawing — same as the normal variant. */
+static void splash_draw_dots_faded(uint8_t fade)
+{
+    /* Clear dot area */
+    uint32_t area_w = NUM_DOTS * DOT_SPACING + DOT_MAX_R * 2 + 8;
+    uint32_t area_x = dot_cx - area_w / 2;
+    uint32_t area_h = DOT_MAX_R * 2 + 8;
+    uint32_t area_y = dot_cy - DOT_MAX_R - 4;
+    splash_fill_rect(area_x, area_y, area_w, area_h, 0x000000);
+
+    uint32_t cycle_pos = 0;   /* all dots at rest — no animation yet */
+
+    for (uint32_t i = 0; i < NUM_DOTS; i++) {
+        int32_t x = (int32_t)dot_cx
+                   + (int32_t)(i * DOT_SPACING)
+                   - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
+        int32_t y = (int32_t)dot_cy;
+
+        int32_t dot_start = (int32_t)i * STAGGER;
+        int32_t phase = (int32_t)cycle_pos - dot_start;
+        int32_t intensity = (phase >= 0 && phase < PULSE_LEN) ?
+                             pulse_curve[phase] : 0;
+
+        int32_t r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / 4;
+        uint32_t brightness;
+        if      (intensity == 0) brightness = 0x44;
+        else if (intensity == 1) brightness = 0x77;
+        else if (intensity == 2) brightness = 0xAA;
+        else if (intensity == 3) brightness = 0xDD;
+        else                     brightness = 0xFF;
+
+        /* Dim by fade factor */
+        brightness = (brightness * (uint32_t)fade) / 255;
+        uint32_t color = (brightness << 16) | (brightness << 8) | brightness;
+        splash_draw_dot(x, y, r, color);
+    }
+}
+
 /* ---- PIT callback: called from IRQ handler at ~14 fps ---- */
 static void splash_timer_callback(void)
 {
@@ -269,10 +305,21 @@ void boot_splash_init(void)
 
     splash_on = 1;
 
-    /* Draw initial splash */
-    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
-    splash_draw_icon();
-    splash_draw_dots();
+    /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
+     * Start from black and ramp up brightness, creating a seamless
+     * transition from the UEFI firmware logo to our splash screen.
+     * The PIT callback hasn't started yet, so this runs synchronously
+     * with sleep_ms() providing the inter-frame delay. */
+    static const uint8_t fade_levels[5] = { 51, 102, 153, 204, 255 };
+    for (int fi = 0; fi < 5; fi++) {
+        splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+        splash_draw_icon_faded(fade_levels[fi]);
+        splash_draw_dots_faded(fade_levels[fi]);
+        fb_swap();
+        sleep_ms(100);
+    }
+
+    /* Final frame: add status text at full brightness */
     splash_draw_text("Starting...", 0x00AAAAAA);
     fb_swap();
 
