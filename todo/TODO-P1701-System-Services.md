@@ -61,54 +61,8 @@
 
 ## 3. Clipboard
 
-### 3.1 System Clipboard
-
-**Prompt:** The clipboard is a single kernel-resident buffer shared between all processes. `clipboard_set(fmt, data, size)` copies data into the buffer with a format tag (TEXT, IMAGE, FILES). `clipboard_get(fmt, buf, max)` retrieves it. Data must be deep-copied on set. Syscalls SYS_CLIPBOARD_SET/GET let user-mode apps access it. Keep it simple: one clipboard entry at a time. After completing all items, create `docs/architecture/clipboard.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system clipboard"`.
-
-
-- [ ] Define `clip_format_t` enum: TEXT, IMAGE, FILES
-- [ ] Define `clipboard_t` struct (format, data pointer, size)
-- [ ] Create `include/clipboard.h` and `src/kernel/clipboard.c`
-- [ ] Implement `clipboard_set(fmt, data, size)` — copy data to clipboard buffer
-- [ ] Implement `clipboard_get(fmt, buf, max_size)` — read clipboard data
-- [ ] Implement `clipboard_has(fmt)` — check if format available
-- [ ] Implement `clipboard_clear()` — clear all clipboard data
-- [ ] Add `SYS_CLIPBOARD_SET` and `SYS_CLIPBOARD_GET` syscalls
-- [ ] Commit: `"kernel: system clipboard"`
-
-### 3.2 Keyboard Shortcuts
-
-**Prompt:** Ctrl+C/X/V must be wired through the keyboard event pipeline to reach the focused control. The flow: keyboard driver → WM key event → check for global shortcuts → dispatch to focused window → focused control handles Ctrl+C by reading its selection and calling `clipboard_set`. Ctrl+X does copy + delete selection. Ctrl+V calls `clipboard_get` and inserts at cursor. Must not conflict with SIGINT in the terminal — SIGINT should only fire when no text is selected. After completing all items, update `docs/architecture/clipboard.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: clipboard keyboard shortcuts"`.
-
-
-- [ ] Ctrl+C in focused control → copy selection to clipboard
-- [ ] Ctrl+X in focused control → cut selection to clipboard
-- [ ] Ctrl+V in focused control → paste from clipboard
-- [ ] Wire shortcuts through WM → focused window → focused control
-- [ ] Commit: `"desktop: clipboard keyboard shortcuts"`
-
-### 3.3 Win32 Clipboard Mapping
-
-- [ ] `OpenClipboard()` / `CloseClipboard()` → no-op
-- [ ] `SetClipboardData(CF_TEXT, data)` → `clipboard_set(CLIP_TEXT, ...)`
-- [ ] `GetClipboardData(CF_TEXT)` → `clipboard_get(CLIP_TEXT, ...)`
-- [ ] `EmptyClipboard()` → `clipboard_clear()`
-- [ ] Add to `user32.dll` builtin stub table
-- [ ] Commit: `"win32: clipboard API stubs"`
-
-### 3.4 Clipboard History
-
-**Prompt:** Clipboard history keeps the last 25 entries in a ring buffer — each entry is a deep copy plus metadata (format, timestamp, source app name). Win+V opens a popup listing recent entries. Clicking an entry sets it as current and pastes. Configurable via Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled`, `HKLM\SYSTEM\Clipboard\MaxItems`. After completing all items, update `docs/architecture/clipboard.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: clipboard history (Win+V)"`.
-
-
-- [ ] Create `src/desktop/clip_history.c`
-- [ ] Maintain ring buffer of last 25 clipboard entries
-- [ ] Each entry: format, data copy, timestamp, source app name
-- [ ] Win+V keyboard shortcut → show clipboard history popup
-- [ ] Click an entry → paste it (set as current clipboard, send paste to focused control)
-- [ ] "Clear all" button → empty history
-- [ ] Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled`, `HKLM\SYSTEM\Clipboard\MaxItems`
-- [ ] Commit: `"desktop: clipboard history (Win+V)"`
+> **Moved to [TODO-P0007-Clipboard.md](TODO-P0007-Clipboard.md)** — System clipboard,
+> Ctrl+C/X/V shortcuts, Win32 API mapping, clipboard history (Win+V).
 
 ---
 
@@ -368,14 +322,14 @@ A minimal version is needed here for file permissions and HOME environment varia
 | 🔴 P0 | §4.1–4.2 Time System | Wall-clock time for timestamps, logs, scheduler |
 | 🔴 P0 | §8 Scheduled Tasks | Powers Registry flush, NTP sync, log rotate |
 | 🟠 P1 | §2 Services/Daemons | Background processes infrastructure |
-| 🟠 P1 | §3.1–3.2 Clipboard | Essential UX (copy/paste) |
+| 🟠 P1 | **P0007** §1–2 Clipboard | Essential UX — see `TODO-P0007-Clipboard.md` |
 | 🟠 P1 | §5 File Associations | Double-click opens correct app |
 | 🟠 P1 | §7 Shortcut Files | Desktop/Start Menu proper UX |
 | 🟡 P2 | §4.4 NTP Client | Accurate time |
 | 🟡 P2 | §9 Recycle Bin | Safe deletion |
 | 🟡 P2 | §10 ZIP Compression | Archive support |
 | 🟡 P2 | §11.4 Autostart | Startup programs |
-| 🟢 P3 | §3.3–3.4 Clipboard History + Win32 | Polish features |
+| 🟢 P3 | **P0007** §3–4 Clipboard History + Win32 | Polish features |
 | 🟢 P3 | §6 Search & Indexing | File discovery |
 | 🟢 P3 | §11.1 User Accounts | Multi-user (see P2301) |
 | 🔵 P4 | §11.2 Win32 System Info | Compatibility APIs |
