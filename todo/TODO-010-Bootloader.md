@@ -401,13 +401,18 @@ update `docs/` covering the EDID protocol, GOP mode matching, and the emulator f
 
 ### 5.1 Fade-In Transition
 
-**Prompt:** The Dell/HP UEFI firmware logo disappears abruptly when our bootloader takes over (black screen snap). Implement a smooth fade-in: start with a black screen and gradually increase brightness of the icon and dots over ~500ms (5 frames at 10fps). This creates a seamless transition from firmware to OS splash. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: fade-in transition for splash screen"`. Update `README.md` if it contains stale or incorrect references to boot transitions. Create or update documentation in `docs/` covering the fade-in transition implementation and timing.
+**Prompt:** ✅ VERIFICATION — Fade-in transition is implemented. Verify:
+(1) `boot_splash_init()` in `src/kernel/boot_splash.c` calls the fade loop before registering the PIT callback;
+(2) `splash_draw_icon_faded(uint8_t fade)` and `splash_draw_dots_faded(uint8_t fade)` exist and scale all color channels by `fade/255`;
+(3) The fade loop iterates 5 frames with `fade_levels = {51,102,153,204,255}`, calling `sleep_ms(100)` between each, totalling ~500ms;
+(4) `bash scripts/build.sh clean` produces `=== BUILD OK ===`;
+(5) QEMU shows a gradual brighten-in rather than a snap.
 
-- [ ] Add `splash_fade_in()` function in `boot_splash.c`
-- [ ] Render icon + dots at 20% → 40% → 60% → 80% → 100% brightness
-- [ ] Each frame: scale all color channels by fade factor and swap
-- [ ] Complete fade before starting dot animation
-- [ ] Commit: `"boot: fade-in transition for splash screen"`
+- [x] Added `splash_draw_icon_faded()` in `boot_splash.c` (replaces original `splash_draw_icon()`)
+- [x] Added `splash_draw_dots_faded()` in `boot_splash.c`
+- [x] Fade loop: icon + dots at 20% → 40% → 60% → 80% → 100% brightness via `{51,102,153,204,255}`
+- [x] Each frame: `sleep_ms(100)` delay + `fb_swap()` — complete before dot animation starts
+- [x] Commit: `"boot: fade-in transition for splash screen"`
 
 ### 5.2 Boot Profiling via Serial Timestamps
 
