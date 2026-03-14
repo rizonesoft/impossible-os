@@ -251,6 +251,33 @@ void fb_init(void)
             page_current = 0;
             klog(LOG_INFO, "gfx", "VBE page flip enabled (Bochs VGA %x, 2x%u virt height)",
                    (uint64_t)vbe_id, (uint64_t)fb_height);
+
+            /* Zero BOTH VRAM pages immediately after setting virtual height.
+             *
+             * WHY: when QEMU processes the VBE virtual_height register write, it
+             * resizes its internal display scan buffer.  The second VRAM page
+             * (rows fb_height..fb_height*2-1) is uninitialized.  On the very
+             * next QEMU display-refresh tick (~16ms), the Bochs VGA emulator
+             * may scan or display part of that raw memory, producing the brief
+             * multi-colour "static noise" flash visible in QEMU just before the
+             * boot splash.
+             *
+             * Zeroing the second page here (directly through hw_addr) happens
+             * within the same KVM exit cycle as the VBE write, so QEMU sees
+             * clean VRAM on the first refresh after the resize. Using rep stosq
+             * for speed (~0.5ms for 3.6 MiB at memory bandwidth). */
+            {
+                uint32_t hw_stride_px = fb_pitch / (fb_bpp / 8);
+                uint64_t *p1 = (uint64_t *)(hw_addr + (uint64_t)fb_height * hw_stride_px);
+                uint64_t qwords = ((uint64_t)fb_height * hw_stride_px * sizeof(uint32_t)) / 8;
+                __asm__ volatile (
+                    "xorq %%rax, %%rax\n\t"
+                    "rep stosq"
+                    : "+D"(p1), "+c"(qwords)
+                    :
+                    : "rax", "memory"
+                );
+            }
         }
     }
 
