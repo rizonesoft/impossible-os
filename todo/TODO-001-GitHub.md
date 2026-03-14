@@ -44,17 +44,17 @@
 
 ### 3.1 Sync Bootloader Changes on Push
 
-**Prompt:** Create a GitHub Actions workflow in the private `impossible-os` repo that automatically pushes changes to `src/boot/` to the public `impossible-os-bootloader` repo whenever a commit touches that path. Use `git subtree` to push a clean copy with no private history leaking. Store the GitHub Personal Access Token (with public repo write scope) as a repository secret named `BOOTLOADER_REPO_TOKEN`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"ci: sync bootloader to public repo on push"`. Test by making a small change to `src/boot/` and confirming it appears in the public repo within 2 minutes.
+**Prompt:** Workflow created (2026-03-14) and committed as `"ci: sync bootloader to public repo on push"` (`da1121a`). The workflow uses `git subtree split --prefix=src/boot/` to create a clean synthetic branch and pushes it to the public repo using `BOOTLOADER_REPO_TOKEN`. **Action required:** Add a GitHub PAT as a repository secret before the first run. Go to `https://github.com/rizonesoft/impossible-os/settings/secrets/actions` → New repository secret → Name: `BOOTLOADER_REPO_TOKEN`, Value: PAT with `public_repo` write scope. After adding the secret and testing, mark remaining items `[x]`.
 
-- [ ] Create `.github/workflows/sync-bootloader.yml` in private repo
-- [ ] Trigger: `push` to `main` with paths filter `src/boot/**`
-- [ ] Action steps:
-  - [ ] Checkout private repo with full history
-  - [ ] Use `git subtree push` (or `git filter-repo` + force push) to public repo
-  - [ ] Authenticate using `BOOTLOADER_REPO_TOKEN` secret
-- [ ] Add `BOOTLOADER_REPO_TOKEN` to private repo secrets (PAT: public repo write scope)
+- [x] Create `.github/workflows/sync-bootloader.yml` in private repo
+- [x] Trigger: `push` to `main` with paths filter `src/boot/**`
+- [x] Action steps:
+  - [x] Checkout private repo with full history (`fetch-depth: 0`)
+  - [x] Use `git subtree split --prefix=src/boot/` to create clean synthetic branch
+  - [x] Authenticate using `BOOTLOADER_REPO_TOKEN` secret
+- [ ] Add `BOOTLOADER_REPO_TOKEN` to private repo secrets *(PAT: `public_repo` write scope — add at `Settings → Secrets → Actions`)*
 - [ ] Test end-to-end: change a file in `src/boot/`, push, verify public repo updates
-- [ ] Commit: `"ci: sync bootloader to public repo on push"`
+- [x] Commit: `"ci: sync bootloader to public repo on push"` (`da1121a`)
 
 ---
 
