@@ -288,13 +288,17 @@ static void splash_timer_callback(void)
 
 static void splash_delay_ms(uint32_t ms)
 {
+    uint64_t start_lo, start_hi, now_lo, now_hi;
     uint64_t start, now;
     uint64_t target_cycles = (uint64_t)ms * RDTSC_CYCLES_PER_MS;
-    __asm__ volatile ("rdtsc"
-        : "=A" (start)  /* result in EDX:EAX → 64-bit via =A constraint */
-    );
+
+    /* Correct 64-bit RDTSC: =A in x86-64 mode only captures RAX (low 32 bits).
+     * Use separate =a / =d constraints to get EDX:EAX as a proper 64-bit value. */
+    __asm__ volatile ("rdtsc" : "=a"(start_lo), "=d"(start_hi));
+    start = (start_hi << 32) | start_lo;
     do {
-        __asm__ volatile ("rdtsc" : "=A" (now));
+        __asm__ volatile ("rdtsc" : "=a"(now_lo), "=d"(now_hi));
+        now = (now_hi << 32) | now_lo;
     } while ((now - start) < target_cycles);
 }
 
@@ -382,9 +386,21 @@ void boot_splash_finish(void)
 
     splash_on = 0;
 
-    /* Clear screen for desktop */
-    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
-    fb_swap();
+    /* ---- Fade-out: 5 frames × 67ms ≈ 330ms total ----
+     * Dim splash to black before handing off to the desktop compositor.
+     * PIT IS initialized by this point so sleep_ms() works correctly. */
+    static const uint8_t fade_out[5] = { 204, 153, 102, 51, 0 };
+    for (int fi = 0; fi < 5; fi++) {
+        if (fade_out[fi] > 0) {
+            splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+            splash_draw_icon_faded(fade_out[fi]);
+            splash_draw_dots_faded(fade_out[fi]);
+        } else {
+            splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+        }
+        fb_swap();
+        sleep_ms(67);
+    }
 
     /* Unlock compositor for normal text/wm operations */
     fb_unlock_compositor();
