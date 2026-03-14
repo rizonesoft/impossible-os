@@ -350,7 +350,7 @@ partition_scan_all() → IXFS detected on system-disk.img
 IXFS auto-mounted at C:\ (pre-populated with all files)
   ↓
 Desktop loads wallpaper, icons from C:\ via VFS
-Shell/exec loaders read ELFs from C:\
+Shell/exec loaders read PEs from C:\
 ```
 
 ## FAT32 Filesystem Driver
@@ -359,7 +359,7 @@ Shell/exec loaders read ELFs from C:\
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/fs/fat32.c` | FAT32 read-only driver |
+| `src/kernel/fs/fat32.c` | FAT32 read/write driver |
 | `include/kernel/fs/fat32.h` | FAT32 API |
 
 ### Capabilities
