@@ -404,3 +404,14 @@
 > **§6–9 (Animations, OpenGL, DPI Scaling, Theme, Context Menus, Notifications,
 > Screenshot, Tooltips) have been moved to [TODO-120-Theme.md](TODO-120-Theme.md)
 > as part of the master GUI consolidation.**
+
+
+---
+
+## Already Completed (from Parking Lot) ✅
+
+### ~~AVX2 SIMD for blur and alpha blending~~ ✅
+
+> Done (commit `3e0cc53`). `simd_enable_avx()`, `simd_blend_pixels_avx2()`,
+> `simd_blur_accum_avx2()`. Runtime dispatch via `simd_avx2_ok` flag.
+> **Note:** QEMU default (`qemu64`) lacks AVX2 — use `-cpu Haswell` to test.

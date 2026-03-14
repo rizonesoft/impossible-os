@@ -300,6 +300,21 @@
 - [ ] QEMU flag: `-device virtio-vga` or `-device virtio-gpu-pci`
 - [ ] Commit: `"drivers: VirtIO-GPU display module"`
 
+#### VirtIO-GPU 2D Acceleration (Detailed)
+
+> *Incorporated from parking-lot P18*
+
+- [ ] PCI enumeration: detect VirtIO GPU device (vendor 0x1AF4, device 0x1050)
+- [ ] Map control/cursor virtqueues via VirtIO transport
+- [ ] Implement `VIRTIO_GPU_CMD_RESOURCE_CREATE_2D` — allocate GPU resources
+- [ ] Implement `VIRTIO_GPU_CMD_SET_SCANOUT` — bind resource to display
+- [ ] Implement `VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D` — upload pixel data
+- [ ] Implement `VIRTIO_GPU_CMD_RESOURCE_FLUSH` — present to screen (page flip)
+- [ ] Replace `fb_swap()` with VirtIO-GPU scanout flip
+- [ ] Replace `fb_fill_rect()` with GPU fill command for large rects
+- [ ] Cursor: use hardware cursor plane (eliminates cursor-in-compositor overhead)
+- [ ] Fallback: keep VBE framebuffer path for non-VirtIO environments
+
 ### 4.3 Bochs/BGA Display Driver
 
 **Prompt:** The Bochs Graphics Adapter (BGA) is the simplest GPU — just VBE DISPI I/O port registers for mode setting. Already used by the built-in framebuffer for page flipping. Extract the BGA-specific code to a display module that can set arbitrary resolutions, enable LFB, and do page flipping via Y_OFFSET. This works in QEMU with `-device VGA` and `-device bochs-display`. Low priority since the built-in VBE fallback already handles this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"drivers: Bochs/BGA display module"`. Update `README.md` if it contains stale or incorrect references to BGA. Create or update documentation in `docs/` covering the BGA driver, DISPI registers, and page flipping.

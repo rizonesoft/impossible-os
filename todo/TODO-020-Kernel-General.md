@@ -385,6 +385,39 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ---
 
+---
+
+## 13. Memory Guardrails & Audit
+
+> *Incorporated from parking-lot P7, P9, P11*
+
+### 13.1 Audit remaining kmalloc usage in GFX/desktop code
+
+- [ ] Run: `grep -rn 'kmalloc' src/kernel/gfx/ src/desktop/ --include='*.c'`
+- [ ] For each result: check if allocation could exceed 4 KB
+- [ ] Migrate violations to `pmm_alloc_contiguous()`
+- [ ] Add guard comments to any remaining legitimate `kmalloc` calls
+
+### 13.2 Update guardrails to reflect PMM migration
+
+- [ ] Update `gfx_text.c` header comment: remove the `TODO: Migrate` line (it's done now)
+- [ ] Update `rules.md` Known Gotchas: add the font PMM migration as a resolved example
+- [ ] Update `.agents/workflows/add-asset.md`: add font system as a "good example" of correct PMM usage
+- [ ] Review `gfx_text.c` `load_ttf_file()` error path: add comment that PMM pages are intentionally not freed (boot-time permanent)
+- [ ] Verify `stb_truetype_impl.c` still redirects `malloc`/`free` to `kmalloc`/`kfree` (correct for small temp buffers)
+
+### 13.3 Build-time kmalloc audit check
+
+- [ ] Create `scripts/lint-alloc.sh`: grep for `kmalloc` in GFX/desktop code
+- [ ] Whitelist known-safe calls (stb_truetype temps, small structs)
+- [ ] Fail or warn on new `kmalloc` calls without a `/* kmalloc OK: ... */` comment
+- [ ] Add to build pipeline
+
+### ~~13.4 Heap usage monitoring~~ ✅
+
+> Done (commit `3508ca7`). `heap_get_total/used/free` + boot-time log + >75% pressure warning.
+
+
 ## Priority Order
 
 | Priority | Section                  | Reason                                     |

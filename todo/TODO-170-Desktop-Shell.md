@@ -240,3 +240,35 @@
 - [ ] Registry: `HKCU\Software\Impossible\Shell\FocusMode`, `FocusScheduleStart/End`
 - [ ] Commit: `"desktop: focus / do not disturb"`
 
+
+
+---
+
+## 10. Compositor Performance
+
+> *Incorporated from parking-lot P12–P16*
+
+### 10.1 Cached Acrylic for Taskbar & Start Menu
+
+- **Taskbar** (fixed position, always visible):
+  - [ ] On wallpaper load/change: pre-blur the taskbar strip region → store as PMM-allocated cached texture
+  - [ ] Each frame: fast-blit cached texture instead of recomputing `gfx_acrylic()`
+  - [ ] Invalidate cache only when wallpaper changes or screen resolution changes
+- **Start menu** (fixed position when open):
+  - [ ] On menu open: snapshot + blur the menu region once → store as cached texture
+  - [ ] Each frame while open: fast-blit cached texture
+  - [ ] Invalidate on close (re-snapshot + re-blur on next open)
+- **Invalidation triggers:**
+  - [ ] Wallpaper change → invalidate both caches
+  - [ ] Resolution change → invalidate + reallocate
+
+### ~~10.2 Dirty-rectangle compositor during drag~~ ✅
+
+> Done. `wm_is_dragging()` + `wm_get_drag_dirty_rect()` API.
+> `fb_swap_rect()` on drag dirty region (~200 KB vs 3.6 MB).
+> Terminal render gated behind `!wm_is_dragging()`.
+
+### ~~10.3 Batch mouse events~~ ✅
+
+> Done (commit `8f9ec05`). Up to 4 coalesced reads per frame.
+> Replaced `yield()` with `sti; hlt` (instant IRQ wake).
