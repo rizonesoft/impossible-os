@@ -346,23 +346,16 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### 4.1 GOP Mode Negotiation
 
-**Prompt:** ✅ VERIFICATION — GOP auto-detection is implemented. Verify:
-(1) `init_gop()` in `src/boot/uefi/bootx64.c` iterates all modes via `gop->QueryMode()`,
-filters to `PixelBlueGreenRedReserved`/`PixelRedGreenBlueReserved`, picks highest pixel count;
-(2) `g_boot_info_ptr->fb.{width,height,pitch}` reflect the selected mode's actual resolution;
-(3) `fb_init()` reads from `g_boot_info.fb` with no hardcoded resolution;
-(4) `docs/architecture/display-scaling.md` exists;
-(5) `bash scripts/build.sh clean` produces `=== BUILD OK ===`.
-Commit: `ea07ed7`.
+**Prompt:** Our bootloader currently hardcodes 1280×720. Real laptops have 1920×1080, 2560×1440, or 3840×2160 displays. Use UEFI's `EFI_GRAPHICS_OUTPUT_PROTOCOL` to enumerate all available modes and select the best one. Prefer the highest resolution that matches the native display. Pass the actual resolution and framebuffer info to the kernel via the boot info struct. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: auto-detect display resolution via GOP"`. Update `README.md` if it contains stale or incorrect references to display resolution or hardcoded 720p. Create or update documentation in `docs/` covering GOP mode enumeration, resolution auto-detection, and display scaling.
 
-- [x] Enumerate all GOP modes via `gop->QueryMode()`
-- [x] Filter for 32bpp modes with `PixelBlueGreenRedReserved` / `PixelRedGreenBlueReserved`
-- [x] Select highest resolution mode (largest width × height)
-- [x] Set selected mode via `gop->SetMode()`
-- [x] Pass resolution, stride, and framebuffer base to kernel via boot params
-- [x] `fb_init()` already uses boot-passed resolution — no kernel changes needed
-- [x] Test: `bash scripts/build.sh clean` → `=== BUILD OK ===` (16.1s)
-- [x] Commit: `"boot: auto-detect display resolution via GOP"` (`ea07ed7`)
+- [ ] Enumerate all GOP modes via `gop->QueryMode()`
+- [ ] Filter for 32bpp modes with `PixelBlueGreenRedReserved8BitPerColor` format
+- [ ] Select highest resolution mode (prefer native over scaled)
+- [ ] Set selected mode via `gop->SetMode()`
+- [ ] Pass resolution, stride, and framebuffer base to kernel via boot params
+- [ ] Update kernel `fb_init()` to use boot-passed resolution instead of hardcoded
+- [ ] Test: verify correct behavior at 1080p, 1440p, 4K
+- [ ] Commit: `"boot: auto-detect display resolution via GOP"`
 
 ### 4.2 HiDPI / Retina Scaling
 
