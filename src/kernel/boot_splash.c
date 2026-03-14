@@ -273,6 +273,31 @@ static void splash_timer_callback(void)
  * Public API
  * ============================================================================ */
 
+/* Spin-wait for approximately 'ms' milliseconds using RDTSC.
+ *
+ * WHY NOT sleep_ms()?
+ * boot_splash_init() is called BEFORE pit_init(), so the PIT tick counter
+ * is zero and never advances — sleep_ms() would return immediately.
+ * RDTSC is always available in x86-64 long mode and needs no initialization.
+ *
+ * Calibration: 300,000 cycles ≈ 100µs at 3 GHz → 3,000,000 cycles ≈ 1ms.
+ * At 1 GHz this overestimates by 3× (fade takes 1.5s instead of 0.5s).
+ * At 5 GHz this underestimates by ~1.7× (fade takes ~300ms).
+ * Acceptable for a cosmetic transition — exact timing is not critical. */
+#define RDTSC_CYCLES_PER_MS  3000000ULL  /* ~3 GHz assumption */
+
+static void splash_delay_ms(uint32_t ms)
+{
+    uint64_t start, now;
+    uint64_t target_cycles = (uint64_t)ms * RDTSC_CYCLES_PER_MS;
+    __asm__ volatile ("rdtsc"
+        : "=A" (start)  /* result in EDX:EAX → 64-bit via =A constraint */
+    );
+    do {
+        __asm__ volatile ("rdtsc" : "=A" (now));
+    } while ((now - start) < target_cycles);
+}
+
 void boot_splash_init(void)
 {
     scr_w = fb_get_width();
@@ -308,15 +333,15 @@ void boot_splash_init(void)
     /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
      * Start from black and ramp up brightness, creating a seamless
      * transition from the UEFI firmware logo to our splash screen.
-     * The PIT callback hasn't started yet, so this runs synchronously
-     * with sleep_ms() providing the inter-frame delay. */
+     * Uses RDTSC spin-wait because PIT is not yet initialized at this point
+     * (pit_init() is called after boot_splash_init() in main.c). */
     static const uint8_t fade_levels[5] = { 51, 102, 153, 204, 255 };
     for (int fi = 0; fi < 5; fi++) {
         splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
         splash_draw_icon_faded(fade_levels[fi]);
         splash_draw_dots_faded(fade_levels[fi]);
         fb_swap();
-        sleep_ms(100);
+        splash_delay_ms(100);
     }
 
     /* Final frame: add status text at full brightness */
