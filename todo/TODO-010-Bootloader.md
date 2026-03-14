@@ -155,19 +155,14 @@
 
 ### 3.1 Generate MOK Key Pair
 
-**Prompt:** Generate a Machine Owner Key (MOK) for signing our bootloader. Use `openssl` to create an RSA-2048 key pair with a 10-year validity. The public certificate (`MOK.cer`) will be embedded in our shim build. The private key (`MOK.key`) is used to sign `BOOTX64.EFI` at build time. Store keys in a `keys/` directory (gitignored). Add a `keys/README.md` explaining the key purpose and rotation procedure. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: MOK key generation infrastructure"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or key management. Create or update documentation in `docs/` covering the MOK key generation process, key storage, and rotation procedure.
+**Prompt:** Verified (2026-03-14). RSA-2048 MOK key pair generated (`518993a`). Keys stored in `keys/`: `MOK.key` (gitignored), `MOK.cer` and `MOK.der` committed. Valid 2026-03-14 → 2036-03-11. SHA-256 fingerprint: `D3:6B:BA:F0:FD:56:D8:5D:B9:F6:9E:3F:29:73:C4:51:47:7A:C3:B3:40:A4:AD:13:7E:8E:67:A1:69:BC:03:D7`. `keys/README.md` documents key purpose, storage, and rotation. Check `.gitignore` contains `keys/MOK.key`.
 
-- [ ] Create `keys/` directory (add to `.gitignore`)
-- [ ] Generate MOK key pair:
-  ```bash
-  openssl req -new -x509 -newkey rsa:2048 -keyout keys/MOK.key \
-    -out keys/MOK.cer -days 3650 -nodes \
-    -subj "/CN=Impossible OS Secure Boot Key/"
-  ```
-- [ ] Convert to DER format for UEFI: `openssl x509 -in keys/MOK.cer -out keys/MOK.der -outform DER`
-- [ ] Create `keys/README.md` documenting key purpose and rotation
-- [ ] Add `keys/MOK.key` to `.gitignore` (NEVER commit private keys)
-- [ ] Commit: `"boot: MOK key generation infrastructure"`
+- [x] Create `keys/` directory (add to `.gitignore`)
+- [x] Generate MOK key pair (RSA-2048, `-days 3650`, CN=`Impossible OS Secure Boot Key`)
+- [x] Convert to DER format for UEFI: `openssl x509 -in keys/MOK.cer -out keys/MOK.der -outform DER`
+- [x] Create `keys/README.md` documenting key purpose and rotation
+- [x] Add `keys/MOK.key` to `.gitignore` (NEVER commit private keys)
+- [x] Commit: `"boot: MOK key generation infrastructure"` (`518993a`)
 
 ### 3.2 Sign Bootloader with MOK
 
