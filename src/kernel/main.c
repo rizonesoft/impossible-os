@@ -121,6 +121,57 @@ extern void multiboot2_parse(uintptr_t mbi_addr);
 /* UEFI boot magic — our custom bootloader passes this instead of Multiboot2 */
 #define UEFI_BOOT_MAGIC 0x55454649ULL  /* "UEFI" */
 
+/* ---- Directory tree dump (serial-only) ---- */
+
+/* Recursively dump a directory tree to serial log for diagnostics.
+ * drive: drive letter ('C', 'D'), node: directory node, depth: indent level.
+ * Returns total number of entries printed. */
+static uint32_t dump_dir_tree(char drive, struct vfs_node *node, uint32_t depth)
+{
+    uint32_t idx = 0;
+    uint32_t total = 0;
+    struct vfs_dirent *de;
+    /* Indent buffer: 2 spaces per depth level, max 20 levels */
+    char indent[42];
+    uint32_t k;
+
+    if (depth > 20) return 0;
+
+    for (k = 0; k < depth * 2 && k < 40; k++)
+        indent[k] = ' ';
+    indent[k] = '\0';
+
+    while ((de = vfs_readdir(node, idx)) != 0) {
+        if (de->type & VFS_DIRECTORY) {
+            klog(LOG_DEBUG, "tree", "%s%c:\\%s/", indent,
+                 (uint64_t)drive, de->name);
+
+            /* Recurse into subdirectory */
+            {
+                struct vfs_node *sub = vfs_finddir(node, de->name);
+                if (sub)
+                    total += dump_dir_tree(drive, sub, depth + 1);
+            }
+        } else {
+            /* Get file size via stat if available */
+            struct vfs_stat st;
+            uint64_t fsize = 0;
+            if (node->ops && node->ops->stat) {
+                struct vfs_node *fnode = vfs_finddir(node, de->name);
+                if (fnode && fnode->ops && fnode->ops->stat) {
+                    if (fnode->ops->stat(fnode, &st) == 0)
+                        fsize = st.size;
+                }
+            }
+            klog(LOG_DEBUG, "tree", "%s%s (%u B)", indent, de->name,
+                 fsize);
+        }
+        total++;
+        idx++;
+    }
+    return total;
+}
+
 /* Kernel entry point
  *   magic = MULTIBOOT2_BOOTLOADER_MAGIC (0x36D76289) for GRUB
  *           or UEFI_BOOT_MAGIC (0x55454649) for our UEFI bootloader
@@ -454,6 +505,126 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
     /* IXFS Performance Tests: block groups, buffer cache, hash index */
     ixfs_test_performance();
+
+    /* === Directory tree dump (serial-only) === */
+    klog(LOG_DEBUG, "test", "=== Directory Tree Dump ===");
+
+    if (vfs_is_mounted('C')) {
+        struct vfs_node *c_root = vfs_get_drive_root('C');
+        if (c_root) {
+            klog(LOG_DEBUG, "tree", "C:\\");
+            uint32_t c_count = dump_dir_tree('C', c_root, 1);
+            klog(LOG_DEBUG, "tree", "C:\\ total: %u entries", (uint64_t)c_count);
+        }
+    }
+
+    if (vfs_is_mounted('D')) {
+        struct vfs_node *d_root = vfs_get_drive_root('D');
+        if (d_root) {
+            klog(LOG_DEBUG, "tree", "D:\\");
+            uint32_t d_count = dump_dir_tree('D', d_root, 1);
+            klog(LOG_DEBUG, "tree", "D:\\ total: %u entries", (uint64_t)d_count);
+        }
+    }
+
+    /* === Registry persistence round-trip test === */
+    {
+        HKEY hk_test = (HKEY)0;
+        uint32_t disp = 0;
+        uint32_t reg_ok = 1;
+
+        /* Create a test key and set a DWORD value */
+        long rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "System\\Test",
+                                 0, (void *)0, 0, KEY_ALL_ACCESS,
+                                 (void *)0, &hk_test, &disp);
+        if (rc == ERROR_SUCCESS && hk_test) {
+            RegSetDword(hk_test, "BootCount", 42);
+            RegCloseKey(hk_test);
+
+            /* Flush to disk */
+            registry_save_all();
+
+            /* Re-load hives from disk (simulates reboot) */
+            registry_load_hives();
+
+            /* Verify the value survived */
+            hk_test = (HKEY)0;
+            rc = RegOpenKeyEx(HKEY_LOCAL_MACHINE, "System\\Test",
+                              0, KEY_READ, &hk_test);
+            if (rc == ERROR_SUCCESS && hk_test) {
+                uint32_t val = 0;
+                rc = RegGetDword(hk_test, "BootCount", &val);
+                if (rc != ERROR_SUCCESS || val != 42)
+                    reg_ok = 0;
+                RegCloseKey(hk_test);
+            } else {
+                reg_ok = 0;
+            }
+
+            /* Clean up test key */
+            RegDeleteTree(HKEY_LOCAL_MACHINE, "System\\Test");
+        } else {
+            reg_ok = 0;
+        }
+
+        klog(reg_ok ? LOG_DEBUG : LOG_ERROR, "test",
+             "Registry round-trip: %s (keys: %u, values: %u)",
+             reg_ok ? "passed" : "FAIL",
+             (uint64_t)reg_keys_used(), (uint64_t)reg_values_used());
+    }
+
+    /* === VMM map/unmap self-test === */
+    {
+        uintptr_t vmm_phys = pmm_alloc_frame();
+        uintptr_t vmm_virt = 0xA00000;  /* 10 MiB — safe test address */
+        uint32_t vmm_ok = 1;
+
+        if (vmm_phys) {
+            vmm_map_page(vmm_virt, vmm_phys, VMM_KERNEL_RW);
+
+            /* Write and read back a pattern */
+            {
+                volatile uint32_t *ptr = (volatile uint32_t *)vmm_virt;
+                *ptr = 0xDEADBEEF;
+                if (*ptr != 0xDEADBEEF)
+                    vmm_ok = 0;
+            }
+
+            vmm_unmap_page(vmm_virt, 1);  /* free_frame = 1 */
+        } else {
+            vmm_ok = 0;
+        }
+
+        klog(vmm_ok ? LOG_DEBUG : LOG_ERROR, "test",
+             "VMM map/unmap: %s", vmm_ok ? "passed" : "FAIL");
+    }
+
+    /* === PMM alloc/free self-test === */
+    {
+        uintptr_t f1 = pmm_alloc_frame();
+        uintptr_t f2 = pmm_alloc_frame();
+        uint32_t pmm_ok = 1;
+
+        if (!f1 || !f2) {
+            pmm_ok = 0;
+        } else {
+            /* Frames should be different */
+            if (f1 == f2)
+                pmm_ok = 0;
+
+            /* Free f1, re-alloc should reuse it or give another valid frame */
+            pmm_free_frame(f1);
+            uintptr_t f3 = pmm_alloc_frame();
+            if (!f3)
+                pmm_ok = 0;
+
+            pmm_free_frame(f2);
+            pmm_free_frame(f3);
+        }
+
+        klog(pmm_ok ? LOG_DEBUG : LOG_ERROR, "test",
+             "PMM alloc/free: %s", pmm_ok ? "passed" : "FAIL");
+    }
 
     /* Timer verification */
     klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");

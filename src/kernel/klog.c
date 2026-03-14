@@ -222,7 +222,7 @@ static void vformat_emit(void (*put)(char), void (*putstr)(const char *),
 /* ---- Level prefixes and colors ---- */
 
 static const char *level_prefix[] = {
-    "[??] ",   /* LOG_DEBUG */
+    "[..] ",   /* LOG_DEBUG */
     "[OK] ",   /* LOG_INFO  */
     "[--] ",   /* LOG_WARN  */
     "[!!] ",   /* LOG_ERROR */
