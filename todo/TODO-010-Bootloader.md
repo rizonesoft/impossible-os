@@ -207,21 +207,51 @@
 
 **Prompt:** Submit our shim build to Microsoft for Secure Boot signing via the [rhboot/shim-review](https://github.com/rhboot/shim-review) process. This is free for open-source projects. The shim fork must be in a **public** GitHub repo. Microsoft reviews the shim (not our OS) and signs it with the Microsoft UEFI CA certificate. Once signed, our shim is trusted by all UEFI firmware worldwide — zero MOK enrollment needed for end users. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: Microsoft-signed shim submitted"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or the shim submission. Create or update documentation in `docs/` covering the Microsoft shim-review submission process, timeline, and requirements.
 
-**Requirements for shim-review submission:**
-- [ ] Public GitHub repo with our shim fork
-- [ ] Vendor certificate (`MOK.cer`) embedded in shim
-- [ ] No modifications to shim code (or clearly documented and justified changes)
-- [ ] Reproducer-verified build (reviewers must be able to build identical binary)
+> [!IMPORTANT]
+> **The README is NOT what reviewers evaluate.** The shim-review GitHub Issue is what
+> matters. Fill out every field in the issue template completely — incomplete submissions
+> are deprioritised. Respond quickly to reviewer questions; active projects are prioritised.
+
+**What reviewers actually check:**
+
+| Requirement | What they look for |
+|-------------|-------------------|
+| Reproducible build | Anyone can clone the shim fork and produce a byte-identical binary |
+| SHA256 match | Hash in the issue matches the submitted binary exactly |
+| Unmodified shim | No patches unless clearly documented and justified |
+| Vendor certificate | `MOK.cer` correctly set as `VENDOR_CERT_FILE` in shim build |
+| OS description | Legitimate use case — not malware, not for bypassing restrictions |
+| Contact info | Real person responsible for the key |
+| Public shim fork | Source of the exact build is publicly accessible |
+
+**Fast-approval checklist:**
+- [ ] Fill out every field in the shim-review issue template — leave nothing blank
+- [ ] Use a Docker-based reproducible build (easiest way to prove identical output)
+- [ ] Verify `VENDOR_CERT_FILE=MOK.cer` is set correctly in shim Makefile
+- [ ] Respond to reviewer questions within 24 hours
+- [ ] Clearly state this is a legitimate OS project, not a tool to bypass restrictions
+
+**UEFI CA Key context (important for timing):**
+
+| Key | Expires | Status |
+|-----|---------|--------|
+| Microsoft UEFI CA 2011 | ~June 2026 | ⚠️ Expiring — new shims will NOT use this |
+| Microsoft UEFI CA 2023 | ~2075 | ✅ New shims are signed with this |
+
+Applying now means our shim will be signed with the **2023 CA** — valid for decades.
+Older firmware (pre-2022) may need a BIOS update to trust the 2023 CA; disabling
+Secure Boot is the simplest workaround for those users in the interim.
 
 **Submission process:**
 - [ ] Open an issue on `rhboot/shim-review` with:
   - [ ] Link to our public shim fork
   - [ ] SHA256 hash of the built `shimx64.efi`
-  - [ ] Explanation of what Impossible OS is
-  - [ ] Build instructions for reproducible verification
-- [ ] Respond to Microsoft reviewer feedback (typically 2-4 weeks)
+  - [ ] Explanation of what Impossible OS is and why we need signing
+  - [ ] Reproducible build instructions (Docker preferred)
+  - [ ] Contact name and email for the key holder
+- [ ] Respond to Microsoft reviewer feedback (typically 2–4 weeks)
 - [ ] Receive signed `shimx64.efi` binary
-- [ ] Replace unsigned shim with Microsoft-signed binary in our ISO build
+- [ ] Replace unsigned shim with Microsoft-signed binary in ISO build
 - [ ] Commit: `"boot: Microsoft-signed shim submitted"`
 
 **What must be public vs private:**
@@ -232,6 +262,15 @@
 | `bootx64.c` (our bootloader)        | ❌ No            | Shim just checks our MOK signature   |
 | Kernel source                       | ❌ No            | UEFI/shim never sees the kernel      |
 | Impossible OS codebase              | ❌ No            | Completely irrelevant to Secure Boot |
+
+**User experience by audience:**
+
+| Audience | Secure Boot approach |
+|----------|---------------------|
+| Developers / enthusiasts | Disable Secure Boot — simplest, zero friction |
+| Tech-savvy, SB enabled | Enroll MOK once — works forever after |
+| General users (target) | Microsoft-signed shim — zero friction once approved |
+| Enterprise / kiosk | Microsoft-signed shim required — pending approval |
 
 ### 3.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
 
