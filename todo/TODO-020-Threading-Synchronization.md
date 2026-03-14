@@ -10,7 +10,7 @@
 
 ## 1. Kernel Threads ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct and consistent: review `src/kernel/sched.c` and `include/task.h` to confirm `thread_t` struct has id, stack_ptr, stack_base, stack_size, state, parent_task fields, that `thread_create`, `thread_exit`, `thread_join`, `thread_yield` all exist and work, and that the scheduler iterates threads. Run `bash scripts/build.sh clean` and test two threads sharing a global variable. Fix any inconsistencies in the TODO items below. Confirm the commit `"sched: kernel threads"` exists in git history. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to threading. Create or update documentation in `docs/` covering the threading model, thread API, and scheduler architecture.
+**Prompt:** This section is marked complete. Verify the implementation is correct and consistent: review `src/kernel/sched.c` and `include/task.h` to confirm `thread_t` struct has id, stack_ptr, stack_base, stack_size, state, parent_task fields, that `thread_create`, `thread_exit`, `thread_join`, `thread_yield` all exist and work, and that the scheduler iterates threads. Run `bash scripts/build.sh clean` and test two threads sharing a global variable. Fix any inconsistencies in the TODO items below. Confirm the commit `"sched: kernel threads"` exists in git history. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to threading. Add notes, gotchas, and design decisions directly in this TODO section covering the threading model, thread API, and scheduler architecture.
 
 
 - [x] Define `thread_t` struct (id, stack_ptr, stack_base, stack_size, state, parent_task)
@@ -27,7 +27,7 @@
 
 ## 2. Mutexes ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review that `mutex_t` struct, `mutex_lock`, `mutex_unlock`, `mutex_trylock` exist and function correctly. Confirm the lock uses compare-and-swap with a wait queue (not busy spinning). Run `bash scripts/build.sh clean` and test mutexes protecting shared state between threads. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to synchronization primitives. Create or update documentation in `docs/` covering the mutex API and implementation details.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review that `mutex_t` struct, `mutex_lock`, `mutex_unlock`, `mutex_trylock` exist and function correctly. Confirm the lock uses compare-and-swap with a wait queue (not busy spinning). Run `bash scripts/build.sh clean` and test mutexes protecting shared state between threads. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to synchronization primitives. Add notes, gotchas, and design decisions directly in this TODO section covering the mutex API and implementation details.
 
 
 - [x] Define `mutex_t` struct (locked flag, owner thread, wait queue)
@@ -41,7 +41,7 @@
 
 ## 3. Semaphores ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review that `semaphore_t` struct with count and wait queue exists, that `sem_wait`, `sem_signal`, `sem_init` all function correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to semaphores. Create or update documentation in `docs/` covering the semaphore API and usage patterns.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review that `semaphore_t` struct with count and wait queue exists, that `sem_wait`, `sem_signal`, `sem_init` all function correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to semaphores. Add notes, gotchas, and design decisions directly in this TODO section covering the semaphore API and usage patterns.
 
 
 - [x] Define `semaphore_t` struct (count, wait queue)
@@ -54,7 +54,7 @@
 
 ## 4. Read-Write Locks ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/rwlock.h` to confirm `rwlock_t` struct has `reader_count`, `writer_held`, `writer_pending`, and separate reader/writer wait queues. Confirm `rwlock_read_lock`, `rwlock_read_unlock`, `rwlock_write_lock`, `rwlock_write_unlock`, `rwlock_try_read`, `rwlock_try_write` all exist in `src/kernel/sched/rwlock.c`. Verify that `writer_pending` prevents new reader acquisitions while a writer is waiting (starvation guard). Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/rwlock.o` appears in the linker output. Confirm the commit `"sched: read-write locks"` exists in git history. After verifying, mark all items as `[x]` and update this prompt for future correctness checks. Create or update documentation in `docs/` covering the rwlock API, starvation prevention design, and usage examples.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/rwlock.h` to confirm `rwlock_t` struct has `reader_count`, `writer_held`, `writer_pending`, and separate reader/writer wait queues. Confirm `rwlock_read_lock`, `rwlock_read_unlock`, `rwlock_write_lock`, `rwlock_write_unlock`, `rwlock_try_read`, `rwlock_try_write` all exist in `src/kernel/sched/rwlock.c`. Verify that `writer_pending` prevents new reader acquisitions while a writer is waiting (starvation guard). Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/rwlock.o` appears in the linker output. Confirm the commit `"sched: read-write locks"` exists in git history. After verifying, mark all items as `[x]` and update this prompt for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the rwlock API, starvation prevention design, and usage examples.
 
 
 - [x] Define `rwlock_t` struct (reader count, writer flag, writer_pending, separate read/write wait queues)
@@ -69,7 +69,7 @@
 
 ## 5. Condition Variables ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/condvar.h` to confirm `condvar_t` struct has a waiter queue matching the mutex/semaphore pattern. Confirm `cond_wait`, `cond_signal`, `cond_broadcast` all exist in `src/kernel/sched/condvar.c`. Verify that `cond_wait` calls `mutex_unlock` before `yield()` and `mutex_lock` after waking. Verify `cond_broadcast` wakes all waiters and clears the queue. Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/condvar.o` appears in the linker output. Confirm the commit `"sched: condition variables"` exists in git history. Update `README.md` if it contains stale or incorrect references to synchronization. Check `docs/kernel/condvar.md` exists and covers the API, atomic mutex-release semantics, and producer-consumer usage.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/condvar.h` to confirm `condvar_t` struct has a waiter queue matching the mutex/semaphore pattern. Confirm `cond_wait`, `cond_signal`, `cond_broadcast` all exist in `src/kernel/sched/condvar.c`. Verify that `cond_wait` calls `mutex_unlock` before `yield()` and `mutex_lock` after waking. Verify `cond_broadcast` wakes all waiters and clears the queue. Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/condvar.o` appears in the linker output. Confirm the commit `"sched: condition variables"` exists in git history. Update `README.md` if it contains stale or incorrect references to synchronization. Add notes directly in this TODO section if inconsistencies or gaps are found.
 
 
 - [x] Define `condvar_t` struct (waiter\_tasks, waiter\_threads, num\_waiters, name)
@@ -79,11 +79,56 @@
 - [x] Graceful degradation when wait queue is full (spin-yield fallback with warning)
 - [x] Commit: `"sched: condition variables"`
 
+### Notes
+
+**API** (`include/kernel/sched/condvar.h`):
+```c
+condvar_t cond = CONDVAR_INIT;
+void cond_init(condvar_t *cond, const char *name);
+void cond_wait(condvar_t *cond, mutex_t *mutex);   // atomic release + sleep + re-lock
+void cond_signal(condvar_t *cond);                 // wake one waiter (FIFO)
+void cond_broadcast(condvar_t *cond);              // wake all waiters
+```
+
+**cond_wait atomic sequence:**
+1. Enqueue calling thread in condvar's wait queue
+2. Set thread state to `THREAD_BLOCKED`
+3. `mutex_unlock(mutex)` — release before sleeping
+4. `yield()` — scheduler skips thread until woken
+5. `mutex_lock(mutex)` — re-acquire before returning to caller
+
+**Caller must hold the mutex** before calling `cond_wait`.
+
+**Always use a `while` loop, not `if`** (spurious wakeup guard + race with other consumers):
+```c
+while (queue_empty(q))
+    cond_wait(&q->nonempty, &q->lock);
+```
+
+**Producer-consumer pattern:**
+```c
+/* Producer */
+mutex_lock(&q->lock);
+enqueue(q, item);
+cond_signal(&q->nonempty);
+mutex_unlock(&q->lock);
+
+/* Consumer */
+mutex_lock(&q->lock);
+while (queue_empty(q))
+    cond_wait(&q->nonempty, &q->lock);
+item = dequeue(q);
+mutex_unlock(&q->lock);
+```
+
+**Real usage:** compositor vsync wait (`vsync_cond`), shell input wait (`input_cond`).
+
+
 ---
 
 ## 6. Spinlocks (IRQ-Safe)
 
-**Prompt:** Spinlocks are the only safe synchronization primitive inside interrupt handlers — they busy-wait using atomic CAS without calling `yield()` or the scheduler. `spin_lock(s)` disables interrupts on the current CPU and spins until the lock is acquired. `spin_unlock(s)` releases and restores interrupts. `spin_lock_irqsave(s, flags)` / `spin_unlock_irqrestore(s, flags)` save/restore the interrupt flag for nested usage. This is equivalent to Windows `KSPIN_LOCK` and Linux `spinlock_t`. Spinlocks must only be held for very short durations (< ~100 ns) — they are for protecting small critical sections inside IRQ handlers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: spinlocks (IRQ-safe)"`. Create or update documentation in `docs/` covering spinlock usage and IRQ safety rules.
+**Prompt:** Spinlocks are the only safe synchronization primitive inside interrupt handlers — they busy-wait using atomic CAS without calling `yield()` or the scheduler. `spin_lock(s)` disables interrupts on the current CPU and spins until the lock is acquired. `spin_unlock(s)` releases and restores interrupts. `spin_lock_irqsave(s, flags)` / `spin_unlock_irqrestore(s, flags)` save/restore the interrupt flag for nested usage. This is equivalent to Windows `KSPIN_LOCK` and Linux `spinlock_t`. Spinlocks must only be held for very short durations (< ~100 ns) — they are for protecting small critical sections inside IRQ handlers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: spinlocks (IRQ-safe)"`. Add notes, gotchas, and design decisions directly in this TODO section covering spinlock usage and IRQ safety rules.
 
 
 - [ ] Implement `spinlock_t` (volatile uint32_t flag)
@@ -98,7 +143,7 @@
 
 ## 7. Atomic Operations
 
-**Prompt:** Atomic operations are fundamental to lock-free data structures and the implementation of higher-level primitives (spinlocks, reference counting). Wrap GCC's `__sync_*` / `__atomic_*` builtins in a thin `kernel/atomic.h` header for portability and clarity. Key operations: `atomic_read`, `atomic_set`, `atomic_inc`, `atomic_dec`, `atomic_dec_and_test` (reference counting), `atomic_cmpxchg` (CAS), `atomic_fetch_add`. These are used by: `rwlock_t` reader count, kernel object reference counts, lock-free ring buffers, and the slab allocator. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: atomic operations"`. Create or update documentation in `docs/` covering the atomic API and memory ordering guarantees.
+**Prompt:** Atomic operations are fundamental to lock-free data structures and the implementation of higher-level primitives (spinlocks, reference counting). Wrap GCC's `__sync_*` / `__atomic_*` builtins in a thin `kernel/atomic.h` header for portability and clarity. Key operations: `atomic_read`, `atomic_set`, `atomic_inc`, `atomic_dec`, `atomic_dec_and_test` (reference counting), `atomic_cmpxchg` (CAS), `atomic_fetch_add`. These are used by: `rwlock_t` reader count, kernel object reference counts, lock-free ring buffers, and the slab allocator. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: atomic operations"`. Add notes, gotchas, and design decisions directly in this TODO section covering the atomic API and memory ordering guarantees.
 
 
 - [ ] Create `include/kernel/atomic.h`
@@ -114,7 +159,7 @@
 
 ## 8. Wait/Event Objects
 
-**Prompt:** Event objects are one-shot or auto-reset synchronization handles — equivalent to Windows `KEVENT` (manual-reset and auto-reset) and Linux `completion`. A manual-reset event: `event_set` wakes all waiters; remains set until `event_reset` clears it. An auto-reset event: `event_set` wakes exactly one waiter and immediately clears itself. These are ideal for: boot synchronization (wait for disk init to complete), vsync signal from PIT to compositor, driver initialization handshakes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait/event objects"`. Create or update documentation in `docs/` covering event types, wait semantics, and usage examples.
+**Prompt:** Event objects are one-shot or auto-reset synchronization handles — equivalent to Windows `KEVENT` (manual-reset and auto-reset) and Linux `completion`. A manual-reset event: `event_set` wakes all waiters; remains set until `event_reset` clears it. An auto-reset event: `event_set` wakes exactly one waiter and immediately clears itself. These are ideal for: boot synchronization (wait for disk init to complete), vsync signal from PIT to compositor, driver initialization handshakes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait/event objects"`. Add notes, gotchas, and design decisions directly in this TODO section covering event types, wait semantics, and usage examples.
 
 
 - [ ] Define `event_t` struct (state flag, type enum MANUAL/AUTO_RESET, wait queue)
@@ -130,7 +175,7 @@
 
 ## 9. Work Queues (Deferred Work)
 
-**Prompt:** IRQ handlers must be short — they run with interrupts disabled and cannot sleep, yield, or call VFS. Work queues solve this by deferring slow work to a kernel thread that runs in normal context. An IRQ handler calls `workqueue_enqueue(wq, func, arg)` to schedule a callback — the work queue kernel thread picks it up and calls `func(arg)` in a yieldable context. This is equivalent to Linux `workqueue_struct` / `schedule_work()` and Windows DPC + work items. Used by: NIC receive path (packet processing after DMA), disk IRQ (completing async I/O), USB events. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: work queues"`. Create or update documentation in `docs/` covering the workqueue API, IRQ-safety rules, and work item lifecycle.
+**Prompt:** IRQ handlers must be short — they run with interrupts disabled and cannot sleep, yield, or call VFS. Work queues solve this by deferring slow work to a kernel thread that runs in normal context. An IRQ handler calls `workqueue_enqueue(wq, func, arg)` to schedule a callback — the work queue kernel thread picks it up and calls `func(arg)` in a yieldable context. This is equivalent to Linux `workqueue_struct` / `schedule_work()` and Windows DPC + work items. Used by: NIC receive path (packet processing after DMA), disk IRQ (completing async I/O), USB events. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: work queues"`. Add notes, gotchas, and design decisions directly in this TODO section covering the workqueue API, IRQ-safety rules, and work item lifecycle.
 
 
 - [ ] Define `work_item_t` struct (callback function ptr, arg, next pointer)
@@ -146,7 +191,7 @@
 
 ## 10. Memory Barriers & Compiler Fences
 
-**Prompt:** Memory barriers prevent the CPU and compiler from reordering memory accesses across synchronization boundaries. Without them, lock-free code and even spinlock implementations can silently mis-order on modern out-of-order CPUs. Implement as lightweight macros using GCC's built-ins and x86 `MFENCE`/`LFENCE`/`SFENCE` instructions. Add `barrier()` (compiler-only fence) and `mb()`/`rmb()`/`wmb()` (full/read/write memory barriers). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: memory barriers"`. Create or update documentation in `docs/` covering when to use each barrier type.
+**Prompt:** Memory barriers prevent the CPU and compiler from reordering memory accesses across synchronization boundaries. Without them, lock-free code and even spinlock implementations can silently mis-order on modern out-of-order CPUs. Implement as lightweight macros using GCC's built-ins and x86 `MFENCE`/`LFENCE`/`SFENCE` instructions. Add `barrier()` (compiler-only fence) and `mb()`/`rmb()`/`wmb()` (full/read/write memory barriers). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: memory barriers"`. Add notes, gotchas, and design decisions directly in this TODO section covering when to use each barrier type.
 
 > **Note for single-core:** On x86 single-core, the CPU guarantees strong ordering for most operations. The compiler barrier (`barrier()`) is still needed to prevent GCC from optimizing away `volatile` accesses. The full `mb()` becomes important when SMP is added.
 
@@ -165,7 +210,7 @@
 
 ## 11. Priority Inheritance (Mutex Enhancement)
 
-**Prompt:** Priority inversion happens when a low-priority thread holds a mutex that a high-priority thread needs, while a medium-priority thread preempts it — the high-priority thread is effectively blocked by the medium one. Priority inheritance fixes this: when a high-priority thread blocks on a mutex, the lock owner's priority is temporarily boosted to match. Implement as an extension to `mutex_t` — add a `priority_ceiling` field; on block, boost the owner's thread priority to `max(owner_prio, waiter_prio)`; on unlock, restore the original priority. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: mutex priority inheritance"`. Create or update documentation in `docs/` covering the priority inversion problem and the inheritance solution.
+**Prompt:** Priority inversion happens when a low-priority thread holds a mutex that a high-priority thread needs, while a medium-priority thread preempts it — the high-priority thread is effectively blocked by the medium one. Priority inheritance fixes this: when a high-priority thread blocks on a mutex, the lock owner's priority is temporarily boosted to match. Implement as an extension to `mutex_t` — add a `priority_ceiling` field; on block, boost the owner's thread priority to `max(owner_prio, waiter_prio)`; on unlock, restore the original priority. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: mutex priority inheritance"`. Add notes, gotchas, and design decisions directly in this TODO section covering the priority inversion problem and the inheritance solution.
 
 
 - [ ] Add `base_priority` field to `thread_t` (saved original priority before boost)
@@ -180,7 +225,7 @@
 
 ## 12. Seqlocks (Ultra-Fast Read Path)
 
-**Prompt:** Seqlocks allow readers to proceed without taking any lock at all — they read a monotonically-incrementing sequence counter before and after the read; if the counter changed (writer was active), they retry. Writers increment the counter before and after modifying data (odd = write in progress). This gives O(1) reads with zero locking overhead for read-mostly data that changes rarely (e.g., system clock, jiffies, uptime counter). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: seqlocks"`. Create or update documentation in `docs/` covering seqlock semantics and use cases.
+**Prompt:** Seqlocks allow readers to proceed without taking any lock at all — they read a monotonically-incrementing sequence counter before and after the read; if the counter changed (writer was active), they retry. Writers increment the counter before and after modifying data (odd = write in progress). This gives O(1) reads with zero locking overhead for read-mostly data that changes rarely (e.g., system clock, jiffies, uptime counter). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: seqlocks"`. Add notes, gotchas, and design decisions directly in this TODO section covering seqlock semantics and use cases.
 
 
 - [ ] Define `seqlock_t` (spinlock + volatile uint64_t sequence counter)
@@ -195,7 +240,7 @@
 
 ## 13. RCU — Read-Copy-Update
 
-**Prompt:** RCU is Linux's most powerful scalability primitive — readers hold no lock at all (zero overhead), writers atomically publish a new version of a data structure by updating a pointer, then wait for all current readers to finish before freeing the old version. Implement a simplified single-core RCU: `rcu_read_lock()` / `rcu_read_unlock()` disable preemption (on single-core this is sufficient); `synchronize_rcu()` blocks until all RCU read-side critical sections complete; `rcu_assign_pointer(ptr, new)` / `rcu_dereference(ptr)` handle pointer publishing with barriers. Use for: VFS dentry cache, network route table, loaded module list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: RCU (single-core)"`. Create or update documentation in `docs/` covering RCU concepts, the grace period, and safe usage patterns.
+**Prompt:** RCU is Linux's most powerful scalability primitive — readers hold no lock at all (zero overhead), writers atomically publish a new version of a data structure by updating a pointer, then wait for all current readers to finish before freeing the old version. Implement a simplified single-core RCU: `rcu_read_lock()` / `rcu_read_unlock()` disable preemption (on single-core this is sufficient); `synchronize_rcu()` blocks until all RCU read-side critical sections complete; `rcu_assign_pointer(ptr, new)` / `rcu_dereference(ptr)` handle pointer publishing with barriers. Use for: VFS dentry cache, network route table, loaded module list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: RCU (single-core)"`. Add notes, gotchas, and design decisions directly in this TODO section covering RCU concepts, the grace period, and safe usage patterns.
 
 > **Scope:** Single-core simplified RCU only. Full SMP RCU (quiescent-state tracking per CPU) is deferred to the SMP phase.
 
@@ -230,7 +275,7 @@
 
 ## 15. Futexes (User-Space Fast Mutex)
 
-**Prompt:** Futexes (fast userspace mutexes) allow user-mode mutex/condvar implementations to avoid syscalls in the uncontended case. The kernel only gets involved when a thread actually needs to sleep or wake. `SYS_FUTEX_WAIT(addr, expected)` — if `*addr == expected`, sleep on that address. `SYS_FUTEX_WAKE(addr, n)` — wake up to N threads sleeping on that address. User-mode pthreads, C++ `std::mutex`, and Go's runtime all use futexes under the hood. Prerequisite: §1 File Descriptors (for per-process futex table) and §3 User-Mode Heap. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: futex syscall"`. Create or update documentation in `docs/` covering futex semantics and a user-mode mutex example.
+**Prompt:** Futexes (fast userspace mutexes) allow user-mode mutex/condvar implementations to avoid syscalls in the uncontended case. The kernel only gets involved when a thread actually needs to sleep or wake. `SYS_FUTEX_WAIT(addr, expected)` — if `*addr == expected`, sleep on that address. `SYS_FUTEX_WAKE(addr, n)` — wake up to N threads sleeping on that address. User-mode pthreads, C++ `std::mutex`, and Go's runtime all use futexes under the hood. Prerequisite: §1 File Descriptors (for per-process futex table) and §3 User-Mode Heap. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: futex syscall"`. Add notes, gotchas, and design decisions directly in this TODO section covering futex semantics and a user-mode mutex example.
 
 
 - [ ] Define per-process futex wait table (hash map of address → wait queue)
@@ -245,7 +290,7 @@
 
 ## 16. Lock Dependency Validator (Debug Build)
 
-**Prompt:** A lock dependency validator (like Linux `lockdep` or Windows Driver Verifier) detects potential deadlocks at runtime by building a directed graph of lock acquisition order. Every time a lock is acquired, the validator records which locks the current thread already holds. If the new acquisition would create a cycle in the dependency graph (A→B and B→A acquired in different threads), it fires a warning immediately — before the actual deadlock occurs. Enable with `-DLOCKDEP` at build time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: lock dependency validator"`. Create or update documentation in `docs/` covering lockdep usage, interpreting warnings, and adding annotations.
+**Prompt:** A lock dependency validator (like Linux `lockdep` or Windows Driver Verifier) detects potential deadlocks at runtime by building a directed graph of lock acquisition order. Every time a lock is acquired, the validator records which locks the current thread already holds. If the new acquisition would create a cycle in the dependency graph (A→B and B→A acquired in different threads), it fires a warning immediately — before the actual deadlock occurs. Enable with `-DLOCKDEP` at build time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: lock dependency validator"`. Add notes, gotchas, and design decisions directly in this TODO section covering lockdep usage, interpreting warnings, and adding annotations.
 
 > **Debug only:** Zero overhead in release builds (`#ifdef LOCKDEP`). Only active in debug/testing builds.
 
@@ -318,7 +363,7 @@
 
 ## 17. Priority Inheritance ON by Default
 
-**Prompt:** Linux's `rt_mutex` requires explicit opt-in — the standard `mutex_t` has no inheritance and is susceptible to priority inversion. Windows applies heuristic priority boosts (not true inheritance) and only for specific scenarios. Impossible OS makes priority inheritance the **default** on every `mutex_t` — no opt-in, no separate type, no special annotation needed. Developers never have to think about priority inversion. Extend the existing §11 implementation so that inheritance is always active. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: priority inheritance on by default"`. Create or update documentation in `docs/` explaining the default-on design decision and how it differs from Linux/Windows.
+**Prompt:** Linux's `rt_mutex` requires explicit opt-in — the standard `mutex_t` has no inheritance and is susceptible to priority inversion. Windows applies heuristic priority boosts (not true inheritance) and only for specific scenarios. Impossible OS makes priority inheritance the **default** on every `mutex_t` — no opt-in, no separate type, no special annotation needed. Developers never have to think about priority inversion. Extend the existing §11 implementation so that inheritance is always active. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: priority inheritance on by default"`. Create or add notes directly in this TODO section explaining the default-on design decision and how it differs from Linux/Windows.
 
 
 - [ ] Ensure §11 priority inheritance is implemented in `mutex_lock()` with no flags needed
@@ -331,7 +376,7 @@
 
 ## 18. Wait-on-Multiple Primitives
 
-**Prompt:** Windows has `WaitForMultipleObjects` — wait for any or all of N kernel handles simultaneously. Linux has no equivalent for kernel sync objects (only `poll`/`epoll` for file descriptors). Impossible OS adds a unified `waitable_t` interface — a common vtable pointer embedded in `mutex_t`, `semaphore_t`, `event_t`, and `condvar_t`. `wait_any(handles[], count, timeout_ms)` blocks until at least one is signalled; `wait_all(handles[], count, timeout_ms)` blocks until all are signalled. Returns the index of the signalled handle (or `WAIT_TIMEOUT`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait-on-multiple primitives"`. Create or update documentation in `docs/` covering the waitable interface and usage examples.
+**Prompt:** Windows has `WaitForMultipleObjects` — wait for any or all of N kernel handles simultaneously. Linux has no equivalent for kernel sync objects (only `poll`/`epoll` for file descriptors). Impossible OS adds a unified `waitable_t` interface — a common vtable pointer embedded in `mutex_t`, `semaphore_t`, `event_t`, and `condvar_t`. `wait_any(handles[], count, timeout_ms)` blocks until at least one is signalled; `wait_all(handles[], count, timeout_ms)` blocks until all are signalled. Returns the index of the signalled handle (or `WAIT_TIMEOUT`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait-on-multiple primitives"`. Add notes, gotchas, and design decisions directly in this TODO section covering the waitable interface and usage examples.
 
 
 - [ ] Define `waitable_t` interface: `{ int (*is_ready)(void *); void (*add_waiter)(void *, waiter_t *); }`
@@ -346,7 +391,7 @@
 
 ## 19. Unified `_timeout(ms)` API
 
-**Prompt:** Linux timeout semantics are inconsistent — some primitives take jiffies, some `timespec`, some relative time, some absolute. Windows is similarly fragmented. Impossible OS standardises: **every** blocking primitive has a `_timeout(ms)` variant with identical semantics — pass milliseconds, get back `WAIT_SIGNALLED` or `WAIT_TIMEOUT`. Implement by extending §8 `event_wait_timeout`, and adding `mutex_lock_timeout`, `sem_wait_timeout`, `rwlock_read_lock_timeout`, `rwlock_write_lock_timeout`. The timer uses the PIT tick counter for ms-accurate timeouts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: unified timeout API"`. Create or update documentation in `docs/` covering timeout semantics and the return value convention.
+**Prompt:** Linux timeout semantics are inconsistent — some primitives take jiffies, some `timespec`, some relative time, some absolute. Windows is similarly fragmented. Impossible OS standardises: **every** blocking primitive has a `_timeout(ms)` variant with identical semantics — pass milliseconds, get back `WAIT_SIGNALLED` or `WAIT_TIMEOUT`. Implement by extending §8 `event_wait_timeout`, and adding `mutex_lock_timeout`, `sem_wait_timeout`, `rwlock_read_lock_timeout`, `rwlock_write_lock_timeout`. The timer uses the PIT tick counter for ms-accurate timeouts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: unified timeout API"`. Add notes, gotchas, and design decisions directly in this TODO section covering timeout semantics and the return value convention.
 
 ```c
 #define WAIT_SIGNALLED   0
@@ -365,7 +410,7 @@
 
 ## 20. Graphical Deadlock Visualization
 
-**Prompt:** When the §16 lock dependency validator detects a deadlock cycle, instead of a plain text kernel log dump, Impossible OS draws the dependency graph directly to the framebuffer using the existing GFX subsystem — thread boxes connected by lock-dependency arrows, the cycle edges highlighted in red, with the blocking lock name and owner thread labelled. This is unprecedented — Linux prints a wall of text to dmesg; Windows shows a blue screen with a stop code. Impossible OS shows a clear, readable diagram. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: graphical deadlock visualization"`. Create or update documentation in `docs/` covering the visualization format and how to interpret it.
+**Prompt:** When the §16 lock dependency validator detects a deadlock cycle, instead of a plain text kernel log dump, Impossible OS draws the dependency graph directly to the framebuffer using the existing GFX subsystem — thread boxes connected by lock-dependency arrows, the cycle edges highlighted in red, with the blocking lock name and owner thread labelled. This is unprecedented — Linux prints a wall of text to dmesg; Windows shows a blue screen with a stop code. Impossible OS shows a clear, readable diagram. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: graphical deadlock visualization"`. Add notes, gotchas, and design decisions directly in this TODO section covering the visualization format and how to interpret it.
 
 > **Prerequisite:** §16 Lock Dependency Validator must be complete first.
 
@@ -383,7 +428,7 @@
 
 ## 21. Named Lock Browser (`/sys/locks` + `locks` shell command)
 
-**Prompt:** Every Impossible OS synchronization primitive already has a `name` field. Expose all currently-held locks via a VFS virtual file `/sys/locks` — each entry shows: lock name, type (mutex/rwlock/spinlock/semaphore), owner thread, waiter count, and time held in milliseconds. A `locks` shell command reads and formats this output. Linux `/proc/locks` only shows file locks. Windows has no equivalent for kernel sync objects. This provides real-time lock observability — useful for debugging deadlocks and performance bottlenecks. The Task Manager (Phase 05) can also read this interface. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: /sys/locks named lock browser"`. Create or update documentation in `docs/` covering the /sys/locks format and shell usage.
+**Prompt:** Every Impossible OS synchronization primitive already has a `name` field. Expose all currently-held locks via a VFS virtual file `/sys/locks` — each entry shows: lock name, type (mutex/rwlock/spinlock/semaphore), owner thread, waiter count, and time held in milliseconds. A `locks` shell command reads and formats this output. Linux `/proc/locks` only shows file locks. Windows has no equivalent for kernel sync objects. This provides real-time lock observability — useful for debugging deadlocks and performance bottlenecks. The Task Manager (Phase 05) can also read this interface. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: /sys/locks named lock browser"`. Add notes, gotchas, and design decisions directly in this TODO section covering the /sys/locks format and shell usage.
 
 
 - [ ] Add global lock registry: linked list of all initialized primitives (registered in `mutex_init`, `rwlock_init`, etc.)

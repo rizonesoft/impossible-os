@@ -9,7 +9,7 @@
 
 ## 1. Pipes ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to IPC or pipes. Create or update documentation in `docs/` covering the pipe implementation, syscalls, and SIGPIPE behavior.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to IPC or pipes. Add notes, gotchas, and design decisions directly in this TODO section covering the pipe implementation, syscalls, and SIGPIPE behavior.
 
 
 - [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)

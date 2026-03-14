@@ -20,7 +20,7 @@
 
 ### 1.1 PS/2 Mouse Driver
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/mouse.c` implements the PS/2 mouse driver with 3-byte packet protocol (status, Δx, Δy), IRQ 12 handler, delta clamping, and screen-bounds clamping. Confirm `mouse_init()`, `mouse_get_state()`, and `mouse_set_position()` are implemented. Run `bash scripts/build.sh clean` and verify mouse movement in QEMU/VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to PS/2 mouse input. Create or update documentation in `docs/` covering the PS/2 mouse driver architecture, 3-byte packet format, and IRQ handling.
+**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/mouse.c` implements the PS/2 mouse driver with 3-byte packet protocol (status, Δx, Δy), IRQ 12 handler, delta clamping, and screen-bounds clamping. Confirm `mouse_init()`, `mouse_get_state()`, and `mouse_set_position()` are implemented. Run `bash scripts/build.sh clean` and verify mouse movement in QEMU/VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to PS/2 mouse input. Add notes, gotchas, and design decisions directly in this TODO section covering the PS/2 mouse driver architecture, 3-byte packet format, and IRQ handling.
 
 - [x] Create `src/kernel/drivers/mouse.c` and `include/kernel/drivers/mouse.h`
 - [x] Implement PS/2 mouse initialization (reset, enable data reporting)
@@ -37,7 +37,7 @@
 
 ### 2.1 VBoxGuest VMMDev Driver
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/vbox_mouse.c` discovers PCI device `80EE:CAFE`, initializes VMMDev protocol v1.03, enables absolute mouse coordinates via `SetMouse` with `GUEST_CAN_ABSOLUTE | NEW_PROTOCOL | GUEST_NEEDS_HOST_CURSOR` flags, and receives position updates via IRQ handler. Confirm the 3-tier priority in `main.c`: VirtIO > VBox > PS/2. Verify buttons come from PS/2 (VMMDev does NOT provide buttons). Run `bash scripts/build.sh clean` and test in VirtualBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VBox mouse integration. Create or update documentation in `docs/` covering the VMMDev protocol, PCI device discovery, and IRQ-based coordinate delivery.
+**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/vbox_mouse.c` discovers PCI device `80EE:CAFE`, initializes VMMDev protocol v1.03, enables absolute mouse coordinates via `SetMouse` with `GUEST_CAN_ABSOLUTE | NEW_PROTOCOL | GUEST_NEEDS_HOST_CURSOR` flags, and receives position updates via IRQ handler. Confirm the 3-tier priority in `main.c`: VirtIO > VBox > PS/2. Verify buttons come from PS/2 (VMMDev does NOT provide buttons). Run `bash scripts/build.sh clean` and test in VirtualBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VBox mouse integration. Add notes, gotchas, and design decisions directly in this TODO section covering the VMMDev protocol, PCI device discovery, and IRQ-based coordinate delivery.
 
 - [x] Create `src/kernel/drivers/vbox_mouse.c` and `include/kernel/drivers/vbox_mouse.h`
 - [x] PCI discovery: vendor `0x80EE`, device `0xCAFE`
@@ -54,7 +54,7 @@
 
 ### 2.2 VirtIO Tablet (QEMU) ✅
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/virtio_input.c` implements the VirtIO input driver for QEMU's `-device virtio-tablet-pci`. Confirm absolute coordinates (0–32767) are scaled to screen resolution. Verify the Makefile includes `-device virtio-tablet-pci` in the QEMU run target. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VirtIO input or QEMU mouse. Create or update documentation in `docs/` covering the VirtIO tablet driver and QEMU integration.
+**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/virtio_input.c` implements the VirtIO input driver for QEMU's `-device virtio-tablet-pci`. Confirm absolute coordinates (0–32767) are scaled to screen resolution. Verify the Makefile includes `-device virtio-tablet-pci` in the QEMU run target. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VirtIO input or QEMU mouse. Add notes, gotchas, and design decisions directly in this TODO section covering the VirtIO tablet driver and QEMU integration.
 
 - [x] `virtio_input_init()` — discover VirtIO input PCI device
 - [x] `virtio_input_get_state()` — return absolute x, y, buttons
@@ -68,7 +68,7 @@
 
 ### 3.1 Edge Clamp Offset Recalculation
 
-**Prompt:** This section is marked complete. Verify that `src/desktop/wm.c` recalculates the drag offset (`drag_offset_x/y`) after clamping the window to screen edges during drag operations. This prevents the window from jumping when the cursor reverses direction after hitting an edge. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to window dragging. Create or update documentation in `docs/` covering the window manager drag system and edge clamping behavior.
+**Prompt:** This section is marked complete. Verify that `src/desktop/wm.c` recalculates the drag offset (`drag_offset_x/y`) after clamping the window to screen edges during drag operations. This prevents the window from jumping when the cursor reverses direction after hitting an edge. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to window dragging. Add notes, gotchas, and design decisions directly in this TODO section covering the window manager drag system and edge clamping behavior.
 
 - [x] Recalculate `drag_offset_x = mx - new_x` after edge clamping in `wm_handle_mouse()`
 - [x] Recalculate `drag_offset_y = my - new_y` after edge clamping
@@ -80,7 +80,7 @@
 
 ### 4.1 Enable Intellimouse 4-Byte Packets
 
-**Prompt:** Upgrade the PS/2 mouse driver from 3-byte to 4-byte packet mode by sending the magic Intellimouse init sequence (set sample rate 200, 100, 80, then read device ID). If the mouse responds with ID 3, it supports scroll wheel. The 4th byte contains the scroll delta (signed 8-bit: positive = up, negative = down). Update the IRQ handler to parse 4-byte packets when Intellimouse is detected. Dispatch scroll events to the window manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test scroll in VBox, and commit as `"input: PS/2 Intellimouse scroll wheel support"`. Update `README.md` if it contains stale or incorrect references to mouse capabilities. Create or update documentation in `docs/` covering Intellimouse protocol detection, 4-byte packet format, and scroll event dispatch.
+**Prompt:** Upgrade the PS/2 mouse driver from 3-byte to 4-byte packet mode by sending the magic Intellimouse init sequence (set sample rate 200, 100, 80, then read device ID). If the mouse responds with ID 3, it supports scroll wheel. The 4th byte contains the scroll delta (signed 8-bit: positive = up, negative = down). Update the IRQ handler to parse 4-byte packets when Intellimouse is detected. Dispatch scroll events to the window manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test scroll in VBox, and commit as `"input: PS/2 Intellimouse scroll wheel support"`. Update `README.md` if it contains stale or incorrect references to mouse capabilities. Add notes, gotchas, and design decisions directly in this TODO section covering Intellimouse protocol detection, 4-byte packet format, and scroll event dispatch.
 
 - [ ] Send magic init sequence: set sample rate 200 → 100 → 80
 - [ ] Read device ID: if `ID == 3`, Intellimouse detected (4-byte packets)
@@ -93,7 +93,7 @@
 
 ### 4.2 Scroll Wheel in Window Manager
 
-**Prompt:** Handle scroll events in the window manager. Dispatch scroll deltas to the focused window's control tree (e.g., scrollable text areas, list views). If no control handles the scroll, the window itself may scroll its client area. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"wm: scroll wheel event dispatch"`. Update `README.md` if it contains stale or incorrect references to scroll support. Create or update documentation in `docs/` covering scroll event handling in the window manager and control tree dispatch.
+**Prompt:** Handle scroll events in the window manager. Dispatch scroll deltas to the focused window's control tree (e.g., scrollable text areas, list views). If no control handles the scroll, the window itself may scroll its client area. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"wm: scroll wheel event dispatch"`. Update `README.md` if it contains stale or incorrect references to scroll support. Add notes, gotchas, and design decisions directly in this TODO section covering scroll event handling in the window manager and control tree dispatch.
 
 - [ ] Add `wm_handle_scroll(int32_t mx, int32_t my, int8_t delta)` to `wm.c`
 - [ ] Dispatch to focused window's control handler
@@ -106,7 +106,7 @@
 
 ### 5.1 Enable Explorer 5-Byte Packets
 
-**Prompt:** Extend Intellimouse support to detect the Explorer protocol (5 buttons). After enabling Intellimouse (ID 3), send the magic sequence again (sample rate 200, 200, 80, read ID). If the mouse responds with ID 4, it supports 5 buttons and the 4th byte includes both scroll + side button bits. Update the packet parser. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test in VBox, and commit as `"input: PS/2 Intellimouse Explorer 5-button support"`. Update `README.md` if it contains stale or incorrect references to mouse button support. Create or update documentation in `docs/` covering Explorer protocol detection, 5-button packet parsing, and side button defines.
+**Prompt:** Extend Intellimouse support to detect the Explorer protocol (5 buttons). After enabling Intellimouse (ID 3), send the magic sequence again (sample rate 200, 200, 80, read ID). If the mouse responds with ID 4, it supports 5 buttons and the 4th byte includes both scroll + side button bits. Update the packet parser. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test in VBox, and commit as `"input: PS/2 Intellimouse Explorer 5-button support"`. Update `README.md` if it contains stale or incorrect references to mouse button support. Add notes, gotchas, and design decisions directly in this TODO section covering Explorer protocol detection, 5-button packet parsing, and side button defines.
 
 - [ ] After Intellimouse init (ID 3), send second magic: sample rate 200 → 200 → 80
 - [ ] Read device ID: if `ID == 4`, Explorer mode (5 buttons in 4th byte)
@@ -121,7 +121,7 @@
 
 ### 6.1 PS/2 Byte Sync Recovery
 
-**Prompt:** If a PS/2 byte is lost (noisy line, slow IRQ), the driver reads garbage for the next 2 frames. Fix by verifying that byte 0 of each packet always has bit 3 set (PS/2 spec mandates this). If bit 3 is clear, discard bytes until a valid sync byte is found. Add a counter for sync-loss events for diagnostics. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: PS/2 packet resynchronization"`. Update `README.md` if it contains stale or incorrect references to mouse reliability. Create or update documentation in `docs/` covering the PS/2 packet sync recovery algorithm and diagnostic counters.
+**Prompt:** If a PS/2 byte is lost (noisy line, slow IRQ), the driver reads garbage for the next 2 frames. Fix by verifying that byte 0 of each packet always has bit 3 set (PS/2 spec mandates this). If bit 3 is clear, discard bytes until a valid sync byte is found. Add a counter for sync-loss events for diagnostics. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: PS/2 packet resynchronization"`. Update `README.md` if it contains stale or incorrect references to mouse reliability. Add notes, gotchas, and design decisions directly in this TODO section covering the PS/2 packet sync recovery algorithm and diagnostic counters.
 
 - [ ] Check bit 3 of byte 0 on every packet boundary
 - [ ] If bit 3 is NOT set: discard byte, shift buffer, resume scanning
@@ -135,7 +135,7 @@
 
 ### 7.1 Acceleration Curves
 
-**Prompt:** Implement mouse acceleration in the input processing layer (between raw deltas and cursor movement). For PS/2 relative mode: apply a non-linear acceleration curve so slow movements are precise and fast movements cover more distance. Use a simple polynomial: `accel_delta = delta * (1.0 + speed * acceleration_factor)` where `speed = sqrt(dx² + dy²)`. Implement using fixed-point integer math (no FPU). Store acceleration settings in the Registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: mouse acceleration curves"`. Update `README.md` if it contains stale or incorrect references to mouse movement or acceleration. Create or update documentation in `docs/` covering the acceleration curve algorithm, fixed-point math implementation, and Registry configuration.
+**Prompt:** Implement mouse acceleration in the input processing layer (between raw deltas and cursor movement). For PS/2 relative mode: apply a non-linear acceleration curve so slow movements are precise and fast movements cover more distance. Use a simple polynomial: `accel_delta = delta * (1.0 + speed * acceleration_factor)` where `speed = sqrt(dx² + dy²)`. Implement using fixed-point integer math (no FPU). Store acceleration settings in the Registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: mouse acceleration curves"`. Update `README.md` if it contains stale or incorrect references to mouse movement or acceleration. Add notes, gotchas, and design decisions directly in this TODO section covering the acceleration curve algorithm, fixed-point math implementation, and Registry configuration.
 
 - [ ] Create `src/kernel/input/mouse_accel.c` and `include/kernel/input/mouse_accel.h`
 - [ ] Implement fixed-point acceleration: `accel = 1.0 + speed * factor` (16.16 fixed point)
@@ -146,7 +146,7 @@
 
 ### 7.2 Configurable DPI / Sensitivity
 
-**Prompt:** Add a sensitivity multiplier to the input layer. Sensitivity is a simple linear scale factor applied to mouse deltas: `effective_delta = raw_delta * sensitivity`. Default sensitivity is 1.0 (stored as integer 100 = 1.00×). Range: 0.1× (10) to 3.0× (300). Read from Registry path `HKLM\SYSTEM\Input\MouseSensitivity`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: configurable mouse sensitivity"`. Update `README.md` if it contains stale or incorrect references to mouse sensitivity. Create or update documentation in `docs/` covering the sensitivity multiplier, Registry integration, and valid range.
+**Prompt:** Add a sensitivity multiplier to the input layer. Sensitivity is a simple linear scale factor applied to mouse deltas: `effective_delta = raw_delta * sensitivity`. Default sensitivity is 1.0 (stored as integer 100 = 1.00×). Range: 0.1× (10) to 3.0× (300). Read from Registry path `HKLM\SYSTEM\Input\MouseSensitivity`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"input: configurable mouse sensitivity"`. Update `README.md` if it contains stale or incorrect references to mouse sensitivity. Add notes, gotchas, and design decisions directly in this TODO section covering the sensitivity multiplier, Registry integration, and valid range.
 
 - [ ] Add sensitivity multiplier (16.16 fixed point)
 - [ ] Read from Registry: `HKLM\SYSTEM\Input\MouseSensitivity` (default: 100 = 1.0×)
@@ -160,7 +160,7 @@
 
 ### 8.1 USB Host Controller Driver (EHCI)
 
-**Prompt:** Implement an EHCI (USB 2.0) host controller driver for USB mouse support. EHCI is the bare minimum for modern USB input — most mice use USB 2.0 full-speed. VirtualBox emulates Intel EHCI. Start with bus enumeration, device addressing, and interrupt transfer endpoints. This is a larger subsystem — implement incrementally. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test with a USB mouse in VBox, and commit as `"usb: EHCI host controller driver"`. Update `README.md` if it contains stale or incorrect references to USB support. Create or update documentation in `docs/` covering the EHCI controller architecture, PCI discovery, and transfer scheduling.
+**Prompt:** Implement an EHCI (USB 2.0) host controller driver for USB mouse support. EHCI is the bare minimum for modern USB input — most mice use USB 2.0 full-speed. VirtualBox emulates Intel EHCI. Start with bus enumeration, device addressing, and interrupt transfer endpoints. This is a larger subsystem — implement incrementally. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test with a USB mouse in VBox, and commit as `"usb: EHCI host controller driver"`. Update `README.md` if it contains stale or incorrect references to USB support. Add notes, gotchas, and design decisions directly in this TODO section covering the EHCI controller architecture, PCI discovery, and transfer scheduling.
 
 - [ ] Create `src/kernel/drivers/usb/ehci.c` and headers
 - [ ] PCI discovery: class 0x0C, subclass 0x03, prog IF 0x20 (EHCI)
@@ -172,7 +172,7 @@
 
 ### 8.2 USB HID Mouse Class Driver
 
-**Prompt:** Implement a USB HID class driver for mice. After EHCI enumerates a USB device, check the interface descriptor for class 3 (HID), subclass 1 (boot interface), protocol 2 (mouse). Set the device to boot protocol mode (simpler than report protocol). Read 3-byte boot mouse reports via interrupt transfers: byte 0 = buttons, byte 1 = Δx, byte 2 = Δy. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test in VBox, and commit as `"usb: HID mouse class driver"`. Update `README.md` if it contains stale or incorrect references to USB mouse support. Create or update documentation in `docs/` covering the USB HID boot protocol, mouse report parsing, and hot-plug support.
+**Prompt:** Implement a USB HID class driver for mice. After EHCI enumerates a USB device, check the interface descriptor for class 3 (HID), subclass 1 (boot interface), protocol 2 (mouse). Set the device to boot protocol mode (simpler than report protocol). Read 3-byte boot mouse reports via interrupt transfers: byte 0 = buttons, byte 1 = Δx, byte 2 = Δy. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test in VBox, and commit as `"usb: HID mouse class driver"`. Update `README.md` if it contains stale or incorrect references to USB mouse support. Add notes, gotchas, and design decisions directly in this TODO section covering the USB HID boot protocol, mouse report parsing, and hot-plug support.
 
 - [ ] Create `src/kernel/drivers/usb/hid_mouse.c`
 - [ ] Detect HID boot mouse: class 3, subclass 1, protocol 2
@@ -185,7 +185,7 @@
 
 ### 8.3 xHCI Host Controller (USB 3.0) — Future
 
-**Prompt:** xHCI (USB 3.0) is needed for modern laptops that don't have EHCI fallback. This is a significantly more complex controller than EHCI (ring-based command/event/transfer architecture). Defer until EHCI is stable. Note: VBox only partially emulates xHCI — test on real hardware or QEMU with `-device qemu-xhci`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"usb: xHCI host controller driver"`. Update `README.md` if it contains stale or incorrect references to USB 3.0 support. Create or update documentation in `docs/` covering the xHCI ring architecture and differences from EHCI.
+**Prompt:** xHCI (USB 3.0) is needed for modern laptops that don't have EHCI fallback. This is a significantly more complex controller than EHCI (ring-based command/event/transfer architecture). Defer until EHCI is stable. Note: VBox only partially emulates xHCI — test on real hardware or QEMU with `-device qemu-xhci`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"usb: xHCI host controller driver"`. Update `README.md` if it contains stale or incorrect references to USB 3.0 support. Add notes, gotchas, and design decisions directly in this TODO section covering the xHCI ring architecture and differences from EHCI.
 
 - [ ] Plan xHCI ring architecture (command ring, event ring, transfer rings)
 - [ ] PCI discovery: class 0x0C, subclass 0x03, prog IF 0x30 (xHCI)
@@ -199,7 +199,7 @@
 
 ### 9.1 Synaptics Touchpad Driver
 
-**Prompt:** Synaptics touchpads communicate over the PS/2 bus using proprietary extensions. Detect by sending the Synaptics identify command (`0xE8 0x00, 0xE8 0x00, 0xE8 0x00, 0xE8 0x00, 0xE6, 0xE9`) and checking the info bytes. If detected, switch to absolute mode for multi-touch, palm detection, and scroll zones. **Cannot be tested in VBox** — requires a real laptop with Synaptics hardware. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"input: Synaptics touchpad driver"`. Update `README.md` if it contains stale or incorrect references to touchpad support. Create or update documentation in `docs/` covering the Synaptics PS/2 protocol, detect sequence, absolute mode, and gesture support.
+**Prompt:** Synaptics touchpads communicate over the PS/2 bus using proprietary extensions. Detect by sending the Synaptics identify command (`0xE8 0x00, 0xE8 0x00, 0xE8 0x00, 0xE8 0x00, 0xE6, 0xE9`) and checking the info bytes. If detected, switch to absolute mode for multi-touch, palm detection, and scroll zones. **Cannot be tested in VBox** — requires a real laptop with Synaptics hardware. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"input: Synaptics touchpad driver"`. Update `README.md` if it contains stale or incorrect references to touchpad support. Add notes, gotchas, and design decisions directly in this TODO section covering the Synaptics PS/2 protocol, detect sequence, absolute mode, and gesture support.
 
 - [ ] Detect Synaptics via PS/2 identify command sequence
 - [ ] Switch to Synaptics absolute mode
@@ -219,7 +219,7 @@
 
 ### 10.1 VBoxGuest Extended Features
 
-**Prompt:** Extend the VBoxGuest VMMDev integration beyond mouse. Add display auto-resize (VBox tells the guest the ideal resolution when the user resizes the VBox window), shared clipboard, and shared folders. All use the same PCI device (`80EE:CAFE`) and VMMDev packet protocol. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: display resize + shared clipboard"`. Update `README.md` if it contains stale or incorrect references to VBox integration. Create or update documentation in `docs/` covering VMMDev display resize, HGCM shared clipboard, and shared folder VFS mounting.
+**Prompt:** Extend the VBoxGuest VMMDev integration beyond mouse. Add display auto-resize (VBox tells the guest the ideal resolution when the user resizes the VBox window), shared clipboard, and shared folders. All use the same PCI device (`80EE:CAFE`) and VMMDev packet protocol. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: display resize + shared clipboard"`. Update `README.md` if it contains stale or incorrect references to VBox integration. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev display resize, HGCM shared clipboard, and shared folder VFS mounting.
 
 - [ ] VBox display auto-resize (`VBOX_REQUEST_GET_DISPLAY_CHANGE = 51`)
   - [ ] Handle display change events in IRQ handler
@@ -231,7 +231,7 @@
 
 ### 10.2 Hypervisor Abstraction Layer
 
-**Prompt:** Create a unified hypervisor abstraction that detects which VM platform we're running on and activates the appropriate backend. The detection uses CPUID leaf 0x40000000 (hypervisor brand string) or PCI device probing. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: abstraction layer with auto-detection"`. Update `README.md` if it contains stale or incorrect references to hypervisor support. Create or update documentation in `docs/` covering the hypervisor detection algorithm, backend dispatch, and supported platforms.
+**Prompt:** Create a unified hypervisor abstraction that detects which VM platform we're running on and activates the appropriate backend. The detection uses CPUID leaf 0x40000000 (hypervisor brand string) or PCI device probing. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: abstraction layer with auto-detection"`. Update `README.md` if it contains stale or incorrect references to hypervisor support. Add notes, gotchas, and design decisions directly in this TODO section covering the hypervisor detection algorithm, backend dispatch, and supported platforms.
 
 - [ ] Create `src/kernel/hypervisor/detect.c` — detect VBox / QEMU / Hyper-V / bare metal
 - [ ] VirtualBox: VMMDev mouse, display resize, shared folders

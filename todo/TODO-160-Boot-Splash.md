@@ -9,7 +9,7 @@
 
 ## 18. Boot Splash Screen *(from Phase 04 §10)*
 
-**Prompt:** Graphical boot splash with logo and progress bar. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: graphical boot splash"`. Update `README.md` if it contains stale or incorrect references to boot splash. Create or update documentation in `docs/` covering the boot splash API, progress milestones, and F8 boot menu.
+**Prompt:** Graphical boot splash with logo and progress bar. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: graphical boot splash"`. Update `README.md` if it contains stale or incorrect references to boot splash. Add notes, gotchas, and design decisions directly in this TODO section covering the boot splash API, progress milestones, and F8 boot menu.
 
 
 - [ ] Create `src/kernel/boot_splash.c`
