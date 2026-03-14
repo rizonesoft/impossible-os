@@ -124,9 +124,11 @@ extern void multiboot2_parse(uintptr_t mbi_addr);
 /* ---- Directory tree dump (serial-only) ---- */
 
 /* Recursively dump a directory tree to serial log for diagnostics.
- * drive: drive letter ('C', 'D'), node: directory node, depth: indent level.
+ * parent_path: accumulated path so far (e.g. "C:\Impossible"),
+ * node: directory vfs_node, depth: indent level.
  * Returns total number of entries printed. */
-static uint32_t dump_dir_tree(char drive, struct vfs_node *node, uint32_t depth)
+static uint32_t dump_dir_tree(const char *parent_path, struct vfs_node *node,
+                               uint32_t depth)
 {
     uint32_t idx = 0;
     uint32_t total = 0;
@@ -142,15 +144,24 @@ static uint32_t dump_dir_tree(char drive, struct vfs_node *node, uint32_t depth)
     indent[k] = '\0';
 
     while ((de = vfs_readdir(node, idx)) != 0) {
+        /* Build full path: parent_path + "\" + name */
+        char full_path[256];
+        uint32_t pi = 0, ni = 0;
+        const char *pp = parent_path;
+        while (*pp && pi < 254) full_path[pi++] = *pp++;
+        if (pi > 0 && full_path[pi - 1] != '\\')
+            full_path[pi++] = '\\';
+        while (de->name[ni] && pi < 254) full_path[pi++] = de->name[ni++];
+        full_path[pi] = '\0';
+
         if (de->type & VFS_DIRECTORY) {
-            klog(LOG_DEBUG, "tree", "%s%c:\\%s/", indent,
-                 (uint64_t)drive, de->name);
+            klog(LOG_DEBUG, "tree", "%s%s\\", indent, full_path);
 
             /* Recurse into subdirectory */
             {
                 struct vfs_node *sub = vfs_finddir(node, de->name);
                 if (sub)
-                    total += dump_dir_tree(drive, sub, depth + 1);
+                    total += dump_dir_tree(full_path, sub, depth + 1);
             }
         } else {
             /* Get file size via stat if available */
@@ -163,7 +174,7 @@ static uint32_t dump_dir_tree(char drive, struct vfs_node *node, uint32_t depth)
                         fsize = st.size;
                 }
             }
-            klog(LOG_DEBUG, "tree", "%s%s (%u B)", indent, de->name,
+            klog(LOG_DEBUG, "tree", "%s%s (%u B)", indent, full_path,
                  fsize);
         }
         total++;
@@ -513,7 +524,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         struct vfs_node *c_root = vfs_get_drive_root('C');
         if (c_root) {
             klog(LOG_DEBUG, "tree", "C:\\");
-            uint32_t c_count = dump_dir_tree('C', c_root, 1);
+            uint32_t c_count = dump_dir_tree("C:", c_root, 1);
             klog(LOG_DEBUG, "tree", "C:\\ total: %u entries", (uint64_t)c_count);
         }
     }
@@ -522,7 +533,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         struct vfs_node *d_root = vfs_get_drive_root('D');
         if (d_root) {
             klog(LOG_DEBUG, "tree", "D:\\");
-            uint32_t d_count = dump_dir_tree('D', d_root, 1);
+            uint32_t d_count = dump_dir_tree("D:", d_root, 1);
             klog(LOG_DEBUG, "tree", "D:\\ total: %u entries", (uint64_t)d_count);
         }
     }
