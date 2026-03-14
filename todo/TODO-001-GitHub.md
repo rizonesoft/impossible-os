@@ -40,21 +40,21 @@
 
 ---
 
-## 3. Automated Sync (GitHub Actions)
+## 3. Automated Sync (GitHub Actions) ✅
 
 ### 3.1 Sync Bootloader Changes on Push
 
-**Prompt:** Workflow created (2026-03-14) and committed as `"ci: sync bootloader to public repo on push"` (`da1121a`). The workflow uses `git subtree split --prefix=src/boot/` to create a clean synthetic branch and pushes it to the public repo using `BOOTLOADER_REPO_TOKEN`. **Action required:** Add a GitHub PAT as a repository secret before the first run. Go to `https://github.com/rizonesoft/impossible-os/settings/secrets/actions` → New repository secret → Name: `BOOTLOADER_REPO_TOKEN`, Value: PAT with `public_repo` write scope. After adding the secret and testing, mark remaining items `[x]`.
+**Prompt:** Verified (2026-03-14). Workflow at `.github/workflows/sync-bootloader.yml` uses `clone + copy src/boot/ + push` approach. `BOOTLOADER_REPO_TOKEN` secret added to private repo. End-to-end test passed — a change to `src/boot/uefi/bootx64.c` triggered the workflow and the public `impossible-os-bootloader` repo was updated automatically within ~2 minutes. Note: first iteration used `git subtree split` which failed; replaced with clone+copy+push (`532f76a`).
 
 - [x] Create `.github/workflows/sync-bootloader.yml` in private repo
 - [x] Trigger: `push` to `main` with paths filter `src/boot/**`
 - [x] Action steps:
   - [x] Checkout private repo with full history (`fetch-depth: 0`)
-  - [x] Use `git subtree split --prefix=src/boot/` to create clean synthetic branch
+  - [x] Clone public bootloader repo, copy `src/boot/`, commit and push
   - [x] Authenticate using `BOOTLOADER_REPO_TOKEN` secret
-- [ ] Add `BOOTLOADER_REPO_TOKEN` to private repo secrets *(PAT: `public_repo` write scope — add at `Settings → Secrets → Actions`)*
-- [ ] Test end-to-end: change a file in `src/boot/`, push, verify public repo updates
-- [x] Commit: `"ci: sync bootloader to public repo on push"` (`da1121a`)
+- [x] Add `BOOTLOADER_REPO_TOKEN` to private repo secrets
+- [x] Test end-to-end: change in `src/boot/uefi/bootx64.c` → public repo updated ✅
+- [x] Commit: `"ci: sync bootloader to public repo on push"` (`da1121a`, fixed `532f76a`)
 
 ---
 
