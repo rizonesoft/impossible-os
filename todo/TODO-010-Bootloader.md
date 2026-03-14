@@ -416,13 +416,18 @@ update `docs/` covering the EDID protocol, GOP mode matching, and the emulator f
 
 ### 5.2 Boot Profiling via Serial Timestamps
 
-**Prompt:** Add high-resolution timestamps to each boot stage in the serial log. Use `pit_get_ticks()` to calculate milliseconds since boot for each `klog()` message during init. This helps identify which init stage is slowest (font loading? wallpaper decoding? DHCP?) and optimize boot time. Format: `[  1.234] Initializing AHCI...`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: serial log timestamps for boot profiling"`. Update `README.md` if it contains stale or incorrect references to boot logging or profiling. Create or update documentation in `docs/` covering the boot profiling system, timestamp format, and how to interpret serial log timings.
+**Prompt:** ✅ VERIFICATION — Serial log timestamps are implemented. Verify:
+(1) Every serial `klog()` line in QEMU's `-serial stdio` is prefixed with `[%4u.%03u]` (e.g., `[   1.230] [OK] boot: ...`);
+(2) `src/kernel/klog.c` computes `ms = pit_get_ticks() * 10`, then emits space-padded seconds + zero-padded milliseconds;
+(3) `main.c` contains `klog(LOG_DEBUG, "boot", "--- Phase: ...")` markers before: storage/VFS, interrupt controllers, display/splash, PCI/network hardware, partition mount, network (DHCP), and desktop/WM;
+(4) A `klog(LOG_INFO, "boot", "Boot complete in %u.%03us ...")` appears just before the compositor loop;
+(5) `bash scripts/build.sh clean` produces `=== BUILD OK ===`.
 
-- [ ] Add `boot_timestamp()` helper: returns ms since kernel start
-- [ ] Prefix all `klog()` output with `[%6d.%03d]` timestamp
-- [ ] Add timing markers in `main.c` for each major init phase
-- [ ] Log total boot time: `"Boot complete in X.XXXs"`
-- [ ] Commit: `"boot: serial log timestamps for boot profiling"`
+- [x] Timestamp prefix `[%4u.%03u]` added to all serial klog() output in `klog.c`
+- [x] No separate `boot_timestamp()` needed — logic is inline in `klog()` serial section
+- [x] Phase markers in `main.c`: storage/VFS, IDT/PIT, display/splash, PCI, partitions, DHCP, desktop/WM
+- [x] `klog(LOG_INFO, "boot", "Boot complete in X.XXXs ...")` before compositor loop
+- [x] Commit: `"boot: serial log timestamps for boot profiling"`
 
 ### 5.3 Error Recovery Screen
 

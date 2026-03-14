@@ -384,6 +384,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Storage & Filesystem ---------------------------------------------------");
 
+    klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     /* Step 8: Initialize VFS */
     vfs_init();
 
@@ -393,6 +394,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * mounts all detected volumes. */
 
 
+    klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     /* Step 5: Load GDT, IDT, PIC, PIT — must happen before boot splash
      * so that sleep_ms() works correctly during the fade-in animation. */
     gdt_init();
@@ -403,6 +405,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     keyboard_init();
     mouse_init();
 
+    klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
     /* Step 6: Initialize framebuffer (needs parsed boot info) */
     fb_init();
 
@@ -412,6 +415,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_init();
     boot_splash_status("Setting up hardware...");
 
+    klog(LOG_DEBUG, "boot", "--- Phase: PCI & network hardware ---");
     /* Step 10: PCI bus scan and NIC init */
     boot_splash_tick();
     boot_splash_status("Detecting hardware...");
@@ -428,6 +432,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_start_animation();
 
 
+    klog(LOG_DEBUG, "boot", "--- Phase: partition & filesystem mount ---");
     /* Step 11b: Scan block devices for partition tables (GPT first, MBR fallback).
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
      * Creates sub-blkdevs for each partition and probes filesystems. */
@@ -438,6 +443,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_tick();
 
 
+    klog(LOG_DEBUG, "boot", "--- Phase: network (DHCP) ---");
     /* Step 12: DHCP — obtain IP address (needs interrupts enabled) */
     dhcp_discover();
 
@@ -1103,6 +1109,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Initialize cursor manager (loads Adwaita Xcur files from sysroot) */
         cursor_init();
 
+        klog(LOG_DEBUG, "boot", "--- Phase: desktop & WM ---");
         /* Initialize window manager */
         boot_splash_tick();
         boot_splash_status("Almost ready...");
@@ -1113,6 +1120,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         /* Finish boot splash — hand off screen to desktop */
         boot_splash_finish();
+        /* Boot complete timing marker (before compositor loop) */
+        {
+            uint64_t ms = pit_get_ticks() * 10;
+            klog(LOG_INFO, "boot",
+                 "Boot complete in %u.%03us (PIT uptime from interrupt init)",
+                 (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));
+        }
         /* NOTE: klog screen output remains suppressed (LOG_FATAL) here.
          * It is restored inside the compositor loop on first_frame after
          * wm_composite() has rendered the full desktop. */

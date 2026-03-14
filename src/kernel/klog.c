@@ -273,6 +273,28 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 
     /* ---- Always output to serial ---- */
     {
+        /* Timestamp: [  1.234]  (seconds space-padded to 4, ms zero-padded to 3)
+         * PIT is 100 Hz → 1 tick = 10 ms.  Before pit_init() ticks = 0. */
+        uint64_t ms  = pit_get_ticks() * 10;
+        uint32_t sec = (uint32_t)(ms / 1000);
+        uint32_t fms = (uint32_t)(ms % 1000);
+
+        /* emit '[' + space-padded seconds + '.' + zero-padded ms + '] ' */
+        serial_char('[');
+        {
+            char secs[12]; int n = 0;
+            uint32_t v = sec;
+            if (v == 0) { secs[n++] = '0'; }
+            else { while (v > 0) { secs[n++] = '0' + (char)(v % 10); v /= 10; } }
+            int pad = 4 - n;
+            while (pad-- > 0) serial_char(' ');
+            while (n > 0) serial_char(secs[--n]);
+        }
+        serial_char('.');
+        emit_uint(serial_char, (uint64_t)fms, 10, 3);
+        serial_char(']');
+        serial_char(' ');
+
         serial_str(level_prefix[level]);
         if (subsystem && subsystem[0]) {
             serial_str(subsystem);
