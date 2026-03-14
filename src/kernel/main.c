@@ -1114,6 +1114,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Finish boot splash — hand off screen to desktop */
         boot_splash_finish();
 
+        /* Restore klog screen output NOW, after the WM has composited its
+         * first frame.  boot_splash_finish() deliberately leaves klog
+         * suppressed so that the window-creation log below doesn't bleed
+         * onto the screen between the fade-out black and the first WM render. */
+        klog_set_screen_level(LOG_INFO);
+
         /* ---- Boot-time heap stats ---- */
         {
             uint64_t h_used  = heap_get_used();

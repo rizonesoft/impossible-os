@@ -305,11 +305,15 @@ void boot_splash_init(void)
 
     splash_on = 1;
 
+    /* Push a clean black frame to the front buffer immediately.
+     * Until this fb_swap(), the front buffer still shows UEFI content
+     * (firmware splash, GOP console text, etc.) — this eliminates the
+     * flash / artifact visible before the fade-in begins. */
+    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+    fb_swap();
+
     /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
-     * Start from black and ramp up brightness, creating a seamless
-     * transition from the UEFI firmware logo to our splash screen.
-     * Uses RDTSC spin-wait because PIT is not yet initialized at this point
-     * (pit_init() is called after boot_splash_init() in main.c). */
+     * PIT is initialized before boot_splash_init() so sleep_ms() works. */
     static const uint8_t fade_levels[5] = { 51, 102, 153, 204, 255 };
     for (int fi = 0; fi < 5; fi++) {
         splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
@@ -376,8 +380,10 @@ void boot_splash_finish(void)
     /* Unlock compositor for normal text/wm operations */
     fb_unlock_compositor();
 
-    /* Restore klog screen output (was suppressed during splash) */
-    klog_set_screen_level(LOG_INFO);
+    /* NOTE: klog screen output remains suppressed (LOG_FATAL) until main.c
+     * explicitly restores it after the WM draws its first frame.  Restoring
+     * it here would let desktop-init log messages bleed onto the screen
+     * between boot_splash_finish() and the first wm composite pass. */
 }
 
 int boot_splash_active(void)
