@@ -10,137 +10,11 @@
 
 ---
 
-## 1. Audio System — Sound Card Driver
+## 1–2. Audio System
 
-### 1.1 AC97 Sound Card Driver
-
-**Prompt:** AC97 is the simplest sound card to implement in QEMU. Detect the Intel ICH AC97 controller via PCI class 0x04/subclass 0x01. Map two I/O BARs: the Native Audio Mixer BAR (for codec registers like master volume, PCM out volume) and the Native Audio Bus Master BAR (for DMA control). The Bus Master uses a Buffer Descriptor List (BDL) — a ring of 32 entries, each pointing to a PCM data buffer with length and IOC (Interrupt On Completion) flags. Fill the BDL with PCM audio data, set the BDL base address register, and start playback by setting the run bit. Generate a test sine wave (440 Hz, 16-bit signed, 44100 Hz) to verify audio output. After completing all items, create `docs/architecture/audio.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"drivers: AC97 sound card driver"`.
-
-
-- [ ] Create `src/kernel/drivers/ac97.c` and `include/ac97.h`
-- [ ] Detect AC97 controller via PCI (class `0x04`, subclass `0x01`, or Intel ICH vendor/device)
-- [ ] Map I/O BAR (Native Audio Mixer BAR + Native Audio Bus Master BAR)
-- [ ] Initialize AC97 codec:
-  - [ ] Cold reset via Bus Master control register
-  - [ ] Read codec ready status
-  - [ ] Set master volume, PCM out volume
-- [ ] Configure Bus Master for PCM out:
-  - [ ] Allocate DMA buffer (ring of Buffer Descriptor List entries)
-  - [ ] Each BDL entry: pointer to PCM data + length + flags (IOC)
-  - [ ] Set BDL base address register
-- [ ] Implement `ac97_play(pcm_data, samples, sample_rate)` — fill DMA buffers, start playback
-- [ ] Implement `ac97_stop()` — halt DMA playback
-- [ ] Implement `ac97_set_volume(volume)` — write mixer register (0–100%)
-- [ ] Handle AC97 IRQ: buffer completion → refill with next chunk
-- [ ] QEMU flag: `-device AC97` (or `-soundhw ac97`)
-- [ ] Test: play a short PCM tone (sine wave) to verify audio output
-- [ ] Commit: `"drivers: AC97 sound card driver"`
-
-### 1.2 Audio Abstraction Layer
-
-**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio abstraction layer"`.
-
-
-- [ ] Create `src/kernel/audio.c` and `include/audio.h`
-- [ ] Define `struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn, stop_fn, volume_fn)
-- [ ] Implement `audio_init()` — detect sound card, register driver
-- [ ] Implement `audio_play(pcm_data, samples, sample_rate)` — dispatch to driver
-- [ ] Implement `audio_set_volume(volume)` — 0–100 scale
-- [ ] Implement `audio_get_volume()` — read current volume
-- [ ] Implement `audio_is_playing()` — check playback state
-- [ ] Store volume in Registry: `HKLM\SYSTEM\Sound\Volume`, `HKLM\SYSTEM\Sound\Mute`
-- [ ] Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls
-- [ ] Commit: `"kernel: audio abstraction layer"`
-
-### 1.3 Audio Mixer
-
-**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `HKLM\SYSTEM\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio mixer"`.
-
-
-- [ ] Create `src/kernel/audio_mixer.c`
-- [ ] Support multiple simultaneous audio streams (up to 8)
-- [ ] Mix streams by summing PCM samples with per-stream volume
-- [ ] Clamp mixed output to prevent clipping
-- [ ] Master volume applied after mixing
-- [ ] Mute support (Registry `HKLM\SYSTEM\Sound\Mute`)
-- [ ] Commit: `"kernel: audio mixer"`
-
-### 1.4 System Sounds
-
-> **Moved to [TODO-P0302-Resources.md](TODO-P0302-Resources.md) §4** — WAV system sounds (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/` directory, install to IXFS.
-
----
-
-## 2. Audio Codec Libraries
-
-### 2.1 WAV Decoder
-
-**Prompt:** `dr_wav.h` is a public domain single-header WAV decoder (~1500 lines). Redirect its memory allocation macros to `kmalloc`/`kfree`. `audio_load_wav(path)` reads the WAV file via VFS, passes it to `drwav_init_memory()`, then decodes to 16-bit PCM. Support common formats: 8-bit unsigned, 16-bit signed, mono and stereo, sample rates 22050/44100/48000. Return a struct with the PCM buffer pointer, sample count, sample rate, and channel count. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_wav WAV decoder"`.
-
-
-- [ ] Add `dr_wav.h` to `include/` (public domain, ~1500 lines)
-- [ ] Redirect memory: `DRWAV_MALLOC → kmalloc`, `DRWAV_FREE → kfree`
-- [ ] Implement `audio_load_wav(path)` — decode WAV file to PCM int16 buffer
-- [ ] Support: 8-bit, 16-bit, mono, stereo, common sample rates (22050, 44100, 48000)
-- [ ] Test: load and play a WAV file
-- [ ] Commit: `"libs: dr_wav WAV decoder"`
-
-### 2.2 MP3 Decoder
-
-**Prompt:** `dr_mp3.h` is a public domain single-header MP3 decoder (~3000 lines). Same integration pattern as WAV: redirect memory, decode to 16-bit PCM. MP3 files are typically MPEG-1 Layer 3 at 44100 Hz stereo. If the sound driver expects a different sample rate (e.g., 48000), resample by linear interpolation. `audio_load_mp3(path)` returns the same PCM struct as WAV. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_mp3 MP3 decoder"`.
-
-
-- [ ] Add `dr_mp3.h` to `include/` (public domain, ~3000 lines)
-- [ ] Redirect memory to kmalloc/kfree
-- [ ] Implement `audio_load_mp3(path)` — decode MP3 to PCM int16 buffer
-- [ ] Handle: MPEG-1 Layer 3, 44100 Hz, stereo
-- [ ] Resample if needed (driver expects specific rate)
-- [ ] Test: decode and play an MP3 file
-- [ ] Commit: `"libs: dr_mp3 MP3 decoder"`
-
-### 2.3 OGG Vorbis Decoder
-
-**Prompt:** `stb_vorbis.c` is a public domain OGG Vorbis decoder (~5000 lines). Because it's a .c file (not header-only), create a wrapper `stb_vorbis_impl.c` similar to the stb_truetype integration from Phase 02. Redirect memory and disable stdio. Compile with SSE2 and `-ffreestanding`. `audio_load_ogg(path)` decodes the full OGG file to PCM. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: stb_vorbis OGG decoder"`.
-
-
-- [ ] Add `stb_vorbis.c` to `src/libs/` (public domain, ~5000 lines)
-- [ ] Redirect memory, disable stdio
-- [ ] Implement `audio_load_ogg(path)` — decode OGG to PCM
-- [ ] Test: decode and play an OGG file
-- [ ] Commit: `"libs: stb_vorbis OGG decoder"`
-
-### 2.4 FLAC Decoder (Future)
-
-**Prompt:** `dr_flac.h` is a public domain single-header FLAC decoder (~4000 lines). FLAC is lossless audio — larger files but perfect quality. Same integration pattern as the other dr_* libraries. This is a stretch goal since WAV, MP3, and OGG cover most use cases. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: dr_flac FLAC decoder"`.
-
-
-- [ ] *(Stretch)* Add `dr_flac.h` to `include/` (public domain, ~4000 lines)
-- [ ] *(Stretch)* Implement `audio_load_flac(path)` — lossless decode to PCM
-- [ ] Commit: `"libs: dr_flac FLAC decoder"`
-
-### 2.5 MIDI Synthesis (Future)
-
-**Prompt:** TinySoundFont (MIT, single header) synthesizes MIDI audio using SoundFont (.sf2) instrument samples. Bundle a small General MIDI SoundFont (~5 MB). `audio_play_midi(path)` loads the MIDI file, synthesizes it to PCM via TinySoundFont, and plays via the audio system. This is a stretch goal for music creation and retro game audio. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"libs: TinySoundFont MIDI synthesis"`.
-
-
-- [ ] *(Stretch)* Add **TinySoundFont** (MIT, single header) to `include/`
-- [ ] *(Stretch)* Bundle a small SoundFont file (~5 MB)
-- [ ] *(Stretch)* Implement `audio_play_midi(path)` — synthesize MIDI to PCM
-- [ ] Commit: `"libs: TinySoundFont MIDI synthesis"`
-
-### 2.6 Unified Audio Loader
-
-**Prompt:** `audio_load(path)` detects the audio format by file extension (.wav/.mp3/.ogg/.flac) and dispatches to the appropriate decoder. Returns a unified `struct audio_clip` with PCM buffer, sample_rate, channels, and total_samples. This is the single entry point for all audio loading — used by the media player, system sounds, and any future audio playback. After completing all items, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"kernel: unified audio file loader"`.
-
-
-- [ ] Implement `audio_load(path)` — detect format by extension, dispatch to decoder:
-  - [ ] `.wav` → `audio_load_wav()`
-  - [ ] `.mp3` → `audio_load_mp3()`
-  - [ ] `.ogg` → `audio_load_ogg()`
-  - [ ] `.flac` → `audio_load_flac()`
-- [ ] Return: PCM buffer + sample_rate + channels + total_samples
-- [ ] Used by: media player app, system sounds, games
-- [ ] Commit: `"kernel: unified audio file loader"`
+> **Moved to [TODO-P0006-Audio.md](TODO-P0006-Audio.md)** — AC97 driver, audio
+> abstraction layer, mixer, codec libraries (WAV/MP3/OGG/FLAC/MIDI), and
+> unified audio loader.
 
 ---
 
@@ -383,27 +257,18 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1.1 AC97 Sound Card | Audio hardware foundation |
-| 🔴 P0 | 1.2 Audio Abstraction | Unified API for all audio |
-| 🔴 P0 | 2.1 WAV Decoder | Simplest format — system sounds |
-| 🟠 P1 | 1.3 Audio Mixer | Multiple simultaneous sounds |
-| 🟠 P1 | 1.4 System Sounds | UX — startup chime, notifications |
-| 🟠 P1 | 2.2 MP3 Decoder | Most common music format |
-| 🟠 P1 | 3.1 USB Core | Foundation for all USB devices |
-| 🟡 P2 | 3.2 xHCI Controller | USB 3.0 host — enables all USB devices |
-| 🟡 P2 | 3.3 USB HID | USB keyboard + mouse |
-| 🟡 P2 | 2.3 OGG Vorbis | Open audio format |
-| 🟡 P2 | 4.2 Media Player | Audio playback app |
-| 🟡 P2 | 4.3 Volume Popup | Essential UX |
-| 🟡 P2 | 5.1 SLAB Allocator | Eliminates heap pressure for kernel objects |
-| 🟢 P3 | 3.4 USB Mass Storage | USB flash drive support |
-| 🟢 P3 | 4.5 Hot-Plug Events | USB attach/detach notifications |
-| 🟢 P3 | 2.6 Unified Audio Loader | Format-agnostic loading |
-| 🟢 P3 | 4.4 Sound Settings | Settings applet |
-| 🟢 P3 | 5.2 vmalloc | Large kernel buffers without physical contiguity |
-| 🟢 P3 | 5.3 Growable Heap | Eliminates fixed heap size ceiling |
-| 🔵 P4 | 2.4 FLAC Decoder | Lossless audio (niche) |
-| 🔵 P4 | 2.5 MIDI Synthesis | Music creation |
-| 🔵 P4 | 4.1 Intel HDA | Modern hardware |
-| 🔵 P4 | 3.5 USB Hub | Cascaded USB devices |
-| 🔵 P4 | 4.7 EHCI/UHCI | Legacy USB support |
+| 🔴 P0 | **P0006** §1–5 | Audio system (see `TODO-P0006-Audio.md`) |
+| 🟠 P1 | §3.1 USB Core | Foundation for all USB devices |
+| 🟡 P2 | §3.2 xHCI Controller | USB 3.0 host — enables all USB devices |
+| 🟡 P2 | §3.3 USB HID | USB keyboard + mouse |
+| 🟡 P2 | §4.2 Media Player | Audio playback app |
+| 🟡 P2 | §4.3 Volume Popup | Essential UX |
+| 🟡 P2 | §5.1 SLAB Allocator | Eliminates heap pressure for kernel objects |
+| 🟢 P3 | §3.4 USB Mass Storage | USB flash drive support |
+| 🟢 P3 | §4.5 Hot-Plug Events | USB attach/detach notifications |
+| 🟢 P3 | §4.4 Sound Settings | Settings applet |
+| 🟢 P3 | §5.2 vmalloc | Large kernel buffers without physical contiguity |
+| 🟢 P3 | §5.3 Growable Heap | Eliminates fixed heap size ceiling |
+| 🔵 P4 | §4.1 Intel HDA | Modern hardware |
+| 🔵 P4 | §3.5 USB Hub | Cascaded USB devices |
+| 🔵 P4 | §4.7 EHCI/UHCI | Legacy USB support |
