@@ -214,29 +214,9 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ## 8. Power Management Enhancements
 
-### 8.1 Clean Shutdown Sequence
-
-**Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: clean shutdown sequence"`. Update `README.md` if it contains stale or incorrect references to shutdown or power management. Create or update documentation in `docs/` covering the shutdown sequence, ACPI power-off, and graceful app termination.
-
-
-- [ ] Before ACPI shutdown:
-  - [ ] Send `WM_CLOSE` to all GUI apps (save work prompt)
-  - [ ] Flush all open file handles
-  - [ ] Flush Registry to disk
-  - [ ] Stop network services (release DHCP lease)
-  - [ ] Unmount all filesystems
-  - [ ] Sync disk caches
-- [ ] Display "Shutting down..." screen during cleanup
-- [ ] Implement shutdown timeout (force-kill apps after 5 seconds)
-- [ ] Commit: `"kernel: clean shutdown sequence"`
-
-### 8.2 Sleep / Lock Screen (Future)
-
-**Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. The lock screen is simpler: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Registry credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: sleep and lock screen"`. Update `README.md` if it contains stale or incorrect references to sleep or lock screen. Create or update documentation in `docs/` covering ACPI S3 suspend, waking vector, and lock screen UI flow.
-
-
-- [ ] *(Stretch)* — ACPI S3 suspend to RAM
-- [ ] *(Stretch)* — Lock screen (password prompt, Registry credential check)
+> **Moved to [TODO-P0004-Power-Management.md](TODO-P0004-Power-Management.md)** — Clean shutdown,
+> restart, sleep, hibernate, power profiles, ACPI integration, and Start Menu power actions.
+> All consolidated into one implementation-ordered document.
 
 ---
 
@@ -374,7 +354,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ### 12.3 Proper `brk`/`sbrk` Heap for User Programs
 
-**Prompt:** User-mode programs need their own heap separate from the kernel heap. `brk(addr)` sets the program break (top of data segment), `sbrk(increment)` extends it by N bytes. The kernel maps new pages on demand as the break increases. User-mode `malloc` implementations (dlmalloc, musl's allocator) call sbrk internally, so once this works, any standard allocator can be ported. The program break starts at the end of the BSS section (read from the ELF loader). This is needed before any non-trivial user programs can run. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: brk/sbrk heap for user processes"`. Update `README.md` if it contains stale or incorrect references to user-mode memory. Create or update documentation in `docs/` covering brk/sbrk, program break, and user-mode malloc integration.
+**Prompt:** User-mode programs need their own heap separate from the kernel heap. `brk(addr)` sets the program break (top of data segment), `sbrk(increment)` extends it by N bytes. The kernel maps new pages on demand as the break increases. User-mode `malloc` implementations (dlmalloc, musl's allocator) call sbrk internally, so once this works, any standard allocator can be ported. The program break starts at the end of the BSS section (read from the PE loader). This is needed before any non-trivial user programs can run. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: brk/sbrk heap for user processes"`. Update `README.md` if it contains stale or incorrect references to user-mode memory. Create or update documentation in `docs/` covering brk/sbrk, program break, and user-mode malloc integration.
 
 
 - [ ] Implement per-process heap via `brk`/`sbrk` syscalls

@@ -491,14 +491,8 @@
 
 ### 11.2 Power Management Profiles
 
-**Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
-
-
-- [ ] Power profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep)
-- [ ] Profiles control: display sleep timeout, CPU throttling (if applicable)
-- [ ] `power.spl` settings applet
-- [ ] Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`
-- [ ] Commit: `"kernel: power management profiles"`
+> **Moved to [TODO-P0004-Power-Management.md](TODO-P0004-Power-Management.md) §8** — Power profiles
+> (Balanced, Performance, Power Saver), display timeout, CPU throttling.
 
 ### 11.3 Scripting Engine (Macro/Automation)
 
