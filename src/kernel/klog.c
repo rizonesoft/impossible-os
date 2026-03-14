@@ -286,7 +286,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
             uint32_t v = sec;
             if (v == 0) { secs[n++] = '0'; }
             else { while (v > 0) { secs[n++] = '0' + (char)(v % 10); v /= 10; } }
-            int pad = 4 - n;
+            int pad = 3 - n;
             while (pad-- > 0) serial_char(' ');
             while (n > 0) serial_char(secs[--n]);
         }
