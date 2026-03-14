@@ -279,7 +279,7 @@
 > all file I/O functions use **Win32-compatible signatures** as the native API.
 > There is **no separate VFS dispatch layer** — `CreateFile()`, `ReadFile()`,
 > etc. call `vfs_ops` function pointers **directly** to reach FS drivers.
-> The Win32 compatibility layer (P1503) is a **direct pass-through** with
+> The native Win32 API (P0105) is a **direct export** with
 > zero translation overhead.
 >
 > **Architecture — single call path, no translation:**
@@ -290,7 +290,7 @@
 
 > [!IMPORTANT]
 > **Cross-references:**
-> - Win32 shim pass-through: `TODO-P1503-Win32.md` §4–5
+> - Win32 native exports: `TODO-P0105-Native.md` §5–6
 > - Native programs call this API directly: `TODO-P0105-Native.md`
 
 #### 3.6.1 Handle Table & Type Definitions
@@ -300,7 +300,7 @@
 
 - [ ] Create `include/kernel/fs/fileapi.h` — Win32-compatible file API header
 - [ ] Define `HANDLE`, `INVALID_HANDLE_VALUE`, standard handle constants
-- [ ] Define `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `LPDWORD` types (or include from `win32.h` if shared with P1503)
+- [ ] Define `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `LPDWORD` types (or include from `win32.h` — see P0105 §5.1)
 - [ ] Define `FILETIME` struct (64-bit, 100-nanosecond intervals since 1601-01-01)
 - [ ] Define access flags: `GENERIC_READ`, `GENERIC_WRITE`, `GENERIC_EXECUTE`
 - [ ] Define share modes: `FILE_SHARE_READ`, `FILE_SHARE_WRITE`, `FILE_SHARE_DELETE`
