@@ -402,5 +402,5 @@
 ---
 
 > **§6–9 (Animations, OpenGL, DPI Scaling, Theme, Context Menus, Notifications,
-> Screenshot, Tooltips) have been moved to [TODO-Phase-02-GUI.md](TODO-Phase-02-GUI.md)
+> Screenshot, Tooltips) have been moved to [TODO-P0202-GUI.md](TODO-P0202-GUI.md)
 > as part of the master GUI consolidation.**

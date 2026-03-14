@@ -163,7 +163,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 ## 5. Hardware Abstraction Layer (HAL)
 
 > **Moved to Phase 16 §1.4** — merged with the Driver Model & PCI Match Tables.
-> See [TODO-Phase-16-Drivers.md §1.4](TODO-Phase-16-Drivers.md#14-driver-model-hal--pci-match-tables).
+> See [TODO-P1601-Drivers.md §1.4](TODO-P1601-Drivers.md).
 
 ---
 
