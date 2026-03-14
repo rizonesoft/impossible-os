@@ -195,7 +195,62 @@
 
 ### 3.4 Submit Shim for Microsoft Signing
 
-**Prompt:** Submit our shim build to Microsoft for Secure Boot signing via the [rhboot/shim-review](https://github.com/rhboot/shim-review) process. This is free for open-source projects. The shim fork must be in a **public** GitHub repo. Microsoft reviews the shim (not our OS) and signs it with the Microsoft UEFI CA certificate. Once signed, our shim is trusted by all UEFI firmware worldwide — zero MOK enrollment needed for end users. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: Microsoft-signed shim submitted"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or the shim submission. Create or update documentation in `docs/` covering the Microsoft shim-review submission process, timeline, and requirements.
+**Prompt:** ✅ VERIFICATION — The shim-review submission has been filed. Verify the
+following are still correct: (1) `rizonesoft/shim-review` branch
+`rizonesoft-shim-x86_64-20260314` contains `shimx64.efi`, `MOK.cer`, `Dockerfile`,
+`build.log`, and `README.md`; (2) SHA256 of `shim/shimx64.efi` matches
+`d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f`; (3) the
+shim-review issue is open on `rhboot/shim-review`; (4) `docs/architecture/shim-review.md`
+exists and is accurate. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`.
+Fix any inconsistencies found. When Microsoft returns the signed binary, replace
+`shim/shimx64.efi` and rebuild.
+
+> [!IMPORTANT]
+> **The README is NOT what reviewers evaluate.** The shim-review GitHub Issue is what
+> matters. Fill out every field in the issue template completely — incomplete submissions
+> are deprioritised. Respond quickly to reviewer questions; active projects are prioritised.
+
+**What reviewers actually check:**
+
+| Requirement | What they look for |
+|-------------|-------------------|
+| Reproducible build | Anyone can clone the shim fork and produce a byte-identical binary |
+| SHA256 match | Hash in the issue matches the submitted binary exactly |
+| Unmodified shim | No patches unless clearly documented and justified |
+| Vendor certificate | `MOK.cer` correctly set as `VENDOR_CERT_FILE` in shim build |
+| OS description | Legitimate use case — not malware, not for bypassing restrictions |
+| Contact info | Real person responsible for the key |
+| Public shim fork | Source of the exact build is publicly accessible |
+
+**Fast-approval checklist:**
+- [x] Fill out every field in the shim-review issue template — leave nothing blank
+- [x] Use a Docker-based reproducible build (easiest way to prove identical output)
+- [x] Verify `VENDOR_CERT_FILE=MOK.cer` is set correctly in shim Makefile
+- [ ] Respond to reviewer questions within 24 hours *(pending — awaiting reviewers)*
+- [x] Clearly state this is a legitimate OS project, not a tool to bypass restrictions
+
+**UEFI CA Key context (important for timing):**
+
+| Key | Expires | Status |
+|-----|---------|--------|
+| Microsoft UEFI CA 2011 | ~June 2026 | ⚠️ Expiring — new shims will NOT use this |
+| Microsoft UEFI CA 2023 | ~2075 | ✅ New shims are signed with this |
+
+Applying now means our shim will be signed with the **2023 CA** — valid for decades.
+Older firmware (pre-2022) may need a BIOS update to trust the 2023 CA; disabling
+Secure Boot is the simplest workaround for those users in the interim.
+
+**Submission process:**
+- [x] Open an issue on `rhboot/shim-review` with:
+  - [x] Link to our public shim fork (`rizonesoft/shim-review` branch `rizonesoft-shim-x86_64-20260314`)
+  - [x] SHA256 hash of the built `shimx64.efi` (`d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f`)
+  - [x] Explanation of what Impossible OS is and why we need signing
+  - [x] Reproducible build instructions (Docker — `shim-review/Dockerfile`)
+  - [x] Contact name and email for the key holder (`derick@rizonetech.com`)
+- [ ] Respond to Microsoft reviewer feedback *(pending — typically 2–4 weeks)*
+- [ ] Receive signed `shimx64.efi` binary *(pending)*
+- [ ] Replace unsigned shim with Microsoft-signed binary in ISO build *(pending)*
+- [ ] Commit: `"boot: Microsoft-signed shim submitted"` *(after binary received)*
 
 > [!IMPORTANT]
 > **The README is NOT what reviewers evaluate.** The shim-review GitHub Issue is what
