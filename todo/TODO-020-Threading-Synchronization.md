@@ -52,17 +52,18 @@
 
 ---
 
-## 4. Read-Write Locks
+## 4. Read-Write Locks ✅
 
-**Prompt:** Read-write locks allow concurrent readers but exclusive writers — critical for kernel data structures accessed frequently for reads (e.g., VFS mount table, module list) but rarely written. `rwlock_t` tracks the reader count and a writer-held flag. `rwlock_read_lock` blocks if a writer holds the lock; `rwlock_write_lock` blocks until all readers finish and no writer holds. Use atomics for the reader count. This eliminates unnecessary serialization compared to a plain mutex for read-heavy structures. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"sched: read-write locks"`.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/rwlock.h` to confirm `rwlock_t` struct has `reader_count`, `writer_held`, `writer_pending`, and separate reader/writer wait queues. Confirm `rwlock_read_lock`, `rwlock_read_unlock`, `rwlock_write_lock`, `rwlock_write_unlock`, `rwlock_try_read`, `rwlock_try_write` all exist in `src/kernel/sched/rwlock.c`. Verify that `writer_pending` prevents new reader acquisitions while a writer is waiting (starvation guard). Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/rwlock.o` appears in the linker output. Confirm the commit `"sched: read-write locks"` exists in git history. After verifying, mark all items as `[x]` and update this prompt for future correctness checks. Create or update documentation in `docs/` covering the rwlock API, starvation prevention design, and usage examples.
 
 
-- [ ] Define `rwlock_t` struct (reader count, writer flag, wait queues)
-- [ ] Implement `rwlock_read_lock(rw)` / `rwlock_read_unlock(rw)`
-- [ ] Implement `rwlock_write_lock(rw)` / `rwlock_write_unlock(rw)`
-- [ ] Implement `rwlock_try_read(rw)` / `rwlock_try_write(rw)` — non-blocking
-- [ ] Use for: VFS mount table, loaded module list, process table
-- [ ] Commit: `"sched: read-write locks"`
+- [x] Define `rwlock_t` struct (reader count, writer flag, writer_pending, separate read/write wait queues)
+- [x] Implement `rwlock_read_lock(rw)` / `rwlock_read_unlock(rw)`
+- [x] Implement `rwlock_write_lock(rw)` / `rwlock_write_unlock(rw)`
+- [x] Implement `rwlock_try_read(rw)` / `rwlock_try_write(rw)` — non-blocking
+- [x] Writer starvation guard: `writer_pending` blocks new readers while a writer waits
+- [x] Use for: VFS mount table, loaded module list, process table
+- [x] Commit: `"sched: read-write locks"`
 
 ---
 
