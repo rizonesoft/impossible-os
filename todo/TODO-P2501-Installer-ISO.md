@@ -1,15 +1,54 @@
-# P2501 — Installer & ISO Validation
+# P2501 — Installer & ISO
 
-> **Goal:** Validate the Impossible OS ISO image and installer on production
-> hypervisors (Hyper-V, VirtualBox, real hardware). This phase is **deferred**
-> until all features are implemented and the ISO installer is complete.
+> **Goal:** Build the ISO installer, automate ISO creation, and validate the
+> full install-to-desktop cycle on Hyper-V and other hypervisors. This phase is
+> **deferred** until all core OS features are complete.
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
+> [!NOTE]
+> **Consolidated from:** TODO-Phase-98.md (Installer Program + ISO Creation)
+> and TODO-Phase-99.md (Hyper-V Validation).
+
 ---
 
-## 1. Hyper-V VM Setup
+## 1. Bootable ISO Creation
+
+**Prompt:** Automate ISO creation with `scripts/make-iso.sh` using `grub-mkrescue` or `xorriso`. Verify ISO boots in QEMU. Sign with `sha256sum os-build.iso > os-build.iso.sha256`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"release: ISO build script"`.
+
+
+- [ ] Write `scripts/make-iso.sh` — automates ISO creation
+- [ ] Use `grub-mkrescue` or `xorriso` to produce `os-build.iso`
+- [ ] Verify ISO boots in QEMU
+- [ ] Sign the ISO with a checksum (`sha256sum os-build.iso > os-build.iso.sha256`)
+- [ ] Commit: `"release: ISO build script"`
+
+---
+
+## 2. Installer Program
+
+**Prompt:** The ISO installer is the capstone feature: boot from ISO, partition a target disk (GPT with EFI System Partition + IXFS root), format both partitions, copy kernel/initrd/OS files, install GRUB for UEFI, and display completion. Test the full cycle in QEMU: boot ISO → install to virtual disk → reboot from disk → OS loads → ✅. After completing all items, create `docs/architecture/installer.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"installer: full OS installer"`.
+
+
+- [ ] Write `src/installer/installer.c` — runs as a special init process from the ISO
+- [ ] Display a **welcome screen** (GUI or text-mode)
+- [ ] **Disk selection** — list available drives (ATA/AHCI enumeration)
+- [ ] **Partitioning** — create a **GPT** partition table on the target disk (UEFI requires GPT)
+  - [ ] Create an **EFI System Partition** (FAT32, ~512 MiB, type `EF00`) → `A:\`
+  - [ ] Create a root partition (remainder of disk, IXFS) → `C:\`
+- [ ] **Format** partitions:
+  - [ ] Write FAT32 BPB + empty FAT for ESP
+  - [ ] Run `ixfs_format()` on the root partition
+- [ ] **Copy files** — copy kernel ELF, initrd, and OS files to `C:\`
+- [ ] **Install GRUB for UEFI** — `grub-install --target=x86_64-efi` to the ESP
+- [ ] **Finalize** — display "Installation Complete, Reboot" message
+- [ ] Test in QEMU: boot ISO → install to a virtual disk → reboot from disk → OS loads → ✅
+- [ ] Commit: `"installer: full OS installer"`
+
+---
+
+## 3. Hyper-V VM Setup
 
 **Prompt:** Set up a Generation 2 Hyper-V VM on the Windows host with 2+ GB RAM, 1+ vCPU, 20+ GB VHDX disk, Secure Boot disabled. Attach the ISO from `build/os-build.iso` via the WSL path. This tests the OS on real Microsoft hardware virtualization (different from QEMU's KVM). After completing all items, mark every item as `[x]` and document results.
 
@@ -24,7 +63,7 @@
 
 ---
 
-## 2. Installer Test Runs
+## 4. Installer Validation Tests
 
 **Prompt:** Execute 8 validation tests in sequence: ISO boots to installer, installer partitions and formats, installer copies files and installs bootloader, VM reboots from disk → kernel loads → desktop, keyboard/mouse work, filesystem CRUD works, window manager renders correctly at Hyper-V resolution, graceful ACPI shutdown/reboot. Document any Hyper-V-specific issues. After all tests, mark every item as `[x]`.
 
@@ -41,7 +80,7 @@
 
 ---
 
-## 3. Performance & Stability
+## 5. Performance & Stability
 
 **Prompt:** Run the OS for 30+ minutes without crash. Stress-test memory allocator (alloc/free loops), stress-test process creation (fork-bomb protection), verify no memory leaks via serial log. Document results. After all items, mark every item as `[x]`, and commit as `"test: Hyper-V validation pass"`.
 
@@ -54,7 +93,7 @@
 
 ---
 
-## 4. VirtualBox Validation *(Stretch)*
+## 6. VirtualBox Validation *(Stretch)*
 
 - [ ] Create VirtualBox VM (64-bit, EFI, 2+ GB RAM)
 - [ ] Attach ISO → boot → verify installer works
@@ -67,7 +106,9 @@
 
 | Priority | Section | Reason |
 |----------|---------|--------|
-| 🔴 P0 | 1. Hyper-V VM Setup | Test environment |
-| 🔴 P0 | 2. Installer Test Runs | End-to-end validation |
-| 🟠 P1 | 3. Performance & Stability | Soak test |
-| 🔵 P4 | 4. VirtualBox Validation | Cross-hypervisor |
+| 🔴 P0 | 1. Bootable ISO Creation | Build pipeline |
+| 🔴 P0 | 2. Installer Program | Capstone feature |
+| 🟠 P1 | 3. Hyper-V VM Setup | Test environment |
+| 🟠 P1 | 4. Installer Validation Tests | End-to-end validation |
+| 🟡 P2 | 5. Performance & Stability | Soak test |
+| 🔵 P4 | 6. VirtualBox Validation | Cross-hypervisor |
