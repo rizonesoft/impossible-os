@@ -16,13 +16,21 @@
 
 ## Layer 1: Kernel Foundations
 
-| #   | TODO                                           | Status |
-|-----|------------------------------------------------|--------|
-| 010 | [Bootloader](TODO-010-Bootloader.md)           |        |
-| 020 | [Kernel General](TODO-020-Kernel-General.md)   |        |
-| 030 | [Memory Advanced](TODO-030-Memory-Advanced.md) |        |
-| 040 | [Filesystem](TODO-040-Filesystem.md)           |        |
-| 050 | [Registry](TODO-050-Registry.md)               |        |
+| #   | TODO                                                                                              | Status      |
+|-----|---------------------------------------------------------------------------------------------------|-------------|
+| 010 | [Bootloader](TODO-010-Bootloader.md)                                                              | 🔄 In progress |
+| 020 | [Threading & Synchronization](TODO-020-Threading-Synchronization.md)                              | 🔄 In progress |
+| 021 | [IPC — Pipes, Signals, Shared Memory](TODO-021-IPC.md)                                            | ✅ All done    |
+| 022 | [Virtual Memory — Swap & mmap](TODO-022-Virtual-Memory.md)                                        | 🔄 In progress |
+| 023 | [System Logging — klog, ring buffer, disk persistence](TODO-023-System-Logging.md)                | 🔄 In progress |
+| 024 | [Environment Variables — env_get/set/expand, PATH](TODO-024-Environment-Variables.md)             |             |
+| 025 | [ELF Dynamic Linker & Kernel Modules ref](TODO-025-ELF-Shared-Libraries.md)                       |             |
+| 026 | [Kernel Libraries — miniz, monocypher, math, cJSON](TODO-026-Kernel-Libraries.md)                 |             |
+| 027 | [Process Model — FD table, CWD, brk/sbrk, timers](TODO-027-Process-Model.md)                      |             |
+| 028 | [Memory Guardrails & Audit — kmalloc audit, lint check](TODO-028-Memory-Guardrails.md)            |             |
+| 030 | [Memory Advanced](TODO-030-Memory-Advanced.md)                                                    |             |
+| 040 | [Filesystem](TODO-040-Filesystem.md)                                                              |             |
+| 050 | [Registry](TODO-050-Registry.md)                                                                  |             |
 
 ## Layer 2: Hardware & Drivers
 

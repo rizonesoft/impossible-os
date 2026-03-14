@@ -483,23 +483,78 @@ Note: `icon_store_init()` ∥ `cursor_init()` parallelization deferred — VFS/F
 
 ## 6. Advanced (Future)
 
-### 6.1 Compressed Kernel
+### 6.1 Measured Boot (TPM)
 
-- [ ] gzip or lz4 compress the kernel ELF at build time
-- [ ] Decompress in the UEFI bootloader after loading from disk
-- [ ] Faster disk→RAM transfer (kernel is ~2 MB compressed vs ~8 MB raw)
+**Prompt:** Implement TPM Measured Boot so each boot stage is hashed into TPM PCR registers, enabling tamper detection and future remote attestation. Realistic scope is **Tier 2** (extend PCRs with kernel hash in `bootx64.c`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: TPM measured boot (Tier 2 — PCR extend)"`. Create documentation in `docs/` covering the PCR layout, measurement chain, testing procedure, and the Tier 3 remote attestation roadmap.
 
-### 6.2 Measured Boot (TPM)
+**Trust chain:**
+`CPU → Firmware (PCR0–7) → UEFI Secure Boot (PCR8–9) → BOOTX64.EFI (PCR4, done by firmware) → kernel.elf (PCR8, done by us)`
 
-- [ ] Log each boot stage hash to TPM PCR registers
-- [ ] Enables remote attestation: "this machine booted authentic Impossible OS"
-- [ ] Requires UEFI TPM protocol access
+Each stage hashes the next and **extends** a PCR — an irreversible accumulative operation. The resulting PCR value fingerprints the exact software that ran. You can't fake it without physical TPM access.
 
-### 6.3 UEFI Boot Manager Entry
+**Tier breakdown (Tier 2 is the target):**
 
-- [ ] Register Impossible OS as a permanent UEFI boot entry via `efibootmgr`
-- [ ] Users can select Impossible OS from BIOS boot menu alongside Windows/Linux
-- [ ] Survives disk reformats (entry lives in NVRAM, not on disk)
+| Tier | What | Effort | Value |
+|---|---|---|---|
+| 1 — Log PCRs | Read PCR values after boot, log to serial | Low | Audit: "did our boot change?" |
+| **2 — Extend PCRs** | Hash `kernel.elf` before load, call `TCG2->HashLogExtendEvent()` | **Medium** | **Actual measured boot — target** |
+| 3 — Remote attestation | TPM signs PCRs, sends to remote verifier | Very high | Requires attestation server + crypto |
+
+Tier 3 is out of scope — Windows spent years building it (vTPM, Azure Attestation). PCRs extended in Tier 2 are already available for future attestation.
+
+**Graceful degradation (mandatory):**
+```c
+EFI_TCG2_PROTOCOL *tcg2 = NULL;
+EFI_STATUS s = gBS->LocateProtocol(&gEfiTcg2ProtocolGuid, NULL, (void**)&tcg2);
+if (EFI_ERROR(s)) { tcg2 = NULL; /* no TPM — skip silently, boot normally */ }
+```
+If no TPM is found, boot continues with zero measurement. This handles: QEMU without swtpm, old hardware, VMs without virtual TPM. Works exactly like our VBE page-flip probe.
+
+**QEMU testing (optional — requires swtpm on host):**
+```bash
+swtpm socket --tpmstate dir=/tmp/tpm --ctrl type=unixio,path=/tmp/tpm.sock --tpm2 &
+qemu-system-x86_64 ... -tpmdev emulator,id=tpm0,chardev=chrtpm -device tpm-tis,tpmdev=tpm0
+```
+Alternative: VirtualBox ≥ 6.1 supports virtual TPM 2.0 (Settings → System → TPM 2.0) — no swtpm needed.
+
+> **Constraints:**
+> - All TPM calls in UEFI phase (before `ExitBootServices()`) — Boot Services guaranteed
+> - Graceful skip if `EFI_TCG2_PROTOCOL` not found — no crash, no hang
+> - Only extend PCR 8 with kernel hash; do not touch PCR 0–7 (firmware-owned)
+> - PCR extend is irreversible per boot — don't extend twice (gate on `tcg2 != NULL`)
+
+- [ ] In `bootx64.c`: probe for `EFI_TCG2_PROTOCOL`; if absent, set `tcg2 = NULL` and skip silently
+- [ ] If TPM found: compute SHA-256 of `kernel.elf` buffer before jumping to kernel
+- [ ] Call `tcg2->HashLogExtendEvent()` to extend PCR 8 with kernel hash
+- [ ] Optionally extend PCR 9 with hash of boot parameters / config  
+- [ ] Log PCR 4 and PCR 8 values to serial at boot for audit (`[OK] TPM PCR[8]: XXXX...`)
+- [ ] Commit: `"boot: TPM measured boot (Tier 2 — PCR extend)"`
+
+### 6.2 UEFI Boot Manager Entry
+
+**Prompt:** Register Impossible OS as a permanent UEFI boot entry so it appears in the firmware boot menu alongside Windows, Linux, and other OSes. The entry lives in NVRAM (not on disk) so it survives disk reformats.
+
+**Architecture decision (confirmed):**
+- **Registration** happens in `bootx64.c` **before `ExitBootServices()`** — all Boot Services are fully available here, eliminating any Runtime Services support risk. Idempotent: scans existing `Boot####` entries and skips if already registered. NVRAM is written exactly once, on the very first boot after install.
+- **Removal** happens from within the running kernel via UEFI Runtime Services `SetVariable(DataSize=0)` — called only when the user explicitly runs a removal command (e.g. `bootmgr --remove` in the shell). Not called on every boot. Risk profile matches what Windows, GRUB, and systemd-boot all do.
+
+After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: self-register UEFI boot entry"`. Create documentation in `docs/` covering the boot entry format, registration flow, removal procedure, and `efibootmgr` manual fallback.
+
+> **Constraints:**
+> - Only meaningful on real hardware — QEMU's OVMF NVRAM is per-session and not preserved
+> - Do NOT call `efibootmgr` from WSL2 — WSL2 has no access to host UEFI NVRAM
+> - Registration is idempotent: scan `Boot0000`–`BootFFFF`, skip if "Impossible OS" already found — NVRAM written exactly once
+> - Append to `BootOrder` (read → append → write); never overwrite or reorder existing entries
+> - Removal must delete `Boot####` variable AND remove its slot from `BootOrder` (dangling `BootOrder` entries cause firmware warnings)
+> - A dangling entry (files deleted, NVRAM entry left) is cosmetically bad but not dangerous — firmware skips unbootable entries
+
+- [ ] In `bootx64.c`, before `ExitBootServices()`: scan `Boot####` NVRAM vars for an existing "Impossible OS" description
+- [ ] If not found: write new `Boot####` `EFI_LOAD_OPTION` pointing to `\EFI\ImpossibleOS\BOOTX64.EFI` on current EFI partition
+- [ ] Read `BootOrder`, append new slot, write back (validate before writing to avoid malformed variable)
+- [ ] Kernel shell command `bootmgr --remove`: call UEFI Runtime `SetVariable(Boot####, NULL, 0)` + remove slot from `BootOrder`
+- [ ] Manual fallback: document `efibootmgr -b XXXX -B` for users who delete the OS without using the removal tool
+- [ ] Commit: `"boot: self-register UEFI boot entry"`
+
 
 ---
 
