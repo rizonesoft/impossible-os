@@ -85,13 +85,50 @@
 
 ---
 
+## 5. SDK Repository
+
+### 5.1 Create Public SDK Repo
+
+**Prompt:** Create `rizonesoft/impossible-os-sdk` as a public GitHub repository. This is the outward-facing repo that third-party developers will use to download SDK headers, libraries, and documentation without needing access to the private OS source. Add `README.md` explaining the SDK purpose and `LICENSE` (MIT). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt.
+
+- [ ] Create `rizonesoft/impossible-os-sdk` (public) on GitHub
+- [ ] Add `README.md` explaining SDK purpose, contents, and how to use it
+- [ ] Add `LICENSE` (MIT)
+- [ ] Commit to SDK repo: `"chore: initial SDK public repo"`
+
+### 5.2 Extract sdk/ History to Public SDK Repo
+
+**Prompt:** Extract the `sdk/` directory history from the private repo into the public `impossible-os-sdk` repo using `git filter-repo`, same approach used for the bootloader repo. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt.
+
+- [ ] Clone private repo: `git clone impossible-os /tmp/sdk-extract`
+- [ ] Run: `cd /tmp/sdk-extract && git filter-repo --path sdk/`
+- [ ] Add public SDK repo as remote and force-push
+- [ ] Verify public repo contains only `sdk/` files with correct history
+- [ ] Delete temp clone: `rm -rf /tmp/sdk-extract`
+
+### 5.3 Sync SDK Changes on Push
+
+**Prompt:** Create `.github/workflows/sync-sdk.yml` in the private repo to automatically push `sdk/` changes to the public `impossible-os-sdk` repo on every push to `main` that touches `sdk/**`. Mirror the clone+copy+push approach used by `sync-bootloader.yml`. Store auth token as `SDK_REPO_TOKEN` secret. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"ci: sync SDK to public repo on push"`.
+
+- [ ] Create `.github/workflows/sync-sdk.yml`
+- [ ] Trigger: `push` to `main` with paths filter `sdk/**`
+- [ ] Action: clone public SDK repo → remove old `sdk/` → copy current `sdk/` → commit + push
+- [ ] Add `SDK_REPO_TOKEN` to private repo secrets (PAT: `public_repo` write scope)
+- [ ] Test end-to-end: change a file in `sdk/`, push, verify public SDK repo updates
+- [ ] Commit: `"ci: sync SDK to public repo on push"`
+
+---
+
 ## Priority Order
 
 | Priority | Section                            | Reason                                          |
 |----------|------------------------------------|-------------------------------------------------|
-| ✅ Done   | 1.1 Repository structure           | Both repos exist                                |
-| 🔴 P0    | 1.1 README + LICENSE               | Public repo needs basic info before sharing     |
-| 🔴 P0    | 2.1 Bootloader history extraction  | Populate the bootloader repo with real content  |
-| 🟠 P1    | 3.1 Automated sync via CI          | Keep repos in sync without manual effort        |
+| ✅ Done   | 1.1 Bootloader repo structure      | Both repos exist                                |
+| ✅ Done   | 1.1 README + LICENSE               | Committed to bootloader repo                    |
+| ✅ Done   | 2.1 Bootloader history extraction  | 17 commits in public bootloader repo            |
+| ✅ Done   | 3.1 Bootloader auto-sync CI        | Tested and working                              |
 | 🟡 P2    | 4.1 Automated ISO releases         | Needed when ready to publish builds             |
-| 🔵 P4    | 4.2 Mirror release tags            | Nice-to-have polish once releases are automated |
+| 🔵 P4    | 4.2 Mirror release tags            | Polish once releases are automated              |
+| 🟠 P1    | 5.1 SDK repo create                | Create before any SDK code is written           |
+| 🟠 P1    | 5.2 SDK history extraction         | After sdk/ directory exists in private repo     |
+| 🟠 P1    | 5.3 SDK auto-sync CI               | After 5.1 + 5.2                                 |
