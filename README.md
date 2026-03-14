@@ -7,6 +7,7 @@ They said building a fully functional, feature-rich operating system from scratc
 ## Features
 
 - **Custom UEFI bootloader** — hand-written PE/COFF boot application (no GRUB)
+- **Secure Boot** — shim chain-loading with embedded vendor certificate (`MOK.cer`); pending Microsoft shim-review signing
 - **64-bit Long Mode** kernel with identity-mapped page tables
 - **Preemptive multitasking** with round-robin scheduler, kernel threads, mutexes, and semaphores
 - **Virtual filesystem** with IXFS (custom filesystem), FAT32, GPT, and MBR support

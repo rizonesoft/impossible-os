@@ -21,6 +21,13 @@ trusts our signed bootloader without requiring MOK enrollment on every machine.
   └── mmx64.efi      ← MokManager (first-boot key enrollment)
 ```
 
+## SHA256 Hashes
+
+```
+d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f  shimx64.efi
+0141578fa3270f55afd0639a91f1d56edb1f5bec5be2462e8b2edf9918ec1248  mmx64.efi
+```
+
 ## Rebuilding
 
 If `keys/MOK.cer` is rotated or the shim version needs updating, rebuild with:

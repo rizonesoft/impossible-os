@@ -178,20 +178,20 @@
 
 ### 3.3 Build and Package Shim
 
-**Prompt:** Fork the [rhboot/shim](https://github.com/rhboot/shim) project. Embed our `MOK.cer` as the vendor certificate. Build `shimx64.efi` from source. Package the EFI system partition with the correct layout: `shimx64.efi` renamed to `BOOTX64.EFI` (firmware loads this first), our signed bootloader as `grubx64.efi` (shim loads this), and `mmx64.efi` (MokManager for first-boot key enrollment). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: shim packaging with vendor certificate"`. Update `README.md` if it contains stale or incorrect references to the shim or EFI partition layout. Create or update documentation in `docs/` covering the shim build process, EFI partition layout, and the chain-loading flow.
+**Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`. Confirm `docs/architecture/secure-boot.md` and updated `docs/architecture/bootloader.md` exist. Confirm `README.md` lists Secure Boot as a feature.
 
-- [ ] Fork `rhboot/shim` into public `impossible-os-shim` repo
-- [ ] Embed our `MOK.cer` as vendor certificate (in `Makefile`: `VENDOR_CERT_FILE`)
-- [ ] Build shim: `make VENDOR_CERT_FILE=MOK.cer EFI_PATH=/usr/lib/gnuefi`
-- [ ] Package EFI partition:
+- [x] Fork `rhboot/shim` into public `impossible-os-shim` repo
+- [x] Embed our `MOK.cer` as vendor certificate (in `Makefile`: `VENDOR_CERT_FILE`)
+- [x] Build shim: `make VENDOR_CERT_FILE=MOK.cer ARCH=x86_64 shimx64.efi mmx64.efi`
+- [x] Package EFI partition:
   ```
   \EFI\BOOT\
     ├── BOOTX64.EFI      ← shimx64.efi (renamed — firmware loads this)
     ├── grubx64.efi       ← Our bootloader (signed with MOK.key)
     └── mmx64.efi         ← MokManager (for first-boot key enrollment)
   ```
-- [ ] Test in QEMU with Secure Boot enabled (OVMF + enrolled PK/KEK)
-- [ ] Commit: `"boot: shim packaging with vendor certificate"`
+- [x] Test in QEMU with Secure Boot enabled (OVMF + enrolled PK/KEK)
+- [x] Commit: `"boot: shim packaging with vendor certificate"`
 
 ### 3.4 Submit Shim for Microsoft Signing
 
