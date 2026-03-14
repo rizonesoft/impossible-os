@@ -387,25 +387,25 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 3.1 Rename Files | Codex → Registry file rename (unblocks everything) |
-| 🔴 P0 | 3.2 Replace API | Migrate all Codex call sites to Registry API |
-| 🔴 P0 | 1.1 Data Structures | Registry engine foundation |
-| 🔴 P0 | 1.2 Value Types | Must support all REG_* types |
-| 🔴 P0 | 1.3 Root Keys | HKLM, HKCU, HKU, HKCR |
-| 🔴 P0 | 2.1 Key Operations | Core API: open, create, close, delete |
-| 🔴 P0 | 2.2 Value Operations | Core API: get, set, delete values |
-| 🔴 P0 | 3.3 Migrate Defaults | Re-map Codex defaults to Win32 paths |
-| 🟠 P1 | 2.3 Enumeration | Needed for regedit + iteration |
-| 🟠 P1 | 2.4 Convenience Helpers | Simplify common access patterns |
-| 🟠 P1 | 4.1 Hive File Format | Binary disk persistence |
-| 🟠 P1 | 4.2 Disk Layout | File paths + auto-flush |
-| 🟡 P2 | 5.1 Change Notifications | Real-time settings updates |
-| 🟡 P2 | 6.1 Syscalls | User-mode app access |
-| 🟡 P2 | 7.1 Win32 Stubs | advapi32.dll registry wrappers |
-| 🟡 P2 | 8.1 Regedit Command | Debugging + inspection |
-| 🟢 P3 | 4.3 Crash-Safe Journaling | Power-loss protection |
-| 🔵 P4 | 9.1 Hash Map Lookup | O(1) performance |
-| 🔵 P4 | 9.2 Memory-Mapped Hives | Zero-copy reads |
-| 🔵 P4 | 9.3 B-Tree Format | Windows NT hive compat |
+| Priority | Section                   | Description                                        |
+|----------|---------------------------|----------------------------------------------------|
+| 🔴 P0     | 3.1 Rename Files          | Codex → Registry file rename (unblocks everything) |
+| 🔴 P0     | 3.2 Replace API           | Migrate all Codex call sites to Registry API       |
+| 🔴 P0     | 1.1 Data Structures       | Registry engine foundation                         |
+| 🔴 P0     | 1.2 Value Types           | Must support all REG_* types                       |
+| 🔴 P0     | 1.3 Root Keys             | HKLM, HKCU, HKU, HKCR                              |
+| 🔴 P0     | 2.1 Key Operations        | Core API: open, create, close, delete              |
+| 🔴 P0     | 2.2 Value Operations      | Core API: get, set, delete values                  |
+| 🔴 P0     | 3.3 Migrate Defaults      | Re-map Codex defaults to Win32 paths               |
+| 🟠 P1     | 2.3 Enumeration           | Needed for regedit + iteration                     |
+| 🟠 P1     | 2.4 Convenience Helpers   | Simplify common access patterns                    |
+| 🟠 P1     | 4.1 Hive File Format      | Binary disk persistence                            |
+| 🟠 P1     | 4.2 Disk Layout           | File paths + auto-flush                            |
+| 🟡 P2     | 5.1 Change Notifications  | Real-time settings updates                         |
+| 🟡 P2     | 6.1 Syscalls              | User-mode app access                               |
+| 🟡 P2     | 7.1 Win32 Stubs           | advapi32.dll registry wrappers                     |
+| 🟡 P2     | 8.1 Regedit Command       | Debugging + inspection                             |
+| 🟢 P3     | 4.3 Crash-Safe Journaling | Power-loss protection                              |
+| 🔵 P4     | 9.1 Hash Map Lookup       | O(1) performance                                   |
+| 🔵 P4     | 9.2 Memory-Mapped Hives   | Zero-copy reads                                    |
+| 🔵 P4     | 9.3 B-Tree Format         | Windows NT hive compat                             |

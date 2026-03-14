@@ -133,20 +133,20 @@
 
 ### Current status
 
-| Driver | File | Status | Source |
-|--------|------|--------|--------|
-| PCI bus | `pci.c` | ✅ Done | Scratch |
-| PIC (8259A) | `pic.c` | ✅ Done | Scratch |
-| PIT timer | `pit.c` | ✅ Done | Scratch |
-| Serial (UART) | `serial.c` | ✅ Done | Scratch |
+| Driver            | File            | Status | Source  |
+|-------------------|-----------------|--------|---------|
+| PCI bus           | `pci.c`         | ✅ Done | Scratch |
+| PIC (8259A)       | `pic.c`         | ✅ Done | Scratch |
+| PIT timer         | `pit.c`         | ✅ Done | Scratch |
+| Serial (UART)     | `serial.c`      | ✅ Done | Scratch |
 | Framebuffer (VBE) | `framebuffer.c` | ✅ Done | Scratch |
-| PS/2 keyboard | `keyboard.c` | ✅ Done | Scratch |
-| PS/2 mouse | `mouse.c` | ✅ Done | Scratch |
-| AHCI (SATA) | `ahci.c` | ✅ Done | Scratch |
-| ATA/IDE | `ata.c` | ✅ Done | Scratch |
-| VirtIO-blk | `virtio_blk.c` | ✅ Done | Scratch |
-| RTC | `rtc.c` | ✅ Done | Scratch |
-| ACPI (basic) | `acpi.c` | ✅ Done | Scratch |
+| PS/2 keyboard     | `keyboard.c`    | ✅ Done | Scratch |
+| PS/2 mouse        | `mouse.c`       | ✅ Done | Scratch |
+| AHCI (SATA)       | `ahci.c`        | ✅ Done | Scratch |
+| ATA/IDE           | `ata.c`         | ✅ Done | Scratch |
+| VirtIO-blk        | `virtio_blk.c`  | ✅ Done | Scratch |
+| RTC               | `rtc.c`         | ✅ Done | Scratch |
+| ACPI (basic)      | `acpi.c`        | ✅ Done | Scratch |
 
 ### 2.1 NVMe Storage Driver (Built-in)
 
@@ -476,14 +476,14 @@
 
 ## Compatible Open-Source Porting Sources
 
-| Source | License | Best Drivers | URL |
-|--------|---------|-------------|-----|
-| SerenityOS | BSD-2 | e1000, AC97, HDA, VMSVGA, NVMe | [github.com/SerenityOS/serenity](https://github.com/SerenityOS/serenity) |
-| tinyusb | MIT | USB host (xHCI, EHCI), HID, MSC | [github.com/hathach/tinyusb](https://github.com/hathach/tinyusb) |
-| FreeBSD | BSD-2 | Intel NIC (em/igb), RTL8169 (re) | [github.com/freebsd/freebsd-src](https://github.com/freebsd/freebsd-src) |
-| OpenBSD | ISC | Clean NIC/storage drivers | [github.com/openbsd/src](https://github.com/openbsd/src) |
-| ToaruOS | NCSA | AC97, e1000, VirtIO | [github.com/klange/toaruos](https://github.com/klange/toaruos) |
-| ACPICA | BSD | Full ACPI implementation | [github.com/acpica/acpica](https://github.com/acpica/acpica) |
+| Source     | License | Best Drivers                     | URL                                                                      |
+|------------|---------|----------------------------------|--------------------------------------------------------------------------|
+| SerenityOS | BSD-2   | e1000, AC97, HDA, VMSVGA, NVMe   | [github.com/SerenityOS/serenity](https://github.com/SerenityOS/serenity) |
+| tinyusb    | MIT     | USB host (xHCI, EHCI), HID, MSC  | [github.com/hathach/tinyusb](https://github.com/hathach/tinyusb)         |
+| FreeBSD    | BSD-2   | Intel NIC (em/igb), RTL8169 (re) | [github.com/freebsd/freebsd-src](https://github.com/freebsd/freebsd-src) |
+| OpenBSD    | ISC     | Clean NIC/storage drivers        | [github.com/openbsd/src](https://github.com/openbsd/src)                 |
+| ToaruOS    | NCSA    | AC97, e1000, VirtIO              | [github.com/klange/toaruos](https://github.com/klange/toaruos)           |
+| ACPICA     | BSD     | Full ACPI implementation         | [github.com/acpica/acpica](https://github.com/acpica/acpica)             |
 
 > [!WARNING]
 > **NEVER** copy code from the **Linux kernel** (GPL-2.0). This would require relicensing the entire OS to GPL. For hardware where only Linux has a driver, do a clean-room implementation from public datasheets.
@@ -492,26 +492,26 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 1.1 Kernel Symbol Table | Foundation — modules can't call kernel functions without it |
-| 🔴 P0 | 1.2 ELF Module Loader | Foundation — load and relocate .kmod files |
-| 🔴 P0 | 1.3 Module Build System | Foundation — compile drivers as .kmod |
-| 🔴 P0 | 1.4 Driver Model | Foundation — PCI match, probe/remove lifecycle |
-| 🔴 P0 | 1.5 Auto-Load at Boot | Foundation — scan C:\System\Drivers\ on boot |
-| 🟠 P1 | 1.6 RTL8139 as Module | Proof of concept — validate entire pipeline |
-| 🟠 P1 | 2.1 NVMe (built-in) | Real hardware SSD support |
-| 🟠 P1 | 3.1 Intel e1000 Module | VirtualBox networking |
-| 🟡 P2 | 4.1 VMSVGA Module | VirtualBox GPU + cursor + acceleration |
-| 🟡 P2 | 4.2 VirtIO-GPU Module | QEMU GPU (restore reverted code) |
-| 🟡 P2 | 3.2 VirtIO-net Module | Fast QEMU networking |
-| 🟡 P2 | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core |
-| 🟢 P3 | 6.1 VirtIO-input Module | Convert existing code |
-| 🟢 P3 | 3.3 RTL8169 Module | Common real-world NIC |
-| 🟢 P3 | 2.3 HPET Timer (built-in) | High-precision timing |
-| 🟢 P3 | 7.1 License Tracking | Attribution compliance |
-| 🔵 P4 | 4.3 Bochs/BGA Module | Simple fallback display |
-| 🔵 P4 | 5.1 Audio as Modules | Convert Phase 08 drivers to modules |
+| Priority | Section                    | Description                                                 |
+|----------|----------------------------|-------------------------------------------------------------|
+| 🔴 P0     | 1.1 Kernel Symbol Table    | Foundation — modules can't call kernel functions without it |
+| 🔴 P0     | 1.2 ELF Module Loader      | Foundation — load and relocate .kmod files                  |
+| 🔴 P0     | 1.3 Module Build System    | Foundation — compile drivers as .kmod                       |
+| 🔴 P0     | 1.4 Driver Model           | Foundation — PCI match, probe/remove lifecycle              |
+| 🔴 P0     | 1.5 Auto-Load at Boot      | Foundation — scan C:\System\Drivers\ on boot                |
+| 🟠 P1     | 1.6 RTL8139 as Module      | Proof of concept — validate entire pipeline                 |
+| 🟠 P1     | 2.1 NVMe (built-in)        | Real hardware SSD support                                   |
+| 🟠 P1     | 3.1 Intel e1000 Module     | VirtualBox networking                                       |
+| 🟡 P2     | 4.1 VMSVGA Module          | VirtualBox GPU + cursor + acceleration                      |
+| 🟡 P2     | 4.2 VirtIO-GPU Module      | QEMU GPU (restore reverted code)                            |
+| 🟡 P2     | 3.2 VirtIO-net Module      | Fast QEMU networking                                        |
+| 🟡 P2     | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core                                |
+| 🟢 P3     | 6.1 VirtIO-input Module    | Convert existing code                                       |
+| 🟢 P3     | 3.3 RTL8169 Module         | Common real-world NIC                                       |
+| 🟢 P3     | 2.3 HPET Timer (built-in)  | High-precision timing                                       |
+| 🟢 P3     | 7.1 License Tracking       | Attribution compliance                                      |
+| 🔵 P4     | 4.3 Bochs/BGA Module       | Simple fallback display                                     |
+| 🔵 P4     | 5.1 Audio as Modules       | Convert Phase 08 drivers to modules                         |
 
 ---
 
@@ -522,44 +522,44 @@
 
 ### Wired Ethernet
 
-| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
-|----------|--------|----------|----------|-----------|---------|--------|
-| 🟠 P1 | **Intel e1000/e1000e** | 82540, 82574, I217, I218, I219 | ~35% | FreeBSD `em(4)` / SerenityOS | BSD-2 | Port |
-| 🟠 P1 | **Realtek RTL8111** | RTL8111B/C/D/E/F/G/H, RTL8168, RTL8169 | ~30% | FreeBSD `re(4)` | BSD-2 | Port |
-| 🟡 P2 | **Intel igc** | I225-V, I226-V (2.5GbE) | ~10% | FreeBSD `igc(4)` | BSD-2 | Port |
-| 🟢 P3 | **Realtek RTL8125** | RTL8125B/BG (2.5GbE) | ~5% | FreeBSD `re(4)` | BSD-2 | Port |
-| 🟢 P3 | **Broadcom tg3** | BCM5751, BCM5754, BCM5761, BCM57765 | ~5% | FreeBSD `bge(4)` | BSD-2 | Port |
-| 🟢 P3 | **Qualcomm Atheros alx** | AR8161, AR8171, Killer E2200/E2400 | ~3% | Datasheet (GPL in Linux) | — | Scratch |
-| 🔵 P4 | **Intel ixgbe** | X520, X540, X550 (10GbE) | ~2% | FreeBSD `ix(4)` | BSD-2 | Port |
-| 🔵 P4 | **Marvell/Aquantia AQC** | AQC107, AQC108, AQC113 (2.5G/5G/10G) | ~1.5% | FreeBSD `atlantic(4)` | BSD-2 | Port |
-| 🔵 P4 | **Intel i210/i211** | I210-AT, I211-AT (server/NAS boards) | ~1% | FreeBSD `igb(4)` | BSD-2 | Port |
-| 🔵 P4 | **Broadcom bnxt** | BCM57301, BCM57414 (NetXtreme-E) | ~0.5% | FreeBSD `bnxt(4)` | BSD-2 | Port |
-| 🔵 P4 | **Marvell Yukon** | 88E8040, 88E8056, 88E8058 (older laptops) | ~0.5% | FreeBSD `msk(4)` | BSD-2 | Port |
-| 🔵 P4 | **Qualcomm atl1c** | AR8131, AR8132, AR8152 (older Atheros) | ~0.5% | OpenBSD `alc(4)` | ISC | Port |
-| 🔵 P4 | **Realtek RTL8153** | RTL8153, RTL8156 (USB 3.0 GbE dongles) | ~0.5% | Scratch (USB CDC-ECM) | — | Scratch |
-| 🔵 P4 | **ASIX AX88179** | AX88179, AX88772 (USB Ethernet dongles) | ~0.5% | FreeBSD `axge(4)` | BSD-2 | Port |
-| — | **RTL8139** | RTL8139C/D (100Mbps) | ~1% | Already have | MIT | Convert |
-| — | **VirtIO-net** | QEMU/KVM paravirtual | VMs | SerenityOS | BSD-2 | Port |
-| | | | **~98%+** | | | |
+| Priority | Driver                   | Chipsets                                  | Coverage  | Port From                    | License | Method  |
+|----------|--------------------------|-------------------------------------------|-----------|------------------------------|---------|---------|
+| 🟠 P1     | **Intel e1000/e1000e**   | 82540, 82574, I217, I218, I219            | ~35%      | FreeBSD `em(4)` / SerenityOS | BSD-2   | Port    |
+| 🟠 P1     | **Realtek RTL8111**      | RTL8111B/C/D/E/F/G/H, RTL8168, RTL8169    | ~30%      | FreeBSD `re(4)`              | BSD-2   | Port    |
+| 🟡 P2     | **Intel igc**            | I225-V, I226-V (2.5GbE)                   | ~10%      | FreeBSD `igc(4)`             | BSD-2   | Port    |
+| 🟢 P3     | **Realtek RTL8125**      | RTL8125B/BG (2.5GbE)                      | ~5%       | FreeBSD `re(4)`              | BSD-2   | Port    |
+| 🟢 P3     | **Broadcom tg3**         | BCM5751, BCM5754, BCM5761, BCM57765       | ~5%       | FreeBSD `bge(4)`             | BSD-2   | Port    |
+| 🟢 P3     | **Qualcomm Atheros alx** | AR8161, AR8171, Killer E2200/E2400        | ~3%       | Datasheet (GPL in Linux)     | —       | Scratch |
+| 🔵 P4     | **Intel ixgbe**          | X520, X540, X550 (10GbE)                  | ~2%       | FreeBSD `ix(4)`              | BSD-2   | Port    |
+| 🔵 P4     | **Marvell/Aquantia AQC** | AQC107, AQC108, AQC113 (2.5G/5G/10G)      | ~1.5%     | FreeBSD `atlantic(4)`        | BSD-2   | Port    |
+| 🔵 P4     | **Intel i210/i211**      | I210-AT, I211-AT (server/NAS boards)      | ~1%       | FreeBSD `igb(4)`             | BSD-2   | Port    |
+| 🔵 P4     | **Broadcom bnxt**        | BCM57301, BCM57414 (NetXtreme-E)          | ~0.5%     | FreeBSD `bnxt(4)`            | BSD-2   | Port    |
+| 🔵 P4     | **Marvell Yukon**        | 88E8040, 88E8056, 88E8058 (older laptops) | ~0.5%     | FreeBSD `msk(4)`             | BSD-2   | Port    |
+| 🔵 P4     | **Qualcomm atl1c**       | AR8131, AR8132, AR8152 (older Atheros)    | ~0.5%     | OpenBSD `alc(4)`             | ISC     | Port    |
+| 🔵 P4     | **Realtek RTL8153**      | RTL8153, RTL8156 (USB 3.0 GbE dongles)    | ~0.5%     | Scratch (USB CDC-ECM)        | —       | Scratch |
+| 🔵 P4     | **ASIX AX88179**         | AX88179, AX88772 (USB Ethernet dongles)   | ~0.5%     | FreeBSD `axge(4)`            | BSD-2   | Port    |
+| —        | **RTL8139**              | RTL8139C/D (100Mbps)                      | ~1%       | Already have                 | MIT     | Convert |
+| —        | **VirtIO-net**           | QEMU/KVM paravirtual                      | VMs       | SerenityOS                   | BSD-2   | Port    |
+|          |                          |                                           | **~98%+** |                              |         |         |
 
 ### WiFi (Stretch — requires 802.11 MAC + WPA supplicant infrastructure)
 
 > All major WiFi drivers are **GPL-only** in Linux. Each requires clean-room implementation from datasheets.
 
-| Priority | Driver | Chipsets | Laptop Coverage | License in Linux | Method |
-|----------|--------|----------|----------------|-----------------|--------|
-| 🔵 P4 | **Intel iwlwifi** | AX200, AX201, AX210, BE200 | ~35% | GPL | Scratch |
-| 🔵 P4 | **Realtek rtw89** | RTL8852AE/BE/CE (Wi-Fi 6/6E) | ~15% | GPL | Scratch |
-| 🔵 P4 | **Qualcomm ath11k** | WCN6855, WCN7850 (Wi-Fi 6E/7) | ~15% | GPL | Scratch |
-| 🔵 P4 | **Broadcom brcmfmac** | BCM4350, BCM4356, BCM43602 | ~10% | GPL | Scratch |
-| 🔵 P4 | **MediaTek mt76** | MT7921, MT7922 (Wi-Fi 6/6E) | ~10% | GPL | Scratch |
-| 🔵 P4 | **Qualcomm ath10k** | QCA6174, QCA9377, QCA9984 (Wi-Fi 5) | ~4% | GPL | Scratch |
-| 🔵 P4 | **Realtek rtw88** | RTL8822BE/CE, RTL8821CE (Wi-Fi 5) | ~3% | GPL | Scratch |
-| 🔵 P4 | **Ralink rt2x00** | RT3090, RT5390, RT5592 (older MediaTek) | ~2% | GPL | Scratch |
-| 🔵 P4 | **Qualcomm ath9k** | AR9285, AR9380, AR9462 (Wi-Fi 4) | ~2% | GPL | Scratch |
-| 🔵 P4 | **Marvell mwifiex** | 88W8897, 88W8997 (Surface devices) | ~1% | GPL | Scratch |
-| 🔵 P4 | **Broadcom b43** | BCM4311, BCM4312, BCM4318 (legacy) | ~1% | GPL | Scratch |
-| | | | **~98%** | | |
+| Priority | Driver                | Chipsets                                | Laptop Coverage | License in Linux | Method  |
+|----------|-----------------------|-----------------------------------------|-----------------|------------------|---------|
+| 🔵 P4     | **Intel iwlwifi**     | AX200, AX201, AX210, BE200              | ~35%            | GPL              | Scratch |
+| 🔵 P4     | **Realtek rtw89**     | RTL8852AE/BE/CE (Wi-Fi 6/6E)            | ~15%            | GPL              | Scratch |
+| 🔵 P4     | **Qualcomm ath11k**   | WCN6855, WCN7850 (Wi-Fi 6E/7)           | ~15%            | GPL              | Scratch |
+| 🔵 P4     | **Broadcom brcmfmac** | BCM4350, BCM4356, BCM43602              | ~10%            | GPL              | Scratch |
+| 🔵 P4     | **MediaTek mt76**     | MT7921, MT7922 (Wi-Fi 6/6E)             | ~10%            | GPL              | Scratch |
+| 🔵 P4     | **Qualcomm ath10k**   | QCA6174, QCA9377, QCA9984 (Wi-Fi 5)     | ~4%             | GPL              | Scratch |
+| 🔵 P4     | **Realtek rtw88**     | RTL8822BE/CE, RTL8821CE (Wi-Fi 5)       | ~3%             | GPL              | Scratch |
+| 🔵 P4     | **Ralink rt2x00**     | RT3090, RT5390, RT5592 (older MediaTek) | ~2%             | GPL              | Scratch |
+| 🔵 P4     | **Qualcomm ath9k**    | AR9285, AR9380, AR9462 (Wi-Fi 4)        | ~2%             | GPL              | Scratch |
+| 🔵 P4     | **Marvell mwifiex**   | 88W8897, 88W8997 (Surface devices)      | ~1%             | GPL              | Scratch |
+| 🔵 P4     | **Broadcom b43**      | BCM4311, BCM4312, BCM4318 (legacy)      | ~1%             | GPL              | Scratch |
+|          |                       |                                         | **~98%**        |                  |         |
 
 ### USB Drivers (Depends on Phase 08 USB stack)
 
@@ -568,26 +568,26 @@
 
 #### Host Controllers
 
-| Priority | Driver | Covers | Port From | License | Method |
-|----------|--------|--------|-----------|---------|--------|
-| 🟠 P1 | **xHCI** | USB 3.x — all modern PCs (2012+) | tinyusb | MIT | Port |
-| 🟢 P3 | **EHCI** | USB 2.0 — older PCs (2001–2015) | tinyusb | MIT | Port |
-| 🔵 P4 | **OHCI/UHCI** | USB 1.1 — legacy (pre-2001) | tinyusb | MIT | Port |
+| Priority | Driver        | Covers                           | Port From | License | Method |
+|----------|---------------|----------------------------------|-----------|---------|--------|
+| 🟠 P1     | **xHCI**      | USB 3.x — all modern PCs (2012+) | tinyusb   | MIT     | Port   |
+| 🟢 P3     | **EHCI**      | USB 2.0 — older PCs (2001–2015)  | tinyusb   | MIT     | Port   |
+| 🔵 P4     | **OHCI/UHCI** | USB 1.1 — legacy (pre-2001)      | tinyusb   | MIT     | Port   |
 
 #### Device Class Drivers
 
-| Priority | Driver | USB Class | Devices | Port From | License | Method |
-|----------|--------|-----------|---------|-----------|---------|--------|
-| 🟠 P1 | **HID** | 0x03 | Keyboard, mouse, gamepad, touchscreen | tinyusb | MIT | Port |
-| 🟠 P1 | **Mass Storage** | 0x08 | Flash drives, external HDDs, card readers | tinyusb | MIT | Port |
-| 🟡 P2 | **Hub** | 0x09 | USB hubs, cascaded devices | tinyusb | MIT | Port |
-| 🟡 P2 | **Audio** | 0x01 | USB headsets, DACs, microphones | Scratch | — | Scratch |
-| 🟢 P3 | **CDC-ECM** | 0x02 | USB Ethernet dongles (RTL8153, AX88179) | Scratch | — | Scratch |
-| 🟢 P3 | **Video** | 0x0E | USB webcams (UVC) | Scratch | — | Scratch |
-| 🟢 P3 | **Printer** | 0x07 | USB printers | Scratch | — | Scratch |
-| 🔵 P4 | **CDC-ACM** | 0x02 | USB serial/modem (Arduino, debug) | Scratch | — | Scratch |
-| 🔵 P4 | **Bluetooth HCI** | 0xE0 | USB Bluetooth dongles | BTstack (MIT) | MIT | Port |
-| 🔵 P4 | **Wireless** | — | USB WiFi dongles (Realtek, Atheros) | Scratch | — | Scratch |
+| Priority | Driver            | USB Class | Devices                                   | Port From     | License | Method  |
+|----------|-------------------|-----------|-------------------------------------------|---------------|---------|---------|
+| 🟠 P1     | **HID**           | 0x03      | Keyboard, mouse, gamepad, touchscreen     | tinyusb       | MIT     | Port    |
+| 🟠 P1     | **Mass Storage**  | 0x08      | Flash drives, external HDDs, card readers | tinyusb       | MIT     | Port    |
+| 🟡 P2     | **Hub**           | 0x09      | USB hubs, cascaded devices                | tinyusb       | MIT     | Port    |
+| 🟡 P2     | **Audio**         | 0x01      | USB headsets, DACs, microphones           | Scratch       | —       | Scratch |
+| 🟢 P3     | **CDC-ECM**       | 0x02      | USB Ethernet dongles (RTL8153, AX88179)   | Scratch       | —       | Scratch |
+| 🟢 P3     | **Video**         | 0x0E      | USB webcams (UVC)                         | Scratch       | —       | Scratch |
+| 🟢 P3     | **Printer**       | 0x07      | USB printers                              | Scratch       | —       | Scratch |
+| 🔵 P4     | **CDC-ACM**       | 0x02      | USB serial/modem (Arduino, debug)         | Scratch       | —       | Scratch |
+| 🔵 P4     | **Bluetooth HCI** | 0xE0      | USB Bluetooth dongles                     | BTstack (MIT) | MIT     | Port    |
+| 🔵 P4     | **Wireless**      | —         | USB WiFi dongles (Realtek, Atheros)       | Scratch       | —       | Scratch |
 
 ### GPU / Graphics Drivers
 
@@ -597,20 +597,20 @@
 
 #### Virtual GPUs (for development)
 
-| Priority | Driver | Used By | Coverage | Port From | License | Method |
-|----------|--------|---------|----------|-----------|---------|--------|
-| 🟡 P2 | **VMSVGA** | VirtualBox | VBox | SerenityOS | BSD-2 | Port |
-| 🟡 P2 | **VirtIO-GPU** | QEMU | QEMU | Reverted code | MIT | Restore |
-| 🔵 P4 | **Bochs/BGA** | QEMU fallback | QEMU | Scratch (DISPI regs) | — | Scratch |
+| Priority | Driver         | Used By       | Coverage | Port From            | License | Method  |
+|----------|----------------|---------------|----------|----------------------|---------|---------|
+| 🟡 P2     | **VMSVGA**     | VirtualBox    | VBox     | SerenityOS           | BSD-2   | Port    |
+| 🟡 P2     | **VirtIO-GPU** | QEMU          | QEMU     | Reverted code        | MIT     | Restore |
+| 🔵 P4     | **Bochs/BGA**  | QEMU fallback | QEMU     | Scratch (DISPI regs) | —       | Scratch |
 
 #### Integrated GPUs (~80% of all PCs)
 
-| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
-|----------|--------|----------|----------|-----------|---------|--------|
-| 🟢 P3 | **Intel HD/UHD/Iris** | Gen 9 (Skylake) – Gen 12 (Alder Lake) | ~55% | Clean-room (Intel open docs) | — | Scratch |
-| 🟢 P3 | **Intel Xe (Arc iGPU)** | Meteor Lake, Lunar Lake, Arrow Lake | ~10% | Clean-room (Intel open docs) | — | Scratch |
-| 🔵 P4 | **AMD APU (Vega/RDNA)** | Ryzen 3000G–8000G, Radeon 680M/780M | ~15% | Clean-room (AMD open docs) | — | Scratch |
-| | | | **~80%** | | | |
+| Priority | Driver                  | Chipsets                              | Coverage | Port From                    | License | Method  |
+|----------|-------------------------|---------------------------------------|----------|------------------------------|---------|---------|
+| 🟢 P3     | **Intel HD/UHD/Iris**   | Gen 9 (Skylake) – Gen 12 (Alder Lake) | ~55%     | Clean-room (Intel open docs) | —       | Scratch |
+| 🟢 P3     | **Intel Xe (Arc iGPU)** | Meteor Lake, Lunar Lake, Arrow Lake   | ~10%     | Clean-room (Intel open docs) | —       | Scratch |
+| 🔵 P4     | **AMD APU (Vega/RDNA)** | Ryzen 3000G–8000G, Radeon 680M/780M   | ~15%     | Clean-room (AMD open docs)   | —       | Scratch |
+|          |                         |                                       | **~80%** |                              |         |         |
 
 > [!TIP]
 > Intel publishes **open GPU documentation** (PRM — Programmer's Reference Manual) for all
@@ -619,12 +619,12 @@
 
 #### Discrete GPUs (~20% of all PCs)
 
-| Priority | Driver | Chipsets | Coverage | Port From | License | Method |
-|----------|--------|----------|----------|-----------|---------|--------|
-| 🔵 P4 | **NVIDIA GeForce** | GTX 1000, RTX 2000–5000 series | ~16% | Clean-room (nouveau RE docs) | — | Scratch |
-| 🔵 P4 | **AMD Radeon** | RX 5000–9000 (RDNA 1–4) | ~3% | Clean-room (AMD open docs) | — | Scratch |
-| 🔵 P4 | **Intel Arc** | A380, A580, A750, A770, B580 | ~1% | Clean-room (Intel open docs) | — | Scratch |
-| | | | **~20%** | | | |
+| Priority | Driver             | Chipsets                       | Coverage | Port From                    | License | Method  |
+|----------|--------------------|--------------------------------|----------|------------------------------|---------|---------|
+| 🔵 P4     | **NVIDIA GeForce** | GTX 1000, RTX 2000–5000 series | ~16%     | Clean-room (nouveau RE docs) | —       | Scratch |
+| 🔵 P4     | **AMD Radeon**     | RX 5000–9000 (RDNA 1–4)        | ~3%      | Clean-room (AMD open docs)   | —       | Scratch |
+| 🔵 P4     | **Intel Arc**      | A380, A580, A750, A770, B580   | ~1%      | Clean-room (Intel open docs) | —       | Scratch |
+|          |                    |                                | **~20%** |                              |         |         |
 
 > [!WARNING]
 > **NVIDIA is the hardest.** They do NOT publish register documentation. The Linux `nouveau`
@@ -634,21 +634,21 @@
 
 #### GPU Driver Scope (what "driver" means for each level)
 
-| Level | What it provides | Complexity | Target |
-|-------|-----------------|------------|--------|
-| **Level 1: VESA/VBE fallback** | Basic framebuffer from bootloader | ✅ Done | Already have |
-| **Level 2: KMS (modesetting)** | Set resolution, refresh rate, multi-monitor | Medium | 🟢 P3 |
-| **Level 3: 2D acceleration** | Rect fill, blit, cursor, page flip | Medium | 🟢 P3 |
-| **Level 4: OpenGL (3D)** | Mesa/Gallium driver, shader compiler | Very Large | 🔵 Future |
-| **Level 5: Vulkan** | Full GPU pipeline | Massive | 🔵 Future |
+| Level                          | What it provides                            | Complexity | Target       |
+|--------------------------------|---------------------------------------------|------------|--------------|
+| **Level 1: VESA/VBE fallback** | Basic framebuffer from bootloader           | ✅ Done     | Already have |
+| **Level 2: KMS (modesetting)** | Set resolution, refresh rate, multi-monitor | Medium     | 🟢 P3         |
+| **Level 3: 2D acceleration**   | Rect fill, blit, cursor, page flip          | Medium     | 🟢 P3         |
+| **Level 4: OpenGL (3D)**       | Mesa/Gallium driver, shader compiler        | Very Large | 🔵 Future     |
+| **Level 5: Vulkan**            | Full GPU pipeline                           | Massive    | 🔵 Future     |
 
 > For Impossible OS, **Level 3** (modesetting + 2D accel + hardware cursor) is the
 > realistic target. This provides a polished desktop without requiring a full 3D stack.
 
 ### Input Devices
 
-| Stage | Input Method | Coverage | Status |
-|-------|-------------|----------|--------|
-| Now | PS/2 mouse/keyboard | ~100% (via legacy emulation) | ✅ Working |
-| Phase 08 | USB HID (xHCI + HID class) | ~100% (native USB) | TODO |
-| Future | Touchscreen, gamepad, stylus | niche | TODO |
+| Stage    | Input Method                 | Coverage                     | Status    |
+|----------|------------------------------|------------------------------|-----------|
+| Now      | PS/2 mouse/keyboard          | ~100% (via legacy emulation) | ✅ Working |
+| Phase 08 | USB HID (xHCI + HID class)   | ~100% (native USB)           | TODO      |
+| Future   | Touchscreen, gamepad, stylus | niche                        | TODO      |

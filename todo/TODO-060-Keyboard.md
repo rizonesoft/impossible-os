@@ -81,22 +81,22 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🟠 P1 | §1 Keyboard Layout System | Foundation for i18n input |
-| 🟠 P1 | §2 Built-in Layouts | Ship 6 layouts |
-| 🟠 P1 | §4 Unicode / UTF-8 | Text support for all languages |
-| 🟡 P2 | §3 Layout Switching | Win+Space, system tray indicator |
-| 🟢 P3 | §5 Localization | Multi-language UI strings |
+| Priority | Section                   | Reason                           |
+|----------|---------------------------|----------------------------------|
+| 🟠 P1     | §1 Keyboard Layout System | Foundation for i18n input        |
+| 🟠 P1     | §2 Built-in Layouts       | Ship 6 layouts                   |
+| 🟠 P1     | §4 Unicode / UTF-8        | Text support for all languages   |
+| 🟡 P2     | §3 Layout Switching       | Win+Space, system tray indicator |
+| 🟢 P3     | §5 Localization           | Multi-language UI strings        |
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/kbd_layout.c` | [NEW] Keyboard layout system |
-| `include/kbd_layout.h` | [NEW] Layout API header |
-| `resources/layouts/` | [NEW] Layout data tables |
-| `src/kernel/drivers/keyboard.c` | [MODIFY] Replace hardcoded US QWERTY |
-| `docs/architecture/keyboard-layouts.md` | [NEW] Layout system documentation |
+| File                                    | Purpose                              |
+|-----------------------------------------|--------------------------------------|
+| `src/kernel/kbd_layout.c`               | [NEW] Keyboard layout system         |
+| `include/kbd_layout.h`                  | [NEW] Layout API header              |
+| `resources/layouts/`                    | [NEW] Layout data tables             |
+| `src/kernel/drivers/keyboard.c`         | [MODIFY] Replace hardcoded US QWERTY |
+| `docs/architecture/keyboard-layouts.md` | [NEW] Layout system documentation    |

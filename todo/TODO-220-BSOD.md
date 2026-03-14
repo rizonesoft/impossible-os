@@ -109,13 +109,13 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| ✅ Done | 1. Panic Screen | Core BSOD display |
-| ✅ Done | 2. Crash Dump | Diagnostics written to disk |
-| ✅ Done | 3. Auto-Restart | Registry-configurable countdown + reboot |
-| ✅ Done | 4. BSOD Test Trigger | Compile-time panic for testing |
-| 🔴 P0 | 5. Auto-Restart Validation | Verify end-to-end BSOD → reboot flow |
-| 🟠 P1 | 6. Crash Loop Protection | Prevent infinite reboot cycles |
-| 🟡 P2 | 7. Recovery Settings | UI for auto-restart configuration |
-| 🟢 P3 | 8. Crash Analysis on Boot | Post-crash notification |
+| Priority | Section                    | Reason                                   |
+|----------|----------------------------|------------------------------------------|
+| ✅ Done   | 1. Panic Screen            | Core BSOD display                        |
+| ✅ Done   | 2. Crash Dump              | Diagnostics written to disk              |
+| ✅ Done   | 3. Auto-Restart            | Registry-configurable countdown + reboot |
+| ✅ Done   | 4. BSOD Test Trigger       | Compile-time panic for testing           |
+| 🔴 P0     | 5. Auto-Restart Validation | Verify end-to-end BSOD → reboot flow     |
+| 🟠 P1     | 6. Crash Loop Protection   | Prevent infinite reboot cycles           |
+| 🟡 P2     | 7. Recovery Settings       | UI for auto-restart configuration        |
+| 🟢 P3     | 8. Crash Analysis on Boot  | Post-crash notification                  |

@@ -282,31 +282,31 @@ namespace HelloApp
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `tools/isc/main.c` | [NEW] Compiler driver |
-| `tools/isc/lexer.c` | [NEW] Tokenizer |
-| `tools/isc/parser.c` | [NEW] Recursive descent parser |
-| `tools/isc/ast.h` | [NEW] AST node definitions |
-| `tools/isc/sema.c` | [NEW] Semantic analysis / type checking |
-| `tools/isc/codegen.c` | [NEW] x86-64 code generator |
-| `src/userland/libis-std/` | [NEW] I# standard library |
-| `docs/architecture/isharp-spec.md` | [NEW] Language specification |
-| `docs/guides/isharp-tutorial.md` | [NEW] Getting started guide |
+| File                               | Purpose                                 |
+|------------------------------------|-----------------------------------------|
+| `tools/isc/main.c`                 | [NEW] Compiler driver                   |
+| `tools/isc/lexer.c`                | [NEW] Tokenizer                         |
+| `tools/isc/parser.c`               | [NEW] Recursive descent parser          |
+| `tools/isc/ast.h`                  | [NEW] AST node definitions              |
+| `tools/isc/sema.c`                 | [NEW] Semantic analysis / type checking |
+| `tools/isc/codegen.c`              | [NEW] x86-64 code generator             |
+| `src/userland/libis-std/`          | [NEW] I# standard library               |
+| `docs/architecture/isharp-spec.md` | [NEW] Language specification            |
+| `docs/guides/isharp-tutorial.md`   | [NEW] Getting started guide             |
 
 ---
 
 ## Effort Estimates
 
-| Component | Effort | Dependencies |
-|-----------|--------|-------------|
-| Language spec | Weeks | Design decisions |
-| Lexer | Days–Weeks | Spec done |
-| Parser | Weeks | Lexer |
-| Type checker | Weeks–Months | Parser, symbol table |
-| Code generator | Months | Type checker, x86-64 knowledge |
-| Standard library | Weeks | Codegen working |
-| GUI bindings | Weeks | IxUI (P0105 §5), std lib |
-| Compiler driver | Days | All compiler stages |
-| Self-hosting | Months | Mature language + compiler |
-| **Total** | **~6–9 months** | |
+| Component        | Effort          | Dependencies                   |
+|------------------|-----------------|--------------------------------|
+| Language spec    | Weeks           | Design decisions               |
+| Lexer            | Days–Weeks      | Spec done                      |
+| Parser           | Weeks           | Lexer                          |
+| Type checker     | Weeks–Months    | Parser, symbol table           |
+| Code generator   | Months          | Type checker, x86-64 knowledge |
+| Standard library | Weeks           | Codegen working                |
+| GUI bindings     | Weeks           | IxUI (P0105 §5), std lib       |
+| Compiler driver  | Days            | All compiler stages            |
+| Self-hosting     | Months          | Mature language + compiler     |
+| **Total**        | **~6–9 months** |                                |

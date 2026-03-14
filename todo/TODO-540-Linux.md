@@ -193,44 +193,44 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 ELF Loader (verify) | Already partial — verify and extend |
-| 🔴 P0 | §2 Binary Format Detection | PE + ELF dual support |
-| 🔴 P0 | §3.1–3.2 Core Syscalls (I/O + process) | Minimum viable syscall set |
-| 🟠 P1 | §4 Path Translation | `/` → `C:\` mapping |
-| 🟠 P1 | §5 File Descriptor Table | Linux fd → native HANDLE |
-| 🟠 P1 | §7 Test: Static Hello World | Prove it works |
-| 🟡 P2 | §3.3–3.4 Memory + Misc Syscalls | Broader program support |
-| 🟡 P2 | §6 Shell Integration | UX polish |
-| 🟢 P3 | §8 Busybox | Real-world Linux binary |
-| 🔵 P4 | §9 Documentation | Reference docs |
+| Priority | Section                                | Reason                              |
+|----------|----------------------------------------|-------------------------------------|
+| 🔴 P0     | §1 ELF Loader (verify)                 | Already partial — verify and extend |
+| 🔴 P0     | §2 Binary Format Detection             | PE + ELF dual support               |
+| 🔴 P0     | §3.1–3.2 Core Syscalls (I/O + process) | Minimum viable syscall set          |
+| 🟠 P1     | §4 Path Translation                    | `/` → `C:\` mapping                 |
+| 🟠 P1     | §5 File Descriptor Table               | Linux fd → native HANDLE            |
+| 🟠 P1     | §7 Test: Static Hello World            | Prove it works                      |
+| 🟡 P2     | §3.3–3.4 Memory + Misc Syscalls        | Broader program support             |
+| 🟡 P2     | §6 Shell Integration                   | UX polish                           |
+| 🟢 P3     | §8 Busybox                             | Real-world Linux binary             |
+| 🔵 P4     | §9 Documentation                       | Reference docs                      |
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/elf.c` | [EXISTS] ELF64 loader |
-| `src/kernel/sched/task.c` | [MODIFY] Binary format detection |
-| `src/compat/linux/linux_syscall.c` | [NEW] Linux syscall handler |
-| `src/compat/linux/linux_path.c` | [NEW] POSIX → Win32 path translation |
-| `src/compat/linux/linux_fd.c` | [NEW] File descriptor table |
-| `docs/architecture/linux-compat.md` | [NEW] Compatibility layer docs |
+| File                                | Purpose                              |
+|-------------------------------------|--------------------------------------|
+| `src/kernel/elf.c`                  | [EXISTS] ELF64 loader                |
+| `src/kernel/sched/task.c`           | [MODIFY] Binary format detection     |
+| `src/compat/linux/linux_syscall.c`  | [NEW] Linux syscall handler          |
+| `src/compat/linux/linux_path.c`     | [NEW] POSIX → Win32 path translation |
+| `src/compat/linux/linux_fd.c`       | [NEW] File descriptor table          |
+| `docs/architecture/linux-compat.md` | [NEW] Compatibility layer docs       |
 
 ---
 
 ## Effort Estimates
 
-| Component | Effort | Dependencies |
-|-----------|--------|-------------|
-| ELF loader verify | Days | Already exists |
-| Binary detection | Days | PE loader (P0105) |
-| ~20 core syscalls | Weeks | Ring 3, native file API |
-| Path translation | Days | VFS paths |
-| FD table | Days | Native HANDLE system |
-| Static hello world | Days | Syscalls working |
-| Busybox | Weeks | Broad syscall coverage |
-| **Total (core)** | **~2–3 weeks** | |
-| **Total (busybox)** | **~4–6 weeks** | |
+| Component           | Effort         | Dependencies            |
+|---------------------|----------------|-------------------------|
+| ELF loader verify   | Days           | Already exists          |
+| Binary detection    | Days           | PE loader (P0105)       |
+| ~20 core syscalls   | Weeks          | Ring 3, native file API |
+| Path translation    | Days           | VFS paths               |
+| FD table            | Days           | Native HANDLE system    |
+| Static hello world  | Days           | Syscalls working        |
+| Busybox             | Weeks          | Broad syscall coverage  |
+| **Total (core)**    | **~2–3 weeks** |                         |
+| **Total (busybox)** | **~4–6 weeks** |                         |

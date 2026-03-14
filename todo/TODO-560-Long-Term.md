@@ -226,16 +226,16 @@
 
 - [ ] Create `src/kernel/gesture.c` and `include/gesture.h`
 - [ ] Recognize gestures from touch event streams:
-  | Gesture | Fingers | Action |
-  |---------|---------|--------|
-  | Tap | 1 | Click |
-  | Double tap | 1 | Double-click |
-  | Long press (>500ms) | 1 | Right-click |
-  | Swipe left/right | 1 | Back/forward |
-  | Swipe from edge | 1 | Open action center |
-  | Pinch in/out | 2 | Zoom in/out |
-  | Two-finger scroll | 2 | Scroll up/down |
-  | Three-finger swipe | 3 | Switch virtual desktop |
+| Gesture             | Fingers | Action                 |
+|---------------------|---------|------------------------|
+| Tap                 | 1       | Click                  |
+| Double tap          | 1       | Double-click           |
+| Long press (>500ms) | 1       | Right-click            |
+| Swipe left/right    | 1       | Back/forward           |
+| Swipe from edge     | 1       | Open action center     |
+| Pinch in/out        | 2       | Zoom in/out            |
+| Two-finger scroll   | 2       | Scroll up/down         |
+| Three-finger swipe  | 3       | Switch virtual desktop |
 - [ ] Emit gesture events to WM → route to focused window
 - [ ] Commit: `"kernel: gesture recognition engine"`
 
@@ -518,26 +518,26 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🟠 P1 | 1.1–1.4 Core Accessibility | Inclusion — high contrast, large text, sticky keys, cursor |
-| 🟠 P1 | 2.1 Debug Console (F12) | Essential for development |
-| 🟡 P2 | 1.5–1.6 Magnifier + Mouse Keys | Additional accessibility |
-| 🟡 P2 | 2.2–2.3 Memory Inspector + strace | Debugging tools |
-| 🟡 P2 | 5.1 Print-to-PDF | Basic print support |
-| 🟡 P2 | 11.1 Keyboard Shortcuts | UX discoverability |
-| 🟢 P3 | 4.1–4.2 Touch + Gestures | Tablet/touch devices |
-| 🟢 P3 | 6.1 Gamepad Driver | Gaming input |
-| 🟢 P3 | 7.1 TTS (SAM) | Accessibility audio |
-| 🟢 P3 | 9.1 Telemetry | Usage analytics |
-| 🟢 P3 | 10.1–10.5 Parental Controls | Family safety |
-| 🟢 P3 | 2.4 Performance Profiler | Optimization |
-| 🟢 P3 | 1.7–1.8 Motion + Color Blind + Settings | Polish |
-| 🔵 P4 | 8. Multi-User Sessions | Fast user switching |
-| 🔵 P4 | 3. Bluetooth | Hardware-dependent |
-| 🔵 P4 | 5.2–5.3 Network/USB Printing | Complex hardware |
-| 🔵 P4 | 7.2–7.3 Screen Reader + espeak | Advanced TTS |
-| 🔵 P4 | 11.2–11.4 Power Profiles + Scripting + Help | Future polish |
+| Priority | Section                                     | Reason                                                     |
+|----------|---------------------------------------------|------------------------------------------------------------|
+| 🟠 P1     | 1.1–1.4 Core Accessibility                  | Inclusion — high contrast, large text, sticky keys, cursor |
+| 🟠 P1     | 2.1 Debug Console (F12)                     | Essential for development                                  |
+| 🟡 P2     | 1.5–1.6 Magnifier + Mouse Keys              | Additional accessibility                                   |
+| 🟡 P2     | 2.2–2.3 Memory Inspector + strace           | Debugging tools                                            |
+| 🟡 P2     | 5.1 Print-to-PDF                            | Basic print support                                        |
+| 🟡 P2     | 11.1 Keyboard Shortcuts                     | UX discoverability                                         |
+| 🟢 P3     | 4.1–4.2 Touch + Gestures                    | Tablet/touch devices                                       |
+| 🟢 P3     | 6.1 Gamepad Driver                          | Gaming input                                               |
+| 🟢 P3     | 7.1 TTS (SAM)                               | Accessibility audio                                        |
+| 🟢 P3     | 9.1 Telemetry                               | Usage analytics                                            |
+| 🟢 P3     | 10.1–10.5 Parental Controls                 | Family safety                                              |
+| 🟢 P3     | 2.4 Performance Profiler                    | Optimization                                               |
+| 🟢 P3     | 1.7–1.8 Motion + Color Blind + Settings     | Polish                                                     |
+| 🔵 P4     | 8. Multi-User Sessions                      | Fast user switching                                        |
+| 🔵 P4     | 3. Bluetooth                                | Hardware-dependent                                         |
+| 🔵 P4     | 5.2–5.3 Network/USB Printing                | Complex hardware                                           |
+| 🔵 P4     | 7.2–7.3 Screen Reader + espeak              | Advanced TTS                                               |
+| 🔵 P4     | 11.2–11.4 Power Profiles + Scripting + Help | Future polish                                              |
 
 ---
 

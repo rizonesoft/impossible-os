@@ -46,8 +46,8 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 Search Index | Foundation — index must exist first |
-| 🟠 P1 | §2 Search Query | API for apps to search |
-| 🟢 P3 | §3 Integration | UI wiring (Start Menu, File Manager) |
+| Priority | Section         | Reason                               |
+|----------|-----------------|--------------------------------------|
+| 🔴 P0     | §1 Search Index | Foundation — index must exist first  |
+| 🟠 P1     | §2 Search Query | API for apps to search               |
+| 🟢 P3     | §3 Integration  | UI wiring (Start Menu, File Manager) |

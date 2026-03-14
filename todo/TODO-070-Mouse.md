@@ -245,51 +245,51 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| ✅ Done | 1.1 PS/2 Basic | 3-byte relative mouse, IRQ 12 |
-| ✅ Done | 2.1 VBox Mouse | VMMDev absolute mouse via PCI `80EE:CAFE` |
-| ✅ Done | 2.2 VirtIO Tablet | QEMU absolute mouse via virtio-tablet-pci |
-| ✅ Done | 3.1 Drag Edge Fix | Offset recalculation after screen edge clamp |
-| 🔴 P0 | 4.1 Scroll Wheel | Intellimouse 4-byte packets — most-needed feature |
-| 🔴 P0 | 6.1 Packet Resync | Prevent jitter from lost PS/2 bytes |
-| 🟠 P1 | 5.1 Explorer 5-Button | Side buttons for browser back/forward |
-| 🟠 P1 | 7.1 Acceleration | Non-linear curves for precise + fast mouse |
-| 🟠 P1 | 7.2 Sensitivity | Configurable DPI multiplier via Registry |
-| 🟡 P2 | 8.1 USB EHCI | USB 2.0 host controller — needed for real hardware |
-| 🟡 P2 | 8.2 USB HID Mouse | USB mouse class driver over EHCI |
-| 🟡 P2 | 10.1 VBox Extended | Display resize, clipboard, shared folders |
-| 🟢 P3 | 8.3 xHCI | USB 3.0 — modern laptops without EHCI |
-| 🟢 P3 | 10.2 Hypervisor Layer | Unified VBox/QEMU/Hyper-V abstraction |
-| 🔵 P4 | 9.1 Synaptics | Laptop touchpad (real hardware only) |
-| 🔵 P4 | 9.2 ALPS | Laptop touchpad (real hardware only) |
+| Priority | Section               | Description                                        |
+|----------|-----------------------|----------------------------------------------------|
+| ✅ Done   | 1.1 PS/2 Basic        | 3-byte relative mouse, IRQ 12                      |
+| ✅ Done   | 2.1 VBox Mouse        | VMMDev absolute mouse via PCI `80EE:CAFE`          |
+| ✅ Done   | 2.2 VirtIO Tablet     | QEMU absolute mouse via virtio-tablet-pci          |
+| ✅ Done   | 3.1 Drag Edge Fix     | Offset recalculation after screen edge clamp       |
+| 🔴 P0     | 4.1 Scroll Wheel      | Intellimouse 4-byte packets — most-needed feature  |
+| 🔴 P0     | 6.1 Packet Resync     | Prevent jitter from lost PS/2 bytes                |
+| 🟠 P1     | 5.1 Explorer 5-Button | Side buttons for browser back/forward              |
+| 🟠 P1     | 7.1 Acceleration      | Non-linear curves for precise + fast mouse         |
+| 🟠 P1     | 7.2 Sensitivity       | Configurable DPI multiplier via Registry           |
+| 🟡 P2     | 8.1 USB EHCI          | USB 2.0 host controller — needed for real hardware |
+| 🟡 P2     | 8.2 USB HID Mouse     | USB mouse class driver over EHCI                   |
+| 🟡 P2     | 10.1 VBox Extended    | Display resize, clipboard, shared folders          |
+| 🟢 P3     | 8.3 xHCI              | USB 3.0 — modern laptops without EHCI              |
+| 🟢 P3     | 10.2 Hypervisor Layer | Unified VBox/QEMU/Hyper-V abstraction              |
+| 🔵 P4     | 9.1 Synaptics         | Laptop touchpad (real hardware only)               |
+| 🔵 P4     | 9.2 ALPS              | Laptop touchpad (real hardware only)               |
 
 ---
 
 ## Feature Comparison vs Other OSes
 
-| Feature | Impossible OS | Linux | SerenityOS |
-|---|---|---|---|
-| Basic PS/2 relative | ✅ | ✅ | ✅ |
-| Scroll wheel (4th byte) | ❌ | ✅ | ✅ |
-| 5-button (5th byte) | ❌ | ✅ | ✅ |
-| USB HID mouse (EHCI/xHCI) | ❌ | ✅ | ✅ |
-| Mouse acceleration curves | ❌ | ✅ | ✅ |
-| Configurable DPI/sensitivity | ❌ | ✅ | ✅ |
-| Synaptics/ALPS touchpad | ❌ | ✅ | ❌ |
-| Packet resynchronization | ❌ | ✅ | ✅ |
+| Feature                      | Impossible OS | Linux | SerenityOS |
+|------------------------------|---------------|-------|------------|
+| Basic PS/2 relative          | ✅             | ✅     | ✅          |
+| Scroll wheel (4th byte)      | ❌             | ✅     | ✅          |
+| 5-button (5th byte)          | ❌             | ✅     | ✅          |
+| USB HID mouse (EHCI/xHCI)    | ❌             | ✅     | ✅          |
+| Mouse acceleration curves    | ❌             | ✅     | ✅          |
+| Configurable DPI/sensitivity | ❌             | ✅     | ✅          |
+| Synaptics/ALPS touchpad      | ❌             | ✅     | ❌          |
+| Packet resynchronization     | ❌             | ✅     | ✅          |
 
 ## VirtualBox Testability
 
-| Feature | Testable in VBox? | Notes |
-|---|---|---|
-| Scroll wheel (4th byte) | ✅ Yes | VBox emulates Intellimouse. Magic init → 4-byte packets. Translates 1:1 to real hardware. |
-| 5-button (5th byte) | ✅ Yes | VBox emulates Explorer. Same magic sequence + ID check. Works identically on real hardware. |
-| USB HID mouse (EHCI/xHCI) | ⚠️ Partially | VBox emulates OHCI/EHCI. USB HID driver works, but real xHCI (USB 3.0) has differences. |
-| Mouse acceleration curves | ✅ Yes | Pure software math — no hardware needed. Works everywhere. |
-| Configurable DPI/sensitivity | ✅ Yes | Pure software — apply multiplier to deltas. Works everywhere. |
-| Synaptics/ALPS touchpad | ❌ No | Proprietary PS/2 extensions. VBox doesn't emulate. Must test on real laptop. |
-| Packet resynchronization | ✅ Yes | Verify bit 3 of byte 0 (PS/2 spec). Can deliberately corrupt bytes to test recovery. |
+| Feature                      | Testable in VBox? | Notes                                                                                       |
+|------------------------------|-------------------|---------------------------------------------------------------------------------------------|
+| Scroll wheel (4th byte)      | ✅ Yes             | VBox emulates Intellimouse. Magic init → 4-byte packets. Translates 1:1 to real hardware.   |
+| 5-button (5th byte)          | ✅ Yes             | VBox emulates Explorer. Same magic sequence + ID check. Works identically on real hardware. |
+| USB HID mouse (EHCI/xHCI)    | ⚠️ Partially      | VBox emulates OHCI/EHCI. USB HID driver works, but real xHCI (USB 3.0) has differences.     |
+| Mouse acceleration curves    | ✅ Yes             | Pure software math — no hardware needed. Works everywhere.                                  |
+| Configurable DPI/sensitivity | ✅ Yes             | Pure software — apply multiplier to deltas. Works everywhere.                               |
+| Synaptics/ALPS touchpad      | ❌ No              | Proprietary PS/2 extensions. VBox doesn't emulate. Must test on real laptop.                |
+| Packet resynchronization     | ✅ Yes             | Verify bit 3 of byte 0 (PS/2 spec). Can deliberately corrupt bytes to test recovery.        |
 
 > **Bottom line:** 6 out of 7 features can be fully developed and tested in VBox.
 > Only touchpad drivers need real hardware.

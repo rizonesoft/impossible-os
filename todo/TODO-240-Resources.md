@@ -161,14 +161,14 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 1.1 File Associations | Core OS functionality — opening files |
-| 🔴 P0 | 1.2 Default Associations | Out-of-box file type support |
-| 🔴 P0 | 2.1 Shortcut Format | Desktop/Start Menu depends on this |
-| 🟠 P1 | 2.2 Shortcut Integration | Desktop icon rendering |
-| 🟠 P1 | 3.1 Recycle Bin Icons | Dynamic desktop icon states |
-| 🟠 P1 | 4.1 System Sounds | UX — startup chime, notifications |
-| 🟠 P1 | 5.1 File Manager Icons | Icon-per-file in file browser |
-| 🟡 P2 | 6.1 Font Manager | User font customization |
-| 🟢 P3 | 1.3 Open With Dialog | Stretch — power user feature |
+| Priority | Section                  | Reason                                |
+|----------|--------------------------|---------------------------------------|
+| 🔴 P0     | 1.1 File Associations    | Core OS functionality — opening files |
+| 🔴 P0     | 1.2 Default Associations | Out-of-box file type support          |
+| 🔴 P0     | 2.1 Shortcut Format      | Desktop/Start Menu depends on this    |
+| 🟠 P1     | 2.2 Shortcut Integration | Desktop icon rendering                |
+| 🟠 P1     | 3.1 Recycle Bin Icons    | Dynamic desktop icon states           |
+| 🟠 P1     | 4.1 System Sounds        | UX — startup chime, notifications     |
+| 🟠 P1     | 5.1 File Manager Icons   | Icon-per-file in file browser         |
+| 🟡 P2     | 6.1 Font Manager         | User font customization               |
+| 🟢 P3     | 1.3 Open With Dialog     | Stretch — power user feature          |

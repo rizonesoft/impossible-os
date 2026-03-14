@@ -161,23 +161,23 @@ A minimal version is needed here for file permissions and HOME environment varia
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 Registry System | Foundation — all services store config here |
-| 🔴 P0 | **P0203** §1–2 Time System | Wall-clock time for timestamps, logs, scheduler |
-| 🔴 P0 | §8 Scheduled Tasks | Powers Registry flush, NTP sync, log rotate |
-| 🟠 P1 | §2 Services/Daemons | Background processes infrastructure |
-| 🟠 P1 | **P0007** §1–2 Clipboard | Essential UX — see `TODO-230-Clipboard.md` |
-| 🟠 P1 | §5 File Associations | Double-click opens correct app |
-| 🟠 P1 | §7 Shortcut Files | Desktop/Start Menu proper UX |
-| 🟡 P2 | **P0203** §4 NTP Client | Accurate time |
-| 🟡 P2 | **P0010** Recycle Bin | Safe deletion — see `TODO-270-Recycle-Bin.md` |
-| 🟡 P2 | **P0011** ZIP | Archive support — see `TODO-280-ZIP.md` |
-| 🟡 P2 | §11.4 Autostart | Startup programs |
-| 🟢 P3 | **P0007** §3–4 Clipboard History + Win32 | Polish features |
-| 🟢 P3 | **P0008** Search & Indexing | File discovery — see `TODO-260-Search.md` |
-| 🟢 P3 | **P0009** Scheduled Tasks | Automation — see `TODO-290-Scheduler.md` |
-| 🟢 P3 | §11.1 User Accounts | Multi-user (see P2301) |
-| 🔵 P4 | §11.2 Win32 System Info | Compatibility APIs |
-| 🔵 P4 | §11.3 Notification Service | Desktop integration |
+| Priority | Section                                  | Reason                                          |
+|----------|------------------------------------------|-------------------------------------------------|
+| 🔴 P0     | §1 Registry System                       | Foundation — all services store config here     |
+| 🔴 P0     | **P0203** §1–2 Time System               | Wall-clock time for timestamps, logs, scheduler |
+| 🔴 P0     | §8 Scheduled Tasks                       | Powers Registry flush, NTP sync, log rotate     |
+| 🟠 P1     | §2 Services/Daemons                      | Background processes infrastructure             |
+| 🟠 P1     | **P0007** §1–2 Clipboard                 | Essential UX — see `TODO-230-Clipboard.md`      |
+| 🟠 P1     | §5 File Associations                     | Double-click opens correct app                  |
+| 🟠 P1     | §7 Shortcut Files                        | Desktop/Start Menu proper UX                    |
+| 🟡 P2     | **P0203** §4 NTP Client                  | Accurate time                                   |
+| 🟡 P2     | **P0010** Recycle Bin                    | Safe deletion — see `TODO-270-Recycle-Bin.md`   |
+| 🟡 P2     | **P0011** ZIP                            | Archive support — see `TODO-280-ZIP.md`         |
+| 🟡 P2     | §11.4 Autostart                          | Startup programs                                |
+| 🟢 P3     | **P0007** §3–4 Clipboard History + Win32 | Polish features                                 |
+| 🟢 P3     | **P0008** Search & Indexing              | File discovery — see `TODO-260-Search.md`       |
+| 🟢 P3     | **P0009** Scheduled Tasks                | Automation — see `TODO-290-Scheduler.md`        |
+| 🟢 P3     | §11.1 User Accounts                      | Multi-user (see P2301)                          |
+| 🔵 P4     | §11.2 Win32 System Info                  | Compatibility APIs                              |
+| 🔵 P4     | §11.3 Notification Service               | Desktop integration                             |
 

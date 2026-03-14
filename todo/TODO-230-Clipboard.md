@@ -67,20 +67,20 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 System Clipboard | Core copy/paste infrastructure |
-| 🟠 P1 | §2 Keyboard Shortcuts | Essential UX (Ctrl+C/X/V) |
-| 🟡 P2 | §3 Win32 Clipboard Mapping | Windows app compatibility |
-| 🟢 P3 | §4 Clipboard History | Win+V power-user feature |
+| Priority | Section                    | Reason                         |
+|----------|----------------------------|--------------------------------|
+| 🔴 P0     | §1 System Clipboard        | Core copy/paste infrastructure |
+| 🟠 P1     | §2 Keyboard Shortcuts      | Essential UX (Ctrl+C/X/V)      |
+| 🟡 P2     | §3 Win32 Clipboard Mapping | Windows app compatibility      |
+| 🟢 P3     | §4 Clipboard History       | Win+V power-user feature       |
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/clipboard.c` | [NEW] System clipboard buffer |
-| `include/clipboard.h` | [NEW] Clipboard API header |
-| `src/desktop/clip_history.c` | [NEW] Clipboard history UI |
+| File                             | Purpose                       |
+|----------------------------------|-------------------------------|
+| `src/kernel/clipboard.c`         | [NEW] System clipboard buffer |
+| `include/clipboard.h`            | [NEW] Clipboard API header    |
+| `src/desktop/clip_history.c`     | [NEW] Clipboard history UI    |
 | `docs/architecture/clipboard.md` | [NEW] Clipboard documentation |

@@ -155,14 +155,14 @@
 
 
 - [ ] Set default permissions on system directories:
-  | Path | Owner | Owner Perms | Other Perms |
-  |------|-------|-------------|-------------|
-  | `C:\Impossible\System\` | Admin | rwx | r-x |
-  | `C:\Impossible\Bin\` | Admin | rwx | r-x |
-  | `C:\Programs\` | Admin | rwx | r-x |
-  | `C:\Users\{name}\` | {name} | rwx | --- |
-  | `C:\Temp\` | System | rwx | rwx |
-  | `C:\Recycle\` | System | rwx | rwx |
+| Path                    | Owner  | Owner Perms | Other Perms |
+|-------------------------|--------|-------------|-------------|
+| `C:\Impossible\System\` | Admin  | rwx         | r-x         |
+| `C:\Impossible\Bin\`    | Admin  | rwx         | r-x         |
+| `C:\Programs\`          | Admin  | rwx         | r-x         |
+| `C:\Users\{name}\`      | {name} | rwx         |-------------|
+| `C:\Temp\`              | System | rwx         | rwx         |
+| `C:\Recycle\`           | System | rwx         | rwx         |
 - [ ] Apply during first-boot directory creation
 - [ ] Commit: `"kernel: default system folder permissions"`
 
@@ -350,25 +350,25 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1.1 User Account System | Foundation for all security |
-| 🔴 P0 | §1.2 Password Hashing | Secure authentication |
-| 🔴 P0 | §1.3 Authentication API | Login/logout mechanics |
-| 🔴 P0 | §3.1–3.2 File Permissions | Protect user data + system files |
-| 🟠 P1 | §2.1–2.2 Login Screen | User-facing authentication |
-| 🟠 P1 | §1.4 Home Directories | Per-user file isolation |
-| 🟠 P1 | §3.3 System Folder Protections | Lock down system directories |
-| 🟠 P1 | §6.2 Process Ownership | Limit process control |
-| 🟠 P1 | §6.4 Entropy Pool | Secure randomness for crypto |
-| 🟡 P2 | §4.1–4.2 UAC Elevation | Prevent unauthorized system changes |
-| 🟡 P2 | §3.4 Ownership Management | chmod/chown tools |
-| 🟡 P2 | §6.1 Session Management | Login tracking + auto-lock |
-| 🟡 P2 | §6.5 Sudo | Admin commands from shell |
-| 🟡 P2 | §2.3 User Switching | Multi-user convenience |
-| 🟢 P3 | §5.1–5.2 File Encryption | Protect sensitive files |
-| 🟢 P3 | §7.1 Accounts Applet | GUI user management |
-| 🟢 P3 | §7.2 Security Applet | GUI security settings |
-| 🟢 P3 | §6.3 Credential Storage | Saved passwords |
-| 🔵 P4 | §5.3 Full Disk Encryption | Whole-partition crypto |
-| 🔵 P4 | §6.6 Executable Signing | Code trust (long-term) |
+| Priority | Section                        | Reason                              |
+|----------|--------------------------------|-------------------------------------|
+| 🔴 P0     | §1.1 User Account System       | Foundation for all security         |
+| 🔴 P0     | §1.2 Password Hashing          | Secure authentication               |
+| 🔴 P0     | §1.3 Authentication API        | Login/logout mechanics              |
+| 🔴 P0     | §3.1–3.2 File Permissions      | Protect user data + system files    |
+| 🟠 P1     | §2.1–2.2 Login Screen          | User-facing authentication          |
+| 🟠 P1     | §1.4 Home Directories          | Per-user file isolation             |
+| 🟠 P1     | §3.3 System Folder Protections | Lock down system directories        |
+| 🟠 P1     | §6.2 Process Ownership         | Limit process control               |
+| 🟠 P1     | §6.4 Entropy Pool              | Secure randomness for crypto        |
+| 🟡 P2     | §4.1–4.2 UAC Elevation         | Prevent unauthorized system changes |
+| 🟡 P2     | §3.4 Ownership Management      | chmod/chown tools                   |
+| 🟡 P2     | §6.1 Session Management        | Login tracking + auto-lock          |
+| 🟡 P2     | §6.5 Sudo                      | Admin commands from shell           |
+| 🟡 P2     | §2.3 User Switching            | Multi-user convenience              |
+| 🟢 P3     | §5.1–5.2 File Encryption       | Protect sensitive files             |
+| 🟢 P3     | §7.1 Accounts Applet           | GUI user management                 |
+| 🟢 P3     | §7.2 Security Applet           | GUI security settings               |
+| 🟢 P3     | §6.3 Credential Storage        | Saved passwords                     |
+| 🔵 P4     | §5.3 Full Disk Encryption      | Whole-partition crypto              |
+| 🔵 P4     | §6.6 Executable Signing        | Code trust (long-term)              |

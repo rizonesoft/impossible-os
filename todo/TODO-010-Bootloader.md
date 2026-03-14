@@ -226,12 +226,12 @@
 
 **What must be public vs private:**
 
-| Component | Must be public? | Reason |
-|-----------|----------------|--------|
-| Shim fork (tiny first-stage loader) | ✅ Yes | Microsoft reviews this |
-| `bootx64.c` (our bootloader) | ❌ No | Shim just checks our MOK signature |
-| Kernel source | ❌ No | UEFI/shim never sees the kernel |
-| Impossible OS codebase | ❌ No | Completely irrelevant to Secure Boot |
+| Component                           | Must be public? | Reason                               |
+|-------------------------------------|-----------------|--------------------------------------|
+| Shim fork (tiny first-stage loader) | ✅ Yes           | Microsoft reviews this               |
+| `bootx64.c` (our bootloader)        | ❌ No            | Shim just checks our MOK signature   |
+| Kernel source                       | ❌ No            | UEFI/shim never sees the kernel      |
+| Impossible OS codebase              | ❌ No            | Completely irrelevant to Secure Boot |
 
 ### 3.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
 
@@ -250,11 +250,11 @@
 
 **First-boot user experience by audience:**
 
-| Audience | MOK enrollment acceptable? |
-|----------|---------------------------|
-| Developers / enthusiasts | ✅ Yes — they expect this |
-| General users | ~Meh — "Press OK to enroll key" is confusing |
-| Enterprise / kiosk | ❌ No — needs fully automated, no user interaction |
+| Audience                 | MOK enrollment acceptable?                        |
+|--------------------------|---------------------------------------------------|
+| Developers / enthusiasts | ✅ Yes — they expect this                          |
+| General users            | ~Meh — "Press OK to enroll key" is confusing      |
+| Enterprise / kiosk       | ❌ No — needs fully automated, no user interaction |
 
 ---
 
@@ -372,25 +372,25 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| ✅ Done | 1.1–1.5 Custom UEFI Bootloader | Boot application, GOP, ELF loader, ACPI, page tables |
-| ✅ Done | 2.1–2.5 Boot Splash | Splash screen, dots, icon, TTF font, status messages |
-| 🔴 P0 | 4.1 GOP Mode Negotiation | Without this, splash looks wrong on any non-720p display |
-| 🟠 P1 | 3.1 Generate MOK Key Pair | Foundation for Secure Boot |
-| 🟠 P1 | 3.2 Sign Bootloader with MOK | Enables Secure Boot testing |
-| 🟠 P1 | 3.5 Interim Pre-Signed Shim | Ship Secure Boot now (with MOK enrollment) |
-| 🟡 P2 | 4.2 HiDPI Scaling | Required for 4K laptops |
-| 🟡 P2 | 5.1 Fade-In Transition | Polish — smooth firmware→OS transition |
-| 🟡 P2 | 5.2 Boot Profiling | Developer tool — identify slow stages |
-| 🟡 P2 | 5.3 Error Recovery Screen | UX — clean panic during boot |
-| 🟢 P3 | 3.3 Build and Package Shim | Build our own shim from source |
-| 🟢 P3 | 3.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users |
-| 🟢 P3 | 5.4 Parallel Init | Performance — reduce boot time |
-| 🟢 P3 | 5.5 Boot Menu | Recovery — safe mode, console |
-| 🔵 P4 | 6.1 Compressed Kernel | Performance — smaller kernel image |
-| 🔵 P4 | 6.2 Measured Boot (TPM) | Security — attestation |
-| 🔵 P4 | 6.3 UEFI Boot Manager Entry | UX — permanent boot menu entry |
+| Priority | Section                          | Description                                              |
+|----------|----------------------------------|----------------------------------------------------------|
+| ✅ Done   | 1.1–1.5 Custom UEFI Bootloader   | Boot application, GOP, ELF loader, ACPI, page tables     |
+| ✅ Done   | 2.1–2.5 Boot Splash              | Splash screen, dots, icon, TTF font, status messages     |
+| 🔴 P0     | 4.1 GOP Mode Negotiation         | Without this, splash looks wrong on any non-720p display |
+| 🟠 P1     | 3.1 Generate MOK Key Pair        | Foundation for Secure Boot                               |
+| 🟠 P1     | 3.2 Sign Bootloader with MOK     | Enables Secure Boot testing                              |
+| 🟠 P1     | 3.5 Interim Pre-Signed Shim      | Ship Secure Boot now (with MOK enrollment)               |
+| 🟡 P2     | 4.2 HiDPI Scaling                | Required for 4K laptops                                  |
+| 🟡 P2     | 5.1 Fade-In Transition           | Polish — smooth firmware→OS transition                   |
+| 🟡 P2     | 5.2 Boot Profiling               | Developer tool — identify slow stages                    |
+| 🟡 P2     | 5.3 Error Recovery Screen        | UX — clean panic during boot                             |
+| 🟢 P3     | 3.3 Build and Package Shim       | Build our own shim from source                           |
+| 🟢 P3     | 3.4 Submit for Microsoft Signing | Eliminate MOK enrollment for end users                   |
+| 🟢 P3     | 5.4 Parallel Init                | Performance — reduce boot time                           |
+| 🟢 P3     | 5.5 Boot Menu                    | Recovery — safe mode, console                            |
+| 🔵 P4     | 6.1 Compressed Kernel            | Performance — smaller kernel image                       |
+| 🔵 P4     | 6.2 Measured Boot (TPM)          | Security — attestation                                   |
+| 🔵 P4     | 6.3 UEFI Boot Manager Entry      | UX — permanent boot menu entry                           |
 
 ---
 
@@ -401,14 +401,14 @@
 
 ### Element Sizes by Resolution
 
-| Resolution | Scale | Logo Size | Dot Radius (min/max) | Dot Spacing | Font Size |
-|---|---|---|---|---|---|
-| 1280×720 (720p) | 1× | 96×96 | 5px / 8px | 20px | 16px |
-| 1366×768 | 1× | 96×96 | 5px / 8px | 20px | 16px |
-| 1920×1080 (1080p) | 1× | 128×128 | 6px / 10px | 24px | 18px |
-| 2560×1440 (1440p) | 2× | 192×192 | 10px / 16px | 40px | 32px |
-| 3840×2160 (4K) | 2× | 256×256 | 12px / 18px | 48px | 36px |
-| 3840×2400 (4K+) | 3× | 288×288 | 15px / 22px | 60px | 48px |
+| Resolution        | Scale | Logo Size | Dot Radius (min/max) | Dot Spacing | Font Size |
+|-------------------|-------|-----------|----------------------|-------------|-----------|
+| 1280×720 (720p)   | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
+| 1366×768          | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
+| 1920×1080 (1080p) | 1×    | 128×128   | 6px / 10px           | 24px        | 18px      |
+| 2560×1440 (1440p) | 2×    | 192×192   | 10px / 16px          | 40px        | 32px      |
+| 3840×2160 (4K)    | 2×    | 256×256   | 12px / 18px          | 48px        | 36px      |
+| 3840×2400 (4K+)   | 3×    | 288×288   | 15px / 22px          | 60px        | 48px      |
 
 ### Scale Factor Formula
 

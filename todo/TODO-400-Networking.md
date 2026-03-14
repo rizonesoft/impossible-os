@@ -410,25 +410,25 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 1.1–1.3 TCP Core | Foundation for HTTP, HTTPS, and all internet protocols |
-| 🔴 P0 | 2.1–2.2 DNS Resolver | Required to connect by hostname instead of IP |
-| 🔴 P0 | 3.1 Sockets API (kernel) | Standard API for all networking apps |
-| 🟠 P1 | 4.1–4.2 HTTP GET | Web requests — enables wget, API calls |
-| 🟠 P1 | 3.3 Socket Syscalls | User-mode networking |
-| 🟠 P1 | 9.1 Network Interface Manager | Multi-NIC support |
-| 🟠 P1 | 9.4 Loopback Interface | Localhost networking |
-| 🟡 P2 | 6.1–6.3 Firewall | Security — packet filtering |
-| 🟡 P2 | 7. Virtio-Net Driver | Modern paravirtual NIC (faster than RTL8139) |
-| 🟡 P2 | 1.4 TCP Robustness | Retransmission, reliability |
-| 🟡 P2 | 2.3 DNS Cache | Performance |
-| 🟡 P2 | 4.4 Shell wget/curl | User-facing download commands |
-| 🟢 P3 | 5.1–5.2 TLS + Certificates | HTTPS support |
-| 🟢 P3 | 8. Winsock Stubs | Win32 network compatibility |
-| 🟢 P3 | 9.2 Connection Tracking | Stateful firewall |
-| 🟢 P3 | 9.3 Network Status | Monitoring and system tray |
-| 🟢 P3 | 4.3 HTTP POST | Full HTTP client |
-| 🔵 P4 | 5.3 HTTPS Client | Secure web access |
-| 🔵 P4 | 6.4 Firewall Management | GUI + shell tools |
-| 🔵 P4 | 9.5 WiFi Framework | Long-term — real hardware only |
+| Priority | Section                       | Reason                                                 |
+|----------|-------------------------------|--------------------------------------------------------|
+| 🔴 P0     | 1.1–1.3 TCP Core              | Foundation for HTTP, HTTPS, and all internet protocols |
+| 🔴 P0     | 2.1–2.2 DNS Resolver          | Required to connect by hostname instead of IP          |
+| 🔴 P0     | 3.1 Sockets API (kernel)      | Standard API for all networking apps                   |
+| 🟠 P1     | 4.1–4.2 HTTP GET              | Web requests — enables wget, API calls                 |
+| 🟠 P1     | 3.3 Socket Syscalls           | User-mode networking                                   |
+| 🟠 P1     | 9.1 Network Interface Manager | Multi-NIC support                                      |
+| 🟠 P1     | 9.4 Loopback Interface        | Localhost networking                                   |
+| 🟡 P2     | 6.1–6.3 Firewall              | Security — packet filtering                            |
+| 🟡 P2     | 7. Virtio-Net Driver          | Modern paravirtual NIC (faster than RTL8139)           |
+| 🟡 P2     | 1.4 TCP Robustness            | Retransmission, reliability                            |
+| 🟡 P2     | 2.3 DNS Cache                 | Performance                                            |
+| 🟡 P2     | 4.4 Shell wget/curl           | User-facing download commands                          |
+| 🟢 P3     | 5.1–5.2 TLS + Certificates    | HTTPS support                                          |
+| 🟢 P3     | 8. Winsock Stubs              | Win32 network compatibility                            |
+| 🟢 P3     | 9.2 Connection Tracking       | Stateful firewall                                      |
+| 🟢 P3     | 9.3 Network Status            | Monitoring and system tray                             |
+| 🟢 P3     | 4.3 HTTP POST                 | Full HTTP client                                       |
+| 🔵 P4     | 5.3 HTTPS Client              | Secure web access                                      |
+| 🔵 P4     | 6.4 Firewall Management       | GUI + shell tools                                      |
+| 🔵 P4     | 9.5 WiFi Framework            | Long-term — real hardware only                         |

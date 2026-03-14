@@ -387,26 +387,26 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 1. Threading & Sync | Prerequisite for GUI apps, IPC, everything |
-| 🔴 P0 | 2.1 Pipes | Shell pipes, process communication |
-| 🔴 P0 | 12.1 File Descriptors | Required by pipes, I/O redirection |
-| 🟠 P1 | 4. Panic Screen | User-visible crash recovery |
-| 🟠 P1 | 7. Environment Variables | Shell PATH, app config |
-| 🟠 P1 | 8.1 Clean Shutdown | Data integrity |
-| 🟠 P1 | 12.2 Working Directory | Shell `cd`, relative paths |
-| 🟡 P2 | 2.2 Signals | Ctrl+C, child notification |
-| 🟡 P2 | 6. Logging Enhancements | Debugging, disk persistence |
-| 🟡 P2 | 11.1 TrueType Fonts | Visual quality upgrade |
-| 🟡 P2 | 11.6 TCP | HTTP, real networking |
-| 🟢 P3 | 2.3 Shared Memory | Advanced IPC |
-| 🟢 P3 | 3.1 Swap | Run more apps than RAM |
-| 🟢 P3 | 3.2 Memory-Mapped Files | Fast I/O, shared memory |
-| 🟢 P3 | ~~5. HAL~~ | Moved to Phase 16 §1.4 |
-| 🟢 P3 | 9. Dynamic Linking | Shared libraries |
-| 🟢 P3 | 10. Kernel Modules | Runtime driver loading |
-| 🟢 P3 | 11.2–11.5 Libraries | Compression, crypto, math, JSON |
-| 🔵 P4 | 12.3 brk/sbrk | Better user heap |
-| 🔵 P4 | 12.4 Timer API | User-mode sleep/timing |
-| 🔵 P4 | 12.5 Leak Detection | Debug tooling |
+| Priority | Section                  | Reason                                     |
+|----------|--------------------------|--------------------------------------------|
+| 🔴 P0     | 1. Threading & Sync      | Prerequisite for GUI apps, IPC, everything |
+| 🔴 P0     | 2.1 Pipes                | Shell pipes, process communication         |
+| 🔴 P0     | 12.1 File Descriptors    | Required by pipes, I/O redirection         |
+| 🟠 P1     | 4. Panic Screen          | User-visible crash recovery                |
+| 🟠 P1     | 7. Environment Variables | Shell PATH, app config                     |
+| 🟠 P1     | 8.1 Clean Shutdown       | Data integrity                             |
+| 🟠 P1     | 12.2 Working Directory   | Shell `cd`, relative paths                 |
+| 🟡 P2     | 2.2 Signals              | Ctrl+C, child notification                 |
+| 🟡 P2     | 6. Logging Enhancements  | Debugging, disk persistence                |
+| 🟡 P2     | 11.1 TrueType Fonts      | Visual quality upgrade                     |
+| 🟡 P2     | 11.6 TCP                 | HTTP, real networking                      |
+| 🟢 P3     | 2.3 Shared Memory        | Advanced IPC                               |
+| 🟢 P3     | 3.1 Swap                 | Run more apps than RAM                     |
+| 🟢 P3     | 3.2 Memory-Mapped Files  | Fast I/O, shared memory                    |
+| 🟢 P3     | ~~5. HAL~~               | Moved to Phase 16 §1.4                     |
+| 🟢 P3     | 9. Dynamic Linking       | Shared libraries                           |
+| 🟢 P3     | 10. Kernel Modules       | Runtime driver loading                     |
+| 🟢 P3     | 11.2–11.5 Libraries      | Compression, crypto, math, JSON            |
+| 🔵 P4     | 12.3 brk/sbrk            | Better user heap                           |
+| 🔵 P4     | 12.4 Timer API           | User-mode sleep/timing                     |
+| 🔵 P4     | 12.5 Leak Detection      | Debug tooling                              |

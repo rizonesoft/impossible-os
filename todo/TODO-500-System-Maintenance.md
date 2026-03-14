@@ -382,26 +382,26 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 2.1–2.2 App Installer (IPKG) | Install/manage applications |
-| 🔴 P0 | 2.3 App Uninstaller | Clean removal of applications |
-| 🔴 P0 | 3.1 Restore Point Creation | Safety net before changes |
-| 🟠 P1 | 1.1–1.2 Update Check + Download | Keep OS current |
-| 🟠 P1 | 2.5 IPKG Build Tool | Create packages for distribution |
-| 🟠 P1 | 3.3 System Rollback | Recovery from bad updates |
-| 🟠 P1 | 5.5 First-Boot Wizard | Clean initial setup |
-| 🟡 P2 | 1.3 Update Application | Apply downloaded updates |
-| 🟡 P2 | 2.4 Add/Remove Programs | GUI for managing apps |
-| 🟡 P2 | 3.4–3.5 Auto Restore + UI | Transparent backup |
-| 🟡 P2 | 5.3 Event Log | System diagnostics |
-| 🟡 P2 | 4.1 Recovery Boot Menu | Emergency repair |
-| 🟢 P3 | 4.2 Recovery Shell | Hands-on repair tools |
-| 🟢 P3 | 1.4 Update Settings | Auto-update configuration |
-| 🟢 P3 | 5.1 Disk Cleanup | Free disk space |
-| 🟢 P3 | 5.4 Crash Dump | Debugging aid |
-| 🟢 P3 | 5.2 Scheduled Tasks | Automated maintenance |
-| 🟢 P3 | 5.6 Safe Mode | Driver troubleshooting |
-| 🔵 P4 | 4.3–4.4 Factory Reset + Startup Repair | Full system recovery |
-| 🔵 P4 | 4.5 Recovery Partition | Separate boot environment |
-| 🔵 P4 | 5.7 OS Installer | Fresh install from ISO |
+| Priority | Section                                | Reason                           |
+|----------|----------------------------------------|----------------------------------|
+| 🔴 P0     | 2.1–2.2 App Installer (IPKG)           | Install/manage applications      |
+| 🔴 P0     | 2.3 App Uninstaller                    | Clean removal of applications    |
+| 🔴 P0     | 3.1 Restore Point Creation             | Safety net before changes        |
+| 🟠 P1     | 1.1–1.2 Update Check + Download        | Keep OS current                  |
+| 🟠 P1     | 2.5 IPKG Build Tool                    | Create packages for distribution |
+| 🟠 P1     | 3.3 System Rollback                    | Recovery from bad updates        |
+| 🟠 P1     | 5.5 First-Boot Wizard                  | Clean initial setup              |
+| 🟡 P2     | 1.3 Update Application                 | Apply downloaded updates         |
+| 🟡 P2     | 2.4 Add/Remove Programs                | GUI for managing apps            |
+| 🟡 P2     | 3.4–3.5 Auto Restore + UI              | Transparent backup               |
+| 🟡 P2     | 5.3 Event Log                          | System diagnostics               |
+| 🟡 P2     | 4.1 Recovery Boot Menu                 | Emergency repair                 |
+| 🟢 P3     | 4.2 Recovery Shell                     | Hands-on repair tools            |
+| 🟢 P3     | 1.4 Update Settings                    | Auto-update configuration        |
+| 🟢 P3     | 5.1 Disk Cleanup                       | Free disk space                  |
+| 🟢 P3     | 5.4 Crash Dump                         | Debugging aid                    |
+| 🟢 P3     | 5.2 Scheduled Tasks                    | Automated maintenance            |
+| 🟢 P3     | 5.6 Safe Mode                          | Driver troubleshooting           |
+| 🔵 P4     | 4.3–4.4 Factory Reset + Startup Repair | Full system recovery             |
+| 🔵 P4     | 4.5 Recovery Partition                 | Separate boot environment        |
+| 🔵 P4     | 5.7 OS Installer                       | Fresh install from ISO           |

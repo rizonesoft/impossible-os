@@ -1199,43 +1199,43 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| ✅ Done | 1.1 VirtIO-blk Driver | Modern VirtIO 1.0 MMIO — implemented and tested |
-| ✅ Done | 1.2 AHCI Driver | SATA HDD/SSD — implemented and tested |
-| ✅ Done | 1.3 Block Device Layer | Unified interface over VirtIO/AHCI |
-| ✅ Done | 1.4 ATAPI Driver | Optical disc reading — implemented and tested |
-| ✅ Done | 2. Partition Tables | MBR + GPT + partition scanner |
-| ✅ Done | 3.1 FAT32 Read | Read USB drives, boot media |
-| ✅ Done | 3.2 FAT32 Write | Full read/write for removable media |
-| ✅ Done | 3.3 FAT32 VFS + Format | Complete FAT32 integration |
-| ✅ Done | 3.5 VFS Driver Interface | `vfs_ops` driver routing — callbacks used by §3.6 |
-| 🔴 P0 | **3.5.5 Directory/Metadata/Flush Callbacks** | **mkdir, rmdir, set_attr, set_times, flush — needed by §3.6** |
-| ✅ Done | 5.1–5.9 IXFS on Disk | Full persistent IXFS with extents, journal, CoW, snapshots |
-| ✅ Done | 8.14 IXFS Directory Structure | Standard paths on first boot |
-| 🔴 P0 | **3.6 Win32-Compatible File API** | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
-| 🟠 P1 | 4.1 NTFS Read | Read Windows-formatted partitions |
-| 🟠 P1 | 6.1 Auto-Mount | Drive letters from real disks |
-| 🟡 P2 | 4.2 NTFS Write | Write to Windows partitions |
-| 🟡 P2 | 4.4 ext2/3/4 Read | Read Linux-formatted partitions |
-| 🟡 P2 | 8.1 Disk Cache | Performance — reduce disk I/O |
-| 🟡 P2 | 6.2 Mount/Unmount Commands | Manual storage management |
-| 🟡 P2 | 7. Disk Management GUI | Visual partition management |
-| 🟡 P2 | 8.2 CheckDisk (CLI + GUI) | Filesystem integrity after crashes |
-| 🟡 P2 | 8.3 Partition Manager (CLI + GUI) | Disk partitioning |
-| 🟡 P2 | 8.6 System File Checker (CLI + GUI) | OS integrity validation |
-| 🟢 P3 | 4.3 NTFS VFS | Complete NTFS integration |
-| 🟢 P3 | 4.5 ext2/3/4 Write | Write to Linux partitions |
-| 🟢 P3 | 4.6 exFAT Read | USB drives > 32 GB |
-| 🟢 P3 | 4.8 ISO 9660 Read | CD/DVD filesystem |
-| 🟢 P3 | 4.9 Joliet/UDF Read | DVD/Blu-ray extensions |
-| 🟢 P3 | 8.4 Defrag/TRIM (CLI + GUI) | Performance optimization |
-| 🟢 P3 | 8.5 File/Data Recovery (CLI + GUI) | Accidental deletion safety net |
-| 🟢 P3 | 8.7 Disk Benchmark (CLI + GUI) | Performance testing |
-| 🟢 P3 | 8.9 Disk Usage Analyzer (CLI + GUI) | Space consumption analysis |
-| 🟢 P3 | 8.13 Disk I/O Metrics | Performance monitoring |
-| 🔵 P4 | 8.8 Disk Wipe (CLI + GUI) | Secure erase / privacy |
-| 🔵 P4 | 8.10 Snapshot Manager (CLI + GUI) | Volume shadow copy / backup |
-| 🔵 P4 | 8.11 NVMe Driver | Modern SSD support (future) |
-| 🔵 P4 | 8.12 USB Mass Storage | Hot-plug USB drives (future) |
+| Priority | Section                                      | Reason                                                          |
+|----------|----------------------------------------------|-----------------------------------------------------------------|
+| ✅ Done   | 1.1 VirtIO-blk Driver                        | Modern VirtIO 1.0 MMIO — implemented and tested                 |
+| ✅ Done   | 1.2 AHCI Driver                              | SATA HDD/SSD — implemented and tested                           |
+| ✅ Done   | 1.3 Block Device Layer                       | Unified interface over VirtIO/AHCI                              |
+| ✅ Done   | 1.4 ATAPI Driver                             | Optical disc reading — implemented and tested                   |
+| ✅ Done   | 2. Partition Tables                          | MBR + GPT + partition scanner                                   |
+| ✅ Done   | 3.1 FAT32 Read                               | Read USB drives, boot media                                     |
+| ✅ Done   | 3.2 FAT32 Write                              | Full read/write for removable media                             |
+| ✅ Done   | 3.3 FAT32 VFS + Format                       | Complete FAT32 integration                                      |
+| ✅ Done   | 3.5 VFS Driver Interface                     | `vfs_ops` driver routing — callbacks used by §3.6               |
+| 🔴 P0     | **3.5.5 Directory/Metadata/Flush Callbacks** | **mkdir, rmdir, set_attr, set_times, flush — needed by §3.6**   |
+| ✅ Done   | 5.1–5.9 IXFS on Disk                         | Full persistent IXFS with extents, journal, CoW, snapshots      |
+| ✅ Done   | 8.14 IXFS Directory Structure                | Standard paths on first boot                                    |
+| 🔴 P0     | **3.6 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
+| 🟠 P1     | 4.1 NTFS Read                                | Read Windows-formatted partitions                               |
+| 🟠 P1     | 6.1 Auto-Mount                               | Drive letters from real disks                                   |
+| 🟡 P2     | 4.2 NTFS Write                               | Write to Windows partitions                                     |
+| 🟡 P2     | 4.4 ext2/3/4 Read                            | Read Linux-formatted partitions                                 |
+| 🟡 P2     | 8.1 Disk Cache                               | Performance — reduce disk I/O                                   |
+| 🟡 P2     | 6.2 Mount/Unmount Commands                   | Manual storage management                                       |
+| 🟡 P2     | 7. Disk Management GUI                       | Visual partition management                                     |
+| 🟡 P2     | 8.2 CheckDisk (CLI + GUI)                    | Filesystem integrity after crashes                              |
+| 🟡 P2     | 8.3 Partition Manager (CLI + GUI)            | Disk partitioning                                               |
+| 🟡 P2     | 8.6 System File Checker (CLI + GUI)          | OS integrity validation                                         |
+| 🟢 P3     | 4.3 NTFS VFS                                 | Complete NTFS integration                                       |
+| 🟢 P3     | 4.5 ext2/3/4 Write                           | Write to Linux partitions                                       |
+| 🟢 P3     | 4.6 exFAT Read                               | USB drives > 32 GB                                              |
+| 🟢 P3     | 4.8 ISO 9660 Read                            | CD/DVD filesystem                                               |
+| 🟢 P3     | 4.9 Joliet/UDF Read                          | DVD/Blu-ray extensions                                          |
+| 🟢 P3     | 8.4 Defrag/TRIM (CLI + GUI)                  | Performance optimization                                        |
+| 🟢 P3     | 8.5 File/Data Recovery (CLI + GUI)           | Accidental deletion safety net                                  |
+| 🟢 P3     | 8.7 Disk Benchmark (CLI + GUI)               | Performance testing                                             |
+| 🟢 P3     | 8.9 Disk Usage Analyzer (CLI + GUI)          | Space consumption analysis                                      |
+| 🟢 P3     | 8.13 Disk I/O Metrics                        | Performance monitoring                                          |
+| 🔵 P4     | 8.8 Disk Wipe (CLI + GUI)                    | Secure erase / privacy                                          |
+| 🔵 P4     | 8.10 Snapshot Manager (CLI + GUI)            | Volume shadow copy / backup                                     |
+| 🔵 P4     | 8.11 NVMe Driver                             | Modern SSD support (future)                                     |
+| 🔵 P4     | 8.12 USB Mass Storage                        | Hot-plug USB drives (future)                                    |
 

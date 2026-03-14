@@ -27,15 +27,15 @@
 
 **Win32 API Scope:**
 
-| API Surface | ~Functions | Status | Impossible OS Mapping |
-|-------------|-----------|--------|----------------------|
-| File I/O (CreateFile, ReadFile) | ~30 | **Done** ✅ | Native API (P0103 §3.6) |
-| Registry (RegOpenKey, etc.) | ~15 | **Done** ✅ | Native Registry API |
-| MessageBox, DialogBox | ~10 | **Done** ✅ | Native `MessageBox()` (P0104) |
-| PE loader (.exe, .dll) | ~20 | TODO | Section mapper + IAT resolver |
-| Console (WriteConsole, etc.) | ~10 | TODO | Thin wrappers on native I/O |
-| CreateWindow, WndProc, message loop | ~50 | TODO | IxUI / `wm_create()` + events |
-| GDI (CreateDC, BitBlt, SelectObject) | ~200 | Stretch | `gfx_*()` primitives + compositor |
+| API Surface                          | ~Functions | Status     | Impossible OS Mapping             |
+|--------------------------------------|------------|------------|-----------------------------------|
+| File I/O (CreateFile, ReadFile)      | ~30        | **Done** ✅ | Native API (P0103 §3.6)           |
+| Registry (RegOpenKey, etc.)          | ~15        | **Done** ✅ | Native Registry API               |
+| MessageBox, DialogBox                | ~10        | **Done** ✅ | Native `MessageBox()` (P0104)     |
+| PE loader (.exe, .dll)               | ~20        | TODO       | Section mapper + IAT resolver     |
+| Console (WriteConsole, etc.)         | ~10        | TODO       | Thin wrappers on native I/O       |
+| CreateWindow, WndProc, message loop  | ~50        | TODO       | IxUI / `wm_create()` + events     |
+| GDI (CreateDC, BitBlt, SelectObject) | ~200       | Stretch    | `gfx_*()` primitives + compositor |
 
 ---
 
@@ -501,25 +501,25 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 Fix User-Mode | Prerequisite for everything |
-| 🔴 P0 | §2 Syscall Interface | Foundation for all API calls |
-| 🔴 P0 | §3.1–3.2 PE Loader | Load native PE binaries |
-| 🔴 P0 | §4.1–4.3 Import Resolution + IAT | Connect PE programs to native API |
-| 🔴 P0 | §5.1–5.2 Type Defs + Console | Run first PE "Hello World" |
-| 🟠 P1 | §5.3–5.4 msvcrt + ntdll | C runtime for compiled programs |
-| 🟠 P1 | §10 Unimplemented Logger | Debug API coverage |
-| 🟠 P1 | §11 Shell Integration | Auto-detect .exe |
-| 🟡 P2 | §6.1 Memory Management | VirtualAlloc / HeapAlloc |
-| 🟡 P2 | §3.3 Base Relocation | Load at non-preferred addresses |
-| 🟡 P2 | §8 SDK (headers + libs) | Developer toolchain |
-| 🟢 P3 | §3.5 PE Resource Parser | Icons from .exe/.dll |
-| 🟢 P3 | §7.1–7.2 GUI (user32 + gdi32) | Window creation + rendering |
-| 🟢 P3 | §7.3 Shell Icon API | ExtractIcon, SHGetFileInfo |
-| 🟢 P3 | §9 IxUI Toolkit | Native GUI library |
-| 🔵 P4 | §7.4 Common Controls | comctl32 widgets |
-| 🔵 P4 | §4.4 External DLL Loading | Load real PE DLLs |
+| Priority | Section                          | Reason                            |
+|----------|----------------------------------|-----------------------------------|
+| 🔴 P0     | §1 Fix User-Mode                 | Prerequisite for everything       |
+| 🔴 P0     | §2 Syscall Interface             | Foundation for all API calls      |
+| 🔴 P0     | §3.1–3.2 PE Loader               | Load native PE binaries           |
+| 🔴 P0     | §4.1–4.3 Import Resolution + IAT | Connect PE programs to native API |
+| 🔴 P0     | §5.1–5.2 Type Defs + Console     | Run first PE "Hello World"        |
+| 🟠 P1     | §5.3–5.4 msvcrt + ntdll          | C runtime for compiled programs   |
+| 🟠 P1     | §10 Unimplemented Logger         | Debug API coverage                |
+| 🟠 P1     | §11 Shell Integration            | Auto-detect .exe                  |
+| 🟡 P2     | §6.1 Memory Management           | VirtualAlloc / HeapAlloc          |
+| 🟡 P2     | §3.3 Base Relocation             | Load at non-preferred addresses   |
+| 🟡 P2     | §8 SDK (headers + libs)          | Developer toolchain               |
+| 🟢 P3     | §3.5 PE Resource Parser          | Icons from .exe/.dll              |
+| 🟢 P3     | §7.1–7.2 GUI (user32 + gdi32)    | Window creation + rendering       |
+| 🟢 P3     | §7.3 Shell Icon API              | ExtractIcon, SHGetFileInfo        |
+| 🟢 P3     | §9 IxUI Toolkit                  | Native GUI library                |
+| 🔵 P4     | §7.4 Common Controls             | comctl32 widgets                  |
+| 🔵 P4     | §4.4 External DLL Loading        | Load real PE DLLs                 |
 
 ---
 
@@ -541,49 +541,49 @@
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `include/pe.h` | [NEW] PE/COFF header structures |
-| `include/win32.h` | [NEW] Windows type definitions |
-| `include/kernel/sched/abi.h` | [NEW] Syscall numbers and ABI constants |
-| `src/kernel/pe.c` | [NEW] PE executable loader |
-| `src/win32/kernel32.c` | [NEW] kernel32.dll native implementation |
-| `src/win32/user32.c` | [NEW] user32.dll native implementation |
-| `src/win32/msvcrt.c` | [NEW] C runtime implementation |
-| `src/win32/ntdll.c` | [NEW] NT runtime stubs |
-| `src/win32/gdi32.c` | [NEW] GDI rendering (stretch) |
-| `src/win32/shell32.c` | [NEW] Shell icon API |
-| `src/win32/comctl32.c` | [NEW] Common controls (stretch) |
-| `src/win32/win32_import.c` | [NEW] IAT import resolver |
-| `sdk/include/windows.h` | [NEW] Win32 API header for SDK |
-| `sdk/include/impossible.h` | [NEW] Impossible OS extensions |
-| `sdk/include/ixui.h` | [NEW] Native GUI toolkit header |
-| `sdk/lib/kernel32.lib` | [NEW] PE import library |
-| `sdk/lib/libixui.a` | [NEW] IxUI static library |
-| `tools/impossible-cc` | [NEW] Cross-compiler wrapper script |
+| File                         | Purpose                                  |
+|------------------------------|------------------------------------------|
+| `include/pe.h`               | [NEW] PE/COFF header structures          |
+| `include/win32.h`            | [NEW] Windows type definitions           |
+| `include/kernel/sched/abi.h` | [NEW] Syscall numbers and ABI constants  |
+| `src/kernel/pe.c`            | [NEW] PE executable loader               |
+| `src/win32/kernel32.c`       | [NEW] kernel32.dll native implementation |
+| `src/win32/user32.c`         | [NEW] user32.dll native implementation   |
+| `src/win32/msvcrt.c`         | [NEW] C runtime implementation           |
+| `src/win32/ntdll.c`          | [NEW] NT runtime stubs                   |
+| `src/win32/gdi32.c`          | [NEW] GDI rendering (stretch)            |
+| `src/win32/shell32.c`        | [NEW] Shell icon API                     |
+| `src/win32/comctl32.c`       | [NEW] Common controls (stretch)          |
+| `src/win32/win32_import.c`   | [NEW] IAT import resolver                |
+| `sdk/include/windows.h`      | [NEW] Win32 API header for SDK           |
+| `sdk/include/impossible.h`   | [NEW] Impossible OS extensions           |
+| `sdk/include/ixui.h`         | [NEW] Native GUI toolkit header          |
+| `sdk/lib/kernel32.lib`       | [NEW] PE import library                  |
+| `sdk/lib/libixui.a`          | [NEW] IxUI static library                |
+| `tools/impossible-cc`        | [NEW] Cross-compiler wrapper script      |
 
 ---
 
 ## Effort Estimates
 
-| Component | Effort | Dependencies |
-|-----------|--------|-------------|
-| Fix user-mode | Medium | TSS/GDT debugging |
-| Syscall interface | Low | User-mode working |
-| PE loader + headers | Weeks | VMM, user-mode |
-| Import resolution + IAT | Weeks | PE loader |
-| Calling convention | Days | PE loader |
-| kernel32 console | Weeks | PE loader, native syscalls |
-| msvcrt + ntdll | Weeks | kernel32 |
-| File I/O | **Done** ✅ | Native API (P0103 §3.6) |
-| Registry | **Done** ✅ | Native Registry API |
-| MessageBox | **Done** ✅ | Native MessageBox (P0104) |
-| Memory management | Days | SYS_MMAP |
-| SDK headers + libs | Medium | Win32 API defined |
-| IxUI toolkit | Medium | WM syscalls, native ABI |
-| PE resource parser | Weeks | PE loader |
-| Shell icon API | Weeks | PE resources, icon system |
-| GDI subset | Months | WM, gfx, full message loop |
-| Common controls | Months | GDI, widget toolkit (120-Theme) |
-| **Total (core: PE + kernel32)** | **~4–6 weeks** | |
-| **Total (full with GDI)** | **~6–9 months** | |
+| Component                       | Effort          | Dependencies                    |
+|---------------------------------|-----------------|---------------------------------|
+| Fix user-mode                   | Medium          | TSS/GDT debugging               |
+| Syscall interface               | Low             | User-mode working               |
+| PE loader + headers             | Weeks           | VMM, user-mode                  |
+| Import resolution + IAT         | Weeks           | PE loader                       |
+| Calling convention              | Days            | PE loader                       |
+| kernel32 console                | Weeks           | PE loader, native syscalls      |
+| msvcrt + ntdll                  | Weeks           | kernel32                        |
+| File I/O                        | **Done** ✅      | Native API (P0103 §3.6)         |
+| Registry                        | **Done** ✅      | Native Registry API             |
+| MessageBox                      | **Done** ✅      | Native MessageBox (P0104)       |
+| Memory management               | Days            | SYS_MMAP                        |
+| SDK headers + libs              | Medium          | Win32 API defined               |
+| IxUI toolkit                    | Medium          | WM syscalls, native ABI         |
+| PE resource parser              | Weeks           | PE loader                       |
+| Shell icon API                  | Weeks           | PE resources, icon system       |
+| GDI subset                      | Months          | WM, gfx, full message loop      |
+| Common controls                 | Months          | GDI, widget toolkit (120-Theme) |
+| **Total (core: PE + kernel32)** | **~4–6 weeks**  |                                 |
+| **Total (full with GDI)**       | **~6–9 months** |                                 |

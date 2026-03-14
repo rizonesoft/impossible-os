@@ -272,34 +272,34 @@ include/kernel/
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| ✅ Done | 1.1 VBox Mouse | VMMDev absolute mouse (PCI `80EE:CAFE`) |
-| ✅ Done | 5.1 VirtIO Tablet | QEMU absolute mouse (virtio-tablet-pci) |
-| 🔴 P0 | 2.1 VBox Display Resize | Same device, same IRQ — almost free to add |
-| 🔴 P0 | 7.1 Hypervisor Detection | Foundation for all abstraction |
-| 🟠 P1 | 3.1 HGCM Connection | Required for shared folders and clipboard |
-| 🟠 P1 | 3.2 Shared Folders | Mount host directories in guest — huge dev UX win |
-| 🟡 P2 | 4.1 Shared Clipboard | Copy/paste between host and guest |
-| 🟡 P2 | 5.2 VirtIO GPU | QEMU display resize |
-| 🟡 P2 | 7.2 Unified Interface | Clean up per-hypervisor code in main.c |
-| 🟢 P3 | 2.2 Guest Caps | Enable VBox "Auto-resize" menu option |
-| 🟢 P3 | 5.3 VirtIO-FS / 9P | QEMU shared folders |
-| 🟢 P3 | 8.1 Bare Metal Fallback | Graceful degradation without hypervisor |
-| 🔵 P4 | 6.1 VMBus Discovery | Hyper-V support |
-| 🔵 P4 | 6.2 Hyper-V Devices | Synthetic mouse + video for Hyper-V |
+| Priority | Section                  | Description                                       |
+|----------|--------------------------|---------------------------------------------------|
+| ✅ Done   | 1.1 VBox Mouse           | VMMDev absolute mouse (PCI `80EE:CAFE`)           |
+| ✅ Done   | 5.1 VirtIO Tablet        | QEMU absolute mouse (virtio-tablet-pci)           |
+| 🔴 P0     | 2.1 VBox Display Resize  | Same device, same IRQ — almost free to add        |
+| 🔴 P0     | 7.1 Hypervisor Detection | Foundation for all abstraction                    |
+| 🟠 P1     | 3.1 HGCM Connection      | Required for shared folders and clipboard         |
+| 🟠 P1     | 3.2 Shared Folders       | Mount host directories in guest — huge dev UX win |
+| 🟡 P2     | 4.1 Shared Clipboard     | Copy/paste between host and guest                 |
+| 🟡 P2     | 5.2 VirtIO GPU           | QEMU display resize                               |
+| 🟡 P2     | 7.2 Unified Interface    | Clean up per-hypervisor code in main.c            |
+| 🟢 P3     | 2.2 Guest Caps           | Enable VBox "Auto-resize" menu option             |
+| 🟢 P3     | 5.3 VirtIO-FS / 9P       | QEMU shared folders                               |
+| 🟢 P3     | 8.1 Bare Metal Fallback  | Graceful degradation without hypervisor           |
+| 🔵 P4     | 6.1 VMBus Discovery      | Hyper-V support                                   |
+| 🔵 P4     | 6.2 Hyper-V Devices      | Synthetic mouse + video for Hyper-V               |
 
 ---
 
 ## Guest Additions Feature Matrix
 
-| Feature | What It Does | Effort | Value |
-|---------|-------------|--------|-------|
-| Absolute mouse | ✅ **Done** — `vbox_mouse.c` | — | High |
-| Display auto-resize | VBox tells guest ideal resolution on window resize | Small (same VMMDev protocol) | High |
-| Shared folders | Mount host folders inside guest | Medium (needs VFS + HGCM) | Very High |
-| Shared clipboard | Copy/paste between host and guest | Medium (HGCM service) | High |
-| Seamless mode | Guest windows appear on host desktop | Large | Low priority |
+| Feature             | What It Does                                       | Effort                       | Value        |
+|---------------------|----------------------------------------------------|------------------------------|--------------|
+| Absolute mouse      | ✅ **Done** — `vbox_mouse.c`                        | —                            | High         |
+| Display auto-resize | VBox tells guest ideal resolution on window resize | Small (same VMMDev protocol) | High         |
+| Shared folders      | Mount host folders inside guest                    | Medium (needs VFS + HGCM)    | Very High    |
+| Shared clipboard    | Copy/paste between host and guest                  | Medium (HGCM service)        | High         |
+| Seamless mode       | Guest windows appear on host desktop               | Large                        | Low priority |
 
 ## Hypervisor Backend Map
 

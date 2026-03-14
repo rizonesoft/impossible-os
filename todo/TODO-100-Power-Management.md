@@ -180,14 +180,14 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 1. ACPI Power-Off & Reboot | Foundation — raw mechanism |
-| 🔴 P0 | 2. Clean Shutdown Sequence | Data integrity — prevents corruption |
-| 🟠 P1 | 3. Shell Commands | User-facing `shutdown`/`reboot` |
-| 🟠 P1 | 4. Start Menu Power Submenu | Desktop UI power actions |
-| 🟡 P2 | 5. Power Settings Applet | Settings UI |
-| 🟡 P2 | 6. Disk Cache Integration | Data safety during shutdown |
-| 🟢 P3 | 7. Sleep & Hibernate | ACPI S3/S4 — stretch goal |
-| 🔵 P4 | 8. Power Profiles | Polish — Balanced/Performance/Saver |
-| 🔵 P4 | 9. Hyper-V Validation | Final testing |
+| Priority | Section                     | Reason                               |
+|----------|-----------------------------|--------------------------------------|
+| 🔴 P0     | 1. ACPI Power-Off & Reboot  | Foundation — raw mechanism           |
+| 🔴 P0     | 2. Clean Shutdown Sequence  | Data integrity — prevents corruption |
+| 🟠 P1     | 3. Shell Commands           | User-facing `shutdown`/`reboot`      |
+| 🟠 P1     | 4. Start Menu Power Submenu | Desktop UI power actions             |
+| 🟡 P2     | 5. Power Settings Applet    | Settings UI                          |
+| 🟡 P2     | 6. Disk Cache Integration   | Data safety during shutdown          |
+| 🟢 P3     | 7. Sleep & Hibernate        | ACPI S3/S4 — stretch goal            |
+| 🔵 P4     | 8. Power Profiles           | Polish — Balanced/Performance/Saver  |
+| 🔵 P4     | 9. Hyper-V Validation       | Final testing                        |

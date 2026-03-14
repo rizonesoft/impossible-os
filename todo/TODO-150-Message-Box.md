@@ -177,15 +177,15 @@ Declare: `int MessageBox(void *hWnd, const char *lpText, const char *lpCaption, 
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `include/desktop/msgbox.h` | [NEW] Win32-compatible API: `MB_*` flags, `ID*` returns, `MessageBox()` |
-| `src/desktop/msgbox.c` | [NEW] Renderer: window, icon, text, buttons |
-| `src/desktop/msgbox_icon_error.h` | [NEW] Embedded 48×48 BGRA error icon |
-| `src/desktop/msgbox_icon_warning.h` | [NEW] Embedded 48×48 BGRA warning icon |
-| `src/desktop/msgbox_icon_info.h` | [NEW] Embedded 48×48 BGRA info icon |
-| `src/desktop/msgbox_icon_question.h` | [NEW] Embedded 48×48 BGRA question icon |
-| `assets/icons/msgbox/*.png` | [NEW] Source PNG icons |
-| `tools/convert_icon.py` | [MODIFY] PNG → C header converter |
-| `src/kernel/main.c` | [MODIFY] Test call, error paths |
-| `docs/architecture/msgbox.md` | [NEW] Documentation |
+| File                                 | Purpose                                                                 |
+|--------------------------------------|-------------------------------------------------------------------------|
+| `include/desktop/msgbox.h`           | [NEW] Win32-compatible API: `MB_*` flags, `ID*` returns, `MessageBox()` |
+| `src/desktop/msgbox.c`               | [NEW] Renderer: window, icon, text, buttons                             |
+| `src/desktop/msgbox_icon_error.h`    | [NEW] Embedded 48×48 BGRA error icon                                    |
+| `src/desktop/msgbox_icon_warning.h`  | [NEW] Embedded 48×48 BGRA warning icon                                  |
+| `src/desktop/msgbox_icon_info.h`     | [NEW] Embedded 48×48 BGRA info icon                                     |
+| `src/desktop/msgbox_icon_question.h` | [NEW] Embedded 48×48 BGRA question icon                                 |
+| `assets/icons/msgbox/*.png`          | [NEW] Source PNG icons                                                  |
+| `tools/convert_icon.py`              | [MODIFY] PNG → C header converter                                       |
+| `src/kernel/main.c`                  | [MODIFY] Test call, error paths                                         |
+| `docs/architecture/msgbox.md`        | [NEW] Documentation                                                     |

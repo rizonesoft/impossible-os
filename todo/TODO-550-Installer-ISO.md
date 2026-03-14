@@ -104,11 +104,11 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 1. Bootable ISO Creation | Build pipeline |
-| 🔴 P0 | 2. Installer Program | Capstone feature |
-| 🟠 P1 | 3. Hyper-V VM Setup | Test environment |
-| 🟠 P1 | 4. Installer Validation Tests | End-to-end validation |
-| 🟡 P2 | 5. Performance & Stability | Soak test |
-| 🔵 P4 | 6. VirtualBox Validation | Cross-hypervisor |
+| Priority | Section                       | Reason                |
+|----------|-------------------------------|-----------------------|
+| 🔴 P0     | 1. Bootable ISO Creation      | Build pipeline        |
+| 🔴 P0     | 2. Installer Program          | Capstone feature      |
+| 🟠 P1     | 3. Hyper-V VM Setup           | Test environment      |
+| 🟠 P1     | 4. Installer Validation Tests | End-to-end validation |
+| 🟡 P2     | 5. Performance & Stability    | Soak test             |
+| 🔵 P4     | 6. VirtualBox Validation      | Cross-hypervisor      |

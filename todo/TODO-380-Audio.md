@@ -170,29 +170,29 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | **080-Drivers §5.1** AC97 Driver | Audio hardware foundation (see 080-Drivers) |
-| 🔴 P0 | §2 Audio Abstraction | Unified API over drivers |
-| 🔴 P0 | §5.1 WAV Decoder | Simplest format — system sounds |
-| 🟠 P1 | §3 Audio Mixer | Multiple simultaneous sounds |
-| 🟠 P1 | §5.2 MP3 Decoder | Most common music format |
-| 🟡 P2 | §5.3 OGG Vorbis | Open audio format |
-| 🟡 P2 | §5.6 Unified Audio Loader | Format-agnostic loading |
-| 🟢 P3 | §5.4 FLAC Decoder | Lossless audio (niche) |
-| 🔵 P4 | §5.5 MIDI Synthesis | Music creation |
+| Priority | Section                          | Reason                                      |
+|----------|----------------------------------|---------------------------------------------|
+| 🔴 P0     | **080-Drivers §5.1** AC97 Driver | Audio hardware foundation (see 080-Drivers) |
+| 🔴 P0     | §2 Audio Abstraction             | Unified API over drivers                    |
+| 🔴 P0     | §5.1 WAV Decoder                 | Simplest format — system sounds             |
+| 🟠 P1     | §3 Audio Mixer                   | Multiple simultaneous sounds                |
+| 🟠 P1     | §5.2 MP3 Decoder                 | Most common music format                    |
+| 🟡 P2     | §5.3 OGG Vorbis                  | Open audio format                           |
+| 🟡 P2     | §5.6 Unified Audio Loader        | Format-agnostic loading                     |
+| 🟢 P3     | §5.4 FLAC Decoder                | Lossless audio (niche)                      |
+| 🔵 P4     | §5.5 MIDI Synthesis              | Music creation                              |
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/drivers/ac97.c` | AC97 driver (see 080-Drivers §5.1) |
-| `src/kernel/audio.c` | [NEW] Audio abstraction layer |
-| `include/audio.h` | [NEW] Audio API header |
-| `src/kernel/audio_mixer.c` | [NEW] Multi-stream PCM mixer |
-| `include/dr_wav.h` | [NEW] WAV decoder (public domain) |
-| `include/dr_mp3.h` | [NEW] MP3 decoder (public domain) |
-| `src/libs/stb_vorbis_impl.c` | [NEW] OGG Vorbis decoder wrapper |
-| `docs/architecture/audio.md` | [NEW] Audio system documentation |
+| File                         | Purpose                            |
+|------------------------------|------------------------------------|
+| `src/kernel/drivers/ac97.c`  | AC97 driver (see 080-Drivers §5.1) |
+| `src/kernel/audio.c`         | [NEW] Audio abstraction layer      |
+| `include/audio.h`            | [NEW] Audio API header             |
+| `src/kernel/audio_mixer.c`   | [NEW] Multi-stream PCM mixer       |
+| `include/dr_wav.h`           | [NEW] WAV decoder (public domain)  |
+| `include/dr_mp3.h`           | [NEW] MP3 decoder (public domain)  |
+| `src/libs/stb_vorbis_impl.c` | [NEW] OGG Vorbis decoder wrapper   |
+| `docs/architecture/audio.md` | [NEW] Audio system documentation   |

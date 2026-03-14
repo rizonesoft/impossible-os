@@ -89,22 +89,22 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | §1 Kernel Time API | Foundation — timestamps for logs, files, scheduler |
-| 🔴 P0 | §2 Time Formatting | Display time throughout the UI |
-| 🟠 P1 | §3 Taskbar Clock | Essential desktop UX |
-| 🟡 P2 | §4 NTP Client | Accurate time sync |
-| 🟡 P2 | §5 Timezone | Correct local time display |
+| Priority | Section            | Reason                                             |
+|----------|--------------------|----------------------------------------------------|
+| 🔴 P0     | §1 Kernel Time API | Foundation — timestamps for logs, files, scheduler |
+| 🔴 P0     | §2 Time Formatting | Display time throughout the UI                     |
+| 🟠 P1     | §3 Taskbar Clock   | Essential desktop UX                               |
+| 🟡 P2     | §4 NTP Client      | Accurate time sync                                 |
+| 🟡 P2     | §5 Timezone        | Correct local time display                         |
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/time.c` | [NEW] Time tracking and conversion |
-| `include/time.h` | [NEW] Time API header |
-| `src/kernel/net/ntp.c` | [NEW] NTP client |
-| `src/kernel/drivers/rtc.c` | [EXISTS] CMOS RTC driver |
-| `docs/architecture/time.md` | [NEW] Time system documentation |
+| File                        | Purpose                            |
+|-----------------------------|------------------------------------|
+| `src/kernel/time.c`         | [NEW] Time tracking and conversion |
+| `include/time.h`            | [NEW] Time API header              |
+| `src/kernel/net/ntp.c`      | [NEW] NTP client                   |
+| `src/kernel/drivers/rtc.c`  | [EXISTS] CMOS RTC driver           |
+| `docs/architecture/time.md` | [NEW] Time system documentation    |

@@ -13,13 +13,13 @@
 
 **Prerequisites Status:**
 
-| Prerequisite | Status | Effort | Reference |
-|-------------|--------|--------|-----------|
-| Working user-mode processes | ❌ Skipped (ring 3 hangs) | Weeks | P0105 §1 |
-| Native SDK (headers + libs) | ❌ None | Weeks | P0105 §3 |
-| `mmap`, `brk` (memory syscalls) | ⚠️ Partial | Weeks | P0105 §2 |
-| Filesystem with Win32 API | ❌ In progress | Weeks | P0103 §3.6 |
-| Process spawning (`CreateProcess`) | ❌ Skipped | Weeks | P0105 §2 |
+| Prerequisite                       | Status                   | Effort | Reference  |
+|------------------------------------|--------------------------|--------|------------|
+| Working user-mode processes        | ❌ Skipped (ring 3 hangs) | Weeks  | P0105 §1   |
+| Native SDK (headers + libs)        | ❌ None                   | Weeks  | P0105 §3   |
+| `mmap`, `brk` (memory syscalls)    | ⚠️ Partial               | Weeks  | P0105 §2   |
+| Filesystem with Win32 API          | ❌ In progress            | Weeks  | P0103 §3.6 |
+| Process spawning (`CreateProcess`) | ❌ Skipped                | Weeks  | P0105 §2   |
 
 ---
 
@@ -111,16 +111,16 @@
 
 **Additional prerequisites beyond TCC:**
 
-| Prerequisite | Status | Why Needed |
-|-------------|--------|------------|
-| `fork()` + `exec()` | ❌ | GCC spawns cc1, as, ld as child processes |
-| `pipe()` | ❌ | Pipeline between preprocessor → compiler → assembler |
-| `/tmp/` writable | ⚠️ | Temporary files during compilation |
-| Larger heap / virtual memory | ⚠️ | GCC uses 100+ MB during C++ compilation |
-| `libgmp`, `libmpfr`, `libmpc` | ❌ | GCC math dependencies (build with GCC) |
-| Dynamic linking (`ld.so`) | ❌ | Shared libraries for plugins |
-| Working `make` utility | ❌ | Build system for GCC itself |
-| POSIX shell (`/bin/sh`) | ❌ | GCC configure scripts |
+| Prerequisite                  | Status | Why Needed                                           |
+|-------------------------------|--------|------------------------------------------------------|
+| `fork()` + `exec()`           | ❌      | GCC spawns cc1, as, ld as child processes            |
+| `pipe()`                      | ❌      | Pipeline between preprocessor → compiler → assembler |
+| `/tmp/` writable              | ⚠️     | Temporary files during compilation                   |
+| Larger heap / virtual memory  | ⚠️     | GCC uses 100+ MB during C++ compilation              |
+| `libgmp`, `libmpfr`, `libmpc` | ❌      | GCC math dependencies (build with GCC)               |
+| Dynamic linking (`ld.so`)     | ❌      | Shared libraries for plugins                         |
+| Working `make` utility        | ❌      | Build system for GCC itself                          |
+| POSIX shell (`/bin/sh`)       | ❌      | GCC configure scripts                                |
 
 - [ ] Verify `CreateProcess()` works reliably (P0105 §2)
 - [ ] Verify pipes work for inter-process communication
@@ -209,32 +209,32 @@
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `C:\Impossible\Bin\tcc.exe` | TCC compiler binary |
-| `C:\Impossible\Bin\gcc.exe` | GCC compiler binary (Phase 3) |
-| `C:\Impossible\Bin\g++.exe` | G++ C++ compiler (Phase 3) |
-| `C:\Impossible\Include\` | SDK headers (windows.h + IxUI) |
-| `C:\Impossible\Lib\kernel32.lib` | Import library (PE linker) |
-| `C:\Impossible\Lib\user32.lib` | Import library (PE linker) |
-| `C:\Impossible\Lib\libtcc1.a` | TCC runtime library |
-| `C:\Impossible\Lib\libstdc++.a` | C++ standard library (Phase 3) |
-| `tools/build-tcc.sh` | [NEW] Script to cross-compile TCC |
-| `tools/build-gcc.sh` | [NEW] Script to cross-compile GCC |
-| `docs/architecture/compiler-toolchain.md` | [NEW] Documentation |
+| File                                      | Purpose                           |
+|-------------------------------------------|-----------------------------------|
+| `C:\Impossible\Bin\tcc.exe`               | TCC compiler binary               |
+| `C:\Impossible\Bin\gcc.exe`               | GCC compiler binary (Phase 3)     |
+| `C:\Impossible\Bin\g++.exe`               | G++ C++ compiler (Phase 3)        |
+| `C:\Impossible\Include\`                  | SDK headers (windows.h + IxUI)    |
+| `C:\Impossible\Lib\kernel32.lib`          | Import library (PE linker)        |
+| `C:\Impossible\Lib\user32.lib`            | Import library (PE linker)        |
+| `C:\Impossible\Lib\libtcc1.a`             | TCC runtime library               |
+| `C:\Impossible\Lib\libstdc++.a`           | C++ standard library (Phase 3)    |
+| `tools/build-tcc.sh`                      | [NEW] Script to cross-compile TCC |
+| `tools/build-gcc.sh`                      | [NEW] Script to cross-compile GCC |
+| `docs/architecture/compiler-toolchain.md` | [NEW] Documentation               |
 
 ---
 
 ## Effort Estimates
 
-| Component | Effort | Dependencies |
-|-----------|--------|-------------|
-| Cross-compile TCC | Days–Weeks | SDK, user-mode, file I/O |
-| Install + test TCC | Days | TCC built, disk image |
-| TCC self-hosting | Days | TCC running on OS |
-| IxUI headers | Days | IxUI library (P0105 §4) |
-| Shell integration | Days | Shell, TCC installed |
-| GCC prerequisites | Weeks | CreateProcess, pipes, C:\\Temp\\ |
-| Cross-compile GCC (C) | Weeks | All prerequisites, binutils |
-| GCC C++ (libstdc++) | Weeks | GCC C working |
-| Clang/LLVM | Months | Mature userland |
+| Component             | Effort     | Dependencies                     |
+|-----------------------|------------|----------------------------------|
+| Cross-compile TCC     | Days–Weeks | SDK, user-mode, file I/O         |
+| Install + test TCC    | Days       | TCC built, disk image            |
+| TCC self-hosting      | Days       | TCC running on OS                |
+| IxUI headers          | Days       | IxUI library (P0105 §4)          |
+| Shell integration     | Days       | Shell, TCC installed             |
+| GCC prerequisites     | Weeks      | CreateProcess, pipes, C:\\Temp\\ |
+| Cross-compile GCC (C) | Weeks      | All prerequisites, binutils      |
+| GCC C++ (libstdc++)   | Weeks      | GCC C working                    |
+| Clang/LLVM            | Months     | Mature userland                  |

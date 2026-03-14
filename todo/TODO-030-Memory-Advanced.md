@@ -56,8 +56,8 @@
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🟡 P2 | §1 SLAB Allocator | Eliminates heap pressure for kernel objects |
-| 🟢 P3 | §2 vmalloc | Large kernel buffers without physical contiguity |
-| 🟢 P3 | §3 Growable Heap | Eliminates fixed heap size ceiling |
+| Priority | Section           | Reason                                           |
+|----------|-------------------|--------------------------------------------------|
+| 🟡 P2     | §1 SLAB Allocator | Eliminates heap pressure for kernel objects      |
+| 🟢 P3     | §2 vmalloc        | Large kernel buffers without physical contiguity |
+| 🟢 P3     | §3 Growable Heap  | Eliminates fixed heap size ceiling               |
