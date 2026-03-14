@@ -322,11 +322,11 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     /* Text position is determined by printk cursor */
 
     /* Move cursor down to below the icon
-     * (each char row is ~16px, icon is 128px + 60px offset = 188px / 16 ≈ 12 rows) */
+     * (each char row is ~16px, icon is 128px + 60px offset + gap = ~14 rows) */
     {
         uint32_t i;
         fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
-        for (i = 0; i < 12; i++)
+        for (i = 0; i < 14; i++)
             printk("\n");
     }
 
