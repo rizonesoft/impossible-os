@@ -1,11 +1,15 @@
-# Production Testing (Hyper-V)
+# P2501 — Installer & ISO Validation
 
-> **Deferred** — run after all features are implemented and the ISO installer is complete.
+> **Goal:** Validate the Impossible OS ISO image and installer on production
+> hypervisors (Hyper-V, VirtualBox, real hardware). This phase is **deferred**
+> until all features are implemented and the ISO installer is complete.
+
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
 
+---
 
-## 15.1 Hyper-V VM Setup
+## 1. Hyper-V VM Setup
 
 **Prompt:** Set up a Generation 2 Hyper-V VM on the Windows host with 2+ GB RAM, 1+ vCPU, 20+ GB VHDX disk, Secure Boot disabled. Attach the ISO from `build/os-build.iso` via the WSL path. This tests the OS on real Microsoft hardware virtualization (different from QEMU's KVM). After completing all items, mark every item as `[x]` and document results.
 
@@ -18,7 +22,9 @@
 - [ ] **Disable Secure Boot** (VM Settings → Security → uncheck)
 - [ ] Attach ISO: `\\wsl.localhost\Ubuntu\home\<user>\impossible-os\build\os-build.iso`
 
-## 15.2 Hyper-V Test Runs
+---
+
+## 2. Installer Test Runs
 
 **Prompt:** Execute 8 validation tests in sequence: ISO boots to installer, installer partitions and formats, installer copies files and installs bootloader, VM reboots from disk → kernel loads → desktop, keyboard/mouse work, filesystem CRUD works, window manager renders correctly at Hyper-V resolution, graceful ACPI shutdown/reboot. Document any Hyper-V-specific issues. After all tests, mark every item as `[x]`.
 
@@ -30,10 +36,12 @@
 - [ ] **Test 5:** Keyboard and mouse work inside Hyper-V
 - [ ] **Test 6:** Filesystem operations work (create, read, delete files)
 - [ ] **Test 7:** Window manager renders correctly at Hyper-V's resolution
-- [ ] **Test 8:** Graceful shutdown/reboot via ACPI
+- [ ] **Test 8:** Graceful shutdown/reboot via ACPI (see TODO-P0004-Power-Management.md §9)
 - [ ] Document any Hyper-V-specific issues and fixes
 
-## 15.3 Performance & Stability
+---
+
+## 3. Performance & Stability
 
 **Prompt:** Run the OS for 30+ minutes without crash. Stress-test memory allocator (alloc/free loops), stress-test process creation (fork-bomb protection), verify no memory leaks via serial log. Document results. After all items, mark every item as `[x]`, and commit as `"test: Hyper-V validation pass"`.
 
@@ -43,3 +51,23 @@
 - [ ] Stress-test process creation (fork-bomb protection)
 - [ ] Verify no memory leaks via serial log inspection
 - [ ] Commit: `"test: Hyper-V validation pass"`
+
+---
+
+## 4. VirtualBox Validation *(Stretch)*
+
+- [ ] Create VirtualBox VM (64-bit, EFI, 2+ GB RAM)
+- [ ] Attach ISO → boot → verify installer works
+- [ ] Test graphics, keyboard, mouse, filesystem
+- [ ] Document any VirtualBox-specific issues
+
+---
+
+## Priority Order
+
+| Priority | Section | Reason |
+|----------|---------|--------|
+| 🔴 P0 | 1. Hyper-V VM Setup | Test environment |
+| 🔴 P0 | 2. Installer Test Runs | End-to-end validation |
+| 🟠 P1 | 3. Performance & Stability | Soak test |
+| 🔵 P4 | 4. VirtualBox Validation | Cross-hypervisor |

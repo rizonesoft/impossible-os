@@ -10,7 +10,7 @@
 > [!IMPORTANT]
 > **Consolidated from:** TODO-P0101-General.md §8, TODO-P0202-GUI.md §7.3,
 > TODO-Phase-89.md §4.3 (power.spl), TODO-Phase-97.md §11.2,
-> TODO-P0103-Filesystem.md §8.1 (cache_flush), TODO-Phase-99.md §15.2 (Test 8).
+> TODO-P0103-Filesystem.md §8.1 (cache_flush), TODO-P2501-Installer-ISO.md §2 (Test 8).
 > The original sections in those files should be replaced with cross-references
 > pointing here.
 
@@ -166,12 +166,13 @@
 ## 9. Hyper-V Power Validation
 
 > **Depends on:** §2 (shutdown), §7 (sleep — if implemented)
-> **Originally:** TODO-Phase-99.md §15.2 (Test 8)
+> **Originally:** TODO-P2501-Installer-ISO.md §2 (Test 8)
 
 - [ ] **Test:** Graceful ACPI shutdown from shell (`shutdown` command)
 - [ ] **Test:** Graceful ACPI reboot from shell (`reboot` command)
 - [ ] **Test:** Start Menu → Power → Shut Down
 - [ ] **Test:** Start Menu → Power → Restart
+- [ ] **Test:** BSOD auto-restart — trigger panic (`BSOD_TEST`), verify system reboots automatically after timeout
 - [ ] *(If implemented)* **Test:** Sleep → wake → verify state preserved
 - [ ] Document any Hyper-V-specific ACPI issues
 
