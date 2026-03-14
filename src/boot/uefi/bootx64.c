@@ -5,7 +5,7 @@
  * Compiled as a PE/COFF binary, placed at \EFI\BOOT\BOOTX64.EFI
  *
  * Responsibilities:
- *   1. Set GOP video mode (1280×720×32bpp)
+ *   1. Enumerate GOP modes and select highest-resolution 32bpp mode
  *   2. Draw boot splash (logo + spinner)
  *   3. Load kernel ELF from \boot\kernel.exe
  *   4. Get UEFI memory map → convert to boot_info format
@@ -181,14 +181,42 @@ static void efi_print_hex(UINT64 val)
 
 /* ============================================================================
  * Step 1: Initialize GOP (Graphics Output Protocol)
+ *
+ * Enumerate all available modes, filter for 32bpp BGRA/RGBA formats, and select
+ * the highest resolution (largest pixel count = width × height).  This allows the
+ * OS to run at the native display resolution on real hardware (1080p, 1440p, 4K)
+ * without any hardcoded fallbacks.
+ *
+ * All resolution info is passed to the kernel via g_boot_info_ptr->fb so that
+ * fb_init() can set up the correct back-buffer size and stride.
  * ============================================================================ */
+
+/* Helper: efi_print a decimal number (for resolution logging) */
+static void efi_print_dec(UINT32 val)
+{
+    CHAR16 buf[12];
+    int i = 10;
+    buf[11] = 0;
+    if (val == 0) {
+        efi_print(u"0");
+        return;
+    }
+    while (val > 0 && i >= 0) {
+        buf[i--] = (CHAR16)('0' + (val % 10));
+        val /= 10;
+    }
+    efi_print(&buf[i + 1]);
+}
+
 static EFI_STATUS init_gop(void)
 {
     EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
     EFI_STATUS status;
-    UINT32 i, best_mode = 0;
-    BOOLEAN found = 0;
+    UINT32 i;
+    UINT32 best_mode      = 0;
+    UINT32 best_pixels    = 0;   /* width × height of best mode found so far */
+    BOOLEAN found_32bpp   = 0;
 
     status = gBS->LocateProtocol(&gop_guid, (VOID *)0, (VOID **)&gop);
     if (EFI_ERROR(status)) {
@@ -196,54 +224,71 @@ static EFI_STATUS init_gop(void)
         return status;
     }
 
-    /* Find 1280×720 mode (or closest match) */
+    /* Enumerate all modes — pick highest-resolution 32bpp mode.
+     * We accept both BGR and RGB pixel orders; the kernel renders BGRA so
+     * BGR is preferred but both produce correct colours on real hardware. */
     for (i = 0; i < gop->Mode->MaxMode; i++) {
         UINTN info_size;
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+        UINT32 pixels;
 
         status = gop->QueryMode(gop, i, &info_size, &info);
-        if (EFI_ERROR(status)) continue;
+        if (EFI_ERROR(status))
+            continue;
 
-        if (info->HorizontalResolution == 1280 &&
-            info->VerticalResolution == 720 &&
-            (info->PixelFormat == PixelBlueGreenRedReserved ||
-             info->PixelFormat == PixelRedGreenBlueReserved)) {
-            best_mode = i;
-            found = 1;
-            break;
+        /* Only accept 32bpp packed-pixel formats */
+        if (info->PixelFormat != PixelBlueGreenRedReserved &&
+            info->PixelFormat != PixelRedGreenBlueReserved)
+            continue;
+
+        pixels = info->HorizontalResolution * info->VerticalResolution;
+        if (pixels > best_pixels) {
+            best_pixels  = pixels;
+            best_mode    = i;
+            found_32bpp  = 1;
         }
     }
 
-    if (!found) {
-        /* Fall back to current mode */
+    if (!found_32bpp) {
+        /* No 32bpp mode found — keep whatever the firmware already set */
         best_mode = gop->Mode->Mode;
-        efi_print(u"[--] 1280x720 not found, using current mode\r\n");
+        efi_print(u"[WARN] No 32bpp GOP mode found, using current mode\r\n");
     }
 
-    /* Set the mode */
+    /* Set the selected mode */
     status = gop->SetMode(gop, best_mode);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] GOP SetMode failed\r\n");
         return status;
     }
 
-    /* Store framebuffer info */
+    /* Log chosen resolution to UEFI console (visible before kernel takes over) */
+    efi_print(u"[GOP] Mode ");
+    efi_print_dec(best_mode);
+    efi_print(u": ");
+    efi_print_dec(gop->Mode->Info->HorizontalResolution);
+    efi_print(u"x");
+    efi_print_dec(gop->Mode->Info->VerticalResolution);
+    efi_print(u" 32bpp selected\r\n");
+
+    /* Cache framebuffer globals (used by boot splash drawing) */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
     gFbHeight = gop->Mode->Info->VerticalResolution;
-    gFbPitch  = gop->Mode->Info->PixelsPerScanLine;
+    gFbPitch  = gop->Mode->Info->PixelsPerScanLine;   /* in pixels */
 
-    /* Fill boot_info framebuffer */
+    /* Fill boot_info framebuffer — kernel uses these exclusively */
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
-    g_boot_info_ptr->fb.pitch  = gop->Mode->Info->PixelsPerScanLine * 4;
+    g_boot_info_ptr->fb.pitch  = gop->Mode->Info->PixelsPerScanLine * 4; /* bytes */
     g_boot_info_ptr->fb.width  = gFbWidth;
     g_boot_info_ptr->fb.height = gFbHeight;
     g_boot_info_ptr->fb.bpp    = 32;
-    g_boot_info_ptr->fb.type   = 1;  /* RGB direct color */
+    g_boot_info_ptr->fb.type   = 1;   /* RGB direct colour */
     g_boot_info_ptr->fb_available = 1;
 
     return EFI_SUCCESS;
 }
+
 
 /* ============================================================================
  * Step 2: Fill screen black (kernel handles the real boot splash)
