@@ -1,5 +1,6 @@
 /* ============================================================================
  * bootx64.c — Custom UEFI Boot Application for Impossible OS
+ * Version: synced to rizonesoft/impossible-os-bootloader
  *
  * Entry point: efi_main(EFI_HANDLE, EFI_SYSTEM_TABLE*)
  * Compiled as a PE/COFF binary, placed at \EFI\BOOT\BOOTX64.EFI
