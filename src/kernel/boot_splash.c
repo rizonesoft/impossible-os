@@ -290,27 +290,27 @@ void boot_splash_init(void)
 
     text_y = dot_cy + TEXT_Y_OFFSET;
 
-    /* Try to init TTF font for smooth text (needs heap + SIMD ready) */
+    /* Suppress klog and lock compositor FIRST, before any slow init.
+     * This must happen before boot_font_init() which takes 10-50ms
+     * and would otherwise race with UEFI content still on screen. */
+    klog_set_screen_level(LOG_FATAL);
+    fb_lock_compositor();
+    splash_on = 1;
+
+    /* Push a clean black frame to the front buffer immediately.
+     * The front buffer still shows UEFI content at this point.
+     * In QEMU this can be uninitialized VRAM (static noise); in VirtualBox
+     * it is the firmware boot text.  This swap eliminates both. */
+    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+    fb_swap();
+
+    /* Try to init TTF font for smooth text (needs heap + SIMD ready).
+     * Screen is now black, so the font-loading delay is not visible. */
     ttf_ready = 0;
     if (boot_font_init(16) == 0)
         ttf_ready = 1;
 
     anim_frame = 0;
-
-    /* Suppress klog screen output — everything goes to serial only */
-    klog_set_screen_level(LOG_FATAL);
-
-    /* Lock compositor so printk doesn't draw to screen */
-    fb_lock_compositor();
-
-    splash_on = 1;
-
-    /* Push a clean black frame to the front buffer immediately.
-     * Until this fb_swap(), the front buffer still shows UEFI content
-     * (firmware splash, GOP console text, etc.) — this eliminates the
-     * flash / artifact visible before the fade-in begins. */
-    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
-    fb_swap();
 
     /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
      * PIT is initialized before boot_splash_init() so sleep_ms() works. */

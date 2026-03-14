@@ -1113,12 +1113,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
         /* Finish boot splash — hand off screen to desktop */
         boot_splash_finish();
-
-        /* Restore klog screen output NOW, after the WM has composited its
-         * first frame.  boot_splash_finish() deliberately leaves klog
-         * suppressed so that the window-creation log below doesn't bleed
-         * onto the screen between the fade-out black and the first WM render. */
-        klog_set_screen_level(LOG_INFO);
+        /* NOTE: klog screen output remains suppressed (LOG_FATAL) here.
+         * It is restored inside the compositor loop on first_frame after
+         * wm_composite() has rendered the full desktop. */
 
         /* ---- Boot-time heap stats ---- */
         {
@@ -1336,6 +1333,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     /* Restore cursor, full composite, draw cursor, flip */
                     cursor_restore();
                     wm_composite();
+
+                    /* On the very first frame, restore klog screen output.
+                     * The desktop is now fully rendered so any subsequent
+                     * klog/printk calls will print over the desktop normally. */
+                    if (first_frame)
+                        klog_set_screen_level(LOG_INFO);
 
                     /* Determine cursor shape from context */
                     cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
