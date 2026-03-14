@@ -8,6 +8,12 @@
 
 ---
 
+## Layer 0: Infrastructure
+
+| #   | TODO                                   | Status |
+|-----|----------------------------------------|--------|
+| 001 | [GitHub Setup](TODO-001-GitHub.md)     |        |
+
 ## Layer 1: Kernel Foundations
 
 | #   | TODO                                           | Status |
@@ -108,7 +114,6 @@
 | #   | TODO                                         | Status |
 |-----|----------------------------------------------|--------|
 | 510 | [Native Win32](TODO-510-Native-Win32.md)     |        |
-
 | 530 | [Compiler](TODO-530-Compiler.md)             |        |
 | 540 | [Linux Compat](TODO-540-Linux.md)            |        |
 | 550 | [Installer & ISO](TODO-550-Installer-ISO.md) |        |
