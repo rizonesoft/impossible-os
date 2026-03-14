@@ -597,8 +597,18 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return status;
     }
 
-    /* Step 3: Load kernel ELF */
-    /* (No screen text — kernel boot splash handles all visuals) */
+    /* Clear screen to black before loading the kernel.
+     * Without this, the framebuffer shows UEFI firmware residue (noise in
+     * QEMU, firmware logo/text in VirtualBox) for hundreds of milliseconds
+     * while the kernel runs hardware init before boot_splash_init(). */
+    {
+        UINT32 row, col;
+        for (row = 0; row < gFbHeight; row++)
+            for (col = 0; col < gFbWidth; col++)
+                gFramebuffer[row * gFbPitch + col] = 0x00000000;
+    }
+
+    /* Load kernel ELF */
     status = load_kernel(&kernel_entry);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] Kernel load failed\r\n");

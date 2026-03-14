@@ -377,13 +377,11 @@ void boot_splash_finish(void)
         sleep_ms(67);
     }
 
-    /* Unlock compositor for normal text/wm operations */
-    fb_unlock_compositor();
-
-    /* NOTE: klog screen output remains suppressed (LOG_FATAL) until main.c
-     * explicitly restores it after the WM draws its first frame.  Restoring
-     * it here would let desktop-init log messages bleed onto the screen
-     * between boot_splash_finish() and the first wm composite pass. */
+    /* NOTE: compositor remains LOCKED after this function returns.
+     * fb_unlock_compositor() is called from main.c's first-frame compositor
+     * path, after wm_composite() has painted the full desktop.  Unlocking
+     * here would let printk() write to the screen during window creation,
+     * producing the "[OK] Heap / Terminal / Gallery" bleed-through. */
 }
 
 int boot_splash_active(void)

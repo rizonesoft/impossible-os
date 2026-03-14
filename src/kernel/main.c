@@ -1334,11 +1334,14 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     cursor_restore();
                     wm_composite();
 
-                    /* On the very first frame, restore klog screen output.
-                     * The desktop is now fully rendered so any subsequent
-                     * klog/printk calls will print over the desktop normally. */
-                    if (first_frame)
+                    /* On the very first frame: unlock compositor and restore
+                     * klog screen output.  Both are held/suppressed from
+                     * boot_splash_init() through all window-creation code so
+                     * that printk() cannot write to the bare framebuffer. */
+                    if (first_frame) {
+                        fb_unlock_compositor();
                         klog_set_screen_level(LOG_INFO);
+                    }
 
                     /* Determine cursor shape from context */
                     cursor_shape_t ctx = desktop_get_cursor_context(mx, my);
