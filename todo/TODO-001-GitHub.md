@@ -25,18 +25,18 @@
 
 ---
 
-## 2. Bootloader History Extraction
+## 2. Bootloader History Extraction ✅
 
 ### 2.1 Extract src/boot/ History to Public Repo
 
-**Prompt:** Extract the `src/boot/` directory history from the private `impossible-os` repo into the public `impossible-os-bootloader` repo using `git filter-repo`. This preserves full commit history for the bootloader component while keeping the rest of the OS private. Install `git filter-repo` if not already installed (`pip3 install git-filter-repo`). Work in a temporary clone to avoid modifying the working repo. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit the result to the public repo as the initial history push. Update `README.md` in the bootloader repo with accurate source path information.
+**Prompt:** Verified (2026-03-14). `git filter-repo --path src/boot/` was run on a temp clone of the private repo, reducing 504 commits to 17 (only commits touching `src/boot/`). The filtered history (11 files, 17 commits) was force-pushed to `rizonesoft/impossible-os-bootloader`. The temp clone was deleted. Verify by checking `https://github.com/rizonesoft/impossible-os-bootloader` contains only `src/boot/` files with intact commit history.
 
-- [ ] Clone private repo to a temp location: `git clone impossible-os /tmp/boot-extract`
-- [ ] Run: `cd /tmp/boot-extract && git filter-repo --path src/boot/`
-- [ ] Add public repo as remote: `git remote add public https://github.com/rizonesoft/impossible-os-bootloader.git`
-- [ ] Force push filtered history: `git push public main --force`
-- [ ] Verify public repo contains only `src/boot/` files with correct history
-- [ ] Delete temp clone after verification: `rm -rf /tmp/boot-extract`
+- [x] Clone private repo to a temp location: `git clone impossible-os /tmp/boot-extract`
+- [x] Run: `cd /tmp/boot-extract && git filter-repo --path src/boot/` (504→17 commits)
+- [x] Add public repo as remote: `git remote add public https://github.com/rizonesoft/impossible-os-bootloader.git`
+- [x] Force push filtered history: `git push public main --force`
+- [x] Verify public repo contains only `src/boot/` files with correct history (11 files, 17 commits)
+- [x] Delete temp clone after verification: `rm -rf /tmp/boot-extract`
 
 ---
 
