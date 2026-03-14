@@ -673,25 +673,25 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 | Feature                           | Windows Boot Manager       | GRUB / systemd-boot        | Impossible OS                         |
 |-----------------------------------|----------------------------|----------------------------|---------------------------------------|
-| Custom UEFI boot application      | ✅ `bootmgfw.efi`          | ✅ `grubx64.efi`           | ✅ §1 Done                            |
-| Boot splash screen                | ✅ Windows 11 spinner      | ⚠️ Basic text / theme      | ✅ §2 Done — animated dots, TTF font  |
-| Secure Boot (signed)              | ✅ Microsoft CA            | ✅ Distro shim             | ✅ §3 Done — MOK + shim pending MSFT  |
-| EDID resolution auto-detect       | ✅                         | ✅ GRUB modes              | ⬜ §4.1 P0                            |
-| HiDPI / Retina scaling            | ✅                         | ⚠️ Limited                 | ⬜ §4.2 P2                            |
-| Fade-in transition                | ✅ Smooth                  | ❌                          | ✅ §5.1 Done                          |
-| Boot profiling / timestamps       | ✅ ETW traces              | ⚠️ Serial only             | ✅ §5.2 Done — serial phase markers   |
-| Error recovery screen (BSOD)      | ✅ BSOD + WinRE            | ❌                          | ✅ §5.3 Done                          |
-| Parallel init                     | ✅ Parallel service start  | ❌                          | ✅ §5.4 Done — async DHCP             |
-| Recovery boot menu (F8/Shift)     | ✅ WinRE                   | ✅ GRUB menu               | ⬜ §5.5 P1                            |
-| Measured Boot / TPM               | ✅ Full TPM 2.0            | ✅ GRUB TPM                | ⬜ §6.2 P2                            |
-| UEFI boot manager entry           | ✅ Automatic               | ✅ `grub-install`          | ⬜ §6.3 P2                            |
-| Boot config file                  | ✅ BCD store               | ✅ `grub.cfg`              | ⬜ §7.1 P1                            |
-| Multi-OS detection                | ✅ BCD auto-detect         | ✅ `os-prober`             | ⬜ §7.2 P2                            |
-| Firmware compatibility check      | ✅ (implicit)              | ❌                          | ⬜ §7.4 P1 — **Impossible OS only**   |
-| Crash dump auto-recovery          | ✅ WER + WinRE             | ❌                          | ⬜ §7.5 P1                            |
-| **A/B dual-slot boot**            | ❌                         | ❌ (only Atomic OSes)       | ⬜ **§7.3 Future — beats both**       |
-| **Anti-aliased TTF boot font**    | ✅                         | ⚠️ Bitmap fonts            | ✅ **Done — Selawik Semibold 16px**   |
-| **Boot profiling serial log**     | ❌ (ETW only, no serial)   | ❌                          | ✅ **Done — beats both**              |
+| Custom UEFI boot application      | ✅ `bootmgfw.efi`          | ✅ `grubx64.efi`          | ✅ §1 Done                            |
+| Boot splash screen                | ✅ Windows 11 spinner      | ⚠️ Basic text / theme     | ✅ §2 Done — animated dots, TTF font  |
+| Secure Boot (signed)              | ✅ Microsoft CA            | ✅ Distro shim            | ✅ §3 Done — MOK + shim pending MSFT  |
+| EDID resolution auto-detect       | ✅                         | ✅ GRUB modes             | ⬜ §4.1 P0                            |
+| HiDPI / Retina scaling            | ✅                         | ⚠️ Limited                | ⬜ §4.2 P2                            |
+| Fade-in transition                | ✅ Smooth                  | ❌                        | ✅ §5.1 Done                          |
+| Boot profiling / timestamps       | ✅ ETW traces              | ⚠️ Serial only            | ✅ §5.2 Done — serial phase markers   |
+| Error recovery screen (BSOD)      | ✅ BSOD + WinRE            | ❌                        | ✅ §5.3 Done                          |
+| Parallel init                     | ✅ Parallel service start  | ❌                        | ✅ §5.4 Done — async DHCP             |
+| Recovery boot menu (F8/Shift)     | ✅ WinRE                   | ✅ GRUB menu              | ⬜ §5.5 P1                            |
+| Measured Boot / TPM               | ✅ Full TPM 2.0            | ✅ GRUB TPM               | ⬜ §6.2 P2                            |
+| UEFI boot manager entry           | ✅ Automatic               | ✅ `grub-install`         | ⬜ §6.3 P2                            |
+| Boot config file                  | ✅ BCD store               | ✅ `grub.cfg`             | ⬜ §7.1 P1                            |
+| Multi-OS detection                | ✅ BCD auto-detect         | ✅ `os-prober`            | ⬜ §7.2 P2                            |
+| Firmware compatibility check      | ✅ (implicit)              | ❌                        | ⬜ §7.4 P1 — **Impossible OS only**   |
+| Crash dump auto-recovery          | ✅ WER + WinRE             | ❌                        | ⬜ §7.5 P1                            |
+| **A/B dual-slot boot**            | ❌                         | ❌ (only Atomic OSes)     | ⬜ **§7.3 Future — beats both**       |
+| **Anti-aliased TTF boot font**    | ✅                         | ⚠️ Bitmap fonts           | ✅ **Done — Selawik Semibold 16px**   |
+| **Boot profiling serial log**     | ❌ (ETW only, no serial)   | ❌                        | ✅ **Done — beats both**              |
 
 > **After P0+P1 items:** Impossible OS matches Windows Boot Manager feature-for-feature on single hardware.
 > **After A/B boot (§7.3):** Exceeds both Windows 11 and desktop Linux — a differentiator unique to Impossible OS.
