@@ -1,471 +1,108 @@
-# P1101 — Advanced Applications
+# P1101 — Advanced Applications (Hub)
 
 > **Goal:** Build the advanced, network-dependent applications that make Impossible OS
 > a capable internet-connected platform: web browser, email client, media player,
-> SSH/FTP clients, PDF viewer, remote desktop, network file sharing, and VPN —
-> transforming the OS from a standalone system into a connected workstation.
-> [!CAUTION]
-> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
+> SSH/FTP clients, PDF viewer, remote desktop, network file sharing, and VPN.
 
+> [!CAUTION]
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB. `kmalloc` is ONLY for small kernel structs (≤ 4 KB).
 
 ---
 
 ## 1. Web Browser
 
-### 1.1 Phase 1: Text-Only Browser (~500 lines)
-
-**Prompt:** Start with the simplest possible browser: fetch a page via `http_get()` (Phase 07), strip HTML tags with a simple state machine (inside tag / not inside tag), display plain text in a scrollable window. Extract `<a href>` links and display as a numbered list. Click a link or type a URL in the address bar to navigate. Maintain a back/forward history stack of URLs. This is ~500 lines and proves the HTTP stack works end-to-end. After all items, create `docs/user/browser.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: text-only web browser"`.
-
-
-- [ ] Create `src/apps/browser/browser.c`
-- [ ] HTTP GET: fetch page via `http_get(url, buffer, max)` (from Phase 07)
-- [ ] Strip HTML tags: simple state machine (in tag / not in tag)
-- [ ] Display plain text content in a scrollable window
-- [ ] Extract `<a href="...">` links: display as numbered list
-- [ ] Click link → navigate to URL
-- [ ] Address bar: type URL, press Enter
-- [ ] Back/Forward navigation history (stack of URLs)
-- [ ] Commit: `"apps: text-only web browser"`
-
-### 1.2 Phase 2: Basic HTML Renderer (~5,000 lines)
-
-**Prompt:** Build an HTML parser (tokenizer → DOM tree with tag, attributes, children, text nodes). Support essential tags: h1-h6 (headings with larger font sizes via Phase 02 font system), p (paragraphs), br, b/strong/i/em (bold/italic), a href (clickable links), ul/ol/li (lists), img src (fetch via HTTP + decode via Phase 02 image loader), table/tr/td (basic grid), hr, pre/code (monospace). Layout engine: block flow (top-to-bottom) and inline flow (left-to-right with word wrapping at window width). Vertical scrolling for long pages. After all items, update `docs/user/browser.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: HTML renderer"`.
-
-
-- [ ] HTML parser: tokenizer → DOM tree (tag, attributes, children, text nodes)
-- [ ] Support tags:
-  - [ ] `<h1>`–`<h6>` — headings (larger font sizes)
-  - [ ] `<p>` — paragraphs (vertical spacing)
-  - [ ] `<br>` — line break
-  - [ ] `<b>`, `<strong>` — bold
-  - [ ] `<i>`, `<em>` — italic
-  - [ ] `<a href>` — links (underlined, accent color, clickable)
-  - [ ] `<ul>`, `<ol>`, `<li>` — lists (bullet/numbered)
-  - [ ] `<img src>` — images via `image_load()` + HTTP fetch
-  - [ ] `<table>`, `<tr>`, `<td>` — basic table layout
-  - [ ] `<hr>` — horizontal rule
-  - [ ] `<pre>`, `<code>` — preformatted text (monospace font)
-- [ ] Layout engine: block flow (top-to-bottom), inline flow (left-to-right)
-- [ ] Text wrapping at window width
-- [ ] Vertical scrolling for long pages
-- [ ] Commit: `"apps: HTML renderer (block/inline layout)"`
-
-### 1.3 Phase 3: CSS Support (~15,000 lines)
-
-**Prompt:** Stretch: CSS parser for selectors + properties. Box model (margin, padding, border, width, height). Properties: color, background-color, font-size, font-family, text-align. Selectors: element, class, ID. Cascading: inline > style block > default. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: CSS support"`.
-
-
-- [ ] *(Stretch)* CSS parser: selectors + properties
-- [ ] *(Stretch)* Box model: margin, padding, border, width, height
-- [ ] *(Stretch)* Properties: color, background-color, font-size, font-family, text-align
-- [ ] *(Stretch)* Selector types: element, class (`.foo`), ID (`#bar`)
-- [ ] *(Stretch)* Cascading: inline style > `<style>` block > default
-- [ ] Commit: `"apps: CSS support"`
-
-### 1.4 Phase 4: JavaScript (Long-Term)
-
-**Prompt:** Stretch: port QuickJS (MIT, ~35K lines, ES2020) or Duktape (MIT, ~60K lines, ES5.1). Add DOM bindings: document.getElementById, element.innerHTML. Event handling: onclick, addEventListener. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: JavaScript engine"`.
-
-
-- [ ] *(Stretch)* Port **QuickJS** (MIT, ~35K lines, ES2020) or **Duktape** (MIT, ~60K lines, ES5.1)
-- [ ] *(Stretch)* DOM bindings: `document.getElementById()`, `element.innerHTML`
-- [ ] *(Stretch)* Event handling: `onclick`, `addEventListener`
-- [ ] Commit: `"apps: JavaScript engine"`
-
-### 1.5 Alternative: Port NetSurf / Dillo
-
-**Prompt:** Stretch: evaluate NetSurf (GPL, ~200K lines, ported to many hobby OSes) or Dillo (GPL, ~30K lines, minimalist). Port requires TCP, DNS, TLS, framebuffer, font rendering — all available from earlier phases. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: ported browser engine"`.
-
-
-- [ ] *(Stretch)* Evaluate **NetSurf** (GPL, ~200K lines) — full browser, ported to many hobby OSes
-- [ ] *(Stretch)* Evaluate **Dillo** (GPL, ~30K lines) — minimalist browser
-- [ ] *(Stretch)* Port selected engine to Impossible OS (requires: TCP, DNS, TLS, framebuffer, font rendering)
+> **See [TODO-P1102-Browser.md](TODO-P1102-Browser.md)** — Text-only → HTML renderer → CSS → JavaScript.
 
 ---
 
 ## 2. Email Client
 
-### 2.1 Email Protocols
-
-**Prompt:** SMTP client (send, port 587+STARTTLS): EHLO → AUTH LOGIN → MAIL FROM → RCPT TO → DATA → body → QUIT. POP3 client (receive, port 995+TLS): USER → PASS → STAT → LIST → RETR → DELE → QUIT. Both require TLS from Phase 07 §5. Stretch: IMAP client (port 993+TLS) for server-side message sync. After all items, create `docs/user/email.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: email protocol clients (SMTP/POP3)"`.
-
-
-- [ ] Create `src/apps/mail/smtp.c` — SMTP client (send email)
-  - [ ] Connect to SMTP server (port 587 with STARTTLS)
-  - [ ] EHLO → AUTH LOGIN → MAIL FROM → RCPT TO → DATA → message body → QUIT
-  - [ ] TLS encryption (via BearSSL/Mbed TLS from Phase 07)
-- [ ] Create `src/apps/mail/pop3.c` — POP3 client (receive email)
-  - [ ] Connect to POP3 server (port 995 with TLS)
-  - [ ] USER → PASS → STAT → LIST → RETR → DELE → QUIT
-  - [ ] Download messages to local mailbox
-- [ ] *(Stretch)* Create `src/apps/mail/imap.c` — IMAP client (sync email)
-  - [ ] Connect to IMAP server (port 993 with TLS)
-  - [ ] LOGIN → SELECT INBOX → FETCH → SEARCH → STORE → LOGOUT
-  - [ ] Keep messages on server, sync state
-- [ ] Commit: `"apps: email protocol clients (SMTP/POP3)"`
-
-### 2.2 Email App UI
-
-**Prompt:** Three-panel layout: sidebar (Inbox/Sent/Drafts/Trash folders), message list (from, subject, date, read/unread), and message viewer. Compose window: To, Subject, Body fields with Send button. Reply/Forward buttons prepopulate fields. Delete moves to Trash. Account setup stores credentials in Phase 09 credential store. Auto-check every 5 minutes, notification toast on new mail. After all items, update `docs/user/email.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: email client UI"`.
-
-
-- [ ] Create `src/apps/mail/mail.c`
-- [ ] Layout: sidebar (Inbox/Sent/Drafts/Trash) + message list + message view
-- [ ] Inbox: list of messages (from, subject, date, read/unread indicator)
-- [ ] Click message → display full content in right pane
-- [ ] [✏ New] button → compose window (To, Subject, Body, [Send])
-- [ ] [Reply] / [Forward] buttons
-- [ ] Delete → move to Trash
-- [ ] Account setup: server, port, username, password (stored in credential store)
-- [ ] Auto-check for new mail every 5 minutes
-- [ ] Notification toast on new email
-- [ ] Commit: `"apps: email client UI"`
+> **See [TODO-P1103-Email.md](TODO-P1103-Email.md)** — SMTP/POP3/IMAP protocols and three-panel UI.
 
 ---
 
 ## 3. Media Player
 
-### 3.1 Media Player App
-
-**Prompt:** Audio playback via `audio_play()` (Phase 08). Load files via `audio_load()` (unified loader: WAV, MP3, OGG, FLAC). Transport: Play/Pause, Stop, Previous/Next. Seek bar for position. Volume slider with mute. Display song title/artist/album from filename or ID3 tags. Current time / total time. After all items, create `docs/user/media-player.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: media player core"`.
-
-
-- [ ] Create `src/apps/mediaplayer/mediaplayer.c`
-- [ ] Audio playback via `audio_play()` (from Phase 08 audio system)
-- [ ] Load files via `audio_load()` (unified loader: WAV, MP3, OGG, FLAC)
-- [ ] Transport controls:
-  - [ ] ▶ Play / ⏸ Pause toggle
-  - [ ] ⏹ Stop
-  - [ ] ⏮ Previous track / ⏭ Next track
-- [ ] Seek bar: click to jump to position in track
-- [ ] Volume slider with mute toggle
-- [ ] Display: song title, artist, album (from filename or ID3 tag)
-- [ ] Current time / total time display
-- [ ] Commit: `"apps: media player core"`
-
-### 3.2 Playlist
-
-**Prompt:** Playlist panel with track titles and durations. Add files via drag-drop or menu. Remove tracks, double-click to play from position. Repeat modes: off/all/one. Shuffle toggle. Auto-advance to next track on completion. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: media player playlist"`.
-
-
-- [ ] Playlist panel: list of tracks with title + duration
-- [ ] Add files: drag + drop or File → Add to playlist
-- [ ] Remove tracks from playlist
-- [ ] Double-click track → play from that position
-- [ ] Repeat modes: off / repeat all / repeat one
-- [ ] Shuffle toggle
-- [ ] Auto-advance to next track on completion
-- [ ] Commit: `"apps: media player playlist"`
-
-### 3.3 File Associations
-
-**Prompt:** Register .mp3/.wav/.ogg/.flac → Media Player in the file association system (Phase 03 §5). Double-click audio file opens and plays in Media Player. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: media player file associations"`.
-
-
-- [ ] Register: `.mp3`, `.wav`, `.ogg`, `.flac` → Media Player
-- [ ] Double-click audio file → opens and plays in Media Player
-- [ ] Commit: `"apps: media player file associations"`
-
-### 3.4 ID3 Tag Parser (Future)
-
-**Prompt:** Stretch: parse MP3 ID3v1 tags (last 128 bytes: title, artist, album) and ID3v2 tags (header TIT2/TPE1/TALB/APIC frames). Display album art from embedded APIC or folder cover.jpg. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: ID3 tag parser"`.
-
-
-- [ ] *(Stretch)* Parse MP3 ID3v1 tags (last 128 bytes: title, artist, album)
-- [ ] *(Stretch)* Parse MP3 ID3v2 tags (header at start: TIT2, TPE1, TALB, APIC)
-- [ ] *(Stretch)* Display album art from embedded APIC frame or folder `cover.jpg`
-- [ ] Commit: `"apps: ID3 tag parser"`
+> **See [TODO-P0006-Audio.md](TODO-P0006-Audio.md) §6** — Media Player app, playlist, file associations, ID3 tags.
 
 ---
 
 ## 4. SSH Client
 
-### 4.1 SSH Protocol Implementation
-
-**Prompt:** Choose: port dropbear (MIT, ~15K lines) or build custom minimal SSH2 client (~2K lines). SSH2 transport: TCP connect port 22, version exchange `SSH-2.0-ImpossibleOS`, key exchange (Curve25519 via monocypher), symmetric encryption (ChaCha20), MAC (HMAC-SHA256). Auth: password auth via SSH_MSG_USERAUTH_REQUEST. Channel: open interactive session, PTY request, forward stdin/stdout. After all items, create `docs/user/ssh.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: SSH client"`.
-
-
-- [ ] Create `src/apps/ssh/ssh.c`
-- [ ] Choose approach:
-  - [ ] Port **dropbear** (MIT, ~15K lines, lightweight) — or —
-  - [ ] Custom minimal SSH2 client (~2K lines, transport + auth only)
-- [ ] SSH2 transport layer:
-  - [ ] TCP connect to server (port 22)
-  - [ ] Version exchange: `SSH-2.0-ImpossibleOS`
-  - [ ] Key exchange (Diffie-Hellman or Curve25519 via monocypher)
-  - [ ] Symmetric encryption (ChaCha20 or AES-CTR)
-  - [ ] MAC (HMAC-SHA256)
-- [ ] Authentication:
-  - [ ] Password auth: `SSH_MSG_USERAUTH_REQUEST` with password
-  - [ ] *(Stretch)* Public key auth: Ed25519 key pair
-- [ ] Channel:
-  - [ ] Open interactive session channel
-  - [ ] PTY request
-  - [ ] Forward stdin/stdout between terminal and remote shell
-- [ ] Commit: `"apps: SSH client"`
-
-### 4.2 SSH Shell Integration
-
-**Prompt:** Shell command: `ssh user@host` connects and starts interactive session inside Terminal app. `ssh user@host -p 2222` for custom port. Terminal handles rendering, SSH handles network transport. Stretch: `scp user@host:file local_file` for file transfer. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"shell: ssh command"`.
-
-
-- [ ] Shell command: `ssh user@host` → connect and start interactive session
-- [ ] Shell command: `ssh user@host -p 2222` → custom port
-- [ ] Runs inside Terminal app (Terminal handles rendering, SSH handles network)
-- [ ] *(Stretch)* `scp user@host:file local_file` — file transfer
-- [ ] Commit: `"shell: ssh command"`
+> **See [TODO-P1104-SSH.md](TODO-P1104-SSH.md)** — SSH2 protocol, shell integration.
 
 ---
 
 ## 5. FTP Client
 
-### 5.1 FTP Protocol
-
-**Prompt:** FTP control connection on TCP port 21. `ftp_connect(host, user, pass)` authenticates with USER/PASS commands. `ftp_list()` sends LIST via data connection. `ftp_download()` uses RETR, `ftp_upload()` uses STOR. Data connection: use PASV (passive mode) to get data port from server. Additional: CWD, PWD, MKD, RMD, SIZE, DELE. After all items, create `docs/user/ftp.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: FTP client protocol"`.
-
-
-- [ ] Create `src/apps/ftp/ftp.c`
-- [ ] Implement FTP control connection (TCP port 21):
-  - [ ] `ftp_connect(host, user, pass)` — connect + authenticate (USER, PASS)
-  - [ ] `ftp_list(session, listing, max)` — LIST command (directory listing)
-  - [ ] `ftp_download(session, remote, local)` — RETR command (download file)
-  - [ ] `ftp_upload(session, local, remote)` — STOR command (upload file)
-  - [ ] `ftp_disconnect(session)` — QUIT
-- [ ] Data connection: passive mode (PASV) — server sends data connection details
-- [ ] Additional commands: CWD (cd), PWD, MKD (mkdir), RMD (rmdir), SIZE, DELE
-- [ ] Commit: `"apps: FTP client protocol"`
-
-### 5.2 FTP Shell Commands
-
-**Prompt:** Interactive `ftp ftp.example.com` with subcommands: ls, cd, get, put, pwd, bye. Also support `wget ftp://host/path` for anonymous single-file download. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"shell: ftp command"`.
-
-
-- [ ] Shell command: `ftp ftp.example.com` → interactive FTP session
-  - [ ] Subcommands: `ls`, `cd`, `get <file>`, `put <file>`, `pwd`, `bye`
-- [ ] Shell command: `wget ftp://host/path` → anonymous download
-- [ ] Commit: `"shell: ftp command"`
-
-### 5.3 FTP GUI (Future)
-
-**Prompt:** Stretch: standalone FTP app with dual-pane view (local ↔ remote). Also support ftp:// URLs in File Manager address bar. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: FTP GUI client"`.
-
-
-- [ ] *(Stretch)* Standalone FTP app with dual-pane view (local ↔ remote)
-- [ ] *(Stretch)* `ftp://` URL support in File Manager address bar
+> **See [TODO-P1105-FTP.md](TODO-P1105-FTP.md)** — FTP protocol, shell commands, GUI.
 
 ---
 
 ## 6. PDF Viewer
 
-### 6.1 Minimal PDF Parser
-
-**Prompt:** Parse PDF structure: header `%PDF-1.x`, cross-reference table (xref) at end via `startxref` keyword, trailer with Root catalog. Parse page tree: catalog → Pages → individual pages. Decompress streams using deflate via miniz (Phase 03). After all items, create `docs/user/pdf-viewer.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: PDF parser core"`.
-
-
-- [ ] Create `src/apps/pdfview/pdfview.c`
-- [ ] Parse PDF file structure:
-  - [ ] Header: `%PDF-1.x`
-  - [ ] Cross-reference table (xref) at end of file
-  - [ ] Trailer: root catalog reference
-- [ ] Parse page tree: catalog → pages → individual page objects
-- [ ] Decompress streams: deflate/zlib via `miniz` (from Phase 03)
-- [ ] Commit: `"apps: PDF parser core"`
-
-### 6.2 PDF Rendering
-
-**Prompt:** Extract text operators from page content stream: Tf (set font), Td (move text position), Tj/TJ (show text). Map PDF fonts to system fonts as fallback. Render to `gfx_surface_t` (one surface per page). Render embedded images via `image_load()`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: PDF rendering"`.
-
-
-- [ ] Render text content: extract text operators (Tf, Td, Tj, TJ)
-- [ ] Map fonts (use system fonts as fallback)
-- [ ] Render to `gfx_surface_t` (one surface per page)
-- [ ] Render embedded images (via `image_load()`)
-- [ ] Commit: `"apps: PDF text and image rendering"`
-
-### 6.3 PDF Viewer UI
-
-**Prompt:** Display rendered page centered in window. Page navigation: Prev/Next buttons, page number input. Zoom: fit-to-width, fit-to-page, percentage, mouse wheel. Vertical scroll. Stretch: text search with highlight, continuous scroll. File association: .pdf → PDF Viewer. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: PDF viewer UI"`.
-
-
-- [ ] Display rendered page centered in window
-- [ ] Page navigation: Previous/Next buttons, page number input
-- [ ] Zoom: fit-to-width, fit-to-page, percentage selection, mouse wheel
-- [ ] Scrolling: vertical scroll through page
-- [ ] *(Stretch)* Text search: find text on current page, highlight matches
-- [ ] *(Stretch)* Multi-page continuous scroll view
-- [ ] File association: `.pdf` → PDF Viewer
-- [ ] Commit: `"apps: PDF viewer UI"`
+> **See [TODO-P1106-PDF-Viewer.md](TODO-P1106-PDF-Viewer.md)** — PDF parser, renderer, viewer UI.
 
 ---
 
 ## 7. Remote Desktop
 
-### 7.1 Remote Desktop Protocol (Custom or VNC)
+> *(Stretch)* VNC/custom protocol, server, client. Kept in this file.
 
-**Prompt:** Stretch: choose VNC (RFB protocol, simpler) or custom. Frame encoding: compress framebuffer diffs (changed rectangles only) with JPEG (lossy) or zlib (lossless). Forward keyboard keycodes and mouse events. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: remote desktop protocol"`.
-
-
-- [ ] *(Stretch)* Create `src/apps/rdp/rdp_protocol.c`
-- [ ] *(Stretch)* Choose: VNC (RFB protocol, simpler) or custom protocol
-- [ ] *(Stretch)* Frame encoding: compress framebuffer diffs (changed rectangles only)
-- [ ] *(Stretch)* Compression: JPEG for lossy speed or zlib for lossless quality
-- [ ] *(Stretch)* Input forwarding: keyboard keycodes + mouse position/clicks
-
-### 7.2 Remote Desktop Server
-
-**Prompt:** Stretch: capture compositor backbuffer periodically, detect changed tiles by comparing with previous frame, compress and send changed tiles. Receive keyboard/mouse from client and inject into WM. Listen on TCP port 3389. Password auth. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: remote desktop server"`.
-
-
-- [ ] *(Stretch)* Create `src/apps/rdp/rdp_server.c`
-- [ ] *(Stretch)* Capture compositor backbuffer periodically
-- [ ] *(Stretch)* Detect changed tiles (compare with previous frame)
-- [ ] *(Stretch)* Compress and send changed tiles to connected client
-- [ ] *(Stretch)* Receive keyboard/mouse events from client → inject into WM
-- [ ] *(Stretch)* Listen on TCP port 3389 (or custom)
-- [ ] *(Stretch)* Password authentication
-
-### 7.3 Remote Desktop Client
-
-**Prompt:** Stretch: connect to remote server, authenticate, receive framebuffer tiles, decompress, render in window. Forward local input to server. Window title shows remote IP. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: remote desktop client"`.
-
-
-- [ ] *(Stretch)* Create `src/apps/rdp/rdp_client.c`
-- [ ] *(Stretch)* Connect to remote server → authenticate
-- [ ] *(Stretch)* Receive framebuffer tiles → decompress → render in window
-- [ ] *(Stretch)* Forward local keyboard/mouse input to server
-- [ ] *(Stretch)* Window title: "Remote Desktop — 192.168.1.100"
+- [ ] *(Stretch)* Remote desktop protocol (VNC or custom)
+- [ ] *(Stretch)* Server: capture compositor, compress, send
+- [ ] *(Stretch)* Client: connect, recv frame, forward input
 - [ ] Commit: `"apps: remote desktop (VNC client + server)"`
 
 ---
 
 ## 8. Network Shares (SMB/NFS)
 
-### 8.1 Network File Sharing Protocol
+> *(Stretch)* LAN file sharing with drive letter mounting.
 
-**Prompt:** Stretch: choose NFS (~1K lines for basic client), SMB2 (~5K+ lines, Windows compat), or custom HTTP-based file server (simplest). Implement connect, list dir, read file, write file. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"net: network file sharing client"`.
-
-
-- [ ] *(Stretch)* Choose protocol:
-  - [ ] **NFS** (simpler, ~1000 lines for basic client) — or —
-  - [ ] **SMB2** (Windows compatible, ~5000+ lines) — or —
-  - [ ] **Custom** (simplest: HTTP-based file server)
-- [ ] Implement chosen protocol client:
-  - [ ] `net_share_connect(server, share, user, pass)` — connect to remote share
-  - [ ] `net_share_list(session, path, listing, max)` — list remote directory
-  - [ ] `net_share_read(session, path, buf, max)` — read remote file
-  - [ ] `net_share_write(session, path, buf, len)` — write remote file
-- [ ] Commit: `"net: network file sharing client"`
-
-### 8.2 Mount Remote Shares
-
-**Prompt:** Stretch: mount remote share as drive letter (Z:\). VFS layer provides transparent access. File Manager browses `\\server\share`. Shell: `net use Z: \\server\share`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"fs: mount network shares"`.
-
-
-- [ ] *(Stretch)* Mount remote share as drive letter (e.g., `Z:\`)
-- [ ] *(Stretch)* VFS layer: transparent access to remote files
-- [ ] *(Stretch)* File Manager: browse `\\server\share` paths
-- [ ] *(Stretch)* Shell: `net use Z: \\server\share` — map network drive
+- [ ] *(Stretch)* Choose: NFS / SMB2 / custom HTTP
+- [ ] *(Stretch)* Mount remote share as drive letter (Z:\)
+- [ ] *(Stretch)* File Manager: browse `\\server\share`
+- [ ] *(Stretch)* Shell: `net use Z: \\server\share`
 - [ ] Commit: `"fs: mount network shares as drive letters"`
 
 ---
 
 ## 9. VPN Client
 
-### 9.1 WireGuard VPN
+> *(Stretch)* WireGuard over UDP with Curve25519 + ChaCha20.
 
-**Prompt:** Stretch: WireGuard protocol using monocypher (Curve25519 handshake, ChaCha20-Poly1305 data encryption) over UDP. Create TUN virtual interface, route traffic through tunnel. Config: server address, keys, allowed IPs. Settings applet: connect/disconnect. System tray: VPN lock icon when connected. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"net: WireGuard VPN client"`.
-
-
-- [ ] *(Stretch)* Create `src/kernel/net/wireguard.c`
-- [ ] *(Stretch)* WireGuard protocol:
-  - [ ] Noise IK handshake (Curve25519 key exchange via monocypher)
-  - [ ] ChaCha20-Poly1305 data encryption
-  - [ ] UDP transport (we already have UDP)
-- [ ] *(Stretch)* Create TUN virtual network interface
-- [ ] *(Stretch)* Route traffic through VPN tunnel
-- [ ] *(Stretch)* Configuration: server address, public/private keys, allowed IPs
-- [ ] *(Stretch)* Settings: `vpn.spl` — connect/disconnect toggle, server config
-- [ ] *(Stretch)* System tray: VPN icon when connected (🔒)
+- [ ] *(Stretch)* WireGuard protocol via monocypher
+- [ ] *(Stretch)* TUN virtual interface, route traffic
+- [ ] *(Stretch)* Settings applet + system tray icon
 - [ ] Commit: `"net: WireGuard VPN client"`
 
 ---
 
 ## 10. Agent-Recommended Additions
 
-> Items not in the research files but important for a complete app ecosystem.
-
-### 10.1 Download Manager
-
-**Prompt:** Centralized download tracking for browser, wget, FTP. Show filename, progress bar, speed, ETA. Pause/Resume/Cancel. Save to `C:\Users\{name}\Downloads\`. Notification toast on completion. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: download manager"`.
-
-
-- [ ] Centralized download tracking for browser, wget, FTP
-- [ ] Show: filename, progress bar, speed, ETA
-- [ ] Pause / Resume / Cancel downloads
-- [ ] Save to `C:\Users\{name}\Downloads\`
-- [ ] Notification toast when download completes
-- [ ] Commit: `"apps: download manager"`
-
-### 10.2 Torrent Client (Future)
-
-**Prompt:** Stretch: BitTorrent protocol — tracker announce, peer exchange, piece download. Bencode parser for .torrent files. Requires TCP+UDP advanced networking. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: torrent client"`.
-
-
-- [ ] *(Stretch)* BitTorrent protocol: tracker announce, peer exchange, piece download
-- [ ] *(Stretch)* Bencode parser (torrent file format)
-- [ ] *(Stretch)* Depends on: TCP, UDP, advanced networking
-
-### 10.3 Text-to-Speech (Future)
-
-**Prompt:** Stretch: simple speech synthesis for accessibility. Read UI elements aloud. Used by screen reader and browser read-aloud feature. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: text-to-speech"`.
-
-
-- [ ] *(Stretch)* Simple festival/espeak-like speech synthesis
-- [ ] *(Stretch)* Accessibility feature: read UI elements aloud
-- [ ] *(Stretch)* Used by: screen reader, browser read-aloud
-
-### 10.4 Chat / Messaging App
-
-**Prompt:** Stretch: IRC client (IRC protocol is text-based over TCP). Connect to server, join channels, send/receive messages. UI: channel list sidebar, message area, input field. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: IRC chat client"`.
-
-
-- [ ] *(Stretch)* Simple IRC client (IRC protocol is text-based over TCP)
-  - [ ] Connect to IRC server
-  - [ ] Join channels, send/receive messages
-  - [ ] UI: channel list + message area + input
-- [ ] Commit: `"apps: IRC chat client"`
-
-### 10.5 Browser Bookmarks & History
-
-**Prompt:** Bookmarks: save URL + title, show in sidebar. History: store visited URLs with timestamps. Address bar auto-complete from bookmarks + history. Store in Registry: `HKU\{name}\Software\Impossible\Browser\Bookmarks` and `History`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: browser bookmarks and history"`.
-
-
-- [ ] Bookmarks: save URL + title, display in sidebar
-- [ ] History: store visited URLs with timestamps
-- [ ] Address bar auto-complete from bookmarks + history
-- [ ] Both stored in Registry: `HKU\{name}\Software\Impossible\Browser\Bookmarks`, `HKU\{name}\Software\Impossible\Browser\History`
-- [ ] Commit: `"apps: browser bookmarks and history"`
+- [ ] Download Manager (centralized download tracking)
+- [ ] *(Stretch)* BitTorrent client
+- [ ] *(Stretch)* IRC chat client
+- [ ] Browser bookmarks & history (address bar auto-complete)
+- [ ] *(Stretch)* Text-to-speech (accessibility)
 
 ---
 
 ## Priority Order
 
-| Priority | Section | Reason |
-|----------|---------|--------|
-| 🔴 P0 | 3. Media Player | Audio playback — extends Phase 08 audio work |
-| 🔴 P0 | 1.1 Text-Only Browser | First internet app (~500 lines) |
-| 🟠 P1 | 1.2 HTML Renderer | Visual web browsing |
-| 🟠 P1 | 5.1 FTP Protocol | File transfer (simple protocol) |
-| 🟠 P1 | 4.1 SSH Client | Remote server access |
-| 🟡 P2 | 6. PDF Viewer | Document viewing |
-| 🟡 P2 | 2. Email Client | Communication |
-| 🟡 P2 | 10.1 Download Manager | Browser/wget integration |
-| 🟡 P2 | 10.5 Browser Bookmarks | Browser usability |
-| 🟢 P3 | 1.3 CSS Support | Modern web rendering |
-| 🟢 P3 | 3.4 ID3 Tags | Rich media metadata |
-| 🟢 P3 | 8. Network Shares | LAN file access |
-| 🔵 P4 | 7. Remote Desktop | Remote control |
-| 🔵 P4 | 9. VPN Client | Encrypted tunneling |
-| 🔵 P4 | 1.4 JavaScript | Full web experience |
-| 🔵 P4 | 10.2 Torrent Client | P2P downloads |
-| 🔵 P4 | 10.4 IRC Chat | Messaging |
+| Priority | Section | File |
+|----------|---------|------|
+| 🔴 P0 | Media Player | `P0006-Audio.md §6` |
+| 🔴 P0 | Text-Only Browser | `P1102-Browser.md` |
+| 🟠 P1 | HTML Renderer | `P1102-Browser.md` |
+| 🟠 P1 | FTP Client | `P1105-FTP.md` |
+| 🟠 P1 | SSH Client | `P1104-SSH.md` |
+| 🟡 P2 | PDF Viewer | `P1106-PDF-Viewer.md` |
+| 🟡 P2 | Email Client | `P1103-Email.md` |
+| 🟡 P2 | Download Manager | This file §10 |
+| 🟢 P3 | CSS Support | `P1102-Browser.md` |
+| 🟢 P3 | Network Shares | This file §8 |
+| 🔵 P4 | Remote Desktop | This file §7 |
+| 🔵 P4 | VPN Client | This file §9 |
+| 🔵 P4 | JavaScript | `P1102-Browser.md` |
