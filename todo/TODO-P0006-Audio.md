@@ -130,6 +130,44 @@
 
 ---
 
+## 6. Media Player App
+
+> *Moved from [TODO-P0801-USB.md](TODO-P0801-USB.md) §4.2 and [TODO-P1101-Advanced-Apps.md](TODO-P1101-Advanced-Apps.md) §3*
+
+- [ ] Create `src/apps/mediaplayer/mediaplayer.c`
+- [ ] Audio playback via `audio_play()`, load via `audio_load()` (WAV, MP3, OGG, FLAC)
+- [ ] Transport: Play/Pause, Stop, Previous/Next track
+- [ ] Seek bar, volume slider with mute toggle
+- [ ] Display song title/artist from filename or ID3 tags
+- [ ] Playlist panel: add files, double-click to play, repeat/shuffle
+- [ ] File association: `.mp3`, `.wav`, `.ogg`, `.flac` → Media Player
+- [ ] Commit: `"apps: Media Player"`
+
+---
+
+## 7. Volume Popup (System Tray)
+
+- [ ] Click 🔊 tray icon → volume slider popup
+- [ ] Drag slider → `audio_set_volume()` in real-time
+- [ ] Mute toggle button
+- [ ] Volume UP / DOWN keyboard keys → adjust volume
+- [ ] Show volume OSD briefly when keys pressed
+- [ ] Commit: `"desktop: volume control popup"`
+
+---
+
+## 8. Sound Settings Applet
+
+- [ ] `sound.spl` in Settings Panel:
+  - [ ] Master volume slider
+  - [ ] Mute toggle
+  - [ ] Output device selector (if multiple audio devices)
+  - [ ] System sounds enable/disable
+  - [ ] Test sound button
+- [ ] Commit: `"apps: sound settings applet"`
+
+---
+
 ## Priority Order
 
 | Priority | Section | Reason |

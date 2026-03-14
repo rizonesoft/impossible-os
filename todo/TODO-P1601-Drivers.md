@@ -379,9 +379,81 @@
 
 ---
 
-## 7. Licensing & Attribution
+## 7. USB Drivers (Modules)
 
-### 7.1 License Tracking
+> *Moved from [TODO-P0801-USB.md](TODO-P0801-USB.md) §3–4*
+
+### 7.1 USB Core
+
+**Prompt:** USB Core defines the data structures and enumeration logic shared by all USB host controllers. Define `struct usb_device` (address, speed, descriptors, endpoints, class driver), plus standard USB descriptor structs. Implement the USB enumeration sequence: reset device on port → assign address → read device descriptor → read configuration descriptor → set configuration. After enumeration, match the device's class/subclass/protocol to a registered class driver. After completing all items, create `docs/architecture/usb.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: USB core and enumeration"`.
+
+- [ ] Create `src/kernel/drivers/usb/usb_core.c` and `include/usb.h`
+- [ ] Define `struct usb_device`, `struct usb_device_descriptor`, config/interface/endpoint descriptors
+- [ ] Implement USB control transfer (SETUP + DATA + STATUS)
+- [ ] Implement USB device enumeration (reset → SET_ADDRESS → GET_DESCRIPTOR → SET_CONFIGURATION)
+- [ ] Match device class/subclass → load appropriate class driver
+- [ ] Commit: `"drivers: USB core and enumeration"`
+
+### 7.2 xHCI Host Controller Driver
+
+**Prompt:** xHCI (USB 3.0) is the modern USB host controller. Detect via PCI class 0x0C, subclass 0x03, prog_if 0x30. Map BAR0 for MMIO registers. Initialize: halt, reset, allocate DCBAA, command ring, event ring, set Max Slots, start. Handle port status change events. Test with QEMU `-device qemu-xhci -device usb-kbd`. After completing all items, update `docs/architecture/usb.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: xHCI USB 3.0 host controller"`.
+
+- [ ] Create `src/kernel/drivers/usb/xhci.c` and `include/xhci.h`
+- [ ] PCI match: class `0x0C`, subclass `0x03`, prog_if `0x30`
+- [ ] Map MMIO BAR0, initialize controller (halt, reset, DCBAA, rings)
+- [ ] Handle port status change events → device attach/detach
+- [ ] Implement control, bulk, interrupt transfers via Transfer Rings
+- [ ] QEMU flag: `-device qemu-xhci`
+- [ ] Commit: `"drivers: xHCI USB 3.0 host controller"`
+
+### 7.3 USB HID Driver (Keyboard + Mouse)
+
+- [ ] Create `src/kernel/drivers/usb/usb_hid.c`
+- [ ] Match HID class (class `0x03`), set up interrupt IN endpoint
+- [ ] USB keyboard: parse 8-byte report, convert keycodes, inject into keyboard subsystem
+- [ ] USB mouse: parse report, inject into mouse subsystem
+- [ ] QEMU: `-device usb-kbd -device usb-mouse`
+- [ ] Commit: `"drivers: USB HID keyboard and mouse"`
+
+### 7.4 USB Mass Storage Driver
+
+- [ ] Create `src/kernel/drivers/usb/usb_msc.c`
+- [ ] Match mass storage class (class `0x08`, subclass `0x06`, protocol `0x50`)
+- [ ] Implement Bulk-Only Transport: CBW → data → CSW
+- [ ] SCSI commands: INQUIRY, READ CAPACITY, READ(10), WRITE(10)
+- [ ] Register as block device → auto-mount with drive letter
+- [ ] Commit: `"drivers: USB mass storage (flash drives)"`
+
+### 7.5 USB Hot-Plug Event System
+
+- [ ] Kernel notification on USB device attach/detach
+- [ ] Desktop toast: "USB drive detected — D:\\ (8.0 GB, FAT32)"
+- [ ] Safe removal: system tray icon → flush, unmount, notify
+- [ ] Commit: `"kernel: USB hot-plug notifications"`
+
+### 7.6 PS/2 ↔ USB Fallback
+
+- [ ] If USB HID detected, prefer USB input over PS/2
+- [ ] Seamlessly switch input source without application changes
+- [ ] Commit: `"drivers: PS/2 ↔ USB input fallback"`
+
+### 7.7 EHCI/UHCI Fallback (Legacy USB)
+
+- [ ] *(Stretch)* EHCI (USB 2.0, PCI prog_if `0x20`)
+- [ ] *(Stretch)* UHCI (USB 1.1, PCI prog_if `0x00`)
+- [ ] Commit: `"drivers: EHCI/UHCI legacy USB host controllers"`
+
+### 7.8 USB Hub Support
+
+- [ ] *(Stretch)* Detect USB hub devices (class `0x09`)
+- [ ] *(Stretch)* Enumerate downstream ports
+- [ ] Commit: `"drivers: USB hub support"`
+
+---
+
+## 8. Licensing & Attribution
+
+### 8.1 License Tracking
 
 **Prompt:** Create a `LICENSES/` directory in the project root with the full text of each license used by ported drivers. Create a `NOTICE.md` file listing each ported file, its original source, and its license. Each ported source file retains its original copyright header with an additional line noting the Impossible OS adaptation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"docs: license tracking for ported drivers"`. Update `README.md` if it contains stale or incorrect references to licensing. Create or update documentation in `docs/` covering the license tracking process, SPDX identifiers, and NOTICE.md format.
 
