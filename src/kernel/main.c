@@ -267,6 +267,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 1: Initialize serial (always works, even without display) */
     serial_init();
+    klog(LOG_DEBUG, "", "========================================================================");
+    klog(LOG_DEBUG, "", "  Impossible OS -- Boot Log");
+    klog(LOG_DEBUG, "", "========================================================================");
 
     /* Step 2: Parse boot info based on bootloader type */
     if (magic == UEFI_BOOT_MAGIC) {
@@ -300,6 +303,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
         klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Hardware ---------------------------------------------------------------");
 
     /* Step 7: Initialize ATA disk driver */
     ata_init();
@@ -375,6 +381,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         blkdev_list();
     }
 
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Storage & Filesystem ---------------------------------------------------");
+
     /* Step 8: Initialize VFS */
     vfs_init();
 
@@ -444,6 +453,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_status("Configuring network...");
     boot_splash_tick();
 
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- System Summary ---------------------------------------------------------");
+
     /* Hardware summary — klog INFO (visible on screen) */
     klog(LOG_INFO, "boot", "Multiboot2 magic verified: %x", magic);
     klog(LOG_INFO, "boot", "Running in 64-bit Long Mode");
@@ -505,6 +517,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
              ok ? "OK" : "FAIL", heap_get_used(), heap_get_free());
     }
 
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Registry ---------------------------------------------------------------");
+
     boot_splash_status("Loading registry...");
     boot_splash_tick();
 
@@ -512,8 +527,14 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     registry_init();
     registry_populate_defaults();
 
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
+
     /* Initialize memory-mapped files subsystem */
     mmap_init();
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
@@ -714,6 +735,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     sleep_ms(1000);
     klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
          pit_get_ticks(), uptime());
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
 
     /* === Cooperative threading test === */
     task_init();
@@ -1056,6 +1080,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     boot_splash_status("Preparing desktop...");
     boot_splash_tick();
+
+    klog(LOG_DEBUG, "", "");
+    klog(LOG_DEBUG, "", "--- Desktop ----------------------------------------------------------------");
 
     /* === Flush boot log to disk === */
     klog_flush_to_disk();

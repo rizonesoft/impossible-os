@@ -140,6 +140,7 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@mkdir -p $(SYSROOT)
 	@# --- Standard directory tree ---
 	@mkdir -p $(SYSROOT)/Impossible/System/Config/Codex
+	@mkdir -p $(SYSROOT)/Impossible/System/Config/Registry
 	@mkdir -p $(SYSROOT)/Impossible/Bin
 	@mkdir -p $(SYSROOT)/Impossible/Fonts
 	@mkdir -p $(SYSROOT)/Impossible/Icons
