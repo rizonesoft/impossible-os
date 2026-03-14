@@ -108,7 +108,7 @@
 | #   | TODO                                         | Status |
 |-----|----------------------------------------------|--------|
 | 510 | [Native Win32](TODO-510-Native-Win32.md)     |        |
-| 520 | [i-Sharp](TODO-520-i-Sharp.md)               |        |
+
 | 530 | [Compiler](TODO-530-Compiler.md)             |        |
 | 540 | [Linux Compat](TODO-540-Linux.md)            |        |
 | 550 | [Installer & ISO](TODO-550-Installer-ISO.md) |        |
