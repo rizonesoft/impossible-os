@@ -13,25 +13,29 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout private repo (full history)
+      - name: Checkout private repo
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Configure git
+      - name: Clone public bootloader repo
         run: |
+          git clone https://x-access-token:${{ secrets.BOOTLOADER_REPO_TOKEN }}@github.com/rizonesoft/impossible-os-bootloader.git /tmp/bootloader-public
+
+      - name: Sync src/boot/ into public repo
+        run: |
+          # Remove old src/ in public repo (keeps README, LICENSE, etc.)
+          rm -rf /tmp/bootloader-public/src
+
+          # Copy current src/boot from private repo
+          mkdir -p /tmp/bootloader-public/src
+          cp -r src/boot /tmp/bootloader-public/src/
+
+      - name: Commit and push to public repo
+        run: |
+          cd /tmp/bootloader-public
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-
-      - name: Split src/boot/ into a synthetic branch
-        run: |
-          git subtree split --prefix=src/boot/ -b bootloader-split
-
-      - name: Push split branch to public bootloader repo
-        run: |
-          git remote add public https://x-access-token:${{ secrets.BOOTLOADER_REPO_TOKEN }}@github.com/rizonesoft/impossible-os-bootloader.git
-          git push public bootloader-split:main --force
-
-      - name: Cleanup split branch
-        run: |
-          git branch -D bootloader-split
+          git add -A
+          # Only commit if there are changes
+          git diff --cached --quiet && echo "No changes to sync" && exit 0
+          git commit -m "sync: bootloader from rizonesoft/impossible-os@${{ github.sha }}"
+          git push origin main
