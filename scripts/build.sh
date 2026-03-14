@@ -226,9 +226,9 @@ printf ' %b%s%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$RESET" | tee -a "$L
 # Step counter
 STEP=0
 if $DO_CLEAN; then
-    TOTAL=5  # clean + kernel + userland + efi + disk
+    TOTAL=6  # clean + kernel + userland + efi + sign + disk
 else
-    TOTAL=4  # kernel + userland + efi + disk
+    TOTAL=5  # kernel + userland + efi + sign + disk
 fi
 
 # Clean (optional)
@@ -248,6 +248,10 @@ run_step $STEP $TOTAL "Userland" "userland" || { print_errors; echo "=== BUILD F
 # EFI
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "EFI Boot" "uefi-boot" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+
+# EFI Signing (skipped silently if keys/MOK.key is absent)
+STEP=$((STEP + 1))
+run_step $STEP $TOTAL "EFI Signing" "sign-efi" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # System Disk
 STEP=$((STEP + 1))

@@ -73,7 +73,7 @@ OBJS     := $(ASM_OBJS) $(C_OBJS)
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot system-disk test-disks run run-test run-debug run-log clean
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build kernel userland uefi-boot system-disk
@@ -93,6 +93,22 @@ $(UEFI_EFI): src/boot/uefi/bootx64.c src/boot/uefi/efi.h src/boot/uefi/uefi.lds
 	@mkdir -p $(BUILD_DIR)/tools
 	$(MAKE) -C src/boot/uefi OUTDIR=$(CURDIR)/$(BUILD_DIR)/tools
 	@echo "[EFI] $@ created ($$(wc -c < $@ | tr -d ' ') bytes)"
+
+## sign-efi: Sign BOOTX64.EFI with MOK private key (skipped if keys/MOK.key absent)
+MOK_KEY := keys/MOK.key
+MOK_CRT := keys/MOK.cer
+
+sign-efi: $(UEFI_EFI)
+	@if [ -f "$(MOK_KEY)" ]; then \
+		echo "[SIGN] Signing $(UEFI_EFI) with MOK..."; \
+		sbsign --key $(MOK_KEY) --cert $(MOK_CRT) \
+			--output $(UEFI_EFI) $(UEFI_EFI); \
+		sbverify --cert $(MOK_CRT) $(UEFI_EFI) \
+			&& echo "[SIGN] Signature verified OK" \
+			|| { echo "[SIGN] ERROR: signature verification FAILED"; exit 1; }; \
+	else \
+		echo "[SIGN] keys/MOK.key not found — skipping signing (dev build)"; \
+	fi
 
 ## boot-icon: Generate boot splash icon header from PNG
 boot-icon: src/kernel/boot_splash_icon.h
@@ -246,7 +262,7 @@ IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 269484032 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) \
+$(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
                 tools/make-system-disk.c tools/mkfs-ixfs.c \
                 $(SYSROOT)/hello.exe
 	@echo "[DISK] Building system disk..."

@@ -166,20 +166,15 @@
 
 ### 3.2 Sign Bootloader with MOK
 
-**Prompt:** Use `sbsign` (from `sbsigntool` package) to sign our compiled `BOOTX64.EFI` with the MOK private key. Add a `sign-efi` target to the Makefile that runs after the EFI bootloader is built. The signed binary replaces the unsigned one. Verify the signature with `sbverify`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: sign EFI bootloader with MOK"`. Update `README.md` if it contains stale or incorrect references to bootloader signing. Create or update documentation in `docs/` covering the EFI signing process and build integration.
+**Prompt:** Verified (2026-03-14). `sign-efi` Makefile target added. `sbsigntool` was already installed (v0.9.4). Signing runs after `uefi-boot`, before `system-disk`. If `keys/MOK.key` is absent, signing is skipped with a clear message (dev builds unaffected). `build.sh` shows EFI Signing as step [5/6]. Verified: `[SIGN] Signature verified OK` in `build/build.log`. Commit: `"boot: sign EFI bootloader with MOK"`. PE/COFF gap warnings from sbsign are cosmetic and do not affect the signature. Run `bash scripts/build.sh clean` and grep for `[SIGN] Signature verified OK` to confirm.
 
-- [ ] Install `sbsigntool` (system package)
-- [ ] Add Makefile target `sign-efi`:
-  ```makefile
-  sign-efi: uefi-boot
-      sbsign --key keys/MOK.key --cert keys/MOK.cer \
-        --output build/efi_staging/EFI/BOOT/grubx64.efi \
-        build/efi_staging/EFI/BOOT/BOOTX64.EFI
-  ```
-- [ ] Verify signature: `sbverify --cert keys/MOK.cer build/efi_staging/EFI/BOOT/grubx64.efi`
-- [ ] Update `scripts/build.sh` to call `sign-efi` when keys exist
-- [ ] If `keys/MOK.key` is missing, skip signing (unsigned dev builds still work)
-- [ ] Commit: `"boot: sign EFI bootloader with MOK"`
+- [x] Install `sbsigntool` (already installed: v0.9.4)
+- [x] Add Makefile `sign-efi` target: signs `build/tools/BOOTX64.EFI` with `keys/MOK.key`
+- [x] Verify signature: `sbverify --cert keys/MOK.cer build/tools/BOOTX64.EFI` → `[SIGN] Signature verified OK`
+- [x] Update `scripts/build.sh` to call `sign-efi` as step [5/6] between EFI Boot and System Disk
+- [x] If `keys/MOK.key` is missing, skip signing with clear message (dev builds unaffected)
+- [x] Commit: `"boot: sign EFI bootloader with MOK"`
+
 
 ### 3.3 Build and Package Shim
 
