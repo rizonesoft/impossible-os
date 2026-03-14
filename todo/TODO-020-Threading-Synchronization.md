@@ -308,3 +308,118 @@
 > **After P0+P1 items complete:** Impossible OS matches Windows 11's kernel sync feature set for single-core.
 > **After P2 items:** Exceeds Windows 11 (seqlocks, RCU, lockdep — Windows has none of these in its kernel).
 > **After SMP:** Full parity with Linux on a multi-core system.
+> **After §17–21:** Exceeds BOTH Windows 11 and Linux in ergonomics, safety, and observability.
+
+---
+
+## Impossible OS Differentiators — Beats Both Windows 11 and Linux
+
+---
+
+## 17. Priority Inheritance ON by Default
+
+**Prompt:** Linux's `rt_mutex` requires explicit opt-in — the standard `mutex_t` has no inheritance and is susceptible to priority inversion. Windows applies heuristic priority boosts (not true inheritance) and only for specific scenarios. Impossible OS makes priority inheritance the **default** on every `mutex_t` — no opt-in, no separate type, no special annotation needed. Developers never have to think about priority inversion. Extend the existing §11 implementation so that inheritance is always active. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: priority inheritance on by default"`. Create or update documentation in `docs/` explaining the default-on design decision and how it differs from Linux/Windows.
+
+
+- [ ] Ensure §11 priority inheritance is implemented in `mutex_lock()` with no flags needed
+- [ ] Remove any `PI_MUTEX` opt-in flag — plain `mutex_t` always inherits
+- [ ] Document: all `mutex_t` locks have priority inheritance — no exceptions
+- [ ] Add a build-time `static_assert` that confirms PI cannot be disabled
+- [ ] Commit: `"sched: priority inheritance on by default"`
+
+---
+
+## 18. Wait-on-Multiple Primitives
+
+**Prompt:** Windows has `WaitForMultipleObjects` — wait for any or all of N kernel handles simultaneously. Linux has no equivalent for kernel sync objects (only `poll`/`epoll` for file descriptors). Impossible OS adds a unified `waitable_t` interface — a common vtable pointer embedded in `mutex_t`, `semaphore_t`, `event_t`, and `condvar_t`. `wait_any(handles[], count, timeout_ms)` blocks until at least one is signalled; `wait_all(handles[], count, timeout_ms)` blocks until all are signalled. Returns the index of the signalled handle (or `WAIT_TIMEOUT`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait-on-multiple primitives"`. Create or update documentation in `docs/` covering the waitable interface and usage examples.
+
+
+- [ ] Define `waitable_t` interface: `{ int (*is_ready)(void *); void (*add_waiter)(void *, waiter_t *); }`
+- [ ] Embed `waitable_t` vtable pointer in `mutex_t`, `semaphore_t`, `event_t`, `condvar_t`
+- [ ] Implement `wait_any(waitable_t *handles[], count, timeout_ms)` — wake on first ready
+- [ ] Implement `wait_all(waitable_t *handles[], count, timeout_ms)` — wake when all ready
+- [ ] Return value: index of signalled handle, or `WAIT_TIMEOUT (-1)` on timeout
+- [ ] Test: wait_any on [mutex, event] — verify correct index returned
+- [ ] Commit: `"sched: wait-on-multiple primitives"`
+
+---
+
+## 19. Unified `_timeout(ms)` API
+
+**Prompt:** Linux timeout semantics are inconsistent — some primitives take jiffies, some `timespec`, some relative time, some absolute. Windows is similarly fragmented. Impossible OS standardises: **every** blocking primitive has a `_timeout(ms)` variant with identical semantics — pass milliseconds, get back `WAIT_SIGNALLED` or `WAIT_TIMEOUT`. Implement by extending §8 `event_wait_timeout`, and adding `mutex_lock_timeout`, `sem_wait_timeout`, `rwlock_read_lock_timeout`, `rwlock_write_lock_timeout`. The timer uses the PIT tick counter for ms-accurate timeouts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: unified timeout API"`. Create or update documentation in `docs/` covering timeout semantics and the return value convention.
+
+```c
+#define WAIT_SIGNALLED   0
+#define WAIT_TIMEOUT    -1
+```
+
+- [ ] Add `mutex_lock_timeout(m, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
+- [ ] Add `sem_wait_timeout(s, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
+- [ ] Add `rwlock_read_lock_timeout(rw, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
+- [ ] Add `rwlock_write_lock_timeout(rw, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
+- [ ] Add `cond_wait_timeout(cond, mutex, ms)` → `WAIT_SIGNALLED` or `WAIT_TIMEOUT`
+- [ ] All timeout variants use PIT tick counter for ms-accurate measurement
+- [ ] Commit: `"sched: unified timeout API"`
+
+---
+
+## 20. Graphical Deadlock Visualization
+
+**Prompt:** When the §16 lock dependency validator detects a deadlock cycle, instead of a plain text kernel log dump, Impossible OS draws the dependency graph directly to the framebuffer using the existing GFX subsystem — thread boxes connected by lock-dependency arrows, the cycle edges highlighted in red, with the blocking lock name and owner thread labelled. This is unprecedented — Linux prints a wall of text to dmesg; Windows shows a blue screen with a stop code. Impossible OS shows a clear, readable diagram. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: graphical deadlock visualization"`. Create or update documentation in `docs/` covering the visualization format and how to interpret it.
+
+> **Prerequisite:** §16 Lock Dependency Validator must be complete first.
+
+
+- [ ] On deadlock detection: collect the cycle (thread IDs, lock names, edges)
+- [ ] Call `gfx_deadlock_draw(cycle_nodes[], edges[], count)` — new GFX function
+- [ ] Draw thread boxes (`gfx_fill_rect` + thread name label)
+- [ ] Draw lock-dependency arrows between boxes (`gfx_draw_line`)
+- [ ] Highlight cycle edges in red; non-cycle edges in grey
+- [ ] Label each edge with the lock name (`gfx_draw_text`)
+- [ ] Flush to framebuffer: `fb_swap()` — visible even without a shell
+- [ ] Commit: `"debug: graphical deadlock visualization"`
+
+---
+
+## 21. Named Lock Browser (`/sys/locks` + `locks` shell command)
+
+**Prompt:** Every Impossible OS synchronization primitive already has a `name` field. Expose all currently-held locks via a VFS virtual file `/sys/locks` — each entry shows: lock name, type (mutex/rwlock/spinlock/semaphore), owner thread, waiter count, and time held in milliseconds. A `locks` shell command reads and formats this output. Linux `/proc/locks` only shows file locks. Windows has no equivalent for kernel sync objects. This provides real-time lock observability — useful for debugging deadlocks and performance bottlenecks. The Task Manager (Phase 05) can also read this interface. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: /sys/locks named lock browser"`. Create or update documentation in `docs/` covering the /sys/locks format and shell usage.
+
+
+- [ ] Add global lock registry: linked list of all initialized primitives (registered in `mutex_init`, `rwlock_init`, etc.)
+- [ ] Track per-lock: owner thread id, waiter count, acquire timestamp (PIT ticks)
+- [ ] Implement `/sys/locks` VFS virtual file — `read()` returns formatted text entries
+- [ ] Format: `TYPE  NAME              OWNER   WAITERS  HELD_MS\n mutex heap_lock         task:3  2        14\n`
+- [ ] Add `locks` shell command — reads and pretty-prints `/sys/locks`
+- [ ] Wire lock registry into Task Manager (Phase 05) lock viewer panel
+- [ ] Commit: `"kernel: /sys/locks named lock browser"`
+
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
+|---------------------------------|----------------------------|----------------------------|-------------------------------------|
+| Kernel Threads                  | ✅ `KTHREAD`               | ✅ `task_struct`           | ✅ §1 Done                          |
+| Mutexes                         | ✅ `KMUTEX`                | ✅ `mutex_t`               | ✅ §2 Done                          |
+| Semaphores                      | ✅ `KSEMAPHORE`            | ✅ `semaphore`             | ✅ §3 Done                          |
+| Read-Write Locks                | ✅ `ERESOURCE`             | ✅ `rwlock_t`              | ✅ §4 Done                          |
+| Condition Variables             | ✅ (user-mode)             | ✅ `wait_queue`            | ✅ §5 Done                          |
+| Spinlocks (IRQ-safe)            | ✅ `KSPIN_LOCK`            | ✅ `spinlock_t`            | ⬜ §6 P0                            |
+| Atomic Operations               | ✅ `Interlocked*`          | ✅ `atomic_t`              | ⬜ §7 P0                            |
+| Wait/Event Objects              | ✅ `KEVENT`                | ✅ `completion`            | ⬜ §8 P1                            |
+| Work Queues                     | ✅ DPC + work items        | ✅ `workqueue_struct`      | ⬜ §9 P1                            |
+| Memory Barriers                 | ✅ `KeMemoryBarrier`       | ✅ `mb()`/`rmb()`/`wmb()` | ⬜ §10 P0                           |
+| Priority Inheritance            | ⚠️ Heuristic only         | ⚠️ Opt-in `rt_mutex`      | ⬜ §11+17 **Default on all mutexes** |
+| Seqlocks                        | ❌                         | ✅ `seqlock_t`             | ⬜ §12 P2                           |
+| RCU                             | ❌                         | ✅ `rcu_*`                 | ⬜ §13 P2                           |
+| SMP / Per-CPU                   | ✅ Full NUMA               | ✅ Full NUMA               | ⬜ §14 Future                       |
+| Futexes                         | ✅ (user-mode)             | ✅ `futex()`               | ⬜ §15 P1                           |
+| Lock Validator                  | ✅ Driver Verifier         | ✅ `lockdep`               | ⬜ §16 P2                           |
+| **PI on by default**            | ❌ Heuristic               | ❌ Opt-in only             | ⬜ **§17 — Impossible OS only**     |
+| **Wait-on-multiple**            | ✅ `WaitForMultiple`       | ❌ FDs only                | ⬜ **§18 — beats Linux**            |
+| **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent            | ⬜ **§19 — Impossible OS only**     |
+| **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only         | ⬜ **§20 — Impossible OS only**     |
+| **Named lock browser**          | ❌                         | ❌ File locks only         | ⬜ **§21 — Impossible OS only**     |
+
+> **After §17–21:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
