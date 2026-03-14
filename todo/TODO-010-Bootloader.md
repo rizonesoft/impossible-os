@@ -346,16 +346,43 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### 4.1 GOP Mode Negotiation
 
-**Prompt:** Our bootloader currently hardcodes 1280×720. Real laptops have 1920×1080, 2560×1440, or 3840×2160 displays. Use UEFI's `EFI_GRAPHICS_OUTPUT_PROTOCOL` to enumerate all available modes and select the best one. Prefer the highest resolution that matches the native display. Pass the actual resolution and framebuffer info to the kernel via the boot info struct. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: auto-detect display resolution via GOP"`. Update `README.md` if it contains stale or incorrect references to display resolution or hardcoded 720p. Create or update documentation in `docs/` covering GOP mode enumeration, resolution auto-detection, and display scaling.
+**Prompt:** The bootloader currently hardcodes 1280×720 and falls back to the current
+GOP mode. This works universally in QEMU, VirtualBox, and on real hardware. Do NOT use
+"pick the highest GOP mode" — OVMF in emulators exposes large preset modes with
+`FrameBufferBase = 0` that cause a black screen. The correct real-hardware approach is
+**EDID-first selection**, which naturally degrades to stable behaviour in emulators:
 
-- [ ] Enumerate all GOP modes via `gop->QueryMode()`
-- [ ] Filter for 32bpp modes with `PixelBlueGreenRedReserved8BitPerColor` format
-- [ ] Select highest resolution mode (prefer native over scaled)
-- [ ] Set selected mode via `gop->SetMode()`
-- [ ] Pass resolution, stride, and framebuffer base to kernel via boot params
-- [ ] Update kernel `fb_init()` to use boot-passed resolution instead of hardcoded
-- [ ] Test: verify correct behavior at 1080p, 1440p, 4K
-- [ ] Commit: `"boot: auto-detect display resolution via GOP"`
+```
+1. Read EFI_EDID_ACTIVE_PROTOCOL → preferred native resolution (W×H)
+2. Find the GOP mode matching that resolution exactly (32bpp)
+3. SetMode → verify FrameBufferBase ≠ 0
+4. Fall back: search for 1280×720 (or current mode) if EDID fails/no match
+5. Pass actual resolution + framebuffer to kernel via boot params (already done)
+```
+
+**Why EDID works on both platforms:**
+- Real hardware: EDID gives the panel's native resolution → correct match
+- QEMU/VirtualBox: `EFI_EDID_ACTIVE_PROTOCOL` typically returns nothing → falls
+  through to the 1280×720 fallback cleanly
+
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"boot: EDID-based GOP resolution auto-detection"`. Update `README.md` and create or
+update `docs/` covering the EDID protocol, GOP mode matching, and the emulator fallback.
+
+> [!NOTE]
+> `fb_init()` already reads `g_boot_info.fb.{width,height,pitch}` dynamically —
+> no kernel changes are needed for any resolution, only the bootloader changes.
+
+- [ ] Locate `EFI_EDID_ACTIVE_PROTOCOL` via `gBS->LocateProtocol()`
+- [ ] Parse the 18-byte preferred timing descriptor (bytes 54–71): extract H-active and V-active pixels
+- [ ] Search GOP modes for an exact (W×H, 32bpp) match
+- [ ] Call `gop->SetMode()` and verify `FrameBufferBase ≠ 0`
+- [ ] Fall back to 1280×720 search if EDID unavailable or no matching GOP mode
+- [ ] Final fallback: use current mode (as today)
+- [ ] Log selected resolution to UEFI console: `[GOP] WxH 32bpp (EDID/fallback)`
+- [ ] Pass resolution + framebuffer to kernel via boot params (already wired up)
+- [ ] Commit: `"boot: EDID-based GOP resolution auto-detection"`
 
 ### 4.2 HiDPI / Retina Scaling
 
