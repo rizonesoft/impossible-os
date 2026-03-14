@@ -100,6 +100,12 @@ boot-icon: src/kernel/boot_splash_icon.h
 src/kernel/boot_splash_icon.h: resources/boot/boot_96.png tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
+## bsod-icon: Generate BSOD icon header from PNG
+bsod-icon: src/kernel/bsod_icon.h
+
+src/kernel/bsod_icon.h: resources/system/bsod.png tools/convert_bsod_icon.py
+	@python3 tools/convert_bsod_icon.py
+
 ## boot-font: Generate embedded TTF font header for boot splash
 boot-font: src/kernel/boot_splash_font_data.h
 
@@ -114,7 +120,7 @@ boot: $(ASM_OBJS)
 kernel: $(KERNEL_BIN)
 	@echo "[KERNEL] $(KERNEL_BIN) built"
 
-$(KERNEL_BIN): boot-icon boot-font $(OBJS) $(LINKER_SCRIPT)
+$(KERNEL_BIN): boot-icon bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"

@@ -1084,6 +1084,16 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* === Flush boot log to disk === */
     klog_flush_to_disk();
 
+#ifdef BSOD_TEST
+    /* Test trigger: fire a deliberate panic to test the BSOD screen */
+    {
+        extern void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
+                                 const char *description, const char *file, uint32_t line);
+        panic_screen((struct interrupt_frame *)0, 0xDEAD,
+                     "BSOD_TEST: Deliberate panic for testing", __FILE__, __LINE__);
+    }
+#endif
+
     /* === Launch the shell === */
     {
         extern void shell_loader_func(void);

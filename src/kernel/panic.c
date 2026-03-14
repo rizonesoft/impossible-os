@@ -22,7 +22,9 @@
 #include "kernel/printk.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"
+#include "kernel/boot_splash.h"
 #include "registry.h"
+#include "bsod_icon.h"
 
 /* --- Constants --- */
 
@@ -107,25 +109,29 @@ static void itoa_simple(uint32_t val, char *buf)
     buf[i] = '\0';
 }
 
-/* Draw the sad face emoticon using rectangles (text approximation) */
-static void draw_sad_face(uint32_t x, uint32_t y, uint32_t size)
+/* Draw the embedded BSOD icon (alpha-blended white over blue background) */
+static void draw_bsod_icon(uint32_t x, uint32_t y)
 {
-    /* Draw a large circle outline (using filled rect approximation) */
-    fb_fill_circle((int32_t)(x + size / 2), (int32_t)(y + size / 2),
-                   (int32_t)(size / 2), PANIC_FG_COLOR);
-    fb_fill_circle((int32_t)(x + size / 2), (int32_t)(y + size / 2),
-                   (int32_t)(size / 2 - 4), PANIC_BG_COLOR);
-
-    /* Left eye */
-    fb_fill_rect(x + size / 3 - 3, y + size / 3, 6, 6, PANIC_FG_COLOR);
-
-    /* Right eye */
-    fb_fill_rect(x + 2 * size / 3 - 3, y + size / 3, 6, 6, PANIC_FG_COLOR);
-
-    /* Sad mouth (frown — a horizontal line slightly curved) */
-    fb_fill_rect(x + size / 4, y + 2 * size / 3, size / 2, 3, PANIC_FG_COLOR);
-    fb_fill_rect(x + size / 4 - 2, y + 2 * size / 3 - 3, 4, 3, PANIC_FG_COLOR);
-    fb_fill_rect(x + 3 * size / 4 - 2, y + 2 * size / 3 - 3, 4, 3, PANIC_FG_COLOR);
+    uint32_t ix, iy;
+    for (iy = 0; iy < BSOD_ICON_H; iy++) {
+        for (ix = 0; ix < BSOD_ICON_W; ix++) {
+            uint32_t px = bsod_icon_pixels[iy * BSOD_ICON_W + ix];
+            uint32_t a = (px >> 24) & 0xFF;
+            if (a == 0) continue;  /* fully transparent */
+            if (a == 255) {
+                fb_put_pixel(x + ix, y + iy, 0x00FFFFFF);
+            } else {
+                /* Alpha blend: white * a + bg * (255-a) */
+                uint32_t bg_r = (PANIC_BG_COLOR >> 16) & 0xFF;
+                uint32_t bg_g = (PANIC_BG_COLOR >> 8) & 0xFF;
+                uint32_t bg_b = PANIC_BG_COLOR & 0xFF;
+                uint32_t r = (0xFF * a + bg_r * (255 - a)) / 255;
+                uint32_t g = (0xFF * a + bg_g * (255 - a)) / 255;
+                uint32_t b = (0xFF * a + bg_b * (255 - a)) / 255;
+                fb_put_pixel(x + ix, y + iy, (r << 16) | (g << 8) | b);
+            }
+        }
+    }
 }
 
 /* --- Crash dump to file --- */
@@ -291,6 +297,10 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     /* Disable interrupts to prevent further exceptions */
     __asm__ volatile ("cli");
 
+    /* Stop boot animation dots if still running */
+    if (boot_splash_active())
+        boot_splash_finish();
+
     /* Unlock the compositor so we can draw directly */
     fb_unlock_compositor();
 
@@ -305,30 +315,18 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     cr2_val = read_cr2();
     cr3_val = read_cr3();
 
-    /* === Draw sad face === */
-    draw_sad_face(80, 80, 80);
+    /* === Draw BSOD icon === */
+    draw_bsod_icon(80, 60);
     fb_swap();
-
-    /* === Print error text via printk (which goes to fb_putchar → framebuffer) === */
-    /* Reset text cursor to a good position */
-    fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
-
-    /* We can only control text via the character grid, so use printk
-     * which goes through fb_putchar. First clear and set up. */
-    fb_clear();
-    fb_fill_rect(0, 0, screen_w, screen_h, PANIC_BG_COLOR);
-
-    /* Draw sad face */
-    draw_sad_face(80, 60, 80);
 
     /* Text position is determined by printk cursor */
 
-    /* Move cursor down to below the sad face
-     * (each char row is ~16px, so 170/16 ≈ 10 rows) */
+    /* Move cursor down to below the icon
+     * (each char row is ~16px, icon is 128px + 60px offset = 188px / 16 ≈ 12 rows) */
     {
         uint32_t i;
         fb_set_color(PANIC_FG_COLOR, PANIC_BG_COLOR);
-        for (i = 0; i < 10; i++)
+        for (i = 0; i < 12; i++)
             printk("\n");
     }
 
