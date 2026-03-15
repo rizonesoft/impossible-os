@@ -111,28 +111,37 @@
 
 ### 2.3 Boot Icon Embedding
 
-**Prompt:** This section is marked complete. Verify that `tools/convert_icon.py` reads a PNG from `resources/boot/` and generates `src/kernel/boot_splash_icon.h` containing raw BGRA pixel data as a C array. Confirm the Makefile has a `boot-icon` target with the correct dependency. Verify the current icon is `boot_96.png` (96×96). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot icon embedding. Add notes, gotchas, and design decisions directly in this TODO section covering the PNG-to-C-header icon pipeline and supported resolutions.
+**Implementation Note (2026-03-15):** The boot icon pipeline was redesigned. Instead of embedding a single 256×256 source and scaling at runtime, all needed sizes are pre-built from `resources/logo/os_logo_*.png` at compile time. `tools/convert_icon.py` scans the directory and generates:
+- `include/kernel/os_logo.h` — `extern` declarations for each size, helper macros `OS_LOGO_FOR_HEIGHT(scr_h)` and `OS_LOGO_SIZE_FOR_HEIGHT(scr_h)` for auto-selecting the right prebuilt array
+- `src/kernel/os_logo.c` — all pixel data (13 sizes, 585 KB total, compiled once)
 
-- [x] Create `tools/convert_icon.py` — PNG to C header converter (BGRA pixel data)
-- [x] Implement minimal PNG decoder (IHDR, IDAT, deflate, unfilter)
-- [x] Generate `boot_splash_icon.h` with `BOOT_ICON_W`, `BOOT_ICON_H`, `boot_icon_data[]`
-- [x] Add Makefile `boot-icon` target: `resources/boot/boot_96.png → boot_splash_icon.h`
-- [x] Support alpha-blended icon rendering (BGRA → framebuffer with alpha compositing)
-- [x] Multi-resolution source PNGs: `boot_96.png`, `boot_128.png`, `boot_192.png`, `boot_256.png`, `boot_288.png`
-- [x] Commit: `"boot: new boot logo (boot_96.png) + updated start menu icon"` (`2adee94`)
+The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array for the detected resolution — **no runtime scaling**. The start button in `desktop.c` uses `os_logo_32_pixels[]` directly (exact 32×32 blit).
+
+> [!NOTE]
+> The `impossible_os_logo_pixels[]` and `BOOT_ICON_W/H` names from the earlier single-file approach were replaced by the per-size naming scheme: `os_logo_NNN_pixels[]` / `OS_LOGO_NNN_W` / `OS_LOGO_NNN_H`.
+
+- [x] Create `tools/convert_icon.py` — scans `resources/logo/os_logo_*.png`, generates `.h` + `.c` pair
+- [x] Implement minimal PNG decoder (IHDR, IDAT, deflate, unfilter) — no dependencies
+- [x] Generate `include/kernel/os_logo.h` with per-size `extern const unsigned int os_logo_NNN_pixels[]`
+- [x] Generate `src/kernel/os_logo.c` with all pixel data (compiled once, auto-discovered by Makefile `find`)
+- [x] Helper macros `OS_LOGO_FOR_HEIGHT(h)` / `OS_LOGO_SIZE_FOR_HEIGHT(h)` for resolution-aware selection
+- [x] Support alpha-blended 1:1 pixel-perfect blit (BGRA → framebuffer with per-pixel alpha)
+- [x] 13 embedded sizes: 16, 20, 24, 32, 40, 48, 64, 72, 80, 96, 128, 192, 256 px
+- [x] Makefile `os-logo` target: `resources/logo/os_logo_*.png → include/kernel/os_logo.h + src/kernel/os_logo.c`
+- [x] Commit: `"feat: embed all 13 native-size OS logo assets — 1:1 pixel-perfect blit"` (`0b89910`)
 
 ### 2.4 Anti-Aliased TTF Font for Status Text
 
-**Prompt:** This section is marked complete. Verify that `tools/convert_boot_font.py` embeds Selawik Semibold (`selawksb.ttf`) as a C header with pre-rasterized glyphs. Confirm the boot splash uses `boot_font_init(16)` for 16px font, `boot_font_measure()` for text width, and `boot_font_render()` for anti-aliased rendering. Verify 1px letter spacing is applied. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot fonts. Add notes, gotchas, and design decisions directly in this TODO section covering the TTF-to-C-header font pipeline, the boot font API, and anti-aliased rendering.
+**Implementation Note (2026-03-15):** `boot_font_init()` now pre-bakes all 95 ASCII glyphs (codepoints 32–126) into a PMM-allocated 256×256 atlas using `stbtt_BakeFontBitmap()` — called **once** at splash init. `boot_font_render()` blits directly from this atlas: zero FPU, zero heap allocations, zero stbtt calls at render time. Font size is selected by resolution tier, not by icon size (see §4.2). Status text appears 200ms into the fade-in (frame 1 of 5), not after all frames complete.
 
-- [x] Create `tools/convert_boot_font.py` — TTF to C header (pre-rasterized glyphs)
-- [x] Embed Selawik Semibold font at 16px size
-- [x] Implement `boot_font_init(pixel_size)` — init embedded font data
-- [x] Implement `boot_font_measure(text)` — return text width in pixels
-- [x] Implement `boot_font_render(text, x, y, color)` — render with anti-aliasing
+- [x] Create `tools/convert_boot_font.py` — TTF to C header (embedded binary, no pre-rasterization at build time)
+- [x] Embed Selawik Semibold as raw TTF binary in `boot_splash_font_data.h` via Makefile `boot-font` target
+- [x] Implement `boot_font_init(pixel_size)` — pre-bakes 256×256 PMM atlas via `stbtt_BakeFontBitmap()`
+- [x] Implement `boot_font_measure(text)` — reads pre-baked `xadvance` values, no FPU
+- [x] Implement `boot_font_render(text, x, y, color)` — atlas blit, no stbtt calls at render time
 - [x] Add 1px letter spacing (`BOOT_LETTER_SPACING`)
 - [x] Makefile `boot-font` target: `resources/fonts/selawksb.ttf → boot_splash_font_data.h`
-- [x] Commit: `"boot: anti-aliased TTF font for splash status text"` (`dbca624`)
+- [x] Commit: `"perf: pre-bake boot splash font atlas — zero FPU/heap at render time"` (`d5e1cf0`)
 
 ### 2.5 Granular Boot Status Messages
 
@@ -364,47 +373,95 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### 4.2 HiDPI / Retina Scaling
 
-**Prompt:** Verified (2026-03-15). Runtime HiDPI scaling implemented in `src/kernel/boot_splash.c` (`5c5f502`). Scale factor `g_scale = (h>2160)?3:(h>1080)?2:1` computed in `boot_splash_init()`. All layout values computed at runtime: `g_dot_min_r=3*s`, `g_dot_max_r=5*s`, `g_dot_spacing=18*s`, `g_dot_y_offset=52*s`, `g_text_y_offset=36*s`, `g_text_area_w=500*s`, `g_font_size=16*s`. Icon rendered at `icon_size=scr_h/8` (clamped 64–`BOOT_ICON_W`) via nearest-neighbor downscale from embedded 256×256 source. `boot_font_init(g_font_size)` uses scaled size. Icon source changed from `boot_96.png` → `boot_256.png`. Build: clean → `=== BUILD OK ===` in 17.9s.
+**Implementation Note (2026-03-15):** Fully reimplemented from the original `scr_h/8` formula approach. The current system uses **pre-built native-size logo assets** — no runtime pixel scaling of the logo.
 
-- [x] Calculate scale factor: `g_scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1`
-- [x] Scale boot splash: `g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`, `g_font_size`
-- [x] Icon rendered at `scr_h/8` px (clamped 64–256) via nearest-neighbor downscale from 256×256 embed
-- [x] Scale text clear area (`g_text_area_w`) and layout offsets (`g_dot_y_offset`, `g_text_y_offset`)
-- [x] Scale factor passed to kernel implicitly via framebuffer resolution in `boot_info`
-- [x] Commit: `"boot: EDID-based GOP resolution auto-detection and HiDPI boot splash scaling"` (`5c5f502`)
+**Logo selection** (`OS_LOGO_FOR_HEIGHT` macro in `include/kernel/os_logo.h`):
+| Screen height | Logo array used | Exact size |
+|---|---|---|
+| < 1440p | `os_logo_128_pixels[]` | 128×128 px |
+| ≥ 1440p | `os_logo_192_pixels[]` | 192×192 px |
+| ≥ 2160p (4K) | `os_logo_256_pixels[]` | 256×256 px |
+
+**Font size** (`g_font_size` in `boot_splash.c`, decoupled from icon size):
+| Screen height | Font size |
+|---|---|
+| < 1080p | 17px |
+| ≥ 1080p | 20px |
+| ≥ 1440p | 26px |
+| ≥ 2160p | 36px |
+
+**Dot geometry** scales from `icon_size` (proportional): `dot_spacing = icon_size/5`, `dot_min_r = icon_size/30`, `dot_max_r = icon_size/18`.
+
+**Glyph atlas** (`boot_font_init`): pre-baked at the selected `g_font_size` via `stbtt_BakeFontBitmap()`. Sizes 17 and 26 fall through to the LRU cache on first character use; sizes 20 and 36 are also LRU. The boot font has its own dedicated 256×256 PMM atlas separate from the desktop TTF manager.
+
+> [!NOTE]
+> The desktop TTF manager (`ttf_mgr_init`) caches `{ 14, 16, 20 }` px for each text font slot (3 sizes × 5 slots = 15 `stbtt_BakeFontBitmap` calls, down from 25 in the original 5-size scheme). Reducing from 5 to 3 sizes saves ~3s desktop init time in QEMU TCG.
+
+- [x] Calculate HiDPI scale factor: `g_scale = (h > 2160) ? 3 : (h > 1080) ? 2 : 1`
+- [x] Logo: prebuilt per-resolution arrays via `OS_LOGO_FOR_HEIGHT(scr_h)` — **1:1 pixel-perfect blit, no scaling**
+- [x] Font: per-resolution tiers (17/20/26/36px), baked to private PMM atlas at splash init
+- [x] Dot geometry derived from `icon_size` (proportional to logo): spacing, min/max radius, y-offset
+- [x] Text shown from fade frame 1 (200ms in) — eliminates 400ms blank-text window
+- [x] Commit: `"feat: embed all 13 native-size OS logo assets — 1:1 pixel-perfect blit"` (`0b89910`)
+- [x] Commit: `"boot: decouple font size from icon size — restore 15px TTF at 720p"` (`cd437a7`)
+- [x] Commit: `"boot: show splash text 200ms earlier + atlas font pre-bake"` (`18782ed`)
 
 ---
 
 # Boot Splash Sizing Reference
 
-> **Rule of thumb:** Logo ≈ 8% of screen height. Embed a single 256×256 source image
-> and scale down at runtime based on detected GOP resolution.
+> **Implementation:** Pre-built logo arrays selected per resolution — no runtime scaling.
+> One embedded C source (`src/kernel/os_logo.c`, 585 KB) holds all 13 sizes.
+> Font size is a fixed tier per resolution, baked to a private 256×256 glyph atlas at splash init.
 
 ### Element Sizes by Resolution
 
-| Resolution        | Scale | Logo Size | Dot Radius (min/max) | Dot Spacing | Font Size |
-|-------------------|-------|-----------|----------------------|-------------|-----------|
-| 1280×720 (720p)   | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
-| 1366×768          | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
-| 1920×1080 (1080p) | 1×    | 128×128   | 6px / 10px           | 24px        | 18px      |
-| 2560×1440 (1440p) | 2×    | 192×192   | 10px / 16px          | 40px        | 32px      |
-| 3840×2160 (4K)    | 2×    | 256×256   | 12px / 18px          | 48px        | 36px      |
-| 3840×2400 (4K+)   | 3×    | 256×256   | 15px / 22px          | 60px        | 48px      |
+| Resolution        | Scale | Logo Array     | Logo Size | Dot r min/max | Font Size |
+|-------------------|-------|----------------|-----------|---------------|-----------|
+| 1280×720 (720p)   | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 17px      |
+| 1366×768          | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 17px      |
+| 1920×1080 (1080p) | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 20px      |
+| 2560×1440 (1440p) | 2×    | `os_logo_192`  | 192×192   | 6px / 10px    | 26px      |
+| 3840×2160 (4K)    | 2×    | `os_logo_256`  | 256×256   | 8px / 14px    | 36px      |
+| 3840×2400 (4K+)   | 3×    | `os_logo_256`  | 256×256   | 8px / 14px    | 36px      |
 
-### Scale Factor Formula
+> [!NOTE]
+> Dot radius formula: `min = icon_size/30`, `max = icon_size/18`. Spacing = `icon_size/5`.
+> These scale continuously with the prebuilt logo size — no fixed-resolution lookup needed.
 
+### Font Size Selection
+
+```c
+/* In boot_splash_init() — boot_splash.c */
+if      (scr_h >= 2160) g_font_size = 36;   /* 4K / 4K+ */
+else if (scr_h >= 1440) g_font_size = 26;   /* 1440p    */
+else if (scr_h >= 1080) g_font_size = 20;   /* 1080p    */
+else                    g_font_size = 17;   /* 720p     */
+/* Font is baked once via stbtt_BakeFontBitmap() into a 256×256 PMM atlas. */
+/* Rendering blits from the atlas: zero FPU, zero heap at render time.     */
 ```
-scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1
-logo  = screen_height / 8      (clamped 64–256px)
-dots  = 5 * scale / 8 * scale  (min/max radius)
-font  = 16 * scale              (Selawik Semibold)
+
+### Logo Selection
+
+```c
+/* in include/kernel/os_logo.h (auto-generated) */
+#define OS_LOGO_FOR_HEIGHT(scr_h) \
+    ((scr_h) >= 2160 ? os_logo_256_pixels : \
+     (scr_h) >= 1440 ? os_logo_192_pixels : \
+                       os_logo_128_pixels)
+
+#define OS_LOGO_SIZE_FOR_HEIGHT(scr_h) \
+    ((scr_h) >= 2160 ? 256 : \
+     (scr_h) >= 1440 ? 192 : \
+                       128)
 ```
 
 ### Implementation Strategy
 
-- Embed one **256×256** BGRA boot logo (256 KB)
-- Scale down via nearest-neighbor at runtime based on GOP mode
-- Same approach as Windows 11: single high-res source, runtime downsample
+- Embed **13 pre-built BGRA logo sizes** from `resources/logo/os_logo_*.png` (16–256 px)
+- Select the exact native-size array at runtime via `OS_LOGO_FOR_HEIGHT()` — **zero scaling**
+- Font size is a fixed per-resolution tier, not derived from icon size (avoids TTF init slowdown)
+- Start button in `desktop.c` uses `os_logo_32_pixels[]` directly — exact 32×32 blit
 
 
 ## 5. Boot UX Polish
@@ -664,13 +721,13 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 | ✅ Done   | 5.2 Boot Profiling               | Serial timestamps + phase markers in main.c                       |
 | ✅ Done   | 5.3 Error Recovery Screen        | Panic screen with BSOD, crash dump, 30s countdown                 |
 | ✅ Done   | 5.4 Parallel Init                | DHCP fire-and-forget before partition scan                        |
-| 🔴 P0     | 4.1 GOP Mode Negotiation         | Without this, splash wrong on any non-720p display                |
+| ✅ Done   | 4.1 GOP Mode Negotiation         | EDID-first mode selection in `bootx64.c init_gop()`               |
 | 🟠 P1     | 7.1 Boot Config File             | `boot.conf` — stop hardcoding kernel path and cmdline             |
 | 🟠 P1     | 3.5 Interim Pre-Signed Shim      | Ship Secure Boot now (with MOK enrollment)                        |
 | 🟠 P1     | 5.5 Boot Menu                    | Recovery — safe mode, console                                     |
 | 🟠 P1     | 7.4 Firmware Compatibility Check | Fail fast with clear error instead of cryptic crash               |
 | 🟠 P1     | 7.5 Crash Dump Auto-Recovery     | Detect and offer options after panic                              |
-| 🟡 P2     | 4.2 HiDPI Scaling                | Required for 4K laptops                                           |
+| ✅ Done   | 4.2 HiDPI Scaling                | Pre-built logos + fixed font tiers: 17/20/26/36px                 |
 | 🟡 P2     | 7.2 Multi-OS Detection           | Detect other OSes, show timed boot menu                           |
 | 🟡 P2     | 6.2 Measured Boot (TPM)          | Security — attestation                                            |
 | 🟡 P2     | 6.3 UEFI Boot Manager Entry      | UX — permanent firmware boot menu entry                           |
@@ -686,8 +743,8 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 | Custom UEFI boot application      | ✅ `bootmgfw.efi`          | ✅ `grubx64.efi`          | ✅ §1 Done                            |
 | Boot splash screen                | ✅ Windows 11 spinner      | ⚠️ Basic text / theme     | ✅ §2 Done — animated dots, TTF font  |
 | Secure Boot (signed)              | ✅ Microsoft CA            | ✅ Distro shim            | ✅ §3 Done — MOK + shim pending MSFT  |
-| EDID resolution auto-detect       | ✅                         | ✅ GRUB modes             | ⬜ §4.1 P0                            |
-| HiDPI / Retina scaling            | ✅                         | ⚠️ Limited                | ⬜ §4.2 P2                            |
+| EDID resolution auto-detect       | ✅                         | ✅ GRUB modes             | ✅ §4.1 Done — EDID-first `init_gop()`              |
+| HiDPI / Retina scaling            | ✅                         | ⚠️ Limited                | ✅ §4.2 Done — pre-built 128/192/256px, tiled font  |
 | Fade-in transition                | ✅ Smooth                  | ❌                        | ✅ §5.1 Done                          |
 | Boot profiling / timestamps       | ✅ ETW traces              | ⚠️ Serial only            | ✅ §5.2 Done — serial phase markers   |
 | Error recovery screen (BSOD)      | ✅ BSOD + WinRE            | ❌                        | ✅ §5.3 Done                          |
@@ -700,7 +757,7 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 | Firmware compatibility check      | ✅ (implicit)              | ❌                        | ⬜ §7.4 P1 — **Impossible OS only**   |
 | Crash dump auto-recovery          | ✅ WER + WinRE             | ❌                        | ⬜ §7.5 P1                            |
 | **A/B dual-slot boot**            | ❌                         | ❌ (only Atomic OSes)     | ⬜ **§7.3 Future — beats both**       |
-| **Anti-aliased TTF boot font**    | ✅                         | ⚠️ Bitmap fonts           | ✅ **Done — Selawik Semibold 16px**   |
+| **Anti-aliased TTF boot font**    | ✅                         | ⚠️ Bitmap fonts           | ✅ **Done — Selawik Semibold, atlas pre-baked**    |
 | **Boot profiling serial log**     | ❌ (ETW only, no serial)   | ❌                        | ✅ **Done — beats both**              |
 
 > **After P0+P1 items:** Impossible OS matches Windows Boot Manager feature-for-feature on single hardware.

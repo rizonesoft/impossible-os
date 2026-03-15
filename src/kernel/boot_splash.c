@@ -312,10 +312,10 @@ void boot_splash_init(void)
     g_text_area_w  = icon_size * 56 / 10;      /* ~716px @ 128px icon */
 
     /* Font size: fixed tiers per resolution — small enough for fast TTF init */
-    if      (scr_h >= 2160) g_font_size = 32;
-    else if (scr_h >= 1440) g_font_size = 24;
-    else if (scr_h >= 1080) g_font_size = 18;
-    else                    g_font_size = 15;
+    if      (scr_h >= 2160) g_font_size = 36;
+    else if (scr_h >= 1440) g_font_size = 26;
+    else if (scr_h >= 1080) g_font_size = 20;
+    else                    g_font_size = 17;
 
     /* Minimum guards for very small displays */
     if (g_dot_min_r < 2)       g_dot_min_r = 2;
