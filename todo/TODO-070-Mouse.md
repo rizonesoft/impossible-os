@@ -293,3 +293,75 @@
 
 > **Bottom line:** 6 out of 7 features can be fully developed and tested in VBox.
 > Only touchpad drivers need real hardware.
+
+---
+
+## 11. Raw Input API
+
+**Prompt:** Add a raw input API so applications can receive mouse events directly without going through the WM cursor pipeline. This is needed for: first-person games (infinite relative mouse movement without hitting screen edges), 3D modeling rotation, and high-precision input tools. Applications call `mouse_raw_grab(task)` to receive all delta events bypassing WM compositing. `mouse_raw_release(task)` restores normal cursor mode. While grabbed, the cursor is hidden and movement is unbounded. The WM sends `WM_INPUT` messages to the grabbing task. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"input: raw mouse grab API"`. Add notes directly in this TODO section.
+
+> **Win32 equivalent:** `RAWINPUT` API (`RegisterRawInputDevices`, `WM_INPUT`). Linux: `XIGrabDevice` via XInput2 or evdev's `EVIOCGRAB`.
+
+- [ ] Add `mouse_raw_grab(task)` — route all deltas to task, hide cursor
+- [ ] Add `mouse_raw_release(task)` — restore normal WM cursor
+- [ ] Send `WM_INPUT` messages with `{dx, dy, buttons}` to grabbing task
+- [ ] Prevent WM from updating cursor position while raw-grabbed
+- [ ] Add `SYS_MOUSE_GRAB` / `SYS_MOUSE_RELEASE` syscalls
+- [ ] Commit: `"input: raw mouse grab API"`
+
+---
+
+## Priority Order
+
+| Priority | Section               | Description                                        |
+|----------|-----------------------|----------------------------------------------------|
+| ✅ Done   | 1.1 PS/2 Basic        | 3-byte relative mouse, IRQ 12                      |
+| ✅ Done   | 2.1 VBox Mouse        | VMMDev absolute mouse via PCI `80EE:CAFE`          |
+| ✅ Done   | 2.2 VirtIO Tablet     | QEMU absolute mouse via virtio-tablet-pci          |
+| ✅ Done   | 3.1 Drag Edge Fix     | Offset recalculation after screen edge clamp       |
+| 🔴 P0    | 4.1 Scroll Wheel      | Intellimouse 4-byte packets — most-needed feature  |
+| 🔴 P0    | 6.1 Packet Resync     | Prevent jitter from lost PS/2 bytes                |
+| 🟠 P1    | 5.1 Explorer 5-Button | Side buttons for browser back/forward              |
+| 🟠 P1    | 7.1 Acceleration      | Non-linear curves for precise + fast mouse         |
+| 🟠 P1    | 7.2 Sensitivity       | Configurable DPI multiplier via Registry           |
+| 🟡 P2    | 8.1 USB EHCI          | USB 2.0 host controller — needed for real hardware |
+| 🟡 P2    | 8.2 USB HID Mouse     | USB mouse class driver over EHCI                   |
+| 🟡 P2    | 10.1 VBox Extended    | Display resize, clipboard, shared folders          |
+| 🟡 P2    | 11. Raw Input API     | First-person games, 3D tools                       |
+| 🟢 P3    | 8.3 xHCI              | USB 3.0 — modern laptops without EHCI              |
+| 🟢 P3    | 10.2 Hypervisor Layer | Unified VBox/QEMU/Hyper-V abstraction              |
+| 🔵 P4    | 9.1 Synaptics         | Laptop touchpad (real hardware only)               |
+| 🔵 P4    | 9.2 ALPS              | Laptop touchpad (real hardware only)               |
+
+---
+
+## OS Comparison
+
+| Feature                      | Windows 11                   | Linux (X11/Wayland)          | Impossible OS                          |
+|------------------------------|------------------------------|------------------------------|----------------------------------------|
+| Basic PS/2 relative          | ✅                            | ✅                            | ✅ Done                                 |
+| Scroll wheel (4th byte)      | ✅                            | ✅                            | ⬜ §4 P0                               |
+| 5-button (5th byte)          | ✅                            | ✅                            | ⬜ §5 P1                               |
+| USB HID mouse (EHCI/xHCI)    | ✅                            | ✅                            | ⬜ §8 P2                               |
+| Mouse acceleration curves    | ✅ Enhance Pointer Precision  | ✅ libinput curves             | ⬜ §7.1 P1                             |
+| Configurable DPI/sensitivity | ✅ Registry + Control Panel   | ✅ libinput + Settings         | ⬜ §7.2 P1                             |
+| Synaptics/ALPS touchpad      | ✅                            | ✅                            | ⬜ §9 P4 (real hardware only)          |
+| Packet resynchronization     | ✅ (PS/2 driver)             | ✅ (kernel PS/2 driver)       | ⬜ §6 P0                               |
+| Absolute mouse (VM)          | ✅ Hyper-V synthetic mouse    | ✅ VirtIO tablet              | ✅ VBox + VirtIO done                   |
+| Raw input grab               | ✅ `RAWINPUT` / `WM_INPUT`   | ✅ `EVIOCGRAB` (evdev)        | ⬜ §11 P2                              |
+| VBox display auto-resize     | ✅ (Guest Additions)          | ✅ (Guest Additions)          | ⬜ §10.1 P2                           |
+| Hypervisor abstraction       | ✅ WHPX / Hyper-V             | ✅ KVM / virtio               | ⬜ §10.2 P3                           |
+| **Unified 3-tier priority**  | ❌ (driver-model, no prio)   | ❌ (device nodes, no prio)   | ✅ **VirtIO > VBox > PS/2 in main.c** |
+
+## VirtualBox Testability
+
+| Feature                      | Testable in VBox? | Notes                                                                                       |
+|------------------------------|-------------------|---------------------------------------------------------------------------------------------|
+| Scroll wheel (4th byte)      | ✅ Yes            | VBox emulates Intellimouse. Magic init → 4-byte packets. Translates 1:1 to real hardware.   |
+| 5-button (5th byte)          | ✅ Yes            | VBox emulates Explorer. Same magic sequence + ID check. Works identically on real hardware. |
+| USB HID mouse (EHCI/xHCI)    | ⚠️ Partially      | VBox emulates OHCI/EHCI. USB HID driver works, but real xHCI (USB 3.0) has differences.     |
+| Mouse acceleration curves    | ✅ Yes            | Pure software math — no hardware needed. Works everywhere.                                  |
+| Configurable DPI/sensitivity | ✅ Yes            | Pure software — apply multiplier to deltas. Works everywhere.                               |
+| Synaptics/ALPS touchpad      | ❌ No             | Proprietary PS/2 extensions. VBox doesn't emulate. Must test on real laptop.                |
+| Packet resynchronization     | ✅ Yes            | Verify bit 3 of byte 0 (PS/2 spec). Can deliberately corrupt bytes to test recovery.        |
+| Raw input grab               | ✅ Yes            | Pure software — hide cursor, route deltas to task. Works in VBox.                           |

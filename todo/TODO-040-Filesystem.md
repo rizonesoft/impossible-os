@@ -1239,3 +1239,29 @@
 | 🔵 P4     | 8.11 NVMe Driver                             | Modern SSD support (future)                                     |
 | 🔵 P4     | 8.12 USB Mass Storage                        | Hot-plug USB drives (future)                                    |
 
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11 (NTFS)                   | Linux (ext4 / btrfs)            | Impossible OS (IXFS / FAT32)                        |
+|---------------------------------|-------------------------------------|---------------------------------|-----------------------------------------------------|
+| Native filesystem               | ✅ NTFS (journaled)                 | ✅ ext4 (journaled)              | ✅ IXFS (journaled, CoW, §5.7)                       |
+| FAT32 R/W                       | ✅                                  | ✅                               | ✅ Done                                              |
+| NTFS R/W                        | ✅ Native                           | ✅ ntfs3 (kernel)               | ⬜ §4.1–4.3 P1/P2                                   |
+| exFAT R/W                       | ✅                                  | ✅ exfatprogs                   | ⬜ §4.6–4.7 P3                                      |
+| ext2/3/4 R/W                    | ❌ (third-party tools)              | ✅ Native                        | ⬜ §4.4–4.5 P2/P3                                   |
+| ISO 9660 / Joliet / UDF         | ✅ Read-only                        | ✅ Read-only                     | ⬜ §4.8–4.9 P3                                      |
+| Copy-on-Write                   | ❌ (ReFS only — not for boot)       | ✅ btrfs CoW                     | ✅ IXFS CoW §5.8 — **on the boot fs**               |
+| Snapshots                       | ✅ VSS (Volume Shadow Copy)         | ✅ btrfs snapshots               | ✅ IXFS snapshots §5.8                               |
+| Per-block checksums             | ❌ (ReFS only)                      | ✅ btrfs checksums               | ✅ IXFS CRC32C §5.9.3                               |
+| Inline small-file data          | ❌                                  | ✅ ext4 inline data              | ✅ IXFS inline ≤48 B §5.9.2                         |
+| Sparse file support             | ✅                                  | ✅                               | ✅ IXFS §5.9.1                                      |
+| Win32 file API (`CreateFile`)   | ✅ Native                           | ❌ (POSIX only)                 | ⬜ §3.6 P0 — native Win32 API                       |
+| Write-ahead journal             | ✅ NTFS log                         | ✅ ext4 journal                  | ✅ IXFS WAL §5.7                                    |
+| chkdsk / fsck                   | ✅ `chkdsk`                         | ✅ `fsck.ext4`                  | ⬜ §8.2 P2 — `chkdsk` CLI + GUI                     |
+| Defrag / TRIM                   | ✅ `defrag` + Optimize Drive        | ✅ `e4defrag` + `fstrim`        | ⬜ §8.4 P3 — `defrag` + GUI                         |
+| Disk Usage Analyzer             | ✅ Storage Sense                    | ✅ `du`, `ncdu`, Baobab         | ⬜ §8.9 P3 — `diskuse` CLI + treemap GUI            |
+| Data Recovery                   | ✅ Previous Versions + third-party  | ✅ `extundelete`, PhotoRec      | ⬜ §8.5 P3                                          |
+| **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root        | ✅ **IXFS is always the boot fs — §5.8**             |
+| **Per-block checksums on boot** | ❌                                  | ⚠️ btrfs only (not default)    | ✅ **IXFS boot volume — §5.9.3**                    |
+| **Integrated disk GUI tools**   | ✅ Disk Management (limited)        | ⚠️ GParted (separate install)  | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |

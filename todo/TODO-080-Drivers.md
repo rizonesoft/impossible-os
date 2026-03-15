@@ -521,10 +521,14 @@
 | 🟡 P2     | 4.2 VirtIO-GPU Module      | QEMU GPU (restore reverted code)                            |
 | 🟡 P2     | 3.2 VirtIO-net Module      | Fast QEMU networking                                        |
 | 🟡 P2     | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core                                |
+| 🟡 P2     | 9.1 ACPI Shutdown/Reboot   | Proper power-off — currently hangs or triple-faults         |
+| 🟡 P2     | 9.3 Battery Status         | Laptop support — system tray battery indicator              |
 | 🟢 P3     | 6.1 VirtIO-input Module    | Convert existing code                                       |
 | 🟢 P3     | 3.3 RTL8169 Module         | Common real-world NIC                                       |
 | 🟢 P3     | 2.3 HPET Timer (built-in)  | High-precision timing                                       |
 | 🟢 P3     | 7.1 License Tracking       | Attribution compliance                                      |
+| 🟢 P3     | 9.2 ACPI S3 Suspend        | Sleep/resume — rare in hobby OSes                           |
+| 🟢 P3     | 9.4 CPU Freq. Scaling      | Power efficiency on laptops                                 |
 | 🔵 P4     | 4.3 Bochs/BGA Module       | Simple fallback display                                     |
 | 🔵 P4     | 5.1 Audio as Modules       | Convert Phase 08 drivers to modules                         |
 
@@ -667,3 +671,83 @@
 | Now      | PS/2 mouse/keyboard          | ~100% (via legacy emulation) | ✅ Working |
 | Phase 08 | USB HID (xHCI + HID class)   | ~100% (native USB)           | TODO      |
 | Future   | Touchscreen, gamepad, stylus | niche                        | TODO      |
+
+---
+
+## 9. Power Management (ACPI)
+
+> **Priority: P2** — Required for battery-powered laptops and proper QEMU shutdown
+
+### 9.1 ACPI Shutdown / Reboot
+
+**Prompt:** The current `shutdown` command likely triggers a triple-fault or hangs — implement proper ACPI power-off via the PM1a control register. Parse the ACPI FADT for `PM1a_CNT_BLK` and `SLP_TYP_S5`. Write `(SLP_TYPa << 10) | SLP_EN` to the PM1a control register to trigger S5 (soft-off). Reboot via `CF9` reset register (write `0x06` to I/O port `0xCF9`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI shutdown and reboot"`. Add notes directly in this TODO section.
+
+- [ ] Parse ACPI FADT: `PM1a_CNT_BLK` and `SLP_TYP_S5` value
+- [ ] Implement `acpi_poweroff()` — write `(SLP_TYPa << 10) | SLP_EN` to PM1a CTL port
+- [ ] Implement `acpi_reboot()` — write `0x06` to I/O port `0xCF9`
+- [ ] Fallback reboot: keyboard controller reset (port `0x64`, command `0xFE`)
+- [ ] Wire to `shutdown` and `reboot` shell commands
+- [ ] Test: `shutdown` → QEMU exits; `reboot` → QEMU restarts cleanly
+- [ ] Commit: `"kernel: ACPI shutdown and reboot"`
+
+### 9.2 ACPI S3 Suspend (Sleep)
+
+**Prompt:** S3 is the suspend-to-RAM state — all device state is saved in RAM, only memory is powered. Sequence: flush dirty buffers, save CPU state to wakeup trampoline page, write `SLP_TYP_S3` to PM1a control. On wake, re-enter long mode via trampoline, reinit devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI S3 suspend/resume"`. Add notes directly in this TODO section.
+
+> **Beats:** Most hobby OSes (including SerenityOS) only implement shutdown — S3 is rarely done.
+
+- [ ] Write wakeup trampoline (real-mode stub at 1 MB) that re-enters long mode
+- [ ] Save CPU state: registers, GDT, IDT, CR3, stack pointer to trampoline page
+- [ ] Flush registry hives and dirty disk buffers before suspend
+- [ ] Write `(SLP_TYP_S3 << 10) | SLP_EN` to PM1a control register
+- [ ] `acpi_resume()`: restore CPU state, reinit APIC, disk controllers, NIC
+- [ ] Test: `sleep` shell command → QEMU pauses; power button → resumes
+- [ ] Commit: `"kernel: ACPI S3 suspend/resume"`
+
+### 9.3 Battery Status (ACPI Control Method Battery)
+
+**Prompt:** Read battery status via ACPI `_BST` (Battery Status) and `_BIF`/`_BIX` control methods in the DSDT using ACPICA (Apache-2.0). Show battery percentage in system tray. Gracefully degrade if no battery objects found. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI battery status"`. Add notes directly in this TODO section.
+
+- [ ] Integrate ACPICA AML interpreter (Apache-2.0) for DSDT evaluation
+- [ ] Evaluate `_BIF`/`_BIX` at boot: design capacity, full charge capacity
+- [ ] Poll `_BST` every 30 seconds: state (charging/discharging), remaining capacity
+- [ ] System tray: battery icon with % and estimated time remaining
+- [ ] Registry: `HKLM\HARDWARE\Battery\Percentage`, `State`, `TimeRemaining`
+- [ ] Graceful degradation: no battery ACPI objects → hide tray icon silently
+- [ ] Commit: `"kernel: ACPI battery status"`
+
+### 9.4 CPU Frequency Scaling (DVFS)
+
+**Prompt:** Read P-states from ACPI `_PSS`. Switch via `IA32_PERF_CTL` MSR (Intel) or `PERF_CTL` (AMD). Policy: max frequency when scheduler queue non-empty, min when idle > 100ms. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: CPU frequency scaling (DVFS)"`. Add notes directly in this TODO section.
+
+- [ ] Read `_PSS` from ACPI DSDT: list of (frequency, voltage, latency) P-states
+- [ ] Detect Intel SpeedStep via CPUID (ECX bit 7 of leaf 0x01)
+- [ ] Switch P-state: write to `IA32_PERF_CTL` MSR (Intel) or `PERF_CTL` MSR (AMD)
+- [ ] Policy: busy scheduler → max P-state; idle > 100ms → min P-state
+- [ ] Registry: `HKLM\HARDWARE\CPU\CurrentFrequencyMHz`
+- [ ] Commit: `"kernel: CPU frequency scaling (DVFS)"`
+
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11                            | Linux                               | Impossible OS                              |
+|---------------------------------|---------------------------------------|-------------------------------------|--------------------------------------------|
+| Loadable kernel modules         | ✅ WDM drivers (`.sys`)              | ✅ `.ko` modules (`insmod`)          | ⬜ §1 P0 — `.kmod` ELF objects            |
+| Kernel symbol table             | ✅ HAL exports                        | ✅ `EXPORT_SYMBOL` / `.kallsyms`     | ⬜ §1.1 P0                                |
+| Driver model (PCI match)        | ✅ PnP manager + INF files           | ✅ `struct pci_device_id` tables     | ⬜ §1.4 P0                                |
+| Auto-load drivers at boot       | ✅ Service manager + registry         | ✅ `modprobe` + `modules.dep`        | ⬜ §1.5 P0                                |
+| NVMe storage                    | ✅ Stornvme.sys                       | ✅ `nvme` driver                     | ⬜ §2.1 P1                                |
+| APIC / IOAPIC                   | ✅ HAL                                | ✅ APIC subsystem                    | ⬜ §2.2 P2                                |
+| Intel e1000 NIC                 | ✅ e1i65x64.sys                       | ✅ `e1000`/`e1000e`                  | ⬜ §3.1 P1 — port from SerenityOS BSD-2   |
+| VirtIO-net NIC                  | ✅ netkvm.sys                         | ✅ `virtio_net`                      | ⬜ §3.2 P2                                |
+| GPU modesetting                 | ✅ WDDM 3.x                           | ✅ DRM/KMS                           | ⬜ §4 P2 — VMSVGA + VirtIO-GPU           |
+| USB xHCI controller             | ✅ USBXHCI.sys                        | ✅ `xhci_hcd`                        | ⬜ §7.2 P1                                |
+| USB HID (keyboard/mouse)        | ✅ HIDCLASS.sys                       | ✅ `usbhid`                          | ⬜ §7.3 P1                                |
+| ACPI shutdown / reboot          | ✅                                    | ✅                                   | ⬜ §9.1 P2 — **currently missing!**       |
+| ACPI S3 suspend/resume          | ✅                                    | ✅                                   | ⬜ §9.2 P3 — **beats most hobby OSes**    |
+| Battery status (laptops)        | ✅ Control Panel + tray              | ✅ UPower + system tray              | ⬜ §9.3 P2                                |
+| CPU frequency scaling (DVFS)    | ✅ Power plans + HWP                 | ✅ `cpufreq` + governors             | ⬜ §9.4 P3                                |
+| Licensing compliance            | ✅ Proprietary                        | ✅ GPL-2.0                           | ⬜ §8.1 P3 — BSD/MIT only                 |
+| **No GPL contamination**        | ✅ Proprietary                        | N/A                                 | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**   |
+| **S3 sleep in hobby OS**        | N/A                                   | N/A (reference: SerenityOS = none) | ⬜ **§9.2 — uncommon in hobby kernels**   |
