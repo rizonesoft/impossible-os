@@ -397,6 +397,38 @@ directly in this TODO section covering the EDID protocol, GOP mode matching, and
 
 ---
 
+# Boot Splash Sizing Reference
+
+> **Rule of thumb:** Logo ≈ 8% of screen height. Embed a single 256×256 source image
+> and scale down at runtime based on detected GOP resolution.
+
+### Element Sizes by Resolution
+
+| Resolution        | Scale | Logo Size | Dot Radius (min/max) | Dot Spacing | Font Size |
+|-------------------|-------|-----------|----------------------|-------------|-----------|
+| 1280×720 (720p)   | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
+| 1366×768          | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
+| 1920×1080 (1080p) | 1×    | 128×128   | 6px / 10px           | 24px        | 18px      |
+| 2560×1440 (1440p) | 2×    | 192×192   | 10px / 16px          | 40px        | 32px      |
+| 3840×2160 (4K)    | 2×    | 256×256   | 12px / 18px          | 48px        | 36px      |
+| 3840×2400 (4K+)   | 3×    | 288×288   | 15px / 22px          | 60px        | 48px      |
+
+### Scale Factor Formula
+
+```
+scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1
+logo  = screen_height / 8      (clamped 64–256px)
+dots  = 5 * scale / 8 * scale  (min/max radius)
+font  = 16 * scale              (Selawik Semibold)
+```
+
+### Implementation Strategy
+
+- Embed one **256×256** BGRA boot logo (256 KB)
+- Scale down via nearest-neighbor at runtime based on GOP mode
+- Same approach as Windows 11: single high-res source, runtime downsample
+
+
 ## 5. Boot UX Polish
 
 ### 5.1 Fade-In Transition
@@ -697,35 +729,3 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 > **After A/B boot (§7.3):** Exceeds both Windows 11 and desktop Linux — a differentiator unique to Impossible OS.
 
 ---
-
-## Boot Splash Sizing Reference
-
-> **Rule of thumb:** Logo ≈ 8% of screen height. Embed a single 256×256 source image
-> and scale down at runtime based on detected GOP resolution.
-
-### Element Sizes by Resolution
-
-| Resolution        | Scale | Logo Size | Dot Radius (min/max) | Dot Spacing | Font Size |
-|-------------------|-------|-----------|----------------------|-------------|-----------|
-| 1280×720 (720p)   | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
-| 1366×768          | 1×    | 96×96     | 5px / 8px            | 20px        | 16px      |
-| 1920×1080 (1080p) | 1×    | 128×128   | 6px / 10px           | 24px        | 18px      |
-| 2560×1440 (1440p) | 2×    | 192×192   | 10px / 16px          | 40px        | 32px      |
-| 3840×2160 (4K)    | 2×    | 256×256   | 12px / 18px          | 48px        | 36px      |
-| 3840×2400 (4K+)   | 3×    | 288×288   | 15px / 22px          | 60px        | 48px      |
-
-### Scale Factor Formula
-
-```
-scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1
-logo  = screen_height / 8      (clamped 64–256px)
-dots  = 5 * scale / 8 * scale  (min/max radius)
-font  = 16 * scale              (Selawik Semibold)
-```
-
-### Implementation Strategy
-
-- Embed one **256×256** BGRA boot logo (256 KB)
-- Scale down via nearest-neighbor at runtime based on GOP mode
-- Same approach as Windows 11: single high-res source, runtime downsample
-

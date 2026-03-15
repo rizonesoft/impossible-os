@@ -29,7 +29,7 @@ styled blue error screen instead of hanging or showing garbled output.
 █  RIP:        0xFFFFFFFF80012345           █
 █                                           █
 █  --- Register Dump ---                    █
-█  RAX=...  RBX=...  RCX=...               █
+█  RAX=...  RBX=...  RCX=...                █
 █  ...                                      █
 █                                           █
 █  --- Stack Trace ---                      █

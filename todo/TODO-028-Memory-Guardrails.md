@@ -130,6 +130,6 @@
 | Heap leak detection              | ✅ Driver Verifier LEAK      | ✅ `kmemleak` (debug)         | ⬜ §4 P2 — `KMALLOC_DEBUG`             |
 | PMM statistics / meminfo         | ✅ `!poolused` (WinDbg)      | ✅ `/proc/meminfo`            | ⬜ §5 P2 — `meminfo` shell cmd         |
 | Stack protector                  | ✅ `/GS` (MSVC)              | ✅ `-fstack-protector`        | ⬜ §6 P2                               |
-| Heap canaries                    | ✅ Debug heap (user only)    | ⚠️ SLUB debug (kernel only)  | ⬜ §6 P2                               |
+| Heap canaries                    | ✅ Debug heap (user only)    | ⚠️ SLUB debug (kernel only)   | ⬜ §6 P2                               |
 | **Build fails on bare kmalloc**  | ❌                           | ❌                            | ⬜ **§3 — Impossible OS only**         |
 | **Heap canary in kernel debug**  | ❌ (user-mode only)          | ⚠️ SLUB allocator only        | ⬜ **§6 — kmalloc-level canaries**     |
