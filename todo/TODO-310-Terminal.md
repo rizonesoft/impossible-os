@@ -93,3 +93,46 @@
 - [ ] *(Stretch)* Split panes — vertical/horizontal
 - [ ] *(Stretch)* Saved profiles/themes (color schemes)
 
+---
+
+## Priority Order
+
+| Priority | Section                         | Reason                                          |
+|----------|---------------------------------|-------------------------------------------------|
+| 🔴 P0    | §1.1 Terminal Core              | Foundation — grid, cell struct, shell pipe      |
+| 🔴 P0    | §1.2 Character Rendering        | No terminal without text on screen              |
+| 🔴 P0    | §1.3 ANSI Escape Codes          | Required by shell prompt + most CLI apps        |
+| 🟠 P1    | §1.4 Scrollback + Selection     | Copy/paste from terminal — essential dev UX     |
+| 🟠 P1    | §1.5 Registry Settings          | Font size, cursor style, opacity                |
+| 🔵 P4    | §1.6 Advanced Features          | Tabs, split panes, profiles (stretch)           |
+
+---
+
+## Key Files
+
+| File                               | Purpose                                   |
+|------------------------------------|-------------------------------------------|
+| `src/apps/terminal/terminal.c`     | [NEW] Terminal core (grid, rendering)     |
+| `include/terminal.h`               | [NEW] Terminal API header                 |
+| `src/apps/terminal/ansi.c`         | [NEW] ANSI escape code state machine      |
+| `docs/architecture/terminal.md`    | [NEW] Terminal documentation              |
+
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11 (Windows Terminal)       | Linux (GNOME Terminal / Alacritty)    | Impossible OS                          |
+|---------------------------------|-------------------------------------|---------------------------------------|----------------------------------------|
+| Terminal cell grid (2D buffer)  | ✅ VT/conPTY                        | ✅ PTY / VTE                           | ⬜ §1.1 P0 — `terminal_cell` grid     |
+| TrueType font rendering         | ✅ DirectWrite                       | ✅ Pango/Cairo or alacritty's GPU      | ⬜ §1.2 P0 — stb_truetype (Cascadia Code) |
+| ANSI SGR attributes (bold etc.) | ✅ Full VT100/VT220/xterm            | ✅ Full VTE/xterm                      | ⬜ §1.3 P0 — SGR 0/1/4/7/30-37/90-97 |
+| 256-color extended palette      | ✅ xterm-256color                    | ✅ xterm-256color                      | ⬜ §1.3 (stretch)                     |
+| Scrollback buffer               | ✅ Configurable                      | ✅ Configurable                        | ⬜ §1.4 P1 — 500 lines PMM-allocated  |
+| Mouse text selection + copy     | ✅ Win Terminal selection            | ✅ Terminal selection                  | ⬜ §1.4 P1 — click+drag selection     |
+| Ctrl+Shift+C/V (copy/paste)     | ✅ Windows Terminal                  | ✅ Standard terminal shortcut          | ⬜ §1.4 P1                            |
+| Cursor blink (block/underline)  | ✅ Configurable                      | ✅ Configurable                        | ⬜ §1.2 P0 — 3 styles, 500ms blink   |
+| Acrylic/blur background         | ✅ Windows Terminal acrylic          | ✅ alacritty transparent bg             | ⬜ §1.6 (stretch) — `gfx_acrylic()`  |
+| Multiple tabs                   | ✅ Windows Terminal tabs              | ✅ GNOME Terminal tabs                  | ⬜ §1.6 (stretch)                     |
+| Split panes                     | ✅ Windows Terminal split             | ✅ Tilix / tmux                         | ⬜ §1.6 (stretch)                     |
+| **No GPU required for rendering** | ❌ DirectWrite (GPU)               | ❌ GPU preferred (Cairo/Vulkan)        | ✅ **stb_truetype CPU rasterizer — works in QEMU** |
+| **No PTY/conPTY layer**         | ❌ conPTY abstraction layer          | ❌ PTY kernel layer required            | ✅ **Direct shell stdout pipe — simpler** |

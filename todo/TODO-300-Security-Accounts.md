@@ -372,3 +372,41 @@
 | 🟢 P3     | §6.3 Credential Storage        | Saved passwords                     |
 | 🔵 P4     | §5.3 Full Disk Encryption      | Whole-partition crypto              |
 | 🔵 P4     | §6.6 Executable Signing        | Code trust (long-term)              |
+
+---
+
+## Key Files
+
+| File                            | Purpose                                    |
+|---------------------------------|--------------------------------------------|
+| `src/kernel/auth.c`             | [NEW] User accounts + authentication       |
+| `include/auth.h`                | [NEW] Auth API header                      |
+| `src/kernel/security.c`         | [NEW] File permission enforcement          |
+| `include/permissions.h`         | [NEW] Permission bits + structs            |
+| `src/kernel/crypto.c`           | [NEW] File encryption (ChaCha20/Argon2)    |
+| `include/crypto.h`              | [NEW] Crypto API header                    |
+| `src/desktop/login.c`           | [NEW] Login screen UI + flow               |
+| `src/desktop/uac.c`             | [NEW] UAC elevation prompt                 |
+| `src/apps/settings/accounts.spl`| [NEW] Accounts settings applet             |
+
+---
+
+## OS Comparison
+
+| Feature                           | Windows 11 (NT Security)             | Linux (PAM / DAC)                     | Impossible OS                          |
+|-----------------------------------|--------------------------------------|---------------------------------------|----------------------------------------|
+| Multi-user account system         | ✅ SAM / Active Directory             | ✅ `/etc/passwd` + PAM                 | ⬜ §1.1 P0 — Registry HKU\{user}      |
+| Password hashing                  | ✅ NTLM / NTHash (weak) + MS-CHAP2   | ✅ SHA-512 / Argon2 (shadow)           | ⬜ §1.2 P0 — **Argon2id / monocypher** |
+| Login screen                      | ✅ winlogon.exe                       | ✅ GDM / SDDM / lightdm                | ⬜ §2.1 P1 — inline kernel login screen |
+| User switching / fast switch      | ✅ Win+L / Switch user                | ✅ `chvt` / GDM multi-seat             | ⬜ §2.3 P2                             |
+| File permission model             | ✅ NTFS ACL (DACL/SACL)              | ✅ POSIX DAC (rwxrwxrwx)              | ⬜ §3.1 P0 — **owner+others model (simpler than NTFS ACL)** |
+| Permission enforcement in VFS     | ✅ SeAccessCheck                      | ✅ `vfs_permission()`                  | ⬜ §3.2 P0 — hook into `vfs_open()`   |
+| System folder protections         | ✅ Protected by NTFS ACL              | ✅ Root-owned directories               | ⬜ §3.3 P1 — first-boot default perms |
+| UAC / privilege elevation         | ✅ UAC dialog (secure desktop)        | ✅ `sudo` / `pkexec`                   | ⬜ §4.1 P2 — modal prompt + admin pw  |
+| File-level encryption             | ✅ EFS (Encrypting File System)       | ✅ ecryptfs / gocryptfs                | ⬜ §5.2 P3 — ChaCha20-Poly1305       |
+| Full disk encryption              | ✅ BitLocker                          | ✅ LUKS / dm-crypt                     | ⬜ §5.3 P4 (stretch)                  |
+| CSPRNG / entropy pool             | ✅ CNG `BCryptGenRandom`              | ✅ `/dev/urandom` (ChaCha20 pool)      | ⬜ §6.4 P1 — keyboard+PIT+RDRAND pool  |
+| `sudo` / run-as admin             | ✅ Run as administrator               | ✅ `sudo` / `su`                       | ⬜ §6.5 P2 — `sudo <cmd>`             |
+| Session + audit log               | ✅ Windows Event Log                  | ✅ systemd journal / `/var/log/auth`   | ⬜ §6.1 P2 — Registry audit log       |
+| **Argon2id password hashing**     | ❌ Legacy NTLM hashes                 | ⚠️ SHA-512 crypt (not Argon2 by default) | ⬜ **§1.2 — ahead of both: Argon2id GPU-resistant** |
+| **Simple owner model (no ACLs)**  | ❌ Complex DACL/SACL ACL lists        | ⚠️ POSIX rwx (no fine-grained)        | ⬜ **§3.1 — clean owner+other, no ACL complexity** |

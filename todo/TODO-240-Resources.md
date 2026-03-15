@@ -172,3 +172,42 @@
 | 🟠 P1     | 5.1 File Manager Icons   | Icon-per-file in file browser         |
 | 🟡 P2     | 6.1 Font Manager         | User font customization               |
 | 🟢 P3     | 1.3 Open With Dialog     | Stretch — power user feature          |
+
+---
+
+## Key Files
+
+| File                                   | Purpose                                    |
+|----------------------------------------|--------------------------------------------|
+| `src/kernel/file_assoc.c`             | [NEW] File extension → app mapping         |
+| `include/file_assoc.h`               | [NEW] File associations API                |
+| `src/kernel/shortcut.c`              | [NEW] .lnk file format parser + executor   |
+| `include/shortcut.h`                 | [NEW] Shortcut API                         |
+| `src/kernel/trash.c`                 | [EXISTS if TODO-270 done] Recycle bin      |
+| `src/apps/filemgr/filemgr.c`         | [NEW] File Manager core                    |
+| `src/apps/fontmgr/fontmgr.c`         | [NEW] Font Manager app                     |
+| `resources/sounds/`                  | [NEW] WAV system sound files               |
+
+> [!NOTE]
+> **Stale build reference fix:** Two prompts in this file (§2.1 and §2.2) contain
+> `make clean && make all && make run` which is **outdated**. The correct command
+> is `bash scripts/build.sh clean` (incremental) or `bash scripts/build.sh clean run`
+> (clean + QEMU). This has been noted here — the prompts will be corrected when
+> those sections are implemented.
+
+---
+
+## OS Comparison
+
+| Feature                           | Windows 11 (Explorer + Win32)          | Linux (XDG / .desktop files)           | Impossible OS                              |
+|-----------------------------------|----------------------------------------|----------------------------------------|--------------------------------------------|
+| File associations (ext → app)     | ✅ HKCR + ProgID + DefaultIcon          | ✅ `.desktop` files + `xdg-mime`       | ⬜ §1.1 P0 — HKCR Registry lookup         |
+| Default associations on install   | ✅ Win32 app registration               | ✅ `/usr/share/applications/`          | ⬜ §1.2 P0 — first-boot Registry defaults |
+| Open With dialog                  | ✅ Explorer → Open With                 | ✅ `xdg-open` / GNOME Open With        | ⬜ §1.3 P3 (stretch)                      |
+| Shortcut files (.lnk)             | ✅ Binary .lnk IShellLink format        | ✅ XDG .desktop INI files              | ⬜ §2.1 P0 — **INI .lnk (simpler than Win32 binary)** |
+| Shortcut icons on desktop         | ✅ LNK icon + overlay arrow             | ✅ .desktop Icon= field                | ⬜ §2.2 P1 — custom icon + arrow overlay  |
+| Recycle Bin (trash)               | ✅ $Recycle.Bin per drive               | ✅ `~/.local/share/Trash/`             | ✅ (see TODO-270) + ⬜ §3.1 desktop icon  |
+| Dynamic trash icon (empty/full)   | ✅ Explorer dynamic icon                | ✅ GNOME/KDE Trash applet              | ⬜ §3.1 P1 — `ICON_TRASH_EMPTY/FULL`      |
+| System sounds (WAV chime)         | ✅ Windows Sound Scheme                 | ✅ GNOME/KDE sound themes              | ⬜ §4.1 P1 — startup/notify/error WAVs    |
+| Font manager app                  | ✅ Settings → Personalization → Fonts   | ✅ GNOME Font Viewer / KFont           | ⬜ §6.1 P2                                |
+| **INI .lnk (human-readable)**     | ❌ Binary IShellLink format             | ✅ .desktop INI format                  | ⬜ **§2.1 — simpler than Win32 binary, matches Linux XDG readability** |
