@@ -151,31 +151,31 @@ and dispatch to the first thread where `!(signal_mask & (1 << sig))`.
 
 ## Priority Order
 
-| Priority  | Section                     | Reason                                                     |
-|-----------|-----------------------------|------------------------------------------------------------|
-| ✅ Done   | 1. Pipes                    | Verified complete — shell piping works                     |
-| ✅ Done   | 2. Signals                  | Verified complete — Ctrl+C, SIGPIPE work                   |
-| ✅ Done   | 3. Shared Memory            | Verified complete — verify `SYS_SHMEM_UNMAP` num           |
-| 🔴 P0     | 6. waitpid / exit status    | Shell can’t report exit codes without this                 |
-| 🟠 P1     | 4. Message Queues           | Compositor event delivery needs typed message passing      |
-| 🟠 P1     | 5. Unix-Domain Sockets      | IxUI ↔ compositor protocol; requires §1 TODO-028 FDs first |
-| 🟠 P1     | 7. Per-Thread Signal Masks  | Required for correct POSIX multithreaded signal delivery   |
+| Priority | Section                    | Reason                                                      |
+| -------- | -------------------------- | ----------------------------------------------------------- |
+| ✅ Done  | 1. Pipes                   | Verified complete — shell piping works                     |
+| ✅ Done  | 2. Signals                 | Verified complete — Ctrl+C, SIGPIPE work                   |
+| ✅ Done  | 3. Shared Memory           | Verified complete — verify `SYS_SHMEM_UNMAP` num           |
+| 🔴 P0    | 6. waitpid / exit status   | Shell can’t report exit codes without this                 |
+| 🟠 P1    | 4. Message Queues          | Compositor event delivery needs typed message passing       |
+| 🟠 P1    | 5. Unix-Domain Sockets     | IxUI ↔ compositor protocol; requires §1 TODO-028 FDs first |
+| 🟠 P1    | 7. Per-Thread Signal Masks | Required for correct POSIX multithreaded signal delivery    |
 
 ---
 
 ## OS Comparison
 
-| Feature                        | Windows IPC                   | Linux IPC                    | Impossible OS                     |
-|--------------------------------|-------------------------------|------------------------------|-----------------------------------|
-| Pipes (anonymous)              | ✅ `CreatePipe`               | ✅ `pipe(2)`                 | ✅ §1 Done                         |
-| Signals                        | ⚠️ Basic (Ctrl+C only)        | ✅ Full POSIX signals        | ✅ §2 Done                         |
-| Shared Memory                  | ✅ `CreateFileMapping`        | ✅ `shmget` / `mmap`         | ✅ §3 Done                         |
-| Message Queues                 | ✅ Window messages / MSMQ     | ✅ `mq_open` (POSIX)         | ⬜ §4 P1                           |
-| Unix-Domain Sockets            | ✅ Named pipes `\\.\pipe\`    | ✅ `AF_UNIX`                 | ⬜ §5 P1                           |
-| waitpid / exit status          | ✅ `WaitForSingleObject`      | ✅ `waitpid(2)`              | ⬜ §6 P0                           |
-| **Named pipes (bidirectional)**| ✅ Full duplex named pipes    | ✅ `mkfifo` (half-duplex)    | ⬜ §5 covers this via unix sockets |
-| Broadcast IPC                  | ✅ `SendMessage(HWND_BROADCAST)` | ⚠️ Signals only           | ⬜ §4 message queues (typed msgs)  |
-| **Per-thread signal masks**    | ✅ Per-thread (Win32 threads) | ✅ `pthread_sigmask`         | ⬜ §7 P1 — POSIX compliant          |
+| Feature                         | 🪟 Windows IPC                   | 🐧 Linux IPC              | 🚀 Impossible OS                   |
+| ------------------------------- | -------------------------------- | ------------------------- | ---------------------------------- |
+| Pipes (anonymous)               | ✅ `CreatePipe`                  | ✅ `pipe(2)`              | ✅ §1 Done                         |
+| Signals                         | ⚠️ Basic (Ctrl+C only)         | ✅ Full POSIX signals     | ✅ §2 Done                         |
+| Shared Memory                   | ✅ `CreateFileMapping`           | ✅ `shmget` / `mmap`      | ✅ §3 Done                         |
+| Message Queues                  | ✅ Window messages / MSMQ        | ✅ `mq_open` (POSIX)      | ⬜ §4 P1                           |
+| Unix-Domain Sockets             | ✅ Named pipes `\\.\pipe\`       | ✅ `AF_UNIX`              | ⬜ §5 P1                           |
+| waitpid / exit status           | ✅ `WaitForSingleObject`         | ✅ `waitpid(2)`           | ⬜ §6 P0                           |
+| **Named pipes (bidirectional)** | ✅ Full duplex named pipes       | ✅ `mkfifo` (half-duplex) | ⬜ §5 covers this via unix sockets |
+| Broadcast IPC                   | ✅ `SendMessage(HWND_BROADCAST)` | ⚠️ Signals only         | ⬜ §4 message queues (typed msgs)  |
+| **Per-thread signal masks**     | ✅ Per-thread (Win32 threads)    | ✅ `pthread_sigmask`      | ⬜ §7 P1 — POSIX compliant        |
 
 > **After §4–6:** Impossible OS matches Linux’s IPC feature set and exceeds basic Windows IPC in signal richness.
 > **After §7:** Full POSIX multithreaded signal delivery — required for any serious user-space threading library.

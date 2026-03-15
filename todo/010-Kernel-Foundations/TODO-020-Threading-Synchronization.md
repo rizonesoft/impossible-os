@@ -309,29 +309,29 @@ mutex_unlock(&q->lock);
 
 ## Priority Order
 
-| Priority | Section                    | Reason                                                        |
-|----------|----------------------------|---------------------------------------------------------------|
-| ✅ Done   | 1. Kernel Threads          | Verified complete                                             |
-| ✅ Done   | 2. Mutexes                 | Verified complete                                             |
-| ✅ Done   | 3. Semaphores              | Verified complete                                             |
+| Priority  | Section                    | Reason                                                         |
+| --------- | -------------------------- | -------------------------------------------------------------- |
+| ✅ Done   | 1. Kernel Threads          | Verified complete                                              |
+| ✅ Done   | 2. Mutexes                 | Verified complete                                              |
+| ✅ Done   | 3. Semaphores              | Verified complete                                              |
 | ✅ Done   | 4. Read-Write Locks        | Implemented — rwlock.o linked, BUILD OK                       |
 | ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                      |
-| 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                |
-| 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting             |
-| 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers    |
+| 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                 |
+| 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting              |
+| 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers     |
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6              |
-| 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory     |
-| 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections  |
+| 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
+| 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
 | 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks    |
 | 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores |
-| 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                |
-| 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature    |
-| 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)   |
+| 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                 |
+| 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
+| 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)    |
 | 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect       |
-| 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed             |
-| 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list           |
-| 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only       |
-| 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading   |
+| 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed              |
+| 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
+| 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
+| 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading    |
 | 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable     |
 
 ---
@@ -611,34 +611,34 @@ normally.
 
 ## OS Comparison
 
-| Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
-|---------------------------------|----------------------------|----------------------------|-------------------------------------|
-| Kernel Threads                  | ✅ `KTHREAD`               | ✅ `task_struct`            | ✅ §1 Done                           |
-| Mutexes                         | ✅ `KMUTEX`                | ✅ `mutex_t`                | ✅ §2 Done                           |
-| Semaphores                      | ✅ `KSEMAPHORE`            | ✅ `semaphore`              | ✅ §3 Done                           |
-| Read-Write Locks                | ✅ `ERESOURCE`             | ✅ `rwlock_t`               | ✅ §4 Done                           |
-| Condition Variables             | ✅ (user-mode)             | ✅ `wait_queue`             | ✅ §5 Done                           |
-| Spinlocks (IRQ-safe)            | ✅ `KSPIN_LOCK`            | ✅ `spinlock_t`             | ⬜ §6 P0                             |
-| Atomic Operations               | ✅ `Interlocked*`          | ✅ `atomic_t`               | ⬜ §7 P0                             |
-| Wait/Event Objects              | ✅ `KEVENT`                | ✅ `completion`             | ⬜ §8 P1                             |
-| Work Queues                     | ✅ DPC + work items        | ✅ `workqueue_struct`       | ⬜ §9 P1                             |
-| Memory Barriers                 | ✅ `KeMemoryBarrier`       | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                            |
-| Priority Inheritance            | ⚠️ Heuristic only          | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes** |
-| Seqlocks                        | ❌                         | ✅ `seqlock_t`              | ⬜ §12 P2                            |
-| RCU                             | ❌                         | ✅ `rcu_*`                  | ⬜ §13 P2                            |
-| SMP / Per-CPU                   | ✅ Full NUMA               | ✅ Full NUMA                | ⬜ §14 Future                        |
-| Futexes                         | ✅ (user-mode)             | ✅ `futex()`                | ⬜ §15 P1                            |
-| Lock Validator                  | ✅ Driver Verifier         | ✅ `lockdep`                | ⬜ §16 P2                            |
-| **PI on by default**            | ❌ Heuristic               | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**      |
-| **Wait-on-multiple**            | ✅ `WaitForMultiple`       | ❌ FDs only                 | ⬜ **§18 — beats Linux**             |
-| **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**      |
-| **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**      |
-| **Named lock browser**          | ❌                         | ❌ File locks only          | ⬜ **§21 — Impossible OS only**        |
-| **Thread-Local Storage (TLS)**  | ✅ Full TEB                | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`    |
-| **Ticket locks (fair)**         | ❌ CAS spinlocks only      | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**          |
-| **Kernel watchdog**             | ✅ KeBugCheck timeout      | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry  |
-| **Stack guard pages**           | ✅ Automatic (Win32 stack) | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread |
-| **Preemption count**            | ✅ `KeEnterCriticalRegion` | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU       |
-| **Thread cancellation**         | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`       | ⬜ §27 P2 — deferred only, safe       |
+| Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                        |
+| ------------------------------ | ----------------------------- | --------------------------- | --------------------------------------- |
+| Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                              |
+| Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                              |
+| Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                              |
+| Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                              |
+| Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                              |
+| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                |
+| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                |
+| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                |
+| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                |
+| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                               |
+| Priority Inheritance           | ⚠️ Heuristic only           | ⚠️ Opt-in `rt_mutex`      | ⬜ §11+17 **Default on all mutexes**    |
+| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                               |
+| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                               |
+| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Future                           |
+| Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                               |
+| Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                               |
+| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**        |
+| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**               |
+| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**        |
+| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**        |
+| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**        |
+| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`    |
+| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP) | ⬜ **§23 P0 — FIFO ordering**          |
+| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry  |
+| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread |
+| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU       |
+| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe        |
 
 > **After §17–27:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
