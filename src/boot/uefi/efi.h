@@ -413,4 +413,17 @@ typedef struct {
     { 0xeb9d2d30, 0x2d88, 0x11d3, \
       { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } }
 
+/* --- EDID Active Protocol — provides raw EDID block from firmware --- */
+/* Bytes 54–71 of EDID: preferred timing descriptor.
+ *   H-active: byte[56] | (byte[58] >> 4) << 8
+ *   V-active: byte[59] | (byte[61] >> 4) << 8  */
+typedef struct {
+    UINT32  SizeOfEdid;   /* in bytes, typically 128 or 256 */
+    UINT8  *Edid;         /* pointer to raw EDID data */
+} EFI_EDID_ACTIVE_PROTOCOL;
+
+#define EFI_EDID_ACTIVE_PROTOCOL_GUID \
+    { 0xbd8c1056, 0x9f36, 0x44ec, \
+      { 0x92, 0xa8, 0xa6, 0x33, 0x7f, 0x81, 0x79, 0x86 } }
+
 #endif /* UEFI_EFI_H */

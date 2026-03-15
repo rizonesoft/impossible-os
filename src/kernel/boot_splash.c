@@ -29,15 +29,14 @@ extern int boot_font_init(int pixel_size);
 extern int boot_font_measure(const char *text);
 extern void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color);
 
-/* ---- Layout constants (Windows 11 proportions on 1280×720) ---- */
+/* ---- Layout constants (scale-independent proportional offsets) ----
+ * All pixel values are computed at runtime from the detected resolution.
+ * Base constants below are for 720p (scale=1×). Multiply by `g_scale`. */
 #define ICON_Y_PCT      38      /* icon center at 38% vertical height */
-#define DOT_Y_OFFSET    52      /* dots below icon bottom, in pixels */
-#define TEXT_Y_OFFSET   36      /* text below dot center, in pixels */
+/* DOT_Y_OFFSET, TEXT_Y_OFFSET, font size, dot radii, spacing,
+ * and icon render size are all computed in boot_splash_init(). */
 
 #define NUM_DOTS        6
-#define DOT_SPACING     18      /* px between dot centers */
-#define DOT_MIN_R       3       /* small (resting) dot radius */
-#define DOT_MAX_R       5       /* large (active) dot radius */
 
 /* Animation: each dot cycles through 16 frames of pulse */
 #define PULSE_FRAMES    16
@@ -50,9 +49,22 @@ static volatile uint8_t  splash_on;
 static uint8_t  ttf_ready;         /* 1 once boot_font_init succeeds */
 static uint32_t scr_w, scr_h;
 static uint32_t icon_x, icon_y;    /* top-left of icon */
+static uint32_t icon_size;         /* rendered icon size (px), ≤ BOOT_ICON_W */
 static uint32_t dot_cx, dot_cy;    /* center of dot row */
 static uint32_t text_y;            /* top of status text */
 static volatile uint32_t anim_frame;
+
+/* HiDPI scale factor (1, 2, or 3) — computed in boot_splash_init() */
+static uint32_t g_scale;
+
+/* Scaled layout values — all computed in boot_splash_init() */
+static int32_t g_dot_min_r;        /* resting dot radius */
+static int32_t g_dot_max_r;        /* active (peak) dot radius */
+static uint32_t g_dot_spacing;     /* px between dot centers */
+static uint32_t g_dot_y_offset;    /* dots below icon bottom */
+static uint32_t g_text_y_offset;   /* text below dot center */
+static uint32_t g_text_area_w;     /* width of status text clear area */
+static uint32_t g_font_size;       /* TTF pixel size */
 
 /* ---- Framebuffer helpers (direct to back buffer) ---- */
 
@@ -111,22 +123,25 @@ static void splash_draw_dot(int32_t cx, int32_t cy, int32_t r, uint32_t color)
     }
 }
 
-/* Draw the 48×48 icon with alpha-blending, optionally dimmed by fade/255.
- * fade=255 → full brightness (normal render); fade<255 → dimmed for fade-in.
- * On a black background, each channel is: pixel_rgb * pixel_alpha / 255 * fade / 255. */
+/* Draw the icon with alpha-blending, optionally dimmed by fade/255.
+ * The icon is nearest-neighbor downscaled from BOOT_ICON_W × BOOT_ICON_H
+ * to icon_size × icon_size at render time.  This avoids storing multiple
+ * bitmaps — one 256×256 source covers all resolutions. */
 static void splash_draw_icon_faded(uint8_t fade)
 {
-    for (uint32_t py = 0; py < BOOT_ICON_H; py++) {
-        for (uint32_t px = 0; px < BOOT_ICON_W; px++) {
-            uint32_t pixel = boot_icon_pixels[py * BOOT_ICON_W + px];
+    for (uint32_t dy = 0; dy < icon_size; dy++) {
+        /* Map rendered row → source row */
+        uint32_t sy_src = dy * BOOT_ICON_H / icon_size;
+        for (uint32_t dx = 0; dx < icon_size; dx++) {
+            uint32_t sx_src = dx * BOOT_ICON_W / icon_size;
+            uint32_t pixel  = boot_icon_pixels[sy_src * BOOT_ICON_W + sx_src];
             uint8_t a = (uint8_t)(pixel >> 24);
             if (a == 0) continue;
 
-            uint32_t sx = icon_x + px;
-            uint32_t sy = icon_y + py;
+            uint32_t sx = icon_x + dx;
+            uint32_t sy = icon_y + dy;
             if (sx >= scr_w || sy >= scr_h) continue;
 
-            /* Pre-multiply by per-pixel alpha, then dim by fade */
             uint8_t b = (uint8_t)((pixel & 0xFF) * a / 255 * fade / 255);
             uint8_t g = (uint8_t)(((pixel >> 8) & 0xFF) * a / 255 * fade / 255);
             uint8_t r = (uint8_t)(((pixel >> 16) & 0xFF) * a / 255 * fade / 255);
@@ -138,13 +153,12 @@ static void splash_draw_icon_faded(uint8_t fade)
 
 /* Draw a status string centered horizontally at text_y using the TTF font.
  * Falls back to no-op if TTF is not yet initialized. */
-#define TEXT_HEIGHT 24  /* conservative height for 16px TTF text */
 static void splash_draw_text(const char *text, uint32_t color)
 {
     /* Clear text area */
-    uint32_t text_area_w = 500;
-    uint32_t text_area_x = (scr_w > text_area_w) ? (scr_w - text_area_w) / 2 : 0;
-    splash_fill_rect(text_area_x, text_y, text_area_w, TEXT_HEIGHT, 0x000000);
+    uint32_t area_x = (scr_w > g_text_area_w) ? (scr_w - g_text_area_w) / 2 : 0;
+    uint32_t text_h = g_font_size + 8;  /* conservative height */
+    splash_fill_rect(area_x, text_y, g_text_area_w, text_h, 0x000000);
 
     if (!ttf_ready) return;
 
@@ -176,10 +190,10 @@ static const int32_t pulse_curve[8] = { 0, 2, 4, 4, 4, 2, 1, 0 };
 static void splash_draw_dots(void)
 {
     /* Clear dot area */
-    uint32_t area_w = NUM_DOTS * DOT_SPACING + DOT_MAX_R * 2 + 8;
+    uint32_t area_w = NUM_DOTS * g_dot_spacing + (uint32_t)g_dot_max_r * 2 + 8;
     uint32_t area_x = dot_cx - area_w / 2;
-    uint32_t area_h = DOT_MAX_R * 2 + 8;
-    uint32_t area_y = dot_cy - DOT_MAX_R - 4;
+    uint32_t area_h = (uint32_t)g_dot_max_r * 2 + 8;
+    uint32_t area_y = dot_cy - (uint32_t)g_dot_max_r - 4;
     splash_fill_rect(area_x, area_y, area_w, area_h, 0x000000);
 
     uint32_t frame = anim_frame;
@@ -187,8 +201,8 @@ static void splash_draw_dots(void)
 
     for (uint32_t i = 0; i < NUM_DOTS; i++) {
         int32_t x = (int32_t)dot_cx
-                   + (int32_t)(i * DOT_SPACING)
-                   - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
+                   + (int32_t)(i * g_dot_spacing)
+                   - (int32_t)((NUM_DOTS - 1) * g_dot_spacing / 2);
         int32_t y = (int32_t)dot_cy;
 
         /* This dot's phase within the wave */
@@ -201,7 +215,7 @@ static void splash_draw_dots(void)
         }
 
         /* Map intensity (0..4) to radius and brightness */
-        int32_t r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / 4;
+        int32_t r = g_dot_min_r + (g_dot_max_r - g_dot_min_r) * intensity / 4;
         uint32_t brightness;
         if (intensity == 0)      brightness = 0x44;  /* resting */
         else if (intensity == 1) brightness = 0x77;
@@ -219,18 +233,18 @@ static void splash_draw_dots(void)
 static void splash_draw_dots_faded(uint8_t fade)
 {
     /* Clear dot area */
-    uint32_t area_w = NUM_DOTS * DOT_SPACING + DOT_MAX_R * 2 + 8;
+    uint32_t area_w = NUM_DOTS * g_dot_spacing + (uint32_t)g_dot_max_r * 2 + 8;
     uint32_t area_x = dot_cx - area_w / 2;
-    uint32_t area_h = DOT_MAX_R * 2 + 8;
-    uint32_t area_y = dot_cy - DOT_MAX_R - 4;
+    uint32_t area_h = (uint32_t)g_dot_max_r * 2 + 8;
+    uint32_t area_y = dot_cy - (uint32_t)g_dot_max_r - 4;
     splash_fill_rect(area_x, area_y, area_w, area_h, 0x000000);
 
     uint32_t cycle_pos = 0;   /* all dots at rest — no animation yet */
 
     for (uint32_t i = 0; i < NUM_DOTS; i++) {
         int32_t x = (int32_t)dot_cx
-                   + (int32_t)(i * DOT_SPACING)
-                   - (int32_t)((NUM_DOTS - 1) * DOT_SPACING / 2);
+                   + (int32_t)(i * g_dot_spacing)
+                   - (int32_t)((NUM_DOTS - 1) * g_dot_spacing / 2);
         int32_t y = (int32_t)dot_cy;
 
         int32_t dot_start = (int32_t)i * STAGGER;
@@ -238,7 +252,7 @@ static void splash_draw_dots_faded(uint8_t fade)
         int32_t intensity = (phase >= 0 && phase < PULSE_LEN) ?
                              pulse_curve[phase] : 0;
 
-        int32_t r = DOT_MIN_R + (DOT_MAX_R - DOT_MIN_R) * intensity / 4;
+        int32_t r = g_dot_min_r + (g_dot_max_r - g_dot_min_r) * intensity / 4;
         uint32_t brightness;
         if      (intensity == 0) brightness = 0x44;
         else if (intensity == 1) brightness = 0x77;
@@ -253,7 +267,7 @@ static void splash_draw_dots_faded(uint8_t fade)
     }
 }
 
-/* ---- PIT callback: called from IRQ handler at ~14 fps ---- */
+/* PIT callback: area swap uses scaled g_dot_* values */
 static void splash_timer_callback(void)
 {
     if (!splash_on) return;
@@ -261,11 +275,10 @@ static void splash_timer_callback(void)
     anim_frame++;
     splash_draw_dots();
 
-    /* Partial swap just the dot area */
-    uint32_t area_w = NUM_DOTS * DOT_SPACING + DOT_MAX_R * 2 + 8;
+    uint32_t area_w = NUM_DOTS * g_dot_spacing + (uint32_t)g_dot_max_r * 2 + 8;
     uint32_t area_x = dot_cx - area_w / 2;
-    uint32_t area_h = DOT_MAX_R * 2 + 8;
-    uint32_t area_y = dot_cy - DOT_MAX_R - 4;
+    uint32_t area_h = (uint32_t)g_dot_max_r * 2 + 8;
+    uint32_t area_y = dot_cy - (uint32_t)g_dot_max_r - 4;
     fb_swap_rect(area_x, area_y, area_w, area_h);
 }
 
@@ -280,40 +293,53 @@ void boot_splash_init(void)
 
     if (scr_w == 0 || scr_h == 0) return;
 
-    /* Compute layout positions */
+    /* ---- HiDPI scale factor ----------------------------------------
+     * Scale:  1× for ≤1080p,  2× for 1081–2160p,  3× for >2160p
+     * This matches the user's reference table from the design doc. */
+    g_scale = (scr_h > 2160) ? 3 : (scr_h > 1080) ? 2 : 1;
+
+    /* ---- Compute scaled layout values ---------------------------------
+     * Base values are tuned for 720p (g_scale=1). Multiply by g_scale. */
+    g_dot_min_r    = (int32_t)(3 * g_scale);
+    g_dot_max_r    = (int32_t)(5 * g_scale);
+    g_dot_spacing  = 18 * g_scale;
+    g_dot_y_offset = 52 * g_scale;
+    g_text_y_offset= 36 * g_scale;
+    g_text_area_w  = 500 * g_scale;
+    g_font_size    = 16 * g_scale;
+
+    /* Icon size: screen_height / 8, clamped to [64, BOOT_ICON_W] */
+    icon_size = scr_h / 8;
+    if (icon_size > (uint32_t)BOOT_ICON_W) icon_size = (uint32_t)BOOT_ICON_W;
+    if (icon_size < 64)                    icon_size = 64;
+
+    /* ---- Compute layout positions ------------------------------------- */
     uint32_t icon_center_y = scr_h * ICON_Y_PCT / 100;
-    icon_x = (scr_w - BOOT_ICON_W) / 2;
-    icon_y = icon_center_y - BOOT_ICON_H / 2;
+    icon_x = (scr_w - icon_size) / 2;
+    icon_y = icon_center_y - icon_size / 2;
 
     dot_cx = scr_w / 2;
-    dot_cy = icon_y + BOOT_ICON_H + DOT_Y_OFFSET;
+    dot_cy = icon_y + icon_size + g_dot_y_offset;
 
-    text_y = dot_cy + TEXT_Y_OFFSET;
+    text_y = dot_cy + g_text_y_offset;
 
-    /* Suppress klog and lock compositor FIRST, before any slow init.
-     * This must happen before boot_font_init() which takes 10-50ms
-     * and would otherwise race with UEFI content still on screen. */
+    /* Suppress klog and lock compositor FIRST, before any slow init. */
     klog_set_screen_level(LOG_FATAL);
     fb_lock_compositor();
     splash_on = 1;
 
-    /* Push a clean black frame to the front buffer immediately.
-     * The front buffer still shows UEFI content at this point.
-     * In QEMU this can be uninitialized VRAM (static noise); in VirtualBox
-     * it is the firmware boot text.  This swap eliminates both. */
+    /* Push a clean black frame immediately to replace UEFI/VRAM content. */
     splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
     fb_swap();
 
-    /* Try to init TTF font for smooth text (needs heap + SIMD ready).
-     * Screen is now black, so the font-loading delay is not visible. */
+    /* Try to init TTF font at scaled size. */
     ttf_ready = 0;
-    if (boot_font_init(16) == 0)
+    if (boot_font_init((int)g_font_size) == 0)
         ttf_ready = 1;
 
     anim_frame = 0;
 
-    /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
-     * PIT is initialized before boot_splash_init() so sleep_ms() works. */
+    /* ---- Fade-in: 5 frames × 100ms = 500ms total ---- */
     static const uint8_t fade_levels[5] = { 51, 102, 153, 204, 255 };
     for (int fi = 0; fi < 5; fi++) {
         splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
@@ -326,9 +352,6 @@ void boot_splash_init(void)
     /* Final frame: add status text at full brightness */
     splash_draw_text("Starting...", 0x00AAAAAA);
     fb_swap();
-
-    /* NOTE: PIT callback is registered later, after pit_init() + sti.
-     * Until then, dots won't animate (but they appear static). */
 }
 
 /* Called from main.c after pit_init() + sti to start animation */
@@ -343,7 +366,9 @@ void boot_splash_status(const char *msg)
     if (!splash_on) return;
 
     splash_draw_text(msg, 0x00AAAAAA);
-    fb_swap_rect((scr_w - 500) / 2, text_y, 500, TEXT_HEIGHT);
+    uint32_t area_x = (scr_w > g_text_area_w) ? (scr_w - g_text_area_w) / 2 : 0;
+    uint32_t text_h = g_font_size + 8;
+    fb_swap_rect(area_x, text_y, g_text_area_w, text_h);
 }
 
 void boot_splash_tick(void)

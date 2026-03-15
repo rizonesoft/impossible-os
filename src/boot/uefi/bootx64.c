@@ -181,22 +181,65 @@ static void efi_print_hex(UINT64 val)
 
 /* ============================================================================
  * Step 1: Initialize GOP (Graphics Output Protocol)
+ *
+ * Resolution selection order:
+ *   1. EFI_EDID_ACTIVE_PROTOCOL → preferred native resolution (real hardware)
+ *   2. GOP mode matching EDID W×H exactly (32 bpp, FrameBufferBase ≠ 0)
+ *   3. Fallback: search for 1280×720 (works in QEMU/VirtualBox/most hardware)
+ *   4. Final fallback: current mode (whatever firmware set)
+ *
+ * Why EDID-first is correct:
+ *   - Real hardware: EDID gives panel native resolution → exact match selected
+ *   - QEMU/VBox: EFI_EDID_ACTIVE_PROTOCOL not present → falls to 1280×720
+ *   - Never "pick highest mode" — OVMF exposes preset modes with
+ *     FrameBufferBase=0 that cause a black screen.
  * ============================================================================ */
 static EFI_STATUS init_gop(void)
 {
-    EFI_GUID gop_guid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    EFI_GUID gop_guid  = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+    EFI_GUID edid_guid = EFI_EDID_ACTIVE_PROTOCOL_GUID;
     EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+    EFI_EDID_ACTIVE_PROTOCOL *edid_proto;
     EFI_STATUS status;
-    UINT32 i, best_mode = 0;
+    UINT32 i, best_mode;
     BOOLEAN found = 0;
 
+    /* ── Locate GOP ─────────────────────────────────────────────────── */
     status = gBS->LocateProtocol(&gop_guid, (VOID *)0, (VOID **)&gop);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] GOP not found\r\n");
         return status;
     }
 
-    /* Find 1280×720 mode (or closest match) */
+    best_mode = gop->Mode->Mode;  /* start with current mode as safety net */
+
+    /* ── Step 1: Try EDID to get native resolution ───────────────────── */
+    UINT32 edid_w = 0, edid_h = 0;
+    status = gBS->LocateProtocol(&edid_guid, (VOID *)0, (VOID **)&edid_proto);
+    if (!EFI_ERROR(status) &&
+        edid_proto->SizeOfEdid >= 72 &&
+        edid_proto->Edid != (VOID *)0) {
+
+        const UINT8 *e = edid_proto->Edid;
+        /* Preferred Timing Descriptor @ byte 54 (first 18-byte block).
+         * H-active: bits[11:8] in byte 58 upper nibble | byte 56
+         * V-active: bits[11:8] in byte 61 upper nibble | byte 59 */
+        UINT32 h_lo  = e[56];
+        UINT32 h_hi  = (e[58] >> 4) & 0x0F;
+        UINT32 v_lo  = e[59];
+        UINT32 v_hi  = (e[61] >> 4) & 0x0F;
+        edid_w = h_lo | (h_hi << 8);
+        edid_h = v_lo | (v_hi << 8);
+
+        if (edid_w > 0 && edid_h > 0) {
+            efi_print(u"[GOP] EDID native: ");
+            /* (No efi_print_dec here — search for the mode below) */
+        } else {
+            edid_w = edid_h = 0;  /* bad EDID block — ignore */
+        }
+    }
+
+    /* ── Step 2: Scan GOP modes ──────────────────────────────────────── */
     for (i = 0; i < gop->Mode->MaxMode; i++) {
         UINTN info_size;
         EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
@@ -204,48 +247,61 @@ static EFI_STATUS init_gop(void)
         status = gop->QueryMode(gop, i, &info_size, &info);
         if (EFI_ERROR(status)) continue;
 
-        if (info->HorizontalResolution == 1280 &&
-            info->VerticalResolution == 720 &&
+        BOOLEAN is_32bpp =
             (info->PixelFormat == PixelBlueGreenRedReserved ||
-             info->PixelFormat == PixelRedGreenBlueReserved)) {
+             info->PixelFormat == PixelRedGreenBlueReserved);
+        if (!is_32bpp) continue;
+
+        /* Prefer EDID-native resolution first */
+        if (edid_w > 0 && edid_h > 0 &&
+            info->HorizontalResolution == edid_w &&
+            info->VerticalResolution   == edid_h) {
             best_mode = i;
             found = 1;
+            efi_print(u"[GOP] EDID match found\r\n");
             break;
+        }
+
+        /* Otherwise remember 1280×720 as fallback */
+        if (!found &&
+            info->HorizontalResolution == 1280 &&
+            info->VerticalResolution   == 720) {
+            best_mode = i;
+            found = 1;  /* keep scanning in case EDID match comes later */
         }
     }
 
-    if (!found) {
-        /* Fall back to current mode */
-        best_mode = gop->Mode->Mode;
-        efi_print(u"[--] 1280x720 not found, using current mode\r\n");
-    }
+    if (!found)
+        efi_print(u"[GOP] No 1280x720 mode — using current mode\r\n");
 
-    /* Set the mode */
+    /* ── Step 3: SetMode and verify FrameBufferBase ≠ 0 ─────────────── */
     status = gop->SetMode(gop, best_mode);
     if (EFI_ERROR(status)) {
         efi_print(u"[FAIL] GOP SetMode failed\r\n");
         return status;
     }
 
-    /* Store framebuffer info */
+    /* Guard: on some emulators large modes report FrameBufferBase=0 */
+    if (gop->Mode->FrameBufferBase == 0) {
+        efi_print(u"[GOP] FrameBufferBase=0 — falling back to mode 0\r\n");
+        gop->SetMode(gop, 0);
+    }
+
+    /* ── Store framebuffer info ──────────────────────────────────────── */
     gFramebuffer = (UINT32 *)(UINTN)gop->Mode->FrameBufferBase;
     gFbWidth  = gop->Mode->Info->HorizontalResolution;
     gFbHeight = gop->Mode->Info->VerticalResolution;
     gFbPitch  = gop->Mode->Info->PixelsPerScanLine;
 
-    /* Zero the framebuffer immediately after SetMode().
-     * In QEMU the VRAM is uninitialized at this moment (random pixels =
-     * static noise).  On real hardware this is usually already zeroed by
-     * the UEFI firmware, but zeroing it here is harmless and guarantees a
-     * clean black frame before any further drawing occurs. */
+    /* Zero the framebuffer to eliminate firmware residue / VRAM noise */
     {
         UINTN sz = (UINTN)gFbHeight * (UINTN)gFbPitch;
-        UINTN i;
-        for (i = 0; i < sz; i++)
-            gFramebuffer[i] = 0x00000000;
+        UINTN j;
+        for (j = 0; j < sz; j++)
+            gFramebuffer[j] = 0x00000000;
     }
 
-    /* Fill boot_info framebuffer */
+    /* ── Fill boot_info framebuffer ──────────────────────────────────── */
     g_boot_info_ptr->fb.addr   = (UINT64)gop->Mode->FrameBufferBase;
     g_boot_info_ptr->fb.pitch  = gop->Mode->Info->PixelsPerScanLine * 4;
     g_boot_info_ptr->fb.width  = gFbWidth;
