@@ -44,7 +44,7 @@
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), and `SYS_SHMEM_UNMAP` (37) syscalls are registered. Run `bash scripts/build.sh clean` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Update `README.md` and add notes directly in this TODO section covering named shared memory regions, syscalls, and reference counting.
 
-> **Note:** Verify syscall numbers — `SYS_SHMEM_UNMAP` may conflict with `SYS_MMAP` (37) in `TODO-022-Virtual-Memory.md`. Check `syscall.h` and resolve any collision.
+> **Note:** Verify syscall numbers — `SYS_SHMEM_UNMAP` may conflict with `SYS_MMAP` (37) in `TODO-023-Virtual-Memory.md`. Check `syscall.h` and resolve any collision.
 
 - [x] Implement `shmem_create(name, size)` — allocate named shared memory region
 - [x] Implement `shmem_map(id)` — map shared region into calling process's address space
@@ -78,7 +78,7 @@
 
 **Prompt:** Unix-domain sockets (`AF_UNIX`) provide a socket-like API for local IPC — bidirectional, stream-oriented, with no network overhead. Both Windows (named pipes in `\\.\pipe\`) and Linux (`AF_UNIX`) have this. Impossible OS needs local sockets for: IxUI widget toolkit ↔ compositor protocol, future Wayland-style display server, and inter-process RPC without networking. Implement as a pair of in-kernel ring buffers with `connect`/`accept`/`send`/`recv` semantics. The socket is identified by a VFS path (e.g., `/tmp/compositor.sock`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ipc: unix-domain sockets"`. Add notes directly in this TODO section.
 
-> **Prerequisite:** File Descriptors (§1 of TODO-027) must exist — sockets are FD-backed.
+> **Prerequisite:** File Descriptors (§1 of TODO-028) must exist — sockets are FD-backed.
 
 
 - [ ] Define `unix_socket_t` struct: two ring buffers (A→B, B→A), mutex, backlog queue
@@ -118,7 +118,7 @@
 | ✅ Done   | 3. Shared Memory            | Verified complete — verify `SYS_SHMEM_UNMAP` num           |
 | 🔴 P0     | 6. waitpid / exit status    | Shell can't report exit codes without this                 |
 | 🟠 P1     | 4. Message Queues           | Compositor event delivery needs typed message passing      |
-| 🟠 P1     | 5. Unix-Domain Sockets      | IxUI ↔ compositor protocol; requires §1 TODO-027 FDs first |
+| 🟠 P1     | 5. Unix-Domain Sockets      | IxUI ↔ compositor protocol; requires §1 TODO-028 FDs first |
 
 ---
 

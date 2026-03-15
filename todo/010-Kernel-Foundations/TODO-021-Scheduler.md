@@ -199,14 +199,14 @@ window and hysteresis.
 
 ## Priority Order
 
-| Priority | Section                    | Reason                                                              |
-|----------|----------------------------|---------------------------------------------------------------------|
-| 🔴 P0     | 1. Priority Scheduling     | Foundation — enables §2, §3, §4; fixes UI lag from background work |
-| 🔴 P0     | 2. Priority Aging          | Prevents starvation — required alongside §1                        |
+| Priority | Section                    | Reason                                                               |
+|----------|----------------------------|----------------------------------------------------------------------|
+| 🔴 P0     | 1. Priority Scheduling     | Foundation — enables §2, §3, §4; fixes UI lag from background work  |
+| 🔴 P0     | 2. Priority Aging          | Prevents starvation — required alongside §1                         |
 | 🟠 P1     | 3. CFS vruntime            | Fair CPU sharing for interactive responsiveness                     |
 | 🟠 P1     | 4. Real-Time Classes       | Required for audio, video, input at guaranteed latency              |
 | 🟡 P2     | 5. Scheduler Statistics    | Observability — Task Manager integration                            |
-| 🔵 Future | 6. CPU Frequency Scaling   | Depends on ACPI DVFS (TODO-080 §9) and TODO-100 Power Management   |
+| 🔵 Future | 6. CPU Frequency Scaling   | Depends on ACPI DVFS (TODO-080 §9) and TODO-100 Power Management    |
 
 ---
 
@@ -214,10 +214,10 @@ window and hysteresis.
 
 | Feature                        | Windows 11 Kernel           | Linux Kernel                | Impossible OS                         |
 |--------------------------------|-----------------------------|-----------------------------|---------------------------------------|
-| Priority scheduling            | ✅ 32 levels                | ✅ 40 nice levels           | ⬜ §1 P0 — 40 levels, O(1) bitmask   |
+| Priority scheduling            | ✅ 32 levels                | ✅ 40 nice levels           | ⬜ §1 P0 — 40 levels, O(1) bitmask    |
 | Starvation prevention          | ✅ Priority boost heuristic | ✅ Priority aging           | ⬜ §2 P0 — configurable aging ticks   |
 | Fair CPU sharing (CFS)         | ❌ Priority only            | ✅ CFS vruntime             | ⬜ §3 P1 — vruntime + weight table    |
-| Real-time scheduling           | ✅ `REALTIME_PRIORITY_CLASS`| ✅ `SCHED_FIFO`/`SCHED_RR`  | ⬜ §4 P1 — `SCHED_FIFO`/`SCHED_RR`   |
+| Real-time scheduling           | ✅ `REALTIME_PRIORITY_CLASS`| ✅ `SCHED_FIFO`/`SCHED_RR`  | ⬜ §4 P1 — `SCHED_FIFO`/`SCHED_RR`    |
 | Scheduler statistics           | ✅ ETW + Task Manager       | ✅ `/proc/<pid>/sched`      | ⬜ §5 P2 — `/sys/sched` unified view  |
 | CPU frequency scaling          | ✅ Windows power plans      | ✅ `cpufreq` governors      | ⬜ §6 Future                          |
 | **Unified /sys/sched view**    | ❌ ETW only, not readable   | ❌ Per-process `/proc` only | ⬜ **§5 — single file, all threads**  |

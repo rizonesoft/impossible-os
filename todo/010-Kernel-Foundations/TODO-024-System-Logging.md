@@ -53,9 +53,9 @@
 
 ## 4. Structured Logging (JSON Events)
 
-**Prompt:** Plain-text logs are hard to parse programmatically. Windows Event Log stores structured XML; Linux `journald` stores binary structured records. Impossible OS can emit structured JSON log events alongside the plain-text log — each entry is a JSON object `{"ts": 1234, "lvl": "WARN", "sub": "net", "msg": "DHCP timeout"}`. Written to `C:\Impossible\System\Logs\events.jsonl` (JSON Lines format — one JSON object per line). The Task Manager's log viewer reads this for color-coded filtering by level and subsystem. Requires cJSON from TODO-026 §4. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: structured JSON log events"`. Add notes directly in this TODO section.
+**Prompt:** Plain-text logs are hard to parse programmatically. Windows Event Log stores structured XML; Linux `journald` stores binary structured records. Impossible OS can emit structured JSON log events alongside the plain-text log — each entry is a JSON object `{"ts": 1234, "lvl": "WARN", "sub": "net", "msg": "DHCP timeout"}`. Written to `C:\Impossible\System\Logs\events.jsonl` (JSON Lines format — one JSON object per line). The Task Manager's log viewer reads this for color-coded filtering by level and subsystem. Requires cJSON from TODO-027 §4. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: structured JSON log events"`. Add notes directly in this TODO section.
 
-> **Prerequisite:** cJSON (TODO-026 §4) and per-subsystem splitting (§2) must exist first.
+> **Prerequisite:** cJSON (TODO-027 §4) and per-subsystem splitting (§2) must exist first.
 
 > **Beats:** Linux journald requires special tools to read. Impossible OS events.jsonl is readable by any text editor or tool.
 

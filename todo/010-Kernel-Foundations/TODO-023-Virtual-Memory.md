@@ -36,7 +36,7 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `mmap`, `munmap`, `msync` exist, MAP_PRIVATE and MAP_SHARED work, `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls are registered. Verify the eager-load implementation reads file contents into mapped pages correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to memory mapping. Add notes, gotchas, and design decisions directly in this TODO section covering mmap semantics, MAP_PRIVATE/MAP_SHARED, and COW fault handling.
 
-> **Note:** `SYS_MMAP=37` — verify this does not conflict with `SYS_SHMEM_UNMAP` in `TODO-021-IPC.md`. Check `syscall.h`.
+> **Note:** `SYS_MMAP=37` — verify this does not conflict with `SYS_SHMEM_UNMAP` in `TODO-022-IPC.md`. Check `syscall.h`.
 
 - [x] Implement `mmap(addr, length, prot, flags, fd, offset)` — map file into address space
 - [x] Implement `munmap(addr, length)` — unmap region
