@@ -53,7 +53,7 @@ Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 $Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
 # Standard VGA caps out at 4K (PCI BAR FrameBufferBase=0 in OVMF).
 # Switch to bochs-display for 4K+ — same GOP driver, no legacy VGA limits.
-$VgaDevice = if ($Yres -ge 2160) { "bochs-display" } else { "VGA,vgamem_mb=64" }
+$VgaDevice = if ($Yres -ge 2160) { "bochs-display" } else { "VGA" }
 
 Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..." -ForegroundColor Green
 Write-Host "  Disk:   $DISK" -ForegroundColor DarkGray

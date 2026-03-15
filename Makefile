@@ -315,7 +315,7 @@ run: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=1280,yres=720 \
+		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
@@ -337,7 +337,7 @@ run-1080p: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=1920,yres=1080 \
+		-device VGA,xres=1920,yres=1080 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
@@ -359,7 +359,7 @@ run-1440p: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=2560,yres=1440 \
+		-device VGA,xres=2560,yres=1440 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
@@ -430,7 +430,7 @@ run-test: all test-disks
 			-device ide-hd,drive=disk0,bus=ahci0.0 \
 			-device ide-cd,drive=cdrom0,bus=ahci0.1 \
 			-m 2G -serial stdio -vga none \
-			-device VGA,vgamem_mb=64,xres=1280,yres=720 \
+			-device VGA,xres=1280,yres=720 \
 			-device rtl8139,netdev=net0 -netdev user,id=net0 \
 			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
 	else \
@@ -444,7 +444,7 @@ run-test: all test-disks
 			-device ide-hd,drive=disk0,bus=ahci0.0 \
 			-device ide-hd,drive=testdisk,bus=ahci0.1 \
 			-m 2G -serial stdio -vga none \
-			-device VGA,vgamem_mb=64,xres=1280,yres=720 \
+			-device VGA,xres=1280,yres=720 \
 			-device rtl8139,netdev=net0 -netdev user,id=net0 \
 			-device virtio-tablet-pci -rtc base=localtime -no-reboot; \
 	fi
@@ -461,7 +461,7 @@ run-debug: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=1280,yres=720 \
+		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
@@ -481,7 +481,7 @@ run-log: all
 		-m 2G \
 		-serial file:serial.log \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=1280,yres=720 \
+		-device VGA,xres=1280,yres=720 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \

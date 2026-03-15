@@ -257,51 +257,23 @@ static EFI_STATUS init_gop(void)
         efi_print(u"[GOP] EDID match failed — using firmware mode\r\n");
     }
 
-    /* ── B. No EDID: scan all modes → pick highest-res 32bpp ─────────────
-     * Whether OVMF defaulted to 1280×720 or 3840×2160, we always try to
-     * get the best available resolution.  We pick the mode with the most
-     * pixels (W×H) that is 32bpp.  Then call SetMode and verify the
-     * FrameBufferBase is non-zero.  If SetMode fails or FB is 0, try the
-     * next-best mode, and ultimately fall back to mode 0.            */
-    {
-        UINT32 best_mode  = gop->Mode->Mode;  /* start = current */
-        UINT32 best_w = gop->Mode->Info->HorizontalResolution;
-        UINT32 best_h = gop->Mode->Info->VerticalResolution;
-        BOOLEAN best_ok   = cur_ok;           /* current mode already valid? */
-
-        for (i = 0; i < gop->Mode->MaxMode; i++) {
-            UINTN info_size;
-            EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
-            if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
-            if (info->PixelFormat != PixelBlueGreenRedReserved &&
-                info->PixelFormat != PixelRedGreenBlueReserved) continue;
-
-            UINT32 pixels = info->HorizontalResolution * info->VerticalResolution;
-            UINT32 cur_pixels = best_w * best_h;
-            if (pixels > cur_pixels) {
-                best_mode = i;
-                best_w    = info->HorizontalResolution;
-                best_h    = info->VerticalResolution;
-                best_ok   = 0;  /* need to SetMode to verify */
-            }
-        }
-
-        /* If we found a higher-res mode, try to switch to it */
-        if (!best_ok) {
-            status = gop->SetMode(gop, best_mode);
-            if (EFI_ERROR(status) || gop->Mode->FrameBufferBase == 0) {
-                /* Switch failed — use current if it was valid, else mode 0 */
-                efi_print(u"[GOP] SetMode failed — fallback\r\n");
-                if (!cur_ok)
-                    gop->SetMode(gop, 0);
-                /* else current mode stays */
-            } else {
-                efi_print(u"[GOP] Best mode selected\r\n");
-            }
-        } else {
-            efi_print(u"[GOP] Current mode is best available\r\n");
-        }
+    /* ── B. No EDID: keep OVMF's current mode ───────────────────────────
+     * OVMF initialises the display at the resolution given by xres/yres on
+     * the QEMU device (-device VGA,xres=N,yres=M or bochs-display,xres=N).
+     * By the time our bootloader runs, gop->Mode already reflects that
+     * resolution.  We just honour it — no SetMode needed.
+     *
+     * Fallback: current mode is genuinely unusable (FrameBufferBase=0 or
+     * non-32bpp format).  In that case try mode 0 (always valid on OVMF). */
+    if (cur_ok) {
+        efi_print(u"[GOP] Keeping firmware mode\r\n");
+        goto store_fb;
     }
+
+    /* cur_ok=false → last resort: SetMode(0) */
+    efi_print(u"[GOP] Current mode unusable — SetMode(0)\r\n");
+    gop->SetMode(gop, 0);
+
 
 store_fb:
     /* Store framebuffer info and zero VRAM */
