@@ -157,8 +157,9 @@ static const char *ttf_fallbacks[FONT_MAX_SLOTS] = {
 
 /* ---- Glyph cache ---- */
 
-/* Pixel sizes to cache at boot */
-static const int cache_sizes[GLYPH_CACHE_SIZES] = { 12, 14, 16, 20, 24 };
+/* Pixel sizes to cache at boot — 3 sizes covers 90%+ of UI text.
+ * 12px and 24px fall to the LRU path on first use (see GLYPH_CACHE_SIZES in font_mgr.h). */
+static const int cache_sizes[GLYPH_CACHE_SIZES] = { 14, 16, 20 };
 
 /* The cache: [slot][size_index][glyph_index] */
 static glyph_entry_t glyph_cache[FONT_MAX_SLOTS][GLYPH_CACHE_SIZES][GLYPH_CACHE_COUNT];

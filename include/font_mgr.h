@@ -42,9 +42,11 @@
 #define GLYPH_CACHE_LAST   126   /* Last cached codepoint (tilde) */
 #define GLYPH_CACHE_COUNT   95   /* LAST - FIRST + 1 */
 
-/* Common pixel sizes to pre-rasterize at boot */
-#define GLYPH_CACHE_SIZES    5
-/* Actual sizes: 12, 14, 16, 20, 24 — defined in gfx_text.c */
+/* Common pixel sizes to pre-rasterize at boot — 3 covers 90%+ of UI text.
+ * Other sizes (12, 24, 32...) go through the LRU cache on first use.
+ * Fewer sizes = fewer stbtt_BakeFontBitmap calls at desktop init. */
+#define GLYPH_CACHE_SIZES    3
+/* Actual sizes: 14, 16, 20 — defined in gfx_text.c */
 
 /* --- Glyph cache entry --- */
 
