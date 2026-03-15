@@ -590,7 +590,22 @@ On unlock, the wait queue is scanned to find the waiter with the highest `priori
 **Gotcha — task_init priority:**
 All new threads created via `task_create`, `task_create_user`, and `thread_create` initialize `priority = base_priority = THREAD_PRIO_NORMAL`. The PID 0 (main/boot) thread also gets NORMAL priority.
 
+**Future Work — Cascaded (full chain) PI:**
+The current implementation does one hop: HIGH blocking on mutex_A boosts the direct owner. If that owner is itself blocked on mutex_B (owned by LOW), LOW's priority is **not** automatically raised. To implement full cascaded PI:
+- `mutex_t` needs a `blocked_on` pointer to the mutex the owner is waiting for (if any)
+- `mutex_lock()` walks the chain: A.owner → A.owner.blocked_on → B.owner → … up to a depth limit (Linux uses 10)
+- `mutex_unlock()` walks back to re-evaluate the highest remaining waiter priority
+
+See Linux `rt_mutex_adjust_prio_chain()` for the reference implementation.
+
+- [ ] Add `blocked_on` pointer to `mutex_t` (set/cleared in `mutex_lock`/`mutex_unlock`)
+- [ ] In `mutex_lock()`: walk `blocked_on` chain and boost each owner in the chain
+- [ ] Add a depth limit (e.g., `PI_MAX_CHAIN_DEPTH = 10`) to prevent infinite loops
+- [ ] In `mutex_unlock()`: re-evaluate priority of remaining waiters and demote if appropriate
+- [ ] Add test: three-task scenario (HIGH → MED → LOW) to verify chain boost
+
 ---
+
 
 
 ## 12. Seqlocks (Ultra-Fast Read Path)
