@@ -2,7 +2,7 @@
 """Convert boot logo PNG to a C header with raw BGRA pixel data.
 
 Usage: python3 tools/convert_icon.py
-Reads:  resources/boot/boot_256.png
+Reads:  resources/boot/boot_288.png
 Writes: src/kernel/boot_splash_icon.h
 """
 import struct, zlib, os
@@ -103,7 +103,7 @@ def read_png(path):
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(script_dir)
-    png_path = os.path.join(root, 'resources', 'boot', 'boot_256.png')
+    png_path = os.path.join(root, 'resources', 'boot', 'boot_288.png')
     out_path = os.path.join(root, 'src', 'kernel', 'boot_splash_icon.h')
 
     w, h, pixels = read_png(png_path)

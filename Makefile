@@ -113,7 +113,7 @@ sign-efi: $(UEFI_EFI)
 ## boot-icon: Generate boot splash icon header from PNG
 boot-icon: src/kernel/boot_splash_icon.h
 
-src/kernel/boot_splash_icon.h: resources/boot/boot_256.png tools/convert_icon.py
+src/kernel/boot_splash_icon.h: resources/boot/boot_288.png tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
 ## bsod-icon: Generate BSOD icon header from PNG
