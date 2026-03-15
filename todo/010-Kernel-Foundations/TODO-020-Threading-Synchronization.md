@@ -199,21 +199,78 @@ mutex_unlock(&q->lock);
 
 ---
 
-## 10. Memory Barriers & Compiler Fences
+## 10. Memory Barriers & Compiler Fences ✅
 
-**Prompt:** Memory barriers prevent the CPU and compiler from reordering memory accesses across synchronization boundaries. Without them, lock-free code and even spinlock implementations can silently mis-order on modern out-of-order CPUs. Implement as lightweight macros using GCC's built-ins and x86 `MFENCE`/`LFENCE`/`SFENCE` instructions. Add `barrier()` (compiler-only fence) and `mb()`/`rmb()`/`wmb()` (full/read/write memory barriers). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: memory barriers"`. Add notes, gotchas, and design decisions directly in this TODO section covering when to use each barrier type.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/barrier.h` exists and defines `barrier()`, `mb()`, `rmb()`, `wmb()`, `smp_mb()`, `smp_rmb()`, `smp_wmb()`. Verify `include/kernel/sched/spinlock.h` and `include/kernel/atomic.h` both `#include "kernel/barrier.h"` and document their acquire/release barrier contract. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"kernel: memory barriers"` exists in git history. Fix any inconsistencies found. Add notes covering when to use each barrier type and the x86 TSO memory model rationale.
 
 > **Note for single-core:** On x86 single-core, the CPU guarantees strong ordering for most operations. The compiler barrier (`barrier()`) is still needed to prevent GCC from optimizing away `volatile` accesses. The full `mb()` becomes important when SMP is added.
 
 
-- [ ] Create `include/kernel/barrier.h`
-- [ ] `barrier()` — compiler-only fence: `__asm__ volatile("" ::: "memory")`
-- [ ] `mb()` — full memory barrier: `__asm__ volatile("mfence" ::: "memory")`
-- [ ] `rmb()` — read barrier: `__asm__ volatile("lfence" ::: "memory")`
-- [ ] `wmb()` — write barrier: `__asm__ volatile("sfence" ::: "memory")`
-- [ ] `smp_mb()`, `smp_rmb()`, `smp_wmb()` — SMP-aware aliases (= mb/rmb/wmb now; nop when !SMP)
-- [ ] Apply `barrier()` in `spinlock.h` and `atomic.h` acquire/release paths
-- [ ] Commit: `"kernel: memory barriers"`
+- [x] Create `include/kernel/barrier.h`
+- [x] `barrier()` — compiler-only fence: `__asm__ volatile("" ::: "memory")`
+- [x] `mb()` — full memory barrier: `__asm__ volatile("mfence" ::: "memory")`
+- [x] `rmb()` — read barrier: `__asm__ volatile("lfence" ::: "memory")`
+- [x] `wmb()` — write barrier: `__asm__ volatile("sfence" ::: "memory")`
+- [x] `smp_mb()`, `smp_rmb()`, `smp_wmb()` — SMP-aware aliases (= mb/rmb/wmb now; nop when !SMP)
+- [x] Apply `barrier()` in `spinlock.h` and `atomic.h` acquire/release paths
+- [x] Commit: `"kernel: memory barriers"`
+
+### Notes
+
+**Files created:**
+- `include/kernel/barrier.h` — header-only, no `.c` file required
+- `include/kernel/sched/spinlock.h` — API stub with `#include "kernel/barrier.h"`
+- `include/kernel/atomic.h` — GCC `__atomic_*` wrappers with `#include "kernel/barrier.h"`
+
+**Barrier quick reference:**
+
+| Macro | Instruction | Cost (x86) | When to use |
+|-------|-------------|-----------|-------------|
+| `barrier()` | _(compiler only, no hw insn)_ | ~0 | Volatile flag reads in spin loops, seqlock read-side, any loop that observes a flag written by another path |
+| `mb()` | `MFENCE` | ~100 cycles | Lock release, pointer publication, any inter-CPU handshake requiring both load and store ordering |
+| `rmb()` | `LFENCE` | ~5 cycles | After reading a seqlock sequence, after non-temporal loads (`MOVNTDQA`), Spectre-v1 barriers |
+| `wmb()` | `SFENCE` | ~5 cycles | Flushing NT stores to framebuffer/DMA rings before updating a tail pointer; seqlock write-side |
+| `smp_mb/rmb/wmb()` | same as above (or `barrier()` on !SMP) | 0 on !SMP | Cross-CPU data publication — prefer these over raw `mb()` so single-core builds pay no CPU cost |
+
+**x86 TSO memory model:**
+x86 uses Total Store Order: stores are globally visible in program order, and loads observe stores in program order. The single exception is store→load reordering (a later load can pass an earlier store in the store buffer). `MFENCE` closes this gap by draining the store buffer. Consequences:
+- `wmb()` costs almost nothing on x86 for regular stores (compiler clobber only matters); SFENCE only affects non-temporal (streaming) stores.
+- `rmb()` costs almost nothing on x86 for regular loads (loads are already ordered); LFENCE is needed only for speculative execution barriers.
+- `mb()` is expensive (~100 cycles) because it must drain the store buffer.
+
+**Spinlock acquire/release contract (`sched/spinlock.h`):**
+```c
+/* acquire — barrier() after CAS prevents critical-section loads
+ * from being hoisted before the lock is seen as held by GCC.
+ * On x86, LOCK CMPXCHG already carries an implicit hardware barrier. */
+while (!CAS(&s->flag, 0, 1)) barrier(); // spin body: prevents CSE on flag
+barrier(); // acquire fence
+
+/* release — barrier() before clearing flag prevents critical-section
+ * stores from being sunk (reordered after) the flag clear. */
+barrier(); // release fence
+s->flag = 0;
+```
+
+**Atomic acquire/release ordering (`atomic.h`):**
+- Loads use `__ATOMIC_ACQUIRE` → prevent load hoisting past the atomic read.
+- Stores use `__ATOMIC_RELEASE` → prevent store sinking past the atomic write.
+- RMW (CAS, fetch_add) use `__ATOMIC_ACQ_REL` → both-sided ordering.
+- This matches Linux `atomic_read()` / `atomic_set()` semantics and the C11 memory model.
+
+**SMP alias design decision:**
+`smp_mb()` / `smp_rmb()` / `smp_wmb()` conditionalize on `CONFIG_SMP`:
+- With `CONFIG_SMP`: alias to `mb()` / `rmb()` / `wmb()` (full hardware barriers).
+- Without `CONFIG_SMP`: alias to `barrier()` (compiler fence only — zero CPU cost).
+This pattern is identical to Linux's `smp_mb()` macro. Prefer `smp_*` in all kernel code so single-core builds are fast; only use raw `mb()` when a hardware barrier is unconditionally required (e.g. DMA completion, framebuffer non-temporal write flush).
+
+**Gotcha — DO NOT use `mb()` in tight loops:**
+Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait loop that calls `mb()` on every iteration will burn 100× more CPU than one using `barrier()`. Use `barrier()` in spin loops, `mb()` only at the lock boundary.
+
+**Gotcha — `wmb()` does NOT order regular stores vs. loads:**
+`SFENCE` only orders stores-before vs. stores-after. If you need a store ordered before a subsequent load on another CPU, use `mb()` (MFENCE). A common mistake: `wmb(); flag = 1;` then expecting another CPU's `if (flag)` load to see all prior stores — this is only guaranteed by `mb()`, not `wmb()`.
+
+**Future — SMP:** When `CONFIG_SMP` is enabled, the `smp_*` macros automatically switch to full hardware barriers. The only additional requirement is that `LOCK CMPXCHG` (already used in `atomic_cmpxchg`) carries an implicit full barrier on x86 — no extra `mb()` is needed around CAS on x86 SMP. On non-x86 SMP (RISC-V, ARM), `smp_mb()` would need to emit the appropriate fence instruction.
 
 
 ---
