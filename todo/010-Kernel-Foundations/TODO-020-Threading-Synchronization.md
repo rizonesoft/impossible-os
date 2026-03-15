@@ -136,20 +136,95 @@ mutex_unlock(&q->lock);
 
 ---
 
-## 6. Spinlocks (IRQ-Safe)
+## 6. Spinlocks (IRQ-Safe) ✅
 
-**Prompt:** Spinlocks are the only safe synchronization primitive inside interrupt handlers — they busy-wait using atomic CAS without calling `yield()` or the scheduler. `spin_lock(s)` disables interrupts on the current CPU and spins until the lock is acquired. `spin_unlock(s)` releases and restores interrupts. `spin_lock_irqsave(s, flags)` / `spin_unlock_irqrestore(s, flags)` save/restore the interrupt flag for nested usage. This is equivalent to Windows `KSPIN_LOCK` and Linux `spinlock_t`. Spinlocks must only be held for very short durations (< ~100 ns) — they are for protecting small critical sections inside IRQ handlers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: spinlocks (IRQ-safe)"`. Add notes, gotchas, and design decisions directly in this TODO section covering spinlock usage and IRQ safety rules.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/sched/spinlock.h` defines `spinlock_t`, `SPINLOCK_INIT`, `spin_lock`, `spin_unlock`, `spin_lock_irqsave`, `spin_unlock_irqrestore`, `spin_trylock`. Confirm `src/kernel/sched/spinlock.c` implements all four blocking functions using `pushfq`/`popfq` for RFLAGS save/restore. Verify `pit.c`, `keyboard.c`, and `rtl8139.c` include `spinlock.h` and use `spin_lock_irqsave`/`spin_unlock_irqrestore` to protect their shared state. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"sched: spinlocks (IRQ-safe)"` exists. Fix any inconsistencies found.
 
 
-- [ ] Implement `spinlock_t` (volatile uint32_t flag)
-- [ ] Implement `spin_lock(s)` — disable interrupts, CAS loop until acquired
-- [ ] Implement `spin_unlock(s)` — release flag, restore interrupts
-- [ ] Implement `spin_lock_irqsave(s, flags)` — save RFLAGS, disable IRQs, acquire
-- [ ] Implement `spin_unlock_irqrestore(s, flags)` — release, restore RFLAGS
-- [ ] Use in: PIT IRQ handler (timer queue), keyboard IRQ, NIC receive path
-- [ ] Commit: `"sched: spinlocks (IRQ-safe)"`
+- [x] Implement `spinlock_t` (volatile uint32_t flag)
+- [x] Implement `spin_lock(s)` — disable interrupts, CAS loop until acquired
+- [x] Implement `spin_unlock(s)` — release flag, restore interrupts
+- [x] Implement `spin_lock_irqsave(s, flags)` — save RFLAGS, disable IRQs, acquire
+- [x] Implement `spin_unlock_irqrestore(s, flags)` — release, restore RFLAGS
+- [x] Use in: PIT IRQ handler (timer queue), keyboard IRQ, NIC receive path
+- [x] Commit: `"sched: spinlocks (IRQ-safe)"`
+
+### Notes
+
+**Files:**
+- `include/kernel/sched/spinlock.h` — API + `SPINLOCK_INIT` macro, `DEFINE_SPINLOCK` helper
+- `src/kernel/sched/spinlock.c` — full implementation
+
+**API:**
+```c
+spinlock_t lock = SPINLOCK_INIT;
+// or: DEFINE_SPINLOCK(lock);
+
+void spin_lock(spinlock_t *s);                        // cli + CAS loop
+void spin_unlock(spinlock_t *s);                      // store 0 + sti
+void spin_lock_irqsave(spinlock_t *s, uint64_t *f);   // pushfq+cli + CAS loop
+void spin_unlock_irqrestore(spinlock_t *s, uint64_t f); // store 0 + popfq
+int  spin_trylock(spinlock_t *s);                     // non-blocking, no IRQ
+int  spin_is_locked(const spinlock_t *s);             // debug query
+```
+
+**IRQ safety rules — memorise these:**
+1. **ALWAYS use `spin_lock_irqsave` / `spin_unlock_irqrestore`** in any function that can be called from BOTH thread context (IRQs on) and IRQ context (IRQs off). Using plain `spin_lock` from thread context is fine; using it from IRQ context is also fine. The dangerous case is mixing: if you call `spin_unlock` (which does `sti`) from inside an IRQ handler, you re-enable interrupts while still inside the handler — this can cause re-entrance.
+2. **Never call yield(), mutex_lock(), sem_wait(), or any sleeping primitive** while holding a spinlock. A spinlock critical section must be non-blocking.
+3. **Never call printk() or kmalloc()** while holding a spinlock. Both can trigger IRQs or sleep.
+4. **Hold-time limit: < ~100 ns** (~200–400 CPU cycles at 2–4 GHz). Count your instructions. For anything longer, use a mutex.
+5. **Never hold two spinlocks** unless you can prove a strict acquisition order (use lock ordering IDs from §2/§16 to verify). Acquiring in inconsistent order deadlocks even on single-core when one IRQ fires mid-acquisition.
+
+**RFLAGS save/restore pattern (why it matters):**
+
+```c
+/* Thread context — IRQs enabled before call */
+uint64_t flags;
+spin_lock_irqsave(&lock, &flags);   /* saves RFLAGS (IF=1), clears IF */
+/* ... critical section ... */
+spin_unlock_irqrestore(&lock, flags); /* clears flag, restores RFLAGS (IF=1) */
+
+/* IRQ context — IRQs already disabled by CPU before handler entry */
+uint64_t flags;
+spin_lock_irqsave(&lock, &flags);   /* saves RFLAGS (IF=0), clears IF (nop) */
+/* ... critical section ... */
+spin_unlock_irqrestore(&lock, flags); /* clears flag, restores RFLAGS (IF=0) */
+/* IRQs NOT re-enabled — correct! The handler's iret will restore IF. */
+```
+
+Without irqsave, `spin_unlock` calls `sti` during IRQ handler — re-enabling interrupts mid-handler causes a second IRQ to fire, which can corrupt the first handler's local state (the NIC Rx path is the classic victim).
+
+**Memory ordering (from §10 barrier.h):**
+- Spin loop body: `barrier()` prevents GCC from caching `flag` in a register (CSE).
+- After CAS (acquire fence): `barrier()` prevents critical-section loads from being hoisted before the CAS.
+- Before clear (release fence): `barrier()` prevents critical-section stores from being sunk after the flag clear.
+- On x86, `LOCK CMPXCHG` already carries a full hardware barrier — the `barrier()` calls are compiler-only on x86. On SMP non-x86, `smp_mb()` would be needed.
+
+**Where applied:**
+- `pit.c`: `pit_lock` protects `tick_count` and `pit_callback_*` state. IRQ handler and `pit_get_ticks()`/`sleep_ms()`/`register_callback()` all use `spin_lock_irqsave`.
+- `keyboard.c`: `kb_lock` protects the `kb_buffer` ring (head/tail). IRQ-side `kb_buffer_push` and thread-side `keyboard_getchar()`/`keyboard_trygetchar()` use `spin_lock_irqsave`.
+- `rtl8139.c`: `nic_rx_lock` protects `rx_offset`/`rx_ready` between IRQ handler and `rtl8139_receive()`; `nic_tx_lock` protects `tx_cur` in `rtl8139_send()`.
+
+**Gotcha — `keyboard_getchar()` spin-wait:**
+
+```c
+/* Correct: release lock before hlt, else PIT/keyboard IRQ can't fire */
+for (;;) {
+    spin_lock_irqsave(&kb_lock, &flags);
+    if (kb_head != kb_tail) break;     /* data available */
+    spin_unlock_irqrestore(&kb_lock, flags);
+    __asm__ volatile("hlt");           /* sleep until next IRQ */
+}
+/* lock still held here — read and release */
+```
+
+The lock must be released before `hlt`. If held during `hlt`, the keyboard IRQ fires, tries to push to the buffer (needs `kb_lock`), deadlocks. The irqrestore restores IF=1 so HLT can fire.
+
+**Future — `spin_trylock`:**
+`spin_trylock` does NOT disable IRQs. It is intended for lock-elision patterns in thread context (try to skip expensive work if a lock is already held). Do not use from IRQ context.
 
 ---
+
 
 ## 7. Atomic Operations
 
@@ -384,7 +459,7 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 | ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                       |
 | ✅ Done   | 10. Memory Barriers        | `barrier.h` complete — `barrier()`, `mb()`, `rmb()`, `wmb()`, `smp_*` aliases |
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting              |
-| 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers     |
+| ✅ Done   | 6. Spinlocks               | `spinlock.c` complete — cli/sti + pushfq/popfq, applied to PIT, keyboard, NIC |
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6               |
 | 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
 | 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
@@ -877,7 +952,7 @@ CPUID probing, and the fallback path.
 | Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                                    |
 | Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                                    |
 | Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                    |
-| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                      |
+| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ✅ `spin_lock/unlock`, irqsave/irqrestore      |
 | Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                      |
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                      |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |

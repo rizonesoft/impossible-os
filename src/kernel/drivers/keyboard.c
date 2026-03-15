@@ -14,6 +14,7 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/ipc/signal.h"
+#include "kernel/sched/spinlock.h"
 #include "desktop/terminal.h"
 
 /* --- Port I/O --- */
@@ -31,16 +32,26 @@ static inline uint8_t inb(uint16_t port)
 #define KB_BUFFER_SIZE 256
 
 static char kb_buffer[KB_BUFFER_SIZE];
-static volatile uint32_t kb_head = 0;  /* write position */
-static volatile uint32_t kb_tail = 0;  /* read position */
+static volatile uint32_t kb_head = 0;  /* write position (IRQ side) */
+static volatile uint32_t kb_tail = 0;  /* read position  (thread side) */
+
+/* Spinlock protecting the ring buffer.
+ * Both IRQ-side push and thread-side pop use irqsave/irqrestore so the
+ * lock is safe regardless of which context the caller runs in. */
+static spinlock_t kb_lock = SPINLOCK_INIT;
 
 static void kb_buffer_push(char c)
 {
+    /* Called from IRQ context — use irqsave (IRQs are already off here,
+     * so irqrestore will NOT blindly re-enable them). */
+    uint64_t flags;
+    spin_lock_irqsave(&kb_lock, &flags);
     uint32_t next = (kb_head + 1) % KB_BUFFER_SIZE;
-    if (next != kb_tail) {  /* don't overwrite unread data */
+    if (next != kb_tail) {
         kb_buffer[kb_head] = c;
         kb_head = next;
     }
+    spin_unlock_irqrestore(&kb_lock, flags);
 }
 
 /* --- Modifier key state --- */
@@ -238,24 +249,33 @@ void keyboard_init(void)
 char keyboard_getchar(void)
 {
     char c;
+    uint64_t flags;
 
     /* Block until a character is available */
-    while (kb_head == kb_tail)
-        __asm__ volatile ("hlt");   /* sleep until next interrupt */
-
+    for (;;) {
+        spin_lock_irqsave(&kb_lock, &flags);
+        if (kb_head != kb_tail) break;
+        spin_unlock_irqrestore(&kb_lock, flags);
+        __asm__ volatile("hlt");   /* sleep until next interrupt */
+    }
     c = kb_buffer[kb_tail];
     kb_tail = (kb_tail + 1) % KB_BUFFER_SIZE;
+    spin_unlock_irqrestore(&kb_lock, flags);
     return c;
 }
 
 char keyboard_trygetchar(void)
 {
     char c;
+    uint64_t flags;
 
-    if (kb_head == kb_tail)
+    spin_lock_irqsave(&kb_lock, &flags);
+    if (kb_head == kb_tail) {
+        spin_unlock_irqrestore(&kb_lock, flags);
         return 0;
-
+    }
     c = kb_buffer[kb_tail];
     kb_tail = (kb_tail + 1) % KB_BUFFER_SIZE;
+    spin_unlock_irqrestore(&kb_lock, flags);
     return c;
 }

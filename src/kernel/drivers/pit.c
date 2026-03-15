@@ -12,11 +12,17 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/spinlock.h"
 
 /* Optional periodic callback (for boot splash animation etc.) */
 static void (*pit_callback_fn)(void) = (void *)0;
 static uint32_t pit_callback_divisor = 0;  /* call every N ticks */
 static uint32_t pit_callback_counter = 0;
+
+/* Spinlock protecting tick_count and callback state.
+ * Used with irqsave/irqrestore so it is safe even if called from
+ * inside another IRQ handler where IRQs are already off. */
+static spinlock_t pit_lock = SPINLOCK_INIT;
 
 /* PIT I/O ports */
 #define PIT_CHANNEL0  0x40
@@ -48,6 +54,12 @@ static uint32_t pit_actual_freq;
  * different task's saved frame for preemptive context switch. */
 static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
+    uint64_t flags;
+
+    /* Protect tick_count and callback state.  IRQs are already off inside
+     * an IRQ handler; irqsave records that so irqrestore won't accidentally
+     * re-enable them mid-handler. */
+    spin_lock_irqsave(&pit_lock, &flags);
     tick_count++;
 
     /* Fire optional callback (e.g., boot splash animation) */
@@ -58,6 +70,7 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
             pit_callback_fn();
         }
     }
+    spin_unlock_irqrestore(&pit_lock, flags);
 
     pic_send_eoi(IRQ_TIMER);
 
@@ -88,36 +101,51 @@ void pit_init(void)
 
 uint64_t pit_get_ticks(void)
 {
-    return tick_count;
+    uint64_t t;
+    uint64_t flags;
+    spin_lock_irqsave(&pit_lock, &flags);
+    t = tick_count;
+    spin_unlock_irqrestore(&pit_lock, flags);
+    return t;
 }
 
 void sleep_ms(uint32_t ms)
 {
-    /* Convert ms to ticks: ticks = ms * freq / 1000 */
-    uint64_t target = tick_count + ((uint64_t)ms * pit_actual_freq / 1000);
+    uint64_t target;
+    uint64_t flags;
+    /* Read tick_count and freq under the lock, then busy-wait without it
+     * so the PIT IRQ can still update tick_count while we sleep. */
+    spin_lock_irqsave(&pit_lock, &flags);
+    target = tick_count + ((uint64_t)ms * pit_actual_freq / 1000);
+    spin_unlock_irqrestore(&pit_lock, flags);
 
     /* Busy-wait until enough ticks have elapsed */
-    while (tick_count < target) {
-        __asm__ volatile ("hlt");   /* Sleep until next interrupt */
-    }
+    while (pit_get_ticks() < target)
+        __asm__ volatile("hlt");   /* Sleep until next interrupt */
 }
 
 uint64_t uptime(void)
 {
     if (pit_actual_freq == 0) return 0;  /* PIT not yet initialized */
-    return tick_count / pit_actual_freq;
+    return pit_get_ticks() / pit_actual_freq;
 }
 
 void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&pit_lock, &flags);
     pit_callback_counter = 0;
     pit_callback_divisor = every_n_ticks;
     pit_callback_fn = fn;
+    spin_unlock_irqrestore(&pit_lock, flags);
 }
 
 void pit_unregister_callback(void)
 {
+    uint64_t flags;
+    spin_lock_irqsave(&pit_lock, &flags);
     pit_callback_fn = (void *)0;
     pit_callback_divisor = 0;
     pit_callback_counter = 0;
+    spin_unlock_irqrestore(&pit_lock, flags);
 }

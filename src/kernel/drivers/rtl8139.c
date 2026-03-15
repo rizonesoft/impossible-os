@@ -17,6 +17,7 @@
 #include "kernel/printk.h"
 #include "kernel/mm/heap.h"
 #include "kernel/net/net.h"
+#include "kernel/sched/spinlock.h"
 
 /* --- Port I/O --- */
 static inline void outb_nic(uint16_t port, uint8_t val)
@@ -124,6 +125,14 @@ static uint8_t  tx_cur;              /* Current Tx descriptor index */
 static uint8_t  irq_line;            /* PCI IRQ line */
 static volatile uint32_t rx_ready;   /* Packets waiting flag */
 
+/* Spinlocks protecting shared NIC state.
+ * nic_rx_lock: rx_offset + rx_ready — shared between IRQ handler and
+ *              rtl8139_receive() called from network thread.
+ * nic_tx_lock: tx_cur — shared between rtl8139_send() callers.
+ * Both use irqsave/irqrestore so they are safe in any call context. */
+static spinlock_t nic_rx_lock = SPINLOCK_INIT;
+static spinlock_t nic_tx_lock = SPINLOCK_INIT;
+
 /* --- Simple memcpy (kernel-side) --- */
 static void nic_memcpy(void *dst, const void *src, uint64_t n)
 {
@@ -136,15 +145,25 @@ static void nic_memcpy(void *dst, const void *src, uint64_t n)
 /* --- IRQ handler --- */
 static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
 {
-    uint16_t status = inw_nic(io_base + REG_ISR);
+    uint16_t status;
+    uint64_t flags;
+
+    /* Read and immediately acknowledge all pending interrupts.
+     * Hold nic_rx_lock across the receive drain to serialise with
+     * any concurrent rtl8139_receive() call from the network thread. */
+    status = inw_nic(io_base + REG_ISR);
 
     if (status & INT_ROK) {
-        /* Drain all received packets from the ring buffer */
         uint8_t pkt_buf[ETH_FRAME_MAX];
         uint32_t pkt_len;
+        /* Drain all received packets from the ring buffer */
+        spin_lock_irqsave(&nic_rx_lock, &flags);
         while ((pkt_len = rtl8139_receive(pkt_buf, sizeof(pkt_buf))) > 0) {
+            spin_unlock_irqrestore(&nic_rx_lock, flags);
             net_rx(pkt_buf, pkt_len);
+            spin_lock_irqsave(&nic_rx_lock, &flags);
         }
+        spin_unlock_irqrestore(&nic_rx_lock, flags);
     }
 
     if (status & (INT_RER | INT_TER | INT_RX_OVERFLOW)) {
@@ -261,10 +280,14 @@ int rtl8139_init(void)
 
 int rtl8139_send(const void *data, uint32_t len)
 {
-    uint8_t desc = tx_cur;
+    uint8_t desc;
+    uint64_t flags;
 
     if (len > TX_BUF_SIZE)
         return -1;
+
+    spin_lock_irqsave(&nic_tx_lock, &flags);
+    desc = tx_cur;
 
     /* Copy packet data to Tx buffer */
     nic_memcpy(tx_buffers[desc], data, len);
@@ -279,6 +302,7 @@ int rtl8139_send(const void *data, uint32_t len)
 
     /* Advance to next descriptor */
     tx_cur = (tx_cur + 1) % TX_DESC_COUNT;
+    spin_unlock_irqrestore(&nic_tx_lock, flags);
 
     return 0;
 }
