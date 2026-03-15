@@ -322,6 +322,72 @@ run: all
 		-rtc base=localtime \
 		-no-reboot
 
+## run-1080p: Test at 1920×1080 — HiDPI scale stays 1× (≤1080p) but different from 720p
+## Serial output: [SPLASH] 1920x1080  scale=1x  font=16px
+run-1080p: all
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@echo "[TEST] Launching QEMU at 1920×1080 (scale=1×)"
+	$(QEMU) \
+		-cpu Haswell \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=1920,yres=1080 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
+## run-1440p: Test at 2560×1440 — HiDPI scale=2× (>1080p)
+## Serial output: [SPLASH] 2560x1440  scale=2x  font=32px
+run-1440p: all
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@echo "[TEST] Launching QEMU at 2560×1440 (scale=2×)"
+	$(QEMU) \
+		-cpu Haswell \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=2560,yres=1440 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
+## run-4k: Test at 3840×2160 — HiDPI scale=2× (≤2160p)
+## Serial output: [SPLASH] 3840x2160  scale=2x  font=32px
+run-4k: all
+	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
+	@echo "[TEST] Launching QEMU at 3840×2160 (scale=2×)"
+	$(QEMU) \
+		-cpu Haswell \
+		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
+		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
+		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
+		-device ich9-ahci,id=ahci0 \
+		-device ide-hd,drive=disk0,bus=ahci0.0 \
+		-m 2G \
+		-serial stdio \
+		-vga none \
+		-device VGA,xres=3840,yres=2160 \
+		-device rtl8139,netdev=net0 \
+		-netdev user,id=net0 \
+		-device virtio-tablet-pci \
+		-rtc base=localtime \
+		-no-reboot
+
 ## vbox: Build, convert to VDI, and launch in VirtualBox
 vbox: all
 	@echo "Converting raw disk to VDI..."

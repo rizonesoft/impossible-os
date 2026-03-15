@@ -298,6 +298,9 @@ void boot_splash_init(void)
      * This matches the user's reference table from the design doc. */
     g_scale = (scr_h > 2160) ? 3 : (scr_h > 1080) ? 2 : 1;
 
+    klog(LOG_DEBUG, "SPLASH", "%ux%u  scale=%ux  font=%upx  icon=%upx",
+         scr_w, scr_h, g_scale, 16 * g_scale, scr_h / 8);
+
     /* ---- Compute scaled layout values ---------------------------------
      * Base values are tuned for 720p (g_scale=1). Multiply by g_scale. */
     g_dot_min_r    = (int32_t)(3 * g_scale);
