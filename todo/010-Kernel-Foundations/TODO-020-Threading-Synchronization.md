@@ -342,10 +342,10 @@ mutex_unlock(&q->lock);
 | 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed              |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
-| 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows       |
-| 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated       |
+| 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows        |
+| 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated        |
 | 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading    |
-| 🔵 Phase 2 | 14. SMP Support           | Critical for production HW — after §6/7/10/11/26 complete    |
+| 🔵 P2     | 14. SMP Support            | Critical for production HW — after §6/7/10/11/26 complete      |
 
 ---
 
