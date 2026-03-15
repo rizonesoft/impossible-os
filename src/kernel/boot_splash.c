@@ -354,19 +354,21 @@ void boot_splash_init(void)
 
     anim_frame = 0;
 
-    /* ---- Fade-in: 5 frames × 100ms = 500ms total ---- */
+    /* ---- Fade-in: 5 frames × 100ms = 500ms total ----
+     * Text is included from frame 1 onwards so it appears 200ms in,
+     * not after the entire fade completes. The fill_rect black-wipe
+     * at the start of each frame clears everything, so text must be
+     * re-drawn after icon + dots in every frame where it's wanted. */
     static const uint8_t fade_levels[5] = { 51, 102, 153, 204, 255 };
     for (int fi = 0; fi < 5; fi++) {
         splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
         splash_draw_icon_faded(fade_levels[fi]);
         splash_draw_dots_faded(fade_levels[fi]);
+        if (fi >= 1 && ttf_ready)
+            splash_draw_text("Starting...", 0x00AAAAAA);
         fb_swap();
         sleep_ms(100);
     }
-
-    /* Final frame: add status text at full brightness */
-    splash_draw_text("Starting...", 0x00AAAAAA);
-    fb_swap();
 }
 
 /* Called from main.c after pit_init() + sti to start animation */
