@@ -408,6 +408,37 @@
 
 ---
 
+## Priority Order
+
+| Priority | Section                     | Reason                                                   |
+|----------|-----------------------------|----------------------------------------------------------|
+| ✅ Done   | §1.1 Core Surface           | gfx_surface_t, primitives                               |
+| ✅ Done   | §1.2 Alpha Blending          | Pre-multiplied alpha, gfx_blit                           |
+| ✅ Done   | §1.3 Gradients               | Linear + radial gradient fills                           |
+| ✅ Done   | §1.4 Blur + Material Effects | Mica, Acrylic, drop shadow                               |
+| ✅ Done   | §1.5 SIMD Optimization       | SSE2 + AVX2 runtime dispatch                             |
+| ✅ Done   | §2.1 stb_truetype            | TrueType font rasterizer                                 |
+| ✅ Done   | §2.2 Font Bundle             | Selawik + Cascadia Code fonts                            |
+| ✅ Done   | §2.3 Glyph Caching           | ASCII pre-rasterized at 5 sizes                          |
+| ✅ Done   | §2.4 Replace Bitmap Font     | TrueType throughout UI                                   |
+| ✅ Done   | §3.1 stb_image               | Runtime JPEG/PNG decode, tiered PMM/kmalloc              |
+| ✅ Done   | §3.2 Image Scaling           | Bilinear + box-filter, 5 fit modes                       |
+| ✅ Done   | §3.3 JPG/PNG Wallpaper       | Decode from VFS, Registry config                         |
+| ✅ Done   | §3.4 Image Saving            | BMP/PNG save to VFS                                      |
+| ✅ Done   | §4.1 Icon Store              | LRU cache, 128 slots, font + IRES                        |
+| ✅ Done   | §4.2 Font Icon Rendering     | Fluent icons, variant selection, codepoint map           |
+| ✅ Done   | §4.3 Fluent UI Assets        | 4 Fluent icon font TTFs                                  |
+| ✅ Done   | §4.4 File Type Mapping       | `icon_for_extension()`                                   |
+| ✅ Done   | §4.5 IRES Format             | Color icon container, host packer tool                   |
+| ✅ Done   | §4.6 ICO File Loader         | Windows .ico container parser                            |
+| ✅ Done   | §5.1 Cursor Manager          | xcur_load, 11 cursor shapes, save/restore pixels         |
+| ✅ Done   | §5.2 Cursor Assets           | Adwaita Xcur files, embedded fallback                    |
+| ✅ Done   | §5.3 Context-Aware Cursors   | wm_get_cursor_context() — resize/move/text/hand          |
+| 🟠 P1    | §4.7 Win32 Icon Index Map    | Win32 shell32.dll / imageres.dll index → icon_t          |
+| 🟢 P3    | §4.3 Color PNGs (deferred)  | Desktop app icon PNGs for IRES                           |
+
+---
+
 ## Already Completed (from Parking Lot) ✅
 
 ### ~~AVX2 SIMD for blur and alpha blending~~ ✅
@@ -415,3 +446,26 @@
 > Done (commit `3e0cc53`). `simd_enable_avx()`, `simd_blend_pixels_avx2()`,
 > `simd_blur_accum_avx2()`. Runtime dispatch via `simd_avx2_ok` flag.
 > **Note:** QEMU default (`qemu64`) lacks AVX2 — use `-cpu Haswell` to test.
+
+---
+
+## OS Comparison
+
+| Feature                          | Windows 11 (DWM/Win32)             | Linux (GTK/KDE/Wayland)              | Impossible OS                              |
+|----------------------------------|-------------------------------------|--------------------------------------|--------------------------------------------|
+| 2D compositing surface           | ✅ DWM / D2D1                       | ✅ Cairo / Skia                       | ✅ Done — `gfx_surface_t` §1.1            |
+| Alpha blending                   | ✅ DWM ARGB compositing             | ✅ Cairo alpha                        | ✅ Done — pre-multiplied §1.2             |
+| Blur / Acrylic / Mica effects    | ✅ DWM Blur Behind, Mica            | ✅ KWin blur, GNOME blur (limited)    | ✅ Done — §1.4 `gfx_mica` / `gfx_acrylic`|
+| Drop shadows                     | ✅ DWM                              | ✅ KWin / Mutter                      | ✅ Done — §1.4 `gfx_drop_shadow`         |
+| SIMD acceleration (SSE2/AVX2)    | ✅ Direct2D uses SSE2               | ✅ pixman SSE2                        | ✅ Done — §1.5 SSE2 + AVX2 dispatch      |
+| TrueType fonts                   | ✅ DirectWrite / FreeType           | ✅ FreeType + HarfBuzz                | ✅ Done — §2.1 stb_truetype              |
+| Glyph cache                      | ✅ DirectWrite glyph cache          | ✅ FreeType bitmap cache              | ✅ Done — §2.3 ASCII at 5 sizes          |
+| Runtime PNG/JPEG decode          | ✅ WIC (Windows Imaging Component)  | ✅ libpng / libjpeg-turbo             | ✅ Done — §3.1 stb_image                 |
+| Image scaling (bilinear)         | ✅ WIC scalers                      | ✅ GDK pixbuf / Cairo                 | ✅ Done — §3.2                           |
+| System icon store                | ✅ shell32.dll / imageres.dll IRES  | ✅ hicolor icon theme / SVG           | ✅ Done — §4.1–4.5 IRES + Fluent fonts   |
+| ICO file support                 | ✅ Native                           | ✅ xicon / Pixbuf loader              | ✅ Done — §4.6                           |
+| Cursor themes                    | ✅ .cur / .ani files                | ✅ X11 Xcursor format                 | ✅ Done — §5 Adwaita Xcur                |
+| Context-aware cursor shapes      | ✅ LoadCursor + SetCursor           | ✅ gdk_cursor_new_from_name           | ✅ Done — §5.3 wm_get_cursor_context()   |
+| Win32 icon index compat          | ✅ shell32.dll indices              | ❌                                   | ⬜ §4.7 P1 — mapping table              |
+| **In-kernel gfx (no GPU needed)**| ❌ DWM requires D3D11               | ❌ Mesa/DRM GPU                      | ✅ **Framebuffer CPU rendering — zero GPU dependency** |
+| **Mica on boot filesystem**      | ✅ (NTFS drive)                     | ⚠️ Only with btrfs root              | ✅ **Works on IXFS boot drive by design** |
