@@ -315,7 +315,7 @@ void boot_splash_init(void)
     if      (scr_h >= 2160) g_font_size = 36;
     else if (scr_h >= 1440) g_font_size = 26;
     else if (scr_h >= 1080) g_font_size = 20;
-    else                    g_font_size = 17;
+    else                    g_font_size = 18;
 
     /* Minimum guards for very small displays */
     if (g_dot_min_r < 2)       g_dot_min_r = 2;

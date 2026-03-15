@@ -418,8 +418,8 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 | Resolution        | Scale | Logo Array     | Logo Size | Dot r min/max | Font Size |
 |-------------------|-------|----------------|-----------|---------------|-----------|
-| 1280×720 (720p)   | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 17px      |
-| 1366×768          | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 17px      |
+| 1280×720 (720p)   | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 18px      |
+| 1366×768          | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 18px      |
 | 1920×1080 (1080p) | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 20px      |
 | 2560×1440 (1440p) | 2×    | `os_logo_192`  | 192×192   | 6px / 10px    | 26px      |
 | 3840×2160 (4K)    | 2×    | `os_logo_256`  | 256×256   | 8px / 14px    | 36px      |
