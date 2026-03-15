@@ -691,7 +691,7 @@ All new threads created via `task_create`, `task_create_user`, and `thread_creat
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6               |
 | 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
 | 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
-| 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks     |
+| ✅ Done   | 11. Priority Inheritance   | `priority`/`base_priority` in thread, PI mutex + priority-aware sched |
 | ✅ Done   | 8. Wait/Event Objects      | `event.h`/`.c` complete — MANUAL/AUTO_RESET, timeout, IRQ-safe |
 | ✅ Done   | 9. Work Queues             | `workqueue.h`/`.c` + `sys_wq` at boot, NIC rx deferred         |
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
@@ -1185,7 +1185,7 @@ CPUID probing, and the fallback path.
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ✅ `event_wait/set/reset`, MANUAL+AUTO_RESET  |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ✅ `workqueue_create/enqueue`, `sys_wq`       |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`     |
-| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**          |
+| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ✅ `thread_boost/restore_priority`, default on all mutexes  |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
 | SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26          |
