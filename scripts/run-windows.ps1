@@ -76,7 +76,7 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
     -m 2G `
     -serial stdio `
     -vga none `
-    -device VGA,vgamem_mb=32,xres=$Xres,yres=$Yres `
+    -device VGA,vgamem_mb=64,xres=$Xres,yres=$Yres `
     -device rtl8139,netdev=net0 `
     -netdev user,id=net0 `
     -device virtio-tablet-pci `
