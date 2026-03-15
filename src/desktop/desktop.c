@@ -26,7 +26,7 @@
 #include "registry.h"           /* Registry for wallpaper settings */
 #include "icon_store.h"          /* Color icon rendering from IRES */
 #include "gfx.h"                 /* Alpha blending for icon compositing */
-#include <kernel/os_logo.h>      /* Embedded OS logo (impossible_os_logo_pixels) */
+#include <kernel/os_logo.h>      /* Pre-built OS logo arrays (all sizes, no scaling needed) */
 
 /* Integer square root — local copy matching gfx_core.c (isqrt is static) */
 static uint32_t isqrt_u(uint32_t n)
@@ -470,18 +470,15 @@ void desktop_draw_taskbar(void)
         /* Subtle highlight on top edge for 3D effect */
         fb_fill_rect(btn_x + 1, btn_y + 1, START_BTN_WIDTH - 2, 1, 0xFF454545);
 
-        /* Draw OS logo downscaled to START_ICON_SIZE using nearest-neighbor */
+        /* Draw OS logo — 1:1 pixel-perfect blit from the 32x32 prebuilt array */
         {
             uint32_t icon_x = btn_x + (START_BTN_WIDTH - START_ICON_SIZE) / 2;
             uint32_t icon_y = btn_y + (btn_h - START_ICON_SIZE) / 2;
             uint32_t ix, iy;
 
             for (iy = 0; iy < START_ICON_SIZE; iy++) {
-                uint32_t sy_src = iy * OS_LOGO_H / START_ICON_SIZE;
                 for (ix = 0; ix < START_ICON_SIZE; ix++) {
-                    uint32_t sx_src = ix * OS_LOGO_W / START_ICON_SIZE;
-                    uint32_t pixel  = impossible_os_logo_pixels[
-                                        sy_src * OS_LOGO_W + sx_src];
+                    uint32_t pixel = os_logo_32_pixels[iy * START_ICON_SIZE + ix];
                     uint8_t a = (pixel >> 24) & 0xFF;
                     if (a == 0) continue;
 

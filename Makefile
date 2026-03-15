@@ -113,7 +113,7 @@ sign-efi: $(UEFI_EFI)
 ## os-logo: Generate shared OS logo header from PNG
 os-logo: include/kernel/os_logo.h
 
-include/kernel/os_logo.h: resources/logo_256.png tools/convert_icon.py
+include/kernel/os_logo.h: $(wildcard resources/logo/os_logo_*.png) tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
 ## bsod-icon: Generate BSOD icon header from PNG

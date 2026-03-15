@@ -389,7 +389,7 @@ Secure Boot is the simplest workaround for those users in the interim.
 | 1920×1080 (1080p) | 1×    | 128×128   | 6px / 10px           | 24px        | 18px      |
 | 2560×1440 (1440p) | 2×    | 192×192   | 10px / 16px          | 40px        | 32px      |
 | 3840×2160 (4K)    | 2×    | 256×256   | 12px / 18px          | 48px        | 36px      |
-| 3840×2400 (4K+)   | 3×    | 288×288   | 15px / 22px          | 60px        | 48px      |
+| 3840×2400 (4K+)   | 3×    | 256×256   | 15px / 22px          | 60px        | 48px      |
 
 ### Scale Factor Formula
 

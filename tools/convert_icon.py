@@ -1,27 +1,25 @@
 #!/usr/bin/env python3
-"""Convert OS logo PNG to a C header with raw BGRA pixel data.
+"""Generate per-size OS logo headers + a single data source from resources/logo/.
 
 Usage: python3 tools/convert_icon.py
-Reads:  resources/logo_256.png
-Writes: include/kernel/os_logo.h
+Reads:  resources/logo/os_logo_*.png
+Writes: include/kernel/os_logo.h  — extern declarations + helper macros
+        src/kernel/os_logo.c      — all pixel data (compiled once)
 """
-import struct, zlib, os
+import struct, zlib, os, re
 
 # --- Minimal PNG decoder (no dependencies) ---
 
 def read_png(path):
-    """Read a PNG file and return (width, height, rgba_pixels)."""
+    """Read a PNG file and return (width, height, bgra_pixels as uint32 list)."""
     with open(path, 'rb') as f:
         data = f.read()
 
-    # Validate PNG signature
-    assert data[:8] == b'\x89PNG\r\n\x1a\n', "Not a PNG file"
+    assert data[:8] == b'\x89PNG\r\n\x1a\n', f"Not a PNG: {path}"
 
     pos = 8
-    chunks = {}
     idat_data = b''
-    width = height = 0
-    bit_depth = color_type = 0
+    width = height = bit_depth = color_type = 0
 
     while pos < len(data):
         length = struct.unpack('>I', data[pos:pos+4])[0]
@@ -36,109 +34,138 @@ def read_png(path):
         elif ctype == b'IEND':
             break
 
-    # Decompress
     raw = zlib.decompress(idat_data)
 
-    # Determine bytes per pixel
-    if color_type == 6:   # RGBA
-        bpp = 4
-    elif color_type == 2: # RGB
-        bpp = 3
-    else:
-        raise ValueError(f"Unsupported color type: {color_type}")
+    if color_type == 6:   bpp = 4
+    elif color_type == 2: bpp = 3
+    else: raise ValueError(f"Unsupported color type {color_type} in {path}")
 
-    stride = 1 + width * bpp  # 1 byte filter + pixel data
+    stride = 1 + width * bpp
+    prev_row = [0] * (width * bpp)
     pixels = []
 
-    prev_row = [0] * (width * bpp)
     for y in range(height):
         row_start = y * stride
         filt = raw[row_start]
         row_data = list(raw[row_start+1:row_start+stride])
 
-        # Apply PNG filter
-        if filt == 0:  # None
+        if filt == 0:
             pass
-        elif filt == 1:  # Sub
+        elif filt == 1:
             for i in range(len(row_data)):
                 a = row_data[i - bpp] if i >= bpp else 0
                 row_data[i] = (row_data[i] + a) & 0xFF
-        elif filt == 2:  # Up
+        elif filt == 2:
             for i in range(len(row_data)):
                 row_data[i] = (row_data[i] + prev_row[i]) & 0xFF
-        elif filt == 3:  # Average
+        elif filt == 3:
             for i in range(len(row_data)):
                 a = row_data[i - bpp] if i >= bpp else 0
                 b = prev_row[i]
                 row_data[i] = (row_data[i] + (a + b) // 2) & 0xFF
-        elif filt == 4:  # Paeth
+        elif filt == 4:
             for i in range(len(row_data)):
                 a = row_data[i - bpp] if i >= bpp else 0
                 b = prev_row[i]
                 c = prev_row[i - bpp] if i >= bpp else 0
                 p = a + b - c
                 pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
-                if pa <= pb and pa <= pc:
-                    pr = a
-                elif pb <= pc:
-                    pr = b
-                else:
-                    pr = c
+                pr = a if (pa <= pb and pa <= pc) else (b if pb <= pc else c)
                 row_data[i] = (row_data[i] + pr) & 0xFF
 
         prev_row = row_data
 
-        # Extract pixels
         for x in range(width):
             off = x * bpp
             r = row_data[off]
             g = row_data[off + 1]
             b = row_data[off + 2]
             a = row_data[off + 3] if bpp == 4 else 255
-            pixels.append((r, g, b, a))
+            # Store as BGRA uint32 (matches framebuffer byte order)
+            pixels.append(b | (g << 8) | (r << 16) | (a << 24))
 
     return width, height, pixels
+
+
+def write_pixels(f, pixels):
+    """Write pixel array body (values only, no braces)."""
+    for i, px in enumerate(pixels):
+        if i % 8 == 0:
+            f.write("    ")
+        f.write(f"0x{px:08X},")
+        if i % 8 == 7:
+            f.write("\n")
+        else:
+            f.write(" ")
 
 
 def main():
     script_dir = os.path.dirname(os.path.abspath(__file__))
     root = os.path.dirname(script_dir)
-    png_path = os.path.join(root, 'resources', 'logo_256.png')
+    logo_dir = os.path.join(root, 'resources', 'logo')
     hdr_path = os.path.join(root, 'include', 'kernel', 'os_logo.h')
     src_path = os.path.join(root, 'src', 'kernel', 'os_logo.c')
 
-    w, h, pixels = read_png(png_path)
+    # Find all os_logo_NNN.png files sorted by size
+    pattern = re.compile(r'^os_logo_(\d+)\.png$')
+    entries = []
+    for fname in sorted(os.listdir(logo_dir)):
+        m = pattern.match(fname)
+        if m:
+            size = int(m.group(1))
+            entries.append((size, os.path.join(logo_dir, fname)))
 
-    # Write header: macros + extern declaration only (no data)
+    if not entries:
+        raise RuntimeError(f"No os_logo_*.png files found in {logo_dir}")
+
+    # Decode each PNG
+    logos = []  # list of (size, width, height, pixels)
+    for size, path in entries:
+        w, h, pixels = read_png(path)
+        assert w == size and h == size, \
+            f"{path}: expected {size}x{size}, got {w}x{h}"
+        logos.append((size, w, h, pixels))
+        print(f"  [OK] os_logo_{size}.png  ({w}x{h}, {w*h*4} bytes)")
+
+    # Write header: extern declarations only
     with open(hdr_path, 'w') as f:
         f.write("/* Auto-generated by tools/convert_icon.py — DO NOT EDIT */\n")
         f.write("#pragma once\n\n")
-        f.write(f"#define OS_LOGO_W {w}\n")
-        f.write(f"#define OS_LOGO_H {h}\n\n")
-        f.write("/* BGRA pixel data — defined in src/kernel/os_logo.c */\n")
-        f.write("extern const uint32_t impossible_os_logo_pixels[];\n")
+        f.write("/* Pre-built OS logo arrays at exact native sizes.\n")
+        f.write(" * Select the right size for each use case — no runtime scaling.\n")
+        f.write(" * Data defined in src/kernel/os_logo.c (compiled once). */\n\n")
+        for size, w, h, pixels in logos:
+            f.write(f"/* {w}x{h} BGRA logo */\n")
+            f.write(f"#define OS_LOGO_{size}_W {w}\n")
+            f.write(f"#define OS_LOGO_{size}_H {h}\n")
+            f.write(f"extern const unsigned int os_logo_{size}_pixels[];\n\n")
 
-    # Write source: actual pixel data (compiled once)
+        # Helper macro: pick boot splash logo based on screen height
+        f.write("/* Pick the splash logo matching screen height — exact size, no scaling */\n")
+        f.write("#define OS_LOGO_FOR_HEIGHT(scr_h) \\\n")
+        f.write("    ((scr_h) >= 2160 ? os_logo_256_pixels : \\\n")
+        f.write("     (scr_h) >= 1440 ? os_logo_192_pixels : \\\n")
+        f.write("                       os_logo_128_pixels)\n\n")
+        f.write("#define OS_LOGO_SIZE_FOR_HEIGHT(scr_h) \\\n")
+        f.write("    ((scr_h) >= 2160 ? 256 : \\\n")
+        f.write("     (scr_h) >= 1440 ? 192 : \\\n")
+        f.write("                       128)\n")
+
+    # Write source: all pixel data
     with open(src_path, 'w') as f:
         f.write("/* Auto-generated by tools/convert_icon.py — DO NOT EDIT */\n")
         f.write("/* Use GCC built-in type — works in freestanding -nostdinc builds */\n")
         f.write("typedef __UINT32_TYPE__ uint32_t;\n\n")
-        f.write("/* BGRA pixel data for the Impossible OS logo (256x256) */\n")
-        f.write(f"const uint32_t impossible_os_logo_pixels[{w * h}] = {{\n")
 
-        for i, (r, g, b, a) in enumerate(pixels):
-            bgra = b | (g << 8) | (r << 16) | (a << 24)
-            if i % 8 == 0:
-                f.write("    ")
-            f.write(f"0x{bgra:08X},")
-            if i % 8 == 7:
-                f.write("\n")
-            else:
-                f.write(" ")
+        for size, w, h, pixels in logos:
+            f.write(f"/* {w}x{h} OS logo — BGRA pixel data */\n")
+            f.write(f"const uint32_t os_logo_{size}_pixels[{w * h}] = {{\n")
+            write_pixels(f, pixels)
+            f.write("};\n\n")
 
-        f.write("};\n")
-
-    print(f"[ICON] {hdr_path} + {src_path} ({w}x{h}, {w*h*4} bytes)")
+    total_bytes = sum(w * h * 4 for _, w, h, _ in logos)
+    print(f"[ICON] {len(logos)} sizes → {hdr_path}")
+    print(f"       {src_path}  ({total_bytes // 1024} KB total)")
 
 
 if __name__ == '__main__':

@@ -49,7 +49,8 @@ static volatile uint8_t  splash_on;
 static uint8_t  ttf_ready;         /* 1 once boot_font_init succeeds */
 static uint32_t scr_w, scr_h;
 static uint32_t icon_x, icon_y;    /* top-left of icon */
-static uint32_t icon_size;         /* rendered icon size (px), ≤ OS_LOGO_W */
+static uint32_t icon_size;         /* pixel size of selected prebuilt logo */
+static const unsigned int *icon_pixels; /* pointer to selected logo array */
 static uint32_t dot_cx, dot_cy;    /* center of dot row */
 static uint32_t text_y;            /* top of status text */
 static volatile uint32_t anim_frame;
@@ -124,16 +125,12 @@ static void splash_draw_dot(int32_t cx, int32_t cy, int32_t r, uint32_t color)
 }
 
 /* Draw the icon with alpha-blending, optionally dimmed by fade/255.
- * The icon is nearest-neighbor downscaled from OS_LOGO_W x OS_LOGO_H
- * to icon_size x icon_size at render time.  One 256x256 source covers all. */
+ * Pixel-perfect 1:1 blit from the prebuilt native-size logo array. */
 static void splash_draw_icon_faded(uint8_t fade)
 {
     for (uint32_t dy = 0; dy < icon_size; dy++) {
-        /* Map rendered row → source row */
-        uint32_t sy_src = dy * OS_LOGO_H / icon_size;
         for (uint32_t dx = 0; dx < icon_size; dx++) {
-            uint32_t sx_src = dx * OS_LOGO_W / icon_size;
-            uint32_t pixel  = impossible_os_logo_pixels[sy_src * OS_LOGO_W + sx_src];
+            uint32_t pixel = icon_pixels[dy * icon_size + dx];
             uint8_t a = (uint8_t)(pixel >> 24);
             if (a == 0) continue;
 
@@ -141,8 +138,8 @@ static void splash_draw_icon_faded(uint8_t fade)
             uint32_t sy = icon_y + dy;
             if (sx >= scr_w || sy >= scr_h) continue;
 
-            uint8_t b = (uint8_t)((pixel & 0xFF) * a / 255 * fade / 255);
-            uint8_t g = (uint8_t)(((pixel >> 8) & 0xFF) * a / 255 * fade / 255);
+            uint8_t b = (uint8_t)((pixel & 0xFF)         * a / 255 * fade / 255);
+            uint8_t g = (uint8_t)(((pixel >> 8)  & 0xFF) * a / 255 * fade / 255);
             uint8_t r = (uint8_t)(((pixel >> 16) & 0xFF) * a / 255 * fade / 255);
             fb_put_pixel(sx, sy,
                 (uint32_t)b | ((uint32_t)g << 8) | ((uint32_t)r << 16));
@@ -296,10 +293,9 @@ void boot_splash_init(void)
      * Integer scale: 1× ≤1080p,  2× ≤2160p,  3× >2160p. */
     g_scale = (scr_h > 2160) ? 3 : (scr_h > 1080) ? 2 : 1;
 
-    /* ---- Icon size: screen_height / 8, clamped to [64, BOOT_ICON_W] - */
-    icon_size = scr_h / 8;
-    if (icon_size > (uint32_t)OS_LOGO_W) icon_size = (uint32_t)OS_LOGO_W;
-    if (icon_size < 64)                    icon_size = 64;
+    /* ---- Icon: pick exact prebuilt size — no runtime scaling ----------- */
+    icon_size   = OS_LOGO_SIZE_FOR_HEIGHT(scr_h);
+    icon_pixels = OS_LOGO_FOR_HEIGHT(scr_h);
 
     /* ---- All layout values derived from icon_size (continuous scale) --
      * This avoids the 1080p proportionality bug where icon grew but dots
