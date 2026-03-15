@@ -319,10 +319,13 @@ mutex_unlock(&q->lock);
 | 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                |
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting             |
 | 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers    |
+| 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6              |
 | 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks    |
 | 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores |
 | 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                |
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature    |
+| 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)   |
+| 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect       |
 | 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed             |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list           |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only       |
@@ -332,7 +335,7 @@ mutex_unlock(&q->lock);
 
 ## Impossible OS Differentiators
 
-The following sections (§17–21) are features that go beyond what either Windows 11 or Linux offer — unique to Impossible OS.
+The following sections (§17–24) are features that go beyond what either Windows 11 or Linux offer — unique to Impossible OS.
 
 ## 17. Priority Inheritance ON by Default
 
@@ -414,6 +417,76 @@ The following sections (§17–21) are features that go beyond what either Windo
 
 ---
 
+## 22. Thread-Local Storage (TLS)
+
+**Prompt:** Every C runtime library (musl, glibc) and POSIX `pthreads` relies on per-thread storage for `errno`, locale data, stack canaries, and `pthread_getspecific()` values. Without TLS, user-space multithreaded programs silently corrupt each other's error state. Implement TLS as a per-thread data block allocated at `thread_create()` time and pointed to by the `FS` segment register. The ELF TLS model (Initial Exec) stores compile-time `__thread` variables at a negative offset from `FS:0`. For the kernel side, expose `tls_get(thread, key)` / `tls_set(thread, key, value)` for arbitrary per-thread data (equivalent to `pthread_key_*`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: thread-local storage (TLS)"`. Add notes, gotchas, and design decisions directly in this TODO section.
+
+> **Cross-reference:** §027 Process Model — the per-process file descriptor table and CWD also use per-thread storage for user-space visibility.
+
+> [!CAUTION]
+> TLS block must be allocated from `pmm_alloc_contiguous()` if > 4 KB. Default user-space TLS is typically 512 B–4 KB. Use `pmm_alloc_contiguous()` if the user requests a large TLS block via `pthread_key_create`.
+
+- [ ] Define `tls_block_t` per-thread struct: pointer array for dynamic keys + static `__thread` data area
+- [ ] Allocate TLS block in `thread_create()` (initial size: 4 KB, from `kmalloc`)
+- [ ] Load `FS` base register to point at TLS block (`WRMSR IA32_FS_BASE`)
+- [ ] On context switch: save/restore `FS` base per thread (add to `thread_t`)
+- [ ] Implement `tls_key_create(destructor)` → unique key (like `pthread_key_create`)
+- [ ] Implement `tls_set(key, value)` / `tls_get(key)` — O(1) slot lookup
+- [ ] Run TLS destructors on `thread_exit()` (call registered destructor for each non-NULL key)
+- [ ] ELF TLS: support `PT_TLS` program header at `exec()` time (copy TLS template per thread)
+- [ ] Place kernel `errno` per-thread: `#define errno (*tls_errno())` in `<errno.h>`
+- [ ] Test: two threads each set errno to different values, verify no interference
+- [ ] Commit: `"kernel: thread-local storage (TLS)"`
+
+---
+
+## 23. Ticket Locks — Fairer Spinlocks
+
+**Prompt:** Standard CAS-based spinlocks (`spin_lock` in §6) have a starvation problem under high contention: whichever thread wins the atomic CAS instruction gets the lock, regardless of how long it has been waiting. Ticket locks solve this with FIFO ordering: an `atomic_fetch_add` on `next_ticket` gives the caller their ticket number; they spin waiting for `now_serving` to reach their ticket; on `spin_unlock`, `now_serving` is incremented. This guarantees strict FIFO ordering with zero extra overhead in the uncontended case. Implement as a drop-in companion to `spinlock_t` — same IRQ-save/restore semantics, same usage — just fair. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: ticket locks (fair spinlocks)"`. Add notes directly comparing ticket locks to CAS spinlocks and documenting when to prefer each.
+
+```c
+/* Example: fair spinlock with FIFO ordering */
+typedef struct { uint32_t next_ticket; uint32_t now_serving; } ticket_lock_t;
+
+void ticket_lock(ticket_lock_t *tl) {
+    uint32_t my_ticket = atomic_fetch_add(&tl->next_ticket, 1);
+    while (atomic_read(&tl->now_serving) != my_ticket) barrier();
+}
+void ticket_unlock(ticket_lock_t *tl) { atomic_inc(&tl->now_serving); }
+```
+
+> [!NOTE]
+> Prefer ticket locks for any shared data structure accessed by > 2 concurrent threads (e.g., run queue, NIC Tx ring). Use plain `spinlock_t` only for ultra-short single-owner sections where fairness is irrelevant.
+
+- [ ] Define `ticket_lock_t` (`next_ticket` + `now_serving` — two adjacent `uint32_t`)
+- [ ] Implement `ticket_lock(tl)` — `atomic_fetch_add` + spin loop with `barrier()`
+- [ ] Implement `ticket_unlock(tl)` — `atomic_inc(&now_serving)`
+- [ ] Implement `ticket_lock_irqsave(tl, flags)` / `ticket_unlock_irqrestore(tl, flags)`
+- [ ] Implement `ticket_trylock(tl)` — CAS on both words atomically (only if uncontended)
+- [ ] Replace scheduler run-queue lock with `ticket_lock_t` (most contended lock in the kernel)
+- [ ] Commit: `"sched: ticket locks (fair spinlocks)"`
+
+---
+
+## 24. Kernel Watchdog Thread
+
+**Prompt:** When a task spins in an infinite loop or holds a spinlock for too long, the kernel silently hangs — `lockdep` (§16) cannot catch it because no lock ordering is violated, and the PIT timer never fires (spinlocks disable interrupts). A kernel watchdog thread runs at the highest priority and monitors a per-CPU heartbeat counter. Every PIT tick, each CPU core increments its heartbeat. The watchdog checks this counter every N seconds; if a core's heartbeat has not advanced, it fires: logs to serial, draws a warning banner on the framebuffer, and optionally panics. Equivalent to Linux `CONFIG_LOCKUP_DETECTOR` (soft lockup / hard lockup detector). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: kernel watchdog thread"`. Add notes directly in this TODO section covering the heartbeat mechanism, threshold tuning, and how it complements `lockdep`.
+
+> **Complements §16 lockdep:** lockdep catches potential deadlocks before they happen (dependency graph). The watchdog catches actual hangs that are already in progress — infinite loops, held spinlocks, runaway interrupt storms.
+
+- [ ] Add `cpu_heartbeat` counter (atomic `uint64_t`, incremented every PIT tick in the ISR)
+- [ ] Create `watchdog_thread` kernel thread (highest priority, runs every 5 seconds)
+- [ ] In `watchdog_thread`: compare `cpu_heartbeat` now vs. 5 seconds ago
+- [ ] If heartbeat has not advanced by at least 1 tick: fire watchdog
+- [ ] Watchdog action: log `[WATCHDOG] Soft lockup detected — CPU stuck for Xs` to serial
+- [ ] Draw warning banner on framebuffer: red bar at top with thread name + uptime
+- [ ] Configurable threshold via Registry `SYSTEM\Watchdog\TimeoutSeconds` (default: 10)
+- [ ] Configurable action via Registry `SYSTEM\Watchdog\Action` (`log` / `panic` / `reboot`)
+- [ ] Test: create a task that spins forever — verify watchdog fires within timeout
+- [ ] Commit: `"debug: kernel watchdog thread"`
+
+---
+
 ## OS Comparison
 
 | Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
@@ -439,5 +512,8 @@ The following sections (§17–21) are features that go beyond what either Windo
 | **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent            | ⬜ **§19 — Impossible OS only**      |
 | **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only         | ⬜ **§20 — Impossible OS only**      |
 | **Named lock browser**          | ❌                         | ❌ File locks only         | ⬜ **§21 — Impossible OS only**      |
+| **Thread-Local Storage (TLS)**  | ✅ Full TEB                | ✅ `pthread_key_*`         | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`  |
+| **Ticket locks (fair)**         | ❌ CAS spinlocks only      | ⚠️ Queued spinlocks (SMP)  | ⬜ **§23 P0 — FIFO ordering**         |
+| **Kernel watchdog**             | ✅ KeBugCheck timeout      | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry |
 
-> **After §17–21:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
+> **After §17–24:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
