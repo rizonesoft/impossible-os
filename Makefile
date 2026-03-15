@@ -366,11 +366,12 @@ run-1440p: all
 		-rtc base=localtime \
 		-no-reboot
 
-## run-4k: Test at 3840×2160 — HiDPI scale=2× (≤2160p)
-## Serial output: [SPLASH] 3840x2160  scale=2x  font=32px
+## run-4k: Test at 3840×2160 using bochs-display (VGA caps out at 4K)
+## bochs-display avoids the VGA PCI BAR limitation that causes FrameBufferBase=0
+## Requires QEMU 4.0+; serial: [??] SPLASH  3840x2160  scale=2x
 run-4k: all
 	@cp $(OVMF_VARS) $(OVMF_VARS_CP)
-	@echo "[TEST] Launching QEMU at 3840×2160 (scale=2×)"
+	@echo "[TEST] Launching QEMU at 3840×2160 via bochs-display (scale=2×)"
 	$(QEMU) \
 		-cpu Haswell \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
@@ -381,7 +382,7 @@ run-4k: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,vgamem_mb=64,xres=3840,yres=2160 \
+		-device bochs-display,vgamem_mb=64,xres=3840,yres=2160 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \

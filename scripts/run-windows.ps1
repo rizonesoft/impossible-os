@@ -51,8 +51,13 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 
 $Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
+# Standard VGA caps out at 4K (PCI BAR FrameBufferBase=0 in OVMF).
+# Switch to bochs-display for 4K+ — same GOP driver, no legacy VGA limits.
+$VgaDevice = if ($Yres -ge 2160) { "bochs-display,vgamem_mb=64" } else { "VGA,vgamem_mb=64" }
+
 Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..." -ForegroundColor Green
-Write-Host "  Disk: $DISK" -ForegroundColor DarkGray
+Write-Host "  Disk:   $DISK" -ForegroundColor DarkGray
+Write-Host "  Device: $VgaDevice" -ForegroundColor DarkGray
 Write-Host "  Serial: [??] SPLASH  ${Xres}x${Yres}  scale=${Scale}x" -ForegroundColor DarkCyan
 Write-Host ""
 
@@ -76,7 +81,7 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
     -m 2G `
     -serial stdio `
     -vga none `
-    -device VGA,vgamem_mb=64,xres=$Xres,yres=$Yres `
+    -device "$VgaDevice,xres=$Xres,yres=$Yres" `
     -device rtl8139,netdev=net0 `
     -netdev user,id=net0 `
     -device virtio-tablet-pci `
