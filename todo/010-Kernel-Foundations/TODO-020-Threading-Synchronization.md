@@ -3,6 +3,7 @@
 > **Goal:** Kernel thread infrastructure, mutual exclusion, counting semaphores,
 > read-write locks, and condition variables — the foundation for concurrent kernel
 > tasks, IPC, and GUI app isolation.
+>
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB. `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas.
 
@@ -329,37 +330,9 @@ mutex_unlock(&q->lock);
 
 ---
 
-## OS Comparison
+## Impossible OS Differentiators
 
-| Feature                    | Windows 11 Kernel          | Linux Kernel               | Impossible OS              |
-|----------------------------|----------------------------|----------------------------|----------------------------|
-| Kernel Threads             | ✅ `KTHREAD`               | ✅ `task_struct`          | ✅ §1 Done                 |
-| Mutexes                    | ✅ `KMUTEX`                | ✅ `mutex_t`              | ✅ §2 Done                 |
-| Semaphores                 | ✅ `KSEMAPHORE`            | ✅ `semaphore`            | ✅ §3 Done                 |
-| Read-Write Locks           | ✅ `ERESOURCE`             | ✅ `rwlock_t`             | ✅ §4 Done                 |
-| Condition Variables        | ✅ (user-mode)             | ✅ `wait_queue`           | ✅ §5 Done                 |
-| Spinlocks (IRQ-safe)       | ✅ `KSPIN_LOCK`            | ✅ `spinlock_t`           | ⬜ §6 P0                   |
-| Atomic Operations          | ✅ `Interlocked*`          | ✅ `atomic_t`             | ⬜ §7 P0                   |
-| Wait/Event Objects         | ✅ `KEVENT`                | ✅ `completion`           | ⬜ §8 P1                   |
-| Work Queues                | ✅ DPC + work items        | ✅ `workqueue_struct`     | ⬜ §9 P1                   |
-| Memory Barriers            | ✅ `KeMemoryBarrier`       | ✅ `mb()`/`rmb()`/`wmb()` | ⬜ §10 P0                  |
-| Priority Inheritance       | ✅ `KMUTEX` protocol       | ✅ `rt_mutex`             | ⬜ §11 P0                  |
-| Seqlocks                   | ❌                         | ✅ `seqlock_t`            | ⬜ §12 P2                  |
-| RCU                        | ❌                         | ✅ `rcu_*`                | ⬜ §13 P2                  |
-| SMP / Per-CPU              | ✅ Full NUMA               | ✅ Full NUMA              | ⬜ §14 Future              |
-| Futexes                    | ✅ (user-mode)             | ✅ `futex()`              | ⬜ §15 P1                  |
-| Lock Validator             | ✅ Driver Verifier         | ✅ `lockdep`              | ⬜ §16 P2                  |
-
-> **After P0+P1 items complete:** Impossible OS matches Windows 11's kernel sync feature set for single-core.
-> **After P2 items:** Exceeds Windows 11 (seqlocks, RCU, lockdep — Windows has none of these in its kernel).
-> **After SMP:** Full parity with Linux on a multi-core system.
-> **After §17–21:** Exceeds BOTH Windows 11 and Linux in ergonomics, safety, and observability.
-
----
-
-## Impossible OS Differentiators — Beats Both Windows 11 and Linux
-
----
+The following sections (§17–21) are features that go beyond what either Windows 11 or Linux offer — unique to Impossible OS.
 
 ## 17. Priority Inheritance ON by Default
 
