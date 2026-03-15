@@ -382,7 +382,7 @@ run-4k: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device bochs-display,vgamem_mb=64,xres=3840,yres=2160 \
+		-device bochs-display,xres=3840,yres=2160 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
