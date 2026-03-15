@@ -257,36 +257,49 @@ static EFI_STATUS init_gop(void)
         efi_print(u"[GOP] EDID match failed — using firmware mode\r\n");
     }
 
-    /* ── B. No EDID (or EDID match failed): use current mode if OK ────── */
-    if (cur_ok) {
-        efi_print(u"[GOP] No EDID — keeping firmware resolution\r\n");
-        goto store_fb;
-    }
-
-    /* ── C. Current mode unusable: find 1280x720 or fall back to 0 ────── */
-    efi_print(u"[GOP] Current mode unusable — searching 1280x720\r\n");
+    /* ── B. No EDID: scan all modes → pick highest-res 32bpp ─────────────
+     * Whether OVMF defaulted to 1280×720 or 3840×2160, we always try to
+     * get the best available resolution.  We pick the mode with the most
+     * pixels (W×H) that is 32bpp.  Then call SetMode and verify the
+     * FrameBufferBase is non-zero.  If SetMode fails or FB is 0, try the
+     * next-best mode, and ultimately fall back to mode 0.            */
     {
-        UINT32 fb_mode = 0;
+        UINT32 best_mode  = gop->Mode->Mode;  /* start = current */
+        UINT32 best_w = gop->Mode->Info->HorizontalResolution;
+        UINT32 best_h = gop->Mode->Info->VerticalResolution;
+        BOOLEAN best_ok   = cur_ok;           /* current mode already valid? */
+
         for (i = 0; i < gop->Mode->MaxMode; i++) {
             UINTN info_size;
             EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
             if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
-            if (info->HorizontalResolution == 1280 &&
-                info->VerticalResolution   == 720  &&
-                (info->PixelFormat == PixelBlueGreenRedReserved ||
-                 info->PixelFormat == PixelRedGreenBlueReserved)) {
-                fb_mode = i;
-                break;
+            if (info->PixelFormat != PixelBlueGreenRedReserved &&
+                info->PixelFormat != PixelRedGreenBlueReserved) continue;
+
+            UINT32 pixels = info->HorizontalResolution * info->VerticalResolution;
+            UINT32 cur_pixels = best_w * best_h;
+            if (pixels > cur_pixels) {
+                best_mode = i;
+                best_w    = info->HorizontalResolution;
+                best_h    = info->VerticalResolution;
+                best_ok   = 0;  /* need to SetMode to verify */
             }
         }
-        status = gop->SetMode(gop, fb_mode);
-        if (EFI_ERROR(status)) {
-            efi_print(u"[FAIL] GOP SetMode failed\r\n");
-            return status;
-        }
-        if (gop->Mode->FrameBufferBase == 0) {
-            efi_print(u"[GOP] FrameBufferBase=0 — SetMode(0)\r\n");
-            gop->SetMode(gop, 0);
+
+        /* If we found a higher-res mode, try to switch to it */
+        if (!best_ok) {
+            status = gop->SetMode(gop, best_mode);
+            if (EFI_ERROR(status) || gop->Mode->FrameBufferBase == 0) {
+                /* Switch failed — use current if it was valid, else mode 0 */
+                efi_print(u"[GOP] SetMode failed — fallback\r\n");
+                if (!cur_ok)
+                    gop->SetMode(gop, 0);
+                /* else current mode stays */
+            } else {
+                efi_print(u"[GOP] Best mode selected\r\n");
+            }
+        } else {
+            efi_print(u"[GOP] Current mode is best available\r\n");
         }
     }
 
