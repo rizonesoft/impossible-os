@@ -1,10 +1,22 @@
-# run-windows.ps1 — Launch Impossible OS in QEMU on Windows (no double cursor)
+# run-windows.ps1 — Launch Impossible OS in QEMU on Windows
+#
+# Parameters:
+#   -Xres  Horizontal resolution (default: 1280)
+#   -Yres  Vertical resolution   (default: 720)
+#
+# Usage:
+#   Double-click run-windows.bat             → 1280×720  (default)
+#   Double-click run-windows-1080p.bat       → 1920×1080  scale=1×
+#   Double-click run-windows-1440p.bat       → 2560×1440  scale=2×
+#   Double-click run-windows-4k.bat          → 3840×2160  scale=2×
 #
 # Prerequisites:
 #   1. Install QEMU for Windows: https://qemu.weilnetz.de/w64/
-#   2. Build in WSL2 first: bash scripts/build.sh clean
-#
-# Usage: Double-click run-windows.bat (or run this script from PowerShell)
+#   2. Build in WSL2 first: bash scripts/build.sh
+Param(
+    [int]$Xres = 1280,
+    [int]$Yres = 720
+)
 
 $ErrorActionPreference = "Stop"
 
@@ -38,8 +50,10 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 # OVMF_VARS needs a writable copy
 Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 
-Write-Host "Launching Impossible OS in Windows QEMU..." -ForegroundColor Green
+$Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
+Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..." -ForegroundColor Green
 Write-Host "  Disk: $DISK" -ForegroundColor DarkGray
+Write-Host "  Serial: [??] SPLASH  ${Xres}x${Yres}  scale=${Scale}x" -ForegroundColor DarkCyan
 Write-Host ""
 
 # Find QEMU executable
@@ -62,7 +76,7 @@ if (-not (Get-Command $QEMU -ErrorAction SilentlyContinue)) {
     -m 2G `
     -serial stdio `
     -vga none `
-    -device VGA,xres=1280,yres=720 `
+    -device VGA,xres=$Xres,yres=$Yres `
     -device rtl8139,netdev=net0 `
     -netdev user,id=net0 `
     -device virtio-tablet-pci `
