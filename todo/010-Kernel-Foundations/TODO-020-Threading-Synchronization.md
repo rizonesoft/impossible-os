@@ -320,6 +320,8 @@ mutex_unlock(&q->lock);
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting             |
 | 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers    |
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6              |
+| 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory     |
+| 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections  |
 | 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks    |
 | 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores |
 | 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                |
@@ -487,6 +489,83 @@ void ticket_unlock(ticket_lock_t *tl) { atomic_inc(&tl->now_serving); }
 
 ---
 
+## 25. Thread Stack Guard Pages
+
+**Prompt:** Each `thread_create()` allocates a stack from `kmalloc` or PMM but
+places no protection at the bottom. A thread that overflows its stack silently
+corrupts whatever is adjacent in memory — on a freestanding kernel this can be
+another thread's stack, heap metadata, or PMM bookkeeping data, with no error
+signal whatsoever. Fix: immediately after allocating the stack, mark the bottom
+page as `PROT_NONE` via `vmm_map(stack_base, PAGE_SIZE, VMM_PROT_NONE)`. The
+first write past the stack bottom triggers a page fault — the fault handler
+checks if the faulting address is a known guard page and panics cleanly with
+`"Stack overflow in thread '%s' (tid=%d)"` instead of silent corruption.
+Equivalent to Windows stack guard pages and Linux `SIGSEGV` on `MAP_STACK`.
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"sched: thread stack guard pages"`. Add notes covering the guard page
+location, size, and the page fault handler check.
+
+> [!CAUTION]
+> The stack itself must use `pmm_alloc_contiguous()` if > 4 KB (which is always
+> — default stack is 64 KB). The guard page has no physical backing frame; it is
+> a VMM-only mapping with `PROT_NONE`. Only the `vmm_map_guard()` call itself is
+> cheap — the cost is already paid when allocating the stack.
+
+- [ ] After stack alloc in `thread_create()`: `vmm_map_guard(stack_base, PAGE_SIZE)`
+- [ ] `vmm_map_guard()`: maps 1 page at `stack_base` with `PROT_NONE` (no read, write, exec)
+- [ ] In page fault handler: check if faulting address is in any thread's guard page range
+- [ ] On guard page fault: log `[PANIC] Stack overflow: thread '%s' (tid=%d) at 0x%016llx`
+- [ ] Include current stack pointer and thread name in the panic message
+- [ ] On `thread_exit()` / `thread_destroy()`: unmap guard page before freeing stack
+- [ ] Test: create a thread that recurses infinitely — verify clean stack overflow panic
+- [ ] Commit: `"sched: thread stack guard pages"`
+
+---
+
+## 26. Preemption Count (`preempt_disable` / `preempt_enable`)
+
+**Prompt:** Kernel code that must not be preempted but doesn't need full
+interrupt safety currently has only one option: `spin_lock_irqsave()` which
+disables all interrupts on the CPU. This is too heavy when the only requirement
+is "don't context-switch away from me" — for example, RCU read-side critical
+sections, `kmap()` for atomic page mapping, and `pagefault_disable()` all just
+need to inhibit the scheduler, not IRQs. A preemption count solves this: add a
+`preempt_count` field to `thread_t`; `preempt_disable()` increments it;
+`preempt_enable()` decrements it and reschedules if `preempt_count == 0` and
+a reschedule was requested. The scheduler checks `if (current->preempt_count >
+0) return` at preemption points. IRQs remain fully enabled — timers and
+network interrupts still fire. Equivalent to Linux `preempt_disable()` /
+`preempt_enable()`. After completing all items, mark every item as `[x]`,
+update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
+and commit as `"sched: preemption count"`. Add notes on nesting rules
+and the reschedule-pending flag.
+
+> **Pairs with §13 RCU:** `rcu_read_lock()` / `rcu_read_unlock()` are
+> implemented as `preempt_disable()` / `preempt_enable()` on single-core.
+> This makes §26 a prerequisite for a clean §13 implementation.
+
+```c
+/* Usage: protect a critical section without disabling IRQs */
+preempt_disable();
+void *ptr = some_global_ptr;   /* safe — won't be freed mid-read */
+do_something(ptr);
+preempt_enable();              /* reschedules if needed */
+```
+
+- [ ] Add `preempt_count` (`uint32_t`) field to `thread_t`, initialized to 0
+- [ ] Add `need_resched` (`bool`) flag to `thread_t` — set by scheduler tick if preemption was deferred
+- [ ] Implement `preempt_disable()` — `current->preempt_count++`
+- [ ] Implement `preempt_enable()` — `if (--current->preempt_count == 0 && need_resched) schedule()`
+- [ ] In PIT tick ISR: if `current->preempt_count > 0`, set `need_resched = true` and return
+- [ ] In `schedule()`: assert `preempt_count == 0` on debug builds (detect illegal scheduling)
+- [ ] Implement `preempt_count()` macro — returns current thread's count (useful for assertions)
+- [ ] Update §13 RCU: replace `preempt_disable_irq()` calls with `preempt_disable()`
+- [ ] Test: `preempt_disable()` in a loop — verify PIT tick fires but context switch is deferred
+- [ ] Commit: `"sched: preemption count"`
+
+---
+
 ## OS Comparison
 
 | Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
@@ -515,5 +594,7 @@ void ticket_unlock(ticket_lock_t *tl) { atomic_inc(&tl->now_serving); }
 | **Thread-Local Storage (TLS)**  | ✅ Full TEB                | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`  |
 | **Ticket locks (fair)**         | ❌ CAS spinlocks only      | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**         |
 | **Kernel watchdog**             | ✅ KeBugCheck timeout      | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry |
+| **Stack guard pages**           | ✅ Automatic (Win32 stack) | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread |
+| **Preemption count**            | ✅ `KeEnterCriticalRegion` | ✅ `preempt_disable/enable`  | ⬜ §26 P0 — prerequisite for RCU       |
 
-> **After §17–24:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
+> **After §17–26:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
