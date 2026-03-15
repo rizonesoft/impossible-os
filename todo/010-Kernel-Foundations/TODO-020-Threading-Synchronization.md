@@ -345,7 +345,7 @@ mutex_unlock(&q->lock);
 | 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows       |
 | 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated       |
 | 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading    |
-| 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable      |
+| 🔵 Phase 2 | 14. SMP Support           | Critical for production HW — after §6/7/10/11/26 complete    |
 
 ---
 
@@ -813,39 +813,39 @@ CPUID probing, and the fallback path.
 
 ## OS Comparison
 
-| Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                             |
-| ------------------------------ | ----------------------------- | ---------------------------- | -------------------------------------------- |
-| Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                                   |
-| Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                                   |
-| Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                                   |
-| Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                                   |
-| Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                   |
-| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                     |
-| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                     |
-| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                     |
-| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                     |
-| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                                    |
-| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**         |
-| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                    |
-| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                    |
-| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Future                                |
-| Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                    |
-| Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                    |
-| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**              |
-| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**                     |
-| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**              |
-| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**              |
-| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**              |
-| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`          |
-| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**                |
-| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry        |
-| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread       |
-| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU             |
-| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe              |
-| **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead         |
-| **pthread_barrier_t**          | ❌ No equivalent              | ✅ `pthread_barrier_t`      | ⬜ **§29 P1 — kernel-native, beats Windows** |
+| Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                              |
+| ------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------------- |
+| Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                                    |
+| Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                                    |
+| Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                                    |
+| Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                                    |
+| Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                    |
+| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                      |
+| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                      |
+| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                      |
+| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |
+| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                                     |
+| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**          |
+| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |
+| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
+| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26                                 |
+| Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                     |
+| Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                     |
+| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**               |
+| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**                      |
+| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**               |
+| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**               |
+| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**               |
+| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`           |
+| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**                 |
+| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry         |
+| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread        |
+| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU              |
+| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe               |
+| **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead          |
+| **pthread_barrier_t**          | ❌ No equivalent              | ✅ `pthread_barrier_t`      | ⬜ **§29 P1 — kernel-native, beats Windows**  |
 | **KCSAN data-race detector**   | ❌ No equivalent              | ✅ `CONFIG_KCSAN` (v5.8+)   | ⬜ **§30 P2 — beats Windows, matches Linux**  |
-| **TSX/HTM lock elision**       | ❌ No equivalent              | ⚠️ Disabled (TAA CVE-2019)   | ⬜ §31 Future/P3 — safe-only, CPUID gated    |
+| **TSX/HTM lock elision**       | ❌ No equivalent              | ⚠️ Disabled (TAA CVE-2019)  | ⬜ §31 Future/P3 — safe-only, CPUID gated     |
 
 > **After §17–29:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
 > **After §30:** Impossible OS matches Linux KCSAN and exceeds Windows (no equivalent) in race detection.
