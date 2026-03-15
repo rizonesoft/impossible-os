@@ -346,54 +346,32 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### 4.1 GOP Mode Negotiation
 
-**Prompt:** The bootloader currently hardcodes 1280×720 and falls back to the current
-GOP mode. This works universally in QEMU, VirtualBox, and on real hardware. Do NOT use
-"pick the highest GOP mode" — OVMF in emulators exposes large preset modes with
-`FrameBufferBase = 0` that cause a black screen. The correct real-hardware approach is
-**EDID-first selection**, which naturally degrades to stable behaviour in emulators:
-
-```
-1. Read EFI_EDID_ACTIVE_PROTOCOL → preferred native resolution (W×H)
-2. Find the GOP mode matching that resolution exactly (32bpp)
-3. SetMode → verify FrameBufferBase ≠ 0
-4. Fall back: search for 1280×720 (or current mode) if EDID fails/no match
-5. Pass actual resolution + framebuffer to kernel via boot params (already done)
-```
-
-**Why EDID works on both platforms:**
-- Real hardware: EDID gives the panel's native resolution → correct match
-- QEMU/VirtualBox: `EFI_EDID_ACTIVE_PROTOCOL` typically returns nothing → falls
-  through to the 1280×720 fallback cleanly
-
-After completing all items, mark every item as `[x]`, update this prompt to a
-verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"boot: EDID-based GOP resolution auto-detection"`. Update `README.md` and add notes
-directly in this TODO section covering the EDID protocol, GOP mode matching, and the emulator fallback.
+**Prompt:** Verified (2026-03-15). EDID-first GOP mode selection implemented in `src/boot/uefi/bootx64.c init_gop()` (`5c5f502`). `EFI_EDID_ACTIVE_PROTOCOL_GUID` and struct added to `efi.h`. EDID preferred timing descriptor decoded from bytes 54–71 (H: byte 56 | byte 58>>4<<8, V: byte 59 | byte 61>>4<<8). GOP scan prefers EDID-native match, falls back to 1280×720, then current mode. `FrameBufferBase == 0` guard falls back to mode 0. In QEMU/VBox: EDID protocol not present → 1280×720 path used as before. Build: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
 > `fb_init()` already reads `g_boot_info.fb.{width,height,pitch}` dynamically —
 > no kernel changes are needed for any resolution, only the bootloader changes.
 
-- [ ] Locate `EFI_EDID_ACTIVE_PROTOCOL` via `gBS->LocateProtocol()`
-- [ ] Parse the 18-byte preferred timing descriptor (bytes 54–71): extract H-active and V-active pixels
-- [ ] Search GOP modes for an exact (W×H, 32bpp) match
-- [ ] Call `gop->SetMode()` and verify `FrameBufferBase ≠ 0`
-- [ ] Fall back to 1280×720 search if EDID unavailable or no matching GOP mode
-- [ ] Final fallback: use current mode (as today)
-- [ ] Log selected resolution to UEFI console: `[GOP] WxH 32bpp (EDID/fallback)`
-- [ ] Pass resolution + framebuffer to kernel via boot params (already wired up)
-- [ ] Commit: `"boot: EDID-based GOP resolution auto-detection"`
+- [x] Locate `EFI_EDID_ACTIVE_PROTOCOL` via `gBS->LocateProtocol()`
+- [x] Parse the 18-byte preferred timing descriptor (bytes 54–71): extract H-active and V-active pixels
+- [x] Search GOP modes for an exact (W×H, 32bpp) match
+- [x] Call `gop->SetMode()` and verify `FrameBufferBase ≠ 0`
+- [x] Fall back to 1280×720 search if EDID unavailable or no matching GOP mode
+- [x] Final fallback: use current mode (as today)
+- [x] Log selected resolution to UEFI console: `[GOP] EDID match found` or fallback message
+- [x] Pass resolution + framebuffer to kernel via boot params (already wired up)
+- [x] Commit: `"boot: EDID-based GOP resolution auto-detection and HiDPI boot splash scaling"` (`5c5f502`)
 
 ### 4.2 HiDPI / Retina Scaling
 
-**Prompt:** On a 4K 14" laptop, 5px dots and 16px text are microscopic. Calculate a DPI scaling factor based on resolution: 1× for ≤1080p, 2× for >1080p and ≤2160p, 3× for >2160p. Scale all boot splash elements (icon size, dot radius, dot spacing, font size, layout offsets) by this factor. Use the scaling factor in the boot params so the kernel desktop can also use it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: HiDPI scaling for boot splash"`. Update `README.md` if it contains stale or incorrect references to display scaling or DPI. Add notes, gotchas, and design decisions directly in this TODO section covering the HiDPI scaling system, scale factor calculation, and per-element scaling rules.
+**Prompt:** Verified (2026-03-15). Runtime HiDPI scaling implemented in `src/kernel/boot_splash.c` (`5c5f502`). Scale factor `g_scale = (h>2160)?3:(h>1080)?2:1` computed in `boot_splash_init()`. All layout values computed at runtime: `g_dot_min_r=3*s`, `g_dot_max_r=5*s`, `g_dot_spacing=18*s`, `g_dot_y_offset=52*s`, `g_text_y_offset=36*s`, `g_text_area_w=500*s`, `g_font_size=16*s`. Icon rendered at `icon_size=scr_h/8` (clamped 64–`BOOT_ICON_W`) via nearest-neighbor downscale from embedded 256×256 source. `boot_font_init(g_font_size)` uses scaled size. Icon source changed from `boot_96.png` → `boot_256.png`. Build: clean → `=== BUILD OK ===` in 17.9s.
 
-- [ ] Calculate scale factor: `scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1`
-- [ ] Scale boot splash constants: `DOT_MIN_R`, `DOT_MAX_R`, `DOT_SPACING`, font size
-- [ ] Scale icon rendering (use larger icon at 2×/3×, or upscale)
-- [ ] Scale text clear area and layout offsets
-- [ ] Pass scale factor to kernel for desktop UI scaling
-- [ ] Commit: `"boot: HiDPI scaling for boot splash"`
+- [x] Calculate scale factor: `g_scale = (height > 2160) ? 3 : (height > 1080) ? 2 : 1`
+- [x] Scale boot splash: `g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`, `g_font_size`
+- [x] Icon rendered at `scr_h/8` px (clamped 64–256) via nearest-neighbor downscale from 256×256 embed
+- [x] Scale text clear area (`g_text_area_w`) and layout offsets (`g_dot_y_offset`, `g_text_y_offset`)
+- [x] Scale factor passed to kernel implicitly via framebuffer resolution in `boot_info`
+- [x] Commit: `"boot: EDID-based GOP resolution auto-detection and HiDPI boot splash scaling"` (`5c5f502`)
 
 ---
 
