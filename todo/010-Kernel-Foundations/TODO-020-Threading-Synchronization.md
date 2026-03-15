@@ -300,21 +300,89 @@ if (atomic_dec_and_test(&obj->refcount)) {
 ---
 
 
-## 8. Wait/Event Objects
+## 8. Wait/Event Objects ✅
 
-**Prompt:** Event objects are one-shot or auto-reset synchronization handles — equivalent to Windows `KEVENT` (manual-reset and auto-reset) and Linux `completion`. A manual-reset event: `event_set` wakes all waiters; remains set until `event_reset` clears it. An auto-reset event: `event_set` wakes exactly one waiter and immediately clears itself. These are ideal for: boot synchronization (wait for disk init to complete), vsync signal from PIT to compositor, driver initialization handshakes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: wait/event objects"`. Add notes, gotchas, and design decisions directly in this TODO section covering event types, wait semantics, and usage examples.
+**Prompt:** This section is marked complete. Verify: `include/kernel/sched/event.h` defines `event_t`, `event_type_t` (MANUAL/AUTO\_RESET), `EVENT_INIT`, `DEFINE_EVENT`, and all six API functions. Verify `src/kernel/sched/event.c` compiles and links. Confirm MANUAL\_RESET wakes all waiters and stays set; AUTO\_RESET wakes one and self-clears. Confirm `event_wait_timeout` uses `pit_get_ticks()` and `PIT_TARGET_FREQ` for the deadline. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: wait/event objects"` in git history. Fix any inconsistencies found.
 
 
-- [ ] Define `event_t` struct (state flag, type enum MANUAL/AUTO_RESET, wait queue)
-- [ ] Implement `event_init(ev, type, initial_state)` — initialize event
-- [ ] Implement `event_wait(ev)` — block until event is set; auto-reset clears on wake
-- [ ] Implement `event_set(ev)` — signal event (wake all for manual, one for auto)
-- [ ] Implement `event_reset(ev)` — clear manual-reset event
-- [ ] Implement `event_wait_timeout(ev, ms)` — wait with timeout (returns 0 on timeout)
-- [ ] Use for: boot phase sync, vsync compositor signal, driver init handshakes
-- [ ] Commit: `"sched: wait/event objects"`
+- [x] Define `event_t` struct (state flag, type enum MANUAL/AUTO_RESET, wait queue)
+- [x] Implement `event_init(ev, type, initial_state)` — initialize event
+- [x] Implement `event_wait(ev)` — block until event is set; auto-reset clears on wake
+- [x] Implement `event_set(ev)` — signal event (wake all for manual, one for auto)
+- [x] Implement `event_reset(ev)` — clear manual-reset event
+- [x] Implement `event_wait_timeout(ev, ms)` — wait with timeout (returns 0 on timeout)
+- [x] Use for: boot phase sync, vsync compositor signal, driver init handshakes
+- [x] Commit: `"sched: wait/event objects"`
+
+### Notes
+
+**Files:**
+- `include/kernel/sched/event.h` — `event_t`, `EVENT_INIT`, `DEFINE_EVENT`, full API
+- `src/kernel/sched/event.c` — implementation
+
+**Types at a glance:**
+| Type | `event_set` wakes | Clears on wake | Stays set |
+|------|------------------|----------------|-----------|
+| `EVENT_MANUAL_RESET` | ALL waiters | No — must call `event_reset()` | Yes, until reset |
+| `EVENT_AUTO_RESET` | ONE waiter (FIFO) | Yes, self-clears | Only if no waiters waiting |
+
+**Event state machine — AUTO_RESET:**
+```
+Unsignalled ──event_set()+waiters──► Unsignalled (waiter woken + cleared)
+Unsignalled ──event_set()+no waiters► Signalled
+Signalled   ──event_wait()──────────► Unsignalled (consumed by first caller)
+Signalled   ──event_reset()─────────► Unsignalled (explicit clear)
+```
+
+**Event state machine — MANUAL_RESET:**
+```
+Unsignalled ──event_set()──► Signalled (all waiters woken, all future wait() return immediately)
+Signalled   ──event_reset()─► Unsignalled
+```
+
+**Usage examples:**
+
+```c
+/* Boot phase sync: wait for AHCI/disk before mounting VFS */
+DEFINE_EVENT(disk_ready, EVENT_MANUAL_RESET, 0);
+
+/* AHCI driver (thread or IRQ): */
+event_set(&disk_ready);
+
+/* VFS init (thread): */
+event_wait(&disk_ready);   /* blocks until AHCI signals */
+
+/* Vsync signal from PIT callback to compositor (AUTO_RESET): */
+DEFINE_EVENT(vsync, EVENT_AUTO_RESET, 0);
+
+/* PIT callback (IRQ context): */
+event_set(&vsync);   /* safe from IRQ — only sets flag + marks thread ready */
+
+/* Compositor thread: */
+event_wait(&vsync);  /* blocks each frame until PIT fires */
+
+/* Timeout for driver init: */
+if (!event_wait_timeout(&nic_ready, 3000)) {
+    klog(LOG_ERROR, "net", "NIC init timed out after 3 s");
+}
+```
+
+**IRQ safety:**
+- `event_set()` is IRQ-safe: only writes `atomic_t state` and sets `THREAD_READY`. No lock, no yield.
+- `event_wait()` and `event_wait_timeout()` call `yield()` — **thread context only**.
+- `event_reset()` is IRQ-safe: single atomic store.
+
+**Timeout implementation:**
+Uses `pit_get_ticks()` / `PIT_TARGET_FREQ` (100 Hz). Minimum resolution = 10 ms. For sub-millisecond precision a high-resolution timer would be needed.
+
+**Spurious wakeup handling:**
+`event_wait()` re-checks `ev->state` after each `yield()`. If the wait queue overflows (> 16 waiters) and the thread falls through to `yield()` without being properly enqueued, it still re-checks the state correctly on resume — this is the correct Linux-style "always re-test predicate" pattern.
+
+**Gotcha — AUTO_RESET and multiple waiters:**
+If two threads call `event_wait()` and then `event_set()` is called, only ONE thread wakes. The second remains blocked until the next `event_set()`. This is intentional and is the defining property of auto-reset events. For "release all" semantics, use `EVENT_MANUAL_RESET` with an explicit `event_reset()` afterwards.
 
 ---
+
 
 ## 9. Work Queues (Deferred Work)
 
@@ -522,7 +590,7 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 | 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
 | 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
 | 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks     |
-| 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores  |
+| ✅ Done   | 8. Wait/Event Objects      | `event.h`/`.c` complete — MANUAL/AUTO_RESET, timeout, IRQ-safe |
 | 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                 |
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
 | 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)    |
@@ -1012,13 +1080,13 @@ CPUID probing, and the fallback path.
 | Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                    |
 | Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ✅ `spin_lock/unlock`, irqsave/irqrestore      |
 | Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ✅ `atomic_read/set/inc/dec/cmpxchg/fetch_add` |
-| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                      |
+| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ✅ `event_wait/set/reset`, MANUAL+AUTO_RESET  |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |
-| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`    |
+| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`     |
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**          |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
-| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26                                 |
+| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26          |
 | Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                     |
 | Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                     |
 | **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**               |
