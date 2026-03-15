@@ -337,7 +337,7 @@ run-1080p: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,xres=1920,yres=1080 \
+		-device VGA,vgamem_mb=16,xres=1920,yres=1080 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \
@@ -359,7 +359,7 @@ run-1440p: all
 		-m 2G \
 		-serial stdio \
 		-vga none \
-		-device VGA,xres=2560,yres=1440 \
+		-device VGA,vgamem_mb=32,xres=2560,yres=1440 \
 		-device rtl8139,netdev=net0 \
 		-netdev user,id=net0 \
 		-device virtio-tablet-pci \

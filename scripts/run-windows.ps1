@@ -51,9 +51,13 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 Copy-Item -Path $OVMF_VARS -Destination $VARS_DEST -Force
 
 $Scale = if ($Yres -gt 2160) { 3 } elseif ($Yres -gt 1080) { 2 } else { 1 }
-# Standard VGA caps out at 4K (PCI BAR FrameBufferBase=0 in OVMF).
-# Switch to bochs-display for 4K+ — same GOP driver, no legacy VGA limits.
-$VgaDevice = if ($Yres -ge 2160) { "bochs-display" } else { "VGA" }
+# Per-resolution VRAM: 1440p needs 32MB (14.7MB fb), 1080p needs 16MB.
+# 720p fits in the default 8MB VGA VRAM.
+# 4K uses bochs-display which manages VRAM automatically.
+$VgaDevice = if ($Yres -ge 2160) { "bochs-display" } `
+        elseif ($Yres -ge 1440) { "VGA,vgamem_mb=32" } `
+        elseif ($Yres -ge 1080) { "VGA,vgamem_mb=16" } `
+        else                    { "VGA" }
 
 Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..." -ForegroundColor Green
 Write-Host "  Disk:   $DISK" -ForegroundColor DarkGray
