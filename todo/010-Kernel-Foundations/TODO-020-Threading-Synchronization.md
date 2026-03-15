@@ -328,6 +328,8 @@ mutex_unlock(&q->lock);
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
 | 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)    |
 | 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect       |
+| 🟠 P1     | 28. pthread_once           | Eliminates init races; replaces all ad-hoc bool init guards   |
+| 🟠 P1     | 29. pthread_barrier_t      | Frame-sync for compositor audio+render pipeline               |
 | 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed              |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
@@ -609,10 +611,115 @@ normally.
 
 ---
 
+## 28. `pthread_once` / `once_flag` — Single-Initialization Primitive
+
+**Prompt:** Many subsystems need to run initialization code exactly once, no
+matter how many threads call the init function simultaneously. Without a
+`once_flag`, the naive approach uses a global bool that creates a race:
+two threads both read `initialized == false`, both call init, and one
+corrupts the other’s result. `pthread_once` solves this atomically: a
+`once_flag` wraps a bool + mutex; the first thread to call
+`pthread_once(&flag, init_fn)` runs `init_fn`, all others block until it
+completes, then return immediately. Subsequent calls are a single atomic
+read — essentially free once initialized. This is the mechanism behind
+C++ `std::call_once` and every lazy singleton in the kernel (e.g.,
+font cache init, registry root init, NTP state init). After completing
+all items, mark every item as `[x]`, update this prompt to a verification
+prompt, run `bash scripts/build.sh clean`, and commit as
+`"sched: pthread_once / once_flag"`. Add notes covering why the naive bool
+approach races and how once_flag avoids it.
+
+```c
+/* ~15 lines total, built on §2 mutex */
+typedef struct { mutex_t mu; bool done; } once_flag;
+#define ONCE_FLAG_INIT { MUTEX_INIT, false }
+
+void pthread_once(once_flag *f, void (*fn)(void)) {
+    if (atomic_read(&f->done)) return;  /* fast path: already done */
+    mutex_lock(&f->mu);
+    if (!f->done) { fn(); atomic_write(&f->done, true); }
+    mutex_unlock(&f->mu);
+}
+```
+
+- [ ] Define `once_flag_t` struct: `{ mutex_t mu; bool done; }` with `ONCE_FLAG_INIT` macro
+- [ ] Implement `pthread_once(flag, fn)` with double-checked locking (atomic read on fast path)
+- [ ] Expose `call_once(flag, fn)` as a C11-compatible alias
+- [ ] Register `once_flag_t` with lockdep (§16) to catch improper nesting
+- [ ] Replace any existing ad-hoc `static bool initialized` guards in kernel subsystems with `once_flag_t`
+- [ ] Test: 8 threads simultaneously call `pthread_once` — verify `fn` runs exactly once
+- [ ] Commit: `"sched: pthread_once / once_flag"`
+
+---
+
+## 29. `pthread_barrier_t` — Barrier Synchronization
+
+**Prompt:** A barrier blocks a fixed number of threads until all of them have
+arrived, then releases all of them simultaneously. This is essential for
+stage-synchronized pipelines: the compositor can wait for both the render
+thread and audio thread to finish their frame work before flipping the
+framebuffer. Without a barrier, each thread needs ad-hoc semaphore
+choreography that is error-prone and hard to read.
+
+Implementation: `barrier_t` holds a count, a target, a mutex, and a
+condition variable. Each thread calls `barrier_wait(&b)` — it increments
+count under the mutex. If `count < target`, it waits on the condvar. The
+last thread to arrive (`count == target`) resets `count = 0` and broadcasts.
+Windows has no direct `pthread_barrier_t` equivalent (developers use manual
+counters + events). Linux has it in pthreads. Impossible OS adds it to the
+kernel so compositor frame sync needs zero user-space coordination.
+
+After completing all items, mark every item as `[x]`, update this prompt
+to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"sched: pthread_barrier_t"`. Add notes on the phase-reset trick and
+the `PTHREAD_BARRIER_SERIAL_THREAD` return value.
+
+> **Impossible OS advantage:** Windows has no `pthread_barrier_t` —
+> developers must emulate it with `WaitForMultipleObjects` on N events
+> (fragile, O(N) handles). Linux has it only in user-space pthreads, not as
+> a kernel primitive. Impossible OS exposes it as a first-class kernel sync
+> object accessible from both kernel threads and user processes.
+
+```c
+typedef struct {
+    uint32_t  target;   /* total threads that must arrive   */
+    uint32_t  count;    /* threads that have arrived so far */
+    uint32_t  phase;    /* toggles 0/1 to prevent spurious release */
+    mutex_t   mu;
+    condvar_t cv;
+} barrier_t;
+
+void barrier_wait(barrier_t *b) {
+    mutex_lock(&b->mu);
+    uint32_t my_phase = b->phase;
+    if (++b->count == b->target) {
+        b->count = 0;
+        b->phase ^= 1;           /* next generation */
+        condvar_broadcast(&b->cv);
+    } else {
+        while (b->phase == my_phase) condvar_wait(&b->cv, &b->mu);
+    }
+    mutex_unlock(&b->mu);
+}
+```
+
+- [ ] Define `barrier_t` struct: `target`, `count`, `phase`, `mutex_t`, `condvar_t`
+- [ ] Implement `barrier_init(&b, count)` — set target, zero count, init mu + cv
+- [ ] Implement `barrier_wait(&b)` — phase-based (handles spurious wakeups, reusable)
+- [ ] Return `BARRIER_SERIAL_THREAD` (non-zero) to exactly one thread per generation
+- [ ] Implement `barrier_destroy(&b)` — asserts no threads are currently waiting
+- [ ] Add `barrier_wait_timeout(&b, timeout_ms)` — using §19 unified timeout API
+- [ ] Wire compositor frame sync to use `barrier_wait` instead of ad-hoc semaphores
+- [ ] Test: N=4 threads, verify none proceed until all 4 have called `barrier_wait`
+- [ ] Test: reuse same barrier across 3 generations without reinit
+- [ ] Commit: `"sched: pthread_barrier_t"`
+
+---
+
 ## OS Comparison
 
 | Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                        |
-| ------------------------------ | ----------------------------- | --------------------------- | --------------------------------------- |
+| ------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------- |
 | Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                              |
 | Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                              |
 | Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                              |
@@ -623,22 +730,24 @@ normally.
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                               |
-| Priority Inheritance           | ⚠️ Heuristic only           | ⚠️ Opt-in `rt_mutex`      | ⬜ §11+17 **Default on all mutexes**    |
+| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**    |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                               |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                               |
 | SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Future                           |
 | Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                               |
 | Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                               |
-| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**        |
-| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**               |
-| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**        |
-| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**        |
-| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**        |
-| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`    |
-| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP) | ⬜ **§23 P0 — FIFO ordering**          |
-| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry  |
-| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread |
-| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU       |
-| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe        |
+| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**         |
+| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**                |
+| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**         |
+| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**         |
+| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**         |
+| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`     |
+| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**           |
+| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry   |
+| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread  |
+| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU        |
+| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe         |
+| **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead    |
+| **pthread_barrier_t**          | ❌ No equivalent              | ✅ `pthread_barrier_t`      | ⬜ **§29 P1 — kernel-native, beats Windows** |
 
-> **After §17–27:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
+> **After §17–29:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
