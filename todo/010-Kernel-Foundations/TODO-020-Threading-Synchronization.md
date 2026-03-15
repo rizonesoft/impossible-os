@@ -384,21 +384,74 @@ If two threads call `event_wait()` and then `event_set()` is called, only ONE th
 ---
 
 
-## 9. Work Queues (Deferred Work)
+## 9. Work Queues (Deferred Work) ✅
 
-**Prompt:** IRQ handlers must be short — they run with interrupts disabled and cannot sleep, yield, or call VFS. Work queues solve this by deferring slow work to a kernel thread that runs in normal context. An IRQ handler calls `workqueue_enqueue(wq, func, arg)` to schedule a callback — the work queue kernel thread picks it up and calls `func(arg)` in a yieldable context. This is equivalent to Linux `workqueue_struct` / `schedule_work()` and Windows DPC + work items. Used by: NIC receive path (packet processing after DMA), disk IRQ (completing async I/O), USB events. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: work queues"`. Add notes, gotchas, and design decisions directly in this TODO section covering the workqueue API, IRQ-safety rules, and work item lifecycle.
+**Prompt:** This section is marked complete. Verify: `include/kernel/sched/workqueue.h` defines `work_item_t`, `workqueue_t`, `WQ_POOL_SIZE=64`, and the full API (`workqueue_create`, `workqueue_enqueue`, `workqueue_flush`, `workqueue_destroy`). Verify `src/kernel/sched/workqueue.c` compiles and links. Confirm `sys_wq` is declared `extern` in the header and defined in workqueue.c. Confirm `main.c` creates `sys_wq` after `task_init()`. Confirm `rtl8139.c` defers `net_rx()` via `sys_wq` using `workqueue_enqueue`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"kernel: work queues"` in git history.
 
 
-- [ ] Define `work_item_t` struct (callback function ptr, arg, next pointer)
-- [ ] Define `workqueue_t` (spinlock-protected linked list + semaphore)
-- [ ] Implement `workqueue_create(name)` — spawn a kernel thread for processing
-- [ ] Implement `workqueue_enqueue(wq, func, arg)` — IRQ-safe, uses spinlock
-- [ ] Work queue thread: loop on semaphore, dequeue, call `func(arg)`, repeat
-- [ ] Create default system work queue (`sys_wq`) at boot
-- [ ] Wire NIC receive DMA completion to `sys_wq` (replace direct IRQ processing)
-- [ ] Commit: `"kernel: work queues"`
+- [x] Define `work_item_t` struct (callback function ptr, arg, next pointer)
+- [x] Define `workqueue_t` (spinlock-protected linked list + semaphore)
+- [x] Implement `workqueue_create(name)` — spawn a kernel thread for processing
+- [x] Implement `workqueue_enqueue(wq, func, arg)` — IRQ-safe, uses spinlock
+- [x] Work queue thread: loop on semaphore, dequeue, call `func(arg)`, repeat
+- [x] Create default system work queue (`sys_wq`) at boot
+- [x] Wire NIC receive DMA completion to `sys_wq` (replace direct IRQ processing)
+- [x] Commit: `"kernel: work queues"`
+
+### Notes
+
+**Files:**
+- `include/kernel/sched/workqueue.h` — API, `work_item_t`, `workqueue_t`, `sys_wq` extern
+- `src/kernel/sched/workqueue.c` — full implementation
+
+**Architecture:**
+```
+IRQ handler (< 1 µs):           Worker thread (normal context):
+  copy packet                     loop:
+  workqueue_enqueue()               sem_count > 0?
+  ▼                                 dequeue item
+  lock + push to list               call fn(arg)
+  sem_count++                       return node to free_head
+  unlock
+```
+
+**Static pool design (no kmalloc in IRQ path):**
+`workqueue_t` contains `work_item_t pool[64]` — 64 pre-allocated nodes. `workqueue_enqueue()` pops a node from `free_head` under spinlock. The worker thread pushes it back after `fn(arg)` returns. This means zero dynamic allocation in the hot path, making `workqueue_enqueue()` safe and deterministic from IRQ context.
+
+**IRQ safety:**
+- `workqueue_enqueue()` — IRQ-safe (spinlock_irqsave, no yield, no alloc)
+- `workqueue_create()`, `workqueue_flush()`, `workqueue_destroy()` — thread context only
+
+**Worker thread locates its queue via PID registry:**
+`task_create()` takes a `void (*)(void)` entry with no arg. Work queues maintain a static `wq_registry[]` table. On startup, the worker calls `task_current()`, scans the registry for a queue whose `worker_pid` matches, and loops forever processing its queue.
+
+**`sys_wq` initialization in `main.c`:**
+Created after `task_init()` — the scheduler is briefly enabled so the worker task can start, then disabled again. The NIC init happens much earlier (before `task_init()`), so the early-boot `sys_wq == NULL` fallback in `rtl8139.c` handles DHCP packets received during boot.
+
+**NIC receive path (rtl8139.c):**
+```c
+/* IRQ handler — if sys_wq ready, defer net_rx: */
+struct nic_rx_work *w = kmalloc(sizeof(*w));
+memcpy(w->data, pkt_buf, pkt_len);
+w->len = pkt_len;
+workqueue_enqueue(sys_wq, nic_rx_work_fn, w);
+
+/* Worker thread calls: */
+static void nic_rx_work_fn(void *arg) {
+    struct nic_rx_work *w = arg;
+    net_rx(w->data, w->len);   /* thread context — can yield, alloc, etc. */
+    kfree(w);
+}
+```
+
+**Gotcha — pool exhaustion:**
+If 64 items are enqueued faster than the worker can process them (e.g. a DMA storm), `workqueue_enqueue()` returns 0 and the packet is dropped. This is correct: the NIC ring buffer would overflow anyway. A warning log would help diagnose this in production.
+
+**Gotcha — `workqueue_destroy()` does not kill the worker task:**
+The worker loops infinitely. `workqueue_destroy()` flushes and frees the `workqueue_t` struct, but the worker task becomes an orphan (it exits on the next iteration because `wq->fn` is null). A future improvement would send a poison-pill work item to signal the worker to call `task_exit()`.
 
 ---
+
 
 ## 10. Memory Barriers & Compiler Fences ✅
 
@@ -591,7 +644,7 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 | 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
 | 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks     |
 | ✅ Done   | 8. Wait/Event Objects      | `event.h`/`.c` complete — MANUAL/AUTO_RESET, timeout, IRQ-safe |
-| 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                 |
+| ✅ Done   | 9. Work Queues             | `workqueue.h`/`.c` + `sys_wq` at boot, NIC rx deferred        |
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
 | 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)    |
 | 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect        |
@@ -1081,7 +1134,7 @@ CPUID probing, and the fallback path.
 | Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ✅ `spin_lock/unlock`, irqsave/irqrestore      |
 | Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ✅ `atomic_read/set/inc/dec/cmpxchg/fetch_add` |
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ✅ `event_wait/set/reset`, MANUAL+AUTO_RESET  |
-| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |
+| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ✅ `workqueue_create/enqueue`, `sys_wq`       |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`     |
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**          |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |

@@ -18,6 +18,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/net/net.h"
 #include "kernel/sched/spinlock.h"
+#include "kernel/sched/workqueue.h"  /* sys_wq for deferred Rx processing */
 
 /* --- Port I/O --- */
 static inline void outb_nic(uint16_t port, uint8_t val)
@@ -133,6 +134,24 @@ static volatile uint32_t rx_ready;   /* Packets waiting flag */
 static spinlock_t nic_rx_lock = SPINLOCK_INIT;
 static spinlock_t nic_tx_lock = SPINLOCK_INIT;
 
+/* ---------------------------------------------------------------------------
+ * Deferred Rx work — packet data is copied here by the IRQ handler and then
+ * net_rx() is called from the sys_wq worker thread in normal context.
+ * ------------------------------------------------------------------------- */
+struct nic_rx_work {
+    uint8_t  data[ETH_FRAME_MAX];  /* packet bytes */
+    uint32_t len;                  /* packet length */
+};
+
+static void nic_rx_work_fn(void *arg)
+{
+    struct nic_rx_work *w = (struct nic_rx_work *)arg;
+    if (w) {
+        net_rx(w->data, w->len);   /* safe: thread context, can yield/alloc */
+        kfree(w);
+    }
+}
+
 /* --- Simple memcpy (kernel-side) --- */
 static void nic_memcpy(void *dst, const void *src, uint64_t n)
 {
@@ -156,11 +175,34 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
     if (status & INT_ROK) {
         uint8_t pkt_buf[ETH_FRAME_MAX];
         uint32_t pkt_len;
-        /* Drain all received packets from the ring buffer */
+        /* Drain all received packets from the ring buffer under the Rx lock.
+         * If sys_wq is available, defer net_rx() into the worker thread so
+         * the IRQ handler returns quickly.  Otherwise fall back to direct
+         * processing (safe during early boot before task_init). */
         spin_lock_irqsave(&nic_rx_lock, &flags);
         while ((pkt_len = rtl8139_receive(pkt_buf, sizeof(pkt_buf))) > 0) {
             spin_unlock_irqrestore(&nic_rx_lock, flags);
-            net_rx(pkt_buf, pkt_len);
+
+            if (sys_wq) {
+                /* Deferred path: copy packet to a heap buffer, enqueue work */
+                struct nic_rx_work *w =
+                    (struct nic_rx_work *)kmalloc(sizeof(struct nic_rx_work));
+                if (w && pkt_len <= ETH_FRAME_MAX) {
+                    uint32_t i;
+                    for (i = 0; i < pkt_len; i++)
+                        w->data[i] = pkt_buf[i];
+                    w->len = pkt_len;
+                    if (!workqueue_enqueue(sys_wq, nic_rx_work_fn, w))
+                        kfree(w);   /* pool full: drop packet (rare) */
+                } else {
+                    if (w) kfree(w);
+                    net_rx(pkt_buf, pkt_len);  /* pool alloc failed, direct */
+                }
+            } else {
+                /* Early boot: process directly (no worker thread yet) */
+                net_rx(pkt_buf, pkt_len);
+            }
+
             spin_lock_irqsave(&nic_rx_lock, &flags);
         }
         spin_unlock_irqrestore(&nic_rx_lock, flags);

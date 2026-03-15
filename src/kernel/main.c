@@ -38,6 +38,7 @@
 #include "kernel/fs/partition.h"
 
 #include "kernel/sched/task.h"
+#include "kernel/sched/workqueue.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/ipc/pipe.h"
 #include "kernel/ipc/shmem.h"
@@ -747,6 +748,21 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* === Cooperative threading test === */
     task_init();
+
+    /* Create the system work queue — used by drivers to defer IRQ bottom-half
+     * work into a normal, yieldable kernel thread context.  Must be created
+     * after task_init() because workqueue_create() spawns a kernel task.
+     * The scheduler is enabled briefly so the worker task can start. */
+    {
+        scheduler_enable();
+        sys_wq = workqueue_create("sys_wq");
+        scheduler_disable();
+        if (sys_wq)
+            klog(LOG_DEBUG, "wq", "sys_wq created");
+        else
+            klog(LOG_ERROR, "wq", "sys_wq creation FAILED");
+    }
+
     {
         extern void thread_a_func(void);
         extern void thread_b_func(void);
