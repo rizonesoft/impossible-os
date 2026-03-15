@@ -298,26 +298,29 @@ void boot_splash_init(void)
     icon_pixels = OS_LOGO_FOR_HEIGHT(scr_h);
 
     /* ---- All layout values derived from icon_size (continuous scale) --
-     * This avoids the 1080p proportionality bug where icon grew but dots
-     * and text stayed at 720p pixel sizes.
-     *
-     * Reference (icon_size=90 at 720p):
-     *   dot_spacing=18  dot_min_r=3  dot_max_r=5  dot_y_off=52
-     *   text_y_off=36   font=16      text_area_w=500
+     * Dot geometry scales with the icon so spacing/radius stay proportional.
+     * Font size is decoupled from icon_size — it's proportional to screen
+     * height so TTF init cost stays predictable (critical: avoids the
+     * icon_size/6 regression that raised 720p font from 15→21px and made
+     * TTF init ~2× slower, causing a 3s blank-text gap before first status).
      */
-    g_dot_spacing  = icon_size / 5;            /* 18px @ 90px icon */
-    g_dot_min_r    = (int32_t)(icon_size / 30); /* 3px  @ 90px icon */
-    g_dot_max_r    = (int32_t)(icon_size / 18); /* 5px  @ 90px icon */
-    g_dot_y_offset = icon_size * 58 / 100;     /* 52px @ 90px icon */
-    g_text_y_offset= icon_size * 40 / 100;     /* 36px @ 90px icon */
-    g_font_size    = icon_size / 6;             /* 15px @ 90px — rounded */
-    g_text_area_w  = icon_size * 56 / 10;      /* ~504px @ 90px icon */
+    g_dot_spacing  = icon_size / 5;            /* 25px @ 128px icon */
+    g_dot_min_r    = (int32_t)(icon_size / 30); /* 4px  @ 128px icon */
+    g_dot_max_r    = (int32_t)(icon_size / 18); /* 7px  @ 128px icon */
+    g_dot_y_offset = icon_size * 58 / 100;     /* 74px @ 128px icon */
+    g_text_y_offset= icon_size * 40 / 100;     /* 51px @ 128px icon */
+    g_text_area_w  = icon_size * 56 / 10;      /* ~716px @ 128px icon */
+
+    /* Font size: fixed tiers per resolution — small enough for fast TTF init */
+    if      (scr_h >= 2160) g_font_size = 32;
+    else if (scr_h >= 1440) g_font_size = 24;
+    else if (scr_h >= 1080) g_font_size = 18;
+    else                    g_font_size = 15;
 
     /* Minimum guards for very small displays */
     if (g_dot_min_r < 2)       g_dot_min_r = 2;
     if (g_dot_max_r < 4)       g_dot_max_r = 4;
     if (g_dot_spacing < 12)    g_dot_spacing = 12;
-    if (g_font_size < 14)      g_font_size = 14;
     if (g_text_area_w < 400)   g_text_area_w = 400;
 
     klog(LOG_DEBUG, "SPLASH",
