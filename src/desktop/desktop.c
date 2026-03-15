@@ -26,6 +26,7 @@
 #include "registry.h"           /* Registry for wallpaper settings */
 #include "icon_store.h"          /* Color icon rendering from IRES */
 #include "gfx.h"                 /* Alpha blending for icon compositing */
+#include <kernel/os_logo.h>      /* Embedded OS logo (impossible_os_logo_pixels) */
 
 /* Integer square root — local copy matching gfx_core.c (isqrt is static) */
 static uint32_t isqrt_u(uint32_t n)
@@ -41,10 +42,6 @@ static uint32_t isqrt_u(uint32_t n)
 /* ---- Wallpaper (decoded + scaled) ---- */
 static image_t   wallpaper_img;       /* Scaled wallpaper (PMM or kmalloc) */
 static uint8_t   wallpaper_loaded;    /* 1 if wallpaper was loaded successfully */
-
-/* ---- Start icon ---- */
-static uint32_t *start_icon_buf;      /* Heap-allocated from VFS read */
-static uint8_t   start_icon_loaded;
 
 /* ---- Start Menu layout constants (Win7 two-column, Win11 dark style) ---- */
 #define SM_LEFT_W          260  /* left column width (thinner)  */
@@ -113,7 +110,6 @@ static const sm_right_item_t sm_right_items[] = {
 
 /* ---- Forward declarations ---- */
 static void load_wallpaper(void);
-static void load_start_icon(void);
 
 /* TrueType text helpers — wrap screen back buffer as gfx_surface_t */
 static void ttf_screen_text(int32_t x, int32_t y, const char *text,
@@ -128,57 +124,13 @@ static uint32_t slen(const char *s)
     return n;
 }
 
-/* ---- VFS file loader (reads entire file into heap buffer) ---- */
-
-static uint8_t *vfs_load_file(const char *path, uint32_t *out_size)
-{
-    struct vfs_node *f;
-    uint8_t *buf;
-    int n;
-
-    f = vfs_open(path, VFS_O_READ);
-    if (!f)
-        return (uint8_t *)0;
-
-    if (f->size == 0) {
-        vfs_close(f);
-        return (uint8_t *)0;
-    }
-
-    buf = (uint8_t *)kmalloc(f->size);
-    if (!buf) {
-        vfs_close(f);
-        return (uint8_t *)0;
-    }
-
-    n = vfs_read(f, 0, (uint32_t)f->size, buf);
-    vfs_close(f);
-
-    if (n <= 0) {
-        kfree(buf);
-        return (uint8_t *)0;
-    }
-
-    *out_size = (uint32_t)n;
-    return buf;
-}
 
 /* ---- Initialization ---- */
 
 void desktop_init(void)
 {
-    wallpaper_img.pixels = (uint32_t *)0;
-    wallpaper_loaded = 0;
-    start_icon_buf   = (uint32_t *)0;
-    start_icon_loaded = 0;
-    start_menu_open  = 0;
-    prev_left        = 0;
-
     /* Load wallpaper from Registry path (JPEG/PNG, runtime decoded) */
     load_wallpaper();
-
-    /* Load start button icon from C:\ */
-    load_start_icon();
 }
 
 /* ---- Simple string comparison ---- */
@@ -262,26 +214,6 @@ static void load_wallpaper(void)
     printk("[OK] Desktop wallpaper loaded (%ux%u, %u bytes)\n",
            (uint64_t)wallpaper_img.width, (uint64_t)wallpaper_img.height,
            (uint64_t)wallpaper_img.alloc_size);
-}
-
-/* ---- Start icon loading (from C:\ via VFS) ---- */
-
-static void load_start_icon(void)
-{
-    uint32_t icon_size = 0;
-    uint8_t *data;
-    uint32_t expected = START_ICON_SIZE * START_ICON_SIZE * 4;
-
-    data = vfs_load_file("C:\\start_icon.raw", &icon_size);
-    if (data && icon_size >= expected) {
-        start_icon_buf = (uint32_t *)data;
-        start_icon_loaded = 1;
-        printk("[OK] Start icon loaded (%ux%u, %u bytes)\n",
-               (uint64_t)START_ICON_SIZE, (uint64_t)START_ICON_SIZE,
-               (uint64_t)icon_size);
-    } else if (data) {
-        kfree(data);
-    }
 }
 
 /* ---- TrueType text helpers (screen framebuffer) ---- */
@@ -538,15 +470,18 @@ void desktop_draw_taskbar(void)
         /* Subtle highlight on top edge for 3D effect */
         fb_fill_rect(btn_x + 1, btn_y + 1, START_BTN_WIDTH - 2, 1, 0xFF454545);
 
-        if (start_icon_loaded && start_icon_buf) {
-            /* Center the 32x32 icon inside the button */
+        /* Draw OS logo downscaled to START_ICON_SIZE using nearest-neighbor */
+        {
             uint32_t icon_x = btn_x + (START_BTN_WIDTH - START_ICON_SIZE) / 2;
             uint32_t icon_y = btn_y + (btn_h - START_ICON_SIZE) / 2;
             uint32_t ix, iy;
 
             for (iy = 0; iy < START_ICON_SIZE; iy++) {
+                uint32_t sy_src = iy * OS_LOGO_H / START_ICON_SIZE;
                 for (ix = 0; ix < START_ICON_SIZE; ix++) {
-                    uint32_t pixel = start_icon_buf[iy * START_ICON_SIZE + ix];
+                    uint32_t sx_src = ix * OS_LOGO_W / START_ICON_SIZE;
+                    uint32_t pixel  = impossible_os_logo_pixels[
+                                        sy_src * OS_LOGO_W + sx_src];
                     uint8_t a = (pixel >> 24) & 0xFF;
                     if (a == 0) continue;
 
@@ -557,26 +492,20 @@ void desktop_draw_taskbar(void)
                     if (a == 0xFF) {
                         fb_put_pixel(sx, sy, pixel & 0x00FFFFFF);
                     } else {
-                        /* Alpha blend with button background */
                         uint8_t sr = (pixel >> 16) & 0xFF;
-                        uint8_t sg = (pixel >> 8) & 0xFF;
-                        uint8_t sb = pixel & 0xFF;
+                        uint8_t sg = (pixel >>  8) & 0xFF;
+                        uint8_t sb =  pixel        & 0xFF;
                         uint8_t dr = (btn_color >> 16) & 0xFF;
-                        uint8_t dg = (btn_color >> 8) & 0xFF;
-                        uint8_t db = btn_color & 0xFF;
+                        uint8_t dg = (btn_color >>  8) & 0xFF;
+                        uint8_t db =  btn_color        & 0xFF;
                         uint8_t or_ = (sr * a + dr * (255 - a)) / 255;
                         uint8_t og  = (sg * a + dg * (255 - a)) / 255;
                         uint8_t ob  = (sb * a + db * (255 - a)) / 255;
                         fb_put_pixel(sx, sy, ((uint32_t)or_ << 16) |
-                                             ((uint32_t)og << 8) | ob);
+                                             ((uint32_t)og  <<  8) | ob);
                     }
                 }
             }
-        } else {
-            /* Fallback: text label */
-            ttf_screen_text((int32_t)(btn_x + 8),
-                            (int32_t)(btn_y + (btn_h - 14) / 2),
-                            "Start", FONT_UI_BOLD, 14, START_BTN_TEXT);
         }
     }
 

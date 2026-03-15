@@ -110,10 +110,10 @@ sign-efi: $(UEFI_EFI)
 		echo "[SIGN] keys/MOK.key not found — skipping signing (dev build)"; \
 	fi
 
-## boot-icon: Generate boot splash icon header from PNG
-boot-icon: src/kernel/boot_splash_icon.h
+## os-logo: Generate shared OS logo header from PNG
+os-logo: include/kernel/os_logo.h
 
-src/kernel/boot_splash_icon.h: resources/boot/boot_256.png tools/convert_icon.py
+include/kernel/os_logo.h: resources/logo_256.png tools/convert_icon.py
 	@python3 tools/convert_icon.py
 
 ## bsod-icon: Generate BSOD icon header from PNG
@@ -136,7 +136,7 @@ boot: $(ASM_OBJS)
 kernel: $(KERNEL_BIN)
 	@echo "[KERNEL] $(KERNEL_BIN) built"
 
-$(KERNEL_BIN): boot-icon bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
+$(KERNEL_BIN): os-logo bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"
@@ -178,9 +178,7 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@# Copy wallpaper JPEG as-is (decoded at runtime by image_load)
 	@cp resources/backgrounds/background.jpg \
 		$(SYSROOT)/Impossible/Wallpapers/default.jpg
-	@# Convert start button icon (32x32 PNG with alpha)
-	$(BUILD_DIR)/tools/jpg2raw resources/start/icon_32.png \
-		$(SYSROOT)/start_icon.raw 32 32 2>&1
+	@# Fonts and icons follow below
 	@# Copy bundled TrueType fonts (Selawik, Cascadia Code, Inter)
 	@cp resources/fonts/*.ttf $(SYSROOT)/Impossible/Fonts/
 	@echo "[SYSROOT] Fonts copied"
