@@ -74,11 +74,59 @@
 
 ---
 
+## 5. Process Priority & Scheduling Policy
+
+**Prompt:** The current scheduler uses a round-robin policy with no priority differentiation. Processes should be assignable to priority classes: `REALTIME > HIGH > NORMAL > IDLE`. Windows uses `SetPriorityClass`; Linux uses `nice()`/`setpriority()`. Add a `priority` field to `struct task`, a `sched_policy` field (`SCHED_RR`, `SCHED_FIFO`, `SCHED_IDLE`), and update the scheduler to select the highest-priority runnable task first. `SYS_SETPRIORITY` allows user-mode priority changes (with privilege check). The compositor and audio mixer should run at `HIGH`; background tasks at `IDLE`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: process priority classes"`. Add notes directly in this TODO section.
+
+
+- [ ] Add `priority` (0–3: IDLE/NORMAL/HIGH/REALTIME) and `sched_policy` fields to `struct task`
+- [ ] Update scheduler: always pick highest-priority runnable task; round-robin within same priority
+- [ ] `SCHED_FIFO`: run until block or yield (no time-slicing) — for realtime tasks
+- [ ] `SCHED_IDLE`: only run when no other tasks are runnable
+- [ ] Add `SYS_SETPRIORITY(pid, priority)` syscall — kernel tasks require privilege
+- [ ] Compositor and audio mixer: spawn at `PRIORITY_HIGH`
+- [ ] Background fetch/index tasks: spawn at `PRIORITY_IDLE`
+- [ ] Commit: `"sched: process priority classes"`
+
+---
+
+## 6. Process Capabilities & Privilege Separation
+
+**Prompt:** Currently the kernel treats all processes equally — any process can do anything. A privilege model is needed for security: some operations (raw disk I/O, loading drivers, changing system time) should require elevated privilege. Windows uses tokens + privileges (`SeShutdownPrivilege`, etc.); Linux uses capabilities (`CAP_SYS_ADMIN`, `CAP_NET_ADMIN`). Add a `capabilities` bitmask to `struct task`. System processes (init, compositor) get full capabilities; user processes get a restricted set. `capability_check(cap)` in the kernel validates before privileged operations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: process capabilities"`. Add notes directly in this TODO section.
+
+
+- [ ] Define capability bitmask constants: `CAP_SYS_ADMIN`, `CAP_RAW_IO`, `CAP_NET_ADMIN`, `CAP_LOAD_DRIVER`, `CAP_KILL_ALL`, `CAP_SET_TIME`
+- [ ] Add `capabilities` field to `struct task` (uint64_t bitmask)
+- [ ] System processes: granted full capability set at spawn
+- [ ] User processes: granted restricted set (no raw I/O, no driver load)
+- [ ] Add `capability_check(cap)` — returns 0 if current task has cap, -EPERM if not
+- [ ] Gate privileged syscalls behind capability_check
+- [ ] `SYS_DROPCAP(cap)` — reduce own capabilities (principle of least privilege)
+- [ ] Commit: `"kernel: process capabilities"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                       | Reason                                           |
-|----------|-------------------------------|--------------------------------------------------|
-| 🔴 P0     | 1. File Descriptors           | Foundation for pipes, I/O redirection, sockets   |
-| 🔴 P0     | 2. Working Directory          | Shell navigation, relative path VFS resolution   |
-| 🔴 P0     | 3. brk/sbrk                   | User-mode malloc doesn't work without this       |
-| 🟠 P1     | 4. Timer API                  | vsync, animations, NTP need sleep/gettimeofday   |
+| Priority | Section                          | Reason                                                  |
+|----------|----------------------------------|---------------------------------------------------------|
+| 🔴 P0    | 1. File Descriptors              | Foundation for pipes, I/O redirection, sockets          |
+| 🔴 P0    | 2. Working Directory             | Shell navigation, relative path VFS resolution           |
+| 🔴 P0    | 3. brk/sbrk                      | User-mode malloc doesn't work without this              |
+| 🟠 P1    | 4. Timer API                     | vsync, animations, NTP need sleep/gettimeofday          |
+| 🟠 P1    | 5. Process Priority              | Compositor/audio needs high priority; background idle   |
+| 🟡 P2    | 6. Process Capabilities          | Security hardening — privilege separation               |
+
+---
+
+## OS Comparison
+
+| Feature                        | Windows 11                       | Linux Kernel                  | Impossible OS                        |
+|--------------------------------|----------------------------------|-------------------------------|--------------------------------------|
+| File descriptor table          | ✅ Handle table (per-process)    | ✅ POSIX FD table              | ⬜ §1 P0                              |
+| Per-process working directory  | ✅ `SetCurrentDirectory`         | ✅ `chdir(2)`                  | ⬜ §2 P0                              |
+| User-mode heap (brk/sbrk)      | ✅ `VirtualAlloc` / heap         | ✅ `brk(2)` / `sbrk(2)`       | ⬜ §3 P0                              |
+| Timer syscalls (sleep/time)    | ✅ `Sleep` / `GetSystemTime`     | ✅ `sleep`/`gettimeofday`      | ⬜ §4 P1                              |
+| Process priority classes       | ✅ `SetPriorityClass`            | ✅ `nice`/`setpriority`        | ⬜ §5 P1                              |
+| Process capabilities           | ✅ Privileges + tokens           | ✅ `CAP_*` capabilities        | ⬜ §6 P2                              |
+| **Unified FD for all IPC**     | ⚠️ Handles ≠ FDs (fragmented)   | ✅ Everything is an FD         | ⬜ **§1 — POSIX-style, clean**        |

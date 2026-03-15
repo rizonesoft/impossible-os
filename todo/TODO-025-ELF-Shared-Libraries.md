@@ -41,11 +41,58 @@
 
 ---
 
+## 3. Symbol Versioning
+
+**Prompt:** Without symbol versioning, upgrading a shared library can silently break existing binaries if a function's ABI changes. Linux uses GNU Symbol Versioning (`.gnu.version`, `.gnu.version_d`, `.gnu.version_r`); Windows uses DLL version manifests (`<dependentAssembly>` in SxS). Impossible OS shared libraries should embed a version tag per exported symbol: `symbol@LIBNAME_1.0`. The dynamic linker checks the required version matches the provided version at bind time. This protects against ABI breakage as system libraries evolve. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF symbol versioning"`. Add notes directly in this TODO section.
+
+> **Prerequisite:** §1 dynamic linker must be complete.
+
+
+- [ ] Parse `.gnu.version_d` (version definitions in .so) and `.gnu.version_r` (required versions in executable)
+- [ ] At bind time: check required version tag matches provided tag for each symbol
+- [ ] On version mismatch: fail load with clear error (`"libfoo.so: symbol bar@LIBFOO_2.0 not found, need LIBFOO_1.0"`)
+- [ ] `nm --dynamic` equivalent shell command: list exported symbols with versions from a `.so`
+- [ ] Commit: `"kernel: ELF symbol versioning"`
+
+---
+
+## 4. Library Cache (`ldcache`)
+
+**Prompt:** Scanning the entire library search path on every `dlopen` is slow. Linux's `ldconfig` pre-builds `/etc/ld.so.cache` — a sorted list of all library names and their paths. Impossible OS should maintain `C:\Impossible\System\ldcache.bin` — a flat binary index of (library name → path) pairs. The dynamic linker checks this cache first before scanning directories. `ldcache --rebuild` regenerates it by scanning the library dirs. Automatically regenerated when `install` or `uninstall` drops/removes a `.so` file. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: dynamic linker cache"`. Add notes directly in this TODO section.
+
+> **Beats:** Windows DLL lookup is PATH-based with no cache — slow on cold start. Linux ldcache requires root to rebuild. Impossible OS can rebuild per-user.
+
+
+- [ ] Define `ldcache.bin` format: `[count][name_len][name][path_len][path]...` entries
+- [ ] Dynamic linker: check cache before directory scan
+- [ ] Implement `ldcache_lookup(name, out_path)` — O(log n) binary search after sort
+- [ ] `ldcache --rebuild` shell command: scan library dirs, write sorted cache file
+- [ ] Call `ldcache --rebuild` automatically after install/uninstall
+- [ ] Commit: `"kernel: dynamic linker cache"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                        | Reason                                         |
-|----------|--------------------------------|------------------------------------------------|
-| 🔴 P0     | 1. ELF symbol table + relocs   | Engine needed by both dlopen and kernel modules|
-| 🟠 P1     | 1. GOT/PLT patching            | Required for real shared library call dispatch |
-| 🟠 P1     | 1. dlopen/dlsym/dlclose        | User-mode plugin loading, Win32 compat layer   |
-| 🟡 P2     | 2. Kernel modules              | See TODO-080-Drivers.md — after Drivers phase  |
+| Priority | Section                        | Reason                                          |
+|----------|--------------------------------|-------------------------------------------------|
+| 🔴 P0    | 1. ELF symbol table + relocs   | Engine needed by both dlopen and kernel modules |
+| 🟠 P1    | 1. GOT/PLT patching            | Required for real shared library call dispatch  |
+| 🟠 P1    | 1. dlopen/dlsym/dlclose        | User-mode plugin loading, Win32 compat layer    |
+| 🟡 P2    | 2. Kernel modules              | See TODO-080-Drivers.md — after Drivers phase   |
+| 🟡 P2    | 3. Symbol versioning           | ABI stability for system libraries              |
+| 🟡 P2    | 4. Library cache               | Performance — fast dlopen cold start            |
+
+---
+
+## OS Comparison
+
+| Feature                      | Windows 11 (DLL)              | Linux (ELF .so)              | Impossible OS                     |
+|------------------------------|-------------------------------|------------------------------|-----------------------------------|
+| Runtime dynamic loading      | ✅ `LoadLibrary`              | ✅ `dlopen`                  | ⬜ §1 P0                           |
+| Symbol lookup                | ✅ `GetProcAddress`           | ✅ `dlsym`                   | ⬜ §1 P0                           |
+| GOT / PLT lazy binding       | ✅ Import Address Table       | ✅ GOT/PLT                   | ⬜ §1 P1                           |
+| Kernel module loading        | ✅ Kernel driver (WDM)        | ✅ `insmod`/`depmod`         | ⬜ §2 (TODO-080)                   |
+| Symbol versioning            | ✅ SxS manifests              | ✅ GNU symbol versioning      | ⬜ §3 P2                           |
+| Library path cache           | ❌ PATH scan                  | ✅ `/etc/ld.so.cache`        | ⬜ §4 P2 — **user-rebuilable**     |
+| **Per-user library cache**   | ❌                            | ❌ Root only (`ldconfig`)    | ⬜ **§4 — Impossible OS only**     |

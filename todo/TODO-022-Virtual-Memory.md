@@ -49,9 +49,9 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ---
 
-## 3. Memory Protection
+## 3. Memory Protection (`mprotect`)
 
-**Prompt:** `mprotect(addr, length, prot)` changes page permissions on an existing mapping — essential for W^X (write XOR execute) security policy, JIT compilers, and stack guards. The kernel updates the PTE flags for the specified range without remapping. `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` correspond to PTE R/W and NX bits. A guard page (PROT_NONE, one page below the stack) turns stack overflows into a page fault instead of silent corruption. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: mprotect and guard pages"`.
+**Prompt:** `mprotect(addr, length, prot)` changes page permissions on an existing mapping — essential for W^X (write XOR execute) security policy, JIT compilers, and stack guards. The kernel updates the PTE flags for the specified range without remapping. `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` correspond to PTE R/W and NX bits. A guard page (PROT_NONE, one page below the stack) turns stack overflows into a page fault instead of silent corruption. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: mprotect and guard pages"`. Add notes directly in this TODO section about W^X enforcement and guard page placement.
 
 
 - [ ] Implement `mprotect(addr, length, prot)` syscall — update PTE flags for range
@@ -65,10 +65,84 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ---
 
+## 4. ASLR — Address Space Layout Randomization
+
+**Prompt:** Without ASLR, the kernel, stack, heap, and mmap regions always load at fixed addresses — making exploit code trivially predictable. Both Windows and Linux enable ASLR by default. Randomize the base addresses of: kernel load address (already KASLR in Linux), user stack start, heap start, and mmap region start. Use the PIT tick counter XOR'd with a boot-time RDRAND value as the entropy source. Add a Registry key `HKLM\SYSTEM\Security\ASLR` (1=enabled, 0=disabled for debugging). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: ASLR — address space randomization"`. Add notes directly in this TODO section covering the entropy source, per-region randomization, and debug disable.
+
+> **Beats:** Windows ASLR is opt-in per-binary. Impossible OS enables it for all user processes by default.
+
+
+- [ ] Add `mm_aslr_enabled` flag (read from Registry at boot, default 1)
+- [ ] Generate ASLR seed: `PIT ticks ^ RDRAND` at kernel init → store in `g_aslr_seed`
+- [ ] Randomize user stack base: align to page, offset by 1–255 pages from stack top
+- [ ] Randomize heap (`brk`) start: offset by 1–63 pages from BSS end
+- [ ] Randomize mmap region start: offset per `mmap_base = DEFAULT_MMAP_BASE ^ (seed & MMAP_MASK)`
+- [ ] Ensure all offsets are page-aligned
+- [ ] Log chosen bases to serial at process spawn (debug builds only)
+- [ ] Commit: `"mm: ASLR — address space randomization"`
+
+---
+
+## 5. Huge Pages (2 MiB pages for performance)
+
+**Prompt:** The kernel already uses 2 MiB pages for its identity-mapped region (bootloader). User processes currently use 4 KiB pages everywhere. For large mappings (graphics buffers, file-backed regions > 4 MiB), using 2 MiB pages reduces TLB pressure and page-fault overhead dramatically. Linux calls these HugePages (`mmap(MAP_HUGETLB)`); Windows uses Large Page Support (`VirtualAlloc(MEM_LARGE_PAGES)`). Add a `MAP_HUGE` flag to `mmap` — if the region is 2 MiB aligned and of sufficient size, use PD entries directly instead of allocating PTs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: huge page support (2 MiB pages)"`. Add notes directly in this TODO section.
+
+> **Win:** Framebuffer back buffer (3.6 MiB) and `mmap` of large files benefit immediately.
+
+
+- [ ] Add `MAP_HUGE` flag constant
+- [ ] In `mmap`: if size ≥ 2 MiB and addr/size 2 MiB-aligned + `MAP_HUGE` set, use 2 MiB PD entries
+- [ ] Physical allocator: `pmm_alloc_huge()` — allocate contiguous 2 MiB-aligned physical frame
+- [ ] Page fault handler: recognize 2 MiB PD entry (PS bit) distinctly from 4 KiB PT entry
+- [ ] `munmap` for huge pages: clear PD entry, mark physical 2 MiB frame free
+- [ ] Use for: framebuffer back buffer mapping, large file mmaps
+- [ ] Commit: `"mm: huge page support (2 MiB pages)"`
+
+---
+
+## 6. Copy-on-Write `fork()`
+
+**Prompt:** `fork()` creates a child process that shares the parent's physical pages until either writes — at which point the written page is copied (COW). Without COW, `fork()` must deep-copy all pages upfront (~seconds for a large process). With COW, `fork()` is nearly instant — only a page table copy. Mark all user pages as read-only in both parent and child after fork; on write fault, copy the page and mark writable. This is how POSIX `fork()` works on Linux; Windows has no `fork()` equivalent. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: COW fork()"`. Add notes directly in this TODO section.
+
+> **Beats:** Windows 11 — no `fork()`. Impossible OS gets both `fork()` + `exec()` (POSIX-style process creation).
+
+> **Prerequisite:** `mprotect` (§3) must exist — fork uses PTE write-protect to trigger COW faults.
+
+
+- [ ] `fork()`: duplicate page tables but mark all user pages read-only in parent + child
+- [ ] Increment physical page reference count for each shared page
+- [ ] On write page fault: if COW page (ref_count > 1), allocate new frame, copy, decrement old ref
+- [ ] If ref_count == 1 after decrement: re-mark page writable (no copy needed)
+- [ ] Add `SYS_FORK` syscall
+- [ ] Test: fork a process, parent and child modify different memory — verify no corruption
+- [ ] Commit: `"mm: COW fork()"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                   | Reason                                         |
-|----------|---------------------------|------------------------------------------------|
-| ✅ Done   | 1. Swap / Page File       | Verified complete — disk-backed pagefile       |
-| ✅ Done   | 2. Memory-Mapped Files    | Verified complete — mmap/munmap/msync          |
-| 🟠 P1     | 3. Memory Protection      | `mprotect` + guard pages for W^X security      |
+| Priority  | Section                          | Reason                                                       |
+|-----------|----------------------------------|--------------------------------------------------------------|
+| ✅ Done   | 1. Swap / Page File              | Verified complete — disk-backed pagefile                     |
+| ✅ Done   | 2. Memory-Mapped Files           | Verified complete — mmap/munmap/msync                        |
+| 🔴 P0     | 3. mprotect + guard pages        | W^X security + stack overflow detection                      |
+| 🟠 P1     | 4. ASLR                          | Essential security — exploit mitigation                      |
+| 🟠 P1     | 6. COW fork()                    | POSIX process creation; requires §3 mprotect first           |
+| 🟡 P2     | 5. Huge Pages                    | Performance — framebuffer and large file mmap                |
+
+---
+
+## OS Comparison
+
+| Feature                      | Windows 11              | Linux Kernel             | Impossible OS                      |
+|------------------------------|-------------------------|--------------------------|------------------------------------|
+| Swap / pagefile              | ✅ `pagefile.sys`       | ✅ swap partition/file   | ✅ §1 Done — `pagefile.sys`        |
+| Memory-mapped files          | ✅ `MapViewOfFile`      | ✅ `mmap(2)`             | ✅ §2 Done                         |
+| Memory protection (mprotect) | ✅ `VirtualProtect`     | ✅ `mprotect(2)`         | ⬜ §3 P0                            |
+| ASLR                         | ✅ Opt-in per binary    | ✅ Default on            | ⬜ §4 P1 — **default on all procs** |
+| Huge pages                   | ✅ `MEM_LARGE_PAGES`    | ✅ `MAP_HUGETLB`         | ⬜ §5 P2                            |
+| COW fork()                   | ❌ No fork              | ✅ COW fork              | ⬜ §6 P1 — **beats Windows**        |
+| Page replacement algorithm   | ✅ Modified clock       | ✅ LRU + clock           | ✅ Clock (second-chance)            |
+| **ASLR default for all**     | ⚠️ Opt-in per PE binary | ✅ Default               | ⬜ **§4 — mandatory for all procs** |
+
+> **After §3–6:** Impossible OS matches Linux's VM subsystem. ASLR mandatory-by-default exceeds Windows 11.

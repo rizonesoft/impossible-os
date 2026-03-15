@@ -28,7 +28,7 @@
 
 **Prompt:** Port monocypher (BSD-2, ~3000 lines) into `src/libs/monocypher/` — it provides ChaCha20 (stream cipher), Poly1305 (MAC), Blake2b (hash), Argon2i (password hash), X25519 (key exchange), and Ed25519 (signatures). Compile with `-ffreestanding`. This library is the cryptographic foundation for: password hashing in Phase 09 §1.2, TLS in Phase 07 §5, executable signing in Phase 09 §8, and data encryption in Phase 09 §4. The kernel CSPRNG should seed from RDRAND (via inline assembly) and use ChaCha20 to generate random bytes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"libs: monocypher crypto primitives"`. Add notes, gotchas, and design decisions directly in this TODO section covering monocypher integration, CSPRNG seeding, and exposed crypto primitives.
 
-> **No malloc needed:** monocypher uses only caller-provided buffers — pure `#ffreestanding` with zero heap use.
+> **No malloc needed:** monocypher uses only caller-provided buffers — pure `-ffreestanding` with zero heap use.
 
 - [ ] Port **monocypher** (~3000 lines, BSD-2) into `src/libs/monocypher/`
 - [ ] Expose: ChaCha20 (stream cipher), Poly1305 (MAC), Blake2b (hash)
@@ -42,7 +42,7 @@
 
 ## 3. Math Library
 
-**Prompt:** `kmath.h` already exists (`include/kernel/kmath.h`) with `fabs`, `floor`, and a subset of math functions required by stb_truetype. Verify what's already there and extend with any missing functions needed by audio synthesis (Phase 08) and the TTS engine (Phase 13 §7.1). Port remaining functions from OpenLibm or musl libc (both MIT-compatible) into `src/libs/math/`. Do NOT duplicate what's in `kmath.h` — extend it. Key missing functions to check: `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `sqrt`, `ceil`, `fmod`, `atan2`. Compile with `-msse2`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"libc: floating-point math functions"`.
+**Prompt:** `kmath.h` already exists (`include/kernel/kmath.h`) with `fabs`, `floor`, and a subset of math functions required by stb_truetype. Verify what's already there and extend with any missing functions needed by audio synthesis (Phase 08) and the TTS engine (Phase 13 §7.1). Port remaining functions from OpenLibm or musl libc (both MIT-compatible) into `src/libs/math/`. Do NOT duplicate what's in `kmath.h` — extend it. Key missing functions to check: `sin`, `cos`, `tan`, `exp`, `log`, `pow`, `sqrt`, `ceil`, `fmod`, `atan2`. Compile with `-msse2`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"libc: floating-point math functions"`. Add notes directly in this TODO section.
 
 > **Note:** `kmath.h` exists from the stb_truetype integration — audit it before porting to avoid duplication.
 
@@ -70,11 +70,44 @@
 
 ---
 
+## 5. String Library (libc shims)
+
+**Prompt:** Freestanding kernel code needs `memset`, `memcpy`, `memmove`, `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strstr`, `strtol`, `snprintf`, `vsnprintf` — but cannot use the system libc. Audit `src/kernel/string.c` and `src/kernel/kprintf.c` to see what already exists, then fill missing gaps. `snprintf`/`vsnprintf` are the most critical — they must be correct and safe (no buffer overflow). Compile with `-ffreestanding -nostdlib`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"libc: string and printf shims"`. Add notes directly in this TODO section.
+
+> **Note:** Audit first — many of these may already exist scattered across the kernel. Consolidate into `src/libs/libc/string.c`.
+
+
+- [ ] Audit existing string functions across kernel source files
+- [ ] Consolidate into `src/libs/libc/string.c` + `include/libc/string.h`
+- [ ] Implement: `memset`, `memcpy`, `memmove`, `memcmp`, `memchr`
+- [ ] Implement: `strlen`, `strcpy`, `strncpy`, `strcat`, `strncat`
+- [ ] Implement: `strcmp`, `strncmp`, `strstr`, `strchr`, `strrchr`
+- [ ] Implement: `strtol`, `strtoul`, `atoi`
+- [ ] Implement: `snprintf`, `vsnprintf` (safe, no overflow)
+- [ ] Verify all compile with `-ffreestanding -nostdlib`
+- [ ] Commit: `"libc: string and printf shims"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                   | Reason                                               |
-|----------|---------------------------|------------------------------------------------------|
-| 🟠 P1     | 3. Math Library           | Audit first — likely mostly done via `kmath.h`       |
-| 🟠 P1     | 4. cJSON                  | Needed for theme/config loading in desktop phase     |
-| 🟠 P1     | 1. miniz                  | Needed for IXFS compression (Phase 06) and HTTP gzip |
-| 🟡 P2     | 2. monocypher             | Needed for Phase 07 TLS and Phase 09 security        |
+| Priority | Section                   | Reason                                                  |
+|----------|---------------------------|---------------------------------------------------------|
+| 🔴 P0    | 5. String library         | Audit/consolidate — likely partially done; fill gaps    |
+| 🟠 P1    | 3. Math Library           | Audit first — likely mostly done via `kmath.h`          |
+| 🟠 P1    | 4. cJSON                  | Needed for theme/config loading in desktop phase        |
+| 🟠 P1    | 1. miniz                  | Needed for IXFS compression (Phase 06) and HTTP gzip    |
+| 🟡 P2    | 2. monocypher             | Needed for Phase 07 TLS and Phase 09 security           |
+
+---
+
+## OS Comparison
+
+| Library / Primitive     | Windows Kernel (WDK)        | Linux Kernel                | Impossible OS                       |
+|-------------------------|-----------------------------|-----------------------------|-------------------------------------|
+| String functions        | ✅ `RtlCopy/MoveMemory` etc | ✅ `lib/string.c`            | ⬜ §5 P0 — audit + consolidate    |
+| Math functions          | ✅ `rtlmath`                | ✅ `lib/math/`               | ⬜ §3 P1 — extend `kmath.h`       |
+| Compression (zlib)      | ✅ `RtlDecompressBuffer`    | ✅ `lib/zlib_deflate/`       | ⬜ §1 P1 — miniz                  |
+| Cryptography            | ✅ BCrypt kernel APIs       | ✅ `crypto/` subsystem       | ⬜ §2 P2 — monocypher             |
+| JSON parser             | ❌ (COM-based, user-mode)   | ❌                           | ⬜ §4 P1 — **in-kernel JSON**     |
+| **In-kernel JSON**      | ❌                          | ❌                           | ⬜ **§4 — Impossible OS only**    |
