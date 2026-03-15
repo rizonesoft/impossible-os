@@ -40,6 +40,17 @@
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
 #define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
 
+/* Thread priority range.
+ * Higher value = higher priority.  Default = THREAD_PRIO_NORMAL.
+ * The scheduler always picks the highest-priority READY thread.
+ * Priority inheritance temporarily boosts a lock owner to match its
+ * highest-priority waiter; the original is stored in base_priority. */
+#define THREAD_PRIO_IDLE     0   /* idle / background tasks only */
+#define THREAD_PRIO_LOW      8   /* below-normal */
+#define THREAD_PRIO_NORMAL  16   /* default for all new threads */
+#define THREAD_PRIO_HIGH    24   /* above-normal */
+#define THREAD_PRIO_REALTIME 31  /* top — interrupt-like priority */
+
 /* Saved CPU context (callee-saved registers only for cooperative switch) */
 struct task_context {
     uint64_t rbx;
@@ -64,6 +75,9 @@ struct thread {
     uint32_t    parent_task;    /* index into tasks[] (owning task) */
     int32_t     exit_status;    /* exit status (set on THREAD_DEAD) */
     int32_t     join_tid;       /* thread we're waiting on (-1 = none) */
+    /* --- Priority (for priority-aware scheduler and PI) --- */
+    uint32_t    priority;       /* current effective priority (may be boosted) */
+    uint32_t    base_priority;  /* original priority before any boost */
 };
 
 /* Task Control Block */
@@ -164,6 +178,20 @@ void thread_yield(void);
 /* Get the current thread within the current task.
  * Returns NULL if current task has no thread tracking (PID 0 boot). */
 struct thread *thread_current(void);
+
+/* Set the effective priority of a thread (0 = lowest, 31 = highest).
+ * Also updates base_priority to the same value (permanent change).
+ * For temporary boosts, write thread->priority directly. */
+void thread_set_priority(uint32_t task_pid, uint32_t thread_id, uint32_t prio);
+
+/* Boost a thread's effective priority if new_prio > current priority.
+ * Used by mutex PI: does NOT change base_priority.
+ * Returns 1 if the boost was applied, 0 if not needed. */
+int thread_boost_priority(uint32_t task_pid, uint32_t thread_id, uint32_t new_prio);
+
+/* Restore a thread's effective priority to its base_priority.
+ * Called from mutex_unlock() to undo PI boosts. */
+void thread_restore_priority(uint32_t task_pid, uint32_t thread_id);
 
 /* --- Assembly (switch_context.asm) --- */
 

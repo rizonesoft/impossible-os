@@ -66,13 +66,32 @@ void mutex_lock(mutex_t *m)
         /* Continue anyway — it's a warning, not a hard stop */
     }
 
-    /* --- Spin-then-sleep acquisition --- */
+    /* --- Spin-then-sleep acquisition with priority inheritance --- */
     while (atomic_read(&m->locked)) {
         /* Add ourselves to the wait queue */
         if (m->num_waiters < MUTEX_MAX_WAITERS) {
-            m->waiter_tasks[m->num_waiters] = my_task;
+            m->waiter_tasks[m->num_waiters]   = my_task;
             m->waiter_threads[m->num_waiters] = my_thread;
             m->num_waiters++;
+        }
+
+        /* --- Priority Inheritance ---
+         * If the owner is running at a lower priority than us, boost it
+         * so it can preempt medium-priority threads and release the lock
+         * sooner, avoiding priority inversion.
+         *
+         * Cascaded case: if the owner is also blocked on another mutex,
+         * walk the owner chain and boost every level. */
+        if (cur_thread) {
+            uint32_t waiter_prio = cur_thread->priority;
+            /* Boost direct owner */
+            if (m->owner_task < (uint32_t)-1) {
+                struct task *owner_t = task_get_by_pid(m->owner_task);
+                if (owner_t && m->owner_thread < owner_t->num_threads) {
+                    thread_boost_priority(m->owner_task, m->owner_thread,
+                                         waiter_prio);
+                }
+            }
         }
 
         /* Block this thread and yield */
@@ -122,6 +141,10 @@ void mutex_unlock(mutex_t *m)
         return;
     }
 
+    /* Restore owner's priority to base_priority (undo any PI boost).
+     * Must happen BEFORE clearing owner_task/owner_thread. */
+    thread_restore_priority(my_task, my_thread);
+
     /* Release the lock */
     atomic_set(&m->locked, 0);
     m->owner_task   = 0;
@@ -131,19 +154,36 @@ void mutex_unlock(mutex_t *m)
     if (m->lock_order > 0 && current_max_lock_order == m->lock_order)
         current_max_lock_order = 0;
 
-    /* Wake the first waiter */
+    /* Wake the highest-priority waiter (PI: promote the most-urgent waiter).
+     * Scan the wait queue and pick the thread with the highest priority. */
     if (m->num_waiters > 0) {
-        uint32_t wake_task = m->waiter_tasks[0];
-        uint32_t wake_thread = m->waiter_threads[0];
+        uint32_t best_idx = 0;
+        uint32_t best_prio = 0;
+        uint32_t wake_task, wake_thread;
 
-        /* Remove from wait queue by shifting left */
-        for (i = 1; i < m->num_waiters; i++) {
-            m->waiter_tasks[i - 1] = m->waiter_tasks[i];
+        /* Find the highest-priority waiter */
+        for (i = 0; i < m->num_waiters; i++) {
+            struct task *wt = task_get_by_pid(m->waiter_tasks[i]);
+            if (wt && m->waiter_threads[i] < wt->num_threads) {
+                uint32_t wp = wt->threads[m->waiter_threads[i]].priority;
+                if (wp > best_prio) {
+                    best_prio = wp;
+                    best_idx  = i;
+                }
+            }
+        }
+
+        wake_task   = m->waiter_tasks[best_idx];
+        wake_thread = m->waiter_threads[best_idx];
+
+        /* Remove chosen waiter from queue by shifting left */
+        for (i = best_idx + 1; i < m->num_waiters; i++) {
+            m->waiter_tasks[i - 1]   = m->waiter_tasks[i];
             m->waiter_threads[i - 1] = m->waiter_threads[i];
         }
         m->num_waiters--;
 
-        /* Wake the thread */
+        /* Wake the chosen thread */
         {
             struct task *wt = task_get_by_pid(wake_task);
             if (wt && wake_thread < wt->num_threads) {

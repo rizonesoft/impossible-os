@@ -59,51 +59,66 @@ static void task_wrapper(void)
         yield();
 }
 
-/* --- Find the next runnable task+thread (round-robin) ---
- * Searches across ALL tasks and their threads for the next schedulable unit.
+/* --- Find the next runnable task+thread (priority-aware) ---
+ * Scans ALL tasks × threads and returns the highest effective-priority
+ * READY/RUNNING thread.  Round-robin order within equal-priority threads:
+ * we still start from the slot *after* the current one so that same-priority
+ * threads each get a fair turn.
  * Sets *out_thread to the thread index within the found task.
- * Returns the task index. */
+ * Returns the task index (or from_task/from_thread if nothing else found). */
 static uint32_t find_next_task(uint32_t from_task, uint32_t from_thread,
                                uint32_t *out_thread)
 {
-    uint32_t ti, tj;
-    uint32_t task_idx, thread_idx;
+    uint32_t best_task   = from_task;
+    uint32_t best_thread = from_thread;
+    uint32_t best_prio   = 0;
+    int      found       = 0;
 
-    /* Start from the *next* thread after the current one */
-    task_idx = from_task;
-    thread_idx = from_thread;
+    uint32_t ti;
 
-    /* Walk all tasks × threads in round-robin order */
+    /* Scan all tasks, walking threads in round-robin order so equal-priority
+     * threads are visited in circular order starting from the current slot. */
     for (ti = 0; ti < num_tasks; ti++) {
-        /* Move to next thread (or next task's first thread) */
-        thread_idx++;
-        if (thread_idx >= tasks[task_idx].num_threads) {
-            task_idx = (task_idx + 1) % num_tasks;
-            thread_idx = 0;
-        }
+        uint32_t task_idx = (from_task + 1 + ti) % num_tasks;
+        uint32_t tj;
 
-        /* Check all threads in this new task, then wrap to next task */
+        if (tasks[task_idx].state != TASK_READY &&
+            tasks[task_idx].state != TASK_RUNNING)
+            continue;
+
+        /* Walk threads in round-robin order within the task */
         for (tj = 0; tj < tasks[task_idx].num_threads; tj++) {
-            uint32_t check_tid = (thread_idx + tj) % tasks[task_idx].num_threads;
-            struct thread *thr = &tasks[task_idx].threads[check_tid];
+            uint32_t thread_idx;
+            struct thread *thr;
 
-            /* Task must be alive and thread must be runnable */
-            if ((tasks[task_idx].state == TASK_READY ||
-                 tasks[task_idx].state == TASK_RUNNING) &&
-                (thr->state == THREAD_READY ||
-                 thr->state == THREAD_RUNNING)) {
-                *out_thread = check_tid;
-                return task_idx;
+            /* Determine start offset for fairness within same task */
+            if (task_idx == from_task)
+                thread_idx = (from_thread + 1 + tj) % tasks[task_idx].num_threads;
+            else
+                thread_idx = tj;
+
+            thr = &tasks[task_idx].threads[thread_idx];
+
+            if (thr->state != THREAD_READY && thr->state != THREAD_RUNNING)
+                continue;
+
+            if (!found || thr->priority > best_prio) {
+                best_task   = task_idx;
+                best_thread = thread_idx;
+                best_prio   = thr->priority;
+                found = 1;
             }
         }
-
-        /* No runnable thread in this task, move to next */
-        thread_idx = tasks[task_idx].num_threads;  /* will wrap in outer loop */
     }
 
-    /* Nothing else found — stay on current */
-    *out_thread = from_thread;
-    return from_task;
+    if (!found) {
+        /* Nothing else runnable — stay on current */
+        *out_thread = from_thread;
+        return from_task;
+    }
+
+    *out_thread = best_thread;
+    return best_task;
 }
 
 /* --- Public API --- */
@@ -154,6 +169,8 @@ void task_init(void)
     tasks[0].threads[0].stack_size = 0;
     tasks[0].threads[0].parent_task = 0;
     tasks[0].threads[0].join_tid = -1;
+    tasks[0].threads[0].priority      = THREAD_PRIO_NORMAL;
+    tasks[0].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[0].num_threads = 1;
 
     /* Initialize signal state for PID 0 */
@@ -253,6 +270,8 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].threads[0].stack_size = 0;
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     num_tasks++;
@@ -348,6 +367,8 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].stack_size = 0;
     tasks[pid].threads[0].parent_task = pid;
     tasks[pid].threads[0].join_tid = -1;
+    tasks[pid].threads[0].priority      = THREAD_PRIO_NORMAL;
+    tasks[pid].threads[0].base_priority = THREAD_PRIO_NORMAL;
     tasks[pid].num_threads = 1;
     signal_init_task(&tasks[pid].signals);
     num_tasks++;
@@ -870,6 +891,8 @@ int thread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].parent_task = task_idx;
     t->threads[tid].exit_status = 0;
     t->threads[tid].join_tid = -1;
+    t->threads[tid].priority      = THREAD_PRIO_NORMAL;
+    t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->num_threads++;
 
     klog(LOG_DEBUG, "sched", "Thread %u created in task %u (\"%s\")",
@@ -970,4 +993,44 @@ struct thread *thread_current(void)
     if (current_thread >= tasks[current_task].num_threads)
         return (struct thread *)0;
     return &tasks[current_task].threads[current_thread];
+}
+
+/* ============================================================================
+ * Priority management helpers (used by mutex priority inheritance)
+ * ============================================================================ */
+
+/* Permanently change a thread's priority (both effective and base). */
+void thread_set_priority(uint32_t task_pid, uint32_t thread_id, uint32_t prio)
+{
+    struct task *t;
+    if (task_pid >= num_tasks) return;
+    t = &tasks[task_pid];
+    if (thread_id >= t->num_threads) return;
+    t->threads[thread_id].priority      = prio;
+    t->threads[thread_id].base_priority = prio;
+}
+
+/* Temporarily boost effective priority (does NOT change base_priority).
+ * Returns 1 if boost was applied, 0 if already at >= new_prio. */
+int thread_boost_priority(uint32_t task_pid, uint32_t thread_id, uint32_t new_prio)
+{
+    struct task *t;
+    if (task_pid >= num_tasks) return 0;
+    t = &tasks[task_pid];
+    if (thread_id >= t->num_threads) return 0;
+    if (new_prio > t->threads[thread_id].priority) {
+        t->threads[thread_id].priority = new_prio;
+        return 1;
+    }
+    return 0;
+}
+
+/* Restore effective priority to base_priority (undoes PI boost). */
+void thread_restore_priority(uint32_t task_pid, uint32_t thread_id)
+{
+    struct task *t;
+    if (task_pid >= num_tasks) return;
+    t = &tasks[task_pid];
+    if (thread_id >= t->num_threads) return;
+    t->threads[thread_id].priority = t->threads[thread_id].base_priority;
 }
