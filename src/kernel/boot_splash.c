@@ -293,28 +293,42 @@ void boot_splash_init(void)
 
     if (scr_w == 0 || scr_h == 0) return;
 
-    /* ---- HiDPI scale factor ----------------------------------------
-     * Scale:  1× for ≤1080p,  2× for 1081–2160p,  3× for >2160p
-     * This matches the user's reference table from the design doc. */
+    /* ---- HiDPI scale factor (for boot_info / desktop use) -------------
+     * Integer scale: 1× ≤1080p,  2× ≤2160p,  3× >2160p. */
     g_scale = (scr_h > 2160) ? 3 : (scr_h > 1080) ? 2 : 1;
 
-    klog(LOG_DEBUG, "SPLASH", "%ux%u  scale=%ux  font=%upx  icon=%upx",
-         scr_w, scr_h, g_scale, 16 * g_scale, scr_h / 8);
-
-    /* ---- Compute scaled layout values ---------------------------------
-     * Base values are tuned for 720p (g_scale=1). Multiply by g_scale. */
-    g_dot_min_r    = (int32_t)(3 * g_scale);
-    g_dot_max_r    = (int32_t)(5 * g_scale);
-    g_dot_spacing  = 18 * g_scale;
-    g_dot_y_offset = 52 * g_scale;
-    g_text_y_offset= 36 * g_scale;
-    g_text_area_w  = 500 * g_scale;
-    g_font_size    = 16 * g_scale;
-
-    /* Icon size: screen_height / 8, clamped to [64, BOOT_ICON_W] */
+    /* ---- Icon size: screen_height / 8, clamped to [64, BOOT_ICON_W] - */
     icon_size = scr_h / 8;
     if (icon_size > (uint32_t)BOOT_ICON_W) icon_size = (uint32_t)BOOT_ICON_W;
     if (icon_size < 64)                    icon_size = 64;
+
+    /* ---- All layout values derived from icon_size (continuous scale) --
+     * This avoids the 1080p proportionality bug where icon grew but dots
+     * and text stayed at 720p pixel sizes.
+     *
+     * Reference (icon_size=90 at 720p):
+     *   dot_spacing=18  dot_min_r=3  dot_max_r=5  dot_y_off=52
+     *   text_y_off=36   font=16      text_area_w=500
+     */
+    g_dot_spacing  = icon_size / 5;            /* 18px @ 90px icon */
+    g_dot_min_r    = (int32_t)(icon_size / 30); /* 3px  @ 90px icon */
+    g_dot_max_r    = (int32_t)(icon_size / 18); /* 5px  @ 90px icon */
+    g_dot_y_offset = icon_size * 58 / 100;     /* 52px @ 90px icon */
+    g_text_y_offset= icon_size * 40 / 100;     /* 36px @ 90px icon */
+    g_font_size    = icon_size / 6;             /* 15px @ 90px — rounded */
+    g_text_area_w  = icon_size * 56 / 10;      /* ~504px @ 90px icon */
+
+    /* Minimum guards for very small displays */
+    if (g_dot_min_r < 2)       g_dot_min_r = 2;
+    if (g_dot_max_r < 4)       g_dot_max_r = 4;
+    if (g_dot_spacing < 12)    g_dot_spacing = 12;
+    if (g_font_size < 14)      g_font_size = 14;
+    if (g_text_area_w < 400)   g_text_area_w = 400;
+
+    klog(LOG_DEBUG, "SPLASH",
+         "%ux%u  scale=%ux  icon=%upx  font=%upx  dot_r=%d/%d",
+         scr_w, scr_h, g_scale, icon_size, g_font_size,
+         g_dot_min_r, g_dot_max_r);
 
     /* ---- Compute layout positions ------------------------------------- */
     uint32_t icon_center_y = scr_h * ICON_Y_PCT / 100;
