@@ -16,6 +16,7 @@
 
 #include "kernel/sched/rwlock.h"
 #include "kernel/sched/task.h"
+#include "kernel/atomic.h"
 #include "kernel/printk.h"
 
 /* -------------------------------------------------------------------------
@@ -80,12 +81,12 @@ static void enqueue_and_block(uint32_t *wtasks, uint32_t *wthreads,
 
 void rwlock_init(rwlock_t *rw, const char *name)
 {
-    rw->reader_count    = 0;
-    rw->writer_held     = 0;
-    rw->writer_pending  = 0;
-    rw->r_num_waiters   = 0;
-    rw->w_num_waiters   = 0;
-    rw->name            = name;
+    atomic_set(&rw->reader_count,   0);
+    atomic_set(&rw->writer_held,    0);
+    atomic_set(&rw->writer_pending, 0);
+    rw->r_num_waiters = 0;
+    rw->w_num_waiters = 0;
+    rw->name          = name;
 }
 
 /* --- Read lock ----------------------------------------------------------- */
@@ -97,31 +98,31 @@ void rwlock_read_lock(rwlock_t *rw)
      *   - A writer currently holds the lock, OR
      *   - A writer is pending (starvation guard — writer gets priority)
      */
-    while (rw->writer_held || rw->writer_pending) {
+    while (atomic_read(&rw->writer_held) || atomic_read(&rw->writer_pending)) {
         enqueue_and_block(rw->r_waiter_tasks, rw->r_waiter_threads,
                           &rw->r_num_waiters, RWLOCK_MAX_WAITERS);
     }
 
-    /* Increment reader count */
-    rw->reader_count++;
+    /* Increment reader count atomically */
+    atomic_inc(&rw->reader_count);
 }
 
 void rwlock_read_unlock(rwlock_t *rw)
 {
-    if (rw->reader_count == 0) {
+    if (atomic_read(&rw->reader_count) == 0) {
         printk("[RWLOCK] read_unlock \"%s\": reader_count already 0!\n",
                rw->name ? rw->name : "?");
         return;
     }
 
-    rw->reader_count--;
+    atomic_dec(&rw->reader_count);
 
     /*
      * If this was the last reader and a writer is waiting,
      * wake that writer. The writer_pending flag stays set until
      * the writer actually acquires and then clears it in write_lock().
      */
-    if (rw->reader_count == 0 && rw->w_num_waiters > 0)
+    if (atomic_read(&rw->reader_count) == 0 && rw->w_num_waiters > 0)
         wake_first_waiter(rw->w_waiter_tasks, rw->w_waiter_threads,
                           &rw->w_num_waiters);
 }
@@ -131,28 +132,28 @@ void rwlock_read_unlock(rwlock_t *rw)
 void rwlock_write_lock(rwlock_t *rw)
 {
     /* Signal intent — prevents new readers from acquiring */
-    rw->writer_pending = 1;
+    atomic_set(&rw->writer_pending, 1);
 
     /* Block until no readers and no other writer */
-    while (rw->reader_count > 0 || rw->writer_held) {
+    while (atomic_read(&rw->reader_count) > 0 || atomic_read(&rw->writer_held)) {
         enqueue_and_block(rw->w_waiter_tasks, rw->w_waiter_threads,
                           &rw->w_num_waiters, RWLOCK_MAX_WAITERS);
     }
 
     /* Acquire */
-    rw->writer_held    = 1;
-    rw->writer_pending = 0;  /* we hold it now — clear pending */
+    atomic_set(&rw->writer_held,    1);
+    atomic_set(&rw->writer_pending, 0);  /* we hold it now — clear pending */
 }
 
 void rwlock_write_unlock(rwlock_t *rw)
 {
-    if (!rw->writer_held) {
+    if (!atomic_read(&rw->writer_held)) {
         printk("[RWLOCK] write_unlock \"%s\": not held!\n",
                rw->name ? rw->name : "?");
         return;
     }
 
-    rw->writer_held = 0;
+    atomic_set(&rw->writer_held, 0);
 
     if (rw->w_num_waiters > 0) {
         /*
@@ -160,12 +161,12 @@ void rwlock_write_unlock(rwlock_t *rw)
          * Set writer_pending so new readers don't sneak in before
          * the woken writer gets scheduled.
          */
-        rw->writer_pending = 1;
+        atomic_set(&rw->writer_pending, 1);
         wake_first_waiter(rw->w_waiter_tasks, rw->w_waiter_threads,
                           &rw->w_num_waiters);
     } else {
         /* No writers waiting — wake all pending readers */
-        rw->writer_pending = 0;
+        atomic_set(&rw->writer_pending, 0);
         wake_all_waiters(rw->r_waiter_tasks, rw->r_waiter_threads,
                          &rw->r_num_waiters);
     }
@@ -175,19 +176,19 @@ void rwlock_write_unlock(rwlock_t *rw)
 
 int rwlock_try_read(rwlock_t *rw)
 {
-    if (rw->writer_held || rw->writer_pending)
+    if (atomic_read(&rw->writer_held) || atomic_read(&rw->writer_pending))
         return 0;
 
-    rw->reader_count++;
+    atomic_inc(&rw->reader_count);
     return 1;
 }
 
 int rwlock_try_write(rwlock_t *rw)
 {
-    if (rw->reader_count > 0 || rw->writer_held)
+    if (atomic_read(&rw->reader_count) > 0 || atomic_read(&rw->writer_held))
         return 0;
 
-    rw->writer_held    = 1;
-    rw->writer_pending = 0;
+    atomic_set(&rw->writer_held,    1);
+    atomic_set(&rw->writer_pending, 0);
     return 1;
 }

@@ -1,19 +1,18 @@
 /* ============================================================================
  * atomic.h — Atomic operation primitives
  *
- * Wraps GCC __atomic_* builtins in thin kernel-friendly macros/inlines.
+ * Wraps GCC __atomic_* builtins in thin kernel-friendly inline functions.
  * All operations carry the minimum necessary memory ordering:
  *   - Loads:          __ATOMIC_ACQUIRE  (prevent hoisting past the load)
  *   - Stores:         __ATOMIC_RELEASE  (prevent sinking past the store)
  *   - RMW (CAS, add): __ATOMIC_ACQ_REL (full ordering on the operation)
  *
- * The barrier.h header is included so that callers can pair atomic ops with
- * barrier() / mb() when they need stronger ordering guarantees than a plain
- * load or store provides (e.g. seqlock write path, RCU pointer publish).
+ * barrier.h is included so callers can pair atomic ops with barrier() / mb()
+ * for stronger guarantees when needed (seqlock write path, RCU pointer publish).
  *
- * NOTE: This header is a forward declaration / API stub.
- *       Full implementation (replace bare volatile flags in mutex.c/rwlock.c
- *       with atomic_t) is tracked in TODO-020 §7.
+ * Used by: rwlock_t (reader_count, writer_held, writer_pending), mutex_t
+ * (locked flag), kernel object reference counts, ticket locks (§23), and
+ * lock-free ring buffers.
  * ============================================================================ */
 
 #pragma once

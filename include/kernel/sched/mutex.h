@@ -15,13 +15,14 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/atomic.h"   /* atomic_t, atomic_read, atomic_set, atomic_cmpxchg */
 
 /* Maximum number of threads that can wait on a single mutex */
 #define MUTEX_MAX_WAITERS  16
 
 /* Mutex structure */
 typedef struct mutex {
-    volatile uint32_t locked;              /* 1 = locked, 0 = unlocked */
+    atomic_t          locked;              /* 1 = locked, 0 = unlocked */
     uint32_t          owner_task;          /* task index of current owner */
     uint32_t          owner_thread;        /* thread index of current owner */
     uint32_t          lock_order;          /* ordering ID for deadlock detection (0 = unchecked) */
@@ -33,7 +34,7 @@ typedef struct mutex {
 } mutex_t;
 
 /* Static initializer macro */
-#define MUTEX_INIT(n) { .locked = 0, .owner_task = 0, .owner_thread = 0, \
+#define MUTEX_INIT(n) { .locked = ATOMIC_INIT(0), .owner_task = 0, .owner_thread = 0, \
                         .lock_order = 0, .num_waiters = 0, .name = (n) }
 
 /* --- API --- */

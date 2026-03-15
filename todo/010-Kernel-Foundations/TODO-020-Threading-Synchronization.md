@@ -226,21 +226,79 @@ The lock must be released before `hlt`. If held during `hlt`, the keyboard IRQ f
 ---
 
 
-## 7. Atomic Operations
+## 7. Atomic Operations ✅
 
-**Prompt:** Atomic operations are fundamental to lock-free data structures and the implementation of higher-level primitives (spinlocks, reference counting). Wrap GCC's `__sync_*` / `__atomic_*` builtins in a thin `kernel/atomic.h` header for portability and clarity. Key operations: `atomic_read`, `atomic_set`, `atomic_inc`, `atomic_dec`, `atomic_dec_and_test` (reference counting), `atomic_cmpxchg` (CAS), `atomic_fetch_add`. These are used by: `rwlock_t` reader count, kernel object reference counts, lock-free ring buffers, and the slab allocator. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: atomic operations"`. Add notes, gotchas, and design decisions directly in this TODO section covering the atomic API and memory ordering guarantees.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/atomic.h` defines `atomic_t`, `atomic64_t`, `ATOMIC_INIT`, `atomic_read`, `atomic_set`, `atomic_inc`, `atomic_dec`, `atomic_dec_and_test`, `atomic_cmpxchg`, `atomic_fetch_add`, and their 64-bit variants. Confirm `mutex.h` and `rwlock.h` both use `atomic_t` for their flag/count fields. Confirm `mutex.c` and `rwlock.c` use `atomic_read`/`atomic_set`/`atomic_cmpxchg` for all accesses. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"kernel: atomic operations"` exists in git history. Fix any inconsistencies found.
 
 
-- [ ] Create `include/kernel/atomic.h`
-- [ ] `atomic_t` typedef (volatile int32_t or struct wrapper)
-- [ ] `atomic_read(a)`, `atomic_set(a, v)` — simple read/write with barrier
-- [ ] `atomic_inc(a)`, `atomic_dec(a)`, `atomic_dec_and_test(a)` — for ref counting
-- [ ] `atomic_cmpxchg(a, old, new)` — CAS primitive for lock-free algorithms
-- [ ] `atomic_fetch_add(a, delta)` — atomic add, returns old value
-- [ ] Replace bare `volatile` flags in `mutex.c`/`rwlock.c` with `atomic_t` where appropriate
-- [ ] Commit: `"kernel: atomic operations"`
+- [x] Create `include/kernel/atomic.h`
+- [x] `atomic_t` typedef (volatile int32_t or struct wrapper)
+- [x] `atomic_read(a)`, `atomic_set(a, v)` — simple read/write with barrier
+- [x] `atomic_inc(a)`, `atomic_dec(a)`, `atomic_dec_and_test(a)` — for ref counting
+- [x] `atomic_cmpxchg(a, old, new)` — CAS primitive for lock-free algorithms
+- [x] `atomic_fetch_add(a, delta)` — atomic add, returns old value
+- [x] Replace bare `volatile` flags in `mutex.c`/`rwlock.c` with `atomic_t` where appropriate
+- [x] Commit: `"kernel: atomic operations"`
+
+### Notes
+
+**Design: struct wrapper, not bare typedef**
+
+`atomic_t` is `struct { volatile int32_t val; }`, not `typedef volatile int32_t`. This prevents accidental direct access (`a.val = 5` compiles but is obviously wrong), forces callers through the API, and allows the struct to grow (e.g., add a debug owner field) without changing call sites. Matches Linux `atomic_t` design exactly.
+
+**API summary:**
+
+| Function | Ordering | Returns | Use for |
+|----------|----------|---------|---------|
+| `atomic_read(a)` | Acquire | `int32_t` | Reading flags (prevents hoisting) |
+| `atomic_set(a, v)` | Release | void | Writing flags (prevents sinking) |
+| `atomic_inc(a)` | Acq+Rel | void | Reference count increment |
+| `atomic_dec(a)` | Acq+Rel | void | Reference count decrement |
+| `atomic_dec_and_test(a)` | Acq+Rel | `int` (1 if now 0) | Ref count — free if returns 1 |
+| `atomic_cmpxchg(a, old, new)` | Acq+Rel | old value | CAS for lock-free algorithms |
+| `atomic_fetch_add(a, delta)` | Acq+Rel | old value | Ticket lock `next_ticket` |
+| `atomic64_read/set/fetch_add` | same | 64-bit | Tick counters, byte offsets |
+
+**Memory ordering rationale:**
+- `__ATOMIC_ACQUIRE` on reads: prevents critical-section loads from being hoisted above the read (equivalent to a load-fence on the consuming side).
+- `__ATOMIC_RELEASE` on writes: prevents prior stores from being reordered after the write (ensures published data is visible before the flag is set).
+- `__ATOMIC_ACQ_REL` on RMW: both-sided barrier — the modification is a synchronisation point. Required for CAS in `mutex_trylock` and `atomic_dec_and_test` in reference counting.
+
+On x86 TSO these map to: ACQUIRE = compiler barrier + normal load, RELEASE = compiler barrier + normal store, ACQ_REL = LOCK-prefixed instruction. No MFENCE is emitted unless SMP and `mb()` is explicitly called.
+
+**Where applied:**
+
+| File | Old type | New type | Accesses updated |
+|------|----------|----------|-----------------|
+| `mutex.h` | `volatile uint32_t locked` | `atomic_t locked` | `mutex_init`, `mutex_lock`, `mutex_unlock`, `mutex_trylock`, `mutex_is_locked` |
+| `rwlock.h` | `volatile uint32_t reader_count/writer_held/writer_pending` | `atomic_t` × 3 | All rwlock functions |
+| `mutex.c` `mutex_trylock` | bare `if (m->locked)` + direct store | `atomic_cmpxchg` | Now race-free trylock |
+
+**Gotcha — `atomic_cmpxchg` return value semantics:**
+`atomic_cmpxchg(a, old, new)` returns the **old** value of `*a`. If it equals `old`, the swap succeeded. If it differs, the swap failed (another thread changed it first). This matches the Linux kernel convention; differs from some POSIX docs that return a bool.
+
+```c
+/* Correct trylock pattern */
+if (atomic_cmpxchg(&m->locked, 0, 1) != 0)
+    return 0; /* was already 1 (locked) — CAS failed */
+/* if returned 0, old value was 0 → CAS succeeded, we now hold the lock */
+```
+
+**Gotcha — `atomic_dec_and_test` for reference counting:**
+```c
+if (atomic_dec_and_test(&obj->refcount)) {
+    /* We were the last reference holder — safe to free */
+    kfree(obj);
+}
+/* DO NOT access obj after this point even if the test returned 0 —
+ * another thread may have decremented it to 0 and freed it. */
+```
+
+**64-bit variants:**
+`atomic64_t` / `atomic64_read` / `atomic64_set` / `atomic64_fetch_add` are provided for use with 64-bit counters (PIT tick counter, byte offset in ring buffers). On x86-64, 64-bit aligned loads/stores are naturally atomic in hardware — the `__atomic_*` builtins ensure the compiler doesn't split them.
 
 ---
+
 
 ## 8. Wait/Event Objects
 
@@ -458,7 +516,7 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 | ✅ Done   | 4. Read-Write Locks        | Implemented — rwlock.o linked, BUILD OK                        |
 | ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                       |
 | ✅ Done   | 10. Memory Barriers        | `barrier.h` complete — `barrier()`, `mb()`, `rmb()`, `wmb()`, `smp_*` aliases |
-| 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting              |
+| ✅ Done   | 7. Atomic Operations       | `atomic.h` complete — rwlock_t + mutex_t flags use `atomic_t`  |
 | ✅ Done   | 6. Spinlocks               | `spinlock.c` complete — cli/sti + pushfq/popfq, applied to PIT, keyboard, NIC |
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6               |
 | 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
@@ -953,7 +1011,7 @@ CPUID probing, and the fallback path.
 | Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                                    |
 | Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                    |
 | Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ✅ `spin_lock/unlock`, irqsave/irqrestore      |
-| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                      |
+| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ✅ `atomic_read/set/inc/dec/cmpxchg/fetch_add` |
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                      |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`    |

@@ -19,6 +19,7 @@
 
 #include "kernel/sched/mutex.h"
 #include "kernel/sched/task.h"
+#include "kernel/atomic.h"
 #include "kernel/printk.h"
 
 /* Track the highest lock order held by the current task (simple detection) */
@@ -26,12 +27,12 @@ static uint32_t current_max_lock_order = 0;
 
 void mutex_init(mutex_t *m, const char *name)
 {
-    m->locked = 0;
-    m->owner_task = 0;
+    atomic_set(&m->locked, 0);
+    m->owner_task   = 0;
     m->owner_thread = 0;
-    m->lock_order = 0;
-    m->num_waiters = 0;
-    m->name = name;
+    m->lock_order   = 0;
+    m->num_waiters  = 0;
+    m->name         = name;
 }
 
 void mutex_init_ordered(mutex_t *m, const char *name, uint32_t order)
@@ -48,7 +49,7 @@ void mutex_lock(mutex_t *m)
     uint32_t my_thread = cur_thread ? cur_thread->id : 0;
 
     /* --- Self-deadlock detection --- */
-    if (m->locked && m->owner_task == my_task && m->owner_thread == my_thread) {
+    if (atomic_read(&m->locked) && m->owner_task == my_task && m->owner_thread == my_thread) {
         printk("[DEADLOCK] mutex \"%s\": thread %u (task %u) already holds this lock!\n",
                m->name ? m->name : "?",
                (uint64_t)my_thread, (uint64_t)my_task);
@@ -66,7 +67,7 @@ void mutex_lock(mutex_t *m)
     }
 
     /* --- Spin-then-sleep acquisition --- */
-    while (m->locked) {
+    while (atomic_read(&m->locked)) {
         /* Add ourselves to the wait queue */
         if (m->num_waiters < MUTEX_MAX_WAITERS) {
             m->waiter_tasks[m->num_waiters] = my_task;
@@ -88,8 +89,8 @@ void mutex_lock(mutex_t *m)
     }
 
     /* Acquire the lock */
-    m->locked = 1;
-    m->owner_task = my_task;
+    atomic_set(&m->locked, 1);
+    m->owner_task   = my_task;
     m->owner_thread = my_thread;
 
     /* Update lock ordering tracker */
@@ -106,7 +107,7 @@ void mutex_unlock(mutex_t *m)
     uint32_t i;
 
     /* Verify ownership */
-    if (!m->locked) {
+    if (!atomic_read(&m->locked)) {
         printk("[MUTEX] unlock \"%s\": not locked!\n",
                m->name ? m->name : "?");
         return;
@@ -122,8 +123,8 @@ void mutex_unlock(mutex_t *m)
     }
 
     /* Release the lock */
-    m->locked = 0;
-    m->owner_task = 0;
+    atomic_set(&m->locked, 0);
+    m->owner_task   = 0;
     m->owner_thread = 0;
 
     /* Reset lock ordering (simplified — only tracks one level) */
@@ -154,18 +155,17 @@ void mutex_unlock(mutex_t *m)
 
 int mutex_trylock(mutex_t *m)
 {
-    struct task *cur_task;
+    struct task   *cur_task;
     struct thread *cur_thread;
 
-    if (m->locked)
-        return 0;  /* already locked — fail without blocking */
+    /* Attempt CAS: if locked == 0, set to 1 and return success. */
+    if (atomic_cmpxchg(&m->locked, 0, 1) != 0)
+        return 0;  /* already locked — CAS returned non-zero (current value) */
 
-    /* Acquire */
-    cur_task = task_current();
+    cur_task   = task_current();
     cur_thread = thread_current();
 
-    m->locked = 1;
-    m->owner_task = cur_task->pid;
+    m->owner_task   = cur_task->pid;
     m->owner_thread = cur_thread ? cur_thread->id : 0;
 
     if (m->lock_order > current_max_lock_order)
@@ -176,5 +176,5 @@ int mutex_trylock(mutex_t *m)
 
 int mutex_is_locked(mutex_t *m)
 {
-    return m->locked ? 1 : 0;
+    return atomic_read(&m->locked) ? 1 : 0;
 }

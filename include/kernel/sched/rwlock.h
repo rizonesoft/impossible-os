@@ -22,14 +22,16 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/atomic.h"   /* atomic_t, atomic_read, atomic_set, atomic_inc, atomic_dec */
 
 /* Maximum waiters per queue */
 #define RWLOCK_MAX_WAITERS  16
 
 typedef struct rwlock {
-    volatile uint32_t  reader_count;    /* number of active readers */
-    volatile uint32_t  writer_held;     /* 1 = writer holds the lock */
-    volatile uint32_t  writer_pending;  /* 1 = a writer is waiting (blocks new readers) */
+    /* Core lock state — accessed atomically from reader and writer paths. */
+    atomic_t  reader_count;    /* number of active readers */
+    atomic_t  writer_held;     /* 1 = writer holds the lock, 0 = free */
+    atomic_t  writer_pending;  /* 1 = a writer is waiting (blocks new readers) */
 
     /* Reader wait queue (blocked because writer holds or is pending) */
     uint32_t  r_waiter_tasks[RWLOCK_MAX_WAITERS];
@@ -44,8 +46,8 @@ typedef struct rwlock {
     const char *name;   /* debug name */
 } rwlock_t;
 
-/* Static initializer */
-#define RWLOCK_INIT  { 0, 0, 0, {0}, {0}, 0, {0}, {0}, 0, NULL }
+/* Static initializer — atomic_t fields are zero-initialized via ATOMIC_INIT(0) */
+#define RWLOCK_INIT  { ATOMIC_INIT(0), ATOMIC_INIT(0), ATOMIC_INIT(0), {0}, {0}, 0, {0}, {0}, 0, NULL }
 
 /* --- API --- */
 
