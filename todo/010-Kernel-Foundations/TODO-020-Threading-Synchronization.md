@@ -38,6 +38,15 @@
 - [x] Add deadlock detection (lock ordering check)
 - [x] Commit: `"sched: mutex synchronization"`
 
+> **Implementation note — Adaptive Mutexes:** Once §6 Spinlocks and §10 Memory
+> Barriers are complete, consider upgrading `mutex_lock()` to spin briefly
+> (e.g., 200 cycles) before sleeping if the owner thread is currently running.
+> This avoids a context switch for short critical sections held by a thread
+> actively executing on the CPU. Linux calls this `MUTEX_SPIN_ON_OWNER`;
+> Windows uses a similar heuristic in `KMUTEX`. Implement as a loop of
+> `PAUSE` + owner-state check before calling `schedule()` — no separate
+> section needed, just an extension of `mutex_lock()`.
+
 ---
 
 ## 3. Semaphores ✅
@@ -314,27 +323,29 @@ mutex_unlock(&q->lock);
 | ✅ Done   | 1. Kernel Threads          | Verified complete                                              |
 | ✅ Done   | 2. Mutexes                 | Verified complete                                              |
 | ✅ Done   | 3. Semaphores              | Verified complete                                              |
-| ✅ Done   | 4. Read-Write Locks        | Implemented — rwlock.o linked, BUILD OK                       |
-| ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                      |
+| ✅ Done   | 4. Read-Write Locks        | Implemented — rwlock.o linked, BUILD OK                        |
+| ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                       |
 | 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                 |
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting              |
 | 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers     |
-| 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6              |
+| 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6               |
 | 🔴 P0     | 25. Stack Guard Pages      | Catches stack overflow before it silently corrupts memory      |
 | 🔴 P0     | 26. Preemption Count       | Lighter than IRQ disable for non-interrupt critical sections   |
-| 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks    |
-| 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores |
+| 🔴 P0     | 11. Priority Inheritance   | Prevents priority inversion — required for real-time tasks     |
+| 🟠 P1     | 8. Wait/Event Objects      | Boot sync, vsync, driver handshakes — cleaner than semaphores  |
 | 🟠 P1     | 9. Work Queues             | Required for proper IRQ bottom-half processing                 |
 | 🟠 P1     | 15. Futexes                | User-mode mutex/condvar; needed when user processes mature     |
 | 🟠 P1     | 22. Thread-Local Storage   | Required for user-space C runtime (errno, locale, pthreads)    |
-| 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect       |
-| 🟠 P1     | 28. pthread_once           | Eliminates init races; replaces all ad-hoc bool init guards   |
-| 🟠 P1     | 29. pthread_barrier_t      | Frame-sync for compositor audio+render pipeline               |
+| 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect        |
+| 🟠 P1     | 28. pthread_once           | Eliminates init races; replaces all ad-hoc bool init guards    |
+| 🟠 P1     | 29. pthread_barrier_t      | Frame-sync for compositor audio+render pipeline                |
 | 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed              |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
+| 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows       |
+| 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated       |
 | 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading    |
-| 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable     |
+| 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable      |
 
 ---
 
@@ -716,38 +727,126 @@ void barrier_wait(barrier_t *b) {
 
 ---
 
+## 30. KCSAN — Kernel Concurrency Sanitizer
+
+**Prompt:** KCSAN is a dynamic data-race detector for the kernel. It instruments
+every memory read and write (via compiler instrumentation, `-fsanitize=thread`
+adapted for the kernel) and reports when two threads access the same memory
+location concurrently without holding a common lock, and at least one of the
+accesses is a write. This catches the class of bugs that §16 `lockdep` cannot:
+unprotected shared variables that are accessed without any lock at all.
+
+Linux added KCSAN in v5.8 (2020). Windows has no equivalent in-kernel
+data-race detector. For a production OS, shipping without a data-race
+detector means shipping with unknown races in the codebase. KCSAN runs in
+debug builds only (`#ifdef KCSAN`) with zero overhead in release.
+
+After completing all items, mark every item as `[x]`, update this prompt
+to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"debug: KCSAN kernel concurrency sanitizer"`. Add notes on the
+instrumentation mechanism and how to suppress known-benign races
+(`data_race()` annotation).
+
+> **Complements §16 lockdep:** lockdep detects lock ordering violations.
+> KCSAN detects unprotected shared memory access. Together they form a
+> complete concurrency correctness suite.
+
+> [!NOTE]
+> KCSAN requires compiler support. Verify that `x86_64-elf-gcc` supports
+> `-fsanitize=thread` or adapt to use `__sanitizer_*` callbacks manually.
+
+- [ ] Implement `__tsan_read*` / `__tsan_write*` callback stubs in `src/kernel/debug/kcsan.c`
+- [ ] Add per-access shadow cell: `{thread_id, pc, is_write}` stored in a parallel shadow map
+- [ ] On every instrumented access: compare current thread with shadow cell thread
+- [ ] If mismatch and at least one is a write and no common lock held: report data race
+- [ ] Race report: log `[KCSAN] data race: %s (tid=%d, pc=%p) vs %s (tid=%d, pc=%p)` to serial
+- [ ] Annotate known-benign racy accesses with `READ_ONCE()` / `WRITE_ONCE()` / `data_race()`
+- [ ] Compile with `KCSAN=1 make` flag — zero overhead in normal builds
+- [ ] Test: create two threads with an unsynchronized counter, verify KCSAN fires
+- [ ] Test: annotate with `data_race()`, verify KCSAN is suppressed
+- [ ] Commit: `"debug: KCSAN kernel concurrency sanitizer"`
+
+---
+
+## 31. TSX / HTM Lock Elision (Hardware Transactional Memory)
+
+**Prompt:** Intel TSX (Transactional Synchronization Extensions) allows the
+CPU to execute a lock’s critical section speculatively without acquiring the
+lock at all — if no concurrent access occurs, the transaction commits with
+zero synchronization overhead. If a conflict is detected, the CPU aborts and
+falls back to the normal lock path. For high-contention spinlocks and mutexes
+on real hardware, lock elision can double throughput.
+
+Linux added HTM lock elision for `pthread_mutex` on power and x86, then
+disabled it on x86 due to TAA (TSX Asynchronous Abort, CVE-2019-11135).
+Intel has since disabled TSX by microcode on most affected CPUs. AMD has
+a similar feature (AMD TSXE). For a production OS targeting real hardware,
+this decision must be made explicitly: probe CPUID for TSX support, check
+for the TAA microcode patch, and enable only on safe configurations.
+
+After completing all items, mark every item as `[x]`, update this prompt
+to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"perf: TSX/HTM lock elision"`. Add notes on the TAA vulnerability,
+CPUID probing, and the fallback path.
+
+> [!CAUTION]
+> **TSX Security:** TAA (CVE-2019-11135) allows a malicious process to leak
+> kernel memory via TSX aborts on affected Intel CPUs. NEVER enable TSX lock
+> elision without first checking `CPUID[EAX=7].EBX[bit 11] == 1` (RTM) **AND**
+> confirming the TAA microcode mitigation is applied
+> (`MSR_IA32_TSX_CTRL` bit available). If in doubt, leave disabled.
+
+> [!NOTE]
+> QEMU does not support TSX (`CPUID[eax=07h].EBX.hle` warning in boot log).
+> This section is Future/P3 — implement only when targeting real Intel hardware.
+
+- [ ] Probe CPUID for RTM (TSX-NI) support: `EAX=7, EBX bit 11`
+- [ ] Check `MSR_IA32_TSX_CTRL` for TAA mitigation (abort if not patched)
+- [ ] Wrap `mutex_lock()` with `XBEGIN` / `XEND` / `XABORT` RTM instructions
+- [ ] On `XABORT` or conflict: fall back to normal `mutex_lock()` (existing path)
+- [ ] Track elision success rate per mutex: if < 50% succeed, disable elision for that lock
+- [ ] Configurable via Registry `SYSTEM\Perf\TSXEnabled` (default: auto-detect)
+- [ ] Test: high-contention mutex benchmark — measure throughput with/without TSX
+- [ ] Commit: `"perf: TSX/HTM lock elision"`
+
+---
+
 ## OS Comparison
 
-| Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                        |
-| ------------------------------ | ----------------------------- | ---------------------------- | --------------------------------------- |
-| Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                              |
-| Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                              |
-| Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                              |
-| Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                              |
-| Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                              |
-| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                |
-| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                |
-| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                |
-| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                |
-| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                               |
-| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**    |
-| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                               |
-| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                               |
-| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Future                           |
-| Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                               |
-| Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                               |
-| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**         |
-| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**                |
-| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**         |
-| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**         |
-| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**         |
-| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`     |
-| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**           |
-| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry   |
-| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread  |
-| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU        |
-| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe         |
-| **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead    |
+| Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                             |
+| ------------------------------ | ----------------------------- | ---------------------------- | -------------------------------------------- |
+| Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                                   |
+| Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                                   |
+| Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                                   |
+| Read-Write Locks               | ✅ `ERESOURCE`                | ✅ `rwlock_t`               | ✅ §4 Done                                   |
+| Condition Variables            | ✅ (user-mode)                | ✅ `wait_queue`             | ✅ §5 Done                                   |
+| Spinlocks (IRQ-safe)           | ✅ `KSPIN_LOCK`               | ✅ `spinlock_t`             | ⬜ §6 P0                                     |
+| Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                     |
+| Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                     |
+| Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                     |
+| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                                    |
+| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**         |
+| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                    |
+| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                    |
+| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Future                                |
+| Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                    |
+| Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                    |
+| **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**              |
+| **Wait-on-multiple**           | ✅ `WaitForMultiple`          | ❌ FDs only                 | ⬜ **§18 — beats Linux**                     |
+| **Unified `_timeout(ms)` API** | ❌ Inconsistent               | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**              |
+| **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**              |
+| **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**              |
+| **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`          |
+| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**                |
+| **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry        |
+| **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread       |
+| **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU             |
+| **Thread cancellation**        | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`         | ⬜ §27 P2 — deferred only, safe              |
+| **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead         |
 | **pthread_barrier_t**          | ❌ No equivalent              | ✅ `pthread_barrier_t`      | ⬜ **§29 P1 — kernel-native, beats Windows** |
+| **KCSAN data-race detector**   | ❌ No equivalent              | ✅ `CONFIG_KCSAN` (v5.8+)   | ⬜ **§30 P2 — beats Windows, matches Linux**  |
+| **TSX/HTM lock elision**       | ❌ No equivalent              | ⚠️ Disabled (TAA CVE-2019)   | ⬜ §31 Future/P3 — safe-only, CPUID gated    |
 
 > **After §17–29:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
+> **After §30:** Impossible OS matches Linux KCSAN and exceeds Windows (no equivalent) in race detection.
+> **After §31:** Impossible OS gains a hardware performance optimization that Linux disabled for safety — but with explicit TAA gating.
