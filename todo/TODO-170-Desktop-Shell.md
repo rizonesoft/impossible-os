@@ -272,3 +272,67 @@
 
 > Done (commit `8f9ec05`). Up to 4 coalesced reads per frame.
 > Replaced `yield()` with `sti; hlt` (instant IRQ wake).
+
+---
+
+## Priority Order
+
+| Priority | Section                        | Reason                                            |
+|----------|--------------------------------|---------------------------------------------------|
+| 🔴 P0    | §1.1 Minimize + Maximize       | Core WM feature — every app needs it             |
+| 🔴 P0    | §2.1 Context Menu Engine       | Foundation for all right-click menus             |
+| 🔴 P0    | §4.1 Keyboard Shortcut Manager | Win+E, Win+L, Alt+Tab — essential shortcuts      |
+| 🟠 P1    | §2.2 Desktop Context Menu      | Right-click desktop — core desktop interaction   |
+| 🟠 P1    | §3 Desktop Icons + Shortcuts   | Icons on desktop — This PC, Recycle Bin          |
+| 🟠 P1    | §4.2 Alt+Tab Task Switcher     | App switching — essential desktop UX             |
+| 🟡 P2    | §1.2 Keyboard Window Snapping  | Win+Left/Right/Up/Down — productivity feature    |
+| 🟡 P2    | §2.3 File Context Menu         | Right-click file — Open, Copy, Delete, Rename    |
+| 🟡 P2    | §4.3 Win+R Run Dialog          | Run commands / open files                        |
+| 🟡 P2    | §5 Drag and Drop               | File operations in File Manager                  |
+| 🟡 P2    | §6 Quick Settings Panel        | Win+A — toggles + sliders                        |
+| 🟡 P2    | §10.1 Cached Acrylic           | Compositor perf: pre-blur taskbar/start menu     |
+| 🟢 P3    | §1.3 Edge Snapping             | Drag to edge → snap preview                      |
+| 🟢 P3    | §7 Virtual Desktops            | Ctrl+Win+Left/Right workspaces                   |
+| 🟢 P3    | §8 Night Light                 | Blue filter → eye comfort                        |
+| 🟢 P3    | §9 Focus / DND Mode            | Suppress notifications during work               |
+| 🔵 P4    | §1.4 Snap Layouts              | Maximize hover → layout picker                   |
+| 🔵 P4    | §1.5 Minimize All (Win+M)      | Show desktop toggle                              |
+
+---
+
+## Key Files
+
+| File                              | Purpose                                    |
+|-----------------------------------|--------------------------------------------|
+| `src/kernel/wm.c`                 | [MODIFY] Add minimize/maximize/restore     |
+| `src/kernel/wm_snap.c`            | [NEW] Keyboard + edge snapping             |
+| `src/kernel/wm_vdesktop.c`        | [NEW] Virtual desktop manager              |
+| `src/kernel/wm_anim.c`            | [NEW] Window animation state (see TODO-140)|
+| `src/desktop/context_menu.c`      | [NEW] Generic context menu engine          |
+| `src/desktop/drag.c`              | [NEW] Drag-and-drop system                 |
+| `src/desktop/quick_settings.c`    | [NEW] Quick settings panel                 |
+| `src/desktop/focus_mode.c`        | [NEW] Focus / DND mode                     |
+| `src/kernel/display/nightlight.c` | [NEW] Night light blue filter              |
+
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11                            | Linux (GNOME/KDE)                    | Impossible OS                          |
+|---------------------------------|---------------------------------------|--------------------------------------|----------------------------------------|
+| Minimize + Maximize             | ✅ Always present                     | ✅ GNOME (toggleable) / KDE           | ⬜ §1.1 P0                            |
+| Keyboard window snapping        | ✅ Win+Arrow keys                     | ✅ KWin / GNOME (with extension)      | ⬜ §1.2 P2                            |
+| Edge snap with preview          | ✅ Snap assist zones                  | ✅ KWin edge snap                     | ⬜ §1.3 P3                            |
+| Snap Layouts (maximize hover)   | ✅ Win11 exclusive                    | ⚠️ KWin layout switcher (extension)  | ⬜ §1.4 P4                            |
+| Win+M minimize all              | ✅ Win+M / Win+D                      | ✅ Super+H (GNOME)                    | ⬜ §1.5 P4                            |
+| Context menus (desktop/file)    | ✅ Explorer shell right-click         | ✅ Nautilus / Dolphin                 | ⬜ §2 P0-P1                           |
+| Desktop icons (This PC, Bin)    | ✅ Desktop.ini controlled             | ✅ GNOME/Nautilus desktop icons       | ⬜ §3 P1                              |
+| Alt+Tab task switcher           | ✅ Windows Task Switcher              | ✅ GNOME Overview / KWin              | ⬜ §4.2 P1                            |
+| Win+R Run dialog                | ✅ Run dialog                         | ✅ GNOME Run (Alt+F2)                 | ⬜ §4.3 P2                            |
+| Drag and drop                   | ✅ OLE Drag-and-Drop                  | ✅ GDK DnD / XDnD                     | ⬜ §5 P2                              |
+| Quick Settings panel            | ✅ Win+A action center                | ✅ GNOME quick settings               | ⬜ §6 P2                              |
+| Virtual desktops                | ✅ Win+Ctrl+D                         | ✅ GNOME / KWin workspaces            | ⬜ §7 P3                              |
+| Night Light / Blue filter       | ✅ Settings → Display                 | ✅ Redshift / GNOME Night Light       | ⬜ §8 P3                              |
+| Focus / Do Not Disturb          | ✅ Focus Assist                       | ✅ GNOME DND                          | ⬜ §9 P3                              |
+| **Snap Layouts on hover**       | ✅ Win11 unique feature               | ❌ (extension required)              | ⬜ §1.4 — **matches Win11 parity**    |
+| **Dirty-rect drag compositor**  | ✅ DWM                                | ✅ Mutter                             | ✅ Done — §10.2                        |

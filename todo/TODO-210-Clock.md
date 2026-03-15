@@ -108,3 +108,21 @@
 | `src/kernel/net/ntp.c`      | [NEW] NTP client                   |
 | `src/kernel/drivers/rtc.c`  | [EXISTS] CMOS RTC driver           |
 | `docs/architecture/time.md` | [NEW] Time system documentation    |
+
+---
+
+## OS Comparison
+
+| Feature                          | Windows 11                          | Linux (hwclock / timedatectl)        | Impossible OS                            |
+|----------------------------------|-------------------------------------|--------------------------------------|------------------------------------------|
+| CMOS RTC read                    | ✅ HAL / IOCTL                      | ✅ `hwclock --hctosys`               | ✅ Exists — `rtc.c` CMOS driver          |
+| Kernel time API (`time_now()`)   | ✅ `GetSystemTime` / `NtQueryTime`  | ✅ `clock_gettime(CLOCK_REALTIME)`   | ⬜ §1 P0                                |
+| Unix epoch + PIT monotonic       | ✅ Interrupt-based                  | ✅ `jiffies` + `ktime_get()`         | ⬜ §1 P0 — boot_time + PIT ticks        |
+| `strftime`-style formatting      | ✅ `GetDateFormatEx`                | ✅ strftime in libc                  | ⬜ §2 P0                                |
+| 12h/24h format from Registry     | ✅ `HKLM\...\DateTime`              | ✅ locale settings                   | ⬜ §2 P0                                |
+| Taskbar clock (time + date)      | ✅ System clock in taskbar          | ✅ GNOME/KDE taskbar clock           | ⬜ §3 P1                                |
+| NTP sync (SNTPv4)                | ✅ Windows Time Service (W32tm)     | ✅ systemd-timesyncd / ntpd           | ⬜ §4 P2 — hardcoded Google NTP IPs     |
+| Timezone offset from Registry    | ✅ `HKLM\...\TimeZoneInformation`   | ✅ `/etc/localtime` symlink           | ⬜ §5 P2                                |
+| Calendar popup (click clock)     | ✅ Click taskbar clock → calendar   | ✅ GNOME/KDE calendar popup          | ⬜ §3 P1 (stretch)                      |
+| **No NTP daemon**                | ❌ W32tm is a separate service      | ❌ systemd-timesyncd is a daemon     | ⬜ **§4 — in-kernel UDP NTP, no daemon** |
+| **PIT + RTC monotonic track**    | ✅ (QPC)                            | ✅ (`ktime_get_real`)                 | ⬜ **§1 — simple, accurate, no TSC dependency** |

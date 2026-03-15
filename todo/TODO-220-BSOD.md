@@ -119,3 +119,23 @@
 | 🟠 P1     | 6. Crash Loop Protection   | Prevent infinite reboot cycles           |
 | 🟡 P2     | 7. Recovery Settings       | UI for auto-restart configuration        |
 | 🟢 P3     | 8. Crash Analysis on Boot  | Post-crash notification                  |
+
+---
+
+## OS Comparison
+
+| Feature                           | Windows 11 (BSOD/WinRE)              | Linux (kernel oops / kdump)           | Impossible OS                          |
+|-----------------------------------|---------------------------------------|---------------------------------------|----------------------------------------|
+| Graphical panic screen            | ✅ BSOD with QR code + stop code      | ⚠️ Plain text (unless plymouth)       | ✅ Done §1 — gradient + logo + icon    |
+| Stop code display                 | ✅ `STOP 0x0000xxxx`                  | ✅ Oops: `BUG:` + backtrace            | ✅ Done §1 — stop code + description  |
+| Register dump                     | ✅ Minidump + live view               | ✅ Oops register dump                  | ✅ Done §1 — RAX–R15, RFLAGS, CR2/3  |
+| Stack trace                       | ✅ !analyze -v (WinDbg)               | ✅ Oops call trace                     | ✅ Done §1 — RBP-chain, 16 frames     |
+| Crash dump to disk                | ✅ MEMORY.DMP / minidump              | ✅ kdump → /var/crash                  | ✅ Done §2 — `crashdump.log`           |
+| Auto-restart countdown            | ✅ Registry `AutoReboot`              | ✅ `kernel.panic =` sysctl             | ✅ Done §3 — PIT countdown + CF9 reboot |
+| Progress bar during countdown     | ❌ No progress bar                    | ❌ No progress bar                    | ✅ Done §3 — **unique feature**       |
+| QR code for troubleshooting       | ✅ Windows BSOD QR                    | ❌                                    | 🔵 Future                             |
+| Crash loop protection             | ✅ Automatic Repair / WinRE           | ✅ `kernel.panic_on_oops`              | ⬜ §6 P1 — consecutive crash counter  |
+| Recovery UI (F8/WinRE)           | ✅ WinRE boot                        | ✅ GRUB rescue                         | ⬜ §7 P2 (see TODO-160 F8 menu)       |
+| Post-boot crash notification      | ✅ "Your PC didn't restart correctly"| ✅ coredumpctl / journald              | ⬜ §8 P3                              |
+| **Progress bar (unique)**        | ❌ No countdown bar                   | ❌ No countdown bar                   | ✅ **Done — only OS with BSOD progress bar** |
+| **Inline kernel (no WinRE)**     | ❌ Recovery requires WinRE            | ❌ Recovery needs rescue kernel        | ⬜ **TODO-160 §4 — F8 in main kernel** |

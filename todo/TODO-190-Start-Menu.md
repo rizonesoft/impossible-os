@@ -62,5 +62,52 @@
 - [ ] Search bar: type to filter pinned + all programs + right-column links
 - [ ] Slide-up animation (200ms, `GFX_EASE_OUT_CUBIC`)
 - [ ] Click outside / Escape → close
-- [ ] Commit: `"desktop: start menu interaction"`
+  - [ ] Commit: `"desktop: start menu interaction"`
 
+### 7.4 Power Panel *(from TODO-120 §2 cross-reference)*
+
+**Prompt:** The Power button (⏻) at the bottom of the Start Menu opens a fly-out popup. Options: Shut Down, Restart, Sleep (grayed until TODO-100 §7 implemented), Lock. Each calls the corresponding function from TODO-100. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu power fly-out"`. Add notes directly in this TODO section.
+
+- [ ] Power button (⏻) → fly-out with: Shut Down, Restart, Sleep (grayed), Lock
+- [ ] Shut Down → `system_shutdown()` (TODO-100 §2)
+- [ ] Restart → `system_reboot()` (TODO-100 §2)
+- [ ] Lock → lock screen stub (grayed until TODO-100 §7)
+- [ ] Commit: `"desktop: start menu power fly-out"`
+
+---
+
+## Priority Order
+
+| Priority | Section                     | Reason                                              |
+|----------|-----------------------------|-----------------------------------------------------|
+| ✅ Done   | §7.1 Start Menu Layout      | Two-column Win11 dark mode layout done              |
+| 🔴 P0    | §7.3 Start Menu Interaction | Toggle, launch apps, close on outside click         |
+| 🟠 P1    | §7.2 Start Menu Data        | Load real pinned apps from Registry + filesystem    |
+| 🟠 P1    | §7.4 Power Panel            | Shut Down/Restart from Start Menu                   |
+
+---
+
+## Key Files
+
+| File                          | Purpose                                      |
+|-------------------------------|----------------------------------------------|
+| `src/desktop/desktop.c`       | [MODIFY] Start menu rendering (§7.1 done)    |
+| `src/desktop/startmenu.c`     | [NEW] Data loading + interaction logic       |
+| `include/desktop/startmenu.h` | [NEW] Start menu API                         |
+
+---
+
+## OS Comparison
+
+| Feature                         | Windows 11 Start Menu               | Linux (GNOME Dash / KDE App Menu)     | Impossible OS                           |
+|---------------------------------|-------------------------------------|---------------------------------------|-----------------------------------------|
+| Two-column layout               | ✅ Pinned + Recommended / All Apps  | ❌ GNOME: single grid / KDE: tree      | ✅ Done §7.1 — Win7-style two columns  |
+| Acrylic blur background         | ✅ Acrylic effect                   | ✅ GNOME blur (compositor)             | ✅ Done §7.1 — `gfx_acrylic()`        |
+| Search bar                      | ✅ Windows Search (Bing-integrated) | ✅ GNOME search                        | ⬜ §7.3 — local app search only       |
+| Alphabetical grouped list       | ✅ All Apps → A-Z grouped           | ✅ GNOME app grid                      | ✅ Done §7.1 (partial)                 |
+| Pinned apps from Registry       | ✅ Registry Start Menu              | ✅ .desktop files in XDG dirs          | ⬜ §7.2 P1                            |
+| Power fly-out (shutdown etc.)   | ✅ Power button flyout              | ✅ GNOME power (top-right)             | ⬜ §7.4 P1                            |
+| Slide-up open animation         | ✅ DWM animation                    | ✅ Mutter                              | ⬜ §7.3 — 200ms ease-out-cubic        |
+| "All Apps" list with back nav   | ✅ All Apps button                  | ✅ GNOME App Grid                      | ⬜ §7.3 P0 — slide transition         |
+| **No ads/recommendations**      | ❌ Win11 shows promoted apps        | ✅ Clean                               | ✅ **§7.2 — pinned + installed only no telemetry** |
+| **In-kernel (no search daemon)**| ❌ Windows Search service           | ❌ GNOME tracker daemon                | ✅ **In-kernel app scan — no daemon** |

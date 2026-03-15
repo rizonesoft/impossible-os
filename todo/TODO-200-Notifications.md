@@ -45,5 +45,66 @@
 - [ ] Dismiss individual (X) or "Clear all"
 - [ ] Store last 100 in Registry `HKLM\SYSTEM\Shell\NotifyHistory`
 - [ ] Open: click 🔔 / Close: click outside or Escape
-- [ ] Commit: `"desktop: notification center"`
+  - [ ] Commit: `"desktop: notification center"`
 
+### 8.4 Do Not Disturb Integration
+
+**Prompt:** When Do Not Disturb mode is active (from TODO-170 §9), notifications are silently queued — no toast slides in. The notification bell in the system tray shows a badge with the count of missed notifications. When DND ends, a summary toast appears: "You missed N notifications — see Notification Center". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: DND notification integration"`.
+
+- [ ] Check DND state before showing toast: if DND active → queue silently
+- [ ] Notification bell tray icon: badge count of missed notifications during DND
+- [ ] On DND disable: toast summary "You missed N notifications"
+- [ ] Click badge → open notification center
+- [ ] Commit: `"desktop: DND notification integration"`
+
+### 8.5 System Event Notifications
+
+**Prompt:** Key system events should generate notifications automatically. USB device connected/disconnected, low disk space, low battery, network connected/disconnected, new update available. Each calls `notify_send()` with appropriate title, message, and icon. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: system event notifications"`.
+
+- [ ] USB device inserted → `notify_send("USB Device Connected", name, ICON_USB)`
+- [ ] Low disk space (< 10% free) → `notify_send("Low Disk Space", "C:\\ drive is almost full", ICON_WARNING)`
+- [ ] Low battery (< 20%) → `notify_send("Low Battery", "XX% remaining", ICON_BATTERY_LOW)`
+- [ ] Network connected → `notify_send("Connected", "IP: X.X.X.X", ICON_NETWORK)`
+- [ ] DHCP lease failed → `notify_send("Network Error", "Could not obtain IP", ICON_WARNING)`
+- [ ] Crash dump detected on boot → `notify_send("PC restarted after a problem", ..., ICON_ERROR)`
+- [ ] Commit: `"kernel: system event notifications"`
+
+---
+
+## Priority Order
+
+| Priority | Section                     | Reason                                              |
+|----------|-----------------------------|-----------------------------------------------------|
+| 🔴 P0    | §8.1 System Tray Icons      | Volume, network in tray — core desktop chrome       |
+| 🔴 P0    | §8.2 Notification Toasts    | Apps need to surface events to user                 |
+| 🟠 P1    | §8.3 Notification Center    | History of past notifications                       |
+| 🟠 P1    | §8.5 System Event Notifs    | USB, network, battery events are high-value         |
+| 🟡 P2    | §8.4 DND Integration        | Requires TODO-170 §9 focus mode first               |
+
+---
+
+## Key Files
+
+| File                          | Purpose                                      |
+|-------------------------------|----------------------------------------------|
+| `src/desktop/systray.c`       | [NEW] System tray icon management            |
+| `src/desktop/notify.c`        | [NEW] Toast notification queue               |
+| `src/desktop/notify_center.c` | [NEW] Notification center panel              |
+| `include/desktop/notify.h`    | [NEW] Notification API header                |
+
+---
+
+## OS Comparison
+
+| Feature                          | Windows 11 (Action Center)         | Linux (GNOME Shell / Dunst)           | Impossible OS                           |
+|----------------------------------|------------------------------------|---------------------------------------|-----------------------------------------|
+| System tray                      | ✅ Shell_NotifyIcon / NOTIFYICONDATA| ✅ AppIndicator / StatusIcon           | ⬜ §8.1 P0                             |
+| Volume/network tray icons        | ✅ Built-in                        | ✅ GNOME built-in indicators           | ⬜ §8.1 P0                             |
+| Toast notifications              | ✅ WinRT ToastNotification (COM)   | ✅ libnotify + notification daemon     | ⬜ §8.2 P0 — **in-kernel, no daemon** |
+| Notification center / history    | ✅ Action Center                    | ✅ GNOME notification tray             | ⬜ §8.3 P1                            |
+| Notification stacking            | ✅ Groups by app                    | ✅ Dunst groups                        | ⬜ §8.2 — stack vertically            |
+| DND / Focus Assist               | ✅ Focus Assist                     | ✅ GNOME DND                           | ⬜ §8.4 P2 (requires TODO-170 §9)     |
+| Badge count on tray icon         | ✅ Overlay icons                    | ✅ libunity badge                      | ⬜ §8.4 — missed count badge          |
+| System event auto-notifications  | ✅ (Windows generates many events) | ✅ udev rules + libnotify              | ⬜ §8.5 P1 — USB, battery, network    |
+| **No COM (in-kernel toasts)**    | ❌ COM + WinRT required            | ❌ Separate notify daemon              | ✅ **`notify_send()` — zero IPC**     |
+| **Works before login session**   | ❌ Toasts require user session      | ❌ libnotify requires session           | ✅ **Kernel global queue — always on** |

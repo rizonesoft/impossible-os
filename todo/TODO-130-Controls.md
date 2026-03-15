@@ -209,3 +209,58 @@
 - [ ] All dialogs centered on screen, standard WM window chrome
 - [ ] Commit: `"desktop: common dialog system"`
 
+---
+
+## Priority Order
+
+| Priority | Section                   | Reason                                            |
+|----------|---------------------------|---------------------------------------------------|
+| ✅ Done   | Button, Label, TextBox, ScrollBar | Basic controls already implemented       |
+| 🔴 P0    | §1.13 Dialog System       | Open/Save dialogs used by every app               |
+| 🟠 P1    | §1.1 Checkbox + Radio     | Settings applets need these immediately           |
+| 🟠 P1    | §1.2 Dropdown             | Settings profile pickers, configuration dropdowns |
+| 🟠 P1    | §1.6 ListView             | File Manager, Settings — most visible control     |
+| 🟠 P1    | §1.9 Menu Bar             | Notepad, File Manager need menu bars              |
+| 🟡 P2    | §1.3 Slider               | Volume, brightness, power settings                |
+| 🟡 P2    | §1.4 ProgressBar          | Download progress, disk operations                |
+| 🟡 P2    | §1.5 TabStrip             | Settings Panel category tabs                      |
+| 🟡 P2    | §1.7 TreeView             | File Manager nav pane, Registry editor            |
+| 🟡 P2    | §1.8 Toolbar              | File Manager, Notepad toolbars                    |
+| 🟡 P2    | §1.12 Tooltip             | Discoverability for all controls                  |
+| 🟢 P3    | §1.10 StatusBar           | File Manager (item count), Notepad (ln/col)       |
+| 🟢 P3    | §1.11 GroupBox+Separator  | Settings applet visual grouping                   |
+
+---
+
+## Key Files
+
+| File                            | Purpose                               |
+|---------------------------------|---------------------------------------|
+| `src/desktop/controls.c`        | [MODIFY] Add all new widget types     |
+| `include/desktop/controls.h`    | [MODIFY] New CTRL_* types + APIs      |
+| `src/desktop/dialogs.c`         | [NEW] Common dialog system            |
+| `include/desktop/dialogs.h`     | [NEW] Dialog API header               |
+
+---
+
+## OS Comparison
+
+| Feature                        | Windows 11 (Win32/WinUI3)          | Linux (GTK4 / Qt6)                 | Impossible OS                            |
+|--------------------------------|------------------------------------|------------------------------------|------------------------------------------|
+| Button, Label, TextBox         | ✅ Win32 BUTTON, STATIC, EDIT      | ✅ GtkButton, GtkLabel, GtkEntry   | ✅ Done — `controls.c`                   |
+| ScrollBar                      | ✅ Win32 SCROLLBAR                 | ✅ GtkScrollbar                    | ✅ Done — `controls.c`                   |
+| Checkbox + Radio               | ✅ BS_CHECKBOX, BS_RADIOBUTTON     | ✅ GtkCheckButton, GtkRadioButton  | ⬜ §1.1 P1                               |
+| Dropdown / ComboBox            | ✅ ComboBox (CBS_DROPDOWN)         | ✅ GtkDropDown, QComboBox          | ⬜ §1.2 P1                               |
+| Slider / TrackBar              | ✅ TRACKBAR_CLASS                  | ✅ GtkScale, QSlider               | ⬜ §1.3 P2                               |
+| ProgressBar                    | ✅ PROGRESS_CLASS                  | ✅ GtkProgressBar, QProgressBar    | ⬜ §1.4 P2                               |
+| Tab Strip                      | ✅ WC_TABCONTROL                   | ✅ GtkNotebook, QTabWidget         | ⬜ §1.5 P2                               |
+| ListView (details + icons)     | ✅ WC_LISTVIEW / SysListView32     | ✅ GtkListView + GtkColumnView     | ⬜ §1.6 P1                               |
+| TreeView                       | ✅ WC_TREEVIEW / SysTreeView32     | ✅ GtkTreeView, QTreeView          | ⬜ §1.7 P2                               |
+| Toolbar                        | ✅ TOOLBARCLASSNAME                | ✅ GtkToolbar, QToolBar            | ⬜ §1.8 P2                               |
+| Menu Bar                       | ✅ HMENU / AppendMenu              | ✅ GtkMenuBar, QMenuBar            | ⬜ §1.9 P1                               |
+| StatusBar                      | ✅ STATUSCLASSNAME                 | ✅ GtkStatusbar, QStatusBar        | ⬜ §1.10 P3                              |
+| GroupBox                       | ✅ BS_GROUPBOX                     | ✅ GtkFrame, QGroupBox             | ⬜ §1.11 P3                              |
+| Tooltips                       | ✅ TOOLTIPS_CLASS                  | ✅ GtkTooltip, QToolTip            | ⬜ §1.12 P2                              |
+| File Open/Save dialog          | ✅ GetOpenFileName / IFileDialog    | ✅ GtkFileChooserDialog            | ⬜ §1.13 P0                              |
+| Color Picker dialog            | ✅ ChooseColor                     | ✅ GtkColorChooserDialog           | ⬜ §1.13 P0 (stretch)                    |
+| **All-in-kernel (no toolkit)** | ❌ Requires Win32 DLLs + GDI       | ❌ Requires GTK/Qt runtime         | ✅ **Pure kernel C — zero dependencies** |
