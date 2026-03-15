@@ -19,21 +19,22 @@
 
 ## Layer 1: Kernel Foundations  `010-Kernel-Foundations/`
 
-| #   | TODO                                                                                                                                               | Status          |
-|-----|----------------------------------------------------------------------------------------------------------------------------------------------------|-----------------|
-| 010 | [Bootloader](010-Kernel-Foundations/TODO-010-Bootloader.md)                                                                                        | 🔄 In progress  |
-| 020 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading-Synchronization.md)                                                        | 🔄 In progress  |
-| 021 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-021-IPC.md)                                                                      | ✅ All done     |
-| 022 | [Virtual Memory — Swap & mmap](010-Kernel-Foundations/TODO-022-Virtual-Memory.md)                                                                   | 🔄 In progress  |
-| 023 | [System Logging — klog, ring buffer, disk persistence](010-Kernel-Foundations/TODO-023-System-Logging.md)                                          | 🔄 In progress  |
-| 024 | [Environment Variables — env_get/set/expand, PATH](010-Kernel-Foundations/TODO-024-Environment-Variables.md)                                       |                 |
-| 025 | [ELF Dynamic Linker & Kernel Modules](010-Kernel-Foundations/TODO-025-ELF-Shared-Libraries.md)                                                     |                 |
-| 026 | [Kernel Libraries — miniz, monocypher, math, cJSON](010-Kernel-Foundations/TODO-026-Kernel-Libraries.md)                                           |                 |
-| 027 | [Process Model — FD table, CWD, brk/sbrk, timers](010-Kernel-Foundations/TODO-027-Process-Model.md)                                               |                 |
-| 028 | [Memory Guardrails & Audit — kmalloc audit, lint check](010-Kernel-Foundations/TODO-028-Memory-Guardrails.md)                                      |                 |
-| 030 | [Memory Advanced](010-Kernel-Foundations/TODO-030-Memory-Advanced.md)                                                                              |                 |
-| 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                                                                        |                 |
-| 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                                                            |                 |
+| #   | TODO                                                                                                    | Status         |
+|-----|---------------------------------------------------------------------------------------------------------|----------------|
+| 010 | [Bootloader](010-Kernel-Foundations/TODO-010-Bootloader.md)                                             | 🔄 In progress |
+| 020 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading-Synchronization.md)             | 🔄 In progress |
+| 021 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-021-IPC.md)                           | ✅ All done    |
+| 022 | [Virtual Memory — Swap & mmap](010-Kernel-Foundations/TODO-022-Virtual-Memory.md)                       | 🔄 In progress |
+| 023 | [System Logging — klog, ring buffer, disk](010-Kernel-Foundations/TODO-023-System-Logging.md)           | 🔄 In progress |
+| 024 | [Environment Variables — env_get/set, PATH](010-Kernel-Foundations/TODO-024-Environment-Variables.md)  |                |
+| 025 | [ELF Dynamic Linker & Kernel Modules](010-Kernel-Foundations/TODO-025-ELF-Shared-Libraries.md)          |                |
+| 026 | [Kernel Libraries — miniz, monocypher, cJSON](010-Kernel-Foundations/TODO-026-Kernel-Libraries.md)      |                |
+| 027 | [Process Model — FD table, CWD, timers](010-Kernel-Foundations/TODO-027-Process-Model.md)               |                |
+| 028 | [Memory Guardrails & Audit](010-Kernel-Foundations/TODO-028-Memory-Guardrails.md)                       |                |
+| 030 | [Memory Advanced](010-Kernel-Foundations/TODO-030-Memory-Advanced.md)                                   |                |
+| 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                             |                |
+| 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
+
 
 ---
 
