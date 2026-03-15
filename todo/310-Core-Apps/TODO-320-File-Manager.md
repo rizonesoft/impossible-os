@@ -8,7 +8,7 @@
 
 > [!NOTE]
 > **File Manager Core** (`icon_for_extension()`, `file_assoc_open()` wiring) is defined in
-> [TODO-240-Resources.md §5](TODO-240-Resources.md). This file covers the File Manager app
+> [TODO-240-Resources.md §5](../230-Core-Services/TODO-240-Resources.md). This file covers the File Manager app
 > itself — layout, view modes, file operations, and advanced features.
 
 ---

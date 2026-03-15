@@ -14,7 +14,7 @@
 
 ## 1. Sound Card Drivers
 
-> **Moved to [TODO-080-Drivers.md](TODO-080-Drivers.md) §5** — AC97 sound
+> **Moved to [TODO-080-Drivers.md](../060-Hardware-Drivers/TODO-080-Drivers.md) §5** — AC97 sound
 > card driver (§5.1), Intel HDA stretch (§5.2), and module conversion (§5.3).
 > The hardware driver provides `ac97_play()`, `ac97_stop()`, `ac97_set_volume()`.
 
@@ -57,7 +57,7 @@
 
 ## 4. System Sounds
 
-> **Moved to [TODO-240-Resources.md](TODO-240-Resources.md) §4** — WAV system sounds
+> **Moved to [TODO-240-Resources.md](../230-Core-Services/TODO-240-Resources.md) §4** — WAV system sounds
 > (startup chime, click, error, notification, shutdown, recycle), `resources/sounds/`
 > directory, install to IXFS.
 
@@ -132,7 +132,7 @@
 
 ## 6. Media Player App
 
-> *Moved from [TODO-080-Drivers.md](TODO-080-Drivers.md) §4.2 and [TODO-560-Long-Term.md](TODO-560-Long-Term.md) §3*
+> *Moved from [TODO-080-Drivers.md](../060-Hardware-Drivers/TODO-080-Drivers.md) §4.2 and [TODO-560-Long-Term.md](../510-Long-Term-Stretch/TODO-560-Long-Term.md) §3*
 
 - [ ] Create `src/apps/mediaplayer/mediaplayer.c`
 - [ ] Audio playback via `audio_play()`, load via `audio_load()` (WAV, MP3, OGG, FLAC)

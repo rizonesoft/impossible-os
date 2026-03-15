@@ -7,21 +7,21 @@
 
 ---
 
-> **See [TODO-170-Desktop-Shell.md](TODO-170-Desktop-Shell.md) §7** — Up to 8 workspaces,
+> **See [TODO-170-Desktop-Shell.md](../160-Desktop-Shell/TODO-170-Desktop-Shell.md) §7** — Up to 8 workspaces,
 > Ctrl+Win shortcuts, taskbar filtering.
 
 ---
 
 ## 16. Night Light
 
-> **See [TODO-170-Desktop-Shell.md](TODO-170-Desktop-Shell.md) §8** — Blue light filter
+> **See [TODO-170-Desktop-Shell.md](../160-Desktop-Shell/TODO-170-Desktop-Shell.md) §8** — Blue light filter
 > with scheduling.
 
 ---
 
 ## 17. Focus / Do Not Disturb
 
-> **See [TODO-170-Desktop-Shell.md](TODO-170-Desktop-Shell.md) §9** — Notification
+> **See [TODO-170-Desktop-Shell.md](../160-Desktop-Shell/TODO-170-Desktop-Shell.md) §9** — Notification
 > suppression modes.
 
 ---

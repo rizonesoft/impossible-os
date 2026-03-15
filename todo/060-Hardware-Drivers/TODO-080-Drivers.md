@@ -329,7 +329,7 @@
 ## 5. Audio Drivers (Modules)
 
 > **Audio subsystem** (abstraction layer, mixer, codec libraries, unified loader)
-> is in **[TODO-380-Audio.md](TODO-380-Audio.md)**. This section covers the
+> is in **[TODO-380-Audio.md](../380-Multimedia/TODO-380-Audio.md)**. This section covers the
 > **hardware drivers** that talk to the sound card.
 
 ### 5.1 AC97 Sound Card Driver

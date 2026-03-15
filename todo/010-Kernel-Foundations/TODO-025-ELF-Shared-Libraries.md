@@ -32,7 +32,7 @@
 
 ## 2. Kernel Modules — See TODO-080-Drivers.md
 
-> **Implemented in [TODO-080-Drivers.md §1](TODO-080-Drivers.md)** — Loadable `.kmod` drivers,
+> **Implemented in [TODO-080-Drivers.md §1](../060-Hardware-Drivers/TODO-080-Drivers.md)** — Loadable `.kmod` drivers,
 > `EXPORT_SYMBOL`, `module_init`/`module_cleanup`, PCI auto-load, RTL8139 as PoC.
 >
 > **Dependency:** The ELF relocation engine from §1 above is shared — implement §1 first,

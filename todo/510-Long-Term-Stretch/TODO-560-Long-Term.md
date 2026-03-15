@@ -491,7 +491,7 @@
 
 ### 11.2 Power Management Profiles
 
-> **Moved to [TODO-100-Power-Management.md](TODO-100-Power-Management.md) §8** — Power profiles
+> **Moved to [TODO-100-Power-Management.md](../060-Hardware-Drivers/TODO-100-Power-Management.md) §8** — Power profiles
 > (Balanced, Performance, Power Saver), display timeout, CPU throttling.
 
 ### 11.3 Scripting Engine (Macro/Automation)

@@ -310,7 +310,7 @@
 > table that intercepts `LoadLibrary("shell32.dll")` and provides kernel-side
 > function pointers directly.
 
-**Prompt:** Create `include/win32_icons.h` with a mapping table that translates Windows standard icon indices (shell32.dll, imageres.dll) to Impossible OS `system_icon_t` enum values. Research the top ~50 most-used icon indices from each DLL and document them. For indices we don't have icons for, map to `ICON_FILE_DEFAULT` as a fallback. Provide `win32_icon_lookup(dll_name, index)` → returns `system_icon_t`. Also define the `SHSTOCKICONID` → `system_icon_t` mapping for `SHGetStockIconInfo`. This is a pure data table with no PE dependency — the actual Win32 API stubs that call this table are in [P0105 §7.3](TODO-510-Native-Win32.md). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 icon index mapping table"`.
+**Prompt:** Create `include/win32_icons.h` with a mapping table that translates Windows standard icon indices (shell32.dll, imageres.dll) to Impossible OS `system_icon_t` enum values. Research the top ~50 most-used icon indices from each DLL and document them. For indices we don't have icons for, map to `ICON_FILE_DEFAULT` as a fallback. Provide `win32_icon_lookup(dll_name, index)` → returns `system_icon_t`. Also define the `SHSTOCKICONID` → `system_icon_t` mapping for `SHGetStockIconInfo`. This is a pure data table with no PE dependency — the actual Win32 API stubs that call this table are in [P0105 §7.3](../510-Long-Term-Stretch/TODO-510-Native-Win32.md). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 icon index mapping table"`.
 
 
 - [ ] Research Windows shell32.dll standard icon indices (document top ~50 used by apps)
@@ -332,7 +332,7 @@
 - [ ] Commit: `"desktop: Win32 icon index mapping table"`
 
 > **Win32 Shell Icon API** (ExtractIconEx, SHGetFileInfo, SHGetStockIconInfo,
-> LoadIcon, LoadImage, DestroyIcon) → **moved to [P0105 §7.3](TODO-510-Native-Win32.md)**
+> LoadIcon, LoadImage, DestroyIcon) → **moved to [P0105 §7.3](../510-Long-Term-Stretch/TODO-510-Native-Win32.md)**
 > because these stubs depend on the PE loader, IAT patching, and builtin DLL table.
 
 ---

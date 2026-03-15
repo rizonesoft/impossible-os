@@ -11,7 +11,7 @@
 
 ## 1. Registry System
 
-> **See [TODO-050-Registry.md](TODO-050-Registry.md)** — Full Registry implementation spec
+> **See [TODO-050-Registry.md](../010-Kernel-Foundations/TODO-050-Registry.md)** — Full Registry implementation spec
 > (Codex→Registry migration, Win32 API, data structures, hive files, persistence,
 > change notifications, syscalls, Win32 stubs, regedit CLI).
 
