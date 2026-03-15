@@ -61,15 +61,18 @@ static int64_t sys_write(uint64_t fd, uint64_t buf, uint64_t len)
     for (i = 0; i < len; i++) {
         if (str[i] == '\0')
             break;
-        printk("%c", (int)str[i]);
-        /* Also send to terminal window if open */
+        /* Echo to serial for debugging */
+        serial_putchar(str[i]);
+        /* Buffer into terminal window — sets term_dirty=1.
+         * Do NOT call terminal_render() here: rendering happens in the
+         * main compositor loop (main.c) which calls terminal_render()
+         * before wm_composite() + fb_swap().  Calling terminal_render()
+         * from inside a syscall races with that loop and causes:
+         *   1. Text artifacts outside the window (partial composite)
+         *   2. VBE Y-offset oscillation (fb_swap called from two paths) */
         if (terminal_is_open())
             terminal_putchar(str[i]);
     }
-
-    /* Re-render terminal after batch write */
-    if (terminal_is_open())
-        terminal_render();
 
     return (int64_t)i;
 }
