@@ -897,13 +897,26 @@ int ttf_line_height(ttf_font_t *f)
 
 #include "boot_splash_font.h"
 #include "kernel/drivers/framebuffer.h"
+#include "kernel/mm/pmm.h"
 #include "gfx_simd.h"
 
-/* Dedicated stbtt_fontinfo for the embedded boot font */
-static stbtt_fontinfo boot_stb_info;
-static int boot_font_ready = 0;
-static float boot_font_scale = 0;
-static int boot_font_ascent_px = 0;
+/* ---- Boot splash pre-baked glyph atlas ----------------------------------- *
+ * Built once by boot_font_init() via stbtt_BakeFontBitmap().
+ * boot_font_render() blits from this atlas — zero FPU, zero heap, zero stbtt.
+ * --------------------------------------------------------------------------- */
+
+#define BOOT_ATLAS_W    256
+#define BOOT_ATLAS_H    256
+#define BOOT_ATLAS_BYTES (BOOT_ATLAS_W * BOOT_ATLAS_H)
+#define BOOT_ATLAS_PAGES ((BOOT_ATLAS_BYTES + 4095) / 4096)
+
+#define BOOT_GLYPH_FIRST 32
+#define BOOT_GLYPH_COUNT 95   /* ASCII 32-126 */
+
+static int             boot_font_ready    = 0;
+static int             boot_font_ascent_px = 0;
+static uint8_t        *boot_atlas         = (void *)0;
+static stbtt_bakedchar boot_chardata[BOOT_GLYPH_COUNT];
 
 /* Extra spacing between characters for cleaner boot text */
 #define BOOT_LETTER_SPACING 1
@@ -912,28 +925,59 @@ int boot_font_init(int pixel_size)
 {
     int offset;
     int ascent_raw, descent_raw, linegap_raw;
+    stbtt_fontinfo info;
+    float scale;
+    uintptr_t atlas_phys;
+    int bake_result;
     fxsave_area_t fpu_state __attribute__((aligned(16)));
 
     simd_save_state(&fpu_state);
 
     offset = stbtt_GetFontOffsetForIndex(boot_font_data, 0);
-    if (offset < 0) {
-        simd_restore_state(&fpu_state);
-        return -1;
+    if (offset < 0) { simd_restore_state(&fpu_state); return -1; }
+
+    if (!stbtt_InitFont(&info, boot_font_data, offset)) {
+        simd_restore_state(&fpu_state); return -1;
     }
 
-    if (!stbtt_InitFont(&boot_stb_info, boot_font_data, offset)) {
-        simd_restore_state(&fpu_state);
-        return -1;
+    /* Store ascent for baseline calculation */
+    stbtt_GetFontVMetrics(&info, &ascent_raw, &descent_raw, &linegap_raw);
+    scale = stbtt_ScaleForPixelHeight(&info, (float)pixel_size);
+    boot_font_ascent_px = (int)(scale * (float)ascent_raw);
+
+    /* Allocate PMM atlas (256×256 single-channel, 64 KB) */
+    if (!boot_atlas) {
+        atlas_phys = pmm_alloc_contiguous(BOOT_ATLAS_PAGES);
+        if (!atlas_phys) {
+            simd_restore_state(&fpu_state);
+            printk("[!!] boot_font_init: PMM atlas alloc failed\n");
+            return -1;
+        }
+        boot_atlas = (uint8_t *)atlas_phys;
     }
 
-    boot_font_scale = stbtt_ScaleForPixelHeight(&boot_stb_info, (float)pixel_size);
-    stbtt_GetFontVMetrics(&boot_stb_info, &ascent_raw, &descent_raw, &linegap_raw);
-    boot_font_ascent_px = (int)(boot_font_scale * (float)ascent_raw);
+    memset(boot_atlas, 0, BOOT_ATLAS_BYTES);
+
+    /* Bake all 95 ASCII glyphs into the atlas in a single call.
+     * This replaces per-character GetCodepointBitmap() at render time. */
+    bake_result = stbtt_BakeFontBitmap(
+        boot_font_data, offset, (float)pixel_size,
+        boot_atlas, BOOT_ATLAS_W, BOOT_ATLAS_H,
+        BOOT_GLYPH_FIRST, BOOT_GLYPH_COUNT,
+        boot_chardata);
 
     simd_restore_state(&fpu_state);
 
+    if (bake_result <= 0) {
+        printk("[!!] boot_font BakeFontBitmap: %d chars fit (result=%d)\n",
+               (uint64_t)-bake_result, (uint64_t)bake_result);
+        /* Negative means some glyphs didn't fit — still usable */
+    }
+
     boot_font_ready = 1;
+    printk("[OK] boot_font: %dpx atlas baked (%d chars, %d KB)\n",
+           (uint64_t)pixel_size, (uint64_t)BOOT_GLYPH_COUNT,
+           (uint64_t)(BOOT_ATLAS_BYTES / 1024));
     return 0;
 }
 
@@ -941,26 +985,18 @@ int boot_font_measure(const char *text)
 {
     int total = 0;
     int i;
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
 
     if (!boot_font_ready || !text)
         return 0;
 
-    simd_save_state(&fpu_state);
-
+    /* Sum advance widths from pre-baked chardata — no FPU needed */
     for (i = 0; text[i]; i++) {
-        int advance, lsb;
-        stbtt_GetCodepointHMetrics(&boot_stb_info, (unsigned char)text[i], &advance, &lsb);
-        total += (int)(boot_font_scale * (float)advance) + BOOT_LETTER_SPACING;
-
-        if (text[i + 1]) {
-            int kern = stbtt_GetCodepointKernAdvance(
-                &boot_stb_info, (unsigned char)text[i], (unsigned char)text[i + 1]);
-            total += (int)(boot_font_scale * (float)kern);
+        int cp = (unsigned char)text[i];
+        if (cp >= BOOT_GLYPH_FIRST && cp < BOOT_GLYPH_FIRST + BOOT_GLYPH_COUNT) {
+            const stbtt_bakedchar *bc = &boot_chardata[cp - BOOT_GLYPH_FIRST];
+            total += (int)(bc->xadvance + 0.5f) + BOOT_LETTER_SPACING;
         }
     }
-
-    simd_restore_state(&fpu_state);
     return total;
 }
 
@@ -970,9 +1006,8 @@ void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
     int32_t cursor_x = x;
     uint32_t scr_w, scr_h;
     uint8_t cr, cg, cb;
-    fxsave_area_t fpu_state __attribute__((aligned(16)));
 
-    if (!boot_font_ready || !text)
+    if (!boot_font_ready || !boot_atlas || !text)
         return;
 
     scr_w = fb_get_width();
@@ -981,57 +1016,64 @@ void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t color)
     cg = (uint8_t)(color >> 8);
     cb = (uint8_t)(color);
 
-    simd_save_state(&fpu_state);
-
+    /* Render each character from the pre-baked atlas.
+     * No FPU, no heap allocations, no stbtt calls — pure integer blit. */
     for (i = 0; text[i]; i++) {
-        int codepoint = (unsigned char)text[i];
-        int width, height, xoff, yoff;
-        int advance, lsb;
-        unsigned char *bitmap;
+        int cp = (unsigned char)text[i];
+        int gi = cp - BOOT_GLYPH_FIRST;
+        const stbtt_bakedchar *bc;
+        int glyph_x, glyph_y, glyph_w, glyph_h;
+        int row, col;
 
-        bitmap = stbtt_GetCodepointBitmap(&boot_stb_info, 0, boot_font_scale,
-                                           codepoint, &width, &height, &xoff, &yoff);
-        stbtt_GetCodepointHMetrics(&boot_stb_info, codepoint, &advance, &lsb);
+        if (cp < BOOT_GLYPH_FIRST || cp >= BOOT_GLYPH_FIRST + BOOT_GLYPH_COUNT)
+            continue;
 
-        if (bitmap) {
-            int32_t base_y = y + boot_font_ascent_px + yoff;
-            int row, col;
+        bc = &boot_chardata[gi];
+        glyph_w = bc->x1 - bc->x0;
+        glyph_h = bc->y1 - bc->y0;
 
-            for (row = 0; row < height; row++) {
-                int32_t py = base_y + row;
-                if (py < 0 || (uint32_t)py >= scr_h) continue;
+        if (glyph_w <= 0 || glyph_h <= 0) {
+            cursor_x += (int)(bc->xadvance + 0.5f) + BOOT_LETTER_SPACING;
+            continue;
+        }
 
-                for (col = 0; col < width; col++) {
-                    int32_t px = cursor_x + xoff + col;
-                    uint32_t alpha;
-                    if (px < 0 || (uint32_t)px >= scr_w) continue;
+        glyph_x = cursor_x + (int)(bc->xoff + 0.5f);
+        glyph_y = y + boot_font_ascent_px + (int)(bc->yoff + 0.5f);
 
-                    alpha = bitmap[row * width + col];
-                    if (alpha == 0) continue;
+        /* Blit from atlas — integer arithmetic only */
+        for (row = 0; row < glyph_h; row++) {
+            int32_t py = glyph_y + row;
+            if (py < 0 || (uint32_t)py >= scr_h) continue;
 
-                    if (alpha == 255) {
-                        fb_put_pixel((uint32_t)px, (uint32_t)py, color);
-                    } else {
-                        /* Blend onto black background (simple multiply) */
-                        uint8_t ob = (uint8_t)((cb * alpha) / 255);
-                        uint8_t og = (uint8_t)((cg * alpha) / 255);
-                        uint8_t or_ = (uint8_t)((cr * alpha) / 255);
-                        fb_put_pixel((uint32_t)px, (uint32_t)py,
-                            (uint32_t)ob | ((uint32_t)og << 8) | ((uint32_t)or_ << 16));
-                    }
+            for (col = 0; col < glyph_w; col++) {
+                int32_t px;
+                uint32_t alpha;
+                int atlas_row = bc->y0 + row;
+                int atlas_col = bc->x0 + col;
+
+                if (atlas_row < 0 || atlas_row >= BOOT_ATLAS_H) continue;
+                if (atlas_col < 0 || atlas_col >= BOOT_ATLAS_W) continue;
+
+                alpha = boot_atlas[atlas_row * BOOT_ATLAS_W + atlas_col];
+                if (alpha == 0) continue;
+
+                px = glyph_x + col;
+                if (px < 0 || (uint32_t)px >= scr_w) continue;
+
+                if (alpha == 255) {
+                    fb_put_pixel((uint32_t)px, (uint32_t)py, color);
+                } else {
+                    uint8_t ob = (uint8_t)((cb * alpha) / 255);
+                    uint8_t og = (uint8_t)((cg * alpha) / 255);
+                    uint8_t or_ = (uint8_t)((cr * alpha) / 255);
+                    fb_put_pixel((uint32_t)px, (uint32_t)py,
+                        (uint32_t)ob | ((uint32_t)og << 8) | ((uint32_t)or_ << 16));
                 }
             }
-            kfree(bitmap);
         }
 
-        cursor_x += (int32_t)(boot_font_scale * (float)advance) + BOOT_LETTER_SPACING;
-
-        if (text[i + 1]) {
-            int kern = stbtt_GetCodepointKernAdvance(
-                &boot_stb_info, codepoint, (unsigned char)text[i + 1]);
-            cursor_x += (int32_t)(boot_font_scale * (float)kern);
-        }
+        cursor_x += (int)(bc->xadvance + 0.5f) + BOOT_LETTER_SPACING;
     }
-
-    simd_restore_state(&fpu_state);
 }
+
+
