@@ -331,6 +331,7 @@ mutex_unlock(&q->lock);
 | 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed             |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list           |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only       |
+| 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading   |
 | 🔵 Future | 14. SMP Support            | Multi-core — after full single-core feature set is stable     |
 
 ---
@@ -566,6 +567,48 @@ preempt_enable();              /* reschedules if needed */
 
 ---
 
+## 27. Thread Cancellation (`pthread_cancel`)
+
+**Prompt:** POSIX thread cancellation allows one thread to request that another
+thread terminate cleanly. `pthread_cancel(tid)` marks the target thread for
+cancellation. The target thread exits at the next **cancellation point** — a
+blocking call such as `sem_wait()`, `cond_wait()`, `pipe_read()`, or
+`sleep()`. Two cancellation types exist: `PTHREAD_CANCEL_DEFERRED` (only exits
+at cancellation points — safe) and `PTHREAD_CANCEL_ASYNCHRONOUS` (exits
+immediately — dangerous, rarely used). Cleanup handlers registered with
+`pthread_cleanup_push()` are invoked in LIFO order on cancellation so that
+locks and resources are released correctly.
+
+Implement by adding a `cancel_requested` flag and `cancel_state` enum to
+`thread_t`. Cancellation points check `cancel_requested` and call
+`thread_exit(PTHREAD_CANCELED)` if set. This is the mechanism that allows
+`pthread_join()` to detect that a thread was cancelled rather than returning
+normally.
+
+> **Related to §15 Futexes:** `SYS_FUTEX_WAIT` is a POSIX cancellation point —
+> when a futex wait is cancelled, the futex wait table entry must be cleaned up
+> atomically to avoid dangling waiter records.
+
+> [!NOTE]
+> `PTHREAD_CANCEL_ASYNCHRONOUS` is intentionally **not implemented**. It is
+> impossible to implement safely in most kernel contexts — Linux documents it
+> as unsafe and recommends deferred cancellation for all practical uses.
+
+- [ ] Add `cancel_requested` (`bool`) field to `thread_t`
+- [ ] Add `cancel_state` enum: `CANCEL_ENABLED` (default) / `CANCEL_DISABLED`
+- [ ] Implement `thread_cancel(tid)` — set `cancel_requested = true` on target thread
+- [ ] Add `SYS_PTHREAD_CANCEL` syscall
+- [ ] Add `pthread_setcancelstate(state, &oldstate)` — enable/disable cancellability
+- [ ] Mark as cancellation points: `sem_wait`, `cond_wait`, `pipe_read`, `mq_recv`, `sleep`, `futex_wait`
+- [ ] At each cancellation point: `if (cancel_requested && cancel_state == CANCEL_ENABLED) thread_exit(PTHREAD_CANCELED)`
+- [ ] Implement cleanup handler stack: `pthread_cleanup_push(fn, arg)` / `pthread_cleanup_pop(execute)`
+- [ ] On cancellation exit: invoke cleanup handlers LIFO before `thread_exit()`
+- [ ] `pthread_join()` distinguishes `PTHREAD_CANCELED` from normal exit code
+- [ ] Test: cancel a thread blocked in `cond_wait()` — verify cleanup handler runs
+- [ ] Commit: `"sched: thread cancellation (pthread_cancel)"`
+
+---
+
 ## OS Comparison
 
 | Feature                         | Windows 11 Kernel          | Linux Kernel               | Impossible OS                       |
@@ -590,11 +633,12 @@ preempt_enable();              /* reschedules if needed */
 | **Wait-on-multiple**            | ✅ `WaitForMultiple`       | ❌ FDs only                 | ⬜ **§18 — beats Linux**             |
 | **Unified `_timeout(ms)` API**  | ❌ Inconsistent            | ❌ Inconsistent             | ⬜ **§19 — Impossible OS only**      |
 | **Graphical deadlock diagram**  | ❌ BSOD only               | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**      |
-| **Named lock browser**          | ❌                         | ❌ File locks only          | ⬜ **§21 — Impossible OS only**      |
-| **Thread-Local Storage (TLS)**  | ✅ Full TEB                | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`  |
-| **Ticket locks (fair)**         | ❌ CAS spinlocks only      | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**         |
-| **Kernel watchdog**             | ✅ KeBugCheck timeout      | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry |
+| **Named lock browser**          | ❌                         | ❌ File locks only          | ⬜ **§21 — Impossible OS only**        |
+| **Thread-Local Storage (TLS)**  | ✅ Full TEB                | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`    |
+| **Ticket locks (fair)**         | ❌ CAS spinlocks only      | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**          |
+| **Kernel watchdog**             | ✅ KeBugCheck timeout      | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry  |
 | **Stack guard pages**           | ✅ Automatic (Win32 stack) | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread |
-| **Preemption count**            | ✅ `KeEnterCriticalRegion` | ✅ `preempt_disable/enable`  | ⬜ §26 P0 — prerequisite for RCU       |
+| **Preemption count**            | ✅ `KeEnterCriticalRegion` | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU       |
+| **Thread cancellation**         | ✅ `TerminateThread` (unsafe) | ✅ `pthread_cancel`       | ⬜ §27 P2 — deferred only, safe       |
 
-> **After §17–26:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
+> **After §17–27:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
