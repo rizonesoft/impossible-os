@@ -382,7 +382,7 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 | ✅ Done   | 3. Semaphores              | Verified complete                                              |
 | ✅ Done   | 4. Read-Write Locks        | Implemented — rwlock.o linked, BUILD OK                        |
 | ✅ Done   | 5. Condition Variables     | Implemented — condvar.o linked, BUILD OK                       |
-| 🔴 P0     | 10. Memory Barriers        | Prerequisite for correct spinlocks and atomics                 |
+| ✅ Done   | 10. Memory Barriers        | `barrier.h` complete — `barrier()`, `mb()`, `rmb()`, `wmb()`, `smp_*` aliases |
 | 🔴 P0     | 7. Atomic Operations       | Prerequisite for spinlocks and reference counting              |
 | 🔴 P0     | 6. Spinlocks               | Needed for IRQ-safe locking in PIT, keyboard, NIC handlers     |
 | 🔴 P0     | 23. Ticket Locks           | Fairer spinlock variant — implement alongside §6               |
@@ -881,7 +881,7 @@ CPUID probing, and the fallback path.
 | Atomic Operations              | ✅ `Interlocked*`             | ✅ `atomic_t`               | ⬜ §7 P0                                      |
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ⬜ §8 P1                                      |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ⬜ §9 P1                                      |
-| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ⬜ §10 P0                                     |
+| Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`    |
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ⬜ §11+17 **Default on all mutexes**          |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
