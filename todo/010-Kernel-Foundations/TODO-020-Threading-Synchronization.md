@@ -688,22 +688,90 @@ If the read-side takes too long (e.g., slow syscall), writers may increment the 
 ---
 
 
-## 13. RCU — Read-Copy-Update
+## 13. RCU — Read-Copy-Update ✅
 
-**Prompt:** RCU is Linux's most powerful scalability primitive — readers hold no lock at all (zero overhead), writers atomically publish a new version of a data structure by updating a pointer, then wait for all current readers to finish before freeing the old version. Implement a simplified single-core RCU: `rcu_read_lock()` / `rcu_read_unlock()` disable preemption (on single-core this is sufficient); `synchronize_rcu()` blocks until all RCU read-side critical sections complete; `rcu_assign_pointer(ptr, new)` / `rcu_dereference(ptr)` handle pointer publishing with barriers. Use for: VFS dentry cache, network route table, loaded module list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: RCU (single-core)"`. Add notes, gotchas, and design decisions directly in this TODO section covering RCU concepts, the grace period, and safe usage patterns.
+**Prompt:** This section is marked complete. Verify: `include/kernel/rcu.h` exists with `rcu_read_lock()` (= `scheduler_disable()`), `rcu_read_unlock()` (= `scheduler_enable()`), `rcu_assign_pointer(ptr,val)` (wmb + store), and `rcu_dereference(ptr)` (load + barrier). `src/kernel/rcu.c` implements `synchronize_rcu()` as `mb() + yield() + mb()`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: RCU (single-core)"` in git history.
 
 > **Scope:** Single-core simplified RCU only. Full SMP RCU (quiescent-state tracking per CPU) is deferred to the SMP phase.
 
 
-- [ ] Implement `rcu_read_lock()` — disable preemption (single-core: disable scheduler)
-- [ ] Implement `rcu_read_unlock()` — re-enable preemption
-- [ ] Implement `synchronize_rcu()` — wait for all in-progress RCU read sections to exit
-- [ ] Implement `rcu_assign_pointer(ptr, new)` — write barrier + pointer store
-- [ ] Implement `rcu_dereference(ptr)` — read barrier + pointer load
-- [ ] Use for: VFS path cache, route table, module list (replace rwlock where read-dominant)
-- [ ] Commit: `"sched: RCU (single-core)"`
+- [x] Implement `rcu_read_lock()` — disable preemption (single-core: disable scheduler)
+- [x] Implement `rcu_read_unlock()` — re-enable preemption
+- [x] Implement `synchronize_rcu()` — wait for all in-progress RCU read sections to exit
+- [x] Implement `rcu_assign_pointer(ptr, new)` — write barrier + pointer store
+- [x] Implement `rcu_dereference(ptr)` — read barrier + pointer load
+- [x] Use for: VFS path cache, route table, module list (replace rwlock where read-dominant)
+- [x] Commit: `"sched: RCU (single-core)"`
+
+### Notes
+
+**Files:**
+- `include/kernel/rcu.h` — all read-side as inline functions/macros; `synchronize_rcu` declaration
+- `src/kernel/rcu.c` — `synchronize_rcu()` implementation
+
+**Writer protocol:**
+```c
+/* 1. Build new version */
+new_entry = kmalloc(sizeof(*new_entry));
+*new_entry = ...;
+
+/* 2. Publish: wmb() ensures *new_entry init is visible before the pointer */
+rcu_assign_pointer(g_route_table, new_entry);
+
+/* 3. Wait for all readers that saw the OLD pointer to finish */
+synchronize_rcu();
+
+/* 4. Free old version — no reader can access it now */
+kfree(old_entry);
+```
+
+**Reader protocol:**
+```c
+rcu_read_lock();
+entry = rcu_dereference(g_route_table);  /* barrier + load */
+if (entry)
+    process(entry);   /* stable — cannot be freed while we hold read lock */
+rcu_read_unlock();
+/* do NOT use entry after this point */
+```
+
+**Why yield() = grace period (single-core):**
+- `rcu_read_lock()` calls `scheduler_disable()` — suppresses the PIT preemption interrupt
+- A thread inside `rcu_read_lock/rcu_read_unlock` **cannot be scheduled out**
+- When `synchronize_rcu()` calls `yield()`, the scheduler switches to another thread
+- That switch is a quiescent state: every thread that was in a read section has necessarily called `rcu_read_unlock()` before the scheduler ran them or they can't be running
+- When `synchronize_rcu()` resumes, **all prior readers are gone**
+
+**Memory barrier placement:**
+| Point | Barrier | Purpose |
+|---|---|---|
+| `rcu_assign_pointer` → `wmb()` | write MB | `*new_ptr` init visible before pointer store |
+| `rcu_dereference` → `barrier()` | compiler fence | dependent loads not hoisted above pointer load |
+| `synchronize_rcu` → `mb()` (before yield) | full MB | new pointer visible to all before we yield |
+| `synchronize_rcu` → `mb()` (after yield) | full MB | we see fresh state after the grace period |
+
+**OS comparison:**
+| Feature | Windows | Linux | Impossible OS |
+|---|---|---|---|
+| RCU | ❌ | ✅ `rcu_read_lock/unlock`, `synchronize_rcu`, `call_rcu` | ✅ Single-core: `rcu_read_lock/unlock`, `synchronize_rcu`, `rcu_assign/dereference` |
+
+**Gotcha — no sleeping inside rcu_read_lock:**
+`rcu_read_lock()` disables the scheduler. Calling `yield()`, `sem_wait()`, `mutex_lock()`, or any other blocking function while holding an RCU read lock will either hang (if it tries to yield with the scheduler disabled) or produce incorrect results.
+
+**Gotcha — synchronize_rcu() must not nest inside rcu_read_lock:**
+`synchronize_rcu()` calls `yield()`, but yield() is suppressed when the scheduler is disabled. If called from within a read section, `synchronize_rcu()` would deadlock (it waits for itself to exit).
+
+**Gotcha — do not dereference after rcu_read_unlock:**
+Between `rcu_read_unlock()` and the next `rcu_read_lock()`, the writer may call `synchronize_rcu()` and then `kfree(old_ptr)`. Any use-after-unlock is a use-after-free.
+
+**Gotcha — rcu_assign_pointer needs wmb, not just barrier():**
+`wmb()` is a full write memory barrier — it prevents the CPU from reordering any store before it to appear after it. `barrier()` is a compiler-only fence and does not prevent out-of-order execution on x86 (though x86 TSO makes it safe in practice; wmb is still preferred for correctness on weaker ISAs).
+
+**SMP upgrade path:**
+Replace `scheduler_disable/enable` with per-CPU preempt counters. Add a `rcu_quiescent_state()` call in each scheduler tick. `synchronize_rcu()` becomes: register a grace-period callback and block until all CPUs have passed through a quiescent state. See Linux `call_rcu()` and `rcu_barrier()`.
 
 ---
+
 
 ## 14. SMP Support (Future)
 
@@ -780,7 +848,7 @@ If the read-side takes too long (e.g., slow syscall), writers may increment the 
 | 🟠 P1     | 28. pthread_once           | Eliminates init races; replaces all ad-hoc bool init guards    |
 | 🟠 P1     | 29. pthread_barrier_t      | Frame-sync for compositor audio+render pipeline                |
 | ✅ Done   | 12. Seqlocks               | `seqlock_t`, `SEQLOCK_INIT`, IRQ-safe writer, lock-free reader  |
-| 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
+| ✅ Done   | 13. RCU                    | `rcu_read_lock/unlock`, `synchronize_rcu`, `rcu_assign/dereference` |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
 | 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows        |
 | 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated        |
@@ -1267,7 +1335,7 @@ CPUID probing, and the fallback path.
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`     |
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ✅ `thread_boost/restore_priority`, default on all mutexes  |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ✅ `seqlock_t` / `DEFINE_SEQLOCK`, `seqlock_read_begin/retry`  |
-| RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
+| RCU                            | ❌                            | ✅ `rcu_*`                  | ✅ `rcu_read_lock/unlock`, `synchronize_rcu`, `rcu_assign/dereference` |
 | SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26          |
 | Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                     |
 | Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                     |
