@@ -175,7 +175,8 @@ const char *partition_fs_name(int fs_type)
 static void register_partition(const struct blkdev *parent,
                                 int disk_idx, int part_num,
                                 uint64_t start_lba, uint64_t sector_count,
-                                const char *type_name)
+                                const char *type_name,
+                                const char *part_name)
 {
     struct partition_info *pi;
     struct blkdev sub;
@@ -209,6 +210,14 @@ static void register_partition(const struct blkdev *parent,
     pi->fs_type      = PART_FS_UNKNOWN;  /* Probed after registration */
     pi->is_efi       = (type_name && type_name[0] == 'E' && type_name[1] == 'F'
                         && type_name[2] == 'I') ? 1 : 0;
+    /* Store GPT partition name for drive letter assignment */
+    pi->gpt_name[0] = '\0';
+    if (part_name) {
+        int j;
+        for (j = 0; part_name[j] && j < 36; j++)
+            pi->gpt_name[j] = part_name[j];
+        pi->gpt_name[j] = '\0';
+    }
 
     /* Build sub-blkdev */
     part_strcpy(sub.name, name, sizeof(sub.name));
@@ -268,7 +277,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             klog(LOG_DEBUG, "blk", "%s: no partition table, raw %s volume",
                    dev->name, partition_fs_name(fs));
             register_partition(dev, disk_idx, 1,
-                               0, dev->sector_count, "Raw Volume");
+                               0, dev->sector_count, "Raw Volume", NULL);
         }
         return;
     }
@@ -294,7 +303,8 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
                                      - gtbl.parts[gi].start_lba + 1;
                     register_partition(dev, disk_idx, gi + 1,
                                       gtbl.parts[gi].start_lba, sectors,
-                                      gpt_type_name(&gtbl.parts[gi].type_guid));
+                                      gpt_type_name(&gtbl.parts[gi].type_guid),
+                                      gtbl.parts[gi].name);
                 }
             }
             return;  /* GPT found — skip MBR */
@@ -309,7 +319,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             register_partition(dev, disk_idx, i + 1,
                               (uint64_t)mtbl.parts[i].start_lba,
                               (uint64_t)mtbl.parts[i].sector_count,
-                              mbr_type_name(mtbl.parts[i].type));
+                              mbr_type_name(mtbl.parts[i].type), NULL);
         }
     } else {
         /* MBR signature present (0x55AA) but no usable partition entries.
@@ -320,7 +330,7 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
             printk("[RAW] %s: no partition table, raw %s volume\n",
                    dev->name, partition_fs_name(fs));
             register_partition(dev, disk_idx, 1,
-                               0, dev->sector_count, "Raw Volume");
+                               0, dev->sector_count, "Raw Volume", NULL);
         }
     }
 }
@@ -341,7 +351,8 @@ void partition_mount_filesystems(void)
 {
     int i;
     /* C: = first IXFS (system), D:+ = non-EFI FAT32 partitions.
-     * EFI System Partitions are hidden (no drive letter), like Windows. */
+     * EFI System Partitions are hidden (no drive letter), like Windows.
+     * Special case: partition named "Logs" mounts as X:. */
     int ixfs_mounted = 0;
     char next_fat32_letter = 'D';
 
@@ -386,7 +397,13 @@ void partition_mount_filesystems(void)
                 klog(LOG_WARN, "blk", "FAT32: failed to init %s", name);
                 continue;
             }
-            if (next_fat32_letter <= 'Z') {
+            /* Check if this is the Logs partition -> mount as X: */
+            if (pi->gpt_name[0] == 'L' && pi->gpt_name[1] == 'o' &&
+                pi->gpt_name[2] == 'g' && pi->gpt_name[3] == 's' &&
+                pi->gpt_name[4] == '\0') {
+                vfs_mount('X', fat32_get_driver(), fat32_get_root());
+                klog(LOG_INFO, "blk", "Mounted Logs partition as X:");
+            } else if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
                           fat32_get_root());

@@ -86,106 +86,188 @@ void klog_flush_to_disk(void)
     uint32_t write_offset;
     uint32_t i;
 
-    if (!vfs_is_mounted('C'))
-        return;
+    /* ---- Flush to IXFS C: drive ---- */
+    if (vfs_is_mounted('C')) {
+        /* Ensure log directory exists */
+        if (!flush_inited) {
+            ensure_dir("C:\\Impossible\\System\\Logs");
+            flush_inited = 1;
+            flush_index = 0;
 
-    /* Ensure log directory exists */
-    if (!flush_inited) {
-        ensure_dir("C:\\Impossible\\System\\Logs");
-        flush_inited = 1;
-        flush_index = 0;
-
-        /* Create the log file if it doesn't exist */
-        {
-            struct vfs_node *root = vfs_get_drive_root('C');
-            if (root && root->ops && root->ops->finddir) {
-                struct vfs_node *imp = root->ops->finddir(root, "Impossible");
-                if (imp && imp->ops && imp->ops->finddir) {
-                    struct vfs_node *sys_dir = imp->ops->finddir(imp, "System");
-                    if (sys_dir && sys_dir->ops && sys_dir->ops->finddir) {
-                        struct vfs_node *logs = sys_dir->ops->finddir(sys_dir, "Logs");
-                        if (logs && logs->ops && logs->ops->create) {
-                            logs->ops->create(logs, "kernel.log", VFS_FILE);
+            /* Create the log file if it doesn't exist */
+            {
+                struct vfs_node *root = vfs_get_drive_root('C');
+                if (root && root->ops && root->ops->finddir) {
+                    struct vfs_node *imp = root->ops->finddir(root, "Impossible");
+                    if (imp && imp->ops && imp->ops->finddir) {
+                        struct vfs_node *sys_dir = imp->ops->finddir(imp, "System");
+                        if (sys_dir && sys_dir->ops && sys_dir->ops->finddir) {
+                            struct vfs_node *logs = sys_dir->ops->finddir(sys_dir, "Logs");
+                            if (logs && logs->ops && logs->ops->create) {
+                                logs->ops->create(logs, "kernel.log", VFS_FILE);
+                            }
                         }
                     }
                 }
             }
         }
+
+        /* Get current ring buffer state */
+        ring = klog_get_ring(&ring_count, &ring_head);
+        if (!ring || ring_count == 0)
+            goto flush_fat32;
+
+        /* Nothing new to flush? */
+        if (flush_index >= ring_count)
+            goto flush_fat32;
+
+        /* Open the log file for appending */
+        logfile = vfs_open("C:\\Impossible\\System\\Logs\\kernel.log",
+                           VFS_O_WRITE);
+        if (!logfile)
+            goto flush_fat32;
+
+        /* Get current file size for append offset */
+        write_offset = (uint32_t)logfile->size;
+
+        /* Write each new entry as a text line */
+        for (i = flush_index; i < ring_count; i++) {
+            /* Calculate actual ring index (oldest first) */
+            uint32_t idx;
+            if (ring_count < KLOG_RING_SIZE) {
+                idx = i;
+            } else {
+                idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
+                      % KLOG_RING_SIZE;
+            }
+
+            const klog_entry_t *e = &ring[idx];
+
+            /* Format: "[TICKS] LEVEL subsys: message\n" */
+            char line[256];
+            int pos = 0;
+
+            /* Timestamp */
+            line[pos++] = '[';
+            pos += u32_to_str(e->timestamp, line + pos, 10);
+            line[pos++] = ']';
+            line[pos++] = ' ';
+
+            /* Level */
+            {
+                const char *ls = level_str(e->level);
+                int j;
+                for (j = 0; ls[j] && pos < 240; j++)
+                    line[pos++] = ls[j];
+            }
+            line[pos++] = ' ';
+
+            /* Subsystem */
+            {
+                const char *ss = e->subsystem ? e->subsystem : "???";
+                int j;
+                for (j = 0; ss[j] && pos < 240; j++)
+                    line[pos++] = ss[j];
+            }
+            line[pos++] = ':';
+            line[pos++] = ' ';
+
+            /* Message */
+            {
+                int j;
+                for (j = 0; e->message[j] && pos < 254; j++)
+                    line[pos++] = e->message[j];
+            }
+            line[pos++] = '\n';
+
+            vfs_write(logfile, write_offset, (uint32_t)pos,
+                      (const uint8_t *)line);
+            write_offset += (uint32_t)pos;
+        }
+
+        flush_index = ring_count;
+        vfs_close(logfile);
     }
 
-    /* Get current ring buffer state */
+flush_fat32:
+    /* ---- Flush to FAT32 X: drive (Logs partition, readable by Windows) ---- */
+    if (!vfs_is_mounted('X'))
+        return;
+
+    /* Create serial.log on X: if needed */
+    {
+        static int x_inited;
+        if (!x_inited) {
+            struct vfs_node *x_root = vfs_get_drive_root('X');
+            if (x_root && x_root->ops && x_root->ops->create) {
+                x_root->ops->create(x_root, "serial.log", VFS_FILE);
+            }
+            x_inited = 1;
+        }
+    }
+
     ring = klog_get_ring(&ring_count, &ring_head);
     if (!ring || ring_count == 0)
         return;
 
-    /* Nothing new to flush? */
-    if (flush_index >= ring_count)
-        return;
-
-    /* Open the log file for appending */
-    logfile = vfs_open("C:\\Impossible\\System\\Logs\\kernel.log",
-                       VFS_O_WRITE);
+    logfile = vfs_open("X:\\serial.log", VFS_O_WRITE);
     if (!logfile)
         return;
 
-    /* Get current file size for append offset */
     write_offset = (uint32_t)logfile->size;
 
-    /* Write each new entry as a text line */
-    for (i = flush_index; i < ring_count; i++) {
-        /* Calculate actual ring index (oldest first) */
-        uint32_t idx;
-        if (ring_count < KLOG_RING_SIZE) {
-            idx = i;
-        } else {
-            idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
-                  % KLOG_RING_SIZE;
+    /* Write ALL entries (not just new — X: gets a full dump each time) */
+    {
+        static uint32_t x_flush_index;
+        for (i = x_flush_index; i < ring_count; i++) {
+            uint32_t idx;
+            if (ring_count < KLOG_RING_SIZE) {
+                idx = i;
+            } else {
+                idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
+                      % KLOG_RING_SIZE;
+            }
+
+            const klog_entry_t *e = &ring[idx];
+            char line[256];
+            int pos = 0;
+
+            line[pos++] = '[';
+            pos += u32_to_str(e->timestamp, line + pos, 10);
+            line[pos++] = ']';
+            line[pos++] = ' ';
+
+            {
+                const char *ls = level_str(e->level);
+                int j;
+                for (j = 0; ls[j] && pos < 240; j++)
+                    line[pos++] = ls[j];
+            }
+            line[pos++] = ' ';
+
+            {
+                const char *ss = e->subsystem ? e->subsystem : "???";
+                int j;
+                for (j = 0; ss[j] && pos < 240; j++)
+                    line[pos++] = ss[j];
+            }
+            line[pos++] = ':';
+            line[pos++] = ' ';
+
+            {
+                int j;
+                for (j = 0; e->message[j] && pos < 254; j++)
+                    line[pos++] = e->message[j];
+            }
+            line[pos++] = '\n';
+
+            vfs_write(logfile, write_offset, (uint32_t)pos,
+                      (const uint8_t *)line);
+            write_offset += (uint32_t)pos;
         }
-
-        const klog_entry_t *e = &ring[idx];
-
-        /* Format: "[TICKS] LEVEL subsys: message\n" */
-        char line[256];
-        int pos = 0;
-
-        /* Timestamp */
-        line[pos++] = '[';
-        pos += u32_to_str(e->timestamp, line + pos, 10);
-        line[pos++] = ']';
-        line[pos++] = ' ';
-
-        /* Level */
-        {
-            const char *ls = level_str(e->level);
-            int j;
-            for (j = 0; ls[j] && pos < 240; j++)
-                line[pos++] = ls[j];
-        }
-        line[pos++] = ' ';
-
-        /* Subsystem */
-        {
-            const char *ss = e->subsystem ? e->subsystem : "???";
-            int j;
-            for (j = 0; ss[j] && pos < 240; j++)
-                line[pos++] = ss[j];
-        }
-        line[pos++] = ':';
-        line[pos++] = ' ';
-
-        /* Message */
-        {
-            int j;
-            for (j = 0; e->message[j] && pos < 254; j++)
-                line[pos++] = e->message[j];
-        }
-        line[pos++] = '\n';
-
-        vfs_write(logfile, write_offset, (uint32_t)pos,
-                  (const uint8_t *)line);
-        write_offset += (uint32_t)pos;
+        x_flush_index = ring_count;
     }
 
-    flush_index = ring_count;
     vfs_close(logfile);
 }
+

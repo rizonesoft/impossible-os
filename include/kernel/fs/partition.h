@@ -29,6 +29,7 @@ struct partition_info {
     int      disk_index;            /* Parent disk number (0-based) */
     int      part_index;            /* Partition number (1-based) */
     int      is_efi;                /* 1 if EFI System Partition (hidden) */
+    char     gpt_name[37];          /* GPT partition name (ASCII, from UTF-16) */
 };
 
 /* ---- API ---- */

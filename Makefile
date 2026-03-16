@@ -252,18 +252,21 @@ $(ISO_FILE): $(KERNEL_BIN) $(BOOT_DIR)/grub.cfg userland
 	grub-mkrescue -o $(ISO_FILE) $(ISO_DIR) 2>/dev/null
 	@echo "[ISO] $(ISO_FILE) created"
 
-## system-disk: Create bootable GPT system disk with EFI + IXFS partitions
+## system-disk: Create bootable GPT system disk with EFI + Logs + IXFS partitions
 SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
 SYSTEM_DISK_SIZE := 512M
-EFI_SIZE := 256M
+EFI_SIZE := 64M
+LOG_SIZE := 16M
 # Shim binaries — built by bash scripts/build-shim.sh
 SHIM_DIR := shim
 # Partition offsets (must match make-system-disk defaults)
-# EFI: LBA 2048 = byte 1048576, size 256M = 268435456 bytes
-# IXFS: LBA 526336 = byte 269484032 (next 2048-aligned LBA after EFI end)
-EFI_OFFSET := 1048576
-IXFS_OFFSET := 269484032
-IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 269484032 - 34*512) )) )
+# EFI:  LBA 2048 = byte 1048576, size 64M
+# Logs: starts at next 1MiB boundary after EFI (LBA 133120 = byte 68157440)
+# IXFS: starts at next 1MiB boundary after Logs (LBA 165888 = byte 84934656)
+EFI_OFFSET  := 1048576
+LOG_OFFSET  := 68157440
+IXFS_OFFSET := 84934656
+IXFS_PART_SIZE := $(shell echo $$(( (512*1024*1024 - 84934656 - 34*512) )) )
 
 system-disk: $(SYSTEM_DISK)
 
@@ -274,8 +277,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@mkdir -p $(BUILD_DIR)/tools
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/make-system-disk tools/make-system-disk.c
 	$(HOST_CC) -O2 -o $(BUILD_DIR)/tools/mkfs-ixfs tools/mkfs-ixfs.c
-	@# Step 1: Create GPT image with partition table
-	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE)
+	@# Step 1: Create GPT image with partition table (EFI + Logs + IXFS)
+	$(BUILD_DIR)/tools/make-system-disk -o $@ -s $(SYSTEM_DISK_SIZE) --efi-size $(EFI_SIZE) --log-size $(LOG_SIZE)
 	@# Step 2: Format EFI partition as FAT32 and copy boot files
 	mkfs.fat -F 32 --offset $$(( $(EFI_OFFSET) / 512 )) $@
 	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/BOOT
@@ -295,14 +298,16 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
-	@# Step 3: Format IXFS partition and populate with system files
+	@# Step 3: Format Logs partition as FAT32
+	mkfs.fat -F 32 -n IXOS_LOG --offset $$(( $(LOG_OFFSET) / 512 )) $@
+	@# Step 4: Format IXFS partition and populate with system files
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \
 		-s $(IXFS_PART_SIZE) \
 		-l "Impossible OS" \
 		--offset $(IXFS_OFFSET) \
 		--populate $(BUILD_DIR)/sysroot
-	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + IXFS)"
+	@echo "[DISK] $@ created ($(SYSTEM_DISK_SIZE) GPT: EFI + Logs + IXFS)"
 
 ## run: Launch QEMU booting from system disk (UEFI via OVMF)
 run: all
