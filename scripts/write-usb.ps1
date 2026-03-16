@@ -33,12 +33,22 @@ Write-Host "  Image: $DISK_IMG `(${imgSizeMB} MB`)" -ForegroundColor DarkGray
 Write-Host ""
 
 # ---- List USB drives ----
-@($usbDisks = Get-Disk | Where-Object { $_.BusType -eq "USB" })
-$usbDisks = @($usbDisks)  # Force array even for single result
+# Some USB drives report as "USB", others as "SCSI" or other types.
+# We look for USB bus type first, then fall back to removable media.
+$usbDisks = @(Get-Disk | Where-Object {
+    $_.BusType -eq "USB" -or
+    ($_.IsSystem -eq $false -and $_.IsBoot -eq $false -and $_.Size -gt 0 -and $_.Size -lt 256GB)
+})
+
+# Filter out the system/boot disk by number (always disk 0 on Windows)
+$usbDisks = @($usbDisks | Where-Object { $_.Number -ne 0 })
 
 if ($usbDisks.Count -eq 0) {
     Write-Host "No USB drives found." -ForegroundColor Red
     Write-Host "Insert a USB flash drive and try again." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "All disks detected by Windows:" -ForegroundColor DarkGray
+    Get-Disk | Format-Table Number, FriendlyName, BusType, @{L="Size GB";E={[math]::Round($_.Size/1GB,1)}}, PartitionStyle -AutoSize
     pause; exit 1
 }
 
