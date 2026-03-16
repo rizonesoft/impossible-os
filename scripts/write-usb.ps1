@@ -74,7 +74,7 @@ $diskName   = $targetDisk.FriendlyName
 $diskSizeMB = [math]::Round($targetDisk.Size / 1MB)
 
 if ($diskSizeMB -lt $imgSizeMB) {
-    Write-Host "Drive too small (${diskSizeMB} MB < ${imgSizeMB} MB image)." -ForegroundColor Red
+    Write-Host "Drive too small `(${diskSizeMB} MB, need ${imgSizeMB} MB`)." -ForegroundColor Red
     pause; exit 1
 }
 
@@ -130,7 +130,8 @@ try {
         $pct = [math]::Round(($totalWritten / $imgSize) * 100)
         $elapsed = $sw.Elapsed.TotalSeconds
         $speed = if ($elapsed -gt 0) { [math]::Round(($totalWritten / 1MB) / $elapsed, 1) } else { 0 }
-        Write-Host "`r        ${pct}%  ($([math]::Round($totalWritten/1MB)) / ${imgSizeMB} MB)  ${speed} MB/s  " -NoNewline -ForegroundColor DarkCyan
+        $writtenMB = [math]::Round($totalWritten / 1MB)
+        Write-Host "`r        ${pct}%  ${writtenMB}/${imgSizeMB} MB  ${speed} MB/s  " -NoNewline -ForegroundColor DarkCyan
     }
 
     $diskStream.Flush()
