@@ -9,6 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/lapic.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -131,4 +132,13 @@ void pic_disable(void)
 {
     outb(PIC1_DATA, 0xFF);
     outb(PIC2_DATA, 0xFF);
+}
+
+void irq_eoi(uint8_t irq)
+{
+    if (lapic_available()) {
+        lapic_eoi();
+    } else {
+        pic_send_eoi(irq);
+    }
 }

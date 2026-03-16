@@ -72,7 +72,7 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
     }
     spin_unlock_irqrestore(&pit_lock, flags);
 
-    pic_send_eoi(IRQ_TIMER);
+    irq_eoi(IRQ_TIMER);
 
     /* Let the scheduler decide if it's time to switch tasks */
     return schedule(frame);

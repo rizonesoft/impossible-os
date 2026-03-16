@@ -215,7 +215,7 @@ static uint64_t rtl8139_irq_handler(struct interrupt_frame *frame)
     /* Acknowledge all handled interrupts */
     outw_nic(io_base + REG_ISR, status);
 
-    pic_send_eoi(irq_line);
+    irq_eoi(irq_line);
     return (uint64_t)frame;
 }
 

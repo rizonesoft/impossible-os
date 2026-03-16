@@ -15,7 +15,8 @@ CFLAGS  := -Wall -Wextra -Werror \
            -ffreestanding -nostdlib -nostdinc \
            -fno-stack-protector -fno-pie -no-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
-           -mcmodel=kernel -std=gnu11 -O2 -g
+           -mcmodel=kernel -std=gnu11 -O2 -g \
+           -DCONFIG_SMP
 ASFLAGS := -f elf64 -g
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 
@@ -305,6 +306,7 @@ run: all
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
 		-cpu Haswell \
+		-smp 4 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \

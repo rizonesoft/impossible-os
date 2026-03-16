@@ -178,7 +178,7 @@ static uint64_t vbox_irq_handler(struct interrupt_frame *frame)
         vbox_mouse_poll();
     }
 
-    pic_send_eoi(irq_line);
+    irq_eoi(irq_line);
     return (uint64_t)frame;
 }
 

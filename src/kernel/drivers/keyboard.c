@@ -227,7 +227,7 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
 
 done:
     (void)alt_held;  /* suppress unused warning (reserved for future use) */
-    pic_send_eoi(IRQ_KEYBOARD);
+    irq_eoi(IRQ_KEYBOARD);
     return (uint64_t)frame;
 }
 

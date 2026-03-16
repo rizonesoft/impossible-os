@@ -93,7 +93,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
     mouse_irq_count++;
     /* Bit 0 = output buffer full, Bit 5 = mouse data */
     if (!(status & 0x01)) {
-        pic_send_eoi(IRQ_MOUSE);
+        irq_eoi(IRQ_MOUSE);
         return (uint64_t)frame;
     }
 
@@ -101,7 +101,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
 
     /* Only process if bit 5 indicates auxiliary (mouse) data */
     if (!(status & 0x20)) {
-        pic_send_eoi(IRQ_MOUSE);
+        irq_eoi(IRQ_MOUSE);
         return (uint64_t)frame;
     }
 
@@ -163,7 +163,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
         break;
     }
 
-    pic_send_eoi(IRQ_MOUSE);
+    irq_eoi(IRQ_MOUSE);
     return (uint64_t)frame;
 }
 

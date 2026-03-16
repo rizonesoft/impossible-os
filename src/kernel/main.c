@@ -59,6 +59,8 @@
 #include "desktop/terminal.h"
 #include "desktop/gallery.h"
 #include "kernel/acpi.h"
+#include "kernel/drivers/lapic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/version.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
@@ -494,8 +496,24 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
 
-        /* Parse RSDP → RSDT → FADT for power management */
+        /* Parse RSDP → RSDT → FADT → MADT for power management and SMP */
         acpi_init();
+
+        /* Initialize APIC system (replaces legacy PIC for interrupt routing).
+         * LAPIC: per-CPU interrupt controller (BSP only at this stage).
+         * IOAPIC: routes hardware IRQs to LAPIC. All drivers use irq_eoi()
+         * which auto-dispatches to LAPIC or PIC based on availability. */
+        lapic_init();
+        if (lapic_available()) {
+            ioapic_init();
+            if (ioapic_available()) {
+                pic_disable();
+                klog(LOG_INFO, "irq", "Switched to LAPIC/IOAPIC (PIC disabled)");
+            }
+
+            klog(LOG_INFO, "smp", "CPUs discovered: %u",
+                 (uint64_t)acpi_get_cpu_count());
+        }
     }
 
     /* Heap test: alloc, write, free, realloc */

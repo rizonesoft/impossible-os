@@ -47,3 +47,10 @@ void pic_unmask_irq(uint8_t irq);
 
 /* Disable both PICs entirely (for APIC migration later) */
 void pic_disable(void);
+
+/* ---- Unified EOI ----
+ * Use irq_eoi() in IRQ handlers instead of pic_send_eoi() directly.
+ * When the LAPIC is active, this sends EOI to the LAPIC; otherwise
+ * it falls back to the legacy PIC. This makes drivers transparent
+ * to the PIC→APIC migration. */
+void irq_eoi(uint8_t irq);

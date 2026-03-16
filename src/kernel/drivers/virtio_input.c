@@ -151,7 +151,7 @@ static uint64_t virtio_input_irq(struct interrupt_frame *frame)
     /* Process events */
     drain_eventq();
 
-    pic_send_eoi(irq_line);
+    irq_eoi(irq_line);
     return (uint64_t)frame;
 }
 

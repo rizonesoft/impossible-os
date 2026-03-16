@@ -56,6 +56,15 @@ static uint16_t pm1a_cnt_port = 0;
 static uint16_t slp_typa = 0;       /* S5 sleep type value */
 static uint8_t  acpi_ready = 0;
 
+/* ---- SMP discovery state ---- */
+
+static struct cpu_info        cpus[MAX_CPUS];
+static uint32_t               cpu_count = 0;
+static uint32_t               lapic_base_addr = 0xFEE00000; /* default */
+static uint32_t               ioapic_base_addr = 0;
+static struct madt_int_override int_overrides[24]; /* ISA only has 16, extra room */
+static uint32_t               override_count = 0;
+
 /* ---- Helpers ---- */
 
 /* Validate ACPI table checksum — all bytes must sum to 0 */
@@ -122,6 +131,24 @@ static const struct acpi_sdt_header *find_table_xsdt(
     return (const struct acpi_sdt_header *)0;
 }
 
+/* Find a table by signature using either RSDT or XSDT depending on ACPI version */
+static const struct acpi_sdt_header *find_acpi_table(
+    const struct acpi_rsdp *rsdp, const char *sig)
+{
+    if (g_boot_info.acpi_version >= 2) {
+        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
+        if (rsdp2->xsdt_addr) {
+            const struct acpi_xsdt *xsdt =
+                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
+            return find_table_xsdt(xsdt, sig);
+        }
+    }
+    /* Fall back to RSDT (32-bit) */
+    const struct acpi_rsdt *rsdt =
+        (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
+    return find_table_rsdt(rsdt, sig);
+}
+
 /* Parse \_S5 object from the DSDT to extract SLP_TYPa.
  *
  * The \_S5 object in the DSDT AML bytecode contains the sleep type values.
@@ -185,6 +212,97 @@ static uint16_t parse_s5_from_dsdt(const struct acpi_sdt_header *dsdt)
     return 0;
 }
 
+/* ---- MADT parsing ---- */
+
+/* Read the BSP's LAPIC ID from the APIC base MSR */
+static uint8_t read_bsp_lapic_id(void)
+{
+    /* Read from LAPIC ID register at offset 0x20 (identity-mapped) */
+    volatile uint32_t *lapic_id_reg =
+        (volatile uint32_t *)(uintptr_t)(lapic_base_addr + 0x20);
+    return (uint8_t)((*lapic_id_reg >> 24) & 0xFF);
+}
+
+/* Parse the MADT to discover CPUs, I/O APIC, and interrupt overrides */
+static void parse_madt(const struct acpi_madt *madt)
+{
+    const uint8_t *data = (const uint8_t *)madt;
+    uint32_t length = madt->header.length;
+    uint32_t offset;
+    uint8_t bsp_lapic_id;
+
+    /* Read LAPIC base from MADT header */
+    lapic_base_addr = madt->lapic_addr;
+
+    /* Get BSP LAPIC ID so we can mark it */
+    bsp_lapic_id = read_bsp_lapic_id();
+
+    /* Walk variable-length MADT entries starting after the fixed header */
+    offset = sizeof(struct acpi_madt);
+
+    while (offset + 2 <= length) {
+        const struct madt_entry_header *entry =
+            (const struct madt_entry_header *)(data + offset);
+
+        if (entry->length < 2 || offset + entry->length > length)
+            break;
+
+        switch (entry->type) {
+        case MADT_TYPE_LAPIC: {
+            const struct madt_lapic *lapic =
+                (const struct madt_lapic *)entry;
+
+            /* Only count enabled or online-capable CPUs */
+            if ((lapic->flags & 0x01) || (lapic->flags & 0x02)) {
+                if (cpu_count < MAX_CPUS) {
+                    cpus[cpu_count].apic_id  = lapic->apic_id;
+                    cpus[cpu_count].acpi_id  = lapic->acpi_processor_id;
+                    cpus[cpu_count].is_bsp   = (lapic->apic_id == bsp_lapic_id) ? 1 : 0;
+                    cpus[cpu_count].enabled   = (lapic->flags & 0x01) ? 1 : 0;
+                    cpu_count++;
+                }
+            }
+            break;
+        }
+
+        case MADT_TYPE_IOAPIC: {
+            const struct madt_ioapic *ioapic =
+                (const struct madt_ioapic *)entry;
+
+            /* Use the first I/O APIC found */
+            if (ioapic_base_addr == 0) {
+                ioapic_base_addr = ioapic->ioapic_addr;
+            }
+            break;
+        }
+
+        case MADT_TYPE_INT_OVERRIDE: {
+            const struct madt_int_override *ovr =
+                (const struct madt_int_override *)entry;
+
+            if (override_count < 24) {
+                int_overrides[override_count] = *ovr;
+                override_count++;
+            }
+            break;
+        }
+
+        case MADT_TYPE_LAPIC_OVERRIDE: {
+            /* 64-bit LAPIC address override — update base */
+            const uint64_t *addr64 =
+                (const uint64_t *)(data + offset + 4);
+            lapic_base_addr = (uint32_t)(*addr64);
+            break;
+        }
+
+        default:
+            break; /* skip unknown entry types */
+        }
+
+        offset += entry->length;
+    }
+}
+
 /* ---- Public API ---- */
 
 int acpi_init(void)
@@ -192,6 +310,7 @@ int acpi_init(void)
     const struct acpi_rsdp *rsdp;
     const struct acpi_sdt_header *fadt_hdr;
     const struct acpi_sdt_header *dsdt_hdr;
+    const struct acpi_sdt_header *madt_hdr;
     const struct acpi_fadt *fadt;
 
     if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr) {
@@ -208,29 +327,7 @@ int acpi_init(void)
     }
 
     /* Find FADT ("FACP") via RSDT or XSDT */
-    if (g_boot_info.acpi_version >= 2) {
-        /* Try XSDT first (64-bit addresses) */
-        const struct acpi_rsdp2 *rsdp2 = (const struct acpi_rsdp2 *)rsdp;
-        if (rsdp2->xsdt_addr) {
-            const struct acpi_xsdt *xsdt =
-                (const struct acpi_xsdt *)(uintptr_t)rsdp2->xsdt_addr;
-            fadt_hdr = find_table_xsdt(xsdt, "FACP");
-        } else {
-            const struct acpi_rsdt *rsdt =
-                (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
-            fadt_hdr = find_table_rsdt(rsdt, "FACP");
-        }
-    } else {
-        const struct acpi_rsdt *rsdt =
-            (const struct acpi_rsdt *)(uintptr_t)rsdp->rsdt_addr;
-
-        if (!acpi_checksum(&rsdt->header, rsdt->header.length)) {
-            printk("[ACPI] RSDT checksum invalid\n");
-            return -1;
-        }
-
-        fadt_hdr = find_table_rsdt(rsdt, "FACP");
-    }
+    fadt_hdr = find_acpi_table(rsdp, "FACP");
 
     if (!fadt_hdr) {
         printk("[ACPI] FADT not found\n");
@@ -254,6 +351,28 @@ int acpi_init(void)
     klog(LOG_INFO, "acpi", "ACPI: FADT at %p, PM1a_CNT=%x, SLP_TYPa=%u",
            (uint64_t)(uintptr_t)fadt, (uint64_t)pm1a_cnt_port,
            (uint64_t)slp_typa);
+
+    /* ---- Parse MADT for SMP discovery ---- */
+
+    madt_hdr = find_acpi_table(rsdp, "APIC");
+
+    if (madt_hdr) {
+        parse_madt((const struct acpi_madt *)madt_hdr);
+
+        klog(LOG_INFO, "acpi",
+             "MADT: %u CPUs, LAPIC=%x, IOAPIC=%x, %u overrides",
+             (uint64_t)cpu_count, (uint64_t)lapic_base_addr,
+             (uint64_t)ioapic_base_addr, (uint64_t)override_count);
+    } else {
+        /* No MADT — single CPU, no APIC routing */
+        cpu_count = 1;
+        cpus[0].apic_id = 0;
+        cpus[0].acpi_id = 0;
+        cpus[0].is_bsp  = 1;
+        cpus[0].enabled  = 1;
+
+        klog(LOG_WARN, "acpi", "No MADT found — single-core mode");
+    }
 
     return 0;
 }
@@ -351,4 +470,40 @@ void acpi_reboot(void)
     /* Should never reach here */
     for (;;)
         __asm__ volatile("hlt");
+}
+
+/* ---- SMP discovery API ---- */
+
+uint32_t acpi_get_cpu_count(void)
+{
+    return cpu_count;
+}
+
+const struct cpu_info *acpi_get_cpu_info(uint32_t index)
+{
+    if (index >= cpu_count)
+        return (const struct cpu_info *)0;
+    return &cpus[index];
+}
+
+uint32_t acpi_get_lapic_base(void)
+{
+    return lapic_base_addr;
+}
+
+uint32_t acpi_get_ioapic_base(void)
+{
+    return ioapic_base_addr;
+}
+
+uint32_t acpi_get_override_count(void)
+{
+    return override_count;
+}
+
+const struct madt_int_override *acpi_get_override(uint32_t index)
+{
+    if (index >= override_count)
+        return (const struct madt_int_override *)0;
+    return &int_overrides[index];
 }
