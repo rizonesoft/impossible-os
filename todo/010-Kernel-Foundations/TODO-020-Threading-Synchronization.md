@@ -606,22 +606,87 @@ See Linux `rt_mutex_adjust_prio_chain()` for the reference implementation.
 
 ---
 
+## 12. Seqlocks (Ultra-Fast Read Path) ✅
+
+**Prompt:** This section is marked complete. Verify: `seqlock_t` exists in `include/kernel/sched/seqlock.h` with a `spinlock_t lock`, `volatile uint64_t seq`, and `uint64_t irq_flags`. `seqlock_write_lock` increments seq → odd (store-release); `seqlock_write_unlock` increments → even. `seqlock_read_begin` spins while seq is odd and returns it (load-acquire). `seqlock_read_retry` issues `rmb()` then checks if seq changed. `src/kernel/sched/seqlock.c` builds without warnings. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: seqlocks"` in git history.
 
 
-## 12. Seqlocks (Ultra-Fast Read Path)
+- [x] Define `seqlock_t` (spinlock + volatile uint64_t sequence counter)
+- [x] Implement `seqlock_write_lock(sl)` / `seqlock_write_unlock(sl)` — inc counter odd/even
+- [x] Implement `seqlock_read_begin(sl)` — return current sequence (retry if odd)
+- [x] Implement `seqlock_read_retry(sl, seq)` — return true if sequence changed
+- [x] Usage pattern: `do { seq = seqlock_read_begin(sl); ... } while (seqlock_read_retry(sl, seq))`
+- [x] Use for: system uptime counter, jiffies, cached RTC time
+- [x] Commit: `"sched: seqlocks"`
 
-**Prompt:** Seqlocks allow readers to proceed without taking any lock at all — they read a monotonically-incrementing sequence counter before and after the read; if the counter changed (writer was active), they retry. Writers increment the counter before and after modifying data (odd = write in progress). This gives O(1) reads with zero locking overhead for read-mostly data that changes rarely (e.g., system clock, jiffies, uptime counter). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sched: seqlocks"`. Add notes, gotchas, and design decisions directly in this TODO section covering seqlock semantics and use cases.
+### Notes
 
+**Files:**
+- `include/kernel/sched/seqlock.h` — `seqlock_t`, `SEQLOCK_INIT`, writer/reader API
+- `src/kernel/sched/seqlock.c` — implementation with acquire/release barrier protocol
 
-- [ ] Define `seqlock_t` (spinlock + volatile uint64_t sequence counter)
-- [ ] Implement `seqlock_write_lock(sl)` / `seqlock_write_unlock(sl)` — inc counter odd/even
-- [ ] Implement `seqlock_read_begin(sl)` — return current sequence (retry if odd)
-- [ ] Implement `seqlock_read_retry(sl, seq)` — return true if sequence changed
-- [ ] Usage pattern: `do { seq = seqlock_read_begin(sl); ... } while (seqlock_read_retry(sl, seq))`
-- [ ] Use for: system uptime counter, jiffies, cached RTC time
-- [ ] Commit: `"sched: seqlocks"`
+**Protocol — counter states:**
+```
+seq = 0 (even)   → no write in progress, readers may proceed
+seq = 1 (odd)    → write in progress, readers spin in seqlock_read_begin
+seq = 2 (even)   → write complete, consistent state; readers check seq != begin
+seq = 3 (odd)    → another write in progress...
+```
+
+**Standard usage pattern:**
+```c
+seqlock_t sys_time_lock = SEQLOCK_INIT;
+uint64_t  g_uptime_ticks;
+
+/* Writer (PIT interrupt handler): */
+seqlock_write_lock(&sys_time_lock);
+g_uptime_ticks++;
+seqlock_write_unlock(&sys_time_lock);
+
+/* Reader (any thread/IRQ): */
+uint64_t seq, ticks;
+do {
+    seq   = seqlock_read_begin(&sys_time_lock);
+    ticks = g_uptime_ticks;
+} while (seqlock_read_retry(&sys_time_lock, seq));
+/* ticks is now consistent */
+```
+
+**Memory barriers in the implementation:**
+| Operation | Barrier | Purpose |
+|---|---|---|
+| `seqlock_write_lock` — seq++ | `__ATOMIC_RELEASE` | data writes can't escape before the odd-inc |
+| `seqlock_write_unlock` — seq++ | `__ATOMIC_RELEASE` | data writes visible before even-inc signals done |
+| `seqlock_read_begin` — load seq | `__ATOMIC_ACQUIRE` | data reads can't be hoisted before seq read |
+| `seqlock_read_retry` — `rmb()` | read barrier | all data reads complete before final seq sample |
+
+**Concurrency properties:**
+- Multiple simultaneous readers → zero contention (no lock, no atomic RMW)
+- Multiple simultaneous writers → serialized by internal spinlock
+- Writer never blocks readers (readers retry instead)
+- Reader never blocks writer (writer doesn't wait for readers)
+
+**IRQ safety:**
+- `seqlock_write_lock` uses `spin_lock_irqsave` → safe from any context
+- `seqlock_read_begin` / `seqlock_read_retry` take no lock → safe from IRQ context
+- Uptime counter can be updated from PIT IRQ and read from any thread
+
+**OS comparison:**
+| Feature | Windows | Linux | Impossible OS |
+|---|---|---|---|
+| Seqlock | ❌ (uses ERESOURCE) | ✅ `seqlock_t` / `seqcount_t` | ✅ `seqlock_t` / `DEFINE_SEQLOCK` |
+
+**Gotcha — no pointers in seqlock-protected data:**
+A reader may read a pointer while a writer is changing it. Between `seqlock_read_begin` and the `wmb()` at the end of `seqlock_write_unlock`, the reader can observe a half-updated pointer. This causes an illegal dereference crash even before `seqlock_read_retry` returns true. Only use seqlocks for scalar values (integers, timestamps, counters). For pointer-containing structures, use RCU (§13).
+
+**Gotcha — reader critical section must be short:**
+If the read-side takes too long (e.g., slow syscall), writers may increment the counter multiple times. Each retry costs a full re-read. For data updated at >10 KHz, a slow reader may spin indefinitely. Keep the read body minimal (just copy the data, process afterward).
+
+**Gotcha — SEQLOCK_INIT irq_flags:**
+`irq_flags` in `seqlock_t` is only valid between `seqlock_write_lock` and `seqlock_write_unlock`. If two writers nest (impossible since the spinlock prevents it), the irq_flags would be clobbered. The spinlock guarantee that only one writer is ever in the critical section makes this safe.
 
 ---
+
 
 ## 13. RCU — Read-Copy-Update
 
@@ -714,7 +779,7 @@ See Linux `rt_mutex_adjust_prio_chain()` for the reference implementation.
 | 🟠 P1     | 24. Kernel Watchdog        | Catches deadlocked/hung tasks that lockdep can’t detect        |
 | 🟠 P1     | 28. pthread_once           | Eliminates init races; replaces all ad-hoc bool init guards    |
 | 🟠 P1     | 29. pthread_barrier_t      | Frame-sync for compositor audio+render pipeline                |
-| 🟡 P2     | 12. Seqlocks               | Ultra-fast clock/uptime reads; no blocking needed              |
+| ✅ Done   | 12. Seqlocks               | `seqlock_t`, `SEQLOCK_INIT`, IRQ-safe writer, lock-free reader  |
 | 🟡 P2     | 13. RCU                    | Lock-free reads for VFS, routing table, module list            |
 | 🟡 P2     | 16. Lock Validator (debug) | Catches deadlocks before they happen; debug builds only        |
 | 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows        |
@@ -1201,7 +1266,7 @@ CPUID probing, and the fallback path.
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ✅ `workqueue_create/enqueue`, `sys_wq`       |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`     |
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ✅ `thread_boost/restore_priority`, default on all mutexes  |
-| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ⬜ §12 P2                                     |
+| Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ✅ `seqlock_t` / `DEFINE_SEQLOCK`, `seqlock_read_begin/retry`  |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ⬜ §13 P2                                     |
 | SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26          |
 | Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                     |
