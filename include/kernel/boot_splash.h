@@ -29,3 +29,7 @@ void boot_splash_finish(void);
 
 /* Returns 1 if the boot splash is currently active (screen owned by splash). */
 int boot_splash_active(void);
+
+/* Abort the splash immediately (no fade) and unlock framebuffer for printk.
+ * Used by debug boot mode to show text output on screen. */
+void boot_splash_abort(void);

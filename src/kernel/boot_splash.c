@@ -46,6 +46,7 @@ extern void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t co
 
 /* ---- State ---- */
 static volatile uint8_t  splash_on;
+static volatile uint8_t  debug_mode; /* 1 when splash aborted by DEBUG flag */
 static uint8_t  ttf_ready;         /* 1 once boot_font_init succeeds */
 static uint32_t scr_w, scr_h;
 static uint32_t icon_x, icon_y;    /* top-left of icon */
@@ -380,7 +381,15 @@ void boot_splash_start_animation(void)
 
 void boot_splash_status(const char *msg)
 {
-    if (!splash_on) return;
+    if (!splash_on) {
+        /* Debug mode: print status to screen via printk (only after
+         * explicit abort, not during early boot before splash init) */
+        if (debug_mode && msg && msg[0]) {
+            extern void printk(const char *fmt, ...);
+            printk("[BOOT] %s\n", msg);
+        }
+        return;
+    }
 
     splash_draw_text(msg, 0x00AAAAAA);
     uint32_t area_x = (scr_w > g_text_area_w) ? (scr_w - g_text_area_w) / 2 : 0;
@@ -429,4 +438,16 @@ void boot_splash_finish(void)
 int boot_splash_active(void)
 {
     return splash_on;
+}
+
+void boot_splash_abort(void)
+{
+    if (!splash_on) return;
+    pit_unregister_callback();
+    splash_on = 0;
+    debug_mode = 1;
+    /* Clear to black and unlock framebuffer for printk */
+    splash_fill_rect(0, 0, scr_w, scr_h, 0x000000);
+    fb_swap();
+    fb_unlock_compositor();
 }

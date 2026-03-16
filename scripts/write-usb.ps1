@@ -9,6 +9,10 @@
 # SAFETY: Only lists USB drives. Requires double confirmation.
 #         Will NOT touch internal drives (SATA/NVMe/etc).
 
+param(
+    [switch]$DebugBoot  # Create X:\DEBUG flag to show live boot output instead of splash
+)
+
 #Requires -RunAsAdministrator
 $ErrorActionPreference = "Stop"
 
@@ -218,14 +222,53 @@ if ($partition) {
     Write-Host "  It should still boot on UEFI machines." -ForegroundColor DarkGray
 }
 
+# ---- Debug boot flag ----
+if ($DebugBoot) {
+    Write-Host ""
+    Write-Host "Setting debug boot flag..." -ForegroundColor Yellow
+
+    $logVol = Get-Volume | Where-Object { $_.FileSystemLabel -eq "IXOS_LOG" } | Select-Object -First 1
+    if ($logVol -and $logVol.DriveLetter) {
+        $debugPath = "$($logVol.DriveLetter):\DEBUG"
+        "debug" | Out-File -FilePath $debugPath -Encoding ASCII -NoNewline
+        Write-Host "  [OK] Created $debugPath" -ForegroundColor Green
+        Write-Host "  Boot will show live text output instead of splash." -ForegroundColor DarkGray
+    } else {
+        # Try to find and assign a letter
+        $logPart = Get-Partition | Where-Object {
+            (Get-Volume -Partition $_ -ErrorAction SilentlyContinue).FileSystemLabel -eq "IXOS_LOG"
+        } | Select-Object -First 1
+
+        if ($logPart) {
+            $usedLetters = (Get-Volume).DriveLetter
+            $freeLetter = [char[]](90..68) | Where-Object { $_ -notin $usedLetters } | Select-Object -First 1
+            if ($freeLetter) {
+                $logPart | Set-Partition -NewDriveLetter $freeLetter -ErrorAction SilentlyContinue
+                Start-Sleep -Milliseconds 500
+                $debugPath = "${freeLetter}:\DEBUG"
+                "debug" | Out-File -FilePath $debugPath -Encoding ASCII -NoNewline
+                Write-Host "  [OK] Created $debugPath" -ForegroundColor Green
+                Write-Host "  Boot will show live text output instead of splash." -ForegroundColor DarkGray
+            } else {
+                Write-Host "  [WARN] No free drive letter for IXOS_LOG" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  [WARN] IXOS_LOG partition not found" -ForegroundColor Yellow
+        }
+    }
+}
+
 # ---- Done ----
 Write-Host ""
 Write-Host "Done! USB drive is ready to boot." -ForegroundColor Green
 Write-Host ""
 Write-Host "To boot:" -ForegroundColor Cyan
 Write-Host "  1. Insert USB into target machine" -ForegroundColor DarkGray
-Write-Host "  2. Enter BIOS/UEFI boot menu `(usually F12, F2, or Del`)" -ForegroundColor DarkGray
-Write-Host "  3. Select the USB drive `(UEFI mode`)" -ForegroundColor DarkGray
+Write-Host "  2. Enter BIOS/UEFI boot menu (usually F12, F2, or Del)" -ForegroundColor DarkGray
+Write-Host "  3. Select the USB drive (UEFI mode)" -ForegroundColor DarkGray
 Write-Host "  4. Impossible OS should boot." -ForegroundColor DarkGray
+if ($DebugBoot) {
+    Write-Host "  5. DEBUG MODE: splash disabled, live text on screen" -ForegroundColor Yellow
+}
 Write-Host ""
 pause

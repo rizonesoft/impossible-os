@@ -457,7 +457,23 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_status("Detecting drives...");
     partition_scan_all();
     partition_mount_filesystems();
-    klog_flush_to_disk();  /* Early flush — capture boot logs even if we hang later */
+
+    /* Check for debug boot flag: if X:\DEBUG exists, kill splash and
+     * show printk output on screen for the rest of boot. */
+    if (vfs_is_mounted('X')) {
+        struct vfs_node *x_root = vfs_get_drive_root('X');
+        if (x_root && x_root->ops && x_root->ops->finddir) {
+            struct vfs_node *dbg = x_root->ops->finddir(x_root, "DEBUG");
+            if (dbg) {
+                klog(LOG_INFO, "boot", "DEBUG flag found on X: -- disabling splash");
+                boot_splash_abort();
+                printk("\n=== DEBUG BOOT MODE ===\n");
+                printk("Splash disabled. Showing live boot output.\n\n");
+            }
+        }
+    }
+
+    klog_flush_to_disk();  /* Early flush -- capture boot logs even if we hang later */
     boot_splash_tick();
 
 
