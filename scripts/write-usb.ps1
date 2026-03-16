@@ -29,7 +29,7 @@ $imgSize = (Get-Item $DISK_IMG).Length
 $imgSizeMB = [math]::Round($imgSize / 1MB)
 Write-Host "Impossible OS USB Writer" -ForegroundColor Cyan
 Write-Host "========================" -ForegroundColor Cyan
-Write-Host "  Image: $DISK_IMG ($imgSizeMB MB)" -ForegroundColor DarkGray
+Write-Host "  Image: $DISK_IMG `(${imgSizeMB} MB`)" -ForegroundColor DarkGray
 Write-Host ""
 
 # ---- List USB drives ----
@@ -49,7 +49,7 @@ foreach ($disk in $usbDisks) {
     $sizeGB = [math]::Round($disk.Size / 1GB, 1)
     $status = if ($sizeMB -lt $imgSizeMB) { " [TOO SMALL]" } else { "" }
     Write-Host "  [$index] Disk $($disk.Number): $($disk.FriendlyName)" -ForegroundColor White
-    Write-Host "      Size: $sizeGB GB ($sizeMB MB)  Partitions: $($disk.NumberOfPartitions)$status" -ForegroundColor DarkGray
+    Write-Host "      Size: ${sizeGB} GB `(${sizeMB} MB`)  Partitions: $($disk.NumberOfPartitions)${status}" -ForegroundColor DarkGray
     $index++
 }
 Write-Host ""
@@ -82,7 +82,7 @@ if ($diskSizeMB -lt $imgSizeMB) {
 Write-Host ""
 Write-Host "WARNING: ALL DATA ON THIS DRIVE WILL BE DESTROYED!" -ForegroundColor Red
 Write-Host ""
-Write-Host "  Target: Disk $diskNumber — $diskName ($diskSizeMB MB)" -ForegroundColor Yellow
+Write-Host "  Target: Disk ${diskNumber} - ${diskName} `(${diskSizeMB} MB`)" -ForegroundColor Yellow
 Write-Host "  Image:  $imgSizeMB MB" -ForegroundColor DarkGray
 Write-Host ""
 $confirm1 = Read-Host "Type 'YES' to continue"
@@ -91,7 +91,7 @@ if ($confirm1 -ne "YES") {
     pause; exit 0
 }
 
-$confirm2 = Read-Host "Type the disk number ($diskNumber) to confirm"
+$confirm2 = Read-Host "Type the disk number `(${diskNumber}`) to confirm"
 if ($confirm2 -ne "$diskNumber") {
     Write-Host "Cancelled — disk number mismatch." -ForegroundColor Yellow
     pause; exit 0
@@ -107,7 +107,7 @@ Set-Disk -Number $diskNumber -IsOffline $false -ErrorAction SilentlyContinue
 Clear-Disk -Number $diskNumber -RemoveData -RemoveOEM -Confirm:$false -ErrorAction SilentlyContinue
 
 # Step 2: Write raw image to the physical disk
-Write-Host "  [2/4] Writing $imgSizeMB MB image (this may take a minute)..." -ForegroundColor DarkGray
+Write-Host "  [2/4] Writing ${imgSizeMB} MB image `(this may take a minute`)..." -ForegroundColor DarkGray
 
 $physPath = "\\.\PhysicalDrive$diskNumber"
 try {
@@ -139,7 +139,7 @@ try {
     $sw.Stop()
     $totalSec = [math]::Round($sw.Elapsed.TotalSeconds, 1)
     $avgSpeed = [math]::Round($imgSizeMB / $sw.Elapsed.TotalSeconds, 1)
-    Write-Host "  [3/4] Write complete ($totalSec s, $avgSpeed MB/s)" -ForegroundColor Green
+    Write-Host "  [3/4] Write complete - ${totalSec}s, ${avgSpeed} MB/s" -ForegroundColor Green
 
 } catch {
     Write-Host ""
@@ -188,14 +188,14 @@ if ($partition) {
 
         if (Test-Path $efiPath) {
             $efiKB = [math]::Round((Get-Item $efiPath).Length / 1KB)
-            Write-Host "  [OK] BOOTX64.EFI ($efiKB KB)" -ForegroundColor Green
+            Write-Host "  [OK] BOOTX64.EFI `(${efiKB} KB`)" -ForegroundColor Green
         } else {
             Write-Host "  [FAIL] BOOTX64.EFI not found!" -ForegroundColor Red
         }
 
         if (Test-Path $kernelPath) {
             $kKB = [math]::Round((Get-Item $kernelPath).Length / 1KB)
-            Write-Host "  [OK] kernel.exe ($kKB KB)" -ForegroundColor Green
+            Write-Host "  [OK] kernel.exe `(${kKB} KB`)" -ForegroundColor Green
         } else {
             Write-Host "  [WARN] kernel.exe not found" -ForegroundColor Yellow
         }
@@ -218,8 +218,8 @@ Write-Host "Done! USB drive is ready to boot." -ForegroundColor Green
 Write-Host ""
 Write-Host "To boot:" -ForegroundColor Cyan
 Write-Host "  1. Insert USB into target machine" -ForegroundColor DarkGray
-Write-Host "  2. Enter BIOS/UEFI boot menu (usually F12, F2, or Del)" -ForegroundColor DarkGray
-Write-Host "  3. Select the USB drive (UEFI mode)" -ForegroundColor DarkGray
+Write-Host "  2. Enter BIOS/UEFI boot menu `(usually F12, F2, or Del`)" -ForegroundColor DarkGray
+Write-Host "  3. Select the USB drive `(UEFI mode`)" -ForegroundColor DarkGray
 Write-Host "  4. Impossible OS should boot!" -ForegroundColor DarkGray
 Write-Host ""
 pause
