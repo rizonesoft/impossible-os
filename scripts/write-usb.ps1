@@ -33,9 +33,10 @@ Write-Host "  Image: $DISK_IMG `(${imgSizeMB} MB`)" -ForegroundColor DarkGray
 Write-Host ""
 
 # ---- List USB drives ----
-$usbDisks = Get-Disk | Where-Object { $_.BusType -eq "USB" }
+@($usbDisks = Get-Disk | Where-Object { $_.BusType -eq "USB" })
+$usbDisks = @($usbDisks)  # Force array even for single result
 
-if (-not $usbDisks -or $usbDisks.Count -eq 0) {
+if ($usbDisks.Count -eq 0) {
     Write-Host "No USB drives found." -ForegroundColor Red
     Write-Host "Insert a USB flash drive and try again." -ForegroundColor Yellow
     pause; exit 1
@@ -43,32 +44,27 @@ if (-not $usbDisks -or $usbDisks.Count -eq 0) {
 
 Write-Host "Available USB drives:" -ForegroundColor Green
 Write-Host ""
-$index = 1
-foreach ($disk in $usbDisks) {
+for ($i = 0; $i -lt $usbDisks.Count; $i++) {
+    $disk = $usbDisks[$i]
     $sizeMB = [math]::Round($disk.Size / 1MB)
     $sizeGB = [math]::Round($disk.Size / 1GB, 1)
     $status = if ($sizeMB -lt $imgSizeMB) { " [TOO SMALL]" } else { "" }
-    Write-Host "  [$index] Disk $($disk.Number): $($disk.FriendlyName)" -ForegroundColor White
+    $num = $i + 1
+    Write-Host "  [${num}] Disk $($disk.Number): $($disk.FriendlyName)" -ForegroundColor White
     Write-Host "      Size: ${sizeGB} GB `(${sizeMB} MB`)  Partitions: $($disk.NumberOfPartitions)${status}" -ForegroundColor DarkGray
-    $index++
 }
 Write-Host ""
 
 # ---- Select drive ----
-if ($usbDisks.Count -eq 1) {
-    $selection = 1
-    Write-Host "Only one USB drive found — auto-selected [$selection]" -ForegroundColor Yellow
-} else {
-    $selection = Read-Host "Enter drive number [1-$($usbDisks.Count)]"
-    $selection = [int]$selection
-}
+$selection = Read-Host "Select drive [1-$($usbDisks.Count)]"
+$selection = [int]$selection
 
 if ($selection -lt 1 -or $selection -gt $usbDisks.Count) {
     Write-Host "Invalid selection." -ForegroundColor Red
     pause; exit 1
 }
 
-$targetDisk = if ($usbDisks.Count -eq 1) { $usbDisks } else { $usbDisks[$selection - 1] }
+$targetDisk = $usbDisks[$selection - 1]
 $diskNumber = $targetDisk.Number
 $diskName   = $targetDisk.FriendlyName
 $diskSizeMB = [math]::Round($targetDisk.Size / 1MB)
