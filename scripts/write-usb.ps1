@@ -1,9 +1,9 @@
-# write-usb.ps1 — Write Impossible OS to a USB flash drive
+# write-usb.ps1 -- Write Impossible OS to a USB flash drive
 #
 # Creates a bootable USB drive from the system-disk.img raw image.
 # The image is a GPT disk with an EFI System Partition + IXFS partition.
 #
-# Usage: Right-click write-usb.bat → "Run as administrator"
+# Usage: Right-click write-usb.bat -> "Run as administrator"
 #        Or from admin PowerShell: .\scripts\write-usb.ps1
 #
 # SAFETY: Only lists USB drives. Requires double confirmation.
@@ -89,7 +89,7 @@ if ($confirm1 -ne "YES") {
 
 $confirm2 = Read-Host "Type the disk number `(${diskNumber}`) to confirm"
 if ($confirm2 -ne "$diskNumber") {
-    Write-Host "Cancelled — disk number mismatch." -ForegroundColor Yellow
+    Write-Host "Cancelled -- disk number mismatch." -ForegroundColor Yellow
     pause; exit 0
 }
 
