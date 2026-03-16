@@ -457,6 +457,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_status("Detecting drives...");
     partition_scan_all();
     partition_mount_filesystems();
+    klog_flush_to_disk();  /* Early flush — capture boot logs even if we hang later */
     boot_splash_tick();
 
 
@@ -575,6 +576,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     boot_splash_status("Loading registry...");
     boot_splash_tick();
+    klog_flush_to_disk();  /* Flush before registry — it may hang on real HW */
 
     /* Initialize the Windows-compatible Registry */
     registry_init();
