@@ -216,6 +216,6 @@ Write-Host "To boot:" -ForegroundColor Cyan
 Write-Host "  1. Insert USB into target machine" -ForegroundColor DarkGray
 Write-Host "  2. Enter BIOS/UEFI boot menu `(usually F12, F2, or Del`)" -ForegroundColor DarkGray
 Write-Host "  3. Select the USB drive `(UEFI mode`)" -ForegroundColor DarkGray
-Write-Host "  4. Impossible OS should boot!" -ForegroundColor DarkGray
+Write-Host "  4. Impossible OS should boot." -ForegroundColor DarkGray
 Write-Host ""
 pause
