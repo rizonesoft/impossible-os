@@ -9,6 +9,7 @@
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/mm/pmm.h"
 
 /* Track how many ring entries we've already flushed */
 static uint32_t flush_index;
@@ -190,7 +191,10 @@ void klog_flush_to_disk(void)
     }
 
 flush_fat32:
-    /* ---- Flush to FAT32 X: drive (Logs partition, readable by Windows) ---- */
+    /* ---- Flush to FAT32 X: drive (Logs partition, readable by Windows) ----
+     * IMPORTANT: FAT32 vfs_write() is a full-file overwrite (ignores offset).
+     * We must buffer ALL log entries into one contiguous buffer, then write
+     * the entire file in a single call. */
     if (!vfs_is_mounted('X'))
         return;
 
@@ -210,16 +214,18 @@ flush_fat32:
     if (!ring || ring_count == 0)
         return;
 
-    logfile = vfs_open("X:\\serial.log", VFS_O_WRITE);
-    if (!logfile)
-        return;
-
-    write_offset = (uint32_t)logfile->size;
-
-    /* Write ALL entries (not just new — X: gets a full dump each time) */
+    /* Allocate a buffer for the entire log (PMM, not kmalloc — could be large).
+     * 1000 entries * ~128 bytes avg = ~128 KB. Allocate 256 KB to be safe. */
     {
-        static uint32_t x_flush_index;
-        for (i = x_flush_index; i < ring_count; i++) {
+        uint32_t buf_pages = 64;  /* 64 * 4KB = 256KB */
+        uint8_t *buf = (uint8_t *)pmm_alloc_contiguous(buf_pages);
+        uint32_t buf_size = buf_pages * 4096;
+        uint32_t total = 0;
+
+        if (!buf)
+            return;
+
+        for (i = 0; i < ring_count && total < buf_size - 256; i++) {
             uint32_t idx;
             if (ring_count < KLOG_RING_SIZE) {
                 idx = i;
@@ -261,13 +267,27 @@ flush_fat32:
             }
             line[pos++] = '\n';
 
-            vfs_write(logfile, write_offset, (uint32_t)pos,
-                      (const uint8_t *)line);
-            write_offset += (uint32_t)pos;
+            /* Append to buffer */
+            {
+                int k;
+                for (k = 0; k < pos; k++)
+                    buf[total++] = (uint8_t)line[k];
+            }
         }
-        x_flush_index = ring_count;
-    }
 
-    vfs_close(logfile);
+        /* Single write of entire log to X:\serial.log */
+        logfile = vfs_open("X:\\serial.log", VFS_O_WRITE);
+        if (logfile) {
+            vfs_write(logfile, 0, total, buf);
+            vfs_close(logfile);
+        }
+
+        /* Free buffer (page by page — no bulk free API) */
+        {
+            uint32_t pg;
+            for (pg = 0; pg < buf_pages; pg++)
+                pmm_free_frame((uintptr_t)buf + pg * 4096);
+        }
+    }
 }
 
