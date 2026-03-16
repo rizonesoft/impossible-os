@@ -134,3 +134,12 @@ void tss_set_kernel_stack(uint64_t stack_top)
 {
     kernel_tss.rsp0 = stack_top;
 }
+
+void gdt_get_gdtr(void *out_gdtr)
+{
+    uint8_t *dst = (uint8_t *)out_gdtr;
+    const uint8_t *src = (const uint8_t *)&gdtr;
+    uint32_t i;
+    for (i = 0; i < 10; i++)
+        dst[i] = src[i];
+}

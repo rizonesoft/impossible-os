@@ -252,6 +252,11 @@ static void parse_madt(const struct acpi_madt *madt)
             const struct madt_lapic *lapic =
                 (const struct madt_lapic *)entry;
 
+            klog(LOG_DEBUG, "acpi",
+                 "  MADT[%u]: LAPIC acpi_id=%u apic_id=%u flags=%x",
+                 (uint64_t)offset, (uint64_t)lapic->acpi_processor_id,
+                 (uint64_t)lapic->apic_id, (uint64_t)lapic->flags);
+
             /* Only count enabled or online-capable CPUs */
             if ((lapic->flags & 0x01) || (lapic->flags & 0x02)) {
                 if (cpu_count < MAX_CPUS) {
@@ -259,6 +264,33 @@ static void parse_madt(const struct acpi_madt *madt)
                     cpus[cpu_count].acpi_id  = lapic->acpi_processor_id;
                     cpus[cpu_count].is_bsp   = (lapic->apic_id == bsp_lapic_id) ? 1 : 0;
                     cpus[cpu_count].enabled   = (lapic->flags & 0x01) ? 1 : 0;
+                    cpu_count++;
+                }
+            }
+            break;
+        }
+
+        case 9: /* MADT_TYPE_X2APIC */ {
+            /* x2APIC entry: 16 bytes total
+             * offset 4: acpi_uid (uint32_t)
+             * offset 8: flags (uint32_t)
+             * offset 12: x2apic_id (uint32_t) */
+            const uint8_t *e = data + offset;
+            uint32_t x2_uid   = *(const uint32_t *)(e + 4);
+            uint32_t x2_flags = *(const uint32_t *)(e + 8);
+            uint32_t x2_id    = *(const uint32_t *)(e + 12);
+
+            klog(LOG_DEBUG, "acpi",
+                 "  MADT[%u]: x2APIC uid=%u id=%u flags=%x",
+                 (uint64_t)offset, (uint64_t)x2_uid,
+                 (uint64_t)x2_id, (uint64_t)x2_flags);
+
+            if ((x2_flags & 0x01) || (x2_flags & 0x02)) {
+                if (cpu_count < MAX_CPUS) {
+                    cpus[cpu_count].apic_id  = (uint8_t)(x2_id & 0xFF);
+                    cpus[cpu_count].acpi_id  = (uint8_t)(x2_uid & 0xFF);
+                    cpus[cpu_count].is_bsp   = (x2_id == bsp_lapic_id) ? 1 : 0;
+                    cpus[cpu_count].enabled   = (x2_flags & 0x01) ? 1 : 0;
                     cpu_count++;
                 }
             }
@@ -283,6 +315,10 @@ static void parse_madt(const struct acpi_madt *madt)
             if (override_count < 24) {
                 int_overrides[override_count] = *ovr;
                 override_count++;
+                klog(LOG_DEBUG, "acpi",
+                     "  MADT override: IRQ %u -> GSI %u (flags=0x%x)",
+                     (uint64_t)ovr->source, (uint64_t)ovr->gsi,
+                     (uint64_t)ovr->flags);
             }
             break;
         }
@@ -296,6 +332,10 @@ static void parse_madt(const struct acpi_madt *madt)
         }
 
         default:
+            klog(LOG_DEBUG, "acpi",
+                 "  MADT[%u]: type=%u len=%u (skipped)",
+                 (uint64_t)offset, (uint64_t)entry->type,
+                 (uint64_t)entry->length);
             break; /* skip unknown entry types */
         }
 

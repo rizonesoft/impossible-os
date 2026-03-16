@@ -185,3 +185,12 @@ void idt_init(void)
 
     klog(LOG_INFO, "cpu", "IDT loaded (256 entries, ISR 0-31, IRQ 32-47)");
 }
+
+void idt_get_idtr(void *out_idtr)
+{
+    uint8_t *dst = (uint8_t *)out_idtr;
+    const uint8_t *src = (const uint8_t *)&idtr;
+    uint32_t i;
+    for (i = 0; i < 10; i++)
+        dst[i] = src[i];
+}

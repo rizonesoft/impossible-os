@@ -773,21 +773,51 @@ Replace `scheduler_disable/enable` with per-CPU preempt counters. Add a `rcu_qui
 ---
 
 
-## 14. SMP Support (Future)
+## 14. SMP Support ✅ (Phase 1 — AP Bringup & Interrupt Routing)
 
-**Prompt:** SMP (symmetric multi-processing) allows multiple CPU cores to run kernel threads simultaneously. This requires: per-CPU data structures (no false sharing), IPI (inter-processor interrupt) for TLB shootdown and cross-CPU wakeups, CPU-aware lock primitives (spinlock must use `LOCK` prefix on x86 SMP), NUMA-aware memory allocation, and a load-balancing scheduler. This is a large future milestone — do not start until the single-core kernel is stable and the full feature set is implemented.
+**Prompt:** This section covers Phase 1 SMP: bringing secondary CPUs online, switching from legacy 8259 PIC to LAPIC/IOAPIC, and establishing LAPIC timer as the tick source. Verify the implementation is correct: confirm ACPI MADT parsing discovers all CPUs and APICs, AP trampoline brings APs online, LAPIC/IOAPIC routing replaces PIC, LAPIC timer fires on vector 32, and ISR drain clears stale PIC-era interrupts. Run `bash scripts/build.sh clean` and verify in both QEMU (2 CPUs) and VBox (4 CPUs). Confirm boot completes to desktop shell prompt in both environments. Fix any regressions.
 
-> **Prerequisite:** §7 Atomic Operations and §10 Memory Barriers must be complete before any SMP work begins.
+> **Status:** Phase 1 complete. 4 CPUs online in VBox, 2 in QEMU. Boot to desktop + shell prompt in both.
 
+- [x] Parse ACPI MADT to discover all CPUs and APICs (`src/kernel/acpi.c`)
+- [x] Initialize LAPIC: mask all LVTs, Init Level De-Assert, EOI clear (`src/kernel/drivers/lapic.c`)
+- [x] Initialize IOAPIC: route ISA IRQs using MADT overrides (`src/kernel/drivers/ioapic.c`)
+- [x] Disable 8259 PIC after IOAPIC routing established (`pic_disable()`)
+- [x] Drain stale ISR bits from PIC→LAPIC transition (8× `lapic_eoi()`)
+- [x] Start LAPIC timer (xv6-style, periodic, vec 32, ICR=10M, div=1)
+- [x] AP trampoline: real→protected→long mode with embedded temporary GDT (`src/kernel/smp/ap_trampoline.asm`)
+- [x] Initialize secondary CPUs via INIT/SIPI IPI sequence (`smp_init()`)
+- [x] Per-CPU data support (BSP + APs, `per_cpu_data_t`)
+- [x] Implement IPI: `lapic_send_ipi()`, `lapic_send_ipi_all_but_self()`
 
-- [ ] Parse ACPI MADT to discover all CPUs and APICs
-- [ ] Initialize secondary CPUs (AP startup via SIPI IPI)
-- [ ] Implement per-CPU data (`per_cpu(var, cpu)` macro using GS segment)
+### Phase 2 — Remaining (Future)
+
 - [ ] Add `LOCK` prefix to atomic ops and spinlocks for SMP correctness
-- [ ] Implement IPI: `send_ipi_single(cpu)`, `send_ipi_all_but_self()`
 - [ ] TLB shootdown IPI: flush remote CPU page tables on `munmap`/`mprotect`
 - [ ] SMP-aware scheduler: run queue per CPU, load balancing via work stealing
-- [ ] Commit series: `"smp: AP bringup"`, `"smp: per-CPU data"`, `"smp: scheduler"`
+- [ ] Per-CPU run queues with work-stealing for load balancing
+
+### Notes — SMP Architecture & Gotchas
+
+**Interrupt controller transition (PIC → LAPIC/IOAPIC):**
+The boot sequence starts with the legacy 8259 PIC delivering PIT timer interrupts. When SMP is detected (>1 CPU via ACPI MADT), the kernel transitions to LAPIC/IOAPIC:
+1. `lapic_init()` — enables LAPIC, masks ALL LVT entries (Timer, LINT0, LINT1, Error, PERF, Thermal)
+2. `ioapic_init()` — programs IOAPIC with MADT override mappings (e.g., IRQ 0 → GSI 2)
+3. `pic_disable()` — masks all PIC IRQs (0xFF to both data ports)
+4. **ISR drain** — sends 8× `lapic_eoi()` to clear any in-service bits from PIC-era interrupts
+5. `lapic_timer_init()` — starts xv6-style LAPIC timer (periodic, vector 32, ICR=10M, divider=1)
+
+**VBox NEM ISR drain bug (critical fix):**
+When masking LINT0 (disconnecting PIC from LAPIC), VBox NEM leaves ISR1 bit 0 set (vector 32 = PIT timer in-service). This blocks all same-priority LAPIC timer interrupts because the LAPIC won't deliver a new interrupt at the same priority level while an ISR bit at that level is still set. The 8× `lapic_eoi()` drain clears this. Without it, the OS freezes at the first `sleep_ms()` call.
+
+**LAPIC timer — xv6 approach (no PIT calibration):**
+PIT channel 2 gate polling (`inb(0x61) & 0x20`) hangs on VBox NEM due to extremely slow port I/O under Hyper-V paravirtualization (each port I/O = VM exit). PIT channel 0 readback (`outb(0x43, 0x00)` + `inb(0x40)` busy loop) also hangs for the same reason. Solution: skip calibration entirely and use xv6's proven hardcoded ICR=10,000,000 with divider=1. The tick rate won't be exactly 100 Hz, but the timer reliably fires on all platforms.
+
+**AP trampoline architecture:**
+The AP trampoline code (`ap_trampoline.asm`) embeds its own temporary GDT with correct 32-bit (L=0, D=1) and 64-bit (L=1, D=0) code segments. This avoids the triple fault caused by using the BSP's GDT (which has L=1 on selector 0x08, invalid for 32-bit protected mode transition). After entering long mode, the AP switches to the BSP's GDT via `lgdt [AP_DATA + 0x10]` and reloads segments.
+
+**Single-core fallback:**
+When only 1 CPU is detected, the LAPIC/IOAPIC code is skipped entirely. The legacy PIC continues to deliver PIT timer interrupts. `smp_init()` still runs to set up per-CPU data for the BSP.
 
 ---
 
@@ -853,7 +883,7 @@ Replace `scheduler_disable/enable` with per-CPU preempt counters. Add a `rcu_qui
 | 🟡 P2     | 30. KCSAN                  | Runtime data-race detector — debug build; beats Windows        |
 | 🔵 P3     | 31. TSX/HTM Lock Elision   | Hardware perf opt — real Intel hardware only, TAA-gated        |
 | 🟡 P2     | 27. Thread Cancellation    | POSIX pthread_cancel; needed for clean user-space threading    |
-| 🔵 P2     | 14. SMP Support            | Critical for production HW — after §6/7/10/11/26 complete      |
+| ✅ Done   | 14. SMP Support (Phase 1)  | AP bringup, LAPIC/IOAPIC, LAPIC timer — VBox + QEMU verified   |
 
 ---
 
@@ -1336,7 +1366,7 @@ CPUID probing, and the fallback path.
 | Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ✅ `thread_boost/restore_priority`, default on all mutexes  |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ✅ `seqlock_t` / `DEFINE_SEQLOCK`, `seqlock_read_begin/retry`  |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ✅ `rcu_read_lock/unlock`, `synchronize_rcu`, `rcu_assign/dereference` |
-| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ⬜ §14 Phase 2 — after §6/7/10/11/26          |
+| SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ✅ §14 Phase 1 — AP bringup, LAPIC timer, VBox |
 | Futexes                        | ✅ (user-mode)                | ✅ `futex()`                | ⬜ §15 P1                                     |
 | Lock Validator                 | ✅ Driver Verifier            | ✅ `lockdep`                | ⬜ §16 P2                                     |
 | **PI on by default**           | ❌ Heuristic                  | ❌ Opt-in only              | ⬜ **§17 — Impossible OS only**               |

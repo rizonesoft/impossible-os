@@ -99,7 +99,8 @@ if ($vmExists) {
 # VMSVGA is required for UEFI guests (VBoxVGA has no EFI GOP support)
 & $VBOX modifyvm $VM_NAME `
     --memory 2048 `
-    --cpus 1 `
+    --cpus 4 `
+    --ioapic on `
     --firmware efi `
     --graphicscontroller vmsvga `
     --vram 128 `

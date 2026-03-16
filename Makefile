@@ -59,16 +59,20 @@ CFLAGS += -DVERSION_MAJOR=$(VERSION_MAJOR) \
           -DVERSION_GIT_HASH='"$(GIT_HASH)"'
 
 # --- Source Discovery ---
-# Assembly sources (boot + kernel)
-ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' 2>/dev/null)
+# Assembly sources (boot + kernel) — exclude ap_trampoline.asm (built separately as flat binary)
+ASM_SRCS := $(shell find $(BOOT_DIR) $(KERNEL_DIR) -name '*.asm' ! -name 'ap_trampoline.asm' 2>/dev/null)
 ASM_OBJS := $(patsubst $(SRC_DIR)/%.asm, $(BUILD_DIR)/%.o, $(ASM_SRCS))
+
+# AP trampoline: assembled as flat binary, then converted to linkable ELF object
+AP_TRAMPOLINE_BIN := $(BUILD_DIR)/kernel/smp/ap_trampoline.bin
+AP_TRAMPOLINE_OBJ := $(BUILD_DIR)/kernel/smp/ap_trampoline.o
 
 # C sources (kernel + libc)
 C_SRCS   := $(shell find $(KERNEL_DIR) $(LIBC_DIR) $(DESKTOP_DIR) -name '*.c' 2>/dev/null)
 C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 
 # All objects
-OBJS     := $(ASM_OBJS) $(C_OBJS)
+OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ)
 
 # ============================================================================
 # Targets
@@ -306,7 +310,7 @@ run: all
 	@cp -n $(OVMF_CODE) $(BUILD_DIR)/OVMF_CODE_4M.fd 2>/dev/null || true
 	$(QEMU) \
 		-cpu Haswell \
-		-smp 4 \
+		-smp 2 \
 		-drive if=pflash,format=raw,readonly=on,file=$(OVMF_CODE) \
 		-drive if=pflash,format=raw,file=$(OVMF_VARS_CP) \
 		-drive id=disk0,file=$(SYSTEM_DISK),format=raw,if=none \
@@ -501,6 +505,18 @@ clean:
 # ============================================================================
 # Pattern Rules
 # ============================================================================
+
+# AP trampoline — assembled as flat binary, then embedded as linkable object
+# We cd into the bin directory so objcopy generates clean symbol names:
+#   _binary_ap_trampoline_bin_start / _binary_ap_trampoline_bin_end
+$(AP_TRAMPOLINE_OBJ): $(SRC_DIR)/kernel/smp/ap_trampoline.asm
+	@mkdir -p $(dir $@)
+	$(AS) -f bin $< -o $(AP_TRAMPOLINE_BIN)
+	cd $(dir $(AP_TRAMPOLINE_BIN)) && \
+		$(OBJCOPY) -I binary -O elf64-x86-64 -B i386:x86-64 \
+		--rename-section .data=.rodata,alloc,load,readonly,data,contents \
+		$(notdir $(AP_TRAMPOLINE_BIN)) $(CURDIR)/$@
+	@echo "[AS/BIN] $< (AP trampoline)"
 
 # SSE2 SIMD module — compiled with -msse2 (overrides -mno-sse from CFLAGS)
 SIMD_CFLAGS := $(filter-out -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) -msse2

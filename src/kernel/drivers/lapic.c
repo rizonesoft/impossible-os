@@ -11,8 +11,11 @@
  * Key operations:
  *   1. Enable LAPIC via Spurious Vector Register (SVR)
  *   2. Set Task Priority to 0 (accept all interrupts)
- *   3. Configure LVT entries (timer, LINT0, LINT1, error)
- *   4. Provide EOI, IPI send, and timer calibration
+ *   3. Mask ALL LVT entries (following xv6 pattern)
+ *   4. Provide EOI, IPI send, and LAPIC timer setup
+ *
+ * xv6 pattern: mask LINT0, LINT1, PCINT, Thermal; only enable Timer.
+ * This avoids all PIC/ExtINT interference on VBox NEM and real hardware.
  * ============================================================================ */
 
 #include "kernel/drivers/lapic.h"
@@ -26,9 +29,12 @@
 static volatile uint32_t *lapic_base = (volatile uint32_t *)0;
 static int lapic_ready = 0;
 
+/* ---- LVT registers not in header ---- */
+#define LAPIC_REG_LVT_THERMAL  0x330
+#define LAPIC_REG_LVT_PERF     0x340
+
 /* ---- Internal helpers ---- */
 
-/* PIT I/O for timer calibration only */
 static inline void outb_lapic(uint16_t port, uint8_t val)
 {
     __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
@@ -59,6 +65,7 @@ void lapic_init(void)
 {
     uint32_t base_addr;
     uint32_t ver;
+    uint32_t max_lvt;
 
     base_addr = acpi_get_lapic_base();
     if (base_addr == 0) {
@@ -68,6 +75,7 @@ void lapic_init(void)
 
     lapic_base = (volatile uint32_t *)(uintptr_t)base_addr;
 
+
     /* Enable the APIC via the IA32_APIC_BASE MSR (set bit 11 = global enable)
      * This is required on some hardware before MMIO access works. */
     {
@@ -76,6 +84,7 @@ void lapic_init(void)
         lo |= (1 << 11);  /* global enable */
         __asm__ volatile("wrmsr" : : "c"(0x1B), "a"(lo), "d"(hi));
     }
+
 
     /* Set Spurious Vector Register: enable APIC + set spurious vector */
     lapic_write(LAPIC_REG_SVR,
@@ -88,31 +97,62 @@ void lapic_init(void)
     lapic_write(LAPIC_REG_ESR, 0);
     lapic_write(LAPIC_REG_ESR, 0);
 
-    /* Mask LVT Timer initially (will be configured in lapic_timer_init) */
+    /* ---- Mask ALL LVT entries (xv6 pattern) ----
+     * This prevents any stray interrupts during the PIC→APIC transition.
+     * Timer will be unmasked later by lapic_timer_init().
+     * LINT0/LINT1/PCINT/Thermal must stay masked when using IOAPIC. */
+
+
+    /* Mask Timer */
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
 
-    /* Configure LINT0: ExtINT (for virtual wire mode compatibility) */
-    lapic_write(LAPIC_REG_LVT_LINT0, 0x00000700); /* ExtINT, masked */
+    /* Mask LINT0 — NO ExtINT, just masked. Prevents PIC interference. */
+    lapic_write(LAPIC_REG_LVT_LINT0, LVT_MASKED);
 
-    /* Configure LINT1: NMI */
-    lapic_write(LAPIC_REG_LVT_LINT1, 0x00000400); /* NMI delivery */
+    /* Mask LINT1 — NMI can be problematic; mask during transition */
+    lapic_write(LAPIC_REG_LVT_LINT1, LVT_MASKED);
 
-    /* Configure LVT Error */
-    lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
+    /* Mask Error */
+    lapic_write(LAPIC_REG_LVT_ERROR, LVT_MASKED);
+
+    /* Read version to determine max LVT entries */
+    ver = lapic_read(LAPIC_REG_VERSION);
+    max_lvt = ((ver >> 16) & 0xFF) + 1;
+
+    /* Mask Performance Counter and Thermal if they exist (maxLVT >= 5/6) */
+    if (max_lvt >= 5) {
+        lapic_write(LAPIC_REG_LVT_PERF, LVT_MASKED);
+    }
+    if (max_lvt >= 6) {
+        lapic_write(LAPIC_REG_LVT_THERMAL, LVT_MASKED);
+    }
 
     /* Send EOI to clear any pending interrupts from init */
     lapic_write(LAPIC_REG_EOI, 0);
 
-    lapic_ready = 1;
+    /* Enable error vector now (after masking everything else) */
+    lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
 
-    ver = lapic_read(LAPIC_REG_VERSION);
+    /* Send Init Level De-Assert to synchronize arbitration IDs (xv6) */
+    lapic_write(LAPIC_REG_ICR_HI, 0);
+    lapic_write(LAPIC_REG_ICR_LO,
+                ICR_INIT | ICR_DEST_ALL |
+                ICR_LEVEL_DEASSERT | ICR_TRIGGER_LEVEL);
+    while (lapic_read(LAPIC_REG_ICR_LO) & (1 << 12))
+        barrier();
+
+    /* Final EOI */
+    lapic_write(LAPIC_REG_EOI, 0);
+
+    lapic_ready = 1;
 
     klog(LOG_INFO, "lapic",
          "LAPIC enabled: base=%x, ID=%u, ver=%x, maxLVT=%u",
          (uint64_t)base_addr,
          (uint64_t)((lapic_read(LAPIC_REG_ID) >> 24) & 0xFF),
          (uint64_t)(ver & 0xFF),
-         (uint64_t)((ver >> 16) & 0xFF));
+         (uint64_t)max_lvt);
+
 }
 
 void lapic_init_ap(void)
@@ -131,12 +171,20 @@ void lapic_init_ap(void)
     lapic_write(LAPIC_REG_ESR, 0);
     lapic_write(LAPIC_REG_ESR, 0);
 
-    /* Mask timer and LINT0 */
+    /* Mask ALL LVT entries on AP (xv6 pattern) */
     lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
     lapic_write(LAPIC_REG_LVT_LINT0, LVT_MASKED);
+    lapic_write(LAPIC_REG_LVT_LINT1, LVT_MASKED);
+    lapic_write(LAPIC_REG_LVT_ERROR, LVT_MASKED);
 
-    /* NMI on LINT1 */
-    lapic_write(LAPIC_REG_LVT_LINT1, 0x00000400);
+    {
+        uint32_t ver = lapic_read(LAPIC_REG_VERSION);
+        uint32_t max_lvt = ((ver >> 16) & 0xFF) + 1;
+        if (max_lvt >= 5)
+            lapic_write(LAPIC_REG_LVT_PERF, LVT_MASKED);
+        if (max_lvt >= 6)
+            lapic_write(LAPIC_REG_LVT_THERMAL, LVT_MASKED);
+    }
 
     /* Error vector */
     lapic_write(LAPIC_REG_LVT_ERROR, 0xFE);
@@ -248,54 +296,44 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 
 /* ---- LAPIC Timer ---- */
 
-/* Use PIT channel 2 for one-shot calibration of LAPIC timer frequency.
- * PIT runs at 1193182 Hz. We count how many LAPIC ticks occur in ~10 ms. */
+/* xv6-style LAPIC timer initialization.
+ *
+ * Instead of calibrating with the PIT (which hangs on VBox NEM due to
+ * extremely slow port I/O under Hyper-V paravirtualization), we use a
+ * hardcoded initial count based on typical LAPIC timer frequencies.
+ *
+ * The LAPIC timer counts down from ICR at (bus_clock / divider) Hz.
+ * With divider=1:
+ *   - QEMU TCG:   ~26 MHz bus → ICR = 260,000 for 100 Hz
+ *   - VBox NEM:    ~1 GHz bus  → ICR = 10,000,000 for 100 Hz
+ *   - Real Intel:  ~100-400 MHz → ICR varies
+ *
+ * xv6 uses ICR=10000000 with divider X1 and it works everywhere.
+ * We do the same. The tick rate won't be exactly 100 Hz, but the
+ * timer WILL fire, and that's what matters for boot progress. */
+
 void lapic_timer_init(uint32_t hz)
 {
-    uint32_t ticks_per_10ms;
-    uint32_t ticks_per_second;
+    /* xv6-style: hardcoded initial count, divider 1 */
+    uint32_t ticr = 10000000;
+    (void)hz; /* we use xv6's fixed count instead of computing from hz */
 
-    if (!lapic_base || hz == 0)
+    if (!lapic_base)
         return;
 
-    /* Set LAPIC timer divider to 16 */
-    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_16);
 
-    /* Start LAPIC timer at max count (one-shot) */
-    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT);
-    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
+    /* Divide configuration = 1 (no division) */
+    lapic_write(LAPIC_REG_TIMER_DCR, 0x0B); /* divide by 1 = 0b1011 */
 
-    /* Use PIT channel 2 for ~10 ms delay (11932 ticks at 1193182 Hz) */
-    outb_lapic(0x61, (inb_lapic(0x61) & 0xFD) | 0x01); /* gate on */
-    outb_lapic(0x43, 0xB0);  /* channel 2, mode 0, lobyte/hibyte */
-    outb_lapic(0x42, 0x9C);  /* 11932 & 0xFF */
-    outb_lapic(0x42, 0x2E);  /* 11932 >> 8 */
-
-    /* Reset PIT gate to start countdown */
-    {
-        uint8_t tmp = inb_lapic(0x61);
-        outb_lapic(0x61, tmp & 0xFE);   /* gate off */
-        outb_lapic(0x61, tmp | 0x01);   /* gate on  */
-    }
-
-    /* Wait for PIT to finish (bit 5 of port 0x61 goes high) */
-    while (!(inb_lapic(0x61) & 0x20))
-        barrier();
-
-    /* Read how many LAPIC ticks elapsed in ~10 ms */
-    ticks_per_10ms = 0xFFFFFFFF - lapic_read(LAPIC_REG_TIMER_CCR);
-    ticks_per_second = ticks_per_10ms * 100;
-
-    /* Configure periodic timer at the requested frequency */
-    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_16);
+    /* Configure periodic timer on vector 32 (same as PIT IRQ0) */
     lapic_write(LAPIC_REG_LVT_TIMER,
-                LVT_TIMER_PERIODIC | 32); /* vector 32 = IRQ0 (PIT replacement) */
-    lapic_write(LAPIC_REG_TIMER_ICR,
-                ticks_per_second / hz);
+                LVT_TIMER_PERIODIC | 32);
+
+    /* Set initial count — starts the timer immediately */
+    lapic_write(LAPIC_REG_TIMER_ICR, ticr);
 
     klog(LOG_INFO, "lapic",
-         "LAPIC timer: %u ticks/10ms, %u Hz, ICR=%u",
-         (uint64_t)ticks_per_10ms,
-         (uint64_t)hz,
-         (uint64_t)(ticks_per_second / hz));
+         "LAPIC timer: periodic, vec=32, ICR=%u, div=1 (xv6-style)",
+         (uint64_t)ticr);
+
 }

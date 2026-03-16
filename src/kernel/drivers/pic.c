@@ -10,6 +10,7 @@
 
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/ioapic.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -136,7 +137,11 @@ void pic_disable(void)
 
 void irq_eoi(uint8_t irq)
 {
-    if (lapic_available()) {
+    /* Use LAPIC EOI only when the full APIC system is active (IOAPIC routing
+     * interrupts AND PIC disabled).  If only the LAPIC is present but the PIC
+     * is still routing (no IOAPIC), we MUST send EOI to the PIC — otherwise
+     * the PIC blocks all further interrupts of that priority level. */
+    if (ioapic_available()) {
         lapic_eoi();
     } else {
         pic_send_eoi(irq);

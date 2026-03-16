@@ -120,24 +120,50 @@ void ioapic_init(void)
     }
 
     /* Route standard ISA IRQs to BSP with vectors 32-47.
-     * Apply MADT interrupt source overrides for correct pin mapping. */
-    for (i = 0; i < 16; i++) {
-        uint32_t gsi = ioapic_isa_to_gsi((uint8_t)i);
-        uint16_t flags = 0;
-        uint32_t j;
+     * Apply MADT interrupt source overrides for correct pin mapping.
+     *
+     * CRITICAL: Skip IRQ 2 (8259 cascade) — it doesn't exist on APIC
+     * systems. With the standard IRQ 0→GSI 2 override, IRQ 2 would also
+     * map to GSI 2 and overwrite the PIT routing, killing the timer. */
+    {
+        uint8_t gsi_routed[24];   /* track which GSIs are already routed */
+        for (i = 0; i < 24; i++)
+            gsi_routed[i] = 0;
 
-        /* Check for override flags */
-        for (j = 0; j < acpi_get_override_count(); j++) {
-            const struct madt_int_override *ovr = acpi_get_override(j);
-            if (ovr && ovr->source == (uint8_t)i) {
-                flags = ovr->flags;
-                break;
+        for (i = 0; i < 16; i++) {
+            uint32_t gsi;
+            uint16_t flags = 0;
+            uint32_t j;
+
+            /* Skip cascade IRQ — doesn't exist on APIC */
+            if (i == 2)
+                continue;
+
+            gsi = ioapic_isa_to_gsi((uint8_t)i);
+
+            /* Skip if this GSI was already routed (prevents collision) */
+            if (gsi < 24 && gsi_routed[gsi])
+                continue;
+
+            /* Check for override flags */
+            for (j = 0; j < acpi_get_override_count(); j++) {
+                const struct madt_int_override *ovr = acpi_get_override(j);
+                if (ovr && ovr->source == (uint8_t)i) {
+                    flags = ovr->flags;
+                    break;
+                }
             }
-        }
 
-        if (gsi < max_redir_entries) {
-            ioapic_route_irq((uint8_t)gsi, (uint8_t)(32 + i),
-                            (uint8_t)bsp_lapic_id, flags);
+            if (gsi < max_redir_entries) {
+                klog(LOG_DEBUG, "ioapic",
+                     "  Route: ISA IRQ %u -> GSI %u, vec %u, dest LAPIC %u, flags=0x%x",
+                     (uint64_t)i, (uint64_t)gsi, (uint64_t)(32 + i),
+                     (uint64_t)bsp_lapic_id, (uint64_t)flags);
+                ioapic_route_irq((uint8_t)gsi, (uint8_t)(32 + i),
+                                (uint8_t)bsp_lapic_id, flags);
+                if (gsi < 24)
+                    gsi_routed[gsi] = 1;
+            }
         }
     }
 

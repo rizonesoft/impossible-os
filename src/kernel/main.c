@@ -61,6 +61,7 @@
 #include "kernel/acpi.h"
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
+#include "kernel/smp.h"
 #include "kernel/version.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
@@ -499,20 +500,44 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         /* Parse RSDP → RSDT → FADT → MADT for power management and SMP */
         acpi_init();
 
-        /* Initialize APIC system (replaces legacy PIC for interrupt routing).
-         * LAPIC: per-CPU interrupt controller (BSP only at this stage).
-         * IOAPIC: routes hardware IRQs to LAPIC. All drivers use irq_eoi()
-         * which auto-dispatches to LAPIC or PIC based on availability. */
-        lapic_init();
-        if (lapic_available()) {
-            ioapic_init();
-            if (ioapic_available()) {
-                pic_disable();
-                klog(LOG_INFO, "irq", "Switched to LAPIC/IOAPIC (PIC disabled)");
-            }
+        klog(LOG_INFO, "smp", "CPUs discovered: %u",
+             (uint64_t)acpi_get_cpu_count());
 
-            klog(LOG_INFO, "smp", "CPUs discovered: %u",
-                 (uint64_t)acpi_get_cpu_count());
+        /* Only switch to LAPIC/IOAPIC when SMP is needed (multiple CPUs).
+         * On single-core, the legacy PIC works perfectly and lapic_init()
+         * would break PIC interrupt delivery by changing the CPU's
+         * interrupt path (PIC→LINT0→LAPIC without ExtINT configuration). */
+        if (acpi_get_cpu_count() > 1) {
+            lapic_init();
+
+            if (lapic_available()) {
+                ioapic_init();
+
+                if (ioapic_available()) {
+                    pic_disable();
+                    klog(LOG_INFO, "irq",
+                         "Switched to LAPIC/IOAPIC (PIC disabled)");
+
+                    /* Drain any stale ISR bits left from the PIC→LAPIC transition.
+                     * VBox NEM leaves ISR1 bit 0 set (vector 32 in-service from the
+                     * last PIC-delivered PIT tick), which blocks the LAPIC timer
+                     * from delivering same-priority interrupts. */
+                    {
+                        uint32_t i;
+                        for (i = 0; i < 8; i++)
+                            lapic_eoi();
+                    }
+
+                    /* Start LAPIC timer as the primary tick source (xv6 approach).
+                     * Avoids PIT-via-IOAPIC delivery issues on VBox NEM. */
+                    lapic_timer_init(100);
+                }
+
+                smp_init();
+            }
+        } else {
+            /* Single CPU — init per-CPU data for BSP without touching LAPIC */
+            smp_init();
         }
     }
 
