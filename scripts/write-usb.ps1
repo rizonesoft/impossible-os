@@ -204,7 +204,7 @@ if ($partition) {
     }
 } else {
     Write-Host "  [WARN] EFI System Partition not detected" -ForegroundColor Yellow
-    Write-Host "  The USB is written but Windows couldn't verify the GPT." -ForegroundColor DarkGray
+    Write-Host "  The USB is written but Windows could not verify the GPT." -ForegroundColor DarkGray
     Write-Host "  It should still boot on UEFI machines." -ForegroundColor DarkGray
 }
 
