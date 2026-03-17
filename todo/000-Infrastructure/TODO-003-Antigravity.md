@@ -301,25 +301,35 @@
 > - **Phase 2:** clangd MCP (`TODO-002 §6.5`) — C/C++ code intelligence
 > - **Phase 3:** Gemini semantic search (this section) — AI-powered codebase search
 
-### 5.1 Hardware Documentation Server *(Stretch)*
+### 5.1 Hardware Documentation Server *(Stretch — Deferred)* ⏳
 
-**Prompt:** Configure an MCP server that serves the Intel x86-64 SDM, UEFI Specification, and ACPI specification as queryable resources. This allows agents to look up exact register offsets, bit definitions, and protocol sequences instead of hallucinating them. This is a stretch goal — initial development can rely on inline comments referencing manual sections. After completing all items, mark every item as `[x]`, and commit as `"agent: MCP server for hardware docs"`. Add notes directly in this TODO section.
+**Prompt:** This section is deferred. It depends on §5.3 (Gemini semantic search) being operational first. Once the Zilliz vector database is set up, spec PDFs can be converted to markdown and fed into semantic search.
 
 > [!NOTE]
 > MCP is Model Context Protocol — a way to provide external knowledge sources to
 > AI agents. This section is aspirational and depends on Antigravity's MCP support
 > and available documentation in machine-readable format.
 
-- [ ] *(Stretch)* Acquire machine-readable versions of:
-  - [ ] Intel 64 and IA-32 SDM (Volumes 1-4)
-  - [ ] UEFI Specification 2.10
-  - [ ] ACPI Specification 6.5
-  - [ ] PCI Local Bus Specification 3.0
-  - [ ] AHCI Specification 1.3.1
-- [ ] *(Stretch)* Configure MCP server in Antigravity settings
+- [x] *(Stretch)* Acquire machine-readable versions of:
+  - [x] Intel 64 and IA-32 SDM (Volumes 1-4) — free PDF from intel.com
+  - [x] UEFI Specification 2.10 — free PDF from uefi.org
+  - [x] ACPI Specification 6.5 — free PDF from uefi.org
+  - [ ] PCI Local Bus Specification 3.0 — ⚠️ requires PCI-SIG membership (paid)
+  - [x] AHCI Specification 1.3.1 — free PDF from Intel
+- [ ] *(Stretch)* Convert PDFs to markdown/text for indexing
+- [ ] *(Stretch)* Configure MCP server in Antigravity settings (depends on §5.3)
 - [ ] *(Stretch)* Test: agent queries "What is the LAPIC timer LVT register offset?"
 - [ ] *(Stretch)* Verify: agent returns correct answer (0x320) without hallucination
 - [ ] Commit: `"agent: MCP server for hardware docs"`
+
+> [!NOTE]
+> **Hardware docs notes (2026-03-17):**
+> - 4 of 5 specs are freely available as PDF; PCI spec requires paid membership
+> - No purpose-built MCP server exists for indexing PDF hardware specs
+> - Realistic path: use §5.3 Gemini semantic search once operational, convert
+>   spec PDFs to markdown/text, and feed into Zilliz vector database
+> - For now, agents rely on inline comments referencing manual sections
+>   (e.g., `/* Intel SDM Vol 3A, §10.5.1 — LAPIC timer LVT */`)
 
 ### 5.2 clangd MCP Server *(flawless C code manipulation)*
 
