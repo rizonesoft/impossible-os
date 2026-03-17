@@ -11,6 +11,10 @@
 #   2. Creates/updates a VirtualBox VM with correct settings
 #   3. Launches the VM
 
+param(
+    [switch]$DebugBoot  # Inject X:\DEBUG flag to show live boot output instead of splash
+)
+
 $ErrorActionPreference = "Stop"
 
 # ---- Paths ----
@@ -52,6 +56,16 @@ if (-not (Test-Path $OVMF_CODE) -or -not (Test-Path $OVMF_VARS)) {
 # Always re-convert to pick up latest build changes.
 # Must properly unregister the old VDI from VirtualBox's media registry
 # before deleting, otherwise UUID mismatch errors occur.
+# ---- Debug boot flag: inject into raw image BEFORE VDI conversion ----
+if ($DebugBoot) {
+    $LOG_OFFSET = 68157440  # Must match Makefile LOG_OFFSET
+    & wsl.exe -e bash -c "echo -n debug | mcopy -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG 2>/dev/null; echo -n debug | mcopy -o -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG"
+    Write-Host "  [OK] DEBUG flag injected into Logs partition" -ForegroundColor Green
+} else {
+    # Remove DEBUG flag if it exists (normal boot)
+    & wsl.exe -e bash -c "mdel -i ~/impossible-os/build/system-disk.img@@68157440 ::DEBUG 2>/dev/null" 2>$null
+}
+
 Write-Host "Converting disk image to VDI..." -ForegroundColor Cyan
 
 # Power off VM if running
@@ -148,6 +162,9 @@ Write-Host "  VM: $VM_NAME" -ForegroundColor DarkGray
 Write-Host "  Disk: $DISK_VDI" -ForegroundColor DarkGray
 Write-Host "  Display: VMSVGA 1280x720 (UEFI)" -ForegroundColor DarkGray
 Write-Host "  Serial log: $BUILD\serial.log" -ForegroundColor DarkGray
+if ($DebugBoot) {
+    Write-Host "  Mode: DEBUG (splash disabled, live text on screen)" -ForegroundColor Yellow
+}
 Write-Host ""
 
 & $VBOX startvm $VM_NAME

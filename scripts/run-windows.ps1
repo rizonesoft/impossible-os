@@ -15,7 +15,8 @@
 #   2. Build in WSL2 first: bash scripts/build.sh
 Param(
     [int]$Xres = 1280,
-    [int]$Yres = 720
+    [int]$Yres = 720,
+    [switch]$DebugBoot  # Inject X:\DEBUG flag to show live boot output instead of splash
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,7 +64,20 @@ Write-Host "Launching Impossible OS at ${Xres}x${Yres} (HiDPI scale=${Scale}x)..
 Write-Host "  Disk:   $DISK" -ForegroundColor DarkGray
 Write-Host "  Device: $VgaDevice" -ForegroundColor DarkGray
 Write-Host "  Serial: [??] SPLASH  ${Xres}x${Yres}  scale=${Scale}x" -ForegroundColor DarkCyan
+if ($DebugBoot) {
+    Write-Host "  Mode:   DEBUG (splash disabled, live text on screen)" -ForegroundColor Yellow
+}
 Write-Host ""
+
+# ---- Debug boot flag: inject DEBUG file into Logs partition ----
+if ($DebugBoot) {
+    $LOG_OFFSET = 68157440  # Must match Makefile LOG_OFFSET
+    & wsl.exe -e bash -c "echo -n debug | mcopy -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG 2>/dev/null; echo -n debug | mcopy -o -i ~/impossible-os/build/system-disk.img@@${LOG_OFFSET} - ::DEBUG"
+    Write-Host "  [OK] DEBUG flag injected into Logs partition" -ForegroundColor Green
+} else {
+    # Remove DEBUG flag if it exists (normal boot)
+    & wsl.exe -e bash -c "mdel -i ~/impossible-os/build/system-disk.img@@68157440 ::DEBUG 2>/dev/null" 2>$null
+}
 
 # Find QEMU executable
 $QEMU = "qemu-system-x86_64.exe"
