@@ -194,12 +194,12 @@
 > **overwrite mode** — it truncates the file and rewrites all data from scratch on every call.
 > The VFS `write` callback ignores the `offset` parameter. This means:
 > - No append support — every write rewrites the entire file
-> - Live debug logging (TODO-009-Debug §1.3) rewrites a growing buffer on each entry
+> - Live debug logging (TODO-005-Debug §1.3) rewrites a growing buffer on each entry
 > - File copy operations can't write in chunks — must buffer entire file in memory
 > - No partial writes — can't update specific bytes within a file
 
 > [!IMPORTANT]
-> → XREF: `TODO-009-Debug.md §1.3 Live Flush Mode` — the debug logging system's
+> → XREF: `TODO-005-Debug.md §1.3 Live Flush Mode` — the debug logging system's
 > performance depends entirely on fixing FAT32 append support. This is the **#1 blocker**
 > for efficient live logging on real hardware via the X: partition.
 
@@ -311,7 +311,7 @@
 | Cross-linked chain detection | ✅ `chkdsk` | ✅ `fsck.vfat` | ⬜ §8.2 |
 | exFAT support | ✅ Native | ✅ kernel driver | ⬜ §4.6-4.7 P3 |
 
-> **After §3.4.1:** The debug logging system can append efficiently, unblocking TODO-009-Debug.
+> **After §3.4.1:** The debug logging system can append efficiently, unblocking TODO-005-Debug.
 > **After §3.4.1-3.4.7:** FAT32 driver reaches feature parity with Linux's `vfat` driver.
 
 ---
@@ -1335,7 +1335,7 @@
 | ✅ Done   | 3.1 FAT32 Read                               | Read USB drives, boot media                                     |
 | ✅ Done   | 3.2 FAT32 Write                              | Full read/write for removable media                             |
 | ✅ Done   | 3.3 FAT32 VFS + Format                       | Complete FAT32 integration                                      |
-| 🔴 P0     | **3.4.1 FAT32 Offset-Aware Write**           | **Append support — blocks TODO-009-Debug live logging**         |
+| 🔴 P0     | **3.4.1 FAT32 Offset-Aware Write**           | **Append support — blocks TODO-005-Debug live logging**         |
 | ✅ Done   | 3.5 VFS Driver Interface                     | `vfs_ops` driver routing — callbacks used by §3.6               |
 | 🔴 P0     | **3.5.5 Directory/Metadata/Flush Callbacks** | **mkdir, rmdir, set_attr, set_times, flush — needed by §3.6**   |
 | ✅ Done   | 5.1–5.9 IXFS on Disk                         | Full persistent IXFS with extents, journal, CoW, snapshots      |
