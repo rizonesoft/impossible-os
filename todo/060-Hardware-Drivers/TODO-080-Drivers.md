@@ -174,10 +174,19 @@
 
 ### 2.2 APIC / IOAPIC (Built-in)
 
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §1.6` — On Hyper-V Gen 2 (and any hardware-reduced ACPI
+> platform), the MADT `PCAT_COMPAT` flag (bit 0 at offset 36) is cleared to 0, meaning
+> **no 8259 PIC exists**. The PIC init below must be conditional on this flag.
+
 **Prompt:** The APIC (Advanced Programmable Interrupt Controller) replaces the legacy 8259 PIC for multi-core systems. The Local APIC is per-CPU (MMIO at `0xFEE00000`), handling timer, IPI, and local interrupts. The IOAPIC (typically at `0xFEC00000`) routes external device interrupts to specific CPUs. Parse ACPI MADT table for APIC and IOAPIC base addresses. Initialize: enable the Local APIC, configure the IOAPIC redirection table for all IRQs currently handled by the PIC. Disable the legacy PIC after APIC takeover. This is **built-in** because MSI interrupts (used by NVMe, xHCI, modern NICs) require APIC. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: APIC and IOAPIC interrupt controller"`. Update `README.md` if it contains stale or incorrect references to APIC. Add notes, gotchas, and design decisions directly in this TODO section covering the APIC/IOAPIC initialization, IRQ routing, and PIC disable.
 
 - [ ] Create `src/kernel/apic.c` and `include/kernel/apic.h`
 - [ ] Parse ACPI MADT table for Local APIC and IOAPIC info
+- [ ] **Parse MADT flags (offset 36, bit 0 = `PCAT_COMPAT`):**
+  - [ ] If `PCAT_COMPAT=1` (legacy hardware): remap PIC, then disable after APIC takeover
+  - [ ] If `PCAT_COMPAT=0` (Hyper-V Gen 2, hardware-reduced ACPI): **skip PIC init entirely**
+  - [ ] Log: `[MADT] PCAT_COMPAT=0 — PIC absent, APIC-only mode`
 - [ ] Initialize Local APIC:
   - [ ] Map MMIO at base address (typically `0xFEE00000`)
   - [ ] Enable APIC via Spurious Interrupt Vector Register
@@ -188,7 +197,7 @@
   - [ ] Map legacy IRQ numbers to IOAPIC inputs
 - [ ] Implement `apic_send_eoi()` — end-of-interrupt for APIC
 - [ ] Implement `ioapic_set_irq(irq, vector, cpu)` — route IRQ to specific CPU
-- [ ] Disable legacy PIC (mask all PIC IRQs) after APIC is active
+- [ ] Conditionally disable legacy PIC (only if `PCAT_COMPAT=1`)
 - [ ] Update existing IRQ handlers to use APIC EOI
 - [ ] Commit: `"kernel: APIC and IOAPIC interrupt controller"`
 
@@ -505,6 +514,76 @@
 
 ---
 
+## 10. Hyper-V VMBus Paravirtualization (Stretch)
+
+> **Priority: 🟢 P3** — Hyper-V Gen 2 support. QEMU and VirtualBox remain primary dev targets.
+> The VMBus driver stack is the largest prerequisite for booting on Hyper-V Gen 2.
+> Can be deferred until after the core driver model (§1) is complete.
+
+> [!WARNING]
+> → XREF: `TODO-010-Bootloader.md §1.6` — Hyper-V Gen 2 removes ALL legacy hardware.
+> Without VMBus drivers, the OS has no storage, no input, and a frozen display.
+
+### 10.1 VMBus Core Protocol
+
+**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). Implement the VMBus core: discover the hypercall page via `HV_X64_MSR_HYPERCALL`, establish a shared connection with the hypervisor, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Linux's `hv_vmbus.c` (GPL) is the reference but must be clean-room reimplemented from the public Hyper-V specification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
+
+- [ ] Create `src/kernel/drivers/vmbus/vmbus.c` and `include/kernel/vmbus.h`
+- [ ] Discover Hyper-V via CPUID leaf `0x40000001` (hypervisor interface signature `"Hv#1"`)
+- [ ] Map hypercall page via `HV_X64_MSR_HYPERCALL` MSR
+- [ ] Implement `vmbus_connect()` — establish shared memory connection with hypervisor
+- [ ] Implement ring buffer management:
+  - [ ] Allocate send/receive ring buffers per channel (PMM-backed, page-aligned)
+  - [ ] Read/write ring buffer with proper memory barriers
+- [ ] Enumerate offered channels via `CHANNELMSG_OFFERCHANNEL` messages
+- [ ] Implement `vmbus_open_channel(guid)` — open a specific VMBus channel
+- [ ] Handle VMBus interrupts (synthetic interrupt via SINT)
+- [ ] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
+- [ ] Commit: `"drivers: VMBus core protocol"`
+
+### 10.2 Synthetic SCSI Storage (storvsc)
+
+**Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
+
+- [ ] Create `src/kernel/drivers/vmbus/storvsc.c`
+- [ ] Open VMBus channel for Storage VSP GUID
+- [ ] Negotiate storvsc protocol version with host
+- [ ] Implement SCSI commands over VMBus:
+  - [ ] INQUIRY — identify virtual disk
+  - [ ] READ CAPACITY — get disk size
+  - [ ] READ(10/16) — read sectors
+  - [ ] WRITE(10/16) — write sectors
+- [ ] Register as block device (`blkdev_register`) for partition scanning
+- [ ] Test: boot in Hyper-V Gen 2 → verify IXFS/FAT32 mount
+- [ ] Commit: `"drivers: Hyper-V synthetic SCSI (storvsc)"`
+
+### 10.3 Synthetic Keyboard & Mouse (hid-hyperv)
+
+**Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop shell is completely unresponsive to user input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
+
+- [ ] Create `src/kernel/drivers/vmbus/hv_kbd.c` and `hv_mouse.c`
+- [ ] Open VMBus channel for Keyboard VSP GUID
+- [ ] Parse synthetic keyboard reports → inject into keyboard subsystem
+- [ ] Open VMBus channel for Mouse VSP GUID
+- [ ] Parse synthetic mouse reports → inject into mouse subsystem
+- [ ] Graceful fallback: if VMBus channels not available, use PS/2 (legacy)
+- [ ] Commit: `"drivers: Hyper-V synthetic HID input"`
+
+### 10.4 Synthetic Video (hvfb)
+
+**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes, but proper VMBus video integration enables resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
+
+- [ ] Create `src/kernel/drivers/vmbus/hv_video.c`
+- [ ] Open VMBus channel for Video VSP GUID
+- [ ] Negotiate screen resolution with host
+- [ ] Map framebuffer via VMBus shared memory
+- [ ] Implement dirty region notification (partial screen updates)
+- [ ] Register as display device
+- [ ] Fallback: if VMBus video unavailable, use bootloader GOP framebuffer as-is
+- [ ] Commit: `"drivers: Hyper-V synthetic video (hvfb)"`
+
+---
+
 ## Priority Order
 
 | Priority | Section                    | Description                                                 |
@@ -521,14 +600,18 @@
 | 🟡 P2     | 4.2 VirtIO-GPU Module      | QEMU GPU (restore reverted code)                            |
 | 🟡 P2     | 3.2 VirtIO-net Module      | Fast QEMU networking                                        |
 | 🟡 P2     | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core                                |
-| 🟡 P2     | 9.1 ACPI Shutdown/Reboot   | Proper power-off — currently hangs or triple-faults         |
+| 🔴 P0     | 9.1 ACPI Shutdown/Reboot   | **Cannot power off** — currently hangs or triple-faults    |
 | 🟡 P2     | 9.3 Battery Status         | Laptop support — system tray battery indicator              |
 | 🟢 P3     | 6.1 VirtIO-input Module    | Convert existing code                                       |
 | 🟢 P3     | 3.3 RTL8169 Module         | Common real-world NIC                                       |
 | 🟢 P3     | 2.3 HPET Timer (built-in)  | High-precision timing                                       |
 | 🟢 P3     | 7.1 License Tracking       | Attribution compliance                                      |
-| 🟢 P3     | 9.2 ACPI S3 Suspend        | Sleep/resume — rare in hobby OSes                           |
+| 🟠 P1     | 9.2 ACPI S3 Suspend        | Sleep/resume — **required for laptop support**              |
 | 🟢 P3     | 9.4 CPU Freq. Scaling      | Power efficiency on laptops                                 |
+| 🟢 P3     | 10.1 VMBus Core            | Hyper-V Gen 2 — channel protocol foundation                 |
+| 🟢 P3     | 10.2 Synthetic SCSI        | Hyper-V Gen 2 — VHDX disk access via VMBus                  |
+| 🟢 P3     | 10.3 Synthetic HID         | Hyper-V Gen 2 — keyboard/mouse via VMBus                    |
+| 🟢 P3     | 10.4 Synthetic Video       | Hyper-V Gen 2 — framebuffer via VMBus                       |
 | 🔵 P4     | 4.3 Bochs/BGA Module       | Simple fallback display                                     |
 | 🔵 P4     | 5.1 Audio as Modules       | Convert Phase 08 drivers to modules                         |
 
@@ -694,7 +777,8 @@
 
 **Prompt:** S3 is the suspend-to-RAM state — all device state is saved in RAM, only memory is powered. Sequence: flush dirty buffers, save CPU state to wakeup trampoline page, write `SLP_TYP_S3` to PM1a control. On wake, re-enter long mode via trampoline, reinit devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI S3 suspend/resume"`. Add notes directly in this TODO section.
 
-> **Beats:** Most hobby OSes (including SerenityOS) only implement shutdown — S3 is rarely done.
+> **Production requirement:** Every laptop user expects sleep/resume. Windows and Linux both
+> support S3 natively. Without this, Impossible OS cannot be used on mobile hardware.
 
 - [ ] Write wakeup trampoline (real-mode stub at 1 MB) that re-enters long mode
 - [ ] Save CPU state: registers, GDT, IDT, CR3, stack pointer to trampoline page
@@ -744,10 +828,13 @@
 | GPU modesetting                 | ✅ WDDM 3.x                           | ✅ DRM/KMS                           | ⬜ §4 P2 — VMSVGA + VirtIO-GPU           |
 | USB xHCI controller             | ✅ USBXHCI.sys                        | ✅ `xhci_hcd`                        | ⬜ §7.2 P1                                |
 | USB HID (keyboard/mouse)        | ✅ HIDCLASS.sys                       | ✅ `usbhid`                          | ⬜ §7.3 P1                                |
-| ACPI shutdown / reboot          | ✅                                    | ✅                                   | ⬜ §9.1 P2 — **currently missing!**       |
-| ACPI S3 suspend/resume          | ✅                                    | ✅                                   | ⬜ §9.2 P3 — **beats most hobby OSes**    |
+| ACPI shutdown / reboot          | ✅                                    | ✅                                   | ⬜ §9.1 P0 — **currently missing!**       |
+| ACPI S3 suspend/resume          | ✅                                    | ✅                                   | ⬜ §9.2 P1 — **required for laptops**     |
 | Battery status (laptops)        | ✅ Control Panel + tray              | ✅ UPower + system tray              | ⬜ §9.3 P2                                |
 | CPU frequency scaling (DVFS)    | ✅ Power plans + HWP                 | ✅ `cpufreq` + governors             | ⬜ §9.4 P3                                |
 | Licensing compliance            | ✅ Proprietary                        | ✅ GPL-2.0                           | ⬜ §8.1 P3 — BSD/MIT only                 |
 | **No GPL contamination**        | ✅ Proprietary                        | N/A                                 | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**   |
-| **S3 sleep in hobby OS**        | N/A                                   | N/A (reference: SerenityOS = none) | ⬜ **§9.2 — uncommon in hobby kernels**   |
+| **S3 sleep/resume**             | ✅ Native                             | ✅ pm-utils / systemd-suspend       | ⬜ **§9.2 P1 — production requirement**   |
+| MADT `PCAT_COMPAT` check       | ✅ HAL checks flags                  | ✅ `acpi_pic_sci_set_trigger()`     | ⬜ §2.2 P2 — **currently assumed**        |
+| VMBus paravirtualization        | ✅ Native (VSC built-in)              | ✅ `hv_vmbus` + storvsc/hid-hyperv  | ⬜ §10 P3 — **missing entirely**          |
+| Hyper-V Gen 2 boot              | ✅ Native                             | ✅ With hv_* drivers                 | ⬜ §1.6 + §10 — **cannot boot**           |

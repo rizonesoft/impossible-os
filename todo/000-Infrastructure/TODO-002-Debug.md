@@ -24,23 +24,23 @@
 
 ### Files Involved
 
-| File                             | Purpose                                                    | Issues                                                               |
-|----------------------------------|------------------------------------------------------------|----------------------------------------------------------------------|
-| `src/kernel/klog.c`             | Ring buffer (1000 entries), serial + framebuffer output    | Ring buffer too small for verbose debug; no filter by subsystem      |
-| `src/kernel/klog_flush.c`       | Batch flush to `C:\` (IXFS) + `X:\` (FAT32 `serial.log`) | FAT32 write is full-file overwrite; `serial.log` name loses history  |
-| `src/kernel/klog_live.c`        | Live per-entry flush to `X:\debug.log` + hardware dump     | Only active when DEBUG flag detected; duplicates klog_flush logic    |
-| `src/kernel/drivers/serial.c`   | COM1 port I/O (0x3F8)                                     | Works in QEMU/VBox; no output on real hardware without serial port   |
-| `include/kernel/klog.h`         | API declarations                                           | `klog_live_*` API mixed with core klog API                           |
-| `src/kernel/boot_splash.c`      | `boot_splash_abort()` for debug mode                       | Disabling splash is separate concern from logging                    |
-| `src/kernel/main.c`             | DEBUG flag detection, klog_flush calls, status messages    | DEBUG detection too late (after X: mount); flush calls scattered     |
+| File | Purpose | Issues |
+|------|---------|--------|
+| `src/kernel/klog.c` | Ring buffer (1000 entries), serial + framebuffer output | Ring buffer too small for verbose debug; no filter by subsystem |
+| `src/kernel/klog_flush.c` | Batch flush to `C:\` (IXFS) + `X:\` (FAT32 `serial.log`) | FAT32 write is full-file overwrite; `serial.log` name loses history |
+| `src/kernel/klog_live.c` | Live per-entry flush to `X:\debug.log` + hardware dump | Only active when DEBUG flag detected; duplicates klog_flush logic |
+| `src/kernel/drivers/serial.c` | COM1 port I/O (0x3F8) | Works in QEMU/VBox; no output on real hardware without serial port |
+| `include/kernel/klog.h` | API declarations | `klog_live_*` API mixed with core klog API |
+| `src/kernel/boot_splash.c` | `boot_splash_abort()` for debug mode | Disabling splash is separate concern from logging |
+| `src/kernel/main.c` | DEBUG flag detection, klog_flush calls, status messages | DEBUG detection too late (after X: mount); flush calls scattered |
 
 ### Output Paths
 
-| Environment              | Serial (COM1)     | `X:\serial.log`  | `X:\debug.log`   | `C:\...\kernel.log` |
-|--------------------------|-------------------|------------------|------------------|---------------------|
-| QEMU (`-serial stdio`)   | ✅ Console        | ✅ After boot    | ✅ If DEBUG flag  | ✅ After boot       |
-| VBox (serial→file)       | ✅ File           | ✅ After boot    | ✅ If DEBUG flag  | ✅ After boot       |
-| Real hardware (USB)      | ❌ No serial port | ❌ Empty if hang | ✅ If DEBUG flag  | ❌ If hang          |
+| Environment | Serial (COM1) | `X:\serial.log` | `X:\debug.log` | `C:\...\kernel.log` |
+|-------------|---------------|------------------|------------------|---------------------|
+| QEMU (`-serial stdio`) | ✅ Console | ✅ After boot | ✅ If DEBUG flag | ✅ After boot |
+| VBox (serial→file) | ✅ File | ✅ After boot | ✅ If DEBUG flag | ✅ After boot |
+| Real hardware (USB) | ❌ No serial port | ❌ Empty if hang | ✅ If DEBUG flag | ❌ If hang |
 
 ### Known Bugs & Design Issues
 
@@ -111,15 +111,17 @@
 > → XREF: `TODO-010-Bootloader.md §7.1 Boot Configuration File` — this section depends on
 > the boot.conf parser being implemented in `bootx64.c`. Coordinate with that TODO item.
 
-- [ ] Add `debug=0|1` key to `boot.conf` format (§7.1 of Bootloader TODO)
+- [ ] Add `debug=0|1` key to `boot.conf` format (§7.1 of Bootloader TODO) — **default: `debug=1`** (always on during development)
 - [ ] Parse in `bootx64.c`: `boot_params.debug_mode = (debug == 1)`
 - [ ] Add `uint8_t debug_mode` field to `struct boot_info` / `boot_params`
 - [ ] In `kernel_main()`: check `g_boot_info.debug_mode` immediately after boot info parsing
 - [ ] If debug mode: `klog_set_screen_level(LOG_DEBUG)` — show all log levels on screen
 - [ ] If debug mode: enable live disk flush as soon as X: is mounted
 - [ ] Remove `X:\DEBUG` file detection from `main.c` (replaced by `boot.conf`)
-- [ ] Update `write-usb.ps1` / `write-usb-debug.bat` to write `debug=1` in `boot.conf` instead of creating `DEBUG` file
-- [ ] Commit: `"boot: debug mode via boot.conf"`
+- [x] ~~Remove `-DebugBoot` switch from `run-windows.ps1` and `write-usb.ps1`~~ ✅ Done
+- [x] ~~Delete `run-windows-DebugBoot.bat` and `write-usb-DebugBoot.bat`~~ ✅ Done
+- [x] ~~Remove DEBUG flag injection code from `run-windows.ps1` and `write-usb.ps1`~~ ✅ Done
+- [ ] Commit: `"boot: debug mode via boot.conf (default=1)"`
 
 ### 2.2 Remove Splash Screen Abort from Debug Mode
 
@@ -195,11 +197,17 @@
 > → XREF: `TODO-010-Bootloader.md §1.4` — ACPI RSDP discovery happens in the bootloader.
 > The ACPI parser must be in place before table-level dumping can work.
 
-**Prompt:** Dump ACPI table signatures and addresses for driver development: RSDP version, RSDT/XSDT address, MADT (LAPIC entries, IOAPIC entries), FADT (PM timer, SCI interrupt), MCFG (PCIe ECAM base), HPET, DSDT/SSDT pointers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: ACPI table dump"`. Add notes directly in this TODO section.
+> [!IMPORTANT]
+> → XREF: `TODO-080-Drivers.md §2.2` — The MADT `PCAT_COMPAT` flag (bit 0 at offset 36)
+> indicates whether the 8259 PIC is present. On Hyper-V Gen 2, this flag is **cleared to 0**.
+> The hardware dump must log this flag so developers can instantly see whether PIC init
+> should be skipped. This is critical for debugging boot failures on legacy-free platforms.
+
+**Prompt:** Dump ACPI table signatures and addresses for driver development: RSDP version, RSDT/XSDT address, MADT (LAPIC entries, IOAPIC entries, **PCAT_COMPAT flag**), FADT (PM timer, SCI interrupt), MCFG (PCIe ECAM base), HPET, DSDT/SSDT pointers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: ACPI table dump"`. Add notes directly in this TODO section.
 
 - [ ] RSDP: version, RSDT/XSDT physical address
 - [ ] Walk RSDT/XSDT: list all table signatures with physical addresses
-- [ ] MADT: LAPIC entries (APIC ID, CPU ID, flags), IOAPIC entries (base, GSI base)
+- [ ] MADT: **PCAT_COMPAT flag** (bit 0), LAPIC entries (APIC ID, CPU ID, flags), IOAPIC entries (base, GSI base)
 - [ ] FADT: PM1a/PM1b port, SCI interrupt, century register, boot flags
 - [ ] MCFG: PCIe ECAM base address, bus range (for future PCIe MMIO config access)
 - [ ] HPET: base address, timer count (for future high-precision timer)
@@ -314,6 +322,23 @@
 
 ---
 
+## 7. Boot Time Profiler
+
+**Prompt:** Track how long each boot stage takes using PIT ticks (or TSC if calibrated). At the start and end of each major init function, record the elapsed time. Print a summary to serial at boot completion: "PMM: 12ms, ACPI: 45ms, Drivers: 230ms, FS: 85ms, Desktop: 150ms — Total: 522ms". Store the boot time in Registry `HKLM\SYSTEM\Boot\LastBootTime` for display in the Settings → System applet. This is essential for identifying and fixing boot regressions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: boot time profiler"`. Add notes directly in this TODO section.
+
+> **Production requirement:** Windows has Boot Event Collector and Event Viewer boot
+> timing. Linux has `systemd-analyze blame`. Impossible OS needs boot stage timing
+> to identify and fix performance regressions.
+
+- [ ] Define boot stages: PMM, ACPI, Drivers, Filesystem, Registry, Desktop
+- [ ] `boot_timer_start(stage)` / `boot_timer_end(stage)` — record PIT tick delta
+- [ ] Print boot time summary to serial on boot completion
+- [ ] Store total boot time in Registry: `HKLM\SYSTEM\Boot\LastBootTime` (milliseconds)
+- [ ] Shell command: `boottime` — display last boot stage breakdown
+- [ ] Commit: `"kernel: boot time profiler"`
+
+---
+
 ## Cross-References
 
 | This TODO Section       | Depends On                       | Other TODO File                    |
@@ -322,7 +347,7 @@
 | §2.1 Boot Config File   | §7.1 Boot Config File            | `TODO-010-Bootloader.md`           |
 | §2.2 Verbose Mode       | §7.1 Boot Config File            | `TODO-010-Bootloader.md`           |
 | §2.3 Remove grub.cfg    | §1 Custom UEFI Bootloader        | `TODO-010-Bootloader.md`           |
-| §3.4 ACPI Tables        | ACPI parser                      | `TODO-010-Bootloader.md §1.4`     |
+| §3.4 ACPI Tables        | ACPI parser                      | `TODO-010-Bootloader.md §1.4`      |
 | §4.3 USB Logging        | §3.4.1 FAT32 Append + partition  | `TODO-040-Filesystem.md`           |
 | §5.2 Subsystem Levels   | Registry system                  | `TODO-050-Registry.md`             |
 
@@ -348,6 +373,7 @@
 | 🟡 P2   | 5.2 Subsystem filtering         | Advanced — depends on registry           |
 | 🟢 P3   | 4.1-4.3 Cross-env verification  | Testing — verify all environments        |
 | 🟢 P3   | 6.2 Remove DEBUG file           | After §2.1 is complete                   |
+| 🟢 P3   | 7.1 Boot Time Profiler          | Performance measurement                  |
 
 ---
 
@@ -355,8 +381,8 @@
 
 | Feature                    | Windows 11                    | Linux                        | Impossible OS                        |
 |----------------------------|-------------------------------|------------------------------|--------------------------------------|
-| Kernel log ring buffer     | ✅ KD ring (64K)              | ✅ dmesg (256K)              | ✅ klog ring (128K)                  |
-| Boot log to disk           | ✅ `%windir%\Logs\CBS`       | ✅ journald                  | ⬜ §1 — scattered, unreliable       |
+| Kernel log ring buffer     | ✅ KD ring (64K)              | ✅ dmesg (256K)              | ✅ klog ring (128K)                 |
+| Boot log to disk           | ✅ `%windir%\Logs\CBS`        | ✅ journald                  | ⬜ §1 — scattered, unreliable       |
 | Numbered/rotated logs      | ✅ Automatic                  | ✅ logrotate                 | ⬜ §1.2 — **missing**               |
 | Live log flush (pre-hang)  | ✅ ETW real-time              | ✅ journald sync             | ⬜ §1.3 — exists but fragile        |
 | Boot config file           | ✅ BCD                        | ✅ cmdline / grub.cfg        | ⬜ §2.1 — **missing**               |
@@ -367,7 +393,8 @@
 | ACPI table dump            | ✅ `acpidump`                 | ✅ `acpidump`                | ⬜ §3.4 — **missing**               |
 | Per-subsystem filtering    | ✅ ETW providers              | ✅ `printk` levels           | ⬜ §5.2 — **missing**               |
 | Serial console debug       | ✅ Kernel debugger            | ✅ serial console            | ✅ COM1 via `klog.c`                |
-| Multi-env (QEMU/VBox/HW)  | N/A                           | ✅ Works everywhere          | ✅ §4 — serial + X: logs            |
+| Multi-env (QEMU/VBox/HW)   | N/A                            | ✅ Works everywhere          | ✅ §4 — serial + X: logs            |
+| Boot time profiling        | ✅ Boot Event Collector         | ✅ `systemd-analyze blame`   | ⬜ §7 P3 — **missing**               |
 
 > **After P0+P1 items:** Impossible OS has a reliable, robust logging system that works across
 > all environments and produces useful, numbered logs with hardware dumps.

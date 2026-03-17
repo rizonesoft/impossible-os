@@ -406,6 +406,25 @@
 - [ ] *(Stretch)* WiFi association: select network → authenticate → associate → DHCP
 - [ ] *(Stretch)* One hardware driver: USB RTL8188 or QEMU virtio-wifi (if available)
 
+### 9.6 IPv6 Dual-Stack Support
+
+**Prompt:** The modern internet is transitioning to IPv6 — many networks and services are IPv6-only or dual-stack. Without IPv6, Impossible OS cannot function on many corporate and mobile networks. Implement IPv6 alongside IPv4 (dual-stack). The IPv6 header is 40 bytes fixed (no header checksum, simplified vs IPv4). ICMPv6 replaces ARP for neighbor discovery (NDP: neighbor solicitation/advertisement). DHCPv6 or SLAAC (Stateless Address Autoconfiguration) provides automatic IPv6 addressing. Socket API extensions: `AF_INET6`, `struct sockaddr_in6`, `in6addr_any`. DNS: AAAA record support. After completing all items, update `docs/architecture/networking.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: IPv6 dual-stack support"`.
+
+> **Production requirement:** Windows, Linux, macOS, Android, and iOS all support
+> IPv6 by default. Many ISPs and cloud providers are IPv6-only. An OS without IPv6
+> cannot access significant portions of the modern internet.
+
+- [ ] Define `struct ipv6_header` (version/traffic class/flow label, payload_length, next_header, hop_limit, src_addr[16], dst_addr[16])
+- [ ] `ipv6_send(dest, next_header, payload, len)` — build and send IPv6 packet
+- [ ] `ipv6_receive(packet)` — parse and dispatch to TCP/UDP/ICMPv6
+- [ ] ICMPv6: neighbor solicitation + neighbor advertisement (replaces ARP)
+- [ ] SLAAC: auto-configure link-local address from MAC (EUI-64)
+- [ ] DHCPv6 client: obtain global IPv6 address + DNS servers
+- [ ] Socket API: `AF_INET6`, `struct sockaddr_in6`, dual-stack sockets
+- [ ] DNS: query AAAA records alongside A records
+- [ ] `ifconfig` displays both IPv4 and IPv6 addresses
+- [ ] Commit: `"net: IPv6 dual-stack support"`
+
 ---
 
 ## Priority Order
@@ -424,6 +443,7 @@
 | 🟡 P2     | 1.4 TCP Robustness            | Retransmission, reliability                            |
 | 🟡 P2     | 2.3 DNS Cache                 | Performance                                            |
 | 🟡 P2     | 4.4 Shell wget/curl           | User-facing download commands                          |
+| 🟡 P2     | 9.6 IPv6 Dual-Stack           | **Production req** — modern internet requires IPv6     |
 | 🟢 P3     | 5.1–5.2 TLS + Certificates    | HTTPS support                                          |
 | 🟢 P3     | 8. Winsock Stubs              | Win32 network compatibility                            |
 | 🟢 P3     | 9.2 Connection Tracking       | Stateful firewall                                      |

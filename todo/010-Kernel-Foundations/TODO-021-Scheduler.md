@@ -13,6 +13,14 @@
 > is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB
 > heap silently. See `rules.md` Known Gotchas.
 
+> [!IMPORTANT]
+> → XREF: `TODO-020-Threading-Synchronization.md §14` — The current scheduler tick
+> source is the LAPIC timer with hardcoded ICR=10,000,000. On Hyper-V Gen 2, the
+> actual bus frequency may differ, making schedule quanta unpredictable (too fast
+> or too slow). When the Hyper-V synthetic timer enhancement (§14 Phase 2 in
+> TODO-020) is implemented, the scheduler should prefer `hv_timer_read_ns()` for
+> accurate `vruntime` accounting and `target_latency` enforcement.
+
 ---
 
 ## 1. Priority-Based Scheduling

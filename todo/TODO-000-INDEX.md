@@ -9,11 +9,12 @@
 
 ---
 
-## Infrastructure
+## Infrastructure  `000-Infrastructure/`
 
-| #   | TODO                                       | Status |
-|-----|--------------------------------------------|--------|
-| 001 | [GitHub Setup](TODO-001-GitHub.md)         |        |
+| #   | TODO                                                                    | Status |
+|-----|-------------------------------------------------------------------------|--------|
+| 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   |        |
+| 002 | [Debug & Logging System](000-Infrastructure/TODO-002-Debug.md)          |        |
 
 ---
 
@@ -140,7 +141,7 @@
 
 ---
 
-## Layer 10: Long-Term / Stretch  `510-Long-Term-Stretch/`
+## Layer 10: Future Releases  `510-Long-Term-Stretch/`
 
 | #   | TODO                                                                          | Status |
 |-----|-------------------------------------------------------------------------------|--------|

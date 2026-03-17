@@ -71,10 +71,10 @@
 
 ### 1.5 Alternative: Port NetSurf / Dillo
 
-**Prompt:** Stretch: evaluate NetSurf (GPL, ~200K lines, ported to many hobby OSes) or Dillo (GPL, ~30K lines, minimalist). Port requires TCP, DNS, TLS, framebuffer, font rendering — all available from earlier phases. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: ported browser engine"`.
+**Prompt:** Evaluate NetSurf (GPL, ~200K lines, ported to many embedded and custom OSes) or Dillo (GPL, ~30K lines, minimalist). Port requires TCP, DNS, TLS, framebuffer, font rendering — all available from earlier phases. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: ported browser engine"`.
 
 
-- [ ] *(Stretch)* Evaluate **NetSurf** (GPL, ~200K lines) — full browser, ported to many hobby OSes
-- [ ] *(Stretch)* Evaluate **Dillo** (GPL, ~30K lines) — minimalist browser
-- [ ] *(Stretch)* Port selected engine to Impossible OS (requires: TCP, DNS, TLS, framebuffer, font rendering)
+- [ ] Evaluate **NetSurf** (GPL, ~200K lines) — full browser, ported to many embedded/custom OSes
+- [ ] Evaluate **Dillo** (GPL, ~30K lines) — minimalist browser
+- [ ] Port selected engine to Impossible OS (requires: TCP, DNS, TLS, framebuffer, font rendering)
 

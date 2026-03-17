@@ -57,6 +57,36 @@
 - [ ] `sc status <name>` — show detailed service info
 - [ ] Commit: `"shell: sc service control command"`
 
+### 2.4 Service Auto-Restart (Crash Recovery)
+
+**Prompt:** A production OS must automatically restart crashed services — a network daemon crash should not require a full reboot. Track service exits: if a service process terminates unexpectedly (non-zero exit or signal), the service manager restarts it automatically after a configurable delay. Use exponential backoff (1s → 2s → 4s → 8s → max 60s) to prevent restart storms. After 5 consecutive failures, mark the service as FAILED and log a critical error. Registry config: `HKLM\SYSTEM\Services\{name}\RestartPolicy` (always/on-failure/never). After completing all items, update `docs/architecture/services.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: service auto-restart"`.
+
+> **Production requirement:** Windows SCM and Linux systemd both auto-restart services.
+> Without this, a single daemon crash degrades the system until manual intervention.
+
+- [ ] Track service exit status via `waitpid()` or kernel thread join
+- [ ] On unexpected exit: schedule restart after backoff delay
+- [ ] Exponential backoff: 1s, 2s, 4s, 8s, 16s, 32s, 60s cap
+- [ ] After 5 consecutive failures: set state = FAILED, log critical error
+- [ ] Reset failure counter on successful run > 60 seconds
+- [ ] Registry: `RestartPolicy` = always | on-failure | never (default: on-failure)
+- [ ] `sc status <name>` shows: restart count, last failure time, backoff delay
+- [ ] Commit: `"kernel: service auto-restart"`
+
+### 2.5 Graceful Degradation
+
+**Prompt:** Non-essential service crashes must not bring down the entire OS. The service manager categorizes services as CRITICAL (kernel panic if they crash) or NORMAL (log error, restart, continue). Only `registryd` and the filesystem are critical. Network daemon crash → no internet but desktop still works. Search indexer crash → no search but files still accessible. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: graceful degradation"`.
+
+> **Production requirement:** Users expect the OS to keep working when non-essential
+> components fail. A crashed print spooler should not require a reboot.
+
+- [ ] Add `critical` flag to `struct service` (default: false)
+- [ ] Critical services: `registryd`, filesystem flush → panic if unrecoverable
+- [ ] Normal services: `netd`, `ntpd`, `indexd` → restart silently, log warning
+- [ ] Desktop notification on service failure: "Network service restarted"
+- [ ] `sc list` shows service health: ✅ RUNNING / ⚠️ RESTARTING / ❌ FAILED
+- [ ] Commit: `"kernel: graceful degradation"`
+
 ---
 
 ## 3. Clipboard
@@ -167,6 +197,8 @@ A minimal version is needed here for file permissions and HOME environment varia
 | 🔴 P0     | **P0203** §1–2 Time System               | Wall-clock time for timestamps, logs, scheduler |
 | 🔴 P0     | §8 Scheduled Tasks                       | Powers Registry flush, NTP sync, log rotate     |
 | 🟠 P1     | §2 Services/Daemons                      | Background processes infrastructure             |
+| 🟠 P1     | §2.4 Service Auto-Restart                | **Production req** — crash recovery             |
+| 🟠 P1     | §2.5 Graceful Degradation                | **Production req** — partial failure resilience |
 | 🟠 P1     | **P0007** §1–2 Clipboard                 | Essential UX — see `TODO-230-Clipboard.md`      |
 | 🟠 P1     | §5 File Associations                     | Double-click opens correct app                  |
 | 🟠 P1     | §7 Shortcut Files                        | Desktop/Start Menu proper UX                    |
@@ -197,4 +229,6 @@ A minimal version is needed here for file permissions and HOME environment varia
 | Win32 GetSystemInfo / GetVersionEx   | ✅ kernel32.dll                       | ❌ No equivalent                        | ⬜ §11.2 P4 — kernel32 stub            |
 | Autostart programs (Run key)         | ✅ `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | ✅ XDG autostart | ⬜ §11.4 P2 — same Registry key         |
 | Notification service                 | ✅ WNS / Toast infrastructure         | ✅ D-Bus notify daemon                  | ⬜ §11.3 / see TODO-200                 |
+| Service auto-restart             | ✅ SCM restart on failure              | ✅ `Restart=on-failure` in .service    | ⬜ §2.4 P1 — exponential backoff        |
+| Graceful degradation             | ✅ Service isolation                   | ✅ Unit dependencies + restart         | ⬜ §2.5 P1 — critical vs normal services |
 | **No separate service manager process** | ❌ svchost.exe per service group   | ❌ PID 1 systemd daemon                 | ✅ **§2 — kernel threads, zero processes** |

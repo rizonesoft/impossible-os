@@ -119,6 +119,43 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ---
 
+## 7. KASLR — Kernel Address Space Layout Randomization
+
+**Prompt:** User-space ASLR (§4) randomizes process memory layouts, but the kernel itself still loads at a fixed address — making kernel exploits trivially predictable. KASLR randomizes the kernel's virtual base address at each boot. The bootloader picks a random physical offset (2 MiB aligned, using RDRAND), loads the kernel there, and passes the offset to the kernel's entry point. The kernel then adjusts its page tables to map from the randomized base. Both Windows and Linux enable KASLR by default. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: KASLR — kernel address randomization"`. Add notes directly in this TODO section.
+
+> **Production requirement:** Every modern OS enables KASLR. Without it, a single
+> kernel memory leak reveals the layout for all future exploits.
+
+- [ ] Bootloader: generate random physical load offset (2 MiB aligned, RDRAND)
+- [ ] Bootloader: load kernel ELF at `KERNEL_BASE + offset` instead of fixed address
+- [ ] Pass kernel load offset to `kernel_main()` via boot params
+- [ ] Kernel: adjust page table setup to use randomized base
+- [ ] Kernel: relocate all kernel symbols by offset (requires position-independent kernel)
+- [ ] Boot log: print effective kernel base address (debug builds only)
+- [ ] Registry: `HKLM\SYSTEM\Security\KASLR` (1=enabled, default 1)
+- [ ] Commit: `"mm: KASLR — kernel address randomization"`
+
+---
+
+## 8. SMEP/SMAP Enforcement
+
+**Prompt:** SMEP (Supervisor Mode Execution Prevention) prevents the kernel from executing code in user-space pages — blocking ret2user exploits. SMAP (Supervisor Mode Access Prevention) prevents the kernel from reading/writing user-space memory without explicit permission — blocking data-only exploits. Both are CPU features enabled via CR4 bits. The kernel must explicitly call `stac()`/`clac()` around intentional user-space copies (e.g., `copy_from_user()`). Both Windows and Linux enable SMEP+SMAP on supported hardware. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: SMEP/SMAP enforcement"`. Add notes directly in this TODO section.
+
+> **Production requirement:** Without SMEP/SMAP, any kernel vulnerability becomes a
+> trivial privilege escalation via user-space code execution.
+
+- [ ] Check CPUID for SMEP (leaf 7, EBX bit 7) and SMAP (leaf 7, EBX bit 20)
+- [ ] Enable SMEP: set CR4 bit 20 at boot if supported
+- [ ] Enable SMAP: set CR4 bit 21 at boot if supported
+- [ ] Implement `copy_from_user(kern_dst, user_src, len)` with `stac()`/`clac()` wrapper
+- [ ] Implement `copy_to_user(user_dst, kern_src, len)` with `stac()`/`clac()` wrapper
+- [ ] Audit all syscall handlers: replace raw pointer dereference with `copy_from_user()`
+- [ ] Page fault handler: detect SMAP violation (error code bit) → panic with clear message
+- [ ] Boot log: `[OK] SMEP enabled` / `[OK] SMAP enabled` / `[WARN] SMEP not supported`
+- [ ] Commit: `"mm: SMEP/SMAP enforcement"`
+
+---
+
 ## Priority Order
 
 | Priority  | Section                          | Reason                                                       |
@@ -128,6 +165,8 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 | 🔴 P0     | 3. mprotect + guard pages        | W^X security + stack overflow detection                      |
 | 🟠 P1     | 4. ASLR                          | Essential security — exploit mitigation                      |
 | 🟠 P1     | 6. COW fork()                    | POSIX process creation; requires §3 mprotect first           |
+| 🟠 P1     | 7. KASLR                         | Kernel exploit mitigation — standard in Windows/Linux        |
+| 🟠 P1     | 8. SMEP/SMAP                     | Privilege escalation prevention — standard in Windows/Linux  |
 | 🟡 P2     | 5. Huge Pages                    | Performance — framebuffer and large file mmap                |
 
 ---
@@ -142,7 +181,10 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 | ASLR                         | ✅ Opt-in per binary    | ✅ Default on            | ⬜ §4 P1 — **default on all procs** |
 | Huge pages                   | ✅ `MEM_LARGE_PAGES`    | ✅ `MAP_HUGETLB`         | ⬜ §5 P2                            |
 | COW fork()                   | ❌ No fork              | ✅ COW fork              | ⬜ §6 P1 — **beats Windows**        |
+| KASLR                        | ✅ Default on            | ✅ Default on             | ⬜ §7 P1 — **production standard**  |
+| SMEP/SMAP                    | ✅ Enabled               | ✅ Enabled                | ⬜ §8 P1 — **stops ret2user**       |
 | Page replacement algorithm   | ✅ Modified clock       | ✅ LRU + clock           | ✅ Clock (second-chance)            |
 | **ASLR default for all**     | ⚠️ Opt-in per PE binary | ✅ Default               | ⬜ **§4 — mandatory for all procs** |
+| **Full exploit mitigation**  | ✅ (ASLR+KASLR+SMEP+SMAP+DEP) | ✅ (all enabled)   | ⬜ **§3-4, §7-8 — complete when done** |
 
-> **After §3–6:** Impossible OS matches Linux's VM subsystem. ASLR mandatory-by-default exceeds Windows 11.
+> **After §3–8:** Impossible OS matches modern OS kernel hardening. ASLR mandatory-by-default exceeds Windows 11.

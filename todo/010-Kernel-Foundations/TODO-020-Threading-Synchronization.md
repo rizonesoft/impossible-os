@@ -770,6 +770,20 @@ Between `rcu_read_unlock()` and the next `rcu_read_lock()`, the writer may call 
 **SMP upgrade path:**
 Replace `scheduler_disable/enable` with per-CPU preempt counters. Add a `rcu_quiescent_state()` call in each scheduler tick. `synchronize_rcu()` becomes: register a grace-period callback and block until all CPUs have passed through a quiescent state. See Linux `call_rcu()` and `rcu_barrier()`.
 
+#### Enhancement: RCU Grace Period Resilience
+
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §1.6` — On Hyper-V Gen 2, the LAPIC timer fires at a
+> non-deterministic rate (hardcoded ICR=10M assumes a specific bus frequency that may differ
+> under virtualization). If the tick rate is slower than expected, RCU grace periods take
+> longer — and if the timer stalls entirely, `synchronize_rcu()` blocks forever, causing
+> unbounded memory growth from deferred frees. A watchdog timeout prevents this.
+
+- [ ] Add `RCU_GRACE_PERIOD_TIMEOUT_MS` (default: 500ms) — max time `synchronize_rcu()` waits before logging a warning
+- [ ] If timeout fires, log: `[WARN] RCU grace period stall — timer may be misconfigured`
+- [ ] After timeout, force a quiescent state (safe on single-core: all readers must have exited)
+- [ ] Commit: `"rcu: add grace period watchdog for timer-stall resilience"`
+
 ---
 
 
@@ -797,6 +811,40 @@ Replace `scheduler_disable/enable` with per-CPU preempt counters. Add a `rcu_qui
 - [ ] SMP-aware scheduler: run queue per CPU, load balancing via work stealing
 - [ ] Per-CPU run queues with work-stealing for load balancing
 
+#### Enhancement: CPU Feature Masking Awareness
+
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §1.6` — Hyper-V’s “Processor Compatibility Mode”
+> (used for live migration between hosts with different CPU generations) masks CPU features
+> like AVX, XSAVE, and AVX-512 via CPUID filtering. If the BSP detects AVX and context
+> switching saves/restores XMM+YMM state via `XSAVE`, but APs run with AVX masked, context
+> restore on APs triggers `#UD` (Invalid Opcode). The context switch code must re-check
+> CPUID on each AP during bringup, or use the intersection of features across all cores.
+
+- [ ] During AP bringup, read `CPUID.01H:ECX` and `CPUID.0DH` on each AP
+- [ ] Compare AP feature set with BSP — log warning if features differ
+- [ ] Use **intersection** of all CPUs’ feature sets for context-switch state save/restore
+- [ ] If AVX detected on BSP but missing on any AP: disable AVX context save, fall back to SSE-only `FXSAVE/FXRSTOR`
+- [ ] Registry: `HKLM\HARDWARE\CPU\FeatureIntersection` — bitmask of safe features
+- [ ] Commit: `"smp: CPU feature intersection for safe context switching"`
+
+#### Enhancement: Hyper-V Synthetic Timer (Optional Clock Source)
+
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §1.6` — The hardcoded `ICR=10,000,000` LAPIC timer
+> produces a non-deterministic tick rate because the actual bus clock frequency varies
+> by platform and virtualization. On Hyper-V, the synthetic timer
+> (`HV_X64_MSR_STIMER0_CONFIG`) provides an accurate, calibration-free clock source
+> with 100ns resolution, independent of bus speed. Using the synthetic timer when
+> available gives reliable scheduler quanta and sleep durations.
+
+- [ ] Detect Hyper-V via CPUID leaf `0x40000001` (signature `"Hv#1"`)
+- [ ] If Hyper-V detected: read `HV_X64_MSR_STIMER0_CONFIG` and `HV_X64_MSR_STIMER0_COUNT`
+- [ ] Configure synthetic timer for periodic scheduler interrupts (replaces LAPIC timer)
+- [ ] Provide `hv_timer_read_ns()` — nanosecond-resolution monotonic clock
+- [ ] Fallback: if not on Hyper-V, continue using LAPIC timer (xv6 hardcoded ICR)
+- [ ] Commit: `"smp: Hyper-V synthetic timer as optional clock source"`
+
 ### Notes — SMP Architecture & Gotchas
 
 **Interrupt controller transition (PIC → LAPIC/IOAPIC):**
@@ -818,6 +866,12 @@ The AP trampoline code (`ap_trampoline.asm`) embeds its own temporary GDT with c
 
 **Single-core fallback:**
 When only 1 CPU is detected, the LAPIC/IOAPIC code is skipped entirely. The legacy PIC continues to deliver PIT timer interrupts. `smp_init()` still runs to set up per-CPU data for the BSP.
+
+> [!IMPORTANT]
+> → XREF: `TODO-080-Drivers.md §2.2` — On Hyper-V Gen 2, the MADT has `PCAT_COMPAT=0`
+> (no PIC). The single-core fallback above assumes PIC is always present when only 1 CPU
+> is detected. After the `PCAT_COMPAT` check is implemented in the APIC/IOAPIC driver,
+> this fallback must be updated: if `PCAT_COMPAT=0`, use LAPIC timer even on single-core.
 
 ---
 

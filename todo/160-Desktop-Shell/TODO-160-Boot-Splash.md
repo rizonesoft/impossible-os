@@ -64,21 +64,23 @@
 
 ---
 
-## 4. F8 Boot Menu *(Stretch)*
+## 4. F8 Boot Menu & Recovery
 
-**Prompt:** Press F8 during boot (within the first 2 seconds) to show a simple text-mode boot menu. Options: (1) Normal boot, (2) Safe Mode (disable non-essential drivers), (3) Recovery Mode (skip registry + filesystem, boot to recovery shell), (4) Boot Last Known Good Configuration. In safe mode: skip network init, skip desktop shell, boot to terminal only. Menu uses PSF bitmap font (no TrueType dependency). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: F8 boot menu"`. Add notes directly in this TODO section.
+**Prompt:** Press F8 during boot (within the first 2 seconds) to show a text-mode boot menu. Options: (1) Normal boot, (2) Safe Mode (disable non-essential drivers), (3) Recovery Mode (skip registry + filesystem, boot to recovery shell), (4) Boot Last Known Good Configuration. In safe mode: skip network init, skip desktop shell, boot to terminal only. Menu uses PSF bitmap font (no TrueType dependency). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: F8 boot menu"`. Add notes directly in this TODO section.
 
-> **Beats:** Linux GRUB has advanced boot menus but requires separate bootloader. Windows F8 requires WinPE/WinRE. Impossible OS F8 menu is built into the kernel — simpler, faster, always available.
+> **Production requirement:** Every operating system needs a recovery path when the normal
+> boot sequence fails. Windows has F8/WinRE, Linux has GRUB recovery. Without this,
+> a bad driver or corrupt registry makes the system permanently unbootable.
 
-- [ ] *(Stretch)* Poll keyboard during boot splash init (first 2 seconds): F8 → show boot menu
-- [ ] *(Stretch)* Text-mode boot menu: dark background, numbered options (PSF font rendering)
+- [ ] Poll keyboard during boot splash init (first 2 seconds): F8 → show boot menu
+- [ ] Text-mode boot menu: dark background, numbered options (PSF font rendering)
   - [ ] (1) Normal Boot — continue boot sequence
   - [ ] (2) Safe Mode — set `BOOT_MODE_SAFE` flag, skip network + GPU drivers
   - [ ] (3) Recovery Shell — skip desktop, boot to text-mode shell with diagnostic commands
   - [ ] (4) Last Known Good — restore Registry backup `HKLM.backup` from last successful boot
-- [ ] *(Stretch)* In Safe Mode: display "Safe Mode" watermark in corner of desktop
-- [ ] *(Stretch)* Registry: `HKLM\SYSTEM\Boot\LastKnownGoodEnabled` + `HKLM.backup` hive copy
-- [ ] *(Stretch)* Commit: `"kernel: F8 boot menu"`
+- [ ] In Safe Mode: display "Safe Mode" watermark in corner of desktop
+- [ ] Registry: `HKLM\SYSTEM\Boot\LastKnownGoodEnabled` + `HKLM.backup` hive copy
+- [ ] Commit: `"kernel: F8 boot menu"``
 
 ---
 
@@ -89,7 +91,7 @@
 | 🔴 P0    | §1 Boot Splash Renderer      | Core visual — replaces blank screen on boot    |
 | 🔴 P0    | §2 Boot Progress Milestones  | Shows meaningful progress rather than spinner  |
 | 🟠 P1    | §3 Serial Boot Log           | Parallel debug output — critical for dev       |
-| 🔵 P4    | §4 F8 Boot Menu              | Advanced feature — nice to have               |
+| 🟠 P1    | §4 F8 Boot Menu & Recovery  | **Production requirement** — recovery boot path |
 
 ---
 
@@ -114,7 +116,7 @@
 | Boot progress bar                | ✅ Thin progress bar                | ✅ Plymouth progress bar               | ⬜ §1-2 P0 — milestone-driven            |
 | Status messages during boot      | ❌ (hidden from user)              | ✅ Plymouth + `quiet` kernel param     | ⬜ §3 P1 — serial + splash status       |
 | Fade-out transition to desktop   | ✅ Smooth fade                      | ✅ Plymouth deactivate                 | ⬜ §1 P0 — 8-step fade                  |
-| F8 boot menu / recovery mode     | ✅ Advanced startup via F8/WinRE   | ✅ GRUB + rescue.cfg                   | ⬜ §4 P4 (stretch)                       |
-| Safe Mode                        | ✅ via F8 → WinPE                  | ✅ `systemd.unit=rescue.target`         | ⬜ §4 P4 (stretch)                       |
+| F8 boot menu / recovery mode     | ✅ Advanced startup via F8/WinRE   | ✅ GRUB + rescue.cfg                   | ⬜ §4 P1 — **built into kernel**           |
+| Safe Mode                        | ✅ via F8 → WinPE                  | ✅ `systemd.unit=rescue.target`         | ⬜ §4 P1 — **production requirement**     |
 | **Logo embedded in kernel**      | ✅ (winload)                        | ❌ Plymouth loads from disk            | ⬜ **§1 — zero filesystem dependency**   |
 | **No separate daemon**           | ❌ winload.exe is separate         | ❌ Plymouth is a separate process      | ⬜ **§1 — inline kernel, no daemon**     |

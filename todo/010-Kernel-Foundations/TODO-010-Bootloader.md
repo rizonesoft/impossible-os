@@ -63,7 +63,7 @@
 - [x] Store RSDP address and version in `boot_info.acpi_rsdp_addr` / `acpi_version`
 - [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
 
-### 1.5 Memory Map & Page Tables
+### 1.5 Memory Map & Page Tables ✅ → Enhancement
 
 **Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to memory mapping or page tables. Add notes, gotchas, and design decisions directly in this TODO section covering the UEFI memory map, page table setup, and ExitBootServices flow.
 
@@ -74,6 +74,60 @@
 - [x] Implement `setup_page_tables()` — 4-level identity mapping of 4 GiB via 2 MiB pages
 - [x] Implement `jump_to_kernel()` — set up Multiboot2 magic + boot info pointer, jump
 - [x] Commit: `"boot: custom UEFI bootloader replaces GRUB"` (`32a5f8f`)
+
+#### Enhancement: Memory-Type-Aware Page Table Mapping
+
+> [!CAUTION]
+> **Critical for Hyper-V Gen 2 and real hardware.** The current `setup_page_tables()` maps
+> all 4 GiB with write-back caching (PTE flags `0x87`). On Hyper-V Gen 2, this maps VMBus
+> MMIO regions with WB caching, triggering a Machine Check Exception (MCE) or hypervisor
+> VM-Exit. On real hardware, this silently corrupts PCI BAR windows. The UEFI memory map
+> contains `EfiMemoryMappedIO` descriptors that **must** be mapped as Uncacheable (UC).
+
+**Prompt:** Enhance `setup_page_tables()` in `bootx64.c` to respect UEFI memory descriptor types. After the initial 4 GiB identity map, walk the UEFI memory map and re-flag 2 MiB pages that overlap MMIO regions with `PCD=1, PWT=1` (Uncacheable). Skip mapping `EfiReservedMemoryType` entirely. Preserve `EfiRuntimeServicesData/Code` with correct attributes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: UC page mapping for MMIO regions"`. Add notes directly in this TODO section.
+
+| UEFI Memory Type | Required Caching | PTE Flags |
+|---|---|---|
+| `EfiConventionalMemory` | Write-Back (WB) | `0x87` (current) |
+| `EfiLoaderCode/Data` | Write-Back (WB) | `0x87` (current) |
+| `EfiMemoryMappedIO` | **Uncacheable (UC)** | `0x87 | PCD(1<<4) | PWT(1<<3)` = `0x9F` |
+| `EfiMemoryMappedIOPortSpace` | **Uncacheable (UC)** | `0x9F` |
+| `EfiReservedMemoryType` | **Do not map** | Skip (PTE = 0) |
+| `EfiRuntimeServicesData/Code` | Write-Back (preserve) | `0x87` |
+
+- [ ] After initial 4 GiB identity map, walk UEFI `GetMemoryMap()` descriptors
+- [ ] For each `EfiMemoryMappedIO` / `EfiMemoryMappedIOPortSpace` region:
+  - [ ] Calculate which 2 MiB page(s) overlap the region
+  - [ ] Set PCD (bit 4) and PWT (bit 3) on those PTE entries → Uncacheable
+- [ ] For each `EfiReservedMemoryType` region: clear the PTE (mark not-present)
+- [ ] Log via serial: `[PAGE] UC mapping: 0xFEC00000 (EfiMemoryMappedIO)` for each re-flagged page
+- [ ] Test: boot in QEMU → verify no regressions; test in VirtualBox NEM → verify no MCE
+- [ ] Commit: `"boot: UC page mapping for MMIO regions"`
+
+### 1.6 Hyper-V Generation 2 Compatibility Notes
+
+> [!WARNING]
+> **Hyper-V Gen 2 is a legacy-free, paravirtualized environment.** It completely removes
+> the PIC, PIT, PS/2 controllers, IDE/AHCI, and floppy. All I/O goes through the proprietary
+> VMBus protocol. The following table maps each architectural gap to the TODO section that
+> addresses it. See the full analysis in the Hyper-V research document.
+
+| Failure Domain | Impact | Fix Location | Status |
+|---|---|---|---|
+| Secure Boot blocks unsigned EFI | Boot halts before `efi_main()` | §3-6 (MOK + shim) | ✅ Done |
+| GOP hardcoded to 1280×720 | `SetMode()` returns `EFI_UNSUPPORTED` | §1.2 (EDID → fallback chain) | ✅ Done |
+| Identity map 4 GiB as WB | MCE on MMIO access (VMBus regions) | §1.5 Enhancement (above) | ⬜ TODO |
+| PIC absent (PCAT_COMPAT=0) | PIC I/O writes silently dropped | `TODO-080 §2.2` Enhancement | ⬜ TODO |
+| PIT absent (no I/O ports 0x40-43) | Calibration hangs | Already bypassed (xv6 LAPIC) | ✅ Done |
+| Storage: no AHCI/VirtIO | PCI scan finds no block devices | `TODO-080 §10` VMBus stack | ⬜ TODO |
+| Input: no PS/2 (i8042) | Ports 0x60/0x64 return garbage | `TODO-080 §10.3` Synthetic HID | ⬜ TODO |
+| Framebuffer back buffer > 2 MiB heap | kmalloc OOM for 3.51 MiB buffer | PMM-backed allocation | ✅ Done |
+| SMP INIT-SIPI | Works (virtual APIC) but unenlightened | Functional — perf only | ⚠️ P4 |
+
+> [!NOTE]
+> **Primary dev targets remain QEMU and VirtualBox (Gen 1).** Hyper-V Gen 2 support is
+> 🟢 P3 stretch. The VMBus driver stack (§10 in `TODO-080-Drivers.md`) is the largest
+> single piece of work and can be deferred until after the core driver model is complete.
 
 ---
 

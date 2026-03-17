@@ -77,12 +77,14 @@
 
 **Prompt:** On NUMA (Non-Uniform Memory Access) systems, memory accesses to local nodes are faster than remote nodes. The NUMA topology is described in the ACPI SRAT (System Resource Affinity Table). Read SRAT at boot to identify NUMA nodes and their associated physical memory ranges. When allocating frames for a CPU, prefer frames local to that CPU's NUMA node. This is a stretch goal — single-node systems (all current QEMU/VBox configs) are not affected. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: NUMA-aware PMM allocation"`. Add notes directly in this TODO section.
 
-> **Beats:** Linux numa subsystem is complex. Most hobby OSes skip NUMA entirely. Implementing even basic NUMA affinity would be ahead of the curve for a hobby kernel.
+> **Competitive target:** Matches Linux NUMA subsystem for multi-socket server support.
+> Windows uses NUMA node affinity in the NT kernel. Even basic NUMA awareness positions
+> Impossible OS alongside production server operating systems.
 
-- [ ] *(Stretch)* Parse ACPI SRAT to identify NUMA nodes and memory ranges
-- [ ] *(Stretch)* Extend PMM to track which node each memory range belongs to
-- [ ] *(Stretch)* `pmm_alloc_node(node_id)` — prefer local-node frames
-- [ ] *(Stretch)* Scheduler: set preferred NUMA node per task
+- [ ] Parse ACPI SRAT to identify NUMA nodes and memory ranges
+- [ ] Extend PMM to track which node each memory range belongs to
+- [ ] `pmm_alloc_node(node_id)` — prefer local-node frames
+- [ ] Scheduler: set preferred NUMA node per task
 - [ ] Commit: `"mm: NUMA-aware PMM allocation"`
 
 ---
