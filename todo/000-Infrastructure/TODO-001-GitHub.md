@@ -110,18 +110,18 @@
 
 **Prompt:** Create `CONTRIBUTING.md` with guidelines for external contributors. Cover: how to set up the dev environment, coding standards (snake_case, UPPER_CASE macros, 120-char lines), commit message convention (`"scope: description"`), PR process, and the TODO system for finding work items. After completing all items, mark every item as `[x]`, and commit as `"docs: contributing guidelines"`. Add notes directly in this TODO section.
 
-- [ ] Create `CONTRIBUTING.md`
-- [ ] Development environment setup (link to `scripts/setup.sh`)
-- [ ] Code style guide (summarize from `.agents/rules/rules.md`):
-  - [ ] snake_case functions/variables, UPPER_CASE macros
-  - [ ] `#pragma once` or include guards
-  - [ ] Functions < 50 lines, lines ≤ 120 characters
-  - [ ] Comment all non-obvious hardware interactions
-- [ ] Commit message format: `"scope: short description"` (conventional commits)
-- [ ] PR process: fork → branch → implement → test (`build.sh clean run`) → PR
-- [ ] Where to find work items: `todo/TODO-000-INDEX.md`
-- [ ] Memory allocation rules: kmalloc (≤ 4 KB) vs PMM (everything else)
-- [ ] Commit: `"docs: contributing guidelines"`
+- [x] Create `CONTRIBUTING.md` — ✅ 160+ lines
+- [x] Development environment setup (link to `scripts/setup.sh`) — ✅ Quick Start section with setup.sh + git hooks
+- [x] Code style guide (summarize from `.agents/rules/rules.md`):
+  - [x] snake_case functions/variables, UPPER_CASE macros — ✅ Naming table
+  - [x] `#pragma once` or include guards — ✅ Headers section
+  - [x] Functions < 50 lines, lines ≤ 120 characters — ✅ Formatting section
+  - [x] Comment all non-obvious hardware interactions — ✅ With LAPIC EOI example
+- [x] Commit message format: `"scope: short description"` (conventional commits) — ✅ 10 scopes with examples
+- [x] PR process: fork → branch → implement → test (`build.sh clean run`) → PR — ✅ 6-step process with checklist
+- [x] Where to find work items: `todo/TODO-000-INDEX.md` — ✅ With "Good First Issues" suggestions
+- [x] Memory allocation rules: kmalloc (≤ 4 KB) vs PMM (everything else) — ✅ Table + CAUTION callout
+- [x] Commit: `"docs: contributing guidelines"` — ✅
 
 ### 2.5 Create CODE_OF_CONDUCT.md *(agent)*
 
