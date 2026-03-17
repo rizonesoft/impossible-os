@@ -469,16 +469,24 @@ scripts/
 
 ## 6. Development Utilities
 
-### 6.1 Symbol Map Generator
+### 6.1 Symbol Map Generator ✅
 
-**Prompt:** Generate a kernel symbol map (`build/kernel.map`) during the build process. This maps function names to addresses, enabling the stack trace in BSOD/panic to show function names instead of raw hex addresses. `nm -n build/kernel.bin > build/kernel.map`. The panic handler uses this map to resolve addresses during stack trace printing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"build: symbol map generation"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `build/kernel.map` and `build/kernel.sym` are generated during build, `symtab_init()` loads the symbol table from IXFS, and `panic.c` resolves addresses to symbol names. Run `bash scripts/build.sh clean` and check `wc -l build/kernel.map`. Fix any inconsistencies in the TODO items below.
 
-- [ ] Add `nm -n $(KERNEL_BIN) > build/kernel.map` to Makefile after kernel link
-- [ ] Embed symbol map as raw data in the kernel (or load from initrd at boot)
-- [ ] `panic.c`: resolve RBP-chain addresses to function names via binary search in map
-- [ ] Boot log: `[OK] Symbol map loaded: 1,247 symbols`
-- [ ] Stack trace output: `  0xFFFF800000012345  kernel_main+0x42  (main.c)`
-- [ ] Commit: `"build: symbol map generation"`
+- [x] Add `llvm-nm-19 -n $(KERNEL_BIN) > build/kernel.map` to Makefile after kernel link
+- [x] Convert to binary format via `tools/convert_symmap.py`, load from IXFS at boot (`C:\Impossible\System\kernel.sym`)
+- [x] `panic.c`: resolve RBP-chain addresses via `symtab_resolve()` — binary search in sorted table
+- [x] Boot log: `[INFO ][SYMTAB] Symbol map loaded: N symbols (K KB)`
+- [x] Stack trace output: `#0  0xADDR  func_name+0xoffset` (on both BSOD screen and serial)
+- [x] Commit: `"build: symbol map generation"`
+
+> [!NOTE]
+> **Symbol map notes (2026-03-17):**
+> - `tools/convert_symmap.py` converts nm text to packed binary (KSYM format: 8-byte addr + 32-byte name)
+> - `src/kernel/symtab.c` loads from VFS, allocates via PMM (40 KB for ~1000 symbols)
+> - O(log n) binary search — safe to call from panic context (no allocations)
+> - Only includes T/t/D/d symbols, skips compiler internals (`.` and `$` prefixes)
+> - `kernel.sym` is copied to sysroot and included in the IXFS partition automatically
 
 ### 6.2 Code Size & Bloat Tracking
 
@@ -661,7 +669,7 @@ scripts/
 | ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds     |
 | ✅ Done   | 2.1 Clang/LLD Migration           | Prerequisite for clangd + Bear + semantic search         |
 | ✅ Done   | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
-| 🟠 P1     | 6.1 Symbol Map                    | BSOD stack traces need function names                    |
+| ✅ Done   | 6.1 Symbol Map                    | BSOD stack traces show function names                    |
 | 🟠 P1     | 6.5 clangd + Bear                 | Deep code intelligence — requires §2.1 Clang first       |
 | ✅ Done   | 1.3 Parallel Build                | Build speed — 2.5× faster with -j12                      |
 | ✅ Done   | 1.5 Scripts Directory Organization| Daily scripts at root, secondary in subdirs              |

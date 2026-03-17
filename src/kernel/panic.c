@@ -26,6 +26,7 @@
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "bsod_icon.h"
+#include "kernel/symtab.h"
 
 /* --- Constants --- */
 
@@ -240,7 +241,7 @@ static void write_crash_dump(struct interrupt_frame *frame,
                 s = at;
                 while (*s && pos < 2040) buf[pos++] = *s++;
             }
-            /* Hex format for return address - simplified */
+            /* Hex format for return address */
             {
                 uint64_t v = ret_addr;
                 char hex[17];
@@ -253,6 +254,30 @@ static void write_crash_dump(struct interrupt_frame *frame,
                 hex[16] = '\0';
                 s = hex;
                 while (*s && pos < 2040) buf[pos++] = *s++;
+            }
+            /* Resolve symbol name */
+            {
+                uint64_t sym_off = 0;
+                const char *sym_name = symtab_resolve(ret_addr, &sym_off);
+                if (sym_name) {
+                    const char *sp = "  ";
+                    s = sp;
+                    while (*s && pos < 2040) buf[pos++] = *s++;
+                    s = sym_name;
+                    while (*s && pos < 2040) buf[pos++] = *s++;
+                    const char *plus = "+0x";
+                    s = plus;
+                    while (*s && pos < 2040) buf[pos++] = *s++;
+                    /* Hex offset (compact) */
+                    char ohex[17];
+                    int oi = 16;
+                    ohex[oi] = '\0';
+                    uint64_t ov = sym_off;
+                    if (ov == 0) { ohex[--oi] = '0'; }
+                    else { while (ov && oi > 0) { ohex[--oi] = "0123456789abcdef"[ov & 0xF]; ov >>= 4; } }
+                    s = &ohex[oi];
+                    while (*s && pos < 2040) buf[pos++] = *s++;
+                }
             }
             buf[pos++] = '\n';
         }
@@ -405,7 +430,17 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
         if (ret_addr == 0)
             break;
 
-        printk("    #%u  %p\n", (uint64_t)depth, ret_addr);
+        {
+            uint64_t sym_off = 0;
+            const char *sym = symtab_resolve(ret_addr, &sym_off);
+            if (sym) {
+                printk("    #%u  %p  %s+0x%x\n",
+                       (uint64_t)depth, ret_addr,
+                       (uint64_t)(uintptr_t)sym, sym_off);
+            } else {
+                printk("    #%u  %p\n", (uint64_t)depth, ret_addr);
+            }
+        }
         rbp = frame_ptr[0];
     }
 

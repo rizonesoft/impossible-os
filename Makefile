@@ -173,6 +173,9 @@ $(KERNEL_BIN): os-logo bsod-icon boot-font $(OBJS) $(LINKER_SCRIPT)
 	@mkdir -p $(dir $@)
 	$(LD) $(LDFLAGS) -T $(LINKER_SCRIPT) -o $@ $(OBJS)
 	@echo "[LD] Linked $@"
+	@llvm-nm-19 -n $@ > $(BUILD_DIR)/kernel.map
+	@python3 tools/convert_symmap.py $(BUILD_DIR)/kernel.map $(BUILD_DIR)/kernel.sym
+	@echo "[NM] Symbol map: $(BUILD_DIR)/kernel.map"
 
 ## host-tools: Build host utility programs (jpg2raw, irespack, etc.)
 host-tools: $(BUILD_DIR)/tools/jpg2raw $(BUILD_DIR)/tools/irespack
@@ -331,6 +334,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 	@# Step 3: Format Logs partition as FAT32
 	mkfs.fat -F 32 -n IXOS_LOG --offset $$(( $(LOG_OFFSET) / 512 )) $@
 	@# Step 4: Format IXFS partition and populate with system files
+	@cp $(BUILD_DIR)/kernel.sym $(BUILD_DIR)/sysroot/Impossible/System/kernel.sym
 	$(BUILD_DIR)/tools/mkfs-ixfs \
 		-o $@ \
 		-s $(IXFS_PART_SIZE) \

@@ -65,6 +65,7 @@
 #include "kernel/version.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
+#include "kernel/symtab.h"
 
 /* ---- Block device adapter wrappers ----
  * These adapt driver-specific APIs to the blkdev function pointer signature:
@@ -648,6 +649,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     registry_init();
     boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
+
+    /* Load kernel symbol map for symbolic stack traces */
+    symtab_init();
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
