@@ -507,20 +507,28 @@ scripts/
 > - CSV history is append-only, survives incremental builds, reset on `clean`
 > - Shows human-readable sizes (KB/MB/GB) with colored deltas (red = grew, green = shrank)
 
-### 6.3 Code Style Linter
+### 6.3 Code Style Linter ✅
 
-**Prompt:** Create `scripts/lint.sh` that checks all C source files against the project's coding standards: snake_case for functions/variables, UPPER_CASE for macros, `#pragma once` or include guards, lines ≤ 120 characters, no trailing whitespace, functions ≤ 50 lines. Use a combination of `grep`, `awk`, and/or `cppcheck` 2.20+ (static analysis for memory leaks, buffer overflows, undefined behavior). Report violations with file:line and a description. Exit with code 0 if clean, 1 if violations found. After completing all items, mark every item as `[x]`, and commit as `"tools: code style linter"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/lint.sh` checks all 6 style rules and reports violations. Run `bash scripts/lint.sh` and review output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `scripts/lint.sh`
-- [ ] Check: snake_case for function definitions
-- [ ] Check: UPPER_CASE for `#define` macros
-- [ ] Check: `#pragma once` or include guard in every `.h` file
-- [ ] Check: lines ≤ 120 characters
-- [ ] Check: no trailing whitespace
-- [ ] Check: functions ≤ 50 lines (warn, not error)
-- [ ] Report: `file:line: violation description`
-- [ ] Exit 0 (clean) or 1 (violations found)
-- [ ] Commit: `"tools: code style linter"`
+- [x] Create `scripts/lint.sh`
+- [x] Check: snake_case for function definitions (detects camelCase, excludes Win32 API wrappers)
+- [x] Check: UPPER_CASE for `#define` macros (flags pure lowercase macros)
+- [x] Check: `#pragma once` or include guard in every `.h` file
+- [x] Check: lines ≤ 120 characters (excludes comment lines)
+- [x] Check: no trailing whitespace
+- [x] Check: functions ≤ 50 lines (warn, not error)
+- [x] Report: `file:line: violation description` with colored output
+- [x] Exit 0 (clean) or 1 (violations found — errors only, warnings don't fail)
+- [x] Commit: `"tools: code style linter"`
+
+> [!NOTE]
+> **Linter notes (2026-03-17):**
+> - Excludes auto-generated files: `build_info.h`, `os_logo.h`, `bsod_icon.h`, `boot_splash_font_data.h`
+> - Excludes third-party: `stb_truetype`, `stb_image`
+> - camelCase detection skips Win32 API names (`Reg*`, `HKEY*`)
+> - Function length uses awk brace-depth tracking for accuracy
+> - Supports path argument: `bash scripts/lint.sh src/kernel/mm/`
 
 ### 6.4 Debug Script Enhancement
 
@@ -692,7 +700,7 @@ scripts/
 | ✅ Done   | 4.3 USB Log Reader                | Hardware debugging log retrieval                         |
 | ✅ Done   | 5.2 Core Subsystem Tests          | PMM, heap, VFS, sched, registry — 12 suites              |
 | ✅ Done   | 6.2 Size Tracking                 | Detect bloat early — tracks kernel + disk sizes          |
-| 🟢 P3     | 6.3 Code Linter                   | Style consistency                                        |
+| ✅ Done   | 6.3 Code Linter                   | Style consistency — 6 automated checks                   |
 | 🟢 P3     | 6.4 GDB Debug Enhancement         | Developer productivity                                   |
 | 🟢 P3     | 7.2 Asset Validation              | Catch malformed assets at build time                     |
 | 🟢 P3     | 8.1 CI Build Workflow             | After §5.3 smoke test exists                             |
@@ -705,7 +713,7 @@ scripts/
 | File                                | Purpose                                  |
 |-------------------------------------|------------------------------------------|
 | `scripts/build.sh`                  | [EXISTS] Core build script               |
-| `scripts/run-qemu.sh`              | [EXISTS] QEMU launcher                   |
+| `scripts/run-qemu.sh`               | [EXISTS] QEMU launcher                   |
 | `scripts/debug.sh`                  | [EXISTS] GDB debug launcher              |
 | `scripts/deploy/write-usb.ps1`      | [EXISTS] USB write (Windows)             |
 | `scripts/setup-toolchain.sh`        | [NEW] Cross-compiler bootstrap           |
