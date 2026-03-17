@@ -17,6 +17,7 @@
 | 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)      |        |
 | 008 | [Hyper-V Gen 2 Boot](000-Infrastructure/TODO-008-Hyper-V-Runner.md)   |        |
 | 005 | [Debug & Logging System](000-Infrastructure/TODO-005-Debug.md)          |        |
+| 006 | [Real Hardware Boot](000-Infrastructure/TODO-006-Real-Hardware.md)      |        |
 
 ---
 
