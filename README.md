@@ -1,5 +1,5 @@
 <p align="center">
-  <img src=".github/logo.png" alt="Impossible OS Logo" width="120" />
+  <img src="resources/logo.svg" alt="Impossible OS Logo" width="128" height="128" />
   <br />
   <strong>Impossible OS</strong>
   <br />
