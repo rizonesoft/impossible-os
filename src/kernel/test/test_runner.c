@@ -44,27 +44,22 @@ void _test_assert(int condition, const char *msg, const char *file, int line)
 }
 
 /* ---- Register built-in test suites ---- */
-/* Add extern declarations for test registration functions here.
- * Each subsystem provides a test_register_xxx() function that calls
- * test_suite_register() for its tests. */
-
-/* Example:
- *   extern void test_register_pmm(void);
- *   extern void test_register_heap(void);
- *   extern void test_register_vfs(void);
- */
+extern void test_register_pmm(void);
+extern void test_register_heap(void);
+extern void test_register_vfs(void);
+extern void test_register_sched(void);
+extern void test_register_registry(void);
 
 void test_runner_init(void)
 {
     log_info("TEST", "=== Kernel Test Framework ===");
     log_info("TEST", "Registering test suites...");
 
-    /* Register test suites here as they are added:
-     * test_register_pmm();
-     * test_register_heap();
-     * test_register_vfs();
-     * test_register_sched();
-     */
+    test_register_pmm();
+    test_register_heap();
+    test_register_vfs();
+    test_register_sched();
+    test_register_registry();
 
     log_info("TEST", "%u suite(s) registered", g_test_state.suite_count);
 }
