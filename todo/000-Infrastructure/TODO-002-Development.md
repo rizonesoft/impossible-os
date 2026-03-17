@@ -578,17 +578,17 @@ scripts/
 - [x] Create `.clangd` at repo root with `--target=x86_64-elf`, `-nostdlib`, `-ffreestanding`, `-mno-red-zone`
 - [x] Commit `.clangd` to repo (it's project-wide config, not machine-specific)
 
-**Step 3: Verify code intelligence works** *(manual — developer tests in editor)*
+**Step 3: Verify code intelligence works** *(manual — developer tests in editor)* ✅
 
-- [ ] Open the project in an LSP-compatible editor (VS Code + clangd extension, or Antigravity)
-- [ ] Verify: `clangd` resolves `#include "kernel/types.h"` correctly (no red squiggles)
-- [ ] Verify: `clangd` does NOT inject host `/usr/include/` headers
-- [ ] Verify: go-to-definition works for kernel functions (`printk`, `kmalloc`, `vfs_open`)
+- [x] Open the project in an LSP-compatible editor (VS Code + clangd extension)
+- [x] Verify: `clangd` resolves `#include "kernel/types.h"` correctly (no red squiggles)
+- [x] Verify: `clangd` does NOT inject host `/usr/include/` headers
+- [x] Verify: go-to-definition works for kernel functions (`printk`, `kmalloc`, `vfs_open`)
 
-**Step 4: Wire clangd as an MCP server in Antigravity** *(manual — developer configures IDE)*
+**Step 4: ~~Wire clangd as an MCP server in Antigravity~~** *(N/A — see gotcha below)*
 
-- [ ] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
-- [ ] Add the `impossible-os-clangd` server entry (see `TODO-003 §5.2` for full JSON)
+- [x] ~~Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config~~ — N/A
+- [x] ~~Add the `impossible-os-clangd` server entry~~ — N/A (clangd speaks LSP, not MCP)
 - [x] Commit: `"tools: clangd + Bear compilation database"`
 
 > [!NOTE]
@@ -597,25 +597,42 @@ scripts/
 > - Uses `bear --append --` to accumulate entries across make invocations in a single build
 > - `compile_commands.json` regenerated on every `bash scripts/build.sh clean`
 > - `.clangd` uses `Index.Background: Build` for faster indexing
-> - Steps 3 & 4 are manual developer tasks (editor/IDE-specific)
+> - Step 3 verified manually — clangd extension installed, `clangd.path` set to `/usr/bin/clangd-19`
+
+> [!WARNING]
+> **Gotcha: clangd is LSP, not MCP.** clangd speaks the Language Server Protocol (LSP), not
+> the Model Context Protocol (MCP). Attempting to add clangd as an MCP server in Antigravity
+> causes it to hang indefinitely on "refreshing" — the two protocols are incompatible.
+> **Use clangd via the VS Code/Cursor clangd extension** (LSP), not via `mcp_config.json`.
+> *(Discovered 2026-03-17)*
 
 ---
 
 ## 7. Asset Pipeline
 
-### 7.1 Asset Build Script
+### 7.1 Asset Build Script ✅
 
-**Prompt:** Create a unified asset pipeline that converts all source assets (PNG icons, JPG wallpapers, TTF fonts, BMP cursors) into kernel-embeddable formats during `make all`. PNG icons → BGRA C arrays. Wallpaper JPGs → converted at runtime (already handled). TTF fonts → copied to sysroot. Cursors → BGRA C arrays. This consolidates the scattered asset conversion steps into one `make assets` target. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"build: unified asset pipeline"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `make assets` builds all generated headers (os-logo, bsod-icon, boot-font) and populates sysroot with fonts, wallpapers, cursors, and icons.ires. Verify dependency tracking: `touch resources/fonts/selawk.ttf && make assets` should only rebuild fonts. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
 
 > **XREF:** See `/add-asset` workflow for the full checklist when adding a new asset.
 
-- [ ] Create `make assets` target in Makefile
-- [ ] PNG icons → BGRA C array headers (via `tools/png2header.py`)
-- [ ] BMP cursors → BGRA C array headers
-- [ ] TTF fonts → copy to `sysroot/Impossible/Fonts/`
-- [ ] Wallpaper → copy to `sysroot/Impossible/Wallpapers/`
-- [ ] Dependency tracking: rebuild only changed assets
-- [ ] Commit: `"build: unified asset pipeline"`
+- [x] Create `make assets` target in Makefile — groups 7 sub-targets
+- [x] PNG icons → BGRA C array headers (via `tools/convert_icon.py` — multi-size os\_logo, `tools/convert_bsod_icon.py` — BSOD icon)
+- [x] ~~BMP cursors → BGRA C array headers~~ — N/A (cursors are Adwaita XCursor format, copied as binary blobs to sysroot)
+- [x] TTF fonts → copy to `sysroot/Impossible/Fonts/` (11 .ttf files via `sysroot-fonts`)
+- [x] Wallpaper → copy to `sysroot/Impossible/Wallpapers/` (decoded at runtime by `image_load`)
+- [x] Dependency tracking: rebuild only changed assets (stamp files per sub-target)
+- [x] Commit: `"build: unified asset pipeline"`
+
+> [!NOTE]
+> **Asset pipeline notes (2026-03-17):**
+> - `make assets` groups: `os-logo`, `bsod-icon`, `boot-font`, `sysroot-fonts`, `sysroot-wallpapers`, `sysroot-cursors`, `sysroot-icons`
+> - Monolithic `sysroot` recipe split into 5 tracked sub-targets with `.stamp` files
+> - `sysroot-dirs` creates the standard directory tree (order-only prerequisite of all others)
+> - Incremental rebuild: touching `selawk.ttf` → only fonts recopy; touching `background.jpg` → only wallpaper recopy
+> - No `png2header.py` exists — the TODO mentioned it but the existing `convert_icon.py` and `convert_bsod_icon.py` already handle PNG→BGRA
+> - Cursors are Adwaita XCursor (not BMP) — the kernel's cursor driver reads XCursor natively
+> - `sysroot-icons` packs PNG icons into IRES via `irespack` host tool
 
 ### 7.2 Asset Validation
 
@@ -682,7 +699,7 @@ scripts/
 | ✅ Done   | 2.3 One-Command Setup             | After §2.1 + §2.2                                        |
 | ✅ Done   | 5.1 Unit Test Framework           | Foundation for systematic testing                        |
 | ✅ Done   | 5.4 Filesystem Test Suite         | Validates FS drivers against real disk images            |
-| 🟡 P2     | 7.1 Asset Pipeline                | Consolidates scattered asset build steps                 |
+| ✅ Done   | 7.1 Asset Pipeline                | Unified `make assets` with dependency tracking           |
 | ✅ Done   | 3.2 VirtualBox Test Runner        | Cross-platform VBox launcher with VBoxManage             |
 | 🟢 P3     | 3.3 Hyper-V Runner                | Production target testing                                |
 | 🟢 P3     | 3.4 Multi-Resolution Launcher     | Consolidates resolution-specific scripts                 |

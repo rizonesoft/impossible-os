@@ -106,11 +106,15 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 
 ## all: Build everything (kernel + userland + system disk)
-all: _increment_build kernel userland uefi-boot system-disk
+all: _increment_build assets kernel userland uefi-boot system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
+
+## assets: Unified asset pipeline — generated headers + sysroot population
+assets: os-logo bsod-icon boot-font sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+	@echo "[ASSETS] All assets up to date"
 
 ## _increment_build: Auto-increment the build number
 _increment_build:
@@ -192,16 +196,31 @@ $(BUILD_DIR)/tools/irespack: tools/irespack.c
 
 ## sysroot: Populate build/sysroot/ with system files and assets
 SYSROOT := $(BUILD_DIR)/sysroot
-sysroot: $(SYSROOT)/Impossible/Wallpapers/default.jpg
+sysroot: sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 
-$(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
+# --- Cursor source files (Adwaita XCursor format) ---
+CURSOR_SRCS := resources/cursors/default resources/cursors/pointer \
+               resources/cursors/text resources/cursors/fleur \
+               resources/cursors/sb_v_double_arrow resources/cursors/sb_h_double_arrow \
+               resources/cursors/bd_double_arrow resources/cursors/fd_double_arrow \
+               resources/cursors/progress resources/cursors/crosshair \
+               resources/cursors/not-allowed
+
+# --- Font source files (TTF only, skip LICENSE-*) ---
+FONT_SRCS := $(wildcard resources/fonts/*.ttf)
+
+# --- Icon PNG sources (48px used as IRES trigger) ---
+ICON_SRCS := $(wildcard resources/icons/color/48/*.png)
+
+## sysroot-dirs: Create the standard directory tree + static files
+$(SYSROOT)/.dirs-stamp:
 	@mkdir -p $(SYSROOT)
-	@# --- Standard directory tree ---
 	@mkdir -p $(SYSROOT)/Impossible/System/Config/Registry
 	@mkdir -p $(SYSROOT)/Impossible/Bin
 	@mkdir -p $(SYSROOT)/Impossible/Fonts
 	@mkdir -p $(SYSROOT)/Impossible/Icons
 	@mkdir -p $(SYSROOT)/Impossible/Wallpapers
+	@mkdir -p $(SYSROOT)/Impossible/System/Cursors
 	@mkdir -p $(SYSROOT)/Users/Default/Desktop
 	@mkdir -p $(SYSROOT)/Users/Default/Documents
 	@mkdir -p $(SYSROOT)/Users/Default/Downloads
@@ -211,32 +230,45 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@mkdir -p $(SYSROOT)/Programs
 	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
 	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
-	@# Copy wallpaper JPEG as-is (decoded at runtime by image_load)
-	@cp resources/backgrounds/background.jpg \
-		$(SYSROOT)/Impossible/Wallpapers/default.jpg
-	@# Fonts and icons follow below
-	@# Copy bundled TrueType fonts (Selawik, Cascadia Code, Inter)
+	@touch $@
+	@echo "[SYSROOT] Directory tree created"
+
+sysroot-dirs: $(SYSROOT)/.dirs-stamp
+
+## sysroot-fonts: Copy bundled TrueType fonts → sysroot/Impossible/Fonts/
+$(SYSROOT)/Impossible/Fonts/.stamp: $(FONT_SRCS) | $(SYSROOT)/.dirs-stamp
 	@cp resources/fonts/*.ttf $(SYSROOT)/Impossible/Fonts/
-	@echo "[SYSROOT] Fonts copied"
-	@# Pack color icons into IRES and copy to sysroot
-	@if ls resources/icons/color/48/*.png >/dev/null 2>&1; then \
+	@touch $@
+	@echo "[ASSETS] Fonts copied ($(words $(FONT_SRCS)) TTF files)"
+
+sysroot-fonts: $(SYSROOT)/Impossible/Fonts/.stamp
+
+## sysroot-wallpapers: Copy wallpaper JPEG → sysroot (decoded at runtime)
+$(SYSROOT)/Impossible/Wallpapers/default.jpg: resources/backgrounds/background.jpg | $(SYSROOT)/.dirs-stamp
+	@cp $< $@
+	@echo "[ASSETS] Wallpaper copied"
+
+sysroot-wallpapers: $(SYSROOT)/Impossible/Wallpapers/default.jpg
+
+## sysroot-cursors: Copy Adwaita XCursor files → sysroot
+$(SYSROOT)/Impossible/System/Cursors/.stamp: $(CURSOR_SRCS) | $(SYSROOT)/.dirs-stamp
+	@cp $(CURSOR_SRCS) $(SYSROOT)/Impossible/System/Cursors/
+	@touch $@
+	@echo "[ASSETS] Cursors copied ($(words $(CURSOR_SRCS)) Adwaita XCursor)"
+
+sysroot-cursors: $(SYSROOT)/Impossible/System/Cursors/.stamp
+
+## sysroot-icons: Pack color icons into IRES archive → sysroot
+$(SYSROOT)/Impossible/System/icons.ires: $(ICON_SRCS) host-tools | $(SYSROOT)/.dirs-stamp
+	@if [ -n "$(ICON_SRCS)" ]; then \
 		$(BUILD_DIR)/tools/irespack $(BUILD_DIR)/icons.ires resources/icons/color 2>&1; \
-		cp $(BUILD_DIR)/icons.ires $(SYSROOT)/Impossible/System/icons.ires; \
-		echo "[SYSROOT] icons.ires packed and copied"; \
+		cp $(BUILD_DIR)/icons.ires $@; \
+		echo "[ASSETS] icons.ires packed and copied"; \
 	else \
-		echo "[SYSROOT] No color icons found — skipping icons.ires"; \
+		echo "[ASSETS] No color icons found — skipping icons.ires"; \
 	fi
-	@echo "[SYSROOT] Assets and directory tree staged"
-	@# Copy Adwaita cursor files to sysroot
-	@mkdir -p $(SYSROOT)/Impossible/System/Cursors
-	@cp resources/cursors/default resources/cursors/pointer \
-		resources/cursors/text resources/cursors/fleur \
-		resources/cursors/sb_v_double_arrow resources/cursors/sb_h_double_arrow \
-		resources/cursors/bd_double_arrow resources/cursors/fd_double_arrow \
-		resources/cursors/progress resources/cursors/crosshair \
-		resources/cursors/not-allowed \
-		$(SYSROOT)/Impossible/System/Cursors/
-	@echo "[SYSROOT] Cursors copied (11 Adwaita)"
+
+sysroot-icons: $(SYSROOT)/Impossible/System/icons.ires
 
 ## userland: Build user-mode programs and copy into sysroot
 USER_CFLAGS := --target=x86_64-elf \
