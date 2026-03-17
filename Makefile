@@ -44,13 +44,12 @@ OVMF_VARS   := /usr/share/OVMF/OVMF_VARS_4M.fd
 OVMF_VARS_CP:= $(BUILD_DIR)/OVMF_VARS_4M.fd
 
 # --- Version Information ---
-# Read SemVer from VERSION file, auto-increment build number
-VERSION_FILE   := VERSION
+# CalVer: YY.M.D (auto-generated from build date, no manual bumps needed)
 BUILD_NUM_FILE := .build_number
-VERSION_RAW    := $(shell cat $(VERSION_FILE) 2>/dev/null | tr -d '[:space:]')
-VERSION_MAJOR  := $(word 1,$(subst ., ,$(VERSION_RAW)))
-VERSION_MINOR  := $(word 2,$(subst ., ,$(VERSION_RAW)))
-VERSION_PATCH  := $(word 3,$(subst ., ,$(VERSION_RAW)))
+VERSION_MAJOR  := $(shell date -u '+%y')
+VERSION_MINOR  := $(shell date -u '+%-m')
+VERSION_PATCH  := $(shell date -u '+%-d')
+VERSION_RAW    := $(VERSION_MAJOR).$(VERSION_MINOR).$(VERSION_PATCH)
 BUILD_NUMBER   := $(shell cat $(BUILD_NUM_FILE) 2>/dev/null | tr -d '[:space:]')
 GIT_HASH       := $(shell git rev-parse --short=8 HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH     := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
