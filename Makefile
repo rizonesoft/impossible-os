@@ -3,17 +3,19 @@
 # Target: x86-64, UEFI-only (GRUB + Multiboot2)
 # ============================================================================
 
-# Tools
-CC      := x86_64-elf-gcc
+# Tools (LLVM toolchain — Clang is a universal cross-compiler via --target)
+CC      := clang-19
 HOST_CC := gcc
 AS      := nasm
-LD      := x86_64-elf-ld
-OBJCOPY := x86_64-elf-objcopy
+LD      := ld.lld-19
+OBJCOPY := llvm-objcopy-19
+AR      := llvm-ar-19
 
 # --- Compiler / Linker Flags ---
-CFLAGS  := -Wall -Wextra -Werror \
+CFLAGS  := --target=x86_64-elf \
+           -Wall -Wextra -Werror \
            -ffreestanding -nostdlib -nostdinc \
-           -fno-stack-protector -fno-pie -no-pie \
+           -fno-stack-protector -fno-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
            -MMD -MP \
@@ -212,8 +214,9 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 	@echo "[SYSROOT] Cursors copied (11 Adwaita)"
 
 ## userland: Build user-mode programs and copy into sysroot
-USER_CFLAGS := -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
-               -fno-stack-protector -fno-pie -no-pie -mno-red-zone \
+USER_CFLAGS := --target=x86_64-elf \
+               -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
+               -fno-stack-protector -fno-pie -mno-red-zone \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
@@ -229,7 +232,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/shell.exe: sysroot user/hello.c user/shell.c use
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/stdio.c -o $(BUILD_DIR)/user/lib/stdio.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/ctype.c -o $(BUILD_DIR)/user/lib/ctype.o
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/lib/math.c -o $(BUILD_DIR)/user/lib/math.o
-	x86_64-elf-ar rcs $(BUILD_DIR)/user/libc.a \
+	$(AR) rcs $(BUILD_DIR)/user/libc.a \
 		$(BUILD_DIR)/user/lib/string.o \
 		$(BUILD_DIR)/user/lib/stdlib.o \
 		$(BUILD_DIR)/user/lib/stdio.o \

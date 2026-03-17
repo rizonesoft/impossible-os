@@ -21,19 +21,19 @@ static inline uint32_t inl(uint16_t port)
     return ret;
 }
 
-static inline void outw_pci(uint16_t port, uint16_t val)
+static inline __attribute__((unused)) void outw_pci(uint16_t port, uint16_t val)
 {
     __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
 }
 
-static inline uint16_t inw(uint16_t port)
+static inline __attribute__((unused)) uint16_t inw(uint16_t port)
 {
     uint16_t ret;
     __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
     return ret;
 }
 
-static inline uint8_t inb_pci(uint16_t port)
+static inline __attribute__((unused)) uint8_t inb_pci(uint16_t port)
 {
     uint8_t ret;
     __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));

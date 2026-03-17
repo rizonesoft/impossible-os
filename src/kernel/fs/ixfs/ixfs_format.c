@@ -459,5 +459,7 @@ int ixfs_scrub(void)
     }
 
     kfree(buf);
+    printk("[IXFS] scrub: %u blocks checked, %u corrupted\n",
+           (uint64_t)checked, (uint64_t)corrupted);
     return (int)corrupted;
 }

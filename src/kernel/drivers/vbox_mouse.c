@@ -84,7 +84,7 @@ static inline void outl(uint16_t port, uint32_t val)
     __asm__ volatile ("outl %0, %1" : : "a"(val), "Nd"(port));
 }
 
-static inline uint8_t inb_vbox(uint16_t port)
+static inline __attribute__((unused)) uint8_t inb_vbox(uint16_t port)
 {
     uint8_t ret;
     __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));

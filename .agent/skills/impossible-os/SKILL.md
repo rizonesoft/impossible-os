@@ -133,7 +133,7 @@ Files from the workspace `resources/` directory at build time map to the OS file
 | Component | Description |
 |-----------|-------------|
 | **Kernel** | ELF binary, loaded by GRUB (Multiboot2) at boot |
-| **Native programs** | ELF format, compiled with `x86_64-elf-gcc` |
+| **Native programs** | ELF format, compiled with `clang-19 --target=x86_64-elf` |
 | **Windows compat** | PE format support via kernel PE loader |
 | **Syscall ABI** | `INT 0x80`, number in RAX, args in RDI/RSI/RDX |
 | **Filesystem** | IXFS (in-memory), VFS layer with drive letters A:-Z: |

@@ -2,19 +2,19 @@
 # Makefile for UEFI bootloader
 #
 # Builds a freestanding PE/COFF binary (BOOTX64.EFI) without gnu-efi.
-# Uses GCC → ELF shared object → objcopy to PE/COFF.
+# Uses Clang → ELF shared object → llvm-objcopy to PE/COFF.
 #
 # Usage: make -C src/boot/uefi OUTDIR=build/tools
 # ============================================================================
 
-CC      := gcc
+CC      := clang-19
 AS      := nasm
-LD      := ld
-OBJCOPY := objcopy
+LD      := ld.lld-19
+OBJCOPY := objcopy   # GNU objcopy — llvm-objcopy lacks efi-app-x86_64 target
 
-GCC_CFLAGS := -ffreestanding -fno-stack-protector -fno-stack-check \
-              -fshort-wchar -mno-red-zone -fpic -fno-plt \
-              -Wall -Wextra -Werror -O2 -std=gnu11 -I.
+CFLAGS  := --target=x86_64-elf -ffreestanding -fno-stack-protector -fno-stack-check \
+           -fshort-wchar -mno-red-zone -fpic -fno-plt \
+           -Wall -Wextra -Werror -O2 -std=gnu11 -I.
 
 OUTDIR ?= ../../../build/tools
 
@@ -26,7 +26,7 @@ all: $(OUTDIR)/BOOTX64.EFI
 
 # Compile C source to position-independent object
 bootx64.o: bootx64.c efi.h
-	$(CC) $(GCC_CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -c $< -o $@
 
 # Assemble the PE relocation stub
 reloc.o: reloc.asm
@@ -34,7 +34,7 @@ reloc.o: reloc.asm
 
 # Link as shared object with relocations preserved
 bootx64.so: $(OBJS)
-	$(LD) -shared -Bsymbolic -z noexecstack \
+	$(LD) -shared -Bsymbolic \
 	    -T uefi.lds \
 	    -o $@ $(OBJS)
 

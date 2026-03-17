@@ -50,7 +50,7 @@ static inline uint16_t inw_nic(uint16_t port)
     return ret;
 }
 
-static inline uint32_t inl_nic(uint16_t port)
+static inline __attribute__((unused)) uint32_t inl_nic(uint16_t port)
 {
     uint32_t ret;
     __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));

@@ -35,7 +35,7 @@ static inline void outw_acpi(uint16_t port, uint16_t val)
     __asm__ volatile("outw %0, %1" : : "a"(val), "Nd"(port));
 }
 
-static inline uint16_t inw_acpi(uint16_t port)
+static inline __attribute__((unused)) uint16_t inw_acpi(uint16_t port)
 {
     uint16_t ret;
     __asm__ volatile("inw %1, %0" : "=a"(ret) : "Nd"(port));
