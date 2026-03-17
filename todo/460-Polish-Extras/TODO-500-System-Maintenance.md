@@ -60,10 +60,10 @@
 
 ### 1.4 Update Settings
 
-**Prompt:** `update.spl` settings applet: manual check button, auto-check toggle with frequency (daily/weekly/never, Registry `HKLM\SYSTEM\Update\AutoCheck`), update channel (stable/beta), last check timestamp, and update history. Auto-check at boot runs as a background task with a notification toast: "System update available (v0.3.0)" with [Install]. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update settings applet"`.
+**Prompt:** `wuapp.cpl` Control Panel applet: manual check button, auto-check toggle with frequency (daily/weekly/never, Registry `HKLM\SYSTEM\Update\AutoCheck`), update channel (stable/beta), last check timestamp, and update history. Auto-check at boot runs as a background task with a notification toast: "System update available (v0.3.0)" with [Install]. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update control panel applet"`.
 
 
-- [ ] `update.spl` settings applet:
+- [ ] `wuapp.cpl` Control Panel applet:
   - [ ] "Check for updates" button (manual check)
   - [ ] Auto-check toggle (Registry: `HKLM\SYSTEM\Update\AutoCheck`)
   - [ ] Check frequency: daily / weekly / never
@@ -123,10 +123,10 @@
 
 ### 2.4 Add/Remove Programs UI
 
-**Prompt:** `apps.spl` settings applet listing all installed apps (name, version, size, install date) with [Uninstall] button per app and search/filter. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Add/Remove Programs"`.
+**Prompt:** `appwiz.cpl` Control Panel applet listing all installed apps (name, version, size, install date) with [Uninstall] button per app and search/filter. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Programs and Features"`.
 
 
-- [ ] `apps.spl` settings applet (or integrated in Settings Panel)
+- [ ] `appwiz.cpl` Control Panel applet (Programs and Features)
 - [ ] List all installed apps: name, version, size, install date
 - [ ] [Uninstall] button per app
 - [ ] Search/filter installed apps

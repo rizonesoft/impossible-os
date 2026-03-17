@@ -40,7 +40,7 @@
 - [ ] **NTP sync** — every 3600s — calls `ntp_sync()` (TODO-210 §4)
 - [ ] **Registry flush** — every 2s — calls `registry_flush_dirty()` (TODO-050)
 - [ ] **Search index rebuild** — every 1800s — calls `search_index_rebuild()` (TODO-260 §1)
-- [ ] **Log rotate** — every 86400s — trim `C:\Impossible\System\klog.txt` to last 5000 lines
+- [ ] **Log rotate** — every 86400s — trim `C:\Impossible\System32\klog.txt` to last 5000 lines
 - [ ] Store task configs in Registry: `HKLM\SYSTEM\Scheduler\Tasks\{name}\Interval`, `HKLM\SYSTEM\Scheduler\Tasks\{name}\Enabled`
 - [ ] Load tasks from Registry at boot — override built-in defaults with Registry values
 - [ ] Commit: `"kernel: built-in scheduled tasks"`
@@ -59,15 +59,15 @@
 
 ---
 
-## 4. Settings Applet: Task Manager *(Stretch)*
+## 4. Control Panel Applet: Task Manager *(Stretch)*
 
-**Prompt:** A "Scheduled Tasks" applet in the Settings Panel shows all registered tasks, their interval, last run time, and last result. Toggle enable/disable. Add a custom task via a dialog: name, command, interval (minutes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: scheduled tasks settings applet"`.
+**Prompt:** A "Scheduled Tasks" applet in the Control Panel shows all registered tasks, their interval, last run time, and last result. Toggle enable/disable. Add a custom task via a dialog: name, command, interval (minutes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: scheduled tasks control panel applet"`.
 
-- [ ] *(Stretch)* Create `src/apps/settings/sched_tasks.spl`
+- [ ] *(Stretch)* Create `src/apps/control/taskschd.cpl`
 - [ ] *(Stretch)* List all tasks: name, interval, last run, last result
 - [ ] *(Stretch)* Toggle enable/disable
 - [ ] *(Stretch)* Add custom task via dialog
-- [ ] *(Stretch)* Commit: `"apps: scheduled tasks settings applet"`
+- [ ] *(Stretch)* Commit: `"apps: scheduled tasks control panel applet"`
 
 ---
 
@@ -78,7 +78,7 @@
 | 🔴 P0    | §1 Task Scheduler               | Foundation — built-in tasks need the tick  |
 | 🔴 P0    | §2 Built-In Tasks               | Registry flush + NTP + search index        |
 | 🟡 P2    | §3 Shell `at` Command           | One-shot scheduling from terminal          |
-| 🔵 P4    | §4 Settings Applet (Stretch)    | GUI task management                        |
+| 🔵 P4    | §4 Control Panel Applet (Stretch)    | GUI task management                        |
 
 ---
 

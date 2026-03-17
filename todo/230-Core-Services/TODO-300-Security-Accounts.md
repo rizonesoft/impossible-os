@@ -155,14 +155,13 @@
 
 
 - [ ] Set default permissions on system directories:
-| Path                    | Owner  | Owner Perms | Other Perms |
-|-------------------------|--------|-------------|-------------|
-| `C:\Impossible\System\` | Admin  | rwx         | r-x         |
-| `C:\Impossible\Bin\`    | Admin  | rwx         | r-x         |
-| `C:\Programs\`          | Admin  | rwx         | r-x         |
-| `C:\Users\{name}\`      | {name} | rwx         |-------------|
-| `C:\Temp\`              | System | rwx         | rwx         |
-| `C:\Recycle\`           | System | rwx         | rwx         |
+| Path                        | Owner  | Owner Perms | Other Perms |
+|----------------------------|--------|-------------|-------------|
+| `C:\Impossible\System32\`  | Admin  | rwx         | r-x         |
+| `C:\Program Files\`        | Admin  | rwx         | r-x         |
+| `C:\Users\{name}\`         | {name} | rwx         |-------------|
+| `C:\Impossible\Temp\`      | System | rwx         | rwx         |
+| `$Recycle.Bin\`            | System | rwx         | rwx         |
 - [ ] Apply during first-boot directory creation
 - [ ] Commit: `"kernel: default system folder permissions"`
 
@@ -201,7 +200,7 @@
 ### 4.2 Actions Requiring Elevation
 
 - [ ] Installing/uninstalling programs
-- [ ] Modifying system files (`C:\Impossible\System\`)
+- [ ] Modifying system files (`C:\Impossible\System32\`)
 - [ ] Changing system settings (network, security, users)
 - [ ] Modifying other users' files
 - [ ] Formatting/partitioning disks
@@ -322,11 +321,11 @@
 
 ---
 
-## 7. Settings Applets
+## 7. Control Panel Applets
 
-### 7.1 Accounts Settings Applet
+### 7.1 User Accounts Applet
 
-- [ ] `accounts.spl` in Settings Panel:
+- [ ] `nusrmgr.cpl` in Control Panel:
   - [ ] View all user accounts (name, privilege level, avatar)
   - [ ] Create new account (admin only)
   - [ ] Delete account (admin only, confirm dialog)
@@ -334,17 +333,17 @@
   - [ ] Change avatar (select from built-in or browse file)
   - [ ] Set privilege level (admin only)
   - [ ] Enable/disable auto-login
-- [ ] Commit: `"apps: accounts settings applet"`
+- [ ] Commit: `"apps: user accounts control panel applet"`
 
-### 7.2 Security Settings Applet
+### 7.2 Security and Privacy Applet
 
-- [ ] `security.spl` in Settings Panel:
+- [ ] `secpol.cpl` in Control Panel:
   - [ ] Firewall: enable/disable, view rules
   - [ ] Encryption: encrypt/decrypt drives
   - [ ] Password policy: minimum length, complexity requirements
   - [ ] Screen lock timeout setting
   - [ ] Login attempt lockout threshold
-- [ ] Commit: `"apps: security settings applet"`
+- [ ] Commit: `"apps: security control panel applet"`
 
 ---
 
@@ -387,7 +386,7 @@
 | `include/crypto.h`              | [NEW] Crypto API header                    |
 | `src/desktop/login.c`           | [NEW] Login screen UI + flow               |
 | `src/desktop/uac.c`             | [NEW] UAC elevation prompt                 |
-| `src/apps/settings/accounts.spl`| [NEW] Accounts settings applet             |
+| `src/apps/control/nusrmgr.cpl`  | [NEW] User Accounts control panel applet   |
 
 ---
 

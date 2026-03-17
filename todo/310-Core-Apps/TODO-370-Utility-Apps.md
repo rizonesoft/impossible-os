@@ -147,7 +147,7 @@
 
 ### 6.1 System Info App
 
-**Prompt:** System Information is a read-only display app showing hardware and OS details. Data sources: CPUID (vendor string, brand string), `g_boot_info` (framebuffer resolution, multiboot info), PMM (total/available memory), PCI enumeration (NIC names, storage controllers), Registry (OS version, hostname, IP), and uptime from PIT ticks. This code should be reusable by the `about.spl` settings applet from §4.3. Display in a two-column table: label on left, value on right. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: System Information"`.
+**Prompt:** System Information is a read-only display app showing hardware and OS details. Data sources: CPUID (vendor string, brand string), `g_boot_info` (framebuffer resolution, multiboot info), PMM (total/available memory), PCI enumeration (NIC names, storage controllers), Registry (OS version, hostname, IP), and uptime from PIT ticks. This code should be reusable by the `sysdm.cpl` Control Panel applet from §4.3. Display in a two-column table: label on left, value on right. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: System Information"`.
 
 
 - [ ] Create `src/apps/sysinfo/sysinfo.c`
@@ -161,7 +161,7 @@
   - [ ] Storage: drive name, total size
   - [ ] Boot: Multiboot2 via GRUB2
 - [ ] Data from: CPUID, `g_boot_info`, PMM, PCI, Registry
-- [ ] Reusable by `about.spl` in Settings Panel
+- [ ] Reusable by `sysdm.cpl` in Control Panel
 - [ ] Commit: `"apps: System Information"`
 
 ---

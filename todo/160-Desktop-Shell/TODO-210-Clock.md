@@ -82,7 +82,7 @@
 - [ ] Store timezone in Registry: `HKLM\SYSTEM\DateTime\TimezoneOffset` (minutes from UTC)
 - [ ] Store timezone name: `HKLM\SYSTEM\DateTime\TimezoneName` (e.g., "SAST")
 - [ ] Default: detect from locale or set UTC+0
-- [ ] *(Stretch)* Timezone selector in Settings Panel
+- [ ] *(Stretch)* Timezone selector in Control Panel
 - [ ] Commit: `"kernel: timezone support"`
 
 ---

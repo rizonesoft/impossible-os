@@ -83,16 +83,16 @@
 
 ---
 
-## 7. Recovery Settings in `power.spl` (Future)
+## 7. Recovery Settings in `powercfg.cpl` (Future)
 
-> **Depends on:** §3, Settings Panel (TODO-310-Terminal.md §4)
+> **Depends on:** §3, Control Panel (TODO-350)
 
-- [ ] Add "Recovery" section to `power.spl` settings applet:
+- [ ] Add "Recovery" section to `powercfg.cpl` Control Panel applet:
   - [ ] Toggle: "Automatically restart after a system failure" (on/off)
   - [ ] Auto-restart delay slider (10, 15, 30, 60 seconds)
   - [ ] "Write crash dump" checkbox
 - [ ] Registry: `HKLM\SYSTEM\Recovery\AutoRestart`, `WriteCrashDump`
-- [ ] Commit: `"apps: recovery settings in power.spl"`
+- [ ] Commit: `"apps: recovery settings in powercfg.cpl"`
 
 ---
 

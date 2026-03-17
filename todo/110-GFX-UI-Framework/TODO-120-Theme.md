@@ -89,7 +89,7 @@
 - [ ] Implement `DPI_SCALE(x)` macro: `((x) * g_dpi_pct / 100)`
 - [ ] Apply DPI scaling to: font pixel sizes, icon request sizes, window chrome sizes, control heights
 - [ ] VBE resolution detection: if resolution ≥ 2560×1440 → auto-set to 150%; ≥ 3840×2160 → 200%
-- [ ] Display settings applet: scale factor dropdown (100%, 125%, 150%, 200%)
+- [ ] Display Control Panel applet: scale factor dropdown (100%, 125%, 150%, 200%)
 - [ ] Live change: update Registry + broadcast `WM_DPI_CHANGED` → all windows re-layout
 - [ ] Commit: `"desktop: DPI scaling"`
 
@@ -133,7 +133,7 @@
 
 ## 7. Wallpaper Engine
 
-**Prompt:** The wallpaper loads from path in Registry `HKCU\Software\Impossible\Theme\Wallpaper` and fit mode in `WallpaperMode` (`fill`, `fit`, `stretch`, `center`, `tile`). Change detection: watch the Registry key — on change, reload and redraw. The scaled wallpaper is cached so the desktop compositor doesn't re-decode every frame. Provide a wallpaper picker in the display settings applet. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: wallpaper engine"`. Add notes directly in this TODO section covering the cache invalidation logic and fit modes.
+**Prompt:** The wallpaper loads from path in Registry `HKCU\Software\Impossible\Theme\Wallpaper` and fit mode in `WallpaperMode` (`fill`, `fit`, `stretch`, `center`, `tile`). Change detection: watch the Registry key — on change, reload and redraw. The scaled wallpaper is cached so the desktop compositor doesn't re-decode every frame. Provide a wallpaper picker in the Display Control Panel applet. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: wallpaper engine"`. Add notes directly in this TODO section covering the cache invalidation logic and fit modes.
 
 > **Note:** The image loading and scaling infrastructure (stb_image, image_scale) is already complete in TODO-110 §3. This section wires those into a full wallpaper change system with Registry change detection.
 
@@ -141,7 +141,7 @@
 - [ ] Registry watch: `HKCU\Software\Impossible\Theme\Wallpaper` change → auto-reload
 - [ ] Support fit modes: fill, fit, stretch, center, tile (maps to `image_fit_t` from image.h)
 - [ ] Cache scaled wallpaper — do not re-decode every compositor frame
-- [ ] Display settings applet: wallpaper picker, fit mode dropdown, thumbnail preview
+- [ ] Display Control Panel applet: wallpaper picker, fit mode dropdown, thumbnail preview
 - [ ] Solid color fallback if path invalid or file missing
 - [ ] `background_color` Registry key: fallback solid color (e.g., `#1C1C1C`)
 - [ ] Commit: `"desktop: wallpaper engine"`

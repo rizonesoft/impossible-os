@@ -93,12 +93,12 @@
   - [ ] Apply color matrix transform at compositor level
 - [ ] Commit: `"desktop: reduced motion + color blind modes"`
 
-### 1.8 Accessibility Settings Applet
+### 1.8 Accessibility Control Panel Applet
 
-**Prompt:** `accessibility.spl` settings applet: toggles for high contrast, DPI slider, sticky keys, mouse keys, cursor size selector, reduced motion, magnifier. Stretch: color blind mode, screen reader toggle. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: accessibility settings applet"`.
+**Prompt:** `access.cpl` Control Panel applet: toggles for high contrast, DPI slider, sticky keys, mouse keys, cursor size selector, reduced motion, magnifier. Stretch: color blind mode, screen reader toggle. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: accessibility control panel applet"`.
 
 
-- [ ] `accessibility.spl` in Settings Panel:
+- [ ] `access.cpl` in Control Panel:
   - [ ] High contrast toggle
   - [ ] DPI scale slider
   - [ ] Sticky keys toggle
@@ -108,7 +108,7 @@
   - [ ] Magnifier toggle
   - [ ] *(Stretch)* Color blind mode selector
   - [ ] *(Stretch)* Screen reader toggle
-- [ ] Commit: `"apps: accessibility settings applet"`
+- [ ] Commit: `"apps: accessibility control panel applet"`
 
 ---
 
@@ -195,7 +195,7 @@
 
 ### 3.2 Bluetooth Settings
 
-- [ ] *(Stretch)* `bluetooth.spl` settings applet:
+- [ ] *(Stretch)* `bthprops.cpl` Control Panel applet:
   - [ ] Enable/disable Bluetooth
   - [ ] Scan for devices
   - [ ] Pair/unpair devices
@@ -403,13 +403,13 @@
 
 ### 9.2 Diagnostic Report
 
-**Prompt:** `telemetry_generate_report(path)` exports diagnostics. Upload only on explicit user action. Privacy settings: `privacy.spl` applet with telemetry level, view collected data, clear data. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: diagnostic report generation"`.
+**Prompt:** `telemetry_generate_report(path)` exports diagnostics. Upload only on explicit user action. Privacy settings: `privacy.cpl` applet with telemetry level, view collected data, clear data. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: diagnostic report generation"`.
 
 
 - [ ] `telemetry_generate_report(path)` — export diagnostics to file
 - [ ] Upload only on explicit user action: "Send diagnostic report" button
 - [ ] *(Stretch)* HTTP POST to `https://impossible-os.dev/api/telemetry`
-- [ ] Privacy settings: `privacy.spl` applet — telemetry level, view collected data, clear data
+- [ ] Privacy settings: `privacy.cpl` applet — telemetry level, view collected data, clear data
 - [ ] Commit: `"kernel: diagnostic report generation"`
 
 ---
@@ -461,10 +461,10 @@
 
 ### 10.5 Parental Controls Settings
 
-**Prompt:** `parental.spl` applet (admin-only): select child, screen time slider (30 min–8 hrs), schedule, app block list, activity report viewer. Stretch: website block list. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: parental controls settings"`.
+**Prompt:** `parental.cpl` applet (admin-only): select child, screen time slider (30 min–8 hrs), schedule, app block list, activity report viewer. Stretch: website block list. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: parental controls"`.  
 
 
-- [ ] `parental.spl` settings applet (**admin-only** access):
+- [ ] `parental.cpl` Control Panel applet (**admin-only** access):
   - [ ] Select child user account
   - [ ] Screen time limit slider (30 min – 8 hours)
   - [ ] Time schedule (start/end hours per day)
@@ -571,7 +571,7 @@
 
 - [ ] *(Stretch)* WireGuard protocol via monocypher
 - [ ] *(Stretch)* TUN virtual interface, route traffic
-- [ ] *(Stretch)* Settings applet + system tray icon
+- [ ] *(Stretch)* Control Panel applet + system tray icon
 - [ ] Commit: `"net: WireGuard VPN client"`
 
 ---

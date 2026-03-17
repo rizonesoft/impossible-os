@@ -9,7 +9,7 @@
 
 > [!IMPORTANT]
 > **Consolidated from:** TODO-020-Kernel-General.md §8, TODO-120-Theme.md §7.3,
-> TODO-310-Terminal.md §4.3 (power.spl), TODO-560-Long-Term.md §11.2,
+> TODO-350 §1.3 (powercfg.cpl), TODO-560-Long-Term.md §11.2,
 > TODO-040-Filesystem.md §8.1 (cache_flush), TODO-550-Installer-ISO.md §2 (Test 8).
 > The original sections in those files should be replaced with cross-references
 > pointing here.
@@ -90,21 +90,21 @@
 
 ---
 
-## 5. Power Settings Applet (`power.spl`)
+## 5. Power Control Panel Applet (`powercfg.cpl`)
 
-> **Depends on:** §2 (shutdown/reboot), Settings Panel framework (TODO-310-Terminal.md §4)
-> **Originally:** TODO-310-Terminal.md §4.3 (Core Applets — power.spl)
+> **Depends on:** §2 (shutdown/reboot), Control Panel framework (TODO-350)
+> **Originally:** TODO-350 §1.3 (Core Applets — powercfg.cpl)
 
-**Prompt:** The `power.spl` settings applet provides a UI for power settings: screen timeout slider, shutdown/restart buttons, and sleep settings. Each setting reads/writes Registry keys under `HKLM\SYSTEM\Power\`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: power settings applet"`.
+**Prompt:** The `powercfg.cpl` Control Panel applet provides a UI for power settings: screen timeout slider, shutdown/restart buttons, and sleep settings. Each setting reads/writes Registry keys under `HKLM\SYSTEM\Power\`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: power control panel applet"`.
 
 
-- [ ] `power.spl.c` — Settings Panel applet:
+- [ ] `powercfg.cpl.c` — Control Panel applet:
   - [ ] Screen timeout slider (minutes: 1, 2, 5, 10, 15, 30, Never)
   - [ ] Shutdown button → `system_shutdown()`
   - [ ] Restart button → `system_reboot()`
   - [ ] Sleep settings (when §7 is available)
 - [ ] Registry: `HKLM\SYSTEM\Power\ScreenTimeout = 10`
-- [ ] Commit: `"apps: power settings applet"`
+- [ ] Commit: `"apps: power control panel applet"`
 
 ---
 
@@ -149,15 +149,15 @@
 
 ## 8. Power Management Profiles
 
-> **Depends on:** §5 (power.spl), §7 (sleep)
+> **Depends on:** §5 (powercfg.cpl), §7 (sleep)
 > **Originally:** TODO-560-Long-Term.md §11.2
 
-**Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `power.spl` settings applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
+**Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `powercfg.cpl` Control Panel applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
 
 
 - [ ] Power profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep)
 - [ ] Profiles control: display sleep timeout, CPU throttling (if applicable)
-- [ ] Integrate into `power.spl` settings applet (§5): profile dropdown selector
+- [ ] Integrate into `powercfg.cpl` Control Panel applet (§5): profile dropdown selector
 - [ ] Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`
 - [ ] Commit: `"kernel: power management profiles"`
 
@@ -186,7 +186,7 @@
 | 🔴 P0     | 2. Clean Shutdown Sequence  | Data integrity — prevents corruption |
 | 🟠 P1     | 3. Shell Commands           | User-facing `shutdown`/`reboot`      |
 | 🟠 P1     | 4. Start Menu Power Submenu | Desktop UI power actions             |
-| 🟡 P2     | 5. Power Settings Applet    | Settings UI                          |
+| 🟡 P2     | 5. Power Control Panel Applet    | Control Panel UI                          |
 | 🟡 P2     | 6. Disk Cache Integration   | Data safety during shutdown          |
 | 🟢 P3     | 7. Sleep & Hibernate        | ACPI S3/S4 — stretch goal            |
 | 🔵 P4     | 8. Power Profiles           | Polish — Balanced/Performance/Saver  |

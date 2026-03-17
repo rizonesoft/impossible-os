@@ -83,7 +83,7 @@
 
 ### 1.5 Tab Control
 
-**Prompt:** Add `CTRL_TABSTRIP`. A row of clickable tab headers at the top of a pane. Each tab has a label and optional icon. Clicking a tab switches the visible content area. The active tab has a thick accent-color underline. Tabs can be added/removed dynamically. The tab strip sends a callback when the selection changes so the host can swap what's drawn in the content area below. Used by: terminal (future tabs), Settings Panel, File Manager properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tab strip"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the tab strip API, dynamic tab management, and selection callbacks.
+**Prompt:** Add `CTRL_TABSTRIP`. A row of clickable tab headers at the top of a pane. Each tab has a label and optional icon. Clicking a tab switches the visible content area. The active tab has a thick accent-color underline. Tabs can be added/removed dynamically. The tab strip sends a callback when the selection changes so the host can swap what's drawn in the content area below. Used by: terminal (future tabs), Control Panel, File Manager properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: tab strip"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the tab strip API, dynamic tab management, and selection callbacks.
 
 
 - [ ] Add `CTRL_TABSTRIP` type
@@ -96,7 +96,7 @@
 
 ### 1.6 ListView
 
-**Prompt:** Add `CTRL_LISTVIEW`. Displays a scrollable list of items. Two view modes: details (columns with header row — icon, name, size, date) and icon grid (large icons with label below, used for desktops and icon views). Each item has: icon ID, primary text, secondary text, and a user pointer. Selection: single-click selects (highlight row), double-click activates (opens/runs). Multi-select with Ctrl+click and Shift+click. Column headers are clickable for sorting (ascending/descending toggle). Scrolls vertically with a scrollbar. Used by: File Manager, Settings app list, Start menu app list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: list view"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the list view API, view modes, sorting, and multi-select.
+**Prompt:** Add `CTRL_LISTVIEW`. Displays a scrollable list of items. Two view modes: details (columns with header row — icon, name, size, date) and icon grid (large icons with label below, used for desktops and icon views). Each item has: icon ID, primary text, secondary text, and a user pointer. Selection: single-click selects (highlight row), double-click activates (opens/runs). Multi-select with Ctrl+click and Shift+click. Column headers are clickable for sorting (ascending/descending toggle). Scrolls vertically with a scrollbar. Used by: File Manager, Control Panel app list, Start menu app list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: list view"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the list view API, view modes, sorting, and multi-select.
 
 
 - [ ] Add `CTRL_LISTVIEW` type
@@ -170,7 +170,7 @@
 
 ### 1.11 GroupBox & Separator
 
-**Prompt:** Add `CTRL_GROUPBOX` — a labeled rectangle that visually groups related controls. The label sits in the top-left corner with the border line interrupted around it. Also add `CTRL_SEPARATOR` — a simple horizontal or vertical dividing line with themed color. Both are purely visual, no interaction. Used by: Settings applets (group settings into sections), dialogs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: groupbox and separator"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the groupbox and separator rendering.
+**Prompt:** Add `CTRL_GROUPBOX` — a labeled rectangle that visually groups related controls. The label sits in the top-left corner with the border line interrupted around it. Also add `CTRL_SEPARATOR` — a simple horizontal or vertical dividing line with themed color. Both are purely visual, no interaction. Used by: Control Panel applets (group settings into sections), dialogs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"controls: groupbox and separator"`. Update `README.md` if it contains stale or incorrect references to controls. Add notes, gotchas, and design decisions directly in this TODO section covering the groupbox and separator rendering.
 
 
 - [ ] Add `CTRL_GROUPBOX` type with label text
@@ -217,18 +217,18 @@
 |----------|---------------------------|---------------------------------------------------|
 | ✅ Done   | Button, Label, TextBox, ScrollBar | Basic controls already implemented       |
 | 🔴 P0    | §1.13 Dialog System       | Open/Save dialogs used by every app               |
-| 🟠 P1    | §1.1 Checkbox + Radio     | Settings applets need these immediately           |
+| 🟠 P1    | §1.1 Checkbox + Radio     | Control Panel applets need these immediately      |
 | 🟠 P1    | §1.2 Dropdown             | Settings profile pickers, configuration dropdowns |
 | 🟠 P1    | §1.6 ListView             | File Manager, Settings — most visible control     |
 | 🟠 P1    | §1.9 Menu Bar             | Notepad, File Manager need menu bars              |
 | 🟡 P2    | §1.3 Slider               | Volume, brightness, power settings                |
 | 🟡 P2    | §1.4 ProgressBar          | Download progress, disk operations                |
-| 🟡 P2    | §1.5 TabStrip             | Settings Panel category tabs                      |
+| 🟡 P2    | §1.5 TabStrip             | Control Panel category tabs                       |
 | 🟡 P2    | §1.7 TreeView             | File Manager nav pane, Registry editor            |
 | 🟡 P2    | §1.8 Toolbar              | File Manager, Notepad toolbars                    |
 | 🟡 P2    | §1.12 Tooltip             | Discoverability for all controls                  |
 | 🟢 P3    | §1.10 StatusBar           | File Manager (item count), Notepad (ln/col)       |
-| 🟢 P3    | §1.11 GroupBox+Separator  | Settings applet visual grouping                   |
+| 🟢 P3    | §1.11 GroupBox+Separator  | Control Panel applet visual grouping              |
 
 ---
 

@@ -40,7 +40,7 @@
 
 ### 1.3 "Open With..." Dialog (Future)
 
-**Prompt:** This stretch goal adds a dialog that appears when right-clicking a file and choosing "Open With..." — it lists all installed applications, lets the user choose one, and optionally sets it as the default via a checkbox that updates the Registry association. The dialog needs to enumerate all executables in `C:\Impossible\Bin\` and `C:\Programs\`. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: open with dialog"`.
+**Prompt:** This stretch goal adds a dialog that appears when right-clicking a file and choosing "Open With..." — it lists all installed applications, lets the user choose one, and optionally sets it as the default via a checkbox that updates the Registry association. The dialog needs to enumerate all executables in `C:\Impossible\System32\` and `C:\Program Files\`. After completing all items, update `docs/architecture/file-associations.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: open with dialog"`.
 
 
 - [ ] *(Stretch)* Show list of installed apps for any file type
@@ -99,7 +99,7 @@
 
 ### 4.1 Sound Assets
 
-**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Sounds\` on IXFS. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Registry `HKLM\SYSTEM\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system sounds"`.
+**Prompt:** Create WAV system sounds (22050 Hz, mono, 16-bit — small file sizes): startup chime (played after boot splash), button click (tactile feedback), error alert (for error dialogs), notification toast sound, shutdown sound, and recycle bin empty sound. Store in `resources/sounds/` in the source tree, install to `C:\Impossible\Media\` on the disk image. Play startup chime after boot splash finishes. Play error sound with error dialogs from Phase 05 §1.3 Message Dialog. Play notification sound with toast notifications from Phase 04 §6.3. Control via Registry `HKLM\SYSTEM\Sound\SystemSounds` (enable/disable). After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system sounds"`.
 
 
 - [ ] Create `resources/sounds/` directory
@@ -110,7 +110,7 @@
   - [ ] `notify.wav` — notification toast
   - [ ] `shutdown.wav` — shutdown sound
   - [ ] `recycle.wav` — empty recycle bin
-- [ ] Install to `C:\Impossible\Sounds\` on IXFS
+- [ ] Install to `C:\Impossible\Media\` on the disk image
 - [ ] Play startup chime after boot splash finishes
 - [ ] Play error sound with error dialogs
 - [ ] Play notification sound with toast notifications

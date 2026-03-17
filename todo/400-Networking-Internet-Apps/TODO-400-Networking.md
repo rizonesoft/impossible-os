@@ -289,11 +289,11 @@
 
 ### 6.4 Firewall Management
 
-**Prompt:** Persist firewall configuration in Registry: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.spl` settings applet (Phase 05 §4 SPL framework) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall management"`.
+**Prompt:** Persist firewall configuration in Registry: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.cpl` Control Panel applet (using the CPL framework from TODO-350) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall management"`.
 
 
 - [ ] Store rules in Registry: `System\Network\Firewall\Enabled`, `System\Network\Firewall\Rules`
-- [ ] `firewall.spl` settings panel applet — toggle firewall, view/add/remove rules
+- [ ] `firewall.cpl` Control Panel applet — toggle firewall, view/add/remove rules
 - [ ] Shell command: `fw list` — show all rules
 - [ ] Shell command: `fw add <direction> <protocol> <port> <action>` — add rule
 - [ ] Shell command: `fw enable` / `fw disable` — toggle firewall

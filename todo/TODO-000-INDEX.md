@@ -103,7 +103,7 @@
 | 320 | [File Manager](310-Core-Apps/TODO-320-File-Manager.md)            |        |
 | 330 | [Notepad](310-Core-Apps/TODO-330-Notepad.md)                      |        |
 | 340 | [Calculator](310-Core-Apps/TODO-340-Calculator.md)                |        |
-| 350 | [Settings Panel](310-Core-Apps/TODO-350-Settings-Panel.md)        |        |
+| 350 | [Control Panel](310-Core-Apps/TODO-350-Settings-Panel.md)         |        |
 | 360 | [Task Manager](310-Core-Apps/TODO-360-Task-Manager.md)            |        |
 | 370 | [Utility Apps](310-Core-Apps/TODO-370-Utility-Apps.md)            |        |
 

@@ -156,15 +156,15 @@
 
 ---
 
-## 8. Sound Settings Applet
+## 8. Sound Control Panel Applet
 
-- [ ] `sound.spl` in Settings Panel:
+- [ ] `mmsys.cpl` in Control Panel:
   - [ ] Master volume slider
   - [ ] Mute toggle
   - [ ] Output device selector (if multiple audio devices)
   - [ ] System sounds enable/disable
   - [ ] Test sound button
-- [ ] Commit: `"apps: sound settings applet"`
+- [ ] Commit: `"apps: sound control panel applet"`
 
 ---
 

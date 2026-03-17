@@ -38,7 +38,7 @@
   - [ ] Indexed files + folders (from §1 index)
   - [ ] App names live scan: `C:\Impossible\Bin\` + `C:\Programs\` (for freshly installed apps)
   - [ ] *(Stretch)* File contents: grep text files (slow path, opt-in)
-  - [ ] *(Stretch)* Settings panel names (search settings entries)
+  - [ ] *(Stretch)* Control Panel applet names (search settings entries)
 - [ ] Add `SYS_SEARCH` syscall (number to be assigned)
 - [ ] Commit: `"kernel: search query API"`
 

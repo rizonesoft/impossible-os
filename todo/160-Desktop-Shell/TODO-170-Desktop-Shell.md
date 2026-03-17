@@ -191,7 +191,7 @@
 - [ ] Open: click system tray / Win+A
 - [ ] 3×2 toggle grid: WiFi, Bluetooth, Airplane Mode, Night Light, DND, Cast
 - [ ] Volume slider + Brightness slider
-- [ ] [Edit ⚙] → open Settings app
+- [ ] [Edit ⚙] → open Control Panel
 - [ ] Acrylic background, rounded corners, drop shadow
 - [ ] Commit: `"desktop: quick settings panel"`
 
