@@ -171,24 +171,14 @@
 
 **Prompt:** Create an auto-generated `CHANGELOG.md` from git history using conventional commit messages. Group commits by type: `feat:`, `fix:`, `build:`, `drivers:`, `desktop:`, `kernel:`, etc. Generate the changelog as part of the release process. After completing all items, mark every item as `[x]`, and commit as `"tools: auto-generated changelog"`. Add notes directly in this TODO section.
 
-- [ ] Create `scripts/generate-changelog.sh`:
-  - [ ] Parse git log between last two tags
-  - [ ] Group by commit prefix: Features, Fixes, Build, Drivers, Desktop, Kernel
-  - [ ] Output as markdown with commit hashes
-  - [ ] Example output:
-    ```markdown
-    ## v0.2.0 (2026-03-17)
-
-    ### Features
-    - desktop: dirty rectangle compositor for drag optimization (a1b2c3d)
-    - kernel: seqlock synchronization primitive (d4e5f6a)
-
-    ### Fixes
-    - boot: fix timer test hang on real hardware (7b8c9d0)
-    ```
-- [ ] Create/update `CHANGELOG.md` at repo root
-- [ ] Integrate into release workflow (§4.1)
-- [ ] Commit: `"tools: auto-generated changelog"`
+- [x] Create `scripts/generate-changelog.sh`: — ✅ 175 lines, 20+ category mappings
+  - [x] Parse git log between last two tags — ✅ Handles tagged releases + unreleased commits
+  - [x] Group by commit prefix: Features, Fixes, Build, Drivers, Desktop, Kernel — ✅ 20+ prefixes mapped
+  - [x] Output as markdown with commit hashes — ✅ Short hash in backticks
+  - [x] Example output verified — ✅ 794 lines generated from full history
+- [x] Create/update `CHANGELOG.md` at repo root — ✅ Auto-generated
+- [x] Integrate into release workflow (§4.1) — ✅ Referenced in `workflows/release.md`
+- [x] Commit: `"tools: auto-generated changelog"` — ✅
 
 ### 3.3 Git Tag Conventions *(manual)*
 
