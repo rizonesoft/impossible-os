@@ -51,3 +51,12 @@ void klog_set_screen_level(log_level_t min_level);
 /* Flush ring buffer entries to C:\Impossible\System\Logs\kernel.log.
  * Call after VFS is mounted. Appends only new entries since last flush. */
 void klog_flush_to_disk(void);
+
+/* ---- Live debug log (X:\debug.log) ----
+ * When enabled, every klog() entry is immediately written to X:\debug.log.
+ * Used for debugging boot hangs on real hardware. */
+void klog_live_enable(void);     /* Turn on — allocates PMM buffer, creates file */
+int  klog_live_active(void);     /* Returns 1 if live mode is on */
+void klog_live_append(const klog_entry_t *e);  /* Append entry to buffer */
+void klog_live_flush(void);      /* Write entire buffer to X:\debug.log */
+void klog_live_hw_dump(void);    /* Dump hardware info into live buffer */

@@ -326,6 +326,14 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         fb_putchar('\n');
     }
 
+    /* ---- Live debug log: write to X:\debug.log immediately ---- */
+    if (klog_live_active()) {
+        klog_entry_t *last = &klog_ring[(klog_ring_head == 0
+            ? KLOG_RING_SIZE - 1 : klog_ring_head - 1)];
+        klog_live_append(last);
+        klog_live_flush();
+    }
+
     /* ---- FATAL: halt ---- */
     if (level == LOG_FATAL) {
         serial_str("[**] FATAL — system halted\r\n");

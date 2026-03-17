@@ -475,6 +475,21 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 boot_splash_abort();
                 printk("\n=== DEBUG BOOT MODE ===\n");
                 printk("Splash disabled. Showing live boot output.\n\n");
+
+                /* Enable live debug log to X:\debug.log.
+                 * Replay all existing ring buffer entries so pre-mount
+                 * boot messages are captured in the debug log too. */
+                klog_live_enable();
+                {
+                    uint32_t rc, rh, ri;
+                    const klog_entry_t *ring = klog_get_ring(&rc, &rh);
+                    for (ri = 0; ri < rc; ri++) {
+                        uint32_t idx = (rc < KLOG_RING_SIZE) ? ri
+                            : (rh + ri) % KLOG_RING_SIZE;
+                        klog_live_append(&ring[idx]);
+                    }
+                    klog_live_flush();
+                }
             }
         }
     }
@@ -582,6 +597,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             /* Single CPU — init per-CPU data for BSP without touching LAPIC */
             smp_init();
         }
+    }
+
+    /* Dump hardware info into debug.log (only when live debug is active) */
+    if (klog_live_active()) {
+        boot_splash_status("Dumping hardware info...");
+        klog_live_hw_dump();
     }
 
     /* Heap test: alloc, write, free, realloc */
