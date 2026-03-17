@@ -180,20 +180,20 @@ If you're new to OS development, look for:
 
 ## 🏷️ Release Tags
 
-We use annotated tags for releases:
+We use annotated tags for releases, matching our **CalVer** (`YY.M.D`) scheme:
 
 | Format | Example | Usage |
 |--------|---------|-------|
-| `v{MAJOR}.{MINOR}.{PATCH}` | `v0.1.0`, `v1.0.0` | Stable releases |
-| `v{M}.{m}.{p}-alpha.{n}` | `v0.1.0-alpha.1` | Early testing |
-| `v{M}.{m}.{p}-beta.{n}` | `v0.1.0-beta.1` | Feature-complete testing |
-| `v{M}.{m}.{p}-rc.{n}` | `v0.1.0-rc.1` | Release candidates |
+| `v{YY}.{M}.{D}` | `v26.3.18`, `v26.4.1` | Stable releases |
+| `v{YY}.{M}.{D}-alpha.{n}` | `v26.3.18-alpha.1` | Early testing |
+| `v{YY}.{M}.{D}-beta.{n}` | `v26.3.18-beta.1` | Feature-complete testing |
+| `v{YY}.{M}.{D}-rc.{n}` | `v26.3.18-rc.1` | Release candidates |
 
 Tags are always annotated:
 
 ```bash
-git tag -a v0.1.0 -m "Release v0.1.0"
-git push origin v0.1.0
+git tag -a v26.3.18 -m "Release v26.3.18"
+git push origin v26.3.18
 ```
 
 Pushing a `v*` tag triggers the automated release CI workflow, which builds
