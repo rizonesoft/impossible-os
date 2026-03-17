@@ -92,22 +92,18 @@
 > - Clarifies POSIX APIs are secondary (Linux compat layer only)
 > - Total rules.md: 78 lines (was 72)
 
-### 1.3 Add Freestanding C Rule
+### 1.3 Add Freestanding C Rule ✅
 
-**Prompt:** The current rules mention `-ffreestanding -nostdlib -nostdinc` compiler flags but don't explicitly prohibit standard library includes. Agents trained on user-space C will reflexively include `<stdio.h>` or use `malloc()`. Add an explicit rule. After completing all items, mark every item as `[x]`, and commit as `"agent: add freestanding C rule"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: open `.agents/rules/rules.md` and confirm the `## Freestanding C` section contains 3 rules (no stdlib, no malloc, no printf).
 
-- [ ] Add to `.agents/rules/rules.md` → `## Freestanding C`:
-  ```markdown
-  ## Freestanding C
+- [x] Add to `.agents/rules/rules.md` → `## Freestanding C` (3 rules)
+- [x] Commit: `"agent: add freestanding C rule"`
 
-  - **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`,
-    `<string.h>`, or any user-space headers. Only freestanding headers
-    are allowed: `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`.
-  - **No malloc().** Use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()`
-    (everything else). See memory-allocation skill for decision tree.
-  - **No printf().** Use `printk()` for kernel output, `klog()` for logging.
-  ```
-- [ ] Commit: `"agent: add freestanding C rule"`
+> [!NOTE]
+> **Freestanding C notes (2026-03-17):**
+> - 3 rules: no stdlib headers, no malloc (use kmalloc/PMM), no printf (use printk/klog)
+> - Reinforces the `-ffreestanding -nostdlib -nostdinc` flags from Build Constraints
+> - Total rules.md: 84 lines (was 78)
 
 ---
 
@@ -480,7 +476,7 @@
 | 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
 | ✅ Done  | 1.1 Hardware constraint rules    | APIC-only, DMA-only, UEFI GOP, RCU           |
 | ✅ Done  | 1.2 Win32 API surface rule       | Win32 native API, Windows paths, CPL applets   |
-| 🟠 P1   | 1.3 Freestanding C rule          | Prevent stdlib includes                        |
+| ✅ Done  | 1.3 Freestanding C rule          | No stdlib, no malloc, no printf                |
 | 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |
 | 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                         |
 | 🟠 P1   | 5.2 clangd MCP server            | Phase 2 intelligence — after TODO-002 §6.5    |

@@ -76,3 +76,9 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - **Win32 is the native API.** User-space programs are PE32+ executables using Win32-style APIs (CreateFile, ReadFile, CreateProcess). POSIX APIs (open, read, fork) are secondary — for the Linux compat layer only.
 - **Windows paths are canonical.** Use `C:\Impossible\System32\`, not `/usr/bin/`. Use `C:\Program Files\`, not `/usr/local/`.
 - **Control Panel uses .cpl applets.** Settings are exposed via Windows-standard Control Panel Library applets (CPlApplet interface, .cpl extension).
+
+## Freestanding C
+
+- **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. Only freestanding headers are allowed: `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`.
+- **No malloc().** Use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()` (everything else). See memory-allocation skill for decision tree.
+- **No printf().** Use `printk()` for kernel output, `klog()` for logging.
