@@ -127,9 +127,9 @@
 
 **Prompt:** Add a standard code of conduct (Contributor Covenant v2.1) to establish community expectations. After completing, commit as `"docs: code of conduct"`.
 
-- [ ] Create `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1)
-- [ ] Add contact email for reporting: `conduct@rizonesoft.com` (or appropriate address)
-- [ ] Commit: `"docs: code of conduct"`
+- [x] Create `CODE_OF_CONDUCT.md` (Contributor Covenant v2.1) — ✅
+- [x] Add contact email for reporting: `conduct@rizonesoft.com` — ✅
+- [x] Commit: `"docs: code of conduct"` — ✅
 
 ### 2.6 Create SECURITY.md *(agent)*
 
