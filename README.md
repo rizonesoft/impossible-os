@@ -51,6 +51,12 @@ bash scripts/build.sh clean run  # Clean build + QEMU
 > Always use `bash scripts/build.sh` — never raw `make` commands.
 > Verify success: `tail -1 build/build.log` → must show `BUILD OK`.
 
+### Developer setup (optional)
+
+```bash
+git config core.hooksPath .githooks   # Enable pre-commit lint hook
+```
+
 ## Testing
 
 - **Fast loop:** `bash scripts/build.sh run` launches QEMU with OVMF UEFI firmware and AHCI

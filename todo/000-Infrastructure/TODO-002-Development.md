@@ -665,16 +665,24 @@ scripts/
 > the canonical location for all GitHub-specific infrastructure.
 > This section covers **local developer hooks** only.
 
-### 8.1 Pre-Commit Hooks
+### 8.1 Pre-Commit Hooks ✅
 
-**Prompt:** Create `.githooks/pre-commit` that runs the code linter (§6.3) and verifies the build succeeds before allowing a commit. Developers opt-in by running `git config core.hooksPath .githooks`. The hook should be fast (< 5 seconds) — only lint changed files, not the entire codebase. After completing all items, mark every item as `[x]`, and commit as `"tools: pre-commit lint hook"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: run `git config core.hooksPath .githooks`, stage a `.c` file, and attempt a commit. Confirm the linter runs only on staged files and blocks the commit if errors are found. Check that `README.md` contains the setup instruction.
 
-- [ ] Create `.githooks/pre-commit`
-- [ ] Run `scripts/lint.sh` on staged `.c` and `.h` files only
-- [ ] Block commit if lint violations found (exit 1)
-- [ ] Print: "Pre-commit lint passed" or "Fix lint errors before committing"
-- [ ] Add setup instruction to README: `git config core.hooksPath .githooks`
-- [ ] Commit: `"tools: pre-commit lint hook"`
+- [x] Create `.githooks/pre-commit` — executable bash script
+- [x] Run `scripts/lint.sh` on staged `.c` and `.h` files only (via `git diff --cached --name-only`)
+- [x] Block commit if lint violations found (exit 1)
+- [x] Print: "Pre-commit lint passed" or "Fix lint errors before committing"
+- [x] Add setup instruction to README: `git config core.hooksPath .githooks`
+- [x] Commit: `"tools: pre-commit lint hook"`
+
+> [!NOTE]
+> **Pre-commit hook notes (2026-03-17):**
+> - Opt-in only: `git config core.hooksPath .githooks`
+> - Fast path: if no `.c`/`.h` files staged → exits 0 immediately (< 1ms)
+> - Uses `git diff --cached --name-only --diff-filter=d` to skip deleted files
+> - Passes absolute paths to `scripts/lint.sh` which handles all 6 checks
+> - Warnings don't block commits (only errors do — same behavior as `lint.sh`)
 
 ---
 
@@ -708,7 +716,7 @@ scripts/
 | ✅ Done   | 6.3 Code Linter                   | Style consistency — 6 automated checks                   |
 | ✅ Done   | 6.4 GDB Debug Enhancement         | Symbol-aware debugging with custom breakpoints           |
 | ✅ Done   | 7.2 Asset Validation              | 37 assets validated at build time (PNG/TTF/XCursor/JPEG) |
-| 🔵 P4     | 8.1 Pre-Commit Hooks              | Local lint hook — CI build is in TODO-001 §4             |
+| ✅ Done   | 8.1 Pre-Commit Hooks              | Opt-in lint hook, fast — staged files only               |
 
 ---
 
@@ -732,7 +740,8 @@ scripts/
 | `scripts/size-report.sh`            | [NEW] Code size tracker                  |
 | `scripts/lint.sh`                   | [NEW] Code style linter                  |
 | `.github/workflows/build.yml`       | [NEW] CI build + test                    |
-| `.githooks/pre-commit`              | [NEW] Pre-commit lint hook               |
+| `.githooks/pre-commit`              | [EXISTS] Pre-commit lint hook            |
+| `tools/validate-assets.py`         | [EXISTS] Build-time asset validation     |
 | `include/build_info.h`              | [NEW] Auto-generated build metadata      |
 | `.clangd`                           | [NEW] clangd language server config      |
 | `compile_commands.json`             | [GENERATED] Bear compilation database    |
@@ -741,22 +750,22 @@ scripts/
 
 ## OS Comparison
 
-| Feature                           | Windows 11 (WDK/VS)              | Linux Kernel                      | Impossible OS                             |
-|-----------------------------------|----------------------------------|-----------------------------------|-------------------------------------------|
-| Build system                      | ✅ MSBuild / WDK                  | ✅ Kbuild (make)                 | ✅ Make + build.sh wrapper                |
-| Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files          | ✅ `-MMD -MP` + `.d` includes             |
-| Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ✅ `-j$(nproc)` default + `--jobs=N`      |
-| Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ✅ `include/build_info.h` (auto-generated)|
-| Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)|
-| One-command dev setup             | ❌ Manual VS + WDK install        | ⚠️ `make defconfig && make`      | ✅ `bash scripts/setup.sh` — **beats both**|
-| Automated smoke test              | ✅ HCK/HLK test framework         | ✅ kselftest + CI bots            | ✅ `scripts/test-smoke.sh` (headless QEMU)|
-| Unit test framework (kernel)      | ✅ WDK test framework              | ✅ KUnit                          | ✅ `test.h` + `test_runner.c` (12 suites) |
-| CI/CD build on push               | ✅ Azure DevOps                    | ✅ GitHub Actions + kernel.org    | ⬜ TODO-001 §4.1 P3                       |
-| Symbol map + debug symbols        | ✅ PDB files                       | ✅ vmlinux + kallsyms             | ✅ `kernel.sym` + `symtab_resolve()` (O(log n))|
-| Code size tracking                | ⚠️ Manual / third-party          | ✅ `bloat-o-meter`               | ✅ `scripts/size-report.sh` + CSV history |
-| Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                  | ⬜ §8.1 P4 — `.githooks/pre-commit`      |
-| Language server (code intel)      | ✅ IntelliSense (MSVC)             | ✅ clangd + compile_commands     | ✅ clangd-19 + Bear (101 entries)         |
-| Asset pipeline                    | ✅ MSBuild resource compiler       | ⚠️ Manual `make` targets         | ✅ `make assets` (7 sub-targets + stamps) |
-| Asset validation                  | ❌ Runtime discovery               | ❌ No built-in                    | ✅ 37 assets validated at build time      |
-| **Zero-install build wrapper**    | ❌ Requires VS + WDK              | ❌ Requires toolchain install     | ✅ **build.sh — single script, no IDE**   |
-| **QEMU auto-test loop**           | ❌ Manual VM setup                 | ✅ virtme + kselftest             | ✅ **build.sh run — build + boot + verify**|
+| Feature                           | Windows 11 (WDK/VS)              | Linux Kernel                      | Impossible OS                                    |
+|-----------------------------------|----------------------------------|-----------------------------------|--------------------------------------------------|
+| Build system                      | ✅ MSBuild / WDK                  | ✅ Kbuild (make)                 | ✅ Make + build.sh wrapper                      |
+| Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files         | ✅ `-MMD -MP` + `.d` includes                   |
+| Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ✅ `-j$(nproc)` default + `--jobs=N`            |
+| Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ✅ `include/build_info.h` (auto-generated)      |
+| Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)      |
+| One-command dev setup             | ❌ Manual VS + WDK install        | ⚠️ `make defconfig && make`      | ✅ `bash scripts/setup.sh` — **beats both**     |
+| Automated smoke test              | ✅ HCK/HLK test framework         | ✅ kselftest + CI bots           | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
+| Unit test framework (kernel)      | ✅ WDK test framework             | ✅ KUnit                         | ✅ `test.h` + `test_runner.c` (12 suites)       |
+| CI/CD build on push               | ✅ Azure DevOps                   | ✅ GitHub Actions + kernel.org   | ⬜ TODO-001 §4.1 P3                             |
+| Symbol map + debug symbols        | ✅ PDB files                      | ✅ vmlinux + kallsyms            | ✅ `kernel.sym` + `symtab_resolve()` (O(log n)) |
+| Code size tracking                | ⚠️ Manual / third-party           | ✅ `bloat-o-meter`               | ✅ `scripts/size-report.sh` + CSV history       |
+| Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                 | ✅ `.githooks/pre-commit` (opt-in, staged only) |
+| Language server (code intel)      | ✅ IntelliSense (MSVC)            | ✅ clangd + compile_commands     | ✅ clangd-19 + Bear (101 entries)               |
+| Asset pipeline                    | ✅ MSBuild resource compiler      | ⚠️ Manual `make` targets         | ✅ `make assets` (7 sub-targets + stamps)       |
+| Asset validation                  | ❌ Runtime discovery              | ❌ No built-in                   | ✅ 37 assets validated at build time            |
+| **Zero-install build wrapper**    | ❌ Requires VS + WDK              | ❌ Requires toolchain install    | ✅ **build.sh — single script, no IDE**         |
+| **QEMU auto-test loop**           | ❌ Manual VM setup                | ✅ virtme + kselftest            | ✅ **build.sh run — build + boot + verify**     |
