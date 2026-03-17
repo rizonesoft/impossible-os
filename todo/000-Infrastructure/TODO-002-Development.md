@@ -355,16 +355,24 @@ scripts/
 > - After write: `sync` + `partprobe`, then mounts EFI partition to verify boot files
 > - Double confirmation: YES + device name (e.g., "sdb") to prevent accidents
 
-### 4.3 USB Log Reader
+### 4.3 USB Log Reader ✅
 
-**Prompt:** Create `scripts/read-usb-log.sh` that reads logs from the USB drive's logs partition (X: or the third partition on Linux). After booting on real hardware, the logs partition contains `debug.log` and hardware information. The script mounts the partition (read-only), copies the log files to `build/logs/<timestamp>/`, and displays a summary. This replaces the deleted `read-usb-log.bat` / `read-usb-log.ps1`. After completing all items, mark every item as `[x]`, and commit as `"tools: USB log reader"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/deploy/read-usb-log.sh` mounts the Logs partition read-only, copies logs to `build/logs/<timestamp>/`, and scans for panics. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `scripts/read-usb-log.sh`
-- [ ] Mount USB logs partition (read-only)
-- [ ] Copy `debug.log` and all `.log` files to `build/logs/<date>/`
-- [ ] Print summary: file sizes, first/last timestamp, any panic indicators
-- [ ] Linux: auto-detect third partition of USB device
-- [ ] Commit: `"tools: USB log reader"`
+- [x] Create `scripts/deploy/read-usb-log.sh`
+- [x] Mount USB logs partition (read-only)
+- [x] Copy `debug.log` and all `.log`/`.txt`/`crashdump*` files to `build/logs/<date>/`
+- [x] Print summary: file sizes, first/last log line, panic/fault detection
+- [x] Linux: auto-detect third partition of USB device (handles `/dev/sdX3` and `/dev/nvme0n1p3`)
+- [x] Commit: `"tools: USB log reader"`
+
+> [!NOTE]
+> **USB log reader notes (2026-03-17):**
+> - Script placed in `scripts/deploy/` alongside `write-usb.sh`
+> - Accepts optional device argument (`/dev/sdX`) or auto-detects removable USB drives
+> - Mounts read-only (`-o ro`) — safe for forensic log collection
+> - Scans for panic/BSOD/fault keywords and highlights them in red
+> - Logs saved to `build/logs/<timestamp>/` for historical comparison
 
 ---
 
@@ -629,7 +637,7 @@ scripts/
 | 🟢 P3     | 3.3 Hyper-V Runner                | Production target testing                                |
 | 🟢 P3     | 3.4 Multi-Resolution Launcher     | Consolidates resolution-specific scripts                 |
 | ✅ Done   | 4.2 USB Write (Linux)             | Cross-platform hardware deployment via dd                |
-| 🟢 P3     | 4.3 USB Log Reader                | Hardware debugging workflow                              |
+| ✅ Done   | 4.3 USB Log Reader                | Hardware debugging log retrieval                         |
 | 🟢 P3     | 5.2 Core Subsystem Tests          | After §5.1 framework                                     |
 | 🟢 P3     | 6.2 Size Tracking                 | Detect bloat early                                       |
 | 🟢 P3     | 6.3 Code Linter                   | Style consistency                                        |
