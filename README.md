@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/lines-84k+-blueviolet?style=flat-square" alt="Lines of Code" />
+  <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE"><img src="https://img.shields.io/badge/Donate-PayPal-00457C?style=flat-square&logo=paypal" alt="Donate" /></a>
 </p>
 
 ---
