@@ -741,7 +741,7 @@ scripts/
 | `scripts/lint.sh`                   | [NEW] Code style linter                  |
 | `.github/workflows/build.yml`       | [NEW] CI build + test                    |
 | `.githooks/pre-commit`              | [EXISTS] Pre-commit lint hook            |
-| `tools/validate-assets.py`         | [EXISTS] Build-time asset validation     |
+| `tools/validate-assets.py`          | [EXISTS] Build-time asset validation     |
 | `include/build_info.h`              | [NEW] Auto-generated build metadata      |
 | `.clangd`                           | [NEW] clangd language server config      |
 | `compile_commands.json`             | [GENERATED] Bear compilation database    |
