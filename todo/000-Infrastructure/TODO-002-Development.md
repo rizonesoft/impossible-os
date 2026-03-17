@@ -379,15 +379,25 @@ scripts/
 ## 5. Test Framework
 
 ### 5.1 Kernel Unit Test Framework
+### 5.1 Kernel Unit Test Framework ✅
 
-**Prompt:** Create a minimal kernel-mode unit test framework for testing core subsystems (PMM, heap, VFS, scheduler) without booting the full desktop. `test_assert(condition, msg)` checks a condition and logs pass/fail to serial. A `test_runner()` function runs all registered test suites and prints a summary: "42 tests passed, 0 failed." Tests run during boot when `--run-tests` is passed via `boot.conf` or compile-time `#ifdef KERNEL_TESTS`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"test: kernel unit test framework"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/test/test.h` provides `TEST_ASSERT()`, `test_suite_register()`, and conditional compilation. Confirm `src/kernel/test/test_runner.c` runs suites and prints summary. Run `bash scripts/build.sh clean` with and without `-DKERNEL_TESTS`. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `src/kernel/test/test.h` — `test_assert(cond, msg)`, `test_suite_register(name, fn)`
-- [ ] Create `src/kernel/test/test_runner.c` — run all registered suites, print summary
-- [ ] `test_assert()` logs to serial: `[PASS] msg` or `[FAIL] msg (file:line)`
-- [ ] Summary output: `"42 passed, 0 failed"` in serial and boot log
-- [ ] Conditional compilation: `#ifdef KERNEL_TESTS` or `boot.conf` flag `run_tests=1`
-- [ ] Commit: `"test: kernel unit test framework"`
+- [x] Create `include/kernel/test/test.h` — `TEST_ASSERT(cond, msg)`, `test_suite_register(name, fn)`
+- [x] Create `src/kernel/test/test_runner.c` — run all registered suites, print summary
+- [x] `TEST_ASSERT()` logs to serial: `[PASS] suite :: msg` or `[FAIL] suite :: msg (file:line)`
+- [x] Summary output: `"N passed, N failed"` via `log_info`/`log_error` to serial
+- [x] Conditional compilation: `#ifdef KERNEL_TESTS` — without it, all APIs compile to nothing
+- [x] Commit: `"test: kernel unit test framework"`
+
+> [!NOTE]
+> **Test framework notes (2026-03-17):**
+> - Header at `include/kernel/test/test.h`, impl at `src/kernel/test/test_runner.c`
+> - Uses `log_info("TEST", ...)` and `log_error("TEST", ...)` for serial output
+> - `test_runner.c` is entirely inside `#ifdef KERNEL_TESTS` — empty object in normal builds
+> - Max 64 suites, each suite is a `void (*fn)(void)` that calls `TEST_ASSERT()` internally
+> - To enable: add `-DKERNEL_TESTS` to CFLAGS, call `test_runner_init()` + `test_runner_run()` from `main.c`
+> - `test_runner_init()` has placeholder comments for registering subsystem tests (§5.2)
 
 ### 5.2 Core Subsystem Tests
 
@@ -622,15 +632,15 @@ scripts/
 | ✅ Done   | 4.1 USB Write (Windows)           | Hardware deployment — working                            |
 | ✅ Done   | 1.4 Build Version & Metadata      | `ver` command, BSOD footer, boot log version info        |
 | 🔴 P0     | 5.3 QEMU Smoke Test               | Catches boot regressions automatically                   |
-| ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds    |
+| ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds     |
 | ✅ Done   | 2.1 Clang/LLD Migration           | Prerequisite for clangd + Bear + semantic search         |
 | ✅ Done   | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
 | 🟠 P1     | 6.1 Symbol Map                    | BSOD stack traces need function names                    |
 | 🟠 P1     | 6.5 clangd + Bear                 | Deep code intelligence — requires §2.1 Clang first       |
-| ✅ Done   | 1.3 Parallel Build                | Build speed — 2.5× faster with -j12                     |
+| ✅ Done   | 1.3 Parallel Build                | Build speed — 2.5× faster with -j12                      |
 | ✅ Done   | 1.5 Scripts Directory Organization| Daily scripts at root, secondary in subdirs              |
 | ✅ Done   | 2.3 One-Command Setup             | After §2.1 + §2.2                                        |
-| 🟡 P2     | 5.1 Unit Test Framework           | Foundation for systematic testing                        |
+| ✅ Done   | 5.1 Unit Test Framework           | Foundation for systematic testing                        |
 | 🟡 P2     | 5.4 Filesystem Test Suite         | Validates FS drivers against real disk images            |
 | 🟡 P2     | 7.1 Asset Pipeline                | Consolidates scattered asset build steps                 |
 | ✅ Done   | 3.2 VirtualBox Test Runner        | Cross-platform VBox launcher with VBoxManage             |
