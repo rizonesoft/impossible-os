@@ -47,3 +47,5 @@ compile_commands.json
 
 # clangd background index cache
 .cache/
+.srclight/
+.srclight/
