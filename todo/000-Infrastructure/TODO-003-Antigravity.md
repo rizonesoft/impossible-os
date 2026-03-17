@@ -250,11 +250,11 @@
 
 ## 4. Agent Execution Strategy
 
-### 4.1 Plan Mode vs Fast Mode Guidelines
+### 4.1 Plan Mode vs Fast Mode Guidelines ✅ *(manual)*
 
 **Prompt:** Document when agents should use Plan Mode (generate a plan artifact for review before coding) versus Fast Mode (code directly). Kernel architecture, driver development, and memory management changes require Plan Mode. UI iteration, bug fixes, and documentation updates can use Fast Mode. Add this as a section in the rules or as a standalone skill. After completing all items, mark every item as `[x]`, and commit as `"agent: document Plan vs Fast mode guidelines"`. Add notes directly in this TODO section.
 
-- [ ] Add guidelines to `.agents/rules/rules.md` → `## Agent Execution Mode`:
+- [x] Add guidelines to `.agents/rules/rules.md` → `## Agent Execution Mode`:
   ```markdown
   ## Agent Execution Mode
 
@@ -269,13 +269,13 @@
     - Documentation and TODO updates
     - Adding new assets (fonts, icons, sounds)
   ```
-- [ ] Commit: `"agent: document Plan vs Fast mode guidelines"`
+- [x] Commit: `"agent: document Plan vs Fast mode guidelines"`
 
-### 4.2 Multi-Agent Task Allocation Patterns
+### 4.2 Multi-Agent Task Allocation Patterns ✅ *(manual)*
 
 **Prompt:** Document recommended patterns for using multiple agents in parallel on Impossible OS. Agents working on different layers can operate simultaneously (e.g., kernel driver + desktop UI). Agents on the same layer must coordinate via shared TODO items. Define the roles and boundaries to prevent merge conflicts. After completing all items, mark every item as `[x]`, and commit as `"agent: document multi-agent patterns"`. Add notes directly in this TODO section.
 
-- [ ] Add to `.agents/rules/rules.md` → `## Multi-Agent Coordination`:
+- [x] Add to `.agents/rules/rules.md` → `## Multi-Agent Coordination`:
   ```markdown
   ## Multi-Agent Coordination
 
@@ -284,7 +284,7 @@
   - **Coordination via TODOs:** mark items `[/]` (in progress) to signal other agents
   - **Never parallel:** two agents both running `bash scripts/build.sh`
   ```
-- [ ] Commit: `"agent: document multi-agent patterns"`
+- [x] Commit: `"agent: document multi-agent patterns"`
 
 ---
 
