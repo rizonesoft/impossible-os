@@ -9,10 +9,8 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-x86__64-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
-  <img src="https://img.shields.io/badge/language-C%20%7C%20x86--64%20ASM-orange?style=flat-square" alt="Language" />
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/lines-84k+-blueviolet?style=flat-square" alt="Lines of Code" />
-  <img src="https://img.shields.io/badge/toolchain-Clang%2019%20%2B%20LLD-informational?style=flat-square" alt="Toolchain" />
 </p>
 
 ---
