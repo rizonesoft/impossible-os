@@ -216,9 +216,9 @@
 - [ ] Expected runtime: < 5 minutes
 - [ ] Commit: `"ci: build and smoke test on push"`
 
-### 4.2 Automated ISO Release on Tag *(agent)*
+### 4.2 Automated Disk Image Release on Tag *(agent)*
 
-**Prompt:** Create `.github/workflows/release.yml` that builds the OS ISO and publishes it as a GitHub Release whenever a version tag (`v*`) is pushed. The ISO is attached as a release artifact. The changelog is auto-generated from commits since the last tag. After completing all items, mark every item as `[x]`, and commit as `"ci: automated release build and ISO publish"`. Add notes directly in this TODO section.
+**Prompt:** Create `.github/workflows/release.yml` that builds the OS disk image and publishes it as a GitHub Release whenever a version tag (`v*`) is pushed. The disk image is attached as a release artifact. The changelog is auto-generated from commits since the last tag. After completing all items, mark every item as `[x]`, and commit as `"ci: automated release build and publish"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
 > → XREF: `TODO-002-Development.md §1.4` — Version metadata must be embedded
@@ -238,7 +238,7 @@
     - [ ] Assets: `build/system-disk.img`, `build/build.log`
     - [ ] Mark as pre-release if tag contains `-alpha`, `-beta`, or `-rc`
 - [ ] Test: push `v26.3.18-test` tag → release appears with disk image attached
-- [ ] Commit: `"ci: automated release build and ISO publish"`
+- [ ] Commit: `"ci: automated release build and publish"`
 
 ### 4.3 Stale Issue Cleanup *(agent)*
 
@@ -466,7 +466,7 @@
 
 - [ ] *(Stretch)* Enable GitHub Pages on `gh-pages` branch
 - [ ] *(Stretch)* Create landing page: hero section, features, screenshots, download
-- [ ] *(Stretch)* Link ISO download to latest GitHub Release
+- [ ] *(Stretch)* Link disk image download to latest GitHub Release
 - [ ] *(Stretch)* Add development blog section (markdown posts)
 - [ ] *(Stretch)* Commit: `"docs: GitHub Pages landing page"`
 
@@ -486,7 +486,7 @@
 | 🟡 P2    | 2.4 CONTRIBUTING.md                | Enables external contributions                          |
 | 🟡 P2    | 2.6 SECURITY.md                    | Responsible vulnerability reporting                     |
 | 🟡 P2    | 3.2 Changelog generation           | Auto-generated release notes                            |
-| 🟡 P2    | 4.2 Automated ISO release          | Publish builds on tag push                              |
+| 🟡 P2    | 4.2 Automated disk image release   | Publish builds on tag push                              |
 | 🟡 P2    | 5.2 PR template                    | Consistent PR descriptions                              |
 | 🟡 P2    | 6.1 Label taxonomy                 | Organized issue triage                                  |
 | 🟡 P2    | 7.2 CODEOWNERS                     | Code review requirements for critical paths             |
@@ -521,7 +521,7 @@
 | `.github/ISSUE_TEMPLATE/config.yml`           | [NEW] Issue template config                  |
 | `.github/labeler.yml`                         | [NEW] PR auto-label definitions              |
 | `.github/workflows/build.yml`                 | [NEW] CI build + smoke test                  |
-| `.github/workflows/release.yml`               | [NEW] ISO release on tag push                |
+| `.github/workflows/release.yml`               | [NEW] Disk image release on tag push         |
 | `.github/workflows/stale.yml`                 | [NEW] Stale issue cleanup                    |
 | `.github/workflows/labeler.yml`               | [NEW] PR auto-labeler                        |
 | `.github/workflows/sync-sdk.yml`              | [NEW] SDK repo sync                          |
