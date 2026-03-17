@@ -28,7 +28,7 @@
 
 | File | Purpose | Issues |
 |------|---------|--------|
-| `.agents/rules/rules.md` | Always-on constraints (65 lines) | Missing: APIC-only rule, DMA-only rule, RCU preference, Win32 API surface |
+| `.agents/rules/rules.md` | Always-on constraints (72 lines) | ~~Missing: APIC-only, DMA-only~~ → ✅ Added in §1.1. Still missing: Win32 API, freestanding C |
 | `.agents/workflows/build.md` | Build + QEMU workflow (turbo-all) | ✅ Working — uses `scripts/build.sh` correctly |
 | `.agents/workflows/add-asset.md` | Asset loading checklist | ✅ Working — PMM vs kmalloc decision tree |
 | `.agents/workflows/release.md` | Tag + changelog + build + publish | Untested — verify release flow |
@@ -55,31 +55,25 @@
 
 ## 1. Rules: Bare-Metal Guardrails
 
-### 1.1 Update Rules with Hardware Constraints
+### 1.1 Update Rules with Hardware Constraints ✅
 
-**Prompt:** The current `rules.md` covers build constraints, code style, and memory allocation gotchas, but lacks hardware-specific rules that prevent the agent from generating incorrect low-level code. Add rules for: (1) APIC-only interrupt routing (no legacy 8259 PIC code), (2) DMA-only storage (no IDE PIO polling), (3) UEFI GOP framebuffer (no VGA text mode), (4) RCU preference for read-heavy data structures. These rules must be concise (one-liners) so they don't bloat the agent context. After completing all items, mark every item as `[x]`, and commit as `"agent: add hardware constraint rules"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: open `.agents/rules/rules.md` and confirm the `## Hardware Constraints` section contains 4 rules (APIC-only, DMA-only, UEFI GOP, RCU). Verify each rule is ≤ 2 lines. Verify the PIC note clarifies that `pic.c` masking code is kept.
 
 > [!IMPORTANT]
 > → XREF: `TODO-006-Real-Hardware.md §3.1` — PIC→APIC transition and MADT
 > PCAT_COMPAT flag. The rule must allow PIC masking code (required on legacy
 > hardware) but prevent new PIC-based interrupt routing.
 
-- [ ] Add to `.agents/rules/rules.md` → `## Hardware Constraints`:
-  ```markdown
-  ## Hardware Constraints
+- [x] Add to `.agents/rules/rules.md` → `## Hardware Constraints` (4 rules)
+- [x] Keep each rule to 2 lines max (concise = less context overhead)
+- [x] Verify existing rules still accurate after additions — ✅ all 7 sections reviewed
+- [x] Commit: `"agent: add hardware constraint rules"`
 
-  - **APIC-only interrupts.** Route all hardware interrupts via LAPIC/IOAPIC.
-    Do NOT write new 8259 PIC routing code. The PIC is masked at boot.
-  - **DMA-only storage.** Use AHCI (DMA + NCQ) or VirtIO for disk I/O.
-    Do NOT use legacy IDE/ATA PIO polling (port 0x1F0-0x1F7).
-  - **UEFI GOP framebuffer.** The framebuffer is a linear 32bpp buffer
-    from UEFI GOP. Do NOT write VGA text mode (0xB8000) code.
-  - **RCU for read-heavy structures.** Prefer Read-Copy-Update over
-    spinlocks for VFS mount list, process tree, and Registry cache.
-  ```
-- [ ] Keep each rule to 2 lines max (concise = less context overhead)
-- [ ] Verify existing rules still accurate after additions
-- [ ] Commit: `"agent: add hardware constraint rules"`
+> [!NOTE]
+> **Hardware constraint notes (2026-03-17):**
+> - 4 rules added: APIC-only, DMA-only, UEFI GOP, RCU preference
+> - PIC note clarifies `pic.c` masking code is kept for boot-time disable only
+> - Total rules.md: 72 lines (was 65) — minimal context overhead increase`
 
 ### 1.2 Add Win32 API Surface Rule
 
@@ -489,7 +483,7 @@
 | 🔴 P0   | 2.1 Fix outdated paths           | Skills generate wrong code — immediate harm    |
 | 🔴 P0   | 2.2 Fix source-code-org skill    | References deleted files (grub.cfg)            |
 | 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
-| 🟠 P1   | 1.1 Hardware constraint rules    | Prevent PIC/PIO/VGA hallucination              |
+| ✅ Done  | 1.1 Hardware constraint rules    | APIC-only, DMA-only, UEFI GOP, RCU           |
 | 🟠 P1   | 1.2 Win32 API surface rule       | Prevent POSIX hallucination                    |
 | 🟠 P1   | 1.3 Freestanding C rule          | Prevent stdlib includes                        |
 | 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |

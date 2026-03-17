@@ -63,3 +63,10 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - **PMM is the default allocator. `kmalloc` is the exception.** The kernel heap is only 2 MiB. `kmalloc` is strictly for small kernel bookkeeping: VFS nodes, task structs, Codex values, short strings, linked-list nodes — typically tens of bytes to a few KB each. **NEVER use `kmalloc` for image buffers, file read buffers, pixel data, font data, or any allocation that could plausibly exceed a few KB.** Use `pmm_alloc_contiguous()` for everything else — it allocates directly from physical memory (identity-mapped) with no size limit. Violating this rule causes silent heap exhaustion that is extremely difficult to debug. *(Learned from framebuffer bug `9722a74`, JPEG decode bug `f673e46`)*
 
 - **Framebuffer back buffer must use PMM, not kmalloc.** The back buffer for 1280×720×32bpp is 3.6 MiB. `kmalloc` fails silently → `back_buf = hw_addr` → zero double buffering → compositor flicker. Always use `pmm_alloc_contiguous()`. Boot log must show `[OK] Framebuffer back buffer:` and `[OK] VBE page flip enabled` to confirm double buffering is active. *(Fixed in commit `9722a74`)*
+
+## Hardware Constraints
+
+- **APIC-only interrupts.** Route all hardware interrupts via LAPIC/IOAPIC. Do NOT write new 8259 PIC routing code. The PIC is masked at boot. *(Legacy PIC masking code in `pic.c` is kept for boot-time disable only.)*
+- **DMA-only storage.** Use AHCI (DMA + NCQ) or VirtIO for disk I/O. Do NOT use legacy IDE/ATA PIO polling (port 0x1F0–0x1F7).
+- **UEFI GOP framebuffer.** The framebuffer is a linear 32bpp buffer from UEFI GOP. Do NOT write VGA text mode (0xB8000) code.
+- **RCU for read-heavy structures.** Prefer Read-Copy-Update over spinlocks for VFS mount list, process tree, and Registry cache.
