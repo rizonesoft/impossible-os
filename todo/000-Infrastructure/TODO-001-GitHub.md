@@ -135,12 +135,12 @@
 
 **Prompt:** Create a security policy that explains how to report vulnerabilities in Impossible OS. Since this is a bare-metal OS, security issues could include bootloader bypass, privilege escalation, or memory corruption. After completing, commit as `"docs: security policy"`.
 
-- [ ] Create `SECURITY.md`
-- [ ] Supported versions table (current release only)
-- [ ] Reporting instructions: email `security@rizonesoft.com` (not public issues)
-- [ ] Response timeline: acknowledge within 48 hours
-- [ ] MOK key compromise procedure: revoke, re-sign, new release
-- [ ] Commit: `"docs: security policy"`
+- [x] Create `SECURITY.md` — ✅ Covers bare-metal threat categories
+- [x] Supported versions table (current release only) — ✅ `main` only
+- [x] Reporting instructions: email `security@rizonesoft.com` (not public issues) — ✅
+- [x] Response timeline: acknowledge within 48 hours — ✅ 48h ack → 7d assess → 14–30d fix
+- [x] MOK key compromise procedure: revoke, re-sign, new release — ✅ 6-step procedure
+- [x] Commit: `"docs: security policy"` — ✅
 
 ---
 
