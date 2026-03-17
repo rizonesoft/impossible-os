@@ -721,7 +721,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* === Registry persistence test === */
-    boot_splash_status("Registry persistence test...");
+    boot_splash_status("Registry test: creating key...");
     klog_flush_to_disk();
     {
         HKEY hk_test = (HKEY)0;
@@ -737,7 +737,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
             RegCloseKey(hk_test);
 
             /* Flush to disk */
+            boot_splash_status("Registry test: saving hives to disk...");
+            klog_flush_to_disk();
             registry_save_all();
+            boot_splash_status("Registry test: verifying...");
 
             /* Verify the value is readable in-memory */
             hk_test = (HKEY)0;
