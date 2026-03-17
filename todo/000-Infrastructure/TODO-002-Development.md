@@ -136,18 +136,9 @@
 
 ### 3.3 Hyper-V Test Runner
 
-**Prompt:** Create `scripts/run-hyperv.ps1` that creates or updates a Hyper-V Generation 2 VM with Secure Boot disabled, 512 MB RAM, and the ISO attached. Hyper-V is the primary target for production testing on Windows hosts. The script must handle: VM doesn't exist (create), VM exists but is running (stop first), and VM exists but settings changed (update). After completing all items, mark every item as `[x]`, and commit as `"tools: Hyper-V Gen 2 test runner"`. Add notes directly in this TODO section.
-
-> **XREF:** Hyper-V Gen 2 architectural requirements are documented in
-> `TODO-080-Drivers.md §1.6` and `TODO-010-Bootloader.md §7`.
-
-- [ ] Create `scripts/run-hyperv.ps1`
-- [ ] Create Hyper-V Generation 2 VM: `ImpossibleOS-Dev`
-- [ ] Settings: 512 MB RAM, Secure Boot OFF, 1 vCPU, DVD drive
-- [ ] Attach `build/os-build.iso` to virtual DVD
-- [ ] Handle existing VM: stop if running, update settings if changed
-- [ ] Start VM and connect to console
-- [ ] Commit: `"tools: Hyper-V Gen 2 test runner"`
+> **Moved to [TODO-008-Hyper-V-Runner.md](TODO-008-Hyper-V-Runner.md)** — Full Hyper-V Gen 2
+> boot support: test runner script, VMBus core, synthetic SCSI/HID/video/NIC,
+> APIC-only mode, MMIO safety, synthetic timer, power management, and guest additions.
 
 ### 3.4 Multi-Resolution QEMU Launcher
 

@@ -15,6 +15,7 @@
 |-----|-------------------------------------------------------------------------|--------|
 | 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   |        |
 | 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)      |        |
+| 008 | [Hyper-V Gen 2 Boot](000-Infrastructure/TODO-008-Hyper-V-Runner.md)   |        |
 | 009 | [Debug & Logging System](000-Infrastructure/TODO-009-Debug.md)          |        |
 
 ---
