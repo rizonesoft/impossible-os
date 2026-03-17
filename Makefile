@@ -287,7 +287,7 @@ SYSTEM_DISK := $(BUILD_DIR)/system-disk.img
 SYSTEM_DISK_SIZE := 512M
 EFI_SIZE := 64M
 LOG_SIZE := 16M
-# Shim binaries — built by bash scripts/build-shim.sh
+# Shim binaries — built by bash scripts/secure-boot/build-shim.sh
 SHIM_DIR := shim
 # Partition offsets (must match make-system-disk defaults)
 # EFI:  LBA 2048 = byte 1048576, size 64M
@@ -322,7 +322,7 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 		cp $(UEFI_EFI)             $(BUILD_DIR)/efi_staging/EFI/BOOT/grubx64.efi; \
 		cp $(SHIM_DIR)/mmx64.efi  $(BUILD_DIR)/efi_staging/EFI/BOOT/mmx64.efi; \
 	else \
-		echo "[DISK] No shim — using direct boot (run scripts/build-shim.sh for Secure Boot)"; \
+		echo "[DISK] No shim — using direct boot (run scripts/secure-boot/build-shim.sh for Secure Boot)"; \
 		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 	fi
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
@@ -435,7 +435,7 @@ vbox: all
 	@qemu-img convert -f raw -O vdi $(SYSTEM_DISK) $(BUILD_DIR)/system-disk.vdi
 	@echo "VDI created: $(BUILD_DIR)/system-disk.vdi"
 	@echo ""
-	@echo "To launch in VirtualBox, run:  scripts/run-vbox.bat"
+	@echo "To launch in VirtualBox, run:  scripts/emulators/run-vbox.bat"
 
 ## run-test: Launch QEMU with a secondary test disk on AHCI port 1
 ##   Usage: make run-test DISK=fat32       (loads build/test-disks/fat32.img)

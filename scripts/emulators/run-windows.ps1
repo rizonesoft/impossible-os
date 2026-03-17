@@ -22,7 +22,7 @@ $ErrorActionPreference = "Stop"
 
 # Resolve project root from this script's location (scripts/ -> parent)
 $SCRIPT_DIR = Split-Path -Parent $MyInvocation.MyCommand.Path
-$PROJECT    = Split-Path -Parent $SCRIPT_DIR
+$PROJECT    = Split-Path -Parent (Split-Path -Parent $SCRIPT_DIR)
 $BUILD      = Join-Path $PROJECT "build"
 
 $DISK      = Join-Path $BUILD "system-disk.img"

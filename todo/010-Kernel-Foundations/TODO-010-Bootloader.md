@@ -241,7 +241,7 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 
 ### 3.3 Build and Package Shim
 
-**Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.md` exist.
+**Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/secure-boot/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.md` exist.
 
 - [x] Fork `rhboot/shim` into public `impossible-os-shim` repo
 - [x] Embed our `MOK.cer` as vendor certificate (in `Makefile`: `VENDOR_CERT_FILE`)

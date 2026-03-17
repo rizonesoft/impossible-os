@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SHIM_DIR="$REPO_ROOT/shim"
 BUILD_DIR="/tmp/shim-build-$$"
 MOK_CER="$REPO_ROOT/keys/MOK.cer"

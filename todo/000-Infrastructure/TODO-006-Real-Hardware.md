@@ -78,17 +78,17 @@
   └── Partition 2: Data (FAT32, remainder)
       └── C:\Impossible\*           — OS filesystem
   ```
-- [ ] `scripts/write-usb.ps1`: create GPT table, format ESP, copy files
-- [ ] `scripts/write-usb.sh`: Linux variant for WSL development
+- [ ] `scripts/deploy/write-usb.ps1`: create GPT table, format ESP, copy files
+- [ ] `scripts/deploy/write-usb.sh`: Linux variant for WSL development
 - [ ] Both scripts: auto-detect USB disk (prompt user to confirm target device)
 - [ ] Safety: refuse to write to fixed disks (check removable flag)
 - [ ] Commit: `"infra: USB disk layout specification"`
 
 ### 1.2 USB Write Script (Windows Host)
 
-**Prompt:** Create `scripts/write-usb.ps1` for writing the OS to a USB disk from a Windows host. The script must: (1) list available removable USB disks, (2) prompt for target selection, (3) create GPT partition table with ESP + data partitions, (4) format ESP as FAT32, (5) copy BOOTX64.EFI, kernel.elf, initrd, and boot.conf, (6) optionally format data partition. The script must handle: disk already has partitions (re-partition), disk is mounted (unmount first), and write verification (compare checksums). After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Windows)"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/deploy/write-usb.ps1` for writing the OS to a USB disk from a Windows host. The script must: (1) list available removable USB disks, (2) prompt for target selection, (3) create GPT partition table with ESP + data partitions, (4) format ESP as FAT32, (5) copy BOOTX64.EFI, kernel.elf, initrd, and boot.conf, (6) optionally format data partition. The script must handle: disk already has partitions (re-partition), disk is mounted (unmount first), and write verification (compare checksums). After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Windows)"`. Add notes directly in this TODO section.
 
-- [ ] Create `scripts/write-usb.ps1`
+- [ ] Create `scripts/deploy/write-usb.ps1`
 - [ ] List removable USB disks with `Get-Disk | Where-Object {$_.BusType -eq 'USB'}`
 - [ ] Prompt: "Write to Disk X? THIS WILL ERASE ALL DATA. [Y/N]"
 - [ ] `Clear-Disk -RemoveData -RemoveOEM` → `New-Partition` (ESP 64 MiB, Data remainder)
@@ -100,9 +100,9 @@
 
 ### 1.3 USB Write Script (Linux/WSL Host)
 
-**Prompt:** Create `scripts/write-usb.sh` for writing the OS to a USB disk from Linux or WSL. Uses `fdisk`/`gdisk` for partitioning, `mkfs.fat` for formatting, and `mount`/`cp` for file copying. Must detect the correct block device, refuse to write to non-removable devices, and handle mounted partitions. After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Linux)"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/deploy/write-usb.sh` for writing the OS to a USB disk from Linux or WSL. Uses `fdisk`/`gdisk` for partitioning, `mkfs.fat` for formatting, and `mount`/`cp` for file copying. Must detect the correct block device, refuse to write to non-removable devices, and handle mounted partitions. After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Linux)"`. Add notes directly in this TODO section.
 
-- [ ] Create `scripts/write-usb.sh`
+- [ ] Create `scripts/deploy/write-usb.sh`
 - [ ] List USB block devices: `lsblk --scsi | grep usb`
 - [ ] Safety check: `cat /sys/block/sdX/removable` must be `1`
 - [ ] `sgdisk --zap-all`, create ESP (ef00) + data (8300) partitions
@@ -428,7 +428,7 @@ Before each real hardware test:
 
 - [ ] Build clean: `bash scripts/build.sh clean` → `=== BUILD OK ===`
 - [ ] QEMU regression test: `bash scripts/build.sh run` → boots to desktop
-- [ ] Write USB: `bash scripts/write-usb.ps1` (Windows) or `bash scripts/write-usb.sh` (Linux)
+- [ ] Write USB: `bash scripts/deploy/write-usb.ps1` (Windows) or `bash scripts/deploy/write-usb.sh` (Linux)
 - [ ] Verify `boot.conf` on USB: `debug=1`
 - [ ] BIOS settings: Secure Boot OFF, USB Boot enabled, Legacy Boot OFF (UEFI only)
 
@@ -516,8 +516,8 @@ After each test, update the test machine table (§ Current Architecture Audit �
 
 | File                                    | Purpose                                    |
 |-----------------------------------------|--------------------------------------------|
-| `scripts/write-usb.ps1`                | [NEW] USB write script (Windows)           |
-| `scripts/write-usb.sh`                 | [NEW] USB write script (Linux/WSL)         |
+| `scripts/deploy/write-usb.ps1`                | [NEW] USB write script (Windows)           |
+| `scripts/deploy/write-usb.sh`                 | [NEW] USB write script (Linux/WSL)         |
 | `src/boot/uefi/bootx64.c`              | [MODIFY] GOP negotiation, Secure Boot, initrd |
 | `src/kernel/main.c`                     | [MODIFY] PIC mask, PIT fix, SMP bring-up   |
 | `src/kernel/drivers/ahci.c`            | [NEW] AHCI controller + DMA driver         |
