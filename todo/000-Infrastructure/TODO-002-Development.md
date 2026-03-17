@@ -70,12 +70,12 @@
 
 ### 2.1 Cross-Compiler Bootstrap Script
 
-**Prompt:** Create `scripts/setup-toolchain.sh` that downloads and builds the `x86_64-elf-gcc` cross-compiler from source (binutils + GCC) into `tools/cross/`. This ensures every developer and CI runner uses an identical compiler version, eliminating "works on my machine" bugs. The script checks if the cross-compiler already exists before rebuilding. Target: GCC 13.x, binutils 2.41+. Build with `--target=x86_64-elf --disable-nls --without-headers`. After completing all items, mark every item as `[x]`, run the script to verify, and commit as `"tools: cross-compiler bootstrap script"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/setup-toolchain.sh` that downloads and builds the `x86_64-elf-gcc` cross-compiler from source (binutils + GCC) into `tools/cross/`. This ensures every developer and CI runner uses an identical compiler version, eliminating "works on my machine" bugs. The script checks if the cross-compiler already exists before rebuilding. Target: GCC 15.2+ (latest stable as of 2026), binutils 2.46+. Build with `--target=x86_64-elf --disable-nls --without-headers`. After completing all items, mark every item as `[x]`, run the script to verify, and commit as `"tools: cross-compiler bootstrap script"`. Add notes directly in this TODO section.
 
 - [ ] Create `scripts/setup-toolchain.sh`
-- [ ] Download binutils 2.41+ and GCC 13.x source tarballs
+- [ ] Download binutils 2.46+ and GCC 15.2+ source tarballs (latest stable as of 2026)
 - [ ] Build binutils: `--target=x86_64-elf --prefix=$(pwd)/tools/cross`
-- [ ] Build GCC: `--target=x86_64-elf --disable-nls --without-headers --enable-languages=c`
+- [ ] Build GCC 15.2: `--target=x86_64-elf --disable-nls --without-headers --enable-languages=c`
 - [ ] Install to `tools/cross/bin/x86_64-elf-gcc`
 - [ ] Skip rebuild if `tools/cross/bin/x86_64-elf-gcc` already exists and matches version
 - [ ] Add `tools/cross/` to `.gitignore`
@@ -84,12 +84,12 @@
 
 ### 2.2 System Dependency Installer
 
-**Prompt:** Create `scripts/setup-deps.sh` that installs all required system packages for building Impossible OS. Detect the Linux distribution (Ubuntu/Debian via `apt`, Fedora via `dnf`, Arch via `pacman`) and install the appropriate packages. Required packages: `nasm`, `xorriso`, `mtools`, `qemu-system-x86`, `ovmf`, `python3`, `python3-pil` (for asset generation), `dosfstools` (for FAT32 image creation), `parted` (for disk images). The script is idempotent — running it twice changes nothing. After completing all items, mark every item as `[x]`, and commit as `"tools: system dependency installer"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/setup-deps.sh` that installs all required system packages for building Impossible OS. Detect the Linux distribution (Ubuntu/Debian via `apt`, Fedora via `dnf`, Arch via `pacman`) and install the appropriate packages. Required packages: `nasm` (3.01+), `xorriso`, `mtools`, `qemu-system-x86` (10.2+), `ovmf`, `python3`, `python3-pil` (for asset generation), `dosfstools` (for FAT32 image creation), `parted` (for disk images). The script is idempotent — running it twice changes nothing. After completing all items, mark every item as `[x]`, and commit as `"tools: system dependency installer"`. Add notes directly in this TODO section.
 
 - [ ] Create `scripts/setup-deps.sh`
 - [ ] Detect distro: Ubuntu/Debian (`apt`), Fedora (`dnf`), Arch (`pacman`)
-- [ ] Install: `nasm`, `xorriso`, `mtools`, `qemu-system-x86`, `ovmf`
-- [ ] Install: `python3`, `python3-pil`, `dosfstools`, `parted`
+- [ ] Install: `nasm` (3.01+), `xorriso`, `mtools`, `qemu-system-x86` (10.2+), `ovmf`
+- [ ] Install: `python3`, `python3-pil`, `dosfstools`, `parted`, `cppcheck` (2.20+)
 - [ ] Idempotent: check if each package is already installed before installing
 - [ ] Print summary: "All dependencies installed" or list missing packages
 - [ ] Commit: `"tools: system dependency installer"`
@@ -285,7 +285,7 @@
 
 ### 6.3 Code Style Linter
 
-**Prompt:** Create `scripts/lint.sh` that checks all C source files against the project's coding standards: snake_case for functions/variables, UPPER_CASE for macros, `#pragma once` or include guards, lines ≤ 120 characters, no trailing whitespace, functions ≤ 50 lines. Use a combination of `grep`, `awk`, and/or `cppcheck` (if available). Report violations with file:line and a description. Exit with code 0 if clean, 1 if violations found. After completing all items, mark every item as `[x]`, and commit as `"tools: code style linter"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/lint.sh` that checks all C source files against the project's coding standards: snake_case for functions/variables, UPPER_CASE for macros, `#pragma once` or include guards, lines ≤ 120 characters, no trailing whitespace, functions ≤ 50 lines. Use a combination of `grep`, `awk`, and/or `cppcheck` 2.20+ (static analysis for memory leaks, buffer overflows, undefined behavior). Report violations with file:line and a description. Exit with code 0 if clean, 1 if violations found. After completing all items, mark every item as `[x]`, and commit as `"tools: code style linter"`. Add notes directly in this TODO section.
 
 - [ ] Create `scripts/lint.sh`
 - [ ] Check: snake_case for function definitions
