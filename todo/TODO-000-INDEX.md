@@ -14,6 +14,7 @@
 | #   | TODO                                                                    | Status |
 |-----|-------------------------------------------------------------------------|--------|
 | 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   |        |
+| 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)      |        |
 | 009 | [Debug & Logging System](000-Infrastructure/TODO-009-Debug.md)          |        |
 
 ---
