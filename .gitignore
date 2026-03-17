@@ -47,5 +47,9 @@ compile_commands.json
 
 # clangd background index cache
 .cache/
+
+# Srclight code intelligence index
 .srclight/
-.srclight/
+
+# MCP server-memory knowledge graph
+.memory/

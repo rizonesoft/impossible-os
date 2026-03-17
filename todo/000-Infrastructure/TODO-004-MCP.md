@@ -18,30 +18,28 @@
 > **Transport:** stdio (npx)
 > **Storage:** JSONL file (configurable path)
 
-### 1.1 Prerequisites
+### 1.1 Prerequisites ✅
 
-- [ ] Verify Node.js is installed: `node --version` → must show `v18+`
-- [ ] If not installed: `sudo apt-get install -y nodejs npm`
-- [ ] Verify npx is available: `npx --version`
+- [x] Verify Node.js is installed: `node --version` → `v18.19.1` ✅
+- [x] Installed via: `sudo apt-get install -y nodejs`
+- [x] Verify npx is available: `npx --version` → `11.9.0` ✅
 
-### 1.2 Test Server Launch
+### 1.2 Test Server Launch ✅
 
-- [ ] Verify the server runs:
+- [x] Verify the server runs:
   ```bash
-  npx -y @modelcontextprotocol/server-memory --help
+  npx -y @modelcontextprotocol/server-memory
   ```
-- [ ] Confirm no npm errors or missing dependencies
+- [x] Confirm no npm errors or missing dependencies — launches cleanly as stdio server
 
-### 1.3 Choose Memory File Location
+### 1.3 Choose Memory File Location ✅
 
-- [ ] Decide where to store the knowledge graph:
-  - **Project-local:** `~/impossible-os/.memory/memory.jsonl` (gitignored, project-specific)
-  - **Global:** `~/.mcp/memory.jsonl` (shared across all projects)
-- [ ] Create the directory:
+- [x] Decision: **Project-local** — `~/impossible-os/.memory/memory.jsonl` (gitignored)
+- [x] Create the directory:
   ```bash
   mkdir -p ~/impossible-os/.memory
   ```
-- [ ] Add `.memory/` to `.gitignore` (if using project-local)
+- [x] Add `.memory/` to `.gitignore`
 
 ### 1.4 Configure Antigravity MCP
 
@@ -124,10 +122,11 @@
 > **GitHub:** https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
 > **Transport:** stdio (npx)
 
-### 2.1 Prerequisites
+### 2.1 Prerequisites ✅
 
-- [ ] Verify Node.js is installed: `node --version` → must show `v18+`
-- [ ] Verify npx is available: `npx --version`
+- [x] Node.js `v18.19.1` ✅ (installed in §1.1)
+- [x] npx `11.9.0` ✅ (verified in §1.1)
+- [x] Server launches cleanly: `npx -y @modelcontextprotocol/server-filesystem /path`
 
 ### 2.2 Decide Allowed Directories
 
