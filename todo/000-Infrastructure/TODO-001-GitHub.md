@@ -231,13 +231,19 @@
   - [ ] Install build dependencies
   - [ ] Build: `bash scripts/build.sh clean`
   - [ ] Verify: `tail -1 build/build.log` = `=== BUILD OK ===`
+  - [ ] Convert to VDI: `VBoxManage convertfromraw build/system-disk.img build/system-disk.vdi --format VDI`
   - [ ] Generate changelog: `bash scripts/generate-changelog.sh` (§3.2)
   - [ ] Create GitHub Release:
     - [ ] Title: `Impossible OS v26.3.18`
     - [ ] Body: auto-generated changelog
-    - [ ] Assets: `build/system-disk.img`, `build/build.log`
+    - [ ] Assets:
+      - [ ] `build/system-disk.img` — raw GPT image (QEMU, USB boot)
+      - [ ] `build/system-disk.vdi` — VirtualBox native format
+      - [ ] `docs/getting-started/qemu.md` — QEMU setup guide
+      - [ ] `docs/getting-started/virtualbox.md` — VirtualBox setup guide
+      - [ ] `build/build.log` — build log
     - [ ] Mark as pre-release if tag contains `-alpha`, `-beta`, or `-rc`
-- [ ] Test: push `v26.3.18-test` tag → release appears with disk image attached
+- [ ] Test: push `v26.3.18-test` tag → release appears with disk images + docs attached
 - [ ] Commit: `"ci: automated release build and publish"`
 
 ### 4.3 Stale Issue Cleanup *(agent)*
