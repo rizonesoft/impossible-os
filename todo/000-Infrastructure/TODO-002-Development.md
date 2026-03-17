@@ -657,27 +657,15 @@ scripts/
 
 ---
 
-## 8. CI/CD Integration
+## 8. Local CI Hooks
 
-### 8.1 GitHub Actions Build Workflow
+> [!NOTE]
+> **GitHub Actions CI/CD** (build workflows, release automation, stale issue cleanup,
+> auto-labeling) lives in **[TODO-001-GitHub.md §4](TODO-001-GitHub.md)** — that's
+> the canonical location for all GitHub-specific infrastructure.
+> This section covers **local developer hooks** only.
 
-**Prompt:** Create `.github/workflows/build.yml` that runs on every push to `main` and on pull requests. Steps: install dependencies (§2.2), build (§1), run smoke test (§5.3), and report size (§6.2). The workflow must complete in under 10 minutes. Cache the cross-compiler and dependencies between runs for speed. After completing all items, mark every item as `[x]`, and commit as `"ci: build and smoke test on push"`. Add notes directly in this TODO section.
-
-> **XREF:** See `TODO-001-GitHub.md §4` for release CI (separate from build CI).
-
-- [ ] Create `.github/workflows/build.yml`
-- [ ] Trigger: push to `main` + pull requests
-- [ ] Steps:
-  - [ ] Cache cross-compiler (`tools/cross/`) between runs
-  - [ ] Install deps: `bash scripts/setup-deps.sh`
-  - [ ] Build: `bash scripts/build.sh clean`
-  - [ ] Smoke test: `bash scripts/test-smoke.sh`
-  - [ ] Size report: `bash scripts/size-report.sh`
-- [ ] Upload ISO as build artifact (downloadable from Actions tab)
-- [ ] Status badge in `README.md`: [![Build](badge-url)](workflow-url)
-- [ ] Commit: `"ci: build and smoke test on push"`
-
-### 8.2 Pre-Commit Hooks
+### 8.1 Pre-Commit Hooks
 
 **Prompt:** Create `.githooks/pre-commit` that runs the code linter (§6.3) and verifies the build succeeds before allowing a commit. Developers opt-in by running `git config core.hooksPath .githooks`. The hook should be fast (< 5 seconds) — only lint changed files, not the entire codebase. After completing all items, mark every item as `[x]`, and commit as `"tools: pre-commit lint hook"`. Add notes directly in this TODO section.
 
@@ -720,8 +708,7 @@ scripts/
 | ✅ Done   | 6.3 Code Linter                   | Style consistency — 6 automated checks                   |
 | ✅ Done   | 6.4 GDB Debug Enhancement         | Symbol-aware debugging with custom breakpoints           |
 | ✅ Done   | 7.2 Asset Validation              | 37 assets validated at build time (PNG/TTF/XCursor/JPEG) |
-| 🟢 P3     | 8.1 CI Build Workflow             | After §5.3 smoke test exists                             |
-| 🔵 P4     | 8.2 Pre-Commit Hooks              | After §6.3 linter exists                                 |
+| 🔵 P4     | 8.1 Pre-Commit Hooks              | Local lint hook — CI build is in TODO-001 §4             |
 
 ---
 
@@ -758,16 +745,18 @@ scripts/
 |-----------------------------------|----------------------------------|-----------------------------------|-------------------------------------------|
 | Build system                      | ✅ MSBuild / WDK                  | ✅ Kbuild (make)                 | ✅ Make + build.sh wrapper                |
 | Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files          | ✅ `-MMD -MP` + `.d` includes             |
-| Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ✅ `-j$(nproc)` default + `--jobs=N`                     |
-| Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ✅ `include/build_info.h` (auto-generated)                |
-| Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)               |
-| One-command dev setup             | ❌ Manual VS + WDK install        | ⚠️ `make defconfig && make`      | ⬜ §2.3 P2 — **beats Windows**            |
-| Automated smoke test              | ✅ HCK/HLK test framework         | ✅ kselftest + CI bots            | ⬜ §5.3 P0                                |
-| Unit test framework (kernel)      | ✅ WDK test framework              | ✅ KUnit                          | ⬜ §5.1 P2                                |
-| CI/CD build on push               | ✅ Azure DevOps                    | ✅ GitHub Actions + kernel.org    | ⬜ §8.1 P3                                |
-| Symbol map + debug symbols        | ✅ PDB files                       | ✅ vmlinux + kallsyms             | ⬜ §6.1 P1                                |
-| Code size tracking                | ⚠️ Manual / third-party          | ✅ `bloat-o-meter`               | ⬜ §6.2 P3                                |
-| Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                  | ⬜ §8.2 P4                                |
-| Language server (code intel)      | ✅ IntelliSense (MSVC)             | ✅ clangd + compile_commands     | ⬜ §6.5 P1 — clangd + Bear               |
+| Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ✅ `-j$(nproc)` default + `--jobs=N`      |
+| Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ✅ `include/build_info.h` (auto-generated)|
+| Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)|
+| One-command dev setup             | ❌ Manual VS + WDK install        | ⚠️ `make defconfig && make`      | ✅ `bash scripts/setup.sh` — **beats both**|
+| Automated smoke test              | ✅ HCK/HLK test framework         | ✅ kselftest + CI bots            | ✅ `scripts/test-smoke.sh` (headless QEMU)|
+| Unit test framework (kernel)      | ✅ WDK test framework              | ✅ KUnit                          | ✅ `test.h` + `test_runner.c` (12 suites) |
+| CI/CD build on push               | ✅ Azure DevOps                    | ✅ GitHub Actions + kernel.org    | ⬜ TODO-001 §4.1 P3                       |
+| Symbol map + debug symbols        | ✅ PDB files                       | ✅ vmlinux + kallsyms             | ✅ `kernel.sym` + `symtab_resolve()` (O(log n))|
+| Code size tracking                | ⚠️ Manual / third-party          | ✅ `bloat-o-meter`               | ✅ `scripts/size-report.sh` + CSV history |
+| Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                  | ⬜ §8.1 P4 — `.githooks/pre-commit`      |
+| Language server (code intel)      | ✅ IntelliSense (MSVC)             | ✅ clangd + compile_commands     | ✅ clangd-19 + Bear (101 entries)         |
+| Asset pipeline                    | ✅ MSBuild resource compiler       | ⚠️ Manual `make` targets         | ✅ `make assets` (7 sub-targets + stamps) |
+| Asset validation                  | ❌ Runtime discovery               | ❌ No built-in                    | ✅ 37 assets validated at build time      |
 | **Zero-install build wrapper**    | ❌ Requires VS + WDK              | ❌ Requires toolchain install     | ✅ **build.sh — single script, no IDE**   |
-| **QEMU auto-test loop**           | ❌ Manual VM setup                 | ✅ virtme + kselftest             | ⬜ **§5.3 — build + boot + verify**       |
+| **QEMU auto-test loop**           | ❌ Manual VM setup                 | ✅ virtme + kselftest             | ✅ **build.sh run — build + boot + verify**|
