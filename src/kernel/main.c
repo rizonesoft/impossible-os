@@ -390,6 +390,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     klog(LOG_DEBUG, "boot", "--- Phase: storage & VFS ---");
     /* Step 8: Initialize VFS */
+    boot_splash_status("Initializing VFS...");
     vfs_init();
 
     /* All system files live on the IXFS partition (C:\), pre-populated
@@ -401,11 +402,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
     /* Step 5: Load GDT, IDT, PIC, PIT — must happen before boot splash
      * so that sleep_ms() works correctly during the fade-in animation. */
+    boot_splash_status("Setting up interrupts...");
     gdt_init();
     idt_init();
     pic_init();
     pit_init();
     rtc_init();
+    boot_splash_status("Initializing input...");
     keyboard_init();
     mouse_init();
 
@@ -423,7 +426,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     /* Step 10: PCI bus scan and NIC init */
     boot_splash_tick();
     boot_splash_status("Detecting hardware...");
+    boot_splash_status("Scanning PCI bus...");
     pci_scan();
+    boot_splash_status("Initializing network...");
     rtl8139_init();
     net_init();
     virtio_input_init();
@@ -454,8 +459,9 @@ void kernel_main(uint64_t magic, uint64_t mbi)
      * Must happen after IDT/PIC init because VirtIO I/O calls sti/cli.
      * Creates sub-blkdevs for each partition and probes filesystems. */
     boot_splash_tick();
-    boot_splash_status("Detecting drives...");
+    boot_splash_status("Scanning partitions...");
     partition_scan_all();
+    boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
 
     /* Check for debug boot flag: if X:\DEBUG exists, kill splash and
@@ -514,7 +520,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                (uint64_t)g_boot_info.acpi_version,
                g_boot_info.acpi_rsdp_addr);
 
-        /* Parse RSDP → RSDT → FADT → MADT for power management and SMP */
+        /* Parse RSDP -> RSDT -> FADT -> MADT for power management and SMP */
+        boot_splash_status("Parsing ACPI tables...");
         acpi_init();
 
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
@@ -525,6 +532,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
          * would break PIC interrupt delivery by changing the CPU's
          * interrupt path (PIC→LINT0→LAPIC without ExtINT configuration). */
         if (acpi_get_cpu_count() > 1) {
+            boot_splash_status("Initializing LAPIC...");
             lapic_init();
 
             if (lapic_available()) {
@@ -550,6 +558,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     lapic_timer_init(100);
                 }
 
+                boot_splash_status("Initializing SMP...");
                 smp_init();
             }
         } else {
@@ -559,6 +568,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* Heap test: alloc, write, free, realloc */
+    boot_splash_status("Heap self-test...");
     {
         uint8_t *a = (uint8_t *)kmalloc(64);
         uint8_t *b = (uint8_t *)kmalloc(128);
@@ -595,17 +605,23 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog_flush_to_disk();  /* Flush before registry — it may hang on real HW */
 
     /* Initialize the Windows-compatible Registry */
+    boot_splash_status("Initializing registry...");
     registry_init();
+    boot_splash_status("Populating registry defaults...");
     registry_populate_defaults();
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- System Services --------------------------------------------------------");
 
     /* Initialize memory-mapped files subsystem */
+    boot_splash_status("Initializing mmap...");
     mmap_init();
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
+
+    boot_splash_status("Running boot tests...");
+    klog_flush_to_disk();
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
@@ -679,9 +695,11 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         }
     }
     /* IXFS Performance Tests: block groups, buffer cache, hash index */
+    boot_splash_status("IXFS performance tests...");
     ixfs_test_performance();
 
     /* === Directory tree dump (serial-only) === */
+    boot_splash_status("Directory tree dump...");
     klog(LOG_DEBUG, "test", "=== Directory Tree Dump ===");
 
     if (vfs_is_mounted('C')) {
@@ -703,6 +721,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* === Registry persistence test === */
+    boot_splash_status("Registry persistence test...");
+    klog_flush_to_disk();
     {
         HKEY hk_test = (HKEY)0;
         uint32_t disp = 0;
@@ -808,6 +828,8 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
 
     /* === Cooperative threading test === */
+    boot_splash_status("Scheduler tests...");
+    klog_flush_to_disk();
     task_init();
 
     /* Create the system work queue — used by drivers to defer IRQ bottom-half
@@ -1020,6 +1042,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         int slot_id;
 
         swap_init(64);  /* 64 slots = 256 KiB swap */
+        boot_splash_status("Swap test...");
 
         if (test_phys) {
             vmm_map_page(test_virt, test_phys, VMM_KERNEL_RW);
@@ -1157,6 +1180,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 #else
     /* Initialize syscalls (needed even without tests) */
+    boot_splash_status("Initializing syscalls...");
     syscall_init();
     klog(LOG_DEBUG, "test", "User mode / exec / fork tests skipped");
 #endif
@@ -1168,6 +1192,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "--- Desktop ----------------------------------------------------------------");
 
     /* === Flush boot log to disk === */
+    boot_splash_status("Flushing boot log...");
     klog_flush_to_disk();
 
 #ifdef BSOD_TEST
