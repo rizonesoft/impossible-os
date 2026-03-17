@@ -24,23 +24,23 @@
 
 ### Files Involved
 
-| File | Purpose | Issues |
-|------|---------|--------|
-| `src/kernel/klog.c` | Ring buffer (1000 entries), serial + framebuffer output | Ring buffer too small for verbose debug; no filter by subsystem |
-| `src/kernel/klog_flush.c` | Batch flush to `C:\` (IXFS) + `X:\` (FAT32 `serial.log`) | FAT32 write is full-file overwrite; `serial.log` name loses history |
-| `src/kernel/klog_live.c` | Live per-entry flush to `X:\debug.log` + hardware dump | Only active when DEBUG flag detected; duplicates klog_flush logic |
-| `src/kernel/drivers/serial.c` | COM1 port I/O (0x3F8) | Works in QEMU/VBox; no output on real hardware without serial port |
-| `include/kernel/klog.h` | API declarations | `klog_live_*` API mixed with core klog API |
-| `src/kernel/boot_splash.c` | `boot_splash_abort()` for debug mode | Disabling splash is separate concern from logging |
-| `src/kernel/main.c` | DEBUG flag detection, klog_flush calls, status messages | DEBUG detection too late (after X: mount); flush calls scattered |
+| File                             | Purpose                                                    | Issues                                                               |
+|----------------------------------|------------------------------------------------------------|----------------------------------------------------------------------|
+| `src/kernel/klog.c`             | Ring buffer (1000 entries), serial + framebuffer output    | Ring buffer too small for verbose debug; no filter by subsystem      |
+| `src/kernel/klog_flush.c`       | Batch flush to `C:\` (IXFS) + `X:\` (FAT32 `serial.log`) | FAT32 write is full-file overwrite; `serial.log` name loses history  |
+| `src/kernel/klog_live.c`        | Live per-entry flush to `X:\debug.log` + hardware dump     | Only active when DEBUG flag detected; duplicates klog_flush logic    |
+| `src/kernel/drivers/serial.c`   | COM1 port I/O (0x3F8)                                     | Works in QEMU/VBox; no output on real hardware without serial port   |
+| `include/kernel/klog.h`         | API declarations                                           | `klog_live_*` API mixed with core klog API                           |
+| `src/kernel/boot_splash.c`      | `boot_splash_abort()` for debug mode                       | Disabling splash is separate concern from logging                    |
+| `src/kernel/main.c`             | DEBUG flag detection, klog_flush calls, status messages    | DEBUG detection too late (after X: mount); flush calls scattered     |
 
 ### Output Paths
 
-| Environment | Serial (COM1) | `X:\serial.log` | `X:\debug.log` | `C:\...\kernel.log` |
-|-------------|---------------|-----------------|----------------|---------------------|
-| QEMU (`-serial stdio`) | ✅ Console | ✅ After boot | ✅ If DEBUG flag | ✅ After boot |
-| VBox (serial→file) | ✅ File | ✅ After boot | ✅ If DEBUG flag | ✅ After boot |
-| Real hardware (USB) | ❌ No serial port | ❌ Empty if hang | ✅ If DEBUG flag | ❌ If hang |
+| Environment              | Serial (COM1)     | `X:\serial.log`  | `X:\debug.log`   | `C:\...\kernel.log` |
+|--------------------------|-------------------|------------------|------------------|---------------------|
+| QEMU (`-serial stdio`)   | ✅ Console        | ✅ After boot    | ✅ If DEBUG flag  | ✅ After boot       |
+| VBox (serial→file)       | ✅ File           | ✅ After boot    | ✅ If DEBUG flag  | ✅ After boot       |
+| Real hardware (USB)      | ❌ No serial port | ❌ Empty if hang | ✅ If DEBUG flag  | ❌ If hang          |
 
 ### Known Bugs & Design Issues
 
@@ -123,6 +123,10 @@
 
 ### 2.2 Remove Splash Screen Abort from Debug Mode
 
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §7.1 Boot Configuration File` — the `verbose=1`
+> option below requires `boot.conf` parsing in the bootloader. Complete §2.1 first.
+
 **Prompt:** Currently, debug mode disables the boot splash and shows raw printk output. This is not needed if the logging system is complete and robust — the splash should always show, and debug output goes to the log files. If the user wants to see live output on screen, that should be a separate `verbose=1` option in `boot.conf`, not tied to debug logging. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: decouple splash abort from debug mode"`. Add notes directly in this TODO section.
 
 - [ ] Remove `boot_splash_abort()` call from debug mode activation
@@ -187,6 +191,10 @@
 
 ### 3.4 ACPI Tables
 
+> [!IMPORTANT]
+> → XREF: `TODO-010-Bootloader.md §1.4` — ACPI RSDP discovery happens in the bootloader.
+> The ACPI parser must be in place before table-level dumping can work.
+
 **Prompt:** Dump ACPI table signatures and addresses for driver development: RSDP version, RSDT/XSDT address, MADT (LAPIC entries, IOAPIC entries), FADT (PM timer, SCI interrupt), MCFG (PCIe ECAM base), HPET, DSDT/SSDT pointers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: ACPI table dump"`. Add notes directly in this TODO section.
 
 - [ ] RSDP: version, RSDT/XSDT physical address
@@ -233,6 +241,11 @@
 
 ### 4.3 Real Hardware (USB Boot)
 
+> [!IMPORTANT]
+> → XREF: `TODO-040-Filesystem.md §3.4.1` — FAT32 append support is critical here.
+> Without it, live flush rewrites the entire log on every entry, which on slow USB
+> hardware can cause visible stalls during boot.
+
 **Prompt:** On real hardware booted from USB, there is no serial port output. The X: FAT32 partition is the only way to capture boot logs. The live flush mode (§1.3) is critical here — without it, a boot hang produces no logs. Ensure the USB write scripts create the boot.conf with debug settings, and that the X: partition is large enough for multiple boot logs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, test on real hardware, and commit as `"debug: real hardware USB boot logging"`. Add notes directly in this TODO section.
 
 - [ ] `write-usb.ps1` / `write-usb-debug.bat`: write `boot.conf` with `debug=1` for debug USB
@@ -258,6 +271,11 @@
 - [ ] Commit: `"klog: improve log content quality"`
 
 ### 5.2 Subsystem Log Level Control
+
+> [!IMPORTANT]
+> → XREF: `TODO-050-Registry.md` — subsystem levels can optionally be persisted in the
+> Registry under `HKLM\SYSTEM\Debug\LogLevels\{subsystem}`. Not a hard dependency, but
+> enables runtime reconfiguration without editing `boot.conf`.
 
 **Prompt:** Add per-subsystem log level filtering so that verbose subsystems (like PCI scan, IXFS operations) can be silenced in production while remaining available in debug mode. This requires a subsystem registry in klog that maps subsystem names to minimum levels. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: per-subsystem log level control"`. Add notes directly in this TODO section.
 
@@ -298,58 +316,58 @@
 
 ## Cross-References
 
-| This TODO Section | Depends On | Other TODO File |
-|-------------------|-----------|-----------------|
-| §1.3 Live Flush Mode | §3.4.1 FAT32 Offset-Aware Write | `TODO-040-Filesystem.md` |
-| §2.1 Boot Config File | §7.1 Boot Config File | `TODO-010-Bootloader.md` |
-| §2.2 Verbose Mode | §7.1 Boot Config File | `TODO-010-Bootloader.md` |
-| §2.3 Remove grub.cfg | §1 Custom UEFI Bootloader | `TODO-010-Bootloader.md` |
-| §3.4 ACPI Tables | ACPI parser | `TODO-010-Bootloader.md §1.4` |
-| §4.3 USB Logging | Partition layout | `TODO-060-Storage.md` (if exists) |
-| §5.2 Subsystem Levels | Registry system | `TODO-030-Registry.md` (if exists) |
+| This TODO Section       | Depends On                       | Other TODO File                    |
+|-------------------------|----------------------------------|------------------------------------|
+| §1.3 Live Flush Mode    | §3.4.1 FAT32 Offset-Aware Write  | `TODO-040-Filesystem.md`           |
+| §2.1 Boot Config File   | §7.1 Boot Config File            | `TODO-010-Bootloader.md`           |
+| §2.2 Verbose Mode       | §7.1 Boot Config File            | `TODO-010-Bootloader.md`           |
+| §2.3 Remove grub.cfg    | §1 Custom UEFI Bootloader        | `TODO-010-Bootloader.md`           |
+| §3.4 ACPI Tables        | ACPI parser                      | `TODO-010-Bootloader.md §1.4`     |
+| §4.3 USB Logging        | §3.4.1 FAT32 Append + partition  | `TODO-040-Filesystem.md`           |
+| §5.2 Subsystem Levels   | Registry system                  | `TODO-050-Registry.md`             |
 
 ---
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 6.3 Remove stale `serial.log` | Quick cleanup — artifact in repo |
-| 🔴 P0 | 2.3 Remove `grub.cfg` | Quick cleanup — dead file |
-| 🟠 P1 | 1.1 Merge klog files | Foundation — unified logging |
-| 🟠 P1 | 1.2 Numbered log files | Stop overwriting logs |
-| 🟠 P1 | 1.3 Live flush mode | Critical for real hardware debugging |
-| 🟠 P1 | 3.1 Structured hw dump | Extract from `klog_live.c` |
-| 🟠 P1 | 3.3 PCI device dump | Full BARs, capabilities — driver dev |
-| 🟠 P1 | 3.5 Storage/display/network | Complete hardware picture |
-| 🟡 P2 | 2.1 Boot config file | Depends on bootloader §7.1 |
-| 🟡 P2 | 2.2 Decouple splash | Depends on §2.1 |
-| 🟡 P2 | 3.2 CPU CPUID dump | Nice to have — basic version exists |
-| 🟡 P2 | 3.4 ACPI tables | Nice to have — for advanced drivers |
-| 🟡 P2 | 5.1 Log content quality | Polish — reduce noise |
-| 🟡 P2 | 5.2 Subsystem filtering | Advanced — depends on registry |
-| 🟢 P3 | 4.1-4.3 Cross-env verification | Testing — verify all environments |
-| 🟢 P3 | 6.2 Remove DEBUG file | After §2.1 is complete |
+| Priority | Section                         | Description                              |
+|----------|---------------------------------|------------------------------------------|
+| 🔴 P0   | 6.3 Remove stale `serial.log`   | Quick cleanup — artifact in repo         |
+| 🔴 P0   | 2.3 Remove `grub.cfg`           | Quick cleanup — dead file                |
+| 🟠 P1   | 1.1 Merge klog files            | Foundation — unified logging             |
+| 🟠 P1   | 1.2 Numbered log files          | Stop overwriting logs                    |
+| 🟠 P1   | 1.3 Live flush mode             | Critical for real hardware debugging     |
+| 🟠 P1   | 3.1 Structured hw dump          | Extract from `klog_live.c`               |
+| 🟠 P1   | 3.3 PCI device dump             | Full BARs, capabilities — driver dev     |
+| 🟠 P1   | 3.5 Storage/display/network     | Complete hardware picture                |
+| 🟡 P2   | 2.1 Boot config file            | Depends on bootloader §7.1               |
+| 🟡 P2   | 2.2 Decouple splash             | Depends on §2.1                          |
+| 🟡 P2   | 3.2 CPU CPUID dump              | Nice to have — basic version exists      |
+| 🟡 P2   | 3.4 ACPI tables                 | Nice to have — for advanced drivers      |
+| 🟡 P2   | 5.1 Log content quality         | Polish — reduce noise                    |
+| 🟡 P2   | 5.2 Subsystem filtering         | Advanced — depends on registry           |
+| 🟢 P3   | 4.1-4.3 Cross-env verification  | Testing — verify all environments        |
+| 🟢 P3   | 6.2 Remove DEBUG file           | After §2.1 is complete                   |
 
 ---
 
 ## OS Comparison
 
-| Feature | Windows 11 | Linux | Impossible OS |
-|---------|-----------|-------|---------------|
-| Kernel log ring buffer | ✅ KD ring (64K) | ✅ dmesg (256K) | ✅ klog ring (128K) |
-| Boot log to disk | ✅ `%windir%\Logs\CBS` | ✅ journald | ⬜ §1 — scattered, unreliable |
-| Numbered/rotated logs | ✅ Automatic | ✅ logrotate | ⬜ §1.2 — **missing** |
-| Live log flush (pre-hang) | ✅ ETW real-time | ✅ journald sync | ⬜ §1.3 — exists but fragile |
-| Boot config file | ✅ BCD | ✅ cmdline / grub.cfg | ⬜ §2.1 — **missing** |
-| Debug mode toggle | ✅ `bcdedit /debug` | ✅ `debug` cmdline | ⬜ §2.1 — uses file flag |
-| Verbose boot | ✅ `bcdedit /bootlog` | ✅ `loglevel=7` | ⬜ §2.2 — tied to splash |
-| Hardware info dump | ✅ Device Manager | ✅ `lspci -vvv` | ⬜ §3 — basic, unstructured |
-| PCI full enumeration | ✅ Full BARs, caps | ✅ `lspci` | ⬜ §3.3 — vendor:device only |
-| ACPI table dump | ✅ `acpidump` | ✅ `acpidump` | ⬜ §3.4 — **missing** |
-| Per-subsystem filtering | ✅ ETW providers | ✅ `printk` levels | ⬜ §5.2 — **missing** |
-| Serial console debug | ✅ Kernel debugger | ✅ serial console | ✅ COM1 via `klog.c` |
-| Multi-env (QEMU/VBox/HW) | N/A | ✅ Works everywhere | ✅ §4 — serial + X: logs |
+| Feature                    | Windows 11                    | Linux                        | Impossible OS                        |
+|----------------------------|-------------------------------|------------------------------|--------------------------------------|
+| Kernel log ring buffer     | ✅ KD ring (64K)              | ✅ dmesg (256K)              | ✅ klog ring (128K)                  |
+| Boot log to disk           | ✅ `%windir%\Logs\CBS`       | ✅ journald                  | ⬜ §1 — scattered, unreliable       |
+| Numbered/rotated logs      | ✅ Automatic                  | ✅ logrotate                 | ⬜ §1.2 — **missing**               |
+| Live log flush (pre-hang)  | ✅ ETW real-time              | ✅ journald sync             | ⬜ §1.3 — exists but fragile        |
+| Boot config file           | ✅ BCD                        | ✅ cmdline / grub.cfg        | ⬜ §2.1 — **missing**               |
+| Debug mode toggle          | ✅ `bcdedit /debug`           | ✅ `debug` cmdline           | ⬜ §2.1 — uses file flag            |
+| Verbose boot               | ✅ `bcdedit /bootlog`         | ✅ `loglevel=7`              | ⬜ §2.2 — tied to splash            |
+| Hardware info dump         | ✅ Device Manager             | ✅ `lspci -vvv`              | ⬜ §3 — basic, unstructured         |
+| PCI full enumeration       | ✅ Full BARs, caps            | ✅ `lspci`                   | ⬜ §3.3 — vendor:device only        |
+| ACPI table dump            | ✅ `acpidump`                 | ✅ `acpidump`                | ⬜ §3.4 — **missing**               |
+| Per-subsystem filtering    | ✅ ETW providers              | ✅ `printk` levels           | ⬜ §5.2 — **missing**               |
+| Serial console debug       | ✅ Kernel debugger            | ✅ serial console            | ✅ COM1 via `klog.c`                |
+| Multi-env (QEMU/VBox/HW)  | N/A                           | ✅ Works everywhere          | ✅ §4 — serial + X: logs            |
 
 > **After P0+P1 items:** Impossible OS has a reliable, robust logging system that works across
 > all environments and produces useful, numbered logs with hardware dumps.
