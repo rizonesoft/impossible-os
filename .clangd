@@ -1,0 +1,13 @@
+# Impossible OS — clangd configuration for kernel freestanding environment
+# This file ensures clangd understands our cross-compilation target
+# and does not inject host standard library headers.
+
+CompileFlags:
+  Add:
+    - "--target=x86_64-elf"
+    - "-nostdlib"
+    - "-ffreestanding"
+    - "-mno-red-zone"
+
+Index:
+  Background: Build

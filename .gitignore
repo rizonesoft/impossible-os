@@ -41,3 +41,6 @@ keys/MOK.key
 
 # Auto-generated build metadata header
 include/build_info.h
+
+# Bear compilation database (machine-specific absolute paths)
+compile_commands.json

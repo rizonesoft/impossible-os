@@ -41,6 +41,14 @@ fi
 # Make flags for parallel compilation
 MAKE_FLAGS="-j${JOBS}"
 
+# Bear wraps make on clean builds to generate compile_commands.json for clangd
+BEAR_PREFIX=""
+if command -v bear &>/dev/null && [ "$DO_CLEAN" = true ]; then
+    BEAR_PREFIX="bear --append --"
+    rm -f compile_commands.json
+    echo "[BEAR] Will generate compile_commands.json" | tee -a "$LOG"
+fi
+
 # ── Helpers ─────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
 DIM='\033[2m'
@@ -152,7 +160,7 @@ run_kernel_step() {
     divider | tee -a "$LOG"
 
     local compiled=0
-    make $MAKE_FLAGS _increment_build kernel 2>&1 | while IFS= read -r line; do
+    $BEAR_PREFIX make $MAKE_FLAGS _increment_build kernel 2>&1 | while IFS= read -r line; do
         # Log every line
         echo "$line" >> "$LOG"
 
