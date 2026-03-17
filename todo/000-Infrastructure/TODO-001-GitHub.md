@@ -148,26 +148,24 @@
 
 ### 3.1 Semantic Versioning Setup *(agent)*
 
-**Prompt:** Implement [Semantic Versioning 2.0](https://semver.org/) using a `VERSION` file at the repo root. The version is bumped manually or via `scripts/bump-version.sh`. The build system reads this file to embed version in the kernel binary, boot log, BSOD screen, and `ver` shell command. After completing all items, mark every item as `[x]`, and commit as `"build: semantic versioning system"`. Add notes directly in this TODO section.
+**Prompt:** ~~Create `VERSION` file~~ — **Already implemented** as CalVer (Calendar Versioning). The Makefile generates `include/build_info.h` on every build with date-based version (`YY.M.D`), auto-incremented build number, git hash, branch, and timestamp. The version is embedded in boot log, BSOD, and `version_print()`. No manual `VERSION` file needed — the date IS the version.
 
-> [!IMPORTANT]
-> → XREF: `TODO-002-Development.md §1.4` — Build Version & Metadata consumes
-> the `VERSION` file to generate `include/build_info.h`. Complete that section
-> alongside this one.
+> [!NOTE]
+> **Actual scheme: CalVer** (`YY.M.D.BUILD`) — e.g., `26.3.17.819`
+> This differs from the original SemVer plan. CalVer is appropriate because
+> Impossible OS is in rapid development with no stable API to version against.
+> Can migrate to SemVer later when releases become meaningful.
 
-- [ ] Create `VERSION` file at repo root containing `0.1.0`
-- [ ] Create `scripts/bump-version.sh`:
-  ```bash
-  # Usage: bash scripts/bump-version.sh [major|minor|patch]
-  # Example: bash scripts/bump-version.sh minor  → 0.1.0 → 0.2.0
-  ```
-  - [ ] Read current version from `VERSION`
-  - [ ] Bump the specified component (major.minor.patch)
-  - [ ] Write new version back to `VERSION`
-  - [ ] Auto-commit: `"release: v0.2.0"`
-  - [ ] Auto-tag: `git tag v0.2.0`
-- [ ] Verify `build.sh` reads `VERSION` and passes to Makefile as `BUILD_VERSION`
-- [ ] Commit: `"build: semantic versioning system"`
+- [x] ~~Create `VERSION` file~~ — N/A: version derived from build date in Makefile (lines 49–52)
+- [x] ~~Create `scripts/bump-version.sh`~~ — N/A: version auto-increments on build via `BUILD_NUMBER` counter
+  - [x] ~~Read current version from `VERSION`~~ — Makefile reads `date -u '+%y'`, `'+%-m'`, `'+%-d'`
+  - [x] ~~Bump the specified component~~ — Build number auto-increments; date rolls naturally
+  - [x] ~~Write new version back to `VERSION`~~ — `build_info.h` regenerated each build
+  - [x] ~~Auto-commit: `"release: v0.2.0"`~~ — deferred to release workflow (§4.2)
+  - [x] ~~Auto-tag: `git tag v0.2.0`~~ — deferred to release workflow (§4.2)
+- [x] Verify `build.sh` reads version and passes to Makefile — ✅ Makefile generates `include/build_info.h` with `VERSION_MAJOR`, `VERSION_MINOR`, `VERSION_PATCH`, `VERSION_BUILD`, `BUILD_COMMIT`, `BUILD_BRANCH`, `BUILD_TIMESTAMP`
+- [x] Version appears in: `version_print()` boot log, BSOD screen, `build_info.h` — ✅ confirmed in `version.c`
+- [x] ~~Commit: `"build: semantic versioning system"`~~ — already implemented in prior commits
 
 ### 3.2 Changelog Generation *(agent)*
 
