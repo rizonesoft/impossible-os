@@ -301,6 +301,64 @@
 - [ ] Print: "GDB connected. Type 'c' to continue."
 - [ ] Commit: `"tools: enhanced GDB debug script"`
 
+### 6.5 clangd MCP (Deep C/C++ Intelligence)
+
+**Prompt:** Set up `clangd` as a language server for deep C/C++ code intelligence (go-to-definition, auto-complete, diagnostics, refactoring) in the freestanding kernel environment. `clangd` requires a `compile_commands.json` (compilation database) to understand the exact compiler flags, include paths, and target triple for each translation unit. Use **Bear** (`bear`) to intercept the `make` invocation and auto-generate this database. Configure `.clangd` at the repo root to enforce freestanding flags and suppress false diagnostics from host system headers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: clangd + Bear compilation database"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-003-Antigravity.md §5` — MCP server integration for AI agents.
+> The `compile_commands.json` generated here is also consumed by AI coding agents
+> via clangd MCP, enabling accurate symbol resolution and code navigation.
+
+> [!NOTE]
+> `bear` must be installed on the build machine. The `compile_commands.json`
+> is regenerated on each `bash scripts/build.sh clean` and should be gitignored
+> (it contains absolute paths specific to each developer's machine).
+
+**Step 1: Install and configure Bear**
+
+- [ ] Add `bear` (1.0+) to `scripts/setup-deps.sh` package list
+- [ ] Add `clangd` (19+) to `scripts/setup-deps.sh` package list
+- [ ] Update `scripts/build.sh` to wrap the `make` invocation with `bear --`:
+  ```bash
+  # Inside scripts/build.sh — locate the make invocation
+  echo "Initiating strict bare-metal build..."
+  bear -- make all
+  ```
+- [ ] Verify: after `bash scripts/build.sh clean`, `compile_commands.json` exists at repo root
+- [ ] Verify: `compile_commands.json` contains entries for every `.c` file with correct flags
+- [ ] Add `compile_commands.json` to `.gitignore` (machine-specific absolute paths)
+
+**Step 2: Configure `.clangd` for kernel environment**
+
+- [ ] Create `.clangd` at repo root:
+  ```yaml
+  CompileFlags:
+    Add:
+      - "-target"
+      - "x86_64-elf"
+      - "-nostdlib"
+      - "-ffreestanding"
+      - "-mno-red-zone"
+    Remove:
+      - "-mabi=*"
+
+  Index:
+    Background: Build
+  ```
+- [ ] Verify: `clangd` resolves `#include "kernel/types.h"` correctly (no red squiggles)
+- [ ] Verify: `clangd` does NOT inject host `/usr/include/` headers
+- [ ] Verify: go-to-definition works for kernel functions (`printk`, `kmalloc`, `vfs_open`)
+- [ ] Verify: auto-complete suggests kernel symbols, not glibc symbols
+
+**Step 3: Integration verification**
+
+- [ ] Full cycle: `bash scripts/build.sh clean` → `compile_commands.json` regenerated → `clangd` picks up changes
+- [ ] Test with VS Code (clangd extension) or any LSP-compatible editor
+- [ ] Test with Antigravity agent: clangd MCP provides accurate symbol resolution
+- [ ] Commit `.clangd` to repo (it's project-wide, not machine-specific)
+- [ ] Commit: `"tools: clangd + Bear compilation database"`
+
 ---
 
 ## 7. Asset Pipeline
@@ -392,6 +450,7 @@
 | 🟢 P3     | 6.2 Size Tracking                 | Detect bloat early                                       |
 | 🟢 P3     | 6.3 Code Linter                   | Style consistency                                        |
 | 🟢 P3     | 6.4 GDB Debug Enhancement         | Developer productivity                                   |
+| 🟢 P3     | 6.5 clangd MCP                    | Deep code intelligence for agents + editors              |
 | 🟢 P3     | 7.2 Asset Validation              | Catch malformed assets at build time                     |
 | 🟢 P3     | 8.1 CI Build Workflow             | After §5.3 smoke test exists                             |
 | 🔵 P4     | 8.2 Pre-Commit Hooks              | After §6.3 linter exists                                 |
@@ -420,6 +479,8 @@
 | `.github/workflows/build.yml`       | [NEW] CI build + test                    |
 | `.githooks/pre-commit`              | [NEW] Pre-commit lint hook               |
 | `include/build_info.h`              | [NEW] Auto-generated build metadata      |
+| `.clangd`                           | [NEW] clangd language server config      |
+| `compile_commands.json`             | [GENERATED] Bear compilation database    |
 
 ---
 
@@ -439,5 +500,6 @@
 | Symbol map + debug symbols        | ✅ PDB files                       | ✅ vmlinux + kallsyms             | ⬜ §6.1 P1                                |
 | Code size tracking                | ⚠️ Manual / third-party          | ✅ `bloat-o-meter`               | ⬜ §6.2 P3                                |
 | Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                  | ⬜ §8.2 P4                                |
+| Language server (code intel)      | ✅ IntelliSense (MSVC)             | ✅ clangd + compile_commands     | ⬜ §6.5 P3 — clangd + Bear               |
 | **Zero-install build wrapper**    | ❌ Requires VS + WDK              | ❌ Requires toolchain install     | ✅ **build.sh — single script, no IDE**   |
 | **QEMU auto-test loop**           | ❌ Manual VM setup                 | ✅ virtme + kselftest             | ⬜ **§5.3 — build + boot + verify**       |

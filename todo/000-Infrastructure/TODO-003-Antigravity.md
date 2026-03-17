@@ -372,22 +372,22 @@
 
 | Priority | Section                         | Description                                    |
 |----------|---------------------------------|------------------------------------------------|
-| 🔴 P0   | 2.1 Fix outdated paths          | Skills generate wrong code — immediate harm    |
-| 🔴 P0   | 2.2 Fix source-code-org skill   | References deleted files (grub.cfg)            |
-| 🔴 P0   | 6.1 Audit all skills            | Catch any other stale content                  |
-| 🟠 P1   | 1.1 Hardware constraint rules   | Prevent PIC/PIO/VGA hallucination              |
-| 🟠 P1   | 1.2 Win32 API surface rule      | Prevent POSIX hallucination                    |
-| 🟠 P1   | 1.3 Freestanding C rule         | Prevent stdlib includes                        |
-| 🟠 P1   | 2.3 UEFI bootloader skill       | Prevent GRUB hallucination                     |
-| 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                        |
-| 🟡 P2   | 2.4 TODO navigation skill       | Helps agents find existing work                |
-| 🟡 P2   | 3.2 Verification workflow        | Quality assurance                             |
-| 🟡 P2   | 4.1 Plan vs Fast mode docs      | Agent efficiency                               |
-| 🟡 P2   | 4.2 Multi-agent patterns         | Parallel development                          |
-| 🟡 P2   | 6.2 Audit all workflows         | Maintenance                                    |
-| 🟢 P3   | 3.3 Hardware test workflow       | Depends on USB scripts existing               |
-| 🟢 P3   | 5.1 MCP hardware docs           | Stretch — depends on MCP availability         |
-| 🟢 P3   | 5.2 MCP codebase context        | Stretch — depends on MCP availability         |
+| 🔴 P0   | 2.1 Fix outdated paths           | Skills generate wrong code — immediate harm    |
+| 🔴 P0   | 2.2 Fix source-code-org skill    | References deleted files (grub.cfg)            |
+| 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
+| 🟠 P1   | 1.1 Hardware constraint rules    | Prevent PIC/PIO/VGA hallucination              |
+| 🟠 P1   | 1.2 Win32 API surface rule       | Prevent POSIX hallucination                    |
+| 🟠 P1   | 1.3 Freestanding C rule          | Prevent stdlib includes                        |
+| 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |
+| 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                         |
+| 🟡 P2   | 2.4 TODO navigation skill        | Helps agents find existing work                |
+| 🟡 P2   | 3.2 Verification workflow        | Quality assurance                              |
+| 🟡 P2   | 4.1 Plan vs Fast mode docs       | Agent efficiency                               |
+| 🟡 P2   | 4.2 Multi-agent patterns         | Parallel development                           |
+| 🟡 P2   | 6.2 Audit all workflows          | Maintenance                                    |
+| 🟢 P3   | 3.3 Hardware test workflow       | Depends on USB scripts existing                |
+| 🟢 P3   | 5.1 MCP hardware docs            | Stretch — depends on MCP availability          |
+| 🟢 P3   | 5.2 MCP codebase context         | Stretch — depends on MCP availability          |
 
 ---
 
