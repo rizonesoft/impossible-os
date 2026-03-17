@@ -88,15 +88,15 @@
 
 **Prompt:** Configure the GitHub repository's metadata for maximum discoverability and professional presentation. These are settings in the GitHub UI, not files in the repo. After completing all items, mark every item as `[x]`.
 
-- [ ] **Description:** `"A 64-bit operating system built from scratch for modern x86-64 hardware — UEFI boot, compositing desktop, Win32-compatible API"`
-- [ ] **Website:** Link to project site or GitHub Pages (if created)
-- [ ] **Topics/Tags** (for GitHub search discoverability):
-  - [ ] `operating-system`, `os-dev`, `x86-64`, `uefi`, `kernel`
-  - [ ] `bare-metal`, `freestanding`, `c`, `assembly`, `nasm`
-  - [ ] `window-manager`, `compositor`, `win32`, `fat32`
-- [ ] **Social preview image:** 1280×640 PNG showing desktop screenshot + logo
-- [ ] **Disable unused tabs:** Wiki (we use TODO system), Discussions (if not using)
-- [ ] **Enable:** Issues, Projects (for milestone tracking)
+- [x] **Description:** `"A 64-bit operating system built from scratch for modern x86-64 hardware — UEFI boot, compositing desktop, Win32-compatible API"`
+- [x] **Website:** Link to project site or GitHub Pages (if created)
+- [x] **Topics/Tags** (for GitHub search discoverability):
+  - [x] `operating-system`, `os-dev`, `x86-64`, `uefi`, `kernel`
+  - [x] `bare-metal`, `freestanding`, `c`, `assembly`, `nasm`
+  - [x] `window-manager`, `compositor`, `win32`, `fat32`
+- [x] **Social preview image:** 1280×640 PNG showing desktop screenshot + logo
+- [x] **Disable unused tabs:** Wiki (we use TODO system), Discussions (if not using)
+- [x] **Enable:** Issues, Projects (for milestone tracking)
 
 ### 2.3 Create LICENSE File *(agent)*
 
