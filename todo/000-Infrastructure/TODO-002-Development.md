@@ -420,19 +420,27 @@ scripts/
 > - Registry tests use Win32 API (`RegSetValueEx`, `RegGetValue`, `RegDeleteKey`)
 > - Scheduler tests are minimal (thread creation only) — preemptive testing requires runtime
 
-### 5.3 Automated QEMU Smoke Test
+### 5.3 Automated QEMU Smoke Test ✅
 
-**Prompt:** Create `scripts/test-smoke.sh` that builds the OS, boots in QEMU headless mode, captures serial output for 30 seconds, and checks for expected boot messages and absence of panics. The test passes if the boot log contains `"Desktop ready"` and does not contain `"KERNEL PANIC"`. Exit with code 0 on pass, 1 on failure. This enables CI/CD automated testing. After completing all items, mark every item as `[x]`, and commit as `"test: automated QEMU smoke test"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/test-smoke.sh` builds, boots QEMU headless, captures serial for 30s, and checks for pass/fail patterns. Run `bash scripts/test-smoke.sh` and verify output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `scripts/test-smoke.sh`
-- [ ] Build: `bash scripts/build.sh clean`
-- [ ] Launch QEMU headless: `-nographic -serial stdio -display none`
-- [ ] Capture serial output for 30 seconds (timeout)
-- [ ] Pass criteria: output contains `"Desktop ready"` or `"=== BOOT COMPLETE ==="`
-- [ ] Fail criteria: output contains `"KERNEL PANIC"` or `"ASSERT FAILED"`
-- [ ] Exit code: 0 = pass, 1 = fail
-- [ ] Print: `"SMOKE TEST PASSED"` or `"SMOKE TEST FAILED: <reason>"`
-- [ ] Commit: `"test: automated QEMU smoke test"`
+- [x] Create `scripts/test-smoke.sh`
+- [x] Build: `bash scripts/build.sh clean`
+- [x] Launch QEMU headless: `-display none -serial file:build/smoke-test.log`
+- [x] Capture serial output for 30 seconds (timeout)
+- [x] Pass criteria: output contains `"Boot complete in"`
+- [x] Fail criteria: output contains `"KERNEL PANIC"`, `"ASSERT FAILED"`, `"triple fault"`, `"Page Fault"`
+- [x] Exit code: 0 = pass, 1 = fail
+- [x] Print: `"SMOKE TEST PASSED"` or `"SMOKE TEST FAILED: <reason>"`
+- [x] Commit: `"test: automated QEMU smoke test"`
+
+> [!NOTE]
+> **Smoke test notes (2026-03-17):**
+> - Uses KVM acceleration when available (`/dev/kvm`)
+> - Serial output to file (`build/smoke-test.log`), not stdio — avoids buffering issues
+> - Polling loop checks log every 1s for pass/fail patterns; kills QEMU on match
+> - Shows boot time on pass, last 10 serial lines on fail
+> - QEMU launched as background process, cleaned up on exit
 
 ### 5.4 FAT32 Filesystem Test Suite
 
@@ -641,7 +649,7 @@ scripts/
 | ✅ Done   | 3.1 QEMU Runner                   | Primary test environment                                 |
 | ✅ Done   | 4.1 USB Write (Windows)           | Hardware deployment — working                            |
 | ✅ Done   | 1.4 Build Version & Metadata      | `ver` command, BSOD footer, boot log version info        |
-| 🔴 P0     | 5.3 QEMU Smoke Test               | Catches boot regressions automatically                   |
+| ✅ Done   | 5.3 QEMU Smoke Test               | Catches boot regressions automatically                   |
 | ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds     |
 | ✅ Done   | 2.1 Clang/LLD Migration           | Prerequisite for clangd + Bear + semantic search         |
 | ✅ Done   | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
