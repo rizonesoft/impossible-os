@@ -427,11 +427,11 @@
 
 **Prompt:** Perform a full audit of all 4 existing workflows. Verify each step works with the current build system and tools. Fix any outdated commands or references. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all workflows for accuracy"`. Add notes directly in this TODO section.
 
-- [ ] Audit `.agents/workflows/build.md` — verify all commands work
-- [ ] Audit `.agents/workflows/add-asset.md` — verify PMM patterns current
-- [ ] Audit `.agents/workflows/release.md` — verify release flow
-- [ ] Audit `.agents/workflows/test-fs-fat32.md` — verify test disk images
-- [ ] Commit: `"agent: audit all workflows for accuracy"`
+- [x] Audit `.agents/workflows/build.md` — ✅ **Fixed.** Troubleshooting referenced VGA `0xB8000` text mode — replaced with UEFI GOP framebuffer. All build commands (`bash scripts/build.sh`, `tail -1 build/build.log`) verified correct.
+- [x] Audit `.agents/workflows/add-asset.md` — ✅ **Fixed.** Code example called `pmm_free_contiguous(phys, pages)` which does not exist — replaced with `pmm_free_frame()` loop (actual API). Decision tree and common mistakes table verified correct.
+- [x] Audit `.agents/workflows/release.md` — ✅ **Major rewrite.** Fixed 4 issues: (1) `make clean && make all && make iso` → `bash scripts/build.sh clean` (per rules.md), (2) `VERSION` file → `src/kernel/version.c` (actual location), (3) `build/os-build.iso` → `build/system-disk.img` (actual output name), (4) `/test-hyperv` → `/test-hardware` (actual workflow name).
+- [x] Audit `.agents/workflows/test-fs-fat32.md` — ✅ **Fixed.** Step 1 now uses `bash scripts/build.sh clean` instead of raw `make clean`. Step 3 retains `make run-test DISK=fat32` with explicit justification note (build.sh doesn't wrap `run-test`). Verified `run-test` target exists in Makefile at line 488.
+- [x] Commit: `"agent: audit all workflows for accuracy"`
 
 ---
 

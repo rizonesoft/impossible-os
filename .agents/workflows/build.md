@@ -44,6 +44,6 @@ bash scripts/build.sh run
 ## Troubleshooting
 
 - **Triple fault / instant reboot:** Add `-d int,cpu_reset` to QEMU flags and check serial output
-- **No output on screen:** Verify VGA buffer writes to `0xB8000` and check QEMU `-serial stdio` for kernel logs
+- **No output on screen:** Verify UEFI GOP framebuffer is initialized and check QEMU `-serial stdio` for kernel logs
 - **Linker errors:** Check `linker.ld` for correct section layout and entry point
 - **Build appears stuck:** Run `tail -1 build/build.log` — if it shows a sentinel, the build finished

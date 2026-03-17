@@ -23,12 +23,12 @@ impossible-os-vX.Y.Z.iso.sha256
 
 ### 1. Update version
 
-Edit the `VERSION` file in the repo root:
-```bash
-echo "X.Y.Z" > VERSION
+Edit `src/kernel/version.c` to set the new version string:
+```c
+const char *KERNEL_VERSION = "X.Y.Z";
 ```
 
-### 2. Update CHANGELOG.md
+### 2. Update CHANGELOG.md (create if it does not exist)
 
 Add a new section at the top:
 ```markdown
@@ -49,11 +49,16 @@ Add a new section at the top:
 // turbo-all
 
 ```bash
-make clean && make all && make iso
+bash scripts/build.sh clean
 ```
 
 ```bash
-make run
+tail -1 build/build.log
+```
+Expected: `=== BUILD OK ===`
+
+```bash
+bash scripts/build.sh run
 ```
 
 Confirm QEMU boots the new version correctly.
@@ -75,7 +80,7 @@ git push && git push --tags
 ### 6. Rename ISO for release
 
 ```bash
-cp build/os-build.iso build/impossible-os-vX.Y.Z.iso
+cp build/system-disk.img build/impossible-os-vX.Y.Z.iso
 sha256sum build/impossible-os-vX.Y.Z.iso > build/impossible-os-vX.Y.Z.iso.sha256
 ```
 
@@ -86,6 +91,6 @@ sha256sum build/impossible-os-vX.Y.Z.iso > build/impossible-os-vX.Y.Z.iso.sha256
 - Upload `impossible-os-vX.Y.Z.iso` and `.sha256`
 - Paste the CHANGELOG entry as release notes
 
-### 8. Hyper-V production test
+### 8. (Optional) Real hardware test
 
-Follow the `/test-hyperv` workflow to validate in Hyper-V.
+Follow the `/test-hardware` workflow to validate on real hardware via USB boot.

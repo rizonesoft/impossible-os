@@ -52,8 +52,9 @@ if (!phys) {
 /* Use directly as a pointer (identity-mapped in Impossible OS) */
 uint8_t *buf = (uint8_t *)(uintptr_t)phys;
 
-/* When done (if ever): */
-pmm_free_contiguous(phys, pages);
+/* When done (if ever — boot-time assets are typically never freed): */
+for (uint32_t i = 0; i < pages; i++)
+    pmm_free_frame(phys + i * 4096);
 ```
 
 ## Common Mistakes

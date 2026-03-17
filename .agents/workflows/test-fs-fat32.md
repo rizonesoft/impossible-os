@@ -9,8 +9,8 @@ description: Complete FAT32 filesystem test workflow using test disk images
 > Builds the OS, launches QEMU with the FAT32 test disk on AHCI port 1,
 > and leaves QEMU running for manual shell testing.
 >
-> `make run-test` already depends on `all` and `test-disks`, so one command
-> handles the full build + disk generation + QEMU launch.
+> **Note:** `make run-test` is an exception to the "always use build.sh" rule
+> because `build.sh` does not wrap the `run-test` target. Use raw `make` here only.
 >
 > Drive letter mapping:
 >   C:\ = IXFS (system partition)
@@ -19,15 +19,25 @@ description: Complete FAT32 filesystem test workflow using test disk images
 
 ## Steps
 
-1. Clean previous build artifacts:
+1. Full clean build first (uses build.sh per rules.md):
 ```bash
-make clean
+bash scripts/build.sh clean
 ```
 
-2. Build, generate test disks, and launch QEMU with FAT32 test disk:
+2. Verify build succeeded:
+```bash
+tail -1 build/build.log
+```
+Expected: `=== BUILD OK ===`
+
+3. Generate test disks and launch QEMU with FAT32 test disk:
 ```bash
 make run-test DISK=fat32
 ```
+
+> **Why raw `make` here?** `build.sh` does not support the `run-test` target.
+> The build itself was already done in step 1 via `build.sh`, so this only
+> generates test disks and launches QEMU.
 
 ## Expected Serial Output
 
