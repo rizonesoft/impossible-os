@@ -232,20 +232,27 @@ scripts/
 >   across 7 driver files needed `__attribute__((unused))`
 > - Build time: 6.8s (Clang -j12) vs 8.0s (GCC -j12) — Clang is slightly faster
 
-### 2.2 System Dependency Installer
+### 2.2 System Dependency Installer ✅
 
-**Prompt:** Create `scripts/setup-deps.sh` that installs all required system packages for building Impossible OS. Detect the Linux distribution (Ubuntu/Debian via `apt`, Fedora via `dnf`, Arch via `pacman`) and install the appropriate packages. Required packages: `nasm` (3.01+), `clang` (19+), `lld` (19+), `llvm` (19+), `xorriso`, `mtools`, `qemu-system-x86` (10.2+), `ovmf`, `python3`, `python3-pil` (for asset generation), `dosfstools` (for FAT32 image creation), `parted` (for disk images), `bear` (for `compile_commands.json` — see §6.5). The script is idempotent — running it twice changes nothing. After completing all items, mark every item as `[x]`, and commit as `"tools: system dependency installer"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/setup-deps.sh` detects distro, installs all required packages idempotently, and prints a version summary. Run `bash scripts/setup-deps.sh` and verify output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `scripts/setup-deps.sh`
-- [ ] Detect distro: Ubuntu/Debian (`apt`), Fedora (`dnf`), Arch (`pacman`)
-- [ ] Install: `nasm` (3.01+), `clang` (19+), `lld` (19+), `llvm` (19+)
-- [ ] Install: `xorriso`, `mtools`, `qemu-system-x86` (10.2+), `ovmf`
-- [ ] Install: `python3`, `python3-pil`, `dosfstools`, `parted`, `cppcheck` (2.20+)
-- [ ] Install: `bear` (for compile_commands.json generation — §6.5)
-- [ ] Install: `clangd` (19+ — for code intelligence — §6.5)
-- [ ] Idempotent: check if each package is already installed before installing
-- [ ] Print summary: "All dependencies installed" or list missing packages
-- [ ] Commit: `"tools: system dependency installer"`
+- [x] Create `scripts/setup-deps.sh`
+- [x] Detect distro: Ubuntu/Debian (`apt`), Fedora (`dnf`), Arch (`pacman`)
+- [x] Install: `nasm` (3.01+), `clang` (19+), `lld` (19+), `llvm` (19+)
+- [x] Install: `xorriso`, `mtools`, `qemu-system-x86` (10.2+), `ovmf`
+- [x] Install: `python3`, `python3-pil`, `dosfstools`, `parted`, `cppcheck` (2.20+)
+- [x] Install: `bear` (for compile_commands.json generation — §6.5)
+- [x] Install: `clangd` (19+ — for code intelligence — §6.5)
+- [x] Idempotent: check if each package is already installed before installing
+- [x] Print summary: "All dependencies installed" or list missing packages
+- [x] Commit: `"tools: system dependency installer"`
+
+> [!NOTE]
+> **Dependency installer notes (2026-03-17):**
+> - Uses `command -v` for binary checks, file existence for data packages (OVMF)
+> - Pillow installed via `pip3` (not a system package on most distros)
+> - Colored output with ✓/·/✗ status indicators
+> - Prints version summary at the end (nasm, clang, qemu, python3)
 
 ### 2.3 One-Command Setup
 
@@ -596,7 +603,7 @@ scripts/
 | 🔴 P0     | 5.3 QEMU Smoke Test               | Catches boot regressions automatically                   |
 | ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds    |
 | ✅ Done   | 2.1 Clang/LLD Migration           | Prerequisite for clangd + Bear + semantic search         |
-| 🟠 P1     | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
+| ✅ Done   | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
 | 🟠 P1     | 6.1 Symbol Map                    | BSOD stack traces need function names                    |
 | 🟠 P1     | 6.5 clangd + Bear                 | Deep code intelligence — requires §2.1 Clang first       |
 | ✅ Done   | 1.3 Parallel Build                | Build speed — 2.5× faster with -j12                     |
