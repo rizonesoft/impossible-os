@@ -161,34 +161,34 @@
 > - Added source dirs: `gfx/`, `ipc/`, `test/`
 > - Note: legacy `grub.cfg` and `multiboot2_header.asm` still exist in `src/boot/` (kept for reference) but removed from skill tree
 
-### 2.3 Create UEFI Bootloader Skill *(NEW)*
+### 2.3 Create UEFI Bootloader Skill ✅
 
-**Prompt:** Create a new skill documenting the UEFI bootloader architecture so agents understand the boot chain without hallucinating GRUB or Multiboot. Cover: PE32+ EFI application structure, GOP framebuffer initialization, ACPI RSDP discovery, memory map parsing, kernel ELF loading, `ExitBootServices()` transition, and `boot_info` struct layout. Keep it concise — under 100 lines. After completing all items, mark every item as `[x]`, and commit as `"agent: add UEFI bootloader skill"`. Add notes directly in this TODO section.
+**Status:** Complete — 65-line skill covering boot chain, boot_info struct, and agent constraints.
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md` — full bootloader implementation.
-> The skill should summarize, not duplicate.
+> The skill summarizes, not duplicates.
 
-- [ ] Create `.agent/skills/uefi-bootloader/SKILL.md`
-- [ ] Cover: boot chain summary (firmware → BOOTX64.EFI → kernel)
-- [ ] Cover: `boot_info` struct fields (framebuffer, memory map, RSDP, initrd)
-- [ ] Cover: what agents must NOT do (no VGA text mode, no BIOS INT, no GRUB)
-- [ ] Cover: how to add new boot parameters (modify `boot_info` + bootx64.c)
-- [ ] Keep under 100 lines
-- [ ] Commit: `"agent: add UEFI bootloader skill"`
+- [x] Create `.agent/skills/uefi-bootloader/SKILL.md`
+- [x] Cover: boot chain summary (firmware → BOOTX64.EFI → kernel)
+- [x] Cover: `boot_info` struct fields (framebuffer, memory map, RSDP, initrd)
+- [x] Cover: what agents must NOT do (no VGA text mode, no BIOS INT, no GRUB)
+- [x] Cover: how to add new boot parameters (modify `boot_info` + bootx64.c)
+- [x] Keep under 100 lines (65 lines)
+- [x] Commit: `"agent: add UEFI bootloader skill"`
 
-### 2.4 Create TODO Navigation Skill *(NEW)*
+### 2.4 Create TODO Navigation Skill ✅
 
-**Prompt:** Create a skill that teaches agents how to navigate, read, and update the TODO system. Cover: the index file (`TODO-000-INDEX.md`), folder structure (`000-Infrastructure/`, `010-Kernel-Foundations/`, etc.), TODO file anatomy (prompt → checklist → commit), cross-reference format (`→ XREF:`), and how to mark items complete (`[x]`). This prevents agents from creating duplicate TODOs or missing existing work items. After completing all items, mark every item as `[x]`, and commit as `"agent: add TODO navigation skill"`. Add notes directly in this TODO section.
+**Status:** Complete — 76-line skill covering index, folder structure, file anatomy, XREFs, commit conventions.
 
-- [ ] Create `.agent/skills/todo-system/SKILL.md`
-- [ ] Cover: how to find the right TODO file (scan index, use folder names)
-- [ ] Cover: TODO file anatomy (goal → sections → prompts → checklists → tables)
-- [ ] Cover: cross-reference format and when to add XREFs
-- [ ] Cover: how to mark items complete and write verification prompts
-- [ ] Cover: commit message convention for TODO updates
-- [ ] Keep under 80 lines
-- [ ] Commit: `"agent: add TODO navigation skill"`
+- [x] Create `.agent/skills/todo-system/SKILL.md`
+- [x] Cover: how to find the right TODO file (scan index, use folder names)
+- [x] Cover: TODO file anatomy (goal → sections → prompts → checklists → tables)
+- [x] Cover: cross-reference format and when to add XREFs
+- [x] Cover: how to mark items complete and write verification prompts
+- [x] Cover: commit message convention for TODO updates
+- [x] Keep under 80 lines (76 lines)
+- [x] Commit: `"agent: add TODO navigation skill"`
 
 ---
 
