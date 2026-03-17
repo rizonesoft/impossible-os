@@ -194,57 +194,57 @@
 
 ## 3. Workflows: Autonomous Execution Patterns
 
-### 3.1 Create TODO Implementation Workflow *(NEW)*
+### 3.1 Create TODO Implementation Workflow ✅
 
-**Prompt:** Create a workflow that agents follow when implementing a TODO section. Steps: (1) read the TODO section and its prompt, (2) check cross-references for dependencies, (3) plan the implementation (Plan Mode for kernel work, Fast Mode for UI), (4) implement the code, (5) build and test (`bash scripts/build.sh clean run`), (6) verify the boot log, (7) mark items `[x]`, (8) update the prompt to a verification prompt, (9) commit with the specified message. This is the most common agent task. After completing all items, mark every item as `[x]`, and commit as `"agent: add TODO implementation workflow"`. Add notes directly in this TODO section.
+**Status:** Complete — `.agents/workflows/implement-todo.md` with 9-step implementation flow and `// turbo-all`.
 
 > [!IMPORTANT]
 > → XREF: `TODO-002-Development.md` — development tooling and build scripts.
 
-- [ ] Create `.agents/workflows/implement-todo.md`
-- [ ] Step 1: Read the TODO section prompt fully
-- [ ] Step 2: Check `→ XREF:` lines — are dependencies completed?
-- [ ] Step 3: Create implementation plan (kernel = Plan Mode, UI = Fast Mode)
-- [ ] Step 4: Implement the code following rules and skills
-- [ ] Step 5: `bash scripts/build.sh clean run` — verify `=== BUILD OK ===`
-- [ ] Step 6: Check serial output / boot log for expected `[OK]` messages
-- [ ] Step 7: Mark all items `[x]` in the TODO
-- [ ] Step 8: Rewrite the prompt as a verification prompt
-- [ ] Step 9: Commit with the message from the TODO section
-- [ ] Add `// turbo-all` for build steps
-- [ ] Commit: `"agent: add TODO implementation workflow"`
+- [x] Create `.agents/workflows/implement-todo.md`
+- [x] Step 1: Read the TODO section prompt fully
+- [x] Step 2: Check `→ XREF:` lines — are dependencies completed?
+- [x] Step 3: Create implementation plan (kernel = Plan Mode, UI = Fast Mode)
+- [x] Step 4: Implement the code following rules and skills
+- [x] Step 5: `bash scripts/build.sh clean run` — verify `=== BUILD OK ===`
+- [x] Step 6: Check serial output / boot log for expected `[OK]` messages
+- [x] Step 7: Mark all items `[x]` in the TODO
+- [x] Step 8: Rewrite the prompt as a verification prompt
+- [x] Step 9: Commit with the message from the TODO section
+- [x] Add `// turbo-all` for build steps
+- [x] Commit: `"agent: add TODO implementation workflow"`
 
-### 3.2 Create Verification Workflow *(NEW)*
+### 3.2 Create Verification Workflow ✅
 
-**Prompt:** Create a workflow for verifying previously implemented TODO sections. Agents should: (1) read the verification prompt, (2) check all `[x]` items match actual source code, (3) build clean, (4) run in QEMU, (5) verify serial output, (6) check for regressions in related subsystems. After completing all items, mark every item as `[x]`, and commit as `"agent: add verification workflow"`. Add notes directly in this TODO section.
+**Status:** Complete — `.agents/workflows/verify-todo.md` with 7-step verification flow and `// turbo-all`.
 
-- [ ] Create `.agents/workflows/verify-todo.md`
-- [ ] Step 1: Read the verification prompt
-- [ ] Step 2: For each `[x]` item — verify the file/function exists in source
-- [ ] Step 3: `bash scripts/build.sh clean` → verify `=== BUILD OK ===`
-- [ ] Step 4: `bash scripts/build.sh run` → check serial output
-- [ ] Step 5: Verify expected boot log messages appear
-- [ ] Step 6: Check for regressions (related subsystems still work)
-- [ ] Step 7: If issues found — update TODO items and fix
-- [ ] Add `// turbo-all` for build steps
-- [ ] Commit: `"agent: add verification workflow"`
+- [x] Create `.agents/workflows/verify-todo.md`
+- [x] Step 1: Read the verification prompt
+- [x] Step 2: For each `[x]` item — verify the file/function exists in source
+- [x] Step 3: `bash scripts/build.sh clean` → verify `=== BUILD OK ===`
+- [x] Step 4: `bash scripts/build.sh run` → check serial output
+- [x] Step 5: Verify expected boot log messages appear
+- [x] Step 6: Check for regressions (related subsystems still work)
+- [x] Step 7: If issues found — update TODO items and fix
+- [x] Add `// turbo-all` for build steps
+- [x] Commit: `"agent: add verification workflow"`
 
-### 3.3 Create Hardware Test Workflow *(NEW)*
+### 3.3 Create Hardware Test Workflow ✅
 
-**Prompt:** Create a workflow for testing on real hardware via USB boot. Steps: (1) clean build, (2) write USB via `write-usb.ps1` or `.sh`, (3) boot target machine, (4) retrieve `BOOT_NNN.LOG` and `HARDWARE.TXT` from USB, (5) analyze logs for errors, (6) update the hardware compatibility log. After completing all items, mark every item as `[x]`, and commit as `"agent: add hardware test workflow"`. Add notes directly in this TODO section.
+**Status:** Complete — `.agents/workflows/test-hardware.md` with manual USB boot steps and log analysis.
 
 > [!IMPORTANT]
 > → XREF: `TODO-006-Real-Hardware.md §8` — test checklist and compatibility log.
 > → XREF: `TODO-005-Debug.md §4.3` — USB boot logging.
 
-- [ ] Create `.agents/workflows/test-hardware.md`
-- [ ] Step 1: `bash scripts/build.sh clean` → verify `=== BUILD OK ===`
-- [ ] Step 2: Write USB (manual step — agent prompts user)
-- [ ] Step 3: Boot target machine (manual step)
-- [ ] Step 4: Mount USB on dev machine, read `X:\BOOT_NNN.LOG`
-- [ ] Step 5: Analyze log: search for `[!!]`, `[FAIL]`, `PANIC`, `FAULT`
-- [ ] Step 6: Update `TODO-006-Real-Hardware.md` → Test Machines table
-- [ ] Commit: `"agent: add hardware test workflow"`
+- [x] Create `.agents/workflows/test-hardware.md`
+- [x] Step 1: `bash scripts/build.sh clean` → verify `=== BUILD OK ===`
+- [x] Step 2: Write USB (manual step — agent prompts user)
+- [x] Step 3: Boot target machine (manual step)
+- [x] Step 4: Mount USB on dev machine, read `X:\BOOT_NNN.LOG`
+- [x] Step 5: Analyze log: search for `[!!]`, `[FAIL]`, `PANIC`, `FAULT`
+- [x] Step 6: Update `TODO-006-Real-Hardware.md` → Test Machines table
+- [x] Commit: `"agent: add hardware test workflow"`
 
 ---
 
