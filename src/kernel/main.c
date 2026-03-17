@@ -543,14 +543,31 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                     klog(LOG_INFO, "irq",
                          "Switched to LAPIC/IOAPIC (PIC disabled)");
 
-                    /* Drain any stale ISR bits left from the PIC→LAPIC transition.
-                     * VBox NEM leaves ISR1 bit 0 set (vector 32 in-service from the
-                     * last PIC-delivered PIT tick), which blocks the LAPIC timer
-                     * from delivering same-priority interrupts. */
+                    /* Drain ALL stale ISR bits left from the PIC→LAPIC transition.
+                     * On real hardware (Acer Aspire V i5) and VBox NEM, stale ISR bits
+                     * block the LAPIC timer from delivering same-priority interrupts.
+                     * Loop until all 8 ISR registers (256 vectors) are clear. */
                     {
-                        uint32_t i;
-                        for (i = 0; i < 8; i++)
-                            lapic_eoi();
+                        uint32_t isr_dirty = 1;
+                        uint32_t drain_rounds = 0;
+                        while (isr_dirty && drain_rounds < 256) {
+                            isr_dirty = 0;
+                            uint32_t ri;
+                            for (ri = 0; ri < 8; ri++) {
+                                uint32_t isr_val = lapic_read(0x100 + ri * 0x10);
+                                if (isr_val) {
+                                    isr_dirty = 1;
+                                    if (drain_rounds == 0)
+                                        klog(LOG_DEBUG, "lapic", "ISR[%u]=0x%x (stale)", (uint64_t)ri, (uint64_t)isr_val);
+                                }
+                            }
+                            if (isr_dirty) {
+                                lapic_eoi();
+                                drain_rounds++;
+                            }
+                        }
+                        if (drain_rounds > 0)
+                            klog(LOG_INFO, "lapic", "ISR drain: %u EOIs sent", (uint64_t)drain_rounds);
                     }
 
                     /* Start LAPIC timer as the primary tick source (xv6 approach).
@@ -823,18 +840,13 @@ void kernel_main(uint64_t magic, uint64_t mbi)
              "PMM alloc/free: %s", pmm_ok ? "passed" : "FAIL");
     }
 
-    /* Timer verification — non-blocking check.
-     * sleep_ms(1000) hangs on some real hardware (Acer Aspire V) because
-     * PIT tick delivery stalls after ACPI/SMP init on single-CPU systems.
-     * The PIT already proved working via the splash animation, so just
-     * verify that ticks are non-zero. */
-    boot_splash_status("Timer check...");
-    {
-        uint32_t t = pit_get_ticks();
-        klog(t > 0 ? LOG_DEBUG : LOG_ERROR, "test",
-             "Timer: ticks=%u, uptime=%u sec (%s)",
-             t, uptime(), t > 0 ? "passed" : "FAIL — no ticks");
-    }
+    /* Timer verification — blocking 1-second sleep.
+     * If this hangs, the LAPIC timer ISR drain failed. */
+    boot_splash_status("Timer test (1s sleep)...");
+    klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");
+    sleep_ms(1000);
+    klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
+         pit_get_ticks(), uptime());
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
