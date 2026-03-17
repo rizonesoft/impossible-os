@@ -70,3 +70,9 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - **DMA-only storage.** Use AHCI (DMA + NCQ) or VirtIO for disk I/O. Do NOT use legacy IDE/ATA PIO polling (port 0x1F0–0x1F7).
 - **UEFI GOP framebuffer.** The framebuffer is a linear 32bpp buffer from UEFI GOP. Do NOT write VGA text mode (0xB8000) code.
 - **RCU for read-heavy structures.** Prefer Read-Copy-Update over spinlocks for VFS mount list, process tree, and Registry cache.
+
+## API Surface
+
+- **Win32 is the native API.** User-space programs are PE32+ executables using Win32-style APIs (CreateFile, ReadFile, CreateProcess). POSIX APIs (open, read, fork) are secondary — for the Linux compat layer only.
+- **Windows paths are canonical.** Use `C:\Impossible\System32\`, not `/usr/bin/`. Use `C:\Program Files\`, not `/usr/local/`.
+- **Control Panel uses .cpl applets.** Settings are exposed via Windows-standard Control Panel Library applets (CPlApplet interface, .cpl extension).

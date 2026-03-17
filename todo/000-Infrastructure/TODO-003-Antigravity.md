@@ -75,27 +75,22 @@
 > - PIC note clarifies `pic.c` masking code is kept for boot-time disable only
 > - Total rules.md: 72 lines (was 65) — minimal context overhead increase`
 
-### 1.2 Add Win32 API Surface Rule
+### 1.2 Add Win32 API Surface Rule ✅
 
-**Prompt:** Impossible OS is natively Win32 (PE executables, Win32 API surface). The kernel is ELF, but all user-space APIs should be Windows 11-compatible. Agents must not hallucinate POSIX syscalls (`fork`, `exec`, `open`, `read`) as the primary API — these exist only in the Linux compatibility layer. Add a rule clarifying the API hierarchy. After completing all items, mark every item as `[x]`, and commit as `"agent: add Win32 API surface rule"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: open `.agents/rules/rules.md` and confirm the `## API Surface` section contains 3 rules (Win32 native API, Windows paths, CPL applets).
 
 > [!IMPORTANT]
 > → XREF: `TODO-510-Native-Win32.md` — full Win32 API implementation roadmap.
 > → XREF: `TODO-028-Process-Model.md` — Win32 HANDLE table as primary abstraction.
 
-- [ ] Add to `.agents/rules/rules.md` → `## API Surface`:
-  ```markdown
-  ## API Surface
+- [x] Add to `.agents/rules/rules.md` → `## API Surface` (3 rules)
+- [x] Commit: `"agent: add Win32 API surface rule"`
 
-  - **Win32 is the native API.** User-space programs are PE32+ executables
-    using Win32-style APIs (CreateFile, ReadFile, CreateProcess). POSIX
-    APIs (open, read, fork) are secondary — for the Linux compat layer only.
-  - **Windows paths are canonical.** Use `C:\Impossible\System32\`, not
-    `/usr/bin/`. Use `C:\Program Files\`, not `/usr/local/`.
-  - **Control Panel uses .cpl applets.** Settings are exposed via Windows-
-    standard Control Panel Library applets (CPlApplet interface, .cpl extension).
-  ```
-- [ ] Commit: `"agent: add Win32 API surface rule"`
+> [!NOTE]
+> **Win32 API surface notes (2026-03-17):**
+> - 3 rules: Win32 native API, Windows paths canonical, CPL applets
+> - Clarifies POSIX APIs are secondary (Linux compat layer only)
+> - Total rules.md: 78 lines (was 72)
 
 ### 1.3 Add Freestanding C Rule
 
@@ -484,7 +479,7 @@
 | 🔴 P0   | 2.2 Fix source-code-org skill    | References deleted files (grub.cfg)            |
 | 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
 | ✅ Done  | 1.1 Hardware constraint rules    | APIC-only, DMA-only, UEFI GOP, RCU           |
-| 🟠 P1   | 1.2 Win32 API surface rule       | Prevent POSIX hallucination                    |
+| ✅ Done  | 1.2 Win32 API surface rule       | Win32 native API, Windows paths, CPL applets   |
 | 🟠 P1   | 1.3 Freestanding C rule          | Prevent stdlib includes                        |
 | 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |
 | 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                         |
