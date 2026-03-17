@@ -106,15 +106,19 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 # Targets
 # ============================================================================
 
-.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+.PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland iso uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 
 ## all: Build everything (kernel + userland + system disk)
 all: _increment_build assets kernel userland uefi-boot system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
 
-## assets: Unified asset pipeline — generated headers + sysroot population
-assets: os-logo bsod-icon boot-font sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
+## assets: Unified asset pipeline — validate + generate headers + populate sysroot
+assets: validate-assets os-logo bsod-icon boot-font sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons
 	@echo "[ASSETS] All assets up to date"
+
+## validate-assets: Check all source assets are well-formed before conversion
+validate-assets:
+	@python3 tools/validate-assets.py
 
 ## _increment_build: Auto-increment the build number
 _increment_build:

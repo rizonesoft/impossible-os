@@ -634,16 +634,26 @@ scripts/
 > - Cursors are Adwaita XCursor (not BMP) — the kernel's cursor driver reads XCursor natively
 > - `sysroot-icons` packs PNG icons into IRES via `irespack` host tool
 
-### 7.2 Asset Validation
+### 7.2 Asset Validation ✅
 
-**Prompt:** Validate all embedded assets at build time: check PNG dimensions and color depth match expected values, verify TTF files parse correctly, confirm cursor hotspot coordinates are within bounds. Fail the build early with a clear error message if an asset is malformed rather than discovering it at runtime. After completing all items, mark every item as `[x]`, and commit as `"build: asset validation"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `make validate-assets` runs `tools/validate-assets.py`, checks all PNG/TTF/XCursor/JPEG assets, and returns exit 1 on any failure. Corrupt a PNG file and verify the build fails with a clear error. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Validate PNG icons: expected dimensions, RGBA format, file size < 1 MB
-- [ ] Validate TTF fonts: parseable, glyph count > 0
-- [ ] Validate cursors: dimensions match expected, hotspot within bounds
-- [ ] Validate wallpapers: JPEG decodeable, reasonable dimensions (< 8K)
-- [ ] Print: `[OK] 12 assets validated` or `[FAIL] cursor.bmp: hotspot (99,99) out of bounds (32x32)`
-- [ ] Commit: `"build: asset validation"`
+- [x] Validate PNG icons: expected dimensions, RGBA format, file size < 1 MB (13 logos + BSOD icon)
+- [x] Validate TTF fonts: parseable, glyph count > 0 (11 fonts, e.g. CascadiaCode 4319 glyphs)
+- [x] Validate cursors: dimensions ≤ 256, hotspot within bounds (11 Adwaita XCursor)
+- [x] Validate wallpapers: JPEG SOI/EOI markers + Pillow decode when available (< 8K)
+- [x] Print: `[OK] 37 assets validated` or `[FAIL] os_logo_32.png: invalid PNG magic`
+- [x] Commit: `"build: asset validation"`
+
+> [!NOTE]
+> **Asset validation notes (2026-03-17):**
+> - Script at `tools/validate-assets.py` — no external dependencies (stdlib only, Pillow optional for JPEG)
+> - `make validate-assets` runs as first dependency of `assets` → fails the build before any conversion starts
+> - 37 assets validated: 14 PNGs, 11 TTFs, 11 XCursors, 1 JPEG
+> - TTF validation checks sfVersion (TrueType vs OpenType/CFF), numTables > 0, and `maxp` glyph count
+> - XCursor validation reads the Xcur TOC, checks image dims ≤ 256 and hotspot within bounds
+> - Cursors are Adwaita XCursor format (not BMP) — the TODO mentioned BMP but that doesn't match reality
+> - Negative test confirmed: corrupted PNG → `[FAIL] 1/37 assets failed validation` → exit 1
 
 ---
 
@@ -709,7 +719,7 @@ scripts/
 | ✅ Done   | 6.2 Size Tracking                 | Detect bloat early — tracks kernel + disk sizes          |
 | ✅ Done   | 6.3 Code Linter                   | Style consistency — 6 automated checks                   |
 | ✅ Done   | 6.4 GDB Debug Enhancement         | Symbol-aware debugging with custom breakpoints           |
-| 🟢 P3     | 7.2 Asset Validation              | Catch malformed assets at build time                     |
+| ✅ Done   | 7.2 Asset Validation              | 37 assets validated at build time (PNG/TTF/XCursor/JPEG) |
 | 🟢 P3     | 8.1 CI Build Workflow             | After §5.3 smoke test exists                             |
 | 🔵 P4     | 8.2 Pre-Commit Hooks              | After §6.3 linter exists                                 |
 
