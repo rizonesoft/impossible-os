@@ -10,6 +10,7 @@
 #include "stdlib.h"
 #include "ctype.h"
 #include "syscall.h"
+#include "build_info.h"
 
 /* --- Constants --- */
 #define LINE_MAX    256
@@ -156,12 +157,12 @@ static int parse(char *line, char **argv, int max_args)
 
 static void cmd_help(void)
 {
-    printf("Impossible OS Shell v0.1.0 - Commands:\n\n");
+    printf("Impossible OS Shell v" BUILD_VERSION " - Commands:\n\n");
     printf("  help              Show this message\n");
     printf("  echo [args...]    Print arguments\n");
     printf("  clear             Clear the screen\n");
     printf("  uname             System information\n");
-    printf("  version           OS version\n");
+    printf("  ver / version     OS version + build info\n");
     printf("  ls                List files on C:\\\n");
     printf("  cat <file>        Print file contents\n");
     printf("  ps                List running processes\n");
@@ -196,7 +197,8 @@ static void cmd_uname(void)
 
 static void cmd_version(void)
 {
-    printf("Impossible OS v0.1.0\n");
+    printf("Impossible OS v" BUILD_VERSION " (build %d, " BUILD_BRANCH "@" BUILD_COMMIT ", " BUILD_TIMESTAMP ")\n",
+           BUILD_NUMBER);
     printf("  Architecture: x86-64 (Long Mode)\n");
     printf("  Shell:        built-in REPL\n");
     printf("  Libc:         minimal freestanding\n");
@@ -454,7 +456,7 @@ int main(void)
 
     printf("\n");
     printf("  ====================================\n");
-    printf("  |   Impossible OS Shell v0.1.0     |\n");
+    printf("  |   Impossible OS Shell v" BUILD_VERSION "     |\n");
     printf("  |   Type 'help' for commands.      |\n");
     printf("  ====================================\n");
     printf("\n");

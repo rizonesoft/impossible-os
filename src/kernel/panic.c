@@ -20,6 +20,7 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/version.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/boot_splash.h"
@@ -411,6 +412,15 @@ void panic_screen(struct interrupt_frame *frame, uint64_t error_code,
     if (depth == 0) {
         printk("    (no stack frames available)\n");
     }
+
+    /* === Version footer === */
+    printk("\n");
+    fb_set_color(PANIC_DIM_COLOR, PANIC_BG_COLOR);
+    printk("    Impossible OS v%s (build %u, %s@%s)\n",
+           (uint64_t)(uintptr_t)version_short(),
+           (uint64_t)version_build_number(),
+           (uint64_t)(uintptr_t)version_branch(),
+           (uint64_t)(uintptr_t)version_git_hash());
 
     /* === Write crash dump to disk === */
     write_crash_dump(frame, description, file, line);

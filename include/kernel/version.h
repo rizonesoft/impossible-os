@@ -1,36 +1,15 @@
 /* ============================================================================
  * version.h — Kernel version information
  *
- * Version numbers are injected at build time by the Makefile from:
- *   - VERSION          (SemVer: MAJOR.MINOR.PATCH)
- *   - .build_number    (auto-incremented on each build)
- *   - Git HEAD hash    (short 8-char commit hash)
- *
- * The generated header build/generated/version_info.h provides the #defines.
+ * Version numbers come from the auto-generated include/build_info.h header,
+ * which is created by the Makefile's build-info target before compilation.
  * This header declares the public API for accessing version info at runtime.
  * ============================================================================ */
 
 #pragma once
 
 #include "kernel/types.h"
-
-/* ---- Version components (injected by Makefile) ---- */
-
-#ifndef VERSION_MAJOR
-#define VERSION_MAJOR  0
-#endif
-#ifndef VERSION_MINOR
-#define VERSION_MINOR  1
-#endif
-#ifndef VERSION_PATCH
-#define VERSION_PATCH  0
-#endif
-#ifndef VERSION_BUILD
-#define VERSION_BUILD  0
-#endif
-#ifndef VERSION_GIT_HASH
-#define VERSION_GIT_HASH "unknown"
-#endif
+#include "build_info.h"
 
 /* ---- Stringification helpers ---- */
 
@@ -60,6 +39,12 @@ const char *version_short(void);
 
 /* Get the Git commit hash (e.g., "a1b2c3d4") */
 const char *version_git_hash(void);
+
+/* Get the Git branch name (e.g., "main") */
+const char *version_branch(void);
+
+/* Get the build timestamp (e.g., "2026-03-17T12:00:00Z") */
+const char *version_timestamp(void);
 
 /* Get the build number */
 uint32_t version_build_number(void);

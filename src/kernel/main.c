@@ -274,6 +274,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "========================================================================");
     klog(LOG_DEBUG, "", "  Impossible OS -- Boot Log");
     klog(LOG_DEBUG, "", "========================================================================");
+    version_print();
 
     /* Step 2: Parse boot info based on bootloader type */
     if (magic == UEFI_BOOT_MAGIC) {

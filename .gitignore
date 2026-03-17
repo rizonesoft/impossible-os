@@ -37,4 +37,4 @@ resources/icons/color/**/*.png
 *:Zone.Identifier
 
 # Secure Boot keys — private key must NEVER be committed
-keys/MOK.key
+keys/MOK.keyinclude/build_info.h
