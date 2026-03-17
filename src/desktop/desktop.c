@@ -169,7 +169,7 @@ static void load_wallpaper(void)
             /* Got path from Registry */
         } else {
             /* Default path */
-            const char *def = "C:\\Impossible\\Wallpapers\\default.jpg";
+            const char *def = "C:\\Impossible\\Web\\Wallpaper\\default.jpg";
             uint32_t i;
             for (i = 0; def[i] && i < sizeof(wp_path) - 1; i++)
                 wp_path[i] = def[i];

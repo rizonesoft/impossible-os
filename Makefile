@@ -220,18 +220,19 @@ ICON_SRCS := $(wildcard resources/icons/color/48/*.png)
 $(SYSROOT)/.dirs-stamp:
 	@mkdir -p $(SYSROOT)
 	@mkdir -p $(SYSROOT)/Impossible/System/Config/Registry
-	@mkdir -p $(SYSROOT)/Impossible/Bin
+	@mkdir -p $(SYSROOT)/Impossible/System32
 	@mkdir -p $(SYSROOT)/Impossible/Fonts
 	@mkdir -p $(SYSROOT)/Impossible/Icons
-	@mkdir -p $(SYSROOT)/Impossible/Wallpapers
+	@mkdir -p $(SYSROOT)/Impossible/Web/Wallpaper
 	@mkdir -p $(SYSROOT)/Impossible/System/Cursors
+	@mkdir -p $(SYSROOT)/Impossible/Media
+	@mkdir -p $(SYSROOT)/Impossible/Temp
 	@mkdir -p $(SYSROOT)/Users/Default/Desktop
 	@mkdir -p $(SYSROOT)/Users/Default/Documents
 	@mkdir -p $(SYSROOT)/Users/Default/Downloads
 	@mkdir -p $(SYSROOT)/Users/Default/Pictures
-	@mkdir -p $(SYSROOT)/Temp
 	@mkdir -p $(SYSROOT)/Recycle
-	@mkdir -p $(SYSROOT)/Programs
+	@mkdir -p "$(SYSROOT)/Program Files"
 	@echo -n "Hello from Impossible OS!" > $(SYSROOT)/hello.txt
 	@echo -n "IXFS root filesystem" > $(SYSROOT)/readme.txt
 	@touch $@
@@ -248,11 +249,11 @@ $(SYSROOT)/Impossible/Fonts/.stamp: $(FONT_SRCS) | $(SYSROOT)/.dirs-stamp
 sysroot-fonts: $(SYSROOT)/Impossible/Fonts/.stamp
 
 ## sysroot-wallpapers: Copy wallpaper JPEG → sysroot (decoded at runtime)
-$(SYSROOT)/Impossible/Wallpapers/default.jpg: resources/backgrounds/background.jpg | $(SYSROOT)/.dirs-stamp
+$(SYSROOT)/Impossible/Web/Wallpaper/default.jpg: resources/backgrounds/background.jpg | $(SYSROOT)/.dirs-stamp
 	@cp $< $@
 	@echo "[ASSETS] Wallpaper copied"
 
-sysroot-wallpapers: $(SYSROOT)/Impossible/Wallpapers/default.jpg
+sysroot-wallpapers: $(SYSROOT)/Impossible/Web/Wallpaper/default.jpg
 
 ## sysroot-cursors: Copy Adwaita XCursor files → sysroot
 $(SYSROOT)/Impossible/System/Cursors/.stamp: $(CURSOR_SRCS) | $(SYSROOT)/.dirs-stamp

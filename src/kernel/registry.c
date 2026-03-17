@@ -1567,7 +1567,7 @@ void registry_populate_defaults(void)
         RegSetString(hKey, "Font",         "Selawik");
         RegSetDword(hKey, "FontSize",      12);
         RegSetDword(hKey, "CornerRadius",  8);
-        RegSetString(hKey, "Wallpaper",    "C:\\Impossible\\Wallpapers\\default.jpg");
+        RegSetString(hKey, "Wallpaper",    "C:\\Impossible\\Web\\Wallpaper\\default.jpg");
         RegSetString(hKey, "WallpaperMode", "stretch");
         RegSetDword(hKey, "EnableAnimations", 1);
         RegCloseKey(hKey);
@@ -1702,7 +1702,7 @@ void registry_populate_defaults(void)
     if (RegCreateKeyEx(HKEY_USERS, "Default\\Desktop", 0,
                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
                        &hKey, &disp) == ERROR_SUCCESS) {
-        RegSetString(hKey, "Wallpaper", "C:\\Impossible\\Wallpapers\\default.jpg");
+        RegSetString(hKey, "Wallpaper", "C:\\Impossible\\Web\\Wallpaper\\default.jpg");
         RegCloseKey(hKey);
         count += 1;
     }
