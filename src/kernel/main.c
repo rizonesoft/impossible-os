@@ -769,6 +769,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* === VMM map/unmap self-test === */
+    boot_splash_status("VMM self-test...");
     {
         uintptr_t vmm_phys = pmm_alloc_frame();
         uintptr_t vmm_virt = 0xA00000;  /* 10 MiB — safe test address */
@@ -795,6 +796,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* === PMM alloc/free self-test === */
+    boot_splash_status("PMM self-test...");
     {
         uintptr_t f1 = pmm_alloc_frame();
         uintptr_t f2 = pmm_alloc_frame();
@@ -822,6 +824,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     }
 
     /* Timer verification */
+    boot_splash_status("Timer test (1s sleep)...");
     klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");
     sleep_ms(1000);
     klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
@@ -831,7 +834,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");
 
     /* === Cooperative threading test === */
-    boot_splash_status("Scheduler tests...");
+    boot_splash_status("Initializing scheduler...");
     klog_flush_to_disk();
     task_init();
 
