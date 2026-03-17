@@ -1,18 +1,28 @@
 # P0108 — ELF Dynamic Linker & Kernel Modules
 
-> **Goal:** User-space ELF dynamic linking (`dlopen`/`dlsym`) and the shared ELF relocation
-> engine that also underpins kernel modules in `TODO-080-Drivers.md`.
+> **Goal:** ELF relocation engine for **kernel modules** and the **Linux compatibility
+> layer** (TODO-540). The native user-space binary format is PE (.exe/.dll) —
+> see `TODO-510-Native-Win32.md`. ELF support exists for: (1) kernel `.kmod`
+> drivers, and (2) running Linux ELF binaries via the compat layer.
+
+> [!IMPORTANT]
+> **Impossible OS is natively Win32/PE.** The kernel is ELF (loaded by UEFI),
+> and kernel modules use ELF relocations, but all user-space programs use PE.
+> `dlopen`/`dlsym` are provided for the Linux compatibility layer; the native
+> equivalents are `LoadLibrary`/`GetProcAddress` (PE DLL loading).
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB. `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas.
 
 ---
 
-## 1. ELF Shared Libraries (User-Space)
+## 1. ELF Relocation Engine & Dynamic Linker
 
-**Prompt:** ELF shared libraries (.so) are loaded at runtime and shared between processes — study the ELF spec sections on PT_DYNAMIC, DT_NEEDED, .dynsym/.dynstr, and GOT/PLT. The dynamic linker parses the executable's DT_NEEDED list, searches the library path (app dir → `C:\Impossible\System\` → `C:\Impossible\System\Drivers\`), loads each .so into memory, applies R_X86_64_64 and R_X86_64_PC32 relocations, and patches the GOT. The `dlopen`/`dlsym`/`dlclose` API enables runtime plugin loading. This feature directly supports Phase 10's compatibility layer where Win32 DLL stubs are loaded similarly. Start by implementing symbol resolution for the current statically-linked kernel, then extend to user-mode binaries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: dynamic linker (dlopen/dlsym)"`. Update `README.md` if it contains stale or incorrect references to dynamic linking. Add notes, gotchas, and design decisions directly in this TODO section covering the dynamic linker, ELF relocation types, GOT/PLT patching, and library search path.
+**Prompt:** The ELF relocation engine is used by two subsystems: (1) **kernel module loading** (`.kmod` files in `TODO-080-Drivers.md`) which uses ELF relocations to link driver code against kernel symbols, and (2) the **Linux compatibility layer** (`TODO-540-Linux.md`) which runs ELF binaries and loads `.so` shared libraries. Implement: ELF symbol table scanning, relocation types (`R_X86_64_64`, `R_X86_64_PC32`, `R_X86_64_PLT32`, `R_X86_64_GLOB_DAT`, `R_X86_64_JUMP_SLOT`), GOT/PLT patching for lazy binding, and `dlopen`/`dlsym`/`dlclose` API for the Linux compat layer. The native PE equivalents (`LoadLibrary`/`GetProcAddress`) are implemented in `TODO-510-Native-Win32.md §4`. Start by implementing the relocation engine for kernel modules, then extend to user-mode ELF compat. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF relocation engine + dlopen"`. Add notes directly in this TODO section.
 
-> **Win32 equivalent:** `LoadLibrary` / `GetProcAddress` / `FreeLibrary` — user-mode only.
-> **Syscall numbers:** Add `SYS_DLOPEN`, `SYS_DLSYM`, `SYS_DLCLOSE` to `syscall.h` (assign next available numbers after existing syscalls).
+> **Native PE equivalent:** `LoadLibrary` / `GetProcAddress` / `FreeLibrary` — the
+> primary DLL loading API (see `TODO-510-Native-Win32.md §4.4`).
+> `dlopen`/`dlsym` are provided for Linux compat only.
+> **Syscall numbers:** Add `SYS_DLOPEN`, `SYS_DLSYM`, `SYS_DLCLOSE` to `syscall.h` (Linux compat layer syscalls).
 
 
 - [ ] Implement ELF `.symtab`/`.dynsym` symbol table scanner
@@ -26,7 +36,7 @@
 - [ ] Define library search path: app dir → `C:\Impossible\System\` → `C:\Impossible\System\Drivers\`
 - [ ] Add `SYS_DLOPEN`, `SYS_DLSYM`, `SYS_DLCLOSE` syscalls
 - [ ] Test: build a minimal `.so` with one exported function, `dlopen` it, `dlsym` the function, call it
-- [ ] Commit: `"kernel: dynamic linker (dlopen/dlsym)"`
+- [ ] Commit: `"kernel: ELF relocation engine + dlopen"`
 
 ---
 
@@ -76,9 +86,9 @@
 
 | Priority | Section                        | Reason                                          |
 |----------|--------------------------------|-------------------------------------------------|
-| 🔴 P0    | 1. ELF symbol table + relocs   | Engine needed by both dlopen and kernel modules |
-| 🟠 P1    | 1. GOT/PLT patching            | Required for real shared library call dispatch  |
-| 🟠 P1    | 1. dlopen/dlsym/dlclose        | User-mode plugin loading, Win32 compat layer    |
+| 🔴 P0    | 1. ELF symbol table + relocs   | Engine needed by kernel modules (TODO-080)      |
+| 🟠 P1    | 1. GOT/PLT patching            | Required for shared library dispatch (Linux compat) |
+| 🟡 P2    | 1. dlopen/dlsym/dlclose        | Linux compat layer (TODO-540) — PE `LoadLibrary` is native |
 | 🟡 P2    | 2. Kernel modules              | See TODO-080-Drivers.md — after Drivers phase   |
 | 🟡 P2    | 3. Symbol versioning           | ABI stability for system libraries              |
 | 🟡 P2    | 4. Library cache               | Performance — fast dlopen cold start            |

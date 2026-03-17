@@ -134,15 +134,16 @@
 
 ### 3.4 Binary Format Detection
 
-**Prompt:** Create `load_binary(data, size)` that checks magic bytes: `"MZ"` → `pe_load()`. Reject unknown formats with an error message. Update exec path to use `load_binary()` instead of `elf_load()`. The kernel itself is still an ELF (loaded by GRUB), but all user-mode programs are PE. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE-only binary detection"`.
+**Prompt:** Create `load_binary(data, size)` that checks magic bytes: `"MZ"` → `pe_load()` (native), `0x7F "ELF"` → `elf_load()` (Linux compat layer — see `TODO-540-Linux.md`). PE is the **native** format; ELF is supported for the Linux compatibility layer. The kernel itself is an ELF (loaded by UEFI bootloader), but all native user-mode programs are PE (.exe). Update exec path to use `load_binary()` instead of direct loader calls. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: binary format detection"`.
 
 
 - [ ] Create `load_binary(data, size)` in `src/kernel/task.c` (or new file)
 - [ ] Auto-detect format by magic bytes:
-  - [ ] `"MZ"` (0x5A4D) → `pe_load()` — PE executable (native format)
+  - [ ] `"MZ"` (0x5A4D) → `pe_load()` — PE executable (**native format**)
+  - [ ] `0x7F "ELF"` → `elf_load()` — ELF executable (**Linux compat layer**)
   - [ ] Unknown → return error ("unsupported binary format")
-- [ ] Update exec path: replace direct `elf_load()` call with `load_binary()`
-- [ ] Commit: `"kernel: PE-only binary detection"`
+- [ ] Update exec path: use `load_binary()` for format dispatch
+- [ ] Commit: `"kernel: binary format detection"`
 
 ### 3.5 PE Resource Section Parser
 

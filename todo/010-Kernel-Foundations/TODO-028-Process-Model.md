@@ -7,22 +7,29 @@
 
 ---
 
-## 1. File Descriptors & I/O Abstraction
+## 1. Handle Table & I/O Abstraction
 
-**Prompt:** File descriptors are the POSIX abstraction that unifies files, pipes, sockets, and devices behind integer handles. Each process gets an FD table (array of `TASK_MAX_FDS=256` pointers to `struct file`). `struct file` has a type enum (FILE, PIPE, SOCKET, DEVICE), a VFS node pointer, a read/write offset, reference count, and type-specific callbacks for read/write/close/seek. FDs 0/1/2 are stdin/stdout/stderr (wired to the terminal). `dup`/`dup2` enables I/O redirection (`cmd > file`). `fcntl(fd, F_SETFL, flags)` sets non-blocking mode. This is a prerequisite for pipes and the shell's I/O redirection. Study the existing VFS in `src/kernel/vfs.c` to understand how `vfs_open`/`vfs_read`/`vfs_write` work, then wrap them in the FD layer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: file descriptor table"`. Add notes, gotchas, and design decisions directly in this TODO section covering the FD table, struct file, type dispatch, and dup/dup2 semantics.
+> [!IMPORTANT]
+> **Impossible OS is natively Win32.** The primary I/O abstraction is the Win32
+> **HANDLE table** (opaque `void*` handles via `CreateFile`/`ReadFile`/`WriteFile`/
+> `CloseHandle`). POSIX-style integer file descriptors (0/1/2) are provided as
+> an internal convenience and for the Linux compatibility layer (TODO-540).
+
+**Prompt:** Implement a per-process handle table that unifies files, pipes, sockets, and devices behind opaque `HANDLE` values (matching the Win32 `CreateFile`/`CloseHandle` model). Each process gets a handle table (array of `TASK_MAX_HANDLES=256` pointers to `struct file`). `struct file` has a type enum (FILE, PIPE, SOCKET, DEVICE), a VFS node pointer, a read/write offset, reference count, and type-specific callbacks for read/write/close/seek. Standard handles: `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` (wired to the terminal). `DuplicateHandle` enables I/O redirection (`cmd > file`). Internally, integer indices map to handles for POSIX compat (`dup`/`dup2`/`fcntl` for Linux compat layer). This is a prerequisite for pipes and the shell's I/O redirection. Study the existing VFS in `src/kernel/vfs.c` to understand how `vfs_open`/`vfs_read`/`vfs_write` work, then wrap them in the handle table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: per-process handle table"`. Add notes directly in this TODO section.
 
 
-- [ ] Define `TASK_MAX_FDS 256` — maximum open file descriptors per process
-- [ ] Implement per-process FD table in `struct task` (array of `struct file *`)
-- [ ] Pre-wire FDs 0/1/2 → stdin/stdout/stderr at task creation
-- [ ] `open(path, flags)` → allocate `struct file`, insert into FD table, return fd
-- [ ] `read(fd, buf, size)` / `write(fd, buf, size)` — dispatch via `struct file` callbacks
-- [ ] `close(fd)` — decrement ref count, free `struct file` when count reaches 0
-- [ ] `seek(fd, offset, whence)` — for file-type FDs only
-- [ ] `dup(fd)` / `dup2(old, new)` — duplicate FD slot, increment ref count
-- [ ] `fcntl(fd, cmd, arg)` — at minimum: `F_GETFL`, `F_SETFL` (non-blocking flag)
-- [ ] Add `SYS_OPEN`, `SYS_READ`, `SYS_WRITE`, `SYS_CLOSE`, `SYS_DUP`, `SYS_DUP2`, `SYS_SEEK`, `SYS_FCNTL` syscalls
-- [ ] Commit: `"kernel: file descriptor table"`
+- [ ] Define `TASK_MAX_HANDLES 256` — maximum open handles per process
+- [ ] Implement per-process handle table in `struct task` (array of `struct file *`)
+- [ ] Pre-wire standard handles: `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE` at task creation
+- [ ] Win32 API surface: `CreateFile` → allocate handle, `ReadFile`/`WriteFile` → dispatch via callbacks, `CloseHandle` → release
+- [ ] `SetFilePointer(handle, offset, method)` — for file-type handles only
+- [ ] `DuplicateHandle` — duplicate handle slot, increment ref count
+- [ ] POSIX compat (internal + Linux compat layer): map integer FDs 0/1/2 to standard handles
+- [ ] POSIX compat: `dup(fd)` / `dup2(old, new)` — for Linux compat layer (TODO-540)
+- [ ] POSIX compat: `fcntl(fd, cmd, arg)` — `F_GETFL`, `F_SETFL` for Linux compat layer
+- [ ] Add Win32 syscalls: `SYS_CREATEFILE`, `SYS_READFILE`, `SYS_WRITEFILE`, `SYS_CLOSEHANDLE`, `SYS_DUPLICATEHANDLE`
+- [ ] Add POSIX compat syscalls: `SYS_OPEN`, `SYS_READ`, `SYS_WRITE`, `SYS_CLOSE`, `SYS_DUP`, `SYS_DUP2` (for Linux compat)
+- [ ] Commit: `"kernel: per-process handle table"`
 
 ---
 
@@ -44,11 +51,11 @@
 
 ## 3. User-Mode Heap (`brk`/`sbrk`)
 
-**Prompt:** User-mode programs need their own heap separate from the kernel heap. `brk(addr)` sets the program break (top of data segment), `sbrk(increment)` extends it by N bytes. The kernel maps new pages on demand as the break increases. User-mode `malloc` implementations (dlmalloc, musl's allocator) call `sbrk` internally, so once this works, any standard allocator can be ported. The program break starts at the end of the BSS section (read from the ELF/PE loader). This is needed before any non-trivial user programs can run. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: brk/sbrk heap for user processes"`. Add notes, gotchas, and design decisions directly in this TODO section covering brk/sbrk, program break, and user-mode malloc integration.
+**Prompt:** User-mode programs need their own heap separate from the kernel heap. The native Win32 API uses `VirtualAlloc`/`HeapAlloc` (implemented in `TODO-510-Native-Win32.md §6`). For the Linux compatibility layer, `brk(addr)` sets the program break (top of data segment), `sbrk(increment)` extends it by N bytes. The kernel maps new pages on demand as the break increases. User-mode `malloc` implementations (dlmalloc, musl's allocator) call `sbrk` internally. The program break starts at the end of the BSS section (read from the PE/ELF loader). This is needed before any non-trivial user programs can run. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: brk/sbrk heap for user processes"`. Add notes directly in this TODO section.
 
 
 - [ ] Add `brk` (program break pointer) field to `struct task`
-- [ ] Init `brk` to end of BSS at exec time (read from ELF/PE loader)
+- [ ] Init `brk` to end of BSS at exec time (read from PE loader, or ELF for Linux compat)
 - [ ] Implement `brk(addr)` syscall — validate addr > BSS end, map pages to cover range
 - [ ] Implement `sbrk(increment)` syscall — return old break, advance break by `increment` bytes, map new pages
 - [ ] Wire user-mode `malloc`/`free` to `sbrk`-backed dlmalloc or musl allocator
@@ -110,7 +117,7 @@
 
 | Priority | Section                          | Reason                                                  |
 |----------|----------------------------------|---------------------------------------------------------|
-| 🔴 P0    | 1. File Descriptors              | Foundation for pipes, I/O redirection, sockets          |
+| 🔴 P0    | 1. Handle Table                  | Foundation for pipes, I/O redirection, sockets (Win32 HANDLE model) |
 | 🔴 P0    | 2. Working Directory             | Shell navigation, relative path VFS resolution           |
 | 🔴 P0    | 3. brk/sbrk                      | User-mode malloc doesn't work without this              |
 | 🟠 P1    | 4. Timer API                     | vsync, animations, NTP need sleep/gettimeofday          |
@@ -123,10 +130,10 @@
 
 | Feature                        | Windows 11                       | Linux Kernel                  | Impossible OS                        |
 |--------------------------------|----------------------------------|-------------------------------|--------------------------------------|
-| File descriptor table          | ✅ Handle table (per-process)    | ✅ POSIX FD table              | ⬜ §1 P0                              |
+| Handle table (per-process)     | ✅ Handle table (HANDLE)         | ✅ POSIX FD table              | ⬜ §1 P0 — **Win32 HANDLE model (native)** |
 | Per-process working directory  | ✅ `SetCurrentDirectory`         | ✅ `chdir(2)`                  | ⬜ §2 P0                              |
 | User-mode heap (brk/sbrk)      | ✅ `VirtualAlloc` / heap         | ✅ `brk(2)` / `sbrk(2)`       | ⬜ §3 P0                              |
 | Timer syscalls (sleep/time)    | ✅ `Sleep` / `GetSystemTime`     | ✅ `sleep`/`gettimeofday`      | ⬜ §4 P1                              |
 | Process priority classes       | ✅ `SetPriorityClass`            | ✅ `nice`/`setpriority`        | ⬜ §5 P1                              |
 | Process capabilities           | ✅ Privileges + tokens           | ✅ `CAP_*` capabilities        | ⬜ §6 P2                              |
-| **Unified FD for all IPC**     | ⚠️ Handles ≠ FDs (fragmented)   | ✅ Everything is an FD         | ⬜ **§1 — POSIX-style, clean**        |
+| **Unified handles for all I/O** | ✅ HANDLE for everything         | ✅ Everything is an FD         | ⬜ **§1 — Win32 HANDLE model (native)** |
