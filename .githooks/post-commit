@@ -15,9 +15,11 @@ VENDORED=(
     "$ROOT/src/boot/uefi/efi.h"
 )
 
-# Count lines by extension, excluding vendored files
+# Count lines by extension in given directories, excluding vendored files
 count_lines() {
     local ext="$1"
+    shift
+    local dirs=("$@")
     local total=0
     local files=0
     while IFS= read -r f; do
@@ -30,16 +32,39 @@ count_lines() {
         n=$(wc -l < "$f")
         total=$((total + n))
         files=$((files + 1))
-    done < <(find "$ROOT/src" "$ROOT/include" -type f -name "*.$ext" 2>/dev/null)
+    done < <(find "${dirs[@]}" -type f -name "*.$ext" 2>/dev/null)
     echo "$files $total"
 }
 
-read -r c_files c_lines <<< "$(count_lines c)"
-read -r h_files h_lines <<< "$(count_lines h)"
-read -r asm_files asm_lines <<< "$(count_lines asm)"
+# Kernel / OS source code
+read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include")"
+read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include")"
+read -r asm_files asm_lines <<< "$(count_lines asm "$ROOT/src")"
 
-total_files=$((c_files + h_files + asm_files))
-total_lines=$((c_lines + h_lines + asm_lines))
+# Build system & scripts
+read -r sh_files sh_lines <<< "$(count_lines sh "$ROOT/scripts")"
+
+mk_files=0; mk_lines=0
+if [ -f "$ROOT/Makefile" ]; then
+    mk_files=1
+    mk_lines=$(wc -l < "$ROOT/Makefile")
+fi
+
+ld_files=0; ld_lines=0
+while IFS= read -r f; do
+    ld_files=$((ld_files + 1))
+    ld_lines=$((ld_lines + $(wc -l < "$f")))
+done < <(find "$ROOT/src" -type f \( -name "*.ld" -o -name "*.lds" \) 2>/dev/null)
+
+# Totals
+code_files=$((c_files + h_files + asm_files))
+code_lines=$((c_lines + h_lines + asm_lines))
+
+infra_files=$((sh_files + mk_files + ld_files))
+infra_lines=$((sh_lines + mk_lines + ld_lines))
+
+total_files=$((code_files + infra_files))
+total_lines=$((code_lines + infra_lines))
 
 # Count vendored lines
 vendored_lines=0
@@ -65,14 +90,29 @@ cat > "$COUNT_FILE" << EOF
 
 ---
 
-## Summary
+## Kernel & OS Code
 
 | | Files | Lines |
 |---|---:|---:|
 | **C sources** (\`.c\`) | ${c_files} | ${c_lines} |
 | **Headers** (\`.h\`) | ${h_files} | ${h_lines} |
 | **Assembly** (\`.asm\`) | ${asm_files} | ${asm_lines} |
-| **Total (our code)** | **${total_files}** | **${total_lines}** |
+| **Subtotal** | **${code_files}** | **${code_lines}** |
+
+## Build System & Scripts
+
+| | Files | Lines |
+|---|---:|---:|
+| **Shell scripts** (\`.sh\`) | ${sh_files} | ${sh_lines} |
+| **Makefile** | ${mk_files} | ${mk_lines} |
+| **Linker scripts** (\`.ld\`/\`.lds\`) | ${ld_files} | ${ld_lines} |
+| **Subtotal** | **${infra_files}** | **${infra_lines}** |
+
+## Grand Total
+
+| | Files | Lines |
+|---|---:|---:|
+| **All project code** | **${total_files}** | **${total_lines}** |
 
 > Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`)
 

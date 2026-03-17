@@ -11,17 +11,32 @@
 
 ---
 
-## Summary
+## Kernel & OS Code
 
 | | Files | Lines |
 |---|---:|---:|
 | **C sources** (`.c`) | 102 | 57252 |
 | **Headers** (`.h`) | 93 | 23166 |
 | **Assembly** (`.asm`) | 7 | 790 |
-| **Total (our code)** | **202** | **81208** |
+| **Subtotal** | **202** | **81208** |
+
+## Build System & Scripts
+
+| | Files | Lines |
+|---|---:|---:|
+| **Shell scripts** (`.sh`) | 13 | 2317 |
+| **Makefile** | 1 | 655 |
+| **Linker scripts** (`.ld`/`.lds`) | 2 | 123 |
+| **Subtotal** | **16** | **3095** |
+
+## Grand Total
+
+| | Files | Lines |
+|---|---:|---:|
+| **All project code** | **218** | **84303** |
 
 > Vendored code excluded: ~13496 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
 ---
 
-*Last updated: 2026-03-18 00:25 · commit `6452689`*
+*Last updated: 2026-03-18 00:27 · commit `4eb45e7`*
