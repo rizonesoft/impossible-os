@@ -16,7 +16,7 @@
 
 ### 1.1 Build Script Enhancements ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/build.sh` supports `clean`, `run`, `clean run` modes, produces `build/os-build.iso`, writes build logs to `build/build.log` with `=== BUILD OK ===` sentinel, and displays a live progress bar during compilation. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/build.sh` supports `clean`, `run`, `clean run` modes, produces `build/system-disk.img`, writes build logs to `build/build.log` with `=== BUILD OK ===` sentinel, and displays a live progress bar during compilation. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
 
 - [x] `bash scripts/build.sh` — incremental build
 - [x] `bash scripts/build.sh clean` — clean build
@@ -26,16 +26,24 @@
 - [x] Live progress bar during compilation
 - [x] Auto-create `build/` directory if missing
 
-### 1.2 Incremental Build Optimization
+### 1.2 Incremental Build Optimization ✅
 
-**Prompt:** The current build recompiles every source file on each `make all`. Optimize for incremental builds by ensuring proper `.o` → `.c` / `.h` dependency tracking. Generate `.d` dependency files (`-MMD -MP` flags) and include them in the Makefile. A single-file change should only recompile the changed file + relink. Measure build times before and after to confirm improvement. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"build: incremental dependency tracking"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `-MMD -MP` flags are in `CFLAGS` and `USER_CFLAGS`, `.d` dependency files are included in the Makefile, and incremental builds only recompile changed files. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Add `-MMD -MP` to `CFLAGS` in Makefile — generate `.d` dependency files
-- [ ] Add `-include $(wildcard $(BUILD_DIR)/*.d)` to Makefile
-- [ ] Verify: change one `.c` file → only that `.o` is rebuilt + relink
-- [ ] Verify: change one `.h` file → all `.c` files including it are rebuilt
-- [ ] Measure: full build time vs incremental build time (log both)
-- [ ] Commit: `"build: incremental dependency tracking"`
+- [x] Add `-MMD -MP` to `CFLAGS` in Makefile — generate `.d` dependency files
+- [x] Add `-include $(DEP_FILES)` to Makefile (uses `find build/ -name '*.d'`)
+- [x] Verify: change one `.c` file → only that `.o` is rebuilt + relink
+- [x] Verify: change one `.h` file → all `.c` files including it are rebuilt
+- [x] Measure: full build time vs incremental build time (log both)
+- [x] Commit: `"build: incremental dependency tracking"`
+
+> [!NOTE]
+> **Build timing measurements (2026-03-17):**
+> - Clean build: **19.0s** (101 `.d` files generated across kernel + userland)
+> - Incremental (touch `main.c`): **3.3s** — only `main.c` recompiled + relink (**5.8× faster**)
+> - Header change (touch `printk.h`): **12.1s** — 71/96 kernel files recompiled (correct: only dependents)
+> - `-MMD -MP` added to `CFLAGS`, `USER_CFLAGS`; `SIMD_CFLAGS` inherits via `$(filter-out ..., $(CFLAGS))`
+> - `.d` files live alongside `.o` files in `build/` and are cleaned by `rm -rf $(BUILD_DIR)`
 
 ### 1.3 Parallel Build Support
 
@@ -585,7 +593,7 @@ scripts/
 | ✅ Done   | 4.1 USB Write (Windows)           | Hardware deployment — working                            |
 | 🔴 P0     | 1.4 Build Version & Metadata      | `ver` command, BSOD footer, boot log need version info   |
 | 🔴 P0     | 5.3 QEMU Smoke Test               | Catches boot regressions automatically                   |
-| 🟠 P1     | 1.2 Incremental Build             | Dev iteration speed — avoid full recompiles              |
+| ✅ Done   | 1.2 Incremental Build             | Dev iteration speed — 5.8× faster incremental builds    |
 | 🟠 P1     | 2.1 Clang/LLD Migration           | Prerequisite for clangd + Bear + semantic search         |
 | 🟠 P1     | 2.2 System Dependency Installer   | Onboarding — new devs need one-command setup             |
 | 🟠 P1     | 6.1 Symbol Map                    | BSOD stack traces need function names                    |
@@ -644,7 +652,7 @@ scripts/
 | Feature                           | Windows 11 (WDK/VS)              | Linux Kernel                      | Impossible OS                             |
 |-----------------------------------|----------------------------------|-----------------------------------|-------------------------------------------|
 | Build system                      | ✅ MSBuild / WDK                  | ✅ Kbuild (make)                 | ✅ Make + build.sh wrapper                |
-| Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files          | ⬜ §1.2 P1                                |
+| Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files          | ✅ `-MMD -MP` + `.d` includes             |
 | Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ⬜ §1.3 P2                                |
 | Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ⬜ §1.4 P0                                |
 | Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ⬜ §2.1 P1 — **Clang/LLD**               |

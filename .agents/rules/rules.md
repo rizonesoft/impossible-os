@@ -26,7 +26,7 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - Always compile with: `-Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc`
 - Use the cross-compiler (`x86_64-elf-gcc`) when available; fall back to system GCC with freestanding flags
 - Target architecture: **x86-64** (Long Mode)
-- Final output: an ISO file named **`os-build.iso`** in the `build/` directory
+- Final output: a bootable GPT disk image named **`system-disk.img`** in the `build/` directory
 
 ## Build Script — MANDATORY
 

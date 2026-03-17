@@ -16,6 +16,7 @@ CFLAGS  := -Wall -Wextra -Werror \
            -fno-stack-protector -fno-pie -no-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
+           -MMD -MP \
            -DCONFIG_SMP
 ASFLAGS := -f elf64 -g
 LDFLAGS := -nostdlib -static -z max-page-size=0x1000
@@ -210,7 +211,8 @@ $(SYSROOT)/Impossible/Wallpapers/default.jpg: host-tools
 ## userland: Build user-mode programs and copy into sysroot
 USER_CFLAGS := -Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc \
                -fno-stack-protector -fno-pie -no-pie -mno-red-zone \
-               -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g
+               -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
+               -MMD -MP
 
 userland: $(SYSROOT)/hello.exe $(SYSROOT)/shell.exe
 
@@ -575,3 +577,9 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/%.asm
 	@mkdir -p $(dir $@)
 	$(AS) $(ASFLAGS) $< -o $@
 	@echo "[AS] $<"
+
+# ============================================================================
+# Auto-generated dependency files (-MMD -MP)
+# ============================================================================
+DEP_FILES := $(shell find $(BUILD_DIR) -name '*.d' 2>/dev/null)
+-include $(DEP_FILES)
