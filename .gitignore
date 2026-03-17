@@ -44,3 +44,6 @@ include/build_info.h
 
 # Bear compilation database (machine-specific absolute paths)
 compile_commands.json
+
+# clangd background index cache
+.cache/
