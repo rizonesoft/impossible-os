@@ -35,7 +35,7 @@
 | `.agents/workflows/test-fs-fat32.md` | FAT32 test with disk images | Untested — verify test flow |
 | `.agent/skills/impossible-os/SKILL.md` | OS conventions, paths, structure (143 lines) | ✅ Fully updated in §2.1 |
 | `.agent/skills/memory-allocation/SKILL.md` | kmalloc vs PMM decision tree (87 lines) | ✅ Correct — well-documented gotchas |
-| `.agent/skills/source-code-organization/SKILL.md` | Source/header layout (131 lines) | ❌ **References grub.cfg, Multiboot2** (deprecated) |
+| `.agent/skills/source-code-organization/SKILL.md` | Source/header layout (170 lines) | ✅ Fully updated in §2.2 |
 | `.agent/skills/github/SKILL.md` | Git/GitHub command handling | ✅ Working |
 | `.agent/skills/command-completion/SKILL.md` | Command status workaround | ✅ Working |
 
@@ -141,17 +141,25 @@
 > - Added: IXFS+FAT32 filesystem, dirty rectangle compositor, Registry hive paths
 > - Build verified: `=== BUILD OK ===``
 
-### 2.2 Fix `source-code-organization` Skill
+### 2.2 Fix `source-code-organization` Skill ✅
 
-**Prompt:** The `source-code-organization` skill references `grub.cfg` in the boot directory tree and `multiboot2.h` / `multiboot2_header.asm` in the include/source layouts. The OS now uses a custom UEFI bootloader (`src/boot/uefi/bootx64.c`). Update the directory trees to reflect the current structure. After completing all items, mark every item as `[x]`, and commit as `"agent: update source-code-organization skill"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: open `.agent/skills/source-code-organization/SKILL.md` and confirm `grub.cfg` and `multiboot2_header.asm` are removed, UEFI bootloader directory is present.
 
-- [ ] Update Source Directory Layout: `src/boot/` section:
-  - [ ] Remove `grub.cfg`, `multiboot2_header.asm`
-  - [ ] Add `src/boot/uefi/bootx64.c` — UEFI PE32+ bootloader
-  - [ ] Add `src/boot/uefi/boot_info.h` — boot params structure
-- [ ] Update Include Directory Layout: remove `multiboot2.h`, add UEFI boot headers
-- [ ] Verify all listed files exist in the actual source tree
-- [ ] Commit: `"agent: update source-code-organization skill"`
+- [x] Update Source Directory Layout: `src/boot/` section:
+  - [x] Remove `grub.cfg`, `multiboot2_header.asm` from tree
+  - [x] Add `src/boot/uefi/bootx64.c` — UEFI PE32+ bootloader
+  - [x] Add `src/boot/uefi/efi.h`, `reloc.asm`, `uefi.lds`
+- [x] Update Include Directory Layout: remove `multiboot2.h`, add 30+ new headers
+- [x] Verify all listed files exist in the actual source tree
+- [x] Commit: `"agent: update source-code-organization skill"`
+
+> [!NOTE]
+> **Source-code-organization notes (2026-03-17):**
+> - Complete rewrite to match actual codebase
+> - Added: UEFI bootloader dir, APIC/IOAPIC, AHCI, IPC, sync primitives, GFX lib
+> - Added top-level headers: `gfx.h`, `registry.h`, `icon_store.h`, `font_mgr.h`, etc.
+> - Added source dirs: `gfx/`, `ipc/`, `test/`
+> - Note: legacy `grub.cfg` and `multiboot2_header.asm` still exist in `src/boot/` (kept for reference) but removed from skill tree
 
 ### 2.3 Create UEFI Bootloader Skill *(NEW)*
 
@@ -483,7 +491,7 @@
 | Priority | Section                         | Description                                    |
 |----------|---------------------------------|------------------------------------------------|
 | ✅ Done  | 2.1 Fix outdated paths           | All paths match codebase + Windows conventions |
-| 🔴 P0   | 2.2 Fix source-code-org skill    | References deleted files (grub.cfg)            |
+| ✅ Done  | 2.2 Fix source-code-org skill    | GRUB→UEFI, 30+ new headers added              |
 | 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
 | ✅ Done  | 1.1 Hardware constraint rules    | APIC-only, DMA-only, UEFI GOP, RCU           |
 | ✅ Done  | 1.2 Win32 API surface rule       | Win32 native API, Windows paths, CPL applets   |
