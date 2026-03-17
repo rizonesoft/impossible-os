@@ -25,29 +25,26 @@ They said building a fully functional, feature-rich operating system from scratc
 - **Multi-resolution icon system** — IRES packed icon format with 9 sizes (16px–256px)
 - **Adwaita cursors** — animated cursor support with 11 cursor types
 
-## Build Requirements
-
-- Ubuntu 24.04 (WSL 2 recommended)
-- Cross-compiler: `x86_64-elf-gcc` and `x86_64-elf-ld`
-- NASM assembler
-- `mtools` and `dosfstools` (for FAT32 EFI partition)
-- QEMU + OVMF (for UEFI testing)
-- Python 3 (for asset conversion tools)
-
-## Quick Start
+## Getting Started
 
 ```bash
-# Clean build (recommended)
-bash scripts/build.sh clean
+git clone https://github.com/rizonesoft/impossible-os.git
+cd impossible-os
+bash scripts/setup.sh          # Install deps + verify build
+bash scripts/build.sh run      # Boot in QEMU
+```
 
-# Incremental build
-bash scripts/build.sh
+> [!NOTE]
+> **Requires:** Ubuntu/Debian, Fedora, or Arch Linux (WSL 2 recommended on Windows).
+> `setup.sh` installs everything automatically: Clang-19, NASM, QEMU, OVMF, mtools, etc.
 
-# Build + launch QEMU
-bash scripts/build.sh run
+### Build commands
 
-# Clean build + QEMU
-bash scripts/build.sh clean run
+```bash
+bash scripts/build.sh          # Incremental build
+bash scripts/build.sh clean    # Clean build
+bash scripts/build.sh run      # Build + QEMU
+bash scripts/build.sh clean run  # Clean build + QEMU
 ```
 
 > [!NOTE]
@@ -58,7 +55,7 @@ bash scripts/build.sh clean run
 
 - **Fast loop:** `bash scripts/build.sh run` launches QEMU with OVMF UEFI firmware and AHCI
 - **Serial output:** Boot log written to `build/serial.log` (`-serial file:build/serial.log`)
-- **VirtualBox:** Use `scripts/run-vbox.bat` (Windows) or configure a 64-bit EFI VM manually
+- **VirtualBox:** Use `scripts/emulators/run-vbox.bat` (Windows) or configure a 64-bit EFI VM manually
 
 ## Architecture
 

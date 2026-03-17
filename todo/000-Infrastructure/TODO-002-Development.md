@@ -254,12 +254,12 @@ scripts/
 > - Colored output with ✓/·/✗ status indicators
 > - Prints version summary at the end (nasm, clang, qemu, python3)
 
-### 2.3 One-Command Setup
+### 2.3 One-Command Setup ✅
 
-**Prompt:** Create a top-level `scripts/setup.sh` that runs `setup-deps.sh` (§2.2) then `setup-toolchain.sh` (§2.1) in sequence. A new developer should be able to clone the repo, run `bash scripts/setup.sh`, and immediately build with `bash scripts/build.sh`. Add a "Getting Started" section to `README.md`. After completing all items, mark every item as `[x]`, and commit as `"tools: one-command dev environment setup"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/setup.sh` installs all deps then verifies with a clean build, and `README.md` has a "Getting Started" section. Run `bash scripts/setup.sh` and verify output. Fix any inconsistencies in the TODO items below.
 
-- [ ] Create `scripts/setup.sh` — runs `setup-deps.sh` + `setup-toolchain.sh`
-- [ ] Update `README.md` with "Getting Started" section:
+- [x] Create `scripts/setup.sh` — runs `setup-deps.sh` + verification build
+- [x] Update `README.md` with "Getting Started" section:
   ```
   git clone https://github.com/rizonesoft/impossible-os.git
   cd impossible-os
@@ -267,7 +267,14 @@ scripts/
   bash scripts/build.sh run
   ```
 - [ ] Test on fresh Ubuntu 22.04 WSL instance (clean slate)
-- [ ] Commit: `"tools: one-command dev environment setup"`
+- [x] Commit: `"tools: one-command dev environment setup"`
+
+> [!NOTE]
+> **One-command setup notes (2026-03-17):**
+> - No separate `setup-toolchain.sh` needed — Clang-19 installs via system packages (no cross-compiler build)
+> - `setup.sh` runs `setup-deps.sh` then does a verification `build.sh clean`
+> - README "Getting Started" replaced old "Build Requirements" + "Quick Start" sections
+> - Also fixed VirtualBox script path in README Testing section (`scripts/emulators/run-vbox.bat`)
 
 ---
 
@@ -284,9 +291,9 @@ scripts/
 
 ### 3.2 VirtualBox Test Runner
 
-**Prompt:** `scripts/run-vbox.ps1` exists but only works on Windows. Create a cross-platform `scripts/run-vbox.sh` for Linux/WSL that registers a VirtualBox VM with the correct settings (EFI boot, AHCI controller, 512 MB RAM, VGA adapter), attaches the ISO, and starts the VM. The script creates the VM if it doesn't exist and updates it if settings have changed. After completing all items, mark every item as `[x]`, run the script to verify, and commit as `"tools: cross-platform VirtualBox runner"`. Add notes directly in this TODO section.
+**Prompt:** `scripts/emulators/run-vbox.ps1` exists but only works on Windows. Create a cross-platform `scripts/emulators/run-vbox.sh` for Linux/WSL that registers a VirtualBox VM with the correct settings (EFI boot, AHCI controller, 512 MB RAM, VGA adapter), attaches the ISO, and starts the VM. The script creates the VM if it doesn't exist and updates it if settings have changed. After completing all items, mark every item as `[x]`, run the script to verify, and commit as `"tools: cross-platform VirtualBox runner"`. Add notes directly in this TODO section.
 
-- [ ] Create `scripts/run-vbox.sh`
+- [ ] Create `scripts/emulators/run-vbox.sh`
 - [ ] Check if VBoxManage is available
 - [ ] Create/update VM: `ImpossibleOS-Dev` with EFI, AHCI, 512 MB RAM
 - [ ] Attach `build/os-build.iso` as DVD
@@ -316,23 +323,23 @@ scripts/
 
 ### 4.1 USB Write Script ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/write-usb.ps1` creates a GPT-partitioned USB drive with an EFI System Partition (FAT32), a system partition (FAT32), and a logs partition (FAT32). Run on a test USB drive and verify all partitions are created correctly.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/deploy/write-usb.ps1` creates a GPT-partitioned USB drive with an EFI System Partition (FAT32), a system partition (FAT32), and a logs partition (FAT32). Run on a test USB drive and verify all partitions are created correctly.
 
-- [x] `scripts/write-usb.ps1` — write ISO to USB drive (Windows/PowerShell)
-- [x] `scripts/write-usb.bat` — wrapper for PowerShell script
+- [x] `scripts/deploy/write-usb.ps1` — write ISO to USB drive (Windows/PowerShell)
+- [x] `scripts/deploy/write-usb.bat` — wrapper for PowerShell script
 - [x] GPT partition layout: EFI (FAT32) + System (FAT32) + Logs (FAT32)
 - [x] Auto-detect USB drive letter
 - [x] Safety prompts before write
 
 ### 4.2 USB Write Script (Linux)
 
-**Prompt:** Create `scripts/write-usb.sh` for Linux/WSL that performs the same USB write operation as `write-usb.ps1`. Uses `parted` for partition table creation and `mkfs.fat` for FAT32 formatting. The script must: detect removable USB drives with `lsblk`, show them to the user, require explicit confirmation before writing, create GPT partition layout matching the Windows script. After completing all items, mark every item as `[x]`, and commit as `"tools: Linux USB write script"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/deploy/write-usb.sh` for Linux/WSL that performs the same USB write operation as `scripts/deploy/write-usb.ps1`. Uses `parted` for partition table creation and `mkfs.fat` for FAT32 formatting. The script must: detect removable USB drives with `lsblk`, show them to the user, require explicit confirmation before writing, create GPT partition layout matching the Windows script. After completing all items, mark every item as `[x]`, and commit as `"tools: Linux USB write script"`. Add notes directly in this TODO section.
 
 > [!CAUTION]
 > **Safety:** This script writes to raw block devices. Triple-check the target device.
 > Never auto-detect and write without user confirmation.
 
-- [ ] Create `scripts/write-usb.sh`
+- [ ] Create `scripts/deploy/write-usb.sh`
 - [ ] List removable USB devices: `lsblk --json --output NAME,SIZE,TRAN,RM`
 - [ ] User selects device (e.g., `/dev/sdb`)
 - [ ] Confirmation prompt: "This will ERASE /dev/sdb (32GB SanDisk). Type YES to continue."
@@ -608,7 +615,7 @@ scripts/
 | 🟠 P1     | 6.5 clangd + Bear                 | Deep code intelligence — requires §2.1 Clang first       |
 | ✅ Done   | 1.3 Parallel Build                | Build speed — 2.5× faster with -j12                     |
 | ✅ Done   | 1.5 Scripts Directory Organization| Daily scripts at root, secondary in subdirs              |
-| 🟡 P2     | 2.3 One-Command Setup             | After §2.1 + §2.2                                        |
+| ✅ Done   | 2.3 One-Command Setup             | After §2.1 + §2.2                                        |
 | 🟡 P2     | 5.1 Unit Test Framework           | Foundation for systematic testing                        |
 | 🟡 P2     | 5.4 Filesystem Test Suite         | Validates FS drivers against real disk images            |
 | 🟡 P2     | 7.1 Asset Pipeline                | Consolidates scattered asset build steps                 |
@@ -635,13 +642,13 @@ scripts/
 | `scripts/build.sh`                  | [EXISTS] Core build script               |
 | `scripts/run-qemu.sh`              | [EXISTS] QEMU launcher                   |
 | `scripts/debug.sh`                  | [EXISTS] GDB debug launcher              |
-| `scripts/write-usb.ps1`             | [EXISTS] USB write (Windows)             |
+| `scripts/deploy/write-usb.ps1`      | [EXISTS] USB write (Windows)             |
 | `scripts/setup-toolchain.sh`        | [NEW] Cross-compiler bootstrap           |
 | `scripts/setup-deps.sh`             | [NEW] System dependency installer        |
 | `scripts/setup.sh`                  | [NEW] One-command setup                  |
-| `scripts/run-vbox.sh`               | [NEW] VirtualBox launcher (Linux)        |
+| `scripts/emulators/run-vbox.sh`     | [NEW] VirtualBox launcher (Linux)        |
 | `scripts/run-hyperv.ps1`            | [NEW] Hyper-V Gen 2 launcher             |
-| `scripts/write-usb.sh`              | [NEW] USB write (Linux)                  |
+| `scripts/deploy/write-usb.sh`       | [NEW] USB write (Linux)                  |
 | `scripts/read-usb-log.sh`           | [NEW] USB log reader                     |
 | `scripts/test-smoke.sh`             | [NEW] Automated smoke test               |
 | `scripts/test-fs.sh`                | [NEW] Filesystem test suite              |
