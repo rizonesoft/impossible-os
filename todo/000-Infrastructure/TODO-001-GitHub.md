@@ -102,9 +102,9 @@
 
 **Prompt:** Ensure the `LICENSE` file at repo root is correct and matches the project's chosen license. If the repo already has a LICENSE file, verify its contents. After completing, mark as `[x]`.
 
-- [ ] Verify `LICENSE` file exists and is correct
-- [ ] Add SPDX identifier to `README.md` badge
-- [ ] Commit if changed: `"docs: verify LICENSE file"`
+- [x] Verify `LICENSE` file exists and is correct — ✅ GPL-3.0 (changed from MIT in commit `474abac`)
+- [x] Add SPDX identifier to `README.md` badge — ✅ `GPL-3.0` badge already present
+- [x] Commit if changed: `"docs: verify LICENSE file"` — already committed as `"license: change from MIT to GPL-3.0"`
 
 ### 2.4 Create CONTRIBUTING.md *(agent)*
 
