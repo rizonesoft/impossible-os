@@ -212,7 +212,7 @@
   - [ ] Build: `bash scripts/build.sh clean`
   - [ ] Verify: `tail -1 build/build.log` = `=== BUILD OK ===`
   - [ ] *(After §5.3)* Smoke test: `bash scripts/test-smoke.sh`
-  - [ ] Upload `build/os-build.iso` as build artifact (downloadable from Actions tab)
+  - [ ] Upload `build/system-disk.img` as build artifact (downloadable from Actions tab)
 - [ ] Expected runtime: < 5 minutes
 - [ ] Commit: `"ci: build and smoke test on push"`
 
@@ -225,7 +225,7 @@
 > in the kernel binary before releases are meaningful.
 
 - [ ] Create `.github/workflows/release.yml`
-- [ ] Trigger: `push` with tag matching `v*` (e.g., `v0.1.0`)
+- [ ] Trigger: `push` with tag matching `v*` (e.g., `v26.3.18`)
 - [ ] Steps:
   - [ ] Checkout with full history (`fetch-depth: 0`)
   - [ ] Install build dependencies
@@ -233,11 +233,11 @@
   - [ ] Verify: `tail -1 build/build.log` = `=== BUILD OK ===`
   - [ ] Generate changelog: `bash scripts/generate-changelog.sh` (§3.2)
   - [ ] Create GitHub Release:
-    - [ ] Title: `Impossible OS v0.1.0`
+    - [ ] Title: `Impossible OS v26.3.18`
     - [ ] Body: auto-generated changelog
-    - [ ] Assets: `build/os-build.iso`, `build/build.log`
+    - [ ] Assets: `build/system-disk.img`, `build/build.log`
     - [ ] Mark as pre-release if tag contains `-alpha`, `-beta`, or `-rc`
-- [ ] Test: push `v0.0.1-test` tag → release appears with ISO attached
+- [ ] Test: push `v26.3.18-test` tag → release appears with disk image attached
 - [ ] Commit: `"ci: automated release build and ISO publish"`
 
 ### 4.3 Stale Issue Cleanup *(agent)*
