@@ -11,3 +11,7 @@ CompileFlags:
 
 Index:
   Background: Build
+
+Diagnostics:
+  UnusedIncludes: None
+  MissingIncludes: None

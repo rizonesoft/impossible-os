@@ -331,53 +331,105 @@
 > - For now, agents rely on inline comments referencing manual sections
 >   (e.g., `/* Intel SDM Vol 3A, §10.5.1 — LAPIC timer LVT */`)
 
-### 5.2 clangd MCP Server *(flawless C code manipulation)*
+### 5.2 Srclight MCP Server *(AST-aware code intelligence for agents)*
 
-**Prompt:** Wire clangd as an MCP server in Antigravity so the AI agent gets byte-accurate C/C++ symbol resolution, go-to-definition, and diagnostics directly in the agent context. This requires `compile_commands.json` from Phase 2 (`TODO-002 §6.5`). After completing all items, mark every item as `[x]`, and commit as `"agent: clangd MCP server"`. Add notes directly in this TODO section.
+**Prompt:** Set up Srclight as an MCP server in Antigravity so AI agents get AST-aware code intelligence — 25 specialized tools including `get_callers`, `codebase_map`, and FTS5 hybrid search — without burning tool calls on grep. Srclight runs entirely locally, building a Tree-sitter AST + SQLite knowledge graph of the codebase. After completing all items, mark every item as `[x]`, and commit as `"agent: Srclight MCP server"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
-> → XREF: `TODO-002 §2.1` — Clang/LLD migration must be complete first (Phase 1).
-> → XREF: `TODO-002 §6.5` — Bear + `.clangd` config must be set up first (Phase 2).
-> The `compile_commands.json` must exist at the repo root before this MCP server works.
+> Srclight replaces the original "clangd MCP" plan from this section. clangd is an
+> LSP server (not MCP) and is already integrated natively via the IDE. Srclight fills
+> the agent-facing knowledge gap: structural code queries, caller/callee graphs,
+> symbol search, and optional GPU-accelerated semantic search via Ollama embeddings.
 
-**Step 1: Add the clangd MCP server entry** *(manual — developer configures IDE)*
+> [!NOTE]
+> **Requirements:**
+> - Python 3.11+ and Git
+> - (Optional) Ollama running locally for GPU-accelerated semantic search
+> - Srclight indexes into a local SQLite database — no cloud accounts needed
 
-- [ ] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
-- [ ] Add this server entry to the `mcpServers` object:
+**Step 1: Install and initialize Srclight** *(manual — developer runs in terminal)* ✅
+
+- [x] Install the package:
+  ```bash
+  pipx install srclight   # pipx for Ubuntu 24.04+ (PEP 668)
+  ```
+- [x] Create a global workspace for your projects:
+  ```bash
+  srclight workspace init dev-workspace
+  ```
+- [x] Add the Impossible OS repository to the workspace:
+  ```bash
+  srclight workspace add /home/derickpayne/impossible-os -w dev-workspace
+  ```
+- [x] Run the initial indexing (Tree-sitter AST parsing → SQLite knowledge graph):
+  ```bash
+  srclight workspace index -w dev-workspace
+  ```
+
+> [!NOTE]
+> **Indexing results (2026-03-17):**
+> - Srclight v0.8.1 installed via `pipx` (Python 3.12.3)
+> - Workspace: `~/.srclight/workspaces/dev-workspace.json`
+> - Indexed **220 files**, **5,432 symbols**, **5,362 edges** in 4.9s
+> - SQLite DB size: **11.43 MB**
+
+**Step 2: Configure Antigravity** *(manual — developer configures IDE)* ✅
+
+- [x] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
+- [x] Add the Srclight MCP server entry:
   ```json
-  "impossible-os-clangd": {
-    "command": "clangd",
-    "args": [
-      "--background-index",
-      "--compile-commands-dir=.",
-      "--log=error"
-    ]
+  {
+    "mcpServers": {
+      "srclight": {
+        "command": "srclight",
+        "args": [
+          "serve",
+          "--transport", "stdio",
+          "--workspace", "dev-workspace"
+        ]
+      }
+    }
   }
   ```
-- [ ] Save and refresh the MCP panel
+- [x] If `srclight` is not in `$PATH`, use the absolute path to the binary in `"command"`
+- [x] Save and refresh the MCP panel
 
-**Step 2: Verify** *(manual)*
+**Step 3: Verify** *(manual)* ✅
 
-- [ ] Verify the MCP panel shows `impossible-os-clangd` as connected
-- [ ] Tell the agent: "Use clangd to find all callers of `printk`" → accurate results
-- [ ] Tell the agent: "What fields does `struct boot_info` have?" → correct answer from source
-- [ ] Commit: `"agent: clangd MCP server"`
+- [x] Confirm Srclight appears in the MCP Servers list with active tools
+- [x] Test in a new agent session:
+  - `codebase_map()` → 220 files, 5,385 symbols, 5,362 edges ✅
+  - `search_symbols("kernel_main")` → found in `src/kernel/main.c` ✅
+  - `get_callers()` → functional (requires `project="impossible-os"` in workspace mode) ✅
+- [x] Verify: Git hooks auto-reindex on commit/branch switch (no manual re-indexing needed)
+- [x] Commit: `"agent: Srclight MCP server"`
 
-### 5.3 Gemini Semantic Search *(AI-powered codebase context)*
+> [!TIP]
+> Srclight uses Git hooks for auto-reindexing — the SQLite database stays synced
+> in the background as you commit code or switch branches. No manual re-indexing needed.
 
-**Prompt:** Set up Gemini-powered semantic search over the entire Impossible OS codebase using the `@zilliz/claude-context-mcp` package. Despite the name, this package natively maps to the Gemini API for vector embeddings via `text-embedding-004`. The codebase is converted into vector embeddings and stored in a Zilliz Cloud serverless cluster, enabling natural-language queries like "how does the bootloader pass the memory map to the kernel" — the agent gets semantically relevant code snippets as context. This is the ultimate dual-indexer: **clangd for C code manipulation, Gemini for architecture-level search**. After completing all items, mark every item as `[x]`, and commit as `"agent: Gemini semantic search MCP"`. Add notes directly in this TODO section.
+### 5.3 Gemini Semantic Search *(AI-powered codebase context)* — ⏸️ Deferred
+
+**Status:** Deferred — requires external account setup (Zilliz Cloud) and API key configuration.
 
 > [!IMPORTANT]
 > → XREF: `TODO-002 §2.1` — Clang migration (Phase 1) must be complete.
 > → XREF: `TODO-002 §6.5` — clangd + Bear (Phase 2) must be operational.
-> → XREF: `TODO-003 §5.2` — clangd MCP (this file) should be configured first.
-> This is Phase 3 — the final layer of the intelligence pipeline.
+
+> [!WARNING]
+> **Corrected requirements (2026-03-17):**
+> The `@zilliz/claude-context-mcp` package **defaults to OpenAI embeddings**
+> (`text-embedding-3-small`), NOT Gemini. To use Gemini embeddings instead,
+> you MUST set `EMBEDDING_PROVIDER=gemini` explicitly. Without this, the server
+> crashes with `OPENAI_API_KEY is required`. Also, clangd is NOT an MCP server
+> (see §5.2) — it's a native LSP server already integrated via the IDE.
 
 > [!NOTE]
-> **Requirements:**
-> - A **Gemini API key** (the only API key needed — no OpenAI or Anthropic required)
-> - A free **Zilliz Cloud** serverless cluster (vector database for embeddings)
-> - The `compile_commands.json` from Phase 2 (for accurate indexing)
+> **Actual requirements:**
+> - `EMBEDDING_PROVIDER=gemini` — **must be set explicitly** (defaults to OpenAI otherwise)
+> - A **Gemini API key** via `GEMINI_API_KEY` env var
+> - `EMBEDDING_MODEL=text-embedding-004` — Gemini embedding model
+> - A free **Zilliz Cloud** serverless cluster (`MILVUS_ADDRESS` + `MILVUS_TOKEN`)
 
 **Step 1: Create Zilliz Cloud vector database** *(manual — developer sets up cloud account)*
 
@@ -388,25 +440,18 @@
   - `MILVUS_TOKEN` — the API token for authentication
 - [ ] Store these securely (do NOT commit to the repo)
 
-**Step 2: Configure the unified MCP server JSON** *(manual — developer configures IDE)*
+**Step 2: Configure the MCP server JSON** *(manual — developer configures IDE)*
 
 - [ ] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
-- [ ] Paste the **complete unified MCP configuration** (combines clangd from §5.2 + semantic search):
+- [ ] Add the semantic search MCP server:
   ```json
   {
     "mcpServers": {
-      "impossible-os-clangd": {
-        "command": "clangd",
-        "args": [
-          "--background-index",
-          "--compile-commands-dir=.",
-          "--log=error"
-        ]
-      },
       "semantic-context": {
         "command": "npx",
         "args": ["-y", "@zilliz/claude-context-mcp@latest"],
         "env": {
+          "EMBEDDING_PROVIDER": "gemini",
           "GEMINI_API_KEY": "<Your-Gemini-API-Key>",
           "EMBEDDING_MODEL": "text-embedding-004",
           "MILVUS_ADDRESS": "<Your-Zilliz-Cluster-URL>",
@@ -416,29 +461,23 @@
     }
   }
   ```
-- [ ] Replace `<Your-Gemini-API-Key>` with your actual Gemini API key
-- [ ] Replace `<Your-Zilliz-Cluster-URL>` with your Zilliz cluster endpoint
-- [ ] Replace `<Your-Zilliz-Token>` with your Zilliz API token
+- [ ] Replace all `<placeholder>` values with actual credentials
 - [ ] Save and refresh the MCP panel
+- [ ] Verify: MCP panel shows `semantic-context` as connected (no OpenAI errors)
 
 **Step 3: Index the entire workspace** *(manual — developer triggers via agent prompt)*
 
-- [ ] After saving the MCP config, tell the Antigravity agent:
-  > _"Use your semantic context tool to index this entire workspace. Ensure you
-  > explicitly include all `.c`, `.h`, `.asm`, `.ld`, and `.sh` files."_
-- [ ] Wait for the indexing to complete (converts codebase into Gemini vector embeddings)
+- [ ] Tell the agent: "Use your semantic context tool to index this entire workspace"
+- [ ] Wait for indexing to complete (Gemini `text-embedding-004` vector embeddings)
 - [ ] Verify the Zilliz Cloud dashboard shows indexed documents
 
-**Step 4: Verify the dual-indexer pipeline** *(manual)*
+**Step 4: Verify semantic search** *(manual)*
 
-- [ ] Test **clangd** (exact code manipulation):
-  - Ask: "What are the fields of `struct vfs_node`?" → exact struct definition from C source
-  - Ask: "Find all callers of `blkdev_read()`" → precise call sites with line numbers
-- [ ] Test **semantic search** (architecture-level understanding):
-  - Ask: "How does the bootloader pass the memory map to the kernel?" → relevant code snippets from `bootx64.c`, `kernel_main`, and `boot_info` struct
-  - Ask: "What happens during the SMP bring-up sequence?" → finds `smp.asm`, `smp.c`, trampoline code
-  - Ask: "How does the compositor avoid flickering during window drags?" → finds dirty rect tracker, `fb_swap_rect()`, preemption guards
-- [ ] Verify: no hallucinated function names or incorrect register offsets
+- [ ] Test semantic queries:
+  - Ask: "How does the bootloader pass the memory map to the kernel?"
+  - Ask: "What happens during the SMP bring-up sequence?"
+  - Ask: "How does the compositor avoid flickering during window drags?"
+- [ ] Verify: results return relevant code snippets, no hallucinated functions
 - [ ] Commit: `"agent: Gemini semantic search MCP"`
 
 ---
