@@ -1,5 +1,6 @@
 @echo off
-:: write-usb.bat — Write Impossible OS to a USB flash drive
+:: write-usb-debug.bat — Write Impossible OS to USB with debug boot enabled
+:: Splash screen disabled, live text output on screen
 :: Right-click -> "Run as administrator"
 
 :: Elevate to admin if not already
@@ -10,5 +11,5 @@ if %errorlevel% neq 0 (
     exit /b
 )
 
-powershell.exe -ExecutionPolicy Bypass -File "%~dp0write-usb.ps1"
+powershell.exe -ExecutionPolicy Bypass -File "%~dp0write-usb.ps1" -DebugBoot
 pause
