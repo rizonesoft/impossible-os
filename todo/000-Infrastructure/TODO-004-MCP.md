@@ -1,141 +1,14 @@
 # TODO-004 — MCP Server Setup
 
 > **Goal:** Install and configure two additional MCP servers for Antigravity:
-> - **mjm.local.docs** — semantic document search for hardware specs and project docs
 > - **@modelcontextprotocol/server-memory** — persistent knowledge graph memory for agents
+> - **@modelcontextprotocol/server-filesystem** — controlled filesystem access for agents
 >
 > → XREF: `TODO-003-Antigravity.md §5` — MCP server ecosystem (Srclight already configured)
 
 ---
 
-## 1. mjm.local.docs — Local Document Search Server
-
-> [!NOTE]
-> **What:** Self-hosted semantic document search with MCP interface.
-> Agents can search, read, and manage documentation via `search_docs`, `add_document`, etc.
-> Built with .NET 10, runs locally, supports PDF/DOCX/Markdown/TXT ingestion.
-> **GitHub:** https://github.com/markjackmilian/mjm.local.docs
-> **License:** MIT
-
-### 1.1 Prerequisites
-
-- [ ] Verify .NET 10 SDK is installed: `dotnet --version` → must show `10.x`
-- [ ] If not installed: `sudo apt-get install -y dotnet-sdk-10.0`
-- [ ] Verify git is available: `git --version`
-
-### 1.2 Clone and Build
-
-- [ ] Clone the repository:
-  ```bash
-  cd ~/tools
-  git clone https://github.com/markjackmilian/mjm.local.docs.git
-  cd mjm.local.docs
-  ```
-- [ ] Build the project:
-  ```bash
-  dotnet build src/Mjm.LocalDocs.Server/Mjm.LocalDocs.Server.csproj
-  ```
-- [ ] Verify build succeeds with no errors
-
-### 1.3 Configure Embedding Provider
-
-> [!IMPORTANT]
-> The default `Fake` embedding provider is usable for testing but provides no real
-> semantic search. For production use, configure one of the real providers below.
-
-- [ ] Choose embedding provider:
-  - **Fake** (default) — no API key needed, no real semantic search
-  - **Ollama** — free, local, private (recommended for offline use)
-  - **OpenAI** — `text-embedding-3-small`, requires `OPENAI_API_KEY`
-- [ ] Edit `src/Mjm.LocalDocs.Server/appsettings.json`:
-  ```json
-  {
-    "ConnectionStrings": {
-      "LocalDocs": "Data Source=localdocs.db"
-    },
-    "LocalDocs": {
-      "Embeddings": {
-        "Provider": "Ollama",
-        "Dimension": 768
-      },
-      "Storage": {
-        "Provider": "Sqlite"
-      }
-    }
-  }
-  ```
-- [ ] If using OpenAI: set environment variable `OPENAI_API_KEY`
-- [ ] If using Ollama: ensure Ollama is running locally (`ollama serve`)
-
-### 1.4 Start the Server
-
-- [ ] Run the server:
-  ```bash
-  dotnet run --project src/Mjm.LocalDocs.Server/Mjm.LocalDocs.Server.csproj
-  ```
-- [ ] Verify web UI loads at: http://localhost:5024
-- [ ] Verify MCP endpoint responds at: http://localhost:5024/mcp
-
-### 1.5 Ingest Impossible OS Specs
-
-- [ ] Upload spec documents via web UI or MCP tools:
-  - `specs/pci-3.0.md` — PCI Local Bus Specification
-  - `specs/ahci-1.3.1.md` — AHCI Specification
-  - (any future specs added to `specs/` directory)
-- [ ] Verify: search for "AHCI command list structure" returns relevant results
-- [ ] Verify: search for "PCI configuration space" returns relevant results
-
-### 1.6 Configure Antigravity MCP
-
-- [ ] Add to Antigravity's MCP config (Agent Manager → MCP Servers → View raw config):
-  ```json
-  {
-    "mcpServers": {
-      "local-docs": {
-        "type": "http",
-        "url": "http://localhost:5024/mcp"
-      }
-    }
-  }
-  ```
-- [ ] Save and refresh MCP panel
-- [ ] Verify: `local-docs` appears in MCP Servers list with tools:
-  - `search_docs` — semantic search across documents
-  - `add_document` — ingest new documents
-  - `update_document` — modify existing documents
-  - `list_collections` — list document collections
-  - `delete_document` — remove documents
-
-### 1.7 Create Systemd Service *(optional)*
-
-> [!NOTE]
-> For persistent background operation, set up a systemd user service
-> so the server starts automatically.
-
-- [ ] Create `~/.config/systemd/user/mjm-local-docs.service`:
-  ```ini
-  [Unit]
-  Description=mjm.local.docs MCP Server
-  After=network.target
-
-  [Service]
-  Type=simple
-  WorkingDirectory=%h/tools/mjm.local.docs
-  ExecStart=/usr/bin/dotnet run --project src/Mjm.LocalDocs.Server/Mjm.LocalDocs.Server.csproj
-  Restart=on-failure
-  Environment=ASPNETCORE_URLS=http://localhost:5024
-
-  [Install]
-  WantedBy=default.target
-  ```
-- [ ] Enable and start: `systemctl --user enable --now mjm-local-docs`
-- [ ] Verify: `systemctl --user status mjm-local-docs` shows active
-
-- [ ] Commit: `"agent: configure mjm.local.docs MCP server"`
-
----
-
-## 2. @modelcontextprotocol/server-memory — Knowledge Graph Memory
+## 1. @modelcontextprotocol/server-memory — Knowledge Graph Memory
 
 > [!NOTE]
 > **What:** Persistent knowledge graph that stores entities, relations, and observations.
@@ -145,13 +18,13 @@
 > **Transport:** stdio (npx)
 > **Storage:** JSONL file (configurable path)
 
-### 2.1 Prerequisites
+### 1.1 Prerequisites
 
 - [ ] Verify Node.js is installed: `node --version` → must show `v18+`
 - [ ] If not installed: `sudo apt-get install -y nodejs npm`
 - [ ] Verify npx is available: `npx --version`
 
-### 2.2 Test Server Launch
+### 1.2 Test Server Launch
 
 - [ ] Verify the server runs:
   ```bash
@@ -159,7 +32,7 @@
   ```
 - [ ] Confirm no npm errors or missing dependencies
 
-### 2.3 Choose Memory File Location
+### 1.3 Choose Memory File Location
 
 - [ ] Decide where to store the knowledge graph:
   - **Project-local:** `~/impossible-os/.memory/memory.jsonl` (gitignored, project-specific)
@@ -170,7 +43,7 @@
   ```
 - [ ] Add `.memory/` to `.gitignore` (if using project-local)
 
-### 2.4 Configure Antigravity MCP
+### 1.4 Configure Antigravity MCP
 
 - [ ] Add to Antigravity's MCP config (Agent Manager → MCP Servers → View raw config):
   ```json
@@ -201,7 +74,7 @@
   - `search_nodes` — search for entities by name or observation
   - `open_nodes` — retrieve specific entities by name
 
-### 2.5 Test Memory Operations
+### 1.5 Test Memory Operations
 
 - [ ] Test entity creation — agent creates a test entity:
   ```
@@ -217,7 +90,7 @@
 - [ ] Verify: `read_graph` returns all entities and relations
 - [ ] Clean up test data or keep as seed knowledge
 
-### 2.6 Seed Initial Knowledge *(optional)*
+### 1.6 Seed Initial Knowledge *(optional)*
 
 > [!NOTE]
 > Pre-populate the knowledge graph with key project facts so agents
@@ -242,16 +115,89 @@
 
 ---
 
+## 2. @modelcontextprotocol/server-filesystem — Filesystem Access
+
+> [!NOTE]
+> **What:** Controlled filesystem access for agents — read, write, edit, search, and
+> list files within explicitly allowed directories. Agents can only access paths
+> specified in the configuration.
+> **GitHub:** https://github.com/modelcontextprotocol/servers/tree/main/src/filesystem
+> **Transport:** stdio (npx)
+
+### 2.1 Prerequisites
+
+- [ ] Verify Node.js is installed: `node --version` → must show `v18+`
+- [ ] Verify npx is available: `npx --version`
+
+### 2.2 Decide Allowed Directories
+
+> [!IMPORTANT]
+> The filesystem server ONLY allows access to directories explicitly listed in args.
+> Agents cannot escape these sandboxed paths. Choose carefully.
+
+- [ ] Determine which directories agents should access:
+  - `/home/derickpayne/impossible-os` — the project root (required)
+  - `/home/derickpayne/impossible-os/specs` — hardware spec documents
+  - `/home/derickpayne/impossible-os/docs` — project documentation
+  - *(add other paths as needed)*
+
+### 2.3 Configure Antigravity MCP
+
+- [ ] Add to Antigravity's MCP config (Agent Manager → MCP Servers → View raw config):
+  ```json
+  {
+    "mcpServers": {
+      "filesystem": {
+        "command": "npx",
+        "args": [
+          "-y",
+          "@modelcontextprotocol/server-filesystem",
+          "/home/derickpayne/impossible-os"
+        ]
+      }
+    }
+  }
+  ```
+- [ ] Save and refresh MCP panel
+- [ ] Verify: `filesystem` appears in MCP Servers list with tools:
+  - `read_text_file` — read file contents (supports head/tail)
+  - `read_media_file` — read images/audio as base64
+  - `read_multiple_files` — batch read multiple files
+  - `write_file` — create or overwrite files
+  - `edit_file` — selective edits with pattern matching and diff preview
+  - `create_directory` — create directories (with parents)
+  - `list_directory` — list files/dirs with type prefixes
+  - `list_directory_with_sizes` — list with file sizes and sorting
+  - `move_file` — move or rename files/directories
+  - `search_files` — recursive file search by name pattern
+  - `get_file_info` — file metadata (size, timestamps, permissions)
+  - `list_allowed_directories` — show configured sandboxed paths
+
+### 2.4 Test Filesystem Operations
+
+- [ ] Test read: agent reads `include/kernel/boot_info.h`
+  - Should return file contents
+- [ ] Test list: agent lists `src/kernel/` directory
+  - Should show files with `[FILE]`/`[DIR]` prefixes
+- [ ] Test search: agent searches for files matching `*.h` in `include/`
+  - Should return header files
+- [ ] Test boundary: agent attempts to read `/etc/passwd`
+  - Should fail with access denied (outside allowed directories)
+
+- [ ] Commit: `"agent: configure server-filesystem MCP"`
+
+---
+
 ## 3. Verification — All MCP Servers Active
 
 - [ ] Verify all 3 MCP servers appear in Antigravity:
-  | Server | Transport | Status |
+  | Server | Transport | Purpose |
   |---|---|---|
-  | `srclight` | stdio | ✅ Active |
-  | `local-docs` | HTTP | ✅ Active |
-  | `memory` | stdio | ✅ Active |
+  | `srclight` | stdio | AST-aware code intelligence |
+  | `memory` | stdio | Persistent knowledge graph |
+  | `filesystem` | stdio | Sandboxed file access |
 - [ ] Test combined workflow:
-  1. Agent searches docs via `local-docs` → finds AHCI spec
-  2. Agent stores finding in `memory` → creates entity
-  3. Agent searches code via `srclight` → finds AHCI driver implementation
+  1. Agent searches code via `srclight` → finds AHCI driver
+  2. Agent reads file via `filesystem` → gets full source
+  3. Agent stores finding in `memory` → creates entity for future reference
 - [ ] Commit: `"agent: verify all MCP servers operational"`
