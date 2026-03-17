@@ -84,6 +84,12 @@
 
 ### 1.3 Live Flush Mode (Per-Entry Write)
 
+> [!IMPORTANT]
+> → XREF: `TODO-040-Filesystem.md §3.4.1 Offset-Aware Write (Append Support)` — **complete this
+> FIRST.** Without FAT32 append support, every live flush rewrites the entire growing log file
+> from scratch (full-file overwrite). After §3.4.1 is done, live flush becomes a simple append
+> of ~100 bytes instead of a rewrite of the entire buffer. This is the #1 performance bottleneck.
+
 **Prompt:** When debug mode is active, every `klog()` entry must be flushed to disk immediately so that even a boot hang leaves the last log line on disk. The current implementation in `klog_live.c` rewrites the entire file on every entry (FAT32 full-file overwrite limitation). Optimise this: use a PMM-backed growing buffer, and only flush every N entries or at explicit flush points. Since FAT32 can't append, each flush must rewrite the entire file — but batching reduces I/O cost. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: optimized live flush with batching"`. Add notes directly in this TODO section.
 
 - [ ] Live mode: flush every 5 entries (configurable) or at explicit `klog_disk_flush()` calls
@@ -294,6 +300,7 @@
 
 | This TODO Section | Depends On | Other TODO File |
 |-------------------|-----------|-----------------|
+| §1.3 Live Flush Mode | §3.4.1 FAT32 Offset-Aware Write | `TODO-040-Filesystem.md` |
 | §2.1 Boot Config File | §7.1 Boot Config File | `TODO-010-Bootloader.md` |
 | §2.2 Verbose Mode | §7.1 Boot Config File | `TODO-010-Bootloader.md` |
 | §2.3 Remove grub.cfg | §1 Custom UEFI Bootloader | `TODO-010-Bootloader.md` |

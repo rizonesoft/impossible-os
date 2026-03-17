@@ -188,6 +188,132 @@
 - [x] Test: create file on FAT32, reboot, verify file persists
 - [x] Commit: `"fs: FAT32 VFS integration"`
 
+### 3.4 FAT32 Driver Improvements
+
+> **Current state (2026-03-17):** The FAT32 write implementation (`fat32_write_file`) uses
+> **overwrite mode** — it truncates the file and rewrites all data from scratch on every call.
+> The VFS `write` callback ignores the `offset` parameter. This means:
+> - No append support — every write rewrites the entire file
+> - Live debug logging (TODO-002-Debug §1.3) rewrites a growing buffer on each entry
+> - File copy operations can't write in chunks — must buffer entire file in memory
+> - No partial writes — can't update specific bytes within a file
+
+> [!IMPORTANT]
+> → XREF: `TODO-002-Debug.md §1.3 Live Flush Mode` — the debug logging system's
+> performance depends entirely on fixing FAT32 append support. This is the **#1 blocker**
+> for efficient live logging on real hardware via the X: partition.
+
+#### 3.4.1 Offset-Aware Write (Append Support)
+
+**Prompt:** The current `fat32_write_file()` truncates the entire file and writes from scratch. Implement proper offset-aware writing: given an offset and length, walk the FAT cluster chain to find the correct cluster and byte position, write data in-place for existing clusters, and allocate new clusters when the write extends past EOF. Update the file size in the directory entry if the file grew. This is the most critical FAT32 fix — it enables efficient append-mode logging and chunked file copies. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: offset-aware write with append support"`. Add notes directly in this TODO section.
+
+- [ ] Modify `fat32_vfs_write(node, offset, size, buffer)` to respect the `offset` parameter
+- [ ] Walk FAT cluster chain to find cluster containing `offset` byte
+- [ ] Calculate: `cluster_index = offset / bytes_per_cluster`, `byte_within_cluster = offset % bytes_per_cluster`
+- [ ] Write data into existing clusters (partial cluster writes: read-modify-write sector)
+- [ ] If write extends past current file size: allocate new clusters via `fat32_alloc_cluster()`
+- [ ] Link new clusters into the FAT chain (update FAT entries)
+- [ ] Update directory entry `file_size` if file grew
+- [ ] Flush both FAT copies to disk after chain modification
+- [ ] Handle edge case: writing at offset > file_size (fill gap with zeros — sparse-like)
+- [ ] Test: create file, write 100 bytes at offset 0, append 100 bytes at offset 100, verify 200 bytes total
+- [ ] Test: write 5000 bytes (multi-cluster) to verify cluster chain extension
+- [ ] Commit: `"fat32: offset-aware write with append support"`
+
+#### 3.4.2 Cluster Chain Extension & Free Cluster Hint
+
+**Prompt:** The current free cluster search starts from cluster 2 every time, making allocation O(n) where n is total clusters. Implement a free cluster hint: store the last-allocated cluster number and start searching from there. Also implement the FSInfo sector (sector 1 on FAT32 volumes), which stores the free cluster count and next-free hint. Read FSInfo on mount, update on allocation/free. This matches the FAT32 specification and dramatically speeds up allocation on large volumes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: FSInfo sector + free cluster hint"`. Add notes directly in this TODO section.
+
+- [ ] Define `struct fat32_fsinfo` — signature `0x41615252`, free count, next free hint
+- [ ] Read FSInfo sector on mount (sector 1, or `bpb.fs_info_sector`)
+- [ ] Track `next_free_hint` in memory — start cluster search from there
+- [ ] Update FSInfo on disk after allocation/deallocation
+- [ ] Validate FSInfo on mount (signature check, sanity check free count vs FAT scan)
+- [ ] Fall back to full FAT scan if FSInfo is invalid
+- [ ] Commit: `"fat32: FSInfo sector + free cluster hint"`
+
+#### 3.4.3 Sector-Level Write Cache
+
+**Prompt:** The FAT32 driver currently reads/writes individual sectors directly to the block device for every operation. Implement a small sector cache (32–64 sectors, ~16–32KB) using LRU eviction with dirty tracking. FAT table sectors are read frequently during chain walks — caching them eliminates repeated disk I/O. Dirty sectors flush on `fat32_flush()`, file close, and unmount. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: sector-level write cache"`. Add notes directly in this TODO section.
+
+- [ ] Implement `fat32_cache_read(sector)` — return cached sector or read from disk
+- [ ] Implement `fat32_cache_write(sector, data)` — mark sector dirty in cache
+- [ ] Implement `fat32_cache_flush()` — write all dirty sectors to disk
+- [ ] LRU eviction: flush dirty sector before evicting
+- [ ] Always cache FAT sectors (hot path during chain walks)
+- [ ] Flush on: `fat32_flush()`, file close, unmount, every N writes
+- [ ] Commit: `"fat32: sector-level write cache"`
+
+#### 3.4.4 Multi-Volume Support (Remove Static Globals)
+
+**Prompt:** The FAT32 driver uses static globals (`bpb`, `fat32_dev`, `root_file`, `dir_files[]`, `sector_buf[]`), limiting it to one mounted FAT32 volume. Wrap all state in a `struct fat32_volume` and pass it through VFS `fs_data`. This enables mounting multiple FAT32 partitions simultaneously (e.g., X: logs + D: user data). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: multi-volume support"`. Add notes directly in this TODO section.
+
+- [ ] Define `struct fat32_volume` — contains `bpb`, `dev`, `root_node`, `cache`, `fsinfo`
+- [ ] Allocate per-volume via `kmalloc` on mount (small struct, OK for heap)
+- [ ] Store `fat32_volume*` in `vfs_mount->fs_data` / `vfs_node->fs_data`
+- [ ] Convert all functions to take `fat32_volume*` parameter instead of using globals
+- [ ] Remove static globals: `bpb`, `fat32_dev`, `root_file`, `dir_files[]`
+- [ ] Test: mount two FAT32 partitions simultaneously (X: + another)
+- [ ] Commit: `"fat32: multi-volume support"`
+
+#### 3.4.5 Concurrent Access Safety
+
+**Prompt:** With multi-tasking enabled, multiple threads could access the same FAT32 volume simultaneously (e.g., debug live-flush writing to X: while the shell reads from it). Add a per-volume spinlock or mutex that protects FAT table modifications and directory entry updates. Read operations can be concurrent if the sector cache has its own lock. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: concurrent access locking"`. Add notes directly in this TODO section.
+
+- [ ] Add `spinlock_t lock` to `struct fat32_volume`
+- [ ] Acquire lock on: write, create, delete, rename, truncate, FAT table modification
+- [ ] Release lock after operation completes and FAT/dir entry is flushed
+- [ ] Read-only operations (read, readdir, stat) can proceed without lock if cache has own lock
+- [ ] Prevent deadlock: never call `klog()` while holding FAT32 lock (reentrancy)
+- [ ] Commit: `"fat32: concurrent access locking"`
+
+#### 3.4.6 LFN Creation (Write Path)
+
+**Prompt:** The FAT32 driver can **read** Long File Names (LFN entries preceding the 8.3 entry) but **creates** files with 8.3 short names only. Implement LFN creation: when a filename doesn't fit in 8.3 format (too long, lowercase, spaces, special chars), generate LFN entries (type 0xC1, UTF-16LE, 13 chars per entry, reverse order) preceding the 8.3 basis name. Generate the 8.3 basis name with numeric tail (`FILENA~1`, `FILENA~2`, etc.) to avoid collisions. Compute the LFN checksum from the 8.3 name. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: LFN creation on write"`. Add notes directly in this TODO section.
+
+- [ ] Detect when filename requires LFN (lowercase, >8.3, spaces, Unicode)
+- [ ] Generate 8.3 basis name: uppercase, strip invalid chars, add `~N` numeric tail
+- [ ] Scan directory for ~N collisions, increment N until unique
+- [ ] Generate LFN entries: 13 UTF-16LE chars per entry, pad with 0xFFFF, null-terminate
+- [ ] Set LFN entry sequence numbers (1, 2, ... | 0x40 on last)
+- [ ] Compute 8.3 checksum: `sum = ((sum >> 1) | (sum << 7)) + name[i]` for all 11 bytes
+- [ ] Write LFN entries BEFORE the 8.3 entry (reverse order in directory)
+- [ ] Allocate additional directory clusters if directory is full
+- [ ] Commit: `"fat32: LFN creation on write"`
+
+#### 3.4.7 Timestamp Support (Read & Write)
+
+**Prompt:** FAT32 stores timestamps in packed 16-bit date (bits: 15-9=year-1980, 8-5=month, 4-0=day) and 16-bit time (bits: 15-11=hours, 10-5=minutes, 4-0=seconds/2) format. The current driver reads these fields but doesn't expose them properly through VFS stat, and never writes them. Implement proper timestamp reading via `fat32_vfs_stat()` (convert to Unix epoch or FILETIME) and writing via `fat32_set_times()` (update directory entry on create, modify, access). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: proper timestamp read/write"`. Add notes directly in this TODO section.
+
+- [ ] Implement `fat32_decode_datetime(date, time)` → Unix epoch seconds
+- [ ] Implement `fat32_encode_datetime(epoch)` → packed date + time fields
+- [ ] Update `fat32_vfs_stat()` to return decoded timestamps
+- [ ] On file create: set create_date, create_time, modify_date, modify_time, access_date
+- [ ] On file write: update modify_date and modify_time
+- [ ] On file read/open: update access_date (FAT32 has date-only access tracking)
+- [ ] Wire into VFS `set_times` callback (§3.5.5)
+- [ ] Commit: `"fat32: proper timestamp read/write"`
+
+#### FAT32 Driver — OS Comparison
+
+| Feature | Windows 11 | Linux (vfat) | Impossible OS FAT32 |
+|---------|-----------|-------------|---------------------|
+| Read support (8.3 + LFN) | ✅ | ✅ | ✅ Done §3.1 |
+| Write support (create/delete/rename) | ✅ | ✅ | ✅ Done §3.2 (overwrite-only) |
+| Offset-aware write / append | ✅ | ✅ | ⬜ **§3.4.1 — MISSING** |
+| FSInfo free cluster hint | ✅ | ✅ | ⬜ §3.4.2 |
+| Sector cache / write-back | ✅ (kernel cache) | ✅ (page cache) | ⬜ §3.4.3 |
+| Multi-volume simultaneous mount | ✅ | ✅ | ⬜ §3.4.4 |
+| Concurrent access safety | ✅ | ✅ (VFS locking) | ⬜ §3.4.5 |
+| LFN creation (write) | ✅ | ✅ | ⬜ §3.4.6 |
+| Timestamp read/write | ✅ | ✅ | ⬜ §3.4.7 (partial read) |
+| FAT32 format (`mkfs.fat`) | ✅ | ✅ | ✅ Done §3.2 |
+| Cross-linked chain detection | ✅ `chkdsk` | ✅ `fsck.vfat` | ⬜ §8.2 |
+| exFAT support | ✅ Native | ✅ kernel driver | ⬜ §4.6-4.7 P3 |
+
+> **After §3.4.1:** The debug logging system can append efficiently, unblocking TODO-002-Debug.
+> **After §3.4.1-3.4.7:** FAT32 driver reaches feature parity with Linux's `vfat` driver.
+
 ---
 
 ### 3.5 VFS Driver Interface ✅
@@ -1209,11 +1335,15 @@
 | ✅ Done   | 3.1 FAT32 Read                               | Read USB drives, boot media                                     |
 | ✅ Done   | 3.2 FAT32 Write                              | Full read/write for removable media                             |
 | ✅ Done   | 3.3 FAT32 VFS + Format                       | Complete FAT32 integration                                      |
+| 🔴 P0     | **3.4.1 FAT32 Offset-Aware Write**           | **Append support — blocks TODO-002-Debug live logging**         |
 | ✅ Done   | 3.5 VFS Driver Interface                     | `vfs_ops` driver routing — callbacks used by §3.6               |
 | 🔴 P0     | **3.5.5 Directory/Metadata/Flush Callbacks** | **mkdir, rmdir, set_attr, set_times, flush — needed by §3.6**   |
 | ✅ Done   | 5.1–5.9 IXFS on Disk                         | Full persistent IXFS with extents, journal, CoW, snapshots      |
 | ✅ Done   | 8.14 IXFS Directory Structure                | Standard paths on first boot                                    |
 | 🔴 P0     | **3.6 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
+| 🟠 P1     | 3.4.2 FAT32 FSInfo + Hint                    | FAT32 spec compliance, faster allocation                        |
+| 🟠 P1     | 3.4.4 FAT32 Multi-Volume                     | Remove static globals — mount multiple FAT32 partitions         |
+| 🟠 P1     | 3.4.6 FAT32 LFN Write                        | Write long filenames (currently 8.3 only on create)             |
 | 🟠 P1     | 4.1 NTFS Read                                | Read Windows-formatted partitions                               |
 | 🟠 P1     | 6.1 Auto-Mount                               | Drive letters from real disks                                   |
 | 🟡 P2     | 4.2 NTFS Write                               | Write to Windows partitions                                     |
