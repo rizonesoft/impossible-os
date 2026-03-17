@@ -64,6 +64,75 @@
 - [ ] Boot log first line: `Impossible OS v0.1.0 build 547`
 - [ ] Commit: `"build: auto-increment build number + version metadata"`
 
+### 1.5 Scripts Directory Organization
+
+**Prompt:** The `scripts/` directory currently has 13 files in a flat layout, making it hard to find the daily-use scripts. Reorganize into subdirectories, keeping only the 3 most-used scripts at the root for instant access. Move infrequently-used scripts into categorized subdirectories. After completing all items, update all references in `build.sh`, Makefile, TODO files, and agent workflows, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: organize scripts directory"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> The `run-windows-*.bat` files are candidates for deletion once `§3.4 Multi-Resolution
+> QEMU Launcher` consolidates them into `scripts/run-qemu.sh --resolution=1080p`.
+> Defer deletion until §3.4 is complete.
+
+**Root `scripts/` — daily workflow (keep here):**
+
+- [ ] `build.sh` — core build script (used every session)
+- [ ] `run-qemu.sh` — primary QEMU test runner
+- [ ] `debug.sh` — GDB debug launcher
+
+**`scripts/deploy/` — hardware deployment (occasional):**
+
+- [ ] Move `write-usb.ps1` → `scripts/deploy/write-usb.ps1`
+- [ ] Move `write-usb.bat` → `scripts/deploy/write-usb.bat`
+- [ ] *(Future)* `write-usb.sh` goes here too (§4.2)
+- [ ] *(Future)* `read-usb-log.sh` goes here too (§4.3)
+
+**`scripts/emulators/` — secondary emulator launchers:**
+
+- [ ] Move `run-vbox.ps1` → `scripts/emulators/run-vbox.ps1`
+- [ ] Move `run-vbox.bat` → `scripts/emulators/run-vbox.bat`
+- [ ] Move `run-windows.ps1` → `scripts/emulators/run-windows.ps1`
+- [ ] Move `run-windows.bat` → `scripts/emulators/run-windows.bat`
+- [ ] Move `run-windows-1080p.bat` → `scripts/emulators/run-windows-1080p.bat`
+- [ ] Move `run-windows-1440p.bat` → `scripts/emulators/run-windows-1440p.bat`
+- [ ] Move `run-windows-4k.bat` → `scripts/emulators/run-windows-4k.bat`
+- [ ] *(After §3.4)* Delete `run-windows-*.bat` (consolidated into `run-qemu.sh --resolution`)
+
+**`scripts/secure-boot/` — one-time setup:**
+
+- [ ] Move `build-shim.sh` → `scripts/secure-boot/build-shim.sh`
+
+**Update all references:**
+
+- [ ] Update `build.sh` if it references moved scripts
+- [ ] Update `Makefile` if it references moved scripts
+- [ ] Update `.agents/workflows/build.md` if it references moved paths
+- [ ] Update `.agents/workflows/add-asset.md` if it references moved paths
+- [ ] Grep all TODO files for `scripts/write-usb`, `scripts/run-vbox`, etc. and update paths
+- [ ] Verify: `bash scripts/build.sh clean run` still works after moves
+- [ ] Commit: `"tools: organize scripts directory"`
+
+**After reorganization:**
+
+```
+scripts/
+├── build.sh                 ← daily (core build)
+├── run-qemu.sh              ← daily (primary tester)
+├── debug.sh                 ← daily (GDB debug)
+├── deploy/
+│   ├── write-usb.ps1        ← occasional (USB write)
+│   └── write-usb.bat
+├── emulators/
+│   ├── run-vbox.ps1         ← secondary (VirtualBox)
+│   ├── run-vbox.bat
+│   ├── run-windows.ps1      ← secondary (QEMU Windows host)
+│   ├── run-windows.bat
+│   ├── run-windows-1080p.bat  ← delete after §3.4
+│   ├── run-windows-1440p.bat
+│   └── run-windows-4k.bat
+└── secure-boot/
+    └── build-shim.sh        ← one-time (shim build)
+```
+
 ---
 
 ## 2. Toolchain & Dependency Management
@@ -522,7 +591,8 @@
 | 🟠 P1     | 6.1 Symbol Map                    | BSOD stack traces need function names                    |
 | 🟠 P1     | 6.5 clangd + Bear                 | Deep code intelligence — requires §2.1 Clang first       |
 | 🟡 P2     | 1.3 Parallel Build                | Build speed — 4x faster on multi-core                    |
-| 🟡 P2     | 2.3 One-Command Setup             | After §2.1 + §2.2                                       |
+| 🟡 P2     | 1.5 Scripts Directory Organization| Daily scripts at root, secondary in subdirs              |
+| 🟡 P2     | 2.3 One-Command Setup             | After §2.1 + §2.2                                        |
 | 🟡 P2     | 5.1 Unit Test Framework           | Foundation for systematic testing                        |
 | 🟡 P2     | 5.4 Filesystem Test Suite         | Validates FS drivers against real disk images            |
 | 🟡 P2     | 7.1 Asset Pipeline                | Consolidates scattered asset build steps                 |
@@ -531,7 +601,7 @@
 | 🟢 P3     | 3.4 Multi-Resolution Launcher     | Consolidates resolution-specific scripts                 |
 | 🟢 P3     | 4.2 USB Write (Linux)             | Cross-platform hardware deployment                       |
 | 🟢 P3     | 4.3 USB Log Reader                | Hardware debugging workflow                              |
-| 🟢 P3     | 5.2 Core Subsystem Tests          | After §5.1 framework                                    |
+| 🟢 P3     | 5.2 Core Subsystem Tests          | After §5.1 framework                                     |
 | 🟢 P3     | 6.2 Size Tracking                 | Detect bloat early                                       |
 | 🟢 P3     | 6.3 Code Linter                   | Style consistency                                        |
 | 🟢 P3     | 6.4 GDB Debug Enhancement         | Developer productivity                                   |
