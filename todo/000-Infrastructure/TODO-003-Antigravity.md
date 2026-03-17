@@ -284,9 +284,20 @@
 
 ---
 
-## 5. MCP Server Integration *(Stretch)*
+## 5. MCP Server Integration
 
-### 5.1 Hardware Documentation Server
+> [!IMPORTANT]
+> **The Gemini API key is all you need.** No OpenAI or Anthropic key required.
+> The semantic search tool natively supports Gemini's `text-embedding-004` model,
+> and Gemini's massive 1M+ token context window excels at digesting intricate
+> relationships in the Impossible OS codebase.
+>
+> This section defines a **3-phase intelligence pipeline:**
+> - **Phase 1:** Clang/LLD migration (`TODO-002 §2.1`) — produces Clang-compatible build
+> - **Phase 2:** clangd MCP (`TODO-002 §6.5`) — C/C++ code intelligence
+> - **Phase 3:** Gemini semantic search (this section) — AI-powered codebase search
+
+### 5.1 Hardware Documentation Server *(Stretch)*
 
 **Prompt:** Configure an MCP server that serves the Intel x86-64 SDM, UEFI Specification, and ACPI specification as queryable resources. This allows agents to look up exact register offsets, bit definitions, and protocol sequences instead of hallucinating them. This is a stretch goal — initial development can rely on inline comments referencing manual sections. After completing all items, mark every item as `[x]`, and commit as `"agent: MCP server for hardware docs"`. Add notes directly in this TODO section.
 
@@ -306,14 +317,115 @@
 - [ ] *(Stretch)* Verify: agent returns correct answer (0x320) without hallucination
 - [ ] Commit: `"agent: MCP server for hardware docs"`
 
-### 5.2 OS Codebase Context Server
+### 5.2 clangd MCP Server *(flawless C code manipulation)*
 
-**Prompt:** Configure an MCP server that indexes the Impossible OS codebase so agents have instant access to function signatures, struct definitions, and current API surfaces without re-reading files. This is particularly useful for large codebases where the agent's context window fills up. After completing all items, mark every item as `[x]`, and commit as `"agent: MCP server for codebase context"`. Add notes directly in this TODO section.
+**Prompt:** Wire clangd as an MCP server in Antigravity so the AI agent gets byte-accurate C/C++ symbol resolution, go-to-definition, and diagnostics directly in the agent context. This requires `compile_commands.json` from Phase 2 (`TODO-002 §6.5`). After completing all items, mark every item as `[x]`, and commit as `"agent: clangd MCP server"`. Add notes directly in this TODO section.
 
-- [ ] *(Stretch)* Configure codebase indexer MCP (Antigravity built-in or ctags-based)
-- [ ] *(Stretch)* Verify: agent can query "What fields does struct boot_info have?"
-- [ ] *(Stretch)* Verify: agent can query "List all klog functions" → accurate results
-- [ ] Commit: `"agent: MCP server for codebase context"`
+> [!IMPORTANT]
+> → XREF: `TODO-002 §2.1` — Clang/LLD migration must be complete first (Phase 1).
+> → XREF: `TODO-002 §6.5` — Bear + `.clangd` config must be set up first (Phase 2).
+> The `compile_commands.json` must exist at the repo root before this MCP server works.
+
+**Step 1: Add the clangd MCP server entry** *(manual — developer configures IDE)*
+
+- [ ] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
+- [ ] Add this server entry to the `mcpServers` object:
+  ```json
+  "impossible-os-clangd": {
+    "command": "clangd",
+    "args": [
+      "--background-index",
+      "--compile-commands-dir=.",
+      "--log=error"
+    ]
+  }
+  ```
+- [ ] Save and refresh the MCP panel
+
+**Step 2: Verify** *(manual)*
+
+- [ ] Verify the MCP panel shows `impossible-os-clangd` as connected
+- [ ] Tell the agent: "Use clangd to find all callers of `printk`" → accurate results
+- [ ] Tell the agent: "What fields does `struct boot_info` have?" → correct answer from source
+- [ ] Commit: `"agent: clangd MCP server"`
+
+### 5.3 Gemini Semantic Search *(AI-powered codebase context)*
+
+**Prompt:** Set up Gemini-powered semantic search over the entire Impossible OS codebase using the `@zilliz/claude-context-mcp` package. Despite the name, this package natively maps to the Gemini API for vector embeddings via `text-embedding-004`. The codebase is converted into vector embeddings and stored in a Zilliz Cloud serverless cluster, enabling natural-language queries like "how does the bootloader pass the memory map to the kernel" — the agent gets semantically relevant code snippets as context. This is the ultimate dual-indexer: **clangd for C code manipulation, Gemini for architecture-level search**. After completing all items, mark every item as `[x]`, and commit as `"agent: Gemini semantic search MCP"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-002 §2.1` — Clang migration (Phase 1) must be complete.
+> → XREF: `TODO-002 §6.5` — clangd + Bear (Phase 2) must be operational.
+> → XREF: `TODO-003 §5.2` — clangd MCP (this file) should be configured first.
+> This is Phase 3 — the final layer of the intelligence pipeline.
+
+> [!NOTE]
+> **Requirements:**
+> - A **Gemini API key** (the only API key needed — no OpenAI or Anthropic required)
+> - A free **Zilliz Cloud** serverless cluster (vector database for embeddings)
+> - The `compile_commands.json` from Phase 2 (for accurate indexing)
+
+**Step 1: Create Zilliz Cloud vector database** *(manual — developer sets up cloud account)*
+
+- [ ] Go to [Zilliz Cloud](https://cloud.zilliz.com) and create a free account
+- [ ] Spin up a **free Serverless cluster** (no credit card required for free tier)
+- [ ] Note your credentials:
+  - `MILVUS_ADDRESS` — the cluster endpoint URL
+  - `MILVUS_TOKEN` — the API token for authentication
+- [ ] Store these securely (do NOT commit to the repo)
+
+**Step 2: Configure the unified MCP server JSON** *(manual — developer configures IDE)*
+
+- [ ] Open Antigravity → Agent Manager → MCP Servers → Manage → View raw config
+- [ ] Paste the **complete unified MCP configuration** (combines clangd from §5.2 + semantic search):
+  ```json
+  {
+    "mcpServers": {
+      "impossible-os-clangd": {
+        "command": "clangd",
+        "args": [
+          "--background-index",
+          "--compile-commands-dir=.",
+          "--log=error"
+        ]
+      },
+      "semantic-context": {
+        "command": "npx",
+        "args": ["-y", "@zilliz/claude-context-mcp@latest"],
+        "env": {
+          "GEMINI_API_KEY": "<Your-Gemini-API-Key>",
+          "EMBEDDING_MODEL": "text-embedding-004",
+          "MILVUS_ADDRESS": "<Your-Zilliz-Cluster-URL>",
+          "MILVUS_TOKEN": "<Your-Zilliz-Token>"
+        }
+      }
+    }
+  }
+  ```
+- [ ] Replace `<Your-Gemini-API-Key>` with your actual Gemini API key
+- [ ] Replace `<Your-Zilliz-Cluster-URL>` with your Zilliz cluster endpoint
+- [ ] Replace `<Your-Zilliz-Token>` with your Zilliz API token
+- [ ] Save and refresh the MCP panel
+
+**Step 3: Index the entire workspace** *(manual — developer triggers via agent prompt)*
+
+- [ ] After saving the MCP config, tell the Antigravity agent:
+  > _"Use your semantic context tool to index this entire workspace. Ensure you
+  > explicitly include all `.c`, `.h`, `.asm`, `.ld`, and `.sh` files."_
+- [ ] Wait for the indexing to complete (converts codebase into Gemini vector embeddings)
+- [ ] Verify the Zilliz Cloud dashboard shows indexed documents
+
+**Step 4: Verify the dual-indexer pipeline** *(manual)*
+
+- [ ] Test **clangd** (exact code manipulation):
+  - Ask: "What are the fields of `struct vfs_node`?" → exact struct definition from C source
+  - Ask: "Find all callers of `blkdev_read()`" → precise call sites with line numbers
+- [ ] Test **semantic search** (architecture-level understanding):
+  - Ask: "How does the bootloader pass the memory map to the kernel?" → relevant code snippets from `bootx64.c`, `kernel_main`, and `boot_info` struct
+  - Ask: "What happens during the SMP bring-up sequence?" → finds `smp.asm`, `smp.c`, trampoline code
+  - Ask: "How does the compositor avoid flickering during window drags?" → finds dirty rect tracker, `fb_swap_rect()`, preemption guards
+- [ ] Verify: no hallucinated function names or incorrect register offsets
+- [ ] Commit: `"agent: Gemini semantic search MCP"`
 
 ---
 
@@ -365,6 +477,8 @@
 | §3.3 HW Test Workflow   | Real hardware test checklist     | `TODO-006-Real-Hardware.md §8`    |
 | §3.3 HW Test Workflow   | USB boot logging                 | `TODO-005-Debug.md §4.3`         |
 | §5.1 MCP Hardware       | Hardware specs (external)        | N/A — external documentation      |
+| §5.2 clangd MCP         | Clang migration + Bear setup     | `TODO-002 §2.1` + `TODO-002 §6.5`|
+| §5.3 Gemini Semantic     | All Phase 1-2 intelligence       | `TODO-002 §2.1` + `TODO-002 §6.5`|
 
 ---
 
@@ -380,6 +494,8 @@
 | 🟠 P1   | 1.3 Freestanding C rule          | Prevent stdlib includes                        |
 | 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |
 | 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                         |
+| 🟠 P1   | 5.2 clangd MCP server            | Phase 2 intelligence — after TODO-002 §6.5    |
+| 🟠 P1   | 5.3 Gemini semantic search       | Phase 3 intelligence — after §5.2             |
 | 🟡 P2   | 2.4 TODO navigation skill        | Helps agents find existing work                |
 | 🟡 P2   | 3.2 Verification workflow        | Quality assurance                              |
 | 🟡 P2   | 4.1 Plan vs Fast mode docs       | Agent efficiency                               |
@@ -387,7 +503,6 @@
 | 🟡 P2   | 6.2 Audit all workflows          | Maintenance                                    |
 | 🟢 P3   | 3.3 Hardware test workflow       | Depends on USB scripts existing                |
 | 🟢 P3   | 5.1 MCP hardware docs            | Stretch — depends on MCP availability          |
-| 🟢 P3   | 5.2 MCP codebase context         | Stretch — depends on MCP availability          |
 
 ---
 
@@ -416,9 +531,10 @@
 | Auto-run terminal          | ❌ Requires approval        | ✅ Background tasks          | ✅ `// turbo-all` annotation        |
 | Plan→Review→Execute       | ❌ Chat only                | ❌ Chat only                 | ✅ Plan Mode + artifacts            |
 | Multi-agent parallel       | ❌ Single chat              | ❌ Single chat               | ✅ Agent Manager                    |
-| MCP server integration     | ❌ None                     | ❌ None                      | ⬜ §5 — planned                    |
+| MCP: clangd code intel     | ❌ None                     | ❌ None                      | ⬜ §5.2 P1 — clangd MCP server      |
+| MCP: semantic search       | ❌ None                     | ❌ None                      | ⬜ §5.3 P1 — Gemini + Zilliz        |
+| MCP: hardware docs         | ❌ None                     | ❌ None                      | ⬜ §5.1 P3 — stretch                |
 | Bare-metal OS awareness    | ❌ Assumes user-space        | ❌ Assumes user-space         | ✅ Rules + skills prevent hallucination |
-| Hardware doc grounding     | ❌ Model knowledge only      | ❌ Model knowledge only       | ⬜ §5.1 — MCP stretch              |
 
 > **After P0 items:** All skills and rules accurately reflect the current codebase — agents
 > generate correct code without producing stale paths or deprecated patterns.
