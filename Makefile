@@ -75,6 +75,9 @@ C_OBJS   := $(patsubst $(SRC_DIR)/%.c, $(BUILD_DIR)/%.o, $(C_SRCS))
 # All objects
 OBJS     := $(ASM_OBJS) $(C_OBJS) $(AP_TRAMPOLINE_OBJ)
 
+# Generated headers — must exist before any C compilation starts (-j safe)
+GENERATED_HDRS := include/kernel/os_logo.h src/kernel/bsod_icon.h src/kernel/boot_splash_font_data.h
+
 # ============================================================================
 # Targets
 # ============================================================================
@@ -527,44 +530,44 @@ $(AP_TRAMPOLINE_OBJ): $(SRC_DIR)/kernel/smp/ap_trampoline.asm
 
 # SSE2 SIMD module — compiled with -msse2 (overrides -mno-sse from CFLAGS)
 SIMD_CFLAGS := $(filter-out -mno-mmx -mno-sse -mno-sse2, $(CFLAGS)) -msse2
-$(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c
+$(BUILD_DIR)/kernel/gfx/gfx_simd.o: $(SRC_DIR)/kernel/gfx/gfx_simd.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $<"
 
 # stb_truetype implementation — needs SSE2 for floating-point math
-$(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c
+$(BUILD_DIR)/kernel/gfx/stb_truetype_impl.o: $(SRC_DIR)/kernel/gfx/stb_truetype_impl.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_truetype)"
 
 # Font manager + text rendering — needs SSE2 for stb_truetype API calls
-$(BUILD_DIR)/kernel/gfx/gfx_text.o: $(SRC_DIR)/kernel/gfx/gfx_text.c
+$(BUILD_DIR)/kernel/gfx/gfx_text.o: $(SRC_DIR)/kernel/gfx/gfx_text.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (fonts)"
 
 # stb_image implementation — needs SSE2 for floating-point math
 # -isystem include/freestanding provides shims for <stdlib.h>, <string.h>, etc.
-$(BUILD_DIR)/kernel/image.o: $(SRC_DIR)/kernel/image.c
+$(BUILD_DIR)/kernel/image.o: $(SRC_DIR)/kernel/image.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_image)"
 
 # stb_image_write implementation — same flags as stb_image
-$(BUILD_DIR)/kernel/image_save.o: $(SRC_DIR)/kernel/image_save.c
+$(BUILD_DIR)/kernel/image_save.o: $(SRC_DIR)/kernel/image_save.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (stb_image_write)"
 
 # Icon store — uses stb_truetype for glyph rasterization
-$(BUILD_DIR)/kernel/icon_store.o: $(SRC_DIR)/kernel/icon_store.c
+$(BUILD_DIR)/kernel/icon_store.o: $(SRC_DIR)/kernel/icon_store.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(SIMD_CFLAGS) -Wno-unused-function -Wno-sign-compare -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC/SSE2] $< (icon_store)"
 
 # Compile C source files (64-bit)
-$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.c | $(GENERATED_HDRS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -c $< -o $@
 	@echo "[CC] $<"

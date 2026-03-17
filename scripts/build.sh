@@ -6,6 +6,7 @@
 #   bash scripts/build.sh clean        Full clean build (rm build/ + rebuild)
 #   bash scripts/build.sh run          Incremental build + launch QEMU
 #   bash scripts/build.sh clean run    Full clean build + launch QEMU
+#   bash scripts/build.sh --jobs=4     Build with 4 parallel jobs (default: nproc)
 #
 # Output is tee'd to build/build.log.  The last line is always one of:
 #   === BUILD OK ===
@@ -22,6 +23,7 @@ mkdir -p build
 # ── Parse arguments ─────────────────────────────────────────────────────────
 DO_CLEAN=false
 DO_RUN=false
+JOBS=$(nproc 2>/dev/null || echo 4)
 
 if [[ $# -eq 0 ]]; then
     : # default: incremental build only
@@ -30,10 +32,14 @@ else
         case "$arg" in
             clean) DO_CLEAN=true ;;
             run)   DO_RUN=true ;;
-            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run]"; exit 1 ;;
+            --jobs=*) JOBS="${arg#--jobs=}" ;;
+            *)     echo "Unknown argument: $arg"; echo "Usage: build.sh [clean] [run] [--jobs=N]"; exit 1 ;;
         esac
     done
 fi
+
+# Make flags for parallel compilation
+MAKE_FLAGS="-j${JOBS}"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 BOLD='\033[1m'
@@ -114,7 +120,7 @@ run_step() {
     printf ' %b[%d/%d]%b %b%s%b\n' "$CYAN" "$num" "$total" "$RESET" "$BOLD" "$label" "$RESET" | tee -a "$LOG"
     divider | tee -a "$LOG"
 
-    make "${targets[@]}" 2>&1 | tee -a "$LOG"
+    make $MAKE_FLAGS "${targets[@]}" 2>&1 | tee -a "$LOG"
     local rc=${PIPESTATUS[0]}
 
     local secs
@@ -146,7 +152,7 @@ run_kernel_step() {
     divider | tee -a "$LOG"
 
     local compiled=0
-    make _increment_build kernel 2>&1 | while IFS= read -r line; do
+    make $MAKE_FLAGS _increment_build kernel 2>&1 | while IFS= read -r line; do
         # Log every line
         echo "$line" >> "$LOG"
 
@@ -221,7 +227,7 @@ BUILD_START=$(date +%s.%N)
 # Header
 echo "" > "$LOG"
 printf '\n%b Impossible OS — Build System%b\n' "${BOLD}${CYAN}" "$RESET" | tee -a "$LOG"
-printf ' %b%s%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$RESET" | tee -a "$LOG"
+printf ' %b%s  (%d parallel jobs)%b\n\n' "$DIM" "$(date '+%Y-%m-%d %H:%M:%S')" "$JOBS" "$RESET" | tee -a "$LOG"
 
 # Step counter
 STEP=0
@@ -267,5 +273,5 @@ if $DO_RUN; then
     divider | tee -a "$LOG"
     printf ' %b▶ Launching QEMU%b\n' "${CYAN}${BOLD}" "$RESET" | tee -a "$LOG"
     divider | tee -a "$LOG"
-    make run 2>&1
+    make $MAKE_FLAGS run 2>&1
 fi
