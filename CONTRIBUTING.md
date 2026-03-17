@@ -178,6 +178,29 @@ If you're new to OS development, look for:
 
 ---
 
+## 🏷️ Release Tags
+
+We use annotated tags for releases:
+
+| Format | Example | Usage |
+|--------|---------|-------|
+| `v{MAJOR}.{MINOR}.{PATCH}` | `v0.1.0`, `v1.0.0` | Stable releases |
+| `v{M}.{m}.{p}-alpha.{n}` | `v0.1.0-alpha.1` | Early testing |
+| `v{M}.{m}.{p}-beta.{n}` | `v0.1.0-beta.1` | Feature-complete testing |
+| `v{M}.{m}.{p}-rc.{n}` | `v0.1.0-rc.1` | Release candidates |
+
+Tags are always annotated:
+
+```bash
+git tag -a v0.1.0 -m "Release v0.1.0"
+git push origin v0.1.0
+```
+
+Pushing a `v*` tag triggers the automated release CI workflow, which builds
+the disk image and publishes a GitHub Release with the auto-generated changelog.
+
+---
+
 ## 📄 License
 
 By contributing, you agree that your contributions will be licensed under the

@@ -184,11 +184,11 @@
 
 **Prompt:** Establish git tag naming conventions for consistent release history. Tags trigger the CI release workflow (§4.1).
 
-- [ ] Format: `v{MAJOR}.{MINOR}.{PATCH}` — e.g., `v0.1.0`, `v1.0.0`
-- [ ] Pre-release: `v0.1.0-alpha.1`, `v0.1.0-beta.1`, `v0.1.0-rc.1`
-- [ ] Tags are annotated: `git tag -a v0.1.0 -m "Release v0.1.0"`
-- [ ] Tags trigger the release CI workflow automatically
-- [ ] Document in `CONTRIBUTING.md`
+- [x] Format: `v{MAJOR}.{MINOR}.{PATCH}` — e.g., `v0.1.0`, `v1.0.0` — ✅
+- [x] Pre-release: `v0.1.0-alpha.1`, `v0.1.0-beta.1`, `v0.1.0-rc.1` — ✅
+- [x] Tags are annotated: `git tag -a v0.1.0 -m "Release v0.1.0"` — ✅
+- [x] Tags trigger the release CI workflow automatically — ✅ documented
+- [x] Document in `CONTRIBUTING.md` — ✅ Added "Release Tags" section with format table
 
 ---
 
