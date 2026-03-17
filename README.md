@@ -12,6 +12,7 @@
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/lines-84k+-blueviolet?style=flat-square" alt="Lines of Code" />
   <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE"><img src="https://img.shields.io/badge/Donate-PayPal-00457C?style=flat-square&logo=paypal" alt="Donate" /></a>
+  <a href="https://github.com/sponsors/rizonesoft"><img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square&logo=githubsponsors" alt="Sponsor" /></a>
 </p>
 
 ---
