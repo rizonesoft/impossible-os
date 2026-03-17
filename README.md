@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="resources/branding/logo.png" alt="Impossible OS Logo" width="120" />
+  <img src="resources/logo/os_logo_128.png" alt="Impossible OS Logo" width="120" />
   <br />
   <strong>Impossible OS</strong>
   <br />
