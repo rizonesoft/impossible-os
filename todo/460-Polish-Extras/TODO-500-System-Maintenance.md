@@ -14,7 +14,7 @@
 
 ### 1.1 Update Check API
 
-**Prompt:** The update system provides a mechanism for keeping Impossible OS current. `update_check()` does an HTTP GET to the update server URL, parses the JSON/INI response for version, download URL, and SHA-256 hash, then compares with the current version stored in Registry `HKLM\SYSTEM\Version`. If an update is available, populate `struct update_info` with version, URL, hash, size, type (hotfix/minor/major), and description. After completing all items, create `docs/architecture/updates.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update check API"`.
+**Prompt:** The update system provides a mechanism for keeping Impossible OS current. `update_check()` does an HTTP GET to the update server URL, parses the JSON/INI response for version, download URL, and SHA-256 hash, then compares with the current version stored in Registry `HKLM\SYSTEM\Version`. If an update is available, populate `struct update_info` with version, URL, hash, size, type (hotfix/minor/major), and description. After completing all items,sh clean`, and commit as `"apps: update check API"`.
 
 
 - [ ] Create `src/apps/updater/updater.c` and `include/update.h`
@@ -80,7 +80,7 @@
 
 ### 2.1 IPKG Package Format
 
-**Prompt:** Define `.ipkg` as a ZIP archive containing: `manifest.ini` (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop), `install.ini` (file destinations, Registry entries, shortcuts, file associations), and `files/` directory with the app executable + libraries + data. After completing all items, create `docs/architecture/package-format.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: IPKG package format specification"`.
+**Prompt:** Define `.ipkg` as a ZIP archive containing: `manifest.ini` (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop), `install.ini` (file destinations, Registry entries, shortcuts, file associations), and `files/` directory with the app executable + libraries + data. After completing all items,sh clean`, and commit as `"apps: IPKG package format specification"`.
 
 
 - [ ] Define `.ipkg` format (ZIP archive containing):
@@ -91,7 +91,7 @@
 
 ### 2.2 App Installer
 
-**Prompt:** Parse `.ipkg` via miniz ZIP extraction, read manifest.ini and install.ini. Installer UI: welcome screen with app name/version/icon, install path selection, progress bar. Install process: create dir (e.g., `C:\Programs\MyApp\`), extract files, write Registry entries, create Start Menu/Desktop shortcuts, register in Registry `HKLM\SOFTWARE\{name}\*`. Create a restore point before install. After completing all items, update `docs/architecture/package-format.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: app installer"`.
+**Prompt:** Parse `.ipkg` via miniz ZIP extraction, read manifest.ini and install.ini. Installer UI: welcome screen with app name/version/icon, install path selection, progress bar. Install process: create dir (e.g., `C:\Programs\MyApp\`), extract files, write Registry entries, create Start Menu/Desktop shortcuts, register in Registry `HKLM\SOFTWARE\{name}\*`. Create a restore point before install. After completing all items,sh clean`, and commit as `"apps: app installer"`.
 
 
 - [ ] Create `src/apps/installer/installer.c`
@@ -159,7 +159,7 @@
 
 ### 3.1 Restore Point Creation
 
-**Prompt:** `restore_create(description)` creates `C:\Impossible\System\Restore\{timestamp}\` with: `manifest.ini` (timestamp, description, OS version), `registry_backup/` (all Registry hive files), and `system_files.tar` (snapshot of changed system files). After completing all items, create `docs/architecture/system-restore.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: restore point creation"`.
+**Prompt:** `restore_create(description)` creates `C:\Impossible\System\Restore\{timestamp}\` with: `manifest.ini` (timestamp, description, OS version), `registry_backup/` (all Registry hive files), and `system_files.tar` (snapshot of changed system files). After completing all items,sh clean`, and commit as `"kernel: restore point creation"`.
 
 
 - [ ] Create `src/kernel/restore.c` and `include/restore.h`
@@ -222,7 +222,7 @@
 
 ### 4.1 Recovery Boot Menu
 
-**Prompt:** Hold F8 at boot to enter Recovery Environment (intercept in bootloader/early kernel). Text-mode menu: Reset to factory, System Restore, Command Prompt, Startup Repair, Reinstall OS, Boot from USB. After completing all items, create `docs/architecture/recovery.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: boot menu"`.
+**Prompt:** Hold F8 at boot to enter Recovery Environment (intercept in bootloader/early kernel). Text-mode menu: Reset to factory, System Restore, Command Prompt, Startup Repair, Reinstall OS, Boot from USB. After completing all items,sh clean`, and commit as `"recovery: boot menu"`.
 
 
 - [ ] Create `src/recovery/recovery.c`

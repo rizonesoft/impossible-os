@@ -28,7 +28,7 @@
 
 ## 2. Installer Program
 
-**Prompt:** The ISO installer is the capstone feature: boot from ISO, partition a target disk (GPT with EFI System Partition + IXFS root), format both partitions, copy kernel/initrd/OS files, install GRUB for UEFI, and display completion. Test the full cycle in QEMU: boot ISO → install to virtual disk → reboot from disk → OS loads → ✅. After completing all items, create `docs/architecture/installer.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"installer: full OS installer"`.
+**Prompt:** The ISO installer is the capstone feature: boot from ISO, partition a target disk (GPT with EFI System Partition + IXFS root), format both partitions, copy kernel/initrd/OS files, install GRUB for UEFI, and display completion. Test the full cycle in QEMU: boot ISO → install to virtual disk → reboot from disk → OS loads → ✅. After completing all items,sh clean`, and commit as `"installer: full OS installer"`.
 
 
 - [ ] Write `src/installer/installer.c` — runs as a special init process from the ISO

@@ -79,7 +79,7 @@ include/kernel/
 
 ### 1.1 VBoxGuest Absolute Mouse
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/vbox_mouse.c` discovers PCI device `80EE:CAFE`, initializes VMMDev protocol v1.03, enables absolute mouse with `GUEST_CAN_ABSOLUTE | NEW_PROTOCOL | GUEST_NEEDS_HOST_CURSOR`, and receives coordinates via IRQ handler. Buttons merge from PS/2. Verify 3-tier priority in `main.c`: VirtIO > VBox > PS/2. Run `bash scripts/build.sh clean` and test in VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VBox mouse integration. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev absolute mouse, PCI discovery, and IRQ-based coordinate delivery.
+**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/vbox_mouse.c` discovers PCI device `80EE:CAFE`, initializes VMMDev protocol v1.03, enables absolute mouse with `GUEST_CAN_ABSOLUTE | NEW_PROTOCOL | GUEST_NEEDS_HOST_CURSOR`, and receives coordinates via IRQ handler. Buttons merge from PS/2. Verify 3-tier priority in `main.c`: VirtIO > VBox > PS/2. Run `bash scripts/build.sh clean` and test in VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev absolute mouse, PCI discovery, and IRQ-based coordinate delivery.
 
 - [x] PCI discovery: vendor `0x80EE`, device `0xCAFE`
 - [x] VMMDev protocol v1.03 initialization (`GuestInfo` packet)
@@ -97,7 +97,7 @@ include/kernel/
 
 ### 2.1 VMMDev Display Change Events
 
-**Prompt:** When the user resizes the VirtualBox window, VBox fires a VMMDev event with the ideal guest resolution. Implement handling for `VBOX_REQUEST_GET_DISPLAY_CHANGE` (request type 51) in the existing VBox IRQ handler. On receiving a display change event, read the new resolution and BPP, then reconfigure the VBE/VGA framebuffer to match. Notify the window manager to recomposite at the new size. The plumbing already exists — same `80EE:CAFE` device, same IRQ line. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test by resizing the VBox window, and commit as `"vbox: display auto-resize via VMMDev"`. Update `README.md` if it contains stale or incorrect references to display resolution. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev display change events, framebuffer reconfiguration, and WM resize notification.
+**Prompt:** When the user resizes the VirtualBox window, VBox fires a VMMDev event with the ideal guest resolution. Implement handling for `VBOX_REQUEST_GET_DISPLAY_CHANGE` (request type 51) in the existing VBox IRQ handler. On receiving a display change event, read the new resolution and BPP, then reconfigure the VBE/VGA framebuffer to match. Notify the window manager to recomposite at the new size. The plumbing already exists — same `80EE:CAFE` device, same IRQ line. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test by resizing the VBox window, and commit as `"vbox: display auto-resize via VMMDev"`. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev display change events, framebuffer reconfiguration, and WM resize notification.
 
 - [ ] Add `VBOX_REQUEST_GET_DISPLAY_CHANGE = 51` constant
 - [ ] Add `VBOX_REQUEST_SET_GUEST_CAPS = 55` constant
@@ -113,7 +113,7 @@ include/kernel/
 
 ### 2.2 VBox Guest Capabilities Advertisement
 
-**Prompt:** Tell VBox that we support auto-resize graphics by sending a `SetGuestCaps` packet with the graphics bit set. This enables the "Auto-resize Guest Display" option in VBox's View menu. Without this, VBox grays out the option. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"vbox: advertise guest capabilities"`. Update `README.md` if it contains stale or incorrect references to VBox guest capabilities. Add notes, gotchas, and design decisions directly in this TODO section covering the SetGuestCaps packet and VBox capability advertisement.
+**Prompt:** Tell VBox that we support auto-resize graphics by sending a `SetGuestCaps` packet with the graphics bit set. This enables the "Auto-resize Guest Display" option in VBox's View menu. Without this, VBox grays out the option. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"vbox: advertise guest capabilities"`. Add notes, gotchas, and design decisions directly in this TODO section covering the SetGuestCaps packet and VBox capability advertisement.
 
 - [ ] Create `vbox_guest_caps` packet struct (header + uint32_t caps)
 - [ ] Set bit 2 (`VBOX_GUEST_CAP_GRAPHICS`) for auto-resize support
@@ -127,7 +127,7 @@ include/kernel/
 
 ### 3.1 HGCM Client Connection
 
-**Prompt:** VBox shared folders use the Host-Guest Communication Manager (HGCM) protocol over VMMDev. HGCM is a generic RPC system — the guest sends function call packets to named host services. The "VBoxSharedFolders" service provides file I/O on host directories. First, implement the HGCM connect/disconnect protocol. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: HGCM client connection"`. Update `README.md` if it contains stale or incorrect references to shared folders. Add notes, gotchas, and design decisions directly in this TODO section covering the HGCM protocol, request types, parameter passing, and async completion.
+**Prompt:** VBox shared folders use the Host-Guest Communication Manager (HGCM) protocol over VMMDev. HGCM is a generic RPC system — the guest sends function call packets to named host services. The "VBoxSharedFolders" service provides file I/O on host directories. First, implement the HGCM connect/disconnect protocol. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: HGCM client connection"`. Add notes, gotchas, and design decisions directly in this TODO section covering the HGCM protocol, request types, parameter passing, and async completion.
 
 - [ ] Implement `VBOX_REQUEST_HGCM_CONNECT = 60` — connect to named service
 - [ ] Implement `VBOX_REQUEST_HGCM_DISCONNECT = 61` — disconnect
@@ -139,7 +139,7 @@ include/kernel/
 
 ### 3.2 Shared Folder Mounting
 
-**Prompt:** Once connected to the VBoxSharedFolders service, implement folder queries and file operations. Map host shared folders as VFS mount points under `/mnt/host/` (or `H:\` drive letter). Support directory listing, file read, file write, and stat. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test by reading a host file from the guest shell, and commit as `"vbox: shared folder VFS mount"`. Update `README.md` if it contains stale or incorrect references to filesystem mounts. Add notes, gotchas, and design decisions directly in this TODO section covering HGCM shared folder operations, VFS integration, and shell access.
+**Prompt:** Once connected to the VBoxSharedFolders service, implement folder queries and file operations. Map host shared folders as VFS mount points under `/mnt/host/` (or `H:\` drive letter). Support directory listing, file read, file write, and stat. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, test by reading a host file from the guest shell, and commit as `"vbox: shared folder VFS mount"`. Add notes, gotchas, and design decisions directly in this TODO section covering HGCM shared folder operations, VFS integration, and shell access.
 
 - [ ] Query available shared folder mappings (HGCM function 1: QueryMappings)
 - [ ] Query mapping name for each mapping ID (HGCM function 2: QueryMapName)
@@ -156,7 +156,7 @@ include/kernel/
 
 ### 4.1 Clipboard Service
 
-**Prompt:** VBox clipboard sharing uses the HGCM service `"VBoxSharedClipboard"`. The guest advertises its clipboard capabilities, and VBox forwards clipboard data bidirectionally. Support plain text clipboard for copy/paste between host and guest. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: shared clipboard"`. Update `README.md` if it contains stale or incorrect references to clipboard support. Add notes, gotchas, and design decisions directly in this TODO section covering the VBox shared clipboard HGCM service, bidirectional data flow, and kernel clipboard API.
+**Prompt:** VBox clipboard sharing uses the HGCM service `"VBoxSharedClipboard"`. The guest advertises its clipboard capabilities, and VBox forwards clipboard data bidirectionally. Support plain text clipboard for copy/paste between host and guest. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"vbox: shared clipboard"`. Add notes, gotchas, and design decisions directly in this TODO section covering the VBox shared clipboard HGCM service, bidirectional data flow, and kernel clipboard API.
 
 - [ ] Connect to `"VBoxSharedClipboard"` HGCM service
 - [ ] Advertise text format capability
@@ -171,7 +171,7 @@ include/kernel/
 
 ### 5.1 VirtIO Tablet ✅
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/virtio_input.c` provides absolute mouse coordinates via VirtIO input for QEMU's `-device virtio-tablet-pci`. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to VirtIO input. Add notes, gotchas, and design decisions directly in this TODO section covering the VirtIO tablet driver and QEMU integration.
+**Prompt:** This section is marked complete. Verify that `src/kernel/drivers/virtio_input.c` provides absolute mouse coordinates via VirtIO input for QEMU's `-device virtio-tablet-pci`. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the VirtIO tablet driver and QEMU integration.
 
 - [x] `virtio_input_init()` — discover VirtIO input PCI device
 - [x] `virtio_input_get_state()` — return absolute x, y, buttons
@@ -180,7 +180,7 @@ include/kernel/
 
 ### 5.2 VirtIO GPU (Display Resize)
 
-**Prompt:** Implement a VirtIO GPU driver for QEMU display resizing. VirtIO GPU replaces the legacy VGA adapter and supports dynamic resolution changes, multi-head displays, and hardware-accelerated 2D. Start with basic scanout configuration (set resolution + framebuffer). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"virtio: GPU driver for display resize"`. Update `README.md` if it contains stale or incorrect references to QEMU display. Add notes, gotchas, and design decisions directly in this TODO section covering VirtIO GPU commands, scanout configuration, and resolution change handling.
+**Prompt:** Implement a VirtIO GPU driver for QEMU display resizing. VirtIO GPU replaces the legacy VGA adapter and supports dynamic resolution changes, multi-head displays, and hardware-accelerated 2D. Start with basic scanout configuration (set resolution + framebuffer). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"virtio: GPU driver for display resize"`. Add notes, gotchas, and design decisions directly in this TODO section covering VirtIO GPU commands, scanout configuration, and resolution change handling.
 
 - [ ] PCI discovery: VirtIO GPU device (device ID 16)
 - [ ] Implement virtqueue setup (control queue + cursor queue)
@@ -193,7 +193,7 @@ include/kernel/
 
 ### 5.3 VirtIO-FS / 9P Shared Folders
 
-**Prompt:** Implement VirtIO-FS or 9P filesystem sharing for QEMU. This provides shared folder access between host and guest — QEMU's equivalent of VBox shared folders. VirtIO-FS uses FUSE over virtqueues. 9P is simpler (Plan 9 protocol). Start with 9P as it's more straightforward. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"virtio: 9P shared folder support"`. Update `README.md` if it contains stale or incorrect references to QEMU shared folders. Add notes, gotchas, and design decisions directly in this TODO section covering the 9P protocol implementation, VFS registration, and QEMU virtfs flags.
+**Prompt:** Implement VirtIO-FS or 9P filesystem sharing for QEMU. This provides shared folder access between host and guest — QEMU's equivalent of VBox shared folders. VirtIO-FS uses FUSE over virtqueues. 9P is simpler (Plan 9 protocol). Start with 9P as it's more straightforward. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"virtio: 9P shared folder support"`. Add notes, gotchas, and design decisions directly in this TODO section covering the 9P protocol implementation, VFS registration, and QEMU virtfs flags.
 
 - [ ] PCI discovery: VirtIO 9P device (device ID 9)
 - [ ] Implement 9P protocol: version, attach, walk, open, read, write, stat, clunk
@@ -207,7 +207,7 @@ include/kernel/
 
 ### 6.1 VMBus Discovery
 
-**Prompt:** Hyper-V uses VMBus (Virtual Machine Bus) for host-guest communication instead of emulated PCI or VirtIO. VMBus is discovered via the Hyper-V CPUID leaf (0x40000000 returns "Microsoft Hv") and MSR-based hypercall interface. This is needed for production Hyper-V deployments. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hyperv: VMBus discovery"`. Update `README.md` if it contains stale or incorrect references to Hyper-V support. Add notes, gotchas, and design decisions directly in this TODO section covering VMBus discovery, Hyper-V CPUID detection, MSR hypercall setup, and channel protocol.
+**Prompt:** Hyper-V uses VMBus (Virtual Machine Bus) for host-guest communication instead of emulated PCI or VirtIO. VMBus is discovered via the Hyper-V CPUID leaf (0x40000000 returns "Microsoft Hv") and MSR-based hypercall interface. This is needed for production Hyper-V deployments. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hyperv: VMBus discovery"`. Add notes, gotchas, and design decisions directly in this TODO section covering VMBus discovery, Hyper-V CPUID detection, MSR hypercall setup, and channel protocol.
 
 - [ ] Detect Hyper-V via CPUID leaf 0x40000000 ("Microsoft Hv")
 - [ ] Read Hyper-V feature MSRs (guest OS ID, hypercall page)
@@ -227,7 +227,7 @@ include/kernel/
 
 ### 7.1 Hypervisor Detection
 
-**Prompt:** Create a unified hypervisor detection module that identifies the host platform at boot. Use CPUID leaf 0x40000000 to read the hypervisor brand string, and fall back to PCI device probing. The detection result determines which backend drivers to load. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"hypervisor: auto-detection layer"`. Update `README.md` if it contains stale or incorrect references to hypervisor detection. Add notes, gotchas, and design decisions directly in this TODO section covering CPUID-based hypervisor detection, PCI fallback probing, and the detection enum.
+**Prompt:** Create a unified hypervisor detection module that identifies the host platform at boot. Use CPUID leaf 0x40000000 to read the hypervisor brand string, and fall back to PCI device probing. The detection result determines which backend drivers to load. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"hypervisor: auto-detection layer"`. Add notes, gotchas, and design decisions directly in this TODO section covering CPUID-based hypervisor detection, PCI fallback probing, and the detection enum.
 
 - [ ] Create `src/kernel/hypervisor/detect.c` and `include/kernel/hypervisor/detect.h`
 - [ ] Detection methods:
@@ -242,7 +242,7 @@ include/kernel/
 
 ### 7.2 Unified Hypervisor Interface
 
-**Prompt:** Create a common interface that abstracts per-hypervisor drivers behind a single API. The kernel and desktop call these functions without knowing which hypervisor is running. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: unified abstraction interface"`. Update `README.md` if it contains stale or incorrect references to hypervisor integration. Add notes, gotchas, and design decisions directly in this TODO section covering the unified hypervisor API, backend dispatch table, and per-platform function mapping.
+**Prompt:** Create a common interface that abstracts per-hypervisor drivers behind a single API. The kernel and desktop call these functions without knowing which hypervisor is running. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: unified abstraction interface"`. Add notes, gotchas, and design decisions directly in this TODO section covering the unified hypervisor API, backend dispatch table, and per-platform function mapping.
 
 - [ ] Create `include/kernel/hypervisor/hv.h` — common interface
 - [ ] `hv_mouse_available()` → is absolute mouse active?
@@ -260,7 +260,7 @@ include/kernel/
 
 ### 8.1 Native Input (No Hypervisor)
 
-**Prompt:** On bare metal (no hypervisor detected), all input comes from PS/2 or USB HID drivers. The hypervisor abstraction layer's mouse functions should gracefully fall back to these. Display resizing is handled by the native GPU driver (VBE/GOP mode switching). No shared folders or clipboard on bare metal. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: bare metal fallback"`. Update `README.md` if it contains stale or incorrect references to bare metal support. Add notes, gotchas, and design decisions directly in this TODO section covering bare metal input fallback, VBE display resizing, and unsupported feature stubs.
+**Prompt:** On bare metal (no hypervisor detected), all input comes from PS/2 or USB HID drivers. The hypervisor abstraction layer's mouse functions should gracefully fall back to these. Display resizing is handled by the native GPU driver (VBE/GOP mode switching). No shared folders or clipboard on bare metal. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"hypervisor: bare metal fallback"`. Add notes, gotchas, and design decisions directly in this TODO section covering bare metal input fallback, VBE display resizing, and unsupported feature stubs.
 
 - [ ] `hv_mouse_available()` returns 0 on bare metal → use PS/2 / USB HID directly
 - [ ] `hv_display_resize()` delegates to VBE mode set on bare metal

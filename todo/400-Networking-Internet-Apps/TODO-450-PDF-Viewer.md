@@ -11,7 +11,7 @@
 
 ### 6.1 Minimal PDF Parser
 
-**Prompt:** Parse PDF structure: header `%PDF-1.x`, cross-reference table (xref) at end via `startxref` keyword, trailer with Root catalog. Parse page tree: catalog → Pages → individual pages. Decompress streams using deflate via miniz (Phase 03). After all items, create `docs/user/pdf-viewer.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: PDF parser core"`.
+**Prompt:** Parse PDF structure: header `%PDF-1.x`, cross-reference table (xref) at end via `startxref` keyword, trailer with Root catalog. Parse page tree: catalog → Pages → individual pages. Decompress streams using deflate via miniz (Phase 03). After all items,sh clean`, commit `"apps: PDF parser core"`.
 
 
 - [ ] Create `src/apps/pdfview/pdfview.c`

@@ -24,7 +24,7 @@
 
 > **Depends on:** 080-Drivers §5.1 (AC97 driver)
 
-**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio abstraction layer"`.
+**Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items,sh clean`, and commit as `"kernel: audio abstraction layer"`.
 
 
 - [ ] Create `src/kernel/audio.c` and `include/audio.h`
@@ -42,7 +42,7 @@
 
 ## 3. Audio Mixer
 
-**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `HKLM\SYSTEM\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items, update `docs/architecture/audio.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: audio mixer"`.
+**Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `HKLM\SYSTEM\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items,sh clean`, and commit as `"kernel: audio mixer"`.
 
 
 - [ ] Create `src/kernel/audio_mixer.c`
@@ -195,4 +195,3 @@
 | `include/dr_wav.h`           | [NEW] WAV decoder (public domain)  |
 | `include/dr_mp3.h`           | [NEW] MP3 decoder (public domain)  |
 | `src/libs/stb_vorbis_impl.c` | [NEW] OGG Vorbis decoder wrapper   |
-| `docs/architecture/audio.md` | [NEW] Audio system documentation   |

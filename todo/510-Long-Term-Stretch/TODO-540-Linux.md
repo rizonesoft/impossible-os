@@ -58,7 +58,7 @@
 
 > **Depends on:** §1 (ELF loader), ring 3 user-mode (P0105 §1)
 
-**Prompt:** Linux x86-64 uses `syscall` with number in RAX, args in RDI, RSI, RDX, R10, R8, R9 (System V convention). Implement a syscall handler that translates Linux syscall numbers into native Impossible OS kernel calls. Start with the ~20 most essential syscalls for a static busybox binary. The translation layer converts POSIX paths (`/home/user/file`) to Windows paths (`C:\Users\Default\file`) and Linux file descriptors to native HANDLEs. After completing all items, create `docs/architecture/linux-compat.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Linux syscall translation layer"`.
+**Prompt:** Linux x86-64 uses `syscall` with number in RAX, args in RDI, RSI, RDX, R10, R8, R9 (System V convention). Implement a syscall handler that translates Linux syscall numbers into native Impossible OS kernel calls. Start with the ~20 most essential syscalls for a static busybox binary. The translation layer converts POSIX paths (`/home/user/file`) to Windows paths (`C:\Users\Default\file`) and Linux file descriptors to native HANDLEs. After completing all items,sh clean`, and commit as `"kernel: Linux syscall translation layer"`.
 
 
 - [ ] Create `src/compat/linux/linux_syscall.c`
@@ -183,7 +183,6 @@
 
 ## 9. Documentation
 
-- [ ] Create `docs/architecture/linux-compat.md`
 - [ ] Document: ELF loader, syscall translation, path mapping, fd table
 - [ ] Document supported syscalls with native mapping table
 - [ ] Document limitations (no dynamic linking, no signals, no ptrace)
@@ -217,7 +216,6 @@
 | `src/compat/linux/linux_syscall.c`  | [NEW] Linux syscall handler          |
 | `src/compat/linux/linux_path.c`     | [NEW] POSIX → Win32 path translation |
 | `src/compat/linux/linux_fd.c`       | [NEW] File descriptor table          |
-| `docs/architecture/linux-compat.md` | [NEW] Compatibility layer docs       |
 
 ---
 

@@ -12,7 +12,7 @@
 
 ### 1.1 Terminal Core
 
-**Prompt:** The terminal emulator bridges the shell to a graphical window. The core data structure is a 2D grid of `terminal_cell` structs, each holding a Unicode codepoint, foreground/background colors, and attribute flags (bold, underline, inverse). The grid has `TERM_COLS × SCROLLBACK` cells. Cell dimensions are calculated from Cascadia Code monospace font metrics (Phase 02 §2). The shell process writes to the terminal via `terminal_put_char()`. Keyboard input from the WM is piped to the shell's stdin. After completing all items, create `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal emulator core"`.
+**Prompt:** The terminal emulator bridges the shell to a graphical window. The core data structure is a 2D grid of `terminal_cell` structs, each holding a Unicode codepoint, foreground/background colors, and attribute flags (bold, underline, inverse). The grid has `TERM_COLS × SCROLLBACK` cells. Cell dimensions are calculated from Cascadia Code monospace font metrics (Phase 02 §2). The shell process writes to the terminal via `terminal_put_char()`. Keyboard input from the WM is piped to the shell's stdin. After completing all items,sh clean`, and commit as `"apps: terminal emulator core"`.
 
 
 - [ ] Create `src/apps/terminal/terminal.c` and `include/terminal.h`
@@ -27,7 +27,7 @@
 
 ### 1.2 Character Rendering
 
-**Prompt:** `terminal_render` iterates visible rows, drawing each cell: fill background rect if non-default color, then draw the character glyph via `font_draw_char()` using Cascadia Code from the font manager (Phase 02 §2). The cursor (block/underline/bar style) blinks on a 500ms toggle driven by PIT ticks. Handle control characters: `\n` (newline + scroll if at bottom), `\r` (carriage return), `\b` (backspace), `\t` (tab to next 8-column stop). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal text rendering"`.
+**Prompt:** `terminal_render` iterates visible rows, drawing each cell: fill background rect if non-default color, then draw the character glyph via `font_draw_char()` using Cascadia Code from the font manager (Phase 02 §2). The cursor (block/underline/bar style) blinks on a 500ms toggle driven by PIT ticks. Handle control characters: `\n` (newline + scroll if at bottom), `\r` (carriage return), `\b` (backspace), `\t` (tab to next 8-column stop). After completing all items,sh clean`, and commit as `"apps: terminal text rendering"`.
 
 
 - [ ] `terminal_render(t, surface)` — draw all visible cells
@@ -40,7 +40,7 @@
 
 ### 1.3 ANSI Escape Code Parser
 
-**Prompt:** The ANSI parser is a state machine: Normal state processes printable characters, ESC (`\e`) enters escape state, `[` after ESC enters CSI (Control Sequence Introducer) state where numeric parameters are collected until a final command letter. Implement the essential SGR (Select Graphic Rendition) codes: reset (0), bold (1), underline (4), inverse (7), foreground colors 30-37 and 90-97, background colors 40-47. Cursor movement codes (H, A/B/C/D) and screen clearing (2J, K) are needed for programs like vim-lite or top. Define a 16-color palette matching standard ANSI colors. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal ANSI escape codes"`.
+**Prompt:** The ANSI parser is a state machine: Normal state processes printable characters, ESC (`\e`) enters escape state, `[` after ESC enters CSI (Control Sequence Introducer) state where numeric parameters are collected until a final command letter. Implement the essential SGR (Select Graphic Rendition) codes: reset (0), bold (1), underline (4), inverse (7), foreground colors 30-37 and 90-97, background colors 40-47. Cursor movement codes (H, A/B/C/D) and screen clearing (2J, K) are needed for programs like vim-lite or top. Define a 16-color palette matching standard ANSI colors. After completing all items,sh clean`, and commit as `"apps: terminal ANSI escape codes"`.
 
 
 - [ ] Create `src/apps/terminal/ansi.c`
@@ -58,7 +58,7 @@
 
 ### 1.4 Scrollback & Selection
 
-**Prompt:** Scrollback lets users review past output. The grid stores 500 history rows above the visible viewport. Mouse wheel scrolls the viewport up/down through this history. A scrollbar on the right side shows the viewport position. Text selection: click + drag highlights cells (tracked as start_row/col to end_row/col). The selection highlight inverts foreground/background colors. Ctrl+Shift+C copies the selected text to the clipboard (Phase 03 §3.1). Ctrl+Shift+V pastes clipboard text into the shell's stdin. Note: use Ctrl+Shift variants to avoid conflicting with Ctrl+C (SIGINT) in the shell. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal scrollback and copy/paste"`.
+**Prompt:** Scrollback lets users review past output. The grid stores 500 history rows above the visible viewport. Mouse wheel scrolls the viewport up/down through this history. A scrollbar on the right side shows the viewport position. Text selection: click + drag highlights cells (tracked as start_row/col to end_row/col). The selection highlight inverts foreground/background colors. Ctrl+Shift+C copies the selected text to the clipboard (Phase 03 §3.1). Ctrl+Shift+V pastes clipboard text into the shell's stdin. Note: use Ctrl+Shift variants to avoid conflicting with Ctrl+C (SIGINT) in the shell. After completing all items,sh clean`, and commit as `"apps: terminal scrollback and copy/paste"`.
 
 
 - [ ] Scrollback buffer: 500 lines of history above the visible viewport
@@ -71,7 +71,7 @@
 
 ### 1.5 Registry Settings
 
-**Prompt:** Terminal appearance is configurable via Registry: `HKCU\Software\Impossible\Terminal\FontName` (default "Cascadia Code"), `HKCU\Software\Impossible\Terminal\FontSize` (14), `HKCU\Software\Impossible\Terminal\CursorStyle` ("block"/"underline"/"bar"), `HKCU\Software\Impossible\Terminal\CursorBlink` (REG_DWORD), `HKCU\Software\Impossible\Terminal\Opacity` (0-100 for Acrylic transparency), `HKCU\Software\Impossible\Terminal\ScrollbackLines` (500). Read these values on terminal creation. Recalculate grid columns/rows when the window is resized (new cols = window_width / cell_w). After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal settings"`.
+**Prompt:** Terminal appearance is configurable via Registry: `HKCU\Software\Impossible\Terminal\FontName` (default "Cascadia Code"), `HKCU\Software\Impossible\Terminal\FontSize` (14), `HKCU\Software\Impossible\Terminal\CursorStyle` ("block"/"underline"/"bar"), `HKCU\Software\Impossible\Terminal\CursorBlink` (REG_DWORD), `HKCU\Software\Impossible\Terminal\Opacity` (0-100 for Acrylic transparency), `HKCU\Software\Impossible\Terminal\ScrollbackLines` (500). Read these values on terminal creation. Recalculate grid columns/rows when the window is resized (new cols = window_width / cell_w). After completing all items,sh clean`, and commit as `"apps: terminal settings"`.
 
 
 - [ ] Font name: `Apps\Terminal\FontName` (default "Cascadia Code")
@@ -85,7 +85,7 @@
 
 ### 1.6 Advanced Features (Future)
 
-**Prompt:** Stretch goals for a premium terminal: multiple tabs (tab bar at top, each tab is a separate terminal session), Acrylic transparency background (composite the desktop behind the terminal surface at reduced alpha via `gfx_acrylic()`), split panes (divide the terminal window horizontally or vertically into independent sessions), and saved color scheme profiles stored in Registry. After completing all items, update `docs/architecture/terminal.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: terminal advanced features"`.
+**Prompt:** Stretch goals for a premium terminal: multiple tabs (tab bar at top, each tab is a separate terminal session), Acrylic transparency background (composite the desktop behind the terminal surface at reduced alpha via `gfx_acrylic()`), split panes (divide the terminal window horizontally or vertically into independent sessions), and saved color scheme profiles stored in Registry. After completing all items,sh clean`, and commit as `"apps: terminal advanced features"`.
 
 
 - [ ] *(Stretch)* Multiple tabs — tabbed terminal sessions
@@ -115,7 +115,6 @@
 | `src/apps/terminal/terminal.c`     | [NEW] Terminal core (grid, rendering)     |
 | `include/terminal.h`               | [NEW] Terminal API header                 |
 | `src/apps/terminal/ansi.c`         | [NEW] ANSI escape code state machine      |
-| `docs/architecture/terminal.md`    | [NEW] Terminal documentation              |
 
 ---
 

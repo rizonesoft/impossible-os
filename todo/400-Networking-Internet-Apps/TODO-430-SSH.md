@@ -11,7 +11,7 @@
 
 ### 4.1 SSH Protocol Implementation
 
-**Prompt:** Choose: port dropbear (MIT, ~15K lines) or build custom minimal SSH2 client (~2K lines). SSH2 transport: TCP connect port 22, version exchange `SSH-2.0-ImpossibleOS`, key exchange (Curve25519 via monocypher), symmetric encryption (ChaCha20), MAC (HMAC-SHA256). Auth: password auth via SSH_MSG_USERAUTH_REQUEST. Channel: open interactive session, PTY request, forward stdin/stdout. After all items, create `docs/user/ssh.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: SSH client"`.
+**Prompt:** Choose: port dropbear (MIT, ~15K lines) or build custom minimal SSH2 client (~2K lines). SSH2 transport: TCP connect port 22, version exchange `SSH-2.0-ImpossibleOS`, key exchange (Curve25519 via monocypher), symmetric encryption (ChaCha20), MAC (HMAC-SHA256). Auth: password auth via SSH_MSG_USERAUTH_REQUEST. Channel: open interactive session, PTY request, forward stdin/stdout. After all items,sh clean`, commit `"apps: SSH client"`.
 
 
 - [ ] Create `src/apps/ssh/ssh.c`

@@ -148,16 +148,15 @@ Declare: `int MessageBox(void *hWnd, const char *lpText, const char *lpCaption, 
 
 ## 4. Documentation
 
-**Prompt:** Create or update `docs/architecture/msgbox.md` documenting the message box API, icon embedding process, modal rendering, and button types. Update `README.md` if it references dialogs or message boxes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"docs: message box system"`.
+**Prompt:** After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"docs: message box system"`.
 
 
-- [ ] Create `docs/architecture/msgbox.md`
 - [ ] Document API: `MessageBox()` signature, `MB_*` flags, `ID*` return values
 - [ ] Document Win32 compatibility: flag values match Win32 exactly
 - [ ] Document icon embedding: PNG → C array → compiled into kernel
 - [ ] Document modal rendering and input blocking
 - [ ] Document shim strategy: Win32 pass-through (PE is the native format)
-- [ ] Update `README.md` if needed
+- [ ]
 - [ ] Commit: `"docs: message box system"`
 
 ---
@@ -188,7 +187,6 @@ Declare: `int MessageBox(void *hWnd, const char *lpText, const char *lpCaption, 
 | `assets/icons/msgbox/*.png`          | [NEW] Source PNG icons                                                  |
 | `tools/convert_icon.py`              | [MODIFY] PNG → C header converter                                       |
 | `src/kernel/main.c`                  | [MODIFY] Test call, error paths                                         |
-| `docs/architecture/msgbox.md`        | [NEW] Documentation                                                     |
 
 ---
 

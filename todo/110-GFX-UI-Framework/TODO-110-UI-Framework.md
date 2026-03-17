@@ -13,7 +13,7 @@
 
 ### 1.1 Core Surface & Primitives
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_surface_t` struct (pixels, width, height, stride), `gfx_color_t` (0xAARRGGBB) with macros, and all drawing primitives (`gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_rounded_rect`, `gfx_draw_rounded_rect`, `gfx_fill_circle`, `gfx_draw_line`) exist in `src/kernel/gfx/gfx_core.c`. Verify the dirty rectangle tracker works. Check that `docs/architecture/gfx-library.md` exists and covers the surface/primitive API — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_surface_t` struct (pixels, width, height, stride), `gfx_color_t` (0xAARRGGBB) with macros, and all drawing primitives (`gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_rounded_rect`, `gfx_draw_rounded_rect`, `gfx_fill_circle`, `gfx_draw_line`) exist in `src/kernel/gfx/gfx_core.c`. Verify the dirty rectangle tracker works. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Define `gfx_surface_t` struct (pixels, width, height, stride)
@@ -31,7 +31,7 @@
 
 ### 1.2 Alpha Blending & Compositing
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blit`, `gfx_blit_alpha`, and `gfx_fill_rect_alpha` exist in `src/kernel/gfx/gfx_blend.c`. Verify pre-multiplied alpha is used (integer-only math, no floating point). Check that `docs/architecture/gfx-library.md` covers the blending API — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blit`, `gfx_blit_alpha`, and `gfx_fill_rect_alpha` exist in `src/kernel/gfx/gfx_blend.c`. Verify pre-multiplied alpha is used (integer-only math, no floating point). Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_blend.c`
@@ -44,7 +44,7 @@
 
 ### 1.3 Gradients
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_gradient_t` struct, `gfx_fill_gradient_rect()`, `gfx_fill_gradient_rounded()`, and radial gradient fill exist in `src/kernel/gfx/gfx_gradient.c`. Check that `docs/architecture/gfx-library.md` covers gradients — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_gradient_t` struct, `gfx_fill_gradient_rect()`, `gfx_fill_gradient_rounded()`, and radial gradient fill exist in `src/kernel/gfx/gfx_gradient.c`. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_gradient.c`
@@ -56,7 +56,7 @@
 
 ### 1.4 Blur & Material Effects
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blur_rect`, `gfx_acrylic`, `gfx_mica`, `gfx_drop_shadow`, and `gfx_reveal_highlight` exist in `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`. Verify the two-pass box blur is O(n) per pixel. Check Mica samples wallpaper, desaturates, and tints. Check that `docs/architecture/gfx-library.md` covers blur/material effects — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_blur_rect`, `gfx_acrylic`, `gfx_mica`, `gfx_drop_shadow`, and `gfx_reveal_highlight` exist in `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`. Verify the two-pass box blur is O(n) per pixel. Check Mica samples wallpaper, desaturates, and tints. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Create `src/kernel/gfx/gfx_blur.c` and `gfx_effects.c`
@@ -78,7 +78,7 @@
 
 ### 1.5 SIMD Optimization
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm SSE2 alpha blending, gradient fill, and blur are implemented with `_mm_loadu_si128`/`_mm_storeu_si128`. Verify `fxsave`/`fxrstor` wrappers protect user FPU state. Confirm gfx files compile with `-msse2`. Check AVX2 runtime detection via CPUID. Verify compositor frame time <8ms at 1280×720. Check that `docs/architecture/gfx-library.md` covers SIMD optimizations — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm SSE2 alpha blending, gradient fill, and blur are implemented with `_mm_loadu_si128`/`_mm_storeu_si128`. Verify `fxsave`/`fxrstor` wrappers protect user FPU state. Confirm gfx files compile with `-msse2`. Check AVX2 runtime detection via CPUID. Verify compositor frame time <8ms at 1280×720. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Enable SSE2 for gfx module: compile with `-msse2` separately
@@ -96,7 +96,7 @@
 
 ### 2.1 stb_truetype Integration
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_truetype.h` exists in `include/`, memory redirects (`STBTT_malloc → kmalloc`, `STBTT_free → kfree`) work, `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h` exist with `ttf_mgr_init`, `ttf_get`, `ttf_draw_char`, `ttf_draw_string`, `ttf_measure_width`, `ttf_line_height`. Verify fonts load from `C:\Impossible\Fonts\` at boot. Check that `docs/architecture/font-rendering.md` exists — create or update if missing. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_truetype.h` exists in `include/`, memory redirects (`STBTT_malloc → kmalloc`, `STBTT_free → kfree`) work, `src/kernel/gfx/gfx_text.c` and `include/font_mgr.h` exist with `ttf_mgr_init`, `ttf_get`, `ttf_draw_char`, `ttf_draw_string`, `ttf_measure_width`, `ttf_line_height`. Verify fonts load from `C:\Impossible\Fonts\` at boot. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Add `stb_truetype.h` to `include/` (public domain)
@@ -126,7 +126,7 @@
 
 ### 2.3 Glyph Caching
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm glyph bitmaps are cached for ASCII range (32-126) at common pixel sizes. Check the `ttf_draw_char` hot path hits the cache before falling back to live rasterization. Check that `docs/architecture/font-rendering.md` covers caching — update if not. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm glyph bitmaps are cached for ASCII range (32-126) at common pixel sizes. Check the `ttf_draw_char` hot path hits the cache before falling back to live rasterization. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Pre-rasterize ASCII 32–126 at common sizes (12, 14, 16, 20, 24px) at boot
@@ -154,7 +154,7 @@
 
 ### 3.1 Kernel-Side stb_image
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_image.h` exists in `include/`, `src/kernel/image.c` and `include/kernel/image.h` exist with `image_load`, `image_load_mem`, `image_free`, and `image_t` struct. Verify `STBI_NO_STDIO`, `STBI_NO_LINEAR`, `STBI_NO_HDR` are defined. Verify RGBA→BGRA channel swap in `rgba_to_bgra()`. **CRITICAL:** Verify the tiered allocator is used — `STBI_MALLOC` must route allocations >64 KB through `pmm_alloc_contiguous()` (NOT `kmalloc`), because the kernel heap is only 2 MiB and a 1280×720 RGBA image is 3.6 MiB. Check `image_free()` correctly detects PMM vs kmalloc via `from_pmm` flag. Verify freestanding header shims exist in `include/freestanding/`. Check that `docs/architecture/image-system.md` covers the tiered allocator. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `stb_image.h` exists in `include/`, `src/kernel/image.c` and `include/kernel/image.h` exist with `image_load`, `image_load_mem`, `image_free`, and `image_t` struct. Verify `STBI_NO_STDIO`, `STBI_NO_LINEAR`, `STBI_NO_HDR` are defined. Verify RGBA→BGRA channel swap in `rgba_to_bgra()`. **CRITICAL:** Verify the tiered allocator is used — `STBI_MALLOC` must route allocations >64 KB through `pmm_alloc_contiguous()` (NOT `kmalloc`), because the kernel heap is only 2 MiB and a 1280×720 RGBA image is 3.6 MiB. Check `image_free()` correctly detects PMM vs kmalloc via `from_pmm` flag. Verify freestanding header shims exist in `include/freestanding/`. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 > **⚠️ Heap Gotcha:** `STBI_MALLOC/STBI_REALLOC/STBI_FREE` are NOT plain `kmalloc`/`kfree`. They use a tiered allocator: ≤64 KB → `kmalloc`, >64 KB → `pmm_alloc_contiguous()`. This avoids the same 2 MiB heap exhaustion that broke the framebuffer back buffer (commit `9722a74`). The `image_t.from_pmm` flag tracks provenance for correct deallocation.
 
@@ -166,12 +166,11 @@
 - [x] Implement `image_load(path)` — load from VFS, decode, RGBA→BGRA conversion
 - [x] Implement `image_load_mem(data, size)` — decode from memory buffer
 - [x] Implement `image_free(img)` — free decoded data (PMM or kmalloc)
-- [x] Create `docs/architecture/image-system.md`
 - [x] Commit: `"kernel: runtime image decoding (stb_image)"` (`1ee5c6a`)
 
 ### 3.2 Image Scaling
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `image_scale()` in `src/kernel/image_scale.c` supports all 5 fit modes (`IMAGE_FIT_STRETCH`, `IMAGE_FIT_FILL`, `IMAGE_FIT_FIT`, `IMAGE_FIT_CENTER`, `IMAGE_FIT_TILE`). Verify bilinear interpolation uses 16.16 fixed-point math (no floats). Verify box-filter downscaling activates for >2x reduction. Check output buffers use the tiered PMM/kmalloc allocator. Verify `docs/architecture/image-system.md` covers scaling. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `image_scale()` in `src/kernel/image_scale.c` supports all 5 fit modes (`IMAGE_FIT_STRETCH`, `IMAGE_FIT_FILL`, `IMAGE_FIT_FIT`, `IMAGE_FIT_CENTER`, `IMAGE_FIT_TILE`). Verify bilinear interpolation uses 16.16 fixed-point math (no floats). Verify box-filter downscaling activates for >2x reduction. Check output buffers use the tiered PMM/kmalloc allocator. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
 
 
 - [x] Implement `image_scale(src, target_w, target_h, mode)` — bilinear interpolation (16.16 fixed-point)
@@ -208,7 +207,7 @@
 
 ### 4.1 Icon Store Basics
 
-**Verification:** Confirm `include/icon_store.h` defines `system_icon_t` enum (~100 icons: 60 monochrome + 40 color), `icon_bitmap_t` struct (BGRA pixels, width, height, PMM flag), and `icon_font_variant_t` enum (4 variants). Confirm `src/kernel/icon_store.c` implements: `icon_store_init()` (loads 4 Fluent icon fonts from `C:\Impossible\Fonts\`), `icon_get(id, size)` (cache check → font rasterize → BGRA tint → LRU cache), `icon_get_colored()`, `icon_get_by_name()` (linear search with `kstrcmp`), `icon_draw()` (per-pixel alpha blend), `icon_draw_scaled()`, LRU cache with 128 slots. Verify `Makefile` has explicit SSE2 rule for `icon_store.o`. Verify `main.c` calls `icon_store_init()` after `ttf_mgr_init()`. Verify `docs/architecture/icon-store.md` exists. Run `make clean && make all && make run`.
+**Verification:** Confirm `include/icon_store.h` defines `system_icon_t` enum (~100 icons: 60 monochrome + 40 color), `icon_bitmap_t` struct (BGRA pixels, width, height, PMM flag), and `icon_font_variant_t` enum (4 variants). Confirm `src/kernel/icon_store.c` implements: `icon_store_init()` (loads 4 Fluent icon fonts from `C:\Impossible\Fonts\`), `icon_get(id, size)` (cache check → font rasterize → BGRA tint → LRU cache), `icon_get_colored()`, `icon_get_by_name()` (linear search with `kstrcmp`), `icon_draw()` (per-pixel alpha blend), `icon_draw_scaled()`, LRU cache with 128 slots. Verify `Makefile` has explicit SSE2 rule for `icon_store.o`. Verify `main.c` calls `icon_store_init()` after `ttf_mgr_init()`. Run `make clean && make all && make run`.
 
 
 - [x] Define `system_icon_t` enum (~60 monochrome + ~15 color icons)
@@ -290,7 +289,7 @@
 
 ### 4.6 ICO File Loader (App Compatibility)
 
-**Prompt:** `.ico` files are the standard Windows icon format — a container holding multiple sizes (16, 32, 48, 256) as embedded BMP or PNG data. Third-party apps and user-created shortcuts need `.ico` support for their custom icons. The `.ico` header is 6 bytes (reserved, type=1, count), followed by 16-byte directory entries (width, height, offset, size), then image data at each offset. If the image data starts with PNG magic (`\x89PNG`), pass it to `image_load_mem()`. Otherwise parse it as a BMP DIB (headerless bitmap). `ico_load(path)` returns an `icon_entry_t` with all available sizes. This is used by File Manager, desktop shortcuts, and the Start menu for app icons. After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `make clean && make all && make run`, and commit as `"desktop: ICO file loader"`.
+**Prompt:** `.ico` files are the standard Windows icon format — a container holding multiple sizes (16, 32, 48, 256) as embedded BMP or PNG data. Third-party apps and user-created shortcuts need `.ico` support for their custom icons. The `.ico` header is 6 bytes (reserved, type=1, count), followed by 16-byte directory entries (width, height, offset, size), then image data at each offset. If the image data starts with PNG magic (`\x89PNG`), pass it to `image_load_mem()`. Otherwise parse it as a BMP DIB (headerless bitmap). `ico_load(path)` returns an `icon_entry_t` with all available sizes. This is used by File Manager, desktop shortcuts, and the Start menu for app icons. After completing all items,
 
 
 - [x] Implement `ico_load(path)` — parse `.ico` container, extract all sizes
@@ -310,7 +309,7 @@
 > table that intercepts `LoadLibrary("shell32.dll")` and provides kernel-side
 > function pointers directly.
 
-**Prompt:** Create `include/win32_icons.h` with a mapping table that translates Windows standard icon indices (shell32.dll, imageres.dll) to Impossible OS `system_icon_t` enum values. Research the top ~50 most-used icon indices from each DLL and document them. For indices we don't have icons for, map to `ICON_FILE_DEFAULT` as a fallback. Provide `win32_icon_lookup(dll_name, index)` → returns `system_icon_t`. Also define the `SHSTOCKICONID` → `system_icon_t` mapping for `SHGetStockIconInfo`. This is a pure data table with no PE dependency — the actual Win32 API stubs that call this table are in [P0105 §7.3](../510-Long-Term-Stretch/TODO-510-Native-Win32.md). After completing all items, update `docs/architecture/icon-store.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: Win32 icon index mapping table"`.
+**Prompt:** Create `include/win32_icons.h` with a mapping table that translates Windows standard icon indices (shell32.dll, imageres.dll) to Impossible OS `system_icon_t` enum values. Research the top ~50 most-used icon indices from each DLL and document them. For indices we don't have icons for, map to `ICON_FILE_DEFAULT` as a fallback. Provide `win32_icon_lookup(dll_name, index)` → returns `system_icon_t`. Also define the `SHSTOCKICONID` → `system_icon_t` mapping for `SHGetStockIconInfo`. This is a pure data table with no PE dependency — the actual Win32 API stubs that call this table are in [P0105 §7.3](../510-Long-Term-Stretch/TODO-510-Native-Win32.md). After completing all items,sh clean`, and commit as `"desktop: Win32 icon index mapping table"`.
 
 
 - [ ] Research Windows shell32.dll standard icon indices (document top ~50 used by apps)
@@ -341,7 +340,7 @@
 
 ### 5.1 Cursor Manager
 
-**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 cursor shapes loaded from Adwaita X11 cursor files (Xcur binary format). The Adwaita cursor theme (LGPL/CC-BY-SA) is pre-installed at `/usr/share/icons/Adwaita/cursors/` on the build host. At build time, selected cursor files are copied to the sysroot at `C:\Impossible\System\Cursors\`. Each Xcur file contains multiple sizes with ARGB pixel data and hotspot coordinates baked in. `cursor_init()` calls `xcur_load()` for each cursor file. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-VFS boot. After completing all items, create `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: cursor manager with Adwaita cursors"`.
+**Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 cursor shapes loaded from Adwaita X11 cursor files (Xcur binary format). The Adwaita cursor theme (LGPL/CC-BY-SA) is pre-installed at `/usr/share/icons/Adwaita/cursors/` on the build host. At build time, selected cursor files are copied to the sysroot at `C:\Impossible\System\Cursors\`. Each Xcur file contains multiple sizes with ARGB pixel data and hotspot coordinates baked in. `cursor_init()` calls `xcur_load()` for each cursor file. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-VFS boot. After completing all items,sh clean`, and commit as `"drivers: cursor manager with Adwaita cursors"`.
 
 
 - [x] Create `include/cursor.h` with `cursor_shape_t` enum (11 shapes)
@@ -380,7 +379,7 @@
 
 ### 5.3 Context-Based Cursor Switching
 
-**Prompt:** The window manager must determine the correct cursor shape based on what's under the mouse pointer. Add `wm_get_cursor_context(mx, my)` that checks: is the mouse over a window edge or corner (resize cursors), over a title bar during drag (move cursor), over a text input widget (I-beam), over a button or link (hand), or over the desktop (arrow). This function is called every mouse-move event and updates the cursor shape. The compositor loop must save/restore cursor pixels around the composite step to prevent cursor artifacts. Remove the old cursor rendering from `mouse.c` entirely -- mouse.c should only track position and button state. After completing all items, update `docs/architecture/cursor-system.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: context-aware cursor switching"`.
+**Prompt:** The window manager must determine the correct cursor shape based on what's under the mouse pointer. Add `wm_get_cursor_context(mx, my)` that checks: is the mouse over a window edge or corner (resize cursors), over a title bar during drag (move cursor), over a text input widget (I-beam), over a button or link (hand), or over the desktop (arrow). This function is called every mouse-move event and updates the cursor shape. The compositor loop must save/restore cursor pixels around the composite step to prevent cursor artifacts. Remove the old cursor rendering from `mouse.c` entirely -- mouse.c should only track position and button state. After completing all items,sh clean`, and commit as `"desktop: context-aware cursor switching"`.
 
 
 - [x] Remove `cursor_data[]` and rendering from `mouse.c` (keep position/button tracking)

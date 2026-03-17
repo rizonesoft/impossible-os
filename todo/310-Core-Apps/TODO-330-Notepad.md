@@ -12,7 +12,7 @@
 
 ### 1.1 Text Buffer (Gap Buffer)
 
-**Prompt:** The gap buffer is the most efficient data structure for text editing — insertions and deletions at the cursor are O(1). The buffer has a "gap" (unused region) that sits at the cursor position. `text_insert` drops a character into the gap (gap shrinks). `text_delete` expands the gap to "eat" the character before cursor. `text_move_cursor` shifts the gap to the new position by copying characters. Pre-allocate a reasonable buffer size (64K) and grow by doubling when the gap shrinks to zero. `text_get_line(n)` scans for the nth newline, returning a pointer and length. After completing all items, create `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad gap buffer"`.
+**Prompt:** The gap buffer is the most efficient data structure for text editing — insertions and deletions at the cursor are O(1). The buffer has a "gap" (unused region) that sits at the cursor position. `text_insert` drops a character into the gap (gap shrinks). `text_delete` expands the gap to "eat" the character before cursor. `text_move_cursor` shifts the gap to the new position by copying characters. Pre-allocate a reasonable buffer size (64K) and grow by doubling when the gap shrinks to zero. `text_get_line(n)` scans for the nth newline, returning a pointer and length. After completing all items,sh clean`, and commit as `"apps: Notepad gap buffer"`.
 
 
 - [ ] Create `src/apps/notepad/notepad.c`
@@ -26,7 +26,7 @@
 
 ### 1.2 Text Rendering & Cursor
 
-**Prompt:** Render visible lines from the gap buffer using `font_draw_string()` (Selawik or user-configured font from Registry). Track cursor_line and cursor_col. The I-beam cursor blinks at the insertion point (500ms toggle). Arrow keys move the cursor, adjusting line/col and scrolling the viewport if necessary. Home/End jump to line start/end. Ctrl+Home/End jump to file start/end. The scroll position (`scroll_y`) determines which line is at the top of the visible area. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad text rendering"`.
+**Prompt:** Render visible lines from the gap buffer using `font_draw_string()` (Selawik or user-configured font from Registry). Track cursor_line and cursor_col. The I-beam cursor blinks at the insertion point (500ms toggle). Arrow keys move the cursor, adjusting line/col and scrolling the viewport if necessary. Home/End jump to line start/end. Ctrl+Home/End jump to file start/end. The scroll position (`scroll_y`) determines which line is at the top of the visible area. After completing all items,sh clean`, and commit as `"apps: Notepad text rendering"`.
 
 
 - [ ] Define `struct notepad` state (text, cursor_line/col, scroll_y, filepath, modified)
@@ -39,7 +39,7 @@
 
 ### 1.3 File Menu
 
-**Prompt:** The File menu uses the menu bar widget from §1.2. File → New clears the buffer and resets the filepath. File → Open invokes `ui_dialog_open()` from §1.3, loads the file via VFS `read()` into the gap buffer. File → Save writes the buffer to the current filepath via VFS `write()`. File → Save As invokes `ui_dialog_save()`. Track a `modified` flag — set on any edit, cleared on save. If modified, show "Do you want to save changes?" dialog (from §1.3) before New/Open/Close. The window title shows "filename.txt — Notepad" (with asterisk if modified). After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad file operations"`.
+**Prompt:** The File menu uses the menu bar widget from §1.2. File → New clears the buffer and resets the filepath. File → Open invokes `ui_dialog_open()` from §1.3, loads the file via VFS `read()` into the gap buffer. File → Save writes the buffer to the current filepath via VFS `write()`. File → Save As invokes `ui_dialog_save()`. Track a `modified` flag — set on any edit, cleared on save. If modified, show "Do you want to save changes?" dialog (from §1.3) before New/Open/Close. The window title shows "filename.txt — Notepad" (with asterisk if modified). After completing all items,sh clean`, and commit as `"apps: Notepad file operations"`.
 
 
 - [ ] Menu bar: File, Edit, View, Help
@@ -53,7 +53,7 @@
 
 ### 1.4 Editing Features
 
-**Prompt:** Mouse click sets the cursor position by calculating which line/col the click coordinates map to. Text selection: click + drag or Shift+Arrow marks a start/end range, rendered with inverted colors. Ctrl+A selects all. Cut/Copy/Paste uses the system clipboard (Phase 03 §3). Vertical scrollbar for long files (from §1.1). Word wrap toggle in the View menu — when enabled, lines wrap at the window width without inserting newlines. Status bar shows line:col, encoding (UTF-8), and line ending type (CRLF/LF). Stretch goals: Find/Replace (Ctrl+F/H) with a search bar, Undo/Redo (Ctrl+Z/Y) with an action stack, line numbers in a left gutter, syntax highlighting for .c/.h files. After completing all items, update `docs/architecture/notepad.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Notepad editing features"`.
+**Prompt:** Mouse click sets the cursor position by calculating which line/col the click coordinates map to. Text selection: click + drag or Shift+Arrow marks a start/end range, rendered with inverted colors. Ctrl+A selects all. Cut/Copy/Paste uses the system clipboard (Phase 03 §3). Vertical scrollbar for long files (from §1.1). Word wrap toggle in the View menu — when enabled, lines wrap at the window width without inserting newlines. Status bar shows line:col, encoding (UTF-8), and line ending type (CRLF/LF). Stretch goals: Find/Replace (Ctrl+F/H) with a search bar, Undo/Redo (Ctrl+Z/Y) with an action stack, line numbers in a left gutter, syntax highlighting for .c/.h files. After completing all items,sh clean`, and commit as `"apps: Notepad editing features"`.
 
 
 - [ ] Mouse click → set cursor position

@@ -11,7 +11,7 @@
 
 ### 2.1 Email Protocols
 
-**Prompt:** SMTP client (send, port 587+STARTTLS): EHLO → AUTH LOGIN → MAIL FROM → RCPT TO → DATA → body → QUIT. POP3 client (receive, port 995+TLS): USER → PASS → STAT → LIST → RETR → DELE → QUIT. Both require TLS from Phase 07 §5. Stretch: IMAP client (port 993+TLS) for server-side message sync. After all items, create `docs/user/email.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: email protocol clients (SMTP/POP3)"`.
+**Prompt:** SMTP client (send, port 587+STARTTLS): EHLO → AUTH LOGIN → MAIL FROM → RCPT TO → DATA → body → QUIT. POP3 client (receive, port 995+TLS): USER → PASS → STAT → LIST → RETR → DELE → QUIT. Both require TLS from Phase 07 §5. Stretch: IMAP client (port 993+TLS) for server-side message sync. After all items,sh clean`, commit `"apps: email protocol clients (SMTP/POP3)"`.
 
 
 - [ ] Create `src/apps/mail/smtp.c` — SMTP client (send email)
@@ -30,7 +30,7 @@
 
 ### 2.2 Email App UI
 
-**Prompt:** Three-panel layout: sidebar (Inbox/Sent/Drafts/Trash folders), message list (from, subject, date, read/unread), and message viewer. Compose window: To, Subject, Body fields with Send button. Reply/Forward buttons prepopulate fields. Delete moves to Trash. Account setup stores credentials in Phase 09 credential store. Auto-check every 5 minutes, notification toast on new mail. After all items, update `docs/user/email.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: email client UI"`.
+**Prompt:** Three-panel layout: sidebar (Inbox/Sent/Drafts/Trash folders), message list (from, subject, date, read/unread), and message viewer. Compose window: To, Subject, Body fields with Send button. Reply/Forward buttons prepopulate fields. Delete moves to Trash. Account setup stores credentials in Phase 09 credential store. Auto-check every 5 minutes, notification toast on new mail. After all items,sh clean`, commit `"apps: email client UI"`.
 
 
 - [ ] Create `src/apps/mail/mail.c`

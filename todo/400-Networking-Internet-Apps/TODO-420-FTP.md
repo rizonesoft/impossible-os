@@ -11,7 +11,7 @@
 
 ### 5.1 FTP Protocol
 
-**Prompt:** FTP control connection on TCP port 21. `ftp_connect(host, user, pass)` authenticates with USER/PASS commands. `ftp_list()` sends LIST via data connection. `ftp_download()` uses RETR, `ftp_upload()` uses STOR. Data connection: use PASV (passive mode) to get data port from server. Additional: CWD, PWD, MKD, RMD, SIZE, DELE. After all items, create `docs/user/ftp.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: FTP client protocol"`.
+**Prompt:** FTP control connection on TCP port 21. `ftp_connect(host, user, pass)` authenticates with USER/PASS commands. `ftp_list()` sends LIST via data connection. `ftp_download()` uses RETR, `ftp_upload()` uses STOR. Data connection: use PASV (passive mode) to get data port from server. Additional: CWD, PWD, MKD, RMD, SIZE, DELE. After all items,sh clean`, commit `"apps: FTP client protocol"`.
 
 
 - [ ] Create `src/apps/ftp/ftp.c`

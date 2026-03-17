@@ -15,7 +15,7 @@
 
 ### 1.1 High Contrast Mode
 
-**Prompt:** Define a high contrast color theme in Registry (black bg, white fg, yellow accent, cyan links, red errors). `accessibility_set_high_contrast(enabled)` swaps the entire UI color palette. All widgets must respect theme colors. Registry: `HKLM\SYSTEM\Accessibility\HighContrast = 0`. After all items, create `docs/architecture/accessibility.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: high contrast mode"`.
+**Prompt:** Define a high contrast color theme in Registry (black bg, white fg, yellow accent, cyan links, red errors). `accessibility_set_high_contrast(enabled)` swaps the entire UI color palette. All widgets must respect theme colors. Registry: `HKLM\SYSTEM\Accessibility\HighContrast = 0`. After all items,sh clean`, commit `"desktop: high contrast mode"`.
 
 
 - [ ] Create `src/desktop/accessibility.c` and `include/accessibility.h`
@@ -116,7 +116,7 @@
 
 ### 2.1 Debug Console (F12)
 
-**Prompt:** F12 toggles a semi-transparent overlay panel. Tabs: Kernel (real-time printk with timestamps + subsystem filter), Memory, Network, Syscalls. Command input at bottom. Registry: `HKLM\SYSTEM\Developer\DebugConsole = 0`. After all items, create `docs/architecture/developer-tools.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: F12 debug console overlay"`.
+**Prompt:** F12 toggles a semi-transparent overlay panel. Tabs: Kernel (real-time printk with timestamps + subsystem filter), Memory, Network, Syscalls. Command input at bottom. Registry: `HKLM\SYSTEM\Developer\DebugConsole = 0`. After all items,sh clean`, commit `"debug: F12 debug console overlay"`.
 
 
 - [ ] Create `src/kernel/debug/debug_console.c`
@@ -418,7 +418,7 @@
 
 ### 10.1 Screen Time Limits
 
-**Prompt:** Set max daily usage (minutes) per child user via Registry `HKU\{child}\ParentalControls\ScreenTimeLimit`. Track active time per session. 15-minute warning. Auto-lock when limit hit with parent extension option. After all items, create `docs/architecture/parental-controls.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: screen time limits"`.
+**Prompt:** Set max daily usage (minutes) per child user via Registry `HKU\{child}\ParentalControls\ScreenTimeLimit`. Track active time per session. 15-minute warning. Auto-lock when limit hit with parent extension option. After all items,sh clean`, commit `"kernel: screen time limits"`.
 
 
 - [ ] Create `src/kernel/parental.c` and `include/parental.h`

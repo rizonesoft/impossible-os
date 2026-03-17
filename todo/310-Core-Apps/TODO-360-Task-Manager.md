@@ -11,7 +11,7 @@
 
 ### 1.1 Task Manager App
 
-**Prompt:** The Task Manager opens via Ctrl+Shift+Esc (registered as a system-wide hotkey in Phase 04 §15.1). It has two tabs: Processes (table listing all threads from the scheduler with Name, CPU%, RAM, PID, Status columns — read from the scheduler's task list from Phase 01 §1) and Performance (CPU usage as a rolling 60-second line chart, RAM usage bar from PMM stats). The "End Task" button kills the selected process. Auto-update the display every 1 second. Status bar shows total process count, overall CPU%, and RAM used/total. After completing all items, create `docs/user/task-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Task Manager"`.
+**Prompt:** The Task Manager opens via Ctrl+Shift+Esc (registered as a system-wide hotkey in Phase 04 §15.1). It has two tabs: Processes (table listing all threads from the scheduler with Name, CPU%, RAM, PID, Status columns — read from the scheduler's task list from Phase 01 §1) and Performance (CPU usage as a rolling 60-second line chart, RAM usage bar from PMM stats). The "End Task" button kills the selected process. Auto-update the display every 1 second. Status bar shows total process count, overall CPU%, and RAM used/total. After completing all items,sh clean`, and commit as `"apps: Task Manager"`.
 
 
 - [ ] Create `src/apps/taskmgr/taskmgr.c`
@@ -33,7 +33,7 @@
 
 ### 2.1 Device Manager App
 
-**Prompt:** The Device Manager displays all hardware in a tree view (from §1.4 Tree View widget): categories as parent nodes (Display adapters, Network adapters, Storage controllers, Input devices, System devices), individual devices as children. Device info comes from PCI enumeration results (vendor/device IDs, BARs, IRQs) and registered driver names. Status indicators: green check for working devices, yellow warning for no-driver, red cross for errors. Click a device to see properties (PCI address, vendor ID, device ID, IRQ, driver name). After completing all items, create `docs/user/device-manager.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Device Manager"`.
+**Prompt:** The Device Manager displays all hardware in a tree view (from §1.4 Tree View widget): categories as parent nodes (Display adapters, Network adapters, Storage controllers, Input devices, System devices), individual devices as children. Device info comes from PCI enumeration results (vendor/device IDs, BARs, IRQs) and registered driver names. Status indicators: green check for working devices, yellow warning for no-driver, red cross for errors. Click a device to see properties (PCI address, vendor ID, device ID, IRQ, driver name). After completing all items,sh clean`, and commit as `"apps: Device Manager"`.
 
 
 - [ ] Create `src/apps/devmgr/devmgr.c`

@@ -11,7 +11,7 @@
 
 ## 1. Pipes ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to IPC or pipes. Add notes, gotchas, and design decisions directly in this TODO section covering the pipe implementation, syscalls, and SIGPIPE behavior.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the pipe implementation, syscalls, and SIGPIPE behavior.
 
 
 - [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
@@ -27,7 +27,7 @@
 
 ## 2. Signals ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm signal constants (SIGKILL=9, SIGTERM=15, SIGINT=2, SIGCHLD=17, SIGPIPE=13), `signal_send`, `signal_handler` functions, and `SYS_SIGNAL` syscall (34) all exist. Verify SIGINT is wired from Ctrl+C in the terminal driver, SIGCHLD fires on child exit, SIGPIPE fires on write to closed pipe, and SIGKILL always terminates. Run `bash scripts/build.sh clean` and test Ctrl+C. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Update `README.md` and add notes directly in this TODO section covering signal constants, delivery semantics, and handler registration.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm signal constants (SIGKILL=9, SIGTERM=15, SIGINT=2, SIGCHLD=17, SIGPIPE=13), `signal_send`, `signal_handler` functions, and `SYS_SIGNAL` syscall (34) all exist. Verify SIGINT is wired from Ctrl+C in the terminal driver, SIGCHLD fires on child exit, SIGPIPE fires on write to closed pipe, and SIGKILL always terminates. Run `bash scripts/build.sh clean` and test Ctrl+C. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering signal constants, delivery semantics, and handler registration.
 
 
 - [x] Define signal constants: `SIGINT(2)`, `SIGKILL(9)`, `SIGPIPE(13)`, `SIGTERM(15)`, `SIGCHLD(17)`
@@ -44,7 +44,7 @@
 
 ## 3. Shared Memory ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), and `SYS_SHMEM_UNMAP` (37) syscalls are registered. Run `bash scripts/build.sh clean` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Update `README.md` and add notes directly in this TODO section covering named shared memory regions, syscalls, and reference counting.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), and `SYS_SHMEM_UNMAP` (37) syscalls are registered. Run `bash scripts/build.sh clean` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering named shared memory regions, syscalls, and reference counting.
 
 > **Note:** Verify syscall numbers — `SYS_SHMEM_UNMAP` may conflict with `SYS_MMAP` (37) in `TODO-023-Virtual-Memory.md`. Check `syscall.h` and resolve any collision.
 

@@ -23,7 +23,7 @@
 
 ### 1.1 UEFI Boot Application
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: review `src/boot/uefi/bootx64.c` to confirm it implements a PE/COFF binary at `\EFI\BOOT\BOOTX64.EFI` that replaces GRUB. Confirm it uses the `ms_abi` calling convention, initializes the UEFI system table and boot services, disables the watchdog timer, and passes control to the kernel. Check that the Makefile builds `BOOTX64.EFI` as a PE binary and copies it to the EFI staging directory. Confirm the commit `"boot: custom UEFI bootloader replaces GRUB"` exists in git history. Run `bash scripts/build.sh clean` and verify the ISO boots in QEMU. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the UEFI bootloader or GRUB. Add notes, gotchas, and design decisions directly in this TODO section covering the custom UEFI boot application architecture.
+**Prompt:** This section is marked complete. Verify the implementation is correct: review `src/boot/uefi/bootx64.c` to confirm it implements a PE/COFF binary at `\EFI\BOOT\BOOTX64.EFI` that replaces GRUB. Confirm it uses the `ms_abi` calling convention, initializes the UEFI system table and boot services, disables the watchdog timer, and passes control to the kernel. Check that the Makefile builds `BOOTX64.EFI` as a PE binary and copies it to the EFI staging directory. Confirm the commit `"boot: custom UEFI bootloader replaces GRUB"` exists in git history. Run `bash scripts/build.sh clean` and verify the ISO boots in QEMU. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the custom UEFI boot application architecture.
 
 - [x] Create `src/boot/uefi/bootx64.c` — UEFI boot application entry point (`efi_main`)
 - [x] Implement `ms_abi` calling convention for UEFI compatibility
@@ -35,7 +35,7 @@
 
 ### 1.2 GOP Framebuffer Initialization
 
-**Prompt:** This section is marked complete. Verify that `init_gop()` in `bootx64.c` locates the `EFI_GRAPHICS_OUTPUT_PROTOCOL`, sets the video mode to 1280×720×32bpp with `PixelBlueGreenRedReserved8BitPerColor` format, and stores the framebuffer address, width, height, and pitch in the boot info struct. Confirm `fill_screen_black()` clears the framebuffer immediately after GOP init for a clean transition. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to GOP or framebuffer initialization. Add notes, gotchas, and design decisions directly in this TODO section covering GOP mode selection and framebuffer setup.
+**Prompt:** This section is marked complete. Verify that `init_gop()` in `bootx64.c` locates the `EFI_GRAPHICS_OUTPUT_PROTOCOL`, sets the video mode to 1280×720×32bpp with `PixelBlueGreenRedReserved8BitPerColor` format, and stores the framebuffer address, width, height, and pitch in the boot info struct. Confirm `fill_screen_black()` clears the framebuffer immediately after GOP init for a clean transition. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering GOP mode selection and framebuffer setup.
 
 - [x] Implement `init_gop()` — locate `EFI_GRAPHICS_OUTPUT_PROTOCOL` via `LocateProtocol`
 - [x] Set video mode to 1280×720×32bpp (`PixelBlueGreenRedReserved8BitPerColor`)
@@ -45,7 +45,7 @@
 
 ### 1.3 Kernel ELF Loader
 
-**Prompt:** This section is marked complete. Verify that `load_kernel()` in `bootx64.c` reads `\boot\kernel.exe` from the EFI partition using `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses the ELF64 header, loads all `PT_LOAD` program headers into memory at their specified physical addresses, and returns the ELF entry point address. Confirm it handles both LOAD segments (code + data) and zeroes BSS. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to kernel loading. Add notes, gotchas, and design decisions directly in this TODO section covering the ELF64 kernel loading process.
+**Prompt:** This section is marked complete. Verify that `load_kernel()` in `bootx64.c` reads `\boot\kernel.exe` from the EFI partition using `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses the ELF64 header, loads all `PT_LOAD` program headers into memory at their specified physical addresses, and returns the ELF entry point address. Confirm it handles both LOAD segments (code + data) and zeroes BSS. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the ELF64 kernel loading process.
 
 - [x] Open `\boot\kernel.exe` via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`
 - [x] Parse ELF64 header (verify magic, class, machine `EM_X86_64`)
@@ -56,7 +56,7 @@
 
 ### 1.4 ACPI RSDP Discovery
 
-**Prompt:** This section is marked complete. Verify that `find_acpi_rsdp()` in `bootx64.c` searches the UEFI configuration table for the ACPI 2.0 GUID (`EFI_ACPI_20_TABLE_GUID`) and falls back to ACPI 1.0 (`EFI_ACPI_TABLE_GUID`). Confirm the RSDP address and ACPI version are stored in boot info for kernel ACPI parsing. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to ACPI discovery. Add notes, gotchas, and design decisions directly in this TODO section covering ACPI RSDP discovery and boot info handoff.
+**Prompt:** This section is marked complete. Verify that `find_acpi_rsdp()` in `bootx64.c` searches the UEFI configuration table for the ACPI 2.0 GUID (`EFI_ACPI_20_TABLE_GUID`) and falls back to ACPI 1.0 (`EFI_ACPI_TABLE_GUID`). Confirm the RSDP address and ACPI version are stored in boot info for kernel ACPI parsing. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering ACPI RSDP discovery and boot info handoff.
 
 - [x] Search UEFI config tables for `ACPI_20_TABLE_GUID` (prefer v2.0)
 - [x] Fall back to `ACPI_TABLE_GUID` (v1.0)
@@ -65,7 +65,7 @@
 
 ### 1.5 Memory Map & Page Tables ✅ → Enhancement
 
-**Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to memory mapping or page tables. Add notes, gotchas, and design decisions directly in this TODO section covering the UEFI memory map, page table setup, and ExitBootServices flow.
+**Prompt:** This section is marked complete. Verify that `get_memory_map()` retrieves the UEFI memory map, `fill_memory_map()` converts UEFI memory types to Multiboot2-compatible types, and `setup_page_tables()` creates identity-mapped page tables covering 4 GiB. Confirm `ExitBootServices()` is called correctly (with retry on stale map key). After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the UEFI memory map, page table setup, and ExitBootServices flow.
 
 - [x] Implement `get_memory_map()` — call UEFI `GetMemoryMap` with retry on buffer resize
 - [x] Implement `fill_memory_map()` — convert UEFI memory descriptors to boot info entries
@@ -135,7 +135,7 @@
 
 ### 2.1 Windows 11-Style Boot Splash
 
-**Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the boot splash. Add notes, gotchas, and design decisions directly in this TODO section covering the boot splash architecture and lifecycle.
+**Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the boot splash architecture and lifecycle.
 
 - [x] Create `src/kernel/boot_splash.c` and `include/kernel/boot_splash.h`
 - [x] Implement `boot_splash_init()` — compute layout, lock compositor, draw initial splash
@@ -151,7 +151,7 @@
 
 ### 2.2 Animated Dot Wave
 
-**Prompt:** This section is marked complete. Verify the dot animation in `boot_splash.c` uses PIT timer callbacks at ~14 fps. Confirm the wave-style animation with 6 dots, pulsing radius (min 5px → max 8px), staggered phases, and smooth sine-like easing. Verify `boot_splash_start_animation()` is called after `pit_init() + sti`, and `pit_unregister_callback()` is called on finish. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to the dot animation. Add notes, gotchas, and design decisions directly in this TODO section covering the PIT-driven animation system and wave parameters.
+**Prompt:** This section is marked complete. Verify the dot animation in `boot_splash.c` uses PIT timer callbacks at ~14 fps. Confirm the wave-style animation with 6 dots, pulsing radius (min 5px → max 8px), staggered phases, and smooth sine-like easing. Verify `boot_splash_start_animation()` is called after `pit_init() + sti`, and `pit_unregister_callback()` is called on finish. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the PIT-driven animation system and wave parameters.
 
 - [x] Implement PIT-driven animation callback at ~14 fps
 - [x] Implement wave-style dot animation (6 dots, pulsing radius)
@@ -199,7 +199,7 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 
 ### 2.5 Granular Boot Status Messages
 
-**Prompt:** This section is marked complete. Verify that `main.c` calls `boot_splash_status()` with descriptive messages throughout the boot sequence: "Setting up hardware...", "Detecting hardware...", "Detecting drives...", "Configuring network...", "Loading system configuration...", "Preparing desktop...", "Loading fonts...", "Loading resources...", "Almost ready...". Each message should be followed by `boot_splash_tick()`. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Update `README.md` if it contains stale or incorrect references to boot status messages. Add notes, gotchas, and design decisions directly in this TODO section covering the boot sequence stages and splash status message flow.
+**Prompt:** This section is marked complete. Verify that `main.c` calls `boot_splash_status()` with descriptive messages throughout the boot sequence: "Setting up hardware...", "Detecting hardware...", "Detecting drives...", "Configuring network...", "Loading system configuration...", "Preparing desktop...", "Loading fonts...", "Loading resources...", "Almost ready...". Each message should be followed by `boot_splash_tick()`. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the boot sequence stages and splash status message flow.
 
 - [x] "Setting up hardware..." — GDT, IDT, PIT, heap, PMM
 - [x] "Detecting hardware..." — PCI scan, NIC, input devices
@@ -241,7 +241,7 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 
 ### 3.3 Build and Package Shim
 
-**Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`. Confirm `docs/architecture/secure-boot.md` and updated `docs/architecture/bootloader.md` exist. Confirm `README.md` lists Secure Boot as a feature.
+**Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.md` exist.
 
 - [x] Fork `rhboot/shim` into public `impossible-os-shim` repo
 - [x] Embed our `MOK.cer` as vendor certificate (in `Makefile`: `VENDOR_CERT_FILE`)
@@ -263,7 +263,7 @@ following are still correct: (1) `rizonesoft/shim-review` branch
 `rizonesoft-shim-x86_64-20260314` contains `shimx64.efi`, `MOK.cer`, `Dockerfile`,
 `build.log`, and `README.md`; (2) SHA256 of `shim/shimx64.efi` matches
 `d7e21770b1c8f2b977db1d533f7bba3d0de3d212e83ffd35c2509de970d6bd2f`; (3) the
-shim-review issue is open on `rhboot/shim-review`; (4) `docs/architecture/shim-review.md`
+shim-review issue is open on `rhboot/shim-review`
 exists and is accurate. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`.
 Fix any inconsistencies found. When Microsoft returns the signed binary, replace
 `shim/shimx64.efi` and rebuild.
@@ -382,7 +382,7 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### 3.5 Interim: Ship Pre-Signed Shim (Before Microsoft Signing)
 
-**Prompt:** While waiting for Microsoft to sign our shim, use Ubuntu's or Fedora's already-signed `shimx64.efi` as an interim solution. This binary is BSD-licensed and freely redistributable. The tradeoff: users will see a one-time MOK enrollment prompt on first boot (because the distro's shim has the distro's key baked in, not ours). This is the same approach used by Arch Linux. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: interim pre-signed shim with MOK enrollment"`. Update `README.md` if it contains stale or incorrect references to Secure Boot or MOK enrollment. Add notes, gotchas, and design decisions directly in this TODO section covering the interim shim approach, MOK enrollment user flow, and install guide instructions.
+**Prompt:** While waiting for Microsoft to sign our shim, use Ubuntu's or Fedora's already-signed `shimx64.efi` as an interim solution. This binary is BSD-licensed and freely redistributable. The tradeoff: users will see a one-time MOK enrollment prompt on first boot (because the distro's shim has the distro's key baked in, not ours). This is the same approach used by Arch Linux. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, and commit as `"boot: interim pre-signed shim with MOK enrollment"`. Add notes, gotchas, and design decisions directly in this TODO section covering the interim shim approach, MOK enrollment user flow, and install guide instructions.
 
 - [ ] Download Ubuntu's signed `shimx64.efi.signed` from the `shim-signed` package
 - [ ] Download Ubuntu's `mmx64.efi.signed` (MokManager)
@@ -580,14 +580,13 @@ else                    g_font_size = 17;   /* 720p     */
 Note: `icon_store_init()` ∥ `cursor_init()` parallelization deferred — VFS/FAT32 has no locking. Enabling it requires adding a `vfs_lock()`/`vfs_unlock()` reader-writer mutex first (see doc for pattern).
 
 - [x] Profiled boot stages via serial timestamps — DHCP round-trip was on critical path
-- [x] Dependency graph in `docs/architecture/boot-parallel-init.md`
 - [x] DHCP ∥ partition scan: `dhcp_discover()` moved before `partition_scan_all()` — ~300ms savings
 - [x] Icon store ∥ cursor: deferred (VFS not thread-safe; doc contains future implementation pattern)
 - [x] Commit: `"boot: parallel initialization for faster boot"`
 
 ### 5.5 Boot Menu (Recovery Mode)
 
-**Prompt:** Hold Shift or F8 during boot to enter a recovery menu. The boot menu uses the same visual style as the splash (black bg, Selawik font, centered layout) and offers: Normal Boot, Safe Mode (skip modules), Recovery Console (drop to shell), Reboot. Use UEFI `SimpleTextInputEx` protocol to detect keypress during the first 2 seconds after firmware handoff. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: recovery boot menu"`. Update `README.md` if it contains stale or incorrect references to boot modes or recovery options. Add notes, gotchas, and design decisions directly in this TODO section covering the recovery boot menu, key detection, available boot modes, and the user-facing menu UI.
+**Prompt:** Hold Shift or F8 during boot to enter a recovery menu. The boot menu uses the same visual style as the splash (black bg, Selawik font, centered layout) and offers: Normal Boot, Safe Mode (skip modules), Recovery Console (drop to shell), Reboot. Use UEFI `SimpleTextInputEx` protocol to detect keypress during the first 2 seconds after firmware handoff. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"boot: recovery boot menu"`. Add notes, gotchas, and design decisions directly in this TODO section covering the recovery boot menu, key detection, available boot modes, and the user-facing menu UI.
 
 - [ ] Detect Shift/F8 keypress in UEFI bootloader (before ExitBootServices)
 - [ ] If key held: set `boot_mode = RECOVERY` in boot params

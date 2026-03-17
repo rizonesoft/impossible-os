@@ -26,7 +26,7 @@
 
 ### 1.1 Core System Headers (C)
 
-**Prompt:** Create the core C system headers for Impossible OS. These are the foundation of the SDK — every program will include at least one of these. They must be compatible with TCC and GCC. Model on the Win32 API style (since PE is the binary format) with Impossible OS-specific extensions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: core C system headers"`. Create `docs/sdk/headers.md` documenting each header.
+**Prompt:** Create the core C system headers for Impossible OS. These are the foundation of the SDK — every program will include at least one of these. They must be compatible with TCC and GCC. Model on the Win32 API style (since PE is the binary format) with Impossible OS-specific extensions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: core C system headers"`.
 
 - [ ] Create `sdk/include/impossible.h` — master include (includes all below)
 - [ ] Create `sdk/include/types.h` — `uint8_t`…`uint64_t`, `size_t`, `bool`, `NULL`, `HANDLE`
@@ -46,7 +46,7 @@
 
 ### 1.2 GUI / Window Manager Headers
 
-**Prompt:** Create the GUI headers that let apps create windows, draw to the screen, and handle input. Model on the Win32 API (`CreateWindowEx`, `DefWindowProc`, `WndProc`, message loop) since it's familiar and our PE execution model is Win32-like. Keep it simple initially — no full Win32 compatibility required. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: GUI/window manager headers"`. Create `docs/sdk/gui.md`.
+**Prompt:** Create the GUI headers that let apps create windows, draw to the screen, and handle input. Model on the Win32 API (`CreateWindowEx`, `DefWindowProc`, `WndProc`, message loop) since it's familiar and our PE execution model is Win32-like. Keep it simple initially — no full Win32 compatibility required. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: GUI/window manager headers"`.
 
 - [ ] Create `sdk/include/window.h` — `CreateWindow`, `DestroyWindow`, `ShowWindow`, `SetWindowTitle`
 - [ ] Create `sdk/include/message.h` — `MSG` struct, `GetMessage`, `TranslateMessage`, `DispatchMessage`
@@ -110,7 +110,7 @@
 
 ### 3.1 CMake Toolchain File
 
-**Prompt:** Provide a CMake toolchain file that makes it easy to cross-compile Impossible OS applications from Linux. Developers set `CMAKE_TOOLCHAIN_FILE=impossible-os.cmake`, set the sysroot to the SDK directory, and CMake will use the correct compiler, linker flags, and libraries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"sdk: CMake toolchain"`. Create `docs/sdk/cmake.md`.
+**Prompt:** Provide a CMake toolchain file that makes it easy to cross-compile Impossible OS applications from Linux. Developers set `CMAKE_TOOLCHAIN_FILE=impossible-os.cmake`, set the sysroot to the SDK directory, and CMake will use the correct compiler, linker flags, and libraries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"sdk: CMake toolchain"`.
 
 - [ ] Create `sdk/cmake/impossible-os.cmake` toolchain file
 - [ ] Set `CMAKE_SYSTEM_NAME ImpossibleOS`
@@ -141,7 +141,7 @@
 
 ### 4.1 IxUI — Native C++ GUI Framework
 
-**Prompt:** IxUI (Impossible UI) is a C++ object-oriented GUI framework built on top of the low-level window headers. It provides a modern C++ API: `Application`, `Window`, `Widget` base class, event handling via `std::function` callbacks, layout managers, and built-in widgets. Think Qt-lite. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: IxUI C++ GUI framework"`. Create `docs/sdk/ixui.md`.
+**Prompt:** IxUI (Impossible UI) is a C++ object-oriented GUI framework built on top of the low-level window headers. It provides a modern C++ API: `Application`, `Window`, `Widget` base class, event handling via `std::function` callbacks, layout managers, and built-in widgets. Think Qt-lite. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"sdk: IxUI C++ GUI framework"`.
 
 - [ ] Create `sdk/ixui/include/ixui/Application.h` — singleton app class, message loop
 - [ ] Create `sdk/ixui/include/ixui/Window.h` — base window wrapper class
@@ -189,7 +189,7 @@
 
 ### 5.1 SDK Installer / Sysroot Package
 
-**Prompt:** Package the SDK as a downloadable archive that developers can extract on Linux to get everything needed to cross-compile Impossible OS apps: headers, import libs, toolchain file, and example projects. Also provide a `setup.sh` script for automated installation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"sdk: sysroot installer package"`. Create `docs/sdk/getting-started.md`.
+**Prompt:** Package the SDK as a downloadable archive that developers can extract on Linux to get everything needed to cross-compile Impossible OS apps: headers, import libs, toolchain file, and example projects. Also provide a `setup.sh` script for automated installation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"sdk: sysroot installer package"`.
 
 - [ ] Create `sdk/package.sh` — assembles SDK into `impossible-os-sdk-vX.Y.Z.tar.gz`
 - [ ] Package contents: `include/`, `lib/`, `cmake/`, `templates/`, `examples/`, `docs/`
@@ -214,13 +214,7 @@
 
 **Prompt:** Write comprehensive SDK documentation. Cover the full API reference, getting started guide, porting guide (from Win32), and architecture overview. Published to the public `impossible-os-sdk` GitHub repo. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"docs: full SDK documentation"`.
 
-- [ ] Create `docs/sdk/getting-started.md` — install SDK, hello world, build and run
-- [ ] Create `docs/sdk/api/system.md` — `impossible.h` full API reference
-- [ ] Create `docs/sdk/api/gui.md` — window + message API reference
-- [ ] Create `docs/sdk/api/ixui.md` — IxUI class reference (all widgets, Painter, Application)
-- [ ] Create `docs/sdk/api/cpp-stl.md` — supported STL subset reference
-- [ ] Create `docs/sdk/porting-guide.md` — how to port a Win32 app to Impossible OS
-- [ ] Create `docs/sdk/architecture.md` — SDK layering diagram (headers → libs → IxUI)
+- [ ]h` full API reference
 - [ ] Update repo `README.md` with quick-start snippet
 - [ ] Commit: `"docs: full SDK documentation"`
 
@@ -230,7 +224,6 @@
 
 - [ ] Create `sdk/VERSION` file — current SDK version string
 - [ ] Create `sdk/include/impossible/version.h` — `IOS_SDK_VERSION_MAJOR/MINOR/PATCH`
-- [ ] Create `docs/sdk/compatibility.md` — SDK version vs OS version table
 - [ ] Tag SDK releases as `sdk-v1.0.0` on the public SDK repo
 - [ ] Commit: `"sdk: versioning and compatibility table"`
 

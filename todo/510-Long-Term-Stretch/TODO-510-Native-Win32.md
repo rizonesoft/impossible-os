@@ -65,7 +65,6 @@
 - [ ] Memory: `SYS_VIRTUALALLOC`, `SYS_VIRTUALFREE`
 - [ ] Display: `SYS_MSGBOX`, `SYS_CREATEWINDOW`, `SYS_DRAWTEXT`
 - [ ] Create `include/kernel/sched/abi.h` with `#define SYS_*` constants
-- [ ] Create `docs/architecture/native-abi.md`
 - [ ] Commit: `"kernel: define syscall interface"`
 
 ### 2.1 Calling Convention
@@ -90,7 +89,7 @@
 
 ### 3.1 PE Header Structures
 
-**Prompt:** PE (Portable Executable) is the native binary format for Impossible OS. Define the structures per the PE/COFF spec: DOS header (e_magic "MZ", e_lfanew to PE signature), COFF header (machine=AMD64), PE32+ Optional Header (magic 0x020B, ImageBase, EntryPointRVA, SizeOfImage), section headers (name, VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData), data directories (RVA+Size for imports, relocations, etc). After completing all items, create `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE/COFF header structures"`.
+**Prompt:** PE (Portable Executable) is the native binary format for Impossible OS. Define the structures per the PE/COFF spec: DOS header (e_magic "MZ", e_lfanew to PE signature), COFF header (machine=AMD64), PE32+ Optional Header (magic 0x020B, ImageBase, EntryPointRVA, SizeOfImage), section headers (name, VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData), data directories (RVA+Size for imports, relocations, etc). After completing all items,sh clean`, and commit as `"kernel: PE/COFF header structures"`.
 
 
 - [ ] Create `include/pe.h` (~80 lines)
@@ -104,7 +103,7 @@
 
 ### 3.2 PE Loader Core
 
-**Prompt:** `pe_load(data, size)` validates DOS "MZ" header, follows e_lfanew to PE signature, parses COFF (verify Machine==AMD64), reads PE32+ Optional Header (ImageBase, EntryPointRVA, SizeOfImage, DataDirectory imports+relocations). Allocate SizeOfImage at ImageBase, copy each section to ImageBase+VirtualAddress, zero-fill BSS. Return entry = ImageBase + AddressOfEntryPoint. After completing all items, update `docs/architecture/pe-loader.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE loader core"`.
+**Prompt:** `pe_load(data, size)` validates DOS "MZ" header, follows e_lfanew to PE signature, parses COFF (verify Machine==AMD64), reads PE32+ Optional Header (ImageBase, EntryPointRVA, SizeOfImage, DataDirectory imports+relocations). Allocate SizeOfImage at ImageBase, copy each section to ImageBase+VirtualAddress, zero-fill BSS. Return entry = ImageBase + AddressOfEntryPoint. After completing all items,sh clean`, and commit as `"kernel: PE loader core"`.
 
 
 - [ ] Create `src/kernel/pe.c` (~250 lines)
@@ -488,8 +487,6 @@
 
 ## 12. Documentation
 
-- [ ] Create `docs/architecture/pe-loader.md`
-- [ ] Create `docs/architecture/native-abi.md`
 - [ ] Document PE loader: header parsing, section mapping, relocation
 - [ ] Document import resolution: native DLL export table, IAT patching
 - [ ] Document supported kernel32/user32/gdi32 functions with mapping table

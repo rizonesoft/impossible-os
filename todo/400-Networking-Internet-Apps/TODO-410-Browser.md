@@ -11,7 +11,7 @@
 
 ### 1.1 Phase 1: Text-Only Browser (~500 lines)
 
-**Prompt:** Start with the simplest possible browser: fetch a page via `http_get()` (Phase 07), strip HTML tags with a simple state machine (inside tag / not inside tag), display plain text in a scrollable window. Extract `<a href>` links and display as a numbered list. Click a link or type a URL in the address bar to navigate. Maintain a back/forward history stack of URLs. This is ~500 lines and proves the HTTP stack works end-to-end. After all items, create `docs/user/browser.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: text-only web browser"`.
+**Prompt:** Start with the simplest possible browser: fetch a page via `http_get()` (Phase 07), strip HTML tags with a simple state machine (inside tag / not inside tag), display plain text in a scrollable window. Extract `<a href>` links and display as a numbered list. Click a link or type a URL in the address bar to navigate. Maintain a back/forward history stack of URLs. This is ~500 lines and proves the HTTP stack works end-to-end. After all items,sh clean`, commit `"apps: text-only web browser"`.
 
 
 - [ ] Create `src/apps/browser/browser.c`
@@ -26,7 +26,7 @@
 
 ### 1.2 Phase 2: Basic HTML Renderer (~5,000 lines)
 
-**Prompt:** Build an HTML parser (tokenizer → DOM tree with tag, attributes, children, text nodes). Support essential tags: h1-h6 (headings with larger font sizes via Phase 02 font system), p (paragraphs), br, b/strong/i/em (bold/italic), a href (clickable links), ul/ol/li (lists), img src (fetch via HTTP + decode via Phase 02 image loader), table/tr/td (basic grid), hr, pre/code (monospace). Layout engine: block flow (top-to-bottom) and inline flow (left-to-right with word wrapping at window width). Vertical scrolling for long pages. After all items, update `docs/user/browser.md`, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: HTML renderer"`.
+**Prompt:** Build an HTML parser (tokenizer → DOM tree with tag, attributes, children, text nodes). Support essential tags: h1-h6 (headings with larger font sizes via Phase 02 font system), p (paragraphs), br, b/strong/i/em (bold/italic), a href (clickable links), ul/ol/li (lists), img src (fetch via HTTP + decode via Phase 02 image loader), table/tr/td (basic grid), hr, pre/code (monospace). Layout engine: block flow (top-to-bottom) and inline flow (left-to-right with word wrapping at window width). Vertical scrolling for long pages. After all items,sh clean`, commit `"apps: HTML renderer"`.
 
 
 - [ ] HTML parser: tokenizer → DOM tree (tag, attributes, children, text nodes)

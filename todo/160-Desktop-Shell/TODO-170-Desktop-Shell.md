@@ -12,7 +12,7 @@
 
 ### 1.1 Window Minimize & Maximize *(NEW — partially missing)*
 
-**Prompt:** Add full minimize/maximize/restore support to the window manager. `wm_minimize(handle)` hides the window, `wm_maximize(handle)` saves the pre-max position and resizes to fill the usable desktop area (screen minus taskbar), `wm_restore(handle)` returns to the saved position. The maximize button in the title bar should toggle between maximize and restore. Double-clicking the title bar also toggles maximize. Add minimize and maximize buttons to the window title bar alongside the close button. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window minimize and maximize"`. Update `README.md` if it contains stale or incorrect references to window management. Add notes, gotchas, and design decisions directly in this TODO section covering minimize/maximize/restore API, title bar buttons, and double-click toggle.
+**Prompt:** Add full minimize/maximize/restore support to the window manager. `wm_minimize(handle)` hides the window, `wm_maximize(handle)` saves the pre-max position and resizes to fill the usable desktop area (screen minus taskbar), `wm_restore(handle)` returns to the saved position. The maximize button in the title bar should toggle between maximize and restore. Double-clicking the title bar also toggles maximize. Add minimize and maximize buttons to the window title bar alongside the close button. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: window minimize and maximize"`. Add notes, gotchas, and design decisions directly in this TODO section covering minimize/maximize/restore API, title bar buttons, and double-click toggle.
 
 
 - [ ] Add `wm_minimize(handle)` — hide window, mark as minimized
@@ -25,7 +25,7 @@
 
 ### 1.2 Keyboard Window Snapping *(from Phase 04 §5.1)*
 
-**Prompt:** Window snapping allows quick tiling of windows. Win+Left snaps the focused window to the left half of the screen, Win+Right to the right half, Win+Up maximizes, Win+Down restores or minimizes. Store the window's pre-snap position so restoring returns it to its original size. Use the animation engine (§3.1) to smoothly tween the snap transition. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard window snapping"`. Update `README.md` if it contains stale or incorrect references to window snapping. Add notes, gotchas, and design decisions directly in this TODO section covering snap keyboard shortcuts, pre-snap position storage, and animation.
+**Prompt:** Window snapping allows quick tiling of windows. Win+Left snaps the focused window to the left half of the screen, Win+Right to the right half, Win+Up maximizes, Win+Down restores or minimizes. Store the window's pre-snap position so restoring returns it to its original size. Use the animation engine (§3.1) to smoothly tween the snap transition. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard window snapping"`. Add notes, gotchas, and design decisions directly in this TODO section covering snap keyboard shortcuts, pre-snap position storage, and animation.
 
 
 - [ ] Create `src/kernel/wm_snap.c`
@@ -38,7 +38,7 @@
 
 ### 1.3 Edge Snapping (Mouse) *(from Phase 04 §5.2)*
 
-**Prompt:** When dragging a window, detect if the cursor hits a screen edge and show a snap preview. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: edge snap with preview"`. Update `README.md` if it contains stale or incorrect references to window snapping. Add notes, gotchas, and design decisions directly in this TODO section covering edge detection, snap preview overlay rendering, and quarter-screen zones.
+**Prompt:** When dragging a window, detect if the cursor hits a screen edge and show a snap preview. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: edge snap with preview"`. Add notes, gotchas, and design decisions directly in this TODO section covering edge detection, snap preview overlay rendering, and quarter-screen zones.
 
 
 - [ ] Drag to top edge → maximize preview overlay
@@ -49,7 +49,7 @@
 
 ### 1.4 Snap Layouts *(from Phase 04 §5.3)*
 
-**Prompt:** Hovering over a window's maximize button shows a popup with visual layout options: 50/50 left-right, 50/50 top-bottom, 66/33 wide-narrow, and 33/33/33 three columns. This mimics Windows 11's Snap Layouts feature. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: snap layouts on maximize hover"`. Update `README.md` if it contains stale or incorrect references to snap layouts. Add notes, gotchas, and design decisions directly in this TODO section covering snap layout options, maximize button hover, and zone filling.
+**Prompt:** Hovering over a window's maximize button shows a popup with visual layout options: 50/50 left-right, 50/50 top-bottom, 66/33 wide-narrow, and 33/33/33 three columns. This mimics Windows 11's Snap Layouts feature. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: snap layouts on maximize hover"`. Add notes, gotchas, and design decisions directly in this TODO section covering snap layout options, maximize button hover, and zone filling.
 
 
 - [ ] Hover maximize button → show snap layout popup
@@ -59,7 +59,7 @@
 
 ### 1.5 Window Minimize/Restore All *(from Phase 04 §15.5)*
 
-**Prompt:** Win+M minimizes all windows. Win+Shift+M restores all previously-minimized windows. Win+D toggles between minimize-all and restore-all (show desktop toggle). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: minimize/restore all windows"`. Update `README.md` if it contains stale or incorrect references to window shortcuts. Add notes, gotchas, and design decisions directly in this TODO section covering Win+M, Win+Shift+M, and Win+D behavior.
+**Prompt:** Win+M minimizes all windows. Win+Shift+M restores all previously-minimized windows. Win+D toggles between minimize-all and restore-all (show desktop toggle). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: minimize/restore all windows"`. Add notes, gotchas, and design decisions directly in this TODO section covering Win+M, Win+Shift+M, and Win+D behavior.
 
 
 - [ ] Win+M → minimize all windows
@@ -75,7 +75,7 @@
 
 ### 2.1 Generic Context Menu Engine *(from Phase 04 §4.1)*
 
-**Prompt:** Build a generic reusable context menu system: `context_menu_show(x, y, items, count)` renders a floating menu with Acrylic blur background, rounded corners, and drop shadow. Each `menu_item` has: label, optional icon, callback, optional submenu pointer, separator flag, disabled flag, and checked flag. Handle keyboard navigation, submenu open on hover, and auto-close when clicking outside. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: context menu system"`. Update `README.md` if it contains stale or incorrect references to context menus. Add notes, gotchas, and design decisions directly in this TODO section covering the context menu API, submenu handling, and keyboard navigation.
+**Prompt:** Build a generic reusable context menu system: `context_menu_show(x, y, items, count)` renders a floating menu with Acrylic blur background, rounded corners, and drop shadow. Each `menu_item` has: label, optional icon, callback, optional submenu pointer, separator flag, disabled flag, and checked flag. Handle keyboard navigation, submenu open on hover, and auto-close when clicking outside. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: context menu system"`. Add notes, gotchas, and design decisions directly in this TODO section covering the context menu API, submenu handling, and keyboard navigation.
 
 
 - [ ] Define `struct menu_item` (label, icon, callback, submenu, separator, disabled, checked)
@@ -90,7 +90,7 @@
 
 ### 2.2 Desktop Context Menu *(from Phase 04 §4.2)*
 
-**Prompt:** Right-clicking the desktop wallpaper shows a context menu with: View submenu, Sort By submenu, Refresh, New submenu (Folder, Text Document, Shortcut), Paste, Display Settings, Personalize. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop right-click menu"`. Update `README.md` if it contains stale or incorrect references to desktop menus. Add notes, gotchas, and design decisions directly in this TODO section covering the desktop context menu items and submenus.
+**Prompt:** Right-clicking the desktop wallpaper shows a context menu with: View submenu, Sort By submenu, Refresh, New submenu (Folder, Text Document, Shortcut), Paste, Display Settings, Personalize. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop right-click menu"`. Add notes, gotchas, and design decisions directly in this TODO section covering the desktop context menu items and submenus.
 
 
 - [ ] Right-click desktop → context menu:
@@ -104,7 +104,7 @@
 
 ### 2.3 File Context Menu *(from Phase 04 §4.3)*
 
-**Prompt:** Right-clicking a file icon shows: Open, Open With, Cut/Copy/Paste, Delete, Rename, Properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: file context menu"`. Update `README.md` if it contains stale or incorrect references to file menus. Add notes, gotchas, and design decisions directly in this TODO section covering the file context menu items and action dispatch.
+**Prompt:** Right-clicking a file icon shows: Open, Open With, Cut/Copy/Paste, Delete, Rename, Properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: file context menu"`. Add notes, gotchas, and design decisions directly in this TODO section covering the file context menu items and action dispatch.
 
 
 - [ ] Right-click file → context menu:
@@ -117,7 +117,7 @@
 
 ## 3. Desktop Icons & Shortcuts *(from Phase 04 §15.4)*
 
-**Prompt:** Desktop icons rendered in a grid layout. Default: "This PC", "Recycle Bin", user shortcuts. Single-click selects, double-click opens. Labels with text shadow for readability. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop icon grid"`. Update `README.md` if it contains stale or incorrect references to desktop icons. Add notes, gotchas, and design decisions directly in this TODO section covering the icon grid layout, default icons, shortcut handling, and drag reorder.
+**Prompt:** Desktop icons rendered in a grid layout. Default: "This PC", "Recycle Bin", user shortcuts. Single-click selects, double-click opens. Labels with text shadow for readability. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: desktop icon grid"`. Add notes, gotchas, and design decisions directly in this TODO section covering the icon grid layout, default icons, shortcut handling, and drag reorder.
 
 
 - [ ] Render icons on desktop surface (grid-aligned)
@@ -133,7 +133,7 @@
 
 ### 4.1 Keyboard Shortcut Manager *(from Phase 04 §15.1)*
 
-**Prompt:** Centralize all system-wide keyboard shortcuts in a hotkey table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard shortcut manager"`. Update `README.md` if it contains stale or incorrect references to keyboard shortcuts. Add notes, gotchas, and design decisions directly in this TODO section covering the hotkey table, registration API, and user-defined shortcuts.
+**Prompt:** Centralize all system-wide keyboard shortcuts in a hotkey table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard shortcut manager"`. Add notes, gotchas, and design decisions directly in this TODO section covering the hotkey table, registration API, and user-defined shortcuts.
 
 
 - [ ] Define hotkey table (key combo → action callback)
@@ -143,7 +143,7 @@
 
 ### 4.2 Alt+Tab Task Switcher *(from Phase 04 §15.2)*
 
-**Prompt:** Alt+Tab overlay with window thumbnails. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Alt+Tab task switcher"`. Update `README.md` if it contains stale or incorrect references to task switching. Add notes, gotchas, and design decisions directly in this TODO section covering the Alt+Tab overlay, thumbnail rendering, and focus handling.
+**Prompt:** Alt+Tab overlay with window thumbnails. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Alt+Tab task switcher"`. Add notes, gotchas, and design decisions directly in this TODO section covering the Alt+Tab overlay, thumbnail rendering, and focus handling.
 
 
 - [ ] Alt+Tab → centered overlay with window thumbnails
@@ -155,7 +155,7 @@
 
 ### 4.3 Run Dialog (Win+R) *(from Phase 04 §15.3)*
 
-**Prompt:** Small dialog with "Open:" text field, execute command/path. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Win+R run dialog"`. Update `README.md` if it contains stale or incorrect references to the Run dialog. Add notes, gotchas, and design decisions directly in this TODO section covering the Run dialog, command execution, history, and auto-complete.
+**Prompt:** Small dialog with "Open:" text field, execute command/path. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: Win+R run dialog"`. Add notes, gotchas, and design decisions directly in this TODO section covering the Run dialog, command execution, history, and auto-complete.
 
 
 - [ ] Win+R → small dialog with text field
@@ -169,7 +169,7 @@
 
 ### 5.1 Core System *(from Phase 04 §8.1)*
 
-**Prompt:** Drag-and-drop with state tracking, visual feedback, and drop delivery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: drag-and-drop system"`. Update `README.md` if it contains stale or incorrect references to drag and drop. Add notes, gotchas, and design decisions directly in this TODO section covering the drag state machine, visual feedback, drop targets, and data formats.
+**Prompt:** Drag-and-drop with state tracking, visual feedback, and drop delivery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: drag-and-drop system"`. Add notes, gotchas, and design decisions directly in this TODO section covering the drag state machine, visual feedback, drop targets, and data formats.
 
 
 - [ ] Define `drag_state_t` (active, format, data, cursor, drag_icon, source_window)
@@ -184,7 +184,7 @@
 
 ## 6. Quick Settings Panel *(from Phase 04 §9)*
 
-**Prompt:** Popup panel with toggle grid + volume/brightness sliders. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: quick settings panel"`. Update `README.md` if it contains stale or incorrect references to quick settings. Add notes, gotchas, and design decisions directly in this TODO section covering the quick settings panel, toggle grid, and slider controls.
+**Prompt:** Popup panel with toggle grid + volume/brightness sliders. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: quick settings panel"`. Add notes, gotchas, and design decisions directly in this TODO section covering the quick settings panel, toggle grid, and slider controls.
 
 
 - [ ] Create `src/desktop/quick_settings.c`
@@ -198,7 +198,7 @@
 
 ## 7. Virtual Desktops *(from Phase 04 §6)*
 
-**Prompt:** Virtual desktops with up to 8 workspaces. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: virtual desktop manager"`. Update `README.md` if it contains stale or incorrect references to virtual desktops. Add notes, gotchas, and design decisions directly in this TODO section covering the virtual desktop API, keyboard shortcuts, and taskbar integration.
+**Prompt:** Virtual desktops with up to 8 workspaces. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: virtual desktop manager"`. Add notes, gotchas, and design decisions directly in this TODO section covering the virtual desktop API, keyboard shortcuts, and taskbar integration.
 
 
 - [ ] Create `src/kernel/wm_vdesktop.c`
@@ -214,7 +214,7 @@
 
 ## 8. Night Light *(from Phase 04 §13)*
 
-**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: night light"`. Update `README.md` if it contains stale or incorrect references to night light. Add notes, gotchas, and design decisions directly in this TODO section covering the night light algorithm, scheduling, and Registry settings.
+**Prompt:** Blue light filter reduces blue channel for eye comfort at night. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"display: night light"`. Add notes, gotchas, and design decisions directly in this TODO section covering the night light algorithm, scheduling, and Registry settings.
 
 
 - [ ] Create `src/kernel/display/nightlight.c`
@@ -228,7 +228,7 @@
 
 ## 9. Focus / Do Not Disturb *(from Phase 04 §14)*
 
-**Prompt:** Suppress notifications during focused work. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: focus / do not disturb"`. Update `README.md` if it contains stale or incorrect references to focus mode. Add notes, gotchas, and design decisions directly in this TODO section covering the focus mode API, DND levels, and scheduled activation.
+**Prompt:** Suppress notifications during focused work. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: focus / do not disturb"`. Add notes, gotchas, and design decisions directly in this TODO section covering the focus mode API, DND levels, and scheduled activation.
 
 
 - [ ] Create `src/desktop/focus_mode.c`

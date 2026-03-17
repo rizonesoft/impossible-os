@@ -182,12 +182,11 @@
 **Prompt:** Document the compiler toolchain: installation paths, how to compile programs, available headers and libraries, self-hosting status, and the developer workflow. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"docs: compiler toolchain"`.
 
 
-- [ ] Create `docs/architecture/compiler-toolchain.md`
 - [ ] Document TCC: installation, usage, limitations
 - [ ] Document newlib/musl headers available
 - [ ] Document IxUI compilation workflow
 - [ ] Document GCC/Clang: prerequisites, build process, C++ support
-- [ ] Update `README.md` if needed
+- [ ]
 - [ ] Commit: `"docs: compiler toolchain"`
 
 ---
@@ -221,7 +220,6 @@
 | `C:\Impossible\Lib\libstdc++.a`           | C++ standard library (Phase 3)    |
 | `tools/build-tcc.sh`                      | [NEW] Script to cross-compile TCC |
 | `tools/build-gcc.sh`                      | [NEW] Script to cross-compile GCC |
-| `docs/architecture/compiler-toolchain.md` | [NEW] Documentation               |
 
 ---
 

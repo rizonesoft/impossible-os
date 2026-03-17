@@ -14,7 +14,7 @@
 
 ### 1.1 TCP Header & Checksum
 
-**Prompt:** TCP is protocol number 6 in the IP layer. The TCP header is 20 bytes minimum: src_port(16), dst_port(16), seq_num(32), ack_num(32), data_offset(4 bits) + reserved(3) + flags(9), window(16), checksum(16), urgent_ptr(16). The checksum covers a pseudo-header (src_ip, dst_ip, zero, protocol=6, TCP_length) + the full TCP header + payload — identical method to UDP checksum but mandatory. Route TCP packets by adding `case IP_PROTO_TCP:` in `ip_receive()` (analogous to the existing ICMP and UDP routing in `ip.c`). After completing all items, create `docs/architecture/tcp.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: TCP header parsing and checksum"`.
+**Prompt:** TCP is protocol number 6 in the IP layer. The TCP header is 20 bytes minimum: src_port(16), dst_port(16), seq_num(32), ack_num(32), data_offset(4 bits) + reserved(3) + flags(9), window(16), checksum(16), urgent_ptr(16). The checksum covers a pseudo-header (src_ip, dst_ip, zero, protocol=6, TCP_length) + the full TCP header + payload — identical method to UDP checksum but mandatory. Route TCP packets by adding `case IP_PROTO_TCP:` in `ip_receive()` (analogous to the existing ICMP and UDP routing in `ip.c`). After completing all items,sh clean`, and commit as `"net: TCP header parsing and checksum"`.
 
 
 - [ ] Create `src/kernel/net/tcp.c` and `include/tcp.h`
@@ -26,7 +26,7 @@
 
 ### 1.2 TCP Connection State Machine
 
-**Prompt:** Each TCP connection has a state from the RFC 793 state diagram. The connection table holds `MAX_TCP_CONNECTIONS` (32) entries, each with local/remote IP+port, sequence/acknowledgment numbers, state, and a receive ring buffer. Key transitions: Active open → SYN_SENT (send SYN), receive SYN+ACK → ESTABLISHED (send ACK), active close → FIN_WAIT_1 (send FIN). RST resets to CLOSED from any state. Implement all 11 TCP states for full correctness. Each incoming packet is matched to a connection by (local_ip, local_port, remote_ip, remote_port) tuple. After completing all items, update `docs/architecture/tcp.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: TCP connection state machine"`.
+**Prompt:** Each TCP connection has a state from the RFC 793 state diagram. The connection table holds `MAX_TCP_CONNECTIONS` (32) entries, each with local/remote IP+port, sequence/acknowledgment numbers, state, and a receive ring buffer. Key transitions: Active open → SYN_SENT (send SYN), receive SYN+ACK → ESTABLISHED (send ACK), active close → FIN_WAIT_1 (send FIN). RST resets to CLOSED from any state. Implement all 11 TCP states for full correctness. Each incoming packet is matched to a connection by (local_ip, local_port, remote_ip, remote_port) tuple. After completing all items,sh clean`, and commit as `"net: TCP connection state machine"`.
 
 
 - [ ] Define `struct tcp_connection` (local/remote IP+port, seq/ack numbers, state, recv buffer)
@@ -42,7 +42,7 @@
 
 ### 1.3 TCP API
 
-**Prompt:** `tcp_connect` performs the 3-way handshake: send SYN (with initial sequence number from a counter or random), wait for SYN+ACK, send ACK, transition to ESTABLISHED. `tcp_send` wraps data in a TCP segment with PSH+ACK flags and the current sequence number, then increments the sequence number by the data length. `tcp_recv` reads from a per-connection circular buffer (4 KB) that incoming data is written into by the receive handler. `tcp_close` sends FIN and transitions through the close states. Allocate ephemeral source ports from range 49152-65535 (maintain a next-port counter). After completing all items, update `docs/architecture/tcp.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: TCP connect, send, recv, close"`.
+**Prompt:** `tcp_connect` performs the 3-way handshake: send SYN (with initial sequence number from a counter or random), wait for SYN+ACK, send ACK, transition to ESTABLISHED. `tcp_send` wraps data in a TCP segment with PSH+ACK flags and the current sequence number, then increments the sequence number by the data length. `tcp_recv` reads from a per-connection circular buffer (4 KB) that incoming data is written into by the receive handler. `tcp_close` sends FIN and transitions through the close states. Allocate ephemeral source ports from range 49152-65535 (maintain a next-port counter). After completing all items,sh clean`, and commit as `"net: TCP connect, send, recv, close"`.
 
 
 - [ ] Implement `tcp_connect(remote_ip, remote_port)` — 3-way handshake (SYN → SYN+ACK → ACK)
@@ -57,7 +57,7 @@
 
 ### 1.4 TCP Robustness
 
-**Prompt:** Reliability is TCP's core contract. The retransmission timer re-sends unacknowledged segments after a timeout (start at 1 second, double on each retry up to 3 retries, then abort). Validate incoming sequence numbers against the receive window — drop out-of-window packets. Handle RST by aborting the connection immediately. Stretch goals: Nagle's algorithm (coalesce small writes into one segment), congestion window (slow start doubles window each RTT until packet loss), out-of-order reassembly (hold queue for future-sequence packets), and window scaling for transfers >64KB. Test by connecting to an HTTP server, sending a GET request, and receiving the full response. After completing all items, update `docs/architecture/tcp.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: TCP retransmission and robustness"`.
+**Prompt:** Reliability is TCP's core contract. The retransmission timer re-sends unacknowledged segments after a timeout (start at 1 second, double on each retry up to 3 retries, then abort). Validate incoming sequence numbers against the receive window — drop out-of-window packets. Handle RST by aborting the connection immediately. Stretch goals: Nagle's algorithm (coalesce small writes into one segment), congestion window (slow start doubles window each RTT until packet loss), out-of-order reassembly (hold queue for future-sequence packets), and window scaling for transfers >64KB. Test by connecting to an HTTP server, sending a GET request, and receiving the full response. After completing all items,sh clean`, and commit as `"net: TCP retransmission and robustness"`.
 
 
 - [ ] Retransmission timer: resend unacked segments after timeout (1–3 seconds initial)
@@ -76,7 +76,7 @@
 
 ### 2.1 DNS Query
 
-**Prompt:** DNS queries are sent via UDP to port 53 on the DNS server (IP obtained from DHCP — use the existing `g_dns_server` from the DHCP client). The DNS packet has a 12-byte header followed by the question section. Encode the hostname by splitting on dots and prefixing each label with its length byte: `"www.google.com"` becomes `\x03www\x06google\x03com\x00`. Set QTYPE=1 (A record) and QCLASS=1 (Internet). Use a random 16-bit transaction ID to match responses. Send via the existing `udp_send()` from the network stack. After completing all items, create `docs/architecture/dns.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: DNS query builder"`.
+**Prompt:** DNS queries are sent via UDP to port 53 on the DNS server (IP obtained from DHCP — use the existing `g_dns_server` from the DHCP client). The DNS packet has a 12-byte header followed by the question section. Encode the hostname by splitting on dots and prefixing each label with its length byte: `"www.google.com"` becomes `\x03www\x06google\x03com\x00`. Set QTYPE=1 (A record) and QCLASS=1 (Internet). Use a random 16-bit transaction ID to match responses. Send via the existing `udp_send()` from the network stack. After completing all items,sh clean`, and commit as `"net: DNS query builder"`.
 
 
 - [ ] Create `src/kernel/net/dns.c` and `include/dns.h`
@@ -89,7 +89,7 @@
 
 ### 2.2 DNS Response Parser
 
-**Prompt:** Parse the DNS response by first checking that the transaction ID matches the sent query and RCODE is 0 (no error). Skip the question section by re-parsing the encoded name (count length-prefixed labels until null terminator). Parse answer records: handle name compression pointers (first two bits = 11, remaining 14 bits = offset into packet). Extract A records (type 1) which contain a 4-byte IPv4 address. `dns_resolve(hostname, ip_out)` is a blocking call: send the query, then poll for a response with a 3-second timeout. After completing all items, update `docs/architecture/dns.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: DNS response parser"`.
+**Prompt:** Parse the DNS response by first checking that the transaction ID matches the sent query and RCODE is 0 (no error). Skip the question section by re-parsing the encoded name (count length-prefixed labels until null terminator). Parse answer records: handle name compression pointers (first two bits = 11, remaining 14 bits = offset into packet). Extract A records (type 1) which contain a 4-byte IPv4 address. `dns_resolve(hostname, ip_out)` is a blocking call: send the query, then poll for a response with a 3-second timeout. After completing all items,sh clean`, and commit as `"net: DNS response parser"`.
 
 
 - [ ] Parse response header: check ID matches, RCODE == 0 (no error), ancount > 0
@@ -101,7 +101,7 @@
 
 ### 2.3 DNS Cache
 
-**Prompt:** Cache resolved hostname→IP mappings in a 64-entry LRU table. Each entry stores the hostname string, resolved IP, TTL from the DNS response, and a timestamp. On `dns_resolve()`, check the cache first — if found and not expired, return immediately without a network query. The `nslookup <hostname>` shell command calls `dns_resolve()` and prints the result. Test with well-known hostnames: `google.com`, `time.google.com`, `example.com`. After completing all items, update `docs/architecture/dns.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: DNS caching"`.
+**Prompt:** Cache resolved hostname→IP mappings in a 64-entry LRU table. Each entry stores the hostname string, resolved IP, TTL from the DNS response, and a timestamp. On `dns_resolve()`, check the cache first — if found and not expired, return immediately without a network query. The `nslookup <hostname>` shell command calls `dns_resolve()` and prints the result. Test with well-known hostnames: `google.com`, `time.google.com`, `example.com`. After completing all items,sh clean`, and commit as `"net: DNS caching"`.
 
 
 - [ ] Cache resolved hostnames → IPs (LRU, 64 entries)
@@ -117,7 +117,7 @@
 
 ### 3.1 Kernel Socket Layer
 
-**Prompt:** The socket layer abstracts TCP and UDP into a uniform API. Each socket is a file descriptor in a global table. `socket(AF_INET, SOCK_STREAM, 0)` allocates a TCP socket, `socket(AF_INET, SOCK_DGRAM, 0)` allocates a UDP socket. `connect()` performs TCP 3-way handshake or sets the UDP peer address. `send()` and `recv()` dispatch to `tcp_send/recv` or `udp_send/recv` based on socket type. `close()` performs TCP graceful close or frees the UDP socket. This is the kernel-side implementation — user-mode syscalls come in §3.3. After completing all items, create `docs/architecture/sockets.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: BSD sockets API (kernel)"`.
+**Prompt:** The socket layer abstracts TCP and UDP into a uniform API. Each socket is a file descriptor in a global table. `socket(AF_INET, SOCK_STREAM, 0)` allocates a TCP socket, `socket(AF_INET, SOCK_DGRAM, 0)` allocates a UDP socket. `connect()` performs TCP 3-way handshake or sets the UDP peer address. `send()` and `recv()` dispatch to `tcp_send/recv` or `udp_send/recv` based on socket type. `close()` performs TCP graceful close or frees the UDP socket. This is the kernel-side implementation — user-mode syscalls come in §3.3. After completing all items,sh clean`, and commit as `"net: BSD sockets API (kernel)"`.
 
 
 - [ ] Create `src/kernel/net/socket.c` and `include/socket.h`
@@ -132,7 +132,7 @@
 
 ### 3.2 Server Sockets
 
-**Prompt:** Server sockets enable incoming connections. `bind(fd, port)` assigns a local port to the socket. `listen(fd, backlog)` puts the socket into LISTEN state and creates a backlog queue for pending connections. `accept(fd, remote_ip, remote_port)` blocks until a SYN arrives, completes the handshake, creates a new connected socket, and returns its fd. The backlog queue holds up to `backlog` half-open connections. After completing all items, update `docs/architecture/sockets.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: server sockets (bind/listen/accept)"`.
+**Prompt:** Server sockets enable incoming connections. `bind(fd, port)` assigns a local port to the socket. `listen(fd, backlog)` puts the socket into LISTEN state and creates a backlog queue for pending connections. `accept(fd, remote_ip, remote_port)` blocks until a SYN arrives, completes the handshake, creates a new connected socket, and returns its fd. The backlog queue holds up to `backlog` half-open connections. After completing all items,sh clean`, and commit as `"net: server sockets (bind/listen/accept)"`.
 
 
 - [ ] Implement `bind(fd, port)` — bind socket to a local port
@@ -142,7 +142,7 @@
 
 ### 3.3 Socket Syscalls
 
-**Prompt:** Expose the socket API to user-mode processes via syscalls: SYS_SOCKET (18), SYS_CONNECT (19), SYS_SEND (20), SYS_RECV (21), SYS_BIND (22), SYS_LISTEN (23), SYS_ACCEPT (24), SYS_DNS (25). Each syscall handler in `syscall.c` validates parameters and calls the kernel socket functions. Create a user-mode library `user/lib/socket.c` that provides `socket()`, `connect()`, `send()`, `recv()`, etc. as thin wrappers around `syscall()`. `getaddrinfo(hostname, ip_out)` wraps SYS_DNS. After completing all items, update `docs/architecture/sockets.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: socket syscalls and user library"`.
+**Prompt:** Expose the socket API to user-mode processes via syscalls: SYS_SOCKET (18), SYS_CONNECT (19), SYS_SEND (20), SYS_RECV (21), SYS_BIND (22), SYS_LISTEN (23), SYS_ACCEPT (24), SYS_DNS (25). Each syscall handler in `syscall.c` validates parameters and calls the kernel socket functions. Create a user-mode library `user/lib/socket.c` that provides `socket()`, `connect()`, `send()`, `recv()`, etc. as thin wrappers around `syscall()`. `getaddrinfo(hostname, ip_out)` wraps SYS_DNS. After completing all items,sh clean`, and commit as `"net: socket syscalls and user library"`.
 
 
 - [ ] Add syscalls: `SYS_SOCKET` (18), `SYS_CONNECT` (19), `SYS_SEND` (20), `SYS_RECV` (21), `SYS_BIND` (22), `SYS_LISTEN` (23), `SYS_ACCEPT` (24), `SYS_DNS` (25)
@@ -157,7 +157,7 @@
 
 ### 4.1 URL Parser
 
-**Prompt:** Parse URLs into components: scheme ("http" or "https"), hostname, port (default 80 for HTTP, 443 for HTTPS), and path (default "/"). Handle forms: `http://example.com/`, `http://example.com:8080/path`, `https://host/path?query`. Store results in a `struct url` with string pointers and port integer. This parser is used by both HTTP and HTTPS clients. After completing all items, create `docs/architecture/http.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: URL parser"`.
+**Prompt:** Parse URLs into components: scheme ("http" or "https"), hostname, port (default 80 for HTTP, 443 for HTTPS), and path (default "/"). Handle forms: `http://example.com/`, `http://example.com:8080/path`, `https://host/path?query`. Store results in a `struct url` with string pointers and port integer. This parser is used by both HTTP and HTTPS clients. After completing all items,sh clean`, and commit as `"net: URL parser"`.
 
 
 - [ ] Create `src/kernel/net/http.c` and `include/http.h`
@@ -167,7 +167,7 @@
 
 ### 4.2 HTTP GET
 
-**Prompt:** `http_get(url, response, max_len)` is the primary web request function. Pipeline: parse URL → `dns_resolve(hostname)` → `tcp_connect(ip, port)` → send `"GET /path HTTP/1.1\r\nHost: hostname\r\nConnection: close\r\n\r\n"` → receive full response → `tcp_close()`. Parse the response: status line (e.g., "HTTP/1.1 200 OK"), header lines (terminated by `\r\n\r\n`), and body. Extract Content-Length for progress reporting. Return the body content to the caller. Handle common status codes: 200 (OK), 301/302 (redirect), 404 (not found). After completing all items, update `docs/architecture/http.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: HTTP GET client"`.
+**Prompt:** `http_get(url, response, max_len)` is the primary web request function. Pipeline: parse URL → `dns_resolve(hostname)` → `tcp_connect(ip, port)` → send `"GET /path HTTP/1.1\r\nHost: hostname\r\nConnection: close\r\n\r\n"` → receive full response → `tcp_close()`. Parse the response: status line (e.g., "HTTP/1.1 200 OK"), header lines (terminated by `\r\n\r\n`), and body. Extract Content-Length for progress reporting. Return the body content to the caller. Handle common status codes: 200 (OK), 301/302 (redirect), 404 (not found). After completing all items,sh clean`, and commit as `"net: HTTP GET client"`.
 
 
 - [ ] Implement `http_get(url, response, max_len)`:
@@ -183,7 +183,7 @@
 
 ### 4.3 HTTP POST
 
-**Prompt:** `http_post(url, content_type, body, body_len, response, max_len)` sends a POST request with Content-Type and Content-Length headers followed by the body data. This enables form submissions and API calls. Stretch goal: chunked transfer encoding parsing (response body may come in `Transfer-Encoding: chunked` format where each chunk is preceded by its hex length). After completing all items, update `docs/architecture/http.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: HTTP POST client"`.
+**Prompt:** `http_post(url, content_type, body, body_len, response, max_len)` sends a POST request with Content-Type and Content-Length headers followed by the body data. This enables form submissions and API calls. Stretch goal: chunked transfer encoding parsing (response body may come in `Transfer-Encoding: chunked` format where each chunk is preceded by its hex length). After completing all items,sh clean`, and commit as `"net: HTTP POST client"`.
 
 
 - [ ] Implement `http_post(url, content_type, body, body_len, response, max_len)`
@@ -193,7 +193,7 @@
 
 ### 4.4 Shell Integration
 
-**Prompt:** `wget <url>` downloads a URL to a file (use the last path component as the filename, or allow `-o filename`) or prints to stdout if no file specified. `curl <url>` is an alias that always prints to stdout. Show download progress: bytes received / Content-Length (from HTTP header) as a percentage and bytes/second. These commands use `http_get()` internally. After completing all items, update `docs/user/shell-commands.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: wget/curl commands"`.
+**Prompt:** `wget <url>` downloads a URL to a file (use the last path component as the filename, or allow `-o filename`) or prints to stdout if no file specified. `curl <url>` is an alias that always prints to stdout. Show download progress: bytes received / Content-Length (from HTTP header) as a percentage and bytes/second. These commands use `http_get()` internally. After completing all items,sh clean`, and commit as `"shell: wget/curl commands"`.
 
 
 - [ ] Shell command: `wget <url>` — download to file or print to stdout
@@ -207,7 +207,7 @@
 
 ### 5.1 TLS Library Port
 
-**Prompt:** HTTPS requires a TLS implementation. BearSSL (~30K lines, MIT) is the recommended choice for a freestanding kernel — it has minimal dependencies and is designed for embedded systems. Port requirements: redirect `malloc/free` to `kmalloc/kfree`, provide `time_now()` for certificate validation, and provide a random number source (RDRAND instruction if available, otherwise PIT-based entropy pool). Compile as a static library `libtls.a` with `-ffreestanding` flags. After completing all items, create `docs/architecture/tls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"libs: TLS library port (BearSSL/Mbed TLS)"`.
+**Prompt:** HTTPS requires a TLS implementation. BearSSL (~30K lines, MIT) is the recommended choice for a freestanding kernel — it has minimal dependencies and is designed for embedded systems. Port requirements: redirect `malloc/free` to `kmalloc/kfree`, provide `time_now()` for certificate validation, and provide a random number source (RDRAND instruction if available, otherwise PIT-based entropy pool). Compile as a static library `libtls.a` with `-ffreestanding` flags. After completing all items,sh clean`, and commit as `"libs: TLS library port (BearSSL/Mbed TLS)"`.
 
 
 - [ ] Choose library: **BearSSL** (MIT, ~30K lines) or **Mbed TLS** (Apache 2.0, ~60K lines)
@@ -220,7 +220,7 @@
 
 ### 5.2 Certificate Store
 
-**Prompt:** Download the Mozilla CA bundle (MPL 2.0, ~130 root CAs, ~200 KB PEM) which contains the trusted root certificates needed to verify HTTPS server certificates. Store at `resources/certs/ca-bundle.crt` in the source tree, install to `C:\Impossible\System\Certs\ca-bundle.crt` during first-boot setup. `tls_load_ca_bundle(path)` parses the PEM file (base64-encoded DER blocks between BEGIN/END CERTIFICATE markers) and loads each certificate into the TLS library's trust store. `tls_verify_cert()` validates a server's certificate chain against these trusted CAs. After completing all items, update `docs/architecture/tls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: certificate store + CA bundle"`.
+**Prompt:** Download the Mozilla CA bundle (MPL 2.0, ~130 root CAs, ~200 KB PEM) which contains the trusted root certificates needed to verify HTTPS server certificates. Store at `resources/certs/ca-bundle.crt` in the source tree, install to `C:\Impossible\System\Certs\ca-bundle.crt` during first-boot setup. `tls_load_ca_bundle(path)` parses the PEM file (base64-encoded DER blocks between BEGIN/END CERTIFICATE markers) and loads each certificate into the TLS library's trust store. `tls_verify_cert()` validates a server's certificate chain against these trusted CAs. After completing all items,sh clean`, and commit as `"net: certificate store + CA bundle"`.
 
 
 - [ ] Download **Mozilla CA bundle** (MPL 2.0, ~130 root CAs, ~200 KB)
@@ -233,7 +233,7 @@
 
 ### 5.3 HTTPS Client
 
-**Prompt:** `https_get()` works like `http_get()` but wraps the TCP connection in a TLS session. After `tcp_connect()`, perform the TLS handshake (ClientHello → ServerHello → Certificate verification → key exchange → encrypted communication). All subsequent send/recv calls go through the TLS encrypt/decrypt layer. The `wget` and `curl` commands auto-detect `https://` URLs and switch to the TLS path. Reject self-signed certificates unless the user explicitly adds them to the trust store. Test with `wget https://example.com/`. After completing all items, update `docs/architecture/tls.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: HTTPS client"`.
+**Prompt:** `https_get()` works like `http_get()` but wraps the TCP connection in a TLS session. After `tcp_connect()`, perform the TLS handshake (ClientHello → ServerHello → Certificate verification → key exchange → encrypted communication). All subsequent send/recv calls go through the TLS encrypt/decrypt layer. The `wget` and `curl` commands auto-detect `https://` URLs and switch to the TLS path. Reject self-signed certificates unless the user explicitly adds them to the trust store. Test with `wget https://example.com/`. After completing all items,sh clean`, and commit as `"net: HTTPS client"`.
 
 
 - [ ] Implement TLS handshake over TCP connection
@@ -250,7 +250,7 @@
 
 ### 6.1 Packet Filter Engine
 
-**Prompt:** The firewall uses a rule table (ordered list, first match wins). Each rule specifies: source/destination IP (or any), source/destination port (or any), protocol (TCP/UDP/ICMP/any), direction (inbound/outbound), and action (ALLOW/BLOCK). `fw_check(ip_header, direction)` iterates rules in order, returns ALLOW or BLOCK. If no rule matches, the default policy applies. Keep the rule table small (max 64 rules) and fast (linear scan is fine for a kernel firewall). After completing all items, create `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall packet filter engine"`.
+**Prompt:** The firewall uses a rule table (ordered list, first match wins). Each rule specifies: source/destination IP (or any), source/destination port (or any), protocol (TCP/UDP/ICMP/any), direction (inbound/outbound), and action (ALLOW/BLOCK). `fw_check(ip_header, direction)` iterates rules in order, returns ALLOW or BLOCK. If no rule matches, the default policy applies. Keep the rule table small (max 64 rules) and fast (linear scan is fine for a kernel firewall). After completing all items,sh clean`, and commit as `"net: firewall packet filter engine"`.
 
 
 - [ ] Create `src/kernel/net/firewall.c` and `include/firewall.h`
@@ -264,7 +264,7 @@
 
 ### 6.2 Firewall Hook
 
-**Prompt:** Hook `fw_check()` into the IP layer at two points: inbound (in `ip_receive()` before dispatching to TCP/UDP/ICMP handlers) and outbound (in `ip_send()` before passing to Ethernet). Blocked packets are dropped silently (no ICMP unreachable response — this is standard stealth behavior). Log blocked packets to serial output for debugging. The hook must be extremely fast since it runs on every packet. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall hook in IP layer"`.
+**Prompt:** Hook `fw_check()` into the IP layer at two points: inbound (in `ip_receive()` before dispatching to TCP/UDP/ICMP handlers) and outbound (in `ip_send()` before passing to Ethernet). Blocked packets are dropped silently (no ICMP unreachable response — this is standard stealth behavior). Log blocked packets to serial output for debugging. The hook must be extremely fast since it runs on every packet. After completing all items,sh clean`, and commit as `"net: firewall hook in IP layer"`.
 
 
 - [ ] Hook `fw_check()` in `ip.c`:
@@ -276,7 +276,7 @@
 
 ### 6.3 Default Rules
 
-**Prompt:** Provide sensible default rules for a consumer OS: allow all outbound traffic (user-initiated connections should always work), block all inbound traffic except established TCP connections (stateful — requires connection tracking from §9.2), allow inbound ICMP (so ping works), allow inbound DHCP (UDP ports 67/68), allow inbound DNS responses (UDP port 53), and allow inbound NTP responses (UDP port 123). These defaults should be loaded at boot from the Registry or hardcoded as fallback. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall default rules"`.
+**Prompt:** Provide sensible default rules for a consumer OS: allow all outbound traffic (user-initiated connections should always work), block all inbound traffic except established TCP connections (stateful — requires connection tracking from §9.2), allow inbound ICMP (so ping works), allow inbound DHCP (UDP ports 67/68), allow inbound DNS responses (UDP port 53), and allow inbound NTP responses (UDP port 123). These defaults should be loaded at boot from the Registry or hardcoded as fallback. After completing all items,sh clean`, and commit as `"net: firewall default rules"`.
 
 
 - [ ] Allow all outbound traffic
@@ -289,7 +289,7 @@
 
 ### 6.4 Firewall Management
 
-**Prompt:** Persist firewall configuration in Registry: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.cpl` Control Panel applet (using the CPL framework from TODO-350) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: firewall management"`.
+**Prompt:** Persist firewall configuration in Registry: `System\Network\Firewall\Enabled` (BOOL) and `System\Network\Firewall\Rules` (serialized rule list). Create a `firewall.cpl` Control Panel applet (using the CPL framework from TODO-350) with an enable/disable toggle and a rule list with add/remove buttons. Shell commands: `fw list` (show all rules with index numbers), `fw add <direction> <protocol> <port> <action>`, `fw remove <index>`, `fw enable/disable`. After completing all items,sh clean`, and commit as `"net: firewall management"`.
 
 
 - [ ] Store rules in Registry: `System\Network\Firewall\Enabled`, `System\Network\Firewall\Rules`
@@ -305,7 +305,7 @@
 
 ### 7.1 Virtio Network Driver
 
-**Prompt:** Virtio-net is the paravirtual NIC for QEMU/KVM — much faster than RTL8139 because it avoids emulating real hardware. Detect via PCI (vendor `0x1AF4`, device `0x1000`). Reuse the modern VirtIO MMIO transport from `virtio.c` (already used by virtio-blk). Initialize two virtqueues: RX (queue 0) and TX (queue 1). Pre-populate the RX queue with empty buffers. On TX: build an Ethernet frame, submit to the TX virtqueue via descriptor chain, kick the queue. On RX interrupt: process used buffers from the RX queue, pass complete Ethernet frames to `ethernet_receive()`. Read the MAC address from the device configuration space. Register as a NIC with the Ethernet layer. After completing all items, create `docs/architecture/virtio-net.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: virtio-net NIC driver"`.
+**Prompt:** Virtio-net is the paravirtual NIC for QEMU/KVM — much faster than RTL8139 because it avoids emulating real hardware. Detect via PCI (vendor `0x1AF4`, device `0x1000`). Reuse the modern VirtIO MMIO transport from `virtio.c` (already used by virtio-blk). Initialize two virtqueues: RX (queue 0) and TX (queue 1). Pre-populate the RX queue with empty buffers. On TX: build an Ethernet frame, submit to the TX virtqueue via descriptor chain, kick the queue. On RX interrupt: process used buffers from the RX queue, pass complete Ethernet frames to `ethernet_receive()`. Read the MAC address from the device configuration space. Register as a NIC with the Ethernet layer. After completing all items,sh clean`, and commit as `"drivers: virtio-net NIC driver"`.
 
 
 - [ ] Create `src/kernel/drivers/virtio_net.c` and `include/virtio_net.h`
@@ -353,7 +353,7 @@
 
 ### 9.1 Network Interface Manager
 
-**Prompt:** Abstract multiple NICs (RTL8139, virtio-net, future drivers) behind a `struct net_interface`. Each interface has a name ("eth0", "eth1"), MAC address, IPv4 address, netmask, gateway, DNS server, MTU, and driver function pointers. `netif_register()` adds an interface. `netif_get_default()` returns the primary interface used for routing. `netif_set_ip()` allows manual IP configuration. The IP layer consults the default interface for the gateway and MAC when sending packets. This replaces the current global NIC state with a proper multi-NIC abstraction. After completing all items, create `docs/architecture/network-interfaces.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: network interface manager"`.
+**Prompt:** Abstract multiple NICs (RTL8139, virtio-net, future drivers) behind a `struct net_interface`. Each interface has a name ("eth0", "eth1"), MAC address, IPv4 address, netmask, gateway, DNS server, MTU, and driver function pointers. `netif_register()` adds an interface. `netif_get_default()` returns the primary interface used for routing. `netif_set_ip()` allows manual IP configuration. The IP layer consults the default interface for the gateway and MAC when sending packets. This replaces the current global NIC state with a proper multi-NIC abstraction. After completing all items,sh clean`, and commit as `"net: network interface manager"`.
 
 
 - [ ] Abstraction over multiple NICs (RTL8139, virtio-net, future drivers)
@@ -366,7 +366,7 @@
 
 ### 9.2 Connection Tracking (Stateful Firewall)
 
-**Prompt:** Stateful connection tracking is essential for the firewall's default "block inbound except established" rule. Maintain a hash table of active connections keyed by (src_ip, src_port, dst_ip, dst_port). When an outbound TCP SYN or UDP packet is sent, create a tracking entry. When an inbound packet arrives, check if it matches an existing tracking entry — if so, auto-allow it regardless of firewall rules. Expire entries: TCP entries expire on FIN/RST or after 300s of inactivity; UDP entries expire after 60s. After completing all items, update `docs/architecture/firewall.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: stateful connection tracking"`.
+**Prompt:** Stateful connection tracking is essential for the firewall's default "block inbound except established" rule. Maintain a hash table of active connections keyed by (src_ip, src_port, dst_ip, dst_port). When an outbound TCP SYN or UDP packet is sent, create a tracking entry. When an inbound packet arrives, check if it matches an existing tracking entry — if so, auto-allow it regardless of firewall rules. Expire entries: TCP entries expire on FIN/RST or after 300s of inactivity; UDP entries expire after 60s. After completing all items,sh clean`, and commit as `"net: stateful connection tracking"`.
 
 
 - [ ] Track established TCP connections: hash table of (src_ip, src_port, dst_ip, dst_port)
@@ -408,7 +408,7 @@
 
 ### 9.6 IPv6 Dual-Stack Support
 
-**Prompt:** The modern internet is transitioning to IPv6 — many networks and services are IPv6-only or dual-stack. Without IPv6, Impossible OS cannot function on many corporate and mobile networks. Implement IPv6 alongside IPv4 (dual-stack). The IPv6 header is 40 bytes fixed (no header checksum, simplified vs IPv4). ICMPv6 replaces ARP for neighbor discovery (NDP: neighbor solicitation/advertisement). DHCPv6 or SLAAC (Stateless Address Autoconfiguration) provides automatic IPv6 addressing. Socket API extensions: `AF_INET6`, `struct sockaddr_in6`, `in6addr_any`. DNS: AAAA record support. After completing all items, update `docs/architecture/networking.md`, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"net: IPv6 dual-stack support"`.
+**Prompt:** The modern internet is transitioning to IPv6 — many networks and services are IPv6-only or dual-stack. Without IPv6, Impossible OS cannot function on many corporate and mobile networks. Implement IPv6 alongside IPv4 (dual-stack). The IPv6 header is 40 bytes fixed (no header checksum, simplified vs IPv4). ICMPv6 replaces ARP for neighbor discovery (NDP: neighbor solicitation/advertisement). DHCPv6 or SLAAC (Stateless Address Autoconfiguration) provides automatic IPv6 addressing. Socket API extensions: `AF_INET6`, `struct sockaddr_in6`, `in6addr_any`. DNS: AAAA record support. After completing all items,sh clean`, and commit as `"net: IPv6 dual-stack support"`.
 
 > **Production requirement:** Windows, Linux, macOS, Android, and iOS all support
 > IPv6 by default. Many ISPs and cloud providers are IPv6-only. An OS without IPv6
