@@ -73,8 +73,11 @@ void *ptr = kmalloc(small_size);  /* MUST be ≤ 4 KB */
 
 ## Files That Need PMM Migration (Tech Debt)
 
-- `src/kernel/gfx/gfx_text.c` — `load_ttf_file()` uses `kmalloc` for font data
-- `src/kernel/gfx/gfx_text.c` — glyph cache bitmaps use `kmalloc`
+- `src/kernel/gfx/stb_truetype_impl.c` — `STBTT_malloc` macro maps to `kmalloc` (stb internal allocs, typically small but unbounded)
+- `src/kernel/gfx/gfx_core.c` — `gfx_create_surface()` uses `kmalloc(w * h * 4)` — **will crash for surfaces > 512×512**
+- `src/kernel/gfx/gfx_blur.c` — scratch buffer via `kmalloc(max_dim * 4)` — safe for current 1280px max but fragile
+
+> **Resolved:** `gfx_text.c` `load_ttf_file()` now correctly uses `pmm_alloc_contiguous()` for font data.
 
 ## How to Audit
 

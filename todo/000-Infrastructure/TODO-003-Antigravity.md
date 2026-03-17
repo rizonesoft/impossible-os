@@ -406,22 +406,22 @@
 
 **Prompt:** Perform a full audit of all 5 existing skills against the current codebase. For each skill, verify: (1) all referenced files exist, (2) all paths match current naming, (3) all code examples compile, (4) no deprecated tools or APIs are referenced. Fix any discrepancies. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all skills for accuracy"`. Add notes directly in this TODO section.
 
-- [ ] Audit `.agent/skills/impossible-os/SKILL.md`:
-  - [ ] Verify all system paths match post-naming-audit conventions
-  - [ ] Verify code examples use correct VFS paths
-  - [ ] Update architecture summary (UEFI, not GRUB)
-- [ ] Audit `.agent/skills/source-code-organization/SKILL.md`:
-  - [ ] Verify directory trees match actual `include/` and `src/` layout
-  - [ ] Remove references to deleted files (`grub.cfg`, `multiboot2_header.asm`)
-  - [ ] Add new files (UEFI bootloader, AHCI driver, etc.)
-- [ ] Audit `.agent/skills/memory-allocation/SKILL.md`:
-  - [ ] Verify "Files That Need PMM Migration" list is current
-  - [ ] Check if any listed bugs have been fixed
-- [ ] Audit `.agent/skills/github/SKILL.md`:
-  - [ ] Verify commit conventions match current practices
-- [ ] Audit `.agent/skills/command-completion/SKILL.md`:
-  - [ ] Verify workaround is still needed
-- [ ] Commit: `"agent: audit all skills for accuracy"`
+- [x] Audit `.agent/skills/impossible-os/SKILL.md`: ✅ **Accurate.** All paths match post-naming-audit. VFS examples use correct backslash convention. Architecture summary already references UEFI (not GRUB). No changes needed.
+  - [x] Verify all system paths match post-naming-audit conventions — ✅ correct
+  - [x] Verify code examples use correct VFS paths — ✅ correct
+  - [x] Update architecture summary (UEFI, not GRUB) — ✅ already says UEFI
+- [x] Audit `.agent/skills/source-code-organization/SKILL.md`: ✅ **Fixed.** Major update — added 15 missing headers and 10 missing source files.
+  - [x] Verify directory trees match actual `include/` and `src/` layout — **Fixed:** added barrier.h, kmath.h, version.h, symtab.h, smp.h, boot_splash.h, os_logo.h, multiboot2.h, log.h + ata.h, vbox_mouse.h, rtl8139.h + spinlock.h, seqlock.h, event.h, workqueue.h
+  - [x] Remove references to deleted files (`grub.cfg`, `multiboot2_header.asm`) — `multiboot2_header.asm` still exists (kept for legacy compat), annotated as such
+  - [x] Add new files (UEFI bootloader, AHCI driver, etc.) — **Fixed:** added gallery.c, klog_flush.c, klog_live.c, log.c, rcu.c, image_save.c, image_scale.c, ico.c, os_logo.c, boot_splash.c, multiboot2_parse.c, symtab.c, version.c, smp/ directory. Fixed `generated/` to show `fluent_codepoints.h` instead of `os_logo_*.h`.
+- [x] Audit `.agent/skills/memory-allocation/SKILL.md`: ✅ **Fixed.** Updated tech debt list.
+  - [x] Verify "Files That Need PMM Migration" list is current — **Fixed:** `gfx_text.c` font data now correctly uses PMM (resolved). Added new violations: `stb_truetype_impl.c` (STBTT_malloc→kmalloc), `gfx_core.c` (surface alloc), `gfx_blur.c` (scratch buffer).
+  - [x] Check if any listed bugs have been fixed — ✅ all 3 bugs (9722a74, f673e46, 5ea919b) remain valid reference examples
+- [x] Audit `.agent/skills/github/SKILL.md`: ✅ **Accurate.** Commit conventions (`scope: description`) match current practices. No-output handling advice still relevant.
+  - [x] Verify commit conventions match current practices — ✅ correct
+- [x] Audit `.agent/skills/command-completion/SKILL.md`: ✅ **Still needed.** `command_status` tool still has the no-output bug with builds. Workaround (sentinel + tail) remains required.
+  - [x] Verify workaround is still needed — ✅ confirmed, still necessary
+- [x] Commit: `"agent: audit all skills for accuracy"`
 
 ### 6.2 Audit All Workflows for Accuracy
 
@@ -439,17 +439,17 @@
 
 | This TODO Section       | Depends On                        | Other TODO File                    |
 |-------------------------|-----------------------------------|------------------------------------|
-| §1.1 Hardware Rules     | PIC→APIC transition              | `TODO-006-Real-Hardware.md §3.1`  |
-| §1.2 Win32 API Rule     | Native Win32 roadmap             | `TODO-510-Native-Win32.md`         |
-| §1.2 Win32 API Rule     | Win32 HANDLE model               | `TODO-028-Process-Model.md`       |
-| §2.1 Fix Paths          | Windows naming audit             | Previous conv (commit `5e12b8e`)  |
-| §2.3 UEFI Skill         | Bootloader implementation        | `TODO-010-Bootloader.md`          |
-| §3.1 Implement Workflow | Development tooling              | `TODO-002-Development.md`         |
-| §3.3 HW Test Workflow   | Real hardware test checklist     | `TODO-006-Real-Hardware.md §8`    |
-| §3.3 HW Test Workflow   | USB boot logging                 | `TODO-005-Debug.md §4.3`         |
-| §5.1 MCP Hardware       | Hardware specs (external)        | N/A — external documentation      |
-| §5.2 clangd MCP         | Clang migration + Bear setup     | `TODO-002 §2.1` + `TODO-002 §6.5`|
-| §5.3 Gemini Semantic     | All Phase 1-2 intelligence       | `TODO-002 §2.1` + `TODO-002 §6.5`|
+| §1.1 Hardware Rules     | PIC→APIC transition               | `TODO-006-Real-Hardware.md §3.1`   |
+| §1.2 Win32 API Rule     | Native Win32 roadmap              | `TODO-510-Native-Win32.md`         |
+| §1.2 Win32 API Rule     | Win32 HANDLE model                | `TODO-028-Process-Model.md`        |
+| §2.1 Fix Paths          | Windows naming audit              | Previous conv (commit `5e12b8e`)   |
+| §2.3 UEFI Skill         | Bootloader implementation         | `TODO-010-Bootloader.md`           |
+| §3.1 Implement Workflow | Development tooling               | `TODO-002-Development.md`          |
+| §3.3 HW Test Workflow   | Real hardware test checklist      | `TODO-006-Real-Hardware.md §8`     |
+| §3.3 HW Test Workflow   | USB boot logging                  | `TODO-005-Debug.md §4.3`           |
+| §5.1 MCP Hardware       | Hardware specs (external)         | N/A — external documentation       |
+| §5.2 clangd MCP         | Clang migration + Bear setup      | `TODO-002 §2.1` + `TODO-002 §6.5`  |
+| §5.3 Gemini Semantic     | All Phase 1-2 intelligence       | `TODO-002 §2.1` + `TODO-002 §6.5`  |
 
 ---
 
@@ -457,16 +457,16 @@
 
 | Priority | Section                         | Description                                    |
 |----------|---------------------------------|------------------------------------------------|
-| ✅ Done  | 2.1 Fix outdated paths           | All paths match codebase + Windows conventions |
-| ✅ Done  | 2.2 Fix source-code-org skill    | GRUB→UEFI, 30+ new headers added              |
+| ✅ Done  | 2.1 Fix outdated paths          | All paths match codebase + Windows conventions |
+| ✅ Done  | 2.2 Fix source-code-org skill   | GRUB→UEFI, 30+ new headers added               |
 | 🔴 P0   | 6.1 Audit all skills             | Catch any other stale content                  |
-| ✅ Done  | 1.1 Hardware constraint rules    | APIC-only, DMA-only, UEFI GOP, RCU           |
-| ✅ Done  | 1.2 Win32 API surface rule       | Win32 native API, Windows paths, CPL applets   |
-| ✅ Done  | 1.3 Freestanding C rule          | No stdlib, no malloc, no printf                |
+| ✅ Done  | 1.1 Hardware constraint rules   | APIC-only, DMA-only, UEFI GOP, RCU             |
+| ✅ Done  | 1.2 Win32 API surface rule      | Win32 native API, Windows paths, CPL applets   |
+| ✅ Done  | 1.3 Freestanding C rule         | No stdlib, no malloc, no printf                |
 | 🟠 P1   | 2.3 UEFI bootloader skill        | Prevent GRUB hallucination                     |
 | 🟠 P1   | 3.1 TODO implementation workflow | Most common agent task                         |
-| 🟠 P1   | 5.2 clangd MCP server            | Phase 2 intelligence — after TODO-002 §6.5    |
-| 🟠 P1   | 5.3 Gemini semantic search       | Phase 3 intelligence — after §5.2             |
+| 🟠 P1   | 5.2 clangd MCP server            | Phase 2 intelligence — after TODO-002 §6.5     |
+| 🟠 P1   | 5.3 Gemini semantic search       | Phase 3 intelligence — after §5.2              |
 | 🟡 P2   | 2.4 TODO navigation skill        | Helps agents find existing work                |
 | 🟡 P2   | 3.2 Verification workflow        | Quality assurance                              |
 | 🟡 P2   | 4.1 Plan vs Fast mode docs       | Agent efficiency                               |
@@ -479,33 +479,33 @@
 
 ## Key Files
 
-| File                                              | Purpose                                    |
-|---------------------------------------------------|--------------------------------------------|
-| `.agents/rules/rules.md`                         | [MODIFY] Add hardware, Win32, freestanding rules |
-| `.agent/skills/impossible-os/SKILL.md`           | [MODIFY] Fix outdated system paths         |
-| `.agent/skills/source-code-organization/SKILL.md`| [MODIFY] Fix deprecated boot references    |
-| `.agent/skills/uefi-bootloader/SKILL.md`         | [NEW] UEFI boot chain knowledge            |
-| `.agent/skills/todo-system/SKILL.md`             | [NEW] TODO navigation skill                |
-| `.agents/workflows/implement-todo.md`            | [NEW] TODO implementation workflow          |
-| `.agents/workflows/verify-todo.md`               | [NEW] Verification workflow                |
-| `.agents/workflows/test-hardware.md`             | [NEW] Hardware test workflow               |
+| File                                              | Purpose                                          |
+|---------------------------------------------------|--------------------------------------------------|
+| `.agents/rules/rules.md`                          | [MODIFY] Add hardware, Win32, freestanding rules |
+| `.agent/skills/impossible-os/SKILL.md`            | [MODIFY] Fix outdated system paths               |
+| `.agent/skills/source-code-organization/SKILL.md` | [MODIFY] Fix deprecated boot references          |
+| `.agent/skills/uefi-bootloader/SKILL.md`          | [NEW] UEFI boot chain knowledge                  |
+| `.agent/skills/todo-system/SKILL.md`              | [NEW] TODO navigation skill                      |
+| `.agents/workflows/implement-todo.md`             | [NEW] TODO implementation workflow               |
+| `.agents/workflows/verify-todo.md`                | [NEW] Verification workflow                      |
+| `.agents/workflows/test-hardware.md`              | [NEW] Hardware test workflow                     |
 
 ---
 
 ## OS Comparison
 
-| Feature                    | VS Code + Copilot          | Cursor                      | Google Antigravity (Impossible OS) |
-|----------------------------|----------------------------|-----------------------------|--------------------------------------|
-| Always-on rules            | ❌ Manual prompting         | ✅ `.cursorrules`            | ✅ `.agents/rules/rules.md`         |
-| Reusable skills            | ❌ None                     | ❌ Manual context            | ✅ `.agent/skills/` (5 skills)      |
-| Autonomous workflows       | ❌ Manual                   | ⚠️ Basic apply              | ✅ `.agents/workflows/` (4 flows)   |
-| Auto-run terminal          | ❌ Requires approval        | ✅ Background tasks          | ✅ `// turbo-all` annotation        |
-| Plan→Review→Execute       | ❌ Chat only                | ❌ Chat only                 | ✅ Plan Mode + artifacts            |
-| Multi-agent parallel       | ❌ Single chat              | ❌ Single chat               | ✅ Agent Manager                    |
-| MCP: clangd code intel     | ❌ None                     | ❌ None                      | ⬜ §5.2 P1 — clangd MCP server      |
-| MCP: semantic search       | ❌ None                     | ❌ None                      | ⬜ §5.3 P1 — Gemini + Zilliz        |
-| MCP: hardware docs         | ❌ None                     | ❌ None                      | ⬜ §5.1 P3 — stretch                |
-| Bare-metal OS awareness    | ❌ Assumes user-space        | ❌ Assumes user-space         | ✅ Rules + skills prevent hallucination |
+| Feature                    | VS Code + Copilot            | Cursor                        | Google Antigravity (Impossible OS)      |
+|----------------------------|------------------------------|-------------------------------|-----------------------------------------|
+| Always-on rules            | ❌ Manual prompting         | ✅ `.cursorrules`            | ✅ `.agents/rules/rules.md`             |
+| Reusable skills            | ❌ None                     | ❌ Manual context            | ✅ `.agent/skills/` (5 skills)          |
+| Autonomous workflows       | ❌ Manual                   | ⚠️ Basic apply               | ✅ `.agents/workflows/` (4 flows)       |
+| Auto-run terminal          | ❌ Requires approval        | ✅ Background tasks          | ✅ `// turbo-all` annotation            |
+| Plan→Review→Execute        | ❌ Chat only                | ❌ Chat only                 | ✅ Plan Mode + artifacts                |
+| Multi-agent parallel       | ❌ Single chat              | ❌ Single chat               | ✅ Agent Manager                        |
+| MCP: clangd code intel     | ❌ None                     | ❌ None                      | ⬜ §5.2 P1 — clangd MCP server          |
+| MCP: semantic search       | ❌ None                     | ❌ None                      | ⬜ §5.3 P1 — Gemini + Zilliz            |
+| MCP: hardware docs         | ❌ None                     | ❌ None                      | ⬜ §5.1 P3 — stretch                    |
+| Bare-metal OS awareness    | ❌ Assumes user-space       | ❌ Assumes user-space        | ✅ Rules + skills prevent hallucination |
 
 > **After P0 items:** All skills and rules accurately reflect the current codebase — agents
 > generate correct code without producing stale paths or deprecated patterns.

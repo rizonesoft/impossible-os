@@ -28,15 +28,24 @@ include/
 │   ├── types.h                # Fundamental integer types
 │   ├── printk.h               # Kernel printf
 │   ├── klog.h                 # Structured klog() logging
+│   ├── log.h                  # Legacy log output
 │   ├── panic.h                # Kernel panic + BSOD + crash dump
 │   ├── acpi.h                 # ACPI table parsing (RSDP, MADT, FADT)
 │   ├── boot_info.h            # UEFI boot_info struct (GOP, memory map, RSDP)
+│   ├── boot_splash.h          # Boot splash screen
 │   ├── gdt.h                  # Global Descriptor Table
 │   ├── idt.h                  # Interrupt Descriptor Table
 │   ├── elf.h                  # ELF binary format
 │   ├── image.h                # Runtime image decode + scaling
+│   ├── os_logo.h              # Embedded OS logo data
 │   ├── rcu.h                  # Read-Copy-Update synchronization
 │   ├── atomic.h               # Atomic operations
+│   ├── barrier.h              # Memory barriers (mfence, sfence, etc.)
+│   ├── kmath.h                # Kernel math utilities
+│   ├── multiboot2.h           # Multiboot2 header definitions (legacy)
+│   ├── symtab.h               # Kernel symbol table (stack traces)
+│   ├── smp.h                  # Symmetric Multi-Processing
+│   ├── version.h              # Kernel version info
 │   │
 │   ├── drivers/               # Hardware driver headers
 │   │   ├── serial.h           # COM1 serial port
@@ -49,8 +58,11 @@ include/
 │   │   ├── pit.h              # Programmable Interval Timer
 │   │   ├── rtc.h              # Real-Time Clock
 │   │   ├── ahci.h             # AHCI (SATA DMA) disk driver
+│   │   ├── ata.h              # Legacy ATA/IDE (reference only)
 │   │   ├── blkdev.h           # Block device abstraction layer
 │   │   ├── pci.h              # PCI bus enumeration
+│   │   ├── rtl8139.h          # RTL8139 network card
+│   │   ├── vbox_mouse.h       # VirtualBox mouse integration
 │   │   ├── virtio.h           # VirtIO device support
 │   │   ├── virtio_blk.h       # VirtIO block device
 │   │   └── virtio_input.h     # VirtIO input devices
@@ -76,7 +88,11 @@ include/
 │   │   ├── mutex.h            # Mutex
 │   │   ├── rwlock.h           # Read-write lock
 │   │   ├── condvar.h          # Condition variable
-│   │   └── semaphore.h        # Counting semaphore
+│   │   ├── semaphore.h        # Counting semaphore
+│   │   ├── spinlock.h         # Spinlock (IRQ-safe)
+│   │   ├── seqlock.h          # Seqlock (reader-writer, read-mostly)
+│   │   ├── event.h            # Event objects (Windows-style)
+│   │   └── workqueue.h        # Deferred work queues
 │   │
 │   ├── ipc/                   # Inter-process communication
 │   │   ├── pipe.h             # Anonymous pipes
@@ -87,15 +103,15 @@ include/
 │       └── net.h              # Network stack (Ethernet/ARP/IP/UDP/ICMP/DHCP)
 │
 ├── desktop/                   # Desktop environment headers
-│   ├── wm.h                   # Window manager
+│   ├── wm.h                   # Window manager + dirty rectangle compositor
 │   ├── desktop.h              # Desktop shell (taskbar, start menu)
 │   ├── terminal.h             # Terminal emulator
 │   ├── font.h                 # Bitmap font renderer (early boot fallback)
 │   ├── controls.h             # Common controls (Button, Label, TextBox)
 │   └── gallery.h              # Image gallery viewer
-
+│
 └── generated/                 # Build-generated headers
-    └── os_logo_*.h            # Pre-built icon BGRA arrays
+    └── fluent_codepoints.h    # Fluent icon codepoint definitions
 ```
 
 ### Source Directory Layout
@@ -109,6 +125,7 @@ src/
 │   │   ├── reloc.asm          # PE relocation fixups
 │   │   └── uefi.lds           # UEFI linker script
 │   ├── entry.asm              # Kernel entry point (Long Mode setup)
+│   ├── multiboot2_header.asm  # Multiboot2 header (legacy, kept for compat)
 │   └── linker.ld              # Kernel linker script
 │
 ├── kernel/                    # Kernel core
@@ -116,21 +133,34 @@ src/
 │   ├── gdt.c, gdt_asm.asm    # GDT + TSS
 │   ├── idt.c, isr_stubs.asm  # IDT + ISR stubs
 │   ├── printk.c              # Kernel printf
-│   ├── klog.c                # Structured logging
+│   ├── klog.c                # Structured klog() logging
+│   ├── klog_flush.c          # klog ring-buffer flush to serial
+│   ├── klog_live.c           # Live klog output to framebuffer
+│   ├── log.c                 # Legacy log output
 │   ├── panic.c               # Kernel panic + BSOD
 │   ├── acpi.c                # ACPI table parsing
 │   ├── registry.c            # Win32-compatible Registry
+│   ├── rcu.c                 # Read-Copy-Update synchronization
 │   ├── elf.c                 # ELF loader
 │   ├── image.c               # Runtime JPEG/PNG decode
+│   ├── image_save.c          # Image encoding (BMP save)
+│   ├── image_scale.c         # Image scaling/resampling
+│   ├── ico.c                 # Windows ICO file parser
 │   ├── icon_store.c           # IRES icon pack
+│   ├── os_logo.c             # Embedded OS logo
+│   ├── boot_splash.c         # Boot splash screen
+│   ├── multiboot2_parse.c    # Multiboot2 tag parser (legacy)
+│   ├── symtab.c              # Kernel symbol table
+│   ├── version.c             # Build version info
 │   │
 │   ├── drivers/               # Hardware drivers
-│   ├── mm/                    # Memory management
-│   ├── fs/                    # Filesystem implementations (IXFS, FAT32, VFS)
+│   ├── mm/                    # Memory management (pmm, vmm, heap, swap, mmap)
+│   ├── fs/                    # Filesystems (IXFS, FAT32, VFS, GPT, MBR)
 │   ├── sched/                 # Scheduler + syscalls + sync primitives
 │   ├── ipc/                   # Pipes, signals, shared memory
-│   ├── gfx/                   # 2D graphics library (blend, blur, effects)
-│   ├── net/                   # Network stack
+│   ├── gfx/                   # 2D graphics library (blend, blur, effects, text)
+│   ├── net/                   # Network stack (Ethernet/ARP/IP/UDP/ICMP/DHCP)
+│   ├── smp/                   # SMP (ap_trampoline.asm, smp.c)
 │   └── test/                  # Kernel unit tests
 │
 ├── desktop/                   # Desktop environment
@@ -138,9 +168,10 @@ src/
 │   ├── desktop.c             # Desktop shell (wallpaper, taskbar, start menu)
 │   ├── terminal.c            # Terminal emulator
 │   ├── font.c                # Bitmap font (early boot fallback)
-│   └── controls.c            # Common controls
+│   ├── controls.c            # Common controls
+│   └── gallery.c             # Image gallery viewer
 │
-└── libc/                      # Minimal kernel libc
+└── libc/                      # Minimal kernel libc (placeholder)
 ```
 
 ## Rules for Adding New Files
