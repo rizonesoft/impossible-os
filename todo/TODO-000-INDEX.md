@@ -15,8 +15,8 @@
 |-----|-------------------------------------------------------------------------|--------------|
 | 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   |              |
 | 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ All done  |
-| 003 | [Antigravity Agent IDE](000-Infrastructure/TODO-003-Antigravity.md)     |              |
-| 004 | [MCP Server Setup](000-Infrastructure/TODO-004-MCP.md)                  |              |
+| 003 | [Antigravity Agent IDE](000-Infrastructure/TODO-003-Antigravity.md)     | ✅ All done  |
+| 004 | [MCP Server Setup](000-Infrastructure/TODO-004-MCP.md)                  | ✅ All done  |
 | 008 | [Hyper-V Gen 2 Boot](000-Infrastructure/TODO-008-Hyper-V-Runner.md)     |              |
 | 005 | [Debug & Logging System](000-Infrastructure/TODO-005-Debug.md)          |              |
 | 006 | [Real Hardware Boot](000-Infrastructure/TODO-006-Real-Hardware.md)      |              |
