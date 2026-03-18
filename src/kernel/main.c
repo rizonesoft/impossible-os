@@ -6,6 +6,7 @@
  * ============================================================================ */
 
 #include "kernel/types.h"
+#include "kernel/cpuid.h"
 #include "kernel/multiboot2.h"
 #include "kernel/boot_info.h"
 #include "gfx_simd.h"
@@ -303,6 +304,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* Step 6: Initialize kernel heap (needs VMM for page mapping) */
     heap_init();
+
+    /* Step 6a: Probe CPU features via CPUID (must run after heap_init,
+     * before any feature-dependent code like SIMD, SMEP, PCID) */
+    cpuid_init();
 
     /* Step 6b: Enable AVX2 SIMD if supported */
     simd_enable_avx();

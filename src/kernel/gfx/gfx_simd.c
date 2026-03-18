@@ -14,6 +14,7 @@
 
 #include "gfx_simd.h"
 #include "kernel/types.h"
+#include "kernel/cpuid.h"
 
 /* ---- FPU / SSE state management ---- */
 
@@ -44,35 +45,16 @@ void simd_restore_state(const fxsave_area_t *area)
     __asm__ volatile ("fxrstor (%0)" : : "r"(area) : "memory");
 }
 
-/* ---- CPUID detection ---- */
+/* ---- CPUID detection (delegated to kernel/cpuid.h) ---- */
 
 int simd_has_sse2(void)
 {
-    uint32_t eax, ebx, ecx, edx;
-    eax = 1;
-    __asm__ volatile ("cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(eax));
-    return (edx >> 26) & 1;  /* SSE2 = EDX bit 26 */
+    return cpu_has(CPU_FEATURE_SSE2);
 }
 
 int simd_has_avx2(void)
 {
-    uint32_t eax, ebx, ecx, edx;
-
-    /* Check max CPUID leaf first */
-    eax = 0;
-    __asm__ volatile ("cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(eax));
-    if (eax < 7)
-        return 0;
-
-    eax = 7; ecx = 0;
-    __asm__ volatile ("cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(eax), "c"(ecx));
-    return (ebx >> 5) & 1;  /* AVX2 = EBX bit 5 */
+    return cpu_has(CPU_FEATURE_AVX2);
 }
 
 /* ---- SSE2 alpha blending (4 pixels per iteration) ---- */
@@ -314,23 +296,12 @@ int simd_avx2_ok = 0;  /* Set to 1 at boot if AVX2 is available and enabled */
 
 void simd_enable_avx(void)
 {
-    uint32_t eax, ebx, ecx, edx;
-
-    /* Check CPUID.01H:ECX bit 26 (XSAVE hw support) and bit 28 (AVX).
-     * NOTE: bit 27 (OSXSAVE) only reads 1 AFTER CR4.OSXSAVE is set,
-     * so we must check bit 26 (hardware capability) instead. */
-    eax = 1;
-    __asm__ volatile ("cpuid"
-        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
-        : "a"(eax));
-
-    if (!((ecx >> 26) & 1))  /* XSAVE not supported by CPU */
+    /* Use centralized CPUID detection */
+    if (!cpu_has(CPU_FEATURE_XSAVE))  /* XSAVE not supported by CPU */
         return;
-    if (!((ecx >> 28) & 1))  /* AVX not supported by CPU */
+    if (!cpu_has(CPU_FEATURE_AVX))    /* AVX not supported by CPU */
         return;
-
-    /* Check CPUID.07H for AVX2 */
-    if (!simd_has_avx2())
+    if (!cpu_has(CPU_FEATURE_AVX2))   /* AVX2 not supported by CPU */
         return;
 
     /* Set CR4.OSXSAVE (bit 18) to enable XGETBV/XSETBV */

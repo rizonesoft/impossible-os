@@ -7,21 +7,12 @@
 
 #include "kernel/hw_dump.h"
 #include "kernel/klog.h"
+#include "kernel/cpuid.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ahci.h"
 #include "kernel/drivers/rtl8139.h"
 #include "kernel/boot_info.h"
-
-/* ---- CPUID helper ---- */
-
-static void cpuid(uint32_t leaf, uint32_t *eax, uint32_t *ebx,
-                   uint32_t *ecx, uint32_t *edx)
-{
-    __asm__ volatile("cpuid"
-        : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
-        : "a"(leaf), "c"(0));
-}
 
 /* ---- Hex formatting helpers ---- */
 
@@ -58,76 +49,44 @@ void hw_dump_to_log(void)
     klog(LOG_INFO, "hwdump",
          "======================================================================");
 
-    /* ---- CPU ---- */
+    /* ---- CPU (from centralized CPUID) ---- */
     {
-        uint32_t eax, ebx, ecx, edx;
-        char vendor[13];
+        const struct cpu_features *cpu = cpuid_get();
 
-        cpuid(0, &eax, &ebx, &ecx, &edx);
-        {
-            char *v = vendor;
-            *(uint32_t *)(v + 0) = ebx;
-            *(uint32_t *)(v + 4) = edx;
-            *(uint32_t *)(v + 8) = ecx;
-            v[12] = '\0';
-        }
-        klog(LOG_INFO, "hwdump", "CPU vendor: %s", vendor);
+        /* Skip leading spaces in brand */
+        const char *brand = cpu->brand;
+        while (*brand == ' ') brand++;
 
-        /* Brand string (CPUID 0x80000002-0x80000004) */
-        {
-            uint32_t max_ext;
-            cpuid(0x80000000, &max_ext, &ebx, &ecx, &edx);
-            if (max_ext >= 0x80000004) {
-                char brand[49];
-                uint32_t *b = (uint32_t *)brand;
-                uint32_t leaf;
-                for (leaf = 0x80000002; leaf <= 0x80000004; leaf++) {
-                    cpuid(leaf, &eax, &ebx, &ecx, &edx);
-                    *b++ = eax; *b++ = ebx; *b++ = ecx; *b++ = edx;
-                }
-                brand[48] = '\0';
-                /* Skip leading spaces */
-                {
-                    const char *p = brand;
-                    while (*p == ' ') p++;
-                    klog(LOG_INFO, "hwdump", "CPU brand: %s", p);
-                }
-            }
-        }
-
-        /* Family/Model/Stepping */
-        cpuid(1, &eax, &ebx, &ecx, &edx);
+        klog(LOG_INFO, "hwdump", "CPU vendor: %s", cpu->vendor);
+        if (brand[0])
+            klog(LOG_INFO, "hwdump", "CPU brand: %s", brand);
         klog(LOG_INFO, "hwdump", "CPU family=%u model=%u stepping=%u",
-             ((eax >> 8) & 0xF) + ((eax >> 20) & 0xFF),
-             ((eax >> 4) & 0xF) | (((eax >> 16) & 0xF) << 4),
-             eax & 0xF);
+             (uint64_t)cpu->family, (uint64_t)cpu->model,
+             (uint64_t)cpu->stepping);
 
-        /* Feature flags — log key features */
         klog(LOG_INFO, "hwdump",
              "CPU features: %s%s%s%s%s%s%s%s%s%s%s%s%s%s",
-             (edx & (1 << 0))  ? "FPU " : "",
-             (edx & (1 << 4))  ? "TSC " : "",
-             (edx & (1 << 9))  ? "APIC " : "",
-             (edx & (1 << 23)) ? "MMX " : "",
-             (edx & (1 << 25)) ? "SSE " : "",
-             (edx & (1 << 26)) ? "SSE2 " : "",
-             (edx & (1 << 28)) ? "HTT " : "",
-             (ecx & (1 << 0))  ? "SSE3 " : "",
-             (ecx & (1 << 9))  ? "SSSE3 " : "",
-             (ecx & (1 << 19)) ? "SSE4.1 " : "",
-             (ecx & (1 << 20)) ? "SSE4.2 " : "",
-             (ecx & (1 << 25)) ? "AES " : "",
-             (ecx & (1 << 28)) ? "AVX " : "",
+             cpu_has(CPU_FEATURE_FPU)    ? "FPU " : "",
+             cpu_has(CPU_FEATURE_TSC)    ? "TSC " : "",
+             cpu_has(CPU_FEATURE_APIC)   ? "APIC " : "",
+             cpu_has(CPU_FEATURE_MMX)    ? "MMX " : "",
+             cpu_has(CPU_FEATURE_SSE)    ? "SSE " : "",
+             cpu_has(CPU_FEATURE_SSE2)   ? "SSE2 " : "",
+             cpu_has(CPU_FEATURE_HTT)    ? "HTT " : "",
+             cpu_has(CPU_FEATURE_SSE3)   ? "SSE3 " : "",
+             cpu_has(CPU_FEATURE_SSSE3)  ? "SSSE3 " : "",
+             cpu_has(CPU_FEATURE_SSE4_1) ? "SSE4.1 " : "",
+             cpu_has(CPU_FEATURE_SSE4_2) ? "SSE4.2 " : "",
+             cpu_has(CPU_FEATURE_AES)    ? "AES " : "",
+             cpu_has(CPU_FEATURE_AVX)    ? "AVX " : "",
              "");
 
-        /* Extended features */
-        cpuid(7, &eax, &ebx, &ecx, &edx);
         klog(LOG_INFO, "hwdump", "CPU ext: %s%s%s%s%s",
-             (ebx & (1 << 5))  ? "AVX2 " : "",
-             (ebx & (1 << 3))  ? "BMI1 " : "",
-             (ebx & (1 << 8))  ? "BMI2 " : "",
-             (ebx & (1 << 18)) ? "RDSEED " : "",
-             (ebx & (1 << 19)) ? "ADX " : "");
+             cpu_has(CPU_FEATURE_AVX2)   ? "AVX2 " : "",
+             cpu_has(CPU_FEATURE_BMI1)   ? "BMI1 " : "",
+             cpu_has(CPU_FEATURE_BMI2)   ? "BMI2 " : "",
+             cpu_has(CPU_FEATURE_RDSEED) ? "RDSEED " : "",
+             cpu_has(CPU_FEATURE_ADX)    ? "ADX " : "");
     }
 
     /* ---- Memory ---- */

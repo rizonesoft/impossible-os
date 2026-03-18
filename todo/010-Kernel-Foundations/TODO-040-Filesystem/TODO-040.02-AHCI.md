@@ -483,31 +483,31 @@
 
 ## OS Comparison
 
-| Feature                         | 🪟 Windows 11 (StorAHCI)          | 🐧 Linux (libata / ahci.c)           | 🚀 Impossible OS                              |
-| ------------------------------- | --------------------------------- | ------------------------------------ | --------------------------------------------- |
-| Basic AHCI read/write           | ✅                                 | ✅                                    | ✅ Done (polling DMA)                          |
-| IDENTIFY DEVICE                 | ✅                                 | ✅                                    | ✅ Done                                        |
-| ATAPI / CD-ROM                  | ✅ Full SCSI passthrough           | ✅ Full (sr, sg)                      | ⚠️ Basic (READ, IDENTIFY only) — §9.2         |
-| Interrupt-driven I/O            | ✅ MSI-X multi-queue               | ✅ MSI / per-port IRQ                 | ⬜ §1.1 P0 — currently polling                |
-| MSI / MSI-X                     | ✅ MSI-X preferred                 | ✅ MSI / MSI-X                        | ⬜ §1.2 P2                                    |
-| Native Command Queuing (NCQ)    | ✅ 32-deep queue                   | ✅ 32-deep, auto-detect               | ⬜ §2.1 P1 — sequential only                  |
-| Interrupt coalescing            | ✅ Adaptive                        | ✅ CCC support                        | ⬜ §2.2 P3                                    |
-| **NCQ Priority (PRIO bit)** ⭐  | ❌ Not used                        | ❌ Not used                           | ⬜ §2.3 P2 — latency advantage                |
-| **NCQ Autosense** ⭐            | ❌ Basic error log only            | ⚠️ Partial (libata-scsi)              | ⬜ §2.4 P2 — surgical error recovery          |
-| Error recovery (CLO)            | ✅ Automatic retry + CLO           | ✅ libata EH (error handler)          | ⬜ §3.1 P0 — no recovery                      |
-| Comprehensive error handling    | ✅ WHEA integration                | ✅ libata error handler               | ⬜ §3.2 P1                                    |
-| Hot-plug (eSATA / swap bay)     | ✅ Full hot-plug                   | ✅ Full hot-plug                       | ⬜ §4.1 P2                                    |
-| Staggered spin-up               | ✅                                 | ✅                                    | ⬜ §4.2 P3                                    |
-| TRIM / discard                  | ✅ Optimize Drives                 | ✅ `fstrim`, auto-discard             | ⬜ §5.1 P1                                    |
-| **Force Unit Access (FUA)** ⭐  | ⚠️ Relies on FLUSH CACHE mostly   | ✅ XFS uses FUA natively              | ⬜ §5.2 P1 — per-command FUA                  |
-| Link power management (ALPM)    | ✅ Balanced / Performance          | ✅ `min_power` / `med_power_with_dipm` | ⬜ §6.1 P2                                    |
-| DevSleep (AHCI 1.3.1)           | ✅ Connected Standby               | ✅ Supported                           | ⬜ §6.2 P3                                    |
-| BIOS/OS handoff (BOHC)          | ✅                                 | ✅                                    | ⬜ §7.1 P1                                    |
-| Enclosure management (LEDs)     | ✅ enclosure aware                 | ✅ `ledtrig-disk`                      | ⬜ §8.1 P4                                    |
-| Port multiplier                 | ✅ (limited)                       | ✅ `libata-pmp`                        | ⬜ §9.1 P4                                    |
-| SMART monitoring                | ✅ Storage Spaces / CrystalDisk    | ✅ `smartctl` (smartmontools)          | ⬜ §10.1 P2                                   |
-| **ATA Security Erase** ⭐       | ❌ Blocked since Win 8 (WinPE only)| ⚠️ Manual `hdparm` only              | ⬜ §11.1 P3 — GUI Disk Manager erase          |
-| **SANITIZE (crypto/block)** ⭐  | ⚠️ NVMe only via IOCTL            | ✅ `sg_sanitize`                       | ⬜ §11.2 P3 — GUI with mode selector          |
-| **I/O Stats (per-NCQ-tag)** ⭐  | ⚠️ PerfMon (aggregate only)       | ⚠️ `/proc/diskstats` (aggregate)     | ⬜ §12.1 P2 — per-tag latency histograms      |
-| **ZPODD** (zero-power ODD)      | ✅ Supported                       | ✅ Since kernel 3.9                    | ⬜ §13.1 P4                                   |
-| **NCQ + IRQ-driven (default)**  | ✅                                 | ✅                                    | ⬜ §1.1 + §2.1 — polling today                |
+| Feature                         | 🪟 Windows 11 (StorAHCI)           | 🐧 Linux (libata / ahci.c)           | 🚀 Impossible OS                             |
+| ------------------------------- | ----------------------------------- | ------------------------------------ | --------------------------------------------- |
+| Basic AHCI read/write           | ✅                                 | ✅                                    | ✅ Done (polling DMA)                       |
+| IDENTIFY DEVICE                 | ✅                                 | ✅                                    | ✅ Done                                     |
+| ATAPI / CD-ROM                  | ✅ Full SCSI passthrough           | ✅ Full (sr, sg)                      | ⚠️ Basic (READ, IDENTIFY only) — §9.2       |
+| Interrupt-driven I/O            | ✅ MSI-X multi-queue               | ✅ MSI / per-port IRQ                 | ⬜ §1.1 P0 — currently polling              |
+| MSI / MSI-X                     | ✅ MSI-X preferred                 | ✅ MSI / MSI-X                        | ⬜ §1.2 P2                                  |
+| Native Command Queuing (NCQ)    | ✅ 32-deep queue                   | ✅ 32-deep, auto-detect               | ⬜ §2.1 P1 — sequential only                |
+| Interrupt coalescing            | ✅ Adaptive                        | ✅ CCC support                        | ⬜ §2.2 P3                                  |
+| **NCQ Priority (PRIO bit)**     | ❌ Not used                        | ❌ Not used                           | ⬜ §2.3 P2 — latency advantage              |⭐
+| **NCQ Autosense**               | ❌ Basic error log only            | ⚠️ Partial (libata-scsi)              | ⬜ §2.4 P2 — surgical error recovery        |⭐
+| Error recovery (CLO)            | ✅ Automatic retry + CLO           | ✅ libata EH (error handler)          | ⬜ §3.1 P0 — no recovery                    |
+| Comprehensive error handling    | ✅ WHEA integration                | ✅ libata error handler               | ⬜ §3.2 P1                                  |
+| Hot-plug (eSATA / swap bay)     | ✅ Full hot-plug                   | ✅ Full hot-plug                      | ⬜ §4.1 P2                                  |
+| Staggered spin-up               | ✅                                 | ✅                                    | ⬜ §4.2 P3                                  |
+| TRIM / discard                  | ✅ Optimize Drives                 | ✅ `fstrim`, auto-discard             | ⬜ §5.1 P1                                  |
+| **Force Unit Access (FUA)**     | ⚠️ Relies on FLUSH CACHE mostly    | ✅ XFS uses FUA natively              | ⬜ §5.2 P1 — per-command FUA                |⭐
+| Link power management (ALPM)    | ✅ Balanced / Performance          | ✅ `min_power` / `med_power_with_dipm`| ⬜ §6.1 P2                                  |
+| DevSleep (AHCI 1.3.1)           | ✅ Connected Standby               | ✅ Supported                          | ⬜ §6.2 P3                                  |
+| BIOS/OS handoff (BOHC)          | ✅                                 | ✅                                    | ⬜ §7.1 P1                                  |
+| Enclosure management (LEDs)     | ✅ enclosure aware                 | ✅ `ledtrig-disk`                     | ⬜ §8.1 P4                                  |
+| Port multiplier                 | ✅ (limited)                       | ✅ `libata-pmp`                       | ⬜ §9.1 P4                                  |
+| SMART monitoring                | ✅ Storage Spaces / CrystalDisk    | ✅ `smartctl` (smartmontools)         | ⬜ §10.1 P2                                 |
+| **ATA Security Erase**          | ❌ Blocked since Win 8 (WinPE only)| ⚠️ Manual `hdparm` only               | ⬜ §11.1 P3 — GUI Disk Manager erase        |⭐
+| **SANITIZE (crypto/block)**     | ⚠️ NVMe only via IOCTL             | ✅ `sg_sanitize`                      | ⬜ §11.2 P3 — GUI with mode selector        |⭐
+| **I/O Stats (per-NCQ-tag)**     | ⚠️ PerfMon (aggregate only)        | ⚠️ `/proc/diskstats` (aggregate)      | ⬜ §12.1 P2 — per-tag latency histograms    |⭐
+| **ZPODD** (zero-power ODD)      | ✅ Supported                       | ✅ Since kernel 3.9                   | ⬜ §13.1 P4                                 |
+| **NCQ + IRQ-driven (default)**  | ✅                                 | ✅                                    | ⬜ §1.1 + §2.1 — polling today              |
