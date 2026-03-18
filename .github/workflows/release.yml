@@ -2,8 +2,10 @@
 # Impossible OS — Automated Release
 #
 # Triggered when a version tag (v*) is pushed.
-# Builds the OS, generates a changelog, converts to VDI, and publishes a
-# GitHub Release with the disk images, docs, and build log attached.
+# Builds the OS, converts to VDI, packages everything into a versioned zip,
+# and publishes a GitHub Release.
+#
+# Stable releases (no suffix) auto-delete old pre-releases (alpha/beta/rc).
 # ──────────────────────────────────────────────────────────────────────────────
 
 name: Release
@@ -13,7 +15,7 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write          # Needed to create releases and upload assets
+  contents: write          # Needed to create/delete releases and upload assets
 
 env:
   LLVM_VERSION: "19"
@@ -115,21 +117,55 @@ jobs:
           SIZE=$(stat -c%s build/system-disk.vdi)
           echo "✅ system-disk.vdi: $(( SIZE / 1024 / 1024 )) MiB"
 
-      # ── Generate changelog ──────────────────────────────────────────────
-      - name: Generate changelog
-        id: changelog
+      # ── Package release zip ─────────────────────────────────────────────
+      - name: Package release archive
         run: |
-          # Get commits since previous tag for release notes
+          TAG="${{ steps.version.outputs.tag }}"
+          RELEASE_DIR="build/release"
+          ZIP_NAME="impossible-os-${TAG}.zip"
+
+          mkdir -p "$RELEASE_DIR"
+
+          # Copy assets into release staging directory
+          cp build/system-disk.img "$RELEASE_DIR/system-disk.img"
+          cp build/system-disk.vdi "$RELEASE_DIR/system-disk.vdi"
+          cp docs/getting-started/qemu.md "$RELEASE_DIR/QEMU-Setup-Guide.md"
+          cp docs/getting-started/virtualbox.md "$RELEASE_DIR/VirtualBox-Setup-Guide.md"
+          cp build/build.log "$RELEASE_DIR/build.log"
+
+          # Create zip from the release directory
+          cd build
+          zip -9 -j "$ZIP_NAME" \
+            release/system-disk.img \
+            release/system-disk.vdi \
+            release/QEMU-Setup-Guide.md \
+            release/VirtualBox-Setup-Guide.md \
+            release/build.log
+          cd ..
+
+          SIZE=$(stat -c%s "build/$ZIP_NAME")
+          echo "✅ $ZIP_NAME: $(( SIZE / 1024 / 1024 )) MiB"
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "zip_path=build/$ZIP_NAME" >> "$GITHUB_OUTPUT"
+        id: package
+
+      # ── Generate release notes ──────────────────────────────────────────
+      - name: Generate release notes
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          ZIP_NAME="${{ steps.package.outputs.zip_name }}"
+
+          # Get commits since previous tag
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
-            echo "Generating changelog: $PREV_TAG → ${{ steps.version.outputs.tag }}"
+            echo "Generating changelog: $PREV_TAG → $TAG"
             BODY=$(git log --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD)
           else
-            echo "Generating changelog: full history → ${{ steps.version.outputs.tag }}"
+            echo "Generating changelog: full history → $TAG"
             BODY=$(git log --pretty=format:"- %s (\`%h\`)" HEAD)
           fi
 
-          # Write to file for the release action
+          # Write release notes
           {
             echo "## What's Changed"
             echo ""
@@ -137,14 +173,16 @@ jobs:
             echo ""
             echo "---"
             echo ""
-            echo "### 📦 Downloads"
+            echo "### 📦 Download"
+            echo ""
+            echo "Download **\`$ZIP_NAME\`** — it contains everything you need:"
             echo ""
             echo "| File | Description |"
             echo "|------|-------------|"
             echo "| \`system-disk.img\` | Raw GPT disk image — use with QEMU or write to USB |"
             echo "| \`system-disk.vdi\` | VirtualBox native format — import directly |"
-            echo "| \`qemu.md\` | QEMU setup guide |"
-            echo "| \`virtualbox.md\` | VirtualBox setup guide |"
+            echo "| \`QEMU-Setup-Guide.md\` | Step-by-step QEMU installation and configuration |"
+            echo "| \`VirtualBox-Setup-Guide.md\` | Step-by-step VirtualBox setup |"
             echo "| \`build.log\` | Build log for this release |"
           } > build/RELEASE_NOTES.md
 
@@ -158,12 +196,37 @@ jobs:
           name: "Impossible OS ${{ steps.version.outputs.tag }}"
           body_path: build/RELEASE_NOTES.md
           prerelease: ${{ steps.version.outputs.prerelease }}
-          files: |
-            build/system-disk.img
-            build/system-disk.vdi
-            docs/getting-started/qemu.md
-            docs/getting-started/virtualbox.md
-            build/build.log
+          files: ${{ steps.package.outputs.zip_path }}
+
+      # ── Clean up old pre-releases (only on stable release) ──────────────
+      - name: Clean up old pre-releases
+        if: steps.version.outputs.prerelease == 'false'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const releases = await github.rest.repos.listReleases({ owner, repo, per_page: 100 });
+
+            const preReleases = releases.data.filter(r => r.prerelease);
+            let deleted = 0;
+
+            for (const release of preReleases) {
+              console.log(`Deleting pre-release: ${release.tag_name} (${release.name})`);
+
+              // Delete the release
+              await github.rest.repos.deleteRelease({ owner, repo, release_id: release.id });
+
+              // Delete the tag
+              try {
+                await github.rest.git.deleteRef({ owner, repo, ref: `tags/${release.tag_name}` });
+              } catch (e) {
+                console.log(`  Tag ${release.tag_name} already deleted or not found`);
+              }
+
+              deleted++;
+            }
+
+            console.log(`✅ Cleaned up ${deleted} pre-release(s)`);
 
       # ── Also update CHANGELOG.md in repo ────────────────────────────────
       - name: Update CHANGELOG.md
