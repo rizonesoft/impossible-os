@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- SEO -->
+    <title>Impossible OS — A Modern Operating System with Native Win32 & Linux Compatibility</title>
+    <meta name="description" content="Impossible OS is a modern x86-64 operating system built from scratch with native Win32 API compatibility, Linux binary support, and a Windows 11-inspired desktop. Releasing January 28, 2028.">
+    <meta name="keywords" content="operating system, OS, x86-64, Win32, Windows compatibility, Linux compatibility, kernel, open source, UEFI, custom OS, hobby OS, desktop operating system, Windows 11, IXFS filesystem, FAT32, AHCI, NVMe, SMP, multi-core, networking, TCP/IP">
+    <meta name="author" content="Rizonesoft">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://rizonesoft.github.io/impossible-os/">
+
+    <!-- Open Graph -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Impossible OS — Modern OS with Win32 & Linux Compatibility">
+    <meta property="og:description" content="A modern x86-64 operating system built from scratch. Native Win32 API, Linux compatibility, Windows 11-inspired desktop. Open source.">
+    <meta property="og:url" content="https://rizonesoft.github.io/impossible-os/">
+    <meta property="og:site_name" content="Impossible OS">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Impossible OS — Modern OS with Win32 & Linux Compatibility">
+    <meta name="twitter:description" content="A modern x86-64 operating system built from scratch with native Win32 API and Linux binary support.">
+
+    <!-- Structured Data -->
+    <script type="application/ld+json">
+    {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Impossible OS",
+        "operatingSystem": "x86-64",
+        "applicationCategory": "OperatingSystem",
+        "description": "A modern x86-64 operating system built from scratch with native Win32 API compatibility and Linux binary support.",
+        "url": "https://rizonesoft.github.io/impossible-os/",
+        "author": {
+            "@type": "Organization",
+            "name": "Rizonesoft",
+            "url": "https://rizonesoft.com"
+        },
+        "license": "https://opensource.org/licenses/GPL-3.0",
+        "programmingLanguage": ["C", "x86-64 Assembly"],
+        "softwareVersion": "alpha"
+    }
+    </script>
+
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+    <style>
+        /* ── Reset & Base ─────────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --bg-card: #1a1f35;
+            --bg-card-hover: #222845;
+            --text-primary: #f0f4ff;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent-blue: #155cde;
+            --accent-cyan: #2eb5f0;
+            --accent-teal: #40daf2;
+            --gradient-start: #155cde;
+            --gradient-mid: #2185e6;
+            --gradient-end: #2eb5f0;
+            --border-subtle: rgba(148, 163, 184, 0.1);
+            --glow: rgba(46, 181, 240, 0.15);
+        }
+
+        html {
+            scroll-behavior: smooth;
+            font-size: 16px;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        a { color: var(--accent-cyan); text-decoration: none; transition: color 0.2s; }
+        a:hover { color: var(--accent-teal); }
+
+        /* ── Animated Background ──────────────────────────────────────── */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image:
+                linear-gradient(rgba(148, 163, 184, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(148, 163, 184, 0.03) 1px, transparent 1px);
+            background-size: 64px 64px;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .bg-glow {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            border-radius: 50%;
+            filter: blur(120px);
+            opacity: 0.12;
+            z-index: 0;
+            pointer-events: none;
+        }
+
+        .bg-glow-1 { top: -200px; left: -100px; background: var(--accent-blue); }
+        .bg-glow-2 { top: 40%; right: -200px; background: var(--accent-teal); }
+        .bg-glow-3 { bottom: -200px; left: 30%; background: var(--accent-cyan); }
+
+        /* ── Layout ───────────────────────────────────────────────────── */
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 24px;
+            position: relative;
+            z-index: 1;
+        }
+
+        section { padding: 100px 0; }
+
+        /* ── Nav ──────────────────────────────────────────────────────── */
+        nav {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+            padding: 16px 0;
+            background: rgba(10, 14, 26, 0.85);
+            backdrop-filter: blur(20px);
+            border-bottom: 1px solid var(--border-subtle);
+        }
+
+        nav .container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .nav-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            font-weight: 700;
+            font-size: 1.1rem;
+            color: var(--text-primary);
+        }
+
+        .nav-brand img { width: 36px; height: 36px; }
+
+        .nav-links {
+            display: flex;
+            align-items: center;
+            gap: 32px;
+            list-style: none;
+        }
+
+        .nav-links a {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: color 0.2s;
+        }
+
+        .nav-links a:hover { color: var(--text-primary); }
+
+        .nav-cta {
+            padding: 8px 20px;
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            border-radius: 8px;
+            color: white !important;
+            font-weight: 600;
+            font-size: 0.85rem;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .nav-cta:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 20px rgba(46, 181, 240, 0.3);
+        }
+
+        /* ── Hero ─────────────────────────────────────────────────────── */
+        .hero {
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            padding-top: 80px;
+            text-align: center;
+        }
+
+        .hero .container { width: 100%; }
+
+        .hero-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 16px;
+            background: rgba(46, 181, 240, 0.1);
+            border: 1px solid rgba(46, 181, 240, 0.2);
+            border-radius: 100px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--accent-cyan);
+            margin-bottom: 32px;
+            animation: fadeInUp 0.6s ease-out;
+        }
+
+        .hero-badge .dot {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-teal);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        .hero-logo {
+            width: 128px;
+            height: 128px;
+            margin: 0 auto 32px;
+            animation: fadeInUp 0.6s ease-out 0.1s both;
+            filter: drop-shadow(0 0 40px rgba(46, 181, 240, 0.3));
+        }
+
+        .hero h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 900;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            animation: fadeInUp 0.6s ease-out 0.2s both;
+        }
+
+        .hero h1 .gradient-text {
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue), var(--accent-teal));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .hero-sub {
+            font-size: clamp(1rem, 2vw, 1.25rem);
+            color: var(--text-secondary);
+            max-width: 640px;
+            margin: 0 auto 48px;
+            animation: fadeInUp 0.6s ease-out 0.3s both;
+        }
+
+        .hero-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+            animation: fadeInUp 0.6s ease-out 0.4s both;
+        }
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 14px 28px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 0.95rem;
+            transition: all 0.2s;
+            border: none;
+            cursor: pointer;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--gradient-start), var(--gradient-end));
+            color: white;
+            box-shadow: 0 4px 24px rgba(21, 92, 222, 0.3);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(21, 92, 222, 0.4);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-subtle);
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-card-hover);
+            border-color: rgba(148, 163, 184, 0.2);
+            transform: translateY(-2px);
+            color: var(--text-primary);
+        }
+
+        .btn-donate {
+            background: linear-gradient(135deg, #e44d26, #f7931e);
+            color: white;
+        }
+
+        .btn-donate:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 32px rgba(228, 77, 38, 0.3);
+            color: white;
+        }
+
+        /* ── Countdown ────────────────────────────────────────────────── */
+        .countdown-section {
+            padding: 60px 0;
+            text-align: center;
+        }
+
+        .countdown-label {
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 24px;
+        }
+
+        .countdown {
+            display: flex;
+            justify-content: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .countdown-unit {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 20px 24px;
+            min-width: 100px;
+            text-align: center;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .countdown-unit:hover {
+            transform: translateY(-4px);
+            border-color: rgba(46, 181, 240, 0.3);
+        }
+
+        .countdown-number {
+            font-size: 2.5rem;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.2;
+        }
+
+        .countdown-text {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 4px;
+        }
+
+        .release-date {
+            margin-top: 24px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .release-date strong {
+            color: var(--accent-cyan);
+        }
+
+        /* ── Feature Pillars ──────────────────────────────────────────── */
+        .pillars {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 24px;
+            margin-top: 48px;
+        }
+
+        .pillar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 20px;
+            padding: 40px 32px;
+            transition: transform 0.3s, border-color 0.3s, box-shadow 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .pillar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, var(--gradient-start), var(--gradient-end));
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .pillar:hover {
+            transform: translateY(-6px);
+            border-color: rgba(46, 181, 240, 0.2);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .pillar:hover::before { opacity: 1; }
+
+        .pillar-icon {
+            font-size: 2.5rem;
+            margin-bottom: 20px;
+            display: block;
+        }
+
+        .pillar h3 {
+            font-size: 1.3rem;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .pillar p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            line-height: 1.7;
+        }
+
+        .pillar-tag {
+            display: inline-block;
+            margin-top: 16px;
+            padding: 4px 12px;
+            background: rgba(46, 181, 240, 0.1);
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+        }
+
+        /* ── Section Headers ──────────────────────────────────────────── */
+        .section-header {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+        .section-tag {
+            display: inline-block;
+            padding: 4px 14px;
+            background: rgba(46, 181, 240, 0.1);
+            border: 1px solid rgba(46, 181, 240, 0.15);
+            border-radius: 100px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--accent-cyan);
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            margin-bottom: 16px;
+        }
+
+        .section-header h2 {
+            font-size: clamp(1.8rem, 4vw, 2.8rem);
+            font-weight: 800;
+            margin-bottom: 16px;
+        }
+
+        .section-header p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        /* ── Feature Grid ─────────────────────────────────────────────── */
+        .features-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-top: 48px;
+        }
+
+        .feature-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 16px;
+            padding: 28px 24px;
+            transition: transform 0.2s, border-color 0.2s;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(46, 181, 240, 0.2);
+        }
+
+        .feature-card-icon {
+            font-size: 1.5rem;
+            margin-bottom: 12px;
+        }
+
+        .feature-card h4 {
+            font-size: 1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .feature-card p {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            line-height: 1.6;
+        }
+
+        /* ── Tech Specs ───────────────────────────────────────────────── */
+        .specs {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            margin-top: 48px;
+        }
+
+        .spec {
+            background: var(--bg-card);
+            border: 1px solid var(--border-subtle);
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+
+        .spec-value {
+            font-size: 1.8rem;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .spec-label {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            margin-top: 4px;
+        }
+
+        /* ── CTA Section ──────────────────────────────────────────────── */
+        .cta-section {
+            text-align: center;
+            padding: 100px 0;
+        }
+
+        .cta-box {
+            background: linear-gradient(135deg, rgba(21, 92, 222, 0.15), rgba(46, 181, 240, 0.1));
+            border: 1px solid rgba(46, 181, 240, 0.2);
+            border-radius: 24px;
+            padding: 64px 48px;
+        }
+
+        .cta-box h2 {
+            font-size: 2rem;
+            font-weight: 800;
+            margin-bottom: 16px;
+        }
+
+        .cta-box p {
+            color: var(--text-secondary);
+            font-size: 1.1rem;
+            margin-bottom: 32px;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+
+        .cta-buttons {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        /* ── Footer ───────────────────────────────────────────────────── */
+        footer {
+            border-top: 1px solid var(--border-subtle);
+            padding: 40px 0;
+            text-align: center;
+        }
+
+        footer p {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        footer a { color: var(--text-secondary); }
+        footer a:hover { color: var(--accent-cyan); }
+
+        .footer-links {
+            display: flex;
+            gap: 24px;
+            justify-content: center;
+            margin-bottom: 16px;
+        }
+
+        /* ── Animations ───────────────────────────────────────────────── */
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(30px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        .fade-in {
+            opacity: 0;
+            transform: translateY(30px);
+            transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+        }
+
+        .fade-in.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* ── Responsive ───────────────────────────────────────────────── */
+        @media (max-width: 768px) {
+            .nav-links { display: none; }
+            .pillars { grid-template-columns: 1fr; }
+            .countdown-unit { min-width: 80px; padding: 16px; }
+            .countdown-number { font-size: 2rem; }
+            .cta-box { padding: 40px 24px; }
+            section { padding: 60px 0; }
+        }
+
+        /* ── Hamburger (mobile) ───────────────────────────────────────── */
+        .nav-toggle { display: none; }
+
+        @media (max-width: 768px) {
+            .nav-toggle {
+                display: block;
+                background: none;
+                border: none;
+                color: var(--text-primary);
+                font-size: 1.5rem;
+                cursor: pointer;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Background effects -->
+<div class="bg-grid"></div>
+<div class="bg-glow bg-glow-1"></div>
+<div class="bg-glow bg-glow-2"></div>
+<div class="bg-glow bg-glow-3"></div>
+
+<!-- Navigation -->
+<nav>
+    <div class="container">
+        <a href="#" class="nav-brand">
+            <img src="logo.svg" alt="Impossible OS Logo" width="36" height="36">
+            Impossible OS
+        </a>
+        <ul class="nav-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#compatibility">Compatibility</a></li>
+            <li><a href="#specs">Specs</a></li>
+            <li><a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a></li>
+            <li><a href="https://github.com/rizonesoft/impossible-os/releases" class="nav-cta">Download Alpha</a></li>
+        </ul>
+        <button class="nav-toggle" aria-label="Menu">☰</button>
+    </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero" id="hero">
+    <div class="container">
+        <div class="hero-badge">
+            <span class="dot"></span>
+            In Active Development — Alpha Available
+        </div>
+        <img src="logo.svg" alt="Impossible OS" class="hero-logo" width="128" height="128">
+        <h1>The <span class="gradient-text">Impossible</span><br>Operating System</h1>
+        <p class="hero-sub">
+            A modern x86-64 operating system built from scratch.
+            Native Win32 API compatibility. Linux binary support.
+            Windows 11&#8209;inspired desktop. 100% open source.
+        </p>
+        <div class="hero-buttons">
+            <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary">
+                ⬇ Download Alpha
+            </a>
+            <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener">
+                ⭐ Star on GitHub
+            </a>
+            <a href="https://rizonesoft.com/contributions/" class="btn btn-donate" target="_blank" rel="noopener">
+                ❤ Donate
+            </a>
+        </div>
+    </div>
+</section>
+
+<!-- Countdown -->
+<section class="countdown-section fade-in" id="countdown">
+    <div class="container">
+        <p class="countdown-label">Countdown to v1.0 Release</p>
+        <div class="countdown" id="countdown-timer">
+            <div class="countdown-unit">
+                <div class="countdown-number" id="cd-days">---</div>
+                <div class="countdown-text">Days</div>
+            </div>
+            <div class="countdown-unit">
+                <div class="countdown-number" id="cd-hours">--</div>
+                <div class="countdown-text">Hours</div>
+            </div>
+            <div class="countdown-unit">
+                <div class="countdown-number" id="cd-minutes">--</div>
+                <div class="countdown-text">Minutes</div>
+            </div>
+            <div class="countdown-unit">
+                <div class="countdown-number" id="cd-seconds">--</div>
+                <div class="countdown-text">Seconds</div>
+            </div>
+        </div>
+        <p class="release-date">Target release: <strong>January 28, 2028</strong></p>
+    </div>
+</section>
+
+<!-- Core Pillars -->
+<section id="features" class="fade-in">
+    <div class="container">
+        <div class="section-header">
+            <span class="section-tag">Why Impossible OS?</span>
+            <h2>Three Worlds. One Kernel.</h2>
+            <p>Run Windows apps, Linux binaries, and native Impossible OS programs — all on a single, clean kernel.</p>
+        </div>
+        <div class="pillars">
+            <div class="pillar">
+                <span class="pillar-icon">🪟</span>
+                <h3>Native Win32 Compatibility</h3>
+                <p>Run Windows applications natively — no emulation layer, no virtual machine. <code>CreateFile()</code>, <code>ReadFile()</code>, <code>CreateProcess()</code> — the Win32 API is the native syscall interface. PE32+ executables run at full speed.</p>
+                <span class="pillar-tag">Windows 11 Compatible</span>
+            </div>
+            <div class="pillar">
+                <span class="pillar-icon">🐧</span>
+                <h3>Linux Binary Support</h3>
+                <p>Run unmodified Linux ELF binaries through a built-in POSIX compatibility layer. <code>open()</code>, <code>read()</code>, <code>fork()</code>, <code>exec()</code> — translated to native kernel calls transparently. No WSL. No containers.</p>
+                <span class="pillar-tag">ELF64 Compatible</span>
+            </div>
+            <div class="pillar">
+                <span class="pillar-icon">💎</span>
+                <h3>Built From Scratch</h3>
+                <p>Not a Linux distro. Not a Windows fork. Every line — from the UEFI bootloader to the window manager — written in C and x86-64 assembly. Full control over every byte. Zero legacy bloat.</p>
+                <span class="pillar-tag">84,000+ Lines of Code</span>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Compatibility -->
+<section id="compatibility" class="fade-in">
+    <div class="container">
+        <div class="section-header">
+            <span class="section-tag">Features</span>
+            <h2>Everything You Need</h2>
+            <p>A fully-featured desktop operating system with modern hardware support.</p>
+        </div>
+        <div class="features-grid">
+            <div class="feature-card">
+                <div class="feature-card-icon">💾</div>
+                <h4>IXFS + FAT32 Filesystems</h4>
+                <p>Custom IXFS with journaling, copy-on-write, and 64-bit addressing. Plus full FAT32 read/write for USB drive compatibility.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">⚡</div>
+                <h4>AHCI & NVMe Storage</h4>
+                <p>DMA-only storage with NCQ command queuing. No legacy IDE polling. Boot from SATA or NVMe at full speed.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">🖥️</div>
+                <h4>Windows 11 Desktop</h4>
+                <p>Taskbar, Start Menu, window compositing with Mica and Acrylic effects, dirty rectangle optimizer, smooth 60fps rendering.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">🧵</div>
+                <h4>SMP Multi-Core</h4>
+                <p>Symmetric multiprocessing with per-CPU run queues, CFS-style scheduler, mutexes, semaphores, RWLocks, seqlocks, and RCU.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">🌐</div>
+                <h4>TCP/IP Networking</h4>
+                <p>Full network stack: Ethernet, ARP, IPv4, ICMP, UDP, DHCP. TCP and DNS in progress. RTL8139 and VirtIO-net drivers.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">🔐</div>
+                <h4>UEFI Secure Boot</h4>
+                <p>Modern UEFI bootloader with GOP framebuffer. No legacy BIOS. No VGA text mode. Clean, secure boot chain from power-on.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">📝</div>
+                <h4>Windows Registry</h4>
+                <p>Codex Registry — a Windows-compatible registry with HKLM, HKCU hives. <code>RegOpenKeyEx</code>, <code>RegSetValueEx</code> and full persistence.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">🎨</div>
+                <h4>GPU-Accelerated GFX</h4>
+                <p>SSE2 SIMD-accelerated graphics with pre-multiplied alpha blending, gradient rendering, TrueType fonts, and glyph caching.</p>
+            </div>
+            <div class="feature-card">
+                <div class="feature-card-icon">📦</div>
+                <h4>Win32 SDK</h4>
+                <p>Full development kit with headers, libraries, and documentation. Build native apps with <code>CreateFile</code>, <code>ReadFile</code>, <code>WriteFile</code>.</p>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Tech Specs -->
+<section id="specs" class="fade-in">
+    <div class="container">
+        <div class="section-header">
+            <span class="section-tag">Under the Hood</span>
+            <h2>Built to Perform</h2>
+        </div>
+        <div class="specs">
+            <div class="spec">
+                <div class="spec-value">x86-64</div>
+                <div class="spec-label">Architecture</div>
+            </div>
+            <div class="spec">
+                <div class="spec-value">84K+</div>
+                <div class="spec-label">Lines of Code</div>
+            </div>
+            <div class="spec">
+                <div class="spec-value">C + ASM</div>
+                <div class="spec-label">Languages</div>
+            </div>
+            <div class="spec">
+                <div class="spec-value">UEFI</div>
+                <div class="spec-label">Boot Method</div>
+            </div>
+            <div class="spec">
+                <div class="spec-value">SMP</div>
+                <div class="spec-label">Multi-Core</div>
+            </div>
+            <div class="spec">
+                <div class="spec-value">GPL-3.0</div>
+                <div class="spec-label">License</div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- CTA -->
+<section class="cta-section fade-in">
+    <div class="container">
+        <div class="cta-box">
+            <h2>Join the Journey</h2>
+            <p>Impossible OS is fully open source. Star the repo, download the alpha, or contribute code.</p>
+            <div class="cta-buttons">
+                <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary">⬇ Download Latest Release</a>
+                <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener">View Source on GitHub</a>
+                <a href="https://rizonesoft.com/contributions/" class="btn btn-donate" target="_blank" rel="noopener">❤ Support the Project</a>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- Footer -->
+<footer>
+    <div class="container">
+        <div class="footer-links">
+            <a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a>
+            <a href="https://github.com/rizonesoft/impossible-os/releases" target="_blank" rel="noopener">Releases</a>
+            <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>
+            <a href="https://rizonesoft.com/contributions/" target="_blank" rel="noopener">Donate</a>
+        </div>
+        <p>&copy; 2026 <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>. Impossible OS is licensed under <a href="https://github.com/rizonesoft/impossible-os/blob/main/LICENSE" target="_blank" rel="noopener">GPL-3.0</a>.</p>
+    </div>
+</footer>
+
+<!-- Countdown Script -->
+<script>
+    // Countdown to January 28, 2028 00:00:00 UTC
+    const releaseDate = new Date('2028-01-28T00:00:00Z').getTime();
+
+    function updateCountdown() {
+        const now = Date.now();
+        const diff = releaseDate - now;
+
+        if (diff <= 0) {
+            document.getElementById('cd-days').textContent = '0';
+            document.getElementById('cd-hours').textContent = '0';
+            document.getElementById('cd-minutes').textContent = '0';
+            document.getElementById('cd-seconds').textContent = '0';
+            return;
+        }
+
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((diff % (1000 * 60)) / 1000);
+
+        document.getElementById('cd-days').textContent = days;
+        document.getElementById('cd-hours').textContent = String(hours).padStart(2, '0');
+        document.getElementById('cd-minutes').textContent = String(minutes).padStart(2, '0');
+        document.getElementById('cd-seconds').textContent = String(seconds).padStart(2, '0');
+    }
+
+    updateCountdown();
+    setInterval(updateCountdown, 1000);
+
+    // Scroll fade-in
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                entry.target.classList.add('visible');
+            }
+        });
+    }, { threshold: 0.1 });
+
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>
