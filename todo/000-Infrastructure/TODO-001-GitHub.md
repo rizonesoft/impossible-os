@@ -327,28 +327,10 @@
 
 ### 5.2 Pull Request Template *(agent)*
 
-**Prompt:** Create a PR template that guides contributors to describe their changes, link relevant TODO items, and confirm they've tested. After completing, commit as `"docs: PR template"`.
+**Prompt:** This section is marked complete. Verify: `.github/PULL_REQUEST_TEMPLATE.md` exists with Description, Related TODO, Testing checklist (build.sh clean + run + serial check), Type of Change checkboxes, and Screenshots section. Verify commit `"docs: PR template"`.
 
-- [ ] Create `.github/PULL_REQUEST_TEMPLATE.md`:
-  ```markdown
-  ## Description
-  <!-- What does this PR do? -->
-
-  ## Related TODO
-  <!-- Link to the TODO section this implements, e.g., TODO-080 §1.3 -->
-
-  ## Testing
-  - [ ] `bash scripts/build.sh clean` → `=== BUILD OK ===`
-  - [ ] `bash scripts/build.sh run` → boots and works in QEMU
-  - [ ] Serial output checked for new warnings/errors
-
-  ## Type of Change
-  - [ ] Bug fix
-  - [ ] New feature
-  - [ ] Breaking change
-  - [ ] Documentation update
-  ```
-- [ ] Commit: `"docs: PR template"`
+- [x] Create `.github/PULL_REQUEST_TEMPLATE.md` — ✅ Added Screenshots/Serial Output section beyond spec
+- [x] Commit: `"docs: PR template"` — ✅
 
 ---
 
