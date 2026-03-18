@@ -1,0 +1,170 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# Impossible OS — Automated Release
+#
+# Triggered when a version tag (v*) is pushed.
+# Builds the OS, generates a changelog, converts to VDI, and publishes a
+# GitHub Release with the disk images, docs, and build log attached.
+# ──────────────────────────────────────────────────────────────────────────────
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write          # Needed to create releases and upload assets
+
+env:
+  LLVM_VERSION: "19"
+
+jobs:
+  release:
+    name: Build & Publish Release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      # ── Checkout ────────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog generation
+
+      # ── Extract version from tag ─────────────────────────────────────────
+      - name: Extract version
+        id: version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+          # Detect pre-release (alpha, beta, rc)
+          if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "✅ Tag: $TAG (pre-release: $(echo "$TAG" | grep -qE '-(alpha|beta|rc)' && echo yes || echo no))"
+
+      # ── Cache LLVM toolchain ────────────────────────────────────────────
+      - name: Cache LLVM toolchain
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/lib/llvm-${{ env.LLVM_VERSION }}
+            /usr/bin/clang-${{ env.LLVM_VERSION }}
+            /usr/bin/ld.lld-${{ env.LLVM_VERSION }}
+            /usr/bin/llvm-objcopy-${{ env.LLVM_VERSION }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ runner.os }}-v1
+
+      # ── Install LLVM (clang-19, lld-19) ────────────────────────────────
+      - name: Install LLVM ${{ env.LLVM_VERSION }}
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-${{ env.LLVM_VERSION }} main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-${{ env.LLVM_VERSION }} lld-${{ env.LLVM_VERSION }}
+
+      # ── Install build dependencies ──────────────────────────────────────
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            nasm \
+            mtools \
+            dosfstools \
+            ovmf \
+            qemu-system-x86 \
+            gcc \
+            virtualbox
+
+      # ── Build ───────────────────────────────────────────────────────────
+      - name: Build OS (clean)
+        run: bash scripts/build.sh clean
+
+      # ── Verify build success ────────────────────────────────────────────
+      - name: Verify build sentinel
+        run: |
+          LAST_LINE=$(tail -1 build/build.log)
+          echo "Build log last line: $LAST_LINE"
+          if [ "$LAST_LINE" != "=== BUILD OK ===" ]; then
+            echo "::error::Build did not complete successfully"
+            tail -30 build/build.log
+            exit 1
+          fi
+          echo "✅ Build succeeded"
+
+      # ── Verify disk image ──────────────────────────────────────────────
+      - name: Verify disk image
+        run: |
+          if [ ! -f build/system-disk.img ]; then
+            echo "::error::build/system-disk.img not found"
+            exit 1
+          fi
+          SIZE=$(stat -c%s build/system-disk.img)
+          echo "✅ system-disk.img: $(( SIZE / 1024 / 1024 )) MiB"
+
+      # ── Convert to VDI (VirtualBox format) ──────────────────────────────
+      - name: Convert disk image to VDI
+        run: |
+          VBoxManage convertfromraw build/system-disk.img build/system-disk.vdi --format VDI
+          SIZE=$(stat -c%s build/system-disk.vdi)
+          echo "✅ system-disk.vdi: $(( SIZE / 1024 / 1024 )) MiB"
+
+      # ── Generate changelog ──────────────────────────────────────────────
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get commits since previous tag for release notes
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            echo "Generating changelog: $PREV_TAG → ${{ steps.version.outputs.tag }}"
+            BODY=$(git log --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD)
+          else
+            echo "Generating changelog: full history → ${{ steps.version.outputs.tag }}"
+            BODY=$(git log --pretty=format:"- %s (\`%h\`)" HEAD)
+          fi
+
+          # Write to file for the release action
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "$BODY"
+            echo ""
+            echo "---"
+            echo ""
+            echo "### 📦 Downloads"
+            echo ""
+            echo "| File | Description |"
+            echo "|------|-------------|"
+            echo "| \`system-disk.img\` | Raw GPT disk image — use with QEMU or write to USB |"
+            echo "| \`system-disk.vdi\` | VirtualBox native format — import directly |"
+            echo "| \`qemu.md\` | QEMU setup guide |"
+            echo "| \`virtualbox.md\` | VirtualBox setup guide |"
+            echo "| \`build.log\` | Build log for this release |"
+          } > build/RELEASE_NOTES.md
+
+          echo "✅ Release notes generated"
+
+      # ── Create GitHub Release ───────────────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: "Impossible OS ${{ steps.version.outputs.tag }}"
+          body_path: build/RELEASE_NOTES.md
+          prerelease: ${{ steps.version.outputs.prerelease }}
+          files: |
+            build/system-disk.img
+            build/system-disk.vdi
+            docs/getting-started/qemu.md
+            docs/getting-started/virtualbox.md
+            build/build.log
+
+      # ── Also update CHANGELOG.md in repo ────────────────────────────────
+      - name: Update CHANGELOG.md
+        run: bash scripts/generate-changelog.sh
