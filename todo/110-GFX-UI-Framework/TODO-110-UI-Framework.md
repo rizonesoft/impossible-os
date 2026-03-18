@@ -279,7 +279,7 @@
 - [x] Build rule: `icons.ires` from `resources/icons/color/{16,24,32,48,64,72,96,128,256}/*.png`
 - [x] Color icons (8 total, Icons8 Fluent Color, 9 sizes including 96px):
   - [x] Folders: folder_closed, folder_open
-  - [x] Desktop: computer, recycle_bin_empty, recycle_bin_full, control_deck
+  - [x] Desktop: computer, recycle_bin_empty, recycle_bin_full, control_panel
   - [x] Defaults: exe_default, file_default
 - [x] Install to `C:\Impossible\System\icons.ires`
 - [x] Implement `ires_load(path)` in kernel — parse header, index, load pixel data via PMM

@@ -111,7 +111,7 @@ static const char *icon_names[ICON_TOTAL_COUNT] = {
     "file_default", "exe_default",
     "dll_default", "text_file",
     "computer", "recycle_bin_empty", "recycle_bin_full",
-    "control_deck"
+    "control_panel"
 };
 
 /* ---- Internal: load IRES file from VFS ---- */

@@ -115,7 +115,7 @@ typedef enum {
     ICON_DESKTOP_COMPUTER,
     ICON_RECYCLE_BIN_EMPTY,
     ICON_RECYCLE_BIN_FULL,
-    ICON_CONTROL_DECK,
+    ICON_CONTROL_PANEL,
 
     ICON_COLOR_COUNT,  /* sentinel: end of color icons */
 

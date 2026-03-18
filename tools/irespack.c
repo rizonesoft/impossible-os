@@ -78,7 +78,7 @@ static const char *accepted_icons[] = {
     "file_default", "exe_default",
     "dll_default", "text_file",
     "computer", "recycle_bin_empty", "recycle_bin_full",
-    "control_deck",
+    "control_panel",
     NULL
 };
 

@@ -103,7 +103,7 @@ static const sm_right_item_t sm_right_items[] = {
     { "Pictures",       ICON_FOLDER_CLOSED    },
     { "Music",          ICON_FOLDER_CLOSED    },
     { "Downloads",      ICON_DOWNLOAD         },
-    { "Control Panel",  ICON_CONTROL_DECK     },
+    { "Control Panel",  ICON_CONTROL_PANEL    },
     { "Help",           ICON_QUESTION         },
 };
 #define SM_RIGHT_COUNT  (sizeof(sm_right_items) / sizeof(sm_right_items[0]))
@@ -355,7 +355,7 @@ typedef struct {
 static const desktop_icon_item_t desktop_icon_items[] = {
     { ICON_DESKTOP_COMPUTER,  "Computer"     },
     { ICON_RECYCLE_BIN_EMPTY, "Recycle Bin"  },
-    { ICON_CONTROL_DECK,      "Control Deck" },
+    { ICON_CONTROL_PANEL,     "Control Panel" },
 };
 #define DESKTOP_ICON_COUNT (sizeof(desktop_icon_items) / sizeof(desktop_icon_items[0]))
 
