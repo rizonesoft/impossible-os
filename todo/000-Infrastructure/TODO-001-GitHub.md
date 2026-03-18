@@ -338,57 +338,57 @@
 
 ### 6.1 Create Label Taxonomy *(manual — GitHub UI or API)*
 
-**Prompt:** Create a comprehensive label system for issues and PRs. Labels should cover priority, component, type, status, and difficulty. Use consistent colors. After completing, mark items as `[x]`.
+**Prompt:** This section is marked complete. Verify: labels exist on GitHub with correct names and colors across Priority (P0–P3), Component (kernel, bootloader, desktop, drivers, filesystem, networking, apps), Type (bug, enhancement, documentation, question, hardware-compat), and Status (help-wanted, good-first-issue, wontfix, duplicate, stale, pinned) categories.
 
 **Priority labels (red gradient):**
 
-- [ ] `P0-critical` (#B60205) — Blocks development or breaks boot
-- [ ] `P1-high` (#D93F0B) — Important, should fix soon
-- [ ] `P2-medium` (#FBCA04) — Nice to have, normal priority
-- [ ] `P3-low` (#0E8A16) — Polish, someday
+- [x] `P0-critical` (#B60205) — Blocks development or breaks boot
+- [x] `P1-high` (#D93F0B) — Important, should fix soon
+- [x] `P2-medium` (#FBCA04) — Nice to have, normal priority
+- [x] `P3-low` (#0E8A16) — Polish, someday
 
 **Component labels (blue gradient):**
 
-- [ ] `kernel` (#0075ca) — Kernel core, memory, scheduler
-- [ ] `bootloader` (#006b75) — UEFI boot chain
-- [ ] `desktop` (#1d76db) — Window manager, compositor, shell
-- [ ] `drivers` (#5319e7) — Hardware drivers (AHCI, USB, NIC)
-- [ ] `filesystem` (#0052cc) — VFS, FAT32, IXFS
-- [ ] `networking` (#0e8a16) — TCP/IP, DNS, HTTP
-- [ ] `apps` (#c5def5) — Built-in apps (Notepad, Calculator, etc.)
+- [x] `kernel` (#0075ca) — Kernel core, memory, scheduler
+- [x] `bootloader` (#006b75) — UEFI boot chain
+- [x] `desktop` (#1d76db) — Window manager, compositor, shell
+- [x] `drivers` (#5319e7) — Hardware drivers (AHCI, USB, NIC)
+- [x] `filesystem` (#0052cc) — VFS, FAT32, IXFS
+- [x] `networking` (#0e8a16) — TCP/IP, DNS, HTTP
+- [x] `apps` (#c5def5) — Built-in apps (Notepad, Calculator, etc.)
 
 **Type labels:**
 
-- [ ] `bug` (#d73a4a) — Something is broken
-- [ ] `enhancement` (#a2eeef) — New feature or improvement
-- [ ] `documentation` (#0075ca) — Documentation only
-- [ ] `question` (#d876e3) — Question or discussion
-- [ ] `hardware-compat` (#e4e669) — Hardware compatibility report
+- [x] `bug` (#d73a4a) — Something is broken
+- [x] `enhancement` (#a2eeef) — New feature or improvement
+- [x] `documentation` (#0075ca) — Documentation only
+- [x] `question` (#d876e3) — Question or discussion
+- [x] `hardware-compat` (#e4e669) — Hardware compatibility report
 
 **Status labels:**
 
-- [ ] `help-wanted` (#008672) — Looking for contributors
-- [ ] `good-first-issue` (#7057ff) — Good for newcomers
-- [ ] `wontfix` (#ffffff) — Not going to fix
-- [ ] `duplicate` (#cfd3d7) — Duplicate issue
-- [ ] `stale` (#ededed) — Inactive issue (auto-applied by stale bot)
-- [ ] `pinned` (#006b75) — Exempt from stale cleanup
+- [x] `help-wanted` (#008672) — Looking for contributors
+- [x] `good-first-issue` (#7057ff) — Good for newcomers
+- [x] `wontfix` (#ffffff) — Not going to fix
+- [x] `duplicate` (#cfd3d7) — Duplicate issue
+- [x] `stale` (#ededed) — Inactive issue (auto-applied by stale bot)
+- [x] `pinned` (#006b75) — Exempt from stale cleanup
 
 ### 6.2 GitHub Project Board *(manual — GitHub UI)*
 
-**Prompt:** Create a GitHub Project (v2) board for tracking development milestones. Map project columns to the TODO phases. This provides a visual overview of progress.
+**Prompt:** This section is marked complete. Verify: GitHub Project (v2) board "Impossible OS Development" exists with columns: Backlog, In Progress, In Review, Done. Milestones created for each phase and linked to issues.
 
-- [ ] Create project: "Impossible OS Development"
-- [ ] Columns: Backlog, In Progress, In Review, Done
-- [ ] Create milestones matching TODO phases:
-  - [ ] `Phase 01: Kernel Foundations` (TODO-010 through TODO-050)
-  - [ ] `Phase 02: GFX & UI Framework` (TODO-110 through TODO-150)
-  - [ ] `Phase 03: Core Services` (TODO-230 through TODO-300)
-  - [ ] `Phase 04: Desktop Shell` (TODO-160 through TODO-220)
-  - [ ] `Phase 05: Core Apps` (TODO-310 through TODO-370)
-  - [ ] `Phase 06: Multimedia` (TODO-380 through TODO-390)
-  - [ ] `Phase 07: Networking` (TODO-400 through TODO-450)
-- [ ] Link issues to milestones as work progresses
+- [x] Create project: "Impossible OS Development"
+- [x] Columns: Backlog, In Progress, In Review, Done
+- [x] Create milestones matching TODO phases:
+  - [x] `Phase 01: Kernel Foundations` (TODO-010 through TODO-050)
+  - [x] `Phase 02: GFX & UI Framework` (TODO-110 through TODO-150)
+  - [x] `Phase 03: Core Services` (TODO-230 through TODO-300)
+  - [x] `Phase 04: Desktop Shell` (TODO-160 through TODO-220)
+  - [x] `Phase 05: Core Apps` (TODO-310 through TODO-370)
+  - [x] `Phase 06: Multimedia` (TODO-380 through TODO-390)
+  - [x] `Phase 07: Networking` (TODO-400 through TODO-450)
+- [x] Link issues to milestones as work progresses
 
 ---
 
