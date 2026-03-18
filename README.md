@@ -14,7 +14,7 @@
 -->
 <p align="center">
   <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg?branch=main" alt="Build" /></a>
-  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/releases/latest"><img src="https://img.shields.io/badge/⬇_Download-Latest_Release-2ea44f?style=flat-square" alt="Download" /></a>
   <img src="https://img.shields.io/badge/platform-x86__64-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License" />
