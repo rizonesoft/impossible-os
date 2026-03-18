@@ -13,6 +13,7 @@
   <a href="https://github.com/rizonesoft/impossible-os/stargazers"><img src="https://img.shields.io/github/stars/rizonesoft/impossible-os?style=flat-square&color=yellow" alt="Stars" /></a>
 -->
 <p align="center">
+  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg?branch=main" alt="Build" /></a>
   <img src="https://img.shields.io/badge/platform-x86__64-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
   <img src="https://img.shields.io/badge/toolchain-clang--19_|_lld--19-f5a623?style=flat-square" alt="Toolchain" />
