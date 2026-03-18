@@ -268,6 +268,60 @@
             animation: fadeInUp 0.6s ease-out 0.4s both;
         }
 
+        .hero-countdown {
+            margin-top: 48px;
+            animation: fadeInUp 0.6s ease-out 0.5s both;
+        }
+
+        .hero-countdown-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            margin-bottom: 12px;
+        }
+
+        .hero-timer {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .hero-timer-unit {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 60px;
+        }
+
+        .hero-timer-unit span:first-child {
+            font-size: 2rem;
+            font-weight: 800;
+            font-family: 'JetBrains Mono', monospace;
+            background: linear-gradient(135deg, var(--accent-cyan), var(--accent-blue));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            line-height: 1.2;
+        }
+
+        .hero-timer-unit small {
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 2px;
+        }
+
+        .hero-timer-sep {
+            font-size: 1.5rem;
+            font-weight: 300;
+            color: var(--text-muted);
+            margin-top: -14px;
+        }
+
         .btn {
             display: inline-flex;
             align-items: center;
@@ -699,7 +753,18 @@
             <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener" data-github>
                 ⭐ Star on GitHub
             </a>
-
+        </div>
+        <div class="hero-countdown">
+            <p class="hero-countdown-label">v1.0 releases in</p>
+            <div class="hero-timer" id="hero-timer">
+                <span class="hero-timer-unit"><span id="hero-days">---</span><small>days</small></span>
+                <span class="hero-timer-sep">:</span>
+                <span class="hero-timer-unit"><span id="hero-hours">--</span><small>hrs</small></span>
+                <span class="hero-timer-sep">:</span>
+                <span class="hero-timer-unit"><span id="hero-mins">--</span><small>min</small></span>
+                <span class="hero-timer-sep">:</span>
+                <span class="hero-timer-unit"><span id="hero-secs">--</span><small>sec</small></span>
+            </div>
         </div>
     </div>
 </section>
@@ -742,14 +807,14 @@
             <div class="pillar">
                 <span class="pillar-icon">🪟</span>
                 <h3>Native Win32 Compatibility</h3>
-                <p>Run Windows applications natively — no emulation layer, no virtual machine. <code>CreateFile()</code>, <code>ReadFile()</code>, <code>CreateProcess()</code> — the Win32 API is the native syscall interface. PE32+ executables run at full speed.</p>
-                <span class="pillar-tag">Windows 11 Compatible</span>
+                <p>Designed to run Windows applications natively — no emulation layer, no virtual machine. <code>CreateFile()</code>, <code>ReadFile()</code>, <code>CreateProcess()</code> — the Win32 API as the native syscall interface. PE32+ executables at full speed.</p>
+                <span class="pillar-tag">v1.0 Target</span>
             </div>
             <div class="pillar">
                 <span class="pillar-icon">🐧</span>
                 <h3>Linux Binary Support</h3>
-                <p>Run unmodified Linux ELF binaries through a built-in POSIX compatibility layer. <code>open()</code>, <code>read()</code>, <code>fork()</code>, <code>exec()</code> — translated to native kernel calls transparently. No WSL. No containers.</p>
-                <span class="pillar-tag">ELF64 Compatible</span>
+                <p>Designed to run unmodified Linux ELF binaries through a built-in POSIX compatibility layer. <code>open()</code>, <code>read()</code>, <code>fork()</code>, <code>exec()</code> — translated to native kernel calls transparently. No WSL. No containers.</p>
+                <span class="pillar-tag">v1.0 Target</span>
             </div>
             <div class="pillar">
                 <span class="pillar-icon">💎</span>
@@ -909,6 +974,12 @@
         document.getElementById('cd-hours').textContent = String(hours).padStart(2, '0');
         document.getElementById('cd-minutes').textContent = String(minutes).padStart(2, '0');
         document.getElementById('cd-seconds').textContent = String(seconds).padStart(2, '0');
+
+        // Hero countdown
+        document.getElementById('hero-days').textContent = days;
+        document.getElementById('hero-hours').textContent = String(hours).padStart(2, '0');
+        document.getElementById('hero-mins').textContent = String(minutes).padStart(2, '0');
+        document.getElementById('hero-secs').textContent = String(seconds).padStart(2, '0');
     }
 
     updateCountdown();
