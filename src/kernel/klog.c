@@ -326,12 +326,12 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         fb_putchar('\n');
     }
 
-    /* ---- Live debug log: write to X:\debug.log immediately ---- */
-    if (klog_live_active()) {
+    /* ---- Live debug log: write to X:\BOOT_NNN.LOG immediately ---- */
+    if (klog_disk_live_active()) {
         klog_entry_t *last = &klog_ring[(klog_ring_head == 0
             ? KLOG_RING_SIZE - 1 : klog_ring_head - 1)];
-        klog_live_append(last);
-        klog_live_flush();
+        klog_disk_append(last);
+        klog_disk_flush();
     }
 
     /* ---- FATAL: halt ---- */

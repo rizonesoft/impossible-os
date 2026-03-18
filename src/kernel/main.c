@@ -13,6 +13,7 @@
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/printk.h"
 #include "kernel/klog.h"
+#include "kernel/hw_dump.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
@@ -481,22 +482,12 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 /* Enable live debug log to X:\debug.log.
                  * Replay all existing ring buffer entries so pre-mount
                  * boot messages are captured in the debug log too. */
-                klog_live_enable();
-                {
-                    uint32_t rc, rh, ri;
-                    const klog_entry_t *ring = klog_get_ring(&rc, &rh);
-                    for (ri = 0; ri < rc; ri++) {
-                        uint32_t idx = (rc < KLOG_RING_SIZE) ? ri
-                            : (rh + ri) % KLOG_RING_SIZE;
-                        klog_live_append(&ring[idx]);
-                    }
-                    klog_live_flush();
-                }
+                klog_disk_set_live(1);
             }
         }
     }
 
-    klog_flush_to_disk();  /* Early flush -- capture boot logs even if we hang later */
+    klog_disk_flush();  /* Early flush -- capture boot logs even if we hang later */
     boot_splash_tick();
 
 
@@ -601,10 +592,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         }
     }
 
-    /* Dump hardware info into debug.log (only when live debug is active) */
-    if (klog_live_active()) {
+    /* Dump hardware info (only when live debug is active) */
+    if (klog_disk_live_active()) {
         boot_splash_status("Dumping hardware info...");
-        klog_live_hw_dump();
+        hw_dump_to_log();
     }
 
     /* Heap test: alloc, write, free, realloc */
@@ -642,7 +633,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     boot_splash_status("Loading registry...");
     boot_splash_tick();
-    klog_flush_to_disk();  /* Flush before registry — it may hang on real HW */
+    klog_disk_flush();  /* Flush before registry — it may hang on real HW */
 
     /* Initialize the Windows-compatible Registry */
     boot_splash_status("Initializing registry...");
@@ -664,7 +655,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     klog(LOG_DEBUG, "", "--- Boot Tests -------------------------------------------------------------");
 
     boot_splash_status("Running boot tests...");
-    klog_flush_to_disk();
+    klog_disk_flush();
 
     /* VFS test: read a file from C:\ (IXFS system partition) */
     if (vfs_is_mounted('C')) {
@@ -765,7 +756,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* === Registry persistence test === */
     boot_splash_status("Registry test: creating key...");
-    klog_flush_to_disk();
+    klog_disk_flush();
     {
         HKEY hk_test = (HKEY)0;
         uint32_t disp = 0;
@@ -781,7 +772,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
             /* Flush to disk */
             boot_splash_status("Registry test: saving hives to disk...");
-            klog_flush_to_disk();
+            klog_disk_flush();
             registry_save_all();
             boot_splash_status("Registry test: verifying...");
 
@@ -879,7 +870,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* === Cooperative threading test === */
     boot_splash_status("Initializing scheduler...");
-    klog_flush_to_disk();
+    klog_disk_flush();
     task_init();
 
     /* Create the system work queue — used by drivers to defer IRQ bottom-half
@@ -1243,7 +1234,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
 
     /* === Flush boot log to disk === */
     boot_splash_status("Flushing boot log...");
-    klog_flush_to_disk();
+    klog_disk_flush();
 
 #ifdef BSOD_TEST
     /* Test trigger: fire a deliberate panic to test the BSOD screen */

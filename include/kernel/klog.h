@@ -48,15 +48,12 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
  * Set to LOG_DEBUG to show everything on screen. */
 void klog_set_screen_level(log_level_t min_level);
 
-/* Flush ring buffer entries to C:\Impossible\System\Logs\kernel.log.
- * Call after VFS is mounted. Appends only new entries since last flush. */
-void klog_flush_to_disk(void);
+/* ---- Unified disk logging (klog_disk.c) ----
+ * Handles all disk output: C:\...\kernel.log (IXFS) + X:\BOOT_NNN.LOG (FAT32).
+ * Call klog_disk_flush() after VFS is mounted. */
+void klog_disk_init(void);             /* Allocate buffer, scan for log number */
+void klog_disk_flush(void);            /* Write ring to C: + buffer to X: */
+void klog_disk_set_live(int on);       /* Enable/disable per-entry live mode */
+int  klog_disk_live_active(void);      /* Returns 1 if live mode is on */
+void klog_disk_append(const klog_entry_t *e);  /* Append entry to FAT32 buffer */
 
-/* ---- Live debug log (X:\debug.log) ----
- * When enabled, every klog() entry is immediately written to X:\debug.log.
- * Used for debugging boot hangs on real hardware. */
-void klog_live_enable(void);     /* Turn on — allocates PMM buffer, creates file */
-int  klog_live_active(void);     /* Returns 1 if live mode is on */
-void klog_live_append(const klog_entry_t *e);  /* Append entry to buffer */
-void klog_live_flush(void);      /* Write entire buffer to X:\debug.log */
-void klog_live_hw_dump(void);    /* Dump hardware info into live buffer */

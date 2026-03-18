@@ -61,15 +61,15 @@
 
 ### 1.1 Merge `klog_flush.c` and `klog_live.c` into single `klog_disk.c`
 
-**Prompt:** The current system has two separate files handling disk logging: `klog_flush.c` (batch flush to `C:\` IXFS + `X:\` FAT32 as `serial.log`) and `klog_live.c` (live per-entry flush to `X:\debug.log` + hardware dump). These overlap in functionality and create confusion. Merge them into a single `klog_disk.c` that handles all disk logging with a unified API. The merged file should support both batch and live modes, numbered log files, and proper error handling. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: merge flush + live into unified klog_disk.c"`. Add notes directly in this TODO section.
+**Prompt — VERIFICATION:** Verify the klog disk merge is correct and complete. Confirm `klog_disk.c` compiles and provides `klog_disk_init()`, `klog_disk_flush()`, `klog_disk_set_live()`, `klog_disk_live_active()`, `klog_disk_append()`. Confirm `hw_dump.c` provides `hw_dump_to_log()` and uses `klog()` for output. Confirm `klog_flush.c` and `klog_live.c` are deleted. Confirm `klog.h` exports the new API. Confirm all callers in `klog.c` and `main.c` use the new function names. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Verify commit `"klog: merge flush + live into unified klog_disk.c"`.
 
-- [ ] Create `src/kernel/klog_disk.c` — replaces both `klog_flush.c` and `klog_live.c`
-- [ ] Delete `src/kernel/klog_flush.c` and `src/kernel/klog_live.c`
-- [ ] Single API: `klog_disk_init()`, `klog_disk_flush()`, `klog_disk_set_live(int on)`
-- [ ] Write to `C:\Impossible\System\Logs\kernel.log` (IXFS, appendable)
-- [ ] Write to `X:\BOOT_NNN.LOG` (FAT32, numbered per boot session)
-- [ ] Move hardware dump to separate `hw_dump.c` (see §3)
-- [ ] Commit: `"klog: merge flush + live into unified klog_disk.c"`
+- [x] Create `src/kernel/klog_disk.c` — replaces both `klog_flush.c` and `klog_live.c`
+- [x] Delete `src/kernel/klog_flush.c` and `src/kernel/klog_live.c`
+- [x] Single API: `klog_disk_init()`, `klog_disk_flush()`, `klog_disk_set_live(int on)`
+- [x] Write to `C:\Impossible\System\Logs\kernel.log` (IXFS, appendable)
+- [x] Write to `X:\BOOT_NNN.LOG` (FAT32, numbered per boot session)
+- [x] Move hardware dump to separate `hw_dump.c` (see §3)
+- [x] Commit: `"klog: merge flush + live into unified klog_disk.c"`
 
 ### 1.2 Numbered Log Files on X: (FAT32)
 
