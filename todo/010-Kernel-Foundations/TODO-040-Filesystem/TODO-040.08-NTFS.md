@@ -191,6 +191,48 @@
 - [ ] Cache extension records to avoid redundant reads
 - [ ] Commit: `"ntfs: $ATTRIBUTE_LIST handler"`
 
+### 3.5 `$SECURITY_DESCRIPTOR` Reader (0x50)
+
+**Prompt:** Read the `$SECURITY_DESCRIPTOR` attribute to extract NTFS file permissions and ownership. In NTFS 3.0+, security descriptors are typically stored centrally in `$Secure` (inode 9) rather than inline, but older volumes and some files still have inline `0x50` attributes. Parse the descriptor to extract: Owner SID, Group SID, DACL (Discretionary Access Control List), and SACL (System Access Control List). For the read-only driver, we only need to READ these — routing them to `GetFileSecurity()` via the VFS compat layer (TODO-040.07 §2.2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: security descriptor reader"`. Add notes directly in this TODO section.
+
+- [ ] Locate `$SECURITY_DESCRIPTOR` (type `0x50`) in MFT record
+- [ ] If not present: check `$STANDARD_INFORMATION` for Security ID → lookup in `$Secure`
+- [ ] Parse self-relative security descriptor header:
+  - [ ] `0x00`: Revision (1 byte, must be 1)
+  - [ ] `0x02`: Control flags (2 bytes)
+  - [ ] `0x04`: Owner SID offset (4 bytes)
+  - [ ] `0x08`: Group SID offset (4 bytes)
+  - [ ] `0x0C`: SACL offset (4 bytes, 0 if absent)
+  - [ ] `0x10`: DACL offset (4 bytes, 0 if absent)
+- [ ] Parse SID: `S-1-{authority}-{sub1}-{sub2}-...`
+- [ ] Parse DACL: ACL header → walk ACEs (Access Control Entries)
+  - [ ] Each ACE: type (allow/deny), flags, access mask, SID
+- [ ] Expose via `vfs_ops.get_security()` for VFS compat layer
+- [ ] Commit: `"ntfs: security descriptor reader"`
+
+### 3.6 `$REPARSE_POINT` Reader (0xC0)
+
+**Prompt:** NTFS reparse points implement symlinks, junctions (directory links), and mount points. The `$REPARSE_POINT` attribute (type `0xC0`) contains a reparse tag identifying the type and a data buffer with the target path. Parse: Reparse Tag (`0x00`, 4 bytes), Data Length (`0x04`, 2 bytes), and the type-specific payload. For symlinks (`IO_REPARSE_TAG_SYMLINK = 0xA000000C`): extract the substitute path (UTF-16LE). For junctions (`IO_REPARSE_TAG_MOUNT_POINT = 0xA0000003`): extract the target directory path. For the read-only driver, follow reparse points during path resolution. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: reparse point reader"`. Add notes directly in this TODO section.
+
+- [ ] Locate `$REPARSE_POINT` (type `0xC0`) in MFT record
+- [ ] Parse reparse data header:
+  - [ ] `0x00`: Reparse Tag (4 bytes)
+  - [ ] `0x04`: Reparse Data Length (2 bytes)
+- [ ] Handle `IO_REPARSE_TAG_MOUNT_POINT (0xA0000003)` — junction:
+  - [ ] `0x08`: Substitute Name Offset (2 bytes)
+  - [ ] `0x0A`: Substitute Name Length (2 bytes)
+  - [ ] `0x0C`: Print Name Offset (2 bytes)
+  - [ ] `0x0E`: Print Name Length (2 bytes)
+  - [ ] `0x10+`: Path buffer (UTF-16LE) — extract substitute name
+  - [ ] Strip `\??\` prefix from substitute name → resolve as local path
+- [ ] Handle `IO_REPARSE_TAG_SYMLINK (0xA000000C)` — symbolic link:
+  - [ ] Same layout as junction but with additional Flags field at `0x10`
+  - [ ] Flags `0x01` = relative symlink (resolve relative to containing directory)
+- [ ] During path resolution: if directory has reparse point → follow target
+- [ ] Set `vfs_node->flags |= VFS_SYMLINK` for reparse nodes
+- [ ] Expose target via `ops->readlink()` for VFS compatibility
+- [ ] Commit: `"ntfs: reparse point reader"`
+
 ---
 
 ## 4. Data Run Decoding
@@ -413,6 +455,110 @@
 
 ---
 
+## 9. Compressed File Reading (LZNT1)
+
+### 9.1 LZNT1 Decompression Engine
+
+**Prompt:** NTFS transparent compression uses LZNT1 (a variant of LZ77), applied to "compression units" of 16 clusters (typically 64 KB). When a file has `$DATA` attribute flag `0x0001` (compressed), the data runs contain a mix of stored (compressed) and sparse (all-zeros) runs. For each 16-cluster compression unit: if the run length on disk is < 16 clusters, the data is LZNT1-compressed — decompress it. If the run length == 16 clusters, the data is stored uncompressed. If the run is sparse (LCN == -1), the entire unit is zeros. Implement the LZNT1 decompression algorithm. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: LZNT1 decompression for compressed files"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> Windows reads compressed NTFS files natively. Linux `ntfs3` supports it in-kernel.
+> Linux `ntfs-3g` (FUSE) supports read-only decompression. This is needed for reading
+> Windows system files — `C:\Windows\` often contains compressed files.
+
+- [ ] Detect compressed flag in `$DATA` attribute flags (`0x0001`)
+- [ ] Read compression unit size: `2^(compression_unit_shift)` clusters (typically 2^4 = 16)
+- [ ] For each compression unit in the data runs:
+  - [ ] If run length == unit size → uncompressed, read directly
+  - [ ] If run length < unit size → LZNT1-compressed, decompress
+  - [ ] If run is sparse → fill with zeros
+- [ ] Implement `ntfs_lznt1_decompress(src, src_len, dst, dst_len)`:
+  - [ ] LZNT1 processes 4096-byte sub-blocks
+  - [ ] Each sub-block: 2-byte header (bit 15 = compressed flag, bits 0–11 = size)
+  - [ ] If compressed: walk tokens — literal bytes and (offset, length) back-references
+  - [ ] Token format: high bit = 1 means back-reference, 0 means literal
+  - [ ] Back-reference: variable-length offset and length fields (displacement bits depend on position)
+- [ ] Integrate with `ntfs_read_data()`: transparently decompress on read
+- [ ] Test: read a compressed file from a Windows NTFS volume, verify contents match
+- [ ] Commit: `"ntfs: LZNT1 decompression for compressed files"`
+
+---
+
+## 10. Performance Optimization
+
+### 10.1 MFT Record Cache
+
+**Prompt:** Every path lookup and directory enumeration reads MFT records from disk. Implement an LRU cache for recently-accessed MFT records. Key: MFT inode number. Value: the parsed 1024-byte record buffer (already fixup-verified). This is especially important for directory traversal — looking up `C:\Users\Derickpayne\Documents\file.txt` reads MFT records for inodes 5 (root), `Users`, `Derickpayne`, `Documents`, and `file.txt`. Without caching, reading 100 files in the same directory re-reads the directory's MFT record 100 times. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record cache"`. Add notes directly in this TODO section.
+
+- [ ] Define MFT cache: array of `{ inode, record_buffer, lru_timestamp }` (default 64 entries)
+- [ ] On `ntfs_read_mft_record(vol, inode, buffer)`:
+  - [ ] Check cache first — if hit, copy from cache, skip disk read
+  - [ ] On miss: read from disk, apply fixup, store in cache (evict LRU if full)
+- [ ] Invalidate cache entry if sequence number changes (stale reference)
+- [ ] Pin critical records: inode 0 ($MFT), 5 (root) — never evict
+- [ ] Telemetry: track hit/miss rate, log on mount: `[NTFS] MFT cache: %u entries, hit rate %.1f%%`
+- [ ] Cache size configurable via Registry: `HKLM\SYSTEM\Storage\NTFS\MFTCacheSize`
+- [ ] Commit: `"ntfs: MFT record cache"`
+
+---
+
+## 11. NTFS Volume Health Dashboard (🚀 Impossible OS Feature)
+
+### 11.1 Volume Health Aggregation
+
+**Prompt:** Aggregate NTFS volume health metrics into a single dashboard view in Disk Manager. Read: dirty flag from `$Volume`, bad cluster count from `$BadClus`, MFT Mirror consistency (`$MFTMirr` vs `$MFT` first 4 records), MFT fragmentation (number of data runs in `$MFT`'s own `$DATA` attribute — ideally 1 run = contiguous MFT), and free space from `$Bitmap`. Display a health score and per-metric status (✅/⚠️/❌). No OS provides this at-a-glance view. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: volume health dashboard"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows shows NTFS volume info spread across Properties → Tools → chkdsk.
+> Linux has `ntfsinfo` but it's CLI-only and doesn't aggregate health. Impossible OS shows
+> everything in one GUI panel: dirty flag, bad clusters, MFT fragmentation, mirror consistency,
+> all with a computed health score. One-click "Check Disk" runs chkdsk-equivalent.
+
+- [ ] Read dirty flag from `$Volume` (inode 3) → `$VOLUME_INFORMATION` flags
+- [ ] Read `$BadClus` (inode 8) → count bad cluster entries in `$Bad` data attribute
+- [ ] Compare `$MFTMirr` (inode 1) first 4 records against `$MFT` (inode 0)
+  - [ ] Byte-exact comparison of records 0–3
+  - [ ] Mismatch → `mirror_status = WARNING`
+- [ ] Count `$MFT` data runs → run count > 1 means MFT is fragmented
+  - [ ] 1 run = perfect ✅, 2–5 = normal ⚠️, 6+ = fragmented ❌
+- [ ] Compute free space percentage from `$Bitmap` cluster bitmap
+- [ ] Aggregate health score: all green = "Healthy", any warning = "Needs Attention", any red = "Unhealthy"
+- [ ] Wire to Disk Manager: NTFS volume properties panel
+- [ ] Commit: `"ntfs: volume health dashboard"`
+
+### 11.2 Deleted File Recovery (Forensics Mode)
+
+**Prompt:** NTFS marks deleted files by clearing the in-use bit (bit 0 of flags at `0x16`) but does NOT overwrite the MFT record. The filename, timestamps, and data runs remain intact until the record is reused. Implement a recovery scanner that walks the MFT for records with the in-use bit cleared that still have valid `$FILE_NAME` and `$DATA` attributes. Display recoverable files in a dedicated panel. Allow recovery by copying the data to a different volume. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: deleted file recovery"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows requires third-party tools (Recuva, R-Studio) for NTFS file
+> recovery. Linux has `ntfsundelete` but it's CLI-only and not well-maintained.
+> Impossible OS having built-in, GUI-based deleted file recovery is a major differentiator.
+
+> [!WARNING]
+> **Read-only operation.** Recovery copies data to a DIFFERENT volume — never write to the
+> NTFS volume being scanned. This preserves forensic integrity.
+
+- [ ] Implement `ntfs_scan_deleted(vol, callback)`:
+  - [ ] Walk all MFT records (inode 0 to max based on `$MFT` data size / frs_size)
+  - [ ] For each record: check magic == `"FILE"`, in-use bit CLEAR (flags & 0x01 == 0)
+  - [ ] Parse `$FILE_NAME` → extract filename, parent, timestamps
+  - [ ] Parse `$DATA` → check if data runs are still valid (clusters not reallocated)
+  - [ ] Cluster validation: cross-reference against `$Bitmap` — if clusters now in-use, file may be partially overwritten
+  - [ ] Callback: `{ filename, size, delete_time, recovery_confidence }`
+- [ ] Recovery confidence levels:
+  - [ ] **High** — all clusters still free in `$Bitmap`
+  - [ ] **Medium** — some clusters reallocated (partial recovery possible)
+  - [ ] **Low** — most/all clusters reallocated (likely corrupted)
+- [ ] Implement `ntfs_recover_file(vol, deleted_inode, output_path)`:
+  - [ ] Read data clusters via data runs (same as §4.2)
+  - [ ] Write to output file on a different volume (IXFS, FAT32)
+- [ ] Wire to Disk Manager: "Recover Deleted Files" button on NTFS volumes
+  - [ ] Show list: filename, size, date deleted, confidence icon (🟢/🟡/🔴)
+- [ ] Commit: `"ntfs: deleted file recovery"`
+
+---
+
 ## Priority Order
 
 | Priority | Section | Description |
@@ -430,9 +576,18 @@
 | 🟠 P1 | 5.3 Directory Lookup | Directory — path resolution (`C:\path\to\file`) |
 | 🟠 P1 | 6.1 VFS Registration | Integration — make NTFS mountable |
 | 🟡 P2 | 3.4 `$ATTRIBUTE_LIST` | Robustness — handle fragmented/overflowing MFT records |
+| 🟡 P2 | 3.5 `$SECURITY_DESCRIPTOR` | Interop — read NTFS ACLs for GetFileSecurity |
+| 🟡 P2 | 3.6 `$REPARSE_POINT` | Feature — follow symlinks and junctions |
 | 🟡 P2 | 5.4 Directory Enumeration | Feature — `FindFirstFile`/`FindNextFile` support |
 | 🟡 P2 | 7.1 System Metafiles | Feature — volume name, dirty flag, free space, $UpCase |
+| 🟡 P2 | 9.1 LZNT1 Decompression | Interop — read compressed Windows system files |
+| 🟡 P2 | 10.1 MFT Record Cache | Performance — avoid redundant disk reads |
 | 🟢 P3 | 8.1 Test Suite | Quality — automated validation with test images |
+| 🟢 P3 | 11.1 Health Dashboard ⭐ | **At-a-glance NTFS health** — no OS does this |
+| 🟢 P3 | 11.2 Deleted File Recovery ⭐ | **Built-in forensic recovery** — Windows needs 3rd-party |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -443,10 +598,12 @@
 | BPB parsing | ✅ Native | ✅ Full | ⬜ §1.1 P0 |
 | MFT record reading | ✅ Native | ✅ Full | ⬜ §2.1 P0 |
 | Update Sequence Array (fixup) | ✅ Full | ✅ Full | ⬜ §2.2 P0 |
-| Attribute parsing (all types) | ✅ All 14 types | ✅ All types | ⬜ §3.1–3.4 (core types only) |
+| Attribute parsing (all types) | ✅ All 14 types | ✅ All types | ⬜ §3.1–3.6 (core + security + reparse) |
 | `$STANDARD_INFORMATION` | ✅ Full | ✅ Full | ⬜ §3.2 P1 |
 | `$FILE_NAME` (multi-namespace) | ✅ Win32 + DOS + POSIX | ✅ Full | ⬜ §3.3 P0 |
 | `$ATTRIBUTE_LIST` (extensions) | ✅ Full | ✅ Full | ⬜ §3.4 P2 |
+| `$SECURITY_DESCRIPTOR` / ACLs | ✅ Full DACL/SACL | ✅ ntfs3 full / ntfs-3g limited | ⬜ §3.5 P2 |
+| `$REPARSE_POINT` (symlinks)  | ✅ Full (symlinks, junctions) | ✅ ntfs3 full | ⬜ §3.6 P2 |
 | Data run decoding | ✅ Full | ✅ Full | ⬜ §4.1 P0 |
 | Sparse file support | ✅ Native | ✅ Full | ⬜ §4.1 (sparse runs) |
 | File reading (resident + non-res) | ✅ Full | ✅ Full | ⬜ §4.2 P1 |
@@ -457,8 +614,11 @@
 | Volume label / dirty flag | ✅ Full | ✅ Full | ⬜ §7.1 P2 |
 | Free space queries | ✅ Full | ✅ Full | ⬜ §7.1 P2 |
 | `$UpCase` case folding | ✅ Full Unicode | ✅ Full Unicode | ⬜ §7.1 P2 (ASCII fallback) |
+| LZNT1 compressed file reading | ✅ Native | ✅ ntfs-3g read-only / ntfs3 full | ⬜ §9.1 P2 |
+| MFT record caching | ✅ Windows cache manager | ✅ Page cache | ⬜ §10.1 P2 |
 | Write support | ✅ Full R/W | ✅ Full R/W (ntfs-3g) | ⬜ Future P3 (read-only first) |
 | Journaling recovery ($LogFile) | ✅ Full | ✅ ntfs-3g replays log | ⬜ Future P3 |
-| Transparent compression (LZ77) | ✅ Native | ✅ ntfs-3g read-only | ⬜ Future P3 |
 | Alternate Data Streams | ✅ Native | ✅ ntfs-3g / ntfs3 | ⬜ Future (routed via VFS §2.1) |
+| **Volume health dashboard** ⭐ | ❌ Spread across multiple tools | ❌ CLI `ntfsinfo` only | ⬜ §11.1 P3 — one-panel health |
+| **Deleted file recovery** ⭐ | ❌ Requires third-party (Recuva) | ⚠️ CLI `ntfsundelete` only | ⬜ §11.2 P3 — built-in GUI recovery |
 | **Full read-only driver** | ✅ | ✅ | ⬜ Requires §1–§6 at minimum |
