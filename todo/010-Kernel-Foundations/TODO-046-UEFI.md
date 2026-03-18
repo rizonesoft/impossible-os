@@ -1,4 +1,4 @@
-# 045-UEFI — Unified Extensible Firmware Interface Subsystem
+# 046-UEFI — Unified Extensible Firmware Interface Subsystem
 
 > **Goal:** Evolve from the current minimal UEFI usage (GOP framebuffer init +
 > `ExitBootServices()` in the bootloader) into a full UEFI subsystem that
