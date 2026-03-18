@@ -57,15 +57,33 @@
   - [ ] `0x0C` — FAT32 (LBA)
   - [ ] `0x0E` — FAT16 (LBA)
   - [ ] `0x0F` — Extended Partition (LBA) → trigger EBR traversal
+  - [ ] `0x11` — Hidden FAT12 (vendor recovery)
+  - [ ] `0x14` — Hidden FAT16 (vendor recovery)
+  - [ ] `0x1B` — Hidden FAT32 (vendor recovery)
+  - [ ] `0x1C` — Hidden FAT32 LBA (vendor recovery)
   - [ ] `0x27` — Windows Recovery Environment (do NOT auto-mount)
+  - [ ] `0x42` — Windows Dynamic Disk (LDM) — log warning, do not interpret as standard
   - [ ] `0x82` — Linux Swap
   - [ ] `0x83` — Linux Native (ext2/3/4)
+  - [ ] `0x85` — Linux Extended (same as `0x05` but for nested Linux extended)
+  - [ ] `0x8E` — Linux LVM
+  - [ ] `0xA5` — FreeBSD
+  - [ ] `0xA6` — OpenBSD
+  - [ ] `0xA9` — NetBSD
+  - [ ] `0xAF` — macOS HFS+
+  - [ ] `0xBF` — Solaris / illumos
   - [ ] `0xDA` — IXFS (Impossible OS native)
+  - [ ] `0xEB` — BeOS / Haiku
   - [ ] `0xEE` — GPT Protective MBR → abort, redirect to GPT parser
+  - [ ] `0xEF` — EFI System Partition (ESP) — used in Hybrid MBR (§7.2)
+  - [ ] `0xFB` — VMware VMFS
+  - [ ] `0xFD` — Linux RAID autodetect
 - [ ] Implement `mbr_type_to_string(type)` → human-readable name for logging
+- [ ] For unknown types: display as `"Unknown (0x%02X)"` — never crash
 - [ ] On type `0xEE` in any entry: `return MBR_REDIRECT_GPT` and log redirect
-- [ ] On type `0x05` or `0x0F`: flag entry as extended container, pass to EBR walker (§2)
-- [ ] On type `0x27`: flag as hidden — do not auto-mount
+- [ ] On type `0x05` or `0x0F` or `0x85`: flag as extended container, pass to EBR walker (§2)
+- [ ] On types `0x11`–`0x1C` or `0x27`: flag as hidden — do not auto-mount
+- [ ] On type `0x42` (Dynamic Disk): log warning, skip — LDM volumes are not supported
 - [ ] Log: `[MBR] Entry %d: %s (0x%02X)`
 - [ ] Commit: `"mbr: expanded partition type recognition"`
 
@@ -255,7 +273,7 @@
 
 ---
 
-## 7. GPT Protective MBR
+## 7. GPT Protective MBR & Hybrid MBR
 
 ### 7.1 Protective MBR Detection & Generation
 
@@ -274,6 +292,31 @@
 - [ ] Existing Protective MBR detection: already in `partition.c` → verify integration
 - [ ] Log: `[MBR] GPT Protective MBR detected — redirecting to GPT parser`
 - [ ] Commit: `"mbr: GPT Protective MBR"`
+
+### 7.2 Hybrid MBR (GPT + Legacy BIOS Boot)
+
+**Prompt:** A Hybrid MBR is a GPT disk where the MBR contains real partition entries (up to 3) alongside the `0xEE` Protective entry. This allows legacy BIOS systems to see and boot from specific GPT partitions. The `0xEE` entry is shrunk to cover only the GPT metadata (LBAs 1..33), and up to 3 GPT partitions are mirrored as real MBR entries with appropriate type codes (`0xEF` for ESP, `0x07` for NTFS, etc.). This is critical for creating bootable USB drives and installation media that work on both UEFI and legacy BIOS machines. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: hybrid MBR for dual BIOS/UEFI boot"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> Hybrid MBRs are a hack that can cause data loss if both MBR and GPT tools modify the same partitions.
+> Impossible OS should support **reading** Hybrid MBR and **creating** them only for installation media.
+
+> [!TIP]
+> **Competitive Edge:** Windows cannot create Hybrid MBRs — it strictly separates MBR (BIOS) and GPT (UEFI).
+> Linux uses `gdisk` (third-party). Impossible OS creating bootable USB media that works on
+> BOTH BIOS and UEFI machines from the GUI is a significant usability advantage.
+
+- [ ] Detect Hybrid MBR: type `0xEE` present but does NOT span entire disk + other entries have real types
+- [ ] Parse Hybrid MBR: read both real MBR entries AND redirect to GPT parser
+  - [ ] Validate: MBR partition boundaries must match corresponding GPT entries
+  - [ ] Log warning if MBR/GPT boundaries don't match: `[MBR] WARNING: Hybrid MBR out of sync with GPT`
+- [ ] Implement `mbr_write_hybrid(blkdev, gpt_partitions_to_mirror[], count)`:
+  - [ ] Entry 1: `0xEE` covering GPT metadata only (LBAs 1–33)
+  - [ ] Entries 2–4: mirror selected GPT partitions with MBR type codes
+  - [ ] ESP → type `0xEF`, NTFS → `0x07`, FAT32 → `0x0C`, IXFS → `0xDA`
+  - [ ] Maximum 3 mirrored partitions (MBR has 4 slots, 1 used by `0xEE`)
+- [ ] Wire to installation media builder: "Create BIOS+UEFI bootable USB"
+- [ ] Commit: `"mbr: hybrid MBR for dual BIOS/UEFI boot"`
 
 ---
 
@@ -338,6 +381,8 @@
   - [ ] Verify correct relative LBA computation for each logical
 - [ ] Test image: GPT disk with Protective MBR (type `0xEE`)
   - [ ] Verify parser detects `0xEE` and redirects to GPT
+- [ ] Test image: Hybrid MBR with `0xEE` + real entries
+  - [ ] Verify both GPT redirect and MBR entry reading work
 - [ ] Test image: legacy 63-sector alignment
   - [ ] Verify parser reads partitions, logs alignment warning
 - [ ] Test image: missing `0xAA55` signature
@@ -345,8 +390,127 @@
 - [ ] Test: create partition via `diskpart`, reboot, verify persistence
 - [ ] Test: create extended + logical, reboot, verify EBR chain persists
 - [ ] Test: delete logical partition, verify chain remains valid
+- [ ] Test: MBR backup → corrupt disk → restore → verify partitions intact
+- [ ] Test: MBR→GPT conversion → verify all partitions preserved
 - [ ] QEMU flags: `-drive file=mbr_test.img,format=raw,if=none,id=t0 -device virtio-blk-pci,drive=t0`
 - [ ] Commit: `"test: MBR partition test suite"`
+
+---
+
+## 11. MBR ↔ GPT Conversion (🚀 Impossible OS Feature)
+
+### 11.1 Non-Destructive MBR → GPT Conversion
+
+**Prompt:** Convert an MBR disk to GPT without data loss by translating the partition entries. Read existing MBR partition table (primary + EBR logical), create corresponding GPT entries preserving LBAs and sizes, assign appropriate Type GUIDs, generate new Partition GUIDs, write GPT headers (primary at LBA 1 + backup at last LBA), write partition entry arrays, then overwrite the MBR with a Protective MBR. This is equivalent to Windows `mbr2gpt.exe` but integrated into the Disk Manager GUI. Validate first: reject if Extended/Logical partitions exist (GPT has no EBR concept — they must be converted to primary GPT entries). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive MBR to GPT conversion"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows `mbr2gpt.exe` is command-line only and restricted to ≤3 primary
+> partitions with no extended. Linux `gdisk` requires CLI expertise. Impossible OS can offer
+> this as a one-click GUI operation in Disk Manager with a progress dialog.
+
+> [!CAUTION]
+> **Destructive if interrupted.** Always write GPT partition entries BEFORE overwriting the MBR
+> with the Protective MBR. If power fails mid-conversion, the MBR still points to valid data.
+
+- [ ] Implement `mbr_to_gpt_validate(blkdev)` — pre-check:
+  - [ ] Reject if disk has more than 4 partitions total (logicals complicate conversion)
+  - [ ] Reject if any partition starts in the GPT header area (LBAs 1–33)
+  - [ ] Reject if last 33 sectors are occupied (needed for backup GPT)
+  - [ ] Warn if boot code is present (will be overwritten by Protective MBR)
+- [ ] Implement `mbr_to_gpt_convert(blkdev)`:
+  - [ ] Read MBR partition table
+  - [ ] Map MBR type codes to GPT Type GUIDs:
+    - [ ] `0x07` → `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` (Microsoft Basic Data)
+    - [ ] `0x0C`/`0x0B` → same (FAT32 uses same GUID)
+    - [ ] `0x83` → `0FC63DAF-8483-4772-8E79-3D69D8477DE4` (Linux Filesystem)
+    - [ ] `0xDA` → `DA000000-0000-4978-4653-000000000001` (IXFS)
+    - [ ] `0xEF` → `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` (EFI System)
+  - [ ] Generate unique Partition GUIDs (v4 UUID from RDRAND)
+  - [ ] Write GPT partition entry array at LBAs 2–33
+  - [ ] Write primary GPT header at LBA 1
+  - [ ] Write backup GPT at disk end
+  - [ ] Write Protective MBR to LBA 0 (LAST step — preserves recovery path)
+- [ ] Log: `[MBR] Converted to GPT: %d partitions migrated`
+- [ ] Commit: `"mbr: non-destructive MBR to GPT conversion"`
+
+### 11.2 Non-Destructive GPT → MBR Conversion
+
+**Prompt:** Convert a GPT disk back to MBR for legacy BIOS compatibility. Read GPT partition entries, map Type GUIDs back to MBR type codes, verify all partitions fit within the 2 TiB MBR limit, and write a new MBR. Maximum 4 primary GPT partitions can be converted (MBR limit). Reject if any partition exceeds LBA 2^32. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: GPT to MBR conversion"`. Add notes directly in this TODO section.
+
+- [ ] Implement `gpt_to_mbr_validate(blkdev)` — pre-check:
+  - [ ] Reject if more than 4 GPT partitions
+  - [ ] Reject if any partition extends beyond LBA 2^32 - 1 (2 TiB limit)
+  - [ ] Reject if any partition has no MBR type code equivalent
+- [ ] Implement `gpt_to_mbr_convert(blkdev)`:
+  - [ ] Read GPT partition entries
+  - [ ] Map GPT Type GUIDs back to MBR type codes (reverse of §11.1 table)
+  - [ ] Write MBR with converted partition entries
+  - [ ] Zero GPT header areas (LBAs 1–33 and disk end) to prevent confusion
+- [ ] Log: `[MBR] Converted from GPT: %d partitions, disk within 2 TiB limit`
+- [ ] Commit: `"mbr: GPT to MBR conversion"`
+
+---
+
+## 12. Partition Table Backup & Restore (🚀 Impossible OS Feature)
+
+### 12.1 MBR Backup & Restore
+
+**Prompt:** The entire MBR partition table fits in a single 512-byte sector. Backup the MBR (and all EBR sectors for logical partitions) to a file for disaster recovery. Restore from backup to recover a corrupted partition table without affecting data. This is equivalent to `dd if=/dev/sda of=backup.mbr bs=512 count=1` on Linux but integrated into the GUI Disk Manager as a one-click operation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition table backup and restore"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has NO built-in partition table backup. Linux requires
+> manual `dd` or `sfdisk -d`. Impossible OS having a "Backup Partition Table" button
+> in Disk Manager, with auto-backup on every partition change, is a clear safety advantage.
+
+- [ ] Implement `mbr_backup(blkdev, output_path)`:
+  - [ ] Read MBR sector (LBA 0, 512 bytes)
+  - [ ] Walk EBR chain and read all EBR sectors
+  - [ ] Write to backup file: magic header + MBR sector + EBR count + EBR sectors
+  - [ ] File format: `"IMBR" (4 bytes) + version (4 bytes) + disk_size (8 bytes) + MBR (512) + ebr_count (4) + EBR[n] (512 each)`
+- [ ] Implement `mbr_restore(blkdev, input_path)`:
+  - [ ] Validate backup magic and version
+  - [ ] Verify backup disk size matches target disk (warn if different)
+  - [ ] Write MBR sector to LBA 0
+  - [ ] Write each EBR sector to its original LBA
+  - [ ] Re-scan partition table after restore
+- [ ] Auto-backup: save partition table to Registry before any write operation
+  - [ ] `HKLM\SYSTEM\Storage\Disks\{sig}\PartitionBackup` (binary blob)
+- [ ] Disk Manager GUI: "Backup Partition Table" / "Restore Partition Table" buttons
+- [ ] Commit: `"mbr: partition table backup and restore"`
+
+---
+
+## 13. Partition Health Validation & Repair
+
+### 13.1 Partition Table Integrity Checker
+
+**Prompt:** Implement a partition table health checker that detects common corruption: overlapping partitions, gaps between partitions, partitions extending beyond disk size, invalid CHS values, duplicate disk signatures, broken EBR chains. Run automatically at boot and on-demand from Disk Manager. Report issues with severity levels (info/warning/error) and offer automatic repair for safe cases. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition health validation"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows `chkdsk` validates filesystems, not partition tables.
+> Linux `fdisk --verify` is CLI-only and minimal. A GUI partition table health checker
+> with automatic repair suggestions is unique to Impossible OS.
+
+- [ ] Implement `mbr_validate(blkdev, *report)` — returns list of issues:
+  - [ ] Check `0xAA55` signature present
+  - [ ] Check for overlapping partition ranges (LBA overlap detection)
+  - [ ] Check partition extends beyond physical disk size
+  - [ ] Check CHS values match LBA values (for non-overflow entries)
+  - [ ] Check EBR chain: no circular links, all within extended container bounds
+  - [ ] Check only one boot indicator `0x80` is set
+  - [ ] Check only one extended partition exists
+  - [ ] Check for unusable space (gaps > 1 MiB that could be reclaimed)
+- [ ] Issue severity:
+  - [ ] `INFO`: unaligned partitions, large gaps
+  - [ ] `WARNING`: CHS/LBA mismatch, multiple boot indicators
+  - [ ] `ERROR`: overlapping partitions, beyond disk bounds, broken EBR chain
+- [ ] Auto-repair (safe operations only, require user confirmation):
+  - [ ] Fix CHS values to match LBA (cosmetic fix, no data impact)
+  - [ ] Clear extra boot indicators (keep first `0x80`)
+  - [ ] Fix EBR chain termination (zero dangling Entry 2 pointers)
+- [ ] Run at boot: log warnings to serial, do not block boot
+- [ ] Disk Manager: "Validate Partition Table" button with report dialog
+- [ ] Commit: `"mbr: partition health validation"`
 
 ---
 
@@ -366,8 +530,16 @@
 | 🟡 P2    | 6.2 Extended & Logical         | Feature — exceed 4-partition limit                            |
 | 🟡 P2    | 6.3 Delete Partition           | Feature — partition removal and chain repair                  |
 | 🟡 P2    | 8.1 Disk Signature Management  | Feature — persistent volume identification                    |
+| 🟡 P2    | 13.1 Health Validation ⭐      | **Partition table health checker** — unique to Impossible OS |
 | 🟢 P3    | 9.1 Diskpart MBR Commands     | Tooling — CLI partition management                            |
 | 🟢 P3    | 10.1 MBR Test Suite            | Quality — automated test coverage for all scenarios           |
+| 🟢 P3    | 7.2 Hybrid MBR ⭐              | **Dual BIOS+UEFI boot** — Windows cannot create these        |
+| 🟢 P3    | 11.1 MBR→GPT Conversion ⭐    | **One-click GUI conversion** — Windows is CLI-only            |
+| 🟢 P3    | 11.2 GPT→MBR Conversion       | Feature — downgrade for legacy BIOS compatibility             |
+| 🟢 P3    | 12.1 Backup & Restore ⭐       | **Auto-backup partition table** — Windows has nothing         |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -378,8 +550,9 @@
 | MBR sector parsing               | ✅ Full (disk.sys)                  | ✅ Full (partitions/msdos.c)       | ⬜ §1.1 P0 (basic exists, needs enhancement)   |
 | Boot signature `0xAA55` check    | ✅                                  | ✅                                 | ⬜ §1.1 P0                                     |
 | 32-bit Disk Signature            | ✅ Critical (volume tracking)       | ✅ Supported                       | ⬜ §1.1 P0 + §8.1 P2                           |
-| All partition type IDs           | ✅ Exhaustive                       | ✅ Exhaustive                      | ⬜ §1.2 P0 (partial: 3 types recognized)       |
+| All partition type IDs           | ✅ Exhaustive                       | ✅ Exhaustive                      | ⬜ §1.2 P0 (expanded: 30+ types)               |
 | GPT Protective MBR (`0xEE`)     | ✅ Redirect to GPT                  | ✅ Redirect to GPT                 | ⬜ §7.1 P1                                     |
+| **Hybrid MBR** ⭐                | ❌ Cannot create                    | ⚠️ `gdisk` CLI only               | ⬜ §7.2 P3 — GUI bootable USB creation         |
 | Extended/Logical (EBR)           | ✅ Full chain traversal             | ✅ Full chain traversal            | ⬜ §2.1 P1                                     |
 | CHS bit-packing                  | ✅ Full encode/decode               | ✅ Full encode/decode              | ⬜ §3.1 P1                                     |
 | CHS overflow dummy (`FE FF FF`) | ✅                                  | ✅                                 | ⬜ §3.1 P1                                     |
@@ -391,5 +564,9 @@
 | Drive letter mapping via sig     | ✅ Registry-based                   | ✅ /dev/disk/by-id                 | ⬜ §8.1 P2                                     |
 | CLI partition tool               | ✅ diskpart (interactive)           | ✅ fdisk (interactive + scripted)  | ⬜ §9.1 P3                                     |
 | Test images / validation         | ✅ Windows PE test suite            | ✅ blktests                        | ⬜ §10.1 P3                                    |
+| **MBR→GPT conversion** ⭐       | ⚠️ `mbr2gpt.exe` CLI only          | ⚠️ `gdisk` CLI only               | ⬜ §11.1 P3 — one-click GUI conversion         |
+| **GPT→MBR conversion**          | ⚠️ diskpart CLI (destructive)      | ⚠️ `gdisk` CLI (non-destructive)  | ⬜ §11.2 P3 — GUI with validation              |
+| **Partition table backup** ⭐    | ❌ No built-in backup               | ⚠️ Manual `dd` / `sfdisk -d`      | ⬜ §12.1 P3 — auto-backup on every change      |
+| **Health validation** ⭐         | ❌ No partition table validator     | ⚠️ `fdisk --verify` (minimal CLI) | ⬜ §13.1 P2 — GUI health checker + auto-repair |
 | **2 TiB limit enforcement**     | ✅ Warns in Disk Management         | ✅ parted warns                    | ⬜ §6.1 P2                                     |
 | **Full MBR subsystem**           | ✅                                  | ✅                                 | ⬜ Requires §1–§7 at minimum                   |
