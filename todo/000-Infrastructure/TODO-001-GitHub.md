@@ -303,27 +303,27 @@
 
 ### 5.1 Issue Templates *(agent)*
 
-**Prompt:** Create structured issue templates so bug reports and feature requests include all necessary information. Use GitHub's issue template forms (YAML-based) for guided input. After completing all items, mark every item as `[x]`, and commit as `"docs: issue templates"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify: `.github/ISSUE_TEMPLATE/config.yml` disables blank issues with contact links. `bug-report.yml` has description/steps/expected/actual fields, environment + component dropdowns, serial log textarea, auto-label `bug`. `feature-request.yml` has description/use-case/implementation fields, component dropdown, roadmap checkbox, auto-label `enhancement`. `hardware-report.yml` has hardware spec fields, boot result dropdown, auto-label `hardware-compat`. Verify commit `"docs: issue templates"`.
 
-- [ ] Create `.github/ISSUE_TEMPLATE/config.yml` — disable blank issues, add links
-- [ ] Create `.github/ISSUE_TEMPLATE/bug-report.yml`:
-  - [ ] Fields: description, steps to reproduce, expected vs actual behavior
-  - [ ] Dropdown: test environment (QEMU, VirtualBox, Hyper-V, Real Hardware)
-  - [ ] Dropdown: component (kernel, bootloader, desktop, drivers, filesystem)
-  - [ ] Textarea: serial output / boot log (code block)
-  - [ ] Textarea: screenshot (optional)
-  - [ ] Auto-label: `bug`
-- [ ] Create `.github/ISSUE_TEMPLATE/feature-request.yml`:
-  - [ ] Fields: description, use case, proposed implementation
-  - [ ] Dropdown: component
-  - [ ] Checkbox: "I've checked the TODO roadmap and this feature isn't planned yet"
-  - [ ] Auto-label: `enhancement`
-- [ ] Create `.github/ISSUE_TEMPLATE/hardware-report.yml`:
-  - [ ] Fields: hardware model, CPU, RAM, GPU, storage type
-  - [ ] Dropdown: boot result (success, partial, fail, no display)
-  - [ ] Textarea: boot log from USB
-  - [ ] Auto-label: `hardware-compat`
-- [ ] Commit: `"docs: issue templates"`
+- [x] Create `.github/ISSUE_TEMPLATE/config.yml` — ✅ Blank issues disabled, links to Discussions + TODO roadmap
+- [x] Create `.github/ISSUE_TEMPLATE/bug-report.yml` — ✅
+  - [x] Fields: description, steps to reproduce, expected vs actual behavior — ✅
+  - [x] Dropdown: test environment (QEMU, VirtualBox, Hyper-V, VMware, Real Hardware) — ✅
+  - [x] Dropdown: component (Kernel, Bootloader, Desktop, Drivers, Filesystem, Networking, Userland, Build System) — ✅
+  - [x] Textarea: serial output / boot log (code block via `render: text`) — ✅
+  - [x] Textarea: screenshot (optional) — ✅
+  - [x] Auto-label: `bug` — ✅
+- [x] Create `.github/ISSUE_TEMPLATE/feature-request.yml` — ✅
+  - [x] Fields: description, use case, proposed implementation — ✅
+  - [x] Dropdown: component — ✅
+  - [x] Checkbox: "I've checked the TODO roadmap and this feature isn't planned yet" (required) — ✅
+  - [x] Auto-label: `enhancement` — ✅
+- [x] Create `.github/ISSUE_TEMPLATE/hardware-report.yml` — ✅
+  - [x] Fields: hardware model, CPU, RAM, GPU, storage type — ✅
+  - [x] Dropdown: boot result (Success, Partial, Fail, No display) — ✅
+  - [x] Textarea: boot log from USB — ✅
+  - [x] Auto-label: `hardware-compat` — ✅
+- [x] Commit: `"docs: issue templates"` — ✅
 
 ### 5.2 Pull Request Template *(agent)*
 
