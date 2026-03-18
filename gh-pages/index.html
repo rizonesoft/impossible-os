@@ -668,8 +668,8 @@
             <li><a href="#features">Features</a></li>
             <li><a href="#compatibility">Compatibility</a></li>
             <li><a href="#specs">Specs</a></li>
-            <li><a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a></li>
-            <li><a href="https://github.com/rizonesoft/impossible-os/releases" class="nav-cta">Download Alpha</a></li>
+            <li data-github><a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a></li>
+            <li data-github><a href="https://github.com/rizonesoft/impossible-os/releases" class="nav-cta">Download Alpha</a></li>
         </ul>
         <button class="nav-toggle" aria-label="Menu">☰</button>
     </div>
@@ -690,10 +690,10 @@
             Windows 11&#8209;inspired desktop. 100% open source.
         </p>
         <div class="hero-buttons">
-            <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary">
+            <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary" data-github>
                 ⬇ Download Alpha
             </a>
-            <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener">
+            <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener" data-github>
                 ⭐ Star on GitHub
             </a>
             <a href="https://rizonesoft.com/contributions/" class="btn btn-donate" target="_blank" rel="noopener">
@@ -861,8 +861,8 @@
             <h2>Join the Journey</h2>
             <p>Impossible OS is fully open source. Star the repo, download the alpha, or contribute code.</p>
             <div class="cta-buttons">
-                <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary">⬇ Download Latest Release</a>
-                <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener">View Source on GitHub</a>
+                <a href="https://github.com/rizonesoft/impossible-os/releases" class="btn btn-primary" data-github>⬇ Download Latest Release</a>
+                <a href="https://github.com/rizonesoft/impossible-os" class="btn btn-secondary" target="_blank" rel="noopener" data-github>View Source on GitHub</a>
                 <a href="https://rizonesoft.com/contributions/" class="btn btn-donate" target="_blank" rel="noopener">❤ Support the Project</a>
             </div>
         </div>
@@ -873,12 +873,12 @@
 <footer>
     <div class="container">
         <div class="footer-links">
-            <a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener">GitHub</a>
-            <a href="https://github.com/rizonesoft/impossible-os/releases" target="_blank" rel="noopener">Releases</a>
+            <a href="https://github.com/rizonesoft/impossible-os" target="_blank" rel="noopener" data-github>GitHub</a>
+            <a href="https://github.com/rizonesoft/impossible-os/releases" target="_blank" rel="noopener" data-github>Releases</a>
             <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>
             <a href="https://rizonesoft.com/contributions/" target="_blank" rel="noopener">Donate</a>
         </div>
-        <p>&copy; 2026 <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>. Impossible OS is licensed under <a href="https://github.com/rizonesoft/impossible-os/blob/main/LICENSE" target="_blank" rel="noopener">GPL-3.0</a>.</p>
+        <p>&copy; 2026 <a href="https://rizonesoft.com" target="_blank" rel="noopener">Rizonesoft</a>. Impossible OS is licensed under <a href="https://github.com/rizonesoft/impossible-os/blob/main/LICENSE" target="_blank" rel="noopener" data-github>GPL-3.0</a>.</p>
     </div>
 </footer>
 
@@ -923,6 +923,23 @@
     }, { threshold: 0.1 });
 
     document.querySelectorAll('.fade-in').forEach(el => observer.observe(el));
+
+    // Hide GitHub links when the repository is private
+    // (unauthenticated API returns 404 for private repos)
+    fetch('https://api.github.com/repos/rizonesoft/impossible-os', { method: 'HEAD' })
+        .then(res => {
+            if (!res.ok) {
+                document.querySelectorAll('[data-github]').forEach(el => {
+                    el.style.display = 'none';
+                });
+            }
+        })
+        .catch(() => {
+            // Network error — hide GitHub links to be safe
+            document.querySelectorAll('[data-github]').forEach(el => {
+                el.style.display = 'none';
+            });
+        });
 </script>
 
 </body>
