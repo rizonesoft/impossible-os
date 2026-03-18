@@ -114,8 +114,10 @@ static int fat32_file_close(struct vfs_node *node)
 {
     struct fat32_volume *vol = vol_from_node(node);
     if (vol) {
+        spin_lock(&vol->lock);
         scache_flush(vol);
         fat32_fsinfo_flush(vol);
+        spin_unlock(&vol->lock);
     }
     return 0;
 }
@@ -201,10 +203,13 @@ static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
     if (!cluster_buf)
         return -1;
 
+    spin_lock(&vol->lock);
+
     cluster = f->first_cluster;
     if (cluster < 2 || cluster >= FAT32_EOC) {
         cluster = fat32_alloc_cluster(vol);
         if (cluster == 0) {
+            spin_unlock(&vol->lock);
             kfree(cluster_buf);
             return -1;
         }
@@ -263,6 +268,7 @@ fc_done:
             if (next < 2 || next >= FAT32_EOC) {
                 next = fat32_alloc_cluster(vol);
                 if (next == 0) {
+                    spin_unlock(&vol->lock);
                     kfree(cluster_buf);
                     return -1;
                 }
@@ -310,8 +316,6 @@ fc_done:
         }
     }
 
-    kfree(cluster_buf);
-
     {
         uint32_t end_pos = offset + bytes_written;
         if (end_pos > f->file_size) {
@@ -323,6 +327,9 @@ fc_done:
     }
 
     vol->dir_file_count = 0;
+    spin_unlock(&vol->lock);
+
+    kfree(cluster_buf);
     return (int)bytes_written;
 }
 
@@ -393,22 +400,30 @@ static int fat32_vfs_create(struct vfs_node *parent, const char *name,
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
+    int rc;
 
     if (!vol) return -1;
 
+    spin_lock(&vol->lock);
     if (type & VFS_DIRECTORY)
-        return fat32_create_dir_vol(vol, dir_cluster, name);
+        rc = fat32_create_dir_vol(vol, dir_cluster, name);
     else
-        return fat32_create_file_vol(vol, dir_cluster, name);
+        rc = fat32_create_file_vol(vol, dir_cluster, name);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_unlink(struct vfs_node *parent, const char *name)
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
+    int rc;
 
     if (!vol) return -1;
-    return fat32_delete_file_vol(vol, dir_cluster, name);
+    spin_lock(&vol->lock);
+    rc = fat32_delete_file_vol(vol, dir_cluster, name);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_rename(struct vfs_node *parent,
@@ -416,9 +431,13 @@ static int fat32_vfs_rename(struct vfs_node *parent,
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
+    int rc;
 
     if (!vol) return -1;
-    return fat32_rename_vol(vol, dir_cluster, old_name, new_name);
+    spin_lock(&vol->lock);
+    rc = fat32_rename_vol(vol, dir_cluster, old_name, new_name);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
@@ -441,14 +460,19 @@ static int fat32_vfs_truncate(struct vfs_node *node, uint64_t new_size)
 {
     struct fat32_file *f = (struct fat32_file *)node->fs_data;
     struct fat32_volume *vol = f ? f->volume : (struct fat32_volume *)0;
+    int rc;
 
     if (!vol) return -1;
     if (node->type & VFS_DIRECTORY)
         return -1;
 
-    if (node->name[0])
-        return fat32_truncate(vol, vol->bpb.root_cluster, node->name,
-                              (uint32_t)new_size);
+    if (node->name[0]) {
+        spin_lock(&vol->lock);
+        rc = fat32_truncate(vol, vol->bpb.root_cluster, node->name,
+                            (uint32_t)new_size);
+        spin_unlock(&vol->lock);
+        return rc;
+    }
 
     return -1;
 }
@@ -457,27 +481,39 @@ static int fat32_vfs_mkdir(struct vfs_node *parent, const char *name)
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
+    int rc;
 
     if (!vol) return -1;
-    return fat32_create_dir_vol(vol, dir_cluster, name);
+    spin_lock(&vol->lock);
+    rc = fat32_create_dir_vol(vol, dir_cluster, name);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_rmdir(struct vfs_node *parent, const char *name)
 {
     struct fat32_volume *vol = vol_from_node(parent);
     uint32_t dir_cluster = dir_cluster_from_node(parent);
+    int rc;
 
     if (!vol) return -1;
-    return fat32_rmdir(vol, dir_cluster, name);
+    spin_lock(&vol->lock);
+    rc = fat32_rmdir(vol, dir_cluster, name);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_set_attr(struct vfs_node *node, uint32_t attributes)
 {
     struct fat32_volume *vol = vol_from_node(node);
+    int rc;
 
     if (!vol || !node->name[0]) return -1;
-    return fat32_set_attr(vol, vol->bpb.root_cluster, node->name,
-                          (uint8_t)attributes);
+    spin_lock(&vol->lock);
+    rc = fat32_set_attr(vol, vol->bpb.root_cluster, node->name,
+                        (uint8_t)attributes);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_set_times(struct vfs_node *node,
@@ -486,18 +522,26 @@ static int fat32_vfs_set_times(struct vfs_node *node,
                                const filetime_t *atime_p)
 {
     struct fat32_volume *vol = vol_from_node(node);
+    int rc;
 
     if (!vol || !node->name[0]) return -1;
-    return fat32_set_times(vol, vol->bpb.root_cluster, node->name,
-                           ctime_p, mtime_p, atime_p);
+    spin_lock(&vol->lock);
+    rc = fat32_set_times(vol, vol->bpb.root_cluster, node->name,
+                         ctime_p, mtime_p, atime_p);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 static int fat32_vfs_flush(struct vfs_node *node)
 {
     struct fat32_volume *vol = vol_from_node(node);
+    int rc;
     if (!vol) return -1;
+    spin_lock(&vol->lock);
     fat32_fsinfo_flush(vol);
-    return fat32_flush_disk(vol);
+    rc = fat32_flush_disk(vol);
+    spin_unlock(&vol->lock);
+    return rc;
 }
 
 /* ---- fat32_stat: file metadata lookup ---- */
@@ -677,6 +721,7 @@ struct fat32_volume *fat32_init(const struct blkdev *dev)
     }
 
     vol->dev = dev;
+    vol->lock = (spinlock_t)SPINLOCK_INIT;
 
     /* Read the boot sector */
     if (fat32_read_sector(vol, 0, vol->sector_buf) != 0) {

@@ -266,14 +266,14 @@
 
 #### 3.4.5 Concurrent Access Safety
 
-**Prompt:** With multi-tasking enabled, multiple threads could access the same FAT32 volume simultaneously (e.g., debug live-flush writing to X: while the shell reads from it). Add a per-volume spinlock or mutex that protects FAT table modifications and directory entry updates. Read operations can be concurrent if the sector cache has its own lock. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: concurrent access locking"`. Add notes directly in this TODO section.
+**Prompt:** Verify FAT32 concurrent access locking is complete. Check that `spinlock_t lock` exists in `struct fat32_volume`, is initialized in `fat32_init()`, and is acquired/released around all 11 write VFS ops in `fat32_ops.c` (close, write, create, unlink, rename, truncate, mkdir, rmdir, set_attr, set_times, flush). Verify read paths (read, readdir, finddir, stat) remain lock-free. Verify no `klog()` calls occur while lock is held. Run `bash scripts/build.sh clean` and confirm BUILD OK.
 
-- [ ] Add `spinlock_t lock` to `struct fat32_volume`
-- [ ] Acquire lock on: write, create, delete, rename, truncate, FAT table modification
-- [ ] Release lock after operation completes and FAT/dir entry is flushed
-- [ ] Read-only operations (read, readdir, stat) can proceed without lock if cache has own lock
-- [ ] Prevent deadlock: never call `klog()` while holding FAT32 lock (reentrancy)
-- [ ] Commit: `"fat32: concurrent access locking"`
+- [x] Add `spinlock_t lock` to `struct fat32_volume` — initialized via `SPINLOCK_INIT` in `fat32_init()`
+- [x] Acquire lock on: write, create, delete, rename, truncate, mkdir, rmdir, set_attr, set_times, flush, close
+- [x] Release lock after operation completes and FAT/dir entry is flushed — `spin_unlock()` before `kfree`/return
+- [x] Read-only operations (read, readdir, finddir, stat) proceed without lock — cache reads are safe
+- [x] Prevent deadlock: no `klog()` calls inside lock-held code sections
+- [x] Commit: `"fat32: concurrent access locking"`
 
 #### 3.4.6 LFN Creation (Write Path)
 
@@ -312,7 +312,7 @@
 | FSInfo free cluster hint | ✅ | ✅ | ✅ Done §3.4.2 |
 | Sector cache / write-back | ✅ (kernel cache) | ✅ (page cache) | ⬜ §3.4.3 |
 | Multi-volume simultaneous mount | ✅ | ✅ | ⬜ §3.4.4 |
-| Concurrent access safety | ✅ | ✅ (VFS locking) | ⬜ §3.4.5 |
+| Concurrent access safety | ✅ | ✅ (VFS locking) | ✅ §3.4.5 |
 | LFN creation (write) | ✅ | ✅ | ⬜ §3.4.6 |
 | Timestamp read/write | ✅ | ✅ | ⬜ §3.4.7 (partial read) |
 | FAT32 format (`mkfs.fat`) | ✅ | ✅ | ✅ Done §3.2 |

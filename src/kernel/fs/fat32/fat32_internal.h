@@ -13,6 +13,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/sched/spinlock.h"
 
 /* FAT32 special cluster values */
 #define FAT32_EOC       0x0FFFFFF8   /* end of chain (>= this value) */
@@ -101,6 +102,7 @@ struct fat32_file {
 struct fat32_volume {
     struct fat32_bpb    bpb;
     const struct blkdev *dev;
+    spinlock_t          lock;    /* protects writes, FAT mods, dir updates */
     struct fat32_file   root_file;
     struct fat32_file   dir_files[FAT32_MAX_DIR_ENTRIES];
     uint32_t            dir_file_count;
