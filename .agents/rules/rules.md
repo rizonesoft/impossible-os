@@ -82,3 +82,9 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 - **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. Only freestanding headers are allowed: `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`.
 - **No malloc().** Use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()` (everything else). See memory-allocation skill for decision tree.
 - **No printf().** Use `printk()` for kernel output, `klog()` for logging.
+
+## Code Intelligence
+
+- **Srclight is available.** The `.srclight/` index at the repo root provides deep code indexing via MCP. Use it for symbol search, call graph navigation, type hierarchy, semantic search, git blame, and hotspot analysis.
+- **Start sessions with `codebase_map()`** to orient before navigating the codebase.
+- **Prefer `hybrid_search()`** for most queries — it combines keyword + semantic search via RRF fusion.

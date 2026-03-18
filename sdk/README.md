@@ -18,12 +18,16 @@ Development kit for building applications that run on Impossible OS.
 #include <impossible/windows.h>
 
 int WinMain(void) {
-    HANDLE file = CreateFile("C:\\hello.txt", GENERIC_WRITE, 0, NULL,
-                             CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    /* Create and write a file using Win32 API */
+    HANDLE hFile = CreateFile("C:\\hello.txt",
+                              GENERIC_WRITE, 0, NULL,
+                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+
     const char *msg = "Hello from Impossible OS!";
     DWORD written;
-    WriteFile(file, msg, 25, &written, NULL);
-    CloseHandle(file);
+    WriteFile(hFile, msg, 25, &written, NULL);
+    CloseHandle(hFile);
+
     return 0;
 }
 ```
@@ -41,19 +45,59 @@ clang-19 --target=x86_64-elf \
 
 ## API Surface
 
-Impossible OS exposes a **Win32-compatible API** as the native interface:
+Impossible OS exposes a **Win32-compatible API** as the native user-space interface.
+Each function maps to a kernel VFS operation internally.
 
-| API | Status | Functions |
-|-----|--------|-----------|
-| File I/O | 🔜 Planned | `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle` |
-| Process | 🔜 Planned | `CreateProcess`, `ExitProcess`, `GetExitCodeProcess` |
-| Memory | 🔜 Planned | `VirtualAlloc`, `VirtualFree`, `HeapAlloc` |
-| Threading | 🔜 Planned | `CreateThread`, `WaitForSingleObject`, `CreateMutex` |
-| Registry | 🔜 Planned | `RegOpenKeyEx`, `RegQueryValueEx`, `RegSetValueEx` |
-| Window | 🔜 Planned | `CreateWindow`, `ShowWindow`, `GetMessage`, `DispatchMessage` |
+### File I/O
 
-> **Note:** The SDK is in early development. Headers and libraries will be
-> populated as the Win32-compatible API layer (TODO-045) is implemented.
+| Win32 API | Kernel VFS | Status |
+|-----------|-----------|--------|
+| `CreateFile()` | `vfs_open()` / `vfs_create()` | ✅ Declared |
+| `ReadFile()` | `vfs_read()` | ✅ Declared |
+| `WriteFile()` | `vfs_write()` | ✅ Declared |
+| `CloseHandle()` | `vfs_close()` | ✅ Declared |
+
+### File Management
+
+| Win32 API | Kernel VFS | Status |
+|-----------|-----------|--------|
+| `DeleteFile()` | `vfs_unlink()` | ✅ Declared |
+| `MoveFile()` | `vfs_rename()` | ✅ Declared |
+| `GetFileAttributes()` | `vfs_stat()` | ✅ Declared |
+| `GetFileSize()` | `vfs_stat()` | ✅ Declared |
+| `SetEndOfFile()` | `vfs_truncate()` | ✅ Declared |
+
+### Directory Enumeration
+
+| Win32 API | Kernel VFS | Status |
+|-----------|-----------|--------|
+| `FindFirstFile()` | `vfs_readdir()` | ✅ Declared |
+| `FindNextFile()` | `vfs_readdir()` | ✅ Declared |
+| `FindClose()` | — | ✅ Declared |
+| `CreateDirectory()` | `vfs_create(VFS_DIRECTORY)` | ✅ Declared |
+| `RemoveDirectory()` | `vfs_unlink()` | ✅ Declared |
+
+### Planned (Not Yet Implemented)
+
+| API | Functions |
+|-----|-----------|
+| Process | `CreateProcess`, `ExitProcess`, `GetExitCodeProcess` |
+| Memory | `VirtualAlloc`, `VirtualFree`, `HeapAlloc` |
+| Threading | `CreateThread`, `WaitForSingleObject`, `CreateMutex` |
+| Registry | `RegOpenKeyEx`, `RegQueryValueEx`, `RegSetValueEx` |
+| Window | `CreateWindow`, `ShowWindow`, `GetMessage`, `DispatchMessage` |
+
+## Paths
+
+Impossible OS uses **Windows-style paths** as canonical:
+
+```
+C:\Impossible\System32\kernel.exe
+C:\Users\Default\Documents\readme.txt
+D:\Data\backup.zip
+```
+
+Drive letters A–Z are supported (VFS mount points).
 
 ## License
 
