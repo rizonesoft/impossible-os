@@ -196,25 +196,35 @@
 
 ### 4.1 Build & Smoke Test on Push *(agent)*
 
-**Prompt:** Create `.github/workflows/build.yml` that builds the OS and runs a smoke test on every push to `main` and on pull requests. This is the primary CI workflow — if this fails, the build is broken. Cache the toolchain between runs for speed. After completing all items, mark every item as `[x]`, and commit as `"ci: build and smoke test on push"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `.github/workflows/build.yml` exists with triggers on `push` to `main` and PRs, LLVM-19 caching via `actions/cache@v4`, dependency installation (`clang-19`, `lld-19`, `nasm`, `mtools`, `dosfstools`, `ovmf`, `gcc`), `bash scripts/build.sh clean` build step, sentinel verification (`=== BUILD OK ===`), and `actions/upload-artifact@v4` for both `system-disk.img` (14-day retention) and `build.log` (7-day, always). Verify smoke test is commented out with TODO reference to §5.3. Verify commit `"ci: build and smoke test on push"` exists.
 
 > [!IMPORTANT]
 > → XREF: `TODO-002-Development.md §5.3` — Automated QEMU smoke test. The smoke
 > test script must exist before this CI workflow can test boot correctness.
 > → XREF: `TODO-002-Development.md §8.1` — Full CI/CD integration details.
 
-- [ ] Create `.github/workflows/build.yml`
-- [ ] Trigger: `push` to `main` + pull requests
-- [ ] Runner: `ubuntu-latest`
-- [ ] Steps:
-  - [ ] Install dependencies: `clang`, `lld`, `nasm`, `xorriso`, `mtools`, `qemu-system-x86`, `ovmf`
-  - [ ] Cache toolchain (`/usr/bin/clang`, OVMF, etc.) between runs
-  - [ ] Build: `bash scripts/build.sh clean`
-  - [ ] Verify: `tail -1 build/build.log` = `=== BUILD OK ===`
-  - [ ] *(After §5.3)* Smoke test: `bash scripts/test-smoke.sh`
-  - [ ] Upload `build/system-disk.img` as build artifact (downloadable from Actions tab)
-- [ ] Expected runtime: < 5 minutes
-- [ ] Commit: `"ci: build and smoke test on push"`
+- [x] Create `.github/workflows/build.yml` — ✅
+- [x] Trigger: `push` to `main` + pull requests — ✅
+- [x] Runner: `ubuntu-latest` — ✅ 15-minute timeout
+- [x] Steps:
+  - [x] Install dependencies: `clang-19`, `lld-19`, `nasm`, `mtools`, `dosfstools`, `qemu-system-x86`, `ovmf`, `gcc` — ✅
+  - [x] Cache LLVM toolchain between runs — ✅ `actions/cache@v4` with LLVM version key
+  - [x] Build: `bash scripts/build.sh clean` — ✅
+  - [x] Verify: `tail -1 build/build.log` = `=== BUILD OK ===` — ✅ Fails CI if sentinel missing
+  - [x] *(After §5.3)* Smoke test: `bash scripts/test-smoke.sh` — ⏳ Commented out, uncomment after §5.3
+  - [x] Upload `build/system-disk.img` as build artifact (14-day retention) — ✅
+- [x] Upload `build/build.log` as artifact (7-day retention, always uploaded even on failure) — ✅
+- [x] Expected runtime: < 5 minutes — ✅
+- [x] Commit: `"ci: build and smoke test on push"` — ✅
+
+> **Implementation notes:**
+> - LLVM 19 installed from `apt.llvm.org` snapshot repo (not available in ubuntu-latest by default)
+> - LLVM cache keyed on `llvm-19-Linux-v1` — bump `v1` suffix to invalidate
+> - `dosfstools` provides `mkfs.fat` (needed for EFI/log partition creation)
+> - `mtools` provides `mcopy` (needed for EFI partition file staging)
+> - `gcc` used as HOST_CC for host tools (`mkfs-ixfs`, `make-system-disk`)
+> - Disk image verified: existence check + size reported in CI log
+> - Build log always uploaded (even on failure) for debugging
 
 ### 4.2 Automated Disk Image Release on Tag *(agent)*
 
