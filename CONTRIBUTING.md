@@ -125,7 +125,7 @@ docs: professional README with feature table
 ## 🔄 Pull Request Process
 
 1. **Fork** the repository
-2. **Branch** from `main`:
+2. **Branch** from `main` using the naming convention below:
    ```bash
    git checkout -b feature/your-feature-name
    ```
@@ -137,6 +137,15 @@ docs: professional README with feature table
    ```
 5. **Commit** with a conventional commit message
 6. **Push** and open a Pull Request against `main`
+
+### Branch Naming Convention
+
+| Prefix | Usage | Example |
+|--------|-------|---------|
+| `feature/*` | New features or capabilities | `feature/tcp-stack` |
+| `fix/*` | Bug fixes | `fix/pmm-double-free` |
+| `docs/*` | Documentation changes | `docs/contributing-guide` |
+| `refactor/*` | Code refactoring (no behavior change) | `refactor/vfs-cleanup` |
 
 ### PR Checklist
 
