@@ -128,7 +128,8 @@ jobs:
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           RELEASE_DIR="build/release"
-          ZIP_NAME="impossible-os-${TAG}.zip"
+          BUILD_NUM=$(git rev-list --count HEAD)
+          ZIP_NAME="impossible-os-${TAG}-build${BUILD_NUM}.zip"
 
           mkdir -p "$RELEASE_DIR"
 
