@@ -1458,11 +1458,11 @@
 | 🟡 P2     | 5.9.6 IXFS Security Descriptors (ACLs)       | Native ACLs — real file permissions                             |
 | 🟡 P2     | 5.9.7 IXFS Hard Links / Symlinks             | WinSxS compat, filesystem navigation                            |
 | 🟢 P3     | 5.9.8 IXFS Extended Attributes               | Metadata storage foundation                                     |
-| 🟢 P3     | 5.9.9 IXFS Transparent Compression           | Per-block LZ4 — better than NTFS compression                   |
+| 🟢 P3     | 5.9.9 IXFS Transparent Compression           | Per-block LZ4 — better than NTFS compression                    |
 | ✅ Done   | 8.14 IXFS Directory Structure                | Standard paths on first boot                                    |
 | 🔴 P0     | **3.6 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
 | 🟠 P1     | 3.4.2 FAT32 FSInfo + Hint                    | FAT32 spec compliance, faster allocation                        |
-| ✅ Done    | 3.4.4 FAT32 Multi-Volume                     | Remove static globals — mount multiple FAT32 partitions         |
+| ✅ Done   | 3.4.4 FAT32 Multi-Volume                     | Remove static globals — mount multiple FAT32 partitions         |
 | 🟠 P1     | 3.4.6 FAT32 LFN Write                        | Write long filenames (currently 8.3 only on create)             |
 | 🟠 P1     | 4.1 NTFS Read                                | Read Windows-formatted partitions                               |
 | 🟠 P1     | 6.1 Auto-Mount                               | Drive letters from real disks                                   |
