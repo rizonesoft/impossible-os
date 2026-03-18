@@ -617,7 +617,7 @@ void icon_store_init(void)
 
     /* Load color icons from IRES file */
     {
-        int ires_result = ires_load("C:\\Impossible\\System\\icons.ires");
+        int ires_result = ires_load("C:\\Impossible\\Icons\\icons.ires");
         if (ires_result > 0) {
             printk("[OK] IRES loaded: icons.ires (%d icons, %d sizes)\n",
                    (uint64_t)ires_result, (uint64_t)ires_size_count);

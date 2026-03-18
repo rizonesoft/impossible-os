@@ -264,7 +264,7 @@ $(SYSROOT)/Impossible/System/Cursors/.stamp: $(CURSOR_SRCS) | $(SYSROOT)/.dirs-s
 sysroot-cursors: $(SYSROOT)/Impossible/System/Cursors/.stamp
 
 ## sysroot-icons: Pack color icons into IRES archive → sysroot
-$(SYSROOT)/Impossible/System/icons.ires: $(ICON_SRCS) host-tools | $(SYSROOT)/.dirs-stamp
+$(SYSROOT)/Impossible/Icons/icons.ires: $(ICON_SRCS) host-tools | $(SYSROOT)/.dirs-stamp
 	@if [ -n "$(ICON_SRCS)" ]; then \
 		$(BUILD_DIR)/tools/irespack $(BUILD_DIR)/icons.ires resources/icons/color 2>&1; \
 		cp $(BUILD_DIR)/icons.ires $@; \
@@ -273,7 +273,7 @@ $(SYSROOT)/Impossible/System/icons.ires: $(ICON_SRCS) host-tools | $(SYSROOT)/.d
 		echo "[ASSETS] No color icons found — skipping icons.ires"; \
 	fi
 
-sysroot-icons: $(SYSROOT)/Impossible/System/icons.ires
+sysroot-icons: $(SYSROOT)/Impossible/Icons/icons.ires
 
 ## userland: Build user-mode programs and copy into sysroot
 USER_CFLAGS := --target=x86_64-elf \
