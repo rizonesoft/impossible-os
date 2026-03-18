@@ -249,6 +249,9 @@ fi
 if $DO_CLEAN; then
     STEP=$((STEP + 1))
     run_step $STEP $TOTAL "Clean" "clean" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
+    # make clean removes build/ — re-create it for the log file
+    mkdir -p build
+    echo "" > "$LOG"
 fi
 
 # Kernel (with progress bar)
