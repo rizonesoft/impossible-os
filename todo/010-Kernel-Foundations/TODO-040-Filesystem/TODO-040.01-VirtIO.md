@@ -396,6 +396,162 @@
 
 ---
 
+## 12. Adaptive Hybrid Polling (🚀 Impossible OS Exclusive)
+
+### 12.1 Adaptive Interrupt/Polling Mode Switching
+
+**Prompt:** Neither Windows viostor nor Linux virtio-blk implement adaptive hybrid polling for block devices. Linux has NAPI busy-polling for `virtio-net` but NOT for `virtio-blk`. Implement an adaptive I/O completion strategy that dynamically switches between three modes based on measured IOPS load:
+- **Low load (< 1K IOPS):** Pure interrupt-driven (§3.2) — minimize CPU usage.
+- **Medium load (1K–50K IOPS):** Hybrid — poll briefly after submission (configurable spin window, default 4 µs), then fall back to interrupt if no completion arrives. This catches fast completions without ISR overhead.
+- **High load (> 50K IOPS):** Pure polling — disable interrupts (`VIRTQ_AVAIL_F_NO_INTERRUPT = 1`), spin on `used->idx` changes. At extreme IOPS, interrupt overhead dominates; polling amortizes the cost across many completions.
+Track a rolling 100ms IOPS average to drive mode transitions. Expose the current mode and thresholds via Registry. This is a significant competitive advantage — no other OS adapts its VirtIO block completion strategy to workload in real time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: adaptive hybrid polling"`. Add notes directly in this TODO section.
+
+- [ ] Implement three I/O completion modes:
+  - [ ] `VIRTIO_IO_MODE_INTERRUPT` — pure ISR-driven (§3.2 baseline)
+  - [ ] `VIRTIO_IO_MODE_HYBRID` — brief spin (4 µs default), fallback to ISR
+  - [ ] `VIRTIO_IO_MODE_POLL` — pure polling, interrupts disabled
+- [ ] Track rolling IOPS: increment counter per completed I/O, compute average over 100ms window
+- [ ] Mode transition logic (with hysteresis to prevent thrashing):
+  - [ ] INTERRUPT → HYBRID: when IOPS > `low_threshold` (default 1000) for 3 consecutive windows
+  - [ ] HYBRID → POLL: when IOPS > `high_threshold` (default 50000) for 3 consecutive windows
+  - [ ] POLL → HYBRID: when IOPS < `high_threshold * 0.8` for 5 consecutive windows
+  - [ ] HYBRID → INTERRUPT: when IOPS < `low_threshold * 0.8` for 5 consecutive windows
+- [ ] Hybrid spin implementation: `rdtsc`-based busy-wait for `spin_us` microseconds checking `used->idx`
+- [ ] Pure poll: set `VIRTQ_AVAIL_F_NO_INTERRUPT = 1`, process completions inline after submission
+- [ ] Configurable via Registry:
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\Enabled` (default true)
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\LowThreshold` (default 1000)
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\HighThreshold` (default 50000)
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\SpinMicroseconds` (default 4)
+- [ ] Expose current mode: `HKLM\HARDWARE\VirtIO\Block0\IoMode` = `"interrupt"` / `"hybrid"` / `"poll"`
+- [ ] Log mode transitions: `[VirtIO] Block: I/O mode → HYBRID (IOPS=%u)`
+- [ ] Commit: `"virtio-blk: adaptive hybrid polling"`
+
+---
+
+## 13. I/O Priority Queues (🚀 Impossible OS Exclusive)
+
+### 13.1 Win32 I/O Priority to Virtqueue Mapping
+
+**Prompt:** Windows exposes I/O priority levels (`IoPriorityVeryLow`, `IoPriorityLow`, `IoPriorityNormal`, `IoPriorityHigh`, `IoPriorityCritical`) but viostor treats all VirtIO requests equally — no priority differentiation at the device level. Linux has blk-mq priority hints but virtio-blk ignores them. Impossible OS can be the first OS to map Win32 I/O priority classes to dedicated virtqueues when multi-queue (`F_MQ`) is negotiated. Assign queue 0 = Critical/High, queue 1 = Normal, queue 2+ = Low/VeryLow (background). The hypervisor (QEMU/KVM) can then schedule higher-priority queues with lower latency. This gives Impossible OS the first true I/O QoS in a VirtIO driver — no other OS does this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: I/O priority queue mapping"`. Add notes directly in this TODO section.
+
+- [ ] Requires `VIRTIO_BLK_F_MQ` (§6.1) with ≥ 3 queues
+- [ ] Define priority-to-queue mapping:
+  - [ ] Queue 0: `IoPriorityCritical` + `IoPriorityHigh` (system, page faults, real-time)
+  - [ ] Queue 1: `IoPriorityNormal` (standard user I/O)
+  - [ ] Queue 2+: `IoPriorityLow` + `IoPriorityVeryLow` (background defrag, indexing, prefetch)
+- [ ] In `virtio_blk_submit()`: read `current_thread->io_priority`, select target queue
+- [ ] Assign independent MSI-X vectors per priority queue
+- [ ] High-priority queue: process completions first in ISR (before normal/low queues)
+- [ ] Expose metrics per priority level: `HKLM\HARDWARE\VirtIO\Block0\QueueStats\High\IOPS`
+- [ ] Fallback: if `F_MQ` not available, treat all I/O as normal priority (single queue)
+- [ ] Commit: `"virtio-blk: I/O priority queue mapping"`
+
+---
+
+## 14. Live Configuration Change & Hot-Resize
+
+### 14.1 Config Change Notification Handling
+
+**Prompt:** The VirtIO spec defines config change interrupts (ISR status bit 1 / MSI-X config vector) that fire when the hypervisor modifies the device configuration — most importantly, the `capacity` field can change at runtime (hot-resize). Neither Windows viostor nor Linux virtio-blk handle this gracefully — Linux logs "capacity changed" but doesn't notify userspace block layer until manual rescan. Implement a config change ISR that atomically re-reads the device config (using `config_generation` loop), detects capacity changes, and proactively notifies the filesystem layer and Disk Manager GUI. Also handle topology changes and write-cache mode changes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: live config change handling"`. Add notes directly in this TODO section.
+
+- [ ] Config change ISR (MSI-X vector 1 from §3.1):
+  - [ ] Read ISR status register: check bit 1 (`VIRTIO_PCI_ISR_CONFIG`)
+  - [ ] Atomic config read: loop on `config_generation` until stable
+- [ ] Detect capacity change:
+  - [ ] Compare new `capacity` with stored `vol->capacity`
+  - [ ] If increased: `blkdev_update_capacity()` → notify VFS / filesystem
+  - [ ] If decreased: log critical warning, mark excess region as offline
+  - [ ] Update `Disk Manager` GUI: send resize event for live UI update
+- [ ] Detect topology change: re-read `physical_block_exp`, `opt_io_size`
+- [ ] Detect write-cache mode change: re-read `writeback` field
+- [ ] Expose event: `HKLM\HARDWARE\VirtIO\Block0\LastConfigChange` = timestamp
+- [ ] Log: `[VirtIO] Block: capacity changed %llu → %llu sectors (hot-resize)`
+- [ ] Commit: `"virtio-blk: live config change handling"`
+
+---
+
+## 15. Hot-Plug & Hot-Unplug
+
+### 15.1 PCI Device Hot-Plug/Unplug
+
+**Prompt:** VirtIO PCI devices can be hot-plugged and hot-unplugged by the hypervisor at runtime. Implement PCI bus event handling: on device arrival, scan the new PCI function, run the full init sequence, register with the block device layer, and notify Disk Manager. On device removal (surprise or managed), quiesce all pending I/O, flush caches, tear down virtqueues, free all memory, unregister the block device, and update Disk Manager. Neither Windows viostor nor early Linux versions handle surprise removal gracefully — they often panic or leak memory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: hot-plug/unplug support"`. Add notes directly in this TODO section.
+
+- [ ] Hot-plug detection: PCI bus enumeration event or ACPI notification
+  - [ ] Detect new VirtIO block PCI function (Vendor `0x1AF4`, Device `0x1042`/`0x1001`)
+  - [ ] Run full `virtio_blk_init()` sequence on new device
+  - [ ] Register new `blkdev` with disk subsystem
+  - [ ] Notify Disk Manager GUI: new drive appeared
+  - [ ] Log: `[VirtIO] Block: hot-plugged new device at PCI %02x:%02x.%x`
+- [ ] Hot-unplug (managed removal):
+  - [ ] Receive PCI removal notification
+  - [ ] Quiesce: stop accepting new I/O requests, drain pending queue
+  - [ ] Flush: `virtio_blk_flush()` → `scache_flush()`
+  - [ ] Teardown: free virtqueue memory, release MSI-X vectors, unmap BARs
+  - [ ] Unregister: `blkdev_unregister()`, remove from Disk Manager
+  - [ ] Log: `[VirtIO] Block: device unregistered (managed removal)`
+- [ ] Surprise removal (no notification):
+  - [ ] Detect via MMIO read returning `0xFFFFFFFF` (PCI function gone)
+  - [ ] Fail all pending I/O with `-ENODEV`
+  - [ ] Cleanup without touching device registers
+  - [ ] Log: `[VirtIO] Block: surprise removal detected — failing pending I/O`
+- [ ] Commit: `"virtio-blk: hot-plug/unplug support"`
+
+---
+
+## 16. I/O Latency Telemetry (🚀 Impossible OS Exclusive)
+
+### 16.1 Per-Request Nanosecond Latency Tracking
+
+**Prompt:** No other OS exposes per-request I/O latency histograms at the VirtIO driver level. Linux has `blk_mq` latency stats but they're buried in sysfs and not virtio-specific. Windows viostor has no equivalent. Implement nanosecond-resolution I/O latency tracking using `rdtsc` / TSC: stamp each request at submission, stamp again at completion, compute delta. Maintain per-device latency histograms in logarithmic buckets (< 1µs, 1–10µs, 10–100µs, 100µs–1ms, 1–10ms, 10–100ms, > 100ms). Expose buckets via Registry for Disk Manager to render real-time latency charts. Also track: average latency, P50, P99, P99.9 percentiles, and max latency. This gives Impossible OS best-in-class storage observability — visible directly in the desktop GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: I/O latency telemetry"`. Add notes directly in this TODO section.
+
+- [ ] Stamp each I/O request at submission: `req->submit_tsc = rdtsc()`
+- [ ] Stamp at completion: `req->complete_tsc = rdtsc()`
+- [ ] Compute latency: `(complete_tsc - submit_tsc) * ns_per_tick`
+- [ ] Calibrate TSC: compute `ns_per_tick` from `tsc_khz` (set during boot)
+- [ ] Maintain histogram buckets (atomic increments, lockless):
+  - [ ] `< 1 µs`, `1–10 µs`, `10–100 µs`, `100 µs–1 ms`, `1–10 ms`, `10–100 ms`, `> 100 ms`
+- [ ] Track running statistics:
+  - [ ] `total_requests`, `total_ns` (for average)
+  - [ ] `min_ns`, `max_ns`
+  - [ ] Approximate P50, P99, P99.9 using histogram interpolation
+- [ ] Separate read vs write latency histograms
+- [ ] Expose via Registry:
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Avg_us`
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\P99_us`
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Max_us`
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Histogram\*`
+  - [ ] Same for `Write`, `Flush`, `Discard`
+- [ ] Wire to Disk Manager: real-time latency chart (bar histogram + percentile lines)
+- [ ] Configurable: disable telemetry for zero-overhead production: `HKLM\SYSTEM\Drivers\VirtIO\LatencyTracking` (default enabled)
+- [ ] Commit: `"virtio-blk: I/O latency telemetry"`
+
+---
+
+## 17. Predictive Sequential Prefetch (🚀 Impossible OS Exclusive)
+
+### 17.1 Pattern-Based Read-Ahead
+
+**Prompt:** Neither Windows viostor nor Linux virtio-blk implement driver-level read-ahead — they rely on the filesystem or block layer above. Implement a lightweight sequential access detector directly in the VirtIO block driver. Track the last N read offsets per open file handle. When 3+ consecutive reads are sequential (LBA[n+1] == LBA[n] + size[n]), trigger a speculative prefetch of the next `prefetch_sectors` worth of data into a small ring buffer. If the next read hits the prefetch buffer, return it immediately without a device round-trip. If the pattern breaks, silently discard the prefetch buffer. This gives sub-microsecond read latency for sequential workloads (file copy, media playback, database scans). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: predictive sequential prefetch"`. Add notes directly in this TODO section.
+
+- [ ] Track per-device read history: ring buffer of last 4 `(sector, count)` pairs
+- [ ] Sequential detection: if `history[n].sector + history[n].count == history[n+1].sector` for 3+ entries
+- [ ] On detection: issue asynchronous prefetch read of next `prefetch_sectors` (default 256 = 128 KB)
+- [ ] Prefetch buffer: small PMM-allocated ring (default 512 KB, configurable)
+- [ ] On read: check if requested `(sector, count)` falls within prefetch buffer
+  - [ ] Hit: copy from prefetch buffer, return immediately (zero device latency)
+  - [ ] Miss: discard prefetch buffer, issue normal read
+- [ ] Pattern break: discard buffer, reset history
+- [ ] Don't prefetch past device capacity or past EOF (if filesystem provides file-size hint)
+- [ ] Track prefetch hit rate: `prefetch_hits / total_reads`
+- [ ] Configurable via Registry:
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\Prefetch\Enabled` (default true)
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\Prefetch\SizeKB` (default 128)
+  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\Prefetch\MinSequential` (default 3)
+- [ ] Expose: `HKLM\HARDWARE\VirtIO\Block0\PrefetchHitRate` = percentage
+- [ ] Disable during random I/O workloads (database OLTP) — auto-detected by miss rate > 80%
+- [ ] Commit: `"virtio-blk: predictive sequential prefetch"`
+
 ## Priority Order
 
 | Priority | Section                          | Description                                              |
@@ -408,16 +564,22 @@
 | 🟠 P1    | 2.4 Read-Only Detection         | Correctness — prevent writes to RO devices               |
 | 🟠 P1    | 2.3 Device Identification       | Feature — serial number for block device registry        |
 | 🟠 P1    | 5.1 Device Reset & Recovery     | Production — recover from device errors and timeouts     |
+| 🟠 P1    | 14.1 Live Config Change         | Correctness — handle hot-resize and config changes       |
 | 🟡 P2    | 3.2 Async I/O Path              | Performance — unblocks CPU during disk I/O               |
 | 🟡 P2    | 4.1 Discard (TRIM)              | SSD optimization — reclaim unused blocks                 |
 | 🟡 P2    | 4.2 Write-Zeroes                | Performance — efficient large zeroing                    |
 | 🟡 P2    | 5.2 Individual Queue Reset      | Less disruptive recovery than full device reset          |
+| 🟡 P2    | 15.1 Hot-Plug/Unplug            | Robustness — graceful device arrival/removal             |
 | 🟢 P3    | 6.1 Per-CPU Request Queues      | Scalability — eliminates virtqueue lock contention       |
 | 🟢 P3    | 7.1 Indirect Descriptors        | Scalability — large scatter-gather lists                 |
 | 🟢 P3    | 7.2 Event Index (Coalescing)    | Performance — reduce interrupt storms                    |
 | 🟢 P3    | 7.3 In-Order Completion         | Performance — optimized sequential descriptor recycling  |
 | 🟢 P3    | 7.4 Notification Data           | Performance — host-side polling optimization             |
 | 🟢 P3    | 10.1 Lifetime Metrics           | Monitoring — drive endurance in Disk Manager             |
+| 🟢 P3    | 12.1 Adaptive Hybrid Polling    | 🚀 **Exclusive** — workload-adaptive completion strategy |
+| 🟢 P3    | 13.1 I/O Priority Queues        | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS   |
+| 🟢 P3    | 16.1 I/O Latency Telemetry      | 🚀 **Exclusive** — ns-resolution histograms in GUI      |
+| 🟢 P3    | 17.1 Predictive Prefetch        | 🚀 **Exclusive** — driver-level sequential read-ahead   |
 | 🔵 P4    | 8.1 Packed Virtqueue            | Performance — better cache locality                      |
 | 🔵 P4    | 9.1 Secure Erase                | Feature — cryptographic data sanitization                |
 | 🔵 P4    | 11.1 Zoned Block Device         | Future — SMR/ZNS enterprise storage compatibility        |
@@ -426,29 +588,35 @@
 
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11 (viostor)              | 🐧 Linux (virtio-blk)                  | 🚀 Impossible OS                               |
-| -------------------------------- | ------------------------------------- | ---------------------------------------- | ----------------------------------------------- |
-| Basic read/write (split VQ)      | ✅                                     | ✅                                        | ✅ Done (MMIO, polling)                          |
-| Modern PCI transport (caps)      | ✅ PCI caps discovery                  | ✅ PCI caps + MMIO fallback               | ⬜ §1.1 P0 — hardcoded MMIO                     |
-| Feature negotiation              | ✅ Full VirtIO 1.0+                    | ✅ Full VirtIO 1.2                        | ⚠️ `VERSION_1` only — §2.1 P1                   |
-| Flush (write barriers)           | ✅ Write cache flush                   | ✅ `REQ_OP_FLUSH`                         | ⬜ §2.2 P0 — no flush support                   |
-| Block size / topology            | ✅ 4K-native aware                     | ✅ `blk_queue_physical_block_size()`      | ⬜ §2.1 P1 — assumes 512                        |
-| Device ID (GET_ID)               | ✅                                     | ✅ `virtblk_get_id()`                     | ⬜ §2.3 P1                                      |
-| Read-only detection              | ✅                                     | ✅ `set_disk_ro()`                        | ⬜ §2.4 P1                                      |
-| MSI-X interrupts                 | ✅ Per-queue MSI-X                     | ✅ MSI-X / IOAPIC                         | ⬜ §3.1 P0 — uses legacy PIC                    |
-| Async I/O (interrupt-driven)     | ✅ Overlapped I/O                      | ✅ `blk_mq_complete_request()`            | ⬜ §3.2 P2 — polling                            |
-| Memory barriers (VQ correctness) | ✅ Implicit in WDF                     | ✅ `virtio_wmb()` / `virt_rmb()`          | ⬜ §3.2 P2 — no explicit barriers               |
-| Discard (TRIM)                   | ✅ Optimize Drives                     | ✅ `blk_queue_discard()`                  | ⬜ §4.1 P2                                      |
-| Write-zeroes                     | ✅                                     | ✅ `REQ_OP_WRITE_ZEROES`                  | ⬜ §4.2 P2                                      |
-| Error recovery / device reset    | ✅ Automatic retry + reset             | ✅ `virtio_break_device()` + reset        | ⬜ §5.1 P1 — no recovery                        |
-| Individual queue reset           | ✅ VirtIO 1.2+                         | ✅ `virtqueue_reset()`                    | ⬜ §5.2 P2                                      |
-| Multi-queue (`F_MQ`)             | ✅ Per-vCPU queues                     | ✅ `blk-mq` multi-queue                   | ⬜ §6.1 P3                                      |
-| Indirect descriptors             | ✅                                     | ✅                                        | ⬜ §7.1 P3                                      |
-| Event index (coalescing)         | ✅                                     | ✅                                        | ⬜ §7.2 P3                                      |
-| In-order completion              | ✅                                     | ✅ `VIRTIO_F_IN_ORDER`                    | ⬜ §7.3 P3                                      |
-| Notification data                | ✅                                     | ✅ `VIRTIO_F_NOTIFICATION_DATA`           | ⬜ §7.4 P3                                      |
-| Packed virtqueue                 | ✅ (newer builds)                      | ✅ `virtio_ring.c` packed path            | ⬜ §8.1 P4                                      |
-| Secure erase                     | ✅ VirtIO 1.2+                         | ✅                                        | ⬜ §9.1 P4                                      |
-| Lifetime metrics                 | ✅ Health monitoring                   | ✅ `virtblk_attrs` sysfs                  | ⬜ §10.1 P3                                     |
-| Zoned block device               | ⬜ Not supported                       | ✅ `blk-zoned` + `virtblk_report_zones`   | ⬜ §11.1 P4                                     |
-| **MSI-X + MQ + async (default)** | ✅                                     | ✅                                        | ⬜ §3.1 + §6.1 + §3.2 — polling + single queue |
+| Feature                            | 🪟 Windows 11 (viostor)              | 🐧 Linux (virtio-blk)                  | 🚀 Impossible OS                               |
+| ---------------------------------- | ------------------------------------- | ---------------------------------------- | ----------------------------------------------- |
+| Basic read/write (split VQ)        | ✅                                     | ✅                                        | ✅ Done (MMIO, polling)                          |
+| Modern PCI transport (caps)        | ✅ PCI caps discovery                  | ✅ PCI caps + MMIO fallback               | ⬜ §1.1 P0 — hardcoded MMIO                     |
+| Feature negotiation                | ✅ Full VirtIO 1.0+                    | ✅ Full VirtIO 1.2                        | ⚠️ `VERSION_1` only — §2.1 P1                   |
+| Flush (write barriers)             | ✅ Write cache flush                   | ✅ `REQ_OP_FLUSH`                         | ⬜ §2.2 P0 — no flush support                   |
+| Block size / topology              | ✅ 4K-native aware                     | ✅ `blk_queue_physical_block_size()`      | ⬜ §2.1 P1 — assumes 512                        |
+| Device ID (GET_ID)                 | ✅                                     | ✅ `virtblk_get_id()`                     | ⬜ §2.3 P1                                      |
+| Read-only detection                | ✅                                     | ✅ `set_disk_ro()`                        | ⬜ §2.4 P1                                      |
+| MSI-X interrupts                   | ✅ Per-queue MSI-X                     | ✅ MSI-X / IOAPIC                         | ⬜ §3.1 P0 — uses legacy PIC                    |
+| Async I/O (interrupt-driven)       | ✅ Overlapped I/O                      | ✅ `blk_mq_complete_request()`            | ⬜ §3.2 P2 — polling                            |
+| Memory barriers (VQ correctness)   | ✅ Implicit in WDF                     | ✅ `virtio_wmb()` / `virt_rmb()`          | ⬜ §3.2 P2 — no explicit barriers               |
+| Discard (TRIM)                     | ✅ Optimize Drives                     | ✅ `blk_queue_discard()`                  | ⬜ §4.1 P2                                      |
+| Write-zeroes                       | ✅                                     | ✅ `REQ_OP_WRITE_ZEROES`                  | ⬜ §4.2 P2                                      |
+| Error recovery / device reset      | ✅ Automatic retry + reset             | ✅ `virtio_break_device()` + reset        | ⬜ §5.1 P1 — no recovery                        |
+| Individual queue reset             | ✅ VirtIO 1.2+                         | ✅ `virtqueue_reset()`                    | ⬜ §5.2 P2                                      |
+| Multi-queue (`F_MQ`)               | ✅ Per-vCPU queues                     | ✅ `blk-mq` multi-queue                   | ⬜ §6.1 P3                                      |
+| Indirect descriptors               | ✅                                     | ✅                                        | ⬜ §7.1 P3                                      |
+| Event index (coalescing)           | ✅                                     | ✅                                        | ⬜ §7.2 P3                                      |
+| In-order completion                | ✅                                     | ✅ `VIRTIO_F_IN_ORDER`                    | ⬜ §7.3 P3                                      |
+| Notification data                  | ✅                                     | ✅ `VIRTIO_F_NOTIFICATION_DATA`           | ⬜ §7.4 P3                                      |
+| Packed virtqueue                   | ✅ (newer builds)                      | ✅ `virtio_ring.c` packed path            | ⬜ §8.1 P4                                      |
+| Secure erase                       | ✅ VirtIO 1.2+                         | ✅                                        | ⬜ §9.1 P4                                      |
+| Lifetime metrics                   | ✅ Health monitoring                   | ✅ `virtblk_attrs` sysfs                  | ⬜ §10.1 P3                                     |
+| Zoned block device                 | ⬜ Not supported                       | ✅ `blk-zoned` + `virtblk_report_zones`   | ⬜ §11.1 P4                                     |
+| 🚀 Adaptive hybrid polling        | ⬜ Not implemented                     | ⬜ NAPI for net only, not blk             | ⬜ §12.1 P3 — **first for block devices**       |
+| 🚀 I/O priority → virtqueue QoS   | ⬜ Priority exists, no queue mapping   | ⬜ blk-mq hints ignored by virtio         | ⬜ §13.1 P3 — **first VirtIO QoS driver**       |
+| Live config change (hot-resize)    | ⚠️ Manual rescan needed                | ⚠️ Logs change, no auto-resize            | ⬜ §14.1 P1 — **proactive auto-resize**         |
+| Hot-plug / hot-unplug              | ✅ Basic                               | ✅ PCI hotplug                             | ⬜ §15.1 P2 — **graceful surprise removal**     |
+| 🚀 I/O latency telemetry (ns)     | ⬜ No driver-level histograms          | ⬜ sysfs block stats only (coarse)        | ⬜ §16.1 P3 — **real-time GUI histograms**      |
+| 🚀 Predictive sequential prefetch | ⬜ Relies on filesystem cache          | ⬜ Relies on block layer readahead        | ⬜ §17.1 P3 — **driver-level prefetch**         |
+| **MSI-X + MQ + async (default)**   | ✅                                     | ✅                                        | ⬜ §3.1 + §6.1 + §3.2 — polling + single queue |
