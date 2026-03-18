@@ -419,39 +419,9 @@
 
 ---
 
-## 8. SDK Repository
+## 8. GitHub Pages (Project Website) *(Stretch)*
 
-### 8.1 Create Public SDK Repo *(manual)*
-
-**Prompt:** Create `rizonesoft/impossible-os-sdk` as a public GitHub repository. This is the outward-facing repo that third-party developers will use to download SDK headers, libraries, and documentation without needing access to the private OS source. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt.
-
-> [!IMPORTANT]
-> → XREF: `TODO-535-SDK.md` — Full SDK development roadmap.
-> This section only covers the GitHub repository creation. SDK content
-> is defined in the phase 05 TODO.
-
-- [ ] Create `rizonesoft/impossible-os-sdk` (public) on GitHub
-- [ ] Add `README.md` explaining SDK purpose, contents, and how to use it
-- [ ] Add `LICENSE` (MIT)
-- [ ] Repository topics: `sdk`, `impossible-os`, `win32`, `c`, `operating-system`
-- [ ] Commit to SDK repo: `"chore: initial SDK public repo"`
-
-### 8.2 Sync SDK Directory on Push *(agent)*
-
-**Prompt:** Create `.github/workflows/sync-sdk.yml` in the private repo to automatically push `sdk/` changes to the public `impossible-os-sdk` repo on every push to `main` that touches `sdk/**`. Use the clone+copy+push approach. Store auth token as `SDK_REPO_TOKEN` secret. After completing all items, mark every item as `[x]`, and commit as `"ci: sync SDK to public repo on push"`.
-
-- [ ] Create `.github/workflows/sync-sdk.yml`
-- [ ] Trigger: `push` to `main` with paths filter `sdk/**`
-- [ ] Action: clone public SDK repo → remove old contents → copy `sdk/` → commit + push
-- [ ] Add `SDK_REPO_TOKEN` to private repo secrets (PAT: `public_repo` write scope)
-- [ ] Test end-to-end: change a file in `sdk/`, push, verify public SDK repo updates
-- [ ] Commit: `"ci: sync SDK to public repo on push"`
-
----
-
-## 9. GitHub Pages (Project Website) *(Stretch)*
-
-### 9.1 Create Project Landing Page *(stretch)*
+### 8.1 Create Project Landing Page *(stretch)*
 
 **Prompt:** Create a simple GitHub Pages site at `rizonesoft.github.io/impossible-os` as the public face of the project. Show screenshots, feature list, download links, and development blog. Static HTML/CSS — no framework needed. After completing, commit as `"docs: GitHub Pages landing page"`.
 
@@ -468,28 +438,26 @@
 | Priority | Section                            | Reason                                                  |
 |----------|------------------------------------|---------------------------------------------------------|
 | ✅ Done   | 1.1 Repository structure           | Both repos exist                                        |
-| 🔴 P0    | 2.1 Professional README            | First impression — critical for project visibility      |
-| 🔴 P0    | 2.2 Repository metadata            | Topics + description = GitHub search discoverability    |
-| 🟠 P1    | 3.1 Semantic versioning            | Foundation for releases and changelogs                  |
-| 🟠 P1    | 4.1 Build CI on push               | Catches regressions automatically                       |
-| 🟠 P1    | 5.1 Issue templates                | Professional issue intake for bug reports               |
-| 🟠 P1    | 7.1 Branch protection              | Prevent accidental force pushes to main                 |
-| 🟡 P2    | 2.4 CONTRIBUTING.md                | Enables external contributions                          |
-| 🟡 P2    | 2.6 SECURITY.md                    | Responsible vulnerability reporting                     |
-| 🟡 P2    | 3.2 Changelog generation           | Auto-generated release notes                            |
-| 🟡 P2    | 4.2 Automated disk image release   | Publish builds on tag push                              |
-| 🟡 P2    | 5.2 PR template                    | Consistent PR descriptions                              |
-| 🟡 P2    | 6.1 Label taxonomy                 | Organized issue triage                                  |
-| 🟡 P2    | 7.2 CODEOWNERS                     | Code review requirements for critical paths             |
-| 🟢 P3    | 2.3 LICENSE verification           | Quick check                                             |
-| 🟢 P3    | 2.5 CODE_OF_CONDUCT.md             | Community standards                                     |
-| 🟢 P3    | 3.3 Git tag conventions            | Documented but simple                                   |
-| 🟢 P3    | 4.3 Stale issue cleanup            | Automation polish                                       |
-| 🟢 P3    | 4.4 Auto-label PRs                 | Automation polish                                       |
-| 🟢 P3    | 6.2 Project board                  | Visual milestone tracking                               |
-| 🟢 P3    | 8.1 SDK repo create                | Before any SDK code is written                          |
-| 🟢 P3    | 8.2 SDK auto-sync CI               | After SDK repo + sdk/ directory exist                   |
-| 🔵 P4    | 9.1 GitHub Pages                   | Stretch — public project website                        |
+| ✅ Done   | 2.1 Professional README            | First impression — critical for project visibility      |
+| ✅ Done   | 2.2 Repository metadata            | Topics + description = GitHub search discoverability    |
+| ✅ Done   | 3.1 Semantic versioning            | Foundation for releases and changelogs                  |
+| ✅ Done   | 4.1 Build CI on push               | Catches regressions automatically                       |
+| ✅ Done   | 5.1 Issue templates                | Professional issue intake for bug reports               |
+| ✅ Done   | 7.1 Branch protection              | Prevent accidental force pushes to main                 |
+| ✅ Done   | 2.4 CONTRIBUTING.md                | Enables external contributions                          |
+| ✅ Done   | 2.6 SECURITY.md                    | Responsible vulnerability reporting                     |
+| ✅ Done   | 3.2 Changelog generation           | Auto-generated release notes                            |
+| ✅ Done   | 4.2 Automated disk image release   | Publish builds on tag push                              |
+| ✅ Done   | 5.2 PR template                    | Consistent PR descriptions                              |
+| ✅ Done   | 6.1 Label taxonomy                 | Organized issue triage                                  |
+| ✅ Done   | 7.2 CODEOWNERS                     | Code review requirements for critical paths             |
+| ✅ Done   | 2.3 LICENSE verification           | Quick check                                             |
+| ✅ Done   | 2.5 CODE_OF_CONDUCT.md             | Community standards                                     |
+| ✅ Done   | 3.3 Git tag conventions            | Documented but simple                                   |
+| ✅ Done   | 4.3 Stale issue cleanup            | Automation polish                                       |
+| ✅ Done   | 4.4 Auto-label PRs                 | Automation polish                                       |
+| ✅ Done   | 6.2 Project board                  | Visual milestone tracking                               |
+| 🔵 Stretch | 8.1 GitHub Pages                 | Public project website                                  |
 
 ---
 
@@ -525,20 +493,20 @@
 
 | Feature                         | Linux Kernel (GitHub)         | SerenityOS               | Impossible OS                            |
 |---------------------------------|-------------------------------|--------------------------|------------------------------------------|
-| Professional README             | ✅ Extensive                   | ✅ Screenshots + GIF     | ⬜ §2.1 P0                               |
-| Badges (build, version, LOC)    | ⚠️ Minimal                   | ✅ Build badge            | ⬜ §2.1 P0                               |
-| Semantic versioning             | ✅ `uname -r`                 | ✅ Date-based             | ⬜ §3.1 P1                               |
-| Auto-generated changelog        | ✅ `git log`                  | ⚠️ Manual                | ⬜ §3.2 P2                               |
-| CI build on push                | ✅ kernel.org CI              | ✅ GitHub Actions         | ⬜ §4.1 P1                               |
-| Automated releases              | ✅ kernel.org tarballs        | ✅ Nightly builds         | ⬜ §4.2 P2                               |
-| Issue templates (YAML forms)    | ❌ Mailing list               | ✅ Bug + feature forms    | ⬜ §5.1 P1                               |
-| PR template                     | ❌ Mailing list               | ✅ Template               | ⬜ §5.2 P2                               |
-| Branch protection               | ✅ Strict                      | ✅ Main protected         | ⬜ §7.1 P1                               |
-| CODEOWNERS                      | ✅ MAINTAINERS file           | ⚠️ Implied               | ⬜ §7.2 P2                               |
-| CONTRIBUTING.md                 | ✅ Extensive                   | ✅ Detailed               | ⬜ §2.4 P2                               |
-| SECURITY.md                     | ✅ security@kernel.org        | ⚠️ No formal policy      | ⬜ §2.6 P2                               |
-| Hardware compat reports         | ❌ Separate DB                | ❌ None                   | ⬜ §5.1 — **unique to Impossible OS**    |
-| Stale issue bot                 | ❌ N/A (mailing list)         | ⚠️ Manual                | ⬜ §4.3 P3                               |
-| Auto-label by path              | ❌ N/A                        | ⚠️ Manual labels         | ⬜ §4.4 P3                               |
-| **Version bump script**         | ❌ Manual                     | ❌ Manual                  | ⬜ §3.1 — **one-command version bump**   |
-| **Project website**             | ✅ kernel.org                 | ✅ serenityos.org         | ⬜ §9.1 P4 — GitHub Pages               |
+| Professional README             | ✅ Extensive                   | ✅ Screenshots + GIF     | ✅ §2.1                                  |
+| Badges (build, version, LOC)    | ⚠️ Minimal                   | ✅ Build badge            | ✅ §2.1                                  |
+| Semantic versioning             | ✅ `uname -r`                 | ✅ Date-based             | ✅ §3.1 CalVer                           |
+| Auto-generated changelog        | ✅ `git log`                  | ⚠️ Manual                | ✅ §3.2                                  |
+| CI build on push                | ✅ kernel.org CI              | ✅ GitHub Actions         | ✅ §4.1                                  |
+| Automated releases              | ✅ kernel.org tarballs        | ✅ Nightly builds         | ✅ §4.2                                  |
+| Issue templates (YAML forms)    | ❌ Mailing list               | ✅ Bug + feature forms    | ✅ §5.1                                  |
+| PR template                     | ❌ Mailing list               | ✅ Template               | ✅ §5.2                                  |
+| Branch protection               | ✅ Strict                      | ✅ Main protected         | ✅ §7.1                                  |
+| CODEOWNERS                      | ✅ MAINTAINERS file           | ⚠️ Implied               | ✅ §7.2                                  |
+| CONTRIBUTING.md                 | ✅ Extensive                   | ✅ Detailed               | ✅ §2.4                                  |
+| SECURITY.md                     | ✅ security@kernel.org        | ⚠️ No formal policy      | ✅ §2.6                                  |
+| Hardware compat reports         | ❌ Separate DB                | ❌ None                   | ✅ §5.1 — **unique to Impossible OS**    |
+| Stale issue bot                 | ❌ N/A (mailing list)         | ⚠️ Manual                | ✅ §4.3                                  |
+| Auto-label by path              | ❌ N/A                        | ⚠️ Manual labels         | ✅ §4.4                                  |
+| **Version bump script**         | ❌ Manual                     | ❌ Manual                  | ✅ §3.1 — **one-command version bump**   |
+| **Project website**             | ✅ kernel.org                 | ✅ serenityos.org         | ⬜ §8.1 — GitHub Pages (stretch)        |
