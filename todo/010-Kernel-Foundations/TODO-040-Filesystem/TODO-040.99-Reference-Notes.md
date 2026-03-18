@@ -105,19 +105,19 @@ UEFI Firmware
 The `system-disk.img` built by `scripts/build.sh` uses this layout:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│ LBA 0          │ Protective MBR (type 0xEE)                 │
-│ LBA 1          │ Primary GPT Header                         │
+┌──────────────────────────────────────────────────────────────┐
+│ LBA 0          │ Protective MBR (type 0xEE)                  │
+│ LBA 1          │ Primary GPT Header                          │
 │ LBA 2–33       │ Primary Partition Entry Array (128 entries) │
-│ LBA 2048+      │ Partition 1: ESP (FAT32, ~64 MB)           │
-│                │   └── EFI/BOOT/BOOTX64.EFI (Limine)        │
+│ LBA 2048+      │ Partition 1: ESP (FAT32, ~64 MB)            │
+│                │   └── EFI/BOOT/BOOTX64.EFI (Limine)         │
 │                │   └── limine.conf                           │
 │ LBA xxxxx+     │ Partition 2: IXFS Data (~remainder)         │
 │                │   └── kernel.exe                            │
 │                │   └── fonts/, icons/, wallpapers/           │
 │ End - 33       │ Backup Partition Entry Array                │
-│ Last LBA       │ Backup GPT Header                          │
-└─────────────────────────────────────────────────────────────┘
+│ Last LBA       │ Backup GPT Header                           │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---

@@ -333,8 +333,8 @@
 | Staggered spin-up               | ✅                                 | ✅                                    | ⬜ §4.2 P3                                    |
 | TRIM / discard                  | ✅ Optimize Drives                 | ✅ `fstrim`, auto-discard             | ⬜ §5.1 P1                                    |
 | Link power management (ALPM)    | ✅ Balanced / Performance          | ✅ `min_power` / `med_power_with_dipm` | ⬜ §6.1 P2                                    |
-| DevSleep (AHCI 1.3.1)          | ✅ Connected Standby               | ✅ Supported                           | ⬜ §6.2 P3                                    |
-| BIOS/OS handoff (BOHC)         | ✅                                 | ✅                                    | ⬜ §7.1 P1                                    |
+| DevSleep (AHCI 1.3.1)           | ✅ Connected Standby               | ✅ Supported                           | ⬜ §6.2 P3                                    |
+| BIOS/OS handoff (BOHC)          | ✅                                 | ✅                                    | ⬜ §7.1 P1                                    |
 | Enclosure management (LEDs)     | ✅ enclosure aware                 | ✅ `ledtrig-disk`                      | ⬜ §8.1 P4                                    |
 | Port multiplier                 | ✅ (limited)                       | ✅ `libata-pmp`                        | ⬜ §9.1 P4                                    |
 | SMART monitoring                | ✅ Storage Spaces / CrystalDisk    | ✅ `smartctl` (smartmontools)          | ⬜ §10.1 P2                                   |

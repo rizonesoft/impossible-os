@@ -1512,11 +1512,11 @@
 | Defrag / TRIM                   | ✅ `defrag` + Optimize Drive       | ✅ `e4defrag` + `fstrim`       | ⬜ §8.4 P3 — `defrag` + GUI                         |
 | Disk Usage Analyzer             | ✅ Storage Sense                   | ✅ `du`, `ncdu`, Baobab        | ⬜ §8.9 P3 — `diskuse` CLI + treemap GUI            |
 | Data Recovery                   | ✅ Previous Versions + third-party | ✅ `extundelete`, PhotoRec     | ⬜ §8.5 P3                                          |
-| **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root       | ✅ **IXFS is always the boot fs — §5.8**            |
-| **Per-block checksums on boot** | ❌                                 | ⚠️ btrfs only (not default)   | ✅ **IXFS boot volume — §5.9.3**                    |
+| **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root        | ✅ **IXFS is always the boot fs — §5.8**            |
+| **Per-block checksums on boot** | ❌                                 | ⚠️ btrfs only (not default)    | ✅ **IXFS boot volume — §5.9.3**                    |
 | **Alternate Data Streams**      | ✅ NTFS native                     | ❌ No equivalent               | ⬜ **IXFS native §5.9.5**                           |
 | **Security descriptors (ACLs)** | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different)      | ⬜ **IXFS native §5.9.6**                           |
 | **Hard links / symlinks**       | ✅ CreateHardLink / mklink         | ✅ link() / symlink()          | ⬜ **IXFS native §5.9.7**                           |
 | **Extended attributes**         | ✅ NtSetEaFile                     | ✅ setxattr                    | ⬜ **IXFS native §5.9.8**                           |
 | **Transparent compression**     | ✅ NTFS (16-cluster units)         | ✅ btrfs zstd                  | ⬜ **IXFS LZ4 per-block §5.9.9 — better than NTFS** |
-| **Integrated disk GUI tools**   | ✅ Disk Management (limited)       | ⚠️ GParted (separate install) | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |
+| **Integrated disk GUI tools**   | ✅ Disk Management (limited)       | ⚠️ GParted (separate install)  | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |

@@ -577,9 +577,9 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟢 P3    | 7.4 Notification Data           | Performance — host-side polling optimization             |
 | 🟢 P3    | 10.1 Lifetime Metrics           | Monitoring — drive endurance in Disk Manager             |
 | 🟢 P3    | 12.1 Adaptive Hybrid Polling    | 🚀 **Exclusive** — workload-adaptive completion strategy |
-| 🟢 P3    | 13.1 I/O Priority Queues        | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS   |
-| 🟢 P3    | 16.1 I/O Latency Telemetry      | 🚀 **Exclusive** — ns-resolution histograms in GUI      |
-| 🟢 P3    | 17.1 Predictive Prefetch        | 🚀 **Exclusive** — driver-level sequential read-ahead   |
+| 🟢 P3    | 13.1 I/O Priority Queues        | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS    |
+| 🟢 P3    | 16.1 I/O Latency Telemetry      | 🚀 **Exclusive** — ns-resolution histograms in GUI       |
+| 🟢 P3    | 17.1 Predictive Prefetch        | 🚀 **Exclusive** — driver-level sequential read-ahead    |
 | 🔵 P4    | 8.1 Packed Virtqueue            | Performance — better cache locality                      |
 | 🔵 P4    | 9.1 Secure Erase                | Feature — cryptographic data sanitization                |
 | 🔵 P4    | 11.1 Zoned Block Device         | Future — SMR/ZNS enterprise storage compatibility        |
@@ -590,7 +590,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 
 | Feature                            | 🪟 Windows 11 (viostor)              | 🐧 Linux (virtio-blk)                  | 🚀 Impossible OS                               |
 | ---------------------------------- | ------------------------------------- | ---------------------------------------- | ----------------------------------------------- |
-| Basic read/write (split VQ)        | ✅                                     | ✅                                        | ✅ Done (MMIO, polling)                          |
+| Basic read/write (split VQ)        | ✅                                     | ✅                                        | ✅ Done (MMIO, polling)                         |
 | Modern PCI transport (caps)        | ✅ PCI caps discovery                  | ✅ PCI caps + MMIO fallback               | ⬜ §1.1 P0 — hardcoded MMIO                     |
 | Feature negotiation                | ✅ Full VirtIO 1.0+                    | ✅ Full VirtIO 1.2                        | ⚠️ `VERSION_1` only — §2.1 P1                   |
 | Flush (write barriers)             | ✅ Write cache flush                   | ✅ `REQ_OP_FLUSH`                         | ⬜ §2.2 P0 — no flush support                   |
@@ -613,10 +613,10 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Secure erase                       | ✅ VirtIO 1.2+                         | ✅                                        | ⬜ §9.1 P4                                      |
 | Lifetime metrics                   | ✅ Health monitoring                   | ✅ `virtblk_attrs` sysfs                  | ⬜ §10.1 P3                                     |
 | Zoned block device                 | ⬜ Not supported                       | ✅ `blk-zoned` + `virtblk_report_zones`   | ⬜ §11.1 P4                                     |
-| 🚀 Adaptive hybrid polling        | ⬜ Not implemented                     | ⬜ NAPI for net only, not blk             | ⬜ §12.1 P3 — **first for block devices**       |
-| 🚀 I/O priority → virtqueue QoS   | ⬜ Priority exists, no queue mapping   | ⬜ blk-mq hints ignored by virtio         | ⬜ §13.1 P3 — **first VirtIO QoS driver**       |
+| Adaptive hybrid polling            | ⬜ Not implemented                     | ⬜ NAPI for net only, not blk             | ⬜ §12.1 P3 — **first for block devices**       |
+| I/O priority → virtqueue QoS       | ⬜ Priority exists, no queue mapping   | ⬜ blk-mq hints ignored by virtio         | ⬜ §13.1 P3 — **first VirtIO QoS driver**       |
 | Live config change (hot-resize)    | ⚠️ Manual rescan needed                | ⚠️ Logs change, no auto-resize            | ⬜ §14.1 P1 — **proactive auto-resize**         |
-| Hot-plug / hot-unplug              | ✅ Basic                               | ✅ PCI hotplug                             | ⬜ §15.1 P2 — **graceful surprise removal**     |
-| 🚀 I/O latency telemetry (ns)     | ⬜ No driver-level histograms          | ⬜ sysfs block stats only (coarse)        | ⬜ §16.1 P3 — **real-time GUI histograms**      |
-| 🚀 Predictive sequential prefetch | ⬜ Relies on filesystem cache          | ⬜ Relies on block layer readahead        | ⬜ §17.1 P3 — **driver-level prefetch**         |
-| **MSI-X + MQ + async (default)**   | ✅                                     | ✅                                        | ⬜ §3.1 + §6.1 + §3.2 — polling + single queue |
+| Hot-plug / hot-unplug              | ✅ Basic                               | ✅ PCI hotplug                            | ⬜ §15.1 P2 — **graceful surprise removal**     |
+| I/O latency telemetry (ns)         | ⬜ No driver-level histograms          | ⬜ sysfs block stats only (coarse)        | ⬜ §16.1 P3 — **real-time GUI histograms**      |
+| Predictive sequential prefetch     | ⬜ Relies on filesystem cache          | ⬜ Relies on block layer readahead        | ⬜ §17.1 P3 — **driver-level prefetch**         |
+| **MSI-X + MQ + async (default)**   | ✅                                     | ✅                                        | ⬜ §3.1 + §6.1 + §3.2 — polling + single queue  |

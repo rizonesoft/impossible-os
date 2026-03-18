@@ -1406,7 +1406,7 @@ CPUID probing, and the fallback path.
 ## OS Comparison
 
 | Feature                        | 🪟 Windows 11 Kernel          | 🐧 Linux Kernel             | 🚀 Impossible OS                                                       |
-| ------------------------------ | ---------------------------- | -------------------------- | --------------------------------------------------------------------- |
+| ------------------------------ | ----------------------------- | ---------------------------- | ---------------------------------------------------------------------- |
 | Kernel Threads                 | ✅ `KTHREAD`                  | ✅ `task_struct`            | ✅ §1 Done                                                             |
 | Mutexes                        | ✅ `KMUTEX`                   | ✅ `mutex_t`                | ✅ §2 Done                                                             |
 | Semaphores                     | ✅ `KSEMAPHORE`               | ✅ `semaphore`              | ✅ §3 Done                                                             |
@@ -1417,7 +1417,7 @@ CPUID probing, and the fallback path.
 | Wait/Event Objects             | ✅ `KEVENT`                   | ✅ `completion`             | ✅ `event_wait/set/reset`, MANUAL+AUTO_RESET                           |
 | Work Queues                    | ✅ DPC + work items           | ✅ `workqueue_struct`       | ✅ `workqueue_create/enqueue`, `sys_wq`                                |
 | Memory Barriers                | ✅ `KeMemoryBarrier`          | ✅ `mb()`/`rmb()`/`wmb()`   | ✅ `barrier()` + `mb/rmb/wmb()` + `smp_*`                              |
-| Priority Inheritance           | ⚠️ Heuristic only            | ⚠️ Opt-in `rt_mutex`       | ✅ `thread_boost/restore_priority`, default on all mutexes             |
+| Priority Inheritance           | ⚠️ Heuristic only             | ⚠️ Opt-in `rt_mutex`        | ✅ `thread_boost/restore_priority`, default on all mutexes             |
 | Seqlocks                       | ❌                            | ✅ `seqlock_t`              | ✅ `seqlock_t` / `DEFINE_SEQLOCK`, `seqlock_read_begin/retry`          |
 | RCU                            | ❌                            | ✅ `rcu_*`                  | ✅ `rcu_read_lock/unlock`, `synchronize_rcu`, `rcu_assign/dereference` |
 | SMP / Per-CPU                  | ✅ Full NUMA                  | ✅ Full NUMA                | ✅ §14 Phase 1 — AP bringup, LAPIC timer, VBox                         |
@@ -1429,7 +1429,7 @@ CPUID probing, and the fallback path.
 | **Graphical deadlock diagram** | ❌ BSOD only                  | ❌ Text dmesg only          | ⬜ **§20 — Impossible OS only**                                        |
 | **Named lock browser**         | ❌                            | ❌ File locks only          | ⬜ **§21 — Impossible OS only**                                        |
 | **Thread-Local Storage (TLS)** | ✅ Full TEB                   | ✅ `pthread_key_*`          | ⬜ §22 P1 — `FS`-base, ELF `PT_TLS`                                    |
-| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)  | ⬜ **§23 P0 — FIFO ordering**                                          |
+| **Ticket locks (fair)**        | ❌ CAS spinlocks only         | ⚠️ Queued spinlocks (SMP)   | ⬜ **§23 P0 — FIFO ordering**                                          |
 | **Kernel watchdog**            | ✅ KeBugCheck timeout         | ✅ `CONFIG_LOCKUP_DETECTOR` | ⬜ §24 P1 — configurable via Registry                                  |
 | **Stack guard pages**          | ✅ Automatic (Win32 stack)    | ✅ `MAP_STACK` + `SIGSEGV`  | ⬜ §25 P0 — `vmm_map_guard` per thread                                 |
 | **Preemption count**           | ✅ `KeEnterCriticalRegion`    | ✅ `preempt_disable/enable` | ⬜ §26 P0 — prerequisite for RCU                                       |
@@ -1437,7 +1437,7 @@ CPUID probing, and the fallback path.
 | **pthread_once / once_flag**   | ✅ `InitOnceExecuteOnce`      | ✅ `pthread_once`           | ⬜ §28 P1 — ~15 lines, zero overhead                                   |
 | **pthread_barrier_t**          | ❌ No equivalent              | ✅ `pthread_barrier_t`      | ⬜ **§29 P1 — kernel-native, beats Windows**                           |
 | **KCSAN data-race detector**   | ❌ No equivalent              | ✅ `CONFIG_KCSAN` (v5.8+)   | ⬜ **§30 P2 — beats Windows, matches Linux**                           |
-| **TSX/HTM lock elision**       | ❌ No equivalent              | ⚠️ Disabled (TAA CVE-2019) | ⬜ §31 Future/P3 — safe-only, CPUID gated                              |
+| **TSX/HTM lock elision**       | ❌ No equivalent              | ⚠️ Disabled (TAA CVE-2019) | ⬜ §31 Future/P3 — safe-only, CPUID gated                               |
 
 > **After §17–29:** Impossible OS exceeds BOTH Windows 11 and Linux in lock safety, ergonomics, and observability.
 > **After §30:** Impossible OS matches Linux KCSAN and exceeds Windows (no equivalent) in race detection.
