@@ -39,7 +39,7 @@ for svg in "$SVG_DIR"/*.svg; do
         rsvg-convert -w "$size" -h "$size" "$svg" -o "$out"
         echo "  [OK] ${name}.png @ ${size}px"
     done
-    ((count++))
+    count=$((count + 1))
 done
 
 if [ "$count" -eq 0 ]; then
