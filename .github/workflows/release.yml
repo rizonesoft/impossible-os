@@ -155,14 +155,20 @@ jobs:
           TAG="${{ steps.version.outputs.tag }}"
           ZIP_NAME="${{ steps.package.outputs.zip_name }}"
 
-          # Get commits since previous tag
+          # Get commits since previous tag (max 20)
           PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
           if [ -n "$PREV_TAG" ]; then
             echo "Generating changelog: $PREV_TAG → $TAG"
-            BODY=$(git log --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD)
+            BODY=$(git log --pretty=format:"- %s (\`%h\`)" "$PREV_TAG"..HEAD | head -20)
+            COUNT=$(git rev-list --count "$PREV_TAG"..HEAD)
+            if [ "$COUNT" -gt 20 ]; then
+              BODY="$BODY"$'\n'"- ... and $(( COUNT - 20 )) more commits"
+            fi
           else
-            echo "Generating changelog: full history → $TAG"
-            BODY=$(git log --pretty=format:"- %s (\`%h\`)" HEAD)
+            echo "Generating changelog: last 20 commits → $TAG (first release)"
+            BODY=$(git log --pretty=format:"- %s (\`%h\`)" -20 HEAD)
+            TOTAL=$(git rev-list --count HEAD)
+            BODY="$BODY"$'\n'"- ... and $(( TOTAL - 20 )) more commits (first release)"
           fi
 
           # Write release notes
