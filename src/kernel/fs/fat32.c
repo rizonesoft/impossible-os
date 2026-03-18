@@ -83,6 +83,7 @@ struct fat32_file {
     struct vfs_node node;
     uint32_t first_cluster;
     uint32_t file_size;
+    uint32_t dir_cluster;     /* parent directory cluster (for dir entry updates) */
 };
 
 /* Static storage */
@@ -1605,21 +1606,213 @@ static int fat32_file_read(struct vfs_node *node, uint32_t offset,
     return (int)bytes_read;
 }
 
-/* VFS-compatible file write: write data at offset into the file.
- * For simplicity, this always rewrites the entire file (FAT32 doesn't
- * support efficient partial writes without a lot more complexity). */
+/* ---- Helper: update file_size in the on-disk directory entry ----
+ *
+ * Finds the directory entry whose first_cluster matches target_fc in the
+ * root directory, then writes the updated file_size.
+ * This is called after an offset-aware write that extended the file. */
+static int fat32_update_dir_size(uint32_t search_dir, uint32_t target_fc,
+                                  uint32_t new_size)
+{
+    uint32_t bytes_per_cluster = bpb.sectors_per_cluster * 512;
+    uint8_t *cbuf;
+    uint32_t cur_cluster = search_dir;
+
+    cbuf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cbuf)
+        return -1;
+
+    while (cur_cluster >= 2 && cur_cluster < FAT32_EOC) {
+        uint32_t sector = cluster_to_sector(cur_cluster);
+        uint32_t i;
+
+        if (fat32_read_sectors_multi(sector, bpb.sectors_per_cluster, cbuf) != 0)
+            break;
+
+        for (i = 0; i < bytes_per_cluster; i += 32) {
+            struct fat32_dir_entry *de = (struct fat32_dir_entry *)&cbuf[i];
+            uint32_t fc;
+
+            if (de->name[0] == 0x00) goto upd_not_found;
+            if (de->name[0] == 0xE5) continue;
+            if (de->attr == FAT32_ATTR_LFN) continue;
+            if (de->attr & FAT32_ATTR_VOLUME_ID) continue;
+
+            fc = ((uint32_t)de->first_cluster_hi << 16)
+               | (uint32_t)de->first_cluster_lo;
+
+            if (fc == target_fc) {
+                de->file_size = new_size;
+                fat32_write_sectors_multi(sector, bpb.sectors_per_cluster, cbuf);
+                kfree(cbuf);
+                return 0;
+            }
+        }
+        cur_cluster = fat32_get_fat_entry(cur_cluster);
+    }
+
+upd_not_found:
+    kfree(cbuf);
+    return -1;
+}
+
+/* VFS-compatible file write: offset-aware write into existing cluster chain.
+ * Walks the FAT chain to the correct cluster, does read-modify-write for
+ * partial clusters, allocates new clusters when extending past EOF. */
 static int fat32_file_write_vfs(struct vfs_node *node, uint32_t offset,
                                 uint32_t size, const uint8_t *buffer)
 {
     struct fat32_file *f = (struct fat32_file *)node->fs_data;
-    (void)offset;  /* FAT32 write is always full-file overwrite */
+    uint32_t bytes_per_cluster;
+    uint32_t cluster;
+    uint32_t bytes_written = 0;
+    uint32_t cluster_offset;
+    uint8_t *cluster_buf;
 
     if (!f || !buffer || size == 0)
         return -1;
 
-    /* Use the parent directory cluster to locate this file.
-     * The root node stores the dir cluster; subdirectories use their own. */
-    return fat32_write_file(bpb.root_cluster, node->name, buffer, size);
+    bytes_per_cluster = bpb.sectors_per_cluster * 512;
+    cluster_buf = (uint8_t *)kmalloc(bytes_per_cluster);
+    if (!cluster_buf)
+        return -1;
+
+    /* If the file has no clusters yet (empty file), allocate the first one */
+    cluster = f->first_cluster;
+    if (cluster < 2 || cluster >= FAT32_EOC) {
+        cluster = fat32_alloc_cluster();
+        if (cluster == 0) {
+            kfree(cluster_buf);
+            return -1;
+        }
+        fat32_zero_cluster(cluster);
+        f->first_cluster = cluster;
+        node->inode = cluster;
+
+        /* Update directory entry's first_cluster fields.
+         * Since the old first_cluster was 0/invalid, we find by name. */
+        {
+            uint32_t bpc = bpb.sectors_per_cluster * 512;
+            uint8_t *dbuf = (uint8_t *)kmalloc(bpc);
+            if (dbuf) {
+                uint8_t short_name[11];
+                uint32_t dc = f->dir_cluster;
+                fat32_make_short_name(node->name, short_name);
+
+                while (dc >= 2 && dc < FAT32_EOC) {
+                    uint32_t sec = cluster_to_sector(dc);
+                    uint32_t di;
+                    if (fat32_read_sectors_multi(sec, bpb.sectors_per_cluster,
+                                                 dbuf) != 0)
+                        break;
+                    for (di = 0; di < bpc; di += 32) {
+                        struct fat32_dir_entry *de =
+                            (struct fat32_dir_entry *)&dbuf[di];
+                        int j, match;
+                        if (de->name[0] == 0x00) goto fc_done;
+                        if (de->name[0] == 0xE5) continue;
+                        if (de->attr == FAT32_ATTR_LFN) continue;
+                        match = 1;
+                        for (j = 0; j < 11; j++) {
+                            if (de->name[j] != short_name[j]) {
+                                match = 0; break;
+                            }
+                        }
+                        if (match) {
+                            de->first_cluster_hi = (uint16_t)(cluster >> 16);
+                            de->first_cluster_lo = (uint16_t)(cluster & 0xFFFF);
+                            fat32_write_sectors_multi(sec,
+                                bpb.sectors_per_cluster, dbuf);
+                            goto fc_done;
+                        }
+                    }
+                    dc = fat32_get_fat_entry(dc);
+                }
+fc_done:
+                kfree(dbuf);
+            }
+        }
+    }
+
+    /* Skip clusters to reach the offset */
+    {
+        uint32_t skip = offset / bytes_per_cluster;
+        uint32_t s;
+        for (s = 0; s < skip; s++) {
+            uint32_t next = fat32_next_cluster(cluster);
+            if (next < 2 || next >= FAT32_EOC) {
+                /* Need to extend chain to reach the offset */
+                next = fat32_alloc_cluster();
+                if (next == 0) {
+                    kfree(cluster_buf);
+                    return -1;
+                }
+                fat32_zero_cluster(next);
+                fat32_set_fat_entry(cluster, next);
+            }
+            cluster = next;
+        }
+    }
+    cluster_offset = offset % bytes_per_cluster;
+
+    /* Write data cluster by cluster */
+    while (bytes_written < size) {
+        uint32_t sector = cluster_to_sector(cluster);
+        uint32_t to_write;
+        uint32_t ci;
+
+        /* Read existing cluster data (required for partial writes) */
+        if (fat32_read_sectors_multi(sector, bpb.sectors_per_cluster,
+                                     cluster_buf) != 0)
+            break;
+
+        to_write = bytes_per_cluster - cluster_offset;
+        if (to_write > size - bytes_written)
+            to_write = size - bytes_written;
+
+        /* Copy buffer into the correct position within the cluster */
+        for (ci = 0; ci < to_write; ci++)
+            cluster_buf[cluster_offset + ci] = buffer[bytes_written + ci];
+
+        /* Write modified cluster back to disk */
+        if (fat32_write_sectors_multi(sector, bpb.sectors_per_cluster,
+                                      cluster_buf) != 0)
+            break;
+
+        bytes_written += to_write;
+        cluster_offset = 0;  /* only first cluster may have an offset */
+
+        /* Move to next cluster, allocating if needed */
+        if (bytes_written < size) {
+            uint32_t next = fat32_next_cluster(cluster);
+            if (next < 2 || next >= FAT32_EOC) {
+                /* Extend chain: allocate new cluster */
+                next = fat32_alloc_cluster();
+                if (next == 0)
+                    break;
+                fat32_zero_cluster(next);
+                fat32_set_fat_entry(cluster, next);
+            }
+            cluster = next;
+        }
+    }
+
+    kfree(cluster_buf);
+
+    /* Update file size if the write extended the file */
+    {
+        uint32_t end_pos = offset + bytes_written;
+        if (end_pos > f->file_size) {
+            f->file_size = end_pos;
+            node->size = end_pos;
+            fat32_update_dir_size(f->dir_cluster, f->first_cluster, end_pos);
+        }
+    }
+
+    /* Invalidate dir cache so subsequent reads see updated size */
+    dir_file_count = 0;
+
+    return (int)bytes_written;
 }
 
 /* Forward declarations for file ops */
@@ -1694,6 +1887,7 @@ static struct vfs_node *fat32_finddir(struct vfs_node *node, const char *name)
             else
                 dir_files[i].node.ops = &fat32_file_ops;
             dir_files[i].node.fs_data = &dir_files[i];
+            dir_files[i].dir_cluster = dir_cluster;
             return &dir_files[i].node;
         }
     }

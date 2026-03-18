@@ -65,6 +65,8 @@ int fat32_create_dir(uint32_t parent_cluster, const char *name);
 
 /* Write data to a file (overwrite mode — replaces existing content).
  * Creates the directory entry if it doesn't exist.
+ * NOTE: The VFS write path (fat32_file_write_vfs) supports offset-aware
+ * writes with append. This function is for bulk writes by filename.
  * Returns 0 on success, -1 on failure. */
 int fat32_write_file(uint32_t dir_cluster, const char *name,
                      const void *data, uint32_t size);

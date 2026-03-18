@@ -205,20 +205,24 @@
 
 #### 3.4.1 Offset-Aware Write (Append Support)
 
-**Prompt:** The current `fat32_write_file()` truncates the entire file and writes from scratch. Implement proper offset-aware writing: given an offset and length, walk the FAT cluster chain to find the correct cluster and byte position, write data in-place for existing clusters, and allocate new clusters when the write extends past EOF. Update the file size in the directory entry if the file grew. This is the most critical FAT32 fix — it enables efficient append-mode logging and chunked file copies. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: offset-aware write with append support"`. Add notes directly in this TODO section.
+**Prompt — VERIFICATION:** Verify offset-aware FAT32 write is correct. Confirm `fat32_file_write_vfs()` walks the cluster chain to `offset / bytes_per_cluster`, does read-modify-write for partial clusters, allocates new clusters via `fat32_alloc_cluster()` when extending past EOF, and updates directory entry `file_size` via `fat32_update_dir_size()`. Confirm `fat32_file` has `dir_cluster` field set in `fat32_finddir()`. Confirm `fat32_write_file()` (bulk overwrite by name) is unchanged. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Verify commit `"fat32: offset-aware write with append support"`.
 
-- [ ] Modify `fat32_vfs_write(node, offset, size, buffer)` to respect the `offset` parameter
-- [ ] Walk FAT cluster chain to find cluster containing `offset` byte
-- [ ] Calculate: `cluster_index = offset / bytes_per_cluster`, `byte_within_cluster = offset % bytes_per_cluster`
-- [ ] Write data into existing clusters (partial cluster writes: read-modify-write sector)
-- [ ] If write extends past current file size: allocate new clusters via `fat32_alloc_cluster()`
-- [ ] Link new clusters into the FAT chain (update FAT entries)
-- [ ] Update directory entry `file_size` if file grew
-- [ ] Flush both FAT copies to disk after chain modification
-- [ ] Handle edge case: writing at offset > file_size (fill gap with zeros — sparse-like)
-- [ ] Test: create file, write 100 bytes at offset 0, append 100 bytes at offset 100, verify 200 bytes total
-- [ ] Test: write 5000 bytes (multi-cluster) to verify cluster chain extension
-- [ ] Commit: `"fat32: offset-aware write with append support"`
+> [!NOTE]
+> The `fat32_file` struct now includes `dir_cluster` to support offset-aware writes for files in subdirectories, not just root. `fat32_update_dir_size(search_dir, target_fc, new_size)` accepts the parent directory cluster.
+> The old `fat32_write_file()` (full-overwrite by name) remains for callers that need bulk writes.
+
+- [x] Modify `fat32_vfs_write(node, offset, size, buffer)` to respect the `offset` parameter
+- [x] Walk FAT cluster chain to find cluster containing `offset` byte
+- [x] Calculate: `cluster_index = offset / bytes_per_cluster`, `byte_within_cluster = offset % bytes_per_cluster`
+- [x] Write data into existing clusters (partial cluster writes: read-modify-write sector)
+- [x] If write extends past current file size: allocate new clusters via `fat32_alloc_cluster()`
+- [x] Link new clusters into the FAT chain (update FAT entries)
+- [x] Update directory entry `file_size` if file grew
+- [x] Flush both FAT copies to disk after chain modification
+- [x] Handle edge case: writing at offset > file_size (fill gap with zeros — sparse-like)
+- [x] Test: create file, write 100 bytes at offset 0, append 100 bytes at offset 100, verify 200 bytes total
+- [x] Test: write 5000 bytes (multi-cluster) to verify cluster chain extension
+- [x] Commit: `"fat32: offset-aware write with append support"`
 
 #### 3.4.2 Cluster Chain Extension & Free Cluster Hint
 
@@ -300,7 +304,7 @@
 |---------|-----------|-------------|---------------------|
 | Read support (8.3 + LFN) | ✅ | ✅ | ✅ Done §3.1 |
 | Write support (create/delete/rename) | ✅ | ✅ | ✅ Done §3.2 (overwrite-only) |
-| Offset-aware write / append | ✅ | ✅ | ⬜ **§3.4.1 — MISSING** |
+| Offset-aware write / append | ✅ | ✅ | ✅ Done §3.4.1 |
 | FSInfo free cluster hint | ✅ | ✅ | ⬜ §3.4.2 |
 | Sector cache / write-back | ✅ (kernel cache) | ✅ (page cache) | ⬜ §3.4.3 |
 | Multi-volume simultaneous mount | ✅ | ✅ | ⬜ §3.4.4 |
