@@ -36,9 +36,9 @@ count_lines() {
     echo "$files $total"
 }
 
-# Kernel / OS source code
-read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include")"
-read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include")"
+# Kernel / OS source code + SDK
+read -r c_files c_lines <<< "$(count_lines c "$ROOT/src" "$ROOT/include" "$ROOT/sdk")"
+read -r h_files h_lines <<< "$(count_lines h "$ROOT/src" "$ROOT/include" "$ROOT/sdk")"
 read -r asm_files asm_lines <<< "$(count_lines asm "$ROOT/src")"
 
 # Build system & scripts
