@@ -279,6 +279,20 @@
 - [ ] Optimize: cache cluster chains for open files
 - [ ] Commit: `"exfat: FAT-chained file reader"`
 
+### 6.3 Cluster Chain Cache
+
+**Prompt:** For FAT-chained files, every read that starts mid-file must walk the FAT chain from `FirstCluster`. A file at offset 100 MB on a 32 KB cluster volume requires traversing ~3,200 FAT entries. Implement a per-file cluster chain cache: on `open()`, walk the entire chain once and store it as a flat array of cluster numbers. Subsequent reads use O(1) indexed access: `clusters[offset / bytes_per_cluster]`. This is especially critical for media files on SD cards where seek performance matters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: cluster chain cache"`. Add notes directly in this TODO section.
+
+- [ ] On `exfat_open()` for FAT-chained files (NoFatChain = 0):
+  - [ ] Walk entire chain: `FirstCluster` → FAT[n] → FAT[n+1] → ... → `0xFFFFFFFF`
+  - [ ] Store as flat array: `uint32_t *chain` (length = `DataLength / bytes_per_cluster`)
+  - [ ] Allocate via `pmm_alloc_contiguous()` if > 4 KB
+- [ ] On `exfat_read()`: `physical_cluster = chain[offset / bytes_per_cluster]`
+- [ ] On `exfat_close()`: free cached chain
+- [ ] Skip caching for NoFatChain files (already O(1) via direct calculation)
+- [ ] Telemetry: log if chain length > 1000: `[exFAT] Large chain: %u clusters for '%s'`
+- [ ] Commit: `"exfat: cluster chain cache"`
+
 ---
 
 ## 7. Directory Lookup & Path Resolution
@@ -407,6 +421,92 @@
 
 ---
 
+## 11. TexFAT Dual-FAT/Bitmap Support
+
+### 11.1 TexFAT Reader
+
+**Prompt:** TexFAT (Transaction-safe exFAT) uses dual FATs and dual Allocation Bitmaps for crash resilience. `NumberOfFats` in the boot sector is 2 (instead of 1), and the `ActiveFat` bit in `VolumeFlags` indicates which FAT/bitmap pair is current. The secondary FAT starts at `FatOffset + FatLength`, and the secondary bitmap is found via a second `0x81` entry with `BitmapFlags` bit 0 set. On mount, use the active pair. If the volume is dirty, compare both pairs to detect corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: TexFAT dual FAT/bitmap support"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> TexFAT is primarily used in Windows CE/Embedded devices and automotive systems.
+> Linux's exfat driver does NOT support TexFAT. Supporting it gives Impossible OS
+> better compatibility with embedded and automotive SD cards.
+
+- [ ] Detect TexFAT: check `NumberOfFats == 2` in boot sector
+- [ ] Read `ActiveFat` flag from `VolumeFlags` bit 0
+- [ ] If `ActiveFat == 0`: use FAT at `FatOffset`, bitmap with `BitmapFlags == 0`
+- [ ] If `ActiveFat == 1`: use FAT at `FatOffset + FatLength`, bitmap with `BitmapFlags == 1`
+- [ ] On dirty volume: compare active vs inactive FAT/bitmap
+  - [ ] Mismatches indicate incomplete transaction — log warning
+  - [ ] Use the active pair (it's the committed state)
+- [ ] Log: `[exFAT] TexFAT detected: using FAT %d (active)`
+- [ ] Commit: `"exfat: TexFAT dual FAT/bitmap support"`
+
+---
+
+## 12. Removable Media Health & Recovery (🚀 Impossible OS Feature)
+
+### 12.1 Removable Media Health Dashboard
+
+**Prompt:** exFAT is the primary filesystem for SDXC cards and large USB drives — media that users frequently unplug without safely ejecting. Aggregate exFAT volume health into a Disk Manager panel: dirty flag status, bad cluster count from the Allocation Bitmap, FAT consistency (any chains pointing to free clusters?), and free space percentage. For flash media, estimate wear by tracking the ratio of allocated-to-total clusters over time. Display a health score with clear status icons. No OS provides at-a-glance health for removable exFAT media. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: removable media health dashboard"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows shows a "Scan and fix" dialog when a dirty exFAT drive is
+> inserted — but provides zero health details. Linux has `fsck.exfat` (CLI only).
+> Impossible OS shows dirty flag, bad clusters, FAT consistency, and free space in one
+> GUI panel. Safe-eject guarantees the dirty flag is cleared before physical removal.
+
+- [ ] Read `VolumeFlags` dirty bit (bit 1) and media failure bit (bit 2)
+- [ ] Count bad clusters: scan Allocation Bitmap for clusters marked allocated but with FAT entry `0xFFFFFFF7`
+- [ ] FAT consistency check: scan FAT for chains pointing to free clusters in bitmap
+  - [ ] Cross-references bitmap against FAT — mismatch = corruption indicator
+- [ ] Compute free space: count zero bits in Allocation Bitmap
+- [ ] Aggregate health:
+  - [ ] Clean + no bad clusters + consistent = "Healthy" 🟢
+  - [ ] Dirty flag set = "Needs Repair" 🟡
+  - [ ] Bad clusters or FAT inconsistency = "Media Failing" 🔴
+- [ ] Safe eject integration:
+  - [ ] On "Safely Remove": flush all writes, clear dirty flag, sync FAT, unmount
+  - [ ] Display "Safe to remove" confirmation only after unmount completes
+  - [ ] If dirty flag clear fails → warn user: "Do not remove drive yet"
+- [ ] Wire to Disk Manager: exFAT volume properties panel + taskbar eject icon
+- [ ] Commit: `"exfat: removable media health dashboard"`
+
+### 12.2 Deleted File Recovery (Forensics Mode)
+
+**Prompt:** exFAT marks deleted files by clearing the InUse bit (bit 7) of the File Directory Entry (`0x85` → `0x05`). The Stream Extension and File Name entries also have InUse cleared (`0xC0` → `0x40`, `0xC1` → `0x41`). However, the entry set data — filename, timestamps, FirstCluster, DataLength — remains intact until the directory entries are reused. Implement a recovery scanner that walks directory clusters looking for deleted entry sets (`0x05` + `0x40` + `0x41`), cross-references data clusters against the Allocation Bitmap, and allows recovery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: deleted file recovery"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has no built-in recovery for exFAT. Linux has no exFAT
+> recovery tool at all (even third-party options are extremely limited).
+> Impossible OS having built-in GUI recovery for exFAT (the filesystem used on every
+> SD card and USB drive) is a major differentiator for everyday data rescue.
+
+> [!WARNING]
+> **Read-only operation.** Recovery copies data to a DIFFERENT volume — never write to the
+> exFAT volume being scanned. This preserves forensic integrity.
+
+- [ ] Implement `exfat_scan_deleted(vol, dir_cluster, callback)`:
+  - [ ] Walk directory clusters (same as §5.1 but include deleted entries)
+  - [ ] Look for deleted entry sets: `0x05` (was `0x85`), `0x40` (was `0xC0`), `0x41` (was `0xC1`)
+  - [ ] Parse deleted `0x40` entry: extract `FirstCluster`, `DataLength`, `NameLength`
+  - [ ] Parse deleted `0x41` entries: extract filename
+  - [ ] Cross-reference `FirstCluster` against Allocation Bitmap:
+    - [ ] All clusters free → **High** confidence 🟢
+    - [ ] Some clusters reallocated → **Medium** confidence 🟡
+    - [ ] Most clusters reallocated → **Low** confidence 🔴
+    - [ ] If NoFatChain was set: can use contiguous cluster range check
+  - [ ] Callback: `{ filename, size, delete_time (if available), confidence }`
+- [ ] Recursively scan subdirectories for deleted files
+- [ ] Implement `exfat_recover_file(vol, entry_set, output_path)`:
+  - [ ] Read data clusters via FAT chain or contiguous range
+  - [ ] Write to output file on a different volume
+- [ ] Wire to Disk Manager: "Recover Deleted Files" button on exFAT volumes
+  - [ ] Show: filename, size, confidence icon (🟢/🟡/🔴)
+- [ ] Commit: `"exfat: deleted file recovery"`
+
+---
+
 ## Priority Order
 
 | Priority | Section | Description |
@@ -424,8 +524,15 @@
 | 🟠 P1 | 7.2 Path Resolution | Core feature — resolve full file paths |
 | 🟠 P1 | 9.1 VFS Registration | Integration — make exFAT mountable |
 | 🟡 P2 | 1.2 Boot Checksum | Integrity — validate boot region |
+| 🟡 P2 | 6.3 Cluster Chain Cache | Performance — O(1) mid-file reads |
 | 🟡 P2 | 8.1 Volume Label | Feature — volume name display |
+| 🟡 P2 | 11.1 TexFAT | Compat — embedded/automotive SD cards |
 | 🟢 P3 | 10.1 Test Suite | Quality — automated validation |
+| 🟢 P3 | 12.1 Health Dashboard ⭐ | **Removable media health** — no OS does this |
+| 🟢 P3 | 12.2 Deleted File Recovery ⭐ | **Built-in recovery** — Windows/Linux have nothing |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -448,11 +555,14 @@
 | Volume Label | ✅ Full | ✅ Full | ⬜ §8.1 P2 |
 | Long filenames (255 chars) | ✅ Native | ✅ Full | ⬜ §5.2 (multi-0xC1) |
 | Files > 4 GB | ✅ Native | ✅ Full | ⬜ §6.1/6.2 (64-bit DataLength) |
+| Cluster chain caching | ✅ Windows cache manager | ✅ Page cache | ⬜ §6.3 P2 |
 | VFS integration | ✅ Native (exfat.sys) | ✅ Native (fs/exfat) | ⬜ §9.1 P1 |
 | Vendor Extensions (0xE0) | ✅ Supported | ✅ Ignored (benign) | ⬜ Ignored (benign) |
-| TexFAT (dual FAT/bitmap) | ✅ Full (Windows CE) | ❌ Not supported | ⬜ Future (not planned) |
+| TexFAT (dual FAT/bitmap) | ✅ Full (Windows CE) | ❌ Not supported | ⬜ §11.1 P2 |
 | OEM Flash Parameters | ✅ Full | ❌ Ignored | ⬜ Future (flash alignment) |
 | Write support | ✅ Full R/W | ✅ Full R/W | ⬜ Future P3 |
+| **Removable media health** ⭐ | ❌ "Scan and fix" only | ❌ CLI `fsck.exfat` only | ⬜ §12.1 P3 — GUI health + safe eject |
+| **Deleted file recovery** ⭐ | ❌ No built-in recovery | ❌ No recovery tool exists | ⬜ §12.2 P3 — built-in GUI recovery |
 | **Read-only driver (minimum)** | ✅ | ✅ | ⬜ Requires §1–§7, §9 |
 
 ---
