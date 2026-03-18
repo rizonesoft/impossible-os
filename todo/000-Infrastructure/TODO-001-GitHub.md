@@ -268,14 +268,20 @@
 
 ### 4.3 Stale Issue Cleanup *(agent)*
 
-**Prompt:** Create a GitHub Actions workflow that automatically labels and closes stale issues and PRs. Issues with no activity for 60 days get labeled `stale`, and if no response for 14 more days, they are closed with a comment. This prevents issue tracker clutter. After completing, commit as `"ci: stale issue cleanup"`.
+**Prompt:** This section is marked complete. Verify: `.github/workflows/stale.yml` exists, uses `actions/stale@v9`, runs daily at 01:30 UTC, 60 days → `stale` label, 14 days → auto-close with comment. Exempt labels: `pinned`, `security`, `help-wanted`. Verify commit `"ci: stale issue cleanup"`.
 
-- [ ] Create `.github/workflows/stale.yml`
-- [ ] Use `actions/stale@v9`
-- [ ] Config: 60 days → `stale` label, 14 days after → close
-- [ ] Exempt labels: `pinned`, `security`, `help-wanted`
-- [ ] Stale comment: "This issue has been inactive for 60 days. It will be closed in 14 days unless there is new activity."
-- [ ] Commit: `"ci: stale issue cleanup"`
+- [x] Create `.github/workflows/stale.yml` — ✅
+- [x] Use `actions/stale@v9` — ✅
+- [x] Config: 60 days → `stale` label, 14 days after → close — ✅
+- [x] Exempt labels: `pinned`, `security`, `help-wanted` — ✅
+- [x] Stale comment: "This issue has been inactive for 60 days. It will be closed in 14 days unless there is new activity." — ✅
+- [x] Commit: `"ci: stale issue cleanup"` — ✅
+
+> **Implementation notes:**
+> - Schedule: daily cron at 01:30 UTC
+> - Separate messages for issues and PRs (stale + close)
+> - `operations-per-run: 30` to stay within GitHub API limits
+> - Permissions: `issues: write`, `pull-requests: write`
 
 ### 4.4 Auto-Label PRs by Path *(agent)*
 
