@@ -15,6 +15,7 @@
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/drivers/serial.h"
+#include "kernel/drivers/rtc.h"
 
 /* ---- State ---- */
 
@@ -158,67 +159,138 @@ static void ensure_log_dirs(void)
     }
 }
 
-/* ---- Numbered log file on X: (FAT32) ---- */
+/* ---- Date-stamped log files on X: (FAT32) ----
+ *
+ * Filename format: YYMMDDnn.LOG  (8.3 FAT32-safe)
+ *   YY   = 2-digit year   (from RTC)
+ *   MM   = 2-digit month  (01–12)
+ *   DD   = 2-digit day    (01–31)
+ *   nn   = sequence within day (01–99)
+ *
+ * Example: 26031802.LOG = March 18, 2026, second boot of the day
+ */
 
-/* Scan X: for BOOT_NNN.LOG files, find highest N, set log_filename */
+/* Helper: build a "YYMMDDnn.LOG" filename */
+static void make_log_filename(uint8_t yy, uint8_t mm, uint8_t dd,
+                               uint8_t seq, char *out)
+{
+    out[0] = '0' + (char)(yy / 10);
+    out[1] = '0' + (char)(yy % 10);
+    out[2] = '0' + (char)(mm / 10);
+    out[3] = '0' + (char)(mm % 10);
+    out[4] = '0' + (char)(dd / 10);
+    out[5] = '0' + (char)(dd % 10);
+    out[6] = '0' + (char)(seq / 10);
+    out[7] = '0' + (char)(seq % 10);
+    out[8] = '.'; out[9] = 'L'; out[10] = 'O'; out[11] = 'G';
+    out[12] = '\0';
+}
+
+/* Parse "YYMMDDnn.LOG" → 1 if valid log file, fills out fields.
+ * Returns 0 if not a log file. */
+static int parse_log_filename(const char *name, uint8_t *yy, uint8_t *mm,
+                               uint8_t *dd, uint8_t *seq)
+{
+    int i;
+
+    /* Must be exactly 12 chars: 8 digits + ".LOG" */
+    for (i = 0; i < 8; i++)
+        if (name[i] < '0' || name[i] > '9') return 0;
+    if (name[8] != '.' || name[9] != 'L' || name[10] != 'O' || name[11] != 'G')
+        return 0;
+    if (name[12] != '\0') return 0;
+
+    *yy  = (uint8_t)((name[0] - '0') * 10 + (name[1] - '0'));
+    *mm  = (uint8_t)((name[2] - '0') * 10 + (name[3] - '0'));
+    *dd  = (uint8_t)((name[4] - '0') * 10 + (name[5] - '0'));
+    *seq = (uint8_t)((name[6] - '0') * 10 + (name[7] - '0'));
+
+    /* Basic sanity: month 01–12, day 01–31 */
+    if (*mm < 1 || *mm > 12 || *dd < 1 || *dd > 31) return 0;
+    return 1;
+}
+
+/* Compare two log dates: returns <0 (a earlier), 0 (equal), >0 (a later) */
+static int log_date_cmp(uint8_t ya, uint8_t ma, uint8_t da, uint8_t sa,
+                         uint8_t yb, uint8_t mb, uint8_t db, uint8_t sb)
+{
+    uint32_t a = ((uint32_t)ya << 24) | ((uint32_t)ma << 16)
+               | ((uint32_t)da << 8) | sa;
+    uint32_t b = ((uint32_t)yb << 24) | ((uint32_t)mb << 16)
+               | ((uint32_t)db << 8) | sb;
+    if (a < b) return -1;
+    if (a > b) return  1;
+    return 0;
+}
+
+#define KLOG_MAX_LOG_FILES 100
+
+/* Scan X: for log files, pick today's next sequence, enforce 100-file cap. */
 static void pick_log_number(void)
 {
     struct vfs_node *x_root;
-    uint32_t highest = 0;
+    uint8_t today_yy, today_mm, today_dd;
+    uint8_t max_seq_today = 0;
+    uint32_t count = 0;
+
+    /* Oldest log tracking (for cap enforcement) */
+    uint8_t old_yy = 99, old_mm = 12, old_dd = 31, old_seq = 99;
+    char    oldest_name[16];
+    oldest_name[0] = '\0';
+
+    /* Get current date from RTC */
+    today_yy = (uint8_t)(rtc_get_year() % 100);
+    today_mm = (uint8_t)rtc_get_month();
+    today_dd = (uint8_t)rtc_get_day();
 
     x_root = vfs_get_drive_root('X');
     if (!x_root || !x_root->ops || !x_root->ops->finddir)
         goto fallback;
 
-    /* Scan for BOOT_001.LOG through BOOT_999.LOG */
+    /* Enumerate X: root directory to find all log files */
     {
-        uint32_t n;
-        char probe[16];
-        for (n = 1; n <= 999; n++) {
-            int p = 0;
-            probe[p++] = 'B';
-            probe[p++] = 'O';
-            probe[p++] = 'O';
-            probe[p++] = 'T';
-            probe[p++] = '_';
-            /* 3-digit number with leading zeros */
-            probe[p++] = '0' + (char)((n / 100) % 10);
-            probe[p++] = '0' + (char)((n / 10) % 10);
-            probe[p++] = '0' + (char)(n % 10);
-            probe[p++] = '.';
-            probe[p++] = 'L';
-            probe[p++] = 'O';
-            probe[p++] = 'G';
-            probe[p] = '\0';
+        uint32_t dir_idx = 0;
+        struct vfs_dirent *de;
+        while ((de = vfs_readdir(x_root, dir_idx)) != 0) {
+            uint8_t yy, mm, dd, seq;
+            if (parse_log_filename(de->name, &yy, &mm, &dd, &seq)) {
+                count++;
 
-            struct vfs_node *found = x_root->ops->finddir(x_root, probe);
-            if (found) {
-                highest = n;
+                /* Track highest sequence number for today */
+                if (yy == today_yy && mm == today_mm && dd == today_dd) {
+                    if (seq > max_seq_today)
+                        max_seq_today = seq;
+                }
+
+                /* Track oldest file for deletion when capped */
+                if (log_date_cmp(yy, mm, dd, seq,
+                                 old_yy, old_mm, old_dd, old_seq) < 0) {
+                    old_yy = yy; old_mm = mm; old_dd = dd; old_seq = seq;
+                    {
+                        int k;
+                        for (k = 0; de->name[k] && k < 15; k++)
+                            oldest_name[k] = de->name[k];
+                        oldest_name[k] = '\0';
+                    }
+                }
             }
+            dir_idx++;
         }
     }
 
+    /* Cap at 100 files: delete oldest when full */
+    if (count >= KLOG_MAX_LOG_FILES && x_root->ops->unlink && oldest_name[0]) {
+        x_root->ops->unlink(x_root, oldest_name);
+        klog(LOG_DEBUG, "klog", "deleted oldest log: X:\\%s (%u files)", oldest_name, count);
+    }
+
 fallback:
-    /* Next number (or 001 if none exist) */
+    /* Build today's filename with next sequence number */
     {
-        uint32_t next = highest + 1;
-        int p = 0;
-        if (next > 999) next = 1;  /* wrap around */
+        uint8_t next_seq = max_seq_today + 1;
+        if (next_seq > 99) next_seq = 99;  /* safety clamp */
 
-        log_filename[p++] = 'B';
-        log_filename[p++] = 'O';
-        log_filename[p++] = 'O';
-        log_filename[p++] = 'T';
-        log_filename[p++] = '_';
-        log_filename[p++] = '0' + (char)((next / 100) % 10);
-        log_filename[p++] = '0' + (char)((next / 10) % 10);
-        log_filename[p++] = '0' + (char)(next % 10);
-        log_filename[p++] = '.';
-        log_filename[p++] = 'L';
-        log_filename[p++] = 'O';
-        log_filename[p++] = 'G';
-        log_filename[p] = '\0';
-
+        make_log_filename(today_yy, today_mm, today_dd, next_seq, log_filename);
         klog(LOG_INFO, "klog", "writing to X:\\%s", log_filename);
     }
 }

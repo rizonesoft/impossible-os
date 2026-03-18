@@ -73,14 +73,17 @@
 
 ### 1.2 Numbered Log Files on X: (FAT32)
 
-**Prompt:** Currently `serial.log` on X: always uses the same filename, overwriting previous boot logs. Implement numbered log files: `BOOT_001.LOG`, `BOOT_002.LOG`, etc. On each boot, scan X: for the highest existing `BOOT_NNN.LOG` and create `BOOT_(NNN+1).LOG`. This preserves boot history across multiple sessions — critical for tracking intermittent real-hardware issues. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: numbered log files on X: partition"`. Add notes directly in this TODO section.
+**Prompt — VERIFICATION:** Verify date-stamped numbered log files work correctly. Confirm `pick_log_number()` reads the RTC date via `rtc_get_year/month/day`, scans X: with `vfs_readdir` + `parse_log_filename()`, builds `YYMMDDnn.LOG` filenames, and deletes the oldest when count ≥ 100. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Verify commit `"klog: numbered log files on X: partition"`.
 
-- [ ] On `klog_disk_init()`, scan X: root for `BOOT_*.LOG` files
-- [ ] Find highest NNN, create `BOOT_(NNN+1).LOG`
-- [ ] If no existing logs, start with `BOOT_001.LOG`
-- [ ] Cap at 100 files (delete oldest when full) — 16MB partition can hold ~100 logs
-- [ ] Log filename in serial output: `klog: writing to X:\BOOT_042.LOG`
-- [ ] Commit: `"klog: numbered log files on X: partition"`
+> [!NOTE]
+> Changed from `BOOT_NNN.LOG` to `YYMMDDnn.LOG` format (e.g. `26031801.LOG` = March 18, 2026, boot 1). Uses RTC date so filenames are self-documenting. Multiple same-day boots get sequence numbers `01`–`99`.
+
+- [x] On `klog_disk_init()`, scan X: root for `*.LOG` files via `vfs_readdir`
+- [x] Parse `YYMMDDnn.LOG` format, find highest sequence for today's date
+- [x] If no existing logs for today, start with `YYMMDDnn.LOG` where nn=01
+- [x] Cap at 100 files (delete oldest by date when full) — 16MB partition limit
+- [x] Log filename in serial output: `klog: writing to X:\26031801.LOG`
+- [x] Commit: `"klog: numbered log files on X: partition"`
 
 ### 1.3 Live Flush Mode (Per-Entry Write)
 
