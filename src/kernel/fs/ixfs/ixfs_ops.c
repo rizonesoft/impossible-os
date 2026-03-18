@@ -471,6 +471,15 @@ static int ixfs_create(struct vfs_node *parent, const char *name, uint8_t type)
 
     if (!pv) return -1;
 
+    /* Idempotent: if an entry with this name already exists, succeed silently.
+     * This prevents boot-time code from creating duplicate directory entries
+     * when directories already exist from mkfs. */
+    {
+        struct vfs_node *existing = ixfs_finddir(parent, name);
+        if (existing)
+            return 0;
+    }
+
     /* Find a free inode (0 = reserved, 1 = root) */
     new_ino = 0;
     for (i = 2; i < vol->sb.s_total_inodes; i++) {
