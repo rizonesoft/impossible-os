@@ -178,8 +178,8 @@ jobs:
             BODY="$BODY"$'\n'"- ... and $(( COUNT - 20 )) more commits — see \`CHANGELOG.md\` in the zip for the full categorized list"
           fi
 
-          # Extract build info from generated header
-          BUILD_NUM=$(grep '#define BUILD_NUMBER' include/build_info.h | awk '{print $3}')
+          # Extract build info (build number from tag, rest from build_info.h)
+          BUILD_NUM=$(echo "$TAG" | grep -oP '\.\K[0-9]+$' || echo "0")
           BUILD_COMMIT=$(grep '#define BUILD_COMMIT' include/build_info.h | awk '{print $3}' | tr -d '"')
           BUILD_TIME=$(grep '#define BUILD_TIMESTAMP' include/build_info.h | awk '{print $3}' | tr -d '"')
 
