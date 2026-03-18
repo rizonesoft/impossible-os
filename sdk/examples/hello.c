@@ -6,7 +6,7 @@
  *       -o hello.exe hello.c -L sdk/lib -limpossible
  */
 
-#include <impossible/windows.h>
+#include "../include/impossible/windows.h"
 
 int WinMain(void) {
     // TODO: Call CreateFile + WriteFile once Win32 API is implemented
