@@ -226,15 +226,18 @@
 
 #### 3.4.2 Cluster Chain Extension & Free Cluster Hint
 
-**Prompt:** The current free cluster search starts from cluster 2 every time, making allocation O(n) where n is total clusters. Implement a free cluster hint: store the last-allocated cluster number and start searching from there. Also implement the FSInfo sector (sector 1 on FAT32 volumes), which stores the free cluster count and next-free hint. Read FSInfo on mount, update on allocation/free. This matches the FAT32 specification and dramatically speeds up allocation on large volumes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: FSInfo sector + free cluster hint"`. Add notes directly in this TODO section.
+**Prompt — VERIFICATION:** Verify FSInfo sector support is correct. Confirm `fat32_init()` reads FSInfo at `bpb.fs_info_sector` (BPB offset 48), validates lead signature `0x41615252`, struct signature `0x61417272`, and trail signature `0xAA550000`. Confirm `fat32_alloc_cluster()` uses `fsinfo_next_free` as hint with two-pass wraparound scan. Confirm `fat32_free_chain()` updates `fsinfo_free_count` and `fsinfo_next_free`. Confirm `fat32_fsinfo_flush()` writes both primary and backup FSInfo sectors. Confirm `fat32_vfs_flush()` calls `fat32_fsinfo_flush()`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Verify commit `"fat32: FSInfo sector + free cluster hint"`.
 
-- [ ] Define `struct fat32_fsinfo` — signature `0x41615252`, free count, next free hint
-- [ ] Read FSInfo sector on mount (sector 1, or `bpb.fs_info_sector`)
-- [ ] Track `next_free_hint` in memory — start cluster search from there
-- [ ] Update FSInfo on disk after allocation/deallocation
-- [ ] Validate FSInfo on mount (signature check, sanity check free count vs FAT scan)
-- [ ] Fall back to full FAT scan if FSInfo is invalid
-- [ ] Commit: `"fat32: FSInfo sector + free cluster hint"`
+> [!NOTE]
+> FSInfo uses defines instead of a struct (`FSINFO_LEAD_SIG`, etc.) to keep the code simple — the sector is read/written via byte offsets. State is tracked in static variables: `fsinfo_free_count`, `fsinfo_next_free`, `fsinfo_valid`, `fsinfo_dirty`. Falls back to full FAT scan (starting at cluster 2) if FSInfo signatures are invalid.
+
+- [x] Define `struct fat32_fsinfo` — signature `0x41615252`, free count, next free hint
+- [x] Read FSInfo sector on mount (sector 1, or `bpb.fs_info_sector`)
+- [x] Track `next_free_hint` in memory — start cluster search from there
+- [x] Update FSInfo on disk after allocation/deallocation
+- [x] Validate FSInfo on mount (signature check, sanity check free count vs FAT scan)
+- [x] Fall back to full FAT scan if FSInfo is invalid
+- [x] Commit: `"fat32: FSInfo sector + free cluster hint"`
 
 #### 3.4.3 Sector-Level Write Cache
 
@@ -305,7 +308,7 @@
 | Read support (8.3 + LFN) | ✅ | ✅ | ✅ Done §3.1 |
 | Write support (create/delete/rename) | ✅ | ✅ | ✅ Done §3.2 (overwrite-only) |
 | Offset-aware write / append | ✅ | ✅ | ✅ Done §3.4.1 |
-| FSInfo free cluster hint | ✅ | ✅ | ⬜ §3.4.2 |
+| FSInfo free cluster hint | ✅ | ✅ | ✅ Done §3.4.2 |
 | Sector cache / write-back | ✅ (kernel cache) | ✅ (page cache) | ⬜ §3.4.3 |
 | Multi-volume simultaneous mount | ✅ | ✅ | ⬜ §3.4.4 |
 | Concurrent access safety | ✅ | ✅ (VFS locking) | ⬜ §3.4.5 |

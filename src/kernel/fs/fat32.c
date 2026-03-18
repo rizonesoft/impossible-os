@@ -97,6 +97,19 @@ static struct vfs_dirent fat32_dirent;
 /* Sector buffer */
 static uint8_t sector_buf[512];
 
+/* ---- FSInfo sector (FAT32 spec §7.1) ----
+ * Stores free cluster count and next-free hint to avoid full FAT scans. */
+#define FSINFO_LEAD_SIG   0x41615252
+#define FSINFO_STRUCT_SIG 0x61417272
+#define FSINFO_TRAIL_SIG  0xAA550000
+#define FSINFO_UNKNOWN    0xFFFFFFFF  /* "not known" sentinel */
+
+static uint32_t fsinfo_sector;          /* LBA of FSInfo sector (from BPB) */
+static uint32_t fsinfo_free_count;      /* cached free cluster count */
+static uint32_t fsinfo_next_free;       /* next-free hint for allocation */
+static int      fsinfo_valid;           /* 1 if FSInfo was loaded OK */
+static int      fsinfo_dirty;           /* 1 if in-memory state diverged */
+
 /* ---- Block device I/O ---- */
 
 /* Read a single sector relative to partition start (handled by sub-blkdev) */
@@ -177,26 +190,88 @@ static int fat32_set_fat_entry(uint32_t cluster, uint32_t value)
     return 0;
 }
 
+/* ---- FSInfo sector I/O ---- */
+
+/* Flush in-memory FSInfo state to disk (both copies if num_fats > 1). */
+static void fat32_fsinfo_flush(void)
+{
+    uint8_t buf[512];
+    uint32_t k;
+
+    if (!fsinfo_valid || !fsinfo_dirty)
+        return;
+
+    if (fat32_read_sector(fsinfo_sector, buf) != 0)
+        return;
+
+    /* Verify lead signature before writing */
+    if (*(uint32_t *)&buf[0] != FSINFO_LEAD_SIG)
+        return;
+
+    /* Update the two mutable fields */
+    *(uint32_t *)&buf[488] = fsinfo_free_count;
+    *(uint32_t *)&buf[492] = fsinfo_next_free;
+
+    fat32_write_sector(fsinfo_sector, buf);
+
+    /* FAT32 backup FSInfo is at fsinfo_sector + 6 (backup boot sector area) */
+    if (fsinfo_sector + 6 < bpb.reserved_sectors) {
+        if (fat32_read_sector(fsinfo_sector + 6, buf) == 0) {
+            if (*(uint32_t *)&buf[0] == FSINFO_LEAD_SIG) {
+                *(uint32_t *)&buf[488] = fsinfo_free_count;
+                *(uint32_t *)&buf[492] = fsinfo_next_free;
+                fat32_write_sector(fsinfo_sector + 6, buf);
+            }
+        }
+    }
+
+    fsinfo_dirty = 0;
+    (void)k;
+}
+
 /* ---- Free cluster allocation ---- */
 
-/* Find a free cluster (FAT entry == 0x00000000).
- * Returns cluster number or 0 on failure.
- * total_data_clusters = total_sectors minus reserved/FAT/root overhead. */
+/* Find a free cluster starting from the FSInfo hint.
+ * Uses wraparound: if no free cluster found from hint→end, retries from 2.
+ * Returns cluster number or 0 on failure. */
 static uint32_t fat32_alloc_cluster(void)
 {
     uint32_t total_data_clusters;
+    uint32_t max_cluster;
+    uint32_t start;
     uint32_t cluster;
+    int pass;
 
     total_data_clusters = (bpb.total_sectors - bpb.first_data_sector)
                         / bpb.sectors_per_cluster;
+    max_cluster = total_data_clusters + 2;
 
-    /* Scan from cluster 2 (first valid data cluster) */
-    for (cluster = 2; cluster < total_data_clusters + 2; cluster++) {
-        if (fat32_get_fat_entry(cluster) == FAT32_FREE) {
-            /* Mark as end-of-chain (caller will link if needed) */
-            if (fat32_set_fat_entry(cluster, 0x0FFFFFFF) != 0)
-                return 0;
-            return cluster;
+    /* Start from hint if valid, otherwise cluster 2 */
+    start = (fsinfo_valid && fsinfo_next_free >= 2
+             && fsinfo_next_free < max_cluster)
+          ? fsinfo_next_free : 2;
+
+    /* Two passes: hint→end, then 2→hint (wraparound) */
+    for (pass = 0; pass < 2; pass++) {
+        uint32_t begin = (pass == 0) ? start : 2;
+        uint32_t end   = (pass == 0) ? max_cluster : start;
+
+        for (cluster = begin; cluster < end; cluster++) {
+            if (fat32_get_fat_entry(cluster) == FAT32_FREE) {
+                if (fat32_set_fat_entry(cluster, 0x0FFFFFFF) != 0)
+                    return 0;
+
+                /* Update FSInfo state */
+                fsinfo_next_free = cluster + 1;
+                if (fsinfo_next_free >= max_cluster)
+                    fsinfo_next_free = 2;
+                if (fsinfo_free_count != FSINFO_UNKNOWN
+                    && fsinfo_free_count > 0)
+                    fsinfo_free_count--;
+                fsinfo_dirty = 1;
+
+                return cluster;
+            }
         }
     }
 
@@ -209,6 +284,14 @@ static void fat32_free_chain(uint32_t cluster)
     while (cluster >= 2 && cluster < FAT32_EOC && cluster != FAT32_FREE) {
         uint32_t next = fat32_get_fat_entry(cluster);
         fat32_set_fat_entry(cluster, FAT32_FREE);
+
+        /* Update FSInfo: increment free count, lower hint if applicable */
+        if (fsinfo_free_count != FSINFO_UNKNOWN)
+            fsinfo_free_count++;
+        if (cluster < fsinfo_next_free)
+            fsinfo_next_free = cluster;
+        fsinfo_dirty = 1;
+
         cluster = next;
     }
 }
@@ -2029,6 +2112,7 @@ static int fat32_vfs_set_times(struct vfs_node *node,
 static int fat32_vfs_flush(struct vfs_node *node)
 {
     (void)node;
+    fat32_fsinfo_flush();
     return fat32_flush_disk();
 }
 
@@ -2244,6 +2328,7 @@ int fat32_init(const struct blkdev *dev)
     bpb.num_fats            = sector_buf[16];
     bpb.fat_size_sectors    = *(uint32_t *)&sector_buf[36];
     bpb.root_cluster        = *(uint32_t *)&sector_buf[44];
+    bpb.fs_info_sector      = *(uint16_t *)&sector_buf[48];
 
     /* Total sectors: use the 32-bit field */
     bpb.total_sectors = *(uint16_t *)&sector_buf[19];
@@ -2285,6 +2370,43 @@ int fat32_init(const struct blkdev *dev)
                vol_mb,
                (uint64_t)bpb.sectors_per_cluster,
                (uint64_t)bpb.root_cluster);
+    }
+
+    /* ---- Read FSInfo sector ---- */
+    fsinfo_valid = 0;
+    fsinfo_dirty = 0;
+    fsinfo_free_count = FSINFO_UNKNOWN;
+    fsinfo_next_free = 2;
+    fsinfo_sector = bpb.fs_info_sector;
+
+    if (fsinfo_sector >= 1 && fsinfo_sector < bpb.reserved_sectors) {
+        uint8_t fsi[512];
+        if (fat32_read_sector(fsinfo_sector, fsi) == 0) {
+            uint32_t lead   = *(uint32_t *)&fsi[0];
+            uint32_t struc  = *(uint32_t *)&fsi[484];
+            uint32_t trail  = *(uint32_t *)&fsi[508];
+
+            if (lead == FSINFO_LEAD_SIG && struc == FSINFO_STRUCT_SIG
+                && trail == FSINFO_TRAIL_SIG) {
+                fsinfo_free_count = *(uint32_t *)&fsi[488];
+                fsinfo_next_free  = *(uint32_t *)&fsi[492];
+                fsinfo_valid = 1;
+
+                /* Sanity: if hint is out of range, reset to 2 */
+                if (fsinfo_next_free < 2 || fsinfo_next_free >= (uint32_t)(
+                    (bpb.total_sectors - bpb.first_data_sector)
+                    / bpb.sectors_per_cluster + 2))
+                    fsinfo_next_free = 2;
+
+                klog(LOG_DEBUG, "fat32",
+                     "FSInfo: %u free clusters, hint cluster %u",
+                     (uint64_t)fsinfo_free_count,
+                     (uint64_t)fsinfo_next_free);
+            } else {
+                klog(LOG_WARN, "fat32",
+                     "FSInfo: invalid signatures, full FAT scan mode");
+            }
+        }
     }
 
     return 0;

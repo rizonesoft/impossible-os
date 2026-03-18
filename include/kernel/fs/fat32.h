@@ -23,6 +23,7 @@ struct fat32_bpb {
     uint32_t total_sectors;
     uint32_t fat_size_sectors;     /* sectors per FAT */
     uint32_t root_cluster;        /* first cluster of root directory */
+    uint16_t fs_info_sector;      /* FSInfo sector number (BPB offset 48) */
     uint32_t first_data_sector;   /* computed: first sector of data region */
     uint32_t first_fat_sector;    /* computed: first sector of FAT */
 };
