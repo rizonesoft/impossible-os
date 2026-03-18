@@ -2,6 +2,7 @@
  * fat32_internal.h — Shared internal types, structs, and function declarations
  *
  * Included by all FAT32 module files. NOT part of the public API.
+ * Each mounted FAT32 partition gets its own fat32_volume context.
  * ============================================================================ */
 
 #pragma once
@@ -9,6 +10,7 @@
 #include "kernel/fs/fat32.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -30,7 +32,7 @@
 #define LFN_SEQ_MASK    0x1F
 #define LFN_LAST_ENTRY  0x40
 
-/* Maximum directory entries we'll track */
+/* Maximum directory entries we'll track per volume */
 #define FAT32_MAX_DIR_ENTRIES 128
 #define FAT32_MAX_NAME        256   /* Support long filenames */
 #define FAT32_LFN_CHARS       13    /* Characters per LFN entry */
@@ -82,37 +84,42 @@ typedef struct {
     uint8_t  dirty;        /* 1 = modified, needs write-back */
 } scache_entry_t;
 
+/* Forward declaration */
+struct fat32_volume;
+
 /* In-memory file/directory node */
 struct fat32_file {
     struct vfs_node node;
     uint32_t first_cluster;
     uint32_t file_size;
-    uint32_t dir_cluster;     /* parent directory cluster (for dir entry updates) */
+    uint32_t dir_cluster;          /* parent directory cluster */
+    struct fat32_volume *volume;   /* back-pointer to owning volume */
 };
 
-/* ---- Global state (will become per-volume in Phase 2) ---- */
-
-extern struct fat32_bpb bpb;
-extern const struct blkdev *fat32_dev;
-extern struct fat32_file root_file;
-extern struct fat32_file dir_files[FAT32_MAX_DIR_ENTRIES];
-extern uint32_t dir_file_count;
-extern struct vfs_dirent fat32_dirent;
-extern uint8_t sector_buf[512];
-
-/* Sector cache */
-extern scache_entry_t scache[SCACHE_SLOTS];
-extern uint32_t scache_access;
-
-/* FSInfo state */
-extern uint32_t fsinfo_sector;
-extern uint32_t fsinfo_free_count;
-extern uint32_t fsinfo_next_free;
-extern int      fsinfo_valid;
-extern int      fsinfo_dirty;
+/* Per-volume state — one for each mounted FAT32 partition.
+ * Allocated via PMM (~40 KB). */
+struct fat32_volume {
+    struct fat32_bpb    bpb;
+    const struct blkdev *dev;
+    struct fat32_file   root_file;
+    struct fat32_file   dir_files[FAT32_MAX_DIR_ENTRIES];
+    uint32_t            dir_file_count;
+    struct vfs_dirent   dirent;
+    uint8_t             sector_buf[512];
+    /* Sector cache */
+    scache_entry_t      cache[SCACHE_SLOTS];
+    uint32_t            cache_access;
+    /* FSInfo state */
+    uint32_t            fsinfo_sector;
+    uint32_t            fsinfo_free_count;
+    uint32_t            fsinfo_next_free;
+    int                 fsinfo_valid;
+    int                 fsinfo_dirty;
+};
 
 /* ---- fat32_core.c: String helpers, sector I/O, cache, FAT ops ---- */
 
+/* String helpers (stateless — no vol needed) */
 void     fat32_strcpy(char *dst, const char *src, uint32_t max);
 int      fat32_strcasecmp(const char *a, const char *b);
 void     fat32_short_name_to_str(const uint8_t *raw, char *out);
@@ -120,56 +127,73 @@ void     lfn_extract_chars(const struct fat32_lfn_entry *lfn,
                            char *name_buf, int seq_index);
 
 /* Sector cache */
-void     scache_flush(void);
-void     scache_invalidate(void);
+void     scache_flush(struct fat32_volume *vol);
+void     scache_invalidate(struct fat32_volume *vol);
 
 /* Sector I/O */
-int      fat32_read_sector(uint32_t sector, void *buf);
-int      fat32_read_sectors_multi(uint32_t sector, uint32_t count, void *buf);
-int      fat32_write_sector(uint32_t sector, const void *buf);
-int      fat32_write_sectors_multi(uint32_t sector, uint32_t count,
-                                    const void *buf);
+int      fat32_read_sector(struct fat32_volume *vol, uint32_t sector,
+                            void *buf);
+int      fat32_read_sectors_multi(struct fat32_volume *vol, uint32_t sector,
+                                   uint32_t count, void *buf);
+int      fat32_write_sector(struct fat32_volume *vol, uint32_t sector,
+                             const void *buf);
+int      fat32_write_sectors_multi(struct fat32_volume *vol, uint32_t sector,
+                                    uint32_t count, const void *buf);
 
 /* FAT entry manipulation */
-uint32_t fat32_get_fat_entry(uint32_t cluster);
-int      fat32_set_fat_entry(uint32_t cluster, uint32_t value);
-uint32_t fat32_next_cluster(uint32_t cluster);
-uint32_t cluster_to_sector(uint32_t cluster);
+uint32_t fat32_get_fat_entry(struct fat32_volume *vol, uint32_t cluster);
+int      fat32_set_fat_entry(struct fat32_volume *vol, uint32_t cluster,
+                              uint32_t value);
+uint32_t fat32_next_cluster(struct fat32_volume *vol, uint32_t cluster);
+uint32_t cluster_to_sector(struct fat32_volume *vol, uint32_t cluster);
 
 /* FSInfo flush */
-void     fat32_fsinfo_flush(void);
+void     fat32_fsinfo_flush(struct fat32_volume *vol);
 
 /* Cluster allocation */
-uint32_t fat32_alloc_cluster(void);
-void     fat32_free_chain(uint32_t cluster);
-int      fat32_zero_cluster(uint32_t cluster);
+uint32_t fat32_alloc_cluster(struct fat32_volume *vol);
+void     fat32_free_chain(struct fat32_volume *vol, uint32_t cluster);
+int      fat32_zero_cluster(struct fat32_volume *vol, uint32_t cluster);
 
 /* ---- fat32_dir.c: Directory operations ---- */
 
 void     fat32_make_short_name(const char *name, uint8_t *short_name);
-int      fat32_find_free_dir_slot(uint32_t dir_cluster,
+int      fat32_find_free_dir_slot(struct fat32_volume *vol,
+                                   uint32_t dir_cluster,
                                    uint32_t *out_sector,
                                    uint32_t *out_offset,
                                    uint32_t *out_cluster);
-int      fat32_write_dir_entry(uint32_t sector, uint32_t offset,
+int      fat32_write_dir_entry(struct fat32_volume *vol, uint32_t sector,
+                                uint32_t offset,
                                 const struct fat32_dir_entry *entry);
-void     fat32_read_dir(uint32_t cluster);
-int      fat32_update_dir_size(uint32_t search_dir, uint32_t target_fc,
-                                uint32_t new_size);
+void     fat32_read_dir(struct fat32_volume *vol, uint32_t cluster);
+int      fat32_update_dir_size(struct fat32_volume *vol, uint32_t search_dir,
+                                uint32_t target_fc, uint32_t new_size);
 void     seconds_to_fat_datetime(uint32_t secs, uint16_t *out_time,
                                   uint16_t *out_date);
 
 /* ---- fat32_write.c: Write API ---- */
 
-int      fat32_truncate(uint32_t dir_cluster, const char *name,
-                         uint32_t new_size);
-int      fat32_rmdir(uint32_t parent_cluster, const char *name);
-int      fat32_set_attr(uint32_t dir_cluster, const char *name,
-                         uint8_t new_attr);
-int      fat32_set_times(uint32_t dir_cluster, const char *name,
-                          const filetime_t *ctime_p, const filetime_t *mtime_p,
-                          const filetime_t *atime_p);
-int      fat32_flush_disk(void);
+int      fat32_truncate(struct fat32_volume *vol, uint32_t dir_cluster,
+                         const char *name, uint32_t new_size);
+int      fat32_rmdir(struct fat32_volume *vol, uint32_t parent_cluster,
+                      const char *name);
+int      fat32_set_attr(struct fat32_volume *vol, uint32_t dir_cluster,
+                         const char *name, uint8_t new_attr);
+int      fat32_set_times(struct fat32_volume *vol, uint32_t dir_cluster,
+                          const char *name, const filetime_t *ctime_p,
+                          const filetime_t *mtime_p, const filetime_t *atime_p);
+int      fat32_flush_disk(struct fat32_volume *vol);
+
+/* Volume-aware write functions (used by VFS ops layer) */
+int      fat32_create_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
+                                const char *name);
+int      fat32_create_dir_vol(struct fat32_volume *vol, uint32_t parent_cluster,
+                               const char *name);
+int      fat32_delete_file_vol(struct fat32_volume *vol, uint32_t dir_cluster,
+                                const char *name);
+int      fat32_rename_vol(struct fat32_volume *vol, uint32_t dir_cluster,
+                           const char *old_name, const char *new_name);
 
 /* ---- fat32_ops.c: VFS ops tables ---- */
 

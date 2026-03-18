@@ -12,8 +12,6 @@
 
 int fat32_format(const struct blkdev *dev, const char *label)
 {
-    /* Invalidate cache — formatting rewrites the entire disk layout */
-    scache_invalidate();
 
     uint8_t boot[512];
     uint8_t fat_sec[512];

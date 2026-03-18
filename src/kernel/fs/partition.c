@@ -393,7 +393,8 @@ void partition_mount_filesystems(void)
             vfs_mount('C', ixfs_get_driver(), ixfs_get_root());
             ixfs_mounted = 1;
         } else if (pi->fs_type == PART_FS_FAT32) {
-            if (fat32_init(sub_dev) != 0) {
+            struct fat32_volume *fat_vol = fat32_init(sub_dev);
+            if (!fat_vol) {
                 klog(LOG_WARN, "blk", "FAT32: failed to init %s", name);
                 continue;
             }
@@ -401,12 +402,13 @@ void partition_mount_filesystems(void)
             if (pi->gpt_name[0] == 'L' && pi->gpt_name[1] == 'o' &&
                 pi->gpt_name[2] == 'g' && pi->gpt_name[3] == 's' &&
                 pi->gpt_name[4] == '\0') {
-                vfs_mount('X', fat32_get_driver(), fat32_get_root());
+                vfs_mount('X', fat32_get_driver(),
+                          fat32_get_root(fat_vol));
                 klog(LOG_INFO, "blk", "Mounted Logs partition as X:");
             } else if (next_fat32_letter <= 'Z') {
                 vfs_mount(next_fat32_letter,
                           fat32_get_driver(),
-                          fat32_get_root());
+                          fat32_get_root(fat_vol));
                 next_fat32_letter++;
             }
         }
