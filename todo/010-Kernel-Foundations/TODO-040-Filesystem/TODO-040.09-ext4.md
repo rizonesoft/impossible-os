@@ -167,6 +167,29 @@
   - [ ] If `INCOMPAT_RECOVER` set → refuse mount (journal replay required)
 - [ ] Commit: `"ext4: special inode handling"`
 
+### 3.3 Extended Attributes (xattr) Reader
+
+**Prompt:** ext4 stores extended attributes in two places: inline within the inode's extra space (after the core 128 bytes, before `i_extra_isize` ends), and in an external xattr block pointed to by `i_file_acl_lo`. Linux uses xattrs extensively: `security.selinux` for SELinux labels, `system.posix_acl_access` for POSIX ACLs, `user.*` for arbitrary metadata. Parse the xattr header (magic `0xEA020000`), walk entries (name_index + name + value offset), and return values for queried names. This is needed for reading POSIX ACLs and for the VFS compat layer's `GetFileSecurity()`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: extended attributes reader"`. Add notes directly in this TODO section.
+
+- [ ] Parse inline xattrs (within inode body):
+  - [ ] Start at `inode_base + EXT4_GOOD_OLD_INODE_SIZE + i_extra_isize`
+  - [ ] Walk entries until end of inode (offset `s_inode_size`)
+  - [ ] Each entry: `name_index` (1B), `name_len` (1B), `value_offset` (2B), `value_inum` (4B), `value_size` (4B), `hash` (4B), name (`name_len` bytes)
+- [ ] Parse external xattr block:
+  - [ ] Read block at `i_file_acl_lo` (combine with `i_file_acl_high` for 64-bit)
+  - [ ] Validate magic `0xEA020000` at block start
+  - [ ] Walk entries (same format as inline)
+  - [ ] Values stored at end of block, growing downward
+- [ ] Name index → namespace mapping:
+  - [ ] 1 = `user.`, 2 = `system.posix_acl_access`, 3 = `system.posix_acl_default`
+  - [ ] 4 = `trusted.`, 6 = `security.`, 7 = `system.`
+- [ ] Implement `ext4_get_xattr(vol, inode, name_index, name, value_buf, buf_size)`
+- [ ] Implement `ext4_list_xattrs(vol, inode, callback)` — enumerate all xattrs
+- [ ] Parse POSIX ACL from `system.posix_acl_access` xattr:
+  - [ ] Version (4B, must be 2), entries: tag (2B), perm (2B), id (4B)
+  - [ ] Expose via `vfs_ops.get_security()` for VFS compat layer
+- [ ] Commit: `"ext4: extended attributes reader"`
+
 ---
 
 ## 4. Extent Tree Traversal
@@ -389,6 +412,92 @@
 
 ---
 
+## 10. Performance Optimization
+
+### 10.1 Inode & Block Group Cache
+
+**Prompt:** Every file access reads the inode from the inode table on disk. Every inode lookup requires knowing the block group descriptor to find the inode table block. Implement an LRU cache for recently-accessed inodes (key: inode number, value: parsed inode struct). Cache the entire block group descriptor table in memory at mount time (typically < 64 KB for a 256 GB volume). Pin the root directory inode (inode 2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: inode and block group cache"`. Add notes directly in this TODO section.
+
+- [ ] Cache entire GDT at mount time:
+  - [ ] Allocate `num_block_groups × desc_size` via `pmm_alloc_contiguous()`
+  - [ ] Read all descriptors once, store in `vol->gdt_cache`
+  - [ ] All group descriptor lookups are now O(1) memory reads
+- [ ] Implement inode LRU cache:
+  - [ ] Default 128 entries (configurable via Registry: `HKLM\SYSTEM\Storage\ext4\InodeCacheSize`)
+  - [ ] Key: inode number, Value: parsed `struct ext4_inode`
+  - [ ] On `ext4_read_inode()`: check cache first, read disk on miss
+  - [ ] Pin inode 2 (root) — never evict
+- [ ] Cache extent trees for open files:
+  - [ ] On `ext4_open()`: decode full extent tree, store as flat array of `{ logical, physical, length }`
+  - [ ] All subsequent reads use O(log n) binary search on cached extents
+- [ ] Telemetry: log on unmount: `[ext4] Inode cache: %u hits / %u lookups (%.1f%%)`
+- [ ] Commit: `"ext4: inode and block group cache"`
+
+---
+
+## 11. ext4 Volume Health & Recovery (🚀 Impossible OS Feature)
+
+### 11.1 Volume Health Dashboard
+
+**Prompt:** Aggregate ext4 volume health metrics into a single dashboard view in Disk Manager. Read: `s_state` (clean/errors/orphan), `s_errors_count` (error counter), `s_last_error_*` fields (time, inode, block, function, line of last error), journal status (clean or needs replay), free space from superblock, and checksum validation results. Display a health score with per-metric status (✅/⚠️/❌). ext4 records incredibly detailed error telemetry in the superblock — more than NTFS does — but no OS surfaces it in a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: volume health dashboard"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux stores extensive error info in the ext4 superblock (`s_first_error_*`,
+> `s_last_error_*`, `s_error_count`) including the **exact kernel function and line number** that
+> triggered each error. But `tune2fs -l` dumps this as raw text. No OS shows it in a GUI.
+> Windows can't read ext4 at all. Impossible OS can be the first to surface this telemetry
+> in a user-friendly health panel.
+
+- [ ] Read `s_state` at `0x3A`: 1 = clean ✅, 2 = has errors ❌, 4 = orphans ⚠️
+- [ ] Read error telemetry from superblock:
+  - [ ] `s_errors_count` at `0x174` (4B) — total error count
+  - [ ] `s_first_error_time` / `s_last_error_time` — when first/last error occurred
+  - [ ] `s_first_error_ino` / `s_last_error_ino` — which inode triggered the error
+  - [ ] `s_first_error_func` / `s_last_error_func` — kernel function name (32B string)
+  - [ ] `s_first_error_line` / `s_last_error_line` — source code line number
+- [ ] Read journal status: check `COMPAT_HAS_JOURNAL` + `INCOMPAT_RECOVER`
+  - [ ] Clean journal ✅, needs replay ⚠️ (and we refuse mount)
+- [ ] Read free space: `s_free_blocks_count` / `s_blocks_count` × 100%
+- [ ] If `METADATA_CSUM` enabled: validate superblock CRC32C
+- [ ] Aggregate health score:
+  - [ ] All green + 0 errors = "Healthy"
+  - [ ] Orphans or journal dirty = "Needs Attention"
+  - [ ] Error count > 0 = "Errors Detected" with details
+- [ ] Wire to Disk Manager: ext4 volume properties panel
+- [ ] Commit: `"ext4: volume health dashboard"`
+
+### 11.2 Deleted Inode Recovery (Forensics Mode)
+
+**Prompt:** ext4 marks deleted files by clearing the inode's `i_links_count` to 0 and returning the inode to the free list, but the inode's data (extent tree, timestamps, size) often remains intact until the inode is reused. Additionally, ext4 records the deletion timestamp in `i_dtime`. Implement a recovery scanner that walks the inode table for inodes with `i_links_count == 0` and `i_dtime != 0` that still have valid extent trees. Cross-reference extent blocks against the block bitmap to determine recovery confidence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: deleted inode recovery"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux has `extundelete` but it's an unmaintained third-party CLI tool.
+> Windows has zero ext4 support. Impossible OS having built-in, GUI-based ext4 file recovery
+> is a unique differentiator — especially valuable for dual-boot data rescue.
+
+> [!WARNING]
+> **Read-only operation.** Recovery copies data to a DIFFERENT volume — never write to the
+> ext4 volume being scanned. This preserves forensic integrity.
+
+- [ ] Implement `ext4_scan_deleted(vol, callback)`:
+  - [ ] Walk all inodes in all block groups (read inode tables sequentially)
+  - [ ] For each inode: check `i_links_count == 0` AND `i_dtime != 0`
+  - [ ] Parse `i_mode` to determine file type (skip directories for simplicity)
+  - [ ] Parse extent tree (or indirect blocks) — check if valid
+  - [ ] Extract `i_size`, `i_dtime`, filename from parent directory (if still in dir entries)
+  - [ ] Cross-reference data blocks against block bitmap:
+    - [ ] All blocks free → **High** confidence 🟢
+    - [ ] Some blocks reallocated → **Medium** confidence 🟡
+    - [ ] Most blocks reallocated → **Low** confidence 🔴
+- [ ] Implement `ext4_recover_file(vol, inode_number, output_path)`:
+  - [ ] Read data blocks via extent tree / indirect blocks
+  - [ ] Write to output file on a different volume (IXFS, FAT32)
+- [ ] Wire to Disk Manager: "Recover Deleted Files" button on ext4 volumes
+  - [ ] Show: inode number, size, deletion time, file type, confidence icon
+- [ ] Commit: `"ext4: deleted inode recovery"`
+
+---
+
 ## Priority Order
 
 | Priority | Section | Description |
@@ -403,10 +512,17 @@
 | 🟠 P1 | 6.1 Linear Directory Parser | Directory — read dir entries |
 | 🟠 P1 | 6.3 Path Resolution | Directory — resolve full paths |
 | 🟠 P1 | 8.1 VFS Registration | Integration — make ext4 mountable |
+| 🟡 P2 | 3.3 Extended Attributes | Interop — read xattrs, POSIX ACLs, SELinux labels |
 | 🟡 P2 | 5.1 Indirect Block Reader | Compat — mount ext2/ext3 volumes |
 | 🟡 P2 | 6.2 HTree Directory Index | Performance — fast lookup in large dirs |
 | 🟡 P2 | 7.1 CRC32C Checksumming | Integrity — detect metadata corruption |
+| 🟡 P2 | 10.1 Inode & Block Group Cache | Performance — avoid redundant disk reads |
 | 🟢 P3 | 9.1 Test Suite | Quality — automated validation |
+| 🟢 P3 | 11.1 Health Dashboard ⭐ | **At-a-glance ext4 health** — surfaces Linux error telemetry |
+| 🟢 P3 | 11.2 Deleted Inode Recovery ⭐ | **Built-in forensic recovery** — replaces `extundelete` |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -418,6 +534,7 @@
 | Feature flag gating | ❌ | ✅ Full 3-tier (compat/incompat/ro) | ⬜ §1.2 P0 |
 | Block group descriptors | ❌ | ✅ Full (32/64-byte) | ⬜ §2.1 P0 |
 | Inode reading | ❌ | ✅ Full (128/256-byte) | ⬜ §3.1 P0 |
+| Extended attributes (xattr) | ❌ | ✅ Full (inline + external block) | ⬜ §3.3 P2 |
 | Extent tree traversal | ❌ | ✅ Full (extent cache + preread) | ⬜ §4.1 P0 |
 | Indirect block map (ext2/ext3) | ❌ | ✅ Full (triple indirect) | ⬜ §5.1 P2 |
 | Linear directory entries | ❌ | ✅ Full | ⬜ §6.1 P1 |
@@ -430,7 +547,10 @@
 | flex_bg support | ❌ | ✅ Full | ⬜ §2.1 (handled in GDT read) |
 | ext2/ext3 backward compat | ❌ | ✅ Full | ⬜ §5.1 + §8.1 P2 |
 | Uninitialized extents | ❌ | ✅ Full (return zeros) | ⬜ §4.1 (bit 15 handling) |
+| Inode / GDT caching | ❌ | ✅ Page cache + slab allocator | ⬜ §10.1 P2 |
 | Write support | ❌ | ✅ Full R/W | ⬜ Future P3 |
+| **Volume health dashboard** ⭐ | ❌ No ext4 support | ❌ `tune2fs -l` raw text only | ⬜ §11.1 P3 — GUI health panel |
+| **Deleted inode recovery** ⭐ | ❌ No ext4 support | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — built-in GUI recovery |
 | **Read-only driver (minimum)** | ❌ None | ✅ | ⬜ Requires §1–§4, §6, §8 |
 
 ---
