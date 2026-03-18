@@ -230,6 +230,64 @@ filesystem TODO.
 - [ ] Test: map executable, execute code from mapped page → demand-loads
 - [ ] Commit: `"vfs: memory-mapped file I/O"`
 
+### 1.6 File Attributes & Timestamps API *(agent)*
+
+**Prompt:** Win32 applications use `GetFileAttributes()` as the fastest file-existence check — it's faster than `CreateFile` because it doesn't open a handle. Many apps call it thousands of times during startup (checking DLL existence, config files, etc.). Implement the full attribute get/set API and the companion timestamp manipulation API. The attribute flags map directly to FAT32/NTFS directory entry attributes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file attributes and timestamps API"`. Add notes directly in this TODO section.
+
+- [ ] Implement `GetFileAttributes(lpFileName)` → `DWORD` attribute bitmask:
+  - [ ] Resolve path via `vfs_finddir()` (no handle needed)
+  - [ ] Map `vfs_node` flags to Win32 attributes:
+    - [ ] `FILE_ATTRIBUTE_READONLY (0x01)` — from FS read-only flag
+    - [ ] `FILE_ATTRIBUTE_HIDDEN (0x02)` — from FS hidden flag  
+    - [ ] `FILE_ATTRIBUTE_SYSTEM (0x04)` — from FS system flag
+    - [ ] `FILE_ATTRIBUTE_DIRECTORY (0x10)` — from `vfs_node->flags & VFS_DIRECTORY`
+    - [ ] `FILE_ATTRIBUTE_ARCHIVE (0x20)` — from FS archive flag
+    - [ ] `FILE_ATTRIBUTE_NORMAL (0x80)` — only if no other attributes set
+  - [ ] On failure: return `INVALID_FILE_ATTRIBUTES`, set `ERROR_FILE_NOT_FOUND`
+- [ ] Implement `SetFileAttributes(lpFileName, dwFileAttributes)`:
+  - [ ] Route to `ops->set_attr(node, attributes)`
+  - [ ] FAT32: map to `DIR_Attr` byte. IXFS: map to inode flags
+- [ ] Implement `GetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime)`:
+  - [ ] Read timestamps from `vfs_node` via open handle
+  - [ ] Convert to `FILETIME` (100ns intervals since 1601-01-01)
+- [ ] Implement `SetFileTime(hFile, lpCreationTime, lpLastAccessTime, lpLastWriteTime)`:
+  - [ ] Route to `ops->set_times(node, create, access, modify)`
+  - [ ] Pass `NULL` for any timestamp that shouldn't be changed
+- [ ] Implement `GetFileAttributesEx(lpFileName, fInfoLevelId, lpFileInformation)`:
+  - [ ] Returns `WIN32_FILE_ATTRIBUTE_DATA`: attributes, timestamps, and file size
+  - [ ] Faster than `GetFileInformationByHandle` — no handle required
+- [ ] Test: `GetFileAttributes("C:\\nonexistent")` → `INVALID_FILE_ATTRIBUTES`
+- [ ] Test: `SetFileAttributes("test.txt", FILE_ATTRIBUTE_READONLY)` → write blocked
+- [ ] Commit: `"vfs: file attributes and timestamps API"`
+
+### 1.7 Byte-Range File Locking *(agent)*
+
+**Prompt:** Beyond share-mode locking (§1.2), Windows supports byte-range locks via `LockFile()` / `UnlockFile()`. Databases (SQLite, Access, Jet) use these to lock specific byte ranges within a file for record-level concurrency. A process can lock bytes 1024–2048 of a file while another process locks bytes 4096–8192 — both succeed. Overlapping lock requests from different handles are denied. Implement a per-file range-lock list. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: byte-range file locking"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux detects deadlocks in byte-range locks.
+> Windows returns `ERROR_LOCK_VIOLATION` immediately (no block). Linux `fcntl` locks can
+> deadlock. Impossible OS can optionally detect potential deadlocks by tracking which
+> process holds which ranges and which processes are waiting.
+
+- [ ] Define `struct file_range_lock`: `{ handle, offset, length, exclusive }`
+- [ ] Maintain per-file range-lock list (sorted by offset for fast overlap checks)
+- [ ] Implement `LockFile(hFile, dwFileOffsetLow, dwFileOffsetHigh, nNumberOfBytesLow, nNumberOfBytesHigh)`:
+  - [ ] Check for overlap with existing locks from OTHER handles
+  - [ ] If overlap found → return `FALSE`, `SetLastError(ERROR_LOCK_VIOLATION)`
+  - [ ] If no overlap → add range lock, return `TRUE`
+- [ ] Implement `LockFileEx(hFile, dwFlags, dwReserved, nNumberOfBytesLow, nNumberOfBytesHigh, lpOverlapped)`:
+  - [ ] `LOCKFILE_EXCLUSIVE_LOCK` — exclusive (read+write blocked)
+  - [ ] Without flag — shared lock (other shared locks OK, exclusive blocked)
+  - [ ] `LOCKFILE_FAIL_IMMEDIATELY` — return immediately instead of blocking
+- [ ] Implement `UnlockFile()` / `UnlockFileEx()` — remove matching range lock
+- [ ] On `CloseHandle`: release ALL range locks held by this handle
+- [ ] Optional deadlock detection: track (process, waiting_for_range) graph
+  - [ ] If cycle detected → return `ERROR_POSSIBLE_DEADLOCK` (Win32 code 1131)
+- [ ] Test: lock range 0–100, lock range 200–300 from another handle → both succeed
+- [ ] Test: lock range 0–100, try to lock range 50–150 from another handle → `ERROR_LOCK_VIOLATION`
+- [ ] Commit: `"vfs: byte-range file locking"`
+
 ---
 
 ## 2. Feature Spoofing (NTFS Compatibility)
@@ -383,6 +441,77 @@ filesystem TODO.
 
 ---
 
+## 4. File Change Notifications (🚀 Impossible OS Feature)
+
+> [!TIP]
+> **Competitive Edge:** Windows has `ReadDirectoryChangesW` but it's per-directory and
+> misses events during buffer overflow. Linux has `inotify` but it doesn't work recursively
+> without manually adding watches to every subdirectory. Impossible OS can implement a
+> unified, recursive, cross-filesystem notification system with guaranteed delivery.
+
+### 4.1 Directory Change Notifications *(agent)*
+
+**Prompt:** File managers, IDEs, build systems, and desktop search all need to know when files change. Windows provides `FindFirstChangeNotification()` for simple signaling and `ReadDirectoryChangesW()` for detailed event streams. Implement both: a VFS-level notification system that fires events (create, delete, rename, modify, attribute change) when any file operation mutates a directory tree. The VFS layer itself generates events — individual filesystem drivers don't need to do anything special. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file change notifications"`. Add notes directly in this TODO section.
+
+- [ ] Define notification event types:
+  - [ ] `FILE_NOTIFY_CHANGE_FILE_NAME (0x01)` — file created/deleted/renamed
+  - [ ] `FILE_NOTIFY_CHANGE_DIR_NAME (0x02)` — directory created/deleted/renamed
+  - [ ] `FILE_NOTIFY_CHANGE_ATTRIBUTES (0x04)` — attribute changes
+  - [ ] `FILE_NOTIFY_CHANGE_SIZE (0x08)` — file size changed
+  - [ ] `FILE_NOTIFY_CHANGE_LAST_WRITE (0x10)` — timestamp changed
+- [ ] Implement notification queue: per-watch ring buffer of `FILE_NOTIFY_INFORMATION` structs
+- [ ] Implement `FindFirstChangeNotification(lpPathName, bWatchSubtree, dwNotifyFilter)` → `HANDLE`:
+  - [ ] Register watch on directory node
+  - [ ] If `bWatchSubtree` — watch recursively (all descendants)
+  - [ ] Return wait handle that signals when matching event occurs
+- [ ] Implement `FindNextChangeNotification(hChangeHandle)` — reset for next event
+- [ ] Implement `FindCloseChangeNotification(hChangeHandle)` — release watch
+- [ ] Implement `ReadDirectoryChangesW(hDirectory, lpBuffer, nBufferLength, bWatchSubtree, dwNotifyFilter, lpBytesReturned, lpOverlapped, lpCompletionRoutine)`:
+  - [ ] Fill `FILE_NOTIFY_INFORMATION` structs with: action, filename, next offset
+  - [ ] Actions: `FILE_ACTION_ADDED`, `REMOVED`, `MODIFIED`, `RENAMED_OLD_NAME`, `RENAMED_NEW_NAME`
+  - [ ] Support both synchronous and overlapped (async) modes
+- [ ] VFS event injection points:
+  - [ ] `vfs_create()` / `ops->create()` → `FILE_ACTION_ADDED`
+  - [ ] `vfs_unlink()` / `ops->unlink()` → `FILE_ACTION_REMOVED`
+  - [ ] `vfs_rename()` / `ops->rename()` → `RENAMED_OLD_NAME` + `RENAMED_NEW_NAME`
+  - [ ] `vfs_write()` / `ops->write()` → `FILE_ACTION_MODIFIED` (debounced)
+- [ ] Test: create watch, create file in watched dir → notification fires
+- [ ] Test: recursive watch, create file in subdirectory → notification fires
+- [ ] Commit: `"vfs: file change notifications"`
+
+---
+
+## 5. Asynchronous File I/O
+
+### 5.1 Overlapped I/O Support *(agent)*
+
+**Prompt:** High-performance Windows applications use overlapped (asynchronous) I/O to avoid blocking threads during disk reads/writes. `ReadFile()` and `WriteFile()` accept an `OVERLAPPED` struct containing a file offset and an event handle. When called with `OVERLAPPED`, the call returns immediately and signals the event when the I/O completes. This is critical for database engines, web servers, and any app doing concurrent I/O. Implement an I/O request queue that dispatches reads/writes to the VFS on a kernel worker thread and signals completion. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: overlapped async file I/O"`. Add notes directly in this TODO section.
+
+- [ ] Define `OVERLAPPED` struct:
+  ```c
+  typedef struct {
+      uint32_t Internal;       // status
+      uint32_t InternalHigh;   // bytes transferred
+      uint64_t Offset;         // file offset
+      HANDLE   hEvent;         // completion event
+  } OVERLAPPED;
+  ```
+- [ ] Modify `ReadFile` / `WriteFile`:
+  - [ ] If `lpOverlapped != NULL` → queue I/O request, return immediately
+  - [ ] If `lpOverlapped == NULL` → synchronous (existing behavior)
+- [ ] Implement I/O request queue:
+  - [ ] `struct io_request`: `{ handle, buffer, size, offset, overlapped, type(read/write) }`
+  - [ ] Kernel worker thread dequeues and executes via `ops->read()` / `ops->write()`
+  - [ ] On completion: set `Internal = STATUS_SUCCESS`, `InternalHigh = bytes`, signal `hEvent`
+- [ ] Implement `GetOverlappedResult(hFile, lpOverlapped, lpNumberOfBytesTransferred, bWait)`:
+  - [ ] If `bWait` → wait on `hEvent` until complete
+  - [ ] Return bytes transferred from `InternalHigh`
+- [ ] Implement `CancelIo(hFile)` — cancel all pending I/O for this handle
+- [ ] Test: start async read, do other work, then `GetOverlappedResult` → data available
+- [ ] Commit: `"vfs: overlapped async file I/O"`
+
+---
+
 ## Priority Order
 
 | Priority | Section | Description | Rationale |
@@ -390,13 +519,20 @@ filesystem TODO.
 | 🔴 P0    | 1.1 Case-insensitive lookup | Mandatory for nearly all Win32 apps | Without this, most apps fail with FILE_NOT_FOUND |
 | 🔴 P0    | 1.2 Mandatory file locking | Database corruption prevention | SQLite, Office, installers all depend on this |
 | 🔴 P0    | 3.1 Error code mapping | Correct app behavior on errors | Wrong error codes → wrong app code paths |
-| 🟡 P1    | 1.3 Deletion semantics | Installer compatibility | Installers overwrite/delete files in use |
-| 🟡 P1    | 1.4 Unique file IDs | Application identity checks | Used by many apps to detect same-file |
-| 🟡 P1    | 2.3 Volume information | App compatibility queries | Some apps refuse to run on unknown FS |
+| 🟠 P1    | 1.3 Deletion semantics | Installer compatibility | Installers overwrite/delete files in use |
+| 🟠 P1    | 1.4 Unique file IDs | Application identity checks | Used by many apps to detect same-file |
+| 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check | `GetFileAttributes` called thousands of times |
+| 🟠 P1    | 2.3 Volume information | App compatibility queries | Some apps refuse to run on unknown FS |
 | 🟡 P2    | 1.5 Memory-mapped files | PE loader demand paging | Performance-critical for large executables |
+| 🟡 P2    | 1.7 Byte-range locking ⭐ | Record-level DB concurrency | SQLite, Access use byte-range locks + deadlock detect |
 | 🟡 P2    | 2.1 ADS handling | Browser download compat | Zone.Identifier must not crash |
 | 🟡 P2    | 2.2 ACL stubs | Installer compat | MSI installers set permissions |
+| 🟡 P2    | 4.1 Change notifications ⭐ | File manager / IDE compat | **Recursive + cross-FS** — Linux inotify can't do recursive |
 | 🟢 P3    | 2.4 Hard links / reparse | WinSxS / MSVC runtime compat | Needed when running VC++ redistributable apps |
+| 🟢 P3    | 5.1 Overlapped I/O | High-perf app compat | Database engines, web servers need async I/O |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -404,29 +540,36 @@ filesystem TODO.
 
 | File | Purpose |
 |------|---------|
-| `src/kernel/fs/vfs.c` | Case-insensitive lookup, file lock table |
-| `src/kernel/fs/fileapi.c` | CreateFile share mode enforcement, deletion semantics |
+| `src/kernel/fs/vfs.c` | Case-insensitive lookup, file lock table, change notifications |
+| `src/kernel/fs/fileapi.c` | CreateFile share mode enforcement, deletion semantics, attributes |
 | `include/kernel/fs/win32_errors.h` | [NEW] Win32 error code constants |
-| `include/kernel/fs/fileapi.h` | Handle type definitions, error codes |
+| `include/kernel/fs/fileapi.h` | Handle type definitions, error codes, OVERLAPPED struct |
 | `src/kernel/fs/vol_info.c` | [NEW] GetVolumeInformation, GetDiskFreeSpace |
 | `src/kernel/fs/security.c` | [NEW] ACL routing (native on IXFS, stub on FAT32) |
+| `src/kernel/fs/flock.c` | [NEW] Byte-range locking with deadlock detection |
+| `src/kernel/fs/notify.c` | [NEW] File change notification queue + recursive watches |
+| `src/kernel/fs/async_io.c` | [NEW] Overlapped I/O request queue + worker thread |
 | `src/kernel/mm/mmap.c` | Memory-mapped file I/O |
 
 ---
 
 ## OS Comparison
 
-| Feature                  | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
-| ------------------------ | ------------------------------- | ------------------------ | ------------------------------------- |
-| Case-insensitive lookup  | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
-| Mandatory file locking   | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
-| Deferred deletion        | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
-| File IDs (inode-like)    | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
-| Memory-mapped I/O        | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
-| ADS (streams)            | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
-| ACL security descriptors | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
-| Volume info queries      | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
-| Hard links / symlinks    | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
-| Extended attributes      | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
-| Transparent compression  | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
-| Precise error codes      | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |
+| Feature                         | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
+| ------------------------------- | ------------------------------- | ------------------------ | ------------------------------------- |
+| Case-insensitive lookup         | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
+| Mandatory file locking          | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
+| Deferred deletion               | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
+| File IDs (inode-like)           | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
+| Memory-mapped I/O               | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
+| File attributes API             | ✅ GetFileAttributes (fast)      | ✅ stat                   | ⬜ §1.6 — attribute get/set + timestamps |
+| **Byte-range locking** ⭐       | ✅ LockFile (no deadlock detect) | ✅ fcntl (can deadlock)   | ⬜ §1.7 — with deadlock detection       |
+| ADS (streams)                   | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
+| ACL security descriptors        | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
+| Volume info queries             | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
+| Hard links / symlinks           | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
+| Extended attributes             | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
+| Transparent compression         | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
+| Precise error codes             | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |
+| **Change notifications** ⭐     | ✅ Per-dir (no recursive native) | ⚠️ inotify (no recursive) | ⬜ §4.1 — recursive + cross-FS          |
+| **Async overlapped I/O**        | ✅ OVERLAPPED struct             | ✅ io_uring / aio          | ⬜ §5.1 — OVERLAPPED compat             |
