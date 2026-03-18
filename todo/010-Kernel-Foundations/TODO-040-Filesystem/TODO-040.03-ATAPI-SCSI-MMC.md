@@ -225,8 +225,59 @@
   - [ ] Parse TOC header: data length (2 bytes BE), first track, last track
   - [ ] Parse track descriptors: track number, ADR/Control, start LBA (4 bytes BE)
   - [ ] Byte-swap all multi-byte fields
+- [ ] Implement `atapi_read_disc_structure(dev, media_type, layer, format, buf)`:
+  - [ ] CDB: `{ 0xAD, media_type, 0, 0, layer, 0, 0, format, Len[1], Len[0], 0, 0 }`
+  - [ ] Format 0x00: Physical Format Info (DVD layer info: track path, density, sectors)
+  - [ ] Format 0x01: DVD Copyright (CSS/CPRM protected status)
+  - [ ] Format 0x04: DVD Manufacturing Info
+  - [ ] Byte-swap all BE response fields
 - [ ] Wire eject to device manager / Explorer context menu
 - [ ] Commit: `"atapi: media control commands"`
+
+### 5.4 GET CONFIGURATION & Feature Profiles
+
+**Prompt:** GET CONFIGURATION (`0x46`) retrieves the drive's capability profile list and active features. This is essential for determining what the drive can do: read CD, read DVD, read BD, write CD-R, write DVD±R/RW, etc. Each profile has a numeric code (e.g., `0x0008` = CD-ROM, `0x0010` = DVD-ROM, `0x0040` = BD-ROM). The current profile indicates what type of media is currently inserted. Feature descriptors provide fine-grained capabilities: core features, morphing, removable medium, random readable, multi-read, CD read, DVD read, BD read, power management, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: GET CONFIGURATION and feature profiles"`. Add notes directly in this TODO section.
+
+- [ ] Implement `atapi_get_configuration(dev, rt, start_feature, buf, buf_len)`:
+  - [ ] CDB: `{ 0x46, rt, Start[1], Start[0], 0, 0, 0, Len[1], Len[0], 0, 0, 0 }`
+  - [ ] RT=0x00: all features, RT=0x01: current features, RT=0x02: single feature
+- [ ] Parse Feature Header (8 bytes):
+  - [ ] Data length (4 bytes BE)
+  - [ ] Current profile (2 bytes BE) — what media type is inserted
+- [ ] Parse Profile List (Feature Code `0x0000`):
+  - [ ] Each profile descriptor: 4 bytes (profile number BE + current bit)
+  - [ ] Key profiles:
+    - [ ] `0x0008` CD-ROM, `0x0009` CD-R, `0x000A` CD-RW
+    - [ ] `0x0010` DVD-ROM, `0x0011` DVD-R, `0x001A` DVD+RW, `0x001B` DVD+R
+    - [ ] `0x0040` BD-ROM, `0x0041` BD-R, `0x0043` BD-RE
+- [ ] Detect drive type from profile list (CD-only, DVD combo, BD combo)
+- [ ] Detect current media type from current profile
+- [ ] Store capabilities in `dev->profiles[]` and `dev->current_profile`
+- [ ] Log: `[ATAPI] Drive supports: %s, current media: %s`
+- [ ] Commit: `"atapi: GET CONFIGURATION and feature profiles"`
+
+### 5.5 MODE SENSE & Drive Capabilities
+
+**Prompt:** MODE SENSE (10) (`0x5A`) retrieves drive operating parameters organized into mode pages. Critical pages for optical drives: Page `0x01` (Error Recovery — retry counts, error reporting), Page `0x2A` (Capabilities and Mechanical Status — read/write speeds, buffer size, media types supported, tray/caddy/slot mechanism type, audio capabilities). Page `0x2A` is particularly important for determining the drive's maximum read/write speeds and supported features. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: MODE SENSE and drive capabilities"`. Add notes directly in this TODO section.
+
+- [ ] Implement `atapi_mode_sense(dev, page_code, buf, buf_len)`:
+  - [ ] CDB: `{ 0x5A, 0x00, page_code, 0, 0, 0, 0, Len[1], Len[0], 0, 0, 0 }`
+  - [ ] Use MODE SENSE (10) — not MODE SENSE (6), which some drives don't support
+- [ ] Parse Mode Parameter Header (8 bytes):
+  - [ ] Mode Data Length (2 bytes BE), Medium Type, Device Specific Parameter
+- [ ] Parse Page `0x01` — Read/Write Error Recovery:
+  - [ ] Error recovery flags, read retry count, write retry count
+- [ ] Parse Page `0x2A` — Capabilities and Mechanical Status:
+  - [ ] Read capabilities: CD-R read, CD-RW read, DVD-ROM read, DVD-R read, etc.
+  - [ ] Write capabilities: CD-R write, CD-RW write, DVD-R write, etc.
+  - [ ] Mechanism type: tray (0), caddy (1), popup (2), changer (4), slot (5)
+  - [ ] Maximum read speed (KB/s), current read speed
+  - [ ] Maximum write speed (KB/s), current write speed
+  - [ ] Buffer size (KB)
+  - [ ] Audio capabilities: digital audio output, accurate DAE stream, C2 error pointers
+- [ ] Store in `dev->capabilities`
+- [ ] Log: `[ATAPI] Capabilities: %s, max_read=%u KB/s, buf=%u KB, mech=%s`
+- [ ] Commit: `"atapi: MODE SENSE and drive capabilities"`
 
 ---
 
@@ -388,9 +439,38 @@
 - [ ] Implement `atapi_read_subchannel(dev, *position)`:
   - [ ] CDB: `{ 0x42, 0x02, 0x40, 0x01, 0, 0, 0, 0x00, 0x10, 0, 0, 0 }`
   - [ ] Parse: current position in MSF, playback status (playing/paused/stopped)
-- [ ] SET CD SPEED (`0xBB`): set read speed for quieter operation or max through  put
+- [ ] SET CD SPEED (`0xBB`): set read speed for quieter operation or max throughput
 - [ ] Wire to audio player application / CD Player applet
 - [ ] Commit: `"atapi: audio CD extraction and playback"`
+
+### 9.2 Paranoia-Grade DAE with C2 Error Pointers
+
+**Prompt:** Standard audio extraction tolerates interpolated errors — the drive silently substitutes guessed samples for unreadable ones. Paranoia-grade extraction detects and corrects these errors for bit-perfect audio recovery from scratched discs. Check MODE SENSE Page `0x2A` for C2 Error Pointers support (Capability byte, bit 4) and Accurate Stream support (bit 1). When C2 is supported, READ CD (`0xBE`) can return a 294-byte C2 error pointer block alongside each 2352-byte audio sector — each bit indicates whether the corresponding byte is in error. When errors are detected, re-read the sector with jitter correction (overlapping reads with offset verification). No OS ships with a built-in paranoia-grade ripper as part of the operating system itself. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: paranoia-grade DAE with C2 error detection"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows relies on third-party rippers (EAC, dbpoweramp).
+> Linux uses `cdparanoia` (separate package, not integrated). Neither OS has
+> built-in bit-perfect audio extraction with C2 error reporting. Impossible OS
+> can ship this as a native, first-class audio CD feature.
+
+- [ ] Check capabilities via MODE SENSE Page `0x2A`:
+  - [ ] Bit 4: C2 Error Pointers supported
+  - [ ] Bit 1: Accurate Stream (DAE does not interpolate errors)
+- [ ] If C2 supported, modify READ CD (`0xBE`) header byte:
+  - [ ] Byte 9 bit 1: request C2 error block (294 bytes per sector)
+  - [ ] Total sector size: 2352 (audio) + 294 (C2) = 2646 bytes
+- [ ] Parse C2 error block:
+  - [ ] 294 bytes × 8 bits = 2352 bits → one bit per audio sample byte
+  - [ ] Bit = 1 → corresponding byte is in error
+  - [ ] Count total C2 errors per sector
+- [ ] On C2 errors detected:
+  - [ ] Re-read sector up to 8 times
+  - [ ] Use overlapping reads (read sector N ± 1) to verify alignment
+  - [ ] If all retries have errors → mark sector as uncorrectable, log warning
+- [ ] Expose via API: `cdrom_rip_track(dev, track, buf, *quality_report)`
+- [ ] Quality report per track: total sectors, error-free sectors, retried sectors, uncorrectable
+- [ ] Wire to CD Player applet: "Rip Track" with quality meter
+- [ ] Commit: `"atapi: paranoia-grade DAE with C2 error detection"`
 
 ---
 
@@ -416,6 +496,75 @@
 
 ---
 
+## 11. Drive Noise Control & Speed Management (🚀 Impossible OS Feature)
+
+### 11.1 SET CD SPEED & Quiet Mode
+
+**Prompt:** Optical drives at maximum speed are extremely loud (40x+ CD = jet turbine). Implement SET CD SPEED (`0xBB`) to allow the user to select between maximum performance and quiet operation. Parse the drive's current speed from MODE SENSE Page `0x2A` (maximum read/write speeds). Offer preset modes: "Performance" (max speed), "Quiet" (8x CD / 4x DVD), "Silent" (4x CD / 2x DVD). Expose via Drive Properties dialog: a speed slider or dropdown. This is a quality-of-life feature no OS provides natively in the GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: drive speed and noise control"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux provides a built-in GUI to
+> control optical drive speed and noise. Users must install third-party tools
+> (e.g., Nero DriveSpeed, hdparm). Impossible OS can offer this natively in
+> the Drive Properties dialog — a significant usability win for laptop users.
+
+- [ ] Implement `atapi_set_speed(dev, read_speed_kbps, write_speed_kbps)`:
+  - [ ] CDB: `{ 0xBB, 0, Read[1], Read[0], Write[1], Write[0], 0, 0, 0, 0, 0, 0 }`
+  - [ ] Values in KB/s (e.g., CD 1x = 176, DVD 1x = 1385, BD 1x = 4500)
+  - [ ] `0xFFFF` = maximum speed (let drive decide)
+- [ ] Speed presets:
+  - [ ] Performance: `0xFFFF` (maximum)
+  - [ ] Balanced: CD 24x (4224), DVD 8x (11080)
+  - [ ] Quiet: CD 8x (1408), DVD 4x (5540)
+  - [ ] Silent: CD 4x (704), DVD 2x (2770)
+- [ ] Auto-quiet: reduce speed when laptop is on battery power
+- [ ] Expose via Drive Properties: speed preset dropdown
+- [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\ATAPI\DriveSpeedPreset`
+- [ ] Log: `[ATAPI] Speed set to %u KB/s (read), %u KB/s (write)`
+- [ ] Commit: `"atapi: drive speed and noise control"`
+
+---
+
+## 12. Rock Ridge & El Torito (ISO 9660 Extensions)
+
+### 12.1 Rock Ridge Extension Support
+
+**Prompt:** Rock Ridge (IEEE P1282) extends ISO 9660 with POSIX-compatible metadata: long filenames (up to 255 chars without the 8.3 restriction), symbolic links, file permissions (owner/group/world), device nodes, and deep directory nesting beyond the ISO 9660 8-level limit. Rock Ridge data is stored in System Use Entries (SUEs) appended to each directory record's System Use area. Key entries: `PX` (POSIX attributes), `NM` (alternate/long name), `SL` (symbolic link), `CL`/`PL`/`RE` (relocated directories). Detect Rock Ridge by finding `SP` (RRIP Sharing Protocol) and `ER` (Extension Reference) entries at the root directory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"iso9660: Rock Ridge extension support"`. Add notes directly in this TODO section.
+
+- [ ] Detect Rock Ridge: scan root directory record's System Use area:
+  - [ ] Look for `SP` entry (signature bytes `0xBE`, `0xEF`) → RRIP indicator
+  - [ ] Look for `ER` entry → confirms "RRIP_1991A" or "IEEE_P1282" extension
+- [ ] Parse System Use Entries (SUEs) for each directory record:
+  - [ ] `NM` (Alternate Name): long filename, replaces 8.3 ISO name
+    - [ ] Handle continuation (`CE` entry) for very long names
+  - [ ] `PX` (POSIX Attributes): file mode, nlinks, uid, gid
+  - [ ] `SL` (Symbolic Link): component records → target path
+  - [ ] `CL` (Child Link): relocated directory LBA
+  - [ ] `PL` (Parent Link): parent of relocated directory
+  - [ ] `RE` (Relocated): marks entry as relocated (skip in normal listing)
+  - [ ] `TF` (Timestamps): creation, modification, access, attributes times
+- [ ] If Rock Ridge detected, prefer `NM` names over ISO 8.3 names
+- [ ] Map POSIX permissions to VFS stat → support `chmod` semantics (read-only)
+- [ ] Commit: `"iso9660: Rock Ridge extension support"`
+
+### 12.2 El Torito Bootable CD/DVD
+
+**Prompt:** El Torito (Phoenix/IBM, 1995) enables booting from CD/DVD-ROM. The Boot Record Volume Descriptor is at LBA 17 (one sector after the PVD). It contains a pointer to a Boot Catalog which lists bootable images (emulated floppy, hard disk, or no-emulation). Impossible OS installation media will be an El Torito bootable ISO with UEFI boot support. Detecting El Torito is needed to identify bootable CDs in the Disk Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"iso9660: El Torito boot detection"`. Add notes directly in this TODO section.
+
+- [ ] Detect Boot Record Volume Descriptor at LBA 17:
+  - [ ] Type code = `0x00`, identifier = `"CD001"`, version = `0x01`
+  - [ ] Boot System Identifier = `"EL TORITO SPECIFICATION"` (32 bytes)
+  - [ ] Boot Catalog LBA at offset 0x47 (4 bytes LE)
+- [ ] Parse Boot Catalog:
+  - [ ] Validation Entry (32 bytes): Header ID `0x01`, platform ID, checksum
+  - [ ] Default Entry (32 bytes): boot indicator, boot media type, load segment, LBA, sector count
+  - [ ] Boot media types: 0=no emulation, 1=1.2M floppy, 2=1.44M floppy, 3=2.88M floppy, 4=hard disk
+- [ ] Detect UEFI boot entries: platform ID = `0xEF` (EFI)
+- [ ] Display in Disk Manager: "Bootable" badge on bootable optical media
+- [ ] Commit: `"iso9660: El Torito boot detection"`
+
+---
+
 ## Priority Order
 
 | Priority | Section                            | Description                                              |
@@ -428,14 +577,23 @@
 | 🟠 P1    | 5.1 TEST UNIT READY & INQUIRY    | Correctness — device probing and media presence check    |
 | 🟠 P1    | 4.1 Transport Abstraction        | Architecture — decouple SCSI from transport hardware     |
 | 🟠 P1    | 7.1 VFS Block Device             | Integration — expose optical drive to filesystem layer   |
+| 🟠 P1    | 5.4 GET CONFIGURATION            | Foundation — determine drive type and media capabilities |
 | 🟡 P2    | 3.2 AHCI ATAPI Delivery          | Performance — bypass PIO handshake via AHCI hardware     |
 | 🟡 P2    | 3.1 Bus Master DMA               | Performance — async DMA instead of PIO polling           |
-| 🟡 P2    | 5.3 Media Control Commands       | Feature — eject, load, lock tray, read TOC               |
+| 🟡 P2    | 5.3 Media Control Commands       | Feature — eject, load, lock tray, read TOC, disc struct  |
+| 🟡 P2    | 5.5 MODE SENSE                   | Feature — drive capabilities, speeds, mechanism type     |
 | 🟡 P2    | 6.2 Media Change Detection       | Correctness — handle disc swaps gracefully               |
 | 🟡 P2    | 10.1 Async I/O & Concurrency     | Performance — non-blocking optical drive access          |
 | 🟢 P3    | 8.1 ISO 9660 / Joliet            | Feature — standard CD/DVD filesystem support             |
 | 🟢 P3    | 8.2 UDF Filesystem               | Feature — DVD-ROM and Blu-ray filesystem support         |
+| 🟢 P3    | 12.1 Rock Ridge ⭐               | Feature — long filenames and POSIX attrs on ISO 9660     |
+| 🟢 P3    | 12.2 El Torito                   | Feature — bootable CD/DVD detection and display          |
 | 🔵 P4    | 9.1 Audio CD Extraction          | Feature — audio CD playback and digital extraction       |
+| 🔵 P4    | 9.2 Paranoia DAE + C2 ⭐         | **Bit-perfect ripping** — no OS ships this built-in     |
+| 🔵 P4    | 11.1 Drive Speed Control ⭐      | **Noise management** — no OS has a native GUI for this  |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -453,6 +611,9 @@
 | INQUIRY                            | ✅                                     | ✅ `scsi_inquiry()`                    | ⬜ §5.1 P1                                      |
 | READ CAPACITY                      | ✅                                     | ✅ `sr_read_capacity()`                | ⬜ §5.2 P0                                      |
 | READ (10) / READ (12)              | ✅                                     | ✅ `sr_block_read()`                   | ⬜ §5.2 P0                                      |
+| READ DISC STRUCTURE (DVD/BD)       | ✅ (via DeviceIoControl)               | ✅ `sr_do_ioctl()`                     | ⬜ §5.3 P2 (added)                              |
+| GET CONFIGURATION / Profiles       | ✅                                     | ✅ `sr_get_config()`                   | ⬜ §5.4 P1                                      |
+| MODE SENSE / Capabilities          | ✅                                     | ✅ `sr_mode_sense()`                   | ⬜ §5.5 P2                                      |
 | REQUEST SENSE                      | ✅                                     | ✅ `scsi_eh_prep_cmnd()`               | ⬜ §6.1 P1                                      |
 | Sense Key / ASC / ASCQ parsing     | ✅                                     | ✅ `scsi_sense_hdr`                    | ⬜ §6.1 P1                                      |
 | Media change detection             | ✅ AutoPlay / WM_DEVICECHANGE          | ✅ `sr_check_events()`                 | ⬜ §6.2 P2                                      |
@@ -462,8 +623,12 @@
 | Block device registration          | ✅ CdRom class driver                  | ✅ `/dev/sr0`                          | ⬜ §7.1 P1                                      |
 | ISO 9660 filesystem                | ✅ CDFS.sys                            | ✅ `isofs` module                      | ⬜ §8.1 P3                                      |
 | Joliet Unicode filenames           | ✅                                     | ✅                                     | ⬜ §8.1 P3                                      |
+| **Rock Ridge (POSIX on ISO)** ⭐   | ❌ Not supported                       | ✅ `isofs` with RR                     | ⬜ §12.1 P3 — long names + POSIX on CD          |
+| **El Torito boot detection**       | ✅ (silent)                            | ✅ `isofs`                             | ⬜ §12.2 P3 — "Bootable" badge in Disk Manager  |
 | UDF filesystem                     | ✅ udfs.sys                            | ✅ `udf` module                        | ⬜ §8.2 P3                                      |
 | Audio CD playback                  | ✅ Windows Media Player                | ✅ `cdda` + various players            | ⬜ §9.1 P4                                      |
 | Audio extraction (ripping)         | ✅ WMP / iTunes                        | ✅ `cdparanoia` / `libcdio`            | ⬜ §9.1 P4                                      |
+| **C2 error ptr ripping** ⭐        | ❌ Third-party only (EAC)              | ❌ `cdparanoia` (separate package)     | ⬜ §9.2 P4 — built-in bit-perfect extraction    |
+| **Drive speed/noise GUI** ⭐       | ❌ Third-party only (Nero DriveSpeed)  | ❌ `hdparm` CLI only                   | ⬜ §11.1 P4 — native Drive Properties slider    |
 | Async I/O                          | ✅ Overlapped I/O                      | ✅ Block MQ                            | ⬜ §10.1 P2                                     |
 | **Full optical drive stack**       | ✅                                     | ✅                                     | ⬜ Requires §1–§8 at minimum                    |
