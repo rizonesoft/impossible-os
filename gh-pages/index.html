@@ -754,46 +754,32 @@
                 ⭐ Star on GitHub
             </a>
         </div>
-        <div class="hero-countdown">
-            <p class="hero-countdown-label">v1.0 releases in</p>
-            <div class="hero-timer" id="hero-timer">
-                <span class="hero-timer-unit"><span id="hero-days">---</span><small>days</small></span>
-                <span class="hero-timer-sep">:</span>
-                <span class="hero-timer-unit"><span id="hero-hours">--</span><small>hrs</small></span>
-                <span class="hero-timer-sep">:</span>
-                <span class="hero-timer-unit"><span id="hero-mins">--</span><small>min</small></span>
-                <span class="hero-timer-sep">:</span>
-                <span class="hero-timer-unit"><span id="hero-secs">--</span><small>sec</small></span>
+        <div class="countdown-section">
+            <p class="countdown-label">Countdown to v1.0 Release</p>
+            <div class="countdown" id="countdown-timer">
+                <div class="countdown-unit">
+                    <div class="countdown-number" id="cd-days">---</div>
+                    <div class="countdown-text">Days</div>
+                </div>
+                <div class="countdown-unit">
+                    <div class="countdown-number" id="cd-hours">--</div>
+                    <div class="countdown-text">Hours</div>
+                </div>
+                <div class="countdown-unit">
+                    <div class="countdown-number" id="cd-minutes">--</div>
+                    <div class="countdown-text">Minutes</div>
+                </div>
+                <div class="countdown-unit">
+                    <div class="countdown-number" id="cd-seconds">--</div>
+                    <div class="countdown-text">Seconds</div>
+                </div>
             </div>
+            <p class="release-date">Target release: <strong>January 28, 2028</strong></p>
         </div>
     </div>
 </section>
 
-<!-- Countdown -->
-<section class="countdown-section fade-in" id="countdown">
-    <div class="container">
-        <p class="countdown-label">Countdown to v1.0 Release</p>
-        <div class="countdown" id="countdown-timer">
-            <div class="countdown-unit">
-                <div class="countdown-number" id="cd-days">---</div>
-                <div class="countdown-text">Days</div>
-            </div>
-            <div class="countdown-unit">
-                <div class="countdown-number" id="cd-hours">--</div>
-                <div class="countdown-text">Hours</div>
-            </div>
-            <div class="countdown-unit">
-                <div class="countdown-number" id="cd-minutes">--</div>
-                <div class="countdown-text">Minutes</div>
-            </div>
-            <div class="countdown-unit">
-                <div class="countdown-number" id="cd-seconds">--</div>
-                <div class="countdown-text">Seconds</div>
-            </div>
-        </div>
-        <p class="release-date">Target release: <strong>January 28, 2028</strong></p>
-    </div>
-</section>
+
 
 <!-- Core Pillars -->
 <section id="features" class="fade-in">
@@ -982,12 +968,6 @@
         document.getElementById('cd-hours').textContent = String(hours).padStart(2, '0');
         document.getElementById('cd-minutes').textContent = String(minutes).padStart(2, '0');
         document.getElementById('cd-seconds').textContent = String(seconds).padStart(2, '0');
-
-        // Hero countdown
-        document.getElementById('hero-days').textContent = days;
-        document.getElementById('hero-hours').textContent = String(hours).padStart(2, '0');
-        document.getElementById('hero-mins').textContent = String(minutes).padStart(2, '0');
-        document.getElementById('hero-secs').textContent = String(seconds).padStart(2, '0');
     }
 
     updateCountdown();
