@@ -12,6 +12,9 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL virtqueue buffers (descriptor tables, available rings, used rings). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
 
+> [!WARNING]
+> **Endianness:** The VirtIO 1.x specification strictly enforces **little-endian** formatting for ALL multi-byte fields in all structures (`le16`, `le32`, `le64`) — descriptor addresses, ring indices, config registers, request headers. On x86-64 this is native, but all struct field types should use explicit `le16`/`le32`/`le64` typedefs to enforce correctness and future-proof for big-endian architectures.
+
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
 > [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/specs/virtio-1.2.md)
@@ -31,9 +34,11 @@
 - [ ] Walk PCI capability list from offset `0x34`:
   - [ ] For each cap with `cap_vndr == 0x09`: parse `cfg_type`, `bar`, `offset`, `length`
   - [ ] Store pointer to `COMMON_CFG` (type 1), `NOTIFY_CFG` (type 2), `ISR_CFG` (type 3), `DEVICE_CFG` (type 4)
+  - [ ] Optionally record `PCI_CFG` (type 5) — fallback config access via PCI config cycles when BAR mapping fails
 - [ ] Map the BAR(s) into kernel address space (identity-mapped MMIO)
-- [ ] Read `notify_off_multiplier` from the notification capability's extended field
+- [ ] Read `notify_off_multiplier` from the notification capability's extended `virtio_pci_notify_cap` struct
 - [ ] Compute per-queue notification address: `BAR_base + cap.offset + (queue_notify_off * notify_off_multiplier)`
+- [ ] Note: if `notify_off_multiplier == 4096`, each queue gets its own page-aligned notification region (enables EPT/NPT hardware isolation of per-queue kicks)
 - [ ] Fallback: if no PCI caps found, use legacy MMIO transport (current code path)
 - [ ] Log: `[VirtIO] PCI caps: common_cfg @ BAR%d+0x%x, notify @ BAR%d+0x%x, device_cfg @ BAR%d+0x%x`
 - [ ] Commit: `"virtio-blk: PCI capability discovery"`
@@ -60,6 +65,7 @@
 - [ ] Step 7: Set `DRIVER_OK` (bit 2) — device is live
 - [ ] Implement `config_generation` read loop for atomic device config access
 - [ ] Check for `DEVICE_NEEDS_RESET` (bit 6) after init — abort if set
+- [ ] On unrecoverable init failure: set `FAILED` (bit 7 = 128) in `device_status` — hypervisor ceases processing
 - [ ] Commit: `"virtio-blk: modern init sequence"`
 
 ---
@@ -143,16 +149,22 @@
 
 ### 3.2 Async I/O Path
 
-**Prompt:** Replace the current polling loop (`while (used->idx == last_seen_used)`) with interrupt-driven async I/O. Add a per-device completion event. The ISR fires when the device updates the used ring — it reads the completed descriptor heads and wakes waiting threads via `event_set()`. The submission path (`virtio_blk_read`/`virtio_blk_write`) uses `event_wait()` with a configurable timeout (5s default). Retain a polling fallback for pre-scheduler boot (before interrupts are available). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: async interrupt-driven I/O"`. Add notes directly in this TODO section.
+**Prompt:** Replace the current polling loop (`while (used->idx == last_seen_used)`) with interrupt-driven async I/O. Add a per-device completion event. The ISR fires when the device updates the used ring — it reads the completed descriptor heads and wakes waiting threads via `event_set()`. The submission path (`virtio_blk_read`/`virtio_blk_write`) uses `event_wait()` with a configurable timeout (5s default). Retain a polling fallback for pre-scheduler boot (before interrupts are available). Critically, insert strict memory barriers (`mfence` on x86-64) in the virtqueue submission and completion hot paths per the VirtIO spec. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: async interrupt-driven I/O"`. Add notes directly in this TODO section.
 
 - [ ] Add `event_t io_completion` to `virtio_blk_dev` struct
 - [ ] Queue ISR: read `used->idx`, process completed entries, call `event_set()`
 - [ ] Config ISR: re-read device configuration (capacity, topology changes)
+  - [ ] Check ISR status register: bit 0 = virtqueue data, bit 1 = config change (`VIRTIO_PCI_ISR_CONFIG`)
 - [ ] Submission path: `event_wait(&io_completion, timeout_ms)` after virtqueue kick
 - [ ] Process used ring entries: match `used_elem.id` to pending request, copy status byte
 - [ ] Handle timeout: log error, attempt device reset (§5.1)
 - [ ] Retain polling path: `if (!scheduler_running) { poll_used_ring(); }`
 - [ ] Set `VIRTQ_AVAIL_F_NO_INTERRUPT = 0` in available ring flags (enable interrupts)
+- [ ] **Memory barriers (critical for correctness):**
+  - [ ] After writing descriptor chain to descriptor table → `smp_wmb()` before incrementing `avail->idx`
+  - [ ] After incrementing `avail->idx` → `smp_wmb()` before writing notification register (kick)
+  - [ ] After reading `used->idx` in ISR → `smp_rmb()` before reading `used->ring[]` entries
+  - [ ] On x86-64: use `mfence` (full barrier) or `sfence`/`lfence` as appropriate
 - [ ] Commit: `"virtio-blk: async interrupt-driven I/O"`
 
 ---
@@ -276,24 +288,56 @@
 - [ ] Tunable batch size via Registry: `HKLM\SYSTEM\Drivers\VirtIO\CoalesceCount`
 - [ ] Commit: `"virtio-blk: event index interrupt coalescing"`
 
+### 7.3 In-Order Completion
+
+**Prompt:** Negotiate `VIRTIO_F_IN_ORDER` (bit 35). When negotiated, the device guarantees it will process, complete, and return descriptors to the used ring in the exact chronological order they were submitted to the available ring. This strict ordering eliminates the need for the driver to match arbitrary `used_elem.id` values to outstanding requests — it can simply reclaim descriptors sequentially, using a FIFO approach. This enables aggressive cache-coherent descriptor recycling: the driver can reuse the same descriptor slot immediately after it appears in the used ring, reducing TLB and cache pressure. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: in-order descriptor completion"`. Add notes directly in this TODO section.
+
+- [ ] Negotiate `VIRTIO_F_IN_ORDER` (bit 35)
+- [ ] When negotiated, switch used ring processing to sequential FIFO reclaim:
+  - [ ] Remove per-request ID matching — descriptors return in submission order
+  - [ ] Track a simple `next_expected_id` counter instead of a pending-request hash table
+- [ ] Optimize descriptor recycling: reuse descriptor slots immediately after sequential completion
+- [ ] Reduce cache pressure: no out-of-order descriptor table lookups
+- [ ] Fallback: if not negotiated, use existing ID-matching completion path
+- [ ] Commit: `"virtio-blk: in-order descriptor completion"`
+
+### 7.4 Notification Data
+
+**Prompt:** Negotiate `VIRTIO_F_NOTIFICATION_DATA` (bit 38). When negotiated, the notification write to the device changes from a simple 16-bit queue index to a richer 32-bit payload that includes additional state data. For split virtqueues, the driver must write: `(vqn & 0xFFFF) | (next_avail_idx << 16)`, packing the virtqueue number in the low 16 bits and the next available index in the high 16 bits. For packed virtqueues, the format is: `(vqn & 0xFFFF) | (next_avail_idx << 16) | (wrap_counter << 31)`. This extra data allows the host to optimize its polling strategy by knowing exactly where new descriptors begin, avoiding full ring scans. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: notification data"`. Add notes directly in this TODO section.
+
+- [ ] Negotiate `VIRTIO_F_NOTIFICATION_DATA` (bit 38)
+- [ ] Modify notification write path:
+  - [ ] Split VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16)` instead of just `vqn`
+  - [ ] Packed VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16) | (wrap_counter << 31)`
+- [ ] Write to notification register as 32-bit MMIO instead of 16-bit
+- [ ] Benefits: host avoids scanning entire ring to find new descriptors
+- [ ] Fallback: if not negotiated, write 16-bit queue index (current behavior)
+- [ ] Commit: `"virtio-blk: notification data"`
+
 ---
 
 ## 8. Packed Virtqueue (VirtIO 1.1+)
 
 ### 8.1 Packed Virtqueue Format
 
-**Prompt:** Negotiate `VIRTIO_F_RING_PACKED` (bit 34). The packed virtqueue replaces the separate descriptor/available/used rings with a single unified ring, improving cache locality. Each packed descriptor is 16 bytes with `addr`, `len`, `id`, and `flags` fields — the `AVAIL` and `USED` bits in flags replace the separate rings. The driver and device track their own wrap counters. This is a significant architectural change from split virtqueues. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: packed virtqueue support"`. Add notes directly in this TODO section.
+**Prompt:** Negotiate `VIRTIO_F_RING_PACKED` (bit 34). The packed virtqueue replaces the separate descriptor/available/used rings with a single unified ring, dramatically improving CPU cache locality by ensuring both driver and device read/write the same cache lines. Each packed descriptor is 16 bytes with `addr`, `len`, `id`, and `flags` fields — the `AVAIL` and `USED` bits in flags replace the separate rings. Both driver and device maintain internal boolean wrap counters (initialized to 1) that flip on every ring wraparound. This eliminates the Split VQ's problem of thrashing across 3 separate memory regions per I/O. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: packed virtqueue support"`. Add notes directly in this TODO section.
 
-- [ ] Negotiate `VIRTIO_F_RING_PACKED` (bit 34) — mutual exclusive with split virtqueue
-- [ ] Allocate single unified ring: `queue_size * 16` bytes
-- [ ] Implement packed descriptor format:
-  - [ ] `addr` (8 bytes), `len` (4 bytes), `id` (2 bytes), `flags` (2 bytes)
+- [ ] Negotiate `VIRTIO_F_RING_PACKED` (bit 34) — mutually exclusive with split virtqueue
+- [ ] Allocate single unified ring: `queue_size * 16` bytes (16-byte aligned)
+- [ ] Implement packed descriptor format (`pvirtq_desc`):
+  - [ ] `addr` (le64), `len` (le32), `id` (le16), `flags` (le16)
   - [ ] `VIRTQ_DESC_F_AVAIL` (bit 7) and `VIRTQ_DESC_F_USED` (bit 15) replace separate rings
-- [ ] Track driver wrap counter and device wrap counter (toggle per ring wrap)
-- [ ] Submission: set `AVAIL` flag matching driver wrap counter, write descriptor
-- [ ] Completion: poll/check `USED` flag matching device wrap counter
-- [ ] Notification: use packed notification format (optional suppression)
+- [ ] Wrap counter mechanism (both driver and device, initialized to `1`):
+  - [ ] Counters flip `1 → 0 → 1` each time processing wraps past `queue_size`
+  - [ ] Available: write `AVAIL = driver_wrap`, `USED = !driver_wrap`
+  - [ ] Device detects available when descriptor's `AVAIL` matches its own wrap counter and `USED` is inverse
+  - [ ] Completion: device sets both `AVAIL` and `USED` to its current wrap counter
+  - [ ] Driver detects completion when `USED` bit matches `AVAIL` bit
+- [ ] Submission: populate `addr`/`len`/`id`, set flags with correct AVAIL/USED bits, advance driver index
+- [ ] Completion: scan ring for descriptors where USED matches driver's expected device wrap counter
+- [ ] Notification: use packed notification format (optional suppression via event suppression struct)
 - [ ] Fallback: if not negotiated, use split virtqueue (current behavior)
+- [ ] Note: some advanced features (mergeable RX buffers, Jumbo MTU, USO) may be unsupported with packed VQ on certain controllers
 - [ ] Commit: `"virtio-blk: packed virtqueue support"`
 
 ---
@@ -312,6 +356,43 @@
   - [ ] Split requests exceeding `max_secure_erase_sectors`
 - [ ] Wire to secure-delete / drive-wipe utility
 - [ ] Commit: `"virtio-blk: secure erase"`
+
+---
+
+## 10. Lifetime Metrics & Telemetry
+
+### 10.1 Device Lifetime Information
+
+**Prompt:** Negotiate `VIRTIO_BLK_F_LIFETIME` (bit 13). When negotiated, the device exposes wear-level and endurance metrics in the device config space — critical for SSD health monitoring in virtual environments. Read the lifetime fields to report estimated remaining device life. Expose metrics via Registry and wire to the Disk Manager GUI for drive health dashboards. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: lifetime metrics"`. Add notes directly in this TODO section.
+
+- [ ] Negotiate `VIRTIO_BLK_F_LIFETIME` (bit 13)
+- [ ] Read lifetime metric fields from device config space
+- [ ] Store in `virtio_blk_dev.lifetime` struct
+- [ ] Expose via Registry: `HKLM\HARDWARE\VirtIO\Block0\Lifetime\*`
+- [ ] Wire to Disk Manager: display drive endurance / remaining life percentage
+- [ ] Log: `[VirtIO] Block: device lifetime: %u%% remaining`
+- [ ] Commit: `"virtio-blk: lifetime metrics"`
+
+---
+
+## 11. Zoned Block Storage (VirtIO 1.2+)
+
+### 11.1 Zoned Block Device Support
+
+**Prompt:** Negotiate `VIRTIO_BLK_F_ZONED` (bit 15). Zoned block devices (ZBDs) divide the disk into sequential-write-only zones — a model matching SMR (Shingled Magnetic Recording) drives and ZNS (Zoned Namespace) SSDs. When negotiated, the device exposes zone characteristics in the config space. Implement zone management commands: Report Zones, Open Zone, Close Zone, Finish Zone, Reset Zone, and Zone Append. This is a stretch goal for future compatibility with enterprise storage. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: zoned block device support"`. Add notes directly in this TODO section.
+
+- [ ] Negotiate `VIRTIO_BLK_F_ZONED` (bit 15)
+- [ ] Read zone config from device config space: `zoned.model`, `zoned.max_open_zones`, `zoned.max_active_zones`
+- [ ] Implement zone management request types:
+  - [ ] `VIRTIO_BLK_T_ZONE_REPORT` — enumerate zone descriptors (start LBA, length, condition, type)
+  - [ ] `VIRTIO_BLK_T_ZONE_OPEN` — explicitly open a zone for writing
+  - [ ] `VIRTIO_BLK_T_ZONE_CLOSE` — close zone, transition to closed state
+  - [ ] `VIRTIO_BLK_T_ZONE_FINISH` — fill remaining capacity, transition to full
+  - [ ] `VIRTIO_BLK_T_ZONE_RESET` — reset zone write pointer to start
+  - [ ] `VIRTIO_BLK_T_ZONE_APPEND` — append data at write pointer (device returns actual LBA)
+- [ ] Track per-zone write pointers and conditions in driver state
+- [ ] Enforce sequential write constraint: reject random writes to sequential zones
+- [ ] Commit: `"virtio-blk: zoned block device support"`
 
 ---
 
@@ -334,8 +415,12 @@
 | 🟢 P3    | 6.1 Per-CPU Request Queues      | Scalability — eliminates virtqueue lock contention       |
 | 🟢 P3    | 7.1 Indirect Descriptors        | Scalability — large scatter-gather lists                 |
 | 🟢 P3    | 7.2 Event Index (Coalescing)    | Performance — reduce interrupt storms                    |
+| 🟢 P3    | 7.3 In-Order Completion         | Performance — optimized sequential descriptor recycling  |
+| 🟢 P3    | 7.4 Notification Data           | Performance — host-side polling optimization             |
+| 🟢 P3    | 10.1 Lifetime Metrics           | Monitoring — drive endurance in Disk Manager             |
 | 🔵 P4    | 8.1 Packed Virtqueue            | Performance — better cache locality                      |
 | 🔵 P4    | 9.1 Secure Erase                | Feature — cryptographic data sanitization                |
+| 🔵 P4    | 11.1 Zoned Block Device         | Future — SMR/ZNS enterprise storage compatibility        |
 
 ---
 
@@ -352,6 +437,7 @@
 | Read-only detection              | ✅                                     | ✅ `set_disk_ro()`                        | ⬜ §2.4 P1                                      |
 | MSI-X interrupts                 | ✅ Per-queue MSI-X                     | ✅ MSI-X / IOAPIC                         | ⬜ §3.1 P0 — uses legacy PIC                    |
 | Async I/O (interrupt-driven)     | ✅ Overlapped I/O                      | ✅ `blk_mq_complete_request()`            | ⬜ §3.2 P2 — polling                            |
+| Memory barriers (VQ correctness) | ✅ Implicit in WDF                     | ✅ `virtio_wmb()` / `virt_rmb()`          | ⬜ §3.2 P2 — no explicit barriers               |
 | Discard (TRIM)                   | ✅ Optimize Drives                     | ✅ `blk_queue_discard()`                  | ⬜ §4.1 P2                                      |
 | Write-zeroes                     | ✅                                     | ✅ `REQ_OP_WRITE_ZEROES`                  | ⬜ §4.2 P2                                      |
 | Error recovery / device reset    | ✅ Automatic retry + reset             | ✅ `virtio_break_device()` + reset        | ⬜ §5.1 P1 — no recovery                        |
@@ -359,6 +445,10 @@
 | Multi-queue (`F_MQ`)             | ✅ Per-vCPU queues                     | ✅ `blk-mq` multi-queue                   | ⬜ §6.1 P3                                      |
 | Indirect descriptors             | ✅                                     | ✅                                        | ⬜ §7.1 P3                                      |
 | Event index (coalescing)         | ✅                                     | ✅                                        | ⬜ §7.2 P3                                      |
+| In-order completion              | ✅                                     | ✅ `VIRTIO_F_IN_ORDER`                    | ⬜ §7.3 P3                                      |
+| Notification data                | ✅                                     | ✅ `VIRTIO_F_NOTIFICATION_DATA`           | ⬜ §7.4 P3                                      |
 | Packed virtqueue                 | ✅ (newer builds)                      | ✅ `virtio_ring.c` packed path            | ⬜ §8.1 P4                                      |
 | Secure erase                     | ✅ VirtIO 1.2+                         | ✅                                        | ⬜ §9.1 P4                                      |
+| Lifetime metrics                 | ✅ Health monitoring                   | ✅ `virtblk_attrs` sysfs                  | ⬜ §10.1 P3                                     |
+| Zoned block device               | ⬜ Not supported                       | ✅ `blk-zoned` + `virtblk_report_zones`   | ⬜ §11.1 P4                                     |
 | **MSI-X + MQ + async (default)** | ✅                                     | ✅                                        | ⬜ §3.1 + §6.1 + §3.2 — polling + single queue |
