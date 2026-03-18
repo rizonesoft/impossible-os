@@ -82,7 +82,7 @@ jobs:
             ovmf \
             qemu-system-x86 \
             gcc \
-            virtualbox
+            qemu-utils
 
       # ── Build ───────────────────────────────────────────────────────────
       - name: Build OS (clean)
@@ -113,7 +113,7 @@ jobs:
       # ── Convert to VDI (VirtualBox format) ──────────────────────────────
       - name: Convert disk image to VDI
         run: |
-          VBoxManage convertfromraw build/system-disk.img build/system-disk.vdi --format VDI
+          qemu-img convert -f raw -O vdi build/system-disk.img build/system-disk.vdi
           SIZE=$(stat -c%s build/system-disk.vdi)
           echo "✅ system-disk.vdi: $(( SIZE / 1024 / 1024 )) MiB"
 
