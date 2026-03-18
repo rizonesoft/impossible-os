@@ -94,8 +94,28 @@ static struct fat32_file dir_files[FAT32_MAX_DIR_ENTRIES];
 static uint32_t dir_file_count;
 static struct vfs_dirent fat32_dirent;
 
-/* Sector buffer */
+/* Sector buffer (scratch — used by functions that need a temp 512-byte buf) */
 static uint8_t sector_buf[512];
+
+/* ---- Sector cache (LRU with dirty tracking) ----
+ * Caches 64 sectors (~32 KB) to avoid repeated disk I/O.  The main win is
+ * FAT table reads: fat32_get_fat_entry() is called once per cluster in a
+ * chain walk, and adjacent clusters usually share the same FAT sector.
+ * Without the cache, each call does a blkdev_read().  With the cache, only
+ * the first read hits disk; the rest are served from SRAM. */
+
+#define SCACHE_SLOTS   64
+
+typedef struct {
+    uint32_t sector;       /* LBA of cached sector (0 = unused sentinel) */
+    uint8_t  data[512];    /* sector payload */
+    uint32_t last_access;  /* monotonic counter for LRU eviction */
+    uint8_t  valid;        /* 1 = slot contains valid data */
+    uint8_t  dirty;        /* 1 = modified, needs write-back */
+} scache_entry_t;
+
+static scache_entry_t scache[SCACHE_SLOTS];
+static uint32_t scache_access = 0;
 
 /* ---- FSInfo sector (FAT32 spec §7.1) ----
  * Stores free cluster count and next-free hint to avoid full FAT scans. */
@@ -110,15 +130,113 @@ static uint32_t fsinfo_next_free;       /* next-free hint for allocation */
 static int      fsinfo_valid;           /* 1 if FSInfo was loaded OK */
 static int      fsinfo_dirty;           /* 1 if in-memory state diverged */
 
-/* ---- Block device I/O ---- */
+/* ---- Sector cache implementation ---- */
 
-/* Read a single sector relative to partition start (handled by sub-blkdev) */
-static int fat32_read_sector(uint32_t sector, void *buf)
+/* Find a cached entry by sector LBA, or NULL if not cached */
+static scache_entry_t *scache_lookup(uint32_t sector)
 {
-    return blkdev_read(fat32_dev, sector, 1, buf);
+    int i;
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        if (scache[i].valid && scache[i].sector == sector) {
+            scache[i].last_access = ++scache_access;
+            return &scache[i];
+        }
+    }
+    return (scache_entry_t *)0;
 }
 
-/* Read multiple contiguous sectors */
+/* Find LRU slot for eviction.  If dirty, flush it first. */
+static scache_entry_t *scache_evict(void)
+{
+    int i;
+    int lru_idx = 0;
+    uint32_t lru_val = 0xFFFFFFFF;
+
+    /* Prefer an empty slot */
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        if (!scache[i].valid)
+            return &scache[i];
+    }
+
+    /* Find least-recently-used */
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        if (scache[i].last_access < lru_val) {
+            lru_val = scache[i].last_access;
+            lru_idx = i;
+        }
+    }
+
+    /* Flush dirty entry before evicting */
+    if (scache[lru_idx].dirty) {
+        blkdev_write(fat32_dev, scache[lru_idx].sector, 1,
+                     scache[lru_idx].data);
+        scache[lru_idx].dirty = 0;
+    }
+
+    scache[lru_idx].valid = 0;
+    return &scache[lru_idx];
+}
+
+/* Flush all dirty cache entries to disk */
+static void scache_flush(void)
+{
+    int i;
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        if (scache[i].valid && scache[i].dirty) {
+            blkdev_write(fat32_dev, scache[i].sector, 1,
+                         scache[i].data);
+            scache[i].dirty = 0;
+        }
+    }
+}
+
+/* Invalidate entire cache (used on unmount or format) */
+static void scache_invalidate(void)
+{
+    int i;
+    for (i = 0; i < SCACHE_SLOTS; i++) {
+        if (scache[i].valid && scache[i].dirty) {
+            blkdev_write(fat32_dev, scache[i].sector, 1,
+                         scache[i].data);
+        }
+        scache[i].valid = 0;
+        scache[i].dirty = 0;
+    }
+    scache_access = 0;
+}
+
+/* ---- Block device I/O (cached) ---- */
+
+/* Read a single sector — served from cache if available */
+static int fat32_read_sector(uint32_t sector, void *buf)
+{
+    scache_entry_t *e = scache_lookup(sector);
+    uint8_t *dst = (uint8_t *)buf;
+    int i;
+
+    if (e) {
+        for (i = 0; i < 512; i++)
+            dst[i] = e->data[i];
+        return 0;
+    }
+
+    /* Cache miss — read from disk and populate cache */
+    e = scache_evict();
+    if (blkdev_read(fat32_dev, sector, 1, e->data) != 0)
+        return -1;
+
+    e->sector      = sector;
+    e->valid       = 1;
+    e->dirty       = 0;
+    e->last_access = ++scache_access;
+
+    for (i = 0; i < 512; i++)
+        dst[i] = e->data[i];
+
+    return 0;
+}
+
+/* Read multiple contiguous sectors (bypasses cache — used for data clusters) */
 static int fat32_read_sectors_multi(uint32_t sector, uint32_t count, void *buf)
 {
     return blkdev_read(fat32_dev, sector, count, buf);
@@ -130,10 +248,26 @@ static int fat32_read_sectors_multi(uint32_t sector, uint32_t count, void *buf)
 static uint32_t cluster_to_sector(uint32_t cluster);
 static uint32_t fat32_next_cluster(uint32_t cluster);
 
-/* Write a single sector */
+/* Write a single sector — writes to cache with dirty flag */
 static int fat32_write_sector(uint32_t sector, const void *buf)
 {
-    return blkdev_write(fat32_dev, sector, 1, buf);
+    scache_entry_t *e = scache_lookup(sector);
+    const uint8_t *src = (const uint8_t *)buf;
+    int i;
+
+    if (!e) {
+        e = scache_evict();
+        e->sector = sector;
+        e->valid  = 1;
+    }
+
+    for (i = 0; i < 512; i++)
+        e->data[i] = src[i];
+
+    e->dirty       = 1;
+    e->last_access = ++scache_access;
+
+    return 0;
 }
 
 /* Write multiple contiguous sectors */
@@ -1209,14 +1343,18 @@ times_not_found:
     return -1;
 }
 
-/* Flush FAT32 — writes are synchronous, so this is a no-op */
+/* Flush FAT32 — write all dirty cached sectors to disk */
 int fat32_flush_disk(void)
 {
+    scache_flush();
     return 0;
 }
 
 int fat32_format(const struct blkdev *dev, const char *label)
 {
+    /* Invalidate cache — formatting rewrites the entire disk layout */
+    scache_invalidate();
+
     uint8_t boot[512];
     uint8_t fat_sec[512];
     uint32_t total_sectors;
@@ -1629,6 +1767,9 @@ static int fat32_file_open(struct vfs_node *node, uint32_t flags)
 static int fat32_file_close(struct vfs_node *node)
 {
     (void)node;
+    /* Flush any dirty cached sectors on file close */
+    scache_flush();
+    fat32_fsinfo_flush();
     return 0;
 }
 

@@ -241,15 +241,15 @@
 
 #### 3.4.3 Sector-Level Write Cache
 
-**Prompt:** The FAT32 driver currently reads/writes individual sectors directly to the block device for every operation. Implement a small sector cache (32–64 sectors, ~16–32KB) using LRU eviction with dirty tracking. FAT table sectors are read frequently during chain walks — caching them eliminates repeated disk I/O. Dirty sectors flush on `fat32_flush()`, file close, and unmount. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: sector-level write cache"`. Add notes directly in this TODO section.
+**Prompt:** This section is complete. Verify: `fat32.c` contains a 64-slot LRU sector cache (`scache_entry_t`, `SCACHE_SLOTS=64`) with dirty tracking. `fat32_read_sector()` serves from cache on hit, populates on miss. `fat32_write_sector()` writes to cache with dirty flag. `fat32_flush_disk()` calls `scache_flush()`. `fat32_file_close()` flushes. `fat32_format()` calls `scache_invalidate()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`.
 
-- [ ] Implement `fat32_cache_read(sector)` — return cached sector or read from disk
-- [ ] Implement `fat32_cache_write(sector, data)` — mark sector dirty in cache
-- [ ] Implement `fat32_cache_flush()` — write all dirty sectors to disk
-- [ ] LRU eviction: flush dirty sector before evicting
-- [ ] Always cache FAT sectors (hot path during chain walks)
-- [ ] Flush on: `fat32_flush()`, file close, unmount, every N writes
-- [ ] Commit: `"fat32: sector-level write cache"`
+- [x] Implement `fat32_cache_read(sector)` — ✅ `scache_lookup()` + `fat32_read_sector()` cache path
+- [x] Implement `fat32_cache_write(sector, data)` — ✅ `fat32_write_sector()` writes to cache, sets dirty
+- [x] Implement `fat32_cache_flush()` — ✅ `scache_flush()` iterates all dirty slots, writes to disk
+- [x] LRU eviction: flush dirty sector before evicting — ✅ `scache_evict()` flushes dirty before reuse
+- [x] Always cache FAT sectors (hot path during chain walks) — ✅ All `fat32_read_sector` calls go through cache, including `fat32_get_fat_entry`
+- [x] Flush on: `fat32_flush()`, file close, unmount — ✅ `fat32_flush_disk` → `scache_flush`, `fat32_file_close` → `scache_flush + fsinfo_flush`, `fat32_format` → `scache_invalidate`
+- [x] Commit: `"fat32: sector-level write cache"`
 
 #### 3.4.4 Multi-Volume Support (Remove Static Globals)
 
