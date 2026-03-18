@@ -13,7 +13,7 @@
 
 | #   | TODO                                                                    | Status       |
 |-----|-------------------------------------------------------------------------|--------------|
-| 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   |              |
+| 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   | ✅ All done  |
 | 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ All done  |
 | 003 | [Antigravity Agent IDE](000-Infrastructure/TODO-003-Antigravity.md)     | ✅ All done  |
 | 004 | [MCP Server Setup](000-Infrastructure/TODO-004-MCP.md)                  | ✅ All done  |
