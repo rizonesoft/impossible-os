@@ -285,28 +285,17 @@
 
 ### 4.4 Auto-Label PRs by Path *(agent)*
 
-**Prompt:** Create a labeler workflow that automatically applies labels to pull requests based on which files are changed. This enables filtering and triaging PRs at a glance. After completing, commit as `"ci: auto-label PRs by path"`.
+**Prompt:** This section is marked complete. Verify: `.github/labeler.yml` defines labels (kernel, bootloader, desktop, drivers, build, documentation) with glob patterns. `.github/workflows/labeler.yml` uses `actions/labeler@v5`, triggers on `pull_request` (opened, synchronize). Verify commit `"ci: auto-label PRs by path"`.
 
-- [ ] Create `.github/labeler.yml` (label definitions):
-  ```yaml
-  kernel:
-    - 'src/kernel/**'
-  bootloader:
-    - 'src/boot/**'
-  desktop:
-    - 'src/desktop/**'
-  drivers:
-    - 'src/kernel/drivers/**'
-  build:
-    - 'Makefile'
-    - 'scripts/**'
-  documentation:
-    - 'todo/**'
-    - '*.md'
-  ```
-- [ ] Create `.github/workflows/labeler.yml` using `actions/labeler@v5`
-- [ ] Trigger: `pull_request` (opened, synchronize)
-- [ ] Commit: `"ci: auto-label PRs by path"`
+- [x] Create `.github/labeler.yml` (label definitions) — ✅ Uses `changed-files` / `any-glob-to-any-file` syntax (v5 format)
+- [x] Create `.github/workflows/labeler.yml` using `actions/labeler@v5` — ✅
+- [x] Trigger: `pull_request` (opened, synchronize) — ✅
+- [x] Commit: `"ci: auto-label PRs by path"` — ✅
+
+> **Implementation notes:**
+> - Uses v5 `changed-files` syntax (not legacy v4 array format)
+> - Labels: `kernel`, `bootloader`, `desktop`, `drivers`, `build`, `documentation`
+> - Permissions: `contents: read`, `pull-requests: write`
 
 ---
 

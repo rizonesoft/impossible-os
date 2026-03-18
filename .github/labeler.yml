@@ -1,0 +1,27 @@
+kernel:
+  - changed-files:
+    - any-glob-to-any-file: 'src/kernel/**'
+
+bootloader:
+  - changed-files:
+    - any-glob-to-any-file: 'src/boot/**'
+
+desktop:
+  - changed-files:
+    - any-glob-to-any-file: 'src/desktop/**'
+
+drivers:
+  - changed-files:
+    - any-glob-to-any-file: 'src/kernel/drivers/**'
+
+build:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'Makefile'
+      - 'scripts/**'
+
+documentation:
+  - changed-files:
+    - any-glob-to-any-file:
+      - 'todo/**'
+      - '*.md'
