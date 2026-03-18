@@ -14,11 +14,12 @@
 -->
 <p align="center">
   <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/build.yml/badge.svg?branch=main" alt="Build" /></a>
-  <a href="https://github.com/rizonesoft/impossible-os/releases/latest"><img src="https://img.shields.io/badge/⬇_Download-Latest_Release-2ea44f?style=flat-square" alt="Download" /></a>
+  <a href="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml"><img src="https://github.com/rizonesoft/impossible-os/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
   <img src="https://img.shields.io/badge/platform-x86__64-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/boot-UEFI-00979D?style=flat-square" alt="Boot" />
   <img src="https://img.shields.io/badge/license-GPL--3.0-blue?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/lines-84k+-blueviolet?style=flat-square" alt="Lines of Code" />
+  <br />
   <a href="https://www.paypal.com/donate/?hosted_button_id=7UGGCSDUZJPFE"><img src="https://img.shields.io/badge/Donate-PayPal-00457C?style=flat-square&logo=paypal" alt="Donate" /></a>
   <a href="https://github.com/sponsors/rizonesoft"><img src="https://img.shields.io/badge/Sponsor-GitHub-ea4aaa?style=flat-square&logo=githubsponsors" alt="Sponsor" /></a>
 </p>
@@ -86,6 +87,14 @@ bash scripts/build.sh run      # Build + boot in QEMU
 > [!NOTE]
 > Always use `bash scripts/build.sh` — never raw `make` commands.
 > Verify success: `tail -1 build/build.log` → must show `=== BUILD OK ===`
+
+### Downloads
+
+Pre-built disk images are available on the [**Releases**](https://github.com/rizonesoft/impossible-os/releases) page. Each release includes:
+
+- **`system-disk.img`** — raw GPT image for QEMU or USB boot
+- **`system-disk.vdi`** — VirtualBox native format
+- **Setup guides** for QEMU and VirtualBox
 
 ---
 
