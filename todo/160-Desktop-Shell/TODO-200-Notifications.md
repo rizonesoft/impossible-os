@@ -96,15 +96,15 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (Action Center)         | Linux (GNOME Shell / Dunst)           | Impossible OS                           |
-|----------------------------------|------------------------------------|---------------------------------------|-----------------------------------------|
-| System tray                      | ✅ Shell_NotifyIcon / NOTIFYICONDATA| ✅ AppIndicator / StatusIcon           | ⬜ §8.1 P0                             |
-| Volume/network tray icons        | ✅ Built-in                        | ✅ GNOME built-in indicators           | ⬜ §8.1 P0                             |
-| Toast notifications              | ✅ WinRT ToastNotification (COM)   | ✅ libnotify + notification daemon     | ⬜ §8.2 P0 — **in-kernel, no daemon** |
-| Notification center / history    | ✅ Action Center                    | ✅ GNOME notification tray             | ⬜ §8.3 P1                            |
-| Notification stacking            | ✅ Groups by app                    | ✅ Dunst groups                        | ⬜ §8.2 — stack vertically            |
-| DND / Focus Assist               | ✅ Focus Assist                     | ✅ GNOME DND                           | ⬜ §8.4 P2 (requires TODO-170 §9)     |
-| Badge count on tray icon         | ✅ Overlay icons                    | ✅ libunity badge                      | ⬜ §8.4 — missed count badge          |
-| System event auto-notifications  | ✅ (Windows generates many events) | ✅ udev rules + libnotify              | ⬜ §8.5 P1 — USB, battery, network    |
-| **No COM (in-kernel toasts)**    | ❌ COM + WinRT required            | ❌ Separate notify daemon              | ✅ **`notify_send()` — zero IPC**     |
-| **Works before login session**   | ❌ Toasts require user session      | ❌ libnotify requires session           | ✅ **Kernel global queue — always on** |
+| Feature                         | 🪟 Windows 11 (Action Center)        | 🐧 Linux (GNOME Shell / Dunst)     | 🚀 Impossible OS                       |
+| ------------------------------- | ----------------------------------- | --------------------------------- | ------------------------------------- |
+| System tray                     | ✅ Shell_NotifyIcon / NOTIFYICONDATA | ✅ AppIndicator / StatusIcon       | ⬜ §8.1 P0                             |
+| Volume/network tray icons       | ✅ Built-in                          | ✅ GNOME built-in indicators       | ⬜ §8.1 P0                             |
+| Toast notifications             | ✅ WinRT ToastNotification (COM)     | ✅ libnotify + notification daemon | ⬜ §8.2 P0 — **in-kernel, no daemon**  |
+| Notification center / history   | ✅ Action Center                     | ✅ GNOME notification tray         | ⬜ §8.3 P1                             |
+| Notification stacking           | ✅ Groups by app                     | ✅ Dunst groups                    | ⬜ §8.2 — stack vertically             |
+| DND / Focus Assist              | ✅ Focus Assist                      | ✅ GNOME DND                       | ⬜ §8.4 P2 (requires TODO-170 §9)      |
+| Badge count on tray icon        | ✅ Overlay icons                     | ✅ libunity badge                  | ⬜ §8.4 — missed count badge           |
+| System event auto-notifications | ✅ (Windows generates many events)   | ✅ udev rules + libnotify          | ⬜ §8.5 P1 — USB, battery, network     |
+| **No COM (in-kernel toasts)**   | ❌ COM + WinRT required              | ❌ Separate notify daemon          | ✅ **`notify_send()` — zero IPC**      |
+| **Works before login session**  | ❌ Toasts require user session       | ❌ libnotify requires session      | ✅ **Kernel global queue — always on** |

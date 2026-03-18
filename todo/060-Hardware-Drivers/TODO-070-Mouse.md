@@ -337,21 +337,21 @@
 
 ## OS Comparison
 
-| Feature                      | Windows 11                   | Linux (X11/Wayland)          | Impossible OS                          |
-|------------------------------|------------------------------|------------------------------|----------------------------------------|
-| Basic PS/2 relative          | ✅                            | ✅                            | ✅ Done                                 |
-| Scroll wheel (4th byte)      | ✅                            | ✅                            | ⬜ §4 P0                               |
-| 5-button (5th byte)          | ✅                            | ✅                            | ⬜ §5 P1                               |
-| USB HID mouse (EHCI/xHCI)    | ✅                            | ✅                            | ⬜ §8 P2                               |
-| Mouse acceleration curves    | ✅ Enhance Pointer Precision  | ✅ libinput curves             | ⬜ §7.1 P1                             |
-| Configurable DPI/sensitivity | ✅ Registry + Control Panel   | ✅ libinput + Settings         | ⬜ §7.2 P1                             |
-| Synaptics/ALPS touchpad      | ✅                            | ✅                            | ⬜ §9 P4 (real hardware only)          |
-| Packet resynchronization     | ✅ (PS/2 driver)             | ✅ (kernel PS/2 driver)       | ⬜ §6 P0                               |
-| Absolute mouse (VM)          | ✅ Hyper-V synthetic mouse    | ✅ VirtIO tablet              | ✅ VBox + VirtIO done                   |
-| Raw input grab               | ✅ `RAWINPUT` / `WM_INPUT`   | ✅ `EVIOCGRAB` (evdev)        | ⬜ §11 P2                              |
-| VBox display auto-resize     | ✅ (Guest Additions)          | ✅ (Guest Additions)          | ⬜ §10.1 P2                           |
-| Hypervisor abstraction       | ✅ WHPX / Hyper-V             | ✅ KVM / virtio               | ⬜ §10.2 P3                           |
-| **Unified 3-tier priority**  | ❌ (driver-model, no prio)   | ❌ (device nodes, no prio)   | ✅ **VirtIO > VBox > PS/2 in main.c** |
+| Feature                      | 🪟 Windows 11                | 🐧 Linux (X11/Wayland)     | 🚀 Impossible OS                      |
+| ---------------------------- | --------------------------- | ------------------------- | ------------------------------------ |
+| Basic PS/2 relative          | ✅                           | ✅                         | ✅ Done                               |
+| Scroll wheel (4th byte)      | ✅                           | ✅                         | ⬜ §4 P0                              |
+| 5-button (5th byte)          | ✅                           | ✅                         | ⬜ §5 P1                              |
+| USB HID mouse (EHCI/xHCI)    | ✅                           | ✅                         | ⬜ §8 P2                              |
+| Mouse acceleration curves    | ✅ Enhance Pointer Precision | ✅ libinput curves         | ⬜ §7.1 P1                            |
+| Configurable DPI/sensitivity | ✅ Registry + Control Panel  | ✅ libinput + Settings     | ⬜ §7.2 P1                            |
+| Synaptics/ALPS touchpad      | ✅                           | ✅                         | ⬜ §9 P4 (real hardware only)         |
+| Packet resynchronization     | ✅ (PS/2 driver)             | ✅ (kernel PS/2 driver)    | ⬜ §6 P0                              |
+| Absolute mouse (VM)          | ✅ Hyper-V synthetic mouse   | ✅ VirtIO tablet           | ✅ VBox + VirtIO done                 |
+| Raw input grab               | ✅ `RAWINPUT` / `WM_INPUT`   | ✅ `EVIOCGRAB` (evdev)     | ⬜ §11 P2                             |
+| VBox display auto-resize     | ✅ (Guest Additions)         | ✅ (Guest Additions)       | ⬜ §10.1 P2                           |
+| Hypervisor abstraction       | ✅ WHPX / Hyper-V            | ✅ KVM / virtio            | ⬜ §10.2 P3                           |
+| **Unified 3-tier priority**  | ❌ (driver-model, no prio)   | ❌ (device nodes, no prio) | ✅ **VirtIO > VBox > PS/2 in main.c** |
 
 ## VirtualBox Testability
 

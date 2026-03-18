@@ -227,20 +227,20 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11                            | Linux (GNOME/KDE)                   | Impossible OS                              |
-|---------------------------------|---------------------------------------|-------------------------------------|--------------------------------------------|
-| Theme system (color tokens)     | ✅ DWM / UWP resource dictionaries    | ✅ GTK CSS / KDE theme engine         | ⬜ §1 P0                                   |
-| Dark / Light mode               | ✅ Registry `AppsUseLightTheme`       | ✅ GTK `prefer-dark-theme`            | ⬜ §1 P0 — Dark preset default            |
-| Live theme hot-reload           | ✅ WM_THEMECHANGED broadcast          | ✅ GSettings notify                   | ⬜ §1 P0 — WM_THEME_CHANGED broadcast     |
-| Start Menu                      | ✅ (controversial design in Win11)    | ✅ GNOME Dash / KDE Application Menu  | ⬜ §2 P1 — clean, no telemetry           |
-| Context menus                   | ✅ ShellExecuteEx / Explorer shell    | ✅ Nautilus / Dolphin                 | ⬜ §8 P1                                  |
-| Toast notifications             | ✅ WinRT ToastNotification (COM)     | ✅ libnotify + notification daemon    | ⬜ §5 P2 — **in-kernel, no daemon**       |
-| DPI scaling                     | ✅ Per-monitor DPI awareness          | ✅ Fractional scaling (GDK / KWin)   | ⬜ §4 P3 — global scale factor            |
-| Screenshot (PrintScreen)        | ✅ Snipping Tool / Win+PrtSc          | ✅ gnome-screenshot / Flameshot       | ⬜ §6 P3                                  |
-| Wallpaper with fit modes        | ✅ Fill/Fit/Stretch/Center/Tile       | ✅ gnome-settings → various           | ✅ Done (§3.3 TODO-110) + ⬜ §7 change-detect |
-| Animations                      | ✅ DWM compositor                     | ✅ Mutter (GNOME) / KWin              | ⬜ §3 P2 — in-kernel tick                 |
-| System tray (notification area) | ✅ Shell_NotifyIcon / NOTIFYICONDATA  | ✅ SystemTray / AppIndicator          | ⬜ §9 P2                                  |
-| Tooltips                        | ✅ TOOLTIPTEXT / Window tooltip       | ✅ GtkTooltip                         | ⬜ §10 P2                                 |
-| **Clean Start Menu (no ads)**   | ❌ Win11 has recommendations + ads   | ✅ Clean                              | ✅ **§2 — pinned apps only, no telemetry** |
-| **In-kernel toast (no daemon)** | ❌ Requires COM + WinRT              | ❌ Requires separate notify daemon    | ⬜ **§5 — single in-kernel queue**        |
-| **In-kernel animation tick**    | ❌ DWM separate process               | ❌ Mutter/KWin separate process       | ⬜ **§3 — compositor loop, no IPC**       |
+| Feature                         | 🪟 Windows 11                        | 🐧 Linux (GNOME/KDE)                 | 🚀 Impossible OS                             |
+| ------------------------------- | ----------------------------------- | ----------------------------------- | ------------------------------------------- |
+| Theme system (color tokens)     | ✅ DWM / UWP resource dictionaries   | ✅ GTK CSS / KDE theme engine        | ⬜ §1 P0                                     |
+| Dark / Light mode               | ✅ Registry `AppsUseLightTheme`      | ✅ GTK `prefer-dark-theme`           | ⬜ §1 P0 — Dark preset default               |
+| Live theme hot-reload           | ✅ WM_THEMECHANGED broadcast         | ✅ GSettings notify                  | ⬜ §1 P0 — WM_THEME_CHANGED broadcast        |
+| Start Menu                      | ✅ (controversial design in Win11)   | ✅ GNOME Dash / KDE Application Menu | ⬜ §2 P1 — clean, no telemetry               |
+| Context menus                   | ✅ ShellExecuteEx / Explorer shell   | ✅ Nautilus / Dolphin                | ⬜ §8 P1                                     |
+| Toast notifications             | ✅ WinRT ToastNotification (COM)     | ✅ libnotify + notification daemon   | ⬜ §5 P2 — **in-kernel, no daemon**          |
+| DPI scaling                     | ✅ Per-monitor DPI awareness         | ✅ Fractional scaling (GDK / KWin)   | ⬜ §4 P3 — global scale factor               |
+| Screenshot (PrintScreen)        | ✅ Snipping Tool / Win+PrtSc         | ✅ gnome-screenshot / Flameshot      | ⬜ §6 P3                                     |
+| Wallpaper with fit modes        | ✅ Fill/Fit/Stretch/Center/Tile      | ✅ gnome-settings → various          | ✅ Done (§3.3 TODO-110) + ⬜ §7 change-detect |
+| Animations                      | ✅ DWM compositor                    | ✅ Mutter (GNOME) / KWin             | ⬜ §3 P2 — in-kernel tick                    |
+| System tray (notification area) | ✅ Shell_NotifyIcon / NOTIFYICONDATA | ✅ SystemTray / AppIndicator         | ⬜ §9 P2                                     |
+| Tooltips                        | ✅ TOOLTIPTEXT / Window tooltip      | ✅ GtkTooltip                        | ⬜ §10 P2                                    |
+| **Clean Start Menu (no ads)**   | ❌ Win11 has recommendations + ads   | ✅ Clean                             | ✅ **§2 — pinned apps only, no telemetry**   |
+| **In-kernel toast (no daemon)** | ❌ Requires COM + WinRT              | ❌ Requires separate notify daemon   | ⬜ **§5 — single in-kernel queue**           |
+| **In-kernel animation tick**    | ❌ DWM separate process              | ❌ Mutter/KWin separate process      | ⬜ **§3 — compositor loop, no IPC**          |

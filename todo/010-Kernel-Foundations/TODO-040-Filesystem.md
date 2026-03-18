@@ -304,20 +304,20 @@
 
 #### FAT32 Driver — OS Comparison
 
-| Feature | Windows 11 | Linux (vfat) | Impossible OS FAT32 |
-|---------|-----------|-------------|---------------------|
-| Read support (8.3 + LFN) | ✅ | ✅ | ✅ Done §3.1 |
-| Write support (create/delete/rename) | ✅ | ✅ | ✅ Done §3.2 (overwrite-only) |
-| Offset-aware write / append | ✅ | ✅ | ✅ Done §3.4.1 |
-| FSInfo free cluster hint | ✅ | ✅ | ✅ Done §3.4.2 |
-| Sector cache / write-back | ✅ (kernel cache) | ✅ (page cache) | ⬜ §3.4.3 |
-| Multi-volume simultaneous mount | ✅ | ✅ | ⬜ §3.4.4 |
-| Concurrent access safety | ✅ | ✅ (VFS locking) | ✅ §3.4.5 |
-| LFN creation (write) | ✅ | ✅ | ⬜ §3.4.6 |
-| Timestamp read/write | ✅ | ✅ | ⬜ §3.4.7 (partial read) |
-| FAT32 format (`mkfs.fat`) | ✅ | ✅ | ✅ Done §3.2 |
-| Cross-linked chain detection | ✅ `chkdsk` | ✅ `fsck.vfat` | ⬜ §8.2 |
-| exFAT support | ✅ Native | ✅ kernel driver | ⬜ §4.6-4.7 P3 |
+| Feature                              | 🪟 Windows 11     | 🐧 Linux (vfat)  | 🚀 Impossible OS FAT32        |
+| ------------------------------------ | ---------------- | --------------- | ---------------------------- |
+| Read support (8.3 + LFN)             | ✅                | ✅               | ✅ Done §3.1                  |
+| Write support (create/delete/rename) | ✅                | ✅               | ✅ Done §3.2 (overwrite-only) |
+| Offset-aware write / append          | ✅                | ✅               | ✅ Done §3.4.1                |
+| FSInfo free cluster hint             | ✅                | ✅               | ✅ Done §3.4.2                |
+| Sector cache / write-back            | ✅ (kernel cache) | ✅ (page cache)  | ⬜ §3.4.3                     |
+| Multi-volume simultaneous mount      | ✅                | ✅               | ⬜ §3.4.4                     |
+| Concurrent access safety             | ✅                | ✅ (VFS locking) | ✅ §3.4.5                     |
+| LFN creation (write)                 | ✅                | ✅               | ⬜ §3.4.6                     |
+| Timestamp read/write                 | ✅                | ✅               | ⬜ §3.4.7 (partial read)      |
+| FAT32 format (`mkfs.fat`)            | ✅                | ✅               | ✅ Done §3.2                  |
+| Cross-linked chain detection         | ✅ `chkdsk`       | ✅ `fsck.vfat`   | ⬜ §8.2                       |
+| exFAT support                        | ✅ Native         | ✅ kernel driver | ⬜ §4.6-4.7 P3                |
 
 > **After §3.4.1:** The debug logging system can append efficiently, unblocking TODO-005-Debug.
 > **After §3.4.1-3.4.7:** FAT32 driver reaches feature parity with Linux's `vfat` driver.
@@ -1493,30 +1493,30 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11 (NTFS)                   | Linux (ext4 / btrfs)            | Impossible OS (IXFS / FAT32)                        |
-|---------------------------------|-------------------------------------|---------------------------------|-----------------------------------------------------|
-| Native filesystem               | ✅ NTFS (journaled)                 | ✅ ext4 (journaled)              | ✅ IXFS (journaled, CoW, §5.7)                       |
-| FAT32 R/W                       | ✅                                  | ✅                               | ✅ Done                                              |
-| NTFS R/W                        | ✅ Native                           | ✅ ntfs3 (kernel)               | ⬜ §4.1–4.3 P1/P2                                   |
-| exFAT R/W                       | ✅                                  | ✅ exfatprogs                   | ⬜ §4.6–4.7 P3                                      |
-| ext2/3/4 R/W                    | ❌ (third-party tools)              | ✅ Native                        | ⬜ §4.4–4.5 P2/P3                                   |
-| ISO 9660 / Joliet / UDF         | ✅ Read-only                        | ✅ Read-only                     | ⬜ §4.8–4.9 P3                                      |
-| Copy-on-Write                   | ❌ (ReFS only — not for boot)       | ✅ btrfs CoW                     | ✅ IXFS CoW §5.8 — **on the boot fs**               |
-| Snapshots                       | ✅ VSS (Volume Shadow Copy)         | ✅ btrfs snapshots               | ✅ IXFS snapshots §5.8                               |
-| Per-block checksums             | ❌ (ReFS only)                      | ✅ btrfs checksums               | ✅ IXFS CRC32C §5.9.3                               |
-| Inline small-file data          | ❌                                  | ✅ ext4 inline data              | ✅ IXFS inline ≤48 B §5.9.2                         |
-| Sparse file support             | ✅                                  | ✅                               | ✅ IXFS §5.9.1                                      |
-| Win32 file API (`CreateFile`)   | ✅ Native                           | ❌ (POSIX only)                 | ⬜ §3.6 P0 — native Win32 API                       |
-| Write-ahead journal             | ✅ NTFS log                         | ✅ ext4 journal                  | ✅ IXFS WAL §5.7                                    |
-| chkdsk / fsck                   | ✅ `chkdsk`                         | ✅ `fsck.ext4`                  | ⬜ §8.2 P2 — `chkdsk` CLI + GUI                     |
-| Defrag / TRIM                   | ✅ `defrag` + Optimize Drive        | ✅ `e4defrag` + `fstrim`        | ⬜ §8.4 P3 — `defrag` + GUI                         |
-| Disk Usage Analyzer             | ✅ Storage Sense                    | ✅ `du`, `ncdu`, Baobab         | ⬜ §8.9 P3 — `diskuse` CLI + treemap GUI            |
-| Data Recovery                   | ✅ Previous Versions + third-party  | ✅ `extundelete`, PhotoRec      | ⬜ §8.5 P3                                          |
-| **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root        | ✅ **IXFS is always the boot fs — §5.8**             |
-| **Per-block checksums on boot** | ❌                                  | ⚠️ btrfs only (not default)    | ✅ **IXFS boot volume — §5.9.3**                    |
-| **Alternate Data Streams**      | ✅ NTFS native                     | ❌ No equivalent                | ⬜ **IXFS native §5.9.5**                           |
-| **Security descriptors (ACLs)** | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different)       | ⬜ **IXFS native §5.9.6**                           |
-| **Hard links / symlinks**       | ✅ CreateHardLink / mklink         | ✅ link() / symlink()           | ⬜ **IXFS native §5.9.7**                           |
-| **Extended attributes**         | ✅ NtSetEaFile                     | ✅ setxattr                     | ⬜ **IXFS native §5.9.8**                           |
-| **Transparent compression**     | ✅ NTFS (16-cluster units)         | ✅ btrfs zstd                   | ⬜ **IXFS LZ4 per-block §5.9.9 — better than NTFS**|
-| **Integrated disk GUI tools**   | ✅ Disk Management (limited)        | ⚠️ GParted (separate install)  | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |
+| Feature                         | 🪟 Windows 11 (NTFS)               | 🐧 Linux (ext4 / btrfs)        | 🚀 Impossible OS (IXFS / FAT32)                     |
+| ------------------------------- | --------------------------------- | ----------------------------- | -------------------------------------------------- |
+| Native filesystem               | ✅ NTFS (journaled)                | ✅ ext4 (journaled)            | ✅ IXFS (journaled, CoW, §5.7)                      |
+| FAT32 R/W                       | ✅                                 | ✅                             | ✅ Done                                             |
+| NTFS R/W                        | ✅ Native                          | ✅ ntfs3 (kernel)              | ⬜ §4.1–4.3 P1/P2                                   |
+| exFAT R/W                       | ✅                                 | ✅ exfatprogs                  | ⬜ §4.6–4.7 P3                                      |
+| ext2/3/4 R/W                    | ❌ (third-party tools)             | ✅ Native                      | ⬜ §4.4–4.5 P2/P3                                   |
+| ISO 9660 / Joliet / UDF         | ✅ Read-only                       | ✅ Read-only                   | ⬜ §4.8–4.9 P3                                      |
+| Copy-on-Write                   | ❌ (ReFS only — not for boot)      | ✅ btrfs CoW                   | ✅ IXFS CoW §5.8 — **on the boot fs**               |
+| Snapshots                       | ✅ VSS (Volume Shadow Copy)        | ✅ btrfs snapshots             | ✅ IXFS snapshots §5.8                              |
+| Per-block checksums             | ❌ (ReFS only)                     | ✅ btrfs checksums             | ✅ IXFS CRC32C §5.9.3                               |
+| Inline small-file data          | ❌                                 | ✅ ext4 inline data            | ✅ IXFS inline ≤48 B §5.9.2                         |
+| Sparse file support             | ✅                                 | ✅                             | ✅ IXFS §5.9.1                                      |
+| Win32 file API (`CreateFile`)   | ✅ Native                          | ❌ (POSIX only)                | ⬜ §3.6 P0 — native Win32 API                       |
+| Write-ahead journal             | ✅ NTFS log                        | ✅ ext4 journal                | ✅ IXFS WAL §5.7                                    |
+| chkdsk / fsck                   | ✅ `chkdsk`                        | ✅ `fsck.ext4`                 | ⬜ §8.2 P2 — `chkdsk` CLI + GUI                     |
+| Defrag / TRIM                   | ✅ `defrag` + Optimize Drive       | ✅ `e4defrag` + `fstrim`       | ⬜ §8.4 P3 — `defrag` + GUI                         |
+| Disk Usage Analyzer             | ✅ Storage Sense                   | ✅ `du`, `ncdu`, Baobab        | ⬜ §8.9 P3 — `diskuse` CLI + treemap GUI            |
+| Data Recovery                   | ✅ Previous Versions + third-party | ✅ `extundelete`, PhotoRec     | ⬜ §8.5 P3                                          |
+| **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root       | ✅ **IXFS is always the boot fs — §5.8**            |
+| **Per-block checksums on boot** | ❌                                 | ⚠️ btrfs only (not default)   | ✅ **IXFS boot volume — §5.9.3**                    |
+| **Alternate Data Streams**      | ✅ NTFS native                     | ❌ No equivalent               | ⬜ **IXFS native §5.9.5**                           |
+| **Security descriptors (ACLs)** | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different)      | ⬜ **IXFS native §5.9.6**                           |
+| **Hard links / symlinks**       | ✅ CreateHardLink / mklink         | ✅ link() / symlink()          | ⬜ **IXFS native §5.9.7**                           |
+| **Extended attributes**         | ✅ NtSetEaFile                     | ✅ setxattr                    | ⬜ **IXFS native §5.9.8**                           |
+| **Transparent compression**     | ✅ NTFS (16-cluster units)         | ✅ btrfs zstd                  | ⬜ **IXFS LZ4 per-block §5.9.9 — better than NTFS** |
+| **Integrated disk GUI tools**   | ✅ Disk Management (limited)       | ⚠️ GParted (separate install) | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |

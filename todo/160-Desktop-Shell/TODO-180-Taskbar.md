@@ -111,15 +111,15 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11 (taskbar)                  | Linux (GNOME Shell / KWin panel)       | Impossible OS                           |
-|---------------------------------|---------------------------------------|----------------------------------------|-----------------------------------------|
-| Window list (buttons per app)   | ✅ Taskbar buttons                    | ✅ GNOME Top Bar / KDE panel            | ⬜ §1 P0                               |
-| Button context menu             | ✅ Right-click → window options       | ✅ Right-click menu                     | ⬜ §2 P1                               |
-| Aero Peek (hover to peek)       | ✅ ITaskbarList3 thumbnail preview    | ❌ GNOME no Peek / KWin with extension  | ⬜ §3 P2                               |
-| Progress overlay on button      | ✅ ITaskbarList3::SetProgressValue    | ✅ Unity Launcher progress (D-Bus)      | ⬜ §4 P2                               |
-| Pinned apps                     | ✅ TaskBar pins in Registry           | ✅ GNOME / KDE favorites                | ⬜ §5 P1                               |
-| Auto-hide                       | ✅ Taskbar auto-hide setting          | ✅ gnome-panel autohide / KDE           | ⬜ §6 P4 (stretch)                     |
-| Jump lists (right-click)        | ✅ `ICustomDestinationList`           | ❌ GNOME no jump lists                  | 🔵 Future                              |
-| Multi-monitor taskbar           | ✅ Show on all monitors               | ✅ KDE multi-monitor panel              | 🔵 Future                              |
-| **In-kernel (no D-Bus)**        | ❌ COM-based ITaskbarList3            | ❌ D-Bus protocol for progress          | ✅ **Syscall-based — zero IPC overhead** |
-| **Progress badge simplicity**   | ❌ Complex COM interface              | ❌ D-Bus required                       | ⬜ **§4 — simple `taskbar_set_progress()` syscall** |
+| Feature                       | 🪟 Windows 11 (taskbar)            | 🐧 Linux (GNOME Shell / KWin panel)    | 🚀 Impossible OS                                    |
+| ----------------------------- | --------------------------------- | ------------------------------------- | -------------------------------------------------- |
+| Window list (buttons per app) | ✅ Taskbar buttons                 | ✅ GNOME Top Bar / KDE panel           | ⬜ §1 P0                                            |
+| Button context menu           | ✅ Right-click → window options    | ✅ Right-click menu                    | ⬜ §2 P1                                            |
+| Aero Peek (hover to peek)     | ✅ ITaskbarList3 thumbnail preview | ❌ GNOME no Peek / KWin with extension | ⬜ §3 P2                                            |
+| Progress overlay on button    | ✅ ITaskbarList3::SetProgressValue | ✅ Unity Launcher progress (D-Bus)     | ⬜ §4 P2                                            |
+| Pinned apps                   | ✅ TaskBar pins in Registry        | ✅ GNOME / KDE favorites               | ⬜ §5 P1                                            |
+| Auto-hide                     | ✅ Taskbar auto-hide setting       | ✅ gnome-panel autohide / KDE          | ⬜ §6 P4 (stretch)                                  |
+| Jump lists (right-click)      | ✅ `ICustomDestinationList`        | ❌ GNOME no jump lists                 | 🔵 Future                                           |
+| Multi-monitor taskbar         | ✅ Show on all monitors            | ✅ KDE multi-monitor panel             | 🔵 Future                                           |
+| **In-kernel (no D-Bus)**      | ❌ COM-based ITaskbarList3         | ❌ D-Bus protocol for progress         | ✅ **Syscall-based — zero IPC overhead**            |
+| **Progress badge simplicity** | ❌ Complex COM interface           | ❌ D-Bus required                      | ⬜ **§4 — simple `taskbar_set_progress()` syscall** |

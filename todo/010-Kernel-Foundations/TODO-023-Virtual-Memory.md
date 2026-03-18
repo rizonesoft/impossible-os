@@ -173,18 +173,18 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 
 ## OS Comparison
 
-| Feature                      | Windows 11              | Linux Kernel             | Impossible OS                      |
-|------------------------------|-------------------------|--------------------------|------------------------------------|
-| Swap / pagefile              | ✅ `pagefile.sys`       | ✅ swap partition/file   | ✅ §1 Done — `pagefile.sys`        |
-| Memory-mapped files          | ✅ `MapViewOfFile`      | ✅ `mmap(2)`             | ✅ §2 Done                         |
-| Memory protection (mprotect) | ✅ `VirtualProtect`     | ✅ `mprotect(2)`         | ⬜ §3 P0                            |
-| ASLR                         | ✅ Opt-in per binary    | ✅ Default on            | ⬜ §4 P1 — **default on all procs** |
-| Huge pages                   | ✅ `MEM_LARGE_PAGES`    | ✅ `MAP_HUGETLB`         | ⬜ §5 P2                            |
-| COW fork()                   | ❌ No fork              | ✅ COW fork              | ⬜ §6 P1 — **beats Windows**        |
-| KASLR                        | ✅ Default on            | ✅ Default on             | ⬜ §7 P1 — **production standard**  |
-| SMEP/SMAP                    | ✅ Enabled               | ✅ Enabled                | ⬜ §8 P1 — **stops ret2user**       |
-| Page replacement algorithm   | ✅ Modified clock       | ✅ LRU + clock           | ✅ Clock (second-chance)            |
-| **ASLR default for all**     | ⚠️ Opt-in per PE binary | ✅ Default               | ⬜ **§4 — mandatory for all procs** |
-| **Full exploit mitigation**  | ✅ (ASLR+KASLR+SMEP+SMAP+DEP) | ✅ (all enabled)   | ⬜ **§3-4, §7-8 — complete when done** |
+| Feature                      | 🪟 Windows 11                 | 🐧 Linux Kernel        | 🚀 Impossible OS                       |
+| ---------------------------- | ---------------------------- | --------------------- | ------------------------------------- |
+| Swap / pagefile              | ✅ `pagefile.sys`             | ✅ swap partition/file | ✅ §1 Done — `pagefile.sys`            |
+| Memory-mapped files          | ✅ `MapViewOfFile`            | ✅ `mmap(2)`           | ✅ §2 Done                             |
+| Memory protection (mprotect) | ✅ `VirtualProtect`           | ✅ `mprotect(2)`       | ⬜ §3 P0                               |
+| ASLR                         | ✅ Opt-in per binary          | ✅ Default on          | ⬜ §4 P1 — **default on all procs**    |
+| Huge pages                   | ✅ `MEM_LARGE_PAGES`          | ✅ `MAP_HUGETLB`       | ⬜ §5 P2                               |
+| COW fork()                   | ❌ No fork                    | ✅ COW fork            | ⬜ §6 P1 — **beats Windows**           |
+| KASLR                        | ✅ Default on                 | ✅ Default on          | ⬜ §7 P1 — **production standard**     |
+| SMEP/SMAP                    | ✅ Enabled                    | ✅ Enabled             | ⬜ §8 P1 — **stops ret2user**          |
+| Page replacement algorithm   | ✅ Modified clock             | ✅ LRU + clock         | ✅ Clock (second-chance)               |
+| **ASLR default for all**     | ⚠️ Opt-in per PE binary      | ✅ Default             | ⬜ **§4 — mandatory for all procs**    |
+| **Full exploit mitigation**  | ✅ (ASLR+KASLR+SMEP+SMAP+DEP) | ✅ (all enabled)       | ⬜ **§3-4, §7-8 — complete when done** |
 
 > **After §3–8:** Impossible OS matches modern OS kernel hardening. ASLR mandatory-by-default exceeds Windows 11.

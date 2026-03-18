@@ -413,19 +413,19 @@
 
 ## OS Comparison
 
-| Feature                             | Windows 11 Registry              | Linux (dconf / sysctl / ini files) | Impossible OS                              |
-|-------------------------------------|----------------------------------|------------------------------------|--------------------------------------------|
-| Hierarchical key/value store        | ✅ Full tree                     | ✅ dconf (GNOME), ini files          | ✅ §1.1 HKLM/HKCU/HKCR tree               |
-| Typed values (DWORD, SZ, BINARY...) | ✅ Full Win32 types              | ⚠️ Only strings (dconf has GVariant) | ✅ §1.2 All REG_* types                   |
-| Predefined root keys                | ✅ HKLM, HKCU, HKCR, HKU         | ❌ No concept                        | ✅ §1.3 Same root keys                    |
-| Win32 API (`RegOpenKeyEx`...)       | ✅ Native                        | ❌                                   | ✅ §2 Complete native API                 |
-| Symbolic link keys (`REG_LINK`)     | ✅                               | ❌                                   | ✅ §1.2                                   |
-| Change notifications                | ✅ `RegNotifyChangeKeyValue`     | ⚠️ inotify on ini files              | ⬜ §5.1 P2 — `RegNotifyChangeKeyValue`    |
-| Persistent binary hive files        | ✅ `.hive` format                | ✅ dconf binary db                   | ✅ §4.1–4.2                               |
-| Crash-safe journaling               | ✅ Transaction log               | ⚠️ No fsync guarantee on dconf       | ✅ §4.3 `.hive.log` WAJ                   |
-| User-mode access syscalls           | ✅ advapi32.dll                  | ✅ libdconf/gsettings                | ⬜ §6.1 P2                                |
-| `regedit` shell inspection          | ✅ GUI regedit.exe               | ✅ `dconf-editor` (GNOME)            | ⬜ §8.1 P2 — CLI + subcommands            |
-| advapi32.dll stubs (Win32 compat)   | ✅ Native                        | ❌                                   | ⬜ §7.1 P2 — Win32 compatibility layer    |
-| Per-user hive redirection (HKCU)    | ✅                               | ✅ per-user home dir                 | ✅ §1.3 HKU\{user} redirection            |
-| **Crash-safe WAJ in kernel space**  | ✅ (kernel-level)                | ❌ (user-space dconf)                | ✅ **§4.3 — kernel WAJ, not user-space**  |
-| **In-kernel typed value store**     | ✅                               | ❌                                   | ✅ **§1-2 — native, no daemon needed**    |
+| Feature                             | 🪟 Windows 11 Registry       | 🐧 Linux (dconf / sysctl / ini files) | 🚀 Impossible OS                         |
+| ----------------------------------- | --------------------------- | ------------------------------------ | --------------------------------------- |
+| Hierarchical key/value store        | ✅ Full tree                 | ✅ dconf (GNOME), ini files           | ✅ §1.1 HKLM/HKCU/HKCR tree              |
+| Typed values (DWORD, SZ, BINARY...) | ✅ Full Win32 types          | ⚠️ Only strings (dconf has GVariant) | ✅ §1.2 All REG_* types                  |
+| Predefined root keys                | ✅ HKLM, HKCU, HKCR, HKU     | ❌ No concept                         | ✅ §1.3 Same root keys                   |
+| Win32 API (`RegOpenKeyEx`...)       | ✅ Native                    | ❌                                    | ✅ §2 Complete native API                |
+| Symbolic link keys (`REG_LINK`)     | ✅                           | ❌                                    | ✅ §1.2                                  |
+| Change notifications                | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify on ini files              | ⬜ §5.1 P2 — `RegNotifyChangeKeyValue`   |
+| Persistent binary hive files        | ✅ `.hive` format            | ✅ dconf binary db                    | ✅ §4.1–4.2                              |
+| Crash-safe journaling               | ✅ Transaction log           | ⚠️ No fsync guarantee on dconf       | ✅ §4.3 `.hive.log` WAJ                  |
+| User-mode access syscalls           | ✅ advapi32.dll              | ✅ libdconf/gsettings                 | ⬜ §6.1 P2                               |
+| `regedit` shell inspection          | ✅ GUI regedit.exe           | ✅ `dconf-editor` (GNOME)             | ⬜ §8.1 P2 — CLI + subcommands           |
+| advapi32.dll stubs (Win32 compat)   | ✅ Native                    | ❌                                    | ⬜ §7.1 P2 — Win32 compatibility layer   |
+| Per-user hive redirection (HKCU)    | ✅                           | ✅ per-user home dir                  | ✅ §1.3 HKU\{user} redirection           |
+| **Crash-safe WAJ in kernel space**  | ✅ (kernel-level)            | ❌ (user-space dconf)                 | ✅ **§4.3 — kernel WAJ, not user-space** |
+| **In-kernel typed value store**     | ✅                           | ❌                                    | ✅ **§1-2 — native, no daemon needed**   |

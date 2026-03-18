@@ -128,12 +128,12 @@
 
 ## OS Comparison
 
-| Feature                        | Windows 11                       | Linux Kernel                  | Impossible OS                        |
-|--------------------------------|----------------------------------|-------------------------------|--------------------------------------|
-| Handle table (per-process)     | ✅ Handle table (HANDLE)         | ✅ POSIX FD table              | ⬜ §1 P0 — **Win32 HANDLE model (native)** |
-| Per-process working directory  | ✅ `SetCurrentDirectory`         | ✅ `chdir(2)`                  | ⬜ §2 P0                              |
-| User-mode heap (brk/sbrk)      | ✅ `VirtualAlloc` / heap         | ✅ `brk(2)` / `sbrk(2)`       | ⬜ §3 P0                              |
-| Timer syscalls (sleep/time)    | ✅ `Sleep` / `GetSystemTime`     | ✅ `sleep`/`gettimeofday`      | ⬜ §4 P1                              |
-| Process priority classes       | ✅ `SetPriorityClass`            | ✅ `nice`/`setpriority`        | ⬜ §5 P1                              |
-| Process capabilities           | ✅ Privileges + tokens           | ✅ `CAP_*` capabilities        | ⬜ §6 P2                              |
-| **Unified handles for all I/O** | ✅ HANDLE for everything         | ✅ Everything is an FD         | ⬜ **§1 — Win32 HANDLE model (native)** |
+| Feature                         | 🪟 Windows 11                | 🐧 Linux Kernel           | 🚀 Impossible OS                           |
+| ------------------------------- | --------------------------- | ------------------------ | ----------------------------------------- |
+| Handle table (per-process)      | ✅ Handle table (HANDLE)     | ✅ POSIX FD table         | ⬜ §1 P0 — **Win32 HANDLE model (native)** |
+| Per-process working directory   | ✅ `SetCurrentDirectory`     | ✅ `chdir(2)`             | ⬜ §2 P0                                   |
+| User-mode heap (brk/sbrk)       | ✅ `VirtualAlloc` / heap     | ✅ `brk(2)` / `sbrk(2)`   | ⬜ §3 P0                                   |
+| Timer syscalls (sleep/time)     | ✅ `Sleep` / `GetSystemTime` | ✅ `sleep`/`gettimeofday` | ⬜ §4 P1                                   |
+| Process priority classes        | ✅ `SetPriorityClass`        | ✅ `nice`/`setpriority`   | ⬜ §5 P1                                   |
+| Process capabilities            | ✅ Privileges + tokens       | ✅ `CAP_*` capabilities   | ⬜ §6 P2                                   |
+| **Unified handles for all I/O** | ✅ HANDLE for everything     | ✅ Everything is an FD    | ⬜ **§1 — Win32 HANDLE model (native)**    |

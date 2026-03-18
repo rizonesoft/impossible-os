@@ -93,12 +93,12 @@
 
 ## OS Comparison
 
-| Feature                           | Windows 11 (Task Scheduler svchost)  | Linux (cron / systemd timers)         | Impossible OS                          |
-|-----------------------------------|--------------------------------------|---------------------------------------|----------------------------------------|
-| Interval-based task scheduling    | ✅ Task Scheduler (COM)               | ✅ cron / `systemd.timer`             | ⬜ §1 P0 — PIT-driven in-kernel tick  |
-| Persist tasks in Registry/file    | ✅ XML task definitions               | ✅ crontab / .timer unit files        | ⬜ §2 — Registry `HKLM\SYSTEM\Scheduler\` |
-| One-shot scheduling               | ✅ Task Scheduler triggers            | ✅ `at` command                       | ⬜ §3 P2 — `at <HH:MM> <cmd>`         |
-| List/cancel scheduled tasks       | ✅ `schtasks /query`                  | ✅ `crontab -l` / `systemctl list-timers` | ⬜ §3 — `at list` / `at cancel`   |
-| GUI task management               | ✅ Task Scheduler MMC snap-in        | ✅ GNOME/KDE crontab editors          | ⬜ §4 P4 (stretch)                    |
-| **No external process**           | ❌ svchost.exe Task Scheduler service| ❌ cron daemon / systemd timers        | ✅ **In-kernel PIT hook — zero overhead** |
-| **Always-available scheduler**    | ❌ Service must be running            | ❌ cron daemon must be running         | ✅ **PIT-driven: always fires, even before full init** |
+| Feature                        | 🪟 Windows 11 (Task Scheduler svchost) | 🐧 Linux (cron / systemd timers)          | 🚀 Impossible OS                                       |
+| ------------------------------ | ------------------------------------- | ---------------------------------------- | ----------------------------------------------------- |
+| Interval-based task scheduling | ✅ Task Scheduler (COM)                | ✅ cron / `systemd.timer`                 | ⬜ §1 P0 — PIT-driven in-kernel tick                   |
+| Persist tasks in Registry/file | ✅ XML task definitions                | ✅ crontab / .timer unit files            | ⬜ §2 — Registry `HKLM\SYSTEM\Scheduler\`              |
+| One-shot scheduling            | ✅ Task Scheduler triggers             | ✅ `at` command                           | ⬜ §3 P2 — `at <HH:MM> <cmd>`                          |
+| List/cancel scheduled tasks    | ✅ `schtasks /query`                   | ✅ `crontab -l` / `systemctl list-timers` | ⬜ §3 — `at list` / `at cancel`                        |
+| GUI task management            | ✅ Task Scheduler MMC snap-in          | ✅ GNOME/KDE crontab editors              | ⬜ §4 P4 (stretch)                                     |
+| **No external process**        | ❌ svchost.exe Task Scheduler service  | ❌ cron daemon / systemd timers           | ✅ **In-kernel PIT hook — zero overhead**              |
+| **Always-available scheduler** | ❌ Service must be running             | ❌ cron daemon must be running            | ✅ **PIT-driven: always fires, even before full init** |

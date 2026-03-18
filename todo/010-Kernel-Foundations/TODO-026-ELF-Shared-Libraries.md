@@ -97,12 +97,12 @@
 
 ## OS Comparison
 
-| Feature                      | Windows 11 (DLL)              | Linux (ELF .so)              | Impossible OS                     |
-|------------------------------|-------------------------------|------------------------------|-----------------------------------|
-| Runtime dynamic loading      | ✅ `LoadLibrary`              | ✅ `dlopen`                  | ⬜ §1 P0                           |
-| Symbol lookup                | ✅ `GetProcAddress`           | ✅ `dlsym`                   | ⬜ §1 P0                           |
-| GOT / PLT lazy binding       | ✅ Import Address Table       | ✅ GOT/PLT                   | ⬜ §1 P1                           |
-| Kernel module loading        | ✅ Kernel driver (WDM)        | ✅ `insmod`/`depmod`         | ⬜ §2 (TODO-080)                   |
-| Symbol versioning            | ✅ SxS manifests              | ✅ GNU symbol versioning      | ⬜ §3 P2                           |
-| Library path cache           | ❌ PATH scan                  | ✅ `/etc/ld.so.cache`        | ⬜ §4 P2 — **user-rebuilable**     |
-| **Per-user library cache**   | ❌                            | ❌ Root only (`ldconfig`)    | ⬜ **§4 — Impossible OS only**     |
+| Feature                    | 🪟 Windows 11 (DLL)     | 🐧 Linux (ELF .so)        | 🚀 Impossible OS               |
+| -------------------------- | ---------------------- | ------------------------ | ----------------------------- |
+| Runtime dynamic loading    | ✅ `LoadLibrary`        | ✅ `dlopen`               | ⬜ §1 P0                       |
+| Symbol lookup              | ✅ `GetProcAddress`     | ✅ `dlsym`                | ⬜ §1 P0                       |
+| GOT / PLT lazy binding     | ✅ Import Address Table | ✅ GOT/PLT                | ⬜ §1 P1                       |
+| Kernel module loading      | ✅ Kernel driver (WDM)  | ✅ `insmod`/`depmod`      | ⬜ §2 (TODO-080)               |
+| Symbol versioning          | ✅ SxS manifests        | ✅ GNU symbol versioning  | ⬜ §3 P2                       |
+| Library path cache         | ❌ PATH scan            | ✅ `/etc/ld.so.cache`     | ⬜ §4 P2 — **user-rebuilable** |
+| **Per-user library cache** | ❌                      | ❌ Root only (`ldconfig`) | ⬜ **§4 — Impossible OS only** |

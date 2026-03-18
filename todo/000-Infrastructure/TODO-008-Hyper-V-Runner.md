@@ -287,17 +287,17 @@ graph LR
 
 ## OS Comparison
 
-| Feature                            | Windows 11 (Native Hyper-V)       | Linux (hv_* drivers)              | Impossible OS                              |
-|------------------------------------|-----------------------------------|-----------------------------------|--------------------------------------------|
-| VMBus discovery + protocol         | ✅ Native (built-in)              | ✅ `hv_vmbus.ko`                 | ⬜ §3 P0 — **cannot boot on Hyper-V**     |
-| Synthetic SCSI (storvsc)           | ✅ Native                         | ✅ `hv_storvsc.ko`               | ⬜ §4 P0 — no disk access                 |
-| Synthetic HID (keyboard + mouse)  | ✅ Native                         | ✅ `hv_utils.ko` + `hid-hyperv`  | ⬜ §5 P1 — no input                       |
-| Synthetic Video (hvfb)            | ✅ Native                         | ✅ `hyperv_fb.ko`                | ⬜ §6 P1 — GOP fallback only              |
-| Synthetic NIC (netvsc)            | ✅ Native                         | ✅ `hv_netvsc.ko`                | ⬜ §7 P2 — no networking                  |
-| Hyper-V synthetic timer           | ✅ Native                         | ✅ `hyperv_timer.c`              | ⬜ §8 P2 — uses LAPIC fallback            |
-| APIC-only mode (no legacy PIC)    | ✅ Automatic                      | ✅ MADT PCAT_COMPAT check        | ⬜ §2 P0 — PIC init always runs           |
-| MMIO-safe page tables             | ✅ Automatic (UEFI memory map)    | ✅ Uses EFI memory map            | ⬜ §9 P0 — maps all as write-back         |
-| Gen 2 Hyper-V boot (full)         | ✅ Native                         | ✅ With hv_* drivers              | ⬜ **Full stack required (§1-§11)**        |
+| Feature                          | 🪟 Windows 11 (Native Hyper-V) | 🐧 Linux (hv_* drivers)         | 🚀 Impossible OS                      |
+| -------------------------------- | ----------------------------- | ------------------------------ | ------------------------------------ |
+| VMBus discovery + protocol       | ✅ Native (built-in)           | ✅ `hv_vmbus.ko`                | ⬜ §3 P0 — **cannot boot on Hyper-V** |
+| Synthetic SCSI (storvsc)         | ✅ Native                      | ✅ `hv_storvsc.ko`              | ⬜ §4 P0 — no disk access             |
+| Synthetic HID (keyboard + mouse) | ✅ Native                      | ✅ `hv_utils.ko` + `hid-hyperv` | ⬜ §5 P1 — no input                   |
+| Synthetic Video (hvfb)           | ✅ Native                      | ✅ `hyperv_fb.ko`               | ⬜ §6 P1 — GOP fallback only          |
+| Synthetic NIC (netvsc)           | ✅ Native                      | ✅ `hv_netvsc.ko`               | ⬜ §7 P2 — no networking              |
+| Hyper-V synthetic timer          | ✅ Native                      | ✅ `hyperv_timer.c`             | ⬜ §8 P2 — uses LAPIC fallback        |
+| APIC-only mode (no legacy PIC)   | ✅ Automatic                   | ✅ MADT PCAT_COMPAT check       | ⬜ §2 P0 — PIC init always runs       |
+| MMIO-safe page tables            | ✅ Automatic (UEFI memory map) | ✅ Uses EFI memory map          | ⬜ §9 P0 — maps all as write-back     |
+| Gen 2 Hyper-V boot (full)        | ✅ Native                      | ✅ With hv_* drivers            | ⬜ **Full stack required (§1-§11)**   |
 
 > **After §1-§9:** Impossible OS boots and runs interactively on Hyper-V Gen 2.
 > **After §10-§11:** Matches Linux's Hyper-V support and integrates with guest additions framework.

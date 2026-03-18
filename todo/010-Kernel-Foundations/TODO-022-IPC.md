@@ -166,16 +166,16 @@ and dispatch to the first thread where `!(signal_mask & (1 << sig))`.
 ## OS Comparison
 
 | Feature                         | 🪟 Windows IPC                   | 🐧 Linux IPC              | 🚀 Impossible OS                   |
-| ------------------------------- | -------------------------------- | ------------------------- | ---------------------------------- |
+| ------------------------------- | ------------------------------- | ------------------------ | --------------------------------- |
 | Pipes (anonymous)               | ✅ `CreatePipe`                  | ✅ `pipe(2)`              | ✅ §1 Done                         |
-| Signals                         | ⚠️ Basic (Ctrl+C only)         | ✅ Full POSIX signals     | ✅ §2 Done                         |
+| Signals                         | ⚠️ Basic (Ctrl+C only)          | ✅ Full POSIX signals     | ✅ §2 Done                         |
 | Shared Memory                   | ✅ `CreateFileMapping`           | ✅ `shmget` / `mmap`      | ✅ §3 Done                         |
 | Message Queues                  | ✅ Window messages / MSMQ        | ✅ `mq_open` (POSIX)      | ⬜ §4 P1                           |
 | Unix-Domain Sockets             | ✅ Named pipes `\\.\pipe\`       | ✅ `AF_UNIX`              | ⬜ §5 P1                           |
 | waitpid / exit status           | ✅ `WaitForSingleObject`         | ✅ `waitpid(2)`           | ⬜ §6 P0                           |
 | **Named pipes (bidirectional)** | ✅ Full duplex named pipes       | ✅ `mkfifo` (half-duplex) | ⬜ §5 covers this via unix sockets |
-| Broadcast IPC                   | ✅ `SendMessage(HWND_BROADCAST)` | ⚠️ Signals only         | ⬜ §4 message queues (typed msgs)  |
-| **Per-thread signal masks**     | ✅ Per-thread (Win32 threads)    | ✅ `pthread_sigmask`      | ⬜ §7 P1 — POSIX compliant        |
+| Broadcast IPC                   | ✅ `SendMessage(HWND_BROADCAST)` | ⚠️ Signals only          | ⬜ §4 message queues (typed msgs)  |
+| **Per-thread signal masks**     | ✅ Per-thread (Win32 threads)    | ✅ `pthread_sigmask`      | ⬜ §7 P1 — POSIX compliant         |
 
 > **After §4–6:** Impossible OS matches Linux’s IPC feature set and exceeds basic Windows IPC in signal richness.
 > **After §7:** Full POSIX multithreaded signal delivery — required for any serious user-space threading library.

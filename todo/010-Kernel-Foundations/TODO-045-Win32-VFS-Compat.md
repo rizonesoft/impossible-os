@@ -326,17 +326,17 @@
 
 ## OS Comparison
 
-| Feature | Windows 11 | Linux | Impossible OS |
-|---------|-----------|-------|---------------|
-| Case-insensitive lookup | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive | ⬜ §1.1 — VFS flag |
-| Mandatory file locking | ✅ dwShareMode enforced | ❌ Advisory only (flock) | ⬜ §1.2 — lock table |
-| Deferred deletion | ✅ pending_delete | ❌ Immediate unlink | ⬜ §1.3 — pending flag |
-| File IDs (inode-like) | ✅ nFileIndex | ✅ ino_t | ⬜ §1.4 — file_id |
-| Memory-mapped I/O | ✅ CreateFileMapping | ✅ mmap | ⬜ §1.5 — demand paging |
-| ADS (streams) | ✅ Native NTFS | ❌ No equivalent | ⬜ §2.1 stub → TODO-040 §5.9.5 native |
-| ACL security descriptors | ✅ Full DACL/SACL | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native |
-| Volume info queries | ✅ GetVolumeInformation | ✅ statfs / statvfs | ⬜ §2.3 — accurate reporting |
-| Hard links / symlinks | ✅ CreateHardLink | ✅ link() / symlink() | ⬜ §2.4 route → TODO-040 §5.9.7 native |
-| Extended attributes | ✅ NtSetEaFile | ✅ setxattr | ⬜ TODO-040 §5.9.8 native |
-| Transparent compression | ✅ NTFS compression | ✅ btrfs/zstd | ⬜ TODO-040 §5.9.9 native |
-| Precise error codes | ✅ 15,000+ distinct codes | ✅ errno (limited set) | ⬜ §3.1 — mapping table |
+| Feature                  | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
+| ------------------------ | ------------------------------- | ------------------------ | ------------------------------------- |
+| Case-insensitive lookup  | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
+| Mandatory file locking   | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
+| Deferred deletion        | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
+| File IDs (inode-like)    | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
+| Memory-mapped I/O        | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
+| ADS (streams)            | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
+| ACL security descriptors | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
+| Volume info queries      | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
+| Hard links / symlinks    | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
+| Extended attributes      | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
+| Transparent compression  | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
+| Precise error codes      | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |

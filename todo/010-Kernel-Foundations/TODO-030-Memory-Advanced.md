@@ -134,14 +134,14 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11                        | Linux                                   | Impossible OS                              |
-|----------------------------------|-----------------------------------|-----------------------------------------|--------------------------------------------|
-| Kernel heap                      | ✅ Non-paged pool (growable)       | ✅ kmalloc (SLUB)                        | ⬜ §3 P3 — currently fixed 2 MiB          |
-| SLAB/look-aside list allocator   | ✅ Look-aside lists (ExAllocate*)  | ✅ SLUB (fast-path, per-CPU)             | ⬜ §1 P2                                   |
-| Virtually contiguous allocator   | ✅ MmMapIoSpace / MmAllocate*     | ✅ vmalloc                               | ⬜ §2 P3                                   |
-| Memory pressure callbacks        | ✅ Memory notification events      | ✅ Shrinker callbacks                    | ⬜ §4 P2                                   |
-| Identity-mapped physical RAM     | ✅ KSEG / Direct Map               | ✅ Direct Map (kernel linear map)        | ✅ Done — full physical range mapped       |
-| NUMA-aware allocation            | ✅ NUMA node affinity              | ✅ numactl, cpuset                       | ⬜ §5 P4 (stretch)                         |
-| PMM (physical frame allocator)   | ✅ MmAllocateContiguousMemory      | ✅ get_free_pages / alloc_pages          | ✅ Done — `pmm_alloc_contiguous()`         |
-| **No fragmentation SLAB caches** | ✅ (look-aside lists)             | ✅ (SLUB per-CPU)                        | ⬜ **§1 P2 — O(1), zero fragmentation**   |
-| **Pressure → cache eviction**    | ✅                                 | ✅ (shrinkers)                           | ⬜ **§4 P2 — simpler than Linux shrinkers**|
+| Feature                          | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                            |
+| -------------------------------- | -------------------------------- | -------------------------------- | ------------------------------------------ |
+| Kernel heap                      | ✅ Non-paged pool (growable)      | ✅ kmalloc (SLUB)                 | ⬜ §3 P3 — currently fixed 2 MiB            |
+| SLAB/look-aside list allocator   | ✅ Look-aside lists (ExAllocate*) | ✅ SLUB (fast-path, per-CPU)      | ⬜ §1 P2                                    |
+| Virtually contiguous allocator   | ✅ MmMapIoSpace / MmAllocate*     | ✅ vmalloc                        | ⬜ §2 P3                                    |
+| Memory pressure callbacks        | ✅ Memory notification events     | ✅ Shrinker callbacks             | ⬜ §4 P2                                    |
+| Identity-mapped physical RAM     | ✅ KSEG / Direct Map              | ✅ Direct Map (kernel linear map) | ✅ Done — full physical range mapped        |
+| NUMA-aware allocation            | ✅ NUMA node affinity             | ✅ numactl, cpuset                | ⬜ §5 P4 (stretch)                          |
+| PMM (physical frame allocator)   | ✅ MmAllocateContiguousMemory     | ✅ get_free_pages / alloc_pages   | ✅ Done — `pmm_alloc_contiguous()`          |
+| **No fragmentation SLAB caches** | ✅ (look-aside lists)             | ✅ (SLUB per-CPU)                 | ⬜ **§1 P2 — O(1), zero fragmentation**     |
+| **Pressure → cache eviction**    | ✅                                | ✅ (shrinkers)                    | ⬜ **§4 P2 — simpler than Linux shrinkers** |

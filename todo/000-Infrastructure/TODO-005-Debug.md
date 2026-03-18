@@ -382,22 +382,22 @@
 
 ## OS Comparison
 
-| Feature                    | Windows 11                    | Linux                        | Impossible OS                        |
-|----------------------------|-------------------------------|------------------------------|--------------------------------------|
-| Kernel log ring buffer     | ✅ KD ring (64K)              | ✅ dmesg (256K)              | ✅ klog ring (128K)                 |
-| Boot log to disk           | ✅ `%windir%\Logs\CBS`        | ✅ journald                  | ⬜ §1 — scattered, unreliable       |
-| Numbered/rotated logs      | ✅ Automatic                  | ✅ logrotate                 | ⬜ §1.2 — **missing**               |
-| Live log flush (pre-hang)  | ✅ ETW real-time              | ✅ journald sync             | ⬜ §1.3 — exists but fragile        |
-| Boot config file           | ✅ BCD                        | ✅ cmdline / grub.cfg        | ⬜ §2.1 — **missing**               |
-| Debug mode toggle          | ✅ `bcdedit /debug`           | ✅ `debug` cmdline           | ⬜ §2.1 — uses file flag            |
-| Verbose boot               | ✅ `bcdedit /bootlog`         | ✅ `loglevel=7`              | ⬜ §2.2 — tied to splash            |
-| Hardware info dump         | ✅ Device Manager             | ✅ `lspci -vvv`              | ⬜ §3 — basic, unstructured         |
-| PCI full enumeration       | ✅ Full BARs, caps            | ✅ `lspci`                   | ⬜ §3.3 — vendor:device only        |
-| ACPI table dump            | ✅ `acpidump`                 | ✅ `acpidump`                | ⬜ §3.4 — **missing**               |
-| Per-subsystem filtering    | ✅ ETW providers              | ✅ `printk` levels           | ⬜ §5.2 — **missing**               |
-| Serial console debug       | ✅ Kernel debugger            | ✅ serial console            | ✅ COM1 via `klog.c`                |
-| Multi-env (QEMU/VBox/HW)   | N/A                            | ✅ Works everywhere          | ✅ §4 — serial + X: logs            |
-| Boot time profiling        | ✅ Boot Event Collector         | ✅ `systemd-analyze blame`   | ⬜ §7 P3 — **missing**               |
+| Feature                   | 🪟 Windows 11           | 🐧 Linux                   | 🚀 Impossible OS              |
+| ------------------------- | ---------------------- | ------------------------- | ---------------------------- |
+| Kernel log ring buffer    | ✅ KD ring (64K)        | ✅ dmesg (256K)            | ✅ klog ring (128K)           |
+| Boot log to disk          | ✅ `%windir%\Logs\CBS`  | ✅ journald                | ⬜ §1 — scattered, unreliable |
+| Numbered/rotated logs     | ✅ Automatic            | ✅ logrotate               | ⬜ §1.2 — **missing**         |
+| Live log flush (pre-hang) | ✅ ETW real-time        | ✅ journald sync           | ⬜ §1.3 — exists but fragile  |
+| Boot config file          | ✅ BCD                  | ✅ cmdline / grub.cfg      | ⬜ §2.1 — **missing**         |
+| Debug mode toggle         | ✅ `bcdedit /debug`     | ✅ `debug` cmdline         | ⬜ §2.1 — uses file flag      |
+| Verbose boot              | ✅ `bcdedit /bootlog`   | ✅ `loglevel=7`            | ⬜ §2.2 — tied to splash      |
+| Hardware info dump        | ✅ Device Manager       | ✅ `lspci -vvv`            | ⬜ §3 — basic, unstructured   |
+| PCI full enumeration      | ✅ Full BARs, caps      | ✅ `lspci`                 | ⬜ §3.3 — vendor:device only  |
+| ACPI table dump           | ✅ `acpidump`           | ✅ `acpidump`              | ⬜ §3.4 — **missing**         |
+| Per-subsystem filtering   | ✅ ETW providers        | ✅ `printk` levels         | ⬜ §5.2 — **missing**         |
+| Serial console debug      | ✅ Kernel debugger      | ✅ serial console          | ✅ COM1 via `klog.c`          |
+| Multi-env (QEMU/VBox/HW)  | N/A                    | ✅ Works everywhere        | ✅ §4 — serial + X: logs      |
+| Boot time profiling       | ✅ Boot Event Collector | ✅ `systemd-analyze blame` | ⬜ §7 P3 — **missing**        |
 
 > **After P0+P1 items:** Impossible OS has a reliable, robust logging system that works across
 > all environments and produces useful, numbered logs with hardware dumps.

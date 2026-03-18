@@ -199,19 +199,19 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11                         | Linux (systemd / ACPI)               | Impossible OS                              |
-|---------------------------------|------------------------------------|--------------------------------------|--------------------------------------------|
-| ACPI power-off (S5)             | ✅ kernel HAL + ACPI               | ✅ `acpi_poweroff()` + systemd        | ⬜ §1 P0 — PM1a CTL register              |
-| ACPI reboot (CF9/RESET_REG)     | ✅ HAL_ACPI_RESET                  | ✅ `reboot=acpi / cf9`               | ⬜ §1 P0 — CF9 / PS2 reset fallback       |
-| Clean shutdown sequence         | ✅ Session Manager + dwm exit       | ✅ systemd shutdown targets           | ⬜ §2 P0 — WM_CLOSE + flush + unmount     |
-| `shutdown` / `reboot` commands  | ✅ `shutdown.exe /s /t 0`          | ✅ `shutdown -h now`                  | ⬜ §3 P1                                  |
-| Start Menu power button         | ✅ Power flyout                    | ✅ GNOME/KDE power menu               | ⬜ §4 P1                                  |
-| Power settings applet           | ✅ Settings → System → Power       | ✅ GNOME Power settings               | ⬜ §5 P2                                  |
-| Disk cache flush on shutdown    | ✅ Volume flush                    | ✅ `sync` + VFS shutdown              | ⬜ §6 P2                                  |
-| ACPI S3 suspend-to-RAM          | ✅ `StandbyS3`                     | ✅ `echo mem > /sys/power/state`      | ⬜ §7 P3 (in TODO-080 §9.2)              |
-| Hibernate (S4, hiberfil.sys)    | ✅ `hiberfil.sys`                  | ✅ `echo disk > /sys/power/state`     | ⬜ §7 P3 (stretch)                        |
-| Lock screen                     | ✅ WinLockScreen                   | ✅ gnome-screensaver / swaylock        | ⬜ §7 P3                                 |
-| Power profiles (Balanced/Perf)  | ✅ Power plans + HWP               | ✅ `cpupower` + `power-profiles-daemon` | ⬜ §8 P4                                |
-| Wake-on-LAN                     | ✅ Device Manager → NIC settings   | ✅ `ethtool -s wol g`                 | ⬜ Not planned yet — add to §7 stretch    |
-| **"Shutting down" splash screen** | ✅                                | ⚠️ Plain text / plymouth              | ⬜ **§2 — custom animated splash**        |
-| **Graceful app close on shutdown**| ✅ WM_CLOSE + 5s timeout           | ✅ SIGTERM + 5s + SIGKILL            | ⬜ **§2 — WM_CLOSE → force-kill 5s**     |
+| Feature                            | 🪟 Windows 11                    | 🐧 Linux (systemd / ACPI)               | 🚀 Impossible OS                       |
+| ---------------------------------- | ------------------------------- | -------------------------------------- | ------------------------------------- |
+| ACPI power-off (S5)                | ✅ kernel HAL + ACPI             | ✅ `acpi_poweroff()` + systemd          | ⬜ §1 P0 — PM1a CTL register           |
+| ACPI reboot (CF9/RESET_REG)        | ✅ HAL_ACPI_RESET                | ✅ `reboot=acpi / cf9`                  | ⬜ §1 P0 — CF9 / PS2 reset fallback    |
+| Clean shutdown sequence            | ✅ Session Manager + dwm exit    | ✅ systemd shutdown targets             | ⬜ §2 P0 — WM_CLOSE + flush + unmount  |
+| `shutdown` / `reboot` commands     | ✅ `shutdown.exe /s /t 0`        | ✅ `shutdown -h now`                    | ⬜ §3 P1                               |
+| Start Menu power button            | ✅ Power flyout                  | ✅ GNOME/KDE power menu                 | ⬜ §4 P1                               |
+| Power settings applet              | ✅ Settings → System → Power     | ✅ GNOME Power settings                 | ⬜ §5 P2                               |
+| Disk cache flush on shutdown       | ✅ Volume flush                  | ✅ `sync` + VFS shutdown                | ⬜ §6 P2                               |
+| ACPI S3 suspend-to-RAM             | ✅ `StandbyS3`                   | ✅ `echo mem > /sys/power/state`        | ⬜ §7 P3 (in TODO-080 §9.2)            |
+| Hibernate (S4, hiberfil.sys)       | ✅ `hiberfil.sys`                | ✅ `echo disk > /sys/power/state`       | ⬜ §7 P3 (stretch)                     |
+| Lock screen                        | ✅ WinLockScreen                 | ✅ gnome-screensaver / swaylock         | ⬜ §7 P3                               |
+| Power profiles (Balanced/Perf)     | ✅ Power plans + HWP             | ✅ `cpupower` + `power-profiles-daemon` | ⬜ §8 P4                               |
+| Wake-on-LAN                        | ✅ Device Manager → NIC settings | ✅ `ethtool -s wol g`                   | ⬜ Not planned yet — add to §7 stretch |
+| **"Shutting down" splash screen**  | ✅                               | ⚠️ Plain text / plymouth               | ⬜ **§2 — custom animated splash**     |
+| **Graceful app close on shutdown** | ✅ WM_CLOSE + 5s timeout         | ✅ SIGTERM + 5s + SIGKILL               | ⬜ **§2 — WM_CLOSE → force-kill 5s**   |

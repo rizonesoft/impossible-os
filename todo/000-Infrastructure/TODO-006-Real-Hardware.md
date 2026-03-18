@@ -532,25 +532,25 @@ After each test, update the test machine table (§ Current Architecture Audit �
 
 ## OS Comparison
 
-| Feature                    | Windows 11                    | Linux                        | Impossible OS                        |
-|----------------------------|-------------------------------|------------------------------|--------------------------------------|
-| UEFI boot (native)        | ✅ Windows Boot Manager       | ✅ GRUB2/systemd-boot        | ✅ Custom BOOTX64.EFI               |
-| GOP mode negotiation      | ✅ Automatic best mode        | ✅ efifb / simplefb          | ⬜ §2.1 — hardcoded 1280×720       |
-| Secure Boot support       | ✅ Signed bootloader          | ✅ shim + MOK                | ⬜ §2.3 — unsigned, detection only  |
-| UEFI memory map handling  | ✅ HAL memory manager          | ✅ e820 + EFI memmap         | ⬜ §2.2 — basic, no edge cases     |
-| PIC→APIC transition       | ✅ HAL handles both           | ✅ APIC driver + PIC compat  | ⬜ §3.1 — works but fragile        |
-| PIT/TSC calibration       | ✅ HAL timer calibration       | ✅ Multiple fallback methods | ⬜ §3.2 — hangs on some hardware   |
-| AHCI/SATA DMA             | ✅ storahci.sys               | ✅ libahci + libata          | ⬜ §4.1-4.3 — VirtIO only          |
-| SMP bring-up (INIT/SIPI)  | ✅ HAL MP init                | ✅ smpboot.c                 | ⬜ §5.1 — untested on real HW      |
-| RCU synchronization       | ✅ Pushlocks / EX resources   | ✅ Tree RCU / SRCU           | ⬜ §5.3 — **missing**              |
-| Per-CPU data              | ✅ KPCR via GS segment       | ✅ per_cpu via GS segment    | ⬜ §5.2 — global state only        |
-| Pixel format handling     | ✅ WDDM driver abstraction    | ✅ DRM/KMS format negotiation | ⬜ §6.1 — assumes BGRA            |
-| VRAM blit optimization    | ✅ GPU-accelerated flip       | ✅ DRM page flip             | ⬜ §6.2 — memcpy, no SSE2         |
-| USB HID keyboard/mouse    | ✅ usbhid.sys                 | ✅ usbhid + hid-generic      | ⬜ §7.3 — **missing** (stretch)    |
-| USB bootable media tool   | ✅ Media Creation Tool        | ✅ dd / Ventoy               | ⬜ §1.2 — **missing**              |
-| **Native PE32+ UEFI boot** | ⚠️ Via Windows Boot Mgr     | ❌ Needs GRUB/systemd-boot   | ✅ **Direct BOOTX64.EFI — zero chainloading** |
-| **In-kernel compositor**  | ❌ WDDM user-mode subsystem   | ❌ X11/Wayland user process   | ✅ **Zero context-switch latency** |
-| **Identity-mapped PMM**   | ❌ HAL virtual mapping         | ❌ buddy allocator + vmalloc  | ✅ **Direct physical access — no TLB miss on heap** |
+| Feature                    | 🪟 Windows 11               | 🐧 Linux                      | 🚀 Impossible OS                                    |
+| -------------------------- | -------------------------- | ---------------------------- | -------------------------------------------------- |
+| UEFI boot (native)         | ✅ Windows Boot Manager     | ✅ GRUB2/systemd-boot         | ✅ Custom BOOTX64.EFI                               |
+| GOP mode negotiation       | ✅ Automatic best mode      | ✅ efifb / simplefb           | ⬜ §2.1 — hardcoded 1280×720                        |
+| Secure Boot support        | ✅ Signed bootloader        | ✅ shim + MOK                 | ⬜ §2.3 — unsigned, detection only                  |
+| UEFI memory map handling   | ✅ HAL memory manager       | ✅ e820 + EFI memmap          | ⬜ §2.2 — basic, no edge cases                      |
+| PIC→APIC transition        | ✅ HAL handles both         | ✅ APIC driver + PIC compat   | ⬜ §3.1 — works but fragile                         |
+| PIT/TSC calibration        | ✅ HAL timer calibration    | ✅ Multiple fallback methods  | ⬜ §3.2 — hangs on some hardware                    |
+| AHCI/SATA DMA              | ✅ storahci.sys             | ✅ libahci + libata           | ⬜ §4.1-4.3 — VirtIO only                           |
+| SMP bring-up (INIT/SIPI)   | ✅ HAL MP init              | ✅ smpboot.c                  | ⬜ §5.1 — untested on real HW                       |
+| RCU synchronization        | ✅ Pushlocks / EX resources | ✅ Tree RCU / SRCU            | ⬜ §5.3 — **missing**                               |
+| Per-CPU data               | ✅ KPCR via GS segment      | ✅ per_cpu via GS segment     | ⬜ §5.2 — global state only                         |
+| Pixel format handling      | ✅ WDDM driver abstraction  | ✅ DRM/KMS format negotiation | ⬜ §6.1 — assumes BGRA                              |
+| VRAM blit optimization     | ✅ GPU-accelerated flip     | ✅ DRM page flip              | ⬜ §6.2 — memcpy, no SSE2                           |
+| USB HID keyboard/mouse     | ✅ usbhid.sys               | ✅ usbhid + hid-generic       | ⬜ §7.3 — **missing** (stretch)                     |
+| USB bootable media tool    | ✅ Media Creation Tool      | ✅ dd / Ventoy                | ⬜ §1.2 — **missing**                               |
+| **Native PE32+ UEFI boot** | ⚠️ Via Windows Boot Mgr    | ❌ Needs GRUB/systemd-boot    | ✅ **Direct BOOTX64.EFI — zero chainloading**       |
+| **In-kernel compositor**   | ❌ WDDM user-mode subsystem | ❌ X11/Wayland user process   | ✅ **Zero context-switch latency**                  |
+| **Identity-mapped PMM**    | ❌ HAL virtual mapping      | ❌ buddy allocator + vmalloc  | ✅ **Direct physical access — no TLB miss on heap** |
 
 > **After P0 items:** Impossible OS boots reliably on real hardware from USB with working
 > keyboard, storage, and display.

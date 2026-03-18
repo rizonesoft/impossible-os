@@ -88,15 +88,15 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11 (Clipboard API)             | Linux (X11 SELECT / Wayland wl_data)    | Impossible OS                             |
-|---------------------------------|----------------------------------------|-----------------------------------------|-------------------------------------------|
-| System clipboard (text)         | ✅ `SetClipboardData` / `GetClipboardData` | ✅ X11 PRIMARY + CLIPBOARD selections | ⬜ §1 P0 — `clipboard_set/get`           |
-| IMAGE format                    | ✅ `CF_DIB` / `CF_BITMAP`              | ✅ `image/png` MIME type                | ⬜ §1 P0 — `CLIP_IMAGE`                  |
-| FILES format                    | ✅ `CF_HDROP`                          | ✅ `text/uri-list`                      | ⬜ §1 P0 — `CLIP_FILES`                  |
-| Ctrl+C/X/V shortcuts            | ✅ Win32 WM_COPY/WM_CUT/WM_PASTE      | ✅ Toolkit-specific                     | ⬜ §2 P1 — WM route → focused control    |
-| Win32 clipboard API             | ✅ Native                              | ✅ xclip / wl-clipboard user-space      | ⬜ §3 P2 — `OpenClipboard/SetClipboardData` stubs |
-| Clipboard history (Win+V)       | ✅ Win+V (Windows 10+)                 | ❌ No system clipboard history          | ⬜ §4 P3 — 25-entry ring buffer           |
-| Syscall (user-mode access)      | ✅ user32.dll/ntdll                    | ✅ X11 IPC / Wayland protocol           | ⬜ §1 — `SYS_CLIPBOARD_SET/GET`          |
-| Multi-format on one write       | ✅ Multiple formats simultaneously     | ✅ MIME target list                     | 🔵 Future (one format at a time for now) |
-| **No clipboard manager daemon** | ❌ clipboardhistory.exe service        | ❌ X11 requires clipboard manager       | ✅ **§1 — in-kernel, no daemon**          |
-| **Clipboard history**           | ✅ Windows 10+                         | ❌ no system clipboard history          | ⬜ **§4 — beats Linux, matches Win10+**  |
+| Feature                         | 🪟 Windows 11 (Clipboard API)              | 🐧 Linux (X11 SELECT / Wayland wl_data) | 🚀 Impossible OS                                  |
+| ------------------------------- | ----------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| System clipboard (text)         | ✅ `SetClipboardData` / `GetClipboardData` | ✅ X11 PRIMARY + CLIPBOARD selections   | ⬜ §1 P0 — `clipboard_set/get`                    |
+| IMAGE format                    | ✅ `CF_DIB` / `CF_BITMAP`                  | ✅ `image/png` MIME type                | ⬜ §1 P0 — `CLIP_IMAGE`                           |
+| FILES format                    | ✅ `CF_HDROP`                              | ✅ `text/uri-list`                      | ⬜ §1 P0 — `CLIP_FILES`                           |
+| Ctrl+C/X/V shortcuts            | ✅ Win32 WM_COPY/WM_CUT/WM_PASTE           | ✅ Toolkit-specific                     | ⬜ §2 P1 — WM route → focused control             |
+| Win32 clipboard API             | ✅ Native                                  | ✅ xclip / wl-clipboard user-space      | ⬜ §3 P2 — `OpenClipboard/SetClipboardData` stubs |
+| Clipboard history (Win+V)       | ✅ Win+V (Windows 10+)                     | ❌ No system clipboard history          | ⬜ §4 P3 — 25-entry ring buffer                   |
+| Syscall (user-mode access)      | ✅ user32.dll/ntdll                        | ✅ X11 IPC / Wayland protocol           | ⬜ §1 — `SYS_CLIPBOARD_SET/GET`                   |
+| Multi-format on one write       | ✅ Multiple formats simultaneously         | ✅ MIME target list                     | 🔵 Future (one format at a time for now)          |
+| **No clipboard manager daemon** | ❌ clipboardhistory.exe service            | ❌ X11 requires clipboard manager       | ✅ **§1 — in-kernel, no daemon**                  |
+| **Clipboard history**           | ✅ Windows 10+                             | ❌ no system clipboard history          | ⬜ **§4 — beats Linux, matches Win10+**           |

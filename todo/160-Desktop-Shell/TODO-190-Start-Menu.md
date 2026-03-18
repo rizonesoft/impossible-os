@@ -99,15 +99,15 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11 Start Menu               | Linux (GNOME Dash / KDE App Menu)     | Impossible OS                           |
-|---------------------------------|-------------------------------------|---------------------------------------|-----------------------------------------|
-| Two-column layout               | ✅ Pinned + Recommended / All Apps  | ❌ GNOME: single grid / KDE: tree      | ✅ Done §7.1 — Win7-style two columns  |
-| Acrylic blur background         | ✅ Acrylic effect                   | ✅ GNOME blur (compositor)             | ✅ Done §7.1 — `gfx_acrylic()`        |
-| Search bar                      | ✅ Windows Search (Bing-integrated) | ✅ GNOME search                        | ⬜ §7.3 — local app search only       |
-| Alphabetical grouped list       | ✅ All Apps → A-Z grouped           | ✅ GNOME app grid                      | ✅ Done §7.1 (partial)                 |
-| Pinned apps from Registry       | ✅ Registry Start Menu              | ✅ .desktop files in XDG dirs          | ⬜ §7.2 P1                            |
-| Power fly-out (shutdown etc.)   | ✅ Power button flyout              | ✅ GNOME power (top-right)             | ⬜ §7.4 P1                            |
-| Slide-up open animation         | ✅ DWM animation                    | ✅ Mutter                              | ⬜ §7.3 — 200ms ease-out-cubic        |
-| "All Apps" list with back nav   | ✅ All Apps button                  | ✅ GNOME App Grid                      | ⬜ §7.3 P0 — slide transition         |
-| **No ads/recommendations**      | ❌ Win11 shows promoted apps        | ✅ Clean                               | ✅ **§7.2 — pinned + installed only no telemetry** |
-| **In-kernel (no search daemon)**| ❌ Windows Search service           | ❌ GNOME tracker daemon                | ✅ **In-kernel app scan — no daemon** |
+| Feature                          | 🪟 Windows 11 Start Menu            | 🐧 Linux (GNOME Dash / KDE App Menu) | 🚀 Impossible OS                                   |
+| -------------------------------- | ---------------------------------- | ----------------------------------- | ------------------------------------------------- |
+| Two-column layout                | ✅ Pinned + Recommended / All Apps  | ❌ GNOME: single grid / KDE: tree    | ✅ Done §7.1 — Win7-style two columns              |
+| Acrylic blur background          | ✅ Acrylic effect                   | ✅ GNOME blur (compositor)           | ✅ Done §7.1 — `gfx_acrylic()`                     |
+| Search bar                       | ✅ Windows Search (Bing-integrated) | ✅ GNOME search                      | ⬜ §7.3 — local app search only                    |
+| Alphabetical grouped list        | ✅ All Apps → A-Z grouped           | ✅ GNOME app grid                    | ✅ Done §7.1 (partial)                             |
+| Pinned apps from Registry        | ✅ Registry Start Menu              | ✅ .desktop files in XDG dirs        | ⬜ §7.2 P1                                         |
+| Power fly-out (shutdown etc.)    | ✅ Power button flyout              | ✅ GNOME power (top-right)           | ⬜ §7.4 P1                                         |
+| Slide-up open animation          | ✅ DWM animation                    | ✅ Mutter                            | ⬜ §7.3 — 200ms ease-out-cubic                     |
+| "All Apps" list with back nav    | ✅ All Apps button                  | ✅ GNOME App Grid                    | ⬜ §7.3 P0 — slide transition                      |
+| **No ads/recommendations**       | ❌ Win11 shows promoted apps        | ✅ Clean                             | ✅ **§7.2 — pinned + installed only no telemetry** |
+| **In-kernel (no search daemon)** | ❌ Windows Search service           | ❌ GNOME tracker daemon              | ✅ **In-kernel app scan — no daemon**              |

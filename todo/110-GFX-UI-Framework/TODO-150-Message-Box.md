@@ -192,15 +192,15 @@ Declare: `int MessageBox(void *hWnd, const char *lpText, const char *lpCaption, 
 
 ## OS Comparison
 
-| Feature                         | Windows 11 (MessageBox API)        | Linux (Zenity / GTK MessageDialog)    | Impossible OS                           |
-|---------------------------------|------------------------------------|---------------------------------------|-----------------------------------------|
-| MessageBox API                  | ✅ `MessageBoxA/W` (user32.dll)    | ✅ GtkMessageDialog / zenity           | ⬜ §2 P0 — Win32-compatible ABI        |
-| Win32-compatible flags (MB_*)   | ✅ Full `MB_*` / `ID*` constants   | ❌ (GTK uses enum types)              | ⬜ §2.1 — **exact Win32 flag values**  |
-| Embedded icons (no disk I/O)    | ✅ Icons in user32.dll resources   | ❌ requires GTK/FreeDesktop icons     | ⬜ §1.2 — compiled-in BGRA arrays      |
-| Custom icon styles              | ✅ MB_ICON* flags                   | ✅ GtkMessageType                     | ⬜ §2.2 — 4 types via embedded arrays  |
-| Keyboard support (Enter/Esc/Tab)| ✅ Full WM_KEYDOWN handling        | ✅ GTK keyboard                       | ⬜ §2.3 P0                             |
-| Modal overlay (dim background)  | ✅ Desktop flashes                  | ✅ GtkWindow modal                    | ⬜ §2.2 — 50% black overlay, MB_SYSTEMMODAL |
-| SYS_MSGBOX syscall              | ✅ (NtUserMessage internal)         | ❌ No kernel syscall                  | ⬜ §3.1 — user-mode PE apps can invoke |
-| Shell command `msgbox`          | ❌ (requires PowerShell workaround)| ✅ zenity --message                   | ⬜ §3.1 — `msgbox title msg [type]`    |
-| **Zero runtime dependency**     | ❌ Requires user32.dll             | ❌ Requires GTK runtime               | ✅ **In-kernel — available before VFS** |
-| **Works on disk failure**       | ❌ user32.dll must be on disk      | ❌ Requires GTK on disk               | ✅ **Embedded icons → works on AHCI fail** |
+| Feature                          | 🪟 Windows 11 (MessageBox API)      | 🐧 Linux (Zenity / GTK MessageDialog) | 🚀 Impossible OS                            |
+| -------------------------------- | ---------------------------------- | ------------------------------------ | ------------------------------------------ |
+| MessageBox API                   | ✅ `MessageBoxA/W` (user32.dll)     | ✅ GtkMessageDialog / zenity          | ⬜ §2 P0 — Win32-compatible ABI             |
+| Win32-compatible flags (MB_*)    | ✅ Full `MB_*` / `ID*` constants    | ❌ (GTK uses enum types)              | ⬜ §2.1 — **exact Win32 flag values**       |
+| Embedded icons (no disk I/O)     | ✅ Icons in user32.dll resources    | ❌ requires GTK/FreeDesktop icons     | ⬜ §1.2 — compiled-in BGRA arrays           |
+| Custom icon styles               | ✅ MB_ICON* flags                   | ✅ GtkMessageType                     | ⬜ §2.2 — 4 types via embedded arrays       |
+| Keyboard support (Enter/Esc/Tab) | ✅ Full WM_KEYDOWN handling         | ✅ GTK keyboard                       | ⬜ §2.3 P0                                  |
+| Modal overlay (dim background)   | ✅ Desktop flashes                  | ✅ GtkWindow modal                    | ⬜ §2.2 — 50% black overlay, MB_SYSTEMMODAL |
+| SYS_MSGBOX syscall               | ✅ (NtUserMessage internal)         | ❌ No kernel syscall                  | ⬜ §3.1 — user-mode PE apps can invoke      |
+| Shell command `msgbox`           | ❌ (requires PowerShell workaround) | ✅ zenity --message                   | ⬜ §3.1 — `msgbox title msg [type]`         |
+| **Zero runtime dependency**      | ❌ Requires user32.dll              | ❌ Requires GTK runtime               | ✅ **In-kernel — available before VFS**     |
+| **Works on disk failure**        | ❌ user32.dll must be on disk       | ❌ Requires GTK on disk               | ✅ **Embedded icons → works on AHCI fail**  |

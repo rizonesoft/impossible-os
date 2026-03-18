@@ -97,14 +97,14 @@
 
 ## OS Comparison
 
-| Feature                           | Windows 11 ($Recycle.Bin)           | Linux (FreeDesktop Trash)              | Impossible OS                          |
-|-----------------------------------|-------------------------------------|----------------------------------------|----------------------------------------|
-| Recoverable deletion              | ✅ $Recycle.Bin per drive            | ✅ `~/.local/share/Trash/`             | ⬜ §1 P0 — `C:\Recycle\`             |
-| Metadata (original path/date)     | ✅ $I file (binary format)          | ✅ `Trash/info/*.trashinfo` (INI)      | ⬜ §2 P0 — **INI .meta (readable)**    |
-| Restore file to original path     | ✅ Explorer → Restore                | ✅ `trash-restore` / Nautilus          | ⬜ §3 P1 — Recycle Bin window          |
-| Empty recycle bin action          | ✅ Right-click → Empty               | ✅ `trash-empty` / Nautilus            | ⬜ §3 P1                              |
-| Size limit / auto-purge           | ✅ Configurable per drive, %         | ❌ No built-in size limit              | ⬜ §4 P2 — Registry MaxSize            |
-| Desktop icon (empty vs full)      | ✅ Dynamic icon                      | ✅ GNOME / KDE dynamic                 | ⬜ TODO-240 §3 P1                     |
-| Recycle Bin window app            | ✅ Explorer shell namespace          | ✅ Nautilus trash:///                  | ⬜ §3 P1                              |
-| **Single unified trash folder**   | ❌ Per-drive $Recycle.Bin            | ❌ Per-user per-mount Trash            | ⬜ **§1 — single `C:\Recycle\` — simpler** |
-| **INI metadata (readable)**       | ❌ Binary $I file format             | ✅ .trashinfo INI format               | ⬜ **§2 — matches Linux readability, beats Win32** |
+| Feature                         | 🪟 Windows 11 ($Recycle.Bin) | 🐧 Linux (FreeDesktop Trash)      | 🚀 Impossible OS                                   |
+| ------------------------------- | --------------------------- | -------------------------------- | ------------------------------------------------- |
+| Recoverable deletion            | ✅ $Recycle.Bin per drive    | ✅ `~/.local/share/Trash/`        | ⬜ §1 P0 — `C:\Recycle\`                           |
+| Metadata (original path/date)   | ✅ $I file (binary format)   | ✅ `Trash/info/*.trashinfo` (INI) | ⬜ §2 P0 — **INI .meta (readable)**                |
+| Restore file to original path   | ✅ Explorer → Restore        | ✅ `trash-restore` / Nautilus     | ⬜ §3 P1 — Recycle Bin window                      |
+| Empty recycle bin action        | ✅ Right-click → Empty       | ✅ `trash-empty` / Nautilus       | ⬜ §3 P1                                           |
+| Size limit / auto-purge         | ✅ Configurable per drive, % | ❌ No built-in size limit         | ⬜ §4 P2 — Registry MaxSize                        |
+| Desktop icon (empty vs full)    | ✅ Dynamic icon              | ✅ GNOME / KDE dynamic            | ⬜ TODO-240 §3 P1                                  |
+| Recycle Bin window app          | ✅ Explorer shell namespace  | ✅ Nautilus trash:///             | ⬜ §3 P1                                           |
+| **Single unified trash folder** | ❌ Per-drive $Recycle.Bin    | ❌ Per-user per-mount Trash       | ⬜ **§1 — single `C:\Recycle\` — simpler**         |
+| **INI metadata (readable)**     | ❌ Binary $I file format     | ✅ .trashinfo INI format          | ⬜ **§2 — matches Linux readability, beats Win32** |

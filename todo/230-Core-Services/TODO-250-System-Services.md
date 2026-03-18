@@ -217,18 +217,18 @@ A minimal version is needed here for file permissions and HOME environment varia
 
 ## OS Comparison
 
-| Feature                              | Windows 11 (SCM / svchost)          | Linux (systemd / init.d)               | Impossible OS                            |
-|--------------------------------------|-------------------------------------|----------------------------------------|------------------------------------------|
-| Service start/stop/restart API       | ✅ SCM `StartService/ControlService` | ✅ `systemctl start/stop/restart`      | ⬜ §2.1 P1 — `svc_start/stop/restart()` |
-| Auto-start services at boot          | ✅ Services.msc → Startup type       | ✅ `.service` unit `WantedBy=default`   | ⬜ §2.2 P1 — Registry `AutoStart=1`     |
-| Service dependency ordering          | ✅ `DependOnService`                  | ✅ `Requires/After=` in .service        | ⬜ §2.2 — netd before ntpd (manual)     |
-| Shell service control (`sc` cmd)     | ✅ `sc.exe start/stop/query`          | ✅ `systemctl` / `service`             | ⬜ §2.3 P1 — `sc list/start/stop`       |
-| Built-in: network stack service      | ✅ `netman.dll` / `nsi` service       | ✅ `NetworkManager` / `networkd`        | ⬜ §2.2 P1 — `netd` kernel thread       |
-| Built-in: NTP sync                   | ✅ `W32tm.exe` service               | ✅ `systemd-timesyncd`                  | ⬜ §2.2 P1 — `ntpd` built-in task      |
-| Built-in: disk/Registry flush        | ✅ Registry autoflushed               | ✅ `sync` / `pdflush`                  | ⬜ §2.2 P1 — `registryd` every 2s      |
-| Win32 GetSystemInfo / GetVersionEx   | ✅ kernel32.dll                       | ❌ No equivalent                        | ⬜ §11.2 P4 — kernel32 stub            |
-| Autostart programs (Run key)         | ✅ `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | ✅ XDG autostart | ⬜ §11.4 P2 — same Registry key         |
-| Notification service                 | ✅ WNS / Toast infrastructure         | ✅ D-Bus notify daemon                  | ⬜ §11.3 / see TODO-200                 |
-| Service auto-restart             | ✅ SCM restart on failure              | ✅ `Restart=on-failure` in .service    | ⬜ §2.4 P1 — exponential backoff        |
-| Graceful degradation             | ✅ Service isolation                   | ✅ Unit dependencies + restart         | ⬜ §2.5 P1 — critical vs normal services |
-| **No separate service manager process** | ❌ svchost.exe per service group   | ❌ PID 1 systemd daemon                 | ✅ **§2 — kernel threads, zero processes** |
+| Feature                                 | 🪟 Windows 11 (SCM / svchost)                           | 🐧 Linux (systemd / init.d)           | 🚀 Impossible OS                           |
+| --------------------------------------- | ------------------------------------------------------ | ------------------------------------ | ----------------------------------------- |
+| Service start/stop/restart API          | ✅ SCM `StartService/ControlService`                    | ✅ `systemctl start/stop/restart`     | ⬜ §2.1 P1 — `svc_start/stop/restart()`    |
+| Auto-start services at boot             | ✅ Services.msc → Startup type                          | ✅ `.service` unit `WantedBy=default` | ⬜ §2.2 P1 — Registry `AutoStart=1`        |
+| Service dependency ordering             | ✅ `DependOnService`                                    | ✅ `Requires/After=` in .service      | ⬜ §2.2 — netd before ntpd (manual)        |
+| Shell service control (`sc` cmd)        | ✅ `sc.exe start/stop/query`                            | ✅ `systemctl` / `service`            | ⬜ §2.3 P1 — `sc list/start/stop`          |
+| Built-in: network stack service         | ✅ `netman.dll` / `nsi` service                         | ✅ `NetworkManager` / `networkd`      | ⬜ §2.2 P1 — `netd` kernel thread          |
+| Built-in: NTP sync                      | ✅ `W32tm.exe` service                                  | ✅ `systemd-timesyncd`                | ⬜ §2.2 P1 — `ntpd` built-in task          |
+| Built-in: disk/Registry flush           | ✅ Registry autoflushed                                 | ✅ `sync` / `pdflush`                 | ⬜ §2.2 P1 — `registryd` every 2s          |
+| Win32 GetSystemInfo / GetVersionEx      | ✅ kernel32.dll                                         | ❌ No equivalent                      | ⬜ §11.2 P4 — kernel32 stub                |
+| Autostart programs (Run key)            | ✅ `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run` | ✅ XDG autostart                      | ⬜ §11.4 P2 — same Registry key            |
+| Notification service                    | ✅ WNS / Toast infrastructure                           | ✅ D-Bus notify daemon                | ⬜ §11.3 / see TODO-200                    |
+| Service auto-restart                    | ✅ SCM restart on failure                               | ✅ `Restart=on-failure` in .service   | ⬜ §2.4 P1 — exponential backoff           |
+| Graceful degradation                    | ✅ Service isolation                                    | ✅ Unit dependencies + restart        | ⬜ §2.5 P1 — critical vs normal services   |
+| **No separate service manager process** | ❌ svchost.exe per service group                        | ❌ PID 1 systemd daemon               | ✅ **§2 — kernel threads, zero processes** |

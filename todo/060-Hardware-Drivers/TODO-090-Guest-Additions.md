@@ -319,19 +319,19 @@ Hypervisor Detection (CPUID 0x40000000 + PCI probe):
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (Hyper-V GIS)           | Linux (vboxguest / virtio)             | Impossible OS                              |
-|----------------------------------|-------------------------------------|----------------------------------------|--------------------------------------------|
-| Hypervisor auto-detection        | ✅ CPUID + HAL selection            | ✅ CPUID leaf 0x40000000               | ⬜ §7.1 P0 — CPUID + PCI probe            |
-| Unified hypervisor interface     | ✅ HAL                              | ✅ virtio / virt_bus subsystem          | ⬜ §7.2 P2                                |
-| VBox absolute mouse (VMMDev)     | ✅ (not VBox — uses Hyper-V SynMouse) | ✅ `vboxguest.ko` `vboxmouse.ko`      | ✅ Done — §1.1                            |
-| QEMU absolute mouse (VirtIO)     | ✅ (via VirtIO drivers)             | ✅ `virtio_input.ko`                    | ✅ Done — §5.1                            |
-| Hyper-V synthetic mouse          | ✅ Native (SynMouse VMBus)          | ✅ `hv_netvsc`/`hyperv_keyboard`        | ⬜ §6.2 P4                                |
-| Display auto-resize (VBox)       | ✅ (not VBox)                       | ✅ `vboxvideo.ko` VMMDev resize         | ⬜ §2.1 P0                               |
-| Display auto-resize (VirtIO GPU) | ✅ (via virtio-gpu)                 | ✅ `virtio_gpu.ko`                      | ⬜ §5.2 P2                               |
-| Display auto-resize (Hyper-V)    | ✅ VMBus HV Video                   | ✅ `hyperv_fb.ko`                       | ⬜ §6.2 P4                               |
-| Shared folders (VBox HGCM)       | ✅ (not VBox — uses \\tsclient)     | ✅ `vboxsf.ko` HGCM                     | ⬜ §3.1–3.2 P1                           |
-| Shared folders (QEMU 9P)         | ✅ (via VirtIO-FS / WSL2)           | ✅ `9p.ko` `virtio_9p.ko`              | ⬜ §5.3 P3                               |
-| Shared clipboard (VBox)          | ✅ (not VBox)                       | ✅ `vboxguest.ko` `/dev/vboxuser`       | ⬜ §4.1 P2                               |
-| Bare metal fallback (no HV)      | ✅                                  | ✅ Native drivers                       | ⬜ §8.1 P3                               |
-| **Cross-hypervisor abstraction** | ❌ (Windows IS the hypervisor)      | ✅ virtio + vboxguest + hv_*           | ⬜ **§7 P0 — unified hv.h interface**    |
-| **Single unified mouse API**     | N/A                                 | ❌ (separate input nodes)              | ⬜ **§7.2 — single `hv_mouse_get_state()`** |
+| Feature                          | 🪟 Windows 11 (Hyper-V GIS)           | 🐧 Linux (vboxguest / virtio)     | 🚀 Impossible OS                            |
+| -------------------------------- | ------------------------------------ | -------------------------------- | ------------------------------------------ |
+| Hypervisor auto-detection        | ✅ CPUID + HAL selection              | ✅ CPUID leaf 0x40000000          | ⬜ §7.1 P0 — CPUID + PCI probe              |
+| Unified hypervisor interface     | ✅ HAL                                | ✅ virtio / virt_bus subsystem    | ⬜ §7.2 P2                                  |
+| VBox absolute mouse (VMMDev)     | ✅ (not VBox — uses Hyper-V SynMouse) | ✅ `vboxguest.ko` `vboxmouse.ko`  | ✅ Done — §1.1                              |
+| QEMU absolute mouse (VirtIO)     | ✅ (via VirtIO drivers)               | ✅ `virtio_input.ko`              | ✅ Done — §5.1                              |
+| Hyper-V synthetic mouse          | ✅ Native (SynMouse VMBus)            | ✅ `hv_netvsc`/`hyperv_keyboard`  | ⬜ §6.2 P4                                  |
+| Display auto-resize (VBox)       | ✅ (not VBox)                         | ✅ `vboxvideo.ko` VMMDev resize   | ⬜ §2.1 P0                                  |
+| Display auto-resize (VirtIO GPU) | ✅ (via virtio-gpu)                   | ✅ `virtio_gpu.ko`                | ⬜ §5.2 P2                                  |
+| Display auto-resize (Hyper-V)    | ✅ VMBus HV Video                     | ✅ `hyperv_fb.ko`                 | ⬜ §6.2 P4                                  |
+| Shared folders (VBox HGCM)       | ✅ (not VBox — uses \\tsclient)       | ✅ `vboxsf.ko` HGCM               | ⬜ §3.1–3.2 P1                              |
+| Shared folders (QEMU 9P)         | ✅ (via VirtIO-FS / WSL2)             | ✅ `9p.ko` `virtio_9p.ko`         | ⬜ §5.3 P3                                  |
+| Shared clipboard (VBox)          | ✅ (not VBox)                         | ✅ `vboxguest.ko` `/dev/vboxuser` | ⬜ §4.1 P2                                  |
+| Bare metal fallback (no HV)      | ✅                                    | ✅ Native drivers                 | ⬜ §8.1 P3                                  |
+| **Cross-hypervisor abstraction** | ❌ (Windows IS the hypervisor)        | ✅ virtio + vboxguest + hv_*      | ⬜ **§7 P0 — unified hv.h interface**       |
+| **Single unified mouse API**     | N/A                                  | ❌ (separate input nodes)         | ⬜ **§7.2 — single `hv_mouse_get_state()`** |

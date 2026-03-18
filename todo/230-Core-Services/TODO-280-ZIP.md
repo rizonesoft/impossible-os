@@ -89,13 +89,13 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (Explorer ZIP)          | Linux (libzip / python-zipfile)       | Impossible OS                           |
-|----------------------------------|------------------------------------|---------------------------------------|-----------------------------------------|
-| Create ZIP archive               | ✅ Explorer right-click             | ✅ `zip` command / libzip              | ⬜ §2-3 P0-P1 — `zip_create()` + shell |
-| Extract ZIP archive              | ✅ Explorer right-click             | ✅ `unzip` / libzip                    | ⬜ §2-3 P0-P1 — `zip_extract()` + shell |
-| List ZIP contents                | ✅ Explorer (navigate .zip)        | ✅ `unzip -l`                          | ⬜ §2-3 P1 — `zip_list()` + `unzip -l` |
-| Single file extract              | ✅ Drag from Explorer              | ✅ `unzip archive.zip specific.file`   | ⬜ §2 P1 — `zip_extract_file()`        |
-| Shell `zip`/`unzip` commands     | ❌ (PowerShell only)               | ✅ Native `zip`/`unzip` tools          | ⬜ §3 P1                               |
-| Context menu compress/extract    | ✅ Explorer built-in               | ⚠️ Requires file-roller / ark plugin  | ⬜ §4 P4 (stretch) — **no plugin**     |
-| .zip preview in file manager     | ✅ Explorer navigates inside .zip  | ✅ KDE Ark / Nautilus extension        | ⬜ §4 P4 (stretch)                     |
-| **No external daemon for ZIP**   | ✅ In-shell                        | ✅ CLI tools                           | ✅ **§1 — in-kernel miniz, no daemon** |
+| Feature                        | 🪟 Windows 11 (Explorer ZIP)      | 🐧 Linux (libzip / python-zipfile)    | 🚀 Impossible OS                        |
+| ------------------------------ | -------------------------------- | ------------------------------------ | -------------------------------------- |
+| Create ZIP archive             | ✅ Explorer right-click           | ✅ `zip` command / libzip             | ⬜ §2-3 P0-P1 — `zip_create()` + shell  |
+| Extract ZIP archive            | ✅ Explorer right-click           | ✅ `unzip` / libzip                   | ⬜ §2-3 P0-P1 — `zip_extract()` + shell |
+| List ZIP contents              | ✅ Explorer (navigate .zip)       | ✅ `unzip -l`                         | ⬜ §2-3 P1 — `zip_list()` + `unzip -l`  |
+| Single file extract            | ✅ Drag from Explorer             | ✅ `unzip archive.zip specific.file`  | ⬜ §2 P1 — `zip_extract_file()`         |
+| Shell `zip`/`unzip` commands   | ❌ (PowerShell only)              | ✅ Native `zip`/`unzip` tools         | ⬜ §3 P1                                |
+| Context menu compress/extract  | ✅ Explorer built-in              | ⚠️ Requires file-roller / ark plugin | ⬜ §4 P4 (stretch) — **no plugin**      |
+| .zip preview in file manager   | ✅ Explorer navigates inside .zip | ✅ KDE Ark / Nautilus extension       | ⬜ §4 P4 (stretch)                      |
+| **No external daemon for ZIP** | ✅ In-shell                       | ✅ CLI tools                          | ✅ **§1 — in-kernel miniz, no daemon**  |

@@ -109,14 +109,14 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (winload/bootsect)      | Linux (Plymouth / GRUB)               | Impossible OS                            |
-|----------------------------------|------------------------------------|---------------------------------------|------------------------------------------|
-| Graphical boot splash            | ✅ winload.exe + boot animation     | ✅ Plymouth with themes                | ⬜ §1 P0 — embedded logo + gradient      |
-| Loading spinner/animation        | ✅ Rotating dots                    | ✅ Plymouth throbber / spinner          | ⬜ §1 P0 — 12-dot spinner               |
-| Boot progress bar                | ✅ Thin progress bar                | ✅ Plymouth progress bar               | ⬜ §1-2 P0 — milestone-driven            |
-| Status messages during boot      | ❌ (hidden from user)              | ✅ Plymouth + `quiet` kernel param     | ⬜ §3 P1 — serial + splash status       |
-| Fade-out transition to desktop   | ✅ Smooth fade                      | ✅ Plymouth deactivate                 | ⬜ §1 P0 — 8-step fade                  |
-| F8 boot menu / recovery mode     | ✅ Advanced startup via F8/WinRE   | ✅ GRUB + rescue.cfg                   | ⬜ §4 P1 — **built into kernel**           |
-| Safe Mode                        | ✅ via F8 → WinPE                  | ✅ `systemd.unit=rescue.target`         | ⬜ §4 P1 — **production requirement**     |
-| **Logo embedded in kernel**      | ✅ (winload)                        | ❌ Plymouth loads from disk            | ⬜ **§1 — zero filesystem dependency**   |
-| **No separate daemon**           | ❌ winload.exe is separate         | ❌ Plymouth is a separate process      | ⬜ **§1 — inline kernel, no daemon**     |
+| Feature                        | 🪟 Windows 11 (winload/bootsect) | 🐧 Linux (Plymouth / GRUB)         | 🚀 Impossible OS                       |
+| ------------------------------ | ------------------------------- | --------------------------------- | ------------------------------------- |
+| Graphical boot splash          | ✅ winload.exe + boot animation  | ✅ Plymouth with themes            | ⬜ §1 P0 — embedded logo + gradient    |
+| Loading spinner/animation      | ✅ Rotating dots                 | ✅ Plymouth throbber / spinner     | ⬜ §1 P0 — 12-dot spinner              |
+| Boot progress bar              | ✅ Thin progress bar             | ✅ Plymouth progress bar           | ⬜ §1-2 P0 — milestone-driven          |
+| Status messages during boot    | ❌ (hidden from user)            | ✅ Plymouth + `quiet` kernel param | ⬜ §3 P1 — serial + splash status      |
+| Fade-out transition to desktop | ✅ Smooth fade                   | ✅ Plymouth deactivate             | ⬜ §1 P0 — 8-step fade                 |
+| F8 boot menu / recovery mode   | ✅ Advanced startup via F8/WinRE | ✅ GRUB + rescue.cfg               | ⬜ §4 P1 — **built into kernel**       |
+| Safe Mode                      | ✅ via F8 → WinPE                | ✅ `systemd.unit=rescue.target`    | ⬜ §4 P1 — **production requirement**  |
+| **Logo embedded in kernel**    | ✅ (winload)                     | ❌ Plymouth loads from disk        | ⬜ **§1 — zero filesystem dependency** |
+| **No separate daemon**         | ❌ winload.exe is separate       | ❌ Plymouth is a separate process  | ⬜ **§1 — inline kernel, no daemon**   |

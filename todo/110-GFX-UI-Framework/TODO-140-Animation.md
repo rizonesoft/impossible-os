@@ -124,14 +124,14 @@
 
 ## OS Comparison
 
-| Feature                           | Windows 11 (DWM)                    | Linux (Mutter/KWin)                   | Impossible OS                           |
-|-----------------------------------|-------------------------------------|---------------------------------------|-----------------------------------------|
-| Window open/close animations      | ✅ DWM scale+fade                   | ✅ Mutter (GNOME) / KWin               | ⬜ §1.2 P1                             |
-| Easing functions                  | ✅ CubicBezier in UWP               | ✅ CSS easing in Clutter               | ⬜ §1.1 P0 — 8 easing types            |
-| Global animation scheduler        | ✅ DWM internal                     | ✅ Clutter stage                       | ⬜ §2 P1 — in-kernel table             |
-| Animation enable/disable          | ✅ System → Accessibility           | ✅ `gtk-enable-animations`             | ⬜ §1.2 — Registry `EnableAnimations`  |
-| Reduce motion (accessibility)     | ✅ Settings → Accessibility         | ✅ GTK prefer-reduced-motion           | ⬜ §1.2 — `EnableAnimations = 0`       |
-| Spring physics                    | ❌ DWM only (CSS springs in WinUI3) | ❌ Fixed easing only in Mutter         | ⬜ §3 P3 — **native spring physics**   |
-| Animate without GPU               | ❌ DWM requires D3D11               | ❌ Mutter/KWin require GPU             | ✅ **CPU framebuffer — works in QEMU** |
-| In-kernel (no animation daemon)   | ❌ DWM separate process             | ❌ Mutter/KWin separate processes      | ✅ **Single in-kernel tick**           |
-| **Spring physics ahead of Win11** | ❌ No DWM spring support            | ❌                                    | ⬜ **§3 — ahead of Windows DWM**       |
+| Feature                           | 🪟 Windows 11 (DWM)                 | 🐧 Linux (Mutter/KWin)            | 🚀 Impossible OS                       |
+| --------------------------------- | ---------------------------------- | -------------------------------- | ------------------------------------- |
+| Window open/close animations      | ✅ DWM scale+fade                   | ✅ Mutter (GNOME) / KWin          | ⬜ §1.2 P1                             |
+| Easing functions                  | ✅ CubicBezier in UWP               | ✅ CSS easing in Clutter          | ⬜ §1.1 P0 — 8 easing types            |
+| Global animation scheduler        | ✅ DWM internal                     | ✅ Clutter stage                  | ⬜ §2 P1 — in-kernel table             |
+| Animation enable/disable          | ✅ System → Accessibility           | ✅ `gtk-enable-animations`        | ⬜ §1.2 — Registry `EnableAnimations`  |
+| Reduce motion (accessibility)     | ✅ Settings → Accessibility         | ✅ GTK prefer-reduced-motion      | ⬜ §1.2 — `EnableAnimations = 0`       |
+| Spring physics                    | ❌ DWM only (CSS springs in WinUI3) | ❌ Fixed easing only in Mutter    | ⬜ §3 P3 — **native spring physics**   |
+| Animate without GPU               | ❌ DWM requires D3D11               | ❌ Mutter/KWin require GPU        | ✅ **CPU framebuffer — works in QEMU** |
+| In-kernel (no animation daemon)   | ❌ DWM separate process             | ❌ Mutter/KWin separate processes | ✅ **Single in-kernel tick**           |
+| **Spring physics ahead of Win11** | ❌ No DWM spring support            | ❌                                | ⬜ **§3 — ahead of Windows DWM**       |

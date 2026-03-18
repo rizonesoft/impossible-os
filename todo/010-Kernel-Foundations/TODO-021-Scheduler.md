@@ -220,15 +220,15 @@ window and hysteresis.
 
 ## OS Comparison
 
-| Feature                        | Windows 11 Kernel           | Linux Kernel                | Impossible OS                         |
-|--------------------------------|-----------------------------|-----------------------------|---------------------------------------|
-| Priority scheduling            | ✅ 32 levels                | ✅ 40 nice levels           | ⬜ §1 P0 — 40 levels, O(1) bitmask    |
-| Starvation prevention          | ✅ Priority boost heuristic | ✅ Priority aging           | ⬜ §2 P0 — configurable aging ticks   |
-| Fair CPU sharing (CFS)         | ❌ Priority only            | ✅ CFS vruntime             | ⬜ §3 P1 — vruntime + weight table    |
-| Real-time scheduling           | ✅ `REALTIME_PRIORITY_CLASS`| ✅ `SCHED_FIFO`/`SCHED_RR`  | ⬜ §4 P1 — `SCHED_FIFO`/`SCHED_RR`    |
-| Scheduler statistics           | ✅ ETW + Task Manager       | ✅ `/proc/<pid>/sched`      | ⬜ §5 P2 — `/sys/sched` unified view  |
-| CPU frequency scaling          | ✅ Windows power plans      | ✅ `cpufreq` governors      | ⬜ §6 Future                          |
-| **Unified /sys/sched view**    | ❌ ETW only, not readable   | ❌ Per-process `/proc` only | ⬜ **§5 — single file, all threads**  |
+| Feature                     | 🪟 Windows 11 Kernel         | 🐧 Linux Kernel             | 🚀 Impossible OS                     |
+| --------------------------- | --------------------------- | -------------------------- | ----------------------------------- |
+| Priority scheduling         | ✅ 32 levels                 | ✅ 40 nice levels           | ⬜ §1 P0 — 40 levels, O(1) bitmask   |
+| Starvation prevention       | ✅ Priority boost heuristic  | ✅ Priority aging           | ⬜ §2 P0 — configurable aging ticks  |
+| Fair CPU sharing (CFS)      | ❌ Priority only             | ✅ CFS vruntime             | ⬜ §3 P1 — vruntime + weight table   |
+| Real-time scheduling        | ✅ `REALTIME_PRIORITY_CLASS` | ✅ `SCHED_FIFO`/`SCHED_RR`  | ⬜ §4 P1 — `SCHED_FIFO`/`SCHED_RR`   |
+| Scheduler statistics        | ✅ ETW + Task Manager        | ✅ `/proc/<pid>/sched`      | ⬜ §5 P2 — `/sys/sched` unified view |
+| CPU frequency scaling       | ✅ Windows power plans       | ✅ `cpufreq` governors      | ⬜ §6 Future                         |
+| **Unified /sys/sched view** | ❌ ETW only, not readable    | ❌ Per-process `/proc` only | ⬜ **§5 — single file, all threads** |
 
 > **After §1–4:** Impossible OS matches Windows 11 and Linux in scheduler
 > sophistication for a single-core system.

@@ -245,22 +245,22 @@
 
 ## OS Comparison
 
-| Feature                        | Windows 11 (Win32/WinUI3)          | Linux (GTK4 / Qt6)                 | Impossible OS                            |
-|--------------------------------|------------------------------------|------------------------------------|------------------------------------------|
-| Button, Label, TextBox         | ✅ Win32 BUTTON, STATIC, EDIT      | ✅ GtkButton, GtkLabel, GtkEntry   | ✅ Done — `controls.c`                   |
-| ScrollBar                      | ✅ Win32 SCROLLBAR                 | ✅ GtkScrollbar                    | ✅ Done — `controls.c`                   |
-| Checkbox + Radio               | ✅ BS_CHECKBOX, BS_RADIOBUTTON     | ✅ GtkCheckButton, GtkRadioButton  | ⬜ §1.1 P1                               |
-| Dropdown / ComboBox            | ✅ ComboBox (CBS_DROPDOWN)         | ✅ GtkDropDown, QComboBox          | ⬜ §1.2 P1                               |
-| Slider / TrackBar              | ✅ TRACKBAR_CLASS                  | ✅ GtkScale, QSlider               | ⬜ §1.3 P2                               |
-| ProgressBar                    | ✅ PROGRESS_CLASS                  | ✅ GtkProgressBar, QProgressBar    | ⬜ §1.4 P2                               |
-| Tab Strip                      | ✅ WC_TABCONTROL                   | ✅ GtkNotebook, QTabWidget         | ⬜ §1.5 P2                               |
-| ListView (details + icons)     | ✅ WC_LISTVIEW / SysListView32     | ✅ GtkListView + GtkColumnView     | ⬜ §1.6 P1                               |
-| TreeView                       | ✅ WC_TREEVIEW / SysTreeView32     | ✅ GtkTreeView, QTreeView          | ⬜ §1.7 P2                               |
-| Toolbar                        | ✅ TOOLBARCLASSNAME                | ✅ GtkToolbar, QToolBar            | ⬜ §1.8 P2                               |
-| Menu Bar                       | ✅ HMENU / AppendMenu              | ✅ GtkMenuBar, QMenuBar            | ⬜ §1.9 P1                               |
-| StatusBar                      | ✅ STATUSCLASSNAME                 | ✅ GtkStatusbar, QStatusBar        | ⬜ §1.10 P3                              |
-| GroupBox                       | ✅ BS_GROUPBOX                     | ✅ GtkFrame, QGroupBox             | ⬜ §1.11 P3                              |
-| Tooltips                       | ✅ TOOLTIPS_CLASS                  | ✅ GtkTooltip, QToolTip            | ⬜ §1.12 P2                              |
-| File Open/Save dialog          | ✅ GetOpenFileName / IFileDialog    | ✅ GtkFileChooserDialog            | ⬜ §1.13 P0                              |
-| Color Picker dialog            | ✅ ChooseColor                     | ✅ GtkColorChooserDialog           | ⬜ §1.13 P0 (stretch)                    |
-| **All-in-kernel (no toolkit)** | ❌ Requires Win32 DLLs + GDI       | ❌ Requires GTK/Qt runtime         | ✅ **Pure kernel C — zero dependencies** |
+| Feature                        | 🪟 Windows 11 (Win32/WinUI3)     | 🐧 Linux (GTK4 / Qt6)             | 🚀 Impossible OS                         |
+| ------------------------------ | ------------------------------- | -------------------------------- | --------------------------------------- |
+| Button, Label, TextBox         | ✅ Win32 BUTTON, STATIC, EDIT    | ✅ GtkButton, GtkLabel, GtkEntry  | ✅ Done — `controls.c`                   |
+| ScrollBar                      | ✅ Win32 SCROLLBAR               | ✅ GtkScrollbar                   | ✅ Done — `controls.c`                   |
+| Checkbox + Radio               | ✅ BS_CHECKBOX, BS_RADIOBUTTON   | ✅ GtkCheckButton, GtkRadioButton | ⬜ §1.1 P1                               |
+| Dropdown / ComboBox            | ✅ ComboBox (CBS_DROPDOWN)       | ✅ GtkDropDown, QComboBox         | ⬜ §1.2 P1                               |
+| Slider / TrackBar              | ✅ TRACKBAR_CLASS                | ✅ GtkScale, QSlider              | ⬜ §1.3 P2                               |
+| ProgressBar                    | ✅ PROGRESS_CLASS                | ✅ GtkProgressBar, QProgressBar   | ⬜ §1.4 P2                               |
+| Tab Strip                      | ✅ WC_TABCONTROL                 | ✅ GtkNotebook, QTabWidget        | ⬜ §1.5 P2                               |
+| ListView (details + icons)     | ✅ WC_LISTVIEW / SysListView32   | ✅ GtkListView + GtkColumnView    | ⬜ §1.6 P1                               |
+| TreeView                       | ✅ WC_TREEVIEW / SysTreeView32   | ✅ GtkTreeView, QTreeView         | ⬜ §1.7 P2                               |
+| Toolbar                        | ✅ TOOLBARCLASSNAME              | ✅ GtkToolbar, QToolBar           | ⬜ §1.8 P2                               |
+| Menu Bar                       | ✅ HMENU / AppendMenu            | ✅ GtkMenuBar, QMenuBar           | ⬜ §1.9 P1                               |
+| StatusBar                      | ✅ STATUSCLASSNAME               | ✅ GtkStatusbar, QStatusBar       | ⬜ §1.10 P3                              |
+| GroupBox                       | ✅ BS_GROUPBOX                   | ✅ GtkFrame, QGroupBox            | ⬜ §1.11 P3                              |
+| Tooltips                       | ✅ TOOLTIPS_CLASS                | ✅ GtkTooltip, QToolTip           | ⬜ §1.12 P2                              |
+| File Open/Save dialog          | ✅ GetOpenFileName / IFileDialog | ✅ GtkFileChooserDialog           | ⬜ §1.13 P0                              |
+| Color Picker dialog            | ✅ ChooseColor                   | ✅ GtkColorChooserDialog          | ⬜ §1.13 P0 (stretch)                    |
+| **All-in-kernel (no toolkit)** | ❌ Requires Win32 DLLs + GDI     | ❌ Requires GTK/Qt runtime        | ✅ **Pure kernel C — zero dependencies** |

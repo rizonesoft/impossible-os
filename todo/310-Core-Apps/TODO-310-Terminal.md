@@ -120,18 +120,18 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11 (Windows Terminal)       | Linux (GNOME Terminal / Alacritty)    | Impossible OS                          |
-|---------------------------------|-------------------------------------|---------------------------------------|----------------------------------------|
-| Terminal cell grid (2D buffer)  | ✅ VT/conPTY                        | ✅ PTY / VTE                           | ⬜ §1.1 P0 — `terminal_cell` grid     |
-| TrueType font rendering         | ✅ DirectWrite                       | ✅ Pango/Cairo or alacritty's GPU      | ⬜ §1.2 P0 — stb_truetype (Cascadia Code) |
-| ANSI SGR attributes (bold etc.) | ✅ Full VT100/VT220/xterm            | ✅ Full VTE/xterm                      | ⬜ §1.3 P0 — SGR 0/1/4/7/30-37/90-97 |
-| 256-color extended palette      | ✅ xterm-256color                    | ✅ xterm-256color                      | ⬜ §1.3 (stretch)                     |
-| Scrollback buffer               | ✅ Configurable                      | ✅ Configurable                        | ⬜ §1.4 P1 — 500 lines PMM-allocated  |
-| Mouse text selection + copy     | ✅ Win Terminal selection            | ✅ Terminal selection                  | ⬜ §1.4 P1 — click+drag selection     |
-| Ctrl+Shift+C/V (copy/paste)     | ✅ Windows Terminal                  | ✅ Standard terminal shortcut          | ⬜ §1.4 P1                            |
-| Cursor blink (block/underline)  | ✅ Configurable                      | ✅ Configurable                        | ⬜ §1.2 P0 — 3 styles, 500ms blink   |
-| Acrylic/blur background         | ✅ Windows Terminal acrylic          | ✅ alacritty transparent bg             | ⬜ §1.6 (stretch) — `gfx_acrylic()`  |
-| Multiple tabs                   | ✅ Windows Terminal tabs              | ✅ GNOME Terminal tabs                  | ⬜ §1.6 (stretch)                     |
-| Split panes                     | ✅ Windows Terminal split             | ✅ Tilix / tmux                         | ⬜ §1.6 (stretch)                     |
-| **No GPU required for rendering** | ❌ DirectWrite (GPU)               | ❌ GPU preferred (Cairo/Vulkan)        | ✅ **stb_truetype CPU rasterizer — works in QEMU** |
-| **No PTY/conPTY layer**         | ❌ conPTY abstraction layer          | ❌ PTY kernel layer required            | ✅ **Direct shell stdout pipe — simpler** |
+| Feature                           | 🪟 Windows 11 (Windows Terminal) | 🐧 Linux (GNOME Terminal / Alacritty) | 🚀 Impossible OS                                   |
+| --------------------------------- | ------------------------------- | ------------------------------------ | ------------------------------------------------- |
+| Terminal cell grid (2D buffer)    | ✅ VT/conPTY                     | ✅ PTY / VTE                          | ⬜ §1.1 P0 — `terminal_cell` grid                  |
+| TrueType font rendering           | ✅ DirectWrite                   | ✅ Pango/Cairo or alacritty's GPU     | ⬜ §1.2 P0 — stb_truetype (Cascadia Code)          |
+| ANSI SGR attributes (bold etc.)   | ✅ Full VT100/VT220/xterm        | ✅ Full VTE/xterm                     | ⬜ §1.3 P0 — SGR 0/1/4/7/30-37/90-97               |
+| 256-color extended palette        | ✅ xterm-256color                | ✅ xterm-256color                     | ⬜ §1.3 (stretch)                                  |
+| Scrollback buffer                 | ✅ Configurable                  | ✅ Configurable                       | ⬜ §1.4 P1 — 500 lines PMM-allocated               |
+| Mouse text selection + copy       | ✅ Win Terminal selection        | ✅ Terminal selection                 | ⬜ §1.4 P1 — click+drag selection                  |
+| Ctrl+Shift+C/V (copy/paste)       | ✅ Windows Terminal              | ✅ Standard terminal shortcut         | ⬜ §1.4 P1                                         |
+| Cursor blink (block/underline)    | ✅ Configurable                  | ✅ Configurable                       | ⬜ §1.2 P0 — 3 styles, 500ms blink                 |
+| Acrylic/blur background           | ✅ Windows Terminal acrylic      | ✅ alacritty transparent bg           | ⬜ §1.6 (stretch) — `gfx_acrylic()`                |
+| Multiple tabs                     | ✅ Windows Terminal tabs         | ✅ GNOME Terminal tabs                | ⬜ §1.6 (stretch)                                  |
+| Split panes                       | ✅ Windows Terminal split        | ✅ Tilix / tmux                       | ⬜ §1.6 (stretch)                                  |
+| **No GPU required for rendering** | ❌ DirectWrite (GPU)             | ❌ GPU preferred (Cairo/Vulkan)       | ✅ **stb_truetype CPU rasterizer — works in QEMU** |
+| **No PTY/conPTY layer**           | ❌ conPTY abstraction layer      | ❌ PTY kernel layer required          | ✅ **Direct shell stdout pipe — simpler**          |

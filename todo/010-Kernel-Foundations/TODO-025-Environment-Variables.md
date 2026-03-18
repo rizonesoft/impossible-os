@@ -98,12 +98,12 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11                   | Linux / Bash              | Impossible OS                      |
-|----------------------------------|------------------------------|---------------------------|------------------------------------|
-| Per-process env vars             | ✅ `GetEnvironmentVariable`  | ✅ POSIX `environ[]`      | ⬜ §1 P0                            |
-| `%VAR%` / `$VAR` expansion       | ✅ `%VAR%` in cmd.exe        | ✅ `$VAR` in bash         | ⬜ §1 P0 — `%VAR%` Windows-style   |
-| PATH-based command lookup        | ✅ `PATH` env var            | ✅ `PATH` env var         | ⬜ §1 P0                            |
-| Default system variables         | ✅ Registry + system env     | ✅ `/etc/environment`     | ⬜ §1 P1 — Registry-backed         |
-| Shell startup config             | ✅ Registry `HKCU\Env`       | ✅ `~/.profile`/`.bashrc` | ⬜ §2 P2 — `.profile` file         |
-| argv/argc to child process       | ✅ Command-line string       | ✅ `execve` argv[]        | ⬜ §3 P0 — System V ABI stack      |
-| **Windows-style `%VAR%` syntax** | ✅                           | ❌ (`$VAR` only)          | ⬜ **§1 — familiar for Win users**  |
+| Feature                          | 🪟 Windows 11               | 🐧 Linux / Bash           | 🚀 Impossible OS                   |
+| -------------------------------- | -------------------------- | ------------------------ | --------------------------------- |
+| Per-process env vars             | ✅ `GetEnvironmentVariable` | ✅ POSIX `environ[]`      | ⬜ §1 P0                           |
+| `%VAR%` / `$VAR` expansion       | ✅ `%VAR%` in cmd.exe       | ✅ `$VAR` in bash         | ⬜ §1 P0 — `%VAR%` Windows-style   |
+| PATH-based command lookup        | ✅ `PATH` env var           | ✅ `PATH` env var         | ⬜ §1 P0                           |
+| Default system variables         | ✅ Registry + system env    | ✅ `/etc/environment`     | ⬜ §1 P1 — Registry-backed         |
+| Shell startup config             | ✅ Registry `HKCU\Env`      | ✅ `~/.profile`/`.bashrc` | ⬜ §2 P2 — `.profile` file         |
+| argv/argc to child process       | ✅ Command-line string      | ✅ `execve` argv[]        | ⬜ §3 P0 — System V ABI stack      |
+| **Windows-style `%VAR%` syntax** | ✅                          | ❌ (`$VAR` only)          | ⬜ **§1 — familiar for Win users** |

@@ -815,26 +815,26 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11                            | Linux                               | Impossible OS                              |
-|---------------------------------|---------------------------------------|-------------------------------------|--------------------------------------------|
-| Loadable kernel modules         | ✅ WDM drivers (`.sys`)              | ✅ `.ko` modules (`insmod`)          | ⬜ §1 P0 — `.kmod` ELF objects            |
-| Kernel symbol table             | ✅ HAL exports                        | ✅ `EXPORT_SYMBOL` / `.kallsyms`     | ⬜ §1.1 P0                                |
-| Driver model (PCI match)        | ✅ PnP manager + INF files           | ✅ `struct pci_device_id` tables     | ⬜ §1.4 P0                                |
-| Auto-load drivers at boot       | ✅ Service manager + registry         | ✅ `modprobe` + `modules.dep`        | ⬜ §1.5 P0                                |
-| NVMe storage                    | ✅ Stornvme.sys                       | ✅ `nvme` driver                     | ⬜ §2.1 P1                                |
-| APIC / IOAPIC                   | ✅ HAL                                | ✅ APIC subsystem                    | ⬜ §2.2 P2                                |
-| Intel e1000 NIC                 | ✅ e1i65x64.sys                       | ✅ `e1000`/`e1000e`                  | ⬜ §3.1 P1 — port from SerenityOS BSD-2   |
-| VirtIO-net NIC                  | ✅ netkvm.sys                         | ✅ `virtio_net`                      | ⬜ §3.2 P2                                |
-| GPU modesetting                 | ✅ WDDM 3.x                           | ✅ DRM/KMS                           | ⬜ §4 P2 — VMSVGA + VirtIO-GPU           |
-| USB xHCI controller             | ✅ USBXHCI.sys                        | ✅ `xhci_hcd`                        | ⬜ §7.2 P1                                |
-| USB HID (keyboard/mouse)        | ✅ HIDCLASS.sys                       | ✅ `usbhid`                          | ⬜ §7.3 P1                                |
-| ACPI shutdown / reboot          | ✅                                    | ✅                                   | ⬜ §9.1 P0 — **currently missing!**       |
-| ACPI S3 suspend/resume          | ✅                                    | ✅                                   | ⬜ §9.2 P1 — **required for laptops**     |
-| Battery status (laptops)        | ✅ Control Panel + tray              | ✅ UPower + system tray              | ⬜ §9.3 P2                                |
-| CPU frequency scaling (DVFS)    | ✅ Power plans + HWP                 | ✅ `cpufreq` + governors             | ⬜ §9.4 P3                                |
-| Licensing compliance            | ✅ Proprietary                        | ✅ GPL-2.0                           | ⬜ §8.1 P3 — BSD/MIT only                 |
-| **No GPL contamination**        | ✅ Proprietary                        | N/A                                 | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**   |
-| **S3 sleep/resume**             | ✅ Native                             | ✅ pm-utils / systemd-suspend       | ⬜ **§9.2 P1 — production requirement**   |
-| MADT `PCAT_COMPAT` check       | ✅ HAL checks flags                  | ✅ `acpi_pic_sci_set_trigger()`     | ⬜ §2.2 P2 — **currently assumed**        |
-| VMBus paravirtualization        | ✅ Native (VSC built-in)              | ✅ `hv_vmbus` + storvsc/hid-hyperv  | ⬜ §10 P3 — **missing entirely**          |
-| Hyper-V Gen 2 boot              | ✅ Native                             | ✅ With hv_* drivers                 | ⬜ §1.6 + §10 — **cannot boot**           |
+| Feature                      | 🪟 Windows 11                 | 🐧 Linux                           | 🚀 Impossible OS                        |
+| ---------------------------- | ---------------------------- | --------------------------------- | -------------------------------------- |
+| Loadable kernel modules      | ✅ WDM drivers (`.sys`)       | ✅ `.ko` modules (`insmod`)        | ⬜ §1 P0 — `.kmod` ELF objects          |
+| Kernel symbol table          | ✅ HAL exports                | ✅ `EXPORT_SYMBOL` / `.kallsyms`   | ⬜ §1.1 P0                              |
+| Driver model (PCI match)     | ✅ PnP manager + INF files    | ✅ `struct pci_device_id` tables   | ⬜ §1.4 P0                              |
+| Auto-load drivers at boot    | ✅ Service manager + registry | ✅ `modprobe` + `modules.dep`      | ⬜ §1.5 P0                              |
+| NVMe storage                 | ✅ Stornvme.sys               | ✅ `nvme` driver                   | ⬜ §2.1 P1                              |
+| APIC / IOAPIC                | ✅ HAL                        | ✅ APIC subsystem                  | ⬜ §2.2 P2                              |
+| Intel e1000 NIC              | ✅ e1i65x64.sys               | ✅ `e1000`/`e1000e`                | ⬜ §3.1 P1 — port from SerenityOS BSD-2 |
+| VirtIO-net NIC               | ✅ netkvm.sys                 | ✅ `virtio_net`                    | ⬜ §3.2 P2                              |
+| GPU modesetting              | ✅ WDDM 3.x                   | ✅ DRM/KMS                         | ⬜ §4 P2 — VMSVGA + VirtIO-GPU          |
+| USB xHCI controller          | ✅ USBXHCI.sys                | ✅ `xhci_hcd`                      | ⬜ §7.2 P1                              |
+| USB HID (keyboard/mouse)     | ✅ HIDCLASS.sys               | ✅ `usbhid`                        | ⬜ §7.3 P1                              |
+| ACPI shutdown / reboot       | ✅                            | ✅                                 | ⬜ §9.1 P0 — **currently missing!**     |
+| ACPI S3 suspend/resume       | ✅                            | ✅                                 | ⬜ §9.2 P1 — **required for laptops**   |
+| Battery status (laptops)     | ✅ Control Panel + tray       | ✅ UPower + system tray            | ⬜ §9.3 P2                              |
+| CPU frequency scaling (DVFS) | ✅ Power plans + HWP          | ✅ `cpufreq` + governors           | ⬜ §9.4 P3                              |
+| Licensing compliance         | ✅ Proprietary                | ✅ GPL-2.0                         | ⬜ §8.1 P3 — BSD/MIT only               |
+| **No GPL contamination**     | ✅ Proprietary                | N/A                               | ✅ **§8 — strict MIT/BSD-2/BSD-3 only** |
+| **S3 sleep/resume**          | ✅ Native                     | ✅ pm-utils / systemd-suspend      | ⬜ **§9.2 P1 — production requirement** |
+| MADT `PCAT_COMPAT` check     | ✅ HAL checks flags           | ✅ `acpi_pic_sci_set_trigger()`    | ⬜ §2.2 P2 — **currently assumed**      |
+| VMBus paravirtualization     | ✅ Native (VSC built-in)      | ✅ `hv_vmbus` + storvsc/hid-hyperv | ⬜ §10 P3 — **missing entirely**        |
+| Hyper-V Gen 2 boot           | ✅ Native                     | ✅ With hv_* drivers               | ⬜ §1.6 + §10 — **cannot boot**         |

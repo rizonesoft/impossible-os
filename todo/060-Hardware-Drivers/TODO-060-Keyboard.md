@@ -145,15 +145,15 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11                        | Linux (X11/Wayland)               | Impossible OS                              |
-|---------------------------------|-----------------------------------|-----------------------------------|--------------------------------------------|
-| Keyboard layout system          | ✅ Win32 keyboard subsystem        | ✅ xkb (X11), evdev                | ⬜ §1 P1                                   |
-| Built-in layout count           | ✅ ~200 layouts                   | ✅ ~200 layouts                    | ⬜ §2 P1 — start with 6                   |
-| Layout switching (hotkey)       | ✅ Win+Space                      | ✅ Win+Space / Super+Space         | ⬜ §3 P2                                  |
-| UTF-8 / Unicode input           | ✅ UTF-16 internally, UTF-8 API   | ✅ UTF-8 native                    | ⬜ §4 P1                                  |
-| Dead key compose sequences      | ✅ In Win32 keyboard stack         | ✅ xkb compose table               | ⬜ §5 P1 — **in-kernel, simpler than xkb** |
-| Sticky Keys (accessibility)     | ✅ Kernel-level keyboard filter   | ⚠️ X11/AT-SPI (user-space)        | ⬜ §6 P2 — **in-kernel like Windows**      |
-| Typematic rate configuration    | ✅ Control Panel / Registry        | ✅ `kbdrate` / `setleds`           | ⬜ §7 P2                                  |
-| Localization framework          | ✅ MUI resource DLLs              | ✅ gettext / .po files             | ⬜ §8 P3 — ini-file approach              |
-| **In-kernel dead keys**         | ✅ (kernel filter level)          | ❌ (xkb is user-space)            | ⬜ **§5 — in-kernel, no xkb complexity**  |
-| **In-kernel sticky keys**       | ✅ (kernel filter level)          | ❌ (X11 user-space)               | ⬜ **§6 — in-kernel, beats Linux**        |
+| Feature                      | 🪟 Windows 11                   | 🐧 Linux (X11/Wayland)      | 🚀 Impossible OS                           |
+| ---------------------------- | ------------------------------ | -------------------------- | ----------------------------------------- |
+| Keyboard layout system       | ✅ Win32 keyboard subsystem     | ✅ xkb (X11), evdev         | ⬜ §1 P1                                   |
+| Built-in layout count        | ✅ ~200 layouts                 | ✅ ~200 layouts             | ⬜ §2 P1 — start with 6                    |
+| Layout switching (hotkey)    | ✅ Win+Space                    | ✅ Win+Space / Super+Space  | ⬜ §3 P2                                   |
+| UTF-8 / Unicode input        | ✅ UTF-16 internally, UTF-8 API | ✅ UTF-8 native             | ⬜ §4 P1                                   |
+| Dead key compose sequences   | ✅ In Win32 keyboard stack      | ✅ xkb compose table        | ⬜ §5 P1 — **in-kernel, simpler than xkb** |
+| Sticky Keys (accessibility)  | ✅ Kernel-level keyboard filter | ⚠️ X11/AT-SPI (user-space) | ⬜ §6 P2 — **in-kernel like Windows**      |
+| Typematic rate configuration | ✅ Control Panel / Registry     | ✅ `kbdrate` / `setleds`    | ⬜ §7 P2                                   |
+| Localization framework       | ✅ MUI resource DLLs            | ✅ gettext / .po files      | ⬜ §8 P3 — ini-file approach               |
+| **In-kernel dead keys**      | ✅ (kernel filter level)        | ❌ (xkb is user-space)      | ⬜ **§5 — in-kernel, no xkb complexity**   |
+| **In-kernel sticky keys**    | ✅ (kernel filter level)        | ❌ (X11 user-space)         | ⬜ **§6 — in-kernel, beats Linux**         |

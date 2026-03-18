@@ -318,21 +318,21 @@
 
 ## OS Comparison
 
-| Feature                         | Windows 11                            | Linux (GNOME/KDE)                    | Impossible OS                          |
-|---------------------------------|---------------------------------------|--------------------------------------|----------------------------------------|
-| Minimize + Maximize             | ✅ Always present                     | ✅ GNOME (toggleable) / KDE           | ⬜ §1.1 P0                            |
-| Keyboard window snapping        | ✅ Win+Arrow keys                     | ✅ KWin / GNOME (with extension)      | ⬜ §1.2 P2                            |
-| Edge snap with preview          | ✅ Snap assist zones                  | ✅ KWin edge snap                     | ⬜ §1.3 P3                            |
-| Snap Layouts (maximize hover)   | ✅ Win11 exclusive                    | ⚠️ KWin layout switcher (extension)  | ⬜ §1.4 P4                            |
-| Win+M minimize all              | ✅ Win+M / Win+D                      | ✅ Super+H (GNOME)                    | ⬜ §1.5 P4                            |
-| Context menus (desktop/file)    | ✅ Explorer shell right-click         | ✅ Nautilus / Dolphin                 | ⬜ §2 P0-P1                           |
-| Desktop icons (This PC, Bin)    | ✅ Desktop.ini controlled             | ✅ GNOME/Nautilus desktop icons       | ⬜ §3 P1                              |
-| Alt+Tab task switcher           | ✅ Windows Task Switcher              | ✅ GNOME Overview / KWin              | ⬜ §4.2 P1                            |
-| Win+R Run dialog                | ✅ Run dialog                         | ✅ GNOME Run (Alt+F2)                 | ⬜ §4.3 P2                            |
-| Drag and drop                   | ✅ OLE Drag-and-Drop                  | ✅ GDK DnD / XDnD                     | ⬜ §5 P2                              |
-| Quick Settings panel            | ✅ Win+A action center                | ✅ GNOME quick settings               | ⬜ §6 P2                              |
-| Virtual desktops                | ✅ Win+Ctrl+D                         | ✅ GNOME / KWin workspaces            | ⬜ §7 P3                              |
-| Night Light / Blue filter       | ✅ Settings → Display                 | ✅ Redshift / GNOME Night Light       | ⬜ §8 P3                              |
-| Focus / Do Not Disturb          | ✅ Focus Assist                       | ✅ GNOME DND                          | ⬜ §9 P3                              |
-| **Snap Layouts on hover**       | ✅ Win11 unique feature               | ❌ (extension required)              | ⬜ §1.4 — **matches Win11 parity**    |
-| **Dirty-rect drag compositor**  | ✅ DWM                                | ✅ Mutter                             | ✅ Done — §10.2                        |
+| Feature                        | 🪟 Windows 11                 | 🐧 Linux (GNOME/KDE)                 | 🚀 Impossible OS                   |
+| ------------------------------ | ---------------------------- | ----------------------------------- | --------------------------------- |
+| Minimize + Maximize            | ✅ Always present             | ✅ GNOME (toggleable) / KDE          | ⬜ §1.1 P0                         |
+| Keyboard window snapping       | ✅ Win+Arrow keys             | ✅ KWin / GNOME (with extension)     | ⬜ §1.2 P2                         |
+| Edge snap with preview         | ✅ Snap assist zones          | ✅ KWin edge snap                    | ⬜ §1.3 P3                         |
+| Snap Layouts (maximize hover)  | ✅ Win11 exclusive            | ⚠️ KWin layout switcher (extension) | ⬜ §1.4 P4                         |
+| Win+M minimize all             | ✅ Win+M / Win+D              | ✅ Super+H (GNOME)                   | ⬜ §1.5 P4                         |
+| Context menus (desktop/file)   | ✅ Explorer shell right-click | ✅ Nautilus / Dolphin                | ⬜ §2 P0-P1                        |
+| Desktop icons (This PC, Bin)   | ✅ Desktop.ini controlled     | ✅ GNOME/Nautilus desktop icons      | ⬜ §3 P1                           |
+| Alt+Tab task switcher          | ✅ Windows Task Switcher      | ✅ GNOME Overview / KWin             | ⬜ §4.2 P1                         |
+| Win+R Run dialog               | ✅ Run dialog                 | ✅ GNOME Run (Alt+F2)                | ⬜ §4.3 P2                         |
+| Drag and drop                  | ✅ OLE Drag-and-Drop          | ✅ GDK DnD / XDnD                    | ⬜ §5 P2                           |
+| Quick Settings panel           | ✅ Win+A action center        | ✅ GNOME quick settings              | ⬜ §6 P2                           |
+| Virtual desktops               | ✅ Win+Ctrl+D                 | ✅ GNOME / KWin workspaces           | ⬜ §7 P3                           |
+| Night Light / Blue filter      | ✅ Settings → Display         | ✅ Redshift / GNOME Night Light      | ⬜ §8 P3                           |
+| Focus / Do Not Disturb         | ✅ Focus Assist               | ✅ GNOME DND                         | ⬜ §9 P3                           |
+| **Snap Layouts on hover**      | ✅ Win11 unique feature       | ❌ (extension required)              | ⬜ §1.4 — **matches Win11 parity** |
+| **Dirty-rect drag compositor** | ✅ DWM                        | ✅ Mutter                            | ✅ Done — §10.2                    |

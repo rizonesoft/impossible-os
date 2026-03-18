@@ -749,22 +749,22 @@ scripts/
 
 ## OS Comparison
 
-| Feature                           | Windows 11 (WDK/VS)              | Linux Kernel                      | Impossible OS                                    |
-|-----------------------------------|----------------------------------|-----------------------------------|--------------------------------------------------|
-| Build system                      | ✅ MSBuild / WDK                  | ✅ Kbuild (make)                 | ✅ Make + build.sh wrapper                      |
-| Incremental builds                | ✅ MSBuild deps                   | ✅ `.d` dependency files         | ✅ `-MMD -MP` + `.d` includes                   |
-| Parallel compilation              | ✅ `/MP` flag                     | ✅ `make -j$(nproc)`             | ✅ `-j$(nproc)` default + `--jobs=N`            |
-| Build version metadata            | ✅ Resource files (.rc)           | ✅ `uname -r` + git describe     | ✅ `include/build_info.h` (auto-generated)      |
-| Compiler toolchain                | ✅ MSVC (WDK)                     | ✅ GCC (Kbuild)                  | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)      |
-| One-command dev setup             | ❌ Manual VS + WDK install        | ⚠️ `make defconfig && make`      | ✅ `bash scripts/setup.sh` — **beats both**     |
-| Automated smoke test              | ✅ HCK/HLK test framework         | ✅ kselftest + CI bots           | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
-| Unit test framework (kernel)      | ✅ WDK test framework             | ✅ KUnit                         | ✅ `test.h` + `test_runner.c` (12 suites)       |
-| CI/CD build on push               | ✅ Azure DevOps                   | ✅ GitHub Actions + kernel.org   | ⬜ TODO-001 §4.1 P3                             |
-| Symbol map + debug symbols        | ✅ PDB files                      | ✅ vmlinux + kallsyms            | ✅ `kernel.sym` + `symtab_resolve()` (O(log n)) |
-| Code size tracking                | ⚠️ Manual / third-party           | ✅ `bloat-o-meter`               | ✅ `scripts/size-report.sh` + CSV history       |
-| Pre-commit linting                | ⚠️ Optional VS extensions         | ✅ checkpatch.pl                 | ✅ `.githooks/pre-commit` (opt-in, staged only) |
-| Language server (code intel)      | ✅ IntelliSense (MSVC)            | ✅ clangd + compile_commands     | ✅ clangd-19 + Bear (101 entries)               |
-| Asset pipeline                    | ✅ MSBuild resource compiler      | ⚠️ Manual `make` targets         | ✅ `make assets` (7 sub-targets + stamps)       |
-| Asset validation                  | ❌ Runtime discovery              | ❌ No built-in                   | ✅ 37 assets validated at build time            |
-| **Zero-install build wrapper**    | ❌ Requires VS + WDK              | ❌ Requires toolchain install    | ✅ **build.sh — single script, no IDE**         |
-| **QEMU auto-test loop**           | ❌ Manual VM setup                | ✅ virtme + kselftest            | ✅ **build.sh run — build + boot + verify**     |
+| Feature                        | 🪟 Windows 11 (WDK/VS)       | 🐧 Linux Kernel                | 🚀 Impossible OS                                |
+| ------------------------------ | --------------------------- | ----------------------------- | ---------------------------------------------- |
+| Build system                   | ✅ MSBuild / WDK             | ✅ Kbuild (make)               | ✅ Make + build.sh wrapper                      |
+| Incremental builds             | ✅ MSBuild deps              | ✅ `.d` dependency files       | ✅ `-MMD -MP` + `.d` includes                   |
+| Parallel compilation           | ✅ `/MP` flag                | ✅ `make -j$(nproc)`           | ✅ `-j$(nproc)` default + `--jobs=N`            |
+| Build version metadata         | ✅ Resource files (.rc)      | ✅ `uname -r` + git describe   | ✅ `include/build_info.h` (auto-generated)      |
+| Compiler toolchain             | ✅ MSVC (WDK)                | ✅ GCC (Kbuild)                | ✅ Clang-19/LLD-19 (`--target=x86_64-elf`)      |
+| One-command dev setup          | ❌ Manual VS + WDK install   | ⚠️ `make defconfig && make`   | ✅ `bash scripts/setup.sh` — **beats both**     |
+| Automated smoke test           | ✅ HCK/HLK test framework    | ✅ kselftest + CI bots         | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
+| Unit test framework (kernel)   | ✅ WDK test framework        | ✅ KUnit                       | ✅ `test.h` + `test_runner.c` (12 suites)       |
+| CI/CD build on push            | ✅ Azure DevOps              | ✅ GitHub Actions + kernel.org | ⬜ TODO-001 §4.1 P3                             |
+| Symbol map + debug symbols     | ✅ PDB files                 | ✅ vmlinux + kallsyms          | ✅ `kernel.sym` + `symtab_resolve()` (O(log n)) |
+| Code size tracking             | ⚠️ Manual / third-party     | ✅ `bloat-o-meter`             | ✅ `scripts/size-report.sh` + CSV history       |
+| Pre-commit linting             | ⚠️ Optional VS extensions   | ✅ checkpatch.pl               | ✅ `.githooks/pre-commit` (opt-in, staged only) |
+| Language server (code intel)   | ✅ IntelliSense (MSVC)       | ✅ clangd + compile_commands   | ✅ clangd-19 + Bear (101 entries)               |
+| Asset pipeline                 | ✅ MSBuild resource compiler | ⚠️ Manual `make` targets      | ✅ `make assets` (7 sub-targets + stamps)       |
+| Asset validation               | ❌ Runtime discovery         | ❌ No built-in                 | ✅ 37 assets validated at build time            |
+| **Zero-install build wrapper** | ❌ Requires VS + WDK         | ❌ Requires toolchain install  | ✅ **build.sh — single script, no IDE**         |
+| **QEMU auto-test loop**        | ❌ Manual VM setup           | ✅ virtme + kselftest          | ✅ **build.sh run — build + boot + verify**     |

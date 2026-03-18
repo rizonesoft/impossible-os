@@ -199,15 +199,15 @@
 
 ## OS Comparison
 
-| Feature                           | Windows 11 (Explorer + Win32)          | Linux (XDG / .desktop files)           | Impossible OS                              |
-|-----------------------------------|----------------------------------------|----------------------------------------|--------------------------------------------|
-| File associations (ext → app)     | ✅ HKCR + ProgID + DefaultIcon          | ✅ `.desktop` files + `xdg-mime`       | ⬜ §1.1 P0 — HKCR Registry lookup         |
-| Default associations on install   | ✅ Win32 app registration               | ✅ `/usr/share/applications/`          | ⬜ §1.2 P0 — first-boot Registry defaults |
-| Open With dialog                  | ✅ Explorer → Open With                 | ✅ `xdg-open` / GNOME Open With        | ⬜ §1.3 P3 (stretch)                      |
-| Shortcut files (.lnk)             | ✅ Binary .lnk IShellLink format        | ✅ XDG .desktop INI files              | ⬜ §2.1 P0 — **INI .lnk (simpler than Win32 binary)** |
-| Shortcut icons on desktop         | ✅ LNK icon + overlay arrow             | ✅ .desktop Icon= field                | ⬜ §2.2 P1 — custom icon + arrow overlay  |
-| Recycle Bin (trash)               | ✅ $Recycle.Bin per drive               | ✅ `~/.local/share/Trash/`             | ✅ (see TODO-270) + ⬜ §3.1 desktop icon  |
-| Dynamic trash icon (empty/full)   | ✅ Explorer dynamic icon                | ✅ GNOME/KDE Trash applet              | ⬜ §3.1 P1 — `ICON_TRASH_EMPTY/FULL`      |
-| System sounds (WAV chime)         | ✅ Windows Sound Scheme                 | ✅ GNOME/KDE sound themes              | ⬜ §4.1 P1 — startup/notify/error WAVs    |
-| Font manager app                  | ✅ Settings → Personalization → Fonts   | ✅ GNOME Font Viewer / KFont           | ⬜ §6.1 P2                                |
-| **INI .lnk (human-readable)**     | ❌ Binary IShellLink format             | ✅ .desktop INI format                  | ⬜ **§2.1 — simpler than Win32 binary, matches Linux XDG readability** |
+| Feature                         | 🪟 Windows 11 (Explorer + Win32)      | 🐧 Linux (XDG / .desktop files)  | 🚀 Impossible OS                                                       |
+| ------------------------------- | ------------------------------------ | ------------------------------- | --------------------------------------------------------------------- |
+| File associations (ext → app)   | ✅ HKCR + ProgID + DefaultIcon        | ✅ `.desktop` files + `xdg-mime` | ⬜ §1.1 P0 — HKCR Registry lookup                                      |
+| Default associations on install | ✅ Win32 app registration             | ✅ `/usr/share/applications/`    | ⬜ §1.2 P0 — first-boot Registry defaults                              |
+| Open With dialog                | ✅ Explorer → Open With               | ✅ `xdg-open` / GNOME Open With  | ⬜ §1.3 P3 (stretch)                                                   |
+| Shortcut files (.lnk)           | ✅ Binary .lnk IShellLink format      | ✅ XDG .desktop INI files        | ⬜ §2.1 P0 — **INI .lnk (simpler than Win32 binary)**                  |
+| Shortcut icons on desktop       | ✅ LNK icon + overlay arrow           | ✅ .desktop Icon= field          | ⬜ §2.2 P1 — custom icon + arrow overlay                               |
+| Recycle Bin (trash)             | ✅ $Recycle.Bin per drive             | ✅ `~/.local/share/Trash/`       | ✅ (see TODO-270) + ⬜ §3.1 desktop icon                                |
+| Dynamic trash icon (empty/full) | ✅ Explorer dynamic icon              | ✅ GNOME/KDE Trash applet        | ⬜ §3.1 P1 — `ICON_TRASH_EMPTY/FULL`                                   |
+| System sounds (WAV chime)       | ✅ Windows Sound Scheme               | ✅ GNOME/KDE sound themes        | ⬜ §4.1 P1 — startup/notify/error WAVs                                 |
+| Font manager app                | ✅ Settings → Personalization → Fonts | ✅ GNOME Font Viewer / KFont     | ⬜ §6.1 P2                                                             |
+| **INI .lnk (human-readable)**   | ❌ Binary IShellLink format           | ✅ .desktop INI format           | ⬜ **§2.1 — simpler than Win32 binary, matches Linux XDG readability** |

@@ -127,20 +127,20 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (File Explorer)          | Linux (Nautilus / Dolphin)            | Impossible OS                          |
-|----------------------------------|-------------------------------------|---------------------------------------|----------------------------------------|
-| Icon view + Detail view          | ✅ 8 view modes (thumbnails, tiles)  | ✅ 2-3 view modes                     | ⬜ §2 P1 — Icon + Detail              |
-| Sidebar (quick access + drives)  | ✅ Quick Access + Drive list         | ✅ GNOME Places / KDE sidebar          | ⬜ §1.2 P1                            |
-| Sortable columns (Detail view)   | ✅ Click column header               | ✅ Nautilus/Dolphin sortable           | ⬜ §2 P1                              |
-| Multi-select (Ctrl/Shift)        | ✅ Full multi-select                 | ✅ Full multi-select                   | ⬜ §2 P1                              |
-| File ops (copy/cut/paste/delete) | ✅ Full operations                   | ✅ Full operations                     | ⬜ §3 P1                              |
-| Progress dialog for large copies | ✅ Copy dialog with speed/ETA        | ✅ Nautilus/Dolphin progress           | ⬜ §3 P1 (> 1 MB)                    |
-| Recycle bin integration          | ✅ Delete → Recycle Bin              | ✅ Trash integration                    | ⬜ §3 P1 — `trash_delete()`          |
-| Inline rename (F2)               | ✅ F2 rename                         | ✅ F2 rename                           | ⬜ §3 P1                              |
-| Right-click context menus        | ✅ Shell extension menus             | ✅ GNOME/KDE context menus             | ⬜ §4 P2                              |
-| Search within folder             | ✅ Windows Search in Explorer        | ✅ Nautilus/Dolphin search bar         | ⬜ §5 P4 (stretch)                    |
-| Drag and drop                    | ✅ OLE DnD                            | ✅ GDK/XDnD                            | ⬜ §5 P4 (stretch — TODO-170 §5)     |
-| Preview pane                     | ✅ Preview pane in Explorer          | ✅ Dolphin preview                     | ⬜ §5 P4 (stretch)                    |
-| Tabs                             | ✅ Windows 11 tabbed Explorer        | ✅ Dolphin / Nautilus (4.2+)           | ⬜ §5 P4 (stretch)                    |
-| **Breadcrumb address bar**       | ✅ Clickable path segments           | ✅ Nautilus breadcrumb                 | ⬜ §5 P4 (stretch)                    |
-| **No file manager daemon**       | ✅ In-process                        | ✅ GNOME: separate nautilus process    | ✅ **In-kernel app — no separate process** |
+| Feature                          | 🪟 Windows 11 (File Explorer)       | 🐧 Linux (Nautilus / Dolphin)       | 🚀 Impossible OS                           |
+| -------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
+| Icon view + Detail view          | ✅ 8 view modes (thumbnails, tiles) | ✅ 2-3 view modes                   | ⬜ §2 P1 — Icon + Detail                   |
+| Sidebar (quick access + drives)  | ✅ Quick Access + Drive list        | ✅ GNOME Places / KDE sidebar       | ⬜ §1.2 P1                                 |
+| Sortable columns (Detail view)   | ✅ Click column header              | ✅ Nautilus/Dolphin sortable        | ⬜ §2 P1                                   |
+| Multi-select (Ctrl/Shift)        | ✅ Full multi-select                | ✅ Full multi-select                | ⬜ §2 P1                                   |
+| File ops (copy/cut/paste/delete) | ✅ Full operations                  | ✅ Full operations                  | ⬜ §3 P1                                   |
+| Progress dialog for large copies | ✅ Copy dialog with speed/ETA       | ✅ Nautilus/Dolphin progress        | ⬜ §3 P1 (> 1 MB)                          |
+| Recycle bin integration          | ✅ Delete → Recycle Bin             | ✅ Trash integration                | ⬜ §3 P1 — `trash_delete()`                |
+| Inline rename (F2)               | ✅ F2 rename                        | ✅ F2 rename                        | ⬜ §3 P1                                   |
+| Right-click context menus        | ✅ Shell extension menus            | ✅ GNOME/KDE context menus          | ⬜ §4 P2                                   |
+| Search within folder             | ✅ Windows Search in Explorer       | ✅ Nautilus/Dolphin search bar      | ⬜ §5 P4 (stretch)                         |
+| Drag and drop                    | ✅ OLE DnD                          | ✅ GDK/XDnD                         | ⬜ §5 P4 (stretch — TODO-170 §5)           |
+| Preview pane                     | ✅ Preview pane in Explorer         | ✅ Dolphin preview                  | ⬜ §5 P4 (stretch)                         |
+| Tabs                             | ✅ Windows 11 tabbed Explorer       | ✅ Dolphin / Nautilus (4.2+)        | ⬜ §5 P4 (stretch)                         |
+| **Breadcrumb address bar**       | ✅ Clickable path segments          | ✅ Nautilus breadcrumb              | ⬜ §5 P4 (stretch)                         |
+| **No file manager daemon**       | ✅ In-process                       | ✅ GNOME: separate nautilus process | ✅ **In-kernel app — no separate process** |

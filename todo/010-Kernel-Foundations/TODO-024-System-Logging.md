@@ -99,15 +99,15 @@
 
 ## OS Comparison
 
-| Feature                         | Windows Event Log            | Linux journald / syslog   | Impossible OS                        |
-|---------------------------------|------------------------------|---------------------------|--------------------------------------|
-| Unified kernel log              | ✅ Event Log                 | ✅ `journald` + syslog    | ✅ §1 Done — klog with ring buffer   |
-| Log levels (5+)                 | ✅ 5 levels                  | ✅ 8 POSIX levels         | ✅ Done — DEBUG/INFO/WARN/ERROR/FATAL|
-| Per-subsystem splitting         | ✅ Event channels            | ✅ `syslog` facilities    | ⬜ §2 P1                              |
-| Log rotation                    | ✅ Auto-rotation             | ✅ `logrotate`            | ⬜ §3 P1                              |
-| Structured logging              | ✅ XML records               | ✅ Binary journal         | ⬜ §4 P2 — **JSON Lines, readable**  |
-| Remote forwarding               | ✅ WEF / WinRM               | ✅ `rsyslog` UDP/TCP      | ⬜ §5 P2                              |
-| Serial timestamp prefix         | ❌                            | ❌                         | ✅ Done — **Impossible OS only**     |
-| **Human-readable structured**   | ❌ XML is verbose             | ❌ Binary (needs journalctl)| ⬜ **§4 JSON Lines — beats both**   |
+| Feature                       | 🪟 Windows Event Log | 🐧 Linux journald / syslog   | 🚀 Impossible OS                      |
+| ----------------------------- | ------------------- | --------------------------- | ------------------------------------ |
+| Unified kernel log            | ✅ Event Log         | ✅ `journald` + syslog       | ✅ §1 Done — klog with ring buffer    |
+| Log levels (5+)               | ✅ 5 levels          | ✅ 8 POSIX levels            | ✅ Done — DEBUG/INFO/WARN/ERROR/FATAL |
+| Per-subsystem splitting       | ✅ Event channels    | ✅ `syslog` facilities       | ⬜ §2 P1                              |
+| Log rotation                  | ✅ Auto-rotation     | ✅ `logrotate`               | ⬜ §3 P1                              |
+| Structured logging            | ✅ XML records       | ✅ Binary journal            | ⬜ §4 P2 — **JSON Lines, readable**   |
+| Remote forwarding             | ✅ WEF / WinRM       | ✅ `rsyslog` UDP/TCP         | ⬜ §5 P2                              |
+| Serial timestamp prefix       | ❌                   | ❌                           | ✅ Done — **Impossible OS only**      |
+| **Human-readable structured** | ❌ XML is verbose    | ❌ Binary (needs journalctl) | ⬜ **§4 JSON Lines — beats both**     |
 
 > **After §4:** `events.jsonl` is readable by any editor — beats Windows XML and Linux binary journal.

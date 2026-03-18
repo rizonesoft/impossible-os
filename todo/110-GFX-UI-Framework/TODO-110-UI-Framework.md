@@ -450,21 +450,21 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (DWM/Win32)             | Linux (GTK/KDE/Wayland)              | Impossible OS                              |
-|----------------------------------|-------------------------------------|--------------------------------------|--------------------------------------------|
-| 2D compositing surface           | ✅ DWM / D2D1                       | ✅ Cairo / Skia                       | ✅ Done — `gfx_surface_t` §1.1            |
-| Alpha blending                   | ✅ DWM ARGB compositing             | ✅ Cairo alpha                        | ✅ Done — pre-multiplied §1.2             |
-| Blur / Acrylic / Mica effects    | ✅ DWM Blur Behind, Mica            | ✅ KWin blur, GNOME blur (limited)    | ✅ Done — §1.4 `gfx_mica` / `gfx_acrylic`|
-| Drop shadows                     | ✅ DWM                              | ✅ KWin / Mutter                      | ✅ Done — §1.4 `gfx_drop_shadow`         |
-| SIMD acceleration (SSE2/AVX2)    | ✅ Direct2D uses SSE2               | ✅ pixman SSE2                        | ✅ Done — §1.5 SSE2 + AVX2 dispatch      |
-| TrueType fonts                   | ✅ DirectWrite / FreeType           | ✅ FreeType + HarfBuzz                | ✅ Done — §2.1 stb_truetype              |
-| Glyph cache                      | ✅ DirectWrite glyph cache          | ✅ FreeType bitmap cache              | ✅ Done — §2.3 ASCII at 5 sizes          |
-| Runtime PNG/JPEG decode          | ✅ WIC (Windows Imaging Component)  | ✅ libpng / libjpeg-turbo             | ✅ Done — §3.1 stb_image                 |
-| Image scaling (bilinear)         | ✅ WIC scalers                      | ✅ GDK pixbuf / Cairo                 | ✅ Done — §3.2                           |
-| System icon store                | ✅ shell32.dll / imageres.dll IRES  | ✅ hicolor icon theme / SVG           | ✅ Done — §4.1–4.5 IRES + Fluent fonts   |
-| ICO file support                 | ✅ Native                           | ✅ xicon / Pixbuf loader              | ✅ Done — §4.6                           |
-| Cursor themes                    | ✅ .cur / .ani files                | ✅ X11 Xcursor format                 | ✅ Done — §5 Adwaita Xcur                |
-| Context-aware cursor shapes      | ✅ LoadCursor + SetCursor           | ✅ gdk_cursor_new_from_name           | ✅ Done — §5.3 wm_get_cursor_context()   |
-| Win32 icon index compat          | ✅ shell32.dll indices              | ❌                                   | ⬜ §4.7 P1 — mapping table              |
-| **In-kernel gfx (no GPU needed)**| ❌ DWM requires D3D11               | ❌ Mesa/DRM GPU                      | ✅ **Framebuffer CPU rendering — zero GPU dependency** |
-| **Mica on boot filesystem**      | ✅ (NTFS drive)                     | ⚠️ Only with btrfs root              | ✅ **Works on IXFS boot drive by design** |
+| Feature                           | 🪟 Windows 11 (DWM/Win32)          | 🐧 Linux (GTK/KDE/Wayland)         | 🚀 Impossible OS                                       |
+| --------------------------------- | --------------------------------- | --------------------------------- | ----------------------------------------------------- |
+| 2D compositing surface            | ✅ DWM / D2D1                      | ✅ Cairo / Skia                    | ✅ Done — `gfx_surface_t` §1.1                         |
+| Alpha blending                    | ✅ DWM ARGB compositing            | ✅ Cairo alpha                     | ✅ Done — pre-multiplied §1.2                          |
+| Blur / Acrylic / Mica effects     | ✅ DWM Blur Behind, Mica           | ✅ KWin blur, GNOME blur (limited) | ✅ Done — §1.4 `gfx_mica` / `gfx_acrylic`              |
+| Drop shadows                      | ✅ DWM                             | ✅ KWin / Mutter                   | ✅ Done — §1.4 `gfx_drop_shadow`                       |
+| SIMD acceleration (SSE2/AVX2)     | ✅ Direct2D uses SSE2              | ✅ pixman SSE2                     | ✅ Done — §1.5 SSE2 + AVX2 dispatch                    |
+| TrueType fonts                    | ✅ DirectWrite / FreeType          | ✅ FreeType + HarfBuzz             | ✅ Done — §2.1 stb_truetype                            |
+| Glyph cache                       | ✅ DirectWrite glyph cache         | ✅ FreeType bitmap cache           | ✅ Done — §2.3 ASCII at 5 sizes                        |
+| Runtime PNG/JPEG decode           | ✅ WIC (Windows Imaging Component) | ✅ libpng / libjpeg-turbo          | ✅ Done — §3.1 stb_image                               |
+| Image scaling (bilinear)          | ✅ WIC scalers                     | ✅ GDK pixbuf / Cairo              | ✅ Done — §3.2                                         |
+| System icon store                 | ✅ shell32.dll / imageres.dll IRES | ✅ hicolor icon theme / SVG        | ✅ Done — §4.1–4.5 IRES + Fluent fonts                 |
+| ICO file support                  | ✅ Native                          | ✅ xicon / Pixbuf loader           | ✅ Done — §4.6                                         |
+| Cursor themes                     | ✅ .cur / .ani files               | ✅ X11 Xcursor format              | ✅ Done — §5 Adwaita Xcur                              |
+| Context-aware cursor shapes       | ✅ LoadCursor + SetCursor          | ✅ gdk_cursor_new_from_name        | ✅ Done — §5.3 wm_get_cursor_context()                 |
+| Win32 icon index compat           | ✅ shell32.dll indices             | ❌                                 | ⬜ §4.7 P1 — mapping table                             |
+| **In-kernel gfx (no GPU needed)** | ❌ DWM requires D3D11              | ❌ Mesa/DRM GPU                    | ✅ **Framebuffer CPU rendering — zero GPU dependency** |
+| **Mica on boot filesystem**       | ✅ (NTFS drive)                    | ⚠️ Only with btrfs root           | ✅ **Works on IXFS boot drive by design**              |

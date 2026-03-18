@@ -93,14 +93,14 @@
 
 ## OS Comparison
 
-| Feature                          | Windows 11 (Windows Search)          | Linux (locate / Tracker / Baloo)      | Impossible OS                          |
-|----------------------------------|--------------------------------------|---------------------------------------|----------------------------------------|
-| Filename index                   | ✅ Jet database                       | ✅ `mlocate` flat file                 | ⬜ §1 P0 — PMM flat array             |
-| Background rebuild               | ✅ SearchIndexer.exe service          | ✅ `updatedb` cron / Tracker daemon    | ⬜ §1 P0 — in-kernel background thread |
-| Case-insensitive query           | ✅ Always                             | ⚠️ `locate -i` (optional)            | ⬜ §2 P1 — **always case-insensitive** |
-| Result ranking (apps first)      | ✅ Windows Search ranking              | ❌ locate returns raw sorted paths     | ⬜ §2 P1 — **ranked: apps > folders > files** |
-| Shell `find` command             | ✅ Windows Search via Explorer API    | ✅ `locate` / `find` / `fd`           | ⬜ §3 P1                               |
-| Start Menu search integration    | ✅ Bing + Local Search                | ✅ GNOME search provider               | ⬜ §4 P3                               |
-| File content search              | ✅ Full-text indexing                  | ✅ Tracker full-text                   | ⬜ §2 (stretch)                        |
-| **No external daemon**           | ❌ SearchIndexer.exe required         | ❌ Tracker/Baloo daemon                | ✅ **In-kernel thread — zero external** |
-| **Simple flat index**            | ❌ Complex Jet DB                     | ✅ locate flat file                    | ✅ **§1 — flat sorted array, binary search** |
+| Feature                       | 🪟 Windows 11 (Windows Search)     | 🐧 Linux (locate / Tracker / Baloo) | 🚀 Impossible OS                              |
+| ----------------------------- | --------------------------------- | ---------------------------------- | -------------------------------------------- |
+| Filename index                | ✅ Jet database                    | ✅ `mlocate` flat file              | ⬜ §1 P0 — PMM flat array                     |
+| Background rebuild            | ✅ SearchIndexer.exe service       | ✅ `updatedb` cron / Tracker daemon | ⬜ §1 P0 — in-kernel background thread        |
+| Case-insensitive query        | ✅ Always                          | ⚠️ `locate -i` (optional)          | ⬜ §2 P1 — **always case-insensitive**        |
+| Result ranking (apps first)   | ✅ Windows Search ranking          | ❌ locate returns raw sorted paths  | ⬜ §2 P1 — **ranked: apps > folders > files** |
+| Shell `find` command          | ✅ Windows Search via Explorer API | ✅ `locate` / `find` / `fd`         | ⬜ §3 P1                                      |
+| Start Menu search integration | ✅ Bing + Local Search             | ✅ GNOME search provider            | ⬜ §4 P3                                      |
+| File content search           | ✅ Full-text indexing              | ✅ Tracker full-text                | ⬜ §2 (stretch)                               |
+| **No external daemon**        | ❌ SearchIndexer.exe required      | ❌ Tracker/Baloo daemon             | ✅ **In-kernel thread — zero external**       |
+| **Simple flat index**         | ❌ Complex Jet DB                  | ✅ locate flat file                 | ✅ **§1 — flat sorted array, binary search**  |
