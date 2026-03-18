@@ -4,6 +4,16 @@
 > Win32 applications work correctly regardless of the underlying filesystem (IXFS,
 > FAT32, NTFS, etc.). This is the "compatibility shim" between the Win32 file API
 > (TODO-040 §3.6) and application expectations.
+>
+> **Two-phase strategy:**
+> 1. **Phase A (this file):** Implement VFS-level compatibility — stub/spoof missing
+>    features for FAT32 and other simple filesystems.
+> 2. **Phase B (TODO-040 §5.9.5–5.9.9):** Implement features natively in IXFS so
+>    the compat layer routes to real implementations on IXFS volumes.
+>
+> The end goal is that IXFS is a **superset of NTFS features** — ADS, ACLs, hard
+> links, compression, xattrs — while the compat layer remains for FAT32/exFAT.
+
 > [!CAUTION]
 > **This is the #1 compatibility risk.** Win32 applications assume Windows-specific
 > filesystem behaviors that differ from POSIX. Without this layer, apps will crash,
@@ -140,40 +150,52 @@
 
 ### 2.1 Alternate Data Streams (ADS) Handling *(agent)*
 
-**Prompt:** Web browsers use NTFS Alternate Data Streams to append the "Mark of the Web" (`:Zone.Identifier`) to downloaded files. If an app tries to create `file.exe:Zone.Identifier` and the filesystem violently rejects the `:` character, browser downloads will fail. Since IXFS and FAT32 don't support ADS, silently discard the stream data and return success — exactly what FAT32 does on real Windows. If queried via `FindFirstStreamW`, return only the default `::$DATA` stream. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ADS graceful fallback"`. Add notes directly in this TODO section.
+**Prompt:** Web browsers use NTFS Alternate Data Streams to append the "Mark of the Web" (`:Zone.Identifier`) to downloaded files. If an app tries to create `file.exe:Zone.Identifier` and the filesystem violently rejects the `:` character, browser downloads will fail. Implement a two-tier strategy: (1) For filesystems without stream support (FAT32, exFAT), silently discard stream data and return success — matching Windows-on-FAT32 behavior. (2) For IXFS, route to native ADS support (TODO-040 §5.9.5) once implemented. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ADS graceful fallback"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Long-term:** IXFS will support native ADS (TODO-040 §5.9.5). This section
+> implements the VFS-level router that detects `:stream` syntax and dispatches
+> to the right handler. Once §5.9.5 is done, IXFS volumes get real streams;
+> FAT32 volumes continue using the discard fallback.
 
 - [ ] Detect ADS path syntax: filename contains `:` followed by stream name (e.g., `file.exe:Zone.Identifier`)
-- [ ] In `CreateFile`: if ADS detected AND filesystem doesn't support streams:
-  - [ ] Strip stream suffix, open the base file instead
-  - [ ] Return a "null" handle that accepts writes but discards data
-  - [ ] `SetLastError(ERROR_SUCCESS)` — do NOT report an error
-- [ ] In `ReadFile` on ADS handle: return 0 bytes read (empty stream)
-- [ ] In `WriteFile` on ADS handle: accept data, discard, return bytes written = requested
-- [ ] In `DeleteFile` with ADS path: silently succeed (nothing to delete)
-- [ ] Implement `FindFirstStreamW` / `FindNextStreamW` stubs:
-  - [ ] Always return only `::$DATA` (the default unnamed stream)
+- [ ] In `CreateFile`: check if filesystem supports streams via `vfs_ops.stream_open` callback:
+  - [ ] If supported (IXFS, NTFS) → route to `ops->stream_open(node, stream_name)`
+  - [ ] If NOT supported (FAT32, exFAT) → return a "null" handle that discards writes
+  - [ ] `SetLastError(ERROR_SUCCESS)` — do NOT report an error in either case
+- [ ] In `ReadFile` on discard-ADS handle: return 0 bytes read (empty stream)
+- [ ] In `WriteFile` on discard-ADS handle: accept data, discard, return bytes written = requested
+- [ ] In `DeleteFile` with ADS path: route to `ops->stream_delete()` or silently succeed
+- [ ] Implement `FindFirstStreamW` / `FindNextStreamW`:
+  - [ ] If FS supports streams → route to `ops->stream_enumerate()`
+  - [ ] If not → return only `::$DATA` (the default unnamed stream)
   - [ ] Second call returns `ERROR_HANDLE_EOF`
 - [ ] Test: `CreateFile("test.exe:Zone.Identifier", GENERIC_WRITE, ...)` → handle returned (not `INVALID_HANDLE_VALUE`)
 - [ ] Test: `WriteFile` to ADS handle → reports success, data discarded
 - [ ] Commit: `"vfs: ADS graceful fallback"`
 
-### 2.2 Security Descriptor Spoofing (ACL Stubs) *(agent)*
+### 2.2 Security Descriptor Routing (ACL Stubs + Native) *(agent)*
 
-**Prompt:** Installers (especially MSI packages) call `SetFileSecurity()` to lock down directories with Access Control Lists. If the filesystem lacks ACL support and the API returns an error, the installer will abort with an "Access Denied" rollback. Instead, silently return `ERROR_SUCCESS` (pretending it worked). For `GetFileSecurity()`, return a dummy security descriptor granting `GENERIC_ALL` to `Everyone`. This matches how Windows handles FAT32 volumes — it synthesizes a permissive security descriptor. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ACL stub (permissive fallback)"`. Add notes directly in this TODO section.
+**Prompt:** Installers (especially MSI packages) call `SetFileSecurity()` to lock down directories with Access Control Lists. Implement a two-tier strategy: (1) For IXFS, route to native security descriptors (TODO-040 §5.9.6) once implemented — IXFS will persist real ACLs. (2) For FAT32/exFAT (no ACL support), silently return `ERROR_SUCCESS` with a dummy permissive descriptor — matching how Windows handles FAT32 volumes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ACL routing (native + stub fallback)"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Long-term:** IXFS will support native ACLs (TODO-040 §5.9.6). This section
+> implements the VFS-level router. Once §5.9.6 is done, IXFS volumes persist
+> real security descriptors; FAT32 volumes use the permissive stub.
 
 - [ ] Implement `SetFileSecurity(lpFileName, SecurityInformation, pSecurityDescriptor)`:
-  - [ ] If filesystem supports ACLs (NTFS) → store the descriptor
-  - [ ] If filesystem lacks ACLs (IXFS, FAT32) → silently return `TRUE` (discard)
+  - [ ] If filesystem supports ACLs (IXFS, NTFS) → `ops->set_security(node, descriptor)`
+  - [ ] If filesystem lacks ACLs (FAT32, exFAT) → silently return `TRUE` (discard)
 - [ ] Implement `GetFileSecurity(lpFileName, SecurityInformation, pSecurityDescriptor, nLength, lpnLengthNeeded)`:
-  - [ ] If filesystem supports ACLs → return stored descriptor
+  - [ ] If filesystem supports ACLs → `ops->get_security(node)` → real descriptor
   - [ ] If filesystem lacks ACLs → return dummy descriptor:
     - [ ] Owner: `BUILTIN\Administrators` SID
     - [ ] DACL: single ACE granting `GENERIC_ALL` to `Everyone` SID
     - [ ] Set `lpnLengthNeeded` to descriptor size
-- [ ] Implement `GetSecurityInfo()` / `SetSecurityInfo()` stubs (same strategy)
-- [ ] Test: `SetFileSecurity` on FAT32 file → returns `TRUE`, no error
-- [ ] Test: `GetFileSecurity` on FAT32 file → returns valid descriptor
-- [ ] Commit: `"vfs: ACL stub (permissive fallback)"`
+- [ ] Implement `GetSecurityInfo()` / `SetSecurityInfo()` (same routing strategy)
+- [ ] Test: `SetFileSecurity` on IXFS → persisted and retrievable
+- [ ] Test: `SetFileSecurity` on FAT32 → returns `TRUE`, no error, descriptor discarded
+- [ ] Commit: `"vfs: ACL routing (native + stub fallback)"
 
 ### 2.3 Volume Information Spoofing *(agent)*
 
@@ -189,7 +211,7 @@
   - [ ] Set `lpFileSystemFlags`:
     - [ ] `FILE_CASE_PRESERVED_NAMES` — always set
     - [ ] `FILE_UNICODE_ON_DISK` — set for IXFS and NTFS
-    - [ ] `FILE_PERSISTENT_ACLS` — NTFS only
+    - [ ] `FILE_PERSISTENT_ACLS` — IXFS (once §5.9.6 done) and NTFS
     - [ ] `FILE_SUPPORTS_SPARSE_FILES` — IXFS only (if implemented)
   - [ ] Set `lpVolumeSerialNumber` from filesystem metadata
 - [ ] Implement `GetDiskFreeSpace(lpRootPathName, lpSectorsPerCluster, lpBytesPerSector, lpNumberOfFreeClusters, lpTotalNumberOfClusters)`
@@ -198,18 +220,30 @@
 - [ ] Test: `GetDiskFreeSpaceEx("C:\\", ...)` → returns realistic values
 - [ ] Commit: `"vfs: GetVolumeInformation + disk space queries"`
 
-### 2.4 Hard Links & Reparse Point Stubs *(agent)*
+### 2.4 Hard Links & Reparse Point Routing *(agent)*
 
-**Prompt:** Windows heavily relies on hard links for the WinSxS (Side-by-Side) assembly cache, used to load correct MSVC C++ runtimes. Without hard link support, applications using the Visual C++ redistributable may fail. Implement `CreateHardLink()` for IXFS (which supports multiple directory entries pointing to the same inode). For FAT32 (no hard link support), return `ERROR_INVALID_FUNCTION` so well-written apps know to fall back to a file copy. Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT, ...)` as a stub that returns `ERROR_INVALID_FUNCTION`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: hard links + reparse point stubs"`. Add notes directly in this TODO section.
+**Prompt:** Windows heavily relies on hard links for the WinSxS (Side-by-Side) assembly cache, used to load correct MSVC C++ runtimes. Implement a two-tier strategy: (1) For IXFS, route to native hard link and symlink support (TODO-040 §5.9.7). (2) For FAT32 (no hard link support), return `ERROR_INVALID_FUNCTION` so well-written apps fall back to a file copy. Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT, ...)` routing — native on IXFS (reparse points as symlinks), stub on FAT32. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: hard links + reparse point routing"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Long-term:** IXFS supports native hard links and symlinks (TODO-040 §5.9.7).
+> This section routes `CreateHardLink` and reparse point operations to the right
+> handler. FAT32 returns `ERROR_INVALID_FUNCTION`.
 
 - [ ] Implement `CreateHardLink(lpFileName, lpExistingFileName, lpSecurityAttributes)`:
-  - [ ] IXFS: create new directory entry pointing to same inode, increment `nlink`
+  - [ ] IXFS: route to `ops->link(dir, name, target_inode)` (native §5.9.7)
   - [ ] FAT32: return `FALSE`, `SetLastError(ERROR_INVALID_FUNCTION)`
   - [ ] NTFS: create new filename attribute in MFT entry, increment link count
+- [ ] Implement `CreateSymbolicLink(lpSymlinkName, lpTargetName, dwFlags)`:
+  - [ ] IXFS: route to `ops->symlink(dir, name, target_path)` (native §5.9.7)
+  - [ ] FAT32: return `FALSE`, `SetLastError(ERROR_INVALID_FUNCTION)`
 - [ ] Update `GetFileInformationByHandle` to return `nNumberOfLinks` from inode
 - [ ] Implement `DeleteFile` for hard-linked files: decrement `nlink`, only free data when `nlink == 0`
-- [ ] Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT)` stub → `ERROR_INVALID_FUNCTION`
-- [ ] Implement `DeviceIoControl(FSCTL_GET_REPARSE_POINT)` stub → `ERROR_NOT_A_REPARSE_POINT`
+- [ ] Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT)`:  
+  - [ ] IXFS: route to symlink creation
+  - [ ] FAT32: return `ERROR_INVALID_FUNCTION`
+- [ ] Implement `DeviceIoControl(FSCTL_GET_REPARSE_POINT)`:  
+  - [ ] IXFS: read symlink target
+  - [ ] FAT32: return `ERROR_NOT_A_REPARSE_POINT`
 - [ ] Test: create hard link on IXFS → both paths reference same data
 - [ ] Test: delete one link → other still accessible, data intact
 - [ ] Test: delete last link → data freed
@@ -285,7 +319,7 @@
 | `include/kernel/fs/win32_errors.h` | [NEW] Win32 error code constants |
 | `include/kernel/fs/fileapi.h` | Handle type definitions, error codes |
 | `src/kernel/fs/vol_info.c` | [NEW] GetVolumeInformation, GetDiskFreeSpace |
-| `src/kernel/fs/security.c` | [NEW] ACL stubs (Set/GetFileSecurity) |
+| `src/kernel/fs/security.c` | [NEW] ACL routing (native on IXFS, stub on FAT32) |
 | `src/kernel/mm/mmap.c` | Memory-mapped file I/O |
 
 ---
@@ -299,8 +333,10 @@
 | Deferred deletion | ✅ pending_delete | ❌ Immediate unlink | ⬜ §1.3 — pending flag |
 | File IDs (inode-like) | ✅ nFileIndex | ✅ ino_t | ⬜ §1.4 — file_id |
 | Memory-mapped I/O | ✅ CreateFileMapping | ✅ mmap | ⬜ §1.5 — demand paging |
-| ADS (streams) | ✅ Native NTFS | ❌ No equivalent | ⬜ §2.1 — silent discard |
-| ACL security descriptors | ✅ Full DACL/SACL | ✅ POSIX ACLs (different) | ⬜ §2.2 — permissive stub |
+| ADS (streams) | ✅ Native NTFS | ❌ No equivalent | ⬜ §2.1 stub → TODO-040 §5.9.5 native |
+| ACL security descriptors | ✅ Full DACL/SACL | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native |
 | Volume info queries | ✅ GetVolumeInformation | ✅ statfs / statvfs | ⬜ §2.3 — accurate reporting |
-| Hard links | ✅ CreateHardLink | ✅ link() | ⬜ §2.4 — IXFS yes, FAT32 stub |
+| Hard links / symlinks | ✅ CreateHardLink | ✅ link() / symlink() | ⬜ §2.4 route → TODO-040 §5.9.7 native |
+| Extended attributes | ✅ NtSetEaFile | ✅ setxattr | ⬜ TODO-040 §5.9.8 native |
+| Transparent compression | ✅ NTFS compression | ✅ btrfs/zstd | ⬜ TODO-040 §5.9.9 native |
 | Precise error codes | ✅ 15,000+ distinct codes | ✅ errno (limited set) | ⬜ §3.1 — mapping table |

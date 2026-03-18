@@ -913,6 +913,113 @@
 - [x] Backward-compatible: v1 volumes mountable read-only, auto-upgrade on format
 - [x] Commit: `"fs: IXFS 64-bit block addressing"`
 
+#### 5.9.5 Alternate Data Streams (Named Streams)
+
+**Prompt:** Implement native Alternate Data Streams (ADS) on IXFS so the filesystem natively supports multiple named data streams per file — the same feature NTFS provides. Each file can have a default (unnamed) stream and zero or more named streams (e.g., `:Zone.Identifier`, `:$DATA`). Store stream metadata as a linked list of `ixfs_stream` entries in the inode's extended attribute area, each with its own extent list. This means IXFS can natively satisfy `CreateFile("file.exe:StreamName", ...)` without the spoofing layer (TODO-045 §2.1) needing to discard data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: native alternate data streams"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-045-Win32-VFS-Compat.md §2.1` — Once IXFS supports native ADS,
+> the spoofing layer should route ADS operations to the real IXFS implementation
+> instead of silently discarding. FAT32 volumes still use the discard fallback.
+
+- [ ] Define `struct ixfs_stream` — name (max 255 chars), extent list, size, checksum
+- [ ] Extend `struct ixfs_inode` with stream list pointer (or store in extended attribute blocks)
+- [ ] Implement `ixfs_stream_create(inode, stream_name)` — allocate stream metadata
+- [ ] Implement `ixfs_stream_open(inode, stream_name)` — return stream's extent list
+- [ ] Implement `ixfs_stream_read(stream, offset, buf, size)` — read from stream's extents
+- [ ] Implement `ixfs_stream_write(stream, offset, data, size)` — write to stream's extents
+- [ ] Implement `ixfs_stream_delete(inode, stream_name)` — free stream extents + metadata
+- [ ] Implement `ixfs_stream_enumerate(inode)` — list all streams on a file
+- [ ] VFS integration: parse `:stream_name` suffix in path, route to stream ops
+- [ ] Default stream (unnamed `::$DATA`) → normal file data (backward compatible)
+- [ ] Delete all streams when the parent file is deleted
+- [ ] Wire into `FindFirstStreamW` / `FindNextStreamW` Win32 API
+- [ ] Test: create `test.txt:metadata`, write data, read it back
+- [ ] Test: enumerate streams → default `::$DATA` + named streams
+- [ ] Commit: `"ixfs: native alternate data streams"`
+
+#### 5.9.6 Security Descriptors (ACLs)
+
+**Prompt:** Implement native security descriptors on IXFS for Win32-compatible Access Control Lists. Each inode stores a security descriptor ID that references a shared security descriptor table (most files share the same permissions). The security descriptor contains an Owner SID, Group SID, DACL (Discretionary ACL — who can access), and optionally a SACL (System ACL — audit logging). This allows `SetFileSecurity()` and `GetFileSecurity()` to actually persist permissions on IXFS, rather than using the permissive stubs from TODO-045 §2.2. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: native security descriptors"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-045-Win32-VFS-Compat.md §2.2` — Once IXFS supports real ACLs,
+> `Set/GetFileSecurity()` routes to the real IXFS implementation. FAT32 volumes
+> still use the permissive stub.
+
+- [ ] Define `struct ixfs_security_descriptor` — owner SID, group SID, DACL, SACL
+- [ ] Define `struct ixfs_ace` (Access Control Entry) — type, flags, access mask, SID
+- [ ] Create shared security descriptor table (deduplicated — NTFS uses `$Secure`)
+- [ ] Add `security_id` field to `struct ixfs_inode` (index into descriptor table)
+- [ ] Implement `ixfs_set_security(inode, descriptor)` — store/deduplicate descriptor
+- [ ] Implement `ixfs_get_security(inode)` — retrieve descriptor by ID
+- [ ] Implement `ixfs_check_access(inode, requested_access, token)` — evaluate DACL
+- [ ] Default descriptor: owner = creator, DACL grants `GENERIC_ALL` to `BUILTIN\Administrators`
+- [ ] Inherit parent directory ACLs on file/directory creation
+- [ ] Persist descriptor table to dedicated IXFS blocks
+- [ ] Wire into `SetFileSecurity()` / `GetFileSecurity()` Win32 API
+- [ ] Set `FILE_PERSISTENT_ACLS` flag in `GetVolumeInformation()` for IXFS volumes
+- [ ] Commit: `"ixfs: native security descriptors"`
+
+#### 5.9.7 Hard Links & Symbolic Links
+
+**Prompt:** Implement native hard links and symbolic links on IXFS. A hard link is an additional directory entry pointing to the same inode — the inode's `nlink` count tracks how many directory entries reference it. Data is freed only when `nlink` reaches 0. A symbolic link is a special inode type that stores a target path string; path resolution follows the symlink transparently. Hard links are critical for WinSxS (Side-by-Side) assembly cache. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: hard links and symbolic links"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-045-Win32-VFS-Compat.md §2.4` — Once IXFS supports native hard
+> links, `CreateHardLink()` routes to the real IXFS implementation. FAT32 volumes
+> still return `ERROR_INVALID_FUNCTION`.
+
+- [ ] Add `nlink` (link count) field to `struct ixfs_inode` (initialize to 1 on create)
+- [ ] Implement `ixfs_hard_link(dir_inode, name, target_inode)`:
+  - [ ] Create new directory entry pointing to existing inode
+  - [ ] Increment `target_inode->nlink`
+- [ ] Implement hard link deletion: decrement `nlink`, only free data when `nlink == 0`
+- [ ] Define `IXFS_TYPE_SYMLINK` inode type
+- [ ] Implement `ixfs_symlink_create(dir_inode, name, target_path)`:
+  - [ ] Store target path in inode (inline for short paths ≤ 48 bytes, extent for long)
+- [ ] Implement `ixfs_symlink_read(inode)` → return target path string
+- [ ] VFS path resolution: detect symlinks, follow target path (with loop detection, max 40 hops)
+- [ ] Wire `CreateHardLink()` to `ixfs_hard_link()` via `vfs_ops.link` callback
+- [ ] Wire `CreateSymbolicLink()` to `ixfs_symlink_create()` via `vfs_ops.symlink` callback
+- [ ] Test: create hard link, verify both paths read same data
+- [ ] Test: delete one link, verify other still works
+- [ ] Test: create symlink to file, read via symlink path
+- [ ] Test: create symlink loop → `ERROR_CANT_RESOLVE_FILENAME` (not infinite loop)
+- [ ] Commit: `"ixfs: hard links and symbolic links"`
+
+#### 5.9.8 Extended Attributes (xattrs)
+
+**Prompt:** Implement extended attributes on IXFS — arbitrary key-value metadata attached to files. This is the underlying storage mechanism for streams, security descriptors, and custom metadata. Each inode can store small xattrs inline (in the inode's reserved space) or in dedicated xattr blocks for larger data. This provides the foundation for POSIX xattrs (for the Linux compat layer) and Win32 extended attributes (`NtSetEaFile`/`NtQueryEaFile`). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: extended attributes"`. Add notes directly in this TODO section.
+
+- [ ] Define `struct ixfs_xattr_entry` — name length, value length, name, value
+- [ ] Inline xattrs: store in inode's reserved area if total ≤ 128 bytes
+- [ ] External xattrs: store in dedicated xattr blocks (one block per inode, expandable)
+- [ ] Implement `ixfs_xattr_set(inode, name, value, size)` — store or update xattr
+- [ ] Implement `ixfs_xattr_get(inode, name, buffer, size)` → return xattr value
+- [ ] Implement `ixfs_xattr_list(inode, buffer, size)` → list all xattr names
+- [ ] Implement `ixfs_xattr_remove(inode, name)` — remove specific xattr
+- [ ] Namespace prefixes: `user.*`, `security.*`, `system.*` (for ACLs, capabilities)
+- [ ] Wire into VFS `setxattr` / `getxattr` / `listxattr` / `removexattr` callbacks
+- [ ] Commit: `"ixfs: extended attributes"`
+
+#### 5.9.9 Transparent Compression
+
+**Prompt:** Implement per-file transparent compression on IXFS. Files marked with `FILE_ATTRIBUTE_COMPRESSED` are stored with LZ4 compression on a per-block basis (each 4 KB block compressed independently for random access). The VFS decompresses on read and compresses on write transparently. Compression ratio is tracked in the inode for `GetCompressedFileSize()`. This provides better space efficiency than NTFS's native compression (which uses 16-cluster compression units and is notorious for fragmentation). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: transparent per-block compression"`. Add notes directly in this TODO section.
+
+- [ ] Define `IXFS_FLAG_COMPRESSED` flag in inode
+- [ ] Implement per-block compression using LZ4 (bundled, freestanding-compatible)
+- [ ] Compressed block format: `[compressed_size:u16][data...]` (max 4 KB → stored uncompressed if larger)
+- [ ] Extent metadata stores compressed size per block for offset calculation
+- [ ] Implement `ixfs_read_compressed(inode, offset, buf, size)` → decompress on read
+- [ ] Implement `ixfs_write_compressed(inode, offset, data, size)` → compress on write
+- [ ] Implement `DeviceIoControl(FSCTL_SET_COMPRESSION)` → set/clear compression flag
+- [ ] Implement `GetCompressedFileSize()` → return actual on-disk bytes used
+- [ ] New files inherit compression from parent directory (if directory is compressed)
+- [ ] Test: create compressed file, verify data integrity after read-back
+- [ ] Test: compare on-disk size vs logical size — compression reduces storage
+- [ ] Commit: `"ixfs: transparent per-block compression"`
+
 ### 5.10 IXFS Unique Selling Points
 
 > See the full feature comparison table in the IXFS specification.
@@ -1338,7 +1445,12 @@
 | 🔴 P0     | **3.4.1 FAT32 Offset-Aware Write**           | **Append support — blocks TODO-005-Debug live logging**         |
 | ✅ Done   | 3.5 VFS Driver Interface                     | `vfs_ops` driver routing — callbacks used by §3.6               |
 | 🔴 P0     | **3.5.5 Directory/Metadata/Flush Callbacks** | **mkdir, rmdir, set_attr, set_times, flush — needed by §3.6**   |
-| ✅ Done   | 5.1–5.9 IXFS on Disk                         | Full persistent IXFS with extents, journal, CoW, snapshots      |
+| ✅ Done   | 5.1–5.9.4 IXFS on Disk                       | Full persistent IXFS with extents, journal, CoW, snapshots      |
+| 🟡 P2     | 5.9.5 IXFS Alternate Data Streams            | Native ADS — NTFS feature parity                                |
+| 🟡 P2     | 5.9.6 IXFS Security Descriptors (ACLs)       | Native ACLs — real file permissions                             |
+| 🟡 P2     | 5.9.7 IXFS Hard Links / Symlinks             | WinSxS compat, filesystem navigation                            |
+| 🟢 P3     | 5.9.8 IXFS Extended Attributes               | Metadata storage foundation                                     |
+| 🟢 P3     | 5.9.9 IXFS Transparent Compression           | Per-block LZ4 — better than NTFS compression                   |
 | ✅ Done   | 8.14 IXFS Directory Structure                | Standard paths on first boot                                    |
 | 🔴 P0     | **3.6 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
 | 🟠 P1     | 3.4.2 FAT32 FSInfo + Hint                    | FAT32 spec compliance, faster allocation                        |
@@ -1394,4 +1506,9 @@
 | Data Recovery                   | ✅ Previous Versions + third-party  | ✅ `extundelete`, PhotoRec      | ⬜ §8.5 P3                                          |
 | **Snapshot on boot fs**         | ❌ (NTFS — no CoW)                 | ⚠️ Only with btrfs root        | ✅ **IXFS is always the boot fs — §5.8**             |
 | **Per-block checksums on boot** | ❌                                  | ⚠️ btrfs only (not default)    | ✅ **IXFS boot volume — §5.9.3**                    |
+| **Alternate Data Streams**      | ✅ NTFS native                     | ❌ No equivalent                | ⬜ **IXFS native §5.9.5**                           |
+| **Security descriptors (ACLs)** | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different)       | ⬜ **IXFS native §5.9.6**                           |
+| **Hard links / symlinks**       | ✅ CreateHardLink / mklink         | ✅ link() / symlink()           | ⬜ **IXFS native §5.9.7**                           |
+| **Extended attributes**         | ✅ NtSetEaFile                     | ✅ setxattr                     | ⬜ **IXFS native §5.9.8**                           |
+| **Transparent compression**     | ✅ NTFS (16-cluster units)         | ✅ btrfs zstd                   | ⬜ **IXFS LZ4 per-block §5.9.9 — better than NTFS**|
 | **Integrated disk GUI tools**   | ✅ Disk Management (limited)        | ⚠️ GParted (separate install)  | ⬜ **§7–8 full suite: diskmgr, defrag, recover…**   |
