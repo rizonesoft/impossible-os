@@ -86,4 +86,3 @@ int fat32_rename(uint32_t dir_cluster,
  * Writes BPB, FSInfo, both FAT copies, and empty root directory.
  * Returns 0 on success, -1 on failure. */
 int fat32_format(const struct blkdev *dev, const char *label);
-
