@@ -1,4 +1,4 @@
-# 041-AHCI — Advanced Host Controller Interface
+# 040.02-AHCI — Advanced Host Controller Interface
 
 > **Goal:** Bring the existing AHCI SATA driver from basic polling read/write up to
 > production-grade quality. Implement interrupt-driven I/O, Native Command Queuing (NCQ),
@@ -76,6 +76,46 @@
 - [ ] ISR: check CCC interrupt vector in addition to per-port vectors
 - [ ] Tunable via Registry: `HKLM\SYSTEM\Drivers\AHCI\CoalesceTimeoutMs` and `CoalesceCount`
 - [ ] Commit: `"ahci: interrupt coalescing"`
+
+### 2.3 NCQ Priority (High/Low)
+
+**Prompt:** SATA 2.6+ defines a Priority bit (PRIO) in `READ FPDMA QUEUED` and `WRITE FPDMA QUEUED` commands that allows the host to classify I/O as normal or high priority. High-priority commands request better quality of service — the drive should process them more quickly than normal commands. This enables the OS I/O scheduler to fast-track latency-sensitive reads (e.g., page fault I/O, boot file reads) while deprioritizing background writes (e.g., log flushing, indexing). Check IDENTIFY DEVICE word 76 bit 1 for NCQ Priority support. Neither Windows StorAHCI nor Linux libata expose this to their I/O schedulers — implementing it gives Impossible OS a measurable latency advantage. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: NCQ priority support"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux uses NCQ Priority in their stock AHCI drivers.
+> Implementing this gives Impossible OS a latency advantage for interactive I/O under load.
+
+- [ ] Check IDENTIFY DEVICE word 76 bit 1 — NCQ Priority supported by device
+- [ ] Modify `ahci_ncq_read()` / `ahci_ncq_write()` to accept a `priority` parameter
+- [ ] Set PRIO bit (bit 14 of Features/Count in FPDMA FIS) for high-priority commands
+- [ ] Wire to block device layer: `blkdev_read()` with `BLK_PRIO_HIGH` flag
+- [ ] Priority classification policy:
+  - [ ] High: page fault I/O, boot file reads, user-initiated file opens
+  - [ ] Normal: sequential prefetch, background indexing, log writes
+- [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\AHCI\EnableNCQPriority` (default: 1)
+- [ ] Track per-port priority statistics: high-prio vs normal-prio command counts
+- [ ] Commit: `"ahci: NCQ priority support"`
+
+### 2.4 NCQ Autosense / Sense Data Reporting
+
+**Prompt:** When an NCQ command fails, the traditional error recovery path requires reading the Queued Error Log (Log Page 10h), which aborts ALL outstanding NCQ commands — a severe performance penalty. ACS-2 introduced Sense Data Reporting: when enabled, the device populates SCSI-like sense keys (Sense Key, ASC, ASCQ) directly in the Set Device Bits FIS and the Queued Error Log, allowing precise error classification without issuing a separate `REQUEST SENSE DATA EXT` command. Check IDENTIFY DEVICE word 119 bit 6 (Sense Data Reporting) and word 120 bit 6 (enabled). This enables surgical error recovery instead of scorched-earth queue drain. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: NCQ Autosense and sense data reporting"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux has partial support via libata-scsi, but Windows StorAHCI
+> doesn't expose detailed sense data to user diagnostics. Full integration with the
+> Disk Manager gives Impossible OS superior error reporting.
+
+- [ ] Check IDENTIFY DEVICE word 119 bit 6 — Sense Data Reporting supported
+- [ ] Enable via SET FEATURES (subcommand 0xC3) if not already enabled
+- [ ] On NCQ error (SDBS with ERR bit):
+  - [ ] Read Queued Error Log (READ LOG EXT, Log Page `0x10`, 512 bytes)
+  - [ ] Parse tag, status, LBA of failed command
+  - [ ] If Sense Data Reporting enabled: extract Sense Key, ASC, ASCQ from log
+  - [ ] Map to human-readable error: e.g., ASC=0x11 → "Unrecovered Read Error"
+- [ ] Implement `ahci_read_log_page(port, log_page, buffer)` — generic log reader
+- [ ] Retry only the FAILED command (not entire queue) when error is recoverable
+- [ ] Expose error details via Registry: `HKLM\HARDWARE\AHCI\PortX\LastError\SenseKey`, `ASC`, `ASCQ`
+- [ ] Commit: `"ahci: NCQ Autosense and sense data reporting"`
 
 ---
 
@@ -157,7 +197,7 @@
 
 ---
 
-## 5. TRIM / Discard
+## 5. TRIM / Discard & Force Unit Access
 
 ### 5.1 DATA SET MANAGEMENT (TRIM)
 
@@ -171,6 +211,25 @@
 - [ ] Implement `ahci_trim(int port, uint64_t lba, uint32_t count)` — public API
 - [ ] Wire to VFS: `fat32_unlink()` and `ixfs_delete()` call `blkdev_discard()` → `ahci_trim()`
 - [ ] Commit: `"ahci: TRIM / discard support"`
+
+### 5.2 Force Unit Access (FUA)
+
+**Prompt:** Force Unit Access guarantees that write data is committed to non-volatile media (platter/flash cells) before the command completes — bypassing the drive's volatile write cache. This is critical for filesystem journal commits and any write that must survive a sudden power loss. FUA uses the `WRITE DMA FUA EXT` (0x3D) or `WRITE FPDMA QUEUED` (0x61) with the FUA bit set. Check IDENTIFY DEVICE word 83 bit 6 for write cache and word 86 bit 6 for FUA support. Without FUA, the filesystem must issue an explicit `FLUSH CACHE EXT` (0xEA) after every critical write — which flushes the ENTIRE cache and is far slower. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: Force Unit Access (FUA)"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux XFS uses FUA natively for journal commits (since kernel 4.18).
+> Windows StorAHCI relies mostly on FLUSH CACHE instead. Implementing per-command FUA
+> gives Impossible OS better write performance for journaled filesystems with equivalent durability.
+
+- [ ] Check IDENTIFY DEVICE word 86 bit 6 — FUA supported
+- [ ] Check IDENTIFY DEVICE word 85 bit 5 — write cache enabled (FUA bypasses it)
+- [ ] Implement `WRITE DMA FUA EXT` (0x3D) — single-command FUA write
+- [ ] For NCQ: set FUA bit (bit 7 in Device register) in `WRITE FPDMA QUEUED`
+- [ ] Implement `FLUSH CACHE EXT` (0xEA) as fallback when FUA not supported
+- [ ] Expose via block device layer: `blkdev_write()` with `BLK_FLAG_FUA`
+- [ ] Wire to filesystems: IXFS journal commits, FAT32 metadata writes use FUA
+- [ ] Tunable: `HKLM\SYSTEM\Drivers\AHCI\EnableFUA` (default: 1)
+- [ ] Commit: `"ahci: Force Unit Access (FUA)"`
 
 ---
 
@@ -293,6 +352,102 @@
 
 ---
 
+## 11. ATA Security & Drive Sanitization
+
+### 11.1 ATA Security Erase
+
+**Prompt:** ATA Security provides drive-level password protection and secure erase. Secure Erase (`SECURITY ERASE UNIT`, 0xF4) instructs the drive firmware to overwrite ALL user data with zeros or vendor-specific patterns — far faster than host-side zeroing because it operates at the media layer. Enhanced Secure Erase uses the drive's encryption key invalidation (for SEDs) making it instantaneous. Check IDENTIFY DEVICE word 82 bit 1 for Security feature support and word 128 for security status. Expose via Disk Manager: "Secure Erase Drive" button. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: ATA security erase"`. Add notes directly in this TODO section.
+
+> [!CAUTION]
+> **Destructive Operation.** ATA Security Erase is irreversible and wipes ALL data.
+> Require explicit user confirmation and admin privileges.
+
+> [!TIP]
+> **Competitive Edge:** Windows 8+ intentionally BLOCKED ATA Security Erase from
+> running under a live OS (only works from WinPE). Linux requires manual `hdparm`
+> invocation. Impossible OS can safely expose this via the GUI Disk Manager —
+> a significant usability advantage.
+
+- [ ] Check IDENTIFY DEVICE word 82 bit 1 — Security feature set supported
+- [ ] Check IDENTIFY DEVICE word 128 — Security status:
+  - [ ] Bit 0: Security supported, Bit 1: Security enabled, Bit 3: Locked
+  - [ ] Bit 5: Enhanced erase supported
+- [ ] Set password: `SECURITY SET PASSWORD` (0xF1) with temporary password
+- [ ] Normal erase: `SECURITY ERASE UNIT` (0xF4) — overwrites with zeros
+- [ ] Enhanced erase: `SECURITY ERASE UNIT` with enhanced bit — uses crypto erase on SEDs
+- [ ] Clear password after erase: `SECURITY DISABLE PASSWORD` (0xF6)
+- [ ] Implement `ahci_security_erase(port, enhanced)` — public API
+- [ ] Disk Manager integration: "Secure Erase" button with confirmation dialog
+- [ ] Timeout: normal erase may take hours on HDDs — show progress estimate
+- [ ] Commit: `"ahci: ATA security erase"`
+
+### 11.2 SANITIZE Device Command
+
+**Prompt:** SANITIZE (ACS-2+) is the modern replacement for ATA Security Erase, designed specifically for SSDs and enterprise drives. It offers three modes: BLOCK ERASE (NAND block erase), CRYPTO SCRAMBLE (invalidate encryption key — instantaneous), and OVERWRITE (pattern write). Unlike Security Erase, SANITIZE is non-interruptible — once started, it continues even after power cycling, preventing partial-erase attacks. Check IDENTIFY DEVICE word 59 bits 12–14 for supported sanitize operations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: SANITIZE device command"`. Add notes directly in this TODO section.
+
+- [ ] Check IDENTIFY DEVICE word 59:
+  - [ ] Bit 12: BLOCK ERASE supported
+  - [ ] Bit 13: OVERWRITE supported
+  - [ ] Bit 14: CRYPTO SCRAMBLE supported
+- [ ] Implement `SANITIZE DEVICE` command (0xB4) with subcommands:
+  - [ ] Feature 0x11: SANITIZE STATUS EXT — poll completion
+  - [ ] Feature 0x12: CRYPTO SCRAMBLE EXT — instant crypto erase
+  - [ ] Feature 0x14: BLOCK ERASE EXT — NAND block erase
+  - [ ] Feature 0x14: OVERWRITE EXT — pattern overwrite
+- [ ] Track progress: `SANITIZE STATUS EXT` returns percent complete
+- [ ] Expose via Disk Manager: "Sanitize Drive" with mode selection dropdown
+- [ ] Commit: `"ahci: SANITIZE device command"`
+
+---
+
+## 12. I/O Statistics & Telemetry
+
+### 12.1 Per-Port I/O Counters
+
+**Prompt:** Implement comprehensive per-port I/O statistics for performance monitoring and diagnostics. Track: read/write IOPS, throughput (bytes/sec), average latency, queue depth, NCQ command utilization, and error counts. Expose via Registry at `HKLM\HARDWARE\AHCI\PortX\Stats\*`. The System Monitor app (Task Manager equivalent) can display real-time disk activity graphs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: I/O statistics and telemetry"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows exposes disk stats via PerfMon counters, Linux via
+> `/proc/diskstats`. Impossible OS can surpass both by providing per-NCQ-tag latency
+> histograms and drive-internal temperature tracking, visible in a single Disk Manager panel.
+
+- [ ] Track per-port counters (atomic increments, no locks):
+  - [ ] `reads_completed`, `writes_completed` (cumulative IOPS)
+  - [ ] `bytes_read`, `bytes_written` (cumulative throughput)
+  - [ ] `read_latency_sum_us`, `write_latency_sum_us` (for average calculation)
+  - [ ] `read_latency_max_us`, `write_latency_max_us` (worst-case)
+  - [ ] `ncq_commands_issued`, `dma_commands_issued` (NCQ vs legacy split)
+  - [ ] `errors_total`, `errors_crc`, `errors_timeout`, `errors_media`
+  - [ ] `current_queue_depth` (live NCQ tag count)
+- [ ] Latency measurement: record `rdtsc` at command issue, compute delta at completion
+- [ ] Per-NCQ-tag latency histogram: 8 buckets (< 100µs, < 500µs, < 1ms, < 5ms, < 10ms, < 50ms, < 100ms, ≥ 100ms)
+- [ ] Expose via Registry:
+  - [ ] `HKLM\HARDWARE\AHCI\Port0\Stats\ReadsCompleted`
+  - [ ] `HKLM\HARDWARE\AHCI\Port0\Stats\AvgReadLatencyUs`
+  - [ ] `HKLM\HARDWARE\AHCI\Port0\Stats\CurrentQueueDepth`
+- [ ] Reset counters on demand: `HKLM\HARDWARE\AHCI\PortX\Stats\Reset = 1`
+- [ ] Log periodic summary: `[AHCI] Port 0: %u reads, %u writes, avg_lat=%uµs, depth=%u`
+- [ ] Commit: `"ahci: I/O statistics and telemetry"`
+
+---
+
+## 13. Zero-Power Optical Disc Drive (ZPODD)
+
+### 13.1 ZPODD Support
+
+**Prompt:** Zero-Power Optical Disc Drive (SATA 3.1) allows ATAPI optical drives to enter a truly zero-power state when no disc is present — the PHY shuts down completely and the drive draws 0W. This is critical for laptop battery life when a DVD/Blu-ray drive is installed but empty. The drive wakes automatically on disc insertion (via the tray sensor signaling PHY wake). Check IDENTIFY PACKET DEVICE word 76 for ZPODD support and word 79 for ZPODD enablement. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: ZPODD zero-power optical drive"`. Add notes directly in this TODO section.
+
+- [ ] Check IDENTIFY PACKET DEVICE word 76 — ZPODD supported
+- [ ] Check IDENTIFY PACKET DEVICE word 79 — ZPODD enabled
+- [ ] Enable via SET FEATURES if supported but not enabled
+- [ ] When no disc present: allow ATAPI port to enter DevSleep/ZPODD
+- [ ] Auto-wake: disc insertion triggers PHY wake → detect via `PxIS.PCS`
+- [ ] After wake: run `TEST UNIT READY` to detect new disc → auto-mount ISO 9660/UDF
+- [ ] Log: `[AHCI] Port %d: ODD entered zero-power state (no disc)`
+- [ ] Commit: `"ahci: ZPODD zero-power optical drive"`
+
+---
+
 ## Priority Order
 
 | Priority | Section                       | Description                                        |
@@ -302,17 +457,27 @@
 | 🟠 P1    | 2.1 NCQ (FPDMA)              | Major performance gain for concurrent I/O          |
 | 🟠 P1    | 3.2 Port Error Handling       | Production systems need robust error handling      |
 | 🟠 P1    | 5.1 TRIM / Discard           | SSD performance degrades without TRIM              |
+| 🟠 P1    | 5.2 Force Unit Access (FUA)  | Data durability — journal commits must survive crash|
 | 🟠 P1    | 7.1 BIOS/OS Handoff          | Prevents SMM firmware interference                 |
+| 🟡 P2    | 2.3 NCQ Priority ⭐          | **Latency edge** — neither Win nor Linux uses this |
+| 🟡 P2    | 2.4 NCQ Autosense ⭐         | **Surgical error recovery** — better than queue drain|
 | 🟡 P2    | 4.1 Hot-Plug Detection       | eSATA and hot-swap bay support                     |
 | 🟡 P2    | 1.2 MSI Support              | Better interrupt routing (no IRQ sharing)          |
 | 🟡 P2    | 6.1 Link Power Management    | Battery life on laptops with SATA SSDs             |
 | 🟡 P2    | 10.1 SMART Monitoring        | Drive health visible in Disk Manager               |
+| 🟡 P2    | 12.1 I/O Statistics ⭐       | **Per-NCQ-tag latency histograms** — beyond both OSes|
 | 🟢 P3    | 2.2 Interrupt Coalescing     | Performance under heavy I/O workloads              |
 | 🟢 P3    | 6.2 DevSleep (AHCI 1.3.1)   | Ultra-low-power idle for laptops                   |
 | 🟢 P3    | 9.2 Enhanced ATAPI/CD-ROM   | Full CD/DVD support                                |
 | 🟢 P3    | 4.2 Staggered Spin-Up       | Multi-drive server/NAS environments                |
+| 🟢 P3    | 11.1 ATA Security Erase ⭐  | **GUI secure erase** — Win blocks this from live OS|
+| 🟢 P3    | 11.2 SANITIZE ⭐             | Modern crypto/block erase — enterprise standard    |
 | 🔵 P4    | 8.1 Enclosure Management    | Server rack LED identification                     |
 | 🔵 P4    | 9.1 Port Multiplier         | External multi-drive enclosures                    |
+| 🔵 P4    | 13.1 ZPODD                  | Zero-power optical drive for laptops               |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -327,15 +492,22 @@
 | MSI / MSI-X                     | ✅ MSI-X preferred                 | ✅ MSI / MSI-X                        | ⬜ §1.2 P2                                    |
 | Native Command Queuing (NCQ)    | ✅ 32-deep queue                   | ✅ 32-deep, auto-detect               | ⬜ §2.1 P1 — sequential only                  |
 | Interrupt coalescing            | ✅ Adaptive                        | ✅ CCC support                        | ⬜ §2.2 P3                                    |
+| **NCQ Priority (PRIO bit)** ⭐  | ❌ Not used                        | ❌ Not used                           | ⬜ §2.3 P2 — latency advantage                |
+| **NCQ Autosense** ⭐            | ❌ Basic error log only            | ⚠️ Partial (libata-scsi)              | ⬜ §2.4 P2 — surgical error recovery          |
 | Error recovery (CLO)            | ✅ Automatic retry + CLO           | ✅ libata EH (error handler)          | ⬜ §3.1 P0 — no recovery                      |
 | Comprehensive error handling    | ✅ WHEA integration                | ✅ libata error handler               | ⬜ §3.2 P1                                    |
 | Hot-plug (eSATA / swap bay)     | ✅ Full hot-plug                   | ✅ Full hot-plug                       | ⬜ §4.1 P2                                    |
 | Staggered spin-up               | ✅                                 | ✅                                    | ⬜ §4.2 P3                                    |
 | TRIM / discard                  | ✅ Optimize Drives                 | ✅ `fstrim`, auto-discard             | ⬜ §5.1 P1                                    |
+| **Force Unit Access (FUA)** ⭐  | ⚠️ Relies on FLUSH CACHE mostly   | ✅ XFS uses FUA natively              | ⬜ §5.2 P1 — per-command FUA                  |
 | Link power management (ALPM)    | ✅ Balanced / Performance          | ✅ `min_power` / `med_power_with_dipm` | ⬜ §6.1 P2                                    |
 | DevSleep (AHCI 1.3.1)           | ✅ Connected Standby               | ✅ Supported                           | ⬜ §6.2 P3                                    |
 | BIOS/OS handoff (BOHC)          | ✅                                 | ✅                                    | ⬜ §7.1 P1                                    |
 | Enclosure management (LEDs)     | ✅ enclosure aware                 | ✅ `ledtrig-disk`                      | ⬜ §8.1 P4                                    |
 | Port multiplier                 | ✅ (limited)                       | ✅ `libata-pmp`                        | ⬜ §9.1 P4                                    |
 | SMART monitoring                | ✅ Storage Spaces / CrystalDisk    | ✅ `smartctl` (smartmontools)          | ⬜ §10.1 P2                                   |
+| **ATA Security Erase** ⭐       | ❌ Blocked since Win 8 (WinPE only)| ⚠️ Manual `hdparm` only              | ⬜ §11.1 P3 — GUI Disk Manager erase          |
+| **SANITIZE (crypto/block)** ⭐  | ⚠️ NVMe only via IOCTL            | ✅ `sg_sanitize`                       | ⬜ §11.2 P3 — GUI with mode selector          |
+| **I/O Stats (per-NCQ-tag)** ⭐  | ⚠️ PerfMon (aggregate only)       | ⚠️ `/proc/diskstats` (aggregate)     | ⬜ §12.1 P2 — per-tag latency histograms      |
+| **ZPODD** (zero-power ODD)      | ✅ Supported                       | ✅ Since kernel 3.9                    | ⬜ §13.1 P4                                   |
 | **NCQ + IRQ-driven (default)**  | ✅                                 | ✅                                    | ⬜ §1.1 + §2.1 — polling today                |
