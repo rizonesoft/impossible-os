@@ -163,6 +163,24 @@
 - [ ] Optionally auto-clean orphans: mark with `0xE5`
 - [ ] Commit: `"fat32: LFN deletion and orphan cleanup"`
 
+### 4.3 Full UCS-2 Unicode Support
+
+**Prompt:** The current LFN implementation converts names to/from ASCII, losing non-ASCII characters (accented letters, CJK, Cyrillic). LFN entries store characters as UCS-2LE (16-bit Unicode). Implement proper UCS-2LE read/write: on read, convert UCS-2LE to UTF-8 for the VFS layer; on write, convert UTF-8 from the VFS layer to UCS-2LE for the directory entry. Handle surrogate pairs (characters > U+FFFF are NOT representable in UCS-2 — reject them). This is critical for international filename interop with Windows. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: full UCS-2 Unicode LFN support"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ucs2le_to_utf8(const uint16_t *ucs2, size_t len, char *utf8, size_t buf_size)`:
+  - [ ] U+0000–U+007F → 1-byte UTF-8
+  - [ ] U+0080–U+07FF → 2-byte UTF-8
+  - [ ] U+0800–U+FFFF → 3-byte UTF-8
+  - [ ] Stop on UCS-2 null terminator or `0xFFFF` padding
+- [ ] Implement `utf8_to_ucs2le(const char *utf8, uint16_t *ucs2, size_t max_chars)`:
+  - [ ] Reverse of above, reject characters > U+FFFF (no surrogate pair support in FAT32)
+  - [ ] Pad remaining characters with `0xFFFF`
+- [ ] Update `lfn_extract_chars()` to use `ucs2le_to_utf8()` instead of ASCII truncation
+- [ ] Update `fat32_create_lfn_entries()` to use `utf8_to_ucs2le()`
+- [ ] SFN basis name: transliterate non-ASCII characters (e.g., "ü" → "U") or use `~` tail
+- [ ] Test: create file with CJK/Cyrillic/accented name, read back correctly
+- [ ] Commit: `"fat32: full UCS-2 Unicode LFN support"`
+
 ---
 
 ## 5. Timestamp Accuracy
@@ -235,6 +253,28 @@
 - [ ] Also write dirty FAT sectors to second FAT (dual-FAT mirroring, §3.1)
 - [ ] Profile: FAT cache hit rate should be > 95% for sequential reads
 - [ ] Commit: `"fat32: dedicated FAT sector cache"`
+
+### 6.4 Contiguous Cluster Pre-Allocation
+
+**Prompt:** When a new file is created with a known target size (e.g., file copy, download), pre-allocate a contiguous run of clusters instead of allocating one-at-a-time during writes. This reduces fragmentation and enables single-DMA writes for the entire file. Windows does this automatically for large copies (`SetEndOfFile()` pre-extends). Implement `fat32_preallocate(file, target_size)`: calculate required cluster count, find the longest contiguous free run in the FAT (scanning from `next_free` hint), allocate the entire run, chain them in the FAT. If no contiguous run is large enough, fall back to best-fit allocation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: contiguous cluster pre-allocation"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows pre-allocates but the algorithm is opaque and not user-controllable.
+> Linux vfat does NOT pre-allocate — it allocates on write. Impossible OS can offer guaranteed
+> contiguous allocation when possible, reducing fragmentation to near-zero for sequential writes.
+
+- [ ] Implement `fat32_preallocate(vol, file, target_size_bytes)`:
+  - [ ] Calculate `needed_clusters = ceil(target_size / cluster_size)`
+  - [ ] Scan FAT for longest contiguous free run starting from `next_free`
+  - [ ] If contiguous run ≥ `needed_clusters`: allocate entire run
+  - [ ] Chain clusters: FAT[n] = n+1, FAT[last] = `0x0FFFFFFF`
+  - [ ] If no contiguous run: fall back to best-fit (largest available run)
+  - [ ] Update `DIR_FileSize` to 0 (file is pre-allocated but empty until written)
+  - [ ] Update FSInfo: `free_count -= needed_clusters`
+- [ ] Wire to `CreateFile()` with `FILE_FLAG_SEQUENTIAL_SCAN` hint
+- [ ] Wire to file copy: pre-allocate before copying data
+- [ ] Log: `[FAT32] Pre-allocated %u contiguous clusters for %s`
+- [ ] Commit: `"fat32: contiguous cluster pre-allocation"`
 
 ---
 
@@ -353,6 +393,92 @@
 
 ---
 
+## 11. Defragmentation & Fragmentation Analysis (🚀 Impossible OS Feature)
+
+### 11.1 Fragmentation Analyzer
+
+**Prompt:** Implement a fragmentation analyzer that reports fragmentation level per file and per volume. Walk every file's cluster chain and count the number of extents (contiguous runs). A file with 1 extent is perfectly contiguous; more extents means more fragmentation. Report: total files, fragmented files, average fragments per file, most fragmented file. Generate a visual cluster map (bitmap of used/free/fragmented sectors) for the Disk Manager GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: fragmentation analyzer"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows defrag shows a visual fragmentation map, but only AFTER running
+> analysis. Linux has no built-in FAT32 defrag tool at all. Impossible OS can show a real-time
+> fragmentation heat map in Disk Manager with per-file fragmentation scores.
+
+- [ ] Implement `fat32_analyze_fragmentation(vol, *report)`:
+  - [ ] Walk all files recursively, count extents per file
+  - [ ] Extent = contiguous run of clusters where `FAT[n] == n+1`
+  - [ ] Track: `total_files`, `fragmented_files`, `total_extents`, `max_extents_file`
+  - [ ] Compute fragmentation percentage: `fragmented_files * 100 / total_files`
+- [ ] Generate cluster bitmap for visual map:
+  - [ ] Each cluster → one pixel: free (gray), used-contiguous (green), fragmented (red)
+  - [ ] Export as raw bitmap for Disk Manager rendering
+- [ ] Report: `[FAT32] Volume %s: %u%% fragmented (%u/%u files, avg %.1f extents)`
+- [ ] Wire to Disk Manager: "Analyze" button with progress bar and visual map
+- [ ] Commit: `"fat32: fragmentation analyzer"`
+
+### 11.2 Online Defragmentation
+
+**Prompt:** Implement a defragmenter that relocates file clusters to make each file contiguous. Read the file's cluster chain, find a contiguous free region large enough, read all data clusters, write to the new contiguous location, update the FAT chain, update the directory entry's start cluster. Process one file at a time to limit memory usage. Prioritize: most fragmented files first, skip files currently open. This is equivalent to Windows `defrag.exe` but for FAT32 on Impossible OS. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: online defragmentation"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> **Crash during defrag can cause data loss.** Always: (1) allocate new contiguous clusters,
+> (2) copy data, (3) update FAT chain to new location, (4) free old clusters.
+> If crash occurs between steps 3 and 4, old data is still intact.
+
+- [ ] Implement `fat32_defrag_file(vol, dir_entry, start_cluster)`:
+  - [ ] Count extents — skip if already contiguous (1 extent)
+  - [ ] Calculate total cluster count for file
+  - [ ] Find contiguous free region via `fat32_find_contiguous(vol, count)`
+  - [ ] If no contiguous region: skip file, report as unfixable
+  - [ ] Read all clusters from old chain into buffer
+  - [ ] Write to new contiguous location
+  - [ ] Update FAT: new chain = n, n+1, ..., n+count-1, EOF
+  - [ ] Update directory entry: `DIR_FstClusHI:LO` = new start cluster
+  - [ ] Free old clusters: set FAT entries to `0x00000000`
+  - [ ] Flush FAT + directory entries + FSInfo
+- [ ] Implement `fat32_defrag_volume(vol)` — defrag all fragmented files:
+  - [ ] Build sorted list: most fragmented first
+  - [ ] Skip open files (check VFS open file table)
+  - [ ] Progress callback for GUI: `on_progress(files_done, files_total, pct)`
+- [ ] Wire to Disk Manager: "Defragment" button with progress dialog
+- [ ] Commit: `"fat32: online defragmentation"`
+
+---
+
+## 12. Transaction-Safe FAT Writes (🚀 Impossible OS Feature)
+
+### 12.1 Write-Ahead Log for FAT Operations
+
+**Prompt:** FAT32 has no journaling — a crash during multi-step operations (file create, cluster chain extension, directory update) can leave the filesystem inconsistent. Implement a lightweight write-ahead log (WAL) that records intended changes before applying them. On mount, if the WAL contains uncommitted entries, replay or roll back to restore consistency. Store the WAL in the reserved sectors between the boot sector and the first FAT (typically sectors 2–5 are unused). This is NOT a full journal like NTFS/ext4 — it's a minimal redo log for atomic multi-sector updates. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: transaction-safe FAT writes (WAL)"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** NO operating system provides crash protection for FAT32.
+> Windows `fastfat.sys` has zero journaling. Linux `vfat` has zero journaling.
+> Both rely on `chkdsk`/`fsck` AFTER the crash. Impossible OS can prevent the
+> corruption from happening in the first place — a world-first for FAT32.
+
+> [!CAUTION]
+> The WAL must NOT break interoperability. It is stored in reserved sectors that no other
+> OS reads or writes, so Windows/Linux can still mount the volume normally. The WAL is only
+> used by Impossible OS for crash recovery.
+
+- [ ] Define WAL sector layout (use reserved sectors 2–5, typically unused):
+  - [ ] Sector 2: WAL header — magic `"IWAL"`, sequence number, entry count
+  - [ ] Sectors 3–5: WAL entries — each entry: `{target_lba, sector_data[512]}`
+- [ ] On multi-sector FAT operation (create file, extend chain, delete):
+  - [ ] Write intended changes to WAL FIRST (with sequence number)
+  - [ ] Apply changes to actual FAT/directory sectors
+  - [ ] Commit WAL: write completion marker
+  - [ ] Erase WAL: zero header on successful completion
+- [ ] On mount: check WAL header magic
+  - [ ] If uncommitted WAL found: replay changes (redo) or discard (undo)
+  - [ ] Log: `[FAT32] WAL recovery: replayed %d pending operations`
+- [ ] Scope: protect FAT chain updates + directory entry updates only
+  - [ ] File data writes are NOT journaled (too expensive — same as NTFS data default)
+- [ ] Commit: `"fat32: transaction-safe FAT writes (WAL)"`
+
+---
+
 ## Priority Order
 
 | Priority | Section                            | Description                                              |
@@ -367,16 +493,24 @@
 | 🟠 P1    | 9.1 Large File Handling           | Correctness — enforce 4 GiB limit                        |
 | 🟡 P2    | 5.1 High-Res Creation Time       | Interop — Windows expects valid CrtTimeTenth             |
 | 🟡 P2    | 4.2 LFN Deletion & Orphan        | Correctness — prevent orphaned LFN entries               |
+| 🟡 P2    | 4.3 Full UCS-2 Unicode           | Interop — international filenames with Windows           |
 | 🟡 P2    | 6.2 Contiguous Cluster Coalescing| Performance — reduce I/O for non-fragmented files        |
+| 🟡 P2    | 6.4 Cluster Pre-Allocation ⭐    | **Anti-fragmentation** — Linux vfat doesn't pre-allocate |
 | 🟡 P2    | 2.2 Full FAT Scan Fallback       | Correctness — needed when FSInfo is unknown              |
 | 🟡 P2    | 3.2 Backup Boot Sector           | Recovery — survive sector 0 corruption                   |
 | 🟡 P2    | 8.1 Robust Formatting            | Feature — complete spec-compliant mkfs                   |
+| 🟡 P2    | 12.1 Transaction-Safe Writes ⭐  | **FAT32 crash protection** — world-first                 |
 | 🟢 P3    | 6.1 Sector Cache Tuning          | Performance — tunable cache size and telemetry           |
 | 🟢 P3    | 6.3 FAT Sector Caching           | Performance — reduce FAT region I/O during chain walks   |
 | 🟢 P3    | 7.1 Basic Consistency Check      | Recovery — detect and repair cross-links and orphans     |
 | 🟢 P3    | 9.2 Volume Label Operations      | Feature — proper volume label in root directory          |
 | 🟢 P3    | 5.2 Year 2107 Boundary           | Future-proofing — clamp and validate year range          |
+| 🟢 P3    | 11.1 Fragmentation Analyzer ⭐   | **Visual fragmentation map** — unique for FAT32          |
+| 🟢 P3    | 11.2 Online Defragmentation ⭐   | **GUI defrag for FAT32** — Linux has no built-in defrag  |
 | 🔵 P4    | 10.1 Cross-Platform Compat       | Interop — verify Windows/Linux round-trip                |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -396,6 +530,7 @@
 | LFN read                         | ✅                                     | ✅                                        | ✅ Done (`lfn_extract_chars()`)                   |
 | LFN write (create with LFN)      | ✅ Full Unicode                        | ✅ `vfat_build_slots()`                   | ⬜ §4.1 P1 — SFN only on create                  |
 | LFN deletion                     | ✅ All LFN + SFN entries               | ✅ `vfat_remove_entries()`                | ⬜ §4.2 P2 — may only delete SFN                 |
+| **LFN full UCS-2 Unicode**       | ✅ Full Unicode support                | ✅ NLS-based Unicode                      | ⬜ §4.3 P2 — currently ASCII-only                 |
 | Timestamps (CrtTimeTenth)        | ✅ 10ms resolution                     | ✅                                        | ⬜ §5.1 P2                                       |
 | NTRes casing flags                | ✅ Bits 3–4                            | ✅ `shortname_info` flags                 | ⬜ §5.1 P2                                       |
 | File read                        | ✅                                     | ✅                                        | ✅ Done (`fat32_file_read()`)                     |
@@ -406,10 +541,14 @@
 | Directory create/delete          | ✅ dot/dotdot entries                  | ✅                                        | ✅ Done (`fat32_create_dir_vol()`, `fat32_rmdir()`)  |
 | Sector cache (write-back)        | ✅ Windows cache manager               | ✅ Page cache                              | ✅ Done (`scache_*`)                              |
 | Contiguous cluster coalescing    | ✅ Automatic                           | ✅ `fat_get_cluster()`                    | ⬜ §6.2 P2                                       |
+| **Cluster pre-allocation** ⭐    | ✅ SetEndOfFile pre-extends            | ❌ vfat allocates on write only           | ⬜ §6.4 P2 — contiguous pre-alloc                 |
 | 4 GiB file size limit            | ✅ Enforced                            | ✅ `-EFBIG`                               | ⬜ §9.1 P1                                       |
 | Volume label operations          | ✅ Full support                        | ✅ `fat_read_root_dir()`                  | ⬜ §9.2 P3                                       |
 | Format (mkfs)                    | ✅ `format /FS:FAT32`                  | ✅ `mkfs.vfat`                            | ✅ Done (`fat32_format()`) — §8.1 enhance P2      |
 | Consistency check (chkdsk)       | ✅ chkdsk /F                           | ✅ `dosfsck`                              | ⬜ §7.1 P3                                       |
 | Safe unmount (clean flag)        | ✅                                     | ✅ `fat_put_super()`                      | ⬜ §7.2 P0                                       |
 | VFS integration                  | ✅ IFS driver model                    | ✅ Linux VFS                               | ✅ Done (`fat32_ops.c`)                           |
+| **Transaction-safe writes** ⭐   | ❌ No FAT32 journaling                 | ❌ No FAT32 journaling                    | ⬜ §12.1 P2 — WAL for crash protection            |
+| **Fragmentation analyzer** ⭐    | ⚠️ Only via defrag GUI                | ❌ No built-in FAT32 defrag               | ⬜ §11.1 P3 — visual heat map in Disk Manager     |
+| **Online defragmentation** ⭐    | ✅ `defrag.exe` (but not FAT32-aware)  | ❌ No built-in FAT32 defrag               | ⬜ §11.2 P3 — GUI defrag with progress            |
 | **Cross-platform round-trip**    | ✅                                     | ✅                                        | ⬜ §10.1 P4 — untested                           |

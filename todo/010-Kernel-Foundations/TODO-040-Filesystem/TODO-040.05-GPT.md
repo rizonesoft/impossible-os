@@ -154,12 +154,21 @@
 - [ ] Add `GPT_GUID_MS_LDM_META` — `5808C8AA-7E8F-42E0-85D2-E1E90434CFB3`
 - [ ] Add `GPT_GUID_MS_LDM_DATA` — `AF9B60A0-1431-4F62-BC68-3311714A69AD`
 - [ ] Add `GPT_GUID_MS_RECOVERY` — `DE94BBA4-06D1-4D40-A16A-BFD50179D6AC`
+- [ ] Add `GPT_GUID_MS_STORAGE_SPACES` — `E75CAF8F-F680-4CEE-AFA3-B001E56EFC2D`
 - [ ] Add `GPT_GUID_LINUX_SWAP` — `0657FD6D-A4AB-43C4-84E5-0933C84B4F4F`
 - [ ] Add `GPT_GUID_LINUX_ROOT_X64` — `4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709`
+- [ ] Add `GPT_GUID_LINUX_HOME` — `933AC7E1-2EB4-4F13-B844-0E14E2AEF915`
+- [ ] Add `GPT_GUID_LINUX_SRV` — `3B8F8425-20E0-4F3B-907F-1A25A76F98E8`
+- [ ] Add `GPT_GUID_LINUX_LVM` — `E6D6D379-F507-44C2-A23C-238F2A3DF928`
+- [ ] Add `GPT_GUID_LINUX_RAID` — `A19D880F-05FC-4D3B-A006-743F0F84911E`
 - [ ] Add `GPT_GUID_APPLE_HFS` — `48465300-0000-11AA-AA11-00306543ECAC`
 - [ ] Add `GPT_GUID_APPLE_APFS` — `7C3457EF-0000-11AA-AA11-00306543ECAC`
 - [ ] Add `GPT_GUID_FREEBSD_ZFS` — `516E7CB5-6ECF-11D6-8FF8-00022D09712B`
+- [ ] Add `GPT_GUID_SOLARIS_ROOT` — `6A85CF4D-1DD2-11B2-99A6-080020736631`
+- [ ] Add `GPT_GUID_VMWARE_VMFS` — `AA31E02A-400F-11DB-9590-000C2911D1B8`
 - [ ] Add `GPT_GUID_CHROMEOS_KERNEL` — `FE3A2A5D-4F32-41A7-B725-ACCC3285A309`
+- [ ] Add `GPT_GUID_CEPH_OSD` — `4FBD7E29-9D25-41B8-AFD0-062C0CEFF05D`
+- [ ] For unknown types: display as `"Unknown ({GUID string})"` — never crash
 - [ ] Update `gpt_type_name()` to return human-readable strings for all types
 - [ ] Commit: `"gpt: expanded type GUID registry"`
 
@@ -332,6 +341,33 @@
 - [ ] Log: `[GPT] Set attribute bit %d=%d on partition %d`
 - [ ] Commit: `"gpt: modify partition attributes"`
 
+### 9.5 Partition Resize (Non-Destructive)
+
+**Prompt:** Implement growing and shrinking GPT partitions in-place by modifying the End LBA in the partition entry. Growing: extend End LBA into adjacent free space (verify no collision with next partition). Shrinking: reduce End LBA (the filesystem on top must be shrunk FIRST or data loss occurs). Never move Start LBA — that would destroy data. After entry modification, recompute array CRC32, update both headers. When growing, also relocate the backup GPT if the partition was the last one (backup GPT lives at disk end). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: non-destructive partition resize"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Disk Management can only extend the LAST partition or
+> one with adjacent right-side free space. It cannot shrink GPT partitions in many scenarios.
+> Linux requires CLI tools (`parted resizepart`). Impossible OS doing this from the GUI
+> Disk Manager with a drag handle is a significant usability advantage.
+
+> [!WARNING]
+> **Shrink is dangerous.** The filesystem MUST be shrunk first (e.g., `ntfs_resize`, `resize2fs`).
+> The partition resize only changes the GPT entry — it does NOT touch filesystem structures.
+
+- [ ] Implement `gpt_resize_partition(dev, entry_index, new_end_lba)`:
+  - [ ] Validate `new_end_lba >= entry.start_lba` (can't make partition empty)
+  - [ ] Validate `new_end_lba <= last_usable_lba`
+  - [ ] If growing: verify no overlap with next partition's start LBA
+  - [ ] If shrinking: warn — filesystem must be shrunk first
+  - [ ] Update `entry.end_lba = new_end_lba`
+  - [ ] Recompute array CRC32, update both headers, write primary + backup
+- [ ] Implement `gpt_get_max_resize(dev, entry_index)` → returns max possible end LBA
+  - [ ] Scan for next partition's start LBA or `last_usable_lba`, whichever is smaller
+- [ ] Wire to Disk Manager: drag handle to resize partitions visually
+- [ ] Log: `[GPT] Resized partition %d: LBA %llu–%llu → %llu–%llu`
+- [ ] Commit: `"gpt: non-destructive partition resize"`
+
 ---
 
 ## 10. CLI Integration
@@ -379,26 +415,92 @@
 
 ---
 
-## 12. Testing & Validation
+## 13. GPT CRC Scrubbing & Self-Healing (🚀 Impossible OS Feature)
 
-### 12.1 GPT Test Suite
+### 13.1 Periodic Integrity Validation
 
-**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system (`gdisk` or `sgdisk`) to create test images: a standard GPT disk with multiple partitions, a disk with a corrupted primary header (backup should auto-recover), a 4Kn-formatted disk, a Hybrid MBR disk, and a disk with non-128 entry counts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section.
+**Prompt:** GPT has built-in CRC32 redundancy but no OS proactively validates it after boot. Implement periodic CRC scrubbing: on a configurable interval (default: once per boot + every 24 hours), re-read the primary and backup GPT headers and entry arrays, recompute both CRC32 values, and verify they match. If either header has a CRC mismatch, automatically repair it from the other (same as §2.2 but triggered proactively, not on failure). Log all scrub results. This is equivalent to ZFS scrubbing for partition tables — no OS does this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: periodic CRC scrubbing and self-healing"`. Add notes directly in this TODO section.
 
-- [ ] Test image: GPT disk with 4 partitions (ESP + IXFS + FAT32 + Linux)
-  - [ ] Verify all 4 detected with correct type GUIDs, LBAs, names
-- [ ] Test image: corrupt primary header (overwrite LBA 1 with garbage)
-  - [ ] Verify parser falls back to backup header
-  - [ ] Verify auto-recovery rewrites primary from backup
-- [ ] Test image: GPT with attributes set (read-only, hidden, required)
-  - [ ] Verify attribute flags correctly parsed and respected
-- [ ] Test image: Hybrid MBR (0xEE covers only ESP, additional MBR entries)
-  - [ ] Verify parser logs warning and uses GPT structures
-- [ ] Test: create partition via `diskpart gptinit` + `diskpart create`, reboot, verify persistence
-- [ ] Test: delete partition, verify entry zeroed but others intact
-- [ ] Test: CRC32 validation against known-good values (use `gdisk` reference)
-- [ ] QEMU flags: `-drive file=gpt_test.img,format=raw,if=none,id=t0 -device virtio-blk-pci,drive=t0`
-- [ ] Commit: `"test: GPT partition test suite"`
+> [!TIP]
+> **Competitive Edge:** No OS proactively validates GPT integrity after boot. Windows and Linux
+> only check CRC32 on mount. Impossible OS can detect and repair silent corruption before it
+> causes data loss — similar to ZFS scrubbing but for the partition table itself.
+
+- [ ] Implement `gpt_scrub(dev)` — full integrity check:
+  - [ ] Read primary header, recompute CRC32, compare
+  - [ ] Read backup header, recompute CRC32, compare
+  - [ ] Read primary entry array, recompute CRC32, compare to primary header's array CRC
+  - [ ] Read backup entry array, recompute CRC32, compare to backup header's array CRC
+  - [ ] Cross-validate: primary array CRC should match backup array CRC
+- [ ] Auto-repair on mismatch:
+  - [ ] Primary corrupt, backup valid → reconstruct primary from backup (§2.2)
+  - [ ] Backup corrupt, primary valid → reconstruct backup from primary (§2.3)
+  - [ ] Both corrupt → log critical error, do NOT attempt repair
+- [ ] Schedule: run on boot + configurable interval
+  - [ ] Registry: `HKLM\SYSTEM\Storage\GPT\ScrubIntervalHours` (default 24)
+- [ ] Log: `[GPT] Scrub complete: primary=%s, backup=%s, repairs=%d`
+- [ ] Expose via Disk Manager: "Validate Partition Table" with last-scrub timestamp
+- [ ] Commit: `"gpt: periodic CRC scrubbing and self-healing"`
+
+---
+
+## 14. GUID Collision Detection (🚀 Impossible OS Feature)
+
+### 14.1 Disk & Partition GUID Duplicate Detection
+
+**Prompt:** When a disk is cloned (e.g., `dd`, Clonezilla), the clone has identical Disk GUID and Partition GUIDs. If both the original and clone are connected simultaneously, the duplicate GUIDs cause volume tracking confusion — the wrong partition can get the wrong drive letter or mount point. Windows silently regenerates GUIDs in some cases; Linux does nothing. Implement explicit detection: on disk enumeration, compare every Disk GUID and Partition GUID against all other known disks. On collision: log a warning, display in Disk Manager, and offer to regenerate GUIDs for the duplicate disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID collision detection and resolution"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows handles collision silently (and sometimes incorrectly).
+> Linux ignores it entirely. Impossible OS can alert the user and offer a one-click
+> "Regenerate GUIDs" option in Disk Manager — far more transparent and safe.
+
+- [ ] On disk enumeration: build global GUID registry (`disk_guid_table[]`)
+- [ ] For each new disk: check `disk.disk_guid` against all registered disks
+  - [ ] Collision found → log: `[GPT] WARNING: Disk GUID collision with disk %d`
+  - [ ] Flag disk as `blkdev->guid_collision = true`
+- [ ] For each partition: check `partition.unique_guid` against all registered partitions
+  - [ ] Collision → log: `[GPT] WARNING: Partition GUID collision on %s`
+- [ ] Implement `gpt_regenerate_guids(dev)`:
+  - [ ] Generate new Disk GUID via `guid_generate()`
+  - [ ] Generate new Unique GUID for each partition via `guid_generate()`
+  - [ ] Update primary + backup headers and entry arrays
+  - [ ] Update Registry volume mappings with new GUIDs
+- [ ] Disk Manager: show warning icon on disks with GUID collision
+  - [ ] Right-click → "Regenerate GUIDs" action
+- [ ] Commit: `"gpt: GUID collision detection and resolution"`
+
+---
+
+## 15. GPT Backup & Restore (🚀 Impossible OS Feature)
+
+### 15.1 Partition Table Backup & Restore
+
+**Prompt:** Back up the entire GPT structure (PMBR + primary header + entry array + backup header + backup array) to a file for disaster recovery. Unlike MBR (512 bytes), GPT backup requires capturing ~33 KB of data (PMBR + header + 32 entry sectors). Restore from backup to recover a completely wiped partition table without affecting data. Auto-backup before every partition table modification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition table backup and restore"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has NO built-in GPT backup. Linux requires manual
+> `sgdisk --backup`. Impossible OS auto-backing up before every partition change
+> and offering one-click restore is a clear safety advantage.
+
+- [ ] Implement `gpt_backup(dev, output_path)`:
+  - [ ] Read PMBR (LBA 0, 512 bytes)
+  - [ ] Read primary header (LBA 1)
+  - [ ] Read primary entry array (LBAs 2–33 for 512b sectors)
+  - [ ] Write to backup file: magic + version + disk_size + PMBR + header + entries
+  - [ ] File format: `"IGPT" (4 bytes) + version (4 bytes) + disk_sectors (8 bytes) + sector_size (4 bytes) + PMBR (sector_size) + header (sector_size) + entries (16384 bytes)`
+- [ ] Implement `gpt_restore(dev, input_path)`:
+  - [ ] Validate backup magic and version
+  - [ ] Verify disk size matches (warn if different)
+  - [ ] Write PMBR to LBA 0
+  - [ ] Write primary header to LBA 1
+  - [ ] Write primary entry array to LBA 2+
+  - [ ] Reconstruct and write backup header + array at disk end
+  - [ ] Re-scan partition table after restore
+- [ ] Auto-backup: save GPT to Registry before any write operation
+  - [ ] `HKLM\SYSTEM\Storage\Disks\{guid}\GPTBackup` (binary blob)
+- [ ] Disk Manager GUI: "Backup Partition Table" / "Restore Partition Table" buttons
+- [ ] Commit: `"gpt: partition table backup and restore"`
 
 ---
 
@@ -426,8 +528,15 @@
 | 🟡 P2    | 9.3 Delete Partition                | Feature — remove partitions safely                          |
 | 🟡 P2    | 9.4 Modify Attributes              | Feature — set bootable, read-only, hidden flags             |
 | 🟡 P2    | 11.1 Volume Identification         | Feature — GUID-based persistent drive letter mapping        |
+| 🟡 P2    | 13.1 CRC Scrubbing ⭐              | **Proactive integrity validation** — no OS does this       |
+| 🟡 P2    | 14.1 GUID Collision ⭐             | **Clone disk safety** — transparent collision resolution   |
+| 🟢 P3    | 9.5 Partition Resize ⭐            | **GUI drag-to-resize** — Windows severely limited          |
 | 🟢 P3    | 10.1 Diskpart GPT Commands         | Tooling — CLI partition management                          |
 | 🟢 P3    | 12.1 GPT Test Suite                 | Quality — automated test coverage                           |
+| 🟢 P3    | 15.1 GPT Backup & Restore ⭐       | **Auto-backup partition table** — Windows has nothing      |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -446,13 +555,17 @@
 | 4Kn sector support               | ✅ Native                            | ✅ Native                           | ⬜ §3.1 P1                                |
 | Mixed-endian GUID (read)         | ✅                                   | ✅                                  | ✅ Done §4.1                               |
 | Mixed-endian GUID (write)        | ✅                                   | ✅                                  | ⬜ §4.1 P1                                |
-| Full type GUID registry          | ✅ Exhaustive                        | ✅ Exhaustive                       | ⬜ §5.1 P0 (4 types recognized)           |
+| Full type GUID registry          | ✅ Exhaustive                        | ✅ Exhaustive                       | ⬜ §5.1 P0 (expanded: 25+ types)          |
 | UEFI global attributes           | ✅ Required, BIOSBoot               | ✅ Full                             | ⬜ §6.1 P1                                |
 | MS type-specific attributes      | ✅ ReadOnly, Hidden, NoMount        | ✅ Recognized                       | ⬜ §6.2 P2                                |
 | Hybrid MBR detection             | ⚠️ Partial                         | ✅ gdisk warns                      | ⬜ §7.1 P1                                |
 | GPT write / create partition     | ✅ Disk Management                   | ✅ gdisk / parted / sgdisk          | ⬜ §8–9 P2                                |
 | Delete partition                 | ✅                                   | ✅                                  | ⬜ §9.3 P2                                |
+| **Partition resize** ⭐          | ⚠️ Extend-only, last partition     | ⚠️ CLI parted/gdisk only           | ⬜ §9.5 P3 — GUI drag-to-resize           |
 | GUID-based volume tracking       | ✅ mountvol                          | ✅ /dev/disk/by-partuuid            | ⬜ §11.1 P2                               |
 | CLI partition tool               | ✅ diskpart                          | ✅ gdisk (interactive + scripted)   | ⬜ §10.1 P3                               |
+| **CRC scrubbing** ⭐             | ❌ Only checks on mount             | ❌ Only checks on mount             | ⬜ §13.1 P2 — proactive periodic scrub     |
+| **GUID collision detection** ⭐  | ⚠️ Silent, sometimes wrong         | ❌ No detection                     | ⬜ §14.1 P2 — GUI alert + one-click fix    |
+| **GPT backup & restore** ⭐     | ❌ No built-in backup               | ⚠️ `sgdisk --backup` CLI only      | ⬜ §15.1 P3 — auto-backup on every change  |
 | **128-entry interop**            | ✅ (enforces 128)                    | ✅ (flexible)                       | ✅ Uses `NumberOfEntries` from header      |
 | **CRC32 polynomial correctness** | ✅ CCITT `0xEDB88320`               | ✅ CCITT `0xEDB88320`              | ✅ Correct polynomial implemented          |
