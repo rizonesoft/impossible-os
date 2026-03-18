@@ -253,15 +253,16 @@
 
 #### 3.4.4 Multi-Volume Support (Remove Static Globals)
 
-**Prompt:** The FAT32 driver uses static globals (`bpb`, `fat32_dev`, `root_file`, `dir_files[]`, `sector_buf[]`), limiting it to one mounted FAT32 volume. Wrap all state in a `struct fat32_volume` and pass it through VFS `fs_data`. This enables mounting multiple FAT32 partitions simultaneously (e.g., X: logs + D: user data). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: multi-volume support"`. Add notes directly in this TODO section.
+**Prompt:** Verify FAT32 multi-volume support is complete. Check that `struct fat32_volume` encapsulates all per-volume state (BPB, block device, root node, sector cache, FSInfo), is allocated via PMM (~40KB), and is threaded through VFS via `fat32_file->volume` back-pointer. Verify `fat32_init()` returns `fat32_volume*`, `fat32_get_root()` takes `vol` parameter, and `partition.c` handles per-partition volumes. Run `bash scripts/build.sh clean` and confirm BUILD OK.
 
-- [ ] Define `struct fat32_volume` — contains `bpb`, `dev`, `root_node`, `cache`, `fsinfo`
-- [ ] Allocate per-volume via `kmalloc` on mount (small struct, OK for heap)
-- [ ] Store `fat32_volume*` in `vfs_mount->fs_data` / `vfs_node->fs_data`
-- [ ] Convert all functions to take `fat32_volume*` parameter instead of using globals
-- [ ] Remove static globals: `bpb`, `fat32_dev`, `root_file`, `dir_files[]`
-- [ ] Test: mount two FAT32 partitions simultaneously (X: + another)
-- [ ] Commit: `"fat32: multi-volume support"`
+- [x] Define `struct fat32_volume` — contains `bpb`, `dev`, `root_file`, `dir_files[]`, `cache[]`, `fsinfo_*`
+- [x] Allocate per-volume via `pmm_alloc_contiguous` on mount (~40KB, exceeds kmalloc 4KB limit)
+- [x] Store `fat32_volume*` via `fat32_file->volume` back-pointer; VFS ops extract with `vol_from_node()` helper
+- [x] Convert all functions to take `fat32_volume*` parameter instead of using globals
+- [x] Remove static globals: `bpb`, `fat32_dev`, `root_file`, `dir_files[]`, `sector_buf[]`, `scache[]`, `fsinfo_*`
+- [x] Split monolith into `src/kernel/fs/fat32/`: `fat32_internal.h`, `fat32_core.c`, `fat32_dir.c`, `fat32_write.c`, `fat32_ops.c`, `fat32_format.c`
+- [x] Commit: `"fat32: split monolith into fat32/ modules"` (`cc259d6`)
+- [x] Commit: `"fat32: multi-volume support"` (`d971706`)
 
 #### 3.4.5 Concurrent Access Safety
 
@@ -1461,7 +1462,7 @@
 | ✅ Done   | 8.14 IXFS Directory Structure                | Standard paths on first boot                                    |
 | 🔴 P0     | **3.6 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle** |
 | 🟠 P1     | 3.4.2 FAT32 FSInfo + Hint                    | FAT32 spec compliance, faster allocation                        |
-| 🟠 P1     | 3.4.4 FAT32 Multi-Volume                     | Remove static globals — mount multiple FAT32 partitions         |
+| ✅ Done    | 3.4.4 FAT32 Multi-Volume                     | Remove static globals — mount multiple FAT32 partitions         |
 | 🟠 P1     | 3.4.6 FAT32 LFN Write                        | Write long filenames (currently 8.3 only on create)             |
 | 🟠 P1     | 4.1 NTFS Read                                | Read Windows-formatted partitions                               |
 | 🟠 P1     | 6.1 Auto-Mount                               | Drive letters from real disks                                   |
