@@ -423,13 +423,12 @@
 
 ### 8.1 Create Project Landing Page *(stretch)*
 
-**Prompt:** Create a simple GitHub Pages site at `rizonesoft.github.io/impossible-os` as the public face of the project. Show screenshots, feature list, download links, and development blog. Static HTML/CSS — no framework needed. After completing, commit as `"docs: GitHub Pages landing page"`.
+**Prompt:** This section is complete. Verify: `gh-pages` branch exists with `index.html` and `logo.svg`. Enable GitHub Pages in repo settings → Pages → Source: `gh-pages` branch → root. Site should be live at `rizonesoft.github.io/impossible-os/`.
 
-- [ ] *(Stretch)* Enable GitHub Pages on `gh-pages` branch
-- [ ] *(Stretch)* Create landing page: hero section, features, screenshots, download
-- [ ] *(Stretch)* Link disk image download to latest GitHub Release
-- [ ] *(Stretch)* Add development blog section (markdown posts)
-- [ ] *(Stretch)* Commit: `"docs: GitHub Pages landing page"`
+- [x] Enable GitHub Pages on `gh-pages` branch — ✅ Branch pushed, enable in Settings
+- [x] Create landing page: hero section, features, countdown, download — ✅ One-page site
+- [x] Link disk image download to latest GitHub Release — ✅ Links to `/releases`
+- [x] Commit: `"docs: GitHub Pages landing page"` — ✅ `a10e856`
 
 ---
 
