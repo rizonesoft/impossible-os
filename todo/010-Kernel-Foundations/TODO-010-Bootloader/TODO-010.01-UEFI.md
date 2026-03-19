@@ -113,7 +113,7 @@ graph TD
 | 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ✅   |
 | 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ✅   |
-| 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ⬜   |
+| 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ✅   |
 | 💎 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                       | Phase 4 (§5.1)                   |   ⬜   |
 | 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ⬜   |
 | 💎 | **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                   | Phase 2 (§9.1)                   |   ⬜   |
@@ -455,24 +455,34 @@ graph TD
 
 ### 7.1 SMBIOS System Information
 
-**Prompt:** SMBIOS (System Management BIOS) tables provide hardware inventory information: system manufacturer, model, serial number, BIOS version, CPU sockets, memory DIMMs, etc. Found via UEFI Configuration Table. Useful for the "About This PC" dialog and hardware detection. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: SMBIOS system information"`. Add notes directly in this TODO section.
+**Prompt:** Verify the SMBIOS system information implementation. Confirm `smbios.h` defines `smbios_system_info` struct with fields from Types 0 (BIOS), 1 (System), 2 (Board), 4 (CPU), 17 (Memory), memory type constants, `smbios_init()` and `smbios_get_info()` API. Confirm `smbios.c` implements SMBIOS 3.x/2.x entry point parsing, structure table walker with double-NUL string extraction, and logs a human-readable summary. Confirm `boot_hw.c` calls `smbios_init()` after `mat_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: SMBIOS system information"` exists.
 
-- [ ] Find SMBIOS entry point via `uefi_find_config_table(SMBIOS3_TABLE_GUID)`
-  - [ ] Fallback: `SMBIOS_TABLE_GUID` for SMBIOS 2.x
-- [ ] Parse SMBIOS 3.0 64-bit entry point:
-  - [ ] Anchor string `_SM3_`, entry point length, major/minor version
-  - [ ] Maximum structure table length, structure table address
-- [ ] Walk SMBIOS structure table (type + length + handle + data + strings):
-  - [ ] **Type 0 — BIOS Information:** vendor, version, release date, BIOS size
-  - [ ] **Type 1 — System Information:** manufacturer, product name, serial, UUID
-  - [ ] **Type 2 — Baseboard:** manufacturer, product, serial
-  - [ ] **Type 4 — Processor:** socket, family, manufacturer, max speed, core count
-  - [ ] **Type 17 — Memory Device:** size, speed, type (DDR4/DDR5), location
-  - [ ] **Type 127 — End of Table:** stop walking
-- [ ] Store in kernel: `system_info.manufacturer`, `system_info.product`, etc.
-- [ ] Log: `[SMBIOS] QEMU Virtual Machine, 4 GB RAM, OVMF BIOS 2024.08`
-- [ ] Wire to "System Information" panel / About dialog
-- [ ] Commit: `"uefi: SMBIOS system information"`
+> [!NOTE]
+> **Implementation notes:**
+> - New files: `include/kernel/smbios.h`, `src/kernel/smbios.c`
+> - Tries SMBIOS3 (`_SM3_`) first, falls back to SMBIOS2 (`_SM_`) — QEMU uses 2.x
+> - Structure table walker handles double-NUL-terminated string encoding correctly
+> - Type 17 handles extended size field (0x7FFF → offset 0x1C) for >32 GB DIMMs
+> - Only first CPU socket parsed (multi-socket not needed for "About" dialog)
+> - `smbios_get_info()` returns const pointer to global struct for kernel-wide access
+> - QEMU output: `v2.8 — QEMU Standard PC`, `BIOS: Ubuntu EDK II 2024.02`, `CPU: QEMU, 2 cores / 2 threads, 2000 MHz`, `RAM: 256 MB`
+
+- [x] Find SMBIOS entry point via `uefi_find_config_table(SMBIOS3_TABLE_GUID)`
+  - [x] Fallback: `SMBIOS_TABLE_GUID` for SMBIOS 2.x
+- [x] Parse SMBIOS 3.0 64-bit entry point:
+  - [x] Anchor string `_SM3_`, entry point length, major/minor version
+  - [x] Maximum structure table length, structure table address
+- [x] Walk SMBIOS structure table (type + length + handle + data + strings):
+  - [x] **Type 0 — BIOS Information:** vendor, version, release date, BIOS size
+  - [x] **Type 1 — System Information:** manufacturer, product name, serial, UUID
+  - [x] **Type 2 — Baseboard:** manufacturer, product, serial
+  - [x] **Type 4 — Processor:** socket, family, manufacturer, max speed, core count
+  - [x] **Type 17 — Memory Device:** size, speed, type (DDR4/DDR5), location
+  - [x] **Type 127 — End of Table:** stop walking
+- [x] Store in kernel: `system_info.manufacturer`, `system_info.product`, etc.
+- [x] Log: `[SMBIOS] QEMU Virtual Machine, 4 GB RAM, OVMF BIOS 2024.08`
+- [x] Wire to "System Information" panel / About dialog
+- [x] Commit: `"uefi: SMBIOS system information"`
 
 ---
 

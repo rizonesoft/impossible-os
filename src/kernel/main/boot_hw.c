@@ -25,6 +25,7 @@
 #include "kernel/uefi_runtime.h"
 #include "kernel/tpm.h"
 #include "kernel/boot_timing.h"
+#include "kernel/smbios.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -115,7 +116,10 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3f: Memory Attributes Table (W^X) */
     mat_init();
 
-    /* Step 3g: Boot timing report (TSC + FPDT) */
+    /* Step 3g: SMBIOS system information */
+    smbios_init();
+
+    /* Step 3h: Boot timing report (TSC + FPDT) */
     boot_timing_init();
 
     /* Step 4: Initialize physical memory manager */
