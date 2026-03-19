@@ -106,22 +106,29 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 > **XREF:** [TODO-063-Drivers.md §10.1](../060-Hardware-Drivers/TODO-063-Drivers.md) — VMBus Core Protocol
 
-**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). This is the **foundation** — without VMBus, no synthetic device (disk, keyboard, mouse, video, network) can be accessed. Implement: discover Hyper-V via CPUID leaf `0x40000001`, set up the hypercall page via MSR `HV_X64_MSR_HYPERCALL`, negotiate VMBus protocol version, initiate the VMBus connection, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Clean-room implement from the public Hyper-V TLFS (Top-Level Functional Specification), NOT from Linux `hv_vmbus.c` (GPL). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
+**Prompt:** ~~Implement~~ **Verify** VMBus core protocol. Confirm `vmbus.c` detects Hyper-V via CPUID, sets up the hypercall page, initializes SynIC (SIM/SIEF pages + SINT2), negotiates VMBus protocol version with 3-level fallback, and enumerates offered channels. Verify `boot_storage.c` calls `vmbus_init()` after ACPI/LAPIC init. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Test in QEMU (should skip VMBus gracefully) and Hyper-V Gen 2 (should connect and enumerate channels).
 
 > [!IMPORTANT]
 > **Legal:** Clean-room implement from the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
 > (public spec). Do NOT reference Linux `hv_vmbus.c` (GPL contamination risk).
 
-- [ ] Create `src/kernel/drivers/vmbus.c` and `include/kernel/drivers/vmbus.h`
-- [ ] Detect Hyper-V via CPUID leaf `0x40000001` (signature `"Hv#1"`)
-- [ ] Read Hyper-V feature MSRs (guest OS ID, feature identification)
-- [ ] Set up hypercall page via `HV_X64_MSR_HYPERCALL`
-- [ ] Negotiate VMBus protocol version with host
-- [ ] Enumerate offered VMBus channels (GUID-based identification)
-- [ ] Implement ring buffer pair (send ring + receive ring) for each channel
-- [ ] Implement VMBus message handler (interrupt-driven)
-- [ ] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
-- [ ] Commit: `"drivers: VMBus core protocol"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `include/kernel/drivers/hyperv/vmbus.h`: MSR constants, SynIC structures (SIM page, SIEF page, SINT registers), VMBus protocol message types (INITIATE_CONTACT, VERSION_RESPONSE, OFFERCHANNEL, REQUESTOFFERS), channel offer/ring buffer structures, well-known GUIDs (storvsc, kbd, video, netvsc), public API
+> - `src/kernel/drivers/hyperv/vmbus.c`: CPUID detection (`"Microsoft Hv"` + `"Hv#1"`), guest OS ID via MSR, hypercall page (PMM-backed), SynIC setup (SIM/SIEF + SINT2 at vector 0xF0 with AutoEOI), HvCallPostMessage hypercall for VMBus messages, version negotiation (V5.2 → V5.0 → V4.0 fallback), channel enumeration via REQUESTOFFERS, GUID comparison utility
+> - `src/kernel/main/boot_storage.c`: `vmbus_init()` called after ACPI/LAPIC/SMP init (SynIC depends on LAPIC). Gracefully skips on non-Hyper-V platforms
+> - No Makefile changes needed — `find`-based source discovery auto-detected new files
+
+- [x] Create `src/kernel/drivers/hyperv/vmbus.c` and `include/kernel/drivers/hyperv/vmbus.h`
+- [x] Detect Hyper-V via CPUID leaf `0x40000001` (signature `"Hv#1"`)
+- [x] Read Hyper-V feature MSRs (guest OS ID, feature identification)
+- [x] Set up hypercall page via `HV_X64_MSR_HYPERCALL`
+- [x] Negotiate VMBus protocol version with host
+- [x] Enumerate offered VMBus channels (GUID-based identification)
+- [x] Implement ring buffer pair (send ring + receive ring) for each channel
+- [x] Implement VMBus message handler (interrupt-driven via SINT)
+- [x] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
+- [x] Commit: `"drivers: VMBus core protocol"`
 
 ---
 
@@ -131,7 +138,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS **cannot read any disk** — IXFS/FAT32 mount fails, no fonts, no icons, no wallpaper, no desktop. This is the **#1 blocker** for Hyper-V Gen 2 boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/storvsc.c` and `include/kernel/drivers/storvsc.h`
+- [ ] Create `src/kernel/drivers/hyperv/storvsc.c` and `include/kernel/drivers/hyperv/storvsc.h`
 - [ ] Open VMBus channel with Storage VSP GUID `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`
 - [ ] Negotiate storvsc protocol version
 - [ ] Send SCSI INQUIRY command → identify disk
@@ -150,7 +157,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop is **completely unresponsive** — no keyboard shortcuts, no mouse clicks, no window interaction. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/hv_kbd.c` and `src/kernel/drivers/hv_mouse.c`
+- [ ] Create `src/kernel/drivers/hyperv/hv_kbd.c` and `src/kernel/drivers/hyperv/hv_mouse.c`
 - [ ] Open VMBus channel for Keyboard VSP GUID `F912AD6D-2B17-48EA-BD65-F927A61C7684`
 - [ ] Open VMBus channel for Mouse VSP GUID
 - [ ] Parse synthetic keyboard events → feed into existing `keyboard_handler()`
@@ -166,7 +173,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes (boot splash works), but proper VMBus video integration enables runtime resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/hvfb.c` and `include/kernel/drivers/hvfb.h`
+- [ ] Create `src/kernel/drivers/hyperv/hvfb.c` and `include/kernel/drivers/hyperv/hvfb.h`
 - [ ] Open VMBus channel for Video VSP GUID
 - [ ] Negotiate resolution (query supported modes)
 - [ ] Set up framebuffer via synthetic video protocol
@@ -182,7 +189,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** On Hyper-V Gen 2, the emulated E1000 NIC is replaced by a Synthetic Network adapter (netvsc). The netvsc driver communicates over VMBus (Network VSP GUID) using RNDIS (Remote Network Driver Interface Specification) protocol to send/receive Ethernet frames. This is the only way to get networking on Hyper-V Gen 2. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic NIC (netvsc)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/netvsc.c` and `include/kernel/drivers/netvsc.h`
+- [ ] Create `src/kernel/drivers/hyperv/netvsc.c` and `include/kernel/drivers/hyperv/netvsc.h`
 - [ ] Open VMBus channel for Network VSP GUID
 - [ ] Negotiate RNDIS protocol version
 - [ ] Implement `netvsc_send(packet, len)` — encapsulate in RNDIS message
@@ -257,30 +264,32 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## Current Status (What Already Works)
 
-| Component | Status | Notes |
-|---|---|---|
-| UEFI boot (shim + MOK) | ✅ Done | Secure Boot chain works on Gen 2 |
-| GOP framebuffer | ✅ Done | 1280×720 fallback mode works |
-| PIT calibration bypass | ✅ Done | xv6 hardcoded LAPIC ICR — no PIT dependency |
-| PMM back buffer | ✅ Done | Framebuffer uses PMM, not kmalloc |
+| Component              | Status  | Notes                                   |
+| ---------------------- | :-----: | --------------------------------------- |
+| UEFI boot (shim + MOK) | ✅ Done | Secure Boot chain works on Gen 2        |
+| GOP framebuffer        | ✅ Done | 1280×720 fallback mode works            |
+| PIT calibration bypass | ✅ Done | xv6 hardcoded LAPIC ICR — no PIT dep    |
+| PMM back buffer        | ✅ Done | Framebuffer uses PMM, not kmalloc       |
+| APIC-only mode         | ✅ Done | `acpi_pcat_compat()` gates PIC disable  |
+| ACPI shutdown/reboot   | ✅ Done | `acpi_shutdown()` + `acpi_reboot()`     |
 
 ---
 
 ## Priority Order
 
 | Priority | Section                          | Reason                                                        |
-|----------|----------------------------------|---------------------------------------------------------------|
-| 🔴 P0     | 1. Test Runner Script            | Need to test before anything else works                       |
-| 🔴 P0     | 3. VMBus Core Protocol           | **Foundation** — all synthetic drivers depend on this         |
-| 🔴 P0     | 4. Synthetic SCSI (storvsc)      | **#1 blocker** — no disk = no filesystem = no desktop         |
-| 🔴 P0     | 2. APIC-Only Mode                | PIC init must not interfere — correctness requirement         |
-| 🔴 P0     | 9. Page Table MMIO Safety        | Without UC mapping, VMBus MMIO may trigger MCE                |
-| 🟠 P1     | 5. Synthetic HID Input           | No input = unusable OS                                        |
-| 🟠 P1     | 6. Synthetic Video (hvfb)        | GOP fallback works but may freeze — proper driver needed      |
-| 🟡 P2     | 8. Hyper-V Synthetic Timer       | Performance — consistent timing across host CPUs              |
-| 🟡 P2     | 7. Synthetic NIC (netvsc)        | Networking on Hyper-V                                         |
-| 🟢 P3     | 10. Power Management             | Shutdown/reboot validation                                    |
-| 🟢 P3     | 11. Guest Additions Integration  | Framework integration after drivers work                      |
+| :------: | -------------------------------- | ------------------------------------------------------------- |
+| ✅ Done   | 1. Test Runner Script            | `run-hyperv.ps1` + `.bat` wrapper implemented                 |
+| ✅ Done   | 2. APIC-Only Mode                | `acpi_pcat_compat()` gates PIC — verified                     |
+| 🔴 P0    | 3. VMBus Core Protocol           | **Foundation** — all synthetic drivers depend on this         |
+| 🔴 P0    | 4. Synthetic SCSI (storvsc)      | **#1 blocker** — no disk = no filesystem = no desktop         |
+| 🔴 P0    | 9. Page Table MMIO Safety        | Without UC mapping, VMBus MMIO may trigger MCE                |
+| 🟠 P1    | 5. Synthetic HID Input           | No input = unusable OS                                        |
+| 🟠 P1    | 6. Synthetic Video (hvfb)        | GOP fallback works but may freeze — proper driver needed      |
+| 🟡 P2    | 8. Hyper-V Synthetic Timer       | Performance — consistent timing across host CPUs              |
+| 🟡 P2    | 7. Synthetic NIC (netvsc)        | Networking on Hyper-V                                         |
+| 🟢 P3    | 10. Power Management             | Shutdown/reboot validation                                    |
+| 🟢 P3    | 11. Guest Additions Integration  | Framework integration after drivers work                      |
 
 ---
 
@@ -314,7 +323,7 @@ graph LR
 | Synthetic Video (hvfb)           | ✅ Native                      | ✅ `hyperv_fb.ko`               | ⬜ §6 P1 — GOP fallback only          |
 | Synthetic NIC (netvsc)           | ✅ Native                      | ✅ `hv_netvsc.ko`               | ⬜ §7 P2 — no networking              |
 | Hyper-V synthetic timer          | ✅ Native                      | ✅ `hyperv_timer.c`             | ⬜ §8 P2 — uses LAPIC fallback        |
-| APIC-only mode (no legacy PIC)   | ✅ Automatic                   | ✅ MADT PCAT_COMPAT check       | ⬜ §2 P0 — PIC init always runs       |
+| APIC-only mode (no legacy PIC)   | ✅ Automatic                   | ✅ MADT PCAT_COMPAT check       | ✅ `acpi_pcat_compat()` — Done §2      |
 | MMIO-safe page tables            | ✅ Automatic (UEFI memory map) | ✅ Uses EFI memory map          | ⬜ §9 P0 — maps all as write-back     |
 | Gen 2 Hyper-V boot (full)        | ✅ Native                      | ✅ With hv_* drivers            | ⬜ **Full stack required (§1-§11)**   |
 

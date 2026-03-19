@@ -133,20 +133,24 @@
 
 ### Current status
 
-| Driver            | File            | Status | Source  |
-|-------------------|-----------------|--------|---------|
-| PCI bus           | `pci.c`         | ✅ Done | Scratch |
-| PIC (8259A)       | `pic.c`         | ✅ Done | Scratch |
-| PIT timer         | `pit.c`         | ✅ Done | Scratch |
-| Serial (UART)     | `serial.c`      | ✅ Done | Scratch |
-| Framebuffer (VBE) | `framebuffer.c` | ✅ Done | Scratch |
-| PS/2 keyboard     | `keyboard.c`    | ✅ Done | Scratch |
-| PS/2 mouse        | `mouse.c`       | ✅ Done | Scratch |
-| AHCI (SATA)       | `ahci.c`        | ✅ Done | Scratch |
-| ATA/IDE           | `ata.c`         | ✅ Done | Scratch |
-| VirtIO-blk        | `virtio_blk.c`  | ✅ Done | Scratch |
-| RTC               | `rtc.c`         | ✅ Done | Scratch |
-| ACPI (basic)      | `acpi.c`        | ✅ Done | Scratch |
+| Driver              | File               | Status  | Source  |
+| ------------------- | ------------------ | :-----: | ------- |
+| PCI bus             | `pci.c`            | ✅ Done | Scratch |
+| PIC (8259A)         | `pic.c`            | ✅ Done | Scratch |
+| PIT timer           | `pit.c`            | ✅ Done | Scratch |
+| Serial (UART)       | `serial.c`         | ✅ Done | Scratch |
+| Framebuffer (VBE)   | `framebuffer.c`    | ✅ Done | Scratch |
+| PS/2 keyboard       | `keyboard.c`       | ✅ Done | Scratch |
+| PS/2 mouse          | `mouse.c`          | ✅ Done | Scratch |
+| AHCI (SATA)         | `ahci.c`           | ✅ Done | Scratch |
+| ATA/IDE             | `ata.c`            | ✅ Done | Scratch |
+| VirtIO-blk          | `virtio_blk.c`     | ✅ Done | Scratch |
+| RTC                 | `rtc.c`            | ✅ Done | Scratch |
+| ACPI tables + power | `acpi.c`           | ✅ Done | Scratch |
+| LAPIC (per-CPU)     | `lapic.c`          | ✅ Done | Scratch |
+| IOAPIC (IRQ routing)| `ioapic.c`         | ✅ Done | Scratch |
+| ACPI shutdown/reboot| `acpi.c`           | ✅ Done | Scratch |
+| SMP boot (SIPI)     | `smp.c`            | ✅ Done | Scratch |
 
 ### 2.1 NVMe Storage Driver (Built-in)
 
@@ -172,34 +176,22 @@
 - [ ] Test: add QEMU flag `-drive file=test.img,if=none,id=nvme0 -device nvme,serial=deadbeef,drive=nvme0`
 - [ ] Commit: `"drivers: NVMe storage (built-in)"`
 
-### 2.2 APIC / IOAPIC (Built-in)
+### 2.2 APIC / IOAPIC (Built-in) — ✅ Done
 
-> [!IMPORTANT]
-> → XREF: `TODO-010-Bootloader.md §1.6` — On Hyper-V Gen 2 (and any hardware-reduced ACPI
-> platform), the MADT `PCAT_COMPAT` flag (bit 0 at offset 36) is cleared to 0, meaning
-> **no 8259 PIC exists**. The PIC init below must be conditional on this flag.
+> [!NOTE]
+> → **XREF:** Full APIC enhancement roadmap (x2APIC, timer calibration, TLB shootdown,
+> MSI/MSI-X, NMI watchdog, interrupt profiler) is in
+> [`TODO-063.09-APIC-Architecture.md`](TODO-063-Drivers/TODO-063.09-APIC-Architecture.md).
 
-**Prompt:** The APIC (Advanced Programmable Interrupt Controller) replaces the legacy 8259 PIC for multi-core systems. The Local APIC is per-CPU (MMIO at `0xFEE00000`), handling timer, IPI, and local interrupts. The IOAPIC (typically at `0xFEC00000`) routes external device interrupts to specific CPUs. Parse ACPI MADT table for APIC and IOAPIC base addresses. Initialize: enable the Local APIC, configure the IOAPIC redirection table for all IRQs currently handled by the PIC. Disable the legacy PIC after APIC takeover. This is **built-in** because MSI interrupts (used by NVMe, xHCI, modern NICs) require APIC. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: APIC and IOAPIC interrupt controller"`. Add notes, gotchas, and design decisions directly in this TODO section covering the APIC/IOAPIC initialization, IRQ routing, and PIC disable.
+The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, and `pic.c`:
 
-- [ ] Create `src/kernel/apic.c` and `include/kernel/apic.h`
-- [ ] Parse ACPI MADT table for Local APIC and IOAPIC info
-- [ ] **Parse MADT flags (offset 36, bit 0 = `PCAT_COMPAT`):**
-  - [ ] If `PCAT_COMPAT=1` (legacy hardware): remap PIC, then disable after APIC takeover
-  - [ ] If `PCAT_COMPAT=0` (Hyper-V Gen 2, hardware-reduced ACPI): **skip PIC init entirely**
-  - [ ] Log: `[MADT] PCAT_COMPAT=0 — PIC absent, APIC-only mode`
-- [ ] Initialize Local APIC:
-  - [ ] Map MMIO at base address (typically `0xFEE00000`)
-  - [ ] Enable APIC via Spurious Interrupt Vector Register
-  - [ ] Configure APIC Timer (for scheduler, replacing PIT later)
-- [ ] Initialize IOAPIC:
-  - [ ] Map MMIO at base address (typically `0xFEC00000`)
-  - [ ] Configure redirection table entries for IRQs 0-23
-  - [ ] Map legacy IRQ numbers to IOAPIC inputs
-- [ ] Implement `apic_send_eoi()` — end-of-interrupt for APIC
-- [ ] Implement `ioapic_set_irq(irq, vector, cpu)` — route IRQ to specific CPU
-- [ ] Conditionally disable legacy PIC (only if `PCAT_COMPAT=1`)
-- [ ] Update existing IRQ handlers to use APIC EOI
-- [ ] Commit: `"kernel: APIC and IOAPIC interrupt controller"`
+- [x] ACPI MADT parsing — LAPIC IDs, x2APIC (type 9), IOAPIC base, ISOs, LAPIC NMI
+- [x] LAPIC init — SVR, TPR, ESR, EOI, IPI send (xAPIC MMIO mode)
+- [x] IOAPIC init — routes 16 ISA IRQs with ISO polarity/trigger flags to BSP
+- [x] PCAT_COMPAT check — `acpi_pcat_compat()` skips PIC when flag is 0
+- [x] LAPIC timer — periodic mode, vector 32 (hardcoded ICR, calibration in §063.09 §2)
+- [x] SMP boot — INIT-SIPI-SIPI sequence via `smp.c`
+- [x] PIC conditional disable — PIC masked only when PCAT_COMPAT=1
 
 ### 2.3 HPET Timer (Built-in)
 
@@ -500,14 +492,14 @@
 
 ## Compatible Open-Source Porting Sources
 
-| Source     | License | Best Drivers                     | URL                                                                      |
-|------------|---------|----------------------------------|--------------------------------------------------------------------------|
-| SerenityOS | BSD-2   | e1000, AC97, HDA, VMSVGA, NVMe   | [github.com/SerenityOS/serenity](https://github.com/SerenityOS/serenity) |
-| tinyusb    | MIT     | USB host (xHCI, EHCI), HID, MSC  | [github.com/hathach/tinyusb](https://github.com/hathach/tinyusb)         |
-| FreeBSD    | BSD-2   | Intel NIC (em/igb), RTL8169 (re) | [github.com/freebsd/freebsd-src](https://github.com/freebsd/freebsd-src) |
-| OpenBSD    | ISC     | Clean NIC/storage drivers        | [github.com/openbsd/src](https://github.com/openbsd/src)                 |
-| ToaruOS    | NCSA    | AC97, e1000, VirtIO              | [github.com/klange/toaruos](https://github.com/klange/toaruos)           |
-| ACPICA     | BSD     | Full ACPI implementation         | [github.com/acpica/acpica](https://github.com/acpica/acpica)             |
+| Source     | License | Best Drivers                    | URL                                                                      |
+| ---------- | ------- | ------------------------------- | ------------------------------------------------------------------------ |
+| SerenityOS | BSD-2   | e1000, AC97, HDA, VMSVGA, NVMe  | [github.com/SerenityOS/serenity](https://github.com/SerenityOS/serenity) |
+| tinyusb    | MIT     | USB host (xHCI, EHCI), HID, MSC | [github.com/hathach/tinyusb](https://github.com/hathach/tinyusb)         |
+| FreeBSD    | BSD-2   | Intel NIC (em/igb), RTL8169 (re)| [github.com/freebsd/freebsd-src](https://github.com/freebsd/freebsd-src) |
+| OpenBSD    | ISC     | Clean NIC/storage drivers       | [github.com/openbsd/src](https://github.com/openbsd/src)                 |
+| ToaruOS    | NCSA    | AC97, e1000, VirtIO             | [github.com/klange/toaruos](https://github.com/klange/toaruos)           |
+| ACPICA     | BSD     | Full ACPI implementation        | [github.com/acpica/acpica](https://github.com/acpica/acpica)             |
 
 > [!WARNING]
 > **NEVER** copy code from the **Linux kernel** (GPL-2.0). This would require relicensing the entire OS to GPL. For hardware where only Linux has a driver, do a clean-room implementation from public datasheets.
@@ -524,28 +516,48 @@
 > → XREF: `TODO-010-Bootloader.md §1.6` — Hyper-V Gen 2 removes ALL legacy hardware.
 > Without VMBus drivers, the OS has no storage, no input, and a frozen display.
 
+### Source organization
+
+All Hyper-V paravirtualization code lives in `src/kernel/drivers/hyperv/`:
+
+```
+src/kernel/drivers/hyperv/
+├── vmbus.c        — VMBus core protocol, ring buffers, channel management
+├── storvsc.c      — Synthetic SCSI storage (VHDX disk access)
+├── hv_kbd.c       — Synthetic keyboard input
+├── hv_mouse.c     — Synthetic mouse input
+└── hv_video.c     — Synthetic video framebuffer
+```
+
+Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
+
 ### 10.1 VMBus Core Protocol
 
-**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). Implement the VMBus core: discover the hypercall page via `HV_X64_MSR_HYPERCALL`, establish a shared connection with the hypervisor, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Linux's `hv_vmbus.c` (GPL) is the reference but must be clean-room reimplemented from the public Hyper-V specification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
+**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). This is the **foundation** — without VMBus, no synthetic device (disk, keyboard, mouse, video, network) can be accessed. Implement: discover Hyper-V via CPUID leaf `0x40000001`, set up the hypercall page via MSR `HV_X64_MSR_HYPERCALL`, negotiate VMBus protocol version, initiate the VMBus connection, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Clean-room implement from the public Hyper-V TLFS (Top-Level Functional Specification), NOT from Linux `hv_vmbus.c` (GPL). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/vmbus/vmbus.c` and `include/kernel/vmbus.h`
-- [ ] Discover Hyper-V via CPUID leaf `0x40000001` (hypervisor interface signature `"Hv#1"`)
-- [ ] Map hypercall page via `HV_X64_MSR_HYPERCALL` MSR
-- [ ] Implement `vmbus_connect()` — establish shared memory connection with hypervisor
-- [ ] Implement ring buffer management:
-  - [ ] Allocate send/receive ring buffers per channel (PMM-backed, page-aligned)
-  - [ ] Read/write ring buffer with proper memory barriers
-- [ ] Enumerate offered channels via `CHANNELMSG_OFFERCHANNEL` messages
-- [ ] Implement `vmbus_open_channel(guid)` — open a specific VMBus channel
-- [ ] Handle VMBus interrupts (synthetic interrupt via SINT)
-- [ ] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
-- [ ] Commit: `"drivers: VMBus core protocol"`
+> [!IMPORTANT]
+> **Legal:** Clean-room implement from the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
+> (public spec). Do NOT reference Linux `hv_vmbus.c` (GPL contamination risk).
+
+- [x] Create `src/kernel/drivers/hyperv/vmbus.c` and `include/kernel/drivers/hyperv/vmbus.h`
+- [x] Detect Hyper-V via CPUID leaf `0x40000001` (signature `"Hv#1"`)
+- [x] Read Hyper-V feature MSRs (guest OS ID, feature identification)
+- [x] Set up hypercall page via `HV_X64_MSR_HYPERCALL`
+- [x] Negotiate VMBus protocol version with host
+- [x] Enumerate offered VMBus channels (GUID-based identification)
+- [x] Implement ring buffer pair (send ring + receive ring) for each channel
+  - [x] Allocate send/receive ring buffers per channel (PMM-backed, page-aligned)
+  - [x] Read/write ring buffer with proper memory barriers
+- [x] Implement VMBus message handler (interrupt-driven via SINT)
+- [x] Implement `vmbus_open_channel(guid)` — open a specific VMBus channel
+- [x] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
+- [x] Commit: `"drivers: VMBus core protocol"`
 
 ### 10.2 Synthetic SCSI Storage (storvsc)
 
-**Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
+**Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/vmbus/storvsc.c`
+- [ ] Create `src/kernel/drivers/hyperv/storvsc.c`
 - [ ] Open VMBus channel for Storage VSP GUID
 - [ ] Negotiate storvsc protocol version with host
 - [ ] Implement SCSI commands over VMBus:
@@ -559,9 +571,9 @@
 
 ### 10.3 Synthetic Keyboard & Mouse (hid-hyperv)
 
-**Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop shell is completely unresponsive to user input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
+**Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop shell is completely unresponsive to user input. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/vmbus/hv_kbd.c` and `hv_mouse.c`
+- [ ] Create `src/kernel/drivers/hyperv/hv_kbd.c` and `hv_mouse.c`
 - [ ] Open VMBus channel for Keyboard VSP GUID
 - [ ] Parse synthetic keyboard reports → inject into keyboard subsystem
 - [ ] Open VMBus channel for Mouse VSP GUID
@@ -571,9 +583,9 @@
 
 ### 10.4 Synthetic Video (hvfb)
 
-**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes, but proper VMBus video integration enables resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
+**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes, but proper VMBus video integration enables resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/vmbus/hv_video.c`
+- [ ] Create `src/kernel/drivers/hyperv/hv_video.c`
 - [ ] Open VMBus channel for Video VSP GUID
 - [ ] Negotiate screen resolution with host
 - [ ] Map framebuffer via VMBus shared memory
@@ -584,36 +596,67 @@
 
 ---
 
+## 11. Device Manager GUI (🚀 Impossible OS Feature)
+
+**Prompt:** Build a graphical Device Manager that shows all detected hardware with live status. The PCI bus scanner already discovers all devices — expose this data in a tree view organized by device class (Storage, Network, Display, Input, Audio). Each device shows vendor/device names (from PCI ID database), driver status (loaded/missing/error), current IRQ vector, and live interrupt rate (interrupts/sec). This gives users unprecedented hardware visibility. Neither Windows Device Manager nor Linux has a single integrated view with live interrupt data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: Device Manager GUI"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Device Manager is static — no live data, no interrupt rates,
+> must right-click → Properties for each device. Linux has no built-in GUI equivalent (requires
+> `lspci`, `lsusb`, `dmesg` CLI tools). Impossible OS can be the **first OS with a native,
+> live Device Manager** showing real-time interrupt rates, driver health, and PCI topology.
+
+- [ ] Enumerate devices: walk PCI scan results, USB device tree, platform devices
+- [ ] Resolve PCI vendor/device names from embedded PCI ID database
+- [ ] Tree view organized by class: Storage, Network, Display, Input, Audio, USB, Other
+- [ ] Per-device info panel:
+  - [ ] PCI BDF address (Bus:Device.Function)
+  - [ ] Vendor name + device name
+  - [ ] Driver status: ✅ Loaded (name.kmod) / ⚠️ Missing / ❌ Error
+  - [ ] IRQ vector + live interrupt rate (interrupts/sec)
+  - [ ] BAR addresses and memory/IO ranges
+- [ ] Live update: refresh interrupt counters every 1 second
+- [ ] Win32 API: `SetupDiGetClassDevs()`, `SetupDiEnumDeviceInfo()` for apps
+- [ ] Commit: `"shell: Device Manager GUI"`
+
+---
+
 ## Priority Order
 
-| Priority | Section                    | Description                                                 |
-|----------|----------------------------|-------------------------------------------------------------|
-| 🔴 P0     | 1.1 Kernel Symbol Table    | Foundation — modules can't call kernel functions without it |
-| 🔴 P0     | 1.2 ELF Module Loader      | Foundation — load and relocate .kmod files                  |
-| 🔴 P0     | 1.3 Module Build System    | Foundation — compile drivers as .kmod                       |
-| 🔴 P0     | 1.4 Driver Model           | Foundation — PCI match, probe/remove lifecycle              |
-| 🔴 P0     | 1.5 Auto-Load at Boot      | Foundation — scan C:\System\Drivers\ on boot                |
-| 🟠 P1     | 1.6 RTL8139 as Module      | Proof of concept — validate entire pipeline                 |
-| 🟠 P1     | 2.1 NVMe (built-in)        | Real hardware SSD support                                   |
-| 🟠 P1     | 3.1 Intel e1000 Module     | VirtualBox networking                                       |
-| 🟡 P2     | 4.1 VMSVGA Module          | VirtualBox GPU + cursor + acceleration                      |
-| 🟡 P2     | 4.2 VirtIO-GPU Module      | QEMU GPU (restore reverted code)                            |
-| 🟡 P2     | 3.2 VirtIO-net Module      | Fast QEMU networking                                        |
-| 🟡 P2     | 2.2 APIC/IOAPIC (built-in) | Required for MSI, multi-core                                |
-| 🔴 P0     | 9.1 ACPI Shutdown/Reboot   | **Cannot power off** — currently hangs or triple-faults    |
-| 🟡 P2     | 9.3 Battery Status         | Laptop support — system tray battery indicator              |
-| 🟢 P3     | 6.1 VirtIO-input Module    | Convert existing code                                       |
-| 🟢 P3     | 3.3 RTL8169 Module         | Common real-world NIC                                       |
-| 🟢 P3     | 2.3 HPET Timer (built-in)  | High-precision timing                                       |
-| 🟢 P3     | 7.1 License Tracking       | Attribution compliance                                      |
-| 🟠 P1     | 9.2 ACPI S3 Suspend        | Sleep/resume — **required for laptop support**              |
-| 🟢 P3     | 9.4 CPU Freq. Scaling      | Power efficiency on laptops                                 |
-| 🟢 P3     | 10.1 VMBus Core            | Hyper-V Gen 2 — channel protocol foundation                 |
-| 🟢 P3     | 10.2 Synthetic SCSI        | Hyper-V Gen 2 — VHDX disk access via VMBus                  |
-| 🟢 P3     | 10.3 Synthetic HID         | Hyper-V Gen 2 — keyboard/mouse via VMBus                    |
-| 🟢 P3     | 10.4 Synthetic Video       | Hyper-V Gen 2 — framebuffer via VMBus                       |
-| 🔵 P4     | 4.3 Bochs/BGA Module       | Simple fallback display                                     |
-| 🔵 P4     | 5.1 Audio as Modules       | Convert Phase 08 drivers to modules                         |
+| Priority | Section                       | Description                                                     |
+| :------: | ----------------------------- | --------------------------------------------------------------- |
+| ✅ Done   | 2.2 APIC/IOAPIC (built-in)   | `lapic.c` + `ioapic.c` — see TODO-063.09 for enhancements      |
+| ✅ Done   | 9.1 ACPI Shutdown/Reboot      | `acpi_shutdown()` + `acpi_reboot()` with 3-method cascade       |
+| 🔴 P0    | 1.1 Kernel Symbol Table       | Foundation — modules can't call kernel functions without it     |
+| 🔴 P0    | 1.2 ELF Module Loader         | Foundation — load and relocate .kmod files                      |
+| 🔴 P0    | 1.3 Module Build System       | Foundation — compile drivers as .kmod                           |
+| 🔴 P0    | 1.4 Driver Model + HAL        | Foundation — PCI match, probe/remove lifecycle                  |
+| 🔴 P0    | 1.5 Auto-Load at Boot         | Foundation — scan `C:\System\Drivers\` on boot                  |
+| 🟠 P1    | 1.6 RTL8139 as Module         | Proof of concept — validate entire pipeline                     |
+| 🟠 P1    | 2.1 NVMe (built-in)           | Real hardware SSD support                                       |
+| 🟠 P1    | 3.1 Intel e1000 Module        | VirtualBox networking                                           |
+| 🟠 P1    | 9.2 ACPI S3 Suspend           | Sleep/resume — **required for laptop support**                  |
+| 🟡 P2    | 4.1 VMSVGA Module             | VirtualBox GPU + cursor + acceleration                          |
+| 🟡 P2    | 4.2 VirtIO-GPU Module         | QEMU GPU (restore reverted code)                                |
+| 🟡 P2    | 3.2 VirtIO-net Module         | Fast QEMU networking                                            |
+| 🟡 P2    | 9.3 Battery Status            | Laptop support — system tray battery indicator                  |
+| 🟡 P2    | 9.5 Power Button Handler      | Clean shutdown on physical button press                         |
+| 🟢 P3    | 6.1 VirtIO-input Module       | Convert existing code                                           |
+| 🟢 P3    | 3.3 RTL8169 Module            | Common real-world NIC                                           |
+| 🟢 P3    | 2.3 HPET Timer (built-in)     | High-precision timing                                           |
+| 🟢 P3    | 8.1 License Tracking          | Attribution compliance                                          |
+| 🟢 P3    | 9.4 CPU Freq. Scaling         | Power efficiency on laptops                                     |
+| 🟢 P3    | 9.6 Thermal Monitoring ⭐     | Per-core temp in Task Manager — no consumer OS has this         |
+| 🟢 P3    | 10.1 VMBus Core               | Hyper-V Gen 2 — channel protocol foundation                     |
+| 🟢 P3    | 10.2 Synthetic SCSI           | Hyper-V Gen 2 — VHDX disk access via VMBus                      |
+| 🟢 P3    | 10.3 Synthetic HID            | Hyper-V Gen 2 — keyboard/mouse via VMBus                        |
+| 🟢 P3    | 10.4 Synthetic Video          | Hyper-V Gen 2 — framebuffer via VMBus                           |
+| 🔵 P4    | 4.3 Bochs/BGA Module          | Simple fallback display                                         |
+| 🔵 P4    | 5.1 Audio as Modules          | Convert Phase 08 drivers to modules                             |
+| 🟢 P3    | 11. Device Manager GUI ⭐     | Live PCI/USB tree with interrupt rates — no OS has this natively |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
@@ -761,17 +804,20 @@
 
 > **Priority: P2** — Required for battery-powered laptops and proper QEMU shutdown
 
-### 9.1 ACPI Shutdown / Reboot
+### 9.1 ACPI Shutdown / Reboot — ✅ Done
 
-**Prompt:** The current `shutdown` command likely triggers a triple-fault or hangs — implement proper ACPI power-off via the PM1a control register. Parse the ACPI FADT for `PM1a_CNT_BLK` and `SLP_TYP_S5`. Write `(SLP_TYPa << 10) | SLP_EN` to the PM1a control register to trigger S5 (soft-off). Reboot via `CF9` reset register (write `0x06` to I/O port `0xCF9`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI shutdown and reboot"`. Add notes directly in this TODO section.
+Full ACPI power management is implemented in `acpi.c`:
 
-- [ ] Parse ACPI FADT: `PM1a_CNT_BLK` and `SLP_TYP_S5` value
-- [ ] Implement `acpi_poweroff()` — write `(SLP_TYPa << 10) | SLP_EN` to PM1a CTL port
-- [ ] Implement `acpi_reboot()` — write `0x06` to I/O port `0xCF9`
-- [ ] Fallback reboot: keyboard controller reset (port `0x64`, command `0xFE`)
-- [ ] Wire to `shutdown` and `reboot` shell commands
-- [ ] Test: `shutdown` → QEMU exits; `reboot` → QEMU restarts cleanly
-- [ ] Commit: `"kernel: ACPI shutdown and reboot"`
+- [x] Parse ACPI FADT: `PM1a_CNT_BLK` and `SLP_TYP_S5` value (from DSDT `\_S5` AML parsing)
+- [x] Implement `acpi_shutdown()` — writes `(SLP_TYPa << 10) | SLP_EN` to PM1a CTL port
+  - [x] Fallback: QEMU-specific port `0x604`, Bochs port `0xB004`
+  - [x] PM1b support: writes to both PM1a and PM1b if available
+- [x] Implement `acpi_reboot()` — 3-method cascade:
+  - [x] Method 1: ACPI reset register (FADT 2.0+ GAS)
+  - [x] Method 2: Keyboard controller reset (port `0x64`, command `0xFE`)
+  - [x] Method 3: Triple fault (null IDT + `int $0x03`)
+- [x] Wire to `shutdown` and `reboot` shell commands
+- [x] Commit: `"kernel: ACPI shutdown and reboot"`
 
 ### 9.2 ACPI S3 Suspend (Sleep)
 
@@ -811,30 +857,70 @@
 - [ ] Registry: `HKLM\HARDWARE\CPU\CurrentFrequencyMHz`
 - [ ] Commit: `"kernel: CPU frequency scaling (DVFS)"`
 
+### 9.5 ACPI Power Button Event Handler
+
+**Prompt:** The ACPI power button generates an SCI (System Control Interrupt) routed via the IOAPIC. When the user presses the physical power button, the OS should receive an ACPI event and initiate a clean shutdown (flush buffers, save registry, power off) rather than an instant hard power-off. Parse the ACPI FADT `SCI_INT` field for the interrupt vector, register an SCI handler, and decode Fixed Events (PM1a Status register bit 8 = Power Button). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI power button handler"`. Add notes directly in this TODO section.
+
+- [ ] Parse FADT `SCI_INT` field — get SCI interrupt vector
+- [ ] Route SCI via IOAPIC to BSP (level-triggered, active-low)
+- [ ] Register SCI ISR in IDT
+- [ ] In SCI handler: read PM1a Status register, check bit 8 (PWRBTN_STS)
+- [ ] On power button press: initiate clean shutdown sequence
+  - [ ] Flush dirty filesystem buffers
+  - [ ] Save registry hives
+  - [ ] Call `acpi_shutdown()`
+- [ ] Clear PWRBTN_STS by writing 1 to bit 8 of PM1a Status
+- [ ] Commit: `"kernel: ACPI power button handler"`
+
+### 9.6 Thermal Monitoring and Emergency Shutdown (🚀 Impossible OS Feature)
+
+**Prompt:** Read CPU thermal status via LAPIC Thermal LVT and `IA32_THERM_STATUS` MSR. Display CPU temperature in Task Manager. If temperature exceeds critical threshold, perform an emergency clean shutdown. Neither Windows nor Linux shows per-core temperature natively in their built-in task manager — both require third-party tools (HWMonitor, lm-sensors). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: thermal monitoring and emergency shutdown"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Task Manager does NOT show CPU temperature. Linux
+> requires `lm-sensors` + a separate GUI tool. Impossible OS can be the first OS to
+> show per-core temperature natively in Task Manager — with color-coded bars and
+> automatic throttling/shutdown at critical temps.
+
+- [ ] Read `IA32_THERM_STATUS` MSR — extract temperature from Digital Readout field
+- [ ] Read `IA32_TEMPERATURE_TARGET` MSR — get Tj,max (max junction temperature)
+- [ ] Calculate: `current_temp = Tj_max - digital_readout`
+- [ ] Configure LAPIC Thermal LVT (vector, unmasked) for threshold crossings
+- [ ] Poll every 5 seconds: `QueryCpuTemperature(cpu_id)` syscall for Task Manager
+- [ ] Task Manager panel: per-core temperature bars
+  - [ ] Color-code: green (<60°C), yellow (60–80°C), orange (80–95°C), red (>95°C)
+- [ ] Emergency shutdown at critical temp (>100°C): flush + `acpi_shutdown()`
+- [ ] Registry: `HKLM\HARDWARE\CPU\Temperature\Core0`, `Core1`, etc.
+- [ ] Commit: `"kernel: thermal monitoring and emergency shutdown"`
+
 ---
 
 ## OS Comparison
 
-| Feature                      | 🪟 Windows 11                 | 🐧 Linux                           | 🚀 Impossible OS                        |
-| ---------------------------- | ---------------------------- | --------------------------------- | -------------------------------------- |
-| Loadable kernel modules      | ✅ WDM drivers (`.sys`)       | ✅ `.ko` modules (`insmod`)        | ⬜ §1 P0 — `.kmod` ELF objects          |
-| Kernel symbol table          | ✅ HAL exports                | ✅ `EXPORT_SYMBOL` / `.kallsyms`   | ⬜ §1.1 P0                              |
-| Driver model (PCI match)     | ✅ PnP manager + INF files    | ✅ `struct pci_device_id` tables   | ⬜ §1.4 P0                              |
-| Auto-load drivers at boot    | ✅ Service manager + registry | ✅ `modprobe` + `modules.dep`      | ⬜ §1.5 P0                              |
-| NVMe storage                 | ✅ Stornvme.sys               | ✅ `nvme` driver                   | ⬜ §2.1 P1                              |
-| APIC / IOAPIC                | ✅ HAL                        | ✅ APIC subsystem                  | ⬜ §2.2 P2                              |
-| Intel e1000 NIC              | ✅ e1i65x64.sys               | ✅ `e1000`/`e1000e`                | ⬜ §3.1 P1 — port from SerenityOS BSD-2 |
-| VirtIO-net NIC               | ✅ netkvm.sys                 | ✅ `virtio_net`                    | ⬜ §3.2 P2                              |
-| GPU modesetting              | ✅ WDDM 3.x                   | ✅ DRM/KMS                         | ⬜ §4 P2 — VMSVGA + VirtIO-GPU          |
-| USB xHCI controller          | ✅ USBXHCI.sys                | ✅ `xhci_hcd`                      | ⬜ §7.2 P1                              |
-| USB HID (keyboard/mouse)     | ✅ HIDCLASS.sys               | ✅ `usbhid`                        | ⬜ §7.3 P1                              |
-| ACPI shutdown / reboot       | ✅                            | ✅                                 | ⬜ §9.1 P0 — **currently missing!**     |
-| ACPI S3 suspend/resume       | ✅                            | ✅                                 | ⬜ §9.2 P1 — **required for laptops**   |
-| Battery status (laptops)     | ✅ Control Panel + tray       | ✅ UPower + system tray            | ⬜ §9.3 P2                              |
-| CPU frequency scaling (DVFS) | ✅ Power plans + HWP          | ✅ `cpufreq` + governors           | ⬜ §9.4 P3                              |
-| Licensing compliance         | ✅ Proprietary                | ✅ GPL-2.0                         | ⬜ §8.1 P3 — BSD/MIT only               |
-| **No GPL contamination**     | ✅ Proprietary                | N/A                               | ✅ **§8 — strict MIT/BSD-2/BSD-3 only** |
-| **S3 sleep/resume**          | ✅ Native                     | ✅ pm-utils / systemd-suspend      | ⬜ **§9.2 P1 — production requirement** |
-| MADT `PCAT_COMPAT` check     | ✅ HAL checks flags           | ✅ `acpi_pic_sci_set_trigger()`    | ⬜ §2.2 P2 — **currently assumed**      |
-| VMBus paravirtualization     | ✅ Native (VSC built-in)      | ✅ `hv_vmbus` + storvsc/hid-hyperv | ⬜ §10 P3 — **missing entirely**        |
-| Hyper-V Gen 2 boot           | ✅ Native                     | ✅ With hv_* drivers               | ⬜ §1.6 + §10 — **cannot boot**         |
+| Feature                              | 🪟 Windows 11                           | 🐧 Linux 6.x                          | 🚀 Impossible OS                                     |
+| ------------------------------------ | --------------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| Loadable kernel modules              | ✅ WDM drivers (`.sys`)                  | ✅ `.ko` modules (`insmod`)             | ⬜ §1 P0 — `.kmod` ELF objects                        |
+| Kernel symbol table                  | ✅ HAL exports                           | ✅ `EXPORT_SYMBOL` / `.kallsyms`        | ⬜ §1.1 P0 — `.ksymtab` linker section                |
+| Driver model (PCI match)             | ✅ PnP manager + INF files               | ✅ `struct pci_device_id` tables        | ⬜ §1.4 P0 — HAL + `struct driver`                    |
+| Auto-load drivers at boot            | ✅ Service manager + registry            | ✅ `modprobe` + `modules.dep`           | ⬜ §1.5 P0 — scan `C:\System\Drivers\`                |
+| NVMe storage                         | ✅ Stornvme.sys                          | ✅ `nvme` driver                        | ⬜ §2.1 P1 — port from SerenityOS BSD-2               |
+| APIC / IOAPIC                        | ✅ HAL APIC driver                       | ✅ `arch/x86/kernel/apic/`              | ✅ `lapic.c` + `ioapic.c` — see TODO-063.09           |
+| PCAT_COMPAT check                    | ✅ HAL checks MADT flags                 | ✅ `acpi_pic_sci_set_trigger()`         | ✅ `acpi_pcat_compat()` — PIC skipped when 0          |
+| ACPI shutdown / reboot               | ✅ Native                                | ✅ Native                               | ✅ `acpi_shutdown()` + `acpi_reboot()` — 3 fallbacks  |
+| SMP boot (SIPI)                      | ✅ `HalpStartProcessor()`                | ✅ `do_boot_cpu()`                      | ✅ `smp.c` — INIT-SIPI-SIPI                           |
+| Intel e1000 NIC                      | ✅ e1i65x64.sys                          | ✅ `e1000` / `e1000e`                   | ⬜ §3.1 P1 — port from SerenityOS BSD-2               |
+| VirtIO-net NIC                       | ✅ netkvm.sys                            | ✅ `virtio_net`                         | ⬜ §3.2 P2                                            |
+| GPU modesetting                      | ✅ WDDM 3.x                             | ✅ DRM/KMS                              | ⬜ §4 P2 — VMSVGA + VirtIO-GPU                        |
+| USB xHCI controller                  | ✅ USBXHCI.sys                           | ✅ `xhci_hcd`                           | ⬜ §7.2 — port from tinyusb MIT                       |
+| USB HID (keyboard/mouse)             | ✅ HIDCLASS.sys                          | ✅ `usbhid`                             | ⬜ §7.3 — port from tinyusb MIT                       |
+| ACPI S3 suspend/resume               | ✅ Native                                | ✅ pm-utils / systemd-suspend           | ⬜ §9.2 P1 — **required for laptops**                 |
+| Battery status (laptops)             | ✅ Control Panel + tray                  | ✅ UPower + system tray                 | ⬜ §9.3 P2 — ACPICA for `_BST` / `_BIF`              |
+| CPU frequency scaling (DVFS)         | ✅ Power plans + HWP                     | ✅ `cpufreq` + governors                | ⬜ §9.4 P3 — P-state via MSR                          |
+| Power button clean shutdown          | ✅ SCI handler (hidden)                  | ✅ `acpi_power_off` (hidden)            | ⬜ §9.5 P2 — SCI event handler                        |
+| VMBus paravirtualization             | ✅ Native (VSC built-in)                 | ✅ `hv_vmbus` + storvsc/hid-hyperv      | ⬜ §10 P3 — **missing entirely**                      |
+| Hyper-V Gen 2 boot                   | ✅ Native                                | ✅ With hv_* drivers                    | ⬜ §10 P3 — **cannot boot without VMBus**             |
+| Licensing compliance                 | ✅ Proprietary                           | ✅ GPL-2.0                              | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**               |
+| **CPU temperature in Task Manager** ⭐| ❌ Requires HWMonitor (third-party)      | ❌ Requires lm-sensors + GUI            | ⬜ §9.6 — per-core temp bars, color-coded              |
+| **HPET ns-resolution timestamps** ⭐ | ✅ QPC (but not user-visible)            | ✅ `clock_gettime` (but not user-visible)| ⬜ §2.3 — exposed as `hpet_read_ns()` API             |
+| **Live Device Manager GUI** ⭐       | ⚠️ Static tree (no live data)            | ❌ CLI only (`lspci`, `lsusb`)           | ⬜ §11 — live interrupt rates + driver health per device|
+
