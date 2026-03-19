@@ -93,7 +93,7 @@ if ($qemuImg) {
     }
 } else {
     # Fallback: use Hyper-V's Convert-VHD if available, else raw write
-    Write-Warn "qemu-img not found — install QEMU for Windows for reliable VHDX conversion"
+    Write-Warn "qemu-img not found -- install QEMU for Windows for reliable VHDX conversion"
     Write-Warn "Download: https://qemu.weilnetz.de/w64/"
     
     $rawSize = (Get-Item $DISK_TEMP).Length

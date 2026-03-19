@@ -249,3 +249,18 @@ void mouse_set_position(int32_t x, int32_t y)
     mouse_y = y;
 }
 
+void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons)
+{
+    mouse_x = x;
+    mouse_y = y;
+    mouse_buttons = buttons;
+
+    /* Clamp to screen bounds */
+    if (mouse_x < 0) mouse_x = 0;
+    if (mouse_y < 0) mouse_y = 0;
+    if ((uint32_t)mouse_x >= fb_get_width())
+        mouse_x = (int32_t)fb_get_width() - 1;
+    if ((uint32_t)mouse_y >= fb_get_height())
+        mouse_y = (int32_t)fb_get_height() - 1;
+}
+

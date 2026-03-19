@@ -29,3 +29,6 @@ struct mouse_state mouse_get_state(void);
 uint32_t mouse_get_irq_count(void);
 void mouse_set_position(int32_t x, int32_t y);
 
+/* Inject absolute mouse state (used by Hyper-V synthetic mouse).
+ * Sets position and button state directly — no PS/2 parsing. */
+void mouse_inject_state(int32_t x, int32_t y, uint8_t buttons);

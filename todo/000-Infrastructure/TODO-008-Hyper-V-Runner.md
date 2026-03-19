@@ -164,14 +164,23 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 > **XREF:** [TODO-064-Guest-Additions.md §6.2](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — Hyper-V Synthetic Mouse & Video
 
 **Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop is **completely unresponsive** — no keyboard shortcuts, no mouse clicks, no window interaction. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
+> [!NOTE]
+> **Implementation Notes:**
+> - Combined keyboard + mouse into single `include/kernel/drivers/hyperv/hv_input.h` and `src/kernel/drivers/hyperv/hv_input.c` (~250 lines)
+> - HID protocol: PROTOCOL_REQUEST → PROTOCOL_RESPONSE → INITIAL_DEVICE_INFO → INITIAL_DEVICE_INFO_ACK → INPUT_REPORT polling
+> - Added `keyboard_inject_scancode()` to keyboard.c/h — reuses same modifier/lookup/buffer logic as PS/2 IRQ handler
+> - Added `mouse_inject_state()` to mouse.c/h — sets absolute position + buttons directly
+> - `compositor.c`: calls `hv_kbd_poll()` and `hv_mouse_poll()` at top of loop; injected state flows through existing PS/2 consumer path
+> - `boot_storage.c`: `hv_kbd_init()` and `hv_mouse_init()` called after VMBus + storvsc init
+> - Mouse VSP GUID: `CFA8B69E-5B4A-4CC0-B98B-8BA1A1F3F95A`
 
-- [ ] Create `src/kernel/drivers/hyperv/hv_kbd.c` and `src/kernel/drivers/hyperv/hv_mouse.c`
-- [ ] Open VMBus channel for Keyboard VSP GUID `F912AD6D-2B17-48EA-BD65-F927A61C7684`
-- [ ] Open VMBus channel for Mouse VSP GUID
-- [ ] Parse synthetic keyboard events → feed into existing `keyboard_handler()`
-- [ ] Parse synthetic mouse events → feed into existing `mouse_handler()`
-- [ ] Fallback: if PS/2 is present (QEMU/VBox), use PS/2; if absent (Hyper-V), use synthetic
-- [ ] Commit: `"drivers: Hyper-V synthetic HID input"`
+- [x] Create `src/kernel/drivers/hyperv/hv_input.c` and `include/kernel/drivers/hyperv/hv_input.h`
+- [x] Open VMBus channel for Keyboard VSP GUID `F912AD6D-2B17-48EA-BD65-F927A61C7684`
+- [x] Open VMBus channel for Mouse VSP GUID
+- [x] Parse synthetic keyboard events → feed into existing `keyboard_inject_scancode()`
+- [x] Parse synthetic mouse events → feed into existing `mouse_inject_state()`
+- [x] Fallback: if PS/2 is present (QEMU/VBox), use PS/2; if absent (Hyper-V), use synthetic
+- [x] Commit: `"drivers: Hyper-V synthetic HID input"`
 
 ---
 

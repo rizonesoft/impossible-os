@@ -21,6 +21,7 @@
 #include "kernel/smp.h"
 #include "kernel/drivers/hyperv/vmbus.h"
 #include "kernel/drivers/hyperv/storvsc.h"
+#include "kernel/drivers/hyperv/hv_input.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "kernel/symtab.h"
@@ -177,9 +178,13 @@ void boot_storage_init(uint64_t magic)
      * On non-Hyper-V platforms, this returns immediately. */
     boot_splash_status("Probing Hyper-V VMBus...");
     if (vmbus_init() == 0) {
-        /* VMBus connected — initialize synthetic storage (StorVSC) */
+        /* VMBus connected — initialize synthetic devices */
         boot_splash_status("Initializing Hyper-V storage...");
         storvsc_init();
+
+        boot_splash_status("Initializing Hyper-V input...");
+        hv_kbd_init();
+        hv_mouse_init();
     }
 
     /* Dump hardware info (only when live debug is active) */

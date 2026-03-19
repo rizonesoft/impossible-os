@@ -279,3 +279,60 @@ char keyboard_trygetchar(void)
     spin_unlock_irqrestore(&kb_lock, flags);
     return c;
 }
+
+void keyboard_inject_scancode(uint8_t scancode)
+{
+    char c;
+
+    /* Handle 0xE0 prefix */
+    if (scancode == 0xE0) {
+        e0_prefix = 1;
+        return;
+    }
+
+    if (e0_prefix) {
+        e0_prefix = 0;
+        if (!(scancode & 0x80)) {
+            switch (scancode) {
+            case 0x48: kb_buffer_push((char)KEY_UP); break;
+            case 0x50: kb_buffer_push((char)KEY_DOWN); break;
+            case 0x4B: kb_buffer_push((char)KEY_LEFT); break;
+            case 0x4D: kb_buffer_push((char)KEY_RIGHT); break;
+            default: break;
+            }
+        }
+        return;
+    }
+
+    /* Modifier keys */
+    switch (scancode) {
+    case SC_LSHIFT_PRESS: case SC_RSHIFT_PRESS:   shift_held = 1;  return;
+    case SC_LSHIFT_RELEASE: case SC_RSHIFT_RELEASE: shift_held = 0; return;
+    case SC_LCTRL_PRESS:   ctrl_held = 1;   return;
+    case SC_LCTRL_RELEASE: ctrl_held = 0;   return;
+    case SC_LALT_PRESS:    alt_held = 1;    return;
+    case SC_LALT_RELEASE:  alt_held = 0;    return;
+    case SC_CAPSLOCK:      capslock_on = !capslock_on; return;
+    default: break;
+    }
+
+    if (scancode & 0x80) return;  /* release */
+    if (scancode >= 0x59) return; /* out of range */
+
+    c = shift_held ? scancode_shifted[scancode] : scancode_normal[scancode];
+
+    if (capslock_on && c >= 'a' && c <= 'z') c -= 32;
+    else if (capslock_on && c >= 'A' && c <= 'Z') c += 32;
+
+    if (ctrl_held && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 1);
+    else if (ctrl_held && c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 1);
+
+    if (c == 3) { signal_ctrl_c(); return; }
+
+    if (c != 0) {
+        if (terminal_is_open())
+            terminal_key_input(c);
+        else
+            kb_buffer_push(c);
+    }
+}

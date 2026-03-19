@@ -11,6 +11,7 @@
 #include "kernel/drivers/mouse.h"
 #include "kernel/drivers/virtio_input.h"
 #include "kernel/drivers/vbox_mouse.h"
+#include "kernel/drivers/hyperv/hv_input.h"
 #include "kernel/drivers/rtc.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/sched/task.h"
@@ -36,6 +37,12 @@ void compositor_run(void)
     for (;;) {
         int32_t mx, my;
         uint8_t mb;
+
+        /* Poll Hyper-V synthetic input (no-op if not on Hyper-V).
+         * Drains VMBus ring buffers and injects scan codes / mouse state
+         * into the PS/2 input pipeline before we read from it. */
+        hv_kbd_poll();
+        hv_mouse_poll();
 
         /* Get mouse state from the best available source:
          *   1. VirtIO tablet (QEMU) — absolute coordinates

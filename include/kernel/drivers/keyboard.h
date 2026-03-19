@@ -30,3 +30,8 @@ char keyboard_getchar(void);
 
 /* Non-blocking read: returns character or 0 if buffer empty */
 char keyboard_trygetchar(void);
+
+/* Inject a PS/2-style scan code (used by Hyper-V synthetic keyboard).
+ * Processes modifiers, lookup tables, and pushes into the ring buffer
+ * exactly as if the scan code came from the PS/2 IRQ handler. */
+void keyboard_inject_scancode(uint8_t scancode);
