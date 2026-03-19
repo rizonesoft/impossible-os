@@ -15,8 +15,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CRC32 algorithms, and validation rules reference the
-> [GPT Specification](file:///home/derickpayne/impossible-os/specs/gpt.md)
-> in the repo at `specs/gpt.md`.
+> [GPT Specification](file:///home/derickpayne/impossible-os/specs/storage/gpt.md)
+> in the repo at `specs/storage/gpt.md`.
 
 ---
 

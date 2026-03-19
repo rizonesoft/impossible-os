@@ -11,8 +11,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All protocol GUIDs, table layouts, and service definitions reference the
-> [UEFI 2.10 Specification](file:///home/derickpayne/impossible-os/specs/uefi-2.10.md)
-> summary in the repo at `specs/uefi-2.10.md`.
+> [UEFI 2.10 Specification](file:///home/derickpayne/impossible-os/specs/firmware/uefi-2.10.md)
+> summary in the repo at `specs/firmware/uefi-2.10.md`.
 
 > [!NOTE]
 > **Cross-references:**
@@ -102,7 +102,7 @@ graph TD
 | Phase | Section                          | What It Delivers                                            | Depends On                            |
 | :---: | -------------------------------- | ----------------------------------------------------------- | ------------------------------------- |
 | **1** | §3.1 Memory Map Preservation     | Full UEFI memory type info for PMM (runtime, ACPI, MMIO)    | —                                     |
-| **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID      | —                                     |
+| **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID       | —                                     |
 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers        | Phase 1 (§3.1)                        |
 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)             | Phase 1 (§4.1)                        |
 | **2** | §9.1 TPM Measured Boot ⭐        | TCG event log + PCR values before ExitBootServices          | —                                     |
@@ -110,15 +110,15 @@ graph TD
 | **2** | §11.1 Boot Timing (FPDT) ⭐      | Full power-on-to-desktop boot timeline                      | Phase 1 (§4.1)                        |
 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers                  | Phase 2 (§1.1)                        |
 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                         | Phase 2 (§1.1)                        |
-| **3** | §2.1 RTC Time Services            | GetTime/SetTime for kernel wall clock                       | Phase 2 (§1.1)                        |
-| **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                            | Phase 1 + Phase 2 (§1.1)             |
+| **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                       | Phase 2 (§1.1)                        |
+| **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                            | Phase 1 + Phase 2 (§1.1)              |
 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                     | Phase 3 (§1.2)                        |
 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version               | Phase 1 (§4.1)                        |
 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                          | Phase 4 (§5.1)                        |
 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                             | — (independent)                       |
 | **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                      | Phase 2 (§9.1)                        |
 | **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                      | Phase 5 (§5.2)                        |
-| **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                                 | Phase 2 (§1.1) + Phase 3 (§1.2)      |
+| **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                                 | Phase 2 (§1.1) + Phase 3 (§1.2)       |
 
 > [!NOTE]
 > **Phases 1–2** are the foundation. Runtime services, config table walker, and ⭐ features unblock everything else.

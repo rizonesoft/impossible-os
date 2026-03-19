@@ -25,8 +25,8 @@
 > **Byte Order:** All exFAT on-disk structures are **little-endian**.
 >
 > **Spec Reference:** All offsets, field layouts, and algorithms reference the
-> [exFAT 1.00 Specification](file:///home/derickpayne/impossible-os/specs/exfat-1.0.md)
-> in the repo at `specs/exfat-1.0.md`.
+> [exFAT 1.00 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/exfat-1.0.md)
+> in the repo at `specs/filesystem/exfat-1.0.md`.
 
 ---
 
@@ -574,4 +574,4 @@
 | `src/kernel/fs/exfat.c` | [NEW] exFAT driver implementation |
 | `include/kernel/fs/exfat.h` | [NEW] exFAT structures, constants, entry types |
 | `src/kernel/fs/partition.c` | Register exFAT detection (differentiate from NTFS by signature) |
-| `specs/exfat-1.0.md` | Full on-disk specification reference |
+| `specs/filesystem/exfat-1.0.md` | Full on-disk specification reference |

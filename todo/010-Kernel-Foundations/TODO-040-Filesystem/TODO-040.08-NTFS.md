@@ -21,8 +21,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, algorithms, and data structures
-> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/specs/ntfs-3.1.md)
-> in the repo at `specs/ntfs-3.1.md`.
+> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/ntfs-3.1.md)
+> in the repo at `specs/filesystem/ntfs-3.1.md`.
 
 ---
 

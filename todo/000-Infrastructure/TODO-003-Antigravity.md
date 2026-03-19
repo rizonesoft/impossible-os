@@ -302,11 +302,11 @@
 > via `search_symbols()` and `hybrid_search()` by agents in context.
 
 - [x] Create machine-readable spec documents in `specs/`:
-  - [x] `specs/intel-sdm-x86-64.md` — Intel 64 and IA-32 SDM architectural analysis
-  - [x] `specs/uefi-2.10.md` — UEFI Specification Release 2.10
-  - [x] `specs/acpi-6.5.md` — ACPI Specification 6.5
-  - [x] `specs/pci-3.0.md` — PCI Local Bus Specification Revision 3.0
-  - [x] `specs/ahci-1.3.1.md` — AHCI Specification Revision 1.3.1
+  - [x] `specs/cpu/intel-sdm-x86-64.md` — Intel 64 and IA-32 SDM architectural analysis
+  - [x] `specs/firmware/uefi-2.10.md` — UEFI Specification Release 2.10
+  - [x] `specs/firmware/acpi-6.5.md` — ACPI Specification 6.5
+  - [x] `specs/bus/pci-3.0.md` — PCI Local Bus Specification Revision 3.0
+  - [x] `specs/storage/ahci-1.3.1.md` — AHCI Specification Revision 1.3.1
 - [x] Specs indexed by Srclight (Tree-sitter + FTS5 keyword search)
 - [x] Agents can query spec content via Srclight MCP tools
 - [x] Commit: `"specs: add PCI Local Bus Specification Revision 3.0"`, `"specs: add AHCI Specification Revision 1.3.1"`

@@ -22,8 +22,8 @@
 > JBD2 journal which is **big-endian**. The driver must handle this dichotomy.
 >
 > **Spec Reference:** All offsets, field layouts, and algorithms reference the
-> [ext4 Specification](file:///home/derickpayne/impossible-os/specs/ext4.md)
-> in the repo at `specs/ext4.md`.
+> [ext4 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/ext4.md)
+> in the repo at `specs/filesystem/ext4.md`.
 
 ---
 
@@ -562,4 +562,4 @@
 | `src/kernel/fs/ext4.c` | [NEW] ext4/ext3/ext2 driver implementation |
 | `include/kernel/fs/ext4.h` | [NEW] ext4 structures, constants, feature flags |
 | `src/kernel/fs/partition.c` | Register ext4 detection on MBR `0x83` / GPT Linux GUID |
-| `specs/ext4.md` | Full on-disk specification reference |
+| `specs/filesystem/ext4.md` | Full on-disk specification reference |

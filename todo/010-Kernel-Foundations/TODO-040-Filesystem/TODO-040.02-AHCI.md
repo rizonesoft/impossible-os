@@ -12,8 +12,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [AHCI 1.3.1 Specification](file:///home/derickpayne/impossible-os/specs/ahci-1.3.1.md)
-> (Intel, 2012). The spec is 121 pages; a comprehensive summary is in the repo at `specs/ahci-1.3.1.md`.
+> [AHCI 1.3.1 Specification](file:///home/derickpayne/impossible-os/specs/storage/ahci-1.3.1.md)
+> (Intel, 2012). The spec is 121 pages; a comprehensive summary is in the repo at `specs/storage/ahci-1.3.1.md`.
 
 ---
 

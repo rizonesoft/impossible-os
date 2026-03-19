@@ -6,15 +6,15 @@
 > FSInfo caching, file read/write, directory operations (SFN/LFN read, create, delete, rename,
 > truncate), timestamp encoding, VFS integration, and basic formatting.
 > This TODO covers missing spec compliance, robustness, performance, and interoperability
-> gaps identified against `specs/fat32.md`.
+> gaps identified against `specs/filesystem/fat32.md`.
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for large I/O buffers (multi-sector reads, FAT sector caches). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, field offsets, and encoding rules reference the
-> [FAT32 Specification](file:///home/derickpayne/impossible-os/specs/fat32.md)
-> in the repo at `specs/fat32.md`.
+> [FAT32 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/fat32.md)
+> in the repo at `specs/filesystem/fat32.md`.
 
 ---
 

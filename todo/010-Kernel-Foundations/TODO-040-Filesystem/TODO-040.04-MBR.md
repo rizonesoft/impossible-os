@@ -17,8 +17,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CHS algorithms, and EBR rules reference the
-> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/specs/mbr.md)
-> in the repo at `specs/mbr.md`.
+> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/specs/storage/mbr.md)
+> in the repo at `specs/storage/mbr.md`.
 
 ---
 

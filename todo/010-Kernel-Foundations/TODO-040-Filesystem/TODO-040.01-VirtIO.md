@@ -17,8 +17,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/specs/virtio-1.2.md)
-> (OASIS, 2022). The block-device-focused summary is in the repo at `specs/virtio-1.2.md`.
+> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/specs/storage/virtio-1.2.md)
+> (OASIS, 2022). The block-device-focused summary is in the repo at `specs/storage/virtio-1.2.md`.
 
 ---
 

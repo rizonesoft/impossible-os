@@ -11,8 +11,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and state definitions reference the
-> [ACPI 6.5 Specification](file:///home/derickpayne/impossible-os/specs/acpi-6.5.md)
-> (UEFI Forum, 2022). The spec summary is in the repo at `specs/acpi-6.5.md`.
+> [ACPI 6.5 Specification](file:///home/derickpayne/impossible-os/specs/firmware/acpi-6.5.md)
+> (UEFI Forum, 2022). The spec summary is in the repo at `specs/firmware/acpi-6.5.md`.
 
 > [!NOTE]
 > **Cross-references:**
