@@ -9,7 +9,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/keyboard.h"
-#include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -106,11 +106,14 @@ static const char scancode_shifted[0x59] = {
 #define SC_LALT_RELEASE   0xB8
 #define SC_CAPSLOCK       0x3A
 
-/* --- IRQ 1 handler --- */
-static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
+/* --- IRQ 1 handler (via irq_register API) --- */
+static void keyboard_irq_callback(uint8_t vector, void *ctx)
 {
     uint8_t scancode;
     char c;
+
+    (void)vector;
+    (void)ctx;
 
     /* Read the scan code from the keyboard data port */
     scancode = inb(KB_DATA_PORT);
@@ -118,7 +121,7 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
     /* Handle 0xE0 prefix (extended scan codes for arrow keys etc.) */
     if (scancode == 0xE0) {
         e0_prefix = 1;
-        goto done;
+        return;
     }
 
     if (e0_prefix) {
@@ -153,7 +156,7 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
             default: break;
             }
         }
-        goto done;
+        return;
     }
 
     /* Handle modifier key presses and releases */
@@ -161,37 +164,37 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
     case SC_LSHIFT_PRESS:
     case SC_RSHIFT_PRESS:
         shift_held = 1;
-        goto done;
+        return;
     case SC_LSHIFT_RELEASE:
     case SC_RSHIFT_RELEASE:
         shift_held = 0;
-        goto done;
+        return;
     case SC_LCTRL_PRESS:
         ctrl_held = 1;
-        goto done;
+        return;
     case SC_LCTRL_RELEASE:
         ctrl_held = 0;
-        goto done;
+        return;
     case SC_LALT_PRESS:
         alt_held = 1;
-        goto done;
+        return;
     case SC_LALT_RELEASE:
         alt_held = 0;
-        goto done;
+        return;
     case SC_CAPSLOCK:
         capslock_on = !capslock_on;
-        goto done;
+        return;
     default:
         break;
     }
 
     /* Ignore key releases (bit 7 set) */
     if (scancode & 0x80)
-        goto done;
+        return;
 
     /* Ignore out-of-range scan codes */
     if (scancode >= 0x59)
-        goto done;
+        return;
 
     /* Look up the character */
     if (shift_held)
@@ -214,7 +217,7 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
     /* Ctrl+C (char code 3) → dispatch SIGINT to foreground task */
     if (c == 3) {
         signal_ctrl_c();
-        goto done;
+        return;
     }
 
     /* Push printable/control characters into the appropriate buffer */
@@ -225,10 +228,8 @@ static uint64_t keyboard_irq_handler(struct interrupt_frame *frame)
             kb_buffer_push(c);
     }
 
-done:
     (void)alt_held;  /* suppress unused warning (reserved for future use) */
-    irq_eoi(IRQ_KEYBOARD);
-    return (uint64_t)frame;
+    /* EOI handled by irq_dispatch_wrapper */
 }
 
 void keyboard_init(void)
@@ -242,8 +243,8 @@ void keyboard_init(void)
             inb(KB_DATA_PORT);
     }
 
-    /* Register IRQ 1 handler (interrupt vector 33) */
-    idt_register_handler(33, keyboard_irq_handler);
+    /* Register IRQ 1 handler (interrupt vector 33) via dynamic IRQ API */
+    irq_register(33, keyboard_irq_callback, (void *)0, "ps2_kbd");
 
     /* Unmask IRQ 1 on the PIC */
     pic_unmask_irq(IRQ_KEYBOARD);

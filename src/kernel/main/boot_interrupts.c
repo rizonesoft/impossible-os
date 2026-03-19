@@ -10,6 +10,7 @@
 #include "kernel/klog.h"
 #include "kernel/gdt.h"
 #include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/rtc.h"
@@ -57,6 +58,7 @@ void boot_interrupts_init(void)
     HV_BAR(172, 0x0000FF00);  /* GREEN = GDT OK */
 
     idt_init();
+    irq_init();
     HV_BAR(184, 0x0000FFFF);  /* CYAN = IDT OK */
 
     /* ACPI MADT must be parsed before PIC/PIT so we know:

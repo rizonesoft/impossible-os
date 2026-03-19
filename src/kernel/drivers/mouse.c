@@ -12,7 +12,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/mouse.h"
-#include "kernel/idt.h"
+#include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/klog.h"
@@ -84,26 +84,25 @@ static volatile uint8_t  mouse_packet[3];
 /* Debug counter — how many IRQ 12 interrupts we've received */
 static volatile uint32_t mouse_irq_count;
 
-/* ---- IRQ 12 handler ---- */
+/* ---- IRQ 12 handler (via irq_register API) ---- */
 
-static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
+static void mouse_irq_callback(uint8_t vector, void *ctx)
 {
     uint8_t status = inb(PS2_STATUS_PORT);
 
+    (void)vector;
+    (void)ctx;
+
     mouse_irq_count++;
     /* Bit 0 = output buffer full, Bit 5 = mouse data */
-    if (!(status & 0x01)) {
-        irq_eoi(IRQ_MOUSE);
-        return (uint64_t)frame;
-    }
+    if (!(status & 0x01))
+        return;  /* EOI handled by wrapper */
 
     uint8_t data = inb(PS2_DATA_PORT);
 
     /* Only process if bit 5 indicates auxiliary (mouse) data */
-    if (!(status & 0x20)) {
-        irq_eoi(IRQ_MOUSE);
-        return (uint64_t)frame;
-    }
+    if (!(status & 0x20))
+        return;  /* EOI handled by wrapper */
 
     switch (mouse_cycle) {
     case 0:
@@ -135,11 +134,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
             if (mouse_packet[0] & 0xC0)
                 break;
 
-            /* Clamp deltas to reject unreasonable jumps.
-             * PS/2 protocol uses signed 9-bit (-256..+255), but values
-             * beyond ±127 almost always indicate desync.  VirtualBox
-             * sends legitimate deltas up to ±127, so the clamp must
-             * cover the full one-byte signed range. */
+            /* Clamp deltas to reject unreasonable jumps. */
             #define MOUSE_DELTA_MAX 127
             if (dx > MOUSE_DELTA_MAX)  dx = MOUSE_DELTA_MAX;
             if (dx < -MOUSE_DELTA_MAX) dx = -MOUSE_DELTA_MAX;
@@ -162,9 +157,7 @@ static uint64_t mouse_irq_handler(struct interrupt_frame *frame)
         }
         break;
     }
-
-    irq_eoi(IRQ_MOUSE);
-    return (uint64_t)frame;
+    /* EOI handled by irq_dispatch_wrapper */
 }
 
 /* ============================================================================
@@ -221,8 +214,8 @@ void mouse_init(void)
             inb(PS2_DATA_PORT);
     }
 
-    /* Register IRQ 12 (vector 44) */
-    idt_register_handler(44, mouse_irq_handler);
+    /* Register IRQ 12 (vector 44) via dynamic IRQ API */
+    irq_register(44, mouse_irq_callback, (void *)0, "ps2_mouse");
     pic_unmask_irq(IRQ_MOUSE);
 
     klog(LOG_DEBUG, "input", "PS/2 mouse initialized (IRQ 12)");

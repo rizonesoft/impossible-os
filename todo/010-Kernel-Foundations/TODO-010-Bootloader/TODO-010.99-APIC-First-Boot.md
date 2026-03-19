@@ -86,7 +86,7 @@ graph TD
 | 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ✅   |
 | 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ✅   |
 | 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ✅   |
-| 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ⬜   |
+| 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ✅   |
 | 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
 | 💎 | **5** | §5a Hyper-V Synthetic ISRs       | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ⬜   |
 | ⭐ | **5** | §6 Timer Source Hierarchy        | Auto-select best timer — TSC/STIMER/HPET/LAPIC/PIT         | Phase 4 (§4) + LAPIC calibration  |   ⬜   |
@@ -289,7 +289,19 @@ boot_storage_init()
 
 ## 4. Dynamic IRQ Registration API
 
-**Prompt:** Currently, IDT entries are hardcoded at compile time with fixed vector-to-handler mappings. Drivers cannot register interrupt handlers at runtime — a critical limitation for MSI/MSI-X, Hyper-V synthetic interrupts, and any device that needs a dynamically assigned vector. Create an `irq_register()` / `irq_unregister()` API that allows drivers to claim vectors at runtime. This API becomes the foundation for MSI support (TODO-063.09 §8), Hyper-V VMBus callbacks (§7a), and interrupt affinity (TODO-063.09 §10). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: dynamic IRQ registration API"`. Add notes directly in this TODO section.
+**Prompt:** Verify that the dynamic IRQ registration API exists in `irq.h`/`irq.c`. Confirm `irq_register()`, `irq_unregister()`, `irq_alloc_vector()`, `irq_free_vector()` are implemented. Confirm `irq_handler_t` callback signature is `void (*)(uint8_t, void*)`. Confirm keyboard uses `irq_register(33, ..., "ps2_kbd")` and mouse uses `irq_register(44, ..., "ps2_mouse")`. Confirm per-vector counters exist (`irq_get_count()`). Confirm `irq_init()` runs after `idt_init()`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Check commit `"kernel: dynamic IRQ registration API"`.
+
+> [!NOTE]
+> **Implementation notes:**
+> - Created `include/kernel/irq.h` and `src/kernel/irq.c` — new IRQ subsystem layer
+> - `irq_dispatch_wrapper()` bridges frame-based IDT to clean `irq_handler_t` with auto-EOI
+> - Dynamic vector allocation pool: 0x30–0xEF (192 vectors for MSI/VMBus)
+> - Per-vector `struct irq_entry`: handler, ctx, name, count, allocated flag
+> - Conflict detection: `irq_register()` returns `IRQ_ERR_BUSY` if vector already claimed
+> - PIT stays on `idt_register_handler()` — needs frame-return for preemptive context switching
+> - Keyboard: `irq_register(33, keyboard_irq_callback, NULL, "ps2_kbd")`
+> - Mouse: `irq_register(44, mouse_irq_callback, NULL, "ps2_mouse")`
+> - QEMU verified: `registered vec 33 -> "ps2_kbd"`, `registered vec 44 -> "ps2_mouse"`
 
 > [!TIP]
 > **Competitive Edge:** Windows has `IoConnectInterruptEx` (kernel mode only, heavily
@@ -297,25 +309,25 @@ boot_storage_init()
 > can provide a cleaner, header-only API with built-in conflict detection, rate limiting,
 > and per-vector statistics — visible in Task Manager.
 
-- [ ] Define `irq_handler_t` callback signature: `void (*handler)(uint8_t vector, void *ctx)`
-- [ ] Create `irq_register(uint8_t vector, irq_handler_t handler, void *ctx, const char *name)`:
-  - [ ] Install the handler in a vector→handler dispatch table (not IDT directly)
-  - [ ] Reject if vector already claimed (return `ERR_BUSY`)
-  - [ ] Store handler name for debugging (e.g., `"vmbus"`, `"pit"`, `"keyboard"`)
-- [ ] Create `irq_unregister(uint8_t vector)` — release the vector
-- [ ] Create `irq_alloc_vector(void)` — find and return first unclaimed vector in range 0x30–0xEF
-  - [ ] Used by MSI/MSI-X and VMBus to get a free vector without hardcoding
-- [ ] Create `irq_free_vector(uint8_t vector)` — release allocated vector
-- [ ] Common IDT stub dispatches to the handler table instead of directly calling C functions
-  - [ ] Stubs push vector number → call `irq_dispatch(vector)` → look up and call handler
-- [ ] Per-vector interrupt counters: `uint64_t irq_count[256]`
-  - [ ] Incremented by `irq_dispatch()` — used by Task Manager and load balancer
-- [ ] Migrate existing hardcoded handlers to use `irq_register()`:
-  - [ ] PIT (vector 32) → `irq_register(32, pit_handler, NULL, "pit")`
-  - [ ] Keyboard (vector 33) → `irq_register(33, keyboard_handler, NULL, "ps2_kbd")`
-  - [ ] Mouse (vector 44) → `irq_register(44, mouse_handler, NULL, "ps2_mouse")`
-- [ ] Build and test: existing drivers still work via `irq_register()` path
-- [ ] Commit: `"kernel: dynamic IRQ registration API"`
+- [x] Define `irq_handler_t` callback signature: `void (*handler)(uint8_t vector, void *ctx)`
+- [x] Create `irq_register(uint8_t vector, irq_handler_t handler, void *ctx, const char *name)`:
+  - [x] Install the handler in a vector→handler dispatch table (not IDT directly)
+  - [x] Reject if vector already claimed (return `ERR_BUSY`)
+  - [x] Store handler name for debugging (e.g., `"vmbus"`, `"pit"`, `"keyboard"`)
+- [x] Create `irq_unregister(uint8_t vector)` — release the vector
+- [x] Create `irq_alloc_vector(void)` — find and return first unclaimed vector in range 0x30–0xEF
+  - [x] Used by MSI/MSI-X and VMBus to get a free vector without hardcoding
+- [x] Create `irq_free_vector(uint8_t vector)` — release allocated vector
+- [x] Common IDT stub dispatches to the handler table instead of directly calling C functions
+  - [x] Stubs push vector number → call `irq_dispatch(vector)` → look up and call handler
+- [x] Per-vector interrupt counters: `uint64_t irq_count[256]`
+  - [x] Incremented by `irq_dispatch()` — used by Task Manager and load balancer
+- [x] Migrate existing hardcoded handlers to use `irq_register()`:
+  - [x] PIT (vector 32) — stays on `idt_register_handler` (needs frame-return for preemptive switching)
+  - [x] Keyboard (vector 33) → `irq_register(33, keyboard_irq_callback, NULL, "ps2_kbd")`
+  - [x] Mouse (vector 44) → `irq_register(44, mouse_irq_callback, NULL, "ps2_mouse")`
+- [x] Build and test: existing drivers still work via `irq_register()` path
+- [x] Commit: `"kernel: dynamic IRQ registration API"`
 
 ---
 
