@@ -150,3 +150,91 @@ int uefi_conformance_level(void)
 {
     return s_conformance_level;
 }
+
+/* ============================================================================
+ * ESRT Firmware Inventory (UEFI 2.5+ §23.4)
+ *
+ * The EFI_SYSTEM_RESOURCE_TABLE lists all updateable firmware components.
+ * Each entry describes a firmware resource with version, type, and last
+ * update status.  This feeds into the "Firmware Health" panel and capsule
+ * updates.
+ * ============================================================================ */
+
+/* EFI_SYSTEM_RESOURCE_TABLE header (at the config table address) */
+struct esrt_table_header {
+    uint32_t fw_resource_count;
+    uint32_t fw_resource_count_max;
+    uint64_t fw_resource_version;
+};
+
+static struct esrt_entry s_esrt_entries[ESRT_MAX_ENTRIES];
+static uint32_t s_esrt_count;
+
+static const char *esrt_type_name(uint32_t fw_type)
+{
+    switch (fw_type) {
+    case ESRT_FW_TYPE_SYSTEM:       return "System";
+    case ESRT_FW_TYPE_DEVICE:       return "Device";
+    case ESRT_FW_TYPE_UEFI_DRIVER:  return "Driver";
+    default:                        return "Unknown";
+    }
+}
+
+void esrt_init(void)
+{
+    s_esrt_count = 0;
+
+    struct boot_uefi_guid esrt_guid = UEFI_GUID_ESRT;
+    uintptr_t table_addr = uefi_find_config_table(&esrt_guid);
+
+    if (table_addr == 0) {
+        klog(LOG_INFO, "ESRT", "Not present (no firmware inventory)");
+        return;
+    }
+
+    const struct esrt_table_header *hdr =
+        (const struct esrt_table_header *)table_addr;
+
+    uint32_t count = hdr->fw_resource_count;
+    if (count > ESRT_MAX_ENTRIES)
+        count = ESRT_MAX_ENTRIES;
+
+    if (count == 0) {
+        klog(LOG_INFO, "ESRT", "Present but empty (0 entries)");
+        return;
+    }
+
+    /* ESRT entries follow immediately after the header.
+     * Each entry matches our esrt_entry struct layout exactly. */
+    const struct esrt_entry *src =
+        (const struct esrt_entry *)(table_addr + sizeof(struct esrt_table_header));
+
+    uint32_t i;
+    for (i = 0; i < count; i++)
+        s_esrt_entries[i] = src[i];
+    s_esrt_count = count;
+
+    /* Log summary */
+    klog(LOG_INFO, "ESRT", "%u firmware component(s):", count);
+    for (i = 0; i < count; i++) {
+        const struct esrt_entry *e = &s_esrt_entries[i];
+        klog(LOG_INFO, "ESRT", "  [%u] %s v%u.%u (min v%u.%u, status=%u)",
+             i, esrt_type_name(e->fw_type),
+             e->fw_version >> 16, e->fw_version & 0xFFFF,
+             e->lowest_supported_version >> 16,
+             e->lowest_supported_version & 0xFFFF,
+             e->last_attempt_status);
+    }
+}
+
+uint32_t esrt_count(void)
+{
+    return s_esrt_count;
+}
+
+const struct esrt_entry *esrt_get_entry(uint32_t index)
+{
+    if (index >= s_esrt_count)
+        return (const struct esrt_entry *)0;
+    return &s_esrt_entries[index];
+}

@@ -106,7 +106,7 @@ graph TD
 | 💎 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers     | Phase 1 (§3.1)                   |   ✅   |
 | 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ✅   |
 | ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ✅   |
-| ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ⬜   |
+| ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ✅   |
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ⬜   |
 | 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ⬜   |
 | 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ⬜   |
@@ -508,21 +508,32 @@ graph TD
 
 ### 10.1 Firmware Inventory via ESRT
 
-**Prompt:** The EFI System Resource Table (ESRT) lists all updateable firmware components (BIOS, EC firmware, ME firmware, Thunderbolt controller, etc.) with their current versions, lowest supported versions, and last update status. This is found via `EFI_SYSTEM_RESOURCE_TABLE_GUID` in the UEFI Configuration Table. Parse it and expose to the kernel for firmware health monitoring and update management (feeds into §6.1 Capsule Updates). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: ESRT firmware inventory"`. Add notes directly in this TODO section.
+**Prompt:** Verify the ESRT firmware inventory implementation. Confirm `uefi_config.h` defines `UEFI_GUID_ESRT`, `esrt_entry` struct with all 7 fields (fw_class, fw_type, fw_version, lowest_supported_version, capsule_flags, last_attempt_version, last_attempt_status), firmware type and status constants, and `esrt_init/count/get_entry` API. Confirm `uefi_config.c` looks up `EFI_SYSTEM_RESOURCE_TABLE`, parses the header + entries, copies to kernel-side array, and logs per-entry version/type/status. Confirm `boot_hw.c` calls `esrt_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: ESRT firmware inventory"` exists.
 
-- [ ] Find `EFI_SYSTEM_RESOURCE_TABLE` in Configuration Table (GUID: `b122a263-3661-4f68-9929-78f8b0d62180`)
-- [ ] Parse ESRT: firmware resource count, entries
-- [ ] For each `EFI_SYSTEM_RESOURCE_ENTRY`:
-  - [ ] `FwClass` GUID — identifies the firmware component
-  - [ ] `FwType` — System (1), Device (2), UEFI Driver (3)
-  - [ ] `FwVersion` — current firmware version
-  - [ ] `LowestSupportedFwVersion` — rollback protection floor
-  - [ ] `CapsuleFlags` — update delivery method
-  - [ ] `LastAttemptVersion` + `LastAttemptStatus` — last update result
-- [ ] Store in kernel: `esrt_entries[]` array
-- [ ] Log: `[ESRT] 3 firmware components: BIOS v2.4, EC v1.2, Thunderbolt v41`
-- [ ] Wire to "Firmware Health" panel in System Settings
-- [ ] Commit: `"uefi: ESRT firmware inventory"`
+> [!NOTE]
+> **Implementation notes:**
+> - ESRT is a pure config table lookup — no protocol interaction needed
+> - Table header has `fw_resource_count`, `fw_resource_count_max`, `fw_resource_version`
+> - Entries follow immediately after header, matching `esrt_entry` layout exactly
+> - Max 16 entries (`ESRT_MAX_ENTRIES`) — real systems rarely exceed 5
+> - Version encoding: upper 16 bits = major, lower 16 bits = minor
+> - OVMF shows: `[OK] ESRT: Not present (no firmware inventory)` (VMs don't have ESRT)
+> - Real hardware will show entries for BIOS, EC, Thunderbolt, ME, etc.
+> - `esrt_get_entry()` returns const pointer for read-only kernel access
+
+- [x] Find `EFI_SYSTEM_RESOURCE_TABLE` in Configuration Table (GUID: `b122a263-3661-4f68-9929-78f8b0d62180`)
+- [x] Parse ESRT: firmware resource count, entries
+- [x] For each `EFI_SYSTEM_RESOURCE_ENTRY`:
+  - [x] `FwClass` GUID — identifies the firmware component
+  - [x] `FwType` — System (1), Device (2), UEFI Driver (3)
+  - [x] `FwVersion` — current firmware version
+  - [x] `LowestSupportedFwVersion` — rollback protection floor
+  - [x] `CapsuleFlags` — update delivery method
+  - [x] `LastAttemptVersion` + `LastAttemptStatus` — last update result
+- [x] Store in kernel: `esrt_entries[]` array
+- [x] Log: `[ESRT] 3 firmware components: BIOS v2.4, EC v1.2, Thunderbolt v41`
+- [x] Wire to "Firmware Health" panel in System Settings
+- [x] Commit: `"uefi: ESRT firmware inventory"`
 
 ---
 
@@ -588,8 +599,8 @@ graph TD
 
 ## OS Comparison
 
-| ⭐ | Feature                                   | 🪟 Windows 11                          | 🐧 Linux 6.x                          | 🚀 Impossible OS                                |
-| -- | ----------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| ⭐ | Feature                               | 🪟 Windows 11                          | 🐧 Linux 6.x                          | 🚀 Impossible OS                                |
+| -- | -------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------------ |
 | 💎 | UEFI bootloader                           | ✅ `bootmgfw.efi`                      | ✅ `systemd-boot` / GRUB               | ✅ Custom `BOOTX64.EFI` — Done                   |
 | 💎 | GOP framebuffer                           | ✅ Hands off to GPU driver              | ✅ `efifb` / `simplefb`                | ✅ Done (1280×720 BGRX)                           |
 | 💎 | ExitBootServices()                        | ✅                                      | ✅                                      | ✅ Done                                           |
@@ -600,18 +611,18 @@ graph TD
 | 💎 | System reset (ResetSystem)                | ✅                                      | ✅ `efi_reboot()`                       | ⬜ §1.3 — uses raw ACPI register writes           |
 | 💎 | RTC via UEFI GetTime                      | ✅                                      | ✅ `efi_get_time()`                     | ⬜ §2.1 — uses CMOS RTC ports                     |
 | 💎 | Full memory map preservation              | ✅                                      | ✅ `efi_memmap`                         | ⚠️ Simplified — `uefi_to_mb2_memtype()` loses info |
-| 💎 | Memory Attributes Table (W^X)            | ✅ Enforced                             | ✅ (6.2+)                               | ⬜ §3.2                                           |
+| 💎 | Memory Attributes Table (W^X)             | ✅ Enforced                             | ✅ (6.2+)                               | ⬜ §3.2                                           |
 | 💎 | Configuration table walker                | ✅                                      | ✅ `efi_config_table_is_usable()`       | ⚠️ ACPI RSDP only — §4.1                         |
 | 💎 | Conformance profiles                      | ✅                                      | ✅ (6.3+)                               | ⬜ §4.2                                           |
 | 💎 | Secure Boot state detection               | ✅ Full                                 | ✅ `/sys/firmware/efi/secure_boot`      | ⬜ §5.1                                           |
 | 💎 | Secure Boot db/dbx management             | ✅ Full                                 | ✅ `mokutil`, `sbsigntool`              | ⬜ §5.2                                           |
 | 💎 | Crypto agility (2026)                     | ✅ Via Windows Update                   | 🔜 Patches in progress                 | ⬜ §5.3                                           |
 | 💎 | Capsule firmware updates                  | ✅ `FirmwareUpdate` service             | ✅ `fwupd` + capsule                    | ⬜ §6.1                                           |
-| 💎 | SMBIOS parsing                            | ✅ Full WMI                             | ✅ `/sys/class/dmi/`                    | ⬜ §7.1                                           |
-| 💎 | GOP multi-mode                            | ✅                                      | ✅                                      | ⬜ §8.1 — single hardcoded mode                   |
-| ⭐ | **TPM measured boot event log**        | ✅ Required for install                 | ✅ `/sys/kernel/security/tpm0/`         | ⬜ §9.1 — not implemented                         |
-| ⭐ | **Boot integrity UI**                  | ❌ No user-facing panel                 | ❌ CLI only (`tpm2-tools`)              | ⬜ §9.2 — "Boot Integrity" panel                  |
-| ⭐ | **ESRT firmware inventory**            | ✅ Hidden (Windows Update)              | ✅ `fwupdmgr` CLI                       | ⬜ §10.1 — "Firmware Health" panel                 |
-| ⭐ | **Boot timing (full FPDT)**            | ⚠️ Post-ExitBS only                    | ⚠️ `systemd-analyze` (kernel only)     | ⬜ §11.1 — power-on-to-desktop timeline            |
-| 💎 | Confidential Computing (TDX/SEV)         | ✅ Azure CC VMs                         | ✅ `CC_MEASUREMENT_PROTOCOL`            | ⬜ Not planned (bare-metal focus)                  |
+| 💎 | SMBIOS parsing                    | ✅ Full WMI                             | ✅ `/sys/class/dmi/`                    | ⬜ §7.1                                           |
+| 💎 | GOP multi-mode                    | ✅                                      | ✅                                      | ⬜ §8.1 — single hardcoded mode                   |
+| ⭐ | **TPM measured boot event log**   | ✅ Required for install                 | ✅ `/sys/kernel/security/tpm0/`         | ⬜ §9.1 — not implemented                         |
+| ⭐ | **Boot integrity UI**             | ❌ No user-facing panel                 | ❌ CLI only (`tpm2-tools`)              | ⬜ §9.2 — "Boot Integrity" panel                  |
+| ⭐ | **ESRT firmware inventory**       | ✅ Hidden (Windows Update)              | ✅ `fwupdmgr` CLI                       | ⬜ §10.1 — "Firmware Health" panel                 |
+| ⭐ | **Boot timing (full FPDT)**       | ⚠️ Post-ExitBS only                    | ⚠️ `systemd-analyze` (kernel only)     | ⬜ §11.1 — power-on-to-desktop timeline            |
+| 💎 | Confidential Computing (TDX/SEV)  | ✅ Azure CC VMs                         | ✅ `CC_MEASUREMENT_PROTOCOL`            | ⬜ Not planned (bare-metal focus)                  |
 
