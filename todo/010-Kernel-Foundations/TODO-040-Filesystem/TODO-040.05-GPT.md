@@ -22,10 +22,6 @@
 
 ## 1. GPT Header Parsing (Primary)
 
-<details>
-<summary>✅ 1. GPT Header Parsing (Primary) — completed</summary>
-
-
 ### 1.1 Primary Header Validation ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` reads LBA 1, checks `"EFI PART"` signature (`0x5452415020494645`), validates Header CRC32 by zeroing bytes 16–19 before computation, parses all 13 header fields, and validates partition entry array CRC32 over the full `NumberOfPartitionEntries × SizeOfPartitionEntry` range. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
@@ -60,9 +56,6 @@
 - [x] Scan all 4 partition entries for type `0xEE` (`MBR_TYPE_GPT`)
 - [x] If no `0xEE` found → return invalid table
 - [x] Commit: `"fs: GPT partition table parsing"`
-
-
-</details>
 
 ---
 ## 2. Backup Header & Structural Redundancy

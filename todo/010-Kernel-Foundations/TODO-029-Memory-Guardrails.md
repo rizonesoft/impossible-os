@@ -11,8 +11,6 @@
 ## 1. Audit kmalloc Usage (GFX, Desktop, Drivers, Net)
 
 **Prompt:** Run a full audit of `kmalloc` calls across all kernel subsystems — not just GFX/desktop but also `src/kernel/net/`, `src/kernel/fs/`, and `src/kernel/drivers/`. For each result, determine whether the allocation could exceed 4 KB under any circumstances (image buffers, font data, file read buffers, network packet buffers, driver DMA regions). Migrate any violations to `pmm_alloc_contiguous()`. For any legitimate small-struct `kmalloc` calls that remain, add a `/* kmalloc OK: <reason> */` comment so the build-time lint check (§3) can whitelist them. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: kmalloc audit — full kernel"`. Add notes directly in this TODO section with the audit results summary.
-
-
 - [ ] Run: `grep -rn 'kmalloc' src/ --include='*.c' | grep -v 'kmalloc OK'`
 - [ ] For each hit in `src/kernel/gfx/`: verify allocation size; migrate buffers > 4 KB to `pmm_alloc_contiguous()`
 - [ ] For each hit in `src/desktop/`: same — watch for icon/wallpaper/pixel buffers
@@ -27,8 +25,6 @@
 ## 2. Update Guardrails Documentation
 
 **Prompt:** Update inline comments, `rules.md`, and the `/add-asset` workflow to reflect the current correct practices. The goal is to make the rules obvious to any agent or developer working in this codebase in the future. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"docs: update kmalloc/PMM guardrails"`. Add notes directly in this TODO section.
-
-
 - [ ] Update `gfx_text.c` header comment: remove any `TODO: Migrate` lines (migration is done)
 - [ ] Update `rules.md` Known Gotchas: add the font PMM migration as a resolved example
 - [ ] Update `.agents/workflows/add-asset.md`: add font system as a "good example" of correct PMM usage
@@ -41,8 +37,6 @@
 ## 3. Build-Time kmalloc Lint Check
 
 **Prompt:** Create a shell script `scripts/lint-alloc.sh` that greps for bare `kmalloc` calls across ALL kernel source, skipping lines with a `/* kmalloc OK: */` whitelist comment. Integrate it into `scripts/build.sh` so it runs on every build and fails loudly if an un-whitelisted `kmalloc` is found. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"build: kmalloc lint checker"`. Add notes directly in this TODO section covering the lint script design and false-positive handling.
-
-
 - [ ] Create `scripts/lint-alloc.sh`:
   - [ ] `grep -rn 'kmalloc' src/ --include='*.c'`
   - [ ] Skip lines containing `/* kmalloc OK:` (whitelist marker)
@@ -58,8 +52,6 @@
 ## 4. Kernel Malloc Leak Detector (Debug Build)
 
 **Prompt:** Debug-only feature with zero overhead in release builds, enabled by `-DKMALLOC_DEBUG`. Wrap `kmalloc` and `kfree` with tracking macros that record caller address (via `__builtin_return_address(0)`), size, file, and line. Store records in a linked list allocated from a dedicated debug pool (separate from the kernel heap to avoid corrupting leak detection state). On shutdown or via a `memleak` shell command, dump all un-freed allocations with their caller context. Also expose `kmalloc_stats()` returning current usage, peak usage, and allocation count — useful for the Task Manager (Phase 05). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: kmalloc leak detector (debug build)"`. Add notes, gotchas, and design decisions directly in this TODO section covering kmalloc debug mode, allocation tracking, and leak reporting.
-
-
 - [ ] Define `KMALLOC_DEBUG` compile-time flag (set in debug build only)
 - [ ] Wrap `kmalloc`/`kfree` with macros that capture `__FILE__`, `__LINE__`, `__builtin_return_address(0)`
 - [ ] Store allocation records in a linked list (use a small static pool, not kmalloc itself)
@@ -77,8 +69,6 @@
 **Prompt:** The physical memory manager (`pmm_alloc_contiguous`) has no visibility — you can't see how much physical memory is free, how many allocations succeeded, or how much is wasted on fragmentation. Add a `pmm_stats()` function that returns: total physical pages, free pages, largest contiguous free block (for diagnosing fragmentation), and allocation count. Expose via a `meminfo` shell command and `SYS_PMMSTATS` syscall for the Task Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: PMM statistics and meminfo command"`. Add notes directly in this TODO section.
 
 > **Beats:** Linux `/proc/meminfo` is well known. Windows Task Manager shows similar info. Impossible OS shell `meminfo` matches both, with PMM-level breakdown that neither exposes directly.
-
-
 - [ ] Implement `pmm_stats(pmm_stats_t *out)` — total/free pages, largest free block, alloc count
 - [ ] Add `meminfo` shell command: print human-readable memory stats
   ```
@@ -98,8 +88,6 @@
 **Prompt:** Heap and stack overflows are silent in the current kernel — a buffer overrun corrupts adjacent memory without detection. Add stack canaries to kernel functions: a random value placed below the return address at function entry, checked at exit (GCC `-fstack-protector-strong`). For the kernel heap, add a canary word at the end of each `kmalloc` allocation; `kfree` verifies it before freeing. Double-free detection: mark freed blocks with a magic pattern and check on free. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: heap canaries and stack protector"`. Add notes directly in this TODO section.
 
 > **Beats:** Neither Windows nor Linux enable heap canaries in their kernel by default. Impossible OS makes them the default in debug builds — safer development.
-
-
 - [ ] Enable `-fstack-protector-strong` in kernel Makefile (check if `x86_64-elf-gcc` supports it)
 - [ ] Initialize stack canary value from RDRAND at kernel boot (stored in `g_stack_canary`)
 - [ ] Add heap tail canary to `kmalloc`: write `HEAP_CANARY` word after last byte of allocation

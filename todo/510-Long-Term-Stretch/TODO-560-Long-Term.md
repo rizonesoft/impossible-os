@@ -7,8 +7,6 @@
 > OS from a hobby project to a production-grade experience.
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
-
-
 ---
 
 ## 1. Accessibility
@@ -16,8 +14,6 @@
 ### 1.1 High Contrast Mode
 
 **Prompt:** Define a high contrast color theme in Registry (black bg, white fg, yellow accent, cyan links, red errors). `accessibility_set_high_contrast(enabled)` swaps the entire UI color palette. All widgets must respect theme colors. Registry: `HKLM\SYSTEM\Accessibility\HighContrast = 0`. After all items,sh clean`, commit `"desktop: high contrast mode"`.
-
-
 - [ ] Create `src/desktop/accessibility.c` and `include/accessibility.h`
 - [ ] Define high contrast theme in Registry:
   - [ ] Background: `#000000`, Foreground: `#FFFFFF`, Accent: `#FFFF00`, Links: `#00FFFF`, Errors: `#FF0000`
@@ -29,8 +25,6 @@
 ### 1.2 Large Text / DPI Scaling
 
 **Prompt:** DPI override forces 150%/200%/250%/300% scale on all rendering: fonts, window chrome, icons, cursor, widgets. Registry: `HKLM\SYSTEM\Accessibility\DPIScale = 100`. Scale factor applies at compositor level. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: DPI scaling override"`.
-
-
 - [ ] DPI override: force 150%, 200%, 250%, 300% scale
 - [ ] Scale all font rendering by DPI factor
 - [ ] Scale window chrome, icons, cursor, widgets
@@ -40,8 +34,6 @@
 ### 1.3 Sticky Keys
 
 **Prompt:** 5× Shift toggles Sticky Keys. When active, modifier keys (Shift, Ctrl, Alt) stay pressed until next non-modifier key. Visual indicator in system tray. Registry: `HKLM\SYSTEM\Accessibility\StickyKeys = 0`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: sticky keys"`.
-
-
 - [ ] 5× Shift → toggle Sticky Keys on/off
 - [ ] When active: modifier keys (Shift, Ctrl, Alt) stay pressed until next key
 - [ ] Visual indicator: modifier key status in system tray
@@ -51,8 +43,6 @@
 ### 1.4 Cursor Accessibility
 
 **Prompt:** Large cursor sizes: 48px and 64px (default 32px). Cursor color options: white+black border or inverse. Registry: `HKLM\SYSTEM\Accessibility\CursorSize = 32`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: large cursor option"`.
-
-
 - [ ] Large cursor option: 48px, 64px (default 32px)
 - [ ] Cursor color: white with black border (default) or inverse
 - [ ] Registry: `HKLM\SYSTEM\Accessibility\CursorSize = 32`
@@ -61,8 +51,6 @@
 ### 1.5 Magnifier
 
 **Prompt:** Win+Plus zooms in (2×/4×/6×/8×), Win+Minus zooms out, Win+Escape closes. Magnifier follows cursor, rendering from compositor backbuffer. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: screen magnifier"`.
-
-
 - [ ] Win+Plus → zoom in (2×, 4×, 6×, 8×)
 - [ ] Win+Minus → zoom out
 - [ ] Win+Escape → close magnifier
@@ -73,8 +61,6 @@
 ### 1.6 Mouse Keys
 
 **Prompt:** Numpad controls cursor: 4/6 left/right, 2/8 down/up, diagonals on 7/9/1/3, 5=click, +=double-click, 0=press, .=release. Registry: `HKLM\SYSTEM\Accessibility\MouseKeys = 0`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: mouse keys"`.
-
-
 - [ ] Numpad keys move cursor when activated:
   - [ ] 4/6 — left/right, 2/8 — down/up, 7/9/1/3 — diagonal
   - [ ] 5 — click, + — double-click, 0 — press, . — release
@@ -84,8 +70,6 @@
 ### 1.7 Reduced Motion & Color Blind Mode
 
 **Prompt:** Reduced motion: disable all UI animations (window transitions). Registry: `HKLM\SYSTEM\Accessibility\ReducedMotion = 0`. Stretch: color blind simulation via color matrix transform at compositor level (Deuteranopia, Protanopia, Tritanopia). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: reduced motion + color blind modes"`.
-
-
 - [ ] Reduced motion: disable all UI animations (window open/close/minimize transitions)
 - [ ] Registry: `HKLM\SYSTEM\Accessibility\ReducedMotion = 0`
 - [ ] *(Stretch)* Color blind simulation modes:
@@ -96,8 +80,6 @@
 ### 1.8 Accessibility Control Panel Applet
 
 **Prompt:** `access.cpl` Control Panel applet: toggles for high contrast, DPI slider, sticky keys, mouse keys, cursor size selector, reduced motion, magnifier. Stretch: color blind mode, screen reader toggle. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: accessibility control panel applet"`.
-
-
 - [ ] `access.cpl` in Control Panel:
   - [ ] High contrast toggle
   - [ ] DPI scale slider
@@ -117,8 +99,6 @@
 ### 2.1 Debug Console (F12)
 
 **Prompt:** F12 toggles a semi-transparent overlay panel. Tabs: Kernel (real-time printk with timestamps + subsystem filter), Memory, Network, Syscalls. Command input at bottom. Registry: `HKLM\SYSTEM\Developer\DebugConsole = 0`. After all items,sh clean`, commit `"debug: F12 debug console overlay"`.
-
-
 - [ ] Create `src/kernel/debug/debug_console.c`
 - [ ] F12 → toggle semi-transparent overlay panel at bottom of screen
 - [ ] Tabs: [Kernel] [Memory] [Network] [Syscalls]
@@ -132,8 +112,6 @@
 ### 2.2 Memory Inspector
 
 **Prompt:** Memory tab in debug console: physical memory map (used/free), per-process virtual memory, heap fragmentation bar chart, total/free/largest free block. Shell: `memmap` dumps physical layout. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: memory inspector"`.
-
-
 - [ ] **Memory tab** in debug console:
   - [ ] Physical memory map: used/free ranges
   - [ ] Per-process virtual memory usage
@@ -145,8 +123,6 @@
 ### 2.3 Syscall Tracer (strace)
 
 **Prompt:** Syscalls tab: live stream of syscalls with name, args, return value, timing, filterable by process. Shell: `strace <program>` traces all syscalls. Output: `SYS_OPEN("readme.txt", READ) = 3 (0.2ms)`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: syscall tracer (strace)"`.
-
-
 - [ ] **Syscalls tab** in debug console:
   - [ ] Live stream of syscalls: name, args, return value, timing
   - [ ] Filter by process
@@ -157,8 +133,6 @@
 ### 2.4 Performance Profiler
 
 **Prompt:** FPS counter overlay (Registry: `HKLM\SYSTEM\Developer\ShowFPS = 0`) shows `60 FPS | 16.7ms`. Frame time bar chart (last 120 frames). Syscall timing averages. IPC throughput (msg/sec). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"debug: performance profiler + FPS overlay"`.
-
-
 - [ ] FPS counter overlay (Registry: `HKLM\SYSTEM\Developer\ShowFPS = 0`)
   - [ ] Show in corner: `60 FPS | 16.7ms`
 - [ ] Frame time graph: last 120 frames as bar chart
@@ -181,8 +155,6 @@
 ### 3.1 Bluetooth Stack
 
 **Prompt:** Stretch: port BlueKitchen BTstack (MIT, ~15K lines). Port HCI transport via USB. Implement L2CAP (multiplexing), SDP (discovery), RFCOMM (serial), A2DP (audio), BLE. Note: QEMU has no BT emulation — requires real hardware + USB passthrough. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"drivers: Bluetooth stack"`.
-
-
 - [ ] *(Stretch)* Evaluate **BlueKitchen BTstack** (MIT, ~15K lines, embedded-friendly)
 - [ ] *(Stretch)* Port HCI transport layer (USB-BT adapter via USB host stack)
 - [ ] *(Stretch)* L2CAP implementation: packet multiplexing
@@ -209,8 +181,6 @@
 ### 4.1 Touch Input Driver
 
 **Prompt:** Define `struct touch_event` (type TOUCH_DOWN/MOVE/UP, finger_id, x, y, pressure). Multi-touch up to 10 fingers. QEMU: `-device usb-tablet` for absolute coords. Real hardware: USB HID touchscreen or I2C controller. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"drivers: touchscreen input"`.
-
-
 - [ ] Create `src/kernel/drivers/touch.c` and `include/touch.h`
 - [ ] Define `struct touch_event` (type, finger_id, x, y, pressure)
 - [ ] Touch event types: `TOUCH_DOWN`, `TOUCH_MOVE`, `TOUCH_UP`
@@ -222,8 +192,6 @@
 ### 4.2 Gesture Recognition
 
 **Prompt:** Recognize gestures from touch streams: tap=click, double-tap=double-click, long-press=right-click, swipe=navigate, pinch=zoom, two-finger-scroll, three-finger-swipe=virtual desktop switch. Emit gesture events to WM. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: gesture recognition engine"`.
-
-
 - [ ] Create `src/kernel/gesture.c` and `include/gesture.h`
 - [ ] Recognize gestures from touch event streams:
 | Gesture             | Fingers | Action                 |
@@ -246,8 +214,6 @@
 ### 5.1 PDF Export (Print-to-PDF)
 
 **Prompt:** Basic PDF writer (~500 lines): header, pages, content streams, text positioning, JPEG images. "Print" → "Save as PDF" in any app. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: print-to-PDF"`.
-
-
 - [ ] Create `src/kernel/print.c` and `include/print.h`
 - [ ] Implement basic PDF writer (~500 lines):
   - [ ] PDF header, pages, content streams
@@ -280,8 +246,6 @@
 ### 6.1 Gamepad Driver
 
 **Prompt:** Define `struct gamepad_state` (buttons bitfield, analog sticks ±32767, triggers 0-255, dpad). Match USB HID gamepad usage page, parse report for Xbox layout. `gamepad_count()` and `gamepad_poll(index, state)`. Depends on USB HID (Phase 08). QEMU requires USB passthrough. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"drivers: USB gamepad"`.
-
-
 - [ ] Create `src/kernel/drivers/usb/usb_gamepad.c` and `include/gamepad.h`
 - [ ] Define `struct gamepad_state`:
   - [ ] buttons (bitfield: A, B, X, Y, LB, RB, Start, Select, L3, R3)
@@ -299,8 +263,6 @@
 ### 6.2 Gamepad API for Apps
 
 **Prompt:** `SYS_GAMEPAD_POLL(index, state_buf)` syscall for user-mode access. Rumble: `gamepad_rumble(index, left, right)`. Optional button-to-key mapping for non-gamepad apps. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: gamepad API"`.
-
-
 - [ ] Syscall: `SYS_GAMEPAD_POLL(index, state_buf)` — user-mode access
 - [ ] Rumble/vibration: `gamepad_rumble(index, left_motor, right_motor)` (if supported)
 - [ ] Gamepad → keyboard mapping (optional): map buttons to key events for apps without gamepad support
@@ -313,8 +275,6 @@
 ### 7.1 TTS Engine
 
 **Prompt:** Port SAM (Software Automatic Mouth, public domain, ~2K lines) for phoneme-based speech synthesis to PCM via `audio_play()`. API: `tts_speak(text)`, `tts_speak_async(text)`, `tts_set_rate(rate)`, `tts_set_voice(voice)`, `tts_stop()`. Depends on audio system (Phase 08). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: text-to-speech (SAM port)"`.
-
-
 - [ ] Create `src/kernel/tts.c` and `include/tts.h`
 - [ ] Port **SAM** (Software Automatic Mouth, public domain, ~2K lines):
   - [ ] Phoneme-based speech synthesis
@@ -352,8 +312,6 @@
 ### 8.1 Session Management
 
 **Prompt:** `struct user_session` with uid, desktop_surface (per-session compositor backbuffer), window_list, processes, active flag. `session_create(uid)` allocates, `session_destroy(uid)` frees all + kills processes. Max 3 simultaneous sessions. Depends on user accounts (Phase 09). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: user session management"`.
-
-
 - [ ] Create `src/kernel/session.c` and `include/session.h`
 - [ ] Define `struct user_session`:
   - [ ] uid, username
@@ -368,8 +326,6 @@
 ### 8.2 Fast User Switching
 
 **Prompt:** Start → Switch User → lock screen. User A's apps continue in background. User B logs in → gets own desktop/compositor/window list. Switch back → instant restore. Memory cost: per-session compositor state. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: fast user switching"`.
-
-
 - [ ] Start → Switch User → lock screen appears
 - [ ] User A's apps continue running in background (not visible)
 - [ ] User B logs in → gets own desktop + compositor + window list
@@ -386,8 +342,6 @@
 ### 9.1 Telemetry Collection
 
 **Prompt:** OFF by default, opt-in only. Collect: OS version, crash dumps (anonymized), boot time, hardware info, feature usage counts. No personal data. Store in `C:\Impossible\System\Diagnostics\telemetry.log`. Registry: `HKLM\SYSTEM\Privacy\Telemetry = 0` (0=off, 1=basic, 2=full). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: telemetry collection (opt-in)"`.
-
-
 - [ ] Create `src/kernel/telemetry.c` and `include/telemetry.h`
 - [ ] **OFF by default** — user must opt in explicitly
 - [ ] Collect (when opted in):
@@ -404,8 +358,6 @@
 ### 9.2 Diagnostic Report
 
 **Prompt:** `telemetry_generate_report(path)` exports diagnostics. Upload only on explicit user action. Privacy settings: `privacy.cpl` applet with telemetry level, view collected data, clear data. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: diagnostic report generation"`.
-
-
 - [ ] `telemetry_generate_report(path)` — export diagnostics to file
 - [ ] Upload only on explicit user action: "Send diagnostic report" button
 - [ ] *(Stretch)* HTTP POST to `https://impossible-os.dev/api/telemetry`
@@ -419,8 +371,6 @@
 ### 10.1 Screen Time Limits
 
 **Prompt:** Set max daily usage (minutes) per child user via Registry `HKU\{child}\ParentalControls\ScreenTimeLimit`. Track active time per session. 15-minute warning. Auto-lock when limit hit with parent extension option. After all items,sh clean`, commit `"kernel: screen time limits"`.
-
-
 - [ ] Create `src/kernel/parental.c` and `include/parental.h`
 - [ ] Set max daily usage (minutes): Registry `HKU\{child}\ParentalControls\ScreenTimeLimit = 120`
 - [ ] Track active time per user session
@@ -431,8 +381,6 @@
 ### 10.2 Time Scheduling
 
 **Prompt:** Set allowed hours per child (e.g., 3 PM-8 PM weekdays). Registry: `HKU\{child}\ParentalControls\AllowedStart`/`HKU\{child}\ParentalControls\AllowedEnd`. Auto-lock outside allowed hours. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: time scheduling"`.
-
-
 - [ ] Set allowed hours: e.g., only 3 PM – 8 PM on weekdays
 - [ ] Registry: `HKU\{child}\ParentalControls\AllowedStart = 15:00`
 - [ ] Registry: `HKU\{child}\ParentalControls\AllowedEnd = 20:00`
@@ -442,8 +390,6 @@
 ### 10.3 App Blocking
 
 **Prompt:** Block specific apps by executable name via Registry `HKU\{child}\ParentalControls\BlockedApps` list. Check on process exec — if blocked, deny + show message. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: app blocking"`.
-
-
 - [ ] Block list of specific apps by executable name
 - [ ] Registry: `HKU\{child}\ParentalControls\BlockedApps = "browser.exe,ssh.exe"`
 - [ ] Check on process exec: if app is blocked → deny + show message
@@ -452,8 +398,6 @@
 ### 10.4 Activity Report
 
 **Prompt:** Log apps launched by child: name + duration. Store in `C:\Users\{child}\AppData\ParentalLogs\{date}.log`. Admin views activity in settings. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: activity logging"`.
-
-
 - [ ] Log apps launched by child account: app name + duration
 - [ ] Store: `C:\Users\{child}\AppData\ParentalLogs\{date}.log`
 - [ ] Admin can view activity in parental settings
@@ -462,8 +406,6 @@
 ### 10.5 Parental Controls Settings
 
 **Prompt:** `parental.cpl` applet (admin-only): select child, screen time slider (30 min–8 hrs), schedule, app block list, activity report viewer. Stretch: website block list. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: parental controls"`.  
-
-
 - [ ] `parental.cpl` Control Panel applet (**admin-only** access):
   - [ ] Select child user account
   - [ ] Screen time limit slider (30 min – 8 hours)
@@ -482,8 +424,6 @@
 ### 11.1 Keyboard Shortcuts Reference
 
 **Prompt:** Win+F1 shows full-screen keyboard shortcuts cheat sheet covering window management, accessibility, developer, and navigation shortcuts. Dismiss with Escape. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"desktop: keyboard shortcuts reference overlay"`.
-
-
 - [ ] Win+F1 → show keyboard shortcuts overlay (full-screen cheat sheet)
 - [ ] List all global shortcuts: window management, accessibility, developer, navigation
 - [ ] Dismiss with Escape or any key
@@ -506,8 +446,6 @@
 ### 11.4 Help System
 
 **Prompt:** Built-in `help.exe` viewer for `.hlp` files in `C:\Impossible\System\Help\`. F1 in any app opens context-sensitive help. Contents: getting started, shortcuts, settings. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"apps: help system"`.
-
-
 - [ ] Built-in help viewer: `help.exe`
 - [ ] Browse `.hlp` files stored in `C:\Impossible\System\Help\`
 - [ ] F1 in any app → open context-sensitive help
@@ -542,8 +480,6 @@
 ---
 
 ## Moved from P1101 (Advanced Apps)
-
-
 > *(Stretch)* VNC/custom protocol, server, client. Kept in this file.
 
 - [ ] *(Stretch)* Remote desktop protocol (VNC or custom)
@@ -587,17 +523,11 @@
 ---
 
 ## Priority Order
-
-
 ## Software OpenGL (from 120-Theme §22)
 
 ---
 
 ## Already Completed ✅
-
-<details>
-<summary>✅ Already Completed — completed</summary>
-
 
 - [x] **2D Compositing Library** — surfaces, primitives, alpha blending, gradients, blur, Mica, Acrylic, shadows, reveal highlight, SIMD optimization *(Phase 02 §1)*
 - [x] **TrueType Font System** — stb_truetype, font manager, glyph caching, replaced bitmap font *(Phase 02 §2)*
@@ -606,8 +536,5 @@
 - [x] **Cursor Manager** — Adwaita X11 cursors, 11 shapes, embedded fallbacks *(Phase 02 §5.1–5.2)*
 - [x] **Context-Aware Cursor Switching** — wm/desktop context, resize/move/hand cursors *(Phase 02 §5.3)*
 - [x] **Dirty Rectangle Compositor** — partial redraws, fb_swap_rect *(implemented)*
-
-
-</details>
 
 ---

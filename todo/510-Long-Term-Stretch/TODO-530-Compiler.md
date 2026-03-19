@@ -32,8 +32,6 @@
 ### 1.1 Cross-Compile TCC for Impossible OS
 
 **Prompt:** Cross-compile TCC from Linux targeting Impossible OS x86-64. TCC already supports PE output natively (`-m64` flag). Build TCC as a static PE binary linked against the SDK (P0105 §3). Patch TCC's source to: (1) replace POSIX include paths with Impossible OS paths (`C:\Impossible\Include\`), (2) replace `/tmp/` with `C:\Temp\`, (3) use PE as the default output format. Test by cross-compiling TCC itself, then running it on the OS. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: cross-compile TCC"`.
-
-
 - [ ] Download TCC source (latest stable from repo.or.cz/tinycc.git)
 - [ ] Configure for x86-64 target, PE output format, static linking
 - [ ] Patch `#include` search paths:
@@ -48,8 +46,6 @@
 ### 1.2 Install TCC on Impossible OS
 
 **Prompt:** Install TCC and its supporting files onto the Impossible OS disk image. Place the binary at `C:\Impossible\Bin\tcc.exe`. Install TCC's runtime library (`libtcc1.a`), include files (tcc's own headers + newlib headers), and the linker script. Add `C:\Impossible\Bin\` to the shell's PATH. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: install TCC on disk"`.
-
-
 - [ ] Copy `tcc.exe` to `C:\Impossible\Bin\` in the disk image
 - [ ] Copy `libtcc1.a` to `C:\Impossible\Lib\`
 - [ ] Copy TCC include files to `C:\Impossible\Include\tcc\`
@@ -62,8 +58,6 @@
 ### 1.3 Test TCC on Impossible OS
 
 **Prompt:** Test that TCC can compile and run programs natively on Impossible OS. Test cases: (1) `tcc -run hello.c` — JIT compile and run (if supported), (2) `tcc hello.c -o hello.exe && ./hello.exe` — compile to binary then run, (3) `tcc -c math.c -o math.o && tcc main.c math.o -o app.exe` — separate compilation, (4) Self-hosting: `tcc tcc.c -o tcc2.exe` — TCC compiles itself. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: TCC self-test"`.
-
-
 - [ ] Test: `tcc hello.c -o hello.exe` → compile simple "Hello World" (PE output)
 - [ ] Test: `./hello.exe` → prints "Hello from TCC on Impossible OS!"
 - [ ] Test: `tcc -run hello.c` → JIT compile and run without intermediate file
@@ -80,8 +74,6 @@
 ### 2.1 IxUI Header Support
 
 **Prompt:** Add the IxUI GUI toolkit headers (from P0105 §1.5) to TCC's include path so native GUI apps can be compiled on the OS. Programs should be able to `#include <ixui.h>` and link against `libixui.a`. Test by compiling a simple windowed app that creates a window and draws text. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: TCC with IxUI support"`.
-
-
 - [ ] Install `ixui.h` to `C:\Impossible\Include\`
 - [ ] Install `libixui.a` to `C:\Impossible\Lib\`
 - [ ] Test: `tcc gui_hello.c -lixui -o gui_hello.exe` → compiles
@@ -91,8 +83,6 @@
 ### 2.2 Shell Integration
 
 **Prompt:** Integrate TCC into the shell for a developer experience. Add shell commands: `cc` as alias for `tcc`, `run <file.c>` as shortcut for `tcc -run <file.c>`. Add a simple `make` equivalent: read a `Makefile` with basic variable substitution and dependency tracking. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: compiler integration"`.
-
-
 - [ ] Shell alias: `cc` → `C:\Impossible\Bin\tcc.exe`
 - [ ] Shell command: `run hello.c` → shortcut for `tcc -run hello.c`
 - [ ] Create minimal `make` utility (parse Makefile, dependencies, variable substitution)
@@ -133,8 +123,6 @@
 ### 3.2 Cross-Compile GCC
 
 **Prompt:** Cross-compile a minimal GCC targeting Impossible OS. Build a two-stage cross-compiler: (1) build a cross-GCC on Linux that outputs Impossible OS binaries, (2) use that cross-GCC to build a native GCC that runs on Impossible OS. Start with C support only (--enable-languages=c), then add C++ (--enable-languages=c,c++). Target: GCC 13+ with x86-64 backend. Link against musl libc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: cross-compile GCC"`.
-
-
 - [ ] Build Stage 1: cross-GCC on Linux targeting `x86_64-w64-mingw32`
   - [ ] Configure: `--target=x86_64-w64-mingw32 --enable-languages=c --disable-shared`
   - [ ] Build binutils (as, ld) for `x86_64-w64-mingw32`
@@ -149,8 +137,6 @@
 ### 3.3 Add C++ Support
 
 **Prompt:** Enable C++ in the GCC build. This requires libstdc++ to be cross-compiled and installed. Test with C++ features: classes, templates, STL containers, exceptions, RTTI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: GCC C++ support"`.
-
-
 - [ ] Rebuild GCC with `--enable-languages=c,c++`
 - [ ] Cross-compile libstdc++ for Impossible OS
 - [ ] Install `libstdc++.a` to `C:\Impossible\Lib\`
@@ -165,8 +151,6 @@
 ### 3.4 Clang/LLVM *(Alternative to GCC)*
 
 **Prompt:** As an alternative or complement to GCC, port Clang/LLVM. LLVM has a modular design and can be easier to port for specific targets. However, it's even larger than GCC (~30M LOC vs GCC's ~15M LOC). Consider this only after GCC is working. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"userland: Clang/LLVM"`.
-
-
 - [ ] Add `x86_64-impossible` target triple to LLVM
 - [ ] Cross-compile Clang for Impossible OS
 - [ ] Cross-compile libc++ (LLVM's C++ standard library)
@@ -180,8 +164,6 @@
 ## 4. Documentation
 
 **Prompt:** Document the compiler toolchain: installation paths, how to compile programs, available headers and libraries, self-hosting status, and the developer workflow. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"docs: compiler toolchain"`.
-
-
 - [ ] Document TCC: installation, usage, limitations
 - [ ] Document newlib/musl headers available
 - [ ] Document IxUI compilation workflow

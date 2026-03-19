@@ -12,8 +12,6 @@
 ### 4.1 SSH Protocol Implementation
 
 **Prompt:** Choose: port dropbear (MIT, ~15K lines) or build custom minimal SSH2 client (~2K lines). SSH2 transport: TCP connect port 22, version exchange `SSH-2.0-ImpossibleOS`, key exchange (Curve25519 via monocypher), symmetric encryption (ChaCha20), MAC (HMAC-SHA256). Auth: password auth via SSH_MSG_USERAUTH_REQUEST. Channel: open interactive session, PTY request, forward stdin/stdout. After all items,sh clean`, commit `"apps: SSH client"`.
-
-
 - [ ] Create `src/apps/ssh/ssh.c`
 - [ ] Choose approach:
   - [ ] Port **dropbear** (MIT, ~15K lines, lightweight) — or —
@@ -36,8 +34,6 @@
 ### 4.2 SSH Shell Integration
 
 **Prompt:** Shell command: `ssh user@host` connects and starts interactive session inside Terminal app. `ssh user@host -p 2222` for custom port. Terminal handles rendering, SSH handles network transport. Stretch: `scp user@host:file local_file` for file transfer. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"shell: ssh command"`.
-
-
 - [ ] Shell command: `ssh user@host` → connect and start interactive session
 - [ ] Shell command: `ssh user@host -p 2222` → custom port
 - [ ] Runs inside Terminal app (Terminal handles rendering, SSH handles network)

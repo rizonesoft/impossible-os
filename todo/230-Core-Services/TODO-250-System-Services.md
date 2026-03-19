@@ -22,8 +22,6 @@
 ### 2.1 Service Manager
 
 **Prompt:** The service manager provides start/stop/restart lifecycle for background daemons. Each service is tracked by a `struct service` with state + PID. `svc_start` forks and execs the service binary (or creates a kernel thread for kernel-level services). `svc_stop` sends SIGTERM and waits, then SIGKILL if necessary. Service definitions are stored in the Registry under `HKLM\SYSTEM\Services\{name}\`. Start with kernel threads since the process model may not be fully mature. After completing all items,sh clean`, and commit as `"kernel: service manager"`.
-
-
 - [ ] Define `svc_state_t` enum: STOPPED, RUNNING, STARTING
 - [ ] Define `struct service` (name, exe_path, state, pid, auto_start)
 - [ ] Create `include/service.h` and `src/kernel/service.c`
@@ -37,8 +35,6 @@
 ### 2.2 Built-In Services
 
 **Prompt:** Register core OS services that start automatically at boot. `netd` manages the network stack (DHCP renewal, ARP cache), `ntpd` runs NTP time sync, `registryd` handles periodic Registry dirty-flag flushes to disk, `indexd` rebuilds the file search index. Each service's config lives in the Registry. Services start after kernel init is complete and the filesystem is mounted. Dependency ordering matters: netd must start before ntpd. After completing all items,sh clean`, and commit as `"kernel: built-in services"`.
-
-
 - [ ] Register `netd` — network stack (DHCP, ARP) — auto-start
 - [ ] Register `ntpd` — NTP time sync — auto-start after network
 - [ ] Register `registryd` — Registry dirty-flag flush — auto-start
@@ -50,8 +46,6 @@
 ### 2.3 Service Shell Command
 
 **Prompt:** The `sc` shell command provides service management from the terminal: `sc list` shows all services with their current state, `sc start netd` starts a service, `sc stop netd` stops it, `sc status netd` shows detailed info. Model this after Windows' `sc` command. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: sc service control command"`.
-
-
 - [ ] `sc list` — show all services with state
 - [ ] `sc start <name>` / `sc stop <name>` / `sc restart <name>`
 - [ ] `sc status <name>` — show detailed service info

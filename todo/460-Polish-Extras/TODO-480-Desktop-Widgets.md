@@ -6,8 +6,6 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB. `kmalloc` is ONLY for small kernel structs (≤ 4 KB).
 
 ---
-
-
 - [ ] Create `src/desktop/widgets.c`
 - [ ] Widget API: `widget_fn(msg, surface, ctx)` — WGT_INIT/RENDER/TICK/CLOSE
 - [ ] Widget manager: load, position, update

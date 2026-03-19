@@ -75,8 +75,6 @@
 **Prompt:** Freestanding kernel code needs `memset`, `memcpy`, `memmove`, `strlen`, `strcpy`, `strncpy`, `strcmp`, `strncmp`, `strstr`, `strtol`, `snprintf`, `vsnprintf` — but cannot use the system libc. Audit `src/kernel/string.c` and `src/kernel/kprintf.c` to see what already exists, then fill missing gaps. `snprintf`/`vsnprintf` are the most critical — they must be correct and safe (no buffer overflow). Compile with `-ffreestanding -nostdlib`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"libc: string and printf shims"`. Add notes directly in this TODO section.
 
 > **Note:** Audit first — many of these may already exist scattered across the kernel. Consolidate into `src/libs/libc/string.c`.
-
-
 - [ ] Audit existing string functions across kernel source files
 - [ ] Consolidate into `src/libs/libc/string.c` + `include/libc/string.h`
 - [ ] Implement: `memset`, `memcpy`, `memmove`, `memcmp`, `memchr`

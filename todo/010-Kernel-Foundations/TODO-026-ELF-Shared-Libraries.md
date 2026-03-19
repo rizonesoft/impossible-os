@@ -23,8 +23,6 @@
 > primary DLL loading API (see `TODO-510-Native-Win32.md §4.4`).
 > `dlopen`/`dlsym` are provided for Linux compat only.
 > **Syscall numbers:** Add `SYS_DLOPEN`, `SYS_DLSYM`, `SYS_DLCLOSE` to `syscall.h` (Linux compat layer syscalls).
-
-
 - [ ] Implement ELF `.symtab`/`.dynsym` symbol table scanner
 - [ ] Implement ELF section loader: `.text`, `.data`, `.bss`, `.rodata` into process address space
 - [ ] Implement ELF relocations (`R_X86_64_64`, `R_X86_64_PC32`, `R_X86_64_PLT32`, `R_X86_64_GLOB_DAT`, `R_X86_64_JUMP_SLOT`) — **this engine is reused by kernel modules**
@@ -56,8 +54,6 @@
 **Prompt:** Without symbol versioning, upgrading a shared library can silently break existing binaries if a function's ABI changes. Linux uses GNU Symbol Versioning (`.gnu.version`, `.gnu.version_d`, `.gnu.version_r`); Windows uses DLL version manifests (`<dependentAssembly>` in SxS). Impossible OS shared libraries should embed a version tag per exported symbol: `symbol@LIBNAME_1.0`. The dynamic linker checks the required version matches the provided version at bind time. This protects against ABI breakage as system libraries evolve. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF symbol versioning"`. Add notes directly in this TODO section.
 
 > **Prerequisite:** §1 dynamic linker must be complete.
-
-
 - [ ] Parse `.gnu.version_d` (version definitions in .so) and `.gnu.version_r` (required versions in executable)
 - [ ] At bind time: check required version tag matches provided tag for each symbol
 - [ ] On version mismatch: fail load with clear error (`"libfoo.so: symbol bar@LIBFOO_2.0 not found, need LIBFOO_1.0"`)
@@ -71,8 +67,6 @@
 **Prompt:** Scanning the entire library search path on every `dlopen` is slow. Linux's `ldconfig` pre-builds `/etc/ld.so.cache` — a sorted list of all library names and their paths. Impossible OS should maintain `C:\Impossible\System\ldcache.bin` — a flat binary index of (library name → path) pairs. The dynamic linker checks this cache first before scanning directories. `ldcache --rebuild` regenerates it by scanning the library dirs. Automatically regenerated when `install` or `uninstall` drops/removes a `.so` file. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: dynamic linker cache"`. Add notes directly in this TODO section.
 
 > **Beats:** Windows DLL lookup is PATH-based with no cache — slow on cold start. Linux ldcache requires root to rebuild. Impossible OS can rebuild per-user.
-
-
 - [ ] Define `ldcache.bin` format: `[count][name_len][name][path_len][path]...` entries
 - [ ] Dynamic linker: check cache before directory scan
 - [ ] Implement `ldcache_lookup(name, out_path)` — O(log n) binary search after sort

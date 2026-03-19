@@ -15,15 +15,9 @@
 > must be updated to use the new Registry API. The disk format changes from `.codex` text
 > files to `.hive` binary files. Existing Codex defaults must be re-populated under the
 > new Registry key paths.
-
-
 ---
 
 ## 1. Core Registry Engine
-
-<details>
-<summary>✅ 1. Core Registry Engine — completed</summary>
-
 
 ### 1.1 Registry Data Structures
 
@@ -84,15 +78,8 @@
 - [x] Implement HKCR merged view (HKLM\SOFTWARE\Classes + HKCU\SOFTWARE\Classes)
 - [x] Commit: `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`
 
-
-</details>
-
 ---
 ## 2. Win32-Compatible API
-
-<details>
-<summary>✅ 2. Win32-Compatible API — completed</summary>
-
 
 ### 2.1 Key Operations
 
@@ -171,15 +158,8 @@
 - [x] `RegReadKeyValue(root, path, valueName, type, buf, size)` — one-shot open+read+close
 - [x] Commit: `"registry: convenience helpers"`
 
-
-</details>
-
 ---
 ## 3. Codex → Registry Migration
-
-<details>
-<summary>✅ 3. Codex → Registry Migration — completed</summary>
-
 
 > **Note:** The Registry implementation (`registry.h`, `registry.c`) was built as new files
 > alongside the existing Codex system (§1–2). This section covers migrating all Codex
@@ -238,15 +218,8 @@
 - [x] Clean stale Codex comments in `panic.h`, `icon_store.h`, `desktop.c`
 - [x] Commit: `"registry: remove legacy codex code"`
 
-
-</details>
-
 ---
 ## 4. Disk Persistence (Hive Files)
-
-<details>
-<summary>✅ 4. Disk Persistence (Hive Files) — completed</summary>
-
 
 ### 4.1 Hive File Format
 
@@ -294,9 +267,6 @@
 - [x] On boot: if `.hive` is corrupt (bad CRC), fall back to `.hive.bak`
 - [x] Keep one backup: copy old `.hive` → `.hive.bak` before overwriting
 - [x] Commit: `"registry: crash-safe journaling"`
-
-
-</details>
 
 ---
 ## 5. Change Notifications

@@ -78,23 +78,23 @@ graph TD
 | **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                     | —                      |
 | **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                            | Phase 2 (§1.1)         |
 | **3** | `TODO-005-Debug.md`                  | §2.1–2.2 Debug Mode         | Debug/verbose mode via `boot.conf`                                   | Phase 1 (§7.1)         |
-| **3** | `TODO-010.99-APIC-First-Boot.md`     | §4 Dynamic IRQ API          | `irq_register()` — foundation for MSI & VMBus                       | Phase 2 (§1–3)         |
+| **3** | `TODO-010.99-APIC-First-Boot.md`     | §4 Dynamic IRQ API          | `irq_register()` — foundation for MSI & VMBus                        | Phase 2 (§1–3)         |
 | **3** | `TODO-010.99-APIC-First-Boot.md`     | §5 Full IDT Coverage        | All 256 IDT entries + Hyper-V VMBus ISRs                             | Phase 3 (§4)           |
 | **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §1–2 Core API + POST codes  | `boot_progress()` API + hex POST code display                        | Phase 2 (APIC)         |
 | **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §7 UEFI POST codes          | Hex codes in bootloader before kernel starts                         | Phase 1 (UEFI)         |
 | **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §3 Debug Bar Waterfall      | Color-coded verbose boot mode                                        | Phase 3 (§2.1) + Ph 4  |
 | **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §4 Panic Forensics + QR     | Progress bars + QR code on BSOD                                      | Phase 4 (§1)           |
-| **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                | Phase 4 (§1)           |
+| **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                 | Phase 4 (§1)           |
 | **5** | `TODO-005-Debug.md`                  | §4.1 Crash Screenshot ⭐    | BMP framebuffer capture on panic → `B:\Crash_*.bmp`                  | Phase 2 (§1) + Ph 5    |
 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §6–7 Timer + Boot Viz       | Timer source hierarchy + Gantt chart                                 | Phase 3 (§4) + Ph 4    |
-| **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) ⭐ | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint             | Phase 2 (§1)           |
+| **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) ⭐ | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint              | Phase 2 (§1)           |
 | **6** | `TODO-005-Debug.md`                  | §6 Log Quality              | Timestamps, memory watermarks, subsystem filtering                   | Phase 2 (§1)           |
 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §9 SMP Adjustment           | Verify AP boot with early LAPIC                                      | Phase 2 (§1–3)         |
 | **7** | `TODO-010.98-Kernel-Heartbeat.md`    | §5–6 Vital Signs + Blink    | Runtime 1px strip, alive pixel, developer HUD                        | Phase 4 (§1)           |
 | **7** | `TODO-005-Debug.md`                  | §7 Cleanup                  | Remove DEBUG file, grub.cfg, stale serial.log                        | Phase 3 (§2.1)         |
 | **7** | `TODO-005-Debug.md`                  | §1.5 Partition Hiding       | Hide B: from file manager (like Windows hides EFI)                   | Phase 2 (§1)           |
 | **7** | `TODO-005-Debug.md`                  | §4.2–4.3 Timeline + Regr ⭐ | Event timeline ring buffer + boot regression detection               | Phase 4 (§1) + Ph 6    |
-| —     | `TODO-063.09-APIC-Architecture.md`   | Full APIC subsystem          | x2APIC, LVT, MSI, NMI — informs but not blocked                     | Phase 3 (§4)           |
+| —     | `TODO-063.09-APIC-Architecture.md`   | Full APIC subsystem         | x2APIC, LVT, MSI, NMI — informs but not blocked                      | Phase 3 (§4)           |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path. They unblock everything else.
@@ -224,10 +224,6 @@ graph TD
 
 ## 2. Boot Splash Screen ✅
 
-<details>
-<summary>✅ 2. Boot Splash Screen — completed</summary>
-
-
 ### 2.1 Windows 11-Style Boot Splash
 
 **Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the boot splash architecture and lifecycle.
@@ -307,9 +303,6 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 - [x] "Almost ready..." — window manager init
 - [x] Commit: `"boot: add more granular splash status messages"` (`3e40e0f`)
 
-
-</details>
-
 ---
 ## 3. Secure Boot — Shim Chain-Loading
 
@@ -334,8 +327,6 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 - [x] Update `scripts/build.sh` to call `sign-efi` as step [5/6] between EFI Boot and System Disk
 - [x] If `keys/MOK.key` is missing, skip signing with clear message (dev builds unaffected)
 - [x] Commit: `"boot: sign EFI bootloader with MOK"`
-
-
 ### 3.3 Build and Package Shim
 
 **Prompt:** Verified (2026-03-14). `shim/shimx64.efi` and `shim/mmx64.efi` are built from rhboot/shim v16.1 with `VENDOR_CERT_FILE=keys/MOK.cer` embedded. The Makefile `system-disk` target automatically uses the shim chain-load layout when `shim/shimx64.efi` is present: `BOOTX64.EFI` ← shimx64.efi, `grubx64.efi` ← our signed bootloader, `mmx64.efi` ← MokManager. Rebuild script at `scripts/secure-boot/build-shim.sh`. SHA256: `d7e21770...` (shimx64.efi), `0141578f...` (mmx64.efi). Committed as `"boot: shim packaging with vendor certificate"`. Verify: run `bash scripts/build.sh clean`, grep `build/build.log` for `[DISK] Shim found — using Secure Boot chain-load layout`, and confirm `tail -1 build/build.log` shows `=== BUILD OK ===`.md` exist.
@@ -504,10 +495,6 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ## 4. Resolution Auto-Detection
 
-<details>
-<summary>✅ 4. Resolution Auto-Detection — completed</summary>
-
-
 ### 4.1 GOP Mode Negotiation
 
 **Prompt:** Verified (2026-03-15). EDID-first GOP mode selection implemented in `src/boot/uefi/bootx64.c init_gop()` (`5c5f502`). `EFI_EDID_ACTIVE_PROTOCOL_GUID` and struct added to `efi.h`. EDID preferred timing descriptor decoded from bytes 54–71 (H: byte 56 | byte 58>>4<<8, V: byte 59 | byte 61>>4<<8). GOP scan prefers EDID-native match, falls back to 1280×720, then current mode. `FrameBufferBase == 0` guard falls back to mode 0. In QEMU/VBox: EDID protocol not present → 1280×720 path used as before. Build: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
@@ -617,9 +604,6 @@ else                    g_font_size = 17;   /* 720p     */
 - Select the exact native-size array at runtime via `OS_LOGO_FOR_HEIGHT()` — **zero scaling**
 - Font size is a fixed per-resolution tier, not derived from icon size (avoids TTF init slowdown)
 - Start button in `desktop.c` uses `os_logo_32_pixels[]` directly — exact 32×32 blit
-
-
-</details>
 
 ---
 ## 5. Boot UX Polish
@@ -778,8 +762,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 - [ ] Kernel shell command `bootmgr --remove`: call UEFI Runtime `SetVariable(Boot####, NULL, 0)` + remove slot from `BootOrder`
 - [ ] Manual fallback: document `efibootmgr -b XXXX -B` for users who delete the OS without using the removal tool
 - [ ] Commit: `"boot: self-register UEFI boot entry"`
-
-
 ---
 
 ## 7. Missing Features vs Windows Boot Manager & GRUB
@@ -789,8 +771,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 ### 7.1 Boot Configuration File
 
 **Prompt:** Windows Boot Manager reads BCD (Boot Configuration Data); GRUB reads `grub.cfg`; systemd-boot reads `loader.conf`. Impossible OS has no equivalent — boot parameters are hardcoded. Add `\EFI\ImpossibleOS\boot.conf` — a simple `key=value` ini file read by `bootx64.c` before loading the kernel. Configurable: kernel path, kernel cmdline, splash timeout, default boot mode, serial debug on/off. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: boot.conf configuration file"`. Add notes directly in this TODO section.
-
-
 - [ ] Define `boot.conf` ini format: `key=value`, `#` comments, blank lines ignored
 - [ ] Implement `parse_boot_conf()` in `bootx64.c` — read from EFI partition via `EFI_SIMPLE_FILE_SYSTEM`
 - [ ] Parse keys: `kernel=`, `cmdline=`, `splash_timeout=`, `boot_mode=`, `serial_debug=`
@@ -804,8 +784,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 ### 7.2 Multi-OS Detection & Boot Menu
 
 **Prompt:** Windows Boot Manager auto-detects other OSes on the disk (Linux EFI entries, other Windows installs). GRUB has `os-prober`. Impossible OS currently shows no other OSes. Scan EFI partition for known bootloaders at boot, and if others are found, offer a timed boot menu. Detection: search for `\EFI\Microsoft\Boot\bootmgfw.efi` (Windows), `\EFI\ubuntu\grubx64.efi`, `\EFI\fedora\grubx64.efi`, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: multi-OS detection and boot menu"`. Add notes directly in this TODO section.
-
-
 - [ ] Scan root EFI partition `\EFI\` subdirectories for `*.efi` files
 - [ ] Identify known bootloaders by path (Windows, Ubuntu, Fedora, etc.)
 - [ ] If other OSes found AND hold-key not pressed: show timed boot menu (5s default)
@@ -822,8 +800,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 **Prompt:** Android, ChromeOS, and modern embedded Linux systems use A/B dual-slot boot — two complete OS copies, updated alternately so a failed update never bricks the device. Boot slot A normally; on consecutive boot failures, auto-switch to slot B (last known good). This is a **major differentiator** — Windows and desktop Linux do NOT have native A/B boot. Store the active slot and failure counter in UEFI NVRAM. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: A/B dual-slot boot"`. Add notes directly in this TODO section.
 
 > **Beats:** Windows 11 (no A/B), desktop Linux (no A/B natively — only Atomic/immutable distros)
-
-
 - [ ] Define NVRAM variable `ImpossibleOS_BootSlot` (A or B) and `ImpossibleOS_BootFailCount`
 - [ ] On boot: read active slot; load kernel from `\boot\kernel_A.exe` or `\boot\kernel_B.exe`
 - [ ] On successful boot: kernel resets `BootFailCount = 0` via UEFI Runtime SetVariable
@@ -837,8 +813,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 ### 7.4 Firmware Compatibility Check
 
 **Prompt:** At boot, validate that the firmware meets minimum requirements before loading the kernel. Check: UEFI version ≥ 2.5 (required for EFI_GRAPHICS_OUTPUT_PROTOCOL v2), available RAM ≥ 256 MiB, x86-64 CPU (already guaranteed by EFI mode), and GPU framebuffer accessible (FrameBufferBase ≠ 0 after GOP SetMode). On failure, print a human-readable UEFI console error and halt rather than showing a confusing crash later. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: firmware compatibility check"`. Add notes directly in this TODO section.
-
-
 - [ ] Check UEFI revision: `gST->Hdr.Revision >= EFI_2_50_SYSTEM_TABLE_REVISION`
 - [ ] Check available RAM ≥ 256 MiB from memory map (sum `EfiConventionalMemory` entries)
 - [ ] Check GOP framebuffer: `FrameBufferBase != 0` after `SetMode()`
@@ -853,8 +827,6 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 **Prompt:** When the kernel writes a crash dump (see §5.3 / `panic.c`), the next boot should detect it and offer to: send the dump, view it, or clear it and boot normally. Windows does this automatically (Windows Error Reporting). Linux has `kdump` + `makedumpfile`. Impossible OS already writes `C:\Impossible\System\crashdump.log` — we just need the bootloader to detect it and adjust boot behaviour. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: crash dump detection and recovery menu"`. Add notes directly in this TODO section.
 
 > **Note:** The bootloader cannot read the FAT32 system disk — check is done in early kernel before the desktop, after VFS mounts.
-
-
 - [ ] In `main.c` early boot (after VFS mount, before desktop): check for `C:\Impossible\System\crashdump.log`
 - [ ] If found: show recovery screen with options: View dump / Send to Rizonesoft / Clear and boot normally
 - [ ] "View dump" → open crash log in a minimal text viewer (no desktop needed)

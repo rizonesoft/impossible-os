@@ -22,8 +22,6 @@
 > off or restart the machine.
 
 **Prompt:** Parse the ACPI RSDP → RSDT/XSDT → FADT to locate `PM1a_CNT_BLK` and `PM1b_CNT_BLK`. To power off, read `SLP_TYPa` from the `\_S5` object in the DSDT/SSDT (or fall back to the QEMU/Bochs shortcut `outw(0x604, 0x2000)`), then write `SLP_TYP | SLP_EN` to PM1a/b control registers. To reboot, write `0x06` to keyboard controller port `0x64` (PS/2 reset), or use ACPI FADT `RESET_REG` if available. Expose two kernel functions: `acpi_poweroff(void)` and `acpi_reboot(void)`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI power-off and reboot"`.
-
-
 - [ ] Parse ACPI RSDP → RSDT/XSDT → FADT for PM1a/b control block addresses
 - [ ] Implement `acpi_poweroff(void)`:
   - [ ] Read `SLP_TYPa` from DSDT `\_S5` (or hardcode QEMU fallback `0x2000`)
@@ -43,8 +41,6 @@
 > **Originally:** TODO-020-Kernel-General.md §8.1
 
 **Prompt:** A clean shutdown prevents data loss by flushing everything before powering off. The sequence must be: send WM_CLOSE to all GUI apps (giving them a chance to prompt "Save work?"), wait up to 5 seconds then force-kill remaining apps, flush all open file handles, flush the Registry to disk, release the DHCP lease, unmount all filesystems, sync disk caches, and finally issue the ACPI power-off. For QEMU/Bochs the shortcut is `outw(0x604, 0x2000)` but for real hardware parse the ACPI FADT for the PM1a_CNT_BLK address and write SLP_TYP | SLP_EN. Show a "Shutting down..." screen during cleanup. The `shutdown` and `reboot` shell commands should trigger this sequence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"kernel: clean shutdown sequence"`. Add notes, gotchas, and design decisions directly in this TODO section covering the shutdown sequence, ACPI power-off, and graceful app termination.
-
-
 - [ ] Implement `system_shutdown(void)` orchestrator function:
   - [ ] Send `WM_CLOSE` to all GUI apps (save work prompt)
   - [ ] Implement shutdown timeout (force-kill apps after 5 seconds)
@@ -65,8 +61,6 @@
 > **Depends on:** §2 (clean shutdown sequence)
 
 **Prompt:** Add `shutdown` and `reboot` commands to the shell. `shutdown` calls `system_shutdown()`, `reboot` calls `system_reboot()`. Both display a confirmation message before proceeding. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: shutdown and reboot commands"`.
-
-
 - [ ] `shutdown` command → confirmation → call `system_shutdown()`
 - [ ] `reboot` command → confirmation → call `system_reboot()`
 - [ ] Commit: `"shell: shutdown and reboot commands"`
@@ -79,8 +73,6 @@
 > **Originally:** TODO-120-Theme.md §7.3 (Start Menu Interaction)
 
 **Prompt:** The Power button (⏻) in the Start Menu's bottom-right area opens a fly-out submenu with: Shut Down, Restart, Sleep, Lock. Each action calls the corresponding kernel function. Sleep and Lock may be grayed out until those features are implemented in §7. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu power actions"`.
-
-
 - [ ] Power button (⏻) → fly-out submenu:
   - [ ] **Shut Down** → `system_shutdown()`
   - [ ] **Restart** → `system_reboot()`
@@ -96,8 +88,6 @@
 > **Originally:** TODO-350 §1.3 (Core Applets — powercfg.cpl)
 
 **Prompt:** The `powercfg.cpl` Control Panel applet provides a UI for power settings: screen timeout slider, shutdown/restart buttons, and sleep settings. Each setting reads/writes Registry keys under `HKLM\SYSTEM\Power\`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: power control panel applet"`.
-
-
 - [ ] `powercfg.cpl.c` — Control Panel applet:
   - [ ] Screen timeout slider (minutes: 1, 2, 5, 10, 15, 30, Never)
   - [ ] Shutdown button → `system_shutdown()`
@@ -130,8 +120,6 @@
 > **Originally:** TODO-020-Kernel-General.md §8.2
 
 **Prompt:** These are stretch goals. Sleep requires ACPI S3 suspend-to-RAM which involves saving all device state and entering the S3 state via the PM1a control register — on wake, the CPU resumes at the FACS waking vector. Hibernate (S4) writes all physical memory to `C:\Impossible\System\hiberfil.sys`, then powers off — on boot, the bootloader detects the file and restores memory. The lock screen is related: stop rendering the desktop, display the login/password UI overlay, and resume on correct password (check against Registry credentials from Phase 09). For QEMU testing, S3 can be simulated with `-global ICH9-LPC.disable_s3=0`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: sleep and hibernate"`. Add notes, gotchas, and design decisions directly in this TODO section covering ACPI S3 suspend, S4 hibernate, waking vector, and lock screen UI flow.
-
-
 - [ ] *(Stretch)* **Sleep (ACPI S3)** — suspend to RAM:
   - [ ] Save device state (PCI, framebuffer, network)
   - [ ] Set FACS waking vector to resume entry point
@@ -153,8 +141,6 @@
 > **Originally:** TODO-560-Long-Term.md §11.2
 
 **Prompt:** Profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep). Control display timeout and CPU throttling. `powercfg.cpl` Control Panel applet. Registry: `HKLM\SYSTEM\Power\Profile = "Balanced"`. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"kernel: power management profiles"`.
-
-
 - [ ] Power profiles: Balanced (default), Performance (no sleep), Power Saver (aggressive sleep)
 - [ ] Profiles control: display sleep timeout, CPU throttling (if applicable)
 - [ ] Integrate into `powercfg.cpl` Control Panel applet (§5): profile dropdown selector

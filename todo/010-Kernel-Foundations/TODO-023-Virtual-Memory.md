@@ -9,10 +9,6 @@
 
 ## 1. Swap / Page File ✅
 
-<details>
-<summary>✅ 1. Swap / Page File — completed</summary>
-
-
 **Prompt:** This section is marked complete (disk-backed pagefile ✅). Verify the implementation is correct: confirm swap_init, swap_out, swap_in exist, the clock page replacement algorithm works, PTEs encode swap_id when Present=0, page faults trigger swap_in, and pagefile.sys is created at `C:\Impossible\System\pagefile.sys`. Verify Registry key `HKLM\SYSTEM\Memory\SwapSlots` controls size. Run `bash scripts/build.sh clean` and verify the boot log shows swap initialization. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the swap system, pagefile.sys, clock replacement, and PTE encoding.
 
 **Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
@@ -34,15 +30,8 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 - [x] Test: swap out → pagefile.sys → swap in → data integrity verified
 - [x] Commit: `"mm: disk-backed swap via pagefile.sys"`
 
-
-</details>
-
 ---
 ## 2. Memory-Mapped Files ✅
-
-<details>
-<summary>✅ 2. Memory-Mapped Files — completed</summary>
-
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `mmap`, `munmap`, `msync` exist, MAP_PRIVATE and MAP_SHARED work, `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls are registered. Verify the eager-load implementation reads file contents into mapped pages correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering mmap semantics, MAP_PRIVATE/MAP_SHARED, and COW fault handling.
 
@@ -57,15 +46,10 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 - [x] Test: mmap hello.txt, read first char as pointer → 'H' ✅
 - [x] Commit: `"mm: memory-mapped files"`
 
-
-</details>
-
 ---
 ## 3. Memory Protection (`mprotect`)
 
 **Prompt:** `mprotect(addr, length, prot)` changes page permissions on an existing mapping — essential for W^X (write XOR execute) security policy, JIT compilers, and stack guards. The kernel updates the PTE flags for the specified range without remapping. `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` correspond to PTE R/W and NX bits. A guard page (PROT_NONE, one page below the stack) turns stack overflows into a page fault instead of silent corruption. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: mprotect and guard pages"`. Add notes directly in this TODO section about W^X enforcement and guard page placement.
-
-
 - [ ] Implement `mprotect(addr, length, prot)` syscall — update PTE flags for range
 - [ ] Define `PROT_NONE`, `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` constants
 - [ ] Map PROT flags to PTE R/W bit and NX (No-Execute) bit
@@ -82,8 +66,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 **Prompt:** Without ASLR, the kernel, stack, heap, and mmap regions always load at fixed addresses — making exploit code trivially predictable. Both Windows and Linux enable ASLR by default. Randomize the base addresses of: kernel load address (already KASLR in Linux), user stack start, heap start, and mmap region start. Use the PIT tick counter XOR'd with a boot-time RDRAND value as the entropy source. Add a Registry key `HKLM\SYSTEM\Security\ASLR` (1=enabled, 0=disabled for debugging). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: ASLR — address space randomization"`. Add notes directly in this TODO section covering the entropy source, per-region randomization, and debug disable.
 
 > **Beats:** Windows ASLR is opt-in per-binary. Impossible OS enables it for all user processes by default.
-
-
 - [ ] Add `mm_aslr_enabled` flag (read from Registry at boot, default 1)
 - [ ] Generate ASLR seed: `PIT ticks ^ RDRAND` at kernel init → store in `g_aslr_seed`
 - [ ] Randomize user stack base: align to page, offset by 1–255 pages from stack top
@@ -100,8 +82,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 **Prompt:** The kernel already uses 2 MiB pages for its identity-mapped region (bootloader). User processes currently use 4 KiB pages everywhere. For large mappings (graphics buffers, file-backed regions > 4 MiB), using 2 MiB pages reduces TLB pressure and page-fault overhead dramatically. Linux calls these HugePages (`mmap(MAP_HUGETLB)`); Windows uses Large Page Support (`VirtualAlloc(MEM_LARGE_PAGES)`). Add a `MAP_HUGE` flag to `mmap` — if the region is 2 MiB aligned and of sufficient size, use PD entries directly instead of allocating PTs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: huge page support (2 MiB pages)"`. Add notes directly in this TODO section.
 
 > **Win:** Framebuffer back buffer (3.6 MiB) and `mmap` of large files benefit immediately.
-
-
 - [ ] Add `MAP_HUGE` flag constant
 - [ ] In `mmap`: if size ≥ 2 MiB and addr/size 2 MiB-aligned + `MAP_HUGE` set, use 2 MiB PD entries
 - [ ] Physical allocator: `pmm_alloc_huge()` — allocate contiguous 2 MiB-aligned physical frame
@@ -119,8 +99,6 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 > **Beats:** Windows 11 — no `fork()`. Impossible OS gets both `fork()` + `exec()` (POSIX-style process creation).
 
 > **Prerequisite:** `mprotect` (§3) must exist — fork uses PTE write-protect to trigger COW faults.
-
-
 - [ ] `fork()`: duplicate page tables but mark all user pages read-only in parent + child
 - [ ] Increment physical page reference count for each shared page
 - [ ] On write page fault: if COW page (ref_count > 1), allocate new frame, copy, decrement old ref

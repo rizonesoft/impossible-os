@@ -42,8 +42,6 @@
 ## 1. Fix User-Mode Execution
 
 **Prompt:** User-mode (ring 3) execution is currently disabled due to a hang during the privilege transition. Debug and fix the user-mode path: verify TSS is loaded with a valid RSP0 (kernel stack), GDT has correct DPL=3 user code/data segments, `sysret`/`iretq` correctly sets CS/SS/RIP/RSP for ring 3, and the syscall entry point saves/restores all registers. Test with a minimal user-mode function that calls `SYS_EXIT`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: fix user-mode execution"`.
-
-
 - [ ] Debug ring 3 transition hang (TSS RSP0, GDT segments, STAR/LSTAR MSRs)
 - [ ] Verify `syscall_init()` sets STAR, LSTAR, SFMASK MSRs correctly
 - [ ] Verify GDT user segments: code (DPL=3, long mode), data (DPL=3)
@@ -56,8 +54,6 @@
 ## 2. Syscall Interface (Win x64 Convention)
 
 **Prompt:** Define the Impossible OS syscall interface using the Windows x64 calling convention (args in RCX, RDX, R8, R9, then stack). Syscall number in RAX, invoked via `int 0x80` or `syscall` instruction. Document all existing syscalls and assign stable numbers. Group by category: process (ExitProcess, CreateProcess), file I/O (CreateFile, ReadFile, WriteFile, CloseHandle), memory (VirtualAlloc, VirtualFree), display (MessageBox, CreateWindow). Create `include/kernel/sched/abi.h` with all syscall numbers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: define syscall interface"`.
-
-
 - [ ] Define syscall convention: Win x64 (RCX, RDX, R8, R9), number in RAX
 - [ ] Assign stable syscall numbers to all existing syscalls
 - [ ] File I/O: `SYS_CREATEFILE`, `SYS_READFILE`, `SYS_WRITEFILE`, `SYS_CLOSEHANDLE`
@@ -70,8 +66,6 @@
 ### 2.1 Calling Convention
 
 **Prompt:** Windows x64 passes args in RCX, RDX, R8, R9 (vs System V: RDI, RSI, RDX, RCX). Compile Win32 API functions with `__attribute__((ms_abi))` or use inline asm to remap. Syscalls via INT 0x80 bypass C ABI, so no conflict. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Win32 calling convention"`.
-
-
 - [ ] Win32 API functions use Windows x64 convention: args in RCX, RDX, R8, R9
 - [ ] Functions internally use inline `INT 0x80` assembly with explicit register setup
 - [ ] No automatic convention conflict since syscalls bypass C ABI
@@ -90,8 +84,6 @@
 ### 3.1 PE Header Structures
 
 **Prompt:** PE (Portable Executable) is the native binary format for Impossible OS. Define the structures per the PE/COFF spec: DOS header (e_magic "MZ", e_lfanew to PE signature), COFF header (machine=AMD64), PE32+ Optional Header (magic 0x020B, ImageBase, EntryPointRVA, SizeOfImage), section headers (name, VirtualSize, VirtualAddress, SizeOfRawData, PointerToRawData), data directories (RVA+Size for imports, relocations, etc). After completing all items,sh clean`, and commit as `"kernel: PE/COFF header structures"`.
-
-
 - [ ] Create `include/pe.h` (~80 lines)
 - [ ] Define `struct pe_dos_header` (e_magic "MZ", e_lfanew offset to PE signature)
 - [ ] Define `struct pe_coff_header` (machine, num_sections, characteristics)
@@ -104,8 +96,6 @@
 ### 3.2 PE Loader Core
 
 **Prompt:** `pe_load(data, size)` validates DOS "MZ" header, follows e_lfanew to PE signature, parses COFF (verify Machine==AMD64), reads PE32+ Optional Header (ImageBase, EntryPointRVA, SizeOfImage, DataDirectory imports+relocations). Allocate SizeOfImage at ImageBase, copy each section to ImageBase+VirtualAddress, zero-fill BSS. Return entry = ImageBase + AddressOfEntryPoint. After completing all items,sh clean`, and commit as `"kernel: PE loader core"`.
-
-
 - [ ] Create `src/kernel/pe.c` (~250 lines)
 - [ ] Implement `pe_load(data, size)`:
   - [ ] Validate DOS header: `e_magic == 0x5A4D` ("MZ")
@@ -122,8 +112,6 @@
 ### 3.3 Base Relocation
 
 **Prompt:** Parse DataDirectory[5] relocation blocks. For IMAGE_REL_BASED_DIR64 entries, add delta (actual_base - preferred_base) to 64-bit addresses. Skip type 0 padding. No relocation needed if loaded at preferred address. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE base relocation support"`.
-
-
 - [ ] Parse DataDirectory[5] (Base Relocation Table) from PE
 - [ ] If PE loaded at address ≠ preferred ImageBase:
   - [ ] Calculate delta = actual_base − preferred_base
@@ -134,8 +122,6 @@
 ### 3.4 Binary Format Detection
 
 **Prompt:** Create `load_binary(data, size)` that checks magic bytes: `"MZ"` → `pe_load()` (native), `0x7F "ELF"` → `elf_load()` (Linux compat layer — see `TODO-540-Linux.md`). PE is the **native** format; ELF is supported for the Linux compatibility layer. The kernel itself is an ELF (loaded by UEFI bootloader), but all native user-mode programs are PE (.exe). Update exec path to use `load_binary()` instead of direct loader calls. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: binary format detection"`.
-
-
 - [ ] Create `load_binary(data, size)` in `src/kernel/task.c` (or new file)
 - [ ] Auto-detect format by magic bytes:
   - [ ] `"MZ"` (0x5A4D) → `pe_load()` — PE executable (**native format**)
@@ -150,8 +136,6 @@
 > icons, title bar icons, File Manager icons).
 
 **Prompt:** Parse DataDirectory[2] Resource Table — it's a 3-level tree: Level 1 = resource type (RT_ICON=3, RT_GROUP_ICON=14, RT_VERSION=16, RT_STRING=6), Level 2 = resource name/ID, Level 3 = language. Implement `pe_find_resource(pe_data, type, id)` that walks the tree and returns a pointer+size to the resource data. For RT_GROUP_ICON, parse the GRPICONDIR structure to find the best-matching size, then load the corresponding RT_ICON entry. For RT_VERSION, parse VS_VERSIONINFO → VS_FIXEDFILEINFO to extract FileVersion, ProductName, CompanyName. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE resource section parser"`.
-
-
 - [ ] Implement `pe_find_resource(pe_data, resource_type, resource_id)` → pointer + size
   - [ ] Walk 3-level resource directory tree (type → name → language)
   - [ ] Handle both integer IDs and string names
@@ -173,8 +157,6 @@
 ### 4.1 Import Table Parser
 
 **Prompt:** Parse DataDirectory[1] Import Directory Table. Each entry has DLL name RVA, Import Lookup Table, Import Address Table. Walk ILT entries: MSB set = ordinal, otherwise Hint/Name Table entry. Log imports: `"PE imports: kernel32.dll!WriteConsoleA"`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: PE import table parser"`.
-
-
 - [ ] Parse Import Directory Table from DataDirectory[1]
 - [ ] For each DLL entry: read DLL name string, Import Lookup Table (ILT), Import Address Table (IAT)
 - [ ] For each function: read name (or ordinal) from Hint/Name Table
@@ -184,8 +166,6 @@
 ### 4.2 Native DLL Export Table
 
 **Prompt:** Map DLL names to (func_name, func_ptr) arrays. `pe_resolve_export(dll_name, func_name)` searches and returns the function pointer. These DLLs are provided natively by the OS. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: native DLL export table"`.
-
-
 - [ ] Define `struct win32_export` (name, func_ptr)
 - [ ] Create lookup function: `pe_resolve_export(dll_name, func_name)` → function pointer
 - [ ] Native DLL registry:
@@ -203,8 +183,6 @@
 ### 4.3 IAT Patching
 
 **Prompt:** Patch Import Address Table: for each import, look up the native DLL export table. If found, write function pointer to IAT slot. If not, write `stub_unimplemented()` that logs `"UNIMPL: dll!func"` and returns 0. PE code calls native functions via normal IAT indirect calls. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: IAT patching"`.
-
-
 - [ ] For each imported function:
   - [ ] Look up in native DLL export table
   - [ ] If found: write function pointer into IAT slot
@@ -215,8 +193,6 @@
 ### 4.4 External DLL Loading *(Stretch)*
 
 **Prompt:** Stretch: search filesystem for DLLs not in the native export table. Load DLL as PE, parse export table. Handle recursive DLL deps. Call DllMain(DLL_PROCESS_ATTACH). Implement LoadLibraryA/GetProcAddress for runtime loading. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: external DLL loading"`.
-
-
 - [ ] *(Stretch)* Search filesystem for DLLs not in native export table:
   - [ ] `C:\Impossible\System\` (system directory)
   - [ ] Same directory as the .exe
@@ -233,8 +209,6 @@
 ### 5.1 Windows Type Definitions
 
 **Prompt:** Create `include/win32.h` with Windows types: HANDLE=void*, DWORD=uint32_t, BOOL=int, LPVOID=void*, LPCSTR=const char*. Constants: STD_INPUT/OUTPUT/ERROR_HANDLE, INVALID_HANDLE_VALUE, TRUE, FALSE. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: Win32 type definitions"`.
-
-
 - [ ] Create `include/win32.h`
 - [ ] Define Windows types: `HANDLE`, `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `SIZE_T`, `UINT`, `LPARAM`, `WPARAM`
 - [ ] Define constants: `STD_INPUT_HANDLE`, `STD_OUTPUT_HANDLE`, `STD_ERROR_HANDLE`, `INVALID_HANDLE_VALUE`, `TRUE`, `FALSE`
@@ -274,8 +248,6 @@
 ### 5.3 msvcrt.dll — C Runtime
 
 **Prompt:** Map C stdlib: printf/puts → format + sys_write, malloc/free/calloc/realloc → kernel heap, memcpy/memmove/memset/memcmp → kernel implementations, strlen/strcpy/strcmp → kernel string functions, sprintf/snprintf → kernel printf engine, atoi/atol for conversions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: msvcrt.dll C runtime"`.
-
-
 - [ ] Create `src/win32/msvcrt.c`
 - [ ] `printf(fmt, ...)` → format + `sys_write()` to stdout
 - [ ] `puts(str)` → write string + newline
@@ -293,8 +265,6 @@
 ### 5.4 ntdll.dll — NT Runtime
 
 **Prompt:** Stub minimal ntdll functions: RtlInitUnicodeString (no-op), NtCurrentTeb (return static dummy TEB), RtlGetVersion (return plausible version info). Most ntdll functions can be safely stubbed as no-ops for basic compatibility. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: ntdll.dll minimal stubs"`.
-
-
 - [ ] Create `src/win32/ntdll.c`
 - [ ] `RtlInitUnicodeString()` → stub (many programs import it)
 - [ ] `NtCurrentTeb()` → stub (Thread Environment Block)
@@ -304,8 +274,6 @@
 ### 5.5 Test: Run Native PE Hello World
 
 **Prompt:** Cross-compile `x86_64-w64-mingw32-gcc -o hello.exe hello.c`, include on C:\. Execute in shell — should print "Hello, World!" via WriteConsoleA. This is the milestone proving PE+IAT+Win32 all work. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: run first native PE program"`.
-
-
 - [ ] Cross-compile test program: `x86_64-w64-mingw32-gcc -o hello.exe hello.c`
 - [ ] Include on C:\
 - [ ] Execute: `hello.exe` in shell → should print "Hello, World!" via WriteConsoleA
@@ -318,8 +286,6 @@
 ### 6.1 kernel32.dll — Memory Management
 
 **Prompt:** VirtualAlloc maps to sys_mmap (MEM_COMMIT|MEM_RESERVE = allocate+zero), VirtualFree releases. HeapCreate/HeapAlloc/HeapFree/GetProcessHeap map to kernel heap. Add SYS_MMAP and SYS_BRK syscalls. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: kernel32.dll memory management"`.
-
-
 - [ ] `VirtualAlloc(addr, size, type, protect)` → `sys_mmap()`
 - [ ] `VirtualFree(addr, size, type)` → `sys_munmap()`
 - [ ] `HeapCreate(options, initial, max)` → create heap region
@@ -359,8 +325,6 @@
 ### 7.1 user32.dll — Window Management & MessageBox
 
 **Prompt:** Map native GUI APIs. RegisterClassExW registers window class, CreateWindowExW → wm_create_window, ShowWindow makes visible. GetMessage/TranslateMessage/DispatchMessage implement message loop. MessageBoxA/W is a direct pass-through to `MessageBox()` (P0104, same ABI). After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"win32: user32.dll window management"`.
-
-
 - [ ] Create `src/win32/user32.c`:
   - [ ] `RegisterClassExW()` → register window class with WM
   - [ ] `CreateWindowExW()` → `wm_create_window()`
@@ -389,8 +353,6 @@
 ### 7.3 shell32.dll — Shell Icon API
 
 **Prompt:** Implement shell icon API functions. ExtractIconEx uses the PE resource parser (§3.5) for `.exe`/`.dll` files and `ico_load()` for `.ico` files. SHGetFileInfo delegates to `icon_for_extension()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: shell32.dll icon API"`.
-
-
 - [ ] Create `src/win32/shell32.c`
 - [ ] `ExtractIconExA(path, index, phiconLarge, phiconSmall, nIcons)`:
   - [ ] System DLL → `win32_icon_lookup()` → `icon_get()`
@@ -405,8 +367,6 @@
 ### 7.4 comctl32.dll — Common Controls *(Stretch)*
 
 **Prompt:** Map Windows common controls to Impossible OS controls library. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: common controls"`.
-
-
 - [ ] `InitCommonControlsEx` → no-op (controls always available)
 - [ ] `CreateStatusWindow` → `ctrl_create_statusbar()` (120-Theme §2.10)
 - [ ] `CreateToolbarEx` → `ctrl_create_toolbar()` (120-Theme §2.8)
@@ -419,8 +379,6 @@
 ## 8. Native SDK (Headers & Cross-Compiler)
 
 **Prompt:** Create the Impossible OS SDK so developers can compile native PE programs. The SDK includes: (1) `windows.h` — exports the Win32 API, (2) `impossible.h` — Impossible OS extensions (IxUI, system info), (3) import libraries (`kernel32.lib`, `user32.lib`) for the PE linker. Cross-compilation uses `x86_64-w64-mingw32-gcc` with our headers. Create a wrapper script `impossible-cc` that sets the correct include paths and libraries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"sdk: Impossible OS SDK"`.
-
-
 - [ ] Create `sdk/include/windows.h` — Win32 API declarations
   - [ ] File I/O: `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, `FindFirstFile`, etc.
   - [ ] Memory: `VirtualAlloc`, `VirtualFree`, `HeapAlloc`, `HeapFree`
@@ -442,8 +400,6 @@
 ## 9. Native GUI Toolkit (IxUI)
 
 **Prompt:** Build a native GUI toolkit called IxUI that wraps the kernel's window manager and compositor. User programs call IxUI functions via syscalls. The IxUI API uses Win32-compatible patterns: `CreateWindow(className, title, style, x, y, w, h, parent, menu, hInstance, param)`, `ShowWindow(hWnd, nCmdShow)`, `SendMessage(hWnd, msg, wParam, lParam)`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"sdk: IxUI native GUI toolkit"`.
-
-
 - [ ] Create `sdk/include/ixui.h` (userland-facing API header)
 - [ ] `CreateWindow(className, title, style, x, y, w, h, parent, ...)` → syscall → `wm_create()`
 - [ ] `ShowWindow(hWnd, nCmdShow)` / `DestroyWindow(hWnd)`
@@ -461,8 +417,6 @@
 ## 10. Unimplemented Function Logger
 
 **Prompt:** When PE calls unimplemented function, log `"UNIMPL: kernel32.dll!CreateThread"` to serial. Return safe default (0/NULL/FALSE). Track call counts. Shell `win32log` dumps log sorted by count to prioritize next implementations. After all items, mark `[x]`, run `bash scripts/build.sh clean`, commit `"win32: unimplemented function logger"`.
-
-
 - [ ] When a PE program calls an unimplemented function:
   - [ ] Log to serial: `"UNIMPL: kernel32.dll!CreateThread"`
   - [ ] Return safe default (0 / NULL / FALSE) instead of crashing
@@ -476,8 +430,6 @@
 ## 11. Shell Integration
 
 **Prompt:** Integrate PE execution into the shell and desktop. Auto-detect PE executables by their `MZ` magic bytes. File extension `.exe` is recognized and routed to the PE loader. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: PE exe support"`.
-
-
 - [ ] Detect PE magic bytes (`MZ`, `0x4D 0x5A`) in `SYS_EXEC`
 - [ ] Route `.exe` files to PE loader automatically
 - [ ] File Manager: double-click `.exe` → run via PE loader

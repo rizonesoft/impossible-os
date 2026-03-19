@@ -10,10 +10,6 @@
 
 ## 1. Panic Screen ✅
 
-<details>
-<summary>✅ 1. Panic Screen — completed</summary>
-
-
 > **Status:** Implemented in `src/kernel/panic.c`.
 
 - [x] Blue background (`#003380`) with direct framebuffer rendering
@@ -24,30 +20,16 @@
 - [x] Stack trace via RBP chain walk (max 16 frames)
 - [x] Commit: `"panic: embed bsod.png icon, stop boot animation, add BSOD_TEST trigger"`
 
-
-</details>
-
 ---
 ## 2. Crash Dump ✅
-
-<details>
-<summary>✅ 2. Crash Dump — completed</summary>
-
 
 > **Status:** Implemented in `src/kernel/panic.c`.
 
 - [x] Write crash dump to `C:\Impossible\System\crashdump.log`
 - [x] Includes: timestamp, exception, description, registers, stack trace
 
-
-</details>
-
 ---
 ## 3. Auto-Restart ✅
-
-<details>
-<summary>✅ 3. Auto-Restart — completed</summary>
-
 
 > **Status:** Implemented in `src/kernel/panic.c`.
 
@@ -57,15 +39,8 @@
 - [x] If `AutoRestart = 0`, display "System halted. Press reset to restart."
 - [x] Auto-creates Registry key with defaults if not present
 
-
-</details>
-
 ---
 ## 4. BSOD Test Trigger ✅
-
-<details>
-<summary>✅ 4. BSOD Test Trigger — completed</summary>
-
 
 > **Status:** Available via compile-time flag.
 
@@ -73,17 +48,12 @@
 - [x] Enable with `-DBSOD_TEST` in Makefile `CFLAGS`
 - [x] Commit: `"panic: add spacing between BSOD icon and text"`
 
-
-</details>
-
 ---
 ## 5. Auto-Restart Validation
 
 > **Depends on:** §3 (auto-restart), §4 (test trigger)
 
 **Prompt:** Validate the BSOD auto-restart end-to-end: enable `BSOD_TEST`, build, boot in QEMU. Verify the BSOD screen appears, countdown runs for the configured number of seconds, progress bar advances, and the system reboots automatically. After reboot, verify the system boots normally (no crash loop). Also test with `AutoRestart = 0` to confirm the system halts instead. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit test results.
-
-
 - [ ] **Test:** Enable `BSOD_TEST` → boot → BSOD appears → countdown runs → system reboots
 - [ ] **Test:** After auto-reboot, system boots normally (no infinite crash loop)
 - [ ] **Test:** Set `AutoRestart = 0` → BSOD shows "System halted" and does NOT reboot
@@ -98,8 +68,6 @@
 > **Depends on:** §3 (auto-restart)
 
 **Prompt:** Prevent infinite crash loops: if the system crashes within 60 seconds of a BSOD auto-restart, disable auto-restart and halt instead. Track consecutive crash count in a Registry key `HKLM\SYSTEM\Recovery\ConsecutiveCrashes`. Reset to 0 on successful boot (e.g., once the desktop is loaded). If count ≥ 3, skip auto-restart and display: "Your PC has crashed multiple times. Automatic restart has been disabled." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"panic: crash loop protection"`.
-
-
 - [ ] Track `HKLM\SYSTEM\Recovery\ConsecutiveCrashes` (DWORD)
 - [ ] Increment on each BSOD, reset to 0 on successful desktop load
 - [ ] If `ConsecutiveCrashes >= 3`, skip auto-restart → halt with message

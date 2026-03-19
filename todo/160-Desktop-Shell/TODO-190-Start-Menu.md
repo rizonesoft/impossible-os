@@ -40,8 +40,6 @@
 ### 7.2 Start Menu Data *(from Phase 04 §2.2)*
 
 **Prompt:** Load pinned apps from the Registry, scan installed apps from filesystem for All Programs list. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu data loading"`. Add notes, gotchas, and design decisions directly in this TODO section covering pinned app loading, app scanning, and alphabetical grouping.
-
-
 - [ ] Load pinned apps from Registry `HKU\{name}\Software\Impossible\Shell\PinnedApps`
 - [ ] Scan installed apps from `C:\Impossible\Bin\` and `C:\Programs\`
 - [ ] Build alphabetical "All Programs" list with folder grouping
@@ -52,8 +50,6 @@
 ### 7.3 Start Menu Interaction *(from Phase 04 §2.3)*
 
 **Prompt:** Toggle open/close on Start click or Win key. Launch apps, navigate All Programs, power submenu, search filtering. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu interaction"`. Add notes, gotchas, and design decisions directly in this TODO section covering Start menu interaction, All Programs navigation, power actions, and search filtering.
-
-
 - [ ] Start button / Win key → toggle menu
 - [ ] Click pinned app → launch, close menu
 - [ ] "All Programs ►" → slide transition replacing left column with app list + "Back" link

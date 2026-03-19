@@ -11,8 +11,6 @@
 ## 1. System Clipboard
 
 **Prompt:** The clipboard is a single kernel-resident buffer shared between all processes. `clipboard_set(fmt, data, size)` copies data into the buffer with a format tag (TEXT, IMAGE, FILES). `clipboard_get(fmt, buf, max)` retrieves it. Data must be deep-copied on set. Syscalls SYS_CLIPBOARD_SET/GET let user-mode apps access it. Keep it simple: one clipboard entry at a time. After completing all items,sh clean`, and commit as `"kernel: system clipboard"`.
-
-
 - [ ] Define `clip_format_t` enum: TEXT, IMAGE, FILES
 - [ ] Define `clipboard_t` struct (format, data pointer, size)
 - [ ] Create `include/clipboard.h` and `src/kernel/clipboard.c`
@@ -28,8 +26,6 @@
 ## 2. Keyboard Shortcuts
 
 **Prompt:** Ctrl+C/X/V must be wired through the keyboard event pipeline to reach the focused control. The flow: keyboard driver → WM key event → check for global shortcuts → dispatch to focused window → focused control handles Ctrl+C by reading its selection and calling `clipboard_set`. Ctrl+X does copy + delete selection. Ctrl+V calls `clipboard_get` and inserts at cursor. Must not conflict with SIGINT in the terminal — SIGINT should only fire when no text is selected. After completing all items,sh clean`, and commit as `"desktop: clipboard keyboard shortcuts"`.
-
-
 - [ ] Ctrl+C in focused control → copy selection to clipboard
 - [ ] Ctrl+X in focused control → cut selection to clipboard
 - [ ] Ctrl+V in focused control → paste from clipboard
@@ -52,8 +48,6 @@
 ## 4. Clipboard History
 
 **Prompt:** Clipboard history keeps the last 25 entries in a ring buffer — each entry is a deep copy plus metadata (format, timestamp, source app name). Win+V opens a popup listing recent entries. Clicking an entry sets it as current and pastes. Configurable via Registry: `HKLM\SYSTEM\Clipboard\HistoryEnabled`, `HKLM\SYSTEM\Clipboard\MaxItems`. After completing all items,sh clean`, and commit as `"desktop: clipboard history (Win+V)"`.
-
-
 - [ ] Create `src/desktop/clip_history.c`
 - [ ] Maintain ring buffer of last 25 clipboard entries
 - [ ] Each entry: format, data copy, timestamp, source app name

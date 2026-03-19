@@ -11,8 +11,6 @@
 
 > [!IMPORTANT]
 > **Licensing Rule:** Only port code from **MIT, BSD-2, BSD-3, ISC, Apache-2.0, or public domain** sources. **Never** copy GPL-2.0 code (Linux kernel). For GPL-only hardware, do clean-room implementation from public datasheets. Each ported file must retain the original copyright + license header.
-
-
 ---
 
 ## 1. Kernel Module Loader Infrastructure
@@ -336,8 +334,6 @@ The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, a
 ### 5.1 AC97 Sound Card Driver
 
 **Prompt:** AC97 is the simplest sound card to implement in QEMU. Detect the Intel ICH AC97 controller via PCI class 0x04/subclass 0x01. Map two I/O BARs: the Native Audio Mixer BAR (for codec registers like master volume, PCM out volume) and the Native Audio Bus Master BAR (for DMA control). The Bus Master uses a Buffer Descriptor List (BDL) — a ring of 32 entries, each pointing to a PCM data buffer with length and IOC (Interrupt On Completion) flags. Fill the BDL with PCM audio data, set the BDL base address register, and start playback by setting the run bit. Generate a test sine wave (440 Hz, 16-bit signed, 44100 Hz) to verify audio output. After completing all items,sh clean`, and commit as `"drivers: AC97 sound card driver"`.
-
-
 - [ ] Create `src/kernel/drivers/ac97.c` and `include/ac97.h`
 - [ ] Detect AC97 controller via PCI (class `0x04`, subclass `0x01`, or Intel ICH vendor/device)
 - [ ] Map I/O BAR (Native Audio Mixer BAR + Native Audio Bus Master BAR)
@@ -361,8 +357,6 @@ The core APIC subsystem is implemented across `lapic.c`, `ioapic.c`, `acpi.c`, a
 ### 5.2 Intel HDA Sound Driver *(Stretch)*
 
 **Prompt:** Intel HDA (High Definition Audio) is the modern audio standard, more complex than AC97. Detect via PCI class 0x04, subclass 0x03. Map MMIO registers, initialize CORB (Command Output Ring Buffer) and RIRB (Response Input Ring Buffer) for codec communication. Enumerate codecs on the HDA link, parse the widget tree (AFG → mixer → DAC → output pin) to find the audio output path. Set up a DMA stream descriptor for PCM playback. QEMU: `-device intel-hda -device hda-duplex`. This is a stretch goal since AC97 covers QEMU testing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Intel HDA audio"`.
-
-
 - [ ] *(Stretch)* Create `src/kernel/drivers/hda.c` and `include/hda.h`
 - [ ] *(Stretch)* Detect Intel HDA via PCI (class `0x04`, subclass `0x03`)
 - [ ] *(Stretch)* Map MMIO registers, initialize CORB/RIRB (command/response buffers)

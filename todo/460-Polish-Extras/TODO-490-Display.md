@@ -6,8 +6,6 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB. `kmalloc` is ONLY for small kernel structs (≤ 4 KB).
 
 ---
-
-
 - [ ] `display_enum_modes()` — query VESA/VBE modes
 - [ ] `display_get_mode()` — return current resolution
 - [ ] *(Stretch)* `display_set_mode(w, h)` — runtime change (requires virtio-gpu)

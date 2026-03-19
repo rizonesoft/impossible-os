@@ -26,8 +26,6 @@
 > **Status:** Basic `elf_load()` exists in `src/kernel/elf.c`.
 
 **Prompt:** The ELF loader already parses ELF64 headers and loads segments. Verify it handles: ELF magic validation, ET_EXEC type check, EM_X86_64 machine check, PT_LOAD segment mapping, entry point extraction. Extend if needed: PT_INTERP for dynamic linking (future), proper BSS zero-fill, alignment. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF loader enhancements"`.
-
-
 - [x] Parse ELF64 header: magic, class (64-bit), machine (x86-64)
 - [x] Map PT_LOAD segments into process address space
 - [x] Extract entry point address
@@ -43,8 +41,6 @@
 > **Depends on:** §1 (ELF loader), P0105 §3.4 (PE `load_binary()`)
 
 **Prompt:** Extend `load_binary(data, size)` from P0105 to detect both formats: `"MZ"` → `pe_load()` (native), `"\x7fELF"` → `elf_load()` (compat layer). PE is always tried first. ELF binaries automatically get the Linux syscall handler attached. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: dual PE+ELF binary detection"`.
-
-
 - [ ] Extend `load_binary()` in `src/kernel/task.c`:
   - [ ] `"MZ"` (0x5A4D) → `pe_load()` — native PE (checked first)
   - [ ] `"\x7fELF"` → `elf_load()` — Linux compatibility
@@ -59,8 +55,6 @@
 > **Depends on:** §1 (ELF loader), ring 3 user-mode (P0105 §1)
 
 **Prompt:** Linux x86-64 uses `syscall` with number in RAX, args in RDI, RSI, RDX, R10, R8, R9 (System V convention). Implement a syscall handler that translates Linux syscall numbers into native Impossible OS kernel calls. Start with the ~20 most essential syscalls for a static busybox binary. The translation layer converts POSIX paths (`/home/user/file`) to Windows paths (`C:\Users\Default\file`) and Linux file descriptors to native HANDLEs. After completing all items,sh clean`, and commit as `"kernel: Linux syscall translation layer"`.
-
-
 - [ ] Create `src/compat/linux/linux_syscall.c`
 - [ ] Detect ELF process → route `syscall` to Linux handler (not Win32 handler)
 - [ ] Linux x86-64 calling convention: RAX=number, RDI, RSI, RDX, R10, R8, R9
@@ -114,8 +108,6 @@
 > **Depends on:** §3 (syscall layer)
 
 **Prompt:** Linux uses forward-slash paths rooted at `/`. Translate: `/` → `C:\`, `/home/<user>` → `C:\Users\Default`, `/tmp` → `C:\Impossible\Temp`, `/dev/null` → NUL, `/proc/self/...` → stub. Handle relative paths using the process CWD. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"compat: Linux path translation"`.
-
-
 - [ ] Create `src/compat/linux/linux_path.c`
 - [ ] `/` → `C:\`
 - [ ] `/home/<user>` → `C:\Users\Default`
@@ -135,8 +127,6 @@
 > **Depends on:** §3 (syscall layer)
 
 **Prompt:** Linux uses integer file descriptors (0=stdin, 1=stdout, 2=stderr). Maintain a per-process fd→HANDLE mapping table. `fd_alloc()` returns the lowest available fd. `fd_to_handle(fd)` returns the native HANDLE. Pre-populate fd 0/1/2 with stdin/stdout/stderr HANDLEs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"compat: Linux file descriptor table"`.
-
-
 - [ ] Create `src/compat/linux/linux_fd.c`
 - [ ] Per-process fd table: `HANDLE fd_table[MAX_FDS]` (MAX_FDS = 256)
 - [ ] Pre-populate: fd 0 = stdin, fd 1 = stdout, fd 2 = stderr
@@ -160,8 +150,6 @@
 ## 7. Test: Run Static Linux Binary
 
 **Prompt:** Cross-compile a static Linux x86-64 "Hello World" (`gcc -static -o hello hello.c`), include on C:\. Execute in shell — should print "Hello, World!" via `sys_write(1, ...)`. This proves ELF + Linux syscall translation works. Next milestone: run a static busybox binary. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"compat: run first Linux ELF binary"`.
-
-
 - [ ] Cross-compile: `x86_64-linux-gnu-gcc -static -o hello hello.c`
 - [ ] Include on C:\
 - [ ] Execute: `hello` in shell → prints "Hello, World!" via sys_write

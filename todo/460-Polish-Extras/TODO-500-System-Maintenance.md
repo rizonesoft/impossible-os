@@ -6,8 +6,6 @@
 > installs — providing the reliability infrastructure expected of a real OS.
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
-
-
 ---
 
 ## 1. System Updates
@@ -15,8 +13,6 @@
 ### 1.1 Update Check API
 
 **Prompt:** The update system provides a mechanism for keeping Impossible OS current. `update_check()` does an HTTP GET to the update server URL, parses the JSON/INI response for version, download URL, and SHA-256 hash, then compares with the current version stored in Registry `HKLM\SYSTEM\Version`. If an update is available, populate `struct update_info` with version, URL, hash, size, type (hotfix/minor/major), and description. After completing all items,sh clean`, and commit as `"apps: update check API"`.
-
-
 - [ ] Create `src/apps/updater/updater.c` and `include/update.h`
 - [ ] Define `struct update_info` (version, url, hash, size, type, description)
 - [ ] Implement `update_check(info)`:
@@ -29,8 +25,6 @@
 ### 1.2 Update Download & Verification
 
 **Prompt:** `update_download(info, path)` does HTTP GET to the download URL and saves to `C:\Temp\update.ipkg` with progress reporting (bytes/total). `update_verify(path, expected_hash)` computes SHA-256 via monocypher and compares with the expected hash, rejecting corrupted or tampered downloads. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update download + SHA-256 verification"`.
-
-
 - [ ] Implement `update_download(info, path)`:
   - [ ] HTTP GET download URL → save to `C:\Temp\update.ipkg`
   - [ ] Show progress: bytes downloaded / total size
@@ -43,8 +37,6 @@
 ### 1.3 Update Application
 
 **Prompt:** `update_apply(path)` first creates a restore point (§3.1) for rollback safety, then extracts the .ipkg ZIP via miniz, replaces system files in `C:\Impossible\System\`, and updates Registry version/timestamp. Handle three update types: hotfix (<100 KB single file), minor (1-5 MB), major (10+ MB kernel changes). Prompt restart. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update apply + auto-restore-point"`.
-
-
 - [ ] Implement `update_apply(path)`:
   - [ ] **Create restore point first** (via `restore_create()`)
   - [ ] Extract `.ipkg` update package (ZIP format)
@@ -61,8 +53,6 @@
 ### 1.4 Update Settings
 
 **Prompt:** `wuapp.cpl` Control Panel applet: manual check button, auto-check toggle with frequency (daily/weekly/never, Registry `HKLM\SYSTEM\Update\AutoCheck`), update channel (stable/beta), last check timestamp, and update history. Auto-check at boot runs as a background task with a notification toast: "System update available (v0.3.0)" with [Install]. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: update control panel applet"`.
-
-
 - [ ] `wuapp.cpl` Control Panel applet:
   - [ ] "Check for updates" button (manual check)
   - [ ] Auto-check toggle (Registry: `HKLM\SYSTEM\Update\AutoCheck`)
@@ -81,8 +71,6 @@
 ### 2.1 IPKG Package Format
 
 **Prompt:** Define `.ipkg` as a ZIP archive containing: `manifest.ini` (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop), `install.ini` (file destinations, Registry entries, shortcuts, file associations), and `files/` directory with the app executable + libraries + data. After completing all items,sh clean`, and commit as `"apps: IPKG package format specification"`.
-
-
 - [ ] Define `.ipkg` format (ZIP archive containing):
   - [ ] `manifest.ini` — app metadata (Name, Version, Author, Icon, Description, InstallPath, StartMenu, Desktop)
   - [ ] `install.ini` — file destinations, Registry entries, shortcuts
@@ -92,8 +80,6 @@
 ### 2.2 App Installer
 
 **Prompt:** Parse `.ipkg` via miniz ZIP extraction, read manifest.ini and install.ini. Installer UI: welcome screen with app name/version/icon, install path selection, progress bar. Install process: create dir (e.g., `C:\Programs\MyApp\`), extract files, write Registry entries, create Start Menu/Desktop shortcuts, register in Registry `HKLM\SOFTWARE\{name}\*`. Create a restore point before install. After completing all items,sh clean`, and commit as `"apps: app installer"`.
-
-
 - [ ] Create `src/apps/installer/installer.c`
 - [ ] Parse `.ipkg` file: extract ZIP (via miniz), read `manifest.ini` and `install.ini`
 - [ ] Installer UI:
@@ -113,8 +99,6 @@
 ### 2.3 App Uninstaller
 
 **Prompt:** Read `HKLM\SOFTWARE\{name}\InstallPath` from Registry, reverse the install: delete files, remove Registry entries, remove shortcuts. Confirmation dialog: "Uninstall {App Name}?". Clean up empty directories. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: app uninstaller"`.
-
-
 - [ ] Read `HKLM\SOFTWARE\{name}\InstallPath` from Registry
 - [ ] Reverse install: delete files, remove Registry entries, remove shortcuts
 - [ ] Confirmation dialog: "Uninstall {App Name}? This will remove the application."
@@ -124,8 +108,6 @@
 ### 2.4 Add/Remove Programs UI
 
 **Prompt:** `appwiz.cpl` Control Panel applet listing all installed apps (name, version, size, install date) with [Uninstall] button per app and search/filter. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: Programs and Features"`.
-
-
 - [ ] `appwiz.cpl` Control Panel applet (Programs and Features)
 - [ ] List all installed apps: name, version, size, install date
 - [ ] [Uninstall] button per app
@@ -135,8 +117,6 @@
 ### 2.5 IPKG Build Tool (Host-Side)
 
 **Prompt:** `tools/ipkg_create.c` runs on the build host, packing a directory into a `.ipkg` ZIP with manifest + install instructions. Usage: `./ipkg_create --name "My App" --version "1.0.0" --dir ./myapp/ --output myapp.ipkg`. Validates manifest first. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: IPKG package build tool"`.
-
-
 - [ ] Create `tools/ipkg_create.c` (runs on build host, not on OS)
 - [ ] Pack a directory into `.ipkg` (ZIP with manifest + install instructions)
 - [ ] Usage: `./ipkg_create --name "My App" --version "1.0.0" --dir ./myapp/ --output myapp.ipkg`
@@ -146,8 +126,6 @@
 ### 2.6 File Associations from Packages
 
 **Prompt:** `install.ini` `[Associations]` section maps extensions to executables. Installer registers associations in Registry `HKCR\{ext}\Program`. Uninstaller reverses them. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: package file associations"`.
-
-
 - [ ] `install.ini` `[Associations]` section: `.txt = myapp.exe`, etc.
 - [ ] Installer registers file associations in Registry: `HKCR\{ext}\Program`
 - [ ] Uninstaller removes associations
@@ -160,8 +138,6 @@
 ### 3.1 Restore Point Creation
 
 **Prompt:** `restore_create(description)` creates `C:\Impossible\System\Restore\{timestamp}\` with: `manifest.ini` (timestamp, description, OS version), `registry_backup/` (all Registry hive files), and `system_files.tar` (snapshot of changed system files). After completing all items,sh clean`, and commit as `"kernel: restore point creation"`.
-
-
 - [ ] Create `src/kernel/restore.c` and `include/restore.h`
 - [ ] Implement `restore_create(description)`:
   - [ ] Create directory: `C:\Impossible\System\Restore\{timestamp}\`
@@ -174,8 +150,6 @@
 ### 3.2 Restore Point Management
 
 **Prompt:** `restore_list()` returns all restore points sorted by date. `restore_cleanup(keep_count)` deletes oldest, keeps last N (default 5). Auto-cleanup when disk space is low. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: restore point management"`.
-
-
 - [ ] Implement `restore_list(out, max)` — list all restore points (sorted by date)
 - [ ] Implement `restore_cleanup(keep_count)` — delete oldest, keep last N (default 5)
 - [ ] Auto-cleanup when disk space is low
@@ -184,8 +158,6 @@
 ### 3.3 System Rollback
 
 **Prompt:** `restore_apply(restore_id)` restores Registry hive files from backup and system files from tar archive, updates Registry timestamp, and prompts restart. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system rollback"`.
-
-
 - [ ] Implement `restore_apply(restore_id)`:
   - [ ] Restore Registry hive files from `registry_backup/`
   - [ ] Restore system files from `system_files.tar`
@@ -196,8 +168,6 @@
 ### 3.4 Automatic Restore Points
 
 **Prompt:** Automatically create restore points before OS updates (from updater) and before app installs (from installer). Manual creation via Settings → System → "Create restore point" button. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: automatic restore points"`.
-
-
 - [ ] Auto-create before OS update (from updater)
 - [ ] Auto-create before app install (from installer)
 - [ ] Manual: Settings → System → "Create restore point" button
@@ -206,8 +176,6 @@
 ### 3.5 Restore UI
 
 **Prompt:** Settings → System → "System Restore" panel lists restore points with date, description, and size. [Restore] with confirmation, [Create] for manual, [Delete] to remove specific. Also accessible from Recovery Environment. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: system restore UI"`.
-
-
 - [ ] Settings → System → "System Restore" panel:
   - [ ] List of restore points (date, description, size)
   - [ ] [Restore] button → confirmation → rollback
@@ -223,8 +191,6 @@
 ### 4.1 Recovery Boot Menu
 
 **Prompt:** Hold F8 at boot to enter Recovery Environment (intercept in bootloader/early kernel). Text-mode menu: Reset to factory, System Restore, Command Prompt, Startup Repair, Reinstall OS, Boot from USB. After completing all items,sh clean`, and commit as `"recovery: boot menu"`.
-
-
 - [ ] Create `src/recovery/recovery.c`
 - [ ] Hold F8 at boot → enter Recovery Environment (intercept in bootloader/early kernel)
 - [ ] Text-mode menu:
@@ -243,8 +209,6 @@
 ### 4.2 Recovery Shell
 
 **Prompt:** Minimal text-mode shell with basic commands (ls, cd, cat, cp, mv, rm), disk tools (fsck, fdisk), Registry tools (reg-reset, reg-query, reg-set), and file backup (backup src dst). No GUI, serial-capable. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: text-mode shell"`.
-
-
 - [ ] Minimal text-mode shell (no GUI, serial-capable)
 - [ ] Basic commands: `ls`, `cd`, `cat`, `cp`, `mv`, `rm`, `pwd`
 - [ ] Disk tools:
@@ -260,8 +224,6 @@
 ### 4.3 Factory Reset
 
 **Prompt:** Wipe all user data + app installs, restore system files from recovery partition or ISO, recreate default directories + first-boot setup. Requires typed "YES" confirmation. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: factory reset"`.
-
-
 - [ ] Wipe all user data + app installs
 - [ ] Restore system files to original state (from recovery partition or ISO)
 - [ ] Recreate default directories + first-boot setup
@@ -271,8 +233,6 @@
 ### 4.4 Startup Repair
 
 **Prompt:** Re-install bootloader (GRUB config regen), repair MBR/GPT headers, verify kernel binary integrity via checksum. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"recovery: startup repair"`.
-
-
 - [ ] Re-install bootloader (GRUB config regeneration)
 - [ ] Repair MBR/GPT (rewrite partition table header)
 - [ ] Verify kernel binary integrity (checksum)
@@ -293,8 +253,6 @@
 ### 5.1 Disk Cleanup
 
 **Prompt:** Scan deletable files: C:\Temp\, C:\Recycle\, old restore points, cached update packages, app logs. Display space savings per category. [Clean up] button deletes selected categories. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"apps: disk cleanup utility"`.
-
-
 - [ ] Create `src/apps/cleanup/cleanup.c`
 - [ ] Scan for deletable files:
   - [ ] `C:\Temp\` — temporary files
@@ -309,8 +267,6 @@
 ### 5.2 Scheduled Tasks
 
 **Prompt:** Simple task scheduler: `struct scheduled_task` with name, interval, last_run, callback. `scheduler_add()` registers tasks. Run at boot + periodically. Schedule: auto-update check, disk cleanup, restore point creation. Registry under `HKLM\SYSTEM\Scheduler\*`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: scheduled task system"`.
-
-
 - [ ] Simple task scheduler: run actions at specified times
 - [ ] Schedule: auto-check for updates, disk cleanup, restore point creation
 - [ ] Define `struct scheduled_task` (name, interval, last_run, callback)
@@ -322,8 +278,6 @@
 ### 5.3 Event Log
 
 **Prompt:** System-wide event logging with types INFO/WARNING/ERROR/SECURITY. Log: install/uninstall, updates, login/logout, crashes, permission denied. Store in `C:\Impossible\System\Logs\events.log` (rolling, max 1 MB). Event Viewer settings applet with filters. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: system event log"`.
-
-
 - [ ] System-wide event logging (beyond serial debug log)
 - [ ] Event types: INFO, WARNING, ERROR, SECURITY
 - [ ] Events: app install/uninstall, update applied, login/logout, crash, permission denied
@@ -334,8 +288,6 @@
 ### 5.4 Crash Dump & Bug Reporter
 
 **Prompt:** On kernel panic: save crash dump (registers, stack trace, last 100 serial lines, loaded drivers) to `C:\Impossible\System\CrashDumps\`. Next boot: "System shut down unexpectedly. View crash report?" Stretch: opt-in server submission. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: crash dump and reporting"`.
-
-
 - [ ] On kernel panic: save crash dump to `C:\Impossible\System\CrashDumps\`
 - [ ] Include: registers, stack trace, last 100 serial lines, loaded drivers
 - [ ] On next boot: "The system shut down unexpectedly. View crash report?"
@@ -345,8 +297,6 @@
 ### 5.5 First-Boot Setup Wizard
 
 **Prompt:** Runs on first boot or after factory reset: Welcome screen, set timezone/region, set keyboard layout, create first user (name + password), choose wallpaper, optional update check, [Finish] boots to desktop. Registry `HKLM\SYSTEM\FirstBoot = 0` skips on subsequent boots. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: first-boot setup wizard"`.
-
-
 - [ ] Runs on very first boot (fresh install) or after factory reset:
   - [ ] Welcome screen: "Welcome to Impossible OS"
   - [ ] Set timezone / region
@@ -361,8 +311,6 @@
 ### 5.6 Safe Mode Boot
 
 **Prompt:** Boot with minimal drivers (no network, audio, USB), basic VGA resolution, skip auto-start apps. Used to fix driver issues or uninstall problematic apps. Select from Recovery menu or hold Shift at boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: safe mode boot"`.
-
-
 - [ ] Boot with minimal drivers (no network, no audio, no USB)
 - [ ] Load basic VGA-resolution desktop
 - [ ] Skip auto-start applications

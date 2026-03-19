@@ -12,8 +12,6 @@
 ### 19.1 Screensaver System *(from Phase 04 §11.1–11.2)*
 
 **Prompt:** Idle detection + screensaver API + 5 built-in screensavers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: screensaver system"`. Add notes, gotchas, and design decisions directly in this TODO section covering the screensaver API, idle detection, and built-in screensavers.
-
-
 - [ ] Create `src/desktop/screensaver.c`
 - [ ] Screensaver API: `scr_entry_fn(msg, surface)` — SCR_INIT/FRAME/CLOSE
 - [ ] Idle detection, configurable timeout
@@ -25,8 +23,6 @@
 ### 19.2 Lock Screen *(from Phase 04 §11.3)*
 
 **Prompt:** Full-screen lock with blurred wallpaper, clock, password input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"desktop: lock screen"`. Add notes, gotchas, and design decisions directly in this TODO section covering the lock screen, password input, and auto-lock behavior.
-
-
 - [ ] Create `src/desktop/lockscreen.c`
 - [ ] Blurred wallpaper background
 - [ ] Large clock + date, user avatar + name

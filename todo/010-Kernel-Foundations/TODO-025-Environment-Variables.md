@@ -23,8 +23,6 @@
 - `COMPUTERNAME=IMPOSSIBLE-PC`
 
 **`%VAR%` expansion:** scanner walks input string, finds `%`, extracts name until next `%`, looks up in environ, substitutes. Handles nested expansion with a depth limit of 4.
-
-
 - [ ] Implement `env_get(task, name)` — look up variable by name in task environ
 - [ ] Implement `env_set(task, name, value)` — set/create variable in task environ
 - [ ] Implement `env_unset(task, name)` — remove variable from task environ
@@ -46,8 +44,6 @@
 ## 2. Shell Config File (`.profile` / `autoexec.conf`)
 
 **Prompt:** On Linux, shell startup sources `~/.profile` or `~/.bashrc` — a script that sets env vars, defines aliases, and runs startup commands. On Windows, `HKCU\Environment` Registry key sets user env vars; `%USERPROFILE%\autoexec.bat` is legacy. Impossible OS should source `C:\Users\Default\.profile` on shell startup: execute each line as a shell command (including `SET VAR=VALUE` lines). This allows users to customise their environment persistently without touching the Registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: .profile startup script"`. Add notes directly in this TODO section.
-
-
 - [ ] On shell startup: check `C:\Users\Default\.profile` exists via VFS
 - [ ] If found: read line-by-line, execute each as a shell command (same as typed input)
 - [ ] Support `SET VAR=VALUE` lines in `.profile` — call `env_set()`
@@ -72,8 +68,6 @@
 ...
 [RSP+8*(N+M+2)] NULL      (envp terminator)
 ```
-
-
 - [ ] `exec(path, argv[], envp[])` syscall: copy argv strings + envp to child user-space stack
 - [ ] Follow System V AMD64 ABI: argc, argv[], NULL, envp[], NULL at bottom of stack
 - [ ] Shell: parse command line into `argv[]` array (handle quoted arguments)

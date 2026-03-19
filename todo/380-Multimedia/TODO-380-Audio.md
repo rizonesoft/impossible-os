@@ -25,8 +25,6 @@
 > **Depends on:** 080-Drivers §5.1 (AC97 driver)
 
 **Prompt:** The audio abstraction layer provides a uniform API over different sound card drivers (AC97 now, Intel HDA later). `struct audio_device` holds the driver name, sample_rate, channels, bits_per_sample, and function pointers for play/stop/volume. `audio_init()` detects available sound hardware and registers the driver. `audio_play(pcm_data, samples, sample_rate)` dispatches to the currently registered driver. Volume is stored in Registry `HKLM\SYSTEM\Sound\Volume` (REG_DWORD, 0-100) and `HKLM\SYSTEM\Sound\Mute` (REG_DWORD). Add `SYS_AUDIO_PLAY` and `SYS_AUDIO_VOLUME` syscalls so user-mode apps can play audio. After completing all items,sh clean`, and commit as `"kernel: audio abstraction layer"`.
-
-
 - [ ] Create `src/kernel/audio.c` and `include/audio.h`
 - [ ] Define `struct audio_device` (name, sample_rate, channels, bits_per_sample, play_fn, stop_fn, volume_fn)
 - [ ] Implement `audio_init()` — detect sound card, register driver
@@ -43,8 +41,6 @@
 ## 3. Audio Mixer
 
 **Prompt:** The audio mixer allows multiple sounds to play simultaneously (up to 8 streams). Each stream has its own PCM buffer and per-stream volume. The mixer sums all active streams' samples, applies per-stream volume scaling, then applies master volume. Clamp the mixed output to INT16_MIN/INT16_MAX to prevent clipping distortion. Feed the mixed output to the sound driver's DMA buffer. Mute support: when `HKLM\SYSTEM\Sound\Mute` is set, output silence (zeros) without stopping the mixer. After completing all items,sh clean`, and commit as `"kernel: audio mixer"`.
-
-
 - [ ] Create `src/kernel/audio_mixer.c`
 - [ ] Support multiple simultaneous audio streams (up to 8)
 - [ ] Mix streams by summing PCM samples with per-stream volume
@@ -68,8 +64,6 @@
 ### 5.1 WAV Decoder
 
 **Prompt:** `dr_wav.h` is a public domain single-header WAV decoder (~1500 lines). Redirect its memory allocation macros to `kmalloc`/`kfree`. `audio_load_wav(path)` reads the WAV file via VFS, passes it to `drwav_init_memory()`, then decodes to 16-bit PCM. Support common formats: 8-bit unsigned, 16-bit signed, mono and stereo, sample rates 22050/44100/48000. Return a struct with the PCM buffer pointer, sample count, sample rate, and channel count. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"libs: dr_wav WAV decoder"`.
-
-
 - [ ] Add `dr_wav.h` to `include/` (public domain, ~1500 lines)
 - [ ] Redirect memory: `DRWAV_MALLOC → kmalloc`, `DRWAV_FREE → kfree`
 - [ ] Implement `audio_load_wav(path)` — decode WAV file to PCM int16 buffer
@@ -80,8 +74,6 @@
 ### 5.2 MP3 Decoder
 
 **Prompt:** `dr_mp3.h` is a public domain single-header MP3 decoder (~3000 lines). Same integration pattern as WAV: redirect memory, decode to 16-bit PCM. MP3 files are typically MPEG-1 Layer 3 at 44100 Hz stereo. If the sound driver expects a different sample rate (e.g., 48000), resample by linear interpolation. `audio_load_mp3(path)` returns the same PCM struct as WAV. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"libs: dr_mp3 MP3 decoder"`.
-
-
 - [ ] Add `dr_mp3.h` to `include/` (public domain, ~3000 lines)
 - [ ] Redirect memory to kmalloc/kfree
 - [ ] Implement `audio_load_mp3(path)` — decode MP3 to PCM int16 buffer
@@ -93,8 +85,6 @@
 ### 5.3 OGG Vorbis Decoder
 
 **Prompt:** `stb_vorbis.c` is a public domain OGG Vorbis decoder (~5000 lines). Because it's a .c file (not header-only), create a wrapper `stb_vorbis_impl.c` similar to the stb_truetype integration. Redirect memory and disable stdio. Compile with SSE2 and `-ffreestanding`. `audio_load_ogg(path)` decodes the full OGG file to PCM. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"libs: stb_vorbis OGG decoder"`.
-
-
 - [ ] Add `stb_vorbis.c` to `src/libs/` (public domain, ~5000 lines)
 - [ ] Redirect memory, disable stdio
 - [ ] Implement `audio_load_ogg(path)` — decode OGG to PCM
@@ -117,8 +107,6 @@
 ### 5.6 Unified Audio Loader
 
 **Prompt:** `audio_load(path)` detects the audio format by file extension (.wav/.mp3/.ogg/.flac) and dispatches to the appropriate decoder. Returns a unified `struct audio_clip` with PCM buffer, sample_rate, channels, and total_samples. This is the single entry point for all audio loading — used by the media player, system sounds, and any future audio playback. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: unified audio file loader"`.
-
-
 - [ ] Implement `audio_load(path)` — detect format by extension, dispatch to decoder:
   - [ ] `.wav` → `audio_load_wav()`
   - [ ] `.mp3` → `audio_load_mp3()`

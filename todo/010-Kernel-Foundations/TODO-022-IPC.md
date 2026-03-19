@@ -11,13 +11,7 @@
 
 ## 1. Pipes ✅
 
-<details>
-<summary>✅ 1. Pipes — completed</summary>
-
-
 **Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the pipe implementation, syscalls, and SIGPIPE behavior.
-
-
 - [x] Define `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores)
 - [x] Implement `pipe_create(fds[2])` — allocate pipe, return read/write file descriptors
 - [x] Implement `pipe_write(pipe, data, len)` — write bytes, block if full
@@ -27,19 +21,10 @@
 - [x] Test: shell commands piping output (e.g., `ls | grep`)
 - [x] Commit: `"ipc: pipe implementation"`
 
-
-</details>
-
 ---
 ## 2. Signals ✅
 
-<details>
-<summary>✅ 2. Signals — completed</summary>
-
-
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm signal constants (SIGKILL=9, SIGTERM=15, SIGINT=2, SIGCHLD=17, SIGPIPE=13), `signal_send`, `signal_handler` functions, and `SYS_SIGNAL` syscall (34) all exist. Verify SIGINT is wired from Ctrl+C in the terminal driver, SIGCHLD fires on child exit, SIGPIPE fires on write to closed pipe, and SIGKILL always terminates. Run `bash scripts/build.sh clean` and test Ctrl+C. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering signal constants, delivery semantics, and handler registration.
-
-
 - [x] Define signal constants: `SIGINT(2)`, `SIGKILL(9)`, `SIGPIPE(13)`, `SIGTERM(15)`, `SIGCHLD(17)`
 - [x] Implement `signal_send(pid, sig)` — deliver signal to process
 - [x] Implement `signal_handler(sig, handler)` — register user-mode handler
@@ -50,15 +35,8 @@
 - [x] Add `SYS_SIGNAL` syscall (number 34)
 - [x] Commit: `"ipc: signal delivery"`
 
-
-</details>
-
 ---
 ## 3. Shared Memory ✅
-
-<details>
-<summary>✅ 3. Shared Memory — completed</summary>
-
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), and `SYS_SHMEM_UNMAP` (37) syscalls are registered. Run `bash scripts/build.sh clean` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering named shared memory regions, syscalls, and reference counting.
 
@@ -72,15 +50,10 @@
 - [x] Test: two processes sharing a counter via shared memory
 - [x] Commit: `"ipc: named shared memory"`
 
-
-</details>
-
 ---
 ## 4. Message Queues
 
 **Prompt:** Message queues are a structured IPC mechanism: typed messages are placed into a kernel-managed FIFO queue, retrieved by type or in order, without a persistent open channel (unlike pipes). Windows uses `PostMessage`/`SendMessage` (window messages) and MSMQ. Linux has POSIX `mq_open`/`mq_send`/`mq_receive`. Impossible OS needs message queues for: the compositor event system (input events from drivers → window manager), the shell's async notification system, and driver-to-kernel communication. A message queue is a ring of fixed-size `mq_msg_t` entries (`type` + `data[MQ_MAX_DATA]`, typically 64 bytes). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ipc: message queues"`. Add notes directly in this TODO section covering the message queue API and compositor usage.
-
-
 - [ ] Define `mq_msg_t` struct: `{ uint32_t type; uint8_t data[60]; }` (64 bytes per message)
 - [ ] Define `msgqueue_t` struct: ring buffer of `mq_msg_t`, capacity, read/write pos, mutex, semaphore
 - [ ] Implement `mq_create(name, capacity)` — create named message queue
@@ -99,8 +72,6 @@
 **Prompt:** Unix-domain sockets (`AF_UNIX`) provide a socket-like API for local IPC — bidirectional, stream-oriented, with no network overhead. Both Windows (named pipes in `\\.\pipe\`) and Linux (`AF_UNIX`) have this. Impossible OS needs local sockets for: IxUI widget toolkit ↔ compositor protocol, future Wayland-style display server, and inter-process RPC without networking. Implement as a pair of in-kernel ring buffers with `connect`/`accept`/`send`/`recv` semantics. The socket is identified by a VFS path (e.g., `/tmp/compositor.sock`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ipc: unix-domain sockets"`. Add notes directly in this TODO section.
 
 > **Prerequisite:** File Descriptors (§1 of TODO-028) must exist — sockets are FD-backed.
-
-
 - [ ] Define `unix_socket_t` struct: two ring buffers (A→B, B→A), mutex, backlog queue
 - [ ] Implement `socket(AF_UNIX, SOCK_STREAM, 0)` — create socket FD
 - [ ] Implement `bind(fd, path)` — register socket at VFS path
@@ -117,8 +88,6 @@
 ## 6. Process Events (waitpid / exit status)
 
 **Prompt:** `waitpid(pid, &status)` blocks the calling process until the target child exits and retrieves its exit code. Without this, parent processes cannot determine if a child succeeded or failed — the shell cannot report exit codes, and process cleanup leaks zombie entries. Linux uses `waitpid()`; Windows uses `WaitForSingleObject` on a process handle. Impossible OS already delivers `SIGCHLD` but has no way to retrieve the exit status. `exit(code)` must store the code in the task struct before terminating; `waitpid` reads it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: waitpid and exit status"`. Add notes directly in this TODO section.
-
-
 - [ ] Add `exit_code` field to `struct task`
 - [ ] `exit(code)` stores `exit_code`, sets task state to `TASK_ZOMBIE` (don't free yet)
 - [ ] Implement `waitpid(pid, &status)` — block until child task is ZOMBIE, read exit_code, free child

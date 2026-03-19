@@ -15,8 +15,6 @@
 ### 1.1 User Account System
 
 **Prompt:** The user account system is the foundation for all security features. Define `struct user_account` with uid, username, display_name, password_hash (never plaintext), privilege_level (ADMIN/USER/GUEST), avatar_path, home_dir, and auto_login flag. Privilege levels control access: ADMIN has full access, USER can read/write own files and read system files, GUEST is read-only with a temporary session. Store user data in Registry under `HKU\{name}\*`. Create a default Admin account on first boot with a configurable password. After completing all items,sh clean`, and commit as `"kernel: user account system"`.
-
-
 - [ ] Create `src/kernel/auth.c` and `include/auth.h`
 - [ ] Define `struct user_account` (uid, username, display_name, password_hash, privilege_level, avatar_path, home_dir, auto_login)
 - [ ] Privilege levels:
@@ -31,8 +29,6 @@
 ### 1.2 Password Hashing
 
 **Prompt:** Use the monocypher crypto library for password hashing. Argon2id is the recommended algorithm (memory-hard, resistant to GPU attacks). Generate a random 16-byte salt per user using RDRAND (or the entropy pool from §6.4). `auth_hash_password(password, salt, hash_out)` produces a fixed-size hash. `auth_verify_password(password, stored_hash)` re-derives the hash with the stored salt and compares in constant time. Never store plaintext passwords — only the salted hash. After completing all items,sh clean`, and commit as `"kernel: password hashing (Argon2/BLAKE2b)"`.
-
-
 - [ ] Implement password hashing using **monocypher** (Argon2id or BLAKE2b-based)
 - [ ] `auth_hash_password(password, salt, hash_out)` — generate hash
 - [ ] `auth_verify_password(password, stored_hash)` — compare
@@ -43,8 +39,6 @@
 ### 1.3 Authentication API
 
 **Prompt:** `auth_login(username, password)` verifies the password hash, and on success sets the current user in kernel state. `auth_logout()` clears the current user and returns to the login screen. `auth_get_current_user()` returns the active user struct (used by permission checks, file creation, etc.). Admin-only functions: `auth_create_user()` and `auth_delete_user()` (cannot delete self). `auth_change_password()` requires verifying the old password first (or admin override). Track the current user globally so all kernel operations can check permissions. After completing all items,sh clean`, and commit as `"kernel: authentication API"`.
-
-
 - [ ] Implement `auth_login(username, password)` — verify password, set current user
 - [ ] Implement `auth_logout()` — end session, return to login screen
 - [ ] Implement `auth_get_current_user()` — return currently logged-in user
@@ -57,8 +51,6 @@
 ### 1.4 User Home Directories
 
 **Prompt:** When a new user is created, automatically create their home directory tree under `C:\Users\{name}\` with subdirectories: Desktop, Documents, Downloads, Pictures, AppData. Set the directory owner to the new user (using the permission model from §3.1). The shell's working directory starts at the user's home directory. Set `%USERPROFILE%` environment variable to `C:\Users\{name}`. After completing all items,sh clean`, and commit as `"kernel: user home directories"`.
-
-
 - [ ] On user creation, create home directory structure:
   ```
   C:\Users\{name}\
@@ -81,8 +73,6 @@
 ### 2.1 Login Screen UI
 
 **Prompt:** The login screen is displayed full-screen before the desktop loads, after the boot splash. Background: blurred wallpaper or solid gradient. Center the OS logo, user avatar (circular image or default icon), username display, password input field (masked with bullet characters), and a [Sign in] button. Bottom-left: Power button (shutdown/restart), Network status icon, Accessibility icon. Use TrueType fonts for crisp text rendering. After completing all items,sh clean`, and commit as `"desktop: login screen UI"`.
-
-
 - [ ] Create `src/desktop/login.c`
 - [ ] Full-screen login displayed before desktop loads:
   - [ ] Background: blurred wallpaper or solid gradient
@@ -97,8 +87,6 @@
 ### 2.2 Login Flow
 
 **Prompt:** The login flow runs after the boot splash and before the desktop compositor starts. If multiple accounts exist, show user avatars side-by-side (click to select). Type password and press Enter or click Sign in. On success: call `auth_login()`, load the user's profile (wallpaper, pinned apps, Registry settings), and start the desktop. On failure: animate a horizontal shake on the password field, show "Incorrect password" text in red, clear the input. Lock out after 5 consecutive failed attempts with a 30-second cooldown timer displayed on screen. Auto-login: if only one account and `AutoLogin = 1` in Registry, skip the login screen entirely. After completing all items,sh clean`, and commit as `"desktop: login flow"`.
-
-
 - [ ] Pre-boot: show login screen after boot splash
 - [ ] Select user (if multiple accounts): click avatar to switch
 - [ ] Type password → click Sign in (or press Enter)
@@ -111,8 +99,6 @@
 ### 2.3 User Switching
 
 **Prompt:** User switching from the Start menu: click the user avatar → "Switch user" or "Sign out". Sign out saves the user's state, calls `auth_logout()`, and returns to the login screen. Win+L locks the screen — shows a lock screen with clock and "Enter password to unlock" that resumes the same session (no sign-out). Stretch goal: fast user switching keeps the current session alive. After completing all items,sh clean`, and commit as `"desktop: user switching"`.
-
-
 - [ ] Start menu → user avatar → "Switch user" or "Sign out"
 - [ ] Sign out: save state → return to login screen
 - [ ] *(Stretch)* Fast user switching: keep user session alive, switch without closing apps
@@ -126,8 +112,6 @@
 ### 3.1 Permission Model
 
 **Prompt:** File permissions use a simple owner-based model: each file has an owner_uid, owner_perms (read/write/exec bits), and other_perms. Store permissions in the IXFS inode (add owner_uid, owner_perms, other_perms fields to `struct ixfs_inode`). For FAT32 (which has no permission support), use a fallback: all files owned by current user, full permissions. Define permission bit constants: `PERM_READ` (0x04), `PERM_WRITE` (0x02), `PERM_EXEC` (0x01). After completing all items,sh clean`, and commit as `"kernel: file permission data structures"`.
-
-
 - [ ] Create `src/kernel/security.c` and `include/permissions.h`
 - [ ] Define permission bits: `PERM_READ` (0x04), `PERM_WRITE` (0x02), `PERM_EXEC` (0x01)
 - [ ] Define `struct file_permissions` (owner_perms, other_perms, owner_uid)
@@ -137,8 +121,6 @@
 ### 3.2 Permission Enforcement
 
 **Prompt:** `security_check_access(path, user, requested_perms)` is the central access check function. Logic: admin always allowed, owner checks owner_perms, other users check other_perms, guest always denied write regardless of bits. Hook this check into VFS operations: `vfs_open()`, `vfs_create()`, `vfs_delete()`, `vfs_rename()`. Return `ERR_ACCESS_DENIED` (-13) on failure. After completing all items,sh clean`, and commit as `"kernel: permission enforcement in VFS"`.
-
-
 - [ ] `security_check_access(path, user, requested_perms)` — check if user can read/write/exec
 - [ ] Logic:
   - [ ] If user is admin → always allow
@@ -152,8 +134,6 @@
 ### 3.3 System Folder Protections
 
 **Prompt:** Set default permissions during first-boot directory creation: system directories owned by Admin with rwx for owner and r-x for others. User home directories owned by that user with rwx for owner and no access for others. After completing all items,sh clean`, and commit as `"kernel: default system folder permissions"`.
-
-
 - [ ] Set default permissions on system directories:
 | Path                        | Owner  | Owner Perms | Other Perms |
 |----------------------------|--------|-------------|-------------|
@@ -168,8 +148,6 @@
 ### 3.4 Ownership Management
 
 **Prompt:** `security_set_owner(path, uid)` changes file ownership (admin only). `security_set_perms(path, owner_perms, other_perms)` changes permission bits (owner or admin). New files inherit their owner from the creating process's current user. Shell commands: `chmod`, `chown`, `ls -l`. After completing all items,sh clean`, and commit as `"kernel: ownership and permission management"`.
-
-
 - [ ] `security_set_owner(path, uid)` — change file owner (admin only)
 - [ ] `security_set_perms(path, owner_perms, other_perms)` — change permissions (owner or admin)
 - [ ] New files inherit owner from creating process's current user
@@ -185,8 +163,6 @@
 ### 4.1 Elevation Prompt
 
 **Prompt:** The UAC-like elevation prompt appears when a standard user attempts an admin-restricted action. Dim the entire screen with a semi-transparent overlay. Show a modal dialog: icon + "This action requires administrator permission" + description + [Allow]/[Deny] buttons. If the current user is admin, clicking Allow proceeds immediately. If standard user, show a password field for the admin account. After completing all items,sh clean`, and commit as `"desktop: UAC elevation prompt"`.
-
-
 - [ ] Create `src/desktop/uac.c`
 - [ ] When a standard user attempts an admin-only action:
   - [ ] Dim the screen (semi-transparent overlay)
@@ -214,8 +190,6 @@
 ### 5.1 Cryptographic Primitives
 
 **Prompt:** Verify that monocypher provides all needed crypto primitives: `crypto_argon2()` for key derivation, ChaCha20-Poly1305 for authenticated encryption, and a random nonce generator. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: crypto primitives for encryption"`.
-
-
 - [ ] Ensure **monocypher** crypto library is integrated
 - [ ] Key derivation: `crypto_argon2(password, salt)` → 256-bit encryption key
 - [ ] Symmetric encryption: ChaCha20-Poly1305 (authenticated encryption)
@@ -225,8 +199,6 @@
 ### 5.2 File-Level Encryption
 
 **Prompt:** `crypto_encrypt_file(path, password)` derives a 256-bit key from the password + random salt via Argon2id, generates a random 12-byte nonce, encrypts the file data with ChaCha20-Poly1305, writes output as: salt(16) + nonce(12) + ciphertext + tag(16), and renames to `filename.enc`. `crypto_decrypt_file(path, password)` reverses the process, verifying the auth tag. Right-click context menu: "Encrypt..." and "Decrypt...". File manager shows 🔒 for `.enc` files. After completing all items,sh clean`, and commit as `"kernel: file encryption/decryption"`.
-
-
 - [ ] Create `src/kernel/crypto.c` and `include/crypto.h`
 - [ ] Implement `crypto_encrypt_file(path, password)`:
   - [ ] Derive key from password (Argon2id)
@@ -260,8 +232,6 @@
 ### 6.1 Session Management
 
 **Prompt:** Track login sessions: each login creates a session with user reference, login timestamp, and unique session ID. Configurable idle timeout: auto-lock the screen after N minutes. Track failed login attempts. Maintain audit log in Registry `HKLM\SYSTEM\Security\AuditLog`. Shell commands: `who` shows current user, `last` shows login history. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: session management and audit log"`.
-
-
 - [ ] Track login sessions: user, login time, session ID
 - [ ] Session timeout: auto-lock after configurable idle period
 - [ ] Track failed login attempts with timestamps
@@ -273,8 +243,6 @@
 ### 6.2 Process Ownership
 
 **Prompt:** Every running process is associated with the user who launched it. Add `owner_uid` to the process/task struct. When a process spawns a child, the child inherits the parent's owner_uid. A process can only kill processes it owns — admin can kill any. Task Manager shows process owner column. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: process ownership"`.
-
-
 - [ ] Associate each running process with the user who launched it
 - [ ] Store `owner_uid` in process/task struct
 - [ ] Process inherits owner from parent process
@@ -295,8 +263,6 @@
 ### 6.4 Entropy Pool / Random Number Generator
 
 **Prompt:** Collect entropy from multiple sources: keyboard inter-keystroke timings, mouse movement deltas, PIT timer jitter, and RDRAND instruction. Maintain a 256-byte entropy pool with cryptographic mixing (XOR + BLAKE2b hash). `random_bytes(buf, len)` produces cryptographically secure random bytes. This CSPRNG is used by: password salts, TLS nonces, session IDs, encryption nonces. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: entropy pool and CSPRNG"`.
-
-
 - [ ] Collect entropy from: keyboard timings, mouse movements, PIT jitter, RDRAND
 - [ ] Maintain entropy pool (256-byte ring buffer with mixing)
 - [ ] `random_bytes(buf, len)` — produce cryptographically secure random bytes

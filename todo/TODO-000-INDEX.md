@@ -44,8 +44,6 @@
 | 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                             |                |
 | 047 | [NTFS](010-Kernel-Foundations/TODO-047-NTFS.md)                                                         |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
-
-
 ---
 
 ## Layer 2: Hardware & Drivers  `060-Hardware-Drivers/`

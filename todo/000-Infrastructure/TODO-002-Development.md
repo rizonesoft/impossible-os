@@ -280,10 +280,6 @@ scripts/
 
 ## 3. Emulator Testing Scripts
 
-<details>
-<summary>✅ 3. Emulator Testing Scripts — completed</summary>
-
-
 ### 3.1 QEMU Test Runner ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/run-qemu.sh` launches QEMU with the correct flags (UEFI firmware, AHCI disk, serial stdio, VGA resolution). Also confirm `scripts/build.sh run` wraps this correctly. Fix any inconsistencies in the TODO items below.
@@ -320,15 +316,8 @@ scripts/
 > boot support: test runner script, VMBus core, synthetic SCSI/HID/video/NIC,
 > APIC-only mode, MMIO safety, synthetic timer, power management, and guest additions.
 
-
-</details>
-
 ---
 ## 4. Hardware Deployment Scripts
-
-<details>
-<summary>✅ 4. Hardware Deployment Scripts — completed</summary>
-
 
 ### 4.1 USB Write Script ✅
 
@@ -384,15 +373,8 @@ scripts/
 > - Scans for panic/BSOD/fault keywords and highlights them in red
 > - Logs saved to `build/logs/<timestamp>/` for historical comparison
 
-
-</details>
-
 ---
 ## 5. Test Framework
-
-<details>
-<summary>✅ 5. Test Framework — completed</summary>
-
 
 ### 5.1 Kernel Unit Test Framework
 ### 5.1 Kernel Unit Test Framework ✅
@@ -481,15 +463,8 @@ scripts/
 > - Logs saved per-filesystem in `build/fs-tests/<name>.log`
 > - Optical media (ISO/UDF) attached as ATAPI CD via `ide-cd` on AHCI port 1
 
-
-</details>
-
 ---
 ## 6. Development Utilities
-
-<details>
-<summary>✅ 6. Development Utilities — completed</summary>
-
 
 ### 6.1 Symbol Map Generator ✅
 
@@ -627,15 +602,8 @@ scripts/
 > **Use clangd via the VS Code/Cursor clangd extension** (LSP), not via `mcp_config.json`.
 > *(Discovered 2026-03-17)*
 
-
-</details>
-
 ---
 ## 7. Asset Pipeline
-
-<details>
-<summary>✅ 7. Asset Pipeline — completed</summary>
-
 
 ### 7.1 Asset Build Script ✅
 
@@ -682,15 +650,8 @@ scripts/
 > - Cursors are Adwaita XCursor format (not BMP) — the TODO mentioned BMP but that doesn't match reality
 > - Negative test confirmed: corrupted PNG → `[FAIL] 1/37 assets failed validation` → exit 1
 
-
-</details>
-
 ---
 ## 8. Local CI Hooks
-
-<details>
-<summary>✅ 8. Local CI Hooks — completed</summary>
-
 
 > [!NOTE]
 > **GitHub Actions CI/CD** (build workflows, release automation, stale issue cleanup,
@@ -716,9 +677,6 @@ scripts/
 > - Uses `git diff --cached --name-only --diff-filter=d` to skip deleted files
 > - Passes absolute paths to `scripts/lint.sh` which handles all 6 checks
 > - Warnings don't block commits (only errors do — same behavior as `lint.sh`)
-
-
-</details>
 
 ---
 ## Priority Order

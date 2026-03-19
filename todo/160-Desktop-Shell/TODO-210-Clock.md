@@ -14,8 +14,6 @@
 ## 1. Kernel Time API
 
 **Prompt:** The time system combines the CMOS RTC (wall-clock calendar time) with the PIT tick counter (monotonic uptime). On boot, `time_init()` reads the RTC, converts to Unix epoch, and records the PIT tick count. `time_now()` returns `boot_time + elapsed_ticks + ntp_offset`. `time_to_datetime` converts a Unix timestamp to a broken-down struct (year/month/day/hour/minute/second). After completing all items,sh clean`, and commit as `"kernel: wall-clock time system"`.
-
-
 - [ ] Define `time_t` (int64_t, seconds since Unix epoch)
 - [ ] Define `struct datetime` (year, month, day, hour, minute, second, tz_offset_min)
 - [ ] Create `include/time.h` and `src/kernel/time.c`
@@ -34,8 +32,6 @@
 ## 2. Time Formatting
 
 **Prompt:** `time_format` implements strftime-style formatting with specifiers: `%H` (24h), `%I` (12h), `%M` (min), `%S` (sec), `%p` (AM/PM), `%Y` (year), `%m` (month), `%d` (day). Read user preferences from Registry: `HKLM\SYSTEM\DateTime\Use24Hour`, `HKLM\SYSTEM\DateTime\DateFormat`. After completing all items,sh clean`, and commit as `"kernel: time formatting"`.
-
-
 - [ ] Implement `time_format(dt, buf, size, fmt)` with format specifiers:
   - [ ] `%H` — 24-hour hour (00–23)
   - [ ] `%I` — 12-hour hour (01–12)
@@ -63,8 +59,6 @@
 ## 4. NTP Client
 
 **Prompt:** NTP synchronizes the system clock with internet time servers. Send SNTPv4 packet (48 bytes) to a time server via UDP port 123. Use hardcoded Google NTP IPs (216.239.35.0, .4, .8, .12) since DNS may not be available yet. Auto-sync after DHCP completes at boot. Store config in Registry: `HKLM\SYSTEM\DateTime\NTPEnabled`, `HKLM\SYSTEM\DateTime\NTPServer`. After completing all items,sh clean`, and commit as `"net: NTP time sync client"`.
-
-
 - [ ] Create `src/kernel/net/ntp.c`
 - [ ] Define NTP packet struct (48 bytes, SNTPv4)
 - [ ] Implement `ntp_sync()` — send request to hardcoded Google NTP IPs (216.239.35.0/4/8)

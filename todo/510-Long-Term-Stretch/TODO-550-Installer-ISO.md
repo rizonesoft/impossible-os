@@ -16,8 +16,6 @@
 ## 1. Bootable ISO Creation
 
 **Prompt:** Automate ISO creation with `scripts/make-iso.sh` using `grub-mkrescue` or `xorriso`. Verify ISO boots in QEMU. Sign with `sha256sum os-build.iso > os-build.iso.sha256`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"release: ISO build script"`.
-
-
 - [ ] Write `scripts/make-iso.sh` — automates ISO creation
 - [ ] Use `grub-mkrescue` or `xorriso` to produce `os-build.iso`
 - [ ] Verify ISO boots in QEMU
@@ -29,8 +27,6 @@
 ## 2. Installer Program
 
 **Prompt:** The ISO installer is the capstone feature: boot from ISO, partition a target disk (GPT with EFI System Partition + IXFS root), format both partitions, copy kernel/initrd/OS files, install GRUB for UEFI, and display completion. Test the full cycle in QEMU: boot ISO → install to virtual disk → reboot from disk → OS loads → ✅. After completing all items,sh clean`, and commit as `"installer: full OS installer"`.
-
-
 - [ ] Write `src/installer/installer.c` — runs as a special init process from the ISO
 - [ ] Display a **welcome screen** (GUI or text-mode)
 - [ ] **Disk selection** — list available drives (ATA/AHCI enumeration)
@@ -51,8 +47,6 @@
 ## 3. Hyper-V VM Setup
 
 **Prompt:** Set up a Generation 2 Hyper-V VM on the Windows host with 2+ GB RAM, 1+ vCPU, 20+ GB VHDX disk, Secure Boot disabled. Attach the ISO from `build/os-build.iso` via the WSL path. This tests the OS on real Microsoft hardware virtualization (different from QEMU's KVM). After completing all items, mark every item as `[x]` and document results.
-
-
 - [ ] Enable Hyper-V on Windows host (if not already)
 - [ ] Open Hyper-V Manager → **New → Virtual Machine**
 - [ ] Choose **Generation 2** VM
@@ -66,8 +60,6 @@
 ## 4. Installer Validation Tests
 
 **Prompt:** Execute 8 validation tests in sequence: ISO boots to installer, installer partitions and formats, installer copies files and installs bootloader, VM reboots from disk → kernel loads → desktop, keyboard/mouse work, filesystem CRUD works, window manager renders correctly at Hyper-V resolution, graceful ACPI shutdown/reboot. Document any Hyper-V-specific issues. After all tests, mark every item as `[x]`.
-
-
 - [ ] **Test 1:** ISO boots to installer without errors
 - [ ] **Test 2:** Installer partitions and formats the virtual disk
 - [ ] **Test 3:** Installer copies OS files and installs bootloader
@@ -83,8 +75,6 @@
 ## 5. Performance & Stability
 
 **Prompt:** Run the OS for 30+ minutes without crash. Stress-test memory allocator (alloc/free loops), stress-test process creation (fork-bomb protection), verify no memory leaks via serial log. Document results. After all items, mark every item as `[x]`, and commit as `"test: Hyper-V validation pass"`.
-
-
 - [ ] Run the OS for 30+ minutes without crash
 - [ ] Stress-test memory allocator (allocate/free in a loop)
 - [ ] Stress-test process creation (fork-bomb protection)

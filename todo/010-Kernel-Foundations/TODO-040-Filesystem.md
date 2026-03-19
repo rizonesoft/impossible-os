@@ -6,21 +6,13 @@
 > a graphical disk management tool.
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (fonts, images, file data). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas and `/add-asset` workflow.
-
-
 ---
 
 ## 1. Disk Drivers
 
-<details>
-<summary>✅ 1. Disk Drivers — completed</summary>
-
-
 ### 1.1 VirtIO Block Device Driver ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/drivers/virtio_blk.c` exists with `virtio_blk_read`, `virtio_blk_write`, `virtio_blk_capacity`, VirtIO 1.0 PCI capability detection, and 3-descriptor chain I/O. Check it registers as a blkdev ("virtio0"). Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/drivers/virtio_blk.c` and `include/virtio_blk.h`
 - [x] Detect virtio-blk device via PCI enumeration (vendor `0x1AF4`, device `0x1001` or `0x1042`)
 - [x] Map MMIO BAR registers via modern VirtIO 1.0 PCI capabilities
@@ -44,8 +36,6 @@
 ### 1.2 AHCI (SATA) Driver ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/drivers/ahci.c` exists with `ahci_read`, `ahci_write`, `ahci_identify`, ABAR mapping, port enumeration, and command list/FIS allocation. Check it registers as a blkdev ("sata0"). Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/drivers/ahci.c` and `include/kernel/drivers/ahci.h`
 - [x] Detect AHCI controller via PCI (class `0x01`, subclass `0x06`)
 - [x] Map ABAR (AHCI Base Address Register) from PCI BAR5
@@ -83,8 +73,6 @@
 ### 1.3 Block Device Abstraction Layer ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data), `blkdev_register`, `blkdev_get`, `blkdev_read`, `blkdev_write`, `blkdev_list` exist. Verify both VirtIO and AHCI are registered via adapters. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `include/kernel/drivers/blkdev.h` and `src/kernel/drivers/blkdev.c`
 - [x] Define `struct blkdev` (name, sector_size, sector_count, read_fn, write_fn, driver_data)
 - [x] Implement `blkdev_register(dev)` — add to global device list
@@ -102,21 +90,12 @@
 > - AHCI uses `driver_data` as port index; VirtIO ignores it
 > - Tested: 2 devices registered (virtio0 + sata0)
 
-
-</details>
-
 ---
 ## 2. Partition Table Support
-
-<details>
-<summary>✅ 2. Partition Table Support — completed</summary>
-
 
 ### 2.1 MBR Partition Table ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/mbr.c` parses MBR at LBA 0 with 4 partition entries, recognizes types 0x0C (FAT32), 0x83 (Linux), 0xDA (IXFS). Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/fs/mbr.c`
 - [x] Parse MBR at LBA 0: 4 partition entries at offset 446
 - [x] Define `struct mbr_entry` (status, type, start_lba, sector_count)
@@ -127,8 +106,6 @@
 ### 2.2 GPT Partition Table
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/gpt.c` detects protective MBR type 0xEE, parses GPT header at LBA 1 (signature, CRC32), parses 128-byte partition entries, and recognizes EFI SP, Basic Data, and IXFS GUIDs. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/fs/gpt.c`
 - [x] Detect GPT: check protective MBR at LBA 0 (type `0xEE`)
 - [x] Parse GPT header at LBA 1: verify signature "EFI PART", validate CRC32
@@ -141,8 +118,6 @@
 ### 2.3 Partition Scanner
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/partition.c` scans each blkdev trying GPT first then MBR, creates sub-blkdevs offset by partition start LBA, auto-detects filesystem via magic bytes, and logs partitions to serial. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/fs/partition.c`
 - [x] On each registered blkdev: try GPT first, fall back to MBR
 - [x] For each discovered partition: create a sub-blkdev (offset reads/writes by partition start LBA)
@@ -151,17 +126,12 @@
 - [x] Call at boot after disk drivers initialize
 - [x] Commit: `"fs: partition scanner & auto-detect"`
 
-
-</details>
-
 ---
 ## 3. FAT32 Filesystem
 
 ### 3.1 FAT32 Read Support
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/fs/fat32.c` parses BPB, calculates FAT/data region offsets, implements `fat32_read_cluster_chain`, `fat32_read_dir` (handling both 8.3 and LFN entries), `fat32_read_file`, and `fat32_stat`. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Create `src/kernel/fs/fat32.c` and `include/fat32.h`
 - [x] Parse BPB (BIOS Parameter Block) at partition start:
   - [x] bytes_per_sector, sectors_per_cluster, reserved_sectors, fat_count, root_cluster
@@ -177,8 +147,6 @@
 ### 3.2 FAT32 Write Support
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `fat32_write_file`, `fat32_create_file`, `fat32_create_dir`, `fat32_delete_file`, `fat32_rename`, free cluster search, `fat32_format`, and dual FAT flush all exist and work. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Implement `fat32_write_file(path, data, size)` — allocate clusters, write data, update directory entry
 - [x] Implement `fat32_create_file(dir, name)` — add directory entry, allocate first cluster
 - [x] Implement `fat32_create_dir(dir, name)` — create directory with `.` and `..` entries
@@ -192,8 +160,6 @@
 ### 3.3 FAT32 VFS Integration
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm FAT32 is registered as a VFS filesystem type with callbacks for open, close, read, write, readdir, stat, create, delete, rename. Verify it mounts to a drive letter (e.g., D:\). Test file persistence across reboots. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
-
-
 - [x] Register FAT32 as a VFS filesystem type
 - [x] Implement VFS callbacks: open, close, read, write, readdir, stat, create, delete, rename
 - [x] Mount FAT32 partition to a drive letter (e.g., `D:\`)
@@ -408,8 +374,6 @@
 #### 3.5.5 Directory, Metadata & Flush Callbacks
 
 **Prompt:** Extend `vfs_ops` with the remaining callbacks needed by the Win32 file API (§3.6). Add `mkdir(parent, name)` for `CreateDirectory()`, `rmdir(parent, name)` for `RemoveDirectory()`, `set_attr(node, attributes)` for `SetFileAttributes()`, `set_times(node, create, modify, access)` for `SetFileTime()`, and `flush(node)` for `FlushFileBuffers()`. FAT32 already implements `fat32_create_dir()` — wire it as the `mkdir` callback. Implement `fat32_rmdir()` (verify directory is empty, then unlink). Implement `fat32_set_attr()` (update directory entry attribute byte). Implement `fat32_set_times()` (update directory entry timestamp fields). Implement `fat32_flush()` (flush FAT copies + dirty sectors). Do the same for IXFS. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: directory, metadata & flush callbacks"`.
-
-
 - [x] Add `mkdir` callback to `vfs_ops`: `int (*mkdir)(vfs_node_t* parent, const char* name)`
 - [x] Add `rmdir` callback to `vfs_ops`: `int (*rmdir)(vfs_node_t* parent, const char* name)`
 - [x] Add `set_attr` callback to `vfs_ops`: `int (*set_attr)(vfs_node_t* node, uint32_t attributes)`
@@ -442,8 +406,6 @@
 #### 3.6.1 Handle Table & Type Definitions
 
 **Prompt:** Create the Win32-compatible handle system. Define `HANDLE` as `void*`, with `INVALID_HANDLE_VALUE = (HANDLE)-1`. Implement a kernel handle table that maps `HANDLE` values to internal `vfs_node` pointers + per-handle state (current file position, access flags). `CreateFile` allocates a handle, `CloseHandle` releases it. Standard handles: `STD_INPUT_HANDLE (-10)`, `STD_OUTPUT_HANDLE (-11)`, `STD_ERROR_HANDLE (-12)`. Define constants: `GENERIC_READ (0x80000000)`, `GENERIC_WRITE (0x40000000)`, `FILE_SHARE_READ`, `OPEN_EXISTING`, `CREATE_NEW`, `CREATE_ALWAYS`, `OPEN_ALWAYS`, `TRUNCATE_EXISTING`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: Win32-compatible handle table"`.
-
-
 - [ ] Create `include/kernel/fs/fileapi.h` — Win32-compatible file API header
 - [ ] Define `HANDLE`, `INVALID_HANDLE_VALUE`, standard handle constants
 - [ ] Define `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `LPDWORD` types (or include from `win32.h` — see P0105 §5.1)
@@ -462,8 +424,6 @@
 #### 3.6.2 CreateFile / CloseHandle
 
 **Prompt:** Implement `HANDLE CreateFile(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, void* lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)`. This is the native file open/create function. Internally: normalize path (backslash → forward slash), resolve drive letter via `vfs_get_drive_root()`, walk path via `vfs_finddir()`, call `node->ops->open()` or `node->ops->create()` directly based on `dwCreationDisposition`, allocate a handle, store the `vfs_node*` + initial position 0 in the handle table. `CloseHandle(HANDLE hObject)` calls `node->ops->close()` and releases the handle slot. Set `GetLastError()` error codes on failure (`ERROR_FILE_NOT_FOUND`, `ERROR_ALREADY_EXISTS`, etc.). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: CreateFile / CloseHandle"`.
-
-
 - [ ] Implement `CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile)`:
   - [ ] Normalize path: backslash → forward slash
   - [ ] Resolve drive root via `vfs_get_drive_root()`, walk path via `vfs_finddir()`
@@ -485,8 +445,6 @@
 #### 3.6.3 ReadFile / WriteFile
 
 **Prompt:** Implement `BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, void* lpOverlapped)`. Look up handle → call `vfs_read(node, position, size, buffer)`, advance file position, set `*lpNumberOfBytesRead`. Same for `WriteFile`. `SetFilePointer(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)` adjusts the handle's file position (FILE_BEGIN=0, FILE_CURRENT=1, FILE_END=2). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ReadFile / WriteFile"`.
-
-
 - [ ] Implement `ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)`:
   - [ ] Look up handle in handle table
   - [ ] Call `vfs_read(node, position, size, buffer)`
@@ -510,8 +468,6 @@
 #### 3.6.4 Directory Operations
 
 **Prompt:** Implement Win32 directory enumeration. `FindFirstFile(lpFileName, lpFindFileData)` opens a directory search, returning a `HANDLE` and populating `WIN32_FIND_DATA` (cFileName, dwFileAttributes, nFileSizeHigh/Low, ftCreationTime, ftLastWriteTime). `FindNextFile(hFindFile, lpFindFileData)` returns the next entry. `FindClose(hFindFile)` releases the search handle. Pattern matching: `*.*` matches all, `*.txt` filters by extension. `CreateDirectory(lpPathName, lpSecurityAttributes)` → `ops->mkdir()` (requires §3.5.5). `RemoveDirectory(lpPathName)` → `ops->rmdir()` (requires §3.5.5, must be empty). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: FindFirstFile / CreateDirectory"`.
-
-
 - [ ] Define `WIN32_FIND_DATA` struct: `cFileName[260]`, `dwFileAttributes`, `nFileSizeHigh`, `nFileSizeLow`, `ftCreationTime`, `ftLastWriteTime`
 - [ ] Implement `FindFirstFile(lpFileName, lpFindFileData)`:
   - [ ] Parse directory path and pattern from lpFileName
@@ -534,8 +490,6 @@
 #### 3.6.5 File Management
 
 **Prompt:** Implement file management functions with Win32-compatible signatures. `DeleteFile(lpFileName)` → `ops->unlink()`. `MoveFile(lpExistingFileName, lpNewFileName)` → `ops->rename()`. `CopyFile(lpExistingFileName, lpNewFileName, bFailIfExists)` → open source, create dest, read/write loop, close both, preserve timestamps via `ops->set_times()`. `GetFileAttributes(lpFileName)` → `ops->stat()` → convert to `FILE_ATTRIBUTE_*` flags. `SetFileAttributes(lpFileName, dwFileAttributes)` → `ops->set_attr()` (requires §3.5.5). `GetFileTime/SetFileTime` → `ops->stat()` / `ops->set_times()` (requires §3.5.5). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: DeleteFile / MoveFile / CopyFile"`.
-
-
 - [ ] Implement `DeleteFile(lpFileName)` → `node->ops->unlink(parent, name)`
 - [ ] Implement `MoveFile(lpExistingFileName, lpNewFileName)` → `node->ops->rename(parent, old, new)`
 - [ ] Implement `CopyFile(lpExistingFileName, lpNewFileName, bFailIfExists)`:
@@ -555,8 +509,6 @@
 #### 3.6.6 Shell & Kernel Migration
 
 **Prompt:** Migrate all kernel-internal and shell file operations from the old `vfs_*()` wrapper API to the new Win32-compatible API. The shell's `cat`, `cp`, `mv`, `rm`, `mkdir`, `ls`, `dir` commands should all use `CreateFile/ReadFile/WriteFile/CloseHandle/FindFirstFile/DeleteFile/MoveFile/CreateDirectory`. Registry hive I/O should use `CreateFile/ReadFile/WriteFile`. After migration, **remove the old `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()`, `vfs_create()`, `vfs_unlink()`, `vfs_rename()`, `vfs_stat()`, `vfs_truncate()`, `vfs_readdir()` public wrapper functions** from `vfs.h` and `vfs.c`. The `vfs_ops` driver interface, `vfs_node`, `vfs_mount()`, `vfs_finddir()`, and `vfs_get_drive_root()` stay. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: migrate shell to Win32 file API"`.
-
-
 - [ ] **Shell / Syscalls** — `src/kernel/sched/syscall.c`:
   - [ ] `SYS_OPEN` / `SYS_READ` / `SYS_WRITE` / `SYS_CLOSE` → `SYS_CREATEFILE` / `SYS_READFILE` / `SYS_WRITEFILE` / `SYS_CLOSEHANDLE`
   - [ ] `cat` → `CreateFile` + `ReadFile` + `CloseHandle`
@@ -613,8 +565,6 @@
 ### 4.1 NTFS Read Support
 
 **Prompt:** NTFS is the most complex filesystem to implement. The Master File Table (MFT) is the core structure — every file and directory is an MFT entry (1024 bytes). Each entry contains attributes: `$STANDARD_INFORMATION` (timestamps), `$FILE_NAME` (name, parent ref), `$DATA` (file contents as "data runs" — compressed offset/length pairs mapping logical clusters to physical clusters). Directories use `$INDEX_ROOT` and `$INDEX_ALLOCATION` B+ trees for name lookup. Parse data runs carefully — they use variable-length encoding with relative offsets. Probe via OEM ID "NTFS    " at boot sector bytes 3-10. After completing all items,sh clean`, and commit as `"fs: NTFS read support"`.
-
-
 - [ ] Create `src/kernel/fs/ntfs.c` and `include/kernel/fs/ntfs.h`
 - [ ] Parse NTFS boot sector: bytes_per_sector, sectors_per_cluster, MFT start cluster
 - [ ] Define `struct ntfs_mft_entry` (signature "FILE", update sequence, attribute list)
@@ -631,8 +581,6 @@
 ### 4.2 NTFS Write Support
 
 **Prompt:** NTFS write is significantly harder than read. Writing to an existing file means finding free clusters via `$Bitmap`, extending data runs (which may require splitting/merging run entries), and updating the MFT entry. Creating a file requires allocating a new MFT entry from `$MFT`, initializing attributes, adding the filename to the parent directory's B+ tree index. Always update `$STANDARD_INFORMATION` timestamps. The `$Bitmap` tracks free clusters as a bit array. Be extremely careful with endianness and NTFS's 64-bit cluster addressing. After completing all items,sh clean`, and commit as `"fs: NTFS write support"`.
-
-
 - [ ] Implement `ntfs_write_file(mft_entry, data, size)` — write to existing data runs
 - [ ] Implement `ntfs_extend_data_run(mft_entry, clusters)` — allocate new clusters
 - [ ] Implement `ntfs_create_file(dir_mft, name)` — allocate MFT entry, add to index
@@ -644,8 +592,6 @@
 ### 4.3 NTFS VFS Integration
 
 **Prompt:** Wire the NTFS read/write functions into VFS callbacks. Register NTFS as a filesystem type. When the partition scanner detects an NTFS partition (OEM ID match), create a VFS mount point at the next available drive letter. Test by creating a small NTFS partition image with `mkfs.ntfs` on the build host, attaching it as a QEMU drive, and verifying files created on Linux are readable in the OS. After completing all items,sh clean`, and commit as `"fs: NTFS VFS integration"`.
-
-
 - [ ] Register NTFS as a VFS filesystem type
 - [ ] Implement VFS callbacks: open, close, read, write, readdir, finddir, stat, create, delete, rename, truncate
 - [ ] Mount NTFS partition to a drive letter (e.g., `D:\`)
@@ -655,8 +601,6 @@
 ### 4.4 ext2/ext3/ext4 Read Support
 
 **Prompt:** ext2/3/4 share the same on-disk layout (magic `0xEF53` at superblock offset 56). The superblock at byte offset 1024 contains block_size (1024 << s_log_block_size), inode_size, total blocks, and total inodes. Inodes are organized in block groups — each group has a block bitmap, inode bitmap, and inode table. Block pointers: 12 direct + single indirect + double indirect + triple indirect. ext4 adds extents (check `EXT4_EXTENTS_FL` flag in inode) — parse the extent tree header and entries instead of block pointers. Detect ext3 vs ext4 by feature flags (`s_feature_incompat`). After completing all items,sh clean`, and commit as `"fs: ext2/ext3/ext4 read support"`.
-
-
 > ext2/ext3/ext4 share the same on-disk layout (magic `0xEF53`). A single
 > driver handles all three — ext3 adds journaling, ext4 adds extents.
 
@@ -677,8 +621,6 @@
 ### 4.5 ext2/ext3/ext4 Write Support
 
 **Prompt:** ext write support requires managing two bitmaps: block bitmap (tracks free blocks per group) and inode bitmap (tracks free inodes per group). Allocating a new file: find free inode from bitmap, initialize it, find free blocks for data, add directory entry to parent. The `ext2_dir_entry_2` format is a linked list of variable-length entries within directory blocks. Update the block group descriptor's free-block and free-inode counts, and the superblock's global counts. Wire all write operations into VFS callbacks. After completing all items,sh clean`, and commit as `"fs: ext2/ext3/ext4 write support"`.
-
-
 - [ ] Implement block bitmap read/write for allocation
 - [ ] Implement inode bitmap read/write for inode allocation
 - [ ] Implement `ext2_write_file(inode, offset, data, size)` — allocate blocks, write data
@@ -693,8 +635,6 @@
 ### 4.6 exFAT Read Support
 
 **Prompt:** exFAT is simpler than NTFS but more complex than FAT32. The boot sector uses shift-based sizes (bytes_per_sector_shift, sectors_per_cluster_shift). The FAT is 32-bit entries (cluster chain, similar to FAT32). Directories use a unique entry-set format: File Directory Entry (type 0x85) + Stream Extension Entry (0xC0) + one or more File Name Entries (0xC1, each holding 15 UTF-16LE characters). Assembly of long filenames requires chaining File Name Entries. Probe via OEM name "EXFAT   " at boot sector. After completing all items,sh clean`, and commit as `"fs: exFAT read support"`.
-
-
 > exFAT is the standard for large USB drives (>32 GB) and SDXC cards.
 > Simpler than NTFS, designed for flash media.
 
@@ -717,8 +657,6 @@
 ### 4.7 exFAT Write Support
 
 **Prompt:** exFAT uses an allocation bitmap instead of scanning the FAT for free clusters (more efficient). The allocation bitmap is a contiguous file whose first cluster is specified in the boot sector. Writing a new file: create a directory entry set (File + Stream + Name entries), allocate clusters from the bitmap, update the FAT chain. Deleting: mark directory entries as deleted (type & 0x80 cleared), free clusters in both FAT and bitmap. The UpCase table (a Unicode case-folding table embedded in the volume) is needed for case-insensitive filename comparisons. After completing all items,sh clean`, and commit as `"fs: exFAT write support"`.
-
-
 - [ ] Implement allocation bitmap read/write (replaces FAT-based free scan)
 - [ ] Implement `exfat_alloc_cluster()` — scan allocation bitmap
 - [ ] Implement `exfat_write_file(dir_cluster, name, data, size)` — allocate clusters, write data
@@ -734,8 +672,6 @@
 ### 4.8 ISO 9660 Read Support
 
 **Prompt:** ISO 9660 is the standard CD/DVD filesystem. It uses 2048-byte sectors. The Primary Volume Descriptor (PVD) is at sector 16, identified by signature "CD001". The root directory record in the PVD gives the LBA and size of the root directory. Directory records are variable-length with a length byte, extent LBA, data length, flags (bit 1 = directory), and 8.3 filename. Files are stored as contiguous extents (no fragmentation). Rock Ridge extensions add POSIX metadata (long names, permissions, symlinks) via System Use Entries appended to each directory record. This is a read-only filesystem. Requires ATAPI driver (§1.4) for real optical media, or can read `.iso` files attached as raw block devices. After completing all items,sh clean`, and commit as `"fs: ISO 9660 read support"`.
-
-
 > ISO 9660 is the standard filesystem for CD/DVD media. Read-only by design.
 > Requires the ATAPI driver (§1.4) for real optical media, or raw block
 > access for `.iso` files attached via QEMU `-cdrom`.
@@ -756,8 +692,6 @@
 ### 4.9 Joliet / UDF Read Support
 
 **Prompt:** Joliet extends ISO 9660 with Unicode filenames via a Supplementary Volume Descriptor (detected by escape sequences in the SVD). Filenames are UTF-16BE encoded. UDF (Universal Disk Format) is used on DVDs and Blu-ray discs. UDF parsing starts from the Anchor Volume Descriptor Pointer at sector 256, which points to the Main Volume Descriptor Sequence. Files are located via File Identifier Descriptors and allocation descriptors (short/long/extended). Both Joliet and UDF build on the ISO 9660 infrastructure and the ATAPI driver. After completing all items,sh clean`, and commit as `"fs: Joliet + UDF read support"`.
-
-
 > Joliet extends ISO 9660 with long Unicode filenames. UDF is the standard
 > for DVD and Blu-ray media. Both build on top of ISO 9660 infrastructure.
 
@@ -1063,8 +997,6 @@
 ### 6.1 Auto-Mount System
 
 **Prompt:** After the partition scanner discovers all partitions, assign drive letters automatically: C:\ is always the first IXFS partition (the system drive), then D:\, E:\, etc. for additional partitions in discovery order. The existing `vfs_mount()` needs to support real disk-backed partitions (not just the initrd). Store mount configuration in Registry: `HKLM\SYSTEM\Storage\Drive\{letter}\Device` and `Filesystem`. Log each mount to serial: "Mounted C:\ (IXFS, 2.0 GB) on sata0-part1". After completing all items,sh clean`, and commit as `"fs: auto-mount drive letters"`.
-
-
 - [ ] After partition scanning: auto-assign drive letters
   - [ ] `C:\` — first IXFS partition (system drive)
   - [ ] `D:\`, `E:\`, etc. — additional partitions in order
@@ -1076,8 +1008,6 @@
 ### 6.2 Manual Mount/Unmount
 
 **Prompt:** Shell commands `mount` and `umount` give the user manual control. `mount D: /dev/disk1p1 fat32` maps a partition to a drive letter. `umount D:` flushes all pending writes (dirty buffers, journal), then removes the VFS mount point. Prevent unmounting C:\ while the system is running (return error). The `mount` command with no arguments lists all current mounts. After completing all items,sh clean`, and commit as `"shell: mount/umount commands"`.
-
-
 - [ ] Shell command: `mount D: /dev/disk1p1 fat32` — mount a partition
 - [ ] Shell command: `umount D:` — unmount a drive
 - [ ] Flush pending writes before unmount
@@ -1091,8 +1021,6 @@
 ### 7.1 Disk Management App
 
 **Prompt:** The Disk Management app is a two-panel window. The upper panel is a table listing mounted drives: Drive letter, Total Size, Used, Free, Filesystem type. The lower panel shows a graphical representation of each physical disk: colored bars proportional to partition sizes (IXFS = blue, FAT32 = green, NTFS = orange, unallocated = gray) with labels showing drive letter, filesystem, and size. Data comes from `blkdev_list()` for physical disks, the partition scanner for partition info, and VFS `stat()` for usage stats. After completing all items,sh clean`, and commit as `"apps: Disk Management layout"`.
-
-
 - [ ] Create `src/apps/diskmgr/diskmgr.c`
 - [ ] Upper panel: table view of mounted drives (Drive, Size, Used, Free, Filesystem)
 - [ ] Lower panel: graphical partition layout per physical disk
@@ -1105,8 +1033,6 @@
 ### 7.2 Disk Operations
 
 **Prompt:** Disk operations are high-risk and need confirmation dialogs. Create partition: select unallocated space, specify size and filesystem type (FAT32 or IXFS), write a new GPT/MBR entry, then format. Delete partition: remove the partition table entry (WARNING: destroys all data). Format: rewrite the filesystem structures (`fat32_format()` or `ixfs_format()`). Change drive letter: update the VFS mount point and Registry entry. View usage: show a pie chart or bar of used vs. free space. Stretch goals: partition resize (complex — requires filesystem-aware shrink/grow) and SMART status for AHCI drives. After completing all items,sh clean`, and commit as `"apps: Disk Management operations"`.
-
-
 - [ ] Create partition: select unallocated space → set size + filesystem type
 - [ ] Delete partition: select partition → confirm → delete (removes data!)
 - [ ] Format partition: select partition → choose filesystem (FAT32, IXFS)
@@ -1125,8 +1051,6 @@
 ### 8.1 Disk Cache (Buffer Cache)
 
 **Prompt:** The block-level disk cache sits between the filesystem drivers and the blkdev layer. It caches recently-read sectors in memory using an LRU eviction policy. Write-back mode: mark cached blocks as dirty on write, batch dirty blocks and flush to disk periodically (every 5 seconds) or on explicit `sync()`. The cache should be configurable (1-8 MB). `cache_flush()` writes all dirty blocks (called on shutdown). `cache_invalidate(dev)` clears all cached blocks for a device (called on unmount). Note: IXFS already has its own buffer cache (§5.5.2) — this is a lower-level, device-agnostic cache that benefits all filesystems. After completing all items,sh clean`, and commit as `"fs: block-level disk cache"`.
-
-
 - [ ] Implement block-level read cache (LRU, configurable size: 1–8 MB)
 - [ ] Cache recently read sectors to avoid repeated disk I/O
 - [ ] Write-back cache: batch writes, flush periodically or on sync
@@ -1137,8 +1061,6 @@
 ### 8.2 Filesystem Integrity / CheckDisk
 
 **Prompt:** CheckDisk validates filesystem consistency after crashes or corruption. For IXFS: validate superblock magic/version/CRC, verify free block bitmap matches actual block references, check inode reference counts against directory entries, detect orphan inodes, verify CRC32C checksums, validate journal state, and check extent tree consistency. For FAT32: validate BPB, compare FAT copies, check chain consistency (no cross-links or loops), detect lost clusters. The CLI `chkdsk C:` runs all checks; `/fix` auto-repairs issues; `/scan` is read-only. Auto-run on mount if the filesystem's "dirty" flag is set. The GUI version wraps the same logic with a progress bar, drive selector, and results panel. After completing all items,sh clean`, and commit as `"tools: chkdsk command"` and `"apps: CheckDisk GUI"`.
-
-
 > **Priority: P2** — Critical for data integrity after crashes
 
 #### CLI: `chkdsk`
@@ -1173,8 +1095,6 @@
 ### 8.3 Partition Manager
 
 **Prompt:** The partition manager provides both CLI and GUI interfaces for managing disk partition tables. The CLI `diskpart` operates interactively: `list disks` shows physical disks, `list parts <disk>` shows partitions, `create` writes a new GPT/MBR entry and formats, `delete` removes an entry, `format` reinitializes a filesystem, `assign` changes drive letters. Reads/writes GPT and MBR structures from §2.1/§2.2. The GUI version shows a graphical bar per disk with color-coded partition segments. Right-click context menus for create, delete, format, change letter, properties. All destructive operations require confirmation dialogs. After completing all items,sh clean`, and commit as `"tools: diskpart command"` and `"apps: Partition Manager GUI"`.
-
-
 > **Priority: P2** — Essential for disk management
 
 #### CLI: `diskpart`
@@ -1207,8 +1127,6 @@
 ### 8.4 Defragmentation & TRIM
 
 **Prompt:** The defrag tool analyzes IXFS volumes for fragmentation (files with multiple non-contiguous extents). `defrag C: /analyze` reports the fragmentation percentage without modifying anything. `defrag C:` relocates blocks to consolidate extents — use the IXFS journal for crash safety during block relocation, skip metadata blocks, and prioritize large files. TRIM support sends ATA TRIM commands to SSDs for free block ranges (requires AHCI driver support for DATA SET MANAGEMENT command). The GUI shows a visual block map (grid of colored squares: used=blue, free=gray, fragmented=red) with real-time updates during defrag. After completing all items,sh clean`, and commit as `"tools: defrag/trim command"` and `"apps: Disk Defragmenter GUI"`.
-
-
 > **Priority: P3** — Performance optimization for fragmented volumes
 
 #### CLI: `defrag`
@@ -1239,8 +1157,6 @@
 ### 8.5 File & Data Recovery
 
 **Prompt:** Recovery scans for deleted files that haven't been overwritten. For IXFS: scan the inode table for inodes with `i_links == 0` whose data blocks are still unallocated (block bitmap shows them free). Recover filenames from directory entry scans (entries with zeroed inode pointers). Assign a confidence score: high (all blocks intact), medium (some blocks overwritten), low (mostly gone). For FAT32: scan for directory entries with the 0xE5 deletion marker, follow the FAT chain if the first cluster is still intact. Data carving: scan raw blocks for magic bytes (JPEG: FFD8FF, PNG: 89504E47, PDF: 25504D46, ZIP: 504B0304). The GUI provides a wizard: select drive → scan → results table → select files → choose destination. After completing all items,sh clean`, and commit as `"tools: recover command"` and `"apps: Recovery Wizard GUI"`.
-
-
 > **Priority: P3** — Essential safety net for accidental deletion
 
 #### CLI: `recover`
@@ -1272,8 +1188,6 @@
 ### 8.6 System File Checker
 
 **Prompt:** SFC validates OS integrity by comparing installed system files against a known-good manifest. The manifest `C:\Impossible\System\manifest.dat` is generated at build time: for each system file, store the relative path, CRC32C checksum, size, and version. `sfc /scannow` iterates the manifest, computes CRC32C of each file on disk, and reports/repairs mismatches. Use the CRC32C function from IXFS checksums (§5.9.3). Repair copies correct files from a recovery source (initrd or backup). The GUI wraps this with a "Scan Now" button, progress bar, and results table showing verified/corrupted/repaired files. After completing all items,sh clean`, and commit as `"tools: sfc command"` and `"apps: System File Checker GUI"`.
-
-
 > **Priority: P2** — Validates OS integrity
 
 #### CLI: `sfc`
@@ -1301,8 +1215,6 @@
 ### 8.7 Disk Benchmark
 
 **Prompt:** The disk benchmark measures I/O performance. Sequential tests: read/write 1 MiB blocks for 32 MiB total, calculate throughput (MB/s). Random tests: 4 KiB blocks at random LBAs for 1000 operations, calculate IOPS and latency (avg/min/max). Use `blkdev_read/write` directly to bypass filesystem overhead. Measure time with PIT ticks or TSC. The CLI `diskbench C:` runs all tests and prints results. The GUI shows real-time bar charts filling in as each test completes, with a results table and history for comparison. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: diskbench command"` and `"apps: Disk Benchmark GUI"`.
-
-
 > **Priority: P3** — Performance testing and diagnostics
 
 #### CLI: `diskbench`
@@ -1323,8 +1235,6 @@
 ### 8.8 Disk Wipe / Secure Erase
 
 **Prompt:** Disk wipe overwrites data for privacy. Quick wipe: zero all free space (write 0x00 to unallocated blocks). Full wipe: overwrite entire partition with zeros. DoD 5220.22-M: 3-pass pattern (zeros, ones, random). Secure erase: send ATA SECURITY ERASE command via AHCI (for SSDs). Only allow wiping unmounted or non-system drives. Mandatory confirmation prompt showing the volume label and size. The GUI version adds a wipe method picker, big warning dialog, progress bar with ETA, and completion report. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: diskwipe command"` and `"apps: Disk Wipe GUI"`.
-
-
 > **Priority: P4** — Privacy and drive decommissioning
 
 #### CLI: `diskwipe`
@@ -1348,8 +1258,6 @@
 ### 8.9 Disk Usage Analyzer
 
 **Prompt:** The disk usage analyzer recursively walks directory trees and calculates space consumption. The CLI `diskuse C:` shows top-level directory sizes. `diskuse C:\Users /depth 3` recurses to 3 levels. `diskuse C: /top 20` shows the 20 largest files. Output is a tree with size, percentage of parent, and an ASCII bar. The GUI shows a treemap visualization (rectangles proportional to size, colored by file type), a expandable directory tree, and a "Largest Files" tab. Right-click options: Open location, Delete, Properties. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: diskuse command"` and `"apps: Disk Usage Analyzer GUI"`.
-
-
 > **Priority: P3** — Visual space consumption analysis
 
 #### CLI: `diskuse`
@@ -1371,8 +1279,6 @@
 ### 8.10 Volume Shadow Copy / Backup
 
 **Prompt:** This builds on the existing IXFS snapshot infrastructure (§5.8). The CLI `snapshot` commands wrap `ixfs_snapshot_create/list/restore/delete`. `snapshot diff` compares two snapshots to show files added/modified/deleted (walk both extent trees, compare inodes). The GUI shows a timeline of snapshots sorted chronologically, with Create/Restore/Delete buttons and confirmation dialogs. A diff viewer shows changed files. Auto-snapshot scheduling (daily/weekly) stores the schedule in Registry `HKLM\SYSTEM\Storage\SnapshotSchedule`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: snapshot command"` and `"apps: Snapshot Manager GUI"`.
-
-
 > **Priority: P4** — Leverages existing IXFS snapshot infrastructure
 
 #### CLI: `snapshot`
@@ -1395,8 +1301,6 @@
 ### 8.11 NVMe Driver (Future)
 
 **Prompt:** NVMe is the modern SSD interface. Detect via PCI class 0x01, subclass 0x08. Map BAR0 for the NVMe registers. Initialize admin submission and completion queues, then create I/O queue pairs. Use the Identify command to discover namespaces and capacity. Read/Write commands use Physical Region Pages (PRP) for scatter-gather DMA. This is a stretch goal — prioritize AHCI first since it covers all current testing scenarios. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: NVMe SSD driver"`.
-
-
 - [ ] *(Stretch)* Create `src/kernel/drivers/nvme.c`
 - [ ] *(Stretch)* Detect NVMe controller via PCI (class `0x01`, subclass `0x08`)
 - [ ] *(Stretch)* Map BAR0, initialize admin + I/O submission/completion queues
@@ -1406,8 +1310,6 @@
 ### 8.12 USB Mass Storage (Future)
 
 **Prompt:** USB mass storage uses the Bulk-Only Transport (BOT) protocol over USB bulk endpoints. SCSI commands (INQUIRY, READ10, WRITE10, READ CAPACITY) are wrapped in Command Block Wrappers (CBW). This requires a USB host controller driver (xHCI or EHCI) as a prerequisite. Hot-plug detection: when a new USB device is attached, show a notification toast and auto-mount. Safe removal: flush all dirty buffers, unmount, then notify the user. This is a long-term stretch goal. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: USB mass storage"`.
-
-
 - [ ] *(Stretch)* USB mass storage class driver (bulk-only transport)
 - [ ] *(Stretch)* SCSI command layer (INQUIRY, READ10, WRITE10)
 - [ ] *(Stretch)* Hot-plug notification: show toast "USB drive detected", auto-mount
@@ -1416,8 +1318,6 @@
 ### 8.13 Disk I/O Metrics
 
 **Prompt:** Track per-device I/O statistics in the blkdev layer: `bytes_read`, `bytes_written`, `read_ops`, `write_ops`, accumulated since boot. Expose via `blkdev_stats(dev)` returning a stats struct. The Task Manager's Performance tab (Phase 05 §8.1) reads these for disk activity graphs. The `iostat` shell command prints a table: Device, Reads/s, Writes/s, Read MB/s, Write MB/s. Update counters atomically in `blkdev_read/write` dispatch functions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: disk I/O metrics"`.
-
-
 - [ ] Track read/write byte counts per block device
 - [ ] Track I/O operations per second
 - [ ] Expose via `blkdev_stats(dev)` — used by Task Manager performance tab
@@ -1427,8 +1327,6 @@
 ### 8.14 IXFS Directory Structure (First Boot)
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm the Makefile sysroot target creates the standard directory tree (C:\Impossible\System\, C:\Impossible\Bin\, C:\Impossible\Fonts\, C:\Users\Default\, C:\Temp\, C:\Programs\, etc.) and that all paths exist after boot. Run `bash scripts/build.sh clean` and list directories in the shell. Fix any inconsistencies in the TODO items below.
-
-
 - [x] On first boot (fresh IXFS format), create standard directory tree:
   - [x] `C:\Impossible\` — system root
   - [x] `C:\Impossible\System\` — system files

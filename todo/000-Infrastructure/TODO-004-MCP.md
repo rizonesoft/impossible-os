@@ -18,10 +18,6 @@
 
 ## 1. @modelcontextprotocol/server-memory — Knowledge Graph Memory ✅
 
-<details>
-<summary>✅ 1. @modelcontextprotocol/server-memory — Knowledge Graph Memory — completed</summary>
-
-
 > [!NOTE]
 > **What:** Persistent knowledge graph that stores entities, relations, and observations.
 > Agents use this to remember facts across conversations — project decisions, user
@@ -87,15 +83,8 @@
   - `search_nodes` — search by name or observation content
   - `open_nodes` — retrieve specific entities by name
 
-
-</details>
-
 ---
 ## 2. @modelcontextprotocol/server-filesystem — Filesystem Access ✅
-
-<details>
-<summary>✅ 2. @modelcontextprotocol/server-filesystem — Filesystem Access — completed</summary>
-
 
 > [!NOTE]
 > **What:** Controlled filesystem access for agents — read, write, edit, search, and
@@ -142,9 +131,6 @@
   - `search_files` — recursive file search by glob pattern
   - `get_file_info` — file metadata (size, timestamps, permissions)
   - `list_allowed_directories` — show configured sandboxed paths
-
-
-</details>
 
 ---
 ## 3. Full MCP Configuration ✅
