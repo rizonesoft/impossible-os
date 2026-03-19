@@ -84,10 +84,10 @@ graph TD
 | ⭐ | Phase | Section                         | What It Delivers                                         | Depends On                       | Status |
 | -- | :----: | ------------------------------- | -------------------------------------------------------- | ------------------------------- | :----: |
 | 💎 | **1** | §1.1 Sine/Cosine LUT            | 256-entry fixed-point table — math foundation            | —                                |   ✅   |
-| 💎 | **1** | §2.1 Easing LUT                 | 64-entry ease-in-out curve — animation smoothness        | —                                |   ⬜   |
+| 💎 | **1** | §2.1 Easing LUT                 | 64-entry ease-in-out curve — animation smoothness        | —                                |   ✅   |
 | 💎 | **2** | §1.2 Arc Drawing Function       | Anti-aliased arc ring renderer — the core primitive      | Phase 1 (§1.1)                   |   ✅   |
 | 💎 | **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ✅   |
-| 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ⬜   |
+| 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ✅   |
 | 💎 | **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash                      |   ✅   |
 | 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ⬜   |
 | 💎 | **4** | §2.3 Accent Color Theming       | System accent color from Registry                        | Phase 3 (§2.2)                   |   ⬜   |
@@ -227,58 +227,71 @@ In a freestanding kernel, we replicate this with:
 
 ---
 
-## 2. Breathing Animation Engine *(agent)*
+## 2. Breathing Animation Engine ✅ *(agent)*
 
-**Prompt:** Implement the dual-motion animation that drives the arc: continuous rotation + oscillating sweep angle. Both motions use eased timing (not linear) to create the organic "breathing" feel. The animation runs from a PIT/LAPIC timer callback — same mechanism as the current dot animation. All state is stored in static variables; no allocations. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"spinner: breathing animation engine"`. Add notes directly in this TODO section.
+**Prompt:** ✅ VERIFICATION — Breathing animation engine is implemented. Verify:
+(1) `tools/gen_ease_lut.py` generates `src/kernel/gfx/ease_lut.h` with `ease_lut[64]` (uint8_t, quarter-sine);
+(2) `ease_lut[0]==0`, `ease_lut[63]==255`;
+(3) `include/kernel/spinner.h` declares `spinner_init()`, `spinner_start()`, `spinner_stop()`, `spinner_draw_faded()`, `spinner_get_bounds()`, `spinner_is_active()`;
+(4) `src/kernel/spinner.c` implements: dual-motion rotation + sweep oscillation via `spinner_compute_frame()`, PIT callback at 20fps (divisor=5), renders via `arc_ring_draw()` to backbuffer, `fb_swap_rect()` on bounding box only;
+(5) `SPINNER_ROT_FRAMES==36`, `SPINNER_SWEEP_FRAMES==30`, `SPINNER_SWEEP_MIN==20`, `SPINNER_SWEEP_MAX==192`;
+(6) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
-> **Easing without FPU:** Use a 64-entry ease-in-out lookup table (pre-computed
-> quarter-sine wave × 256). The animation phase indexes into this table instead
-> of calling `sin()` or using floating point. Result: smooth bezier-like curves
-> with pure integer math.
+> **Implementation notes (2026-03-19):**
+> - **Static state design**: All state in file-scope static variables (`s_cx`, `s_cy`, `s_radius`,
+>   `s_stroke`, `s_color`, `s_frame`, `s_active`). No struct passed around — simpler for ISR context.
+> - **Frame computation**: `spinner_compute_frame()` is a pure function — given frame number, returns
+>   start angle and sweep. Rotation uses `(frame * 256 / 36) & 0xFF` for ~1.8s period. Sweep uses
+>   `(frame * 128 / 30) % 128` folded through the ease LUT for organic breathing.
+> - **Timer divisor**: PIT at 100Hz / 5 = 20fps (vs boot splash dots at 100Hz / 10 = 10fps).
+>   Higher fps makes the arc rotation visually smoother.
+> - **Fade support**: `spinner_draw_faded(fade)` applies fade to the accent color before rendering.
+>   Used by boot splash fade-in/fade-out sequences (§3).
+> - **Bounding box**: `spinner_get_bounds()` returns the tight rect around the spinner (radius + 4px
+>   for AA fringe and end caps). Used for `fb_swap_rect()` partial updates.
+> - **No Makefile changes**: `find $(KERNEL_DIR) -name '*.c'` auto-discovers `spinner.c`.
 
 ### 2.1 Easing Lookup Table
 
-- [ ] Create `src/kernel/gfx/ease_lut.h` — 64-entry ease-in-out curve (0–255)
-- [ ] Shape: quarter-sine (approximates cubic-bezier ease-in-out)
-- [ ] Input: linear phase 0–63 → Output: eased value 0–255
-- [ ] Generate via `tools/gen_ease_lut.py`
-- [ ] Commit (with §2.2): `"spinner: breathing animation engine"`
+- [x] Create `src/kernel/gfx/ease_lut.h` — 64-entry ease-in-out curve (0–255)
+- [x] Shape: quarter-sine (approximates cubic-bezier ease-in-out)
+- [x] Input: linear phase 0–63 → Output: eased value 0–255
+- [x] Generate via `tools/gen_ease_lut.py`
+- [x] Commit (with §2.2): `"spinner: breathing animation engine"`
 
 ### 2.2 Animation State Machine
 
-- [ ] Create `src/kernel/spinner.c` and `include/kernel/spinner.h`
-- [ ] Animation state:
+- [x] Create `src/kernel/spinner.c` and `include/kernel/spinner.h`
+- [x] Static state variables (equivalent to the struct, but file-scope):
   ```c
-  struct spinner_state {
-      uint32_t frame;           /* monotonic frame counter */
-      int32_t  cx, cy;          /* ring center position */
-      int32_t  radius;          /* outer radius (scaled) */
-      int32_t  stroke;          /* ring thickness (scaled) */
-      uint32_t color;           /* accent color (ARGB32) */
-      uint8_t  active;          /* 1 = animating */
-  };
+  static volatile uint8_t  s_active;   /* 1 = animation running */
+  static volatile uint32_t s_frame;    /* monotonic frame counter */
+  static int32_t  s_cx, s_cy;          /* ring center position */
+  static int32_t  s_radius;            /* outer radius (scaled) */
+  static int32_t  s_stroke;            /* ring thickness (scaled) */
+  static uint32_t s_color;             /* accent color (0x00RRGGBB) */
   ```
-- [ ] Animation parameters (compile-time constants):
+- [x] Animation parameters (compile-time constants):
   ```c
-  #define SPINNER_FPS         20     /* timer callback rate */
-  #define SPINNER_ROT_FRAMES  36     /* frames per full rotation (1.8s @ 20fps) */
-  #define SPINNER_SWEEP_FRAMES 30    /* frames per sweep oscillation (1.5s @ 20fps) */
-  #define SPINNER_SWEEP_MIN   20     /* minimum arc sweep (out of 256 = ~28°) */
-  #define SPINNER_SWEEP_MAX   192    /* maximum arc sweep (out of 256 = ~270°) */
+  #define SPINNER_TICK_DIVISOR  5  /* PIT at 100Hz / 5 = 20 fps */
+  #define SPINNER_ROT_FRAMES   36 /* frames per full rotation (1.8s @ 20fps) */
+  #define SPINNER_SWEEP_FRAMES 30 /* frames per sweep oscillation (1.5s @ 20fps) */
+  #define SPINNER_SWEEP_MIN    20 /* min arc sweep (out of 256 ≈ 28°) */
+  #define SPINNER_SWEEP_MAX    192 /* max arc sweep (out of 256 ≈ 270°) */
   ```
-- [ ] Per-frame update logic:
-  - [ ] Rotation angle: `start = (frame * 256 / SPINNER_ROT_FRAMES) % 256`
-  - [ ] Sweep phase: `phase = (frame * 64 / SPINNER_SWEEP_FRAMES) % 128`
-  - [ ] Apply ease table: `eased = ease_lut[phase < 64 ? phase : 127 - phase]`
-  - [ ] Sweep angle: `sweep = SWEEP_MIN + (SWEEP_MAX - SWEEP_MIN) * eased / 255`
-  - [ ] Call `arc_ring_draw(cx, cy, radius, stroke, start, sweep, color)`
-- [ ] Timer callback:
-  - [ ] Clear previous arc area (fill rect with background color)
-  - [ ] Compute new frame parameters
-  - [ ] Draw new arc
-  - [ ] `fb_swap_rect()` the arc bounding box only (no full-screen swap)
-- [ ] Commit: `"spinner: breathing animation engine"`
+- [x] Per-frame update logic:
+  - [x] Rotation angle: `start = (frame * 256 / SPINNER_ROT_FRAMES) & 0xFF`
+  - [x] Sweep phase: `phase = (frame * 128 / SPINNER_SWEEP_FRAMES) % 128`
+  - [x] Apply ease table: `eased = ease_lut[phase < 64 ? phase : 127 - phase]`
+  - [x] Sweep angle: `sweep = SWEEP_MIN + (SWEEP_MAX - SWEEP_MIN) * eased / 255`
+  - [x] Call `arc_ring_draw(buf, buf_w, buf_h, cx, cy, radius, stroke, start, sweep, color)`
+- [x] Timer callback:
+  - [x] Clear previous arc area (fill rect with black in backbuffer)
+  - [x] Compute new frame parameters via `spinner_compute_frame()`
+  - [x] Draw new arc via `spinner_render(255)`
+  - [x] `fb_swap_rect()` the arc bounding box only (no full-screen swap)
+- [x] Commit: `"spinner: breathing animation engine"`
 
 ### 2.3 Accent Color Theming
 
