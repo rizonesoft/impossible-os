@@ -366,6 +366,8 @@ $(SYSTEM_DISK): $(KERNEL_BIN) $(UEFI_EFI) sign-efi \
 		cp $(UEFI_EFI) $(BUILD_DIR)/efi_staging/EFI/BOOT/BOOTX64.EFI; \
 	fi
 	@cp $(KERNEL_BIN) $(BUILD_DIR)/efi_staging/boot/kernel.exe
+	@mkdir -p $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS
+	@cp resources/boot/boot.conf $(BUILD_DIR)/efi_staging/EFI/ImpossibleOS/boot.conf
 	mcopy -i $@@@$(EFI_OFFSET) -s $(BUILD_DIR)/efi_staging/* ::
 	@rm -rf $(BUILD_DIR)/efi_staging
 	@# Step 3: Format Logs partition as FAT32

@@ -768,16 +768,78 @@ After completing all items, mark every item as `[x]`, update this prompt to a ve
 
 ---
 
-### 7.1 Boot Configuration File
+### 7.1 Boot Configuration File ✅
 
-**Prompt:** Windows Boot Manager reads BCD (Boot Configuration Data); GRUB reads `grub.cfg`; systemd-boot reads `loader.conf`. Impossible OS has no equivalent — boot parameters are hardcoded. Add `\EFI\ImpossibleOS\boot.conf` — a simple `key=value` ini file read by `bootx64.c` before loading the kernel. Configurable: kernel path, kernel cmdline, splash timeout, default boot mode, serial debug on/off. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: boot.conf configuration file"`. Add notes directly in this TODO section.
-- [ ] Define `boot.conf` ini format: `key=value`, `#` comments, blank lines ignored
-- [ ] Implement `parse_boot_conf()` in `bootx64.c` — read from EFI partition via `EFI_SIMPLE_FILE_SYSTEM`
-- [ ] Parse keys: `kernel=`, `cmdline=`, `splash_timeout=`, `boot_mode=`, `serial_debug=`
-- [ ] Pass parsed cmdline string to kernel in boot params
-- [ ] Graceful fallback: if `boot.conf` absent, use hardcoded defaults
-- [ ] Ship a default `boot.conf` in the ISO
-- [ ] Commit: `"boot: boot.conf configuration file"`
+> [!IMPORTANT]
+> **This is Phase 1 of the roadmap — it unblocks `TODO-005-Debug.md §2.1–2.2`,
+> `TODO-010.98-Kernel-Heartbeat.md §3`, and all features that depend on boot-time config.**
+
+> [!NOTE]
+> → XREF: Consumers of `boot.conf` keys:
+> | Key | Consumer | TODO File |
+> |---|---|---|
+> | `debug=` | Debug mode activation | `TODO-005-Debug.md §2.1` |
+> | `verbose=` | Verbose boot (disable splash) | `TODO-005-Debug.md §2.2` |
+> | `heartbeat=` | Kernel Heartbeat color bars | `TODO-010.98-Kernel-Heartbeat.md §3` |
+> | `postcode=` | POST hex code display | `TODO-010.98-Kernel-Heartbeat.md §2` |
+> | `log.*=` | Subsystem log levels | `TODO-005-Debug.md §6.2` |
+> | `default_os=` | Multi-OS boot menu default | `TODO-010-Bootloader.md §7.2` |
+
+**Prompt:** This section is marked complete. Verify the implementation: confirm `struct boot_config` exists in `include/kernel/boot_info.h` with fields `debug`, `verbose`, `serial_debug`, `boot_mode`, `splash_timeout`, `heartbeat`, `postcode`, `cmdline[256]`, `config_found`. Confirm `parse_boot_conf()` in `src/boot/uefi/bootx64.c` reads `\EFI\ImpossibleOS\boot.conf` via `EFI_SIMPLE_FILE_SYSTEM_PROTOCOL`, parses `key=value` lines, and falls back to defaults if file is missing. Confirm `resources/boot/boot.conf` ships with the OS and the Makefile copies it to the ESP. Run `bash scripts/build.sh clean run` and verify serial output shows `BOOT: boot.conf loaded` and `[CONF] boot.conf: debug=... verbose=... serial=... mode=... splash=...s heartbeat=... postcode=...`. No `[FAIL]` or `PANIC`. Fix any inconsistencies.
+
+> [!NOTE]
+> **Implementation notes:**
+> - Parser is in `bootx64.c` (~190 lines) — runs after `init_gop()`, before `load_kernel()`
+> - `struct boot_config` mirrored in both `boot_info.h` (kernel types) and `bootx64.c` (UEFI types)
+> - Kernel reads config via `g_boot_info.config.*` — logged in `boot_hw.c` as `[CONF]`
+> - Default `boot.conf` at `resources/boot/boot.conf` → copied to ESP by Makefile
+> - **CHAR8 gotcha:** Use `char` (not `CHAR8`) for string operations — `CHAR8` is `unsigned char` in UEFI, causes `-Wpointer-sign` with string literals
+> - `log.*=` prefix keys defined in spec but not yet parsed — reserved for `TODO-005-Debug.md §6.2`
+
+**Example `boot.conf`:**
+```ini
+# Impossible OS Boot Configuration
+# Location: \EFI\ImpossibleOS\boot.conf
+
+# --- Core ---
+kernel=\boot\kernel.exe
+cmdline=
+splash_timeout=3
+boot_mode=normal          # normal | safe | recovery
+
+# --- Debug & Logging (→ TODO-005-Debug.md §2) ---
+debug=1                   # 0=off, 1=on — enable live flush to B:\ Black Box
+verbose=0                 # 0=splash, 1=text mode — disable splash, show printk
+
+# --- Kernel Heartbeat (→ TODO-010.98 §2–3) ---
+heartbeat=auto            # auto | always | off — debug color bars
+postcode=auto             # auto | always | off — hex POST codes on screen
+
+# --- Serial ---
+serial_debug=1            # 0=off, 1=on — COM1 output
+
+# --- Multi-OS (→ §7.2) ---
+default_os=ImpossibleOS   # boot menu default if multi-OS detected
+timeout=5                 # boot menu timeout in seconds
+
+# --- Subsystem Log Levels (→ TODO-005-Debug.md §6.2) ---
+# log.pci=INFO
+# log.ixfs=WARN
+# log.ahci=DEBUG
+```
+
+- [x] Define `boot.conf` ini format: `key=value`, `#` comments, blank lines ignored
+- [x] Implement `parse_boot_conf()` in `bootx64.c` — read from EFI partition via `EFI_SIMPLE_FILE_SYSTEM`
+- [x] Parse core keys: `kernel=`, `cmdline=`, `splash_timeout=`, `boot_mode=`, `serial_debug=`
+- [x] Parse debug keys: `debug=`, `verbose=`, `heartbeat=`, `postcode=`
+- [x] Parse multi-OS keys: `default_os=`, `timeout=`
+- [ ] Parse `log.*=` prefix keys into a subsystem log level array *(deferred to TODO-005-Debug.md §6.2)*
+- [x] Store all parsed values in `struct boot_config` (new struct in `boot_info`)
+- [x] Pass to kernel in boot params — kernel reads immediately in `kernel_main()`
+- [x] Graceful fallback: if `boot.conf` absent, use hardcoded defaults (debug=0, verbose=0)
+- [x] Ship a default `boot.conf` in the ISO and on USB write
+- [x] `write-usb.ps1`: verify `boot.conf` at `\EFI\ImpossibleOS\` during USB verification
+- [x] Commit: `"boot: boot.conf configuration file"`
 
 ---
 

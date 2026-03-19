@@ -209,6 +209,14 @@ if ($partition) {
             Write-Host "  [WARN] kernel.exe not found" -ForegroundColor Yellow
         }
 
+        $confPath = "${driveLetter}:\EFI\ImpossibleOS\boot.conf"
+        if (Test-Path $confPath) {
+            $confBytes = (Get-Item $confPath).Length
+            Write-Host "  [OK] boot.conf `(${confBytes} bytes`)" -ForegroundColor Green
+        } else {
+            Write-Host "  [WARN] boot.conf not found" -ForegroundColor Yellow
+        }
+
         if ($tempAssigned) {
             $partition | Remove-PartitionAccessPath -AccessPath "${driveLetter}:\" -ErrorAction SilentlyContinue
         }

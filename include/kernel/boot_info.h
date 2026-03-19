@@ -26,7 +26,26 @@ struct boot_framebuffer {
     uint8_t  type;          /* 0=indexed, 1=RGB, 2=EGA text */
 };
 
-/* All boot info collected from Multiboot2 */
+/* Boot configuration from \EFI\ImpossibleOS\boot.conf */
+#define BOOT_CONF_CMDLINE_MAX 256
+
+struct boot_config {
+    /* Core */
+    uint8_t  debug;            /* 1 = debug mode on (live flush to B:\) */
+    uint8_t  verbose;          /* 1 = text mode, skip splash */
+    uint8_t  serial_debug;     /* 1 = serial COM1 output */
+    uint8_t  boot_mode;        /* 0=normal, 1=safe, 2=recovery */
+    uint16_t splash_timeout;   /* seconds (0 = no timeout) */
+    /* Kernel Heartbeat */
+    uint8_t  heartbeat;        /* 0=off, 1=auto, 2=always */
+    uint8_t  postcode;         /* 0=off, 1=auto, 2=always */
+    /* Command line */
+    char     cmdline[BOOT_CONF_CMDLINE_MAX];
+    /* Status */
+    uint8_t  config_found;     /* 1 if boot.conf was successfully parsed */
+};
+
+/* All boot info collected from UEFI bootloader */
 struct boot_info {
     /* Memory map */
     struct boot_mmap_entry mmap[BOOT_MMAP_MAX_ENTRIES];
@@ -49,7 +68,10 @@ struct boot_info {
     uintptr_t module_start;     /* physical address of first module */
     uintptr_t module_end;       /* physical address of end of module */
     uint8_t   module_available; /* 1 if a module was loaded */
+
+    /* Boot configuration (parsed from boot.conf) */
+    struct boot_config config;
 };
 
-/* Global boot info — populated by multiboot2_parse() */
+/* Global boot info — populated by multiboot2_parse() or UEFI bootloader */
 extern struct boot_info g_boot_info;

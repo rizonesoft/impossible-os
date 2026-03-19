@@ -35,6 +35,22 @@ struct boot_framebuffer {
     UINT8   type;
 };
 
+/* Boot configuration from \EFI\ImpossibleOS\boot.conf
+ * Must match struct boot_config in kernel/boot_info.h exactly. */
+#define BOOT_CONF_CMDLINE_MAX 256
+
+struct boot_config {
+    UINT8   debug;
+    UINT8   verbose;
+    UINT8   serial_debug;
+    UINT8   boot_mode;
+    UINT16  splash_timeout;
+    UINT8   heartbeat;
+    UINT8   postcode;
+    char    cmdline[BOOT_CONF_CMDLINE_MAX];
+    UINT8   config_found;
+};
+
 struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
@@ -48,6 +64,7 @@ struct boot_info {
     UINT64  module_start;
     UINT64  module_end;
     UINT8   module_available;
+    struct boot_config config;
 };
 
 /* --- ELF64 header structures --- */
@@ -346,6 +363,196 @@ store_fb:
     return EFI_SUCCESS;
 }
 
+/* ============================================================================
+ * Step 1b: Parse boot.conf — key=value ini file from EFI partition
+ *
+ * Format: key=value, # comments, blank lines ignored.
+ * Runs BEFORE load_kernel() — UEFI Boot Services are still available.
+ * ============================================================================ */
+
+/* ASCII string compare (no strcmp in freestanding UEFI) */
+static BOOLEAN ascii_streq(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (*a != *b) return 0;
+        a++; b++;
+    }
+    return *a == *b;
+}
+
+/* ASCII to unsigned int (no atoi in freestanding UEFI) */
+static UINT32 ascii_atoi(const char *s)
+{
+    UINT32 val = 0;
+    while (*s >= '0' && *s <= '9') {
+        val = val * 10 + (*s - '0');
+        s++;
+    }
+    return val;
+}
+
+/* Set boot_config defaults (used when boot.conf is missing or on parse error) */
+static void boot_config_defaults(struct boot_config *cfg)
+{
+    efi_memset(cfg, 0, sizeof(*cfg));
+    cfg->debug          = 0;    /* off by default */
+    cfg->verbose        = 0;    /* splash mode */
+    cfg->serial_debug   = 1;    /* always useful */
+    cfg->boot_mode      = 0;    /* normal */
+    cfg->splash_timeout = 3;    /* 3 seconds */
+    cfg->heartbeat      = 1;    /* auto */
+    cfg->postcode       = 1;    /* auto */
+    cfg->cmdline[0]     = '\0';
+    cfg->config_found   = 0;
+}
+
+/* Parse a single key=value pair into boot_config */
+static void parse_conf_kv(struct boot_config *cfg,
+                          const char *key, const char *val)
+{
+    if      (ascii_streq(key, "debug"))          cfg->debug          = (UINT8)ascii_atoi(val);
+    else if (ascii_streq(key, "verbose"))        cfg->verbose        = (UINT8)ascii_atoi(val);
+    else if (ascii_streq(key, "serial_debug"))   cfg->serial_debug   = (UINT8)ascii_atoi(val);
+    else if (ascii_streq(key, "splash_timeout")) cfg->splash_timeout = (UINT16)ascii_atoi(val);
+    else if (ascii_streq(key, "heartbeat")) {
+        if      (ascii_streq(val, "off"))    cfg->heartbeat = 0;
+        else if (ascii_streq(val, "auto"))   cfg->heartbeat = 1;
+        else if (ascii_streq(val, "always")) cfg->heartbeat = 2;
+        else cfg->heartbeat = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "postcode")) {
+        if      (ascii_streq(val, "off"))    cfg->postcode = 0;
+        else if (ascii_streq(val, "auto"))   cfg->postcode = 1;
+        else if (ascii_streq(val, "always")) cfg->postcode = 2;
+        else cfg->postcode = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "boot_mode")) {
+        if      (ascii_streq(val, "normal"))   cfg->boot_mode = 0;
+        else if (ascii_streq(val, "safe"))     cfg->boot_mode = 1;
+        else if (ascii_streq(val, "recovery")) cfg->boot_mode = 2;
+        else cfg->boot_mode = (UINT8)ascii_atoi(val);
+    }
+    else if (ascii_streq(key, "cmdline")) {
+        UINTN i;
+        for (i = 0; i < BOOT_CONF_CMDLINE_MAX - 1 && val[i]; i++)
+            cfg->cmdline[i] = val[i];
+        cfg->cmdline[i] = '\0';
+    }
+    /* Unknown keys are silently ignored — forward compatibility */
+}
+
+/* Read and parse \EFI\ImpossibleOS\boot.conf */
+static void parse_boot_conf(void)
+{
+    EFI_GUID fs_guid = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_GUID;
+    EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *fs;
+    EFI_FILE_PROTOCOL *root_dir, *conf_file;
+    EFI_STATUS status;
+    struct boot_config *cfg = &g_boot_info_ptr->config;
+
+    /* Always start with defaults */
+    boot_config_defaults(cfg);
+
+    serial_early_print("BOOT: parse_boot_conf...\n");
+
+    /* Open filesystem */
+    status = gBS->LocateProtocol(&fs_guid, (VOID *)0, (VOID **)&fs);
+    if (EFI_ERROR(status)) {
+        serial_early_print("BOOT: boot.conf - no filesystem\n");
+        return;
+    }
+
+    status = fs->OpenVolume(fs, &root_dir);
+    if (EFI_ERROR(status)) {
+        serial_early_print("BOOT: boot.conf - cannot open volume\n");
+        return;
+    }
+
+    /* Open boot.conf */
+    status = root_dir->Open(
+        root_dir, &conf_file,
+        u"\\EFI\\ImpossibleOS\\boot.conf",
+        EFI_FILE_MODE_READ, 0
+    );
+    if (EFI_ERROR(status)) {
+        serial_early_print("BOOT: boot.conf not found - using defaults\n");
+        root_dir->Close(root_dir);
+        return;
+    }
+
+    /* Read entire file (boot.conf should be < 1 KB) */
+    char buf[1024];
+    UINTN buf_size = sizeof(buf) - 1;
+    status = conf_file->Read(conf_file, &buf_size, buf);
+    conf_file->Close(conf_file);
+    root_dir->Close(root_dir);
+
+    if (EFI_ERROR(status) || buf_size == 0) {
+        serial_early_print("BOOT: boot.conf read error - using defaults\n");
+        return;
+    }
+    buf[buf_size] = '\0';
+
+    serial_early_print("BOOT: boot.conf loaded\n");
+
+    /* Parse line by line */
+    char *pos = buf;
+    while (*pos) {
+        /* Skip leading whitespace */
+        while (*pos == ' ' || *pos == '\t') pos++;
+
+        /* Skip blank lines and comments */
+        if (*pos == '\n' || *pos == '\r' || *pos == '#' || *pos == '\0') {
+            while (*pos && *pos != '\n') pos++;
+            if (*pos == '\n') pos++;
+            continue;
+        }
+
+        /* Extract key */
+        char key[64];
+        UINTN ki = 0;
+        while (*pos && *pos != '=' && *pos != '\n' && *pos != '#' &&
+               ki < sizeof(key) - 1) {
+            if (*pos != ' ' && *pos != '\t')  /* skip spaces in key */
+                key[ki++] = *pos;
+            pos++;
+        }
+        key[ki] = '\0';
+
+        if (*pos != '=') {
+            /* No '=' found — skip line */
+            while (*pos && *pos != '\n') pos++;
+            if (*pos == '\n') pos++;
+            continue;
+        }
+        pos++;  /* skip '=' */
+
+        /* Skip leading whitespace in value */
+        while (*pos == ' ' || *pos == '\t') pos++;
+
+        /* Extract value (until newline, comment, or EOF) */
+        char val[256];
+        UINTN vi = 0;
+        while (*pos && *pos != '\n' && *pos != '\r' && *pos != '#' &&
+               vi < sizeof(val) - 1) {
+            val[vi++] = *pos++;
+        }
+        /* Trim trailing whitespace from value */
+        while (vi > 0 && (val[vi - 1] == ' ' || val[vi - 1] == '\t'))
+            vi--;
+        val[vi] = '\0';
+
+        /* Skip to next line */
+        while (*pos && *pos != '\n') pos++;
+        if (*pos == '\n') pos++;
+
+        /* Parse this key=value */
+        if (ki > 0 && vi > 0)
+            parse_conf_kv(cfg, key, val);
+    }
+
+    cfg->config_found = 1;
+}
 
 /* ============================================================================
  * Step 2: Load kernel ELF from FAT32
@@ -704,6 +911,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return status;
     }
     serial_early_print("BOOT: init_gop OK\n");
+
+    /* Step 1b: Parse boot.conf (must run while UEFI Boot Services available) */
+    parse_boot_conf();
 
     /* Clear screen to black before loading the kernel. */
     {

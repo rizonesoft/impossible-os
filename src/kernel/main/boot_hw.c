@@ -76,6 +76,14 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     }
     HV_BAR(84, 0x0000FFFF);   /* Row 84: CYAN = boot info parsed */
 
+    /* Log boot.conf values */
+    printk("[CONF] boot.conf: debug=%d verbose=%d serial=%d mode=%d splash=%ds heartbeat=%d postcode=%d%s\n",
+           g_boot_info.config.debug, g_boot_info.config.verbose,
+           g_boot_info.config.serial_debug, g_boot_info.config.boot_mode,
+           g_boot_info.config.splash_timeout, g_boot_info.config.heartbeat,
+           g_boot_info.config.postcode,
+           g_boot_info.config.config_found ? "" : " (defaults)");
+
     /* Step 4: Initialize physical memory manager */
     pmm_init();
     HV_BAR(96, 0x00FFFF00);   /* Row 96: YELLOW = PMM OK */
