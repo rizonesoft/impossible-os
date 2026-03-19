@@ -19,6 +19,97 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Five TODO files** contribute to the bootloader subsystem. They have
+> cross-dependencies that dictate implementation order. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    A["010-Bootloader.md §7.1<br/>Boot Config File (boot.conf)"]
+    B["010.01-UEFI.md<br/>UEFI Enhancements"]
+    C["010.99-APIC-First-Boot.md §1–3<br/>ACPI → LAPIC → IOAPIC → PIC"]
+    D["010.99-APIC-First-Boot.md §4<br/>Dynamic IRQ Registration"]
+    E["010.99-APIC-First-Boot.md §5<br/>Full IDT Coverage"]
+    F["005-Debug.md §1<br/>Black Box Log System"]
+    G["005-Debug.md §2.1–2.2<br/>Debug Mode via boot.conf"]
+    H["010.98-Kernel-Heartbeat.md §1–2<br/>boot_progress API + POST codes"]
+    I["010.98-Kernel-Heartbeat.md §3<br/>Debug Bar Waterfall"]
+    J["010.98-Kernel-Heartbeat.md §4<br/>Panic Forensics + QR"]
+    K["010.99-APIC-First-Boot.md §6–7<br/>Timer Hierarchy + Boot Viz"]
+    L["010.99-APIC-First-Boot.md §8<br/>Remove Debug Workarounds"]
+    M["010.98-Kernel-Heartbeat.md §5–6<br/>Vital Signs + Alive Blink"]
+    N["005-Debug.md §3<br/>HW Report + Driver Dev Kit"]
+    P["005-Debug.md §4<br/>Crash Forensics"]
+    Q["005-Debug.md §6<br/>Log Quality"]
+    O["063.09-APIC-Architecture.md<br/>x2APIC, LVT, MSI, NMI"]
+
+    A --> G
+    F --> G
+    F --> N
+    C --> D
+    C --> E
+    D --> E
+    C --> L
+    H --> L
+    H --> I
+    H --> J
+    G --> I
+    D --> K
+    D --> O
+    H --> K
+    H --> M
+    J --> P
+    H --> P
+    B --> A
+```
+
+### Phase-by-Phase Implementation Order
+
+| Phase | TODO File                            | Sections                    | What It Delivers                                                     | Depends On             |
+| :---: | ------------------------------------ | --------------------------- | -------------------------------------------------------------------- | ---------------------- |
+| **1** | `TODO-010-Bootloader.md`             | §7.1 Boot Config File       | `boot.conf` parser — enables debug/verbose flags                     | —                      |
+| **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI enhancements (feeds into boot.conf)                             | —                      |
+| **2** | `TODO-010.99-APIC-First-Boot.md`     | §1–3 (P0+P1)                | ACPI → LAPIC → IOAPIC before PIT; conditional PIC                    | —                      |
+| **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                     | —                      |
+| **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                            | Phase 2 (§1.1)         |
+| **3** | `TODO-005-Debug.md`                  | §2.1–2.2 Debug Mode         | Debug/verbose mode via `boot.conf`                                   | Phase 1 (§7.1)         |
+| **3** | `TODO-010.99-APIC-First-Boot.md`     | §4 Dynamic IRQ API          | `irq_register()` — foundation for MSI & VMBus                       | Phase 2 (§1–3)         |
+| **3** | `TODO-010.99-APIC-First-Boot.md`     | §5 Full IDT Coverage        | All 256 IDT entries + Hyper-V VMBus ISRs                             | Phase 3 (§4)           |
+| **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §1–2 Core API + POST codes  | `boot_progress()` API + hex POST code display                        | Phase 2 (APIC)         |
+| **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §7 UEFI POST codes          | Hex codes in bootloader before kernel starts                         | Phase 1 (UEFI)         |
+| **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §3 Debug Bar Waterfall      | Color-coded verbose boot mode                                        | Phase 3 (§2.1) + Ph 4  |
+| **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §4 Panic Forensics + QR     | Progress bars + QR code on BSOD                                      | Phase 4 (§1)           |
+| **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                | Phase 4 (§1)           |
+| **5** | `TODO-005-Debug.md`                  | §4.1 Crash Screenshot ⭐    | BMP framebuffer capture on panic → `B:\Crash_*.bmp`                  | Phase 2 (§1) + Ph 5    |
+| **6** | `TODO-010.99-APIC-First-Boot.md`     | §6–7 Timer + Boot Viz       | Timer source hierarchy + Gantt chart                                 | Phase 3 (§4) + Ph 4    |
+| **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) ⭐ | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint             | Phase 2 (§1)           |
+| **6** | `TODO-005-Debug.md`                  | §6 Log Quality              | Timestamps, memory watermarks, subsystem filtering                   | Phase 2 (§1)           |
+| **6** | `TODO-010.99-APIC-First-Boot.md`     | §9 SMP Adjustment           | Verify AP boot with early LAPIC                                      | Phase 2 (§1–3)         |
+| **7** | `TODO-010.98-Kernel-Heartbeat.md`    | §5–6 Vital Signs + Blink    | Runtime 1px strip, alive pixel, developer HUD                        | Phase 4 (§1)           |
+| **7** | `TODO-005-Debug.md`                  | §7 Cleanup                  | Remove DEBUG file, grub.cfg, stale serial.log                        | Phase 3 (§2.1)         |
+| **7** | `TODO-005-Debug.md`                  | §1.5 Partition Hiding       | Hide B: from file manager (like Windows hides EFI)                   | Phase 2 (§1)           |
+| **7** | `TODO-005-Debug.md`                  | §4.2–4.3 Timeline + Regr ⭐ | Event timeline ring buffer + boot regression detection               | Phase 4 (§1) + Ph 6    |
+| —     | `TODO-063.09-APIC-Architecture.md`   | Full APIC subsystem          | x2APIC, LVT, MSI, NMI — informs but not blocked                     | Phase 3 (§4)           |
+
+> [!NOTE]
+> **Phases 1–3** are the critical path. They unblock everything else.
+> **Phases 4–5** deliver the Kernel Heartbeat, remove debug workarounds, and add crash screenshots.
+> **Phases 6–7** are polish and competitive features (⭐): Hardware Report DDK, event timeline,
+> boot regression detection, vital signs, and partition hiding.
+> `TODO-063.09` is a **cross-domain** dependency — it can proceed in parallel
+> after Phase 3 but is not part of this bootloader roadmap.
+
+> [!TIP]
+> **Quick wins (any time):** `TODO-005-Debug.md §7.3` (remove stale `serial.log`)
+> and `§2.3` (remove `grub.cfg`) are zero-dependency cleanups.
+
+---
+
 ## 1. Custom UEFI Bootloader ✅
 
 ### 1.1 UEFI Boot Application
