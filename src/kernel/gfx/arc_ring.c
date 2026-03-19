@@ -31,49 +31,41 @@ struct arc_ring_size arc_ring_size_for_height(uint32_t scr_h)
 /* ---- Angle computation via atan2 approximation ----
  *
  * Returns angle in 0..255 range (mapping to 0°..360°).
- * Uses the identity: atan2(y,x) via octant decomposition + linear approx.
- * Max error: ~0.5 LUT steps (~0.7°) — invisible at spinner scale. */
+ * Convention matches the LUT:
+ *   0   = right  (3 o'clock, cos=+1, sin=0)
+ *   64  = down   (6 o'clock, cos=0, sin=+1)  [screen coords: y+ is down]
+ *   128 = left   (9 o'clock, cos=-1, sin=0)
+ *   192 = up     (12 o'clock, cos=0, sin=-1)
+ *
+ * Uses quadrant decomposition + linear atan approximation.
+ * Max error: ~1 LUT step (~1.4°) — invisible at spinner scale. */
 
 static uint8_t angle256(int32_t dx, int32_t dy)
 {
     if (dx == 0 && dy == 0) return 0;
 
-    /* Determine octant and rotate to first octant */
     int32_t ax = dx < 0 ? -dx : dx;
     int32_t ay = dy < 0 ? -dy : dy;
 
-    /* atan2 approximation: angle = atan(min/max) scaled to 0..32 (45°) */
-    int32_t mn, mx;
-    int32_t oct;  /* which 45° octant */
+    /* Compute angle within [0, 64) for the first quadrant (dx>=0, dy>=0).
+     * When ax >= ay, angle is in [0, 32]  (0°..45°).
+     * When ay > ax,  angle is in [32, 64) (45°..90°). */
+    int32_t sub;
+    if (ax >= ay)
+        sub = (ax > 0) ? (ay * 32 / ax) : 0;      /* 0..32 */
+    else
+        sub = 64 - ((ax > 0) ? (ax * 32 / ay) : 0); /* 32..64 */
 
-    if (ax >= ay) {
-        mx = ax; mn = ay;
-        oct = (dx >= 0) ? 0 : 4;
-        if (dy < 0) oct = (dx >= 0) ? 7 : 3;
-        else if (oct == 4) oct = 5;
-    } else {
-        mx = ay; mn = ax;
-        oct = (dy >= 0) ? 2 : 6;
-        if (dx < 0) oct = (dy >= 0) ? 3 : 5;
-        else if (oct == 6) oct = 7;
-    }
-
-    /* Linear approximation of atan(mn/mx) in range [0, 32] (0..45°) */
-    int32_t a = (mn * 32) / mx;  /* 0..32 */
-
-    /* Map octant + sub-angle to 0..255 */
+    /* Map to full circle based on sign of dx, dy */
     int32_t angle;
-    switch (oct) {
-    case 0: angle = a;           break;  /*   0°..  45° */
-    case 1: angle = 64 - a;      break;  /*  45°..  90° */ /* unused in practice */
-    case 2: angle = 64 + a;      break;  /*  90°.. 135° */
-    case 3: angle = 128 - a;     break;  /* 135°.. 180° */
-    case 4: angle = 128 + a;     break;  /* 180°.. 225° */
-    case 5: angle = 192 - a;     break;  /* 225°.. 270° */
-    case 6: angle = 192 + a;     break;  /* 270°.. 315° */
-    case 7: angle = 256 - a;     break;  /* 315°.. 360° */
-    default: angle = 0;          break;
-    }
+    if (dx >= 0 && dy >= 0)
+        angle = sub;            /*   0.. 64 : Q1 right→down  */
+    else if (dx < 0 && dy >= 0)
+        angle = 128 - sub;      /*  64..128 : Q2 down→left   */
+    else if (dx < 0 && dy < 0)
+        angle = 128 + sub;      /* 128..192 : Q3 left→up     */
+    else /* dx >= 0 && dy < 0 */
+        angle = 256 - sub;      /* 192..256 : Q4 up→right    */
 
     return (uint8_t)(angle & 0xFF);
 }
@@ -222,10 +214,15 @@ void arc_ring_draw(uint32_t *buf, uint32_t buf_w, uint32_t buf_h,
     }
 
     /* Rounded end caps: small filled circles at arc start and end points.
-     * Cap radius = stroke/2 (centered on the ring's mid-radius). */
+     * Cap radius = stroke/2 (centered on the ring's mid-radius).
+     * Skip caps for thin strokes (stroke <= 4) — cap_r would be ≤ 2px,
+     * producing pixelated single-pixel dots. Angular AA handles endpoints. */
+    if (stroke <= 4)
+        return;
+
     int32_t mid_r = r_inner + stroke / 2;
     int32_t cap_r = stroke / 2;
-    if (cap_r < 1) cap_r = 1;
+    if (cap_r < 2) cap_r = 2;
 
     uint8_t endpoints[2] = { start_256,
                              (uint8_t)(start_256 + sweep_256) };

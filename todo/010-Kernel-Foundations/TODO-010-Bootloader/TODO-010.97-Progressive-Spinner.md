@@ -89,9 +89,9 @@ graph TD
 | 💎 | **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ✅   |
 | 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ✅   |
 | 💎 | **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash                      |   ✅   |
-| 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ⬜   |
+| 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ✅   |
 | 💎 | **4** | §2.3 Accent Color Theming       | System accent color from Registry                        | Phase 3 (§2.2)                   |   ⬜   |
-| 💎 | **5** | §3.3 Update Sizing Reference    | Documentation: update parent TODO sizing table           | Phase 4 (§3.2)                   |   ⬜   |
+| 💎 | **5** | §3.3 Update Sizing Reference    | Documentation: update parent TODO sizing table           | Phase 4 (§3.2)                   |   ✅   |
 | 💎 | **5** | §4.1 Multi-Instance API         | Reusable spinner for dialogs, shell, settings            | Phase 3 (§2.2)                   |   ⬜   |
 | 💎 | **5** | §4.2 Predefined Size Variants   | Fluent 2 standard sizes (tiny → xlarge)                  | Phase 5 (§4.1)                   |   ⬜   |
 | 💎 | **6** | §4.3 Compositor Integration     | Post-boot spinner routing through window manager         | Phase 5 (§4.1)                   |   ⬜   |
@@ -303,56 +303,71 @@ In a freestanding kernel, we replicate this with:
 
 ---
 
-## 3. Boot Splash Integration *(agent)*
+## 3. Boot Splash Integration ✅ *(agent)*
 
-**Prompt:** Replace the current 6-dot wave animation on the boot splash screen with the new progressive arc spinner. The spinner renders in the exact same position as the dots (centered horizontally, below the logo icon). The fade-in and fade-out transitions must be updated to use the arc ring instead of dots. The PIT timer callback switches from `splash_draw_dots()` to the spinner's `spinner_tick()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"splash: replace dots with progressive spinner"`. Add notes directly in this TODO section.
+**Prompt:** ✅ VERIFICATION — Boot splash now uses the progressive spinner. Verify:
+(1) `boot_splash.c` has NO references to dots: no `splash_draw_dot()`, `splash_draw_dots()`, `splash_draw_dots_faded()`, `splash_timer_callback()`, `NUM_DOTS`, `PULSE_FRAMES`, `PULSE_LEN`, `STAGGER`, `REST_GAP`, `TOTAL_CYCLE`, `pulse_curve`, `g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`, `dot_cx`, `dot_cy`, `anim_frame`;
+(2) `boot_splash.c` includes `spinner.h` and `arc_ring.h`, calls `spinner_init()`, `spinner_start()`, `spinner_stop()`, `spinner_draw_faded()`;
+(3) Spinner position: center at `(scr_w/2, icon_y + icon_size + g_spinner_y_offset)` — same Y offset as old dots;
+(4) `boot_splash.h` comments say "spinner" not "dots";
+(5) Log line shows `ring_r=` and `ring_s=` instead of `dot_r=`;
+(6) `TODO-010-Bootloader.md` sizing table column is "Ring r/stroke" not "Dot r min/max";
+(7) `bash scripts/build.sh clean` → `=== BUILD OK ===`;
+(8) `bash scripts/build.sh run` → boots without crash.
 
-> [!WARNING]
-> **Breaking change:** The dot animation functions in `boot_splash.c` will be
-> removed. Any code that references `splash_draw_dots()`,
-> `splash_draw_dots_faded()`, `NUM_DOTS`, `PULSE_LEN`, `STAGGER`, or dot
-> geometry variables (`g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`) must be
-> updated or deleted.
+> [!NOTE]
+> **Implementation notes (2026-03-19):**
+> - **Breaking change executed**: Removed ~200 lines of dot animation code from `boot_splash.c`.
+>   All dot constants, variables, functions, and the PIT callback were deleted.
+> - **Spinner wiring**: `boot_splash_init()` now calls `arc_ring_size_for_height(scr_h)` for geometry
+>   and `spinner_init()` to set up the ring. `boot_splash_start_animation()` calls `spinner_start()`
+>   directly (which handles its own PIT registration internally).
+> - **Fade transitions**: Both fade-in and fade-out use `spinner_draw_faded(fade_level)` instead of
+>   the old `splash_draw_dots_faded()`. The fill_rect-then-draw pattern is preserved.
+> - **Accent color**: Hardcoded `#0078D4` (Fluent Blue) as `SPINNER_ACCENT_COLOR`. §2.3 will add
+>   Registry-based theming later.
+> - **Text Y position**: Now computed as `spinner_cy + ring.radius + 20` — positions text below
+>   the ring's bottom edge with a 20px gap, instead of the old absolute offset from dot center.
+> - **Abort path**: `boot_splash_abort()` calls `spinner_stop()` instead of `pit_unregister_callback()`.
 
 ### 3.1 Remove Dot Animation
 
-- [ ] Delete from `boot_splash.c`:
-  - [ ] `splash_draw_dot()` — filled circle primitive (replaced by arc ring)
-  - [ ] `splash_draw_dots()` — main dot animation renderer
-  - [ ] `splash_draw_dots_faded()` — fade-in/out dot renderer
-  - [ ] Constants: `NUM_DOTS`, `PULSE_FRAMES`, `PULSE_LEN`, `STAGGER`, `REST_GAP`, `TOTAL_CYCLE`
-  - [ ] Variables: `g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`, `dot_cx`, `dot_cy`
-  - [ ] Lookup table: `pulse_curve[8]`
-- [ ] Delete from `boot_splash.h`: any dot-related declarations (if any)
-- [ ] Commit (with §3.2): `"splash: replace dots with progressive spinner"`
+- [x] Delete from `boot_splash.c`:
+  - [x] `splash_draw_dot()` — filled circle primitive (replaced by arc ring)
+  - [x] `splash_draw_dots()` — main dot animation renderer
+  - [x] `splash_draw_dots_faded()` — fade-in/out dot renderer
+  - [x] `splash_timer_callback()` — PIT callback (replaced by spinner_start/stop)
+  - [x] Constants: `NUM_DOTS`, `PULSE_FRAMES`, `ANIM_TICK_DIVISOR`, `PULSE_LEN`, `STAGGER`, `REST_GAP`, `TOTAL_CYCLE`
+  - [x] Variables: `g_dot_min_r`, `g_dot_max_r`, `g_dot_spacing`, `g_dot_y_offset`, `dot_cx`, `dot_cy`, `anim_frame`
+  - [x] Lookup table: `pulse_curve[8]`
+- [x] Delete from `boot_splash.h`: updated all dot-related comments to say "spinner"
+- [x] Commit (with §3.2): `"splash: replace dots with progressive spinner"`
 
 ### 3.2 Wire Up Spinner
 
-- [ ] In `boot_splash_init()`:
-  - [ ] Replace dot geometry calculation with spinner geometry:
-    - [ ] `spinner_radius = arc_ring_size_for_height(scr_h).radius`
-    - [ ] `spinner_stroke = arc_ring_size_for_height(scr_h).stroke`
-  - [ ] Compute spinner center position: same as old `dot_cx, dot_cy`
-  - [ ] Initialize spinner state: `spinner_init(cx, cy, radius, stroke, accent_color)`
-- [ ] In `boot_splash_start_animation()`:
-  - [ ] Register spinner timer callback instead of `splash_timer_callback`
-  - [ ] `pit_register_callback(spinner_tick, SPINNER_TICK_DIVISOR)`
-- [ ] In `boot_splash_finish()`:
-  - [ ] Stop spinner: `pit_unregister_callback()` (same as before)
-  - [ ] Clear spinner area in fade-out frames
-- [ ] Fade-in: render arc at reduced opacity (`spinner_draw_faded(fade_level)`)
-- [ ] Fade-out: render arc at decreasing opacity
-- [ ] Build and test: spinner visible on boot splash, smooth rotation, no flicker
-- [ ] Commit: `"splash: replace dots with progressive spinner"`
+- [x] In `boot_splash_init()`:
+  - [x] Replace dot geometry with spinner geometry via `arc_ring_size_for_height(scr_h)`
+  - [x] Compute spinner center position: `spinner_cx = scr_w / 2`, `spinner_cy = icon_y + icon_size + g_spinner_y_offset`
+  - [x] Initialize spinner: `spinner_init(cx, cy, ring.radius, ring.stroke, SPINNER_ACCENT_COLOR)`
+- [x] In `boot_splash_start_animation()`:
+  - [x] Call `spinner_start()` instead of `pit_register_callback(splash_timer_callback, ...)`
+- [x] In `boot_splash_finish()`:
+  - [x] Call `spinner_stop()` instead of `pit_unregister_callback()`
+  - [x] Fade-out uses `spinner_draw_faded(fade_out[fi])`
+- [x] Fade-in: `spinner_draw_faded(fade_levels[fi])` in the 5-frame sequence
+- [x] Fade-out: `spinner_draw_faded(fade_out[fi])` at decreasing opacity
+- [x] Build and test: QEMU boots through splash without crash or flicker
+- [x] Commit: `"splash: replace dots with progressive spinner"`
 
 ### 3.3 Update Boot Splash Sizing Reference
 
-- [ ] Update `TODO-010-Bootloader.md` sizing reference table:
-  - [ ] Replace "Dot r min/max" column with "Ring radius/stroke"
-  - [ ] Update values per resolution tier
-- [ ] Update `boot_splash.c` header comment (remove dot references)
-- [ ] Log line: update `[SPLASH] ... dot_r=` to `ring_r=`
-- [ ] Commit (with §3.2): `"splash: replace dots with progressive spinner"`
+- [x] Update `TODO-010-Bootloader.md` sizing reference table:
+  - [x] Replace "Dot r min/max" column with "Ring r/stroke"
+  - [x] Update values per resolution tier to match `arc_ring_size_for_height()`
+- [x] Update `boot_splash.c` header comment — now says "Progressive arc spinner"
+- [x] Log line: `ring_r=%d  ring_s=%d` instead of `dot_r=%d/%d`
+- [x] Update `boot_splash.h` comments — "spinner" not "dots"
+- [x] Commit (with §3.2): `"splash: replace dots with progressive spinner"`
 
 ---
 

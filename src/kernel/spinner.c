@@ -2,14 +2,15 @@
  * spinner.c — Progressive arc-ring spinner (breathing animation engine)
  *
  * Windows 11-style Fluent 2 spinner: a dynamic arc that rotates while its
- * sweep angle oscillates.  Animation is driven by PIT timer callbacks.
+ * length oscillates.  Animation is driven by PIT timer callbacks.
  *
- * Two simultaneous motions:
- *   1. Rotation — the arc rotates around the ring center
- *   2. Sweep oscillation — the arc length breathes (grows and shrinks)
+ * Two concurrent behaviors (per Fluent Design spec):
+ *   1. Continuous base rotation at constant speed (100°/s)
+ *   2. Expand/contract cycle: head extends, then tail catches up
  *
- * Both motions use eased timing (quarter-sine LUT) for organic feel.
- * All math is integer-only — no FPU/SSE.
+ * Easing uses the Smoothstep polynomial (3x² - 2x³), which is the exact
+ * closed-form simplification of the Fluent EasyEase cubic-bezier
+ * (0.33, 0.0, 0.67, 1.0).  All math is integer-only — no FPU/SSE.
  *
  * Part of the Progressive Spinner component (TODO-010.97 §2).
  * ============================================================================ */
@@ -18,15 +19,26 @@
 #include "kernel/gfx/arc_ring.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/drivers/pit.h"
-#include "gfx/ease_lut.h"
 
-/* ---- Animation parameters ---- */
+/* ---- Animation timing ---- */
 
-#define SPINNER_TICK_DIVISOR  5  /* PIT at 100Hz / 5 = 20 fps */
-#define SPINNER_ROT_FRAMES   36 /* frames per full rotation (1.8s @ 20fps) */
-#define SPINNER_SWEEP_FRAMES 30 /* frames per sweep oscillation (1.5s @ 20fps) */
-#define SPINNER_SWEEP_MIN    20 /* min arc sweep (out of 256 ≈ 28°) */
-#define SPINNER_SWEEP_MAX    192 /* max arc sweep (out of 256 ≈ 270°) */
+#define SPINNER_TICK_DIVISOR  10  /* PIT at 100Hz / 10 = 10 fps */
+#define SPINNER_CYCLE_FRAMES 20  /* frames per cycle (2.0s @ 10fps) */
+#define SPINNER_HALF_CYCLE   10  /* expand phase = contract phase */
+
+/* Arc sweep limits (in 0–255 angle units, mapping to 0–360°) */
+#define SPINNER_MIN_SWEEP    11  /* ~15° — forms a dot with rounded tips */
+#define SPINNER_MAX_SWEEP    192 /* ~270° — 3/4 of a circle */
+#define SPINNER_DELTA        (SPINNER_MAX_SWEEP - SPINNER_MIN_SWEEP) /* 181 */
+
+/* Start at 12 o'clock: -90° = 192 in uint8 (256 * 270/360) */
+#define SPINNER_START_OFFSET 192
+
+/* Base rotation speed: 100°/s at 10fps = 10°/frame.
+ * In 256-step units: 10 × 256/360 ≈ 7.11/frame.
+ * Integer approx: frame × 64 / 9 ≈ 7.11/frame. */
+#define SPINNER_ROT_NUMER    64
+#define SPINNER_ROT_DENOM    9
 
 /* ---- State ---- */
 
@@ -37,33 +49,72 @@ static int32_t  s_radius;            /* outer radius (scaled) */
 static int32_t  s_stroke;            /* ring thickness (scaled) */
 static uint32_t s_color;             /* accent color (0x00RRGGBB) */
 
-/* ---- Frame computation ---- */
+/* ---- Smoothstep easing ----
+ *
+ * f(x) = 3x² - 2x³  (Hermite interpolation)
+ * Equivalent to Fluent EasyEase cubic-bezier(0.33, 0, 0.67, 1).
+ *
+ * Input:  x in [0, 256] (0.0 to 1.0 in fixed-point)
+ * Output: f in [0, 256] (0.0 to 1.0 in fixed-point) */
+static uint32_t smoothstep256(uint32_t x)
+{
+    if (x >= 256) return 256;
+    /* x² max = 65536, x³ max = 16777216 — fits uint32_t */
+    uint32_t x2 = x * x;
+    uint32_t x3 = x2 * x;
+    return (3 * x2 / 256) - (2 * x3 / 65536);
+}
 
-/* Compute rotation angle and sweep for the current frame.
- * Returns start angle and sweep as 0–255 values. */
+/* ---- Frame computation ----
+ *
+ * Direct translation of the Fluent Design ProgressRing algorithm:
+ *   cycle_offset = completed_cycles × delta  (cumulative, wrapping)
+ *   Phase 1 (expand):  tail = cycle_offset, head eases forward
+ *   Phase 2 (contract): head = cycle_offset + max, tail eases to catch up
+ *   continuous_rotation = frame × 100°/s  (always clockwise)
+ *   final angles = phase angles + rotation + start_offset(-90°) */
 static void spinner_compute_frame(uint32_t frame,
                                   uint8_t *out_start, uint8_t *out_sweep)
 {
-    /* Rotation: linear sweep through 0–255, but at a non-constant rate.
-     * The rotation leads the sweep by having a slightly different period. */
-    uint32_t rot = (frame * 256 / SPINNER_ROT_FRAMES) & 0xFF;
+    /* Cycle and phase within cycle */
+    uint32_t cycle = frame / SPINNER_CYCLE_FRAMES;
+    uint32_t phase = frame % SPINNER_CYCLE_FRAMES;
 
-    /* Sweep oscillation: phase goes 0→127→0→127... in SWEEP_FRAMES period.
-     * We fold the phase into 0–63 and mirror for the second half. */
-    uint32_t sweep_phase = (frame * 128 / SPINNER_SWEEP_FRAMES) % 128;
-    uint32_t ease_idx;
-    if (sweep_phase < 64)
-        ease_idx = sweep_phase;
-    else
-        ease_idx = 127 - sweep_phase;
+    /* Cumulative offset from completed cycles (wraps via & 0xFF) */
+    uint32_t cycle_offset = cycle * SPINNER_DELTA;
 
-    uint32_t eased = (uint32_t)ease_lut[ease_idx];
+    uint32_t tail, head;
 
-    /* Map eased value to sweep range */
-    uint32_t sweep = SPINNER_SWEEP_MIN
-                   + (SPINNER_SWEEP_MAX - SPINNER_SWEEP_MIN) * eased / 255;
+    if (phase < SPINNER_HALF_CYCLE) {
+        /* Expanding: tail anchored, head eases forward */
+        uint32_t progress = phase * 256 / SPINNER_HALF_CYCLE;
+        uint32_t ease = smoothstep256(progress);
 
-    *out_start = (uint8_t)rot;
+        tail = cycle_offset;
+        head = cycle_offset + SPINNER_MIN_SWEEP
+             + SPINNER_DELTA * ease / 256;
+    } else {
+        /* Contracting: head anchored, tail eases forward to catch up */
+        uint32_t p = phase - SPINNER_HALF_CYCLE;
+        uint32_t progress = p * 256 / SPINNER_HALF_CYCLE;
+        uint32_t ease = smoothstep256(progress);
+
+        tail = cycle_offset + SPINNER_DELTA * ease / 256;
+        head = cycle_offset + SPINNER_MAX_SWEEP;
+    }
+
+    /* Continuous base rotation (100°/s, independent of cycle) */
+    uint32_t rotation = frame * SPINNER_ROT_NUMER / SPINNER_ROT_DENOM;
+
+    /* Apply rotation and 12-o'clock offset */
+    tail = (tail + rotation + SPINNER_START_OFFSET) & 0xFF;
+    head = (head + rotation + SPINNER_START_OFFSET) & 0xFF;
+
+    /* Sweep = angular distance from tail to head (unsigned wrap) */
+    uint32_t sweep = (head - tail) & 0xFF;
+    if (sweep < SPINNER_MIN_SWEEP) sweep = SPINNER_MIN_SWEEP;
+
+    *out_start = (uint8_t)tail;
     *out_sweep = (uint8_t)sweep;
 }
 

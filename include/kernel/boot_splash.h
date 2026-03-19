@@ -1,7 +1,7 @@
 /* ============================================================================
  * boot_splash.h — Persistent boot splash screen (Windows 11-style)
  *
- * Shows centered icon + animated horizontal dots + status text
+ * Shows centered icon + progressive arc spinner + status text
  * on a black background. Persists from fb_init() until desktop_init().
  * ============================================================================ */
 
@@ -11,15 +11,15 @@
  * Call immediately after fb_init(). */
 void boot_splash_init(void);
 
-/* Start the timer-driven dot animation.
+/* Start the timer-driven spinner animation.
  * Call after pit_init() + sti (needs PIT interrupts running). */
 void boot_splash_start_animation(void);
 
-/* Update the status message below the dots.
+/* Update the status message below the spinner.
  * The previous message is cleared and the new one is drawn. */
 void boot_splash_status(const char *msg);
 
-/* Advance the dot animation by one frame and redraw.
+/* Advance the animation by one frame and redraw.
  * Call periodically during kernel init (e.g., every subsystem init). */
 void boot_splash_tick(void);
 

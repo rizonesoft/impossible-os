@@ -70,31 +70,31 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| Phase | TODO File                            | Sections                    | What It Delivers                                                     | Depends On             | Status |
-| :---: | ------------------------------------ | --------------------------- | -------------------------------------------------------------------- | ---------------------- | :----: |
-| **1** | `TODO-010-Bootloader.md`             | §7.1 Boot Config File       | `boot.conf` parser — enables debug/verbose flags                     | —                      |   ✅   |
-| **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI enhancements (feeds into boot.conf)                             | —                      |   ⬜   |
-| **2** | `TODO-010.99-APIC-First-Boot.md`     | §1–3 (P0+P1)                | ACPI → LAPIC → IOAPIC before PIT; conditional PIC                    | —                      |   ⬜   |
-| **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                     | —                      |   ⬜   |
-| **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                            | Phase 2 (§1.1)         |   ⬜   |
-| **3** | `TODO-005-Debug.md`                  | §2.1–2.2 Debug Mode         | Debug/verbose mode via `boot.conf`                                   | Phase 1 (§7.1)         |   ⬜   |
-| **3** | `TODO-010.99-APIC-First-Boot.md`     | §4 Dynamic IRQ API          | `irq_register()` — foundation for MSI & VMBus                        | Phase 2 (§1–3)         |   ⬜   |
-| **3** | `TODO-010.99-APIC-First-Boot.md`     | §5 Full IDT Coverage        | All 256 IDT entries + Hyper-V VMBus ISRs                             | Phase 3 (§4)           |   ⬜   |
-| **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §1–2 Core API + POST codes  | `boot_progress()` API + hex POST code display                        | Phase 2 (APIC)         |   ⬜   |
-| **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §7 UEFI POST codes          | Hex codes in bootloader before kernel starts                         | Phase 1 (UEFI)         |   ⬜   |
-| **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §3 Debug Bar Waterfall      | Color-coded verbose boot mode                                        | Phase 3 (§2.1) + Ph 4  |   ⬜   |
-| **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §4 Panic Forensics + QR     | Progress bars + QR code on BSOD                                      | Phase 4 (§1)           |   ⬜   |
-| **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                 | Phase 4 (§1)           |   ⬜   |
-| **5** | `TODO-005-Debug.md`                  | §4.1 Crash Screenshot ⭐    | BMP framebuffer capture on panic → `B:\Crash_*.bmp`                  | Phase 2 (§1) + Ph 5    |   ⬜   |
-| **6** | `TODO-010.99-APIC-First-Boot.md`     | §6–7 Timer + Boot Viz       | Timer source hierarchy + Gantt chart                                 | Phase 3 (§4) + Ph 4    |   ⬜   |
-| **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) ⭐ | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint              | Phase 2 (§1)           |   ⬜   |
-| **6** | `TODO-005-Debug.md`                  | §6 Log Quality              | Timestamps, memory watermarks, subsystem filtering                   | Phase 2 (§1)           |   ⬜   |
-| **6** | `TODO-010.99-APIC-First-Boot.md`     | §9 SMP Adjustment           | Verify AP boot with early LAPIC                                      | Phase 2 (§1–3)         |   ⬜   |
-| **7** | `TODO-010.98-Kernel-Heartbeat.md`    | §5–6 Vital Signs + Blink    | Runtime 1px strip, alive pixel, developer HUD                        | Phase 4 (§1)           |   ⬜   |
-| **7** | `TODO-005-Debug.md`                  | §7 Cleanup                  | Remove DEBUG file, grub.cfg, stale serial.log                        | Phase 3 (§2.1)         |   ⬜   |
-| **7** | `TODO-005-Debug.md`                  | §1.5 Partition Hiding       | Hide B: from file manager (like Windows hides EFI)                   | Phase 2 (§1)           |   ⬜   |
-| **7** | `TODO-005-Debug.md`                  | §4.2–4.3 Timeline + Regr ⭐ | Event timeline ring buffer + boot regression detection               | Phase 4 (§1) + Ph 6    |   ⬜   |
-| —     | `TODO-063.09-APIC-Architecture.md`   | Full APIC subsystem         | x2APIC, LVT, MSI, NMI — informs but not blocked                      | Phase 3 (§4)           |   ⬜   |
+| ⭐ | Phase | TODO File                            | Sections                    | What It Delivers                                                     | Depends On             | Status |
+| -- | :---: | ------------------------------------ | --------------------------- | -------------------------------------------------------------------- | ---------------------- | :----: |
+| 💎 | **1** | `TODO-010-Bootloader.md`             | §7.1 Boot Config File       | `boot.conf` parser — enables debug/verbose flags                     | —                      |   ✅   |
+| 💎 | **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI enhancements (feeds into boot.conf)                             | —                      |   ⬜   |
+| 💎 | **2** | `TODO-010.99-APIC-First-Boot.md`     | §1–3 (P0+P1)                | ACPI → LAPIC → IOAPIC before PIT; conditional PIC                    | —                      |   ⬜   |
+| 💎 | **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                     | —                      |   ⬜   |
+| 💎 | **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                            | Phase 2 (§1.1)         |   ⬜   |
+| 💎 | **3** | `TODO-005-Debug.md`                  | §2.1–2.2 Debug Mode         | Debug/verbose mode via `boot.conf`                                   | Phase 1 (§7.1)         |   ⬜   |
+| 💎 | **3** | `TODO-010.99-APIC-First-Boot.md`     | §4 Dynamic IRQ API          | `irq_register()` — foundation for MSI & VMBus                        | Phase 2 (§1–3)         |   ⬜   |
+| 💎 | **3** | `TODO-010.99-APIC-First-Boot.md`     | §5 Full IDT Coverage        | All 256 IDT entries + Hyper-V VMBus ISRs                             | Phase 3 (§4)           |   ⬜   |
+| 💎 | **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §1–2 Core API + POST codes  | `boot_progress()` API + hex POST code display                        | Phase 2 (APIC)         |   ⬜   |
+| 💎 | **4** | `TODO-010.98-Kernel-Heartbeat.md`    | §7 UEFI POST codes          | Hex codes in bootloader before kernel starts                         | Phase 1 (UEFI)         |   ⬜   |
+| 💎 | **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §3 Debug Bar Waterfall      | Color-coded verbose boot mode                                        | Phase 3 (§2.1) + Ph 4  |   ⬜   |
+| 💎 | **5** | `TODO-010.98-Kernel-Heartbeat.md`    | §4 Panic Forensics + QR     | Progress bars + QR code on BSOD                                      | Phase 4 (§1)           |   ⬜   |
+| 💎 | **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                 | Phase 4 (§1)           |   ⬜   |
+| ⭐ | **5** | `TODO-005-Debug.md`                  | §4.1 Crash Screenshot    | BMP framebuffer capture on panic → `B:\Crash_*.bmp`                  | Phase 2 (§1) + Ph 5    |   ⬜   |
+| 💎 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §6–7 Timer + Boot Viz       | Timer source hierarchy + Gantt chart                                 | Phase 3 (§4) + Ph 4    |   ⬜   |
+| ⭐ | **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint              | Phase 2 (§1)           |   ⬜   |
+| 💎 | **6** | `TODO-005-Debug.md`                  | §6 Log Quality              | Timestamps, memory watermarks, subsystem filtering                   | Phase 2 (§1)           |   ⬜   |
+| 💎 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §9 SMP Adjustment           | Verify AP boot with early LAPIC                                      | Phase 2 (§1–3)         |   ⬜   |
+| 💎 | **7** | `TODO-010.98-Kernel-Heartbeat.md`    | §5–6 Vital Signs + Blink    | Runtime 1px strip, alive pixel, developer HUD                        | Phase 4 (§1)           |   ⬜   |
+| 💎 | **7** | `TODO-005-Debug.md`                  | §7 Cleanup                  | Remove DEBUG file, grub.cfg, stale serial.log                        | Phase 3 (§2.1)         |   ⬜   |
+| 💎 | **7** | `TODO-005-Debug.md`                  | §1.5 Partition Hiding       | Hide B: from file manager (like Windows hides EFI)                   | Phase 2 (§1)           |   ⬜   |
+| ⭐ | **7** | `TODO-005-Debug.md`                  | §4.2–4.3 Timeline + Regr | Event timeline ring buffer + boot regression detection               | Phase 4 (§1) + Ph 6    |   ⬜   |
+| 💎 | —     | `TODO-063.09-APIC-Architecture.md`   | Full APIC subsystem         | x2APIC, LVT, MSI, NMI — informs but not blocked                      | Phase 3 (§4)           |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path. They unblock everything else.
@@ -558,18 +558,18 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ### Element Sizes by Resolution
 
-| Resolution        | Scale | Logo Array     | Logo Size | Dot r min/max | Font Size |
+| Resolution        | Scale | Logo Array     | Logo Size | Ring r/stroke | Font Size |
 |-------------------|-------|----------------|-----------|---------------|-----------|
-| 1280×720 (720p)   | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 18px      |
-| 1366×768          | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 18px      |
-| 1920×1080 (1080p) | 1×    | `os_logo_128`  | 128×128   | 4px / 7px     | 20px      |
-| 2560×1440 (1440p) | 2×    | `os_logo_192`  | 192×192   | 6px / 10px    | 26px      |
-| 3840×2160 (4K)    | 2×    | `os_logo_256`  | 256×256   | 8px / 14px    | 36px      |
-| 3840×2400 (4K+)   | 3×    | `os_logo_256`  | 256×256   | 8px / 14px    | 36px      |
+| 1280×720 (720p)   | 1×    | `os_logo_128`  | 128×128   | 20px / 3px    | 18px      |
+| 1366×768          | 1×    | `os_logo_128`  | 128×128   | 20px / 3px    | 18px      |
+| 1920×1080 (1080p) | 1×    | `os_logo_128`  | 128×128   | 24px / 3px    | 20px      |
+| 2560×1440 (1440p) | 2×    | `os_logo_192`  | 192×192   | 32px / 4px    | 26px      |
+| 3840×2160 (4K)    | 2×    | `os_logo_256`  | 256×256   | 48px / 5px    | 36px      |
+| 3840×2400 (4K+)   | 3×    | `os_logo_256`  | 256×256   | 48px / 5px    | 36px      |
 
 > [!NOTE]
-> Dot radius formula: `min = icon_size/30`, `max = icon_size/18`. Spacing = `icon_size/5`.
-> These scale continuously with the prebuilt logo size — no fixed-resolution lookup needed.
+> Ring dimensions from `arc_ring_size_for_height()` — fixed tiers per screen height.
+> Replaces the old dot geometry (`min = icon_size/30`, `max = icon_size/18`).
 
 ### Font Size Selection
 
