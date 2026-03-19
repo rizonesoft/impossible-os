@@ -55,6 +55,7 @@ static const struct acpi_fadt *fadt_ptr = (const struct acpi_fadt *)0;
 static uint16_t pm1a_cnt_port = 0;
 static uint16_t slp_typa = 0;       /* S5 sleep type value */
 static uint8_t  acpi_ready = 0;
+static uint8_t  pcat_compat = 1;    /* MADT bit 0: 1=legacy PIC present, 0=APIC-only */
 
 /* ---- SMP discovery state ---- */
 
@@ -233,6 +234,13 @@ static void parse_madt(const struct acpi_madt *madt)
 
     /* Read LAPIC base from MADT header */
     lapic_base_addr = madt->lapic_addr;
+
+    /* Read PCAT_COMPAT flag (bit 0): 1 = dual-8259 PICs installed, 0 = APIC-only */
+    pcat_compat = (madt->flags & 1) ? 1 : 0;
+    klog(LOG_INFO, "acpi",
+         "MADT PCAT_COMPAT=%u%s",
+         (uint64_t)pcat_compat,
+         pcat_compat ? "" : " — PIC absent, APIC-only mode");
 
     /* Get BSP LAPIC ID so we can mark it */
     bsp_lapic_id = read_bsp_lapic_id();
@@ -546,4 +554,9 @@ const struct madt_int_override *acpi_get_override(uint32_t index)
     if (index >= override_count)
         return (const struct madt_int_override *)0;
     return &int_overrides[index];
+}
+
+uint8_t acpi_pcat_compat(void)
+{
+    return pcat_compat;
 }

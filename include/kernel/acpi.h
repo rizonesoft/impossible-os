@@ -212,3 +212,7 @@ uint32_t acpi_get_override_count(void);
 
 /* Get an interrupt source override by index. Returns NULL if invalid. */
 const struct madt_int_override *acpi_get_override(uint32_t index);
+
+/* Returns 1 if MADT reports dual-8259 legacy PICs (PCAT_COMPAT=1).
+ * Returns 0 for APIC-only platforms (Hyper-V Gen 2, hardware-reduced ACPI). */
+uint8_t acpi_pcat_compat(void);

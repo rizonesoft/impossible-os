@@ -413,7 +413,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
     boot_splash_status("Setting up interrupts...");
     gdt_init();
     idt_init();
-    pic_init();
+    pic_init();   /* Always remap PIC early — PIT needs IRQ0 for boot splash.
+                   * On APIC-only platforms (Hyper-V Gen 2), these writes are
+                   * harmlessly dropped.  pic_disable() is called later when
+                   * LAPIC/IOAPIC takes over (only if PCAT_COMPAT=1). */
     pit_init();
     rtc_init();
     boot_splash_status("Initializing input...");
@@ -540,11 +543,14 @@ void kernel_main(uint64_t magic, uint64_t mbi)
         klog(LOG_INFO, "smp", "CPUs discovered: %u",
              (uint64_t)acpi_get_cpu_count());
 
-        /* Only switch to LAPIC/IOAPIC when SMP is needed (multiple CPUs).
-         * On single-core, the legacy PIC works perfectly and lapic_init()
-         * would break PIC interrupt delivery by changing the CPU's
-         * interrupt path (PIC→LINT0→LAPIC without ExtINT configuration). */
-        if (acpi_get_cpu_count() > 1) {
+        /* Switch to LAPIC/IOAPIC when:
+         *   (a) SMP (cpu_count > 1) — need LAPIC for inter-CPU IPI, or
+         *   (b) APIC-only (PCAT_COMPAT=0) — no PIC exists (Hyper-V Gen 2).
+         *
+         * Single-CPU with PIC (QEMU default) stays on PIT timer to avoid
+         * LAPIC timer frequency issues on TCG emulation. */
+        if ((acpi_get_cpu_count() > 1 || !acpi_pcat_compat()) &&
+            acpi_get_ioapic_base() != 0) {
             boot_splash_status("Initializing LAPIC...");
             lapic_init();
 
@@ -552,9 +558,15 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 ioapic_init();
 
                 if (ioapic_available()) {
-                    pic_disable();
-                    klog(LOG_INFO, "irq",
-                         "Switched to LAPIC/IOAPIC (PIC disabled)");
+                    /* Only touch the PIC if the platform actually has one */
+                    if (acpi_pcat_compat()) {
+                        pic_disable();
+                        klog(LOG_INFO, "irq",
+                             "Switched to LAPIC/IOAPIC (PIC disabled)");
+                    } else {
+                        klog(LOG_INFO, "irq",
+                             "LAPIC/IOAPIC active (APIC-only, no PIC)");
+                    }
 
                     /* Drain ALL stale ISR bits left from the PIC→LAPIC transition.
                      * On real hardware (Acer Aspire V i5) and VBox NEM, stale ISR bits
@@ -571,7 +583,10 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                                 if (isr_val) {
                                     isr_dirty = 1;
                                     if (drain_rounds == 0)
-                                        klog(LOG_DEBUG, "lapic", "ISR[%u]=0x%x (stale)", (uint64_t)ri, (uint64_t)isr_val);
+                                        klog(LOG_DEBUG, "lapic",
+                                             "ISR[%u]=0x%x (stale)",
+                                             (uint64_t)ri,
+                                             (uint64_t)isr_val);
                                 }
                             }
                             if (isr_dirty) {
@@ -592,7 +607,7 @@ void kernel_main(uint64_t magic, uint64_t mbi)
                 smp_init();
             }
         } else {
-            /* Single CPU — init per-CPU data for BSP without touching LAPIC */
+            /* No IOAPIC — single CPU with PIC routing only */
             smp_init();
         }
     }

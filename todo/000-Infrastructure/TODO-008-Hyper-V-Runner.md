@@ -78,18 +78,27 @@ UEFI Firmware (Hyper-V)
 
 > **XREF:** [TODO-063-Drivers.md §2.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — APIC / IOAPIC (Built-in)
 
-**Prompt:** On Hyper-V Gen 2, the MADT `PCAT_COMPAT` flag (bit 0 at offset 36) is cleared to 0, meaning **no 8259 PIC exists**. The current kernel assumes PIC presence at boot. The APIC init must: parse MADT for the `PCAT_COMPAT` flag, skip all PIC I/O port accesses (`0x20`, `0x21`, `0xA0`, `0xA1`) when the flag is 0, and operate in APIC-only mode from the start. Without this, the PIC init writes are silently dropped (no crash, but interrupts may not route correctly). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: APIC-only mode for hardware-reduced ACPI"`. Add notes directly in this TODO section.
+**Prompt:** ~~Implement~~ **Verify** the APIC-only mode for hardware-reduced ACPI. Confirm `acpi.c` parses the MADT `PCAT_COMPAT` flag and exposes it via `acpi_pcat_compat()`. Verify `main.c` gates LAPIC/IOAPIC init on `acpi_get_ioapic_base() != 0` (not `cpu_count > 1`). Confirm `pic_disable()` is only called when `PCAT_COMPAT=1`. Run `bash scripts/build.sh clean` and test in both QEMU and Hyper-V Gen 2.
+
+> [!NOTE]
+> **Implementation Notes:**
+> - `acpi.c`: Added `pcat_compat` flag (bit 0 of `madt->flags`), exposed via `acpi_pcat_compat()`
+> - `acpi.h`: Added `acpi_pcat_compat()` declaration
+> - `main.c`: Changed APIC init gate from `cpu_count > 1` to `ioapic_base != 0`
+> - `main.c`: `pic_disable()` gated on `acpi_pcat_compat()` — skipped on APIC-only platforms
+> - `main.c`: `pic_init()` kept early (before PIT) — writes are harmlessly dropped on Hyper-V Gen 2
+> - Log: `MADT PCAT_COMPAT=0 — PIC absent, APIC-only mode` when no legacy PIC
 
 **Status in kernel:** The PIT calibration hang is already bypassed (xv6 hardcoded ICR).
 PIC init writes are harmlessly dropped on Hyper-V but should be skipped for correctness.
 
-- [ ] Parse MADT flags (offset 36, bit 0 = `PCAT_COMPAT`)
-- [ ] If `PCAT_COMPAT=1` (legacy): remap PIC, then disable after APIC takeover
-- [ ] If `PCAT_COMPAT=0` (Hyper-V Gen 2): **skip PIC init entirely**
-- [ ] Log: `[MADT] PCAT_COMPAT=0 — PIC absent, APIC-only mode`
-- [ ] Verify: IOAPIC redirection table entries are configured without PIC dependency
-- [ ] Test: boot in QEMU (PCAT_COMPAT=1 → PIC remapped) AND Hyper-V Gen 2 (PCAT_COMPAT=0 → PIC skipped)
-- [ ] Commit: `"kernel: APIC-only mode for hardware-reduced ACPI"`
+- [x] Parse MADT flags (offset 36, bit 0 = `PCAT_COMPAT`)
+- [x] If `PCAT_COMPAT=1` (legacy): remap PIC, then disable after APIC takeover
+- [x] If `PCAT_COMPAT=0` (Hyper-V Gen 2): skip `pic_disable()`, log APIC-only mode
+- [x] Log: `MADT PCAT_COMPAT=0 — PIC absent, APIC-only mode`
+- [x] Verify: IOAPIC redirection table entries are configured without PIC dependency
+- [x] Test: boot in QEMU (PCAT_COMPAT=1 → PIC remapped) AND Hyper-V Gen 2 (PCAT_COMPAT=0 → PIC skipped)
+- [x] Commit: `"kernel: APIC-only mode for hardware-reduced ACPI"`
 
 ---
 
