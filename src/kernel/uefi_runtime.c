@@ -770,3 +770,136 @@ const struct secureboot_db_info *secureboot_get_db_info(void)
 {
     return &s_db_info;
 }
+
+/* ============================================================================
+ * Crypto Agility (§5.3 — UEFI 2.10)
+ *
+ * Reads the CryptoIndication variables to determine firmware algorithm
+ * capabilities and active negotiated set.  These variables enable OS-driven
+ * algorithm upgrades (e.g., SHA-256 → SHA-384) without firmware reflash.
+ *
+ * Variable names (all under EFI_GLOBAL_VARIABLE GUID):
+ *   "CryptoIndicationsSupported" — firmware lists everything it can do
+ *   "CryptoIndications"          — OS writes what it wants for next boot
+ *   "CryptoIndicationsActivated" — firmware confirms what's active now
+ *
+ * OVMF/EDK2 does not currently implement these (UEFI 2.10 is new), so
+ * this will gracefully report "not available" on most test platforms.
+ * ============================================================================ */
+
+static struct crypto_agility_info s_crypto_info;
+
+/* Read a uint32_t UEFI variable by UCS-2 name (global GUID). */
+static uint32_t read_crypto_var(const uint16_t *name)
+{
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint32_t attrs = 0;
+    uint32_t val = 0;
+    uint64_t sz = sizeof(val);
+    efi_status_t status = uefi_get_variable(
+        &global, name, &attrs, &sz, &val);
+    if (status != UEFI_SUCCESS) return 0;
+    return val;
+}
+
+/* Append algorithm name to buffer if bitmask bit is set. */
+static int append_algo(char *buf, int pos, int max,
+                       uint32_t mask, uint32_t bit, const char *name)
+{
+    if (!(mask & bit)) return pos;
+    if (pos > 0 && pos < max - 1)
+        buf[pos++] = '+';
+    int i = 0;
+    while (name[i] && pos < max - 1)
+        buf[pos++] = name[i++];
+    buf[pos] = '\0';
+    return pos;
+}
+
+void uefi_crypto_agility_init(void)
+{
+    uint32_t i;
+    uint8_t *p = (uint8_t *)&s_crypto_info;
+    for (i = 0; i < (uint32_t)sizeof(s_crypto_info); i++)
+        p[i] = 0;
+
+    if (!s_available) return;
+
+    /* Read CryptoIndicationsSupported (firmware-owned) */
+    static const uint16_t name_sup[] = {
+        'C','r','y','p','t','o','I','n','d','i','c','a','t','i','o','n','s',
+        'S','u','p','p','o','r','t','e','d', 0 };
+    s_crypto_info.supported = read_crypto_var(name_sup);
+
+    /* If firmware doesn't support CryptoIndications, skip the rest */
+    if (s_crypto_info.supported == 0) {
+        klog(LOG_INFO, "UEFI",
+             "Crypto agility: not available "
+             "(firmware lacks UEFI 2.10 CryptoIndications)");
+        return;
+    }
+
+    s_crypto_info.available = 1;
+
+    /* Read CryptoIndications (OS-owned — what we previously requested) */
+    static const uint16_t name_req[] = {
+        'C','r','y','p','t','o','I','n','d','i','c','a','t','i','o','n','s',
+        0 };
+    s_crypto_info.requested = read_crypto_var(name_req);
+
+    /* Read CryptoIndicationsActivated (firmware-owned — what's active now) */
+    static const uint16_t name_act[] = {
+        'C','r','y','p','t','o','I','n','d','i','c','a','t','i','o','n','s',
+        'A','c','t','i','v','a','t','e','d', 0 };
+    s_crypto_info.activated = read_crypto_var(name_act);
+
+    /* Log what's active */
+    char active_str[64];
+    int pos = 0;
+    active_str[0] = '\0';
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_RSA_4096_SHA512, "RSA-4096");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_RSA_3072_SHA384, "RSA-3072");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_ECDSA_P384, "ECDSA-P384");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_ECDSA_P256, "ECDSA-P256");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_RSA_2048_SHA256, "RSA-2048");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_SHA384, "SHA-384");
+    pos = append_algo(active_str, pos, 64,
+                      s_crypto_info.activated,
+                      CRYPTO_IND_SHA256, "SHA-256");
+    (void)pos;
+
+    if (active_str[0] != '\0') {
+        klog(LOG_INFO, "UEFI",
+             "Crypto agility: active [%s], %u supported, %u requested",
+             active_str,
+             s_crypto_info.supported,
+             s_crypto_info.requested);
+    } else {
+        klog(LOG_INFO, "UEFI",
+             "Crypto agility: supported=0x%x, none activated yet",
+             s_crypto_info.supported);
+    }
+
+    /* TODO: When crypto policy engine is built, implement:
+     *   1. Analyze supported bitmask to find strongest common set
+     *   2. Write CryptoIndications to request upgrade (e.g., SHA-384 + RSA-3072)
+     *   3. On next boot, firmware reads our request and activates it
+     *   4. Check CryptoIndicationsActivated to confirm upgrade took effect */
+}
+
+const struct crypto_agility_info *uefi_crypto_agility_info(void)
+{
+    return &s_crypto_info;
+}

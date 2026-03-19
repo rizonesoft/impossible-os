@@ -242,3 +242,52 @@ void secureboot_keys_init(void);
 
 /* Returns parsed database summary (valid after secureboot_keys_init). */
 const struct secureboot_db_info *secureboot_get_db_info(void);
+
+/* ---- Crypto Agility API (§5.3 — UEFI 2.10) ----
+ *
+ * UEFI 2.10 introduces three variables for dynamic algorithm negotiation:
+ *   - CryptoIndicationsSupported (firmware-owned): bitmask of all algorithms
+ *     the firmware can use for Secure Boot signature verification.
+ *   - CryptoIndications (OS-owned): bitmask the OS writes to request
+ *     specific algorithms for next boot. Enables algorithm upgrade
+ *     without firmware reflash.
+ *   - CryptoIndicationsActivated (firmware-owned): bitmask of algorithms
+ *     actually active for this boot. Firmware confirms what it's using.
+ *
+ * Critical for the 2026 Microsoft Secure Boot certificate rollover:
+ * - Current: SHA-256 + RSA-2048 (PKCS#1 v1.5)
+ * - 2026+:   SHA-384 + RSA-3072/4096 or ECDSA P-384
+ *
+ * STATUS: Reader implementation. Writes to CryptoIndications deferred
+ * until crypto policy engine is built.
+ * ---- */
+
+/* EFI_CRYPTO_INDICATION bitmask values (UEFI 2.10 §32.4.3) */
+#define CRYPTO_IND_RSA_2048_SHA256   (1U << 0)  /* RSA-2048, PKCS#1 v1.5 */
+#define CRYPTO_IND_RSA_3072_SHA384   (1U << 1)  /* RSA-3072, PKCS#1 v1.5 */
+#define CRYPTO_IND_RSA_4096_SHA512   (1U << 2)  /* RSA-4096, PKCS#1 v1.5 */
+#define CRYPTO_IND_RSA_2048_PSS      (1U << 3)  /* RSA-2048, PSS */
+#define CRYPTO_IND_RSA_3072_PSS      (1U << 4)  /* RSA-3072, PSS */
+#define CRYPTO_IND_RSA_4096_PSS      (1U << 5)  /* RSA-4096, PSS */
+#define CRYPTO_IND_ECDSA_P256        (1U << 6)  /* ECDSA P-256, SHA-256 */
+#define CRYPTO_IND_ECDSA_P384        (1U << 7)  /* ECDSA P-384, SHA-384 */
+#define CRYPTO_IND_SHA256            (1U << 8)  /* SHA-256 hash */
+#define CRYPTO_IND_SHA384            (1U << 9)  /* SHA-384 hash */
+#define CRYPTO_IND_SHA512            (1U << 10) /* SHA-512 hash */
+
+/* Parsed crypto agility state */
+struct crypto_agility_info {
+    uint32_t supported;     /* firmware-supported algorithms (bitmask) */
+    uint32_t requested;     /* OS-requested algorithms (bitmask) */
+    uint32_t activated;     /* currently active algorithms (bitmask) */
+    uint8_t  available;     /* 1 if firmware supports CryptoIndications */
+    uint8_t  pad[3];
+};
+
+/* Initialize crypto agility — read all three CryptoIndication variables.
+ * Must be called after uefi_runtime_init(). Graceful if firmware lacks
+ * UEFI 2.10 support (available=0). */
+void uefi_crypto_agility_init(void);
+
+/* Returns parsed crypto agility state. */
+const struct crypto_agility_info *uefi_crypto_agility_info(void);

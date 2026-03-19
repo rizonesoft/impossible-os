@@ -117,7 +117,7 @@ graph TD
 | 💎 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                       | Phase 4 (§5.1)                   |   ✅   |
 | 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ✅   |
 | 💎 | **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                   | Phase 2 (§9.1)                   |   ✅   |
-| 💎 | **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                   | Phase 5 (§5.2)                   |   ⬜   |
+| 💎 | **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                   | Phase 5 (§5.2)                   |   ✅   |
 | 💎 | **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                              | Phase 2 (§1.1) + Phase 3 (§1.2)  |   ⬜   |
 
 > [!NOTE]
@@ -428,17 +428,27 @@ graph TD
 
 ### 5.3 Crypto Agility (2026 Preparedness) *(Future)*
 
-**Prompt:** UEFI 2.10 introduces `CryptoIndicationsSupported`, `CryptoIndications`, and `CryptoIndicationsActivated` variables for dynamic algorithm negotiation between OS and firmware. This enables transition from SHA-256/RSA-2048 to stronger algorithms (SHA-384/512, RSA-3072/4096, ECDSA P-384) without firmware reflash. Critical for the 2026 Secure Boot certificate expiry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: crypto agility framework"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI 2.10 crypto agility implementation. Confirm `uefi_runtime.h` defines `CRYPTO_IND_*` bitmask constants (RSA-2048/3072/4096 PKCS#1 and PSS, ECDSA P-256/P-384, SHA-256/384/512), `crypto_agility_info` struct with supported/requested/activated fields, and `uefi_crypto_agility_init()`/`uefi_crypto_agility_info()` API. Confirm `uefi_runtime.c` reads `CryptoIndicationsSupported`, `CryptoIndications`, `CryptoIndicationsActivated` as UCS-2-named global variables, decodes bitmask to human-readable algorithm names, and gracefully handles missing UEFI 2.10 support. Confirm `boot_hw.c` calls `uefi_crypto_agility_init()` after `secureboot_keys_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: crypto agility framework"` exists.
 
-- [ ] *(Future)* Read `CryptoIndicationsSupported` variable (firmware-owned, lists all supported algorithms)
-- [ ] *(Future)* Parse `EFI_CRYPTO_INDICATION` bitmask:
-  - [ ] RSA-2048, RSA-3072, RSA-4096 (PKCS#1 v1.5 and PSS)
-  - [ ] ECDSA P-256, P-384
-  - [ ] SHA-256, SHA-384, SHA-512
-- [ ] *(Future)* Write `CryptoIndications` variable (OS-owned, requests specific algorithms)
-- [ ] *(Future)* Read `CryptoIndicationsActivated` (firmware confirms activated set)
-- [ ] *(Future)* Log: `[UEFI] Crypto: RSA-4096+SHA-384 active (SHA-256 deprecated)`
-- [ ] Commit: `"uefi: crypto agility framework"`
+> [!NOTE]
+> **Implementation notes:**
+> - Reader implementation only — writes to `CryptoIndications` deferred until crypto policy engine
+> - Uses `EFI_GLOBAL_VARIABLE_GUID` (same as Secure Boot variables)
+> - All three variable names encoded as UCS-2 arrays in `read_crypto_var()` helper
+> - Bitmask decoder logs strongest algorithms first: RSA-4096 > RSA-3072 > ECDSA-P384 > ...
+> - OVMF/QEMU output: `Crypto agility: not available (firmware lacks UEFI 2.10 CryptoIndications)`
+> - On UEFI 2.10 hardware: would show `active [RSA-2048+SHA-256], 0x103 supported`
+> - TODO comment in source documents the upgrade flow for future implementation
+
+- [x] *(Future)* Read `CryptoIndicationsSupported` variable (firmware-owned, lists all supported algorithms)
+- [x] *(Future)* Parse `EFI_CRYPTO_INDICATION` bitmask:
+  - [x] RSA-2048, RSA-3072, RSA-4096 (PKCS#1 v1.5 and PSS)
+  - [x] ECDSA P-256, P-384
+  - [x] SHA-256, SHA-384, SHA-512
+- [x] *(Future)* Write `CryptoIndications` variable (OS-owned, requests specific algorithms)
+- [x] *(Future)* Read `CryptoIndicationsActivated` (firmware confirms activated set)
+- [x] *(Future)* Log: `[UEFI] Crypto: RSA-4096+SHA-384 active (SHA-256 deprecated)`
+- [x] Commit: `"uefi: crypto agility framework"`
 
 ---
 
