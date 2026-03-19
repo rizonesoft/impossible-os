@@ -624,3 +624,149 @@ int uefi_secureboot_enabled(void)  { return s_sb_enabled; }
 int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
 int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
 int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }
+
+/* ============================================================================
+ * Secure Boot Key Management (§5.2)
+ *
+ * Reads and parses db/dbx/dbt signature databases.
+ * Walking EFI_SIGNATURE_LIST chains to enumerate trust entries.
+ * Authenticated writes (dbx update) deferred until crypto stack available.
+ * ============================================================================ */
+
+static struct secureboot_db_info s_db_info;
+
+/* GUID comparison helper (reuse from uefi_config.c pattern) */
+static int sb_guid_equal(const struct boot_uefi_guid *a,
+                         const struct boot_uefi_guid *b)
+{
+    const uint8_t *pa = (const uint8_t *)a;
+    const uint8_t *pb = (const uint8_t *)b;
+    uint32_t i;
+    for (i = 0; i < 16; i++)
+        if (pa[i] != pb[i]) return 0;
+    return 1;
+}
+
+/* Walk an EFI_SIGNATURE_LIST chain in a buffer, counting entries by type. */
+static void count_sig_entries(const uint8_t *buf, uint64_t buf_sz,
+                              uint32_t *total,
+                              uint32_t *sha256_count,
+                              uint32_t *x509_count)
+{
+    struct boot_uefi_guid sha256_type = EFI_CERT_SHA256_GUID;
+    struct boot_uefi_guid x509_type   = EFI_CERT_X509_GUID;
+
+    *total = 0;
+    *sha256_count = 0;
+    *x509_count = 0;
+
+    uint64_t offset = 0;
+    while (offset + sizeof(struct efi_signature_list) <= buf_sz) {
+        const struct efi_signature_list *sl =
+            (const struct efi_signature_list *)(buf + offset);
+
+        if (sl->signature_list_size == 0) break;
+        if (offset + sl->signature_list_size > buf_sz) break;
+
+        /* Count entries in this list */
+        uint32_t data_size = sl->signature_list_size -
+            (uint32_t)sizeof(struct efi_signature_list) -
+            sl->signature_header_size;
+        uint32_t entries = 0;
+        if (sl->signature_size > 0)
+            entries = data_size / sl->signature_size;
+
+        *total += entries;
+
+        if (sb_guid_equal(&sl->signature_type, &sha256_type))
+            *sha256_count += entries;
+        else if (sb_guid_equal(&sl->signature_type, &x509_type))
+            *x509_count += entries;
+
+        offset += sl->signature_list_size;
+    }
+}
+
+/* Read a security database variable and count its entries. */
+static void read_security_db(const uint16_t *name,
+                             uint32_t *total,
+                             uint32_t *sha256_count,
+                             uint32_t *x509_count)
+{
+    struct boot_uefi_guid db_guid = EFI_IMAGE_SECURITY_DATABASE_GUID;
+    uint32_t attrs = 0;
+
+    *total = 0;
+    *sha256_count = 0;
+    *x509_count = 0;
+
+    /* First call with size=0 to get actual size */
+    uint64_t sz = 0;
+    efi_status_t status = uefi_get_variable(
+        &db_guid, name, &attrs, &sz, (void *)0);
+
+    if (status != UEFI_BUFFER_TOO_SMALL || sz == 0)
+        return;  /* Variable doesn't exist or is empty */
+
+    /* Use a static buffer — security DBs are typically 1-4 KB in OVMF,
+     * up to ~32 KB on real hardware with many entries.
+     * We cap at 8 KB to avoid stack overflow. */
+    if (sz > 8192) sz = 8192;
+
+    uint8_t dbuf[8192];
+    status = uefi_get_variable(&db_guid, name, &attrs, &sz, dbuf);
+    if (status != UEFI_SUCCESS)
+        return;
+
+    count_sig_entries(dbuf, sz, total, sha256_count, x509_count);
+}
+
+void secureboot_keys_init(void)
+{
+    uint32_t i;
+    uint8_t *p = (uint8_t *)&s_db_info;
+    for (i = 0; i < (uint32_t)sizeof(s_db_info); i++)
+        p[i] = 0;
+
+    if (!s_available) return;
+
+    /* Read db (Authorized Signature Database) */
+    static const uint16_t db_name[] = { 'd','b', 0 };
+    uint32_t db_sha = 0, db_x509 = 0;
+    read_security_db(db_name, &s_db_info.db_entries, &db_sha, &db_x509);
+    s_db_info.db_sha256_count = db_sha;
+    s_db_info.db_x509_count = db_x509;
+
+    /* Read dbx (Forbidden Signature Database) */
+    static const uint16_t dbx_name[] = { 'd','b','x', 0 };
+    uint32_t dbx_sha = 0, dbx_x509 = 0;
+    read_security_db(dbx_name, &s_db_info.dbx_entries, &dbx_sha, &dbx_x509);
+    s_db_info.dbx_sha256_count = dbx_sha;
+
+    /* Read dbt (Timestamp Database) */
+    static const uint16_t dbt_name[] = { 'd','b','t', 0 };
+    uint32_t dbt_sha = 0, dbt_x509 = 0;
+    read_security_db(dbt_name, &s_db_info.dbt_entries, &dbt_sha, &dbt_x509);
+
+    /* Log summary */
+    klog(LOG_INFO, "UEFI", "Secure Boot db: %u entries "
+         "(%u X.509, %u SHA-256)",
+         s_db_info.db_entries,
+         s_db_info.db_x509_count,
+         s_db_info.db_sha256_count);
+
+    klog(LOG_INFO, "UEFI", "Secure Boot dbx: %u revocations "
+         "(%u SHA-256)",
+         s_db_info.dbx_entries,
+         s_db_info.dbx_sha256_count);
+
+    if (s_db_info.dbt_entries > 0) {
+        klog(LOG_INFO, "UEFI", "Secure Boot dbt: %u timestamp entries",
+             s_db_info.dbt_entries);
+    }
+}
+
+const struct secureboot_db_info *secureboot_get_db_info(void)
+{
+    return &s_db_info;
+}

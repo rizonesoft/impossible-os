@@ -104,6 +104,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3b4: Secure Boot state detection */
     uefi_secureboot_init();
 
+    /* Step 3b5: Secure Boot key enumeration (db/dbx/dbt) */
+    secureboot_keys_init();
+
     /* Step 3c: UEFI conformance profile (Full UEFI vs EBBR) */
     uefi_conformance_init();
 

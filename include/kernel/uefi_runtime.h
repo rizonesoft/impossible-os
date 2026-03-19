@@ -191,3 +191,54 @@ int uefi_secureboot_pk_present(void);
 
 /* Returns 1 if a Key Exchange Key (KEK) is enrolled. */
 int uefi_secureboot_kek_present(void);
+
+/* ---- Secure Boot Key Management API (§5.2) ---- */
+
+/* Security database GUID — used for db, dbx, dbt variables */
+#define EFI_IMAGE_SECURITY_DATABASE_GUID \
+    ((struct boot_uefi_guid){ 0xd719b2cb, 0x3d3a, 0x4596, \
+        { 0xa3, 0xbc, 0xda, 0xd0, 0x0e, 0x67, 0x65, 0x6f } })
+
+/* Signature type GUIDs */
+#define EFI_CERT_SHA256_GUID \
+    ((struct boot_uefi_guid){ 0xc1c41626, 0x504c, 0x4092, \
+        { 0xac, 0xa9, 0x41, 0xf9, 0x36, 0x93, 0x43, 0x28 } })
+
+#define EFI_CERT_X509_GUID \
+    ((struct boot_uefi_guid){ 0xa5c059a1, 0x94e4, 0x4aa7, \
+        { 0x87, 0xb5, 0xab, 0x15, 0x5c, 0x2b, 0xf0, 0x72 } })
+
+#define EFI_CERT_RSA2048_GUID \
+    ((struct boot_uefi_guid){ 0x3c5766e8, 0x269c, 0x4e34, \
+        { 0xaa, 0x14, 0xed, 0x77, 0x6e, 0x85, 0xb3, 0xb6 } })
+
+/* EFI_SIGNATURE_LIST header */
+struct efi_signature_list {
+    struct boot_uefi_guid signature_type;
+    uint32_t signature_list_size;   /* total size including header + data */
+    uint32_t signature_header_size; /* size of optional header (usually 0) */
+    uint32_t signature_size;        /* size of each EFI_SIGNATURE_DATA */
+};
+
+/* EFI_SIGNATURE_DATA (one per entry in a signature list) */
+struct efi_signature_data {
+    struct boot_uefi_guid signature_owner;
+    /* followed by signature_size - 16 bytes of signature data */
+};
+
+/* Parsed Secure Boot database summary */
+struct secureboot_db_info {
+    uint32_t db_entries;    /* trusted certs/hashes in db */
+    uint32_t dbx_entries;   /* revoked certs/hashes in dbx */
+    uint32_t dbt_entries;   /* timestamp entries in dbt */
+    uint32_t db_x509_count; /* X.509 certificates in db */
+    uint32_t db_sha256_count; /* SHA-256 hashes in db */
+    uint32_t dbx_sha256_count; /* SHA-256 hashes in dbx */
+};
+
+/* Initialize Secure Boot key enumeration — read and parse db/dbx/dbt.
+ * Must be called after uefi_secureboot_init(). */
+void secureboot_keys_init(void);
+
+/* Returns parsed database summary (valid after secureboot_keys_init). */
+const struct secureboot_db_info *secureboot_get_db_info(void);
