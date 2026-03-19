@@ -97,6 +97,11 @@ struct boot_rt_mem_entry {
     uint32_t reserved;    /* alignment padding */
 };
 
+/* GOP pixel format constants */
+#define GOP_PIXEL_RGBX   0   /* PixelRedGreenBlueReserved8BitPerColor */
+#define GOP_PIXEL_BGRX   1   /* PixelBlueGreenRedReserved8BitPerColor */
+#define GOP_PIXEL_BITMASK 2  /* PixelBitMask (custom channel masks) */
+
 /* Framebuffer information from the bootloader */
 struct boot_framebuffer {
     uintptr_t addr;         /* physical address */
@@ -105,6 +110,19 @@ struct boot_framebuffer {
     uint32_t height;        /* pixels */
     uint8_t  bpp;           /* bits per pixel */
     uint8_t  type;          /* 0=indexed, 1=RGB, 2=EGA text */
+    uint8_t  pixel_format;  /* GOP_PIXEL_RGBX/BGRX/BITMASK */
+    uint8_t  pad0;
+};
+
+/* GOP mode entry (enumerated before ExitBootServices) */
+#define BOOT_GOP_MODE_MAX  32
+
+struct boot_gop_mode {
+    uint32_t width;
+    uint32_t height;
+    uint32_t pixels_per_scanline;
+    uint8_t  pixel_format;  /* GOP_PIXEL_* */
+    uint8_t  pad[3];
 };
 
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf */
@@ -139,6 +157,11 @@ struct boot_info {
     /* Framebuffer */
     struct boot_framebuffer fb;
     uint8_t  fb_available;  /* 1 if framebuffer tag was found */
+
+    /* GOP mode list (enumerated by bootloader) */
+    struct boot_gop_mode gop_modes[BOOT_GOP_MODE_MAX];
+    uint32_t gop_mode_count;     /* number of valid entries */
+    uint32_t gop_mode_selected;  /* index of currently active mode */
 
     /* ACPI */
     uintptr_t acpi_rsdp_addr;   /* physical address of RSDP */

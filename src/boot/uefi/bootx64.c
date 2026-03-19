@@ -35,6 +35,18 @@ struct boot_framebuffer {
     UINT32  height;
     UINT8   bpp;
     UINT8   type;
+    UINT8   pixel_format;
+    UINT8   pad0;
+};
+
+#define BOOT_GOP_MODE_MAX  32
+
+struct boot_gop_mode {
+    UINT32  width;
+    UINT32  height;
+    UINT32  pixels_per_scanline;
+    UINT8   pixel_format;
+    UINT8   pad[3];
 };
 
 /* Boot configuration from \EFI\ImpossibleOS\boot.conf
@@ -82,6 +94,10 @@ struct boot_info {
     UINT32  mem_upper_kb;
     struct boot_framebuffer fb;
     UINT8   fb_available;
+    /* GOP mode list */
+    struct boot_gop_mode gop_modes[BOOT_GOP_MODE_MAX];
+    UINT32  gop_mode_count;
+    UINT32  gop_mode_selected;
     UINT64  acpi_rsdp_addr;
     UINT8   acpi_version;
     UINT8   acpi_available;
@@ -345,6 +361,31 @@ static EFI_STATUS init_gop(void)
         return status;
     }
 
+    /* ── Enumerate all available modes ────────────────────────────────── */
+    g_boot_info_ptr->gop_mode_count = 0;
+    g_boot_info_ptr->gop_mode_selected = 0;
+    for (i = 0; i < gop->Mode->MaxMode && i < BOOT_GOP_MODE_MAX; i++) {
+        UINTN info_size;
+        EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+        if (EFI_ERROR(gop->QueryMode(gop, i, &info_size, &info))) continue;
+
+        UINT32 idx = g_boot_info_ptr->gop_mode_count;
+        g_boot_info_ptr->gop_modes[idx].width  = info->HorizontalResolution;
+        g_boot_info_ptr->gop_modes[idx].height = info->VerticalResolution;
+        g_boot_info_ptr->gop_modes[idx].pixels_per_scanline =
+            info->PixelsPerScanLine;
+        if (info->PixelFormat == PixelRedGreenBlueReserved)
+            g_boot_info_ptr->gop_modes[idx].pixel_format = 0;  /* RGBX */
+        else if (info->PixelFormat == PixelBlueGreenRedReserved)
+            g_boot_info_ptr->gop_modes[idx].pixel_format = 1;  /* BGRX */
+        else
+            g_boot_info_ptr->gop_modes[idx].pixel_format = 2;  /* BitMask */
+        g_boot_info_ptr->gop_modes[idx].pad[0] = 0;
+        g_boot_info_ptr->gop_modes[idx].pad[1] = 0;
+        g_boot_info_ptr->gop_modes[idx].pad[2] = 0;
+        g_boot_info_ptr->gop_mode_count++;
+    }
+
     /* Is the current firmware mode already usable? */
     BOOLEAN cur_ok =
         (gop->Mode->FrameBufferBase != 0) &&
@@ -427,6 +468,14 @@ store_fb:
     g_boot_info_ptr->fb.height = gFbHeight;
     g_boot_info_ptr->fb.bpp    = 32;
     g_boot_info_ptr->fb.type   = 1;
+    if (gop->Mode->Info->PixelFormat == PixelRedGreenBlueReserved)
+        g_boot_info_ptr->fb.pixel_format = 0;  /* RGBX */
+    else if (gop->Mode->Info->PixelFormat == PixelBlueGreenRedReserved)
+        g_boot_info_ptr->fb.pixel_format = 1;  /* BGRX */
+    else
+        g_boot_info_ptr->fb.pixel_format = 2;  /* BitMask */
+    g_boot_info_ptr->fb.pad0 = 0;
+    g_boot_info_ptr->gop_mode_selected = gop->Mode->Mode;
     g_boot_info_ptr->fb_available = 1;
 
     return EFI_SUCCESS;

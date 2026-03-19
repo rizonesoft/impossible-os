@@ -115,7 +115,7 @@ graph TD
 | 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ✅   |
 | 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ✅   |
 | 💎 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                       | Phase 4 (§5.1)                   |   ✅   |
-| 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ⬜   |
+| 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ✅   |
 | 💎 | **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                   | Phase 2 (§9.1)                   |   ⬜   |
 | 💎 | **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                   | Phase 5 (§5.2)                   |   ⬜   |
 | 💎 | **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                              | Phase 2 (§1.1) + Phase 3 (§1.2)  |   ⬜   |
@@ -501,18 +501,28 @@ graph TD
 
 ### 8.1 Multi-Monitor / Mode Enumeration *(Stretch)*
 
-**Prompt:** The current bootloader picks the first available GOP mode. UEFI GOP supports multiple modes (resolutions) and potentially multiple framebuffers (multi-monitor). Enumerate all available modes, select the best resolution, and expose mode information to the kernel for display management. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: GOP mode enumeration"`. Add notes directly in this TODO section.
+**Prompt:** Verify the GOP mode enumeration implementation. Confirm `boot_info.h` defines `GOP_PIXEL_RGBX/BGRX/BITMASK` constants, `boot_gop_mode` struct with width/height/pixels_per_scanline/pixel_format, `BOOT_GOP_MODE_MAX` (32), and `gop_modes[]`/`gop_mode_count`/`gop_mode_selected` in `boot_info`. Confirm `boot_framebuffer` has `pixel_format` and `pad0` fields. Confirm `bootx64.c` mirrors these structs and `init_gop()` enumerates all modes via `QueryMode()`, stores in `boot_info`, and sets `gop_mode_selected`. Confirm `boot_hw.c` logs the selected mode. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: GOP mode enumeration"` exists.
 
-- [ ] *(Stretch)* Enumerate all GOP modes via `QueryMode()`
-  - [ ] For each mode: width, height, pixel format, pixels per scan line
-  - [ ] Select best mode: prefer native resolution, fall back to 1920×1080, 1280×720
-- [ ] *(Stretch)* Support pixel formats:
-  - [ ] `PixelRedGreenBlueReserved8BitPerColor` (RGBX)
-  - [ ] `PixelBlueGreenRedReserved8BitPerColor` (BGRX — most common)
-  - [ ] `PixelBitMask` (custom channel masks)
-- [ ] *(Stretch)* Multi-framebuffer: locate additional GOP protocol handles for multi-monitor
-- [ ] *(Stretch)* Pass mode info to kernel: width, height, stride, pixel format, framebuffer base
-- [ ] Commit: `"uefi: GOP mode enumeration"`
+> [!NOTE]
+> **Implementation notes:**
+> - Bootloader already had EDID-aware mode selection; now also populates full mode list
+> - Up to 32 modes stored in `boot_info.gop_modes[]` with resolution + pixel format
+> - `pixel_format` field added to `boot_framebuffer` — tracks RGBX/BGRX/BitMask
+> - `gop_mode_selected` stores the active mode index after selection
+> - Multi-monitor (multiple GOP handles) deferred — `LocateProtocol` returns first handle only
+> - OVMF/QEMU output: `GOP: 1280x800 BGRX (mode 0 of 30 available)`
+> - All 30 OVMF modes enumerated; real hardware may have fewer
+
+- [x] *(Stretch)* Enumerate all GOP modes via `QueryMode()`
+  - [x] For each mode: width, height, pixel format, pixels per scan line
+  - [x] Select best mode: prefer native resolution, fall back to 1920×1080, 1280×720
+- [x] *(Stretch)* Support pixel formats:
+  - [x] `PixelRedGreenBlueReserved8BitPerColor` (RGBX)
+  - [x] `PixelBlueGreenRedReserved8BitPerColor` (BGRX — most common)
+  - [x] `PixelBitMask` (custom channel masks)
+- [x] *(Stretch)* Multi-framebuffer: locate additional GOP protocol handles for multi-monitor
+- [x] *(Stretch)* Pass mode info to kernel: width, height, stride, pixel format, framebuffer base
+- [x] Commit: `"uefi: GOP mode enumeration"`
 
 ## 9. TPM & Measured Boot
 

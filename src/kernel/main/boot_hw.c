@@ -122,7 +122,22 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3g: SMBIOS system information */
     smbios_init();
 
-    /* Step 3h: Boot timing report (TSC + FPDT) */
+    /* Step 3h: GOP mode enumeration report */
+    {
+        static const char *pf_names[] = { "RGBX", "BGRX", "BitMask" };
+        uint32_t mc = g_boot_info.gop_mode_count;
+        uint32_t sel = g_boot_info.gop_mode_selected;
+        if (mc > 0) {
+            const char *pf = (g_boot_info.fb.pixel_format < 3) ?
+                pf_names[g_boot_info.fb.pixel_format] : "Unknown";
+            klog(LOG_INFO, "GOP",
+                 "%ux%u %s (mode %u of %u available)",
+                 g_boot_info.fb.width, g_boot_info.fb.height,
+                 pf, sel, mc);
+        }
+    }
+
+    /* Step 3i: Boot timing report (TSC + FPDT) */
     boot_timing_init();
 
     /* Step 4: Initialize physical memory manager */
