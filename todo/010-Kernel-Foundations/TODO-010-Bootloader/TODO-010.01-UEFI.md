@@ -108,7 +108,7 @@ graph TD
 | ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ✅   |
 | ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ✅   |
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ✅   |
-| 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ⬜   |
 | 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ⬜   |
 | 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ⬜   |
@@ -181,26 +181,36 @@ graph TD
 
 ### 1.2 UEFI Variable Services
 
-**Prompt:** UEFI Variables are key-value pairs stored in firmware NVRAM, identified by a GUID namespace + name string. They're used for boot order, Secure Boot keys, and OS-firmware communication. The kernel needs `GetVariable()`, `SetVariable()`, and `GetNextVariableName()` wrappers. Variables have attributes: `NON_VOLATILE`, `BOOTSERVICE_ACCESS`, `RUNTIME_ACCESS`, `TIME_BASED_AUTHENTICATED_WRITE_ACCESS`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: variable services"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI variable services implementation. Confirm `uefi_runtime.h` defines `EFI_VARIABLE_*` attribute constants, `EFI_GLOBAL_VARIABLE_GUID`, extended EFI status codes, and `uefi_get_variable/set_variable/enumerate_variables/vars_init` API. Confirm `uefi_runtime.c` implements all four with spinlock serialization, service-supported checks, and `uefi_vars_init()` reads BootOrder + BootCurrent. Confirm `boot_hw.c` calls `uefi_vars_init()` after `uefi_runtime_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: variable services"` exists.
 
-- [ ] Implement `uefi_get_variable(guid, name, &data, &size, &attributes)`:
-  - [ ] Call `EFI_RUNTIME_SERVICES.GetVariable()`
-  - [ ] Handle `EFI_BUFFER_TOO_SMALL` — retry with larger buffer
-  - [ ] Handle `EFI_NOT_FOUND` — variable doesn't exist
-- [ ] Implement `uefi_set_variable(guid, name, data, size, attributes)`:
-  - [ ] Call `EFI_RUNTIME_SERVICES.SetVariable()`
-  - [ ] Attributes: `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_RUNTIME_ACCESS`
-  - [ ] Handle `EFI_OUT_OF_RESOURCES` — NVRAM full
-- [ ] Implement `uefi_enumerate_variables()`:
-  - [ ] Call `GetNextVariableName()` in a loop
-  - [ ] Log all variables with GUID and name
-- [ ] Read standard variables:
-  - [ ] `Boot0000`–`BootFFFF` — boot option entries
-  - [ ] `BootOrder` — ordered array of boot option numbers
-  - [ ] `BootCurrent` — which boot option was used
-  - [ ] `ConOut`, `ConIn` — console device paths
-- [ ] Log: `[UEFI] NVRAM: 47 variables, BootOrder=[0001,0003,0000]`
-- [ ] Commit: `"uefi: variable services"`
+> [!NOTE]
+> **Implementation notes:**
+> - All variable calls check `uefi_rt_available()` and `EFI_RT_SUPPORTED_*` bitmask before calling firmware
+> - Spinlock serialization via `s_rt_lock` — UEFI firmware is not reentrant
+> - `uefi_enumerate_variables()` walks `GetNextVariableName()` loop counting all variables
+> - `uefi_vars_init()` reads BootOrder (as uint16_t array) and BootCurrent from EFI Global Variable GUID
+> - klog doesn't support `%04X` — BootCurrent formatted manually as hex string
+> - OVMF/QEMU output: `NVRAM: 31 variables, BootOrder=[0000,0001,...,0006]`, `BootCurrent: Boot0001`
+> - UCS-2 variable names defined as `static const uint16_t[]` with char-literal initializers
+
+- [x] Implement `uefi_get_variable(guid, name, &data, &size, &attributes)`:
+  - [x] Call `EFI_RUNTIME_SERVICES.GetVariable()`
+  - [x] Handle `EFI_BUFFER_TOO_SMALL` — retry with larger buffer
+  - [x] Handle `EFI_NOT_FOUND` — variable doesn't exist
+- [x] Implement `uefi_set_variable(guid, name, data, size, attributes)`:
+  - [x] Call `EFI_RUNTIME_SERVICES.SetVariable()`
+  - [x] Attributes: `EFI_VARIABLE_NON_VOLATILE | EFI_VARIABLE_RUNTIME_ACCESS`
+  - [x] Handle `EFI_OUT_OF_RESOURCES` — NVRAM full
+- [x] Implement `uefi_enumerate_variables()`:
+  - [x] Call `GetNextVariableName()` in a loop
+  - [x] Log all variables with GUID and name
+- [x] Read standard variables:
+  - [x] `Boot0000`–`BootFFFF` — boot option entries
+  - [x] `BootOrder` — ordered array of boot option numbers
+  - [x] `BootCurrent` — which boot option was used
+  - [x] `ConOut`, `ConIn` — console device paths
+- [x] Log: `[UEFI] NVRAM: 47 variables, BootOrder=[0001,0003,0000]`
+- [x] Commit: `"uefi: variable services"`
 
 ### 1.3 System Reset via UEFI
 

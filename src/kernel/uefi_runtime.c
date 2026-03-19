@@ -237,3 +237,151 @@ uint32_t uefi_rt_supported(void)
 {
     return s_supported;
 }
+
+/* ============================================================================
+ * UEFI Variable Services (§1.2)
+ *
+ * GetVariable, SetVariable, GetNextVariableName wrappers.
+ * All calls are serialized via s_rt_lock (firmware is not reentrant).
+ * ============================================================================ */
+
+uint64_t uefi_get_variable(const struct boot_uefi_guid *guid,
+                           const uint16_t *name,
+                           uint32_t *attributes,
+                           uint64_t *data_size,
+                           void *data)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_GET_VARIABLE)) return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->get_variable(
+        (uint16_t *)name, (void *)guid, attributes, data_size, data);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
+uint64_t uefi_set_variable(const struct boot_uefi_guid *guid,
+                           const uint16_t *name,
+                           uint32_t attributes,
+                           uint64_t data_size,
+                           const void *data)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_SET_VARIABLE)) return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->set_variable(
+        (uint16_t *)name, (void *)guid, attributes, data_size, (void *)data);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
+uint32_t uefi_enumerate_variables(void)
+{
+    if (!s_available || !s_rt) return 0;
+    if (!(s_supported & EFI_RT_SUPPORTED_GET_NEXT_VARIABLE_NAME))
+        return 0;
+
+    /* Buffer for variable name — UEFI spec says max 1024 bytes */
+    uint16_t name_buf[512];  /* 512 × 2 = 1024 bytes */
+    struct boot_uefi_guid guid;
+    uint64_t name_size;
+    uint32_t count = 0;
+
+    /* Start enumeration: empty name + zero GUID */
+    name_buf[0] = 0;
+    uint32_t i;
+    uint8_t *gp = (uint8_t *)&guid;
+    for (i = 0; i < 16; i++) gp[i] = 0;
+
+    for (;;) {
+        name_size = sizeof(name_buf);
+
+        spin_lock(&s_rt_lock);
+        efi_status_t status = s_rt->get_next_variable_name(
+            &name_size, name_buf, &guid);
+        spin_unlock(&s_rt_lock);
+
+        if (status != UEFI_SUCCESS)
+            break;
+
+        count++;
+    }
+
+    return count;
+}
+
+void uefi_vars_init(void)
+{
+    if (!s_available) {
+        klog(LOG_INFO, "UEFI", "Variable services: unavailable");
+        return;
+    }
+
+    /* Enumerate all variables */
+    uint32_t total = uefi_enumerate_variables();
+
+    /* Try to read BootOrder */
+    struct boot_uefi_guid global_guid = EFI_GLOBAL_VARIABLE_GUID;
+    static const uint16_t boot_order_name[] = {
+        'B','o','o','t','O','r','d','e','r', 0
+    };
+
+    uint8_t order_buf[32];  /* max 16 boot entries */
+    uint64_t order_size = sizeof(order_buf);
+    uint32_t attrs = 0;
+
+    efi_status_t status = uefi_get_variable(
+        &global_guid, boot_order_name, &attrs, &order_size, order_buf);
+
+    if (status == UEFI_SUCCESS && order_size >= 2) {
+        uint16_t *order = (uint16_t *)order_buf;
+        uint32_t num_entries = (uint32_t)(order_size / 2);
+
+        /* Build BootOrder string for logging */
+        char order_str[64];
+        uint32_t pos = 0;
+        uint32_t e;
+        for (e = 0; e < num_entries && pos < sizeof(order_str) - 6; e++) {
+            if (e > 0 && pos < sizeof(order_str) - 1)
+                order_str[pos++] = ',';
+            /* Format as 4-digit hex */
+            uint16_t val = order[e];
+            order_str[pos++] = "0123456789ABCDEF"[(val >> 12) & 0xF];
+            order_str[pos++] = "0123456789ABCDEF"[(val >> 8) & 0xF];
+            order_str[pos++] = "0123456789ABCDEF"[(val >> 4) & 0xF];
+            order_str[pos++] = "0123456789ABCDEF"[val & 0xF];
+        }
+        order_str[pos] = '\0';
+
+        klog(LOG_INFO, "UEFI", "NVRAM: %u variables, BootOrder=[%s]",
+             total, order_str);
+    } else {
+        klog(LOG_INFO, "UEFI", "NVRAM: %u variables (BootOrder not available)",
+             total);
+    }
+
+    /* Try to read BootCurrent */
+    static const uint16_t boot_current_name[] = {
+        'B','o','o','t','C','u','r','r','e','n','t', 0
+    };
+    uint16_t boot_current = 0;
+    uint64_t bc_size = sizeof(boot_current);
+    attrs = 0;
+
+    status = uefi_get_variable(
+        &global_guid, boot_current_name, &attrs, &bc_size, &boot_current);
+
+    if (status == UEFI_SUCCESS) {
+        char bc_str[5];
+        bc_str[0] = "0123456789ABCDEF"[(boot_current >> 12) & 0xF];
+        bc_str[1] = "0123456789ABCDEF"[(boot_current >> 8) & 0xF];
+        bc_str[2] = "0123456789ABCDEF"[(boot_current >> 4) & 0xF];
+        bc_str[3] = "0123456789ABCDEF"[boot_current & 0xF];
+        bc_str[4] = '\0';
+        klog(LOG_INFO, "UEFI", "BootCurrent: Boot%s", bc_str);
+    }
+}
