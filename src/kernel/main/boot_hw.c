@@ -23,6 +23,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/uefi_config.h"
 #include "kernel/uefi_runtime.h"
+#include "kernel/tpm.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -94,6 +95,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 3c: UEFI conformance profile (Full UEFI vs EBBR) */
     uefi_conformance_init();
+
+    /* Step 3d: TPM measured boot (parse event log) */
+    tpm_init();
 
     /* Step 4: Initialize physical memory manager */
     pmm_init();

@@ -492,4 +492,54 @@ typedef struct {
     { 0xbd8c1056, 0x9f36, 0x44ec, \
       { 0x92, 0xa8, 0xa6, 0x33, 0x7f, 0x81, 0x79, 0x86 } }
 
+/* --- TCG2 Protocol (TPM Measured Boot) --- */
+
+#define EFI_TCG2_PROTOCOL_GUID \
+    { 0x607f766c, 0x7455, 0x42be, \
+      { 0x93, 0x0b, 0xe4, 0xd7, 0x6d, 0xb2, 0x72, 0x0f } }
+
+/* Event log format identifiers */
+#define EFI_TCG2_EVENT_LOG_FORMAT_TCG_1_2   0x00000001
+#define EFI_TCG2_EVENT_LOG_FORMAT_TCG_2     0x00000002  /* Crypto-agile */
+
+/* EFI_TCG2_BOOT_SERVICE_CAPABILITY */
+typedef struct {
+    UINT8   Size;                  /* sizeof this struct */
+    /* UEFI 2.4 Errata B fields */
+    UINT8   StructureVersion_Major;
+    UINT8   StructureVersion_Minor;
+    UINT8   ProtocolVersion_Major;
+    UINT8   ProtocolVersion_Minor;
+    UINT32  HashAlgorithmBitmap;   /* supported hash algorithms */
+    UINT32  SupportedEventLogs;    /* bitmask of supported event log formats */
+    BOOLEAN TPMPresentFlag;        /* TRUE if TPM is present */
+    UINT16  MaxCommandSize;
+    UINT16  MaxResponseSize;
+    UINT32  ManufacturerID;
+    UINT32  NumberOfPCRBanks;
+    UINT32  ActivePCRBanks;        /* bitmask of active PCR banks */
+} EFI_TCG2_BOOT_SERVICE_CAPABILITY;
+
+/* Forward-declare the protocol struct for function pointer typedefs */
+struct EFI_TCG2_PROTOCOL;
+
+typedef EFI_STATUS (EFIAPI *EFI_TCG2_GET_CAPABILITY)(
+    struct EFI_TCG2_PROTOCOL *This,
+    EFI_TCG2_BOOT_SERVICE_CAPABILITY *ProtocolCapability);
+
+typedef EFI_STATUS (EFIAPI *EFI_TCG2_GET_EVENT_LOG)(
+    struct EFI_TCG2_PROTOCOL *This,
+    UINT32 EventLogFormat,
+    EFI_PHYSICAL_ADDRESS *EventLogLocation,
+    EFI_PHYSICAL_ADDRESS *EventLogLastEntry,
+    BOOLEAN *EventLogTruncated);
+
+typedef struct EFI_TCG2_PROTOCOL {
+    EFI_TCG2_GET_CAPABILITY     GetCapability;
+    VOID                        *HashLogExtendEvent; /* not used */
+    VOID                        *SubmitCommand;      /* not used */
+    EFI_TCG2_GET_EVENT_LOG      GetEventLog;
+    VOID                        *HashLogExtendEventEx; /* not used */
+} EFI_TCG2_PROTOCOL;
+
 #endif /* UEFI_EFI_H */

@@ -99,6 +99,12 @@ struct boot_info {
     UINT32  rt_mmap_count;
     UINT32  uefi_mmap_desc_size;
     UINT32  uefi_mmap_desc_version;
+    /* TPM Measured Boot */
+    UINT64  tpm_event_log;
+    UINT32  tpm_event_log_size;
+    UINT8   tpm_available;
+    UINT8   tpm_version;
+    UINT16  tpm_event_count;
 };
 
 /* --- ELF64 header structures --- */
@@ -864,6 +870,134 @@ static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
 }
 
 /* ============================================================================
+ * Step 4c: Retrieve TPM Event Log (if available)
+ *
+ * Uses EFI_TCG2_PROTOCOL to detect the TPM and retrieve the measured boot
+ * event log.  This must happen before ExitBootServices() because the
+ * protocol is a boot service.  We copy the event log to a separate buffer
+ * since firmware may reclaim the original memory after ExitBootServices.
+ * ============================================================================ */
+#define TPM_EVENT_LOG_MAX (32 * 1024)  /* 32 KiB max event log */
+
+static void retrieve_tpm_event_log(void)
+{
+    EFI_STATUS status;
+    EFI_GUID tcg2_guid = EFI_TCG2_PROTOCOL_GUID;
+    EFI_TCG2_PROTOCOL *tcg2 = (EFI_TCG2_PROTOCOL *)0;
+
+    /* Try to locate the TCG2 protocol */
+    status = gBS->LocateProtocol(&tcg2_guid, (VOID *)0, (VOID **)&tcg2);
+    if (EFI_ERROR(status) || !tcg2) {
+        /* No TPM — not an error, just unavailable */
+        serial_early_print("BOOT: TPM: not available\n");
+        g_boot_info_ptr->tpm_available = 0;
+        return;
+    }
+
+    /* Get TPM capabilities */
+    EFI_TCG2_BOOT_SERVICE_CAPABILITY caps;
+    caps.Size = (UINT8)sizeof(caps);
+
+    status = tcg2->GetCapability(tcg2, &caps);
+    if (EFI_ERROR(status)) {
+        serial_early_print("BOOT: TPM: GetCapability failed\n");
+        g_boot_info_ptr->tpm_available = 0;
+        return;
+    }
+
+    if (!caps.TPMPresentFlag) {
+        serial_early_print("BOOT: TPM: device not present\n");
+        g_boot_info_ptr->tpm_available = 0;
+        return;
+    }
+
+    /* Determine TPM version from supported event log formats */
+    UINT8 tpm_ver = 1;  /* default: TPM 1.2 */
+    UINT32 log_format = EFI_TCG2_EVENT_LOG_FORMAT_TCG_1_2;
+    if (caps.SupportedEventLogs & EFI_TCG2_EVENT_LOG_FORMAT_TCG_2) {
+        tpm_ver = 2;  /* TPM 2.0 with crypto-agile log */
+        log_format = EFI_TCG2_EVENT_LOG_FORMAT_TCG_2;
+    }
+
+    /* Get event log */
+    EFI_PHYSICAL_ADDRESS log_location = 0;
+    EFI_PHYSICAL_ADDRESS log_last_entry = 0;
+    BOOLEAN log_truncated = 0;
+
+    status = tcg2->GetEventLog(tcg2, log_format,
+                                &log_location, &log_last_entry,
+                                &log_truncated);
+    if (EFI_ERROR(status) || log_location == 0) {
+        serial_early_print("BOOT: TPM: GetEventLog failed\n");
+        g_boot_info_ptr->tpm_available = 0;
+        return;
+    }
+
+    /* Calculate event log size.
+     * The last entry pointer points to the start of the last event.
+     * We estimate size as (last_entry - log_location + 256) since we
+     * don't know the exact size of the last event without parsing.
+     * Cap at TPM_EVENT_LOG_MAX. */
+    UINT64 log_size;
+    if (log_last_entry > log_location) {
+        log_size = (log_last_entry - log_location) + 256;
+    } else {
+        log_size = 4096;  /* fallback: single page */
+    }
+    if (log_size > TPM_EVENT_LOG_MAX)
+        log_size = TPM_EVENT_LOG_MAX;
+
+    /* Allocate buffer and copy event log (firmware may reclaim original) */
+    VOID *log_copy = (VOID *)0;
+    status = gBS->AllocatePool(EfiLoaderData, (UINTN)log_size, &log_copy);
+    if (EFI_ERROR(status) || !log_copy) {
+        serial_early_print("BOOT: TPM: failed to allocate log buffer\n");
+        g_boot_info_ptr->tpm_available = 0;
+        return;
+    }
+
+    /* Copy event log data */
+    UINT8 *dst = (UINT8 *)log_copy;
+    UINT8 *src = (UINT8 *)(UINTN)log_location;
+    UINTN i;
+    for (i = 0; i < (UINTN)log_size; i++)
+        dst[i] = src[i];
+
+    /* Count events by walking the TCG_PCR_EVENT header (first entry is
+     * always a SHA-1 spec ID event in the TCG 1.2 format, even for
+     * crypto-agile logs).  For a simple count, scan for 4-byte aligned
+     * entries.  This is approximate — the kernel will do full parsing. */
+    UINT16 event_count = 0;
+    UINTN offset = 0;
+    while (offset + 32 < (UINTN)log_size) {
+        /* Each TCG_PCR_EVENT starts with: uint32 pcr_index, uint32 event_type,
+         * 20-byte SHA-1 digest, uint32 event_data_size, then event_data[] */
+        UINT32 event_data_size = *(UINT32 *)(dst + offset + 28);
+        UINTN entry_size = 32 + event_data_size;
+        if (entry_size < 32 || offset + entry_size > (UINTN)log_size)
+            break;
+        event_count++;
+        if (event_count == 1 && tpm_ver == 2) {
+            /* First entry is spec ID event — remaining entries use
+             * TCG_PCR_EVENT2 format. We can't easily count those without
+             * knowing the hash sizes, so break after the first. The kernel
+             * will do proper parsing. */
+            break;
+        }
+        offset += entry_size;
+    }
+
+    /* Store in boot_info */
+    g_boot_info_ptr->tpm_event_log      = (UINT64)(UINTN)log_copy;
+    g_boot_info_ptr->tpm_event_log_size = (UINT32)log_size;
+    g_boot_info_ptr->tpm_available      = 1;
+    g_boot_info_ptr->tpm_version        = tpm_ver;
+    g_boot_info_ptr->tpm_event_count    = event_count;
+
+    serial_early_print("BOOT: TPM: event log retrieved\n");
+}
+
+/* ============================================================================
  * Step 5: Copy UEFI Configuration Table + find ACPI RSDP
  *
  * The EFI_SYSTEM_TABLE.ConfigurationTable[] array contains {GUID, Pointer}
@@ -1058,6 +1192,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Step 4: Copy UEFI Configuration Table + find ACPI RSDP */
     serial_early_print("BOOT: copy_config_tables...\n");
     copy_config_tables();
+
+    /* Step 4c: Retrieve TPM event log (if available) */
+    retrieve_tpm_event_log();
 
     /* Step 5: Get UEFI memory map */
     serial_early_print("BOOT: get_memory_map...\n");

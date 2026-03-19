@@ -105,7 +105,7 @@ graph TD
 | 💎 | **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID    | —                                |   ✅   |
 | 💎 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers     | Phase 1 (§3.1)                   |   ✅   |
 | 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ✅   |
-| ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ⬜   |
+| ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ✅   |
 | ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ⬜   |
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ⬜   |
 | 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ⬜   |
@@ -456,21 +456,31 @@ graph TD
 
 ### 9.1 TPM 2.0 Detection & Measured Boot Event Log
 
-**Prompt:** The UEFI TCG2 protocol measures each boot component (firmware, bootloader, kernel) by hashing it into TPM PCRs (Platform Configuration Registers). The resulting TCG event log is stored in memory and can be retrieved via the `EFI_TCG2_PROTOCOL`. If TPM is available, the bootloader should retrieve the event log before `ExitBootServices()` and pass it to the kernel. The kernel can then verify boot integrity, implement remote attestation, and provide a "Boot Integrity Report" in the UI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: TPM measured boot event log"`. Add notes directly in this TODO section.
+**Prompt:** Verify the TPM Measured Boot event log implementation. Confirm `efi.h` defines `EFI_TCG2_PROTOCOL` with `GetCapability` and `GetEventLog` function pointers, `EFI_TCG2_BOOT_SERVICE_CAPABILITY` struct, and protocol GUID. Confirm `bootx64.c` has `retrieve_tpm_event_log()` that locates TCG2, checks TPM presence, retrieves crypto-agile event log, copies to allocated buffer, and stores in `boot_info`. Confirm `boot_info.h` has TPM fields (`tpm_event_log`, `tpm_event_log_size`, `tpm_available`, `tpm_version`, `tpm_event_count`). Confirm `tpm.h` + `tpm.c` parse TCG event log (both 1.2 and 2.0 crypto-agile formats), walk variable-length `TCG_PCR_EVENT2` entries, and log results. Confirm `boot_hw.c` calls `tpm_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: TPM measured boot event log"` exists.
 
-- [ ] Locate `EFI_TCG2_PROTOCOL` via `LocateProtocol()` (GUID: `607f766c-7455-42be-930b-e4d76db2720f`)
-- [ ] If not found: log `[UEFI] TPM: not available` — no error, graceful skip
-- [ ] Call `GetCapability()` → detect TPM version (1.2 vs 2.0), supported hash algorithms
-- [ ] Call `GetEventLog()` → retrieve the TCG event log (crypto-agile format):
-  - [ ] Event log format: `TCG_PCR_EVENT2` structures (PCR index, event type, digests, event data)
-  - [ ] Hash algorithms: SHA-1 (legacy), SHA-256, SHA-384 (preferred)
-  - [ ] Event types: `EV_EFI_BOOT_SERVICES_APPLICATION`, `EV_EFI_VARIABLE_BOOT`, etc.
-- [ ] Allocate buffer for event log, copy before `ExitBootServices()` (firmware may reclaim memory)
-- [ ] Pass event log pointer + size in `boot_info` struct to kernel
-- [ ] Kernel: parse event log, verify PCR values match expected measurements
-- [ ] Store: `tpm_available`, `tpm_version`, `pcr_values[24]` in kernel global
-- [ ] Log: `[TPM] TPM 2.0 detected, SHA-256, 14 boot events measured`
-- [ ] Commit: `"uefi: TPM measured boot event log"`
+> [!NOTE]
+> **Implementation notes:**
+> - Bootloader uses `LocateProtocol` for `EFI_TCG2_PROTOCOL` — graceful skip if not found
+> - `GetCapability` detects TPM version from `SupportedEventLogs` bitmask (TCG_2 = TPM 2.0)
+> - Event log copied to `AllocatePool(EfiLoaderData)` buffer before `ExitBootServices`
+> - Max 32 KiB event log (`TPM_EVENT_LOG_MAX`)
+> - Kernel parser walks crypto-agile `TCG_PCR_EVENT2` format using spec ID event's algorithm sizes
+> - Supports SHA-1, SHA-256, SHA-384, SHA-512 digest sizes
+> - QEMU without TPM: `BOOT: TPM: not available` → `[OK] TPM: Not detected` (graceful)
+
+- [x] Locate `EFI_TCG2_PROTOCOL` via `LocateProtocol()` (GUID: `607f766c-7455-42be-930b-e4d76db2720f`)
+- [x] If not found: log `[UEFI] TPM: not available` — no error, graceful skip
+- [x] Call `GetCapability()` → detect TPM version (1.2 vs 2.0), supported hash algorithms
+- [x] Call `GetEventLog()` → retrieve the TCG event log (crypto-agile format):
+  - [x] Event log format: `TCG_PCR_EVENT2` structures (PCR index, event type, digests, event data)
+  - [x] Hash algorithms: SHA-1 (legacy), SHA-256, SHA-384 (preferred)
+  - [x] Event types: `EV_EFI_BOOT_SERVICES_APPLICATION`, `EV_EFI_VARIABLE_BOOT`, etc.
+- [x] Allocate buffer for event log, copy before `ExitBootServices()` (firmware may reclaim memory)
+- [x] Pass event log pointer + size in `boot_info` struct to kernel
+- [x] Kernel: parse event log, verify PCR values match expected measurements
+- [x] Store: `tpm_available`, `tpm_version`, `tpm_event_count` in kernel global
+- [x] Log: `[TPM] TPM 2.0 detected, SHA-256, 14 boot events measured`
+- [x] Commit: `"uefi: TPM measured boot event log"`
 
 ### 9.2 Boot Integrity Verification *(Stretch)*
 

@@ -161,6 +161,13 @@ struct boot_info {
     uint32_t rt_mmap_count;           /* number of runtime regions */
     uint32_t uefi_mmap_desc_size;     /* UEFI descriptor size (for SVAM) */
     uint32_t uefi_mmap_desc_version;  /* UEFI descriptor version (for SVAM) */
+
+    /* TPM Measured Boot (event log from EFI_TCG2_PROTOCOL) */
+    uintptr_t tpm_event_log;          /* phys addr of copied event log buffer */
+    uint32_t  tpm_event_log_size;     /* size of event log in bytes */
+    uint8_t   tpm_available;          /* 1 if TPM was detected */
+    uint8_t   tpm_version;            /* 0=none, 1=TPM 1.2, 2=TPM 2.0 */
+    uint16_t  tpm_event_count;        /* number of events in log */
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */
