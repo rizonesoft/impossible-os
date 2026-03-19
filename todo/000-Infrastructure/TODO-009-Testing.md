@@ -270,38 +270,105 @@ bash scripts/test-matrix.sh --profile=modern-2cpu --timeout=60
 
 ---
 
+## 8. Windows Visual Test Launchers (One-Click Bat Files)
+
+> **All 3 platforms.** Numbered `.bat` files in `scripts/emulators/tests/` for
+> one-click visual testing from Windows Explorer. Each file is ~3 lines — a thin
+> wrapper that invokes the correct platform runner with a specific profile.
+> QEMU profiles call `wsl bash scripts/test-matrix.sh --profile=X --visual`,
+> VBox profiles call `run-vbox.ps1`, and Hyper-V profiles call `run-hyperv.ps1`.
+
+**Prompt:** Create 18 numbered batch files in `scripts/emulators/tests/` for one-click visual testing across all 3 virtual platforms. QEMU tests call `test-matrix.sh` with `--visual` (keeps QEMU window open). VBox tests call `run-vbox.ps1` with resolution/CPU parameters. Hyper-V tests call `run-hyperv.ps1` with CPU count parameters. Each bat file is a thin wrapper (~3 lines). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: Windows one-click visual test launchers"`.
+
+### Bat File Listing
+
+| #  | Filename                            | Platform | Profile               | What You're Visually Verifying           |
+| -- | ----------------------------------- | -------- | --------------------- | ---------------------------------------- |
+| 01 | `01-legacy-ide-1cpu.bat`            | QEMU     | `legacy-1cpu`         | PIC+PIT boot, VGA 1024×768              |
+| 02 | `02-legacy-ide-2cpu.bat`            | QEMU     | `legacy-2cpu`         | PIC→APIC transition on dual-core        |
+| 03 | `03-legacy-ahci-1cpu.bat`           | QEMU     | `legacy-ahci-1cpu`    | Early AHCI + VGA on Penryn              |
+| 04 | `04-legacy-ahci-2cpu.bat`           | QEMU     | `legacy-ahci-2cpu`    | Early AHCI + dual-core Penryn           |
+| 05 | `05-modern-haswell-1cpu.bat`        | QEMU     | `modern-1cpu`         | Single-core APIC, GOP 720p              |
+| 06 | `06-modern-haswell-2cpu.bat`        | QEMU     | `modern-2cpu`         | Standard dev config (2-core Haswell)    |
+| 07 | `07-modern-haswell-4cpu.bat`        | QEMU     | `modern-4cpu`         | Quad-core Haswell, SMP stress           |
+| 08 | `08-modern-skylake-2cpu.bat`        | QEMU     | `modern-skylake-2cpu` | Skylake + VirtIO NIC + 1080p            |
+| 09 | `09-modern-skylake-4cpu.bat`        | QEMU     | `modern-skylake-4cpu` | Skylake quad-core + VirtIO + 1080p      |
+| 10 | `10-latest-sapphire-1cpu.bat`       | QEMU     | `latest-1cpu`         | x2APIC + VirtIO-blk, single-core       |
+| 11 | `11-latest-sapphire-2cpu.bat`       | QEMU     | `latest-2cpu`         | x2APIC + VirtIO-blk, dual-core         |
+| 12 | `12-latest-sapphire-4cpu.bat`       | QEMU     | `latest-4cpu`         | x2APIC + VirtIO-blk + 1440p, quad-core |
+| 13 | `13-vbox-720p-1cpu.bat`             | VBox     | `vbox-720p-1cpu`      | Desktop at reference 720p              |
+| 14 | `14-vbox-1080p-2cpu.bat`            | VBox     | `vbox-1080p-2cpu`     | Full HD + SMP compositor               |
+| 15 | `15-vbox-4k-2cpu.bat`               | VBox     | `vbox-4k-2cpu`        | 4K HiDPI scaling validation            |
+| 16 | `16-hyperv-gen2-1cpu.bat`           | Hyper-V  | `hyperv-gen2-1cpu`    | APIC-only, VMBus, single-core          |
+| 17 | `17-hyperv-gen2-2cpu.bat`           | Hyper-V  | `hyperv-gen2-2cpu`    | VMBus + SMP dual-core                  |
+| 18 | `18-hyperv-gen2-4cpu.bat`           | Hyper-V  | `hyperv-gen2-4cpu`    | VMBus + SMP quad-core                  |
+
+### Test Checklist
+
+- [ ] Create `scripts/emulators/tests/` directory
+- [ ] Create bat files 01–12: QEMU visual launchers (call `wsl bash scripts/test-matrix.sh --profile=X --visual`)
+- [ ] Create bat files 13–15: VBox visual launchers (call `run-vbox.ps1` with resolution params)
+- [ ] Create bat files 16–18: Hyper-V visual launchers (call `run-hyperv.ps1` with CPU params)
+- [ ] Add `--visual` switch to `test-matrix.sh`: keeps QEMU window open (no `-nographic`), no timeout kill
+- [ ] Each bat file must: `@echo off`, display profile name, call the correct platform runner
+- [ ] Verify: double-clicking any bat file launches the OS visually on Windows
+- [ ] Commit: `"tools: Windows one-click visual test launchers"`
+
+---
+
 ## Source Tree
 
 ```
 scripts/
-├── test-matrix.sh             # Unified test runner (all profiles)
+├── test-matrix.sh             # Unified test runner (all profiles, headless + visual)
 ├── test-matrix.bat            # Windows wrapper (calls WSL)
 ├── build.sh                   # Existing build script (unchanged)
 └── emulators/
     ├── run-vbox.sh            # Existing VBox runner (unchanged)
     ├── run-vbox.bat           # Existing VBox wrapper (unchanged)
+    ├── run-vbox.ps1           # Existing VBox PowerShell runner (unchanged)
     ├── run-hyperv.ps1         # Existing Hyper-V runner (unchanged)
-    └── run-hyperv.bat         # Existing Hyper-V wrapper (unchanged)
+    ├── run-hyperv.bat         # Existing Hyper-V wrapper (unchanged)
+    └── tests/                 # One-click visual test launchers (Windows)
+        ├── 01-legacy-ide-1cpu.bat
+        ├── 02-legacy-ide-2cpu.bat
+        ├── 03-legacy-ahci-1cpu.bat
+        ├── 04-legacy-ahci-2cpu.bat
+        ├── 05-modern-haswell-1cpu.bat
+        ├── 06-modern-haswell-2cpu.bat
+        ├── 07-modern-haswell-4cpu.bat
+        ├── 08-modern-skylake-2cpu.bat
+        ├── 09-modern-skylake-4cpu.bat
+        ├── 10-latest-sapphire-1cpu.bat
+        ├── 11-latest-sapphire-2cpu.bat
+        ├── 12-latest-sapphire-4cpu.bat
+        ├── 13-vbox-720p-1cpu.bat
+        ├── 14-vbox-1080p-2cpu.bat
+        ├── 15-vbox-4k-2cpu.bat
+        ├── 16-hyperv-gen2-1cpu.bat
+        ├── 17-hyperv-gen2-2cpu.bat
+        └── 18-hyperv-gen2-4cpu.bat
 ```
 
 > [!TIP]
 > **No new scripts in `scripts/`.** All 15+ test profiles are switches inside
-> `test-matrix.sh`. The profile definitions are associative arrays in the script,
-> not separate files.
+> `test-matrix.sh`. The 18 bat files in `tests/` are thin wrappers (~3 lines each)
+> that call the main script or existing platform runners.
 
 ---
 
 ## Priority Order
 
-| Priority | Section                          | Reason                                                     |
-| :------: | -------------------------------- | ---------------------------------------------------------- |
-| 🔴 P0    | 1. Unified Test Runner Script    | **Foundation** — all profiles depend on this script        |
-| 🔴 P0    | 3. Modern Hardware (2011–2023)   | Primary dev config — catches most regressions              |
-| 🟠 P1    | 2. Legacy Hardware (2005–2010)   | Validates backward compat — IDE, PIC, low RAM              |
-| 🟠 P1    | 7. CPU Scaling Stress Tests      | Catches SMP race conditions early                          |
-| 🟡 P2    | 4. Latest Hardware (2024+)       | Forward compat — VirtIO-blk, x2APIC                       |
-| 🟡 P2    | 5. VirtualBox GUI Validation     | Visual quality — manual inspection needed                  |
-| 🟢 P3    | 6. Hyper-V Paravirtual Testing   | Blocked on VMBus synthetic drivers (§3–§7 in TODO-008)     |
+| Priority | Section                              | Reason                                                     |
+| :------: | ------------------------------------ | ---------------------------------------------------------- |
+| 🔴 P0    | 1. Unified Test Runner Script        | **Foundation** — all profiles depend on this script        |
+| 🔴 P0    | 3. Modern Hardware (2011–2023)       | Primary dev config — catches most regressions              |
+| 🟠 P1    | 2. Legacy Hardware (2005–2010)       | Validates backward compat — IDE, PIC, low RAM              |
+| 🟠 P1    | 7. CPU Scaling Stress Tests          | Catches SMP race conditions early                          |
+| 🟠 P1    | 8. Windows Visual Test Launchers     | One-click visual testing during development                |
+| 🟡 P2    | 4. Latest Hardware (2024+)           | Forward compat — VirtIO-blk, x2APIC                       |
+| 🟡 P2    | 5. VirtualBox GUI Validation         | Visual quality — manual inspection needed                  |
+| 🟢 P3    | 6. Hyper-V Paravirtual Testing       | Blocked on VMBus synthetic drivers (§3–§7 in TODO-008)     |
 
 ---
 
@@ -317,6 +384,7 @@ graph LR
     D --> E
     A --> F[5. VBox GUI]
     A --> G[6. Hyper-V]
+    A --> H[8. Visual Launchers]
 ```
 
 ---
@@ -330,4 +398,5 @@ graph LR
 | Multi-CPU stress testing            | ✅ WinPE boot tests       | ✅ kselftest + LTP         | ⬜ §7 — SMP sweep profiles          |
 | VirtIO driver testing               | ⬜ Windows guest only     | ✅ Native VirtIO drivers   | ⬜ §4 — VirtIO-blk + VirtIO-net     |
 | Paravirtual testing (Hyper-V)       | ✅ Native                 | ✅ hv_* driver tests       | ⬜ §6 — blocked on VMBus drivers    |
+| One-click visual test launchers     | ✅ WinDbg + KDNET          | ⬜ No standard tooling     | ⬜ §8 — 18 numbered bat files       |
 | CI/CD automated test matrix         | ✅ Azure DevOps           | ✅ GitHub Actions + QEMU   | ⬜ Future — `test-matrix.sh` in CI  |
