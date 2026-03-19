@@ -50,6 +50,10 @@ UEFI Firmware (Hyper-V)
 
 ## 1. Test Runner Script
 
+<details>
+<summary>✅ 1. Test Runner Script — completed</summary>
+
+
 **Prompt:** ~~Create~~ **Verify** `scripts/vm/run-hyperv.ps1` creates or updates a Hyper-V Generation 2 VM with Secure Boot disabled, 512 MB RAM, and the system disk attached as a VHDX. Confirm the script handles: VM doesn't exist (create), VM exists but is running (stop first), and VM exists but settings changed (update). Verify `scripts/vm/run-hyperv.bat` launches the PowerShell script elevated. Run on a Windows host with Hyper-V enabled to validate.
 
 > [!NOTE]
@@ -72,9 +76,15 @@ UEFI Firmware (Hyper-V)
 - [x] Create `scripts/vm/run-hyperv.bat` — one-click wrapper
 - [x] Commit: `"tools: Hyper-V Gen 2 test runner"`
 
----
 
+</details>
+
+---
 ## 2. APIC-Only Interrupt Mode (No PIC)
+
+<details>
+<summary>✅ 2. APIC-Only Interrupt Mode (No PIC) — completed</summary>
+
 
 > **XREF:** [TODO-063-Drivers.md §2.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — APIC / IOAPIC (Built-in)
 
@@ -100,9 +110,15 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 - [x] Test: boot in QEMU (PCAT_COMPAT=1 → PIC remapped) AND Hyper-V Gen 2 (PCAT_COMPAT=0 → PIC skipped)
 - [x] Commit: `"kernel: APIC-only mode for hardware-reduced ACPI"`
 
----
 
+</details>
+
+---
 ## 3. VMBus Core Protocol
+
+<details>
+<summary>✅ 3. VMBus Core Protocol — completed</summary>
+
 
 > **XREF:** [TODO-063-Drivers.md §10.1](../060-Hardware-Drivers/TODO-063-Drivers.md) — VMBus Core Protocol
 
@@ -130,8 +146,10 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 - [x] Clean-room from: Hyper-V TLFS (public spec), NOT Linux `hv_vmbus.c` (GPL)
 - [x] Commit: `"drivers: VMBus core protocol"`
 
----
 
+</details>
+
+---
 ## 4. Synthetic SCSI Storage Driver (storvsc)
 
 > **XREF:** [TODO-063-Drivers.md §10.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic SCSI
@@ -160,6 +178,10 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 5. Synthetic HID Input Driver
 
+<details>
+<summary>✅ 5. Synthetic HID Input Driver — completed</summary>
+
+
 > **XREF:** [TODO-063-Drivers.md §10.3](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic HID
 > **XREF:** [TODO-064-Guest-Additions.md §6.2](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — Hyper-V Synthetic Mouse & Video
 
@@ -182,8 +204,10 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 - [x] Fallback: if PS/2 is present (QEMU/VBox), use PS/2; if absent (Hyper-V), use synthetic
 - [x] Commit: `"drivers: Hyper-V synthetic HID input"`
 
----
 
+</details>
+
+---
 ## 6. Synthetic Video Driver (hvfb)
 
 > **XREF:** [TODO-063-Drivers.md §10.4](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic Video

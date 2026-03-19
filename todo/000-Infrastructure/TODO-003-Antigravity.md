@@ -55,6 +55,10 @@
 
 ## 1. Rules: Bare-Metal Guardrails
 
+<details>
+<summary>✅ 1. Rules: Bare-Metal Guardrails — completed</summary>
+
+
 ### 1.1 Update Rules with Hardware Constraints ✅
 
 **Prompt:** This section is marked complete. Verify: open `.agents/rules/rules.md` and confirm the `## Hardware Constraints` section contains 4 rules (APIC-only, DMA-only, UEFI GOP, RCU). Verify each rule is ≤ 2 lines. Verify the PIC note clarifies that `pic.c` masking code is kept.
@@ -105,9 +109,15 @@
 > - Reinforces the `-ffreestanding -nostdlib -nostdinc` flags from Build Constraints
 > - Total rules.md: 84 lines (was 78)
 
----
 
+</details>
+
+---
 ## 2. Skills: Evergreen Agent Knowledge
+
+<details>
+<summary>✅ 2. Skills: Evergreen Agent Knowledge — completed</summary>
+
 
 ### 2.1 Fix Outdated Paths in `impossible-os` Skill ✅
 
@@ -190,9 +200,15 @@
 - [x] Keep under 80 lines (76 lines)
 - [x] Commit: `"agent: add TODO navigation skill"`
 
----
 
+</details>
+
+---
 ## 3. Workflows: Autonomous Execution Patterns
+
+<details>
+<summary>✅ 3. Workflows: Autonomous Execution Patterns — completed</summary>
+
 
 ### 3.1 Create TODO Implementation Workflow ✅
 
@@ -246,9 +262,15 @@
 - [x] Step 6: Update `TODO-006-Real-Hardware.md` → Test Machines table
 - [x] Commit: `"agent: add hardware test workflow"`
 
----
 
+</details>
+
+---
 ## 4. Agent Execution Strategy
+
+<details>
+<summary>✅ 4. Agent Execution Strategy — completed</summary>
+
 
 ### 4.1 Plan Mode vs Fast Mode Guidelines ✅ *(manual)*
 
@@ -286,9 +308,15 @@
   ```
 - [x] Commit: `"agent: document multi-agent patterns"`
 
----
 
+</details>
+
+---
 ## 5. MCP Server Integration
+
+<details>
+<summary>✅ 5. MCP Server Integration — completed</summary>
+
 
 > [!IMPORTANT]
 > **The Gemini API key is all you need.** No OpenAI or Anthropic key required.
@@ -398,9 +426,15 @@
 > Srclight uses Git hooks for auto-reindexing — the SQLite database stays synced
 > in the background as you commit code or switch branches. No manual re-indexing needed.
 
----
 
+</details>
+
+---
 ## 6. Cleanup & Synchronization
+
+<details>
+<summary>✅ 6. Cleanup & Synchronization — completed</summary>
+
 
 ### 6.1 Audit All Skills for Accuracy
 
@@ -433,8 +467,10 @@
 - [x] Audit `.agents/workflows/test-fs-fat32.md` — ✅ **Fixed.** Step 1 now uses `bash scripts/build.sh clean` instead of raw `make clean`. Step 3 retains `make run-test DISK=fat32` with explicit justification note (build.sh doesn't wrap `run-test`). Verified `run-test` target exists in Makefile at line 488.
 - [x] Commit: `"agent: audit all workflows for accuracy"`
 
----
 
+</details>
+
+---
 ## Cross-References
 
 | This TODO Section       | Depends On                        | Other TODO File                     | Status   |

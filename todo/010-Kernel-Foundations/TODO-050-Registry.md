@@ -21,6 +21,10 @@
 
 ## 1. Core Registry Engine
 
+<details>
+<summary>✅ 1. Core Registry Engine — completed</summary>
+
+
 ### 1.1 Registry Data Structures
 
 **Prompt:** Verify the correctness and consistency of the Registry core data structures (commit `d44a791`). Confirm that `include/registry.h` defines `reg_key_t` with a 256-char name, parent pointer, 16-bucket FNV-1a child hash map (`children[REG_CHILD_BUCKETS]`), `hash_next` collision chain, `child_count`, `values` linked list, `value_count`, `last_write_time`, and `flags`. Confirm `reg_value_t` has a 256-char name, `type` (uint32_t), `data[REG_MAX_VALUE_SIZE]` buffer, `data_size`, and `next` pointer. Confirm `HKEY` is defined as `reg_handle_t*` wrapping `reg_key_t*` + access mode, and that `HKEY_LOCAL_MACHINE` through `HKEY_CURRENT_CONFIG` use sentinel addresses `0x80000000`–`0x80000005`. Confirm `src/kernel/registry.c` defines static pools `reg_key_pool[512]` and `reg_value_pool[1024]`, FNV-1a hash function (`reg_fnv1a`) with case-insensitive folding, pool allocators `reg_alloc_key`/`reg_alloc_value`, `reg_resolve_predefined()` mapping, and `registry_init()` creating all 5 root keys. Run `bash scripts/build.sh clean` and confirm zero warnings.1 structures.
@@ -80,9 +84,15 @@
 - [x] Implement HKCR merged view (HKLM\SOFTWARE\Classes + HKCU\SOFTWARE\Classes)
 - [x] Commit: `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`
 
----
 
+</details>
+
+---
 ## 2. Win32-Compatible API
+
+<details>
+<summary>✅ 2. Win32-Compatible API — completed</summary>
+
 
 ### 2.1 Key Operations
 
@@ -161,9 +171,15 @@
 - [x] `RegReadKeyValue(root, path, valueName, type, buf, size)` — one-shot open+read+close
 - [x] Commit: `"registry: convenience helpers"`
 
----
 
+</details>
+
+---
 ## 3. Codex → Registry Migration
+
+<details>
+<summary>✅ 3. Codex → Registry Migration — completed</summary>
+
 
 > **Note:** The Registry implementation (`registry.h`, `registry.c`) was built as new files
 > alongside the existing Codex system (§1–2). This section covers migrating all Codex
@@ -223,9 +239,14 @@
 - [x] Commit: `"registry: remove legacy codex code"`
 
 
----
+</details>
 
+---
 ## 4. Disk Persistence (Hive Files)
+
+<details>
+<summary>✅ 4. Disk Persistence (Hive Files) — completed</summary>
+
 
 ### 4.1 Hive File Format
 
@@ -274,8 +295,10 @@
 - [x] Keep one backup: copy old `.hive` → `.hive.bak` before overwriting
 - [x] Commit: `"registry: crash-safe journaling"`
 
----
 
+</details>
+
+---
 ## 5. Change Notifications
 
 ### 5.1 Registry Watchers

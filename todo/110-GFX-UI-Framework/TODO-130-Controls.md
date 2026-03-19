@@ -10,6 +10,10 @@
 
 ## Already Completed ✅
 
+<details>
+<summary>✅ Already Completed — completed</summary>
+
+
 - [x] **Button** — click handler, hover/press states, themed colors
 - [x] **Label** — text display with font rendering
 - [x] **TextBox** — single-line text input with cursor
@@ -17,8 +21,10 @@
 
 > These basic controls are implemented in `controls.c` / `controls.h`.
 
----
 
+</details>
+
+---
 ## 1. Extended Widget Toolkit *(NEW — missing from all TODOs)*
 
 > The existing controls library (`controls.h`) only has Button, Label, TextBox,

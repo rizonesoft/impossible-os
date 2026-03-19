@@ -595,6 +595,10 @@
 
 ## Already Completed ✅
 
+<details>
+<summary>✅ Already Completed — completed</summary>
+
+
 - [x] **2D Compositing Library** — surfaces, primitives, alpha blending, gradients, blur, Mica, Acrylic, shadows, reveal highlight, SIMD optimization *(Phase 02 §1)*
 - [x] **TrueType Font System** — stb_truetype, font manager, glyph caching, replaced bitmap font *(Phase 02 §2)*
 - [x] **Runtime Image Decoding** — stb_image, JPEG/PNG wallpaper, image scaling *(Phase 02 §3)*
@@ -602,3 +606,8 @@
 - [x] **Cursor Manager** — Adwaita X11 cursors, 11 shapes, embedded fallbacks *(Phase 02 §5.1–5.2)*
 - [x] **Context-Aware Cursor Switching** — wm/desktop context, resize/move/hand cursors *(Phase 02 §5.3)*
 - [x] **Dirty Rectangle Compositor** — partial redraws, fb_swap_rect *(implemented)*
+
+
+</details>
+
+---

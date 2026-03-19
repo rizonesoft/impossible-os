@@ -9,6 +9,10 @@
 
 ## 1. Swap / Page File ✅
 
+<details>
+<summary>✅ 1. Swap / Page File — completed</summary>
+
+
 **Prompt:** This section is marked complete (disk-backed pagefile ✅). Verify the implementation is correct: confirm swap_init, swap_out, swap_in exist, the clock page replacement algorithm works, PTEs encode swap_id when Present=0, page faults trigger swap_in, and pagefile.sys is created at `C:\Impossible\System\pagefile.sys`. Verify Registry key `HKLM\SYSTEM\Memory\SwapSlots` controls size. Run `bash scripts/build.sh clean` and verify the boot log shows swap initialization. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the swap system, pagefile.sys, clock replacement, and PTE encoding.
 
 **Status: Disk-backed pagefile.** Swap out writes pages to `C:\Impossible\System\pagefile.sys`
@@ -30,9 +34,15 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 - [x] Test: swap out → pagefile.sys → swap in → data integrity verified
 - [x] Commit: `"mm: disk-backed swap via pagefile.sys"`
 
----
 
+</details>
+
+---
 ## 2. Memory-Mapped Files ✅
+
+<details>
+<summary>✅ 2. Memory-Mapped Files — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `mmap`, `munmap`, `msync` exist, MAP_PRIVATE and MAP_SHARED work, `SYS_MMAP` (37) and `SYS_MUNMAP` (38) syscalls are registered. Verify the eager-load implementation reads file contents into mapped pages correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering mmap semantics, MAP_PRIVATE/MAP_SHARED, and COW fault handling.
 
@@ -47,8 +57,10 @@ all work end-to-end with disk I/O. Swap size configurable via Registry `HKLM\SYS
 - [x] Test: mmap hello.txt, read first char as pointer → 'H' ✅
 - [x] Commit: `"mm: memory-mapped files"`
 
----
 
+</details>
+
+---
 ## 3. Memory Protection (`mprotect`)
 
 **Prompt:** `mprotect(addr, length, prot)` changes page permissions on an existing mapping — essential for W^X (write XOR execute) security policy, JIT compilers, and stack guards. The kernel updates the PTE flags for the specified range without remapping. `PROT_READ`, `PROT_WRITE`, `PROT_EXEC` correspond to PTE R/W and NX bits. A guard page (PROT_NONE, one page below the stack) turns stack overflows into a page fault instead of silent corruption. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: mprotect and guard pages"`. Add notes directly in this TODO section about W^X enforcement and guard page placement.

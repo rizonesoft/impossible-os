@@ -11,6 +11,10 @@
 
 ## 1. Kernel Threads ✅
 
+<details>
+<summary>✅ 1. Kernel Threads — completed</summary>
+
+
 **Prompt:** This section is marked complete. Verify the implementation is correct and consistent: review `src/kernel/sched.c` and `include/task.h` to confirm `thread_t` struct has id, stack_ptr, stack_base, stack_size, state, parent_task fields, that `thread_create`, `thread_exit`, `thread_join`, `thread_yield` all exist and work, and that the scheduler iterates threads. Run `bash scripts/build.sh clean` and test two threads sharing a global variable. Fix any inconsistencies in the TODO items below. Confirm the commit `"sched: kernel threads"` exists in git history. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the threading model, thread API, and scheduler architecture.
 
 
@@ -24,9 +28,15 @@
 - [x] Test: two threads in one process sharing globals
 - [x] Commit: `"sched: kernel threads"`
 
----
 
+</details>
+
+---
 ## 2. Mutexes ✅
+
+<details>
+<summary>✅ 2. Mutexes — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: review that `mutex_t` struct, `mutex_lock`, `mutex_unlock`, `mutex_trylock` exist and function correctly. Confirm the lock uses compare-and-swap with a wait queue (not busy spinning). Run `bash scripts/build.sh clean` and test mutexes protecting shared state between threads. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the mutex API and implementation details.
 
@@ -47,9 +57,15 @@
 > `PAUSE` + owner-state check before calling `schedule()` — no separate
 > section needed, just an extension of `mutex_lock()`.
 
----
 
+</details>
+
+---
 ## 3. Semaphores ✅
+
+<details>
+<summary>✅ 3. Semaphores — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: review that `semaphore_t` struct with count and wait queue exists, that `sem_wait`, `sem_signal`, `sem_init` all function correctly. Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the semaphore API and usage patterns.
 
@@ -60,9 +76,15 @@
 - [x] Implement `sem_init(s, initial_count)`
 - [x] Commit: `"sched: semaphore synchronization"`
 
----
 
+</details>
+
+---
 ## 4. Read-Write Locks ✅
+
+<details>
+<summary>✅ 4. Read-Write Locks — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/rwlock.h` to confirm `rwlock_t` struct has `reader_count`, `writer_held`, `writer_pending`, and separate reader/writer wait queues. Confirm `rwlock_read_lock`, `rwlock_read_unlock`, `rwlock_write_lock`, `rwlock_write_unlock`, `rwlock_try_read`, `rwlock_try_write` all exist in `src/kernel/sched/rwlock.c`. Verify that `writer_pending` prevents new reader acquisitions while a writer is waiting (starvation guard). Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/rwlock.o` appears in the linker output. Confirm the commit `"sched: read-write locks"` exists in git history. After verifying, mark all items as `[x]` and update this prompt for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the rwlock API, starvation prevention design, and usage examples.
 
@@ -75,9 +97,15 @@
 - [x] Use for: VFS mount table, loaded module list, process table
 - [x] Commit: `"sched: read-write locks"`
 
----
 
+</details>
+
+---
 ## 5. Condition Variables ✅
+
+<details>
+<summary>✅ 5. Condition Variables — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: review `include/kernel/sched/condvar.h` to confirm `condvar_t` struct has a waiter queue matching the mutex/semaphore pattern. Confirm `cond_wait`, `cond_signal`, `cond_broadcast` all exist in `src/kernel/sched/condvar.c`. Verify that `cond_wait` calls `mutex_unlock` before `yield()` and `mutex_lock` after waking. Verify `cond_broadcast` wakes all waiters and clears the queue. Run `bash scripts/build.sh clean` and confirm `build/kernel/sched/condvar.o` appears in the linker output. Confirm the commit `"sched: condition variables"` exists in git history. Add notes directly in this TODO section if inconsistencies or gaps are found.
 
@@ -134,9 +162,14 @@ mutex_unlock(&q->lock);
 **Real usage:** compositor vsync wait (`vsync_cond`), shell input wait (`input_cond`).
 
 
----
+</details>
 
+---
 ## 6. Spinlocks (IRQ-Safe) ✅
+
+<details>
+<summary>✅ 6. Spinlocks (IRQ-Safe) — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/sched/spinlock.h` defines `spinlock_t`, `SPINLOCK_INIT`, `spin_lock`, `spin_unlock`, `spin_lock_irqsave`, `spin_unlock_irqrestore`, `spin_trylock`. Confirm `src/kernel/sched/spinlock.c` implements all four blocking functions using `pushfq`/`popfq` for RFLAGS save/restore. Verify `pit.c`, `keyboard.c`, and `rtl8139.c` include `spinlock.h` and use `spin_lock_irqsave`/`spin_unlock_irqrestore` to protect their shared state. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"sched: spinlocks (IRQ-safe)"` exists. Fix any inconsistencies found.
 
@@ -223,10 +256,15 @@ The lock must be released before `hlt`. If held during `hlt`, the keyboard IRQ f
 **Future — `spin_trylock`:**
 `spin_trylock` does NOT disable IRQs. It is intended for lock-elision patterns in thread context (try to skip expensive work if a lock is already held). Do not use from IRQ context.
 
+
+</details>
+
 ---
-
-
 ## 7. Atomic Operations ✅
+
+<details>
+<summary>✅ 7. Atomic Operations — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/atomic.h` defines `atomic_t`, `atomic64_t`, `ATOMIC_INIT`, `atomic_read`, `atomic_set`, `atomic_inc`, `atomic_dec`, `atomic_dec_and_test`, `atomic_cmpxchg`, `atomic_fetch_add`, and their 64-bit variants. Confirm `mutex.h` and `rwlock.h` both use `atomic_t` for their flag/count fields. Confirm `mutex.c` and `rwlock.c` use `atomic_read`/`atomic_set`/`atomic_cmpxchg` for all accesses. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"kernel: atomic operations"` exists in git history. Fix any inconsistencies found.
 
@@ -297,10 +335,15 @@ if (atomic_dec_and_test(&obj->refcount)) {
 **64-bit variants:**
 `atomic64_t` / `atomic64_read` / `atomic64_set` / `atomic64_fetch_add` are provided for use with 64-bit counters (PIT tick counter, byte offset in ring buffers). On x86-64, 64-bit aligned loads/stores are naturally atomic in hardware — the `__atomic_*` builtins ensure the compiler doesn't split them.
 
+
+</details>
+
 ---
-
-
 ## 8. Wait/Event Objects ✅
+
+<details>
+<summary>✅ 8. Wait/Event Objects — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify: `include/kernel/sched/event.h` defines `event_t`, `event_type_t` (MANUAL/AUTO\_RESET), `EVENT_INIT`, `DEFINE_EVENT`, and all six API functions. Verify `src/kernel/sched/event.c` compiles and links. Confirm MANUAL\_RESET wakes all waiters and stays set; AUTO\_RESET wakes one and self-clears. Confirm `event_wait_timeout` uses `pit_get_ticks()` and `PIT_TARGET_FREQ` for the deadline. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: wait/event objects"` in git history. Fix any inconsistencies found.
 
@@ -381,10 +424,15 @@ Uses `pit_get_ticks()` / `PIT_TARGET_FREQ` (100 Hz). Minimum resolution = 10 ms.
 **Gotcha — AUTO_RESET and multiple waiters:**
 If two threads call `event_wait()` and then `event_set()` is called, only ONE thread wakes. The second remains blocked until the next `event_set()`. This is intentional and is the defining property of auto-reset events. For "release all" semantics, use `EVENT_MANUAL_RESET` with an explicit `event_reset()` afterwards.
 
+
+</details>
+
 ---
-
-
 ## 9. Work Queues (Deferred Work) ✅
+
+<details>
+<summary>✅ 9. Work Queues (Deferred Work) — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify: `include/kernel/sched/workqueue.h` defines `work_item_t`, `workqueue_t`, `WQ_POOL_SIZE=64`, and the full API (`workqueue_create`, `workqueue_enqueue`, `workqueue_flush`, `workqueue_destroy`). Verify `src/kernel/sched/workqueue.c` compiles and links. Confirm `sys_wq` is declared `extern` in the header and defined in workqueue.c. Confirm `main.c` creates `sys_wq` after `task_init()`. Confirm `rtl8139.c` defers `net_rx()` via `sys_wq` using `workqueue_enqueue`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"kernel: work queues"` in git history.
 
@@ -450,10 +498,15 @@ If 64 items are enqueued faster than the worker can process them (e.g. a DMA sto
 **Gotcha — `workqueue_destroy()` does not kill the worker task:**
 The worker loops infinitely. `workqueue_destroy()` flushes and frees the `workqueue_t` struct, but the worker task becomes an orphan (it exits on the next iteration because `wq->fn` is null). A future improvement would send a poison-pill work item to signal the worker to call `task_exit()`.
 
+
+</details>
+
 ---
-
-
 ## 10. Memory Barriers & Compiler Fences ✅
+
+<details>
+<summary>✅ 10. Memory Barriers & Compiler Fences — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `include/kernel/barrier.h` exists and defines `barrier()`, `mb()`, `rmb()`, `wmb()`, `smp_mb()`, `smp_rmb()`, `smp_wmb()`. Verify `include/kernel/sched/spinlock.h` and `include/kernel/atomic.h` both `#include "kernel/barrier.h"` and document their acquire/release barrier contract. Run `bash scripts/build.sh clean` and confirm `=== BUILD OK ===`. Confirm commit `"kernel: memory barriers"` exists in git history. Fix any inconsistencies found. Add notes covering when to use each barrier type and the x86 TSO memory model rationale.
 
@@ -527,8 +580,9 @@ Every `MFENCE` takes ~100 cycles and serializes the entire pipeline. A spin-wait
 **Future — SMP:** When `CONFIG_SMP` is enabled, the `smp_*` macros automatically switch to full hardware barriers. The only additional requirement is that `LOCK CMPXCHG` (already used in `atomic_cmpxchg`) carries an implicit full barrier on x86 — no extra `mb()` is needed around CAS on x86 SMP. On non-x86 SMP (RISC-V, ARM), `smp_mb()` would need to emit the appropriate fence instruction.
 
 
----
+</details>
 
+---
 ## 11. Priority Inheritance (Mutex Enhancement) ✅
 
 **Prompt:** This section is marked complete. Verify: `struct thread` in `task.h` has `priority` and `base_priority` fields. Priority constants `THREAD_PRIO_NORMAL=16` etc. exist. `find_next_task()` in `task.c` selects the highest-priority READY thread (not round-robin). `mutex_lock()` calls `thread_boost_priority()` on the owner before yielding. `mutex_unlock()` calls `thread_restore_priority()` before releasing and wakes the highest-priority waiter. `thread_set_priority`, `thread_boost_priority`, `thread_restore_priority` are exported from `task.h`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: mutex priority inheritance"` in git history.
@@ -608,6 +662,10 @@ See Linux `rt_mutex_adjust_prio_chain()` for the reference implementation.
 
 ## 12. Seqlocks (Ultra-Fast Read Path) ✅
 
+<details>
+<summary>✅ 12. Seqlocks (Ultra-Fast Read Path) — completed</summary>
+
+
 **Prompt:** This section is marked complete. Verify: `seqlock_t` exists in `include/kernel/sched/seqlock.h` with a `spinlock_t lock`, `volatile uint64_t seq`, and `uint64_t irq_flags`. `seqlock_write_lock` increments seq → odd (store-release); `seqlock_write_unlock` increments → even. `seqlock_read_begin` spins while seq is odd and returns it (load-acquire). `seqlock_read_retry` issues `rmb()` then checks if seq changed. `src/kernel/sched/seqlock.c` builds without warnings. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: seqlocks"` in git history.
 
 
@@ -685,9 +743,10 @@ If the read-side takes too long (e.g., slow syscall), writers may increment the 
 **Gotcha — SEQLOCK_INIT irq_flags:**
 `irq_flags` in `seqlock_t` is only valid between `seqlock_write_lock` and `seqlock_write_unlock`. If two writers nest (impossible since the spinlock prevents it), the irq_flags would be clobbered. The spinlock guarantee that only one writer is ever in the critical section makes this safe.
 
+
+</details>
+
 ---
-
-
 ## 13. RCU — Read-Copy-Update ✅
 
 **Prompt:** This section is marked complete. Verify: `include/kernel/rcu.h` exists with `rcu_read_lock()` (= `scheduler_disable()`), `rcu_read_unlock()` (= `scheduler_enable()`), `rcu_assign_pointer(ptr,val)` (wmb + store), and `rcu_dereference(ptr)` (load + barrier). `src/kernel/rcu.c` implements `synchronize_rcu()` as `mb() + yield() + mb()`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Confirm commit `"sched: RCU (single-core)"` in git history.

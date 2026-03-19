@@ -11,6 +11,10 @@
 
 ## 1. 2D Compositing Library
 
+<details>
+<summary>✅ 1. 2D Compositing Library — completed</summary>
+
+
 ### 1.1 Core Surface & Primitives
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gfx_surface_t` struct (pixels, width, height, stride), `gfx_color_t` (0xAARRGGBB) with macros, and all drawing primitives (`gfx_fill_rect`, `gfx_draw_rect`, `gfx_fill_rounded_rect`, `gfx_draw_rounded_rect`, `gfx_fill_circle`, `gfx_draw_line`) exist in `src/kernel/gfx/gfx_core.c`. Verify the dirty rectangle tracker works. Run `make clean && make all && make run`. Fix any inconsistencies in the TODO items below.
@@ -90,9 +94,15 @@
 - [x] Benchmark: target <8ms full compositor frame at 1280×720
 - [x] Commit: `"gfx: SSE2 SIMD acceleration"`
 
----
 
+</details>
+
+---
 ## 2. TrueType Font System
+
+<details>
+<summary>✅ 2. TrueType Font System — completed</summary>
+
 
 ### 2.1 stb_truetype Integration
 
@@ -148,9 +158,15 @@
 - [x] Copy fonts from C:\ to `C:\Impossible\Fonts\` on IXFS
 - [x] Commit: `"desktop: TrueType fonts replace bitmap"`
 
----
 
+</details>
+
+---
 ## 3. Runtime Image Decoding
+
+<details>
+<summary>✅ 3. Runtime Image Decoding — completed</summary>
+
 
 ### 3.1 Kernel-Side stb_image
 
@@ -201,8 +217,10 @@
 - [x] Used by: future Paint app (Save As), screenshot feature
 - [x] Commit: `"kernel: image saving (BMP/PNG)"`
 
----
 
+</details>
+
+---
 ## 4. System Icon Store
 
 ### 4.1 Icon Store Basics
@@ -338,6 +356,10 @@
 
 ## 5. Cursor Pack
 
+<details>
+<summary>✅ 5. Cursor Pack — completed</summary>
+
+
 ### 5.1 Cursor Manager
 
 **Prompt:** The cursor manager replaces the current hardcoded arrow cursor in `mouse.c` with a system that supports 11 cursor shapes loaded from Adwaita X11 cursor files (Xcur binary format). The Adwaita cursor theme (LGPL/CC-BY-SA) is pre-installed at `/usr/share/icons/Adwaita/cursors/` on the build host. At build time, selected cursor files are copied to the sysroot at `C:\Impossible\System\Cursors\`. Each Xcur file contains multiple sizes with ARGB pixel data and hotspot coordinates baked in. `cursor_init()` calls `xcur_load()` for each cursor file. `cursor_set_shape(shape)` switches the active cursor. `cursor_draw` saves pixels underneath before blitting (so `cursor_restore` can undo without redrawing the entire frame). The hotspot offset must be applied in `wm_handle_mouse` so clicks register at the correct position. Keep an embedded fallback arrow as a C byte array for pre-VFS boot. After completing all items,sh clean`, and commit as `"drivers: cursor manager with Adwaita cursors"`.
@@ -405,8 +427,9 @@
 > as part of the master GUI consolidation.**
 
 
----
+</details>
 
+---
 ## Priority Order
 
 | Priority | Section                     | Reason                                                   |

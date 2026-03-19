@@ -14,6 +14,10 @@
 
 ## 1. Repository Structure ✅
 
+<details>
+<summary>✅ 1. Repository Structure — completed</summary>
+
+
 ### 1.1 Create Repositories
 
 **Prompt:** Verified (2026-03-14). `https://github.com/rizonesoft/impossible-os` (private) and `https://github.com/rizonesoft/impossible-os-bootloader` (public, archived) exist. The bootloader repo is no longer maintained separately — all development happens in the main repo. No further action needed.
@@ -23,9 +27,15 @@
 - [x] Add `LICENSE` file to repos
 - [x] Commit: `"chore: initial repo setup"`
 
----
 
+</details>
+
+---
 ## 2. README & Repository Presentation
+
+<details>
+<summary>✅ 2. README & Repository Presentation — completed</summary>
+
 
 ### 2.1 Create Professional README *(agent + manual)*
 
@@ -142,9 +152,15 @@
 - [x] MOK key compromise procedure: revoke, re-sign, new release — ✅ 6-step procedure
 - [x] Commit: `"docs: security policy"` — ✅
 
----
 
+</details>
+
+---
 ## 3. Automatic Versioning System
+
+<details>
+<summary>✅ 3. Automatic Versioning System — completed</summary>
+
 
 ### 3.1 Semantic Versioning Setup *(agent)*
 
@@ -190,9 +206,15 @@
 - [x] Tags trigger the release CI workflow automatically — ✅ documented
 - [x] Document in `CONTRIBUTING.md` — ✅ "Release Tags" section with CalVer format table
 
----
 
+</details>
+
+---
 ## 4. CI/CD Workflows (GitHub Actions)
+
+<details>
+<summary>✅ 4. CI/CD Workflows (GitHub Actions) — completed</summary>
+
 
 ### 4.1 Build & Smoke Test on Push *(agent)*
 
@@ -297,9 +319,15 @@
 > - Labels: `kernel`, `bootloader`, `desktop`, `drivers`, `build`, `documentation`
 > - Permissions: `contents: read`, `pull-requests: write`
 
----
 
+</details>
+
+---
 ## 5. Issue & PR Templates
+
+<details>
+<summary>✅ 5. Issue & PR Templates — completed</summary>
+
 
 ### 5.1 Issue Templates *(agent)*
 
@@ -332,9 +360,15 @@
 - [x] Create `.github/PULL_REQUEST_TEMPLATE.md` — ✅ Added Screenshots/Serial Output section beyond spec
 - [x] Commit: `"docs: PR template"` — ✅
 
----
 
+</details>
+
+---
 ## 6. Labels & Project Board
+
+<details>
+<summary>✅ 6. Labels & Project Board — completed</summary>
+
 
 ### 6.1 Create Label Taxonomy *(manual — GitHub UI or API)*
 
@@ -390,9 +424,15 @@
   - [x] `Phase 07: Networking` (TODO-400 through TODO-450)
 - [x] Link issues to milestones as work progresses
 
----
 
+</details>
+
+---
 ## 7. Branch Protection & Policies
+
+<details>
+<summary>✅ 7. Branch Protection & Policies — completed</summary>
+
 
 ### 7.1 Branch Protection Rules *(manual — GitHub settings)*
 
@@ -417,9 +457,15 @@
 - [x] Create `.github/CODEOWNERS` — ✅
 - [x] Commit: `"docs: CODEOWNERS file"` — ✅
 
----
 
+</details>
+
+---
 ## 8. GitHub Pages (Project Website) *(Stretch)*
+
+<details>
+<summary>✅ 8. GitHub Pages (Project Website) *(Stretch)* — completed</summary>
+
 
 ### 8.1 Create Project Landing Page *(stretch)*
 
@@ -430,8 +476,10 @@
 - [x] Link disk image download to latest GitHub Release — ✅ Links to `/releases`
 - [x] Commit: `"docs: GitHub Pages landing page"` — ✅ `a10e856`
 
----
 
+</details>
+
+---
 ## Priority Order
 
 | Priority | Section                            | Reason                                                  |

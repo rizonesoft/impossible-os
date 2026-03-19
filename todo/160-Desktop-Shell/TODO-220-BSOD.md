@@ -10,6 +10,10 @@
 
 ## 1. Panic Screen ✅
 
+<details>
+<summary>✅ 1. Panic Screen — completed</summary>
+
+
 > **Status:** Implemented in `src/kernel/panic.c`.
 
 - [x] Blue background (`#003380`) with direct framebuffer rendering
@@ -20,18 +24,30 @@
 - [x] Stack trace via RBP chain walk (max 16 frames)
 - [x] Commit: `"panic: embed bsod.png icon, stop boot animation, add BSOD_TEST trigger"`
 
----
 
+</details>
+
+---
 ## 2. Crash Dump ✅
+
+<details>
+<summary>✅ 2. Crash Dump — completed</summary>
+
 
 > **Status:** Implemented in `src/kernel/panic.c`.
 
 - [x] Write crash dump to `C:\Impossible\System\crashdump.log`
 - [x] Includes: timestamp, exception, description, registers, stack trace
 
----
 
+</details>
+
+---
 ## 3. Auto-Restart ✅
+
+<details>
+<summary>✅ 3. Auto-Restart — completed</summary>
+
 
 > **Status:** Implemented in `src/kernel/panic.c`.
 
@@ -41,9 +57,15 @@
 - [x] If `AutoRestart = 0`, display "System halted. Press reset to restart."
 - [x] Auto-creates Registry key with defaults if not present
 
----
 
+</details>
+
+---
 ## 4. BSOD Test Trigger ✅
+
+<details>
+<summary>✅ 4. BSOD Test Trigger — completed</summary>
+
 
 > **Status:** Available via compile-time flag.
 
@@ -51,8 +73,10 @@
 - [x] Enable with `-DBSOD_TEST` in Makefile `CFLAGS`
 - [x] Commit: `"panic: add spacing between BSOD icon and text"`
 
----
 
+</details>
+
+---
 ## 5. Auto-Restart Validation
 
 > **Depends on:** §3 (auto-restart), §4 (test trigger)

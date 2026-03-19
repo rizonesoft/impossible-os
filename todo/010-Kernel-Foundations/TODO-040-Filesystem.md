@@ -12,6 +12,10 @@
 
 ## 1. Disk Drivers
 
+<details>
+<summary>✅ 1. Disk Drivers — completed</summary>
+
+
 ### 1.1 VirtIO Block Device Driver ✅
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `src/kernel/drivers/virtio_blk.c` exists with `virtio_blk_read`, `virtio_blk_write`, `virtio_blk_capacity`, VirtIO 1.0 PCI capability detection, and 3-descriptor chain I/O. Check it registers as a blkdev ("virtio0"). Run `bash scripts/build.sh clean`. Fix any inconsistencies in the TODO items below.
@@ -98,9 +102,15 @@
 > - AHCI uses `driver_data` as port index; VirtIO ignores it
 > - Tested: 2 devices registered (virtio0 + sata0)
 
----
 
+</details>
+
+---
 ## 2. Partition Table Support
+
+<details>
+<summary>✅ 2. Partition Table Support — completed</summary>
+
 
 ### 2.1 MBR Partition Table ✅
 
@@ -141,8 +151,10 @@
 - [x] Call at boot after disk drivers initialize
 - [x] Commit: `"fs: partition scanner & auto-detect"`
 
----
 
+</details>
+
+---
 ## 3. FAT32 Filesystem
 
 ### 3.1 FAT32 Read Support

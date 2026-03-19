@@ -133,6 +133,10 @@
 
 ## 2. Boot Splash Screen ✅
 
+<details>
+<summary>✅ 2. Boot Splash Screen — completed</summary>
+
+
 ### 2.1 Windows 11-Style Boot Splash
 
 **Prompt:** This section is marked complete. Verify that `src/kernel/boot_splash.c` implements a persistent boot splash with: black background, centered icon at ~40% vertical, animated horizontal dots below the icon, and status text below dots. Confirm `boot_splash_init()` locks the compositor to prevent printk output on screen, `boot_splash_finish()` unlocks it and clears the screen for the desktop. Verify the splash is active from `fb_init()` through desktop startup. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the boot splash architecture and lifecycle.
@@ -212,8 +216,10 @@ The boot splash uses `OS_LOGO_FOR_HEIGHT()` to select the exact prebuilt array f
 - [x] "Almost ready..." — window manager init
 - [x] Commit: `"boot: add more granular splash status messages"` (`3e40e0f`)
 
----
 
+</details>
+
+---
 ## 3. Secure Boot — Shim Chain-Loading
 
 ### 3.1 Generate MOK Key Pair
@@ -407,6 +413,10 @@ Secure Boot is the simplest workaround for those users in the interim.
 
 ## 4. Resolution Auto-Detection
 
+<details>
+<summary>✅ 4. Resolution Auto-Detection — completed</summary>
+
+
 ### 4.1 GOP Mode Negotiation
 
 **Prompt:** Verified (2026-03-15). EDID-first GOP mode selection implemented in `src/boot/uefi/bootx64.c init_gop()` (`5c5f502`). `EFI_EDID_ACTIVE_PROTOCOL_GUID` and struct added to `efi.h`. EDID preferred timing descriptor decoded from bytes 54–71 (H: byte 56 | byte 58>>4<<8, V: byte 59 | byte 61>>4<<8). GOP scan prefers EDID-native match, falls back to 1280×720, then current mode. `FrameBufferBase == 0` guard falls back to mode 0. In QEMU/VBox: EDID protocol not present → 1280×720 path used as before. Build: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
@@ -518,6 +528,9 @@ else                    g_font_size = 17;   /* 720p     */
 - Start button in `desktop.c` uses `os_logo_32_pixels[]` directly — exact 32×32 blit
 
 
+</details>
+
+---
 ## 5. Boot UX Polish
 
 ### 5.1 Fade-In Transition

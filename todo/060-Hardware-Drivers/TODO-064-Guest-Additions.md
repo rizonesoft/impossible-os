@@ -77,6 +77,10 @@ include/kernel/
 
 ## 1. VirtualBox — VMMDev Mouse Integration ✅
 
+<details>
+<summary>✅ 1. VirtualBox — VMMDev Mouse Integration — completed</summary>
+
+
 ### 1.1 VBoxGuest Absolute Mouse
 
 **Prompt:** This section is marked complete. Verify that `src/kernel/drivers/vbox_mouse.c` discovers PCI device `80EE:CAFE`, initializes VMMDev protocol v1.03, enables absolute mouse with `GUEST_CAN_ABSOLUTE | NEW_PROTOCOL | GUEST_NEEDS_HOST_CURSOR`, and receives coordinates via IRQ handler. Buttons merge from PS/2. Verify 3-tier priority in `main.c`: VirtIO > VBox > PS/2. Run `bash scripts/build.sh clean` and test in VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering VMMDev absolute mouse, PCI discovery, and IRQ-based coordinate delivery.
@@ -91,8 +95,10 @@ include/kernel/
 - [x] Commit: `"input: VBox absolute mouse + fix drag edge jump"` (`fd410bc`)
 - [x] Commit: `"input: fix VBox mouse movement — IRQ-based coords"` (`3d5f08e`)
 
----
 
+</details>
+
+---
 ## 2. VirtualBox — Display Auto-Resize
 
 ### 2.1 VMMDev Display Change Events

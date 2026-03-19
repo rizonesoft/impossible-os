@@ -18,6 +18,10 @@
 
 ## 1. PS/2 Mouse — Basic Relative Mode ✅
 
+<details>
+<summary>✅ 1. PS/2 Mouse — Basic Relative Mode — completed</summary>
+
+
 ### 1.1 PS/2 Mouse Driver
 
 **Prompt:** This section is marked complete. Verify that `src/kernel/drivers/mouse.c` implements the PS/2 mouse driver with 3-byte packet protocol (status, Δx, Δy), IRQ 12 handler, delta clamping, and screen-bounds clamping. Confirm `mouse_init()`, `mouse_get_state()`, and `mouse_set_position()` are implemented. Run `bash scripts/build.sh clean` and verify mouse movement in QEMU/VBox. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the PS/2 mouse driver architecture, 3-byte packet format, and IRQ handling.
@@ -31,9 +35,15 @@
 - [x] `mouse_get_state()` — return current x, y, buttons
 - [x] `mouse_set_position()` — allow external drivers to override position
 
----
 
+</details>
+
+---
 ## 2. VirtualBox Absolute Mouse ✅
+
+<details>
+<summary>✅ 2. VirtualBox Absolute Mouse — completed</summary>
+
 
 ### 2.1 VBoxGuest VMMDev Driver
 
@@ -62,9 +72,15 @@
 - [x] Scale 0–32767 to framebuffer width/height
 - [x] Makefile: `-device virtio-tablet-pci` in QEMU flags
 
----
 
+</details>
+
+---
 ## 3. Window Manager Drag Fix ✅
+
+<details>
+<summary>✅ 3. Window Manager Drag Fix — completed</summary>
+
 
 ### 3.1 Edge Clamp Offset Recalculation
 
@@ -74,8 +90,10 @@
 - [x] Recalculate `drag_offset_y = my - new_y` after edge clamping
 - [x] Commit: `"input: VBox absolute mouse + fix drag edge jump"` (`fd410bc`)
 
----
 
+</details>
+
+---
 ## 4. PS/2 Scroll Wheel (Intellimouse Protocol)
 
 ### 4.1 Enable Intellimouse 4-Byte Packets

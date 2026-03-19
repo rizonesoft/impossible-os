@@ -11,6 +11,10 @@
 
 ## 1. Pipes ✅
 
+<details>
+<summary>✅ 1. Pipes — completed</summary>
+
+
 **Prompt:** This section is marked complete. Verify the implementation is correct: review `pipe_t` struct (4 KiB ring buffer, read/write positions, mutex, semaphores), confirm `pipe_create`, `pipe_write`, `pipe_read`, `pipe_close` all work, and that `SYS_PIPE` syscall (number 33) is registered. Check that SIGPIPE is sent when writing to a closed pipe. Run `bash scripts/build.sh clean` and test shell piping (e.g., `ls | grep`). Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]` and update this prompt to reflect the final verified state for future correctness checks. Add notes, gotchas, and design decisions directly in this TODO section covering the pipe implementation, syscalls, and SIGPIPE behavior.
 
 
@@ -23,9 +27,15 @@
 - [x] Test: shell commands piping output (e.g., `ls | grep`)
 - [x] Commit: `"ipc: pipe implementation"`
 
----
 
+</details>
+
+---
 ## 2. Signals ✅
+
+<details>
+<summary>✅ 2. Signals — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm signal constants (SIGKILL=9, SIGTERM=15, SIGINT=2, SIGCHLD=17, SIGPIPE=13), `signal_send`, `signal_handler` functions, and `SYS_SIGNAL` syscall (34) all exist. Verify SIGINT is wired from Ctrl+C in the terminal driver, SIGCHLD fires on child exit, SIGPIPE fires on write to closed pipe, and SIGKILL always terminates. Run `bash scripts/build.sh clean` and test Ctrl+C. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering signal constants, delivery semantics, and handler registration.
 
@@ -40,9 +50,15 @@
 - [x] Add `SYS_SIGNAL` syscall (number 34)
 - [x] Commit: `"ipc: signal delivery"`
 
----
 
+</details>
+
+---
 ## 3. Shared Memory ✅
+
+<details>
+<summary>✅ 3. Shared Memory — completed</summary>
+
 
 **Prompt:** This section is marked complete. Verify the implementation is correct: confirm `shmem_create`, `shmem_map`, `shmem_unmap` exist with reference counting, and that `SYS_SHMEM_CREATE` (35), `SYS_SHMEM_MAP` (36), and `SYS_SHMEM_UNMAP` (37) syscalls are registered. Run `bash scripts/build.sh clean` and test two processes sharing a counter. Fix any inconsistencies in the TODO items below. After verifying, mark all items as `[x]`. Add notes directly in this TODO section covering named shared memory regions, syscalls, and reference counting.
 
@@ -56,8 +72,10 @@
 - [x] Test: two processes sharing a counter via shared memory
 - [x] Commit: `"ipc: named shared memory"`
 
----
 
+</details>
+
+---
 ## 4. Message Queues
 
 **Prompt:** Message queues are a structured IPC mechanism: typed messages are placed into a kernel-managed FIFO queue, retrieved by type or in order, without a persistent open channel (unlike pipes). Windows uses `PostMessage`/`SendMessage` (window messages) and MSMQ. Linux has POSIX `mq_open`/`mq_send`/`mq_receive`. Impossible OS needs message queues for: the compositor event system (input events from drivers → window manager), the shell's async notification system, and driver-to-kernel communication. A message queue is a ring of fixed-size `mq_msg_t` entries (`type` + `data[MQ_MAX_DATA]`, typically 64 bytes). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ipc: message queues"`. Add notes directly in this TODO section covering the message queue API and compositor usage.
