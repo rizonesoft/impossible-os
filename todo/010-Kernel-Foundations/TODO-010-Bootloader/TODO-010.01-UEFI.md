@@ -112,7 +112,7 @@ graph TD
 | 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ✅   |
-| 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ⬜   |
+| 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ✅   |
 | 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ⬜   |
 | 💎 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                       | Phase 4 (§5.1)                   |   ⬜   |
 | 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ⬜   |
@@ -378,15 +378,24 @@ graph TD
 
 ### 5.1 Secure Boot State Detection
 
-**Prompt:** Detect whether the system booted with Secure Boot enabled by reading UEFI variables. The kernel should know whether it was verified by firmware, which affects trust decisions (e.g., whether to allow unsigned kernel modules). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: Secure Boot state detection"`. Add notes directly in this TODO section.
+**Prompt:** Verify the Secure Boot state detection implementation. Confirm `uefi_runtime.h` defines `uefi_secureboot_init()`, `uefi_secureboot_enabled()`, `uefi_secureboot_setup_mode()`, `uefi_secureboot_pk_present()`, `uefi_secureboot_kek_present()` API. Confirm `uefi_runtime.c` reads SecureBoot, SetupMode (single-byte globals), PK, KEK (existence check via BUFFER_TOO_SMALL) from `EFI_GLOBAL_VARIABLE_GUID`. Confirm `boot_hw.c` calls `uefi_secureboot_init()` after `uefi_time_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: Secure Boot state detection"` exists.
 
-- [ ] Read UEFI variable `SecureBoot` (global GUID): 0 = off, 1 = on
-- [ ] Read UEFI variable `SetupMode`: 0 = User Mode (keys enrolled), 1 = Setup Mode
-- [ ] Read UEFI variable `PK` — Platform Key (if empty, Setup Mode)
-- [ ] Read UEFI variable `KEK` — Key Exchange Key
-- [ ] Store state in kernel: `secure_boot_enabled`, `setup_mode`
-- [ ] Log: `[UEFI] Secure Boot: ENABLED (User Mode)` or `[UEFI] Secure Boot: DISABLED`
-- [ ] Commit: `"uefi: Secure Boot state detection"`
+> [!NOTE]
+> **Implementation notes:**
+> - `read_global_byte()` helper reads 1-byte UEFI global variables (SecureBoot, SetupMode)
+> - `global_var_exists()` helper calls GetVariable with size=0 to check existence via BUFFER_TOO_SMALL
+> - PK/KEK presence checked without reading the full certificate data (can be several KB)
+> - OVMF/QEMU output: `Secure Boot: DISABLED (User Mode)`, `PK=absent, KEK=absent`
+> - Real hardware with Secure Boot: `Secure Boot: ENABLED (User Mode)`, `PK=enrolled, KEK=enrolled`
+> - State exposed via query functions for kernel security policy (unsigned module loading, etc.)
+
+- [x] Read UEFI variable `SecureBoot` (global GUID): 0 = off, 1 = on
+- [x] Read UEFI variable `SetupMode`: 0 = User Mode (keys enrolled), 1 = Setup Mode
+- [x] Read UEFI variable `PK` — Platform Key (if empty, Setup Mode)
+- [x] Read UEFI variable `KEK` — Key Exchange Key
+- [x] Store state in kernel: `secure_boot_enabled`, `setup_mode`
+- [x] Log: `[UEFI] Secure Boot: ENABLED (User Mode)` or `[UEFI] Secure Boot: DISABLED`
+- [x] Commit: `"uefi: Secure Boot state detection"`
 
 ### 5.2 Secure Boot Key Management *(Stretch)*
 

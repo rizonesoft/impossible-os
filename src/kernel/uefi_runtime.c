@@ -524,3 +524,103 @@ void uefi_time_init(void)
     klog(LOG_INFO, "UEFI", "RTC: resolution=%u Hz, accuracy=%u ppm",
          caps.resolution, caps.accuracy);
 }
+
+/* ============================================================================
+ * Secure Boot State Detection (§5.1)
+ *
+ * Reads UEFI NVRAM variables to determine Secure Boot state.
+ * ============================================================================ */
+
+static int s_sb_enabled;    /* SecureBoot variable = 1 */
+static int s_sb_setup_mode; /* SetupMode variable = 1 */
+static int s_sb_pk_present; /* PK variable exists with data */
+static int s_sb_kek_present;/* KEK variable exists with data */
+
+/* Helper: read a single-byte UEFI global variable. Returns the byte, or -1. */
+static int read_global_byte(const uint16_t *name)
+{
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint8_t val = 0;
+    uint64_t sz = sizeof(val);
+    uint32_t attrs = 0;
+
+    efi_status_t status = uefi_get_variable(&global, name, &attrs, &sz, &val);
+    if (status != UEFI_SUCCESS)
+        return -1;
+    return (int)val;
+}
+
+/* Helper: check if a UEFI global variable exists with non-zero size. */
+static int global_var_exists(const uint16_t *name)
+{
+    struct boot_uefi_guid global = EFI_GLOBAL_VARIABLE_GUID;
+    uint64_t sz = 0;
+    uint32_t attrs = 0;
+
+    /* Call with size=0 to get the actual size via BUFFER_TOO_SMALL */
+    efi_status_t status = uefi_get_variable(
+        &global, name, &attrs, &sz, (void *)0);
+
+    /* BUFFER_TOO_SMALL means it exists; sz > 0 means it has data */
+    if (status == UEFI_BUFFER_TOO_SMALL && sz > 0)
+        return 1;
+    /* SUCCESS with sz=0 also means it exists (empty variable) */
+    if (status == UEFI_SUCCESS)
+        return 1;
+    return 0;
+}
+
+void uefi_secureboot_init(void)
+{
+    s_sb_enabled = 0;
+    s_sb_setup_mode = 0;
+    s_sb_pk_present = 0;
+    s_sb_kek_present = 0;
+
+    if (!s_available) {
+        klog(LOG_INFO, "UEFI", "Secure Boot: unknown (runtime unavailable)");
+        return;
+    }
+
+    /* Read SecureBoot variable (uint8_t: 0=off, 1=on) */
+    static const uint16_t sb_name[] = {
+        'S','e','c','u','r','e','B','o','o','t', 0
+    };
+    int sb_val = read_global_byte(sb_name);
+    if (sb_val >= 0)
+        s_sb_enabled = (sb_val == 1) ? 1 : 0;
+
+    /* Read SetupMode variable (uint8_t: 0=User Mode, 1=Setup Mode) */
+    static const uint16_t sm_name[] = {
+        'S','e','t','u','p','M','o','d','e', 0
+    };
+    int sm_val = read_global_byte(sm_name);
+    if (sm_val >= 0)
+        s_sb_setup_mode = (sm_val == 1) ? 1 : 0;
+
+    /* Check PK existence */
+    static const uint16_t pk_name[] = { 'P','K', 0 };
+    s_sb_pk_present = global_var_exists(pk_name);
+
+    /* Check KEK existence */
+    static const uint16_t kek_name[] = { 'K','E','K', 0 };
+    s_sb_kek_present = global_var_exists(kek_name);
+
+    /* Log summary */
+    if (s_sb_enabled) {
+        klog(LOG_INFO, "UEFI", "Secure Boot: ENABLED (%s)",
+             s_sb_setup_mode ? "Setup Mode" : "User Mode");
+    } else {
+        klog(LOG_INFO, "UEFI", "Secure Boot: DISABLED (%s)",
+             s_sb_setup_mode ? "Setup Mode" : "User Mode");
+    }
+
+    klog(LOG_INFO, "UEFI", "Secure Boot keys: PK=%s, KEK=%s",
+         s_sb_pk_present ? "enrolled" : "absent",
+         s_sb_kek_present ? "enrolled" : "absent");
+}
+
+int uefi_secureboot_enabled(void)  { return s_sb_enabled; }
+int uefi_secureboot_setup_mode(void) { return s_sb_setup_mode; }
+int uefi_secureboot_pk_present(void) { return s_sb_pk_present; }
+int uefi_secureboot_kek_present(void) { return s_sb_kek_present; }

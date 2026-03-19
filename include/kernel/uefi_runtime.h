@@ -173,3 +173,21 @@ uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
 
 /* Initialize time services — read and log current time. */
 void uefi_time_init(void);
+
+/* ---- Secure Boot State Detection API ---- */
+
+/* Initialize Secure Boot state by reading UEFI NVRAM variables.
+ * Must be called after uefi_runtime_init() + uefi_vars_init(). */
+void uefi_secureboot_init(void);
+
+/* Returns 1 if Secure Boot is enabled by firmware. */
+int uefi_secureboot_enabled(void);
+
+/* Returns 1 if firmware is in Setup Mode (no Platform Key enrolled). */
+int uefi_secureboot_setup_mode(void);
+
+/* Returns 1 if a Platform Key (PK) is enrolled. */
+int uefi_secureboot_pk_present(void);
+
+/* Returns 1 if a Key Exchange Key (KEK) is enrolled. */
+int uefi_secureboot_kek_present(void);
