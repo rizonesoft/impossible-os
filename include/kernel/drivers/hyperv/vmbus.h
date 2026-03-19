@@ -196,6 +196,48 @@ struct vmbus_channel_offer_channel {
     /* Sub-channel info and connection ID follow in newer versions */
 } __attribute__((packed));
 
+/* ---- VMBus GPADL (Guest Physical Address Descriptor List) ---- */
+
+/* GPADL_HEADER: sent by guest to create a memory mapping shared with host */
+struct vmbus_channel_gpadl_header {
+    struct vmbus_channel_msg_header header;
+    uint32_t child_relid;       /* channel ID */
+    uint32_t gpadl;             /* unique GPADL handle (guest-chosen) */
+    uint16_t range_buflen;      /* total size of GPA range descriptor */
+    uint16_t rangecount;        /* always 1 for contiguous allocations */
+    /* Followed by: GPA range descriptor (offset, length, PFN list) */
+    uint32_t range_offset;      /* byte offset within first page (0) */
+    uint32_t range_len;         /* total bytes in the range */
+    uint64_t pfn_array[32];     /* page frame numbers (enough for 128 KiB) */
+} __attribute__((packed));
+
+/* GPADL_CREATED: response from host confirming GPADL setup */
+struct vmbus_channel_gpadl_created {
+    struct vmbus_channel_msg_header header;
+    uint32_t child_relid;
+    uint32_t gpadl;
+    uint32_t creation_status;   /* 0 = success */
+} __attribute__((packed));
+
+/* ---- VMBus OPENCHANNEL / OPENCHANNEL_RESULT ---- */
+
+struct vmbus_channel_open_channel {
+    struct vmbus_channel_msg_header header;
+    uint32_t child_relid;
+    uint32_t open_id;           /* unique open ID (guest-chosen, same as relid) */
+    uint32_t ring_buffer_gpadl_handle;
+    uint32_t target_vp;         /* target vCPU (0 = BSP) */
+    uint32_t downstream_ring_buffer_offset;  /* offset of recv ring within GPADL */
+    uint8_t  user_data[120];    /* channel-specific open data */
+} __attribute__((packed));
+
+struct vmbus_channel_open_result {
+    struct vmbus_channel_msg_header header;
+    uint32_t child_relid;
+    uint32_t open_id;
+    uint32_t status;            /* 0 = success */
+} __attribute__((packed));
+
 /* ---- VMBus ring buffer (shared memory with host) ---- */
 
 #define VMBUS_RING_BUFFER_SIZE      (16 * 4096)  /* 64 KiB per ring */
@@ -216,14 +258,18 @@ struct vmbus_channel {
     struct vmbus_channel_offer_channel offer;
     uint16_t                           child_relid;
     int                                is_open;
+    uint32_t                           gpadl_handle;
+    uint32_t                           connection_id;
 
     /* Ring buffers (shared with host) */
+    void                              *ring_pages;   /* raw PMM allocation */
+    uint32_t                           ring_page_count;
     struct vmbus_ring_buffer_header   *send_ring;
     struct vmbus_ring_buffer_header   *recv_ring;
-    uint32_t                           ring_size;  /* total bytes per ring */
-    uint8_t                           *send_data;  /* points past send_ring header */
-    uint8_t                           *recv_data;  /* points past recv_ring header */
-    uint32_t                           data_size;  /* ring_size - sizeof(header) */
+    uint32_t                           ring_size;    /* bytes per ring (half of total) */
+    uint8_t                           *send_data;    /* points past send_ring header */
+    uint8_t                           *recv_data;    /* points past recv_ring header */
+    uint32_t                           data_size;    /* ring_size - sizeof(header) */
 };
 
 /* ---- Public API ---- */
@@ -245,3 +291,26 @@ const struct vmbus_channel_offer_channel *vmbus_get_offer(int idx);
 
 /* Check if a channel's type GUID matches a known GUID. */
 int hv_guid_equal(const struct hv_guid *a, const struct hv_guid *b);
+
+/* Find a channel by its type GUID. Returns channel pointer or NULL. */
+struct vmbus_channel *vmbus_find_channel_by_guid(const struct hv_guid *guid);
+
+/* Open a VMBus channel: allocate ring buffers (PMM), create GPADL,
+ * send OPENCHANNEL, wait for result.
+ * ring_page_count: total pages for both rings (split in half).
+ *   16 = 32 KiB per ring (send + recv).
+ * Returns 0 on success, -1 on failure. */
+int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count);
+
+/* Write data to the channel's send ring buffer. Returns 0 on success. */
+int vmbus_ring_write(struct vmbus_channel *ch,
+                     const void *data, uint32_t len);
+
+/* Read data from the channel's receive ring buffer.
+ * Returns number of bytes read, or 0 if ring is empty. */
+uint32_t vmbus_ring_read(struct vmbus_channel *ch,
+                         void *buf, uint32_t max_len);
+
+/* Signal the host that data is available on the send ring.
+ * Uses the hypercall page to send an event. */
+void vmbus_signal_channel(struct vmbus_channel *ch);

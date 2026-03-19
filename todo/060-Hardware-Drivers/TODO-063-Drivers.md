@@ -557,17 +557,17 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 **Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/hyperv/storvsc.c`
-- [ ] Open VMBus channel for Storage VSP GUID
-- [ ] Negotiate storvsc protocol version with host
-- [ ] Implement SCSI commands over VMBus:
-  - [ ] INQUIRY — identify virtual disk
-  - [ ] READ CAPACITY — get disk size
-  - [ ] READ(10/16) — read sectors
-  - [ ] WRITE(10/16) — write sectors
-- [ ] Register as block device (`blkdev_register`) for partition scanning
+- [x] Create `src/kernel/drivers/hyperv/storvsc.c`
+- [x] Open VMBus channel for Storage VSP GUID
+- [x] Negotiate storvsc protocol version with host
+- [x] Implement SCSI commands over VMBus:
+  - [x] INQUIRY — identify virtual disk
+  - [x] READ CAPACITY — get disk size
+  - [x] READ(10/16) — read sectors
+  - [x] WRITE(10/16) — write sectors
+- [x] Register as block device (`blkdev_register`) for partition scanning
 - [ ] Test: boot in Hyper-V Gen 2 → verify IXFS/FAT32 mount
-- [ ] Commit: `"drivers: Hyper-V synthetic SCSI (storvsc)"`
+- [x] Commit: `"drivers: Hyper-V synthetic SCSI (storvsc)"`
 
 ### 10.3 Synthetic Keyboard & Mouse (hid-hyperv)
 

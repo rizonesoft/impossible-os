@@ -138,15 +138,23 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 **Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS **cannot read any disk** — IXFS/FAT32 mount fails, no fonts, no icons, no wallpaper, no desktop. This is the **#1 blocker** for Hyper-V Gen 2 boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
 
-- [ ] Create `src/kernel/drivers/hyperv/storvsc.c` and `include/kernel/drivers/hyperv/storvsc.h`
-- [ ] Open VMBus channel with Storage VSP GUID `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`
-- [ ] Negotiate storvsc protocol version
-- [ ] Send SCSI INQUIRY command → identify disk
-- [ ] Implement `storvsc_read_sectors(lba, count, buf)` via SCSI READ(16)
-- [ ] Implement `storvsc_write_sectors(lba, count, buf)` via SCSI WRITE(16)
-- [ ] Register as block device (`blkdev_register`)
+> [!NOTE]
+> **Implementation Notes:**
+> - `include/kernel/drivers/hyperv/storvsc.h`: VSTOR_PACKET protocol (operations, flags, status), SCSI CDB opcodes (INQUIRY, READ_CAPACITY_16, READ_16, WRITE_16), vstor_srb struct, protocol versions (Win10/8.1/8)
+> - `src/kernel/drivers/hyperv/storvsc.c` (~350 lines): find storage channel by GUID → open channel → protocol init (BEGIN_INITIALIZATION → QUERY_PROTOCOL_VERSION → QUERY_PROPERTIES → END_INITIALIZATION) → SCSI INQUIRY → READ_CAPACITY(16) → register as blkdev "hyperv0" with read/write callbacks
+> - VMBus extensions (prerequisite): added `vmbus_find_channel_by_guid()`, `vmbus_open_channel()` (PMM ring buffers + GPADL + OPENCHANNEL), `vmbus_ring_write/read()` (wrap-around with memory barriers), `vmbus_signal_channel()` (HvCallSignalEvent) to vmbus.h/vmbus.c
+> - Transfer buffer uses PMM (`pmm_alloc_contiguous(16)` = 64 KiB), NOT kmalloc, per memory rules
+> - `boot_storage.c`: `storvsc_init()` called conditionally after `vmbus_init()` succeeds; skipped on non-Hyper-V
+
+- [x] Create `src/kernel/drivers/hyperv/storvsc.c` and `include/kernel/drivers/hyperv/storvsc.h`
+- [x] Open VMBus channel with Storage VSP GUID `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`
+- [x] Negotiate storvsc protocol version
+- [x] Send SCSI INQUIRY command → identify disk
+- [x] Implement `storvsc_read_sectors(lba, count, buf)` via SCSI READ(16)
+- [x] Implement `storvsc_write_sectors(lba, count, buf)` via SCSI WRITE(16)
+- [x] Register as block device (`blkdev_register`)
 - [ ] Test: boot in Hyper-V Gen 2 → verify IXFS/FAT32 mount
-- [ ] Commit: `"drivers: Hyper-V synthetic SCSI (storvsc)"`
+- [x] Commit: `"drivers: Hyper-V synthetic SCSI (storvsc)"`
 
 ---
 

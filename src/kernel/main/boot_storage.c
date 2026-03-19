@@ -20,6 +20,7 @@
 #include "kernel/drivers/pic.h"
 #include "kernel/smp.h"
 #include "kernel/drivers/hyperv/vmbus.h"
+#include "kernel/drivers/hyperv/storvsc.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "kernel/symtab.h"
@@ -175,7 +176,11 @@ void boot_storage_init(uint64_t magic)
      * Must be after LAPIC init (SynIC depends on LAPIC).
      * On non-Hyper-V platforms, this returns immediately. */
     boot_splash_status("Probing Hyper-V VMBus...");
-    vmbus_init();
+    if (vmbus_init() == 0) {
+        /* VMBus connected — initialize synthetic storage (StorVSC) */
+        boot_splash_status("Initializing Hyper-V storage...");
+        storvsc_init();
+    }
 
     /* Dump hardware info (only when live debug is active) */
     if (klog_disk_live_active()) {
