@@ -476,7 +476,7 @@ vbox: all
 	@qemu-img convert -f raw -O vdi $(SYSTEM_DISK) $(BUILD_DIR)/system-disk.vdi
 	@echo "VDI created: $(BUILD_DIR)/system-disk.vdi"
 	@echo ""
-	@echo "To launch in VirtualBox, run:  scripts/emulators/run-vbox.bat"
+	@echo "To launch in VirtualBox, run:  scripts/vm/run-vbox.bat"
 
 ## run-test: Launch QEMU with a secondary test disk on AHCI port 1
 ##   Usage: make run-test DISK=fat32       (loads build/test-disks/fat32.img)

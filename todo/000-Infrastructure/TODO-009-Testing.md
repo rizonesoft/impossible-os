@@ -186,7 +186,7 @@ bash scripts/test-matrix.sh --profile=modern-2cpu --timeout=60
 > desktop compositing. NOT used for hardware model testing (VBox doesn't emulate
 > specific CPU models like QEMU does).
 
-**Prompt:** Add VirtualBox-specific test profiles to the test matrix script for GUI validation. These tests use the existing `scripts/emulators/run-vbox.sh` infrastructure but are invoked via the unified `test-matrix.sh --profile=vbox-*` interface. Focus on display resolution testing and mouse integration. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: VirtualBox GUI validation profiles"`.
+**Prompt:** Add VirtualBox-specific test profiles to the test matrix script for GUI validation. These tests use the existing `scripts/vm/run-vbox.sh` infrastructure but are invoked via the unified `test-matrix.sh --profile=vbox-*` interface. Focus on display resolution testing and mouse integration. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: VirtualBox GUI validation profiles"`.
 
 ### Profile Definitions
 
@@ -217,7 +217,7 @@ bash scripts/test-matrix.sh --profile=modern-2cpu --timeout=60
 
 > **XREF:** [TODO-008-Hyper-V-Runner.md](TODO-008-Hyper-V-Runner.md) — Full Hyper-V Gen 2 support plan
 
-**Prompt:** Add Hyper-V test profiles to the test matrix for paravirtualized testing. These test the VMBus stack, synthetic SCSI, synthetic HID, and APIC-only mode that cannot be tested on QEMU or VirtualBox. Invoked via `test-matrix.sh --profile=hyperv-*` which calls the existing `scripts/emulators/run-hyperv.ps1` infrastructure. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: Hyper-V paravirtual test profiles"`.
+**Prompt:** Add Hyper-V test profiles to the test matrix for paravirtualized testing. These test the VMBus stack, synthetic SCSI, synthetic HID, and APIC-only mode that cannot be tested on QEMU or VirtualBox. Invoked via `test-matrix.sh --profile=hyperv-*` which calls the existing `scripts/vm/run-hyperv.ps1` infrastructure. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: Hyper-V paravirtual test profiles"`.
 
 ### Profile Definitions
 
@@ -272,13 +272,13 @@ bash scripts/test-matrix.sh --profile=modern-2cpu --timeout=60
 
 ## 8. Windows Visual Test Launchers (One-Click Bat Files)
 
-> **All 3 platforms.** Numbered `.bat` files in `scripts/emulators/tests/` for
+> **All 3 platforms.** Numbered `.bat` files in `scripts/vm/tests/` for
 > one-click visual testing from Windows Explorer. Each file is ~3 lines — a thin
 > wrapper that invokes the correct platform runner with a specific profile.
 > QEMU profiles call `wsl bash scripts/test-matrix.sh --profile=X --visual`,
 > VBox profiles call `run-vbox.ps1`, and Hyper-V profiles call `run-hyperv.ps1`.
 
-**Prompt:** Create 18 numbered batch files in `scripts/emulators/tests/` for one-click visual testing across all 3 virtual platforms. QEMU tests call `test-matrix.sh` with `--visual` (keeps QEMU window open). VBox tests call `run-vbox.ps1` with resolution/CPU parameters. Hyper-V tests call `run-hyperv.ps1` with CPU count parameters. Each bat file is a thin wrapper (~3 lines). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: Windows one-click visual test launchers"`.
+**Prompt:** Create 18 numbered batch files in `scripts/vm/tests/` for one-click visual testing across all 3 virtual platforms. QEMU tests call `test-matrix.sh` with `--visual` (keeps QEMU window open). VBox tests call `run-vbox.ps1` with resolution/CPU parameters. Hyper-V tests call `run-hyperv.ps1` with CPU count parameters. Each bat file is a thin wrapper (~3 lines). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: Windows one-click visual test launchers"`.
 
 ### Bat File Listing
 
@@ -305,7 +305,7 @@ bash scripts/test-matrix.sh --profile=modern-2cpu --timeout=60
 
 ### Test Checklist
 
-- [ ] Create `scripts/emulators/tests/` directory
+- [ ] Create `scripts/vm/tests/` directory
 - [ ] Create bat files 01–12: QEMU visual launchers (call `wsl bash scripts/test-matrix.sh --profile=X --visual`)
 - [ ] Create bat files 13–15: VBox visual launchers (call `run-vbox.ps1` with resolution params)
 - [ ] Create bat files 16–18: Hyper-V visual launchers (call `run-hyperv.ps1` with CPU params)
@@ -323,7 +323,7 @@ scripts/
 ├── test-matrix.sh             # Unified test runner (all profiles, headless + visual)
 ├── test-matrix.bat            # Windows wrapper (calls WSL)
 ├── build.sh                   # Existing build script (unchanged)
-└── emulators/
+└── vm/
     ├── run-vbox.sh            # Existing VBox runner (unchanged)
     ├── run-vbox.bat           # Existing VBox wrapper (unchanged)
     ├── run-vbox.ps1           # Existing VBox PowerShell runner (unchanged)

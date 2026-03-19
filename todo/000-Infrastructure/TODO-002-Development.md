@@ -94,7 +94,7 @@
 
 ### 1.5 Scripts Directory Organization ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/` root contains only `build.sh`, `run-qemu.sh`, `debug.sh`, with subdirectories `deploy/`, `emulators/`, `secure-boot/` containing the moved scripts. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/` root contains only `build.sh`, `run-qemu.sh`, `debug.sh`, with subdirectories `deploy/`, `vm/`, `secure-boot/` containing the moved scripts. Run `bash scripts/build.sh clean` and verify output. Fix any inconsistencies in the TODO items below.
 
 > [!NOTE]
 > The `run-windows-*.bat` files are candidates for deletion once `§3.4 Multi-Resolution
@@ -114,15 +114,15 @@
 - [ ] *(Future)* `write-usb.sh` goes here too (§4.2)
 - [ ] *(Future)* `read-usb-log.sh` goes here too (§4.3)
 
-**`scripts/emulators/` — secondary emulator launchers:**
+**`scripts/vm/` — secondary emulator launchers:**
 
-- [x] Move `run-vbox.ps1` → `scripts/emulators/run-vbox.ps1`
-- [x] Move `run-vbox.bat` → `scripts/emulators/run-vbox.bat`
-- [x] Move `run-windows.ps1` → `scripts/emulators/run-windows.ps1`
-- [x] Move `run-windows.bat` → `scripts/emulators/run-windows.bat`
-- [x] Move `run-windows-1080p.bat` → `scripts/emulators/run-windows-1080p.bat`
-- [x] Move `run-windows-1440p.bat` → `scripts/emulators/run-windows-1440p.bat`
-- [x] Move `run-windows-4k.bat` → `scripts/emulators/run-windows-4k.bat`
+- [x] Move `run-vbox.ps1` → `scripts/vm/run-vbox.ps1`
+- [x] Move `run-vbox.bat` → `scripts/vm/run-vbox.bat`
+- [x] Move `run-windows.ps1` → `scripts/vm/run-windows.ps1`
+- [x] Move `run-windows.bat` → `scripts/vm/run-windows.bat`
+- [x] Move `run-windows-1080p.bat` → `scripts/vm/run-windows-1080p.bat`
+- [x] Move `run-windows-1440p.bat` → `scripts/vm/run-windows-1440p.bat`
+- [x] Move `run-windows-4k.bat` → `scripts/vm/run-windows-4k.bat`
 - [ ] *(After §3.4)* Delete `run-windows-*.bat` (consolidated into `run-qemu.sh --resolution`)
 
 **`scripts/secure-boot/` — one-time setup:**
@@ -149,7 +149,7 @@ scripts/
 ├── deploy/
 │   ├── write-usb.ps1        ← occasional (USB write)
 │   └── write-usb.bat
-├── emulators/
+├── vm/
 │   ├── run-vbox.ps1         ← secondary (VirtualBox)
 │   ├── run-vbox.bat
 │   ├── run-windows.ps1      ← secondary (QEMU Windows host)
@@ -163,7 +163,7 @@ scripts/
 
 > [!NOTE]
 > **Scripts directory reorganization notes (2026-03-17):**
-> - Moved 10 scripts into `deploy/` (2), `emulators/` (7), `secure-boot/` (1) — root keeps 3 daily-use scripts
+> - Moved 10 scripts into `deploy/` (2), `vm/` (7), `secure-boot/` (1) — root keeps 3 daily-use scripts
 > - **Internal path fixes required:** all `.ps1` scripts used `Split-Path -Parent $SCRIPT_DIR` to find repo root — needed extra `Split-Path` level after move. `build-shim.sh` needed `../..` instead of `..`
 > - **External references updated:** `Makefile` (3 refs), `TODO-006-Real-Hardware.md` (8 refs), `TODO-010-Bootloader.md` (1 ref). No workflow refs needed changes
 > - `.bat` files use `%~dp0` (self-relative) — worked correctly without changes
@@ -274,7 +274,7 @@ scripts/
 > - No separate `setup-toolchain.sh` needed — Clang-19 installs via system packages (no cross-compiler build)
 > - `setup.sh` runs `setup-deps.sh` then does a verification `build.sh clean`
 > - README "Getting Started" replaced old "Build Requirements" + "Quick Start" sections
-> - Also fixed VirtualBox script path in README Testing section (`scripts/emulators/run-vbox.bat`)
+> - Also fixed VirtualBox script path in README Testing section (`scripts/vm/run-vbox.bat`)
 
 ---
 
@@ -291,9 +291,9 @@ scripts/
 
 ### 3.2 VirtualBox Test Runner ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/emulators/run-vbox.sh` creates/updates a VirtualBox VM with EFI, AHCI, VMSVGA, 2048 MB RAM, and supports `--headless` and `--debug` flags. Fix any inconsistencies in the TODO items below.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `scripts/vm/run-vbox.sh` creates/updates a VirtualBox VM with EFI, AHCI, VMSVGA, 2048 MB RAM, and supports `--headless` and `--debug` flags. Fix any inconsistencies in the TODO items below.
 
-- [x] Create `scripts/emulators/run-vbox.sh`
+- [x] Create `scripts/vm/run-vbox.sh`
 - [x] Check if VBoxManage is available
 - [x] Create/update VM: `ImpossibleOS` with EFI, AHCI, VMSVGA, 2048 MB RAM, 4 CPUs
 - [x] Convert raw disk to VDI and attach as AHCI port 0
@@ -730,7 +730,7 @@ scripts/
 | `scripts/setup-toolchain.sh`        | [NEW] Cross-compiler bootstrap           |
 | `scripts/setup-deps.sh`             | [NEW] System dependency installer        |
 | `scripts/setup.sh`                  | [NEW] One-command setup                  |
-| `scripts/emulators/run-vbox.sh`     | [NEW] VirtualBox launcher (Linux)        |
+| `scripts/vm/run-vbox.sh`     | [NEW] VirtualBox launcher (Linux)        |
 | `scripts/run-hyperv.ps1`            | [NEW] Hyper-V Gen 2 launcher             |
 | `scripts/deploy/write-usb.sh`       | [NEW] USB write (Linux)                  |
 | `scripts/read-usb-log.sh`           | [NEW] USB log reader                     |

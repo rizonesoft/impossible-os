@@ -50,11 +50,11 @@ UEFI Firmware (Hyper-V)
 
 ## 1. Test Runner Script
 
-**Prompt:** ~~Create~~ **Verify** `scripts/emulators/run-hyperv.ps1` creates or updates a Hyper-V Generation 2 VM with Secure Boot disabled, 512 MB RAM, and the system disk attached as a VHDX. Confirm the script handles: VM doesn't exist (create), VM exists but is running (stop first), and VM exists but settings changed (update). Verify `scripts/emulators/run-hyperv.bat` launches the PowerShell script elevated. Run on a Windows host with Hyper-V enabled to validate.
+**Prompt:** ~~Create~~ **Verify** `scripts/vm/run-hyperv.ps1` creates or updates a Hyper-V Generation 2 VM with Secure Boot disabled, 512 MB RAM, and the system disk attached as a VHDX. Confirm the script handles: VM doesn't exist (create), VM exists but is running (stop first), and VM exists but settings changed (update). Verify `scripts/vm/run-hyperv.bat` launches the PowerShell script elevated. Run on a Windows host with Hyper-V enabled to validate.
 
 > [!NOTE]
 > **Implementation Notes:**
-> - Script placed in `scripts/emulators/` alongside `run-vbox.ps1`
+> - Script placed in `scripts/vm/` alongside `run-vbox.ps1`
 > - Converts `build/system-disk.img` (raw GPT) to `build/system-disk.vhdx` on every run
 > - Uses `New-VHD -Fixed` + raw byte copy (same pattern as VBox VDI conversion)
 > - Gen 2 VM boots from SCSI hard disk, not DVD/ISO
@@ -63,13 +63,13 @@ UEFI Firmware (Hyper-V)
 > - Hard drive set as first boot device via `Set-VMFirmware -FirstBootDevice`
 > - Batch wrapper uses `Start-Process -Verb RunAs` for UAC elevation with `-NoExit`
 
-- [x] Create `scripts/emulators/run-hyperv.ps1`
+- [x] Create `scripts/vm/run-hyperv.ps1`
 - [x] Create Hyper-V Generation 2 VM: `ImpossibleOS-Dev`
 - [x] Settings: 512 MB RAM, Secure Boot OFF, 1 vCPU, SCSI hard disk
 - [x] Convert `build/system-disk.img` to VHDX and attach as boot disk
 - [x] Handle existing VM: stop if running, update settings if changed
 - [x] Start VM and connect to console (`vmconnect.exe`)
-- [x] Create `scripts/emulators/run-hyperv.bat` — one-click wrapper
+- [x] Create `scripts/vm/run-hyperv.bat` — one-click wrapper
 - [x] Commit: `"tools: Hyper-V Gen 2 test runner"`
 
 ---

@@ -7,9 +7,9 @@
 #   2. Build first: bash scripts/build.sh clean
 #
 # Usage:
-#   bash scripts/emulators/run-vbox.sh           # GUI mode
-#   bash scripts/emulators/run-vbox.sh --headless  # Headless (CI)
-#   bash scripts/emulators/run-vbox.sh --debug     # Debug boot (no splash)
+#   bash scripts/vm/run-vbox.sh           # GUI mode
+#   bash scripts/vm/run-vbox.sh --headless  # Headless (CI)
+#   bash scripts/vm/run-vbox.sh --debug     # Debug boot (no splash)
 # ============================================================================
 
 set -euo pipefail
@@ -43,7 +43,7 @@ for arg in "$@"; do
         --headless) HEADLESS=true ;;
         --debug)    DEBUG_BOOT=true ;;
         -h|--help)
-            echo "Usage: bash scripts/emulators/run-vbox.sh [--headless] [--debug]"
+            echo "Usage: bash scripts/vm/run-vbox.sh [--headless] [--debug]"
             echo "  --headless  Start VM without GUI (for CI)"
             echo "  --debug     Inject DEBUG flag (skip boot splash)"
             exit 0
