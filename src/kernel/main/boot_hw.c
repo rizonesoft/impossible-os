@@ -113,6 +113,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3d: TPM measured boot (parse event log) */
     tpm_init();
 
+    /* Step 3d2: Boot integrity verification (PCR golden value check) */
+    tpm_integrity_init();
+
     /* Step 3e: ESRT firmware inventory */
     esrt_init();
 
