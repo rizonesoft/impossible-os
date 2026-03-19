@@ -41,12 +41,14 @@ graph TD
     I["010.98-Kernel-Heartbeat.md §3<br/>Debug Bar Waterfall"]
     J["010.98-Kernel-Heartbeat.md §4<br/>Panic Forensics + QR"]
     K["010.99-APIC-First-Boot.md §6–7<br/>Timer Hierarchy + Boot Viz"]
+    K2["010.99-APIC-First-Boot.md §6a<br/>Spinner PIT Migration"]
     L["010.99-APIC-First-Boot.md §8<br/>Remove Debug Workarounds"]
     M["010.98-Kernel-Heartbeat.md §5–6<br/>Vital Signs + Alive Blink"]
     N["005-Debug.md §3<br/>HW Report + Driver Dev Kit"]
     P["005-Debug.md §4<br/>Crash Forensics"]
     Q["005-Debug.md §6<br/>Log Quality"]
     O["063.09-APIC-Architecture.md<br/>x2APIC, LVT, MSI, NMI"]
+    S["010.97-Progressive-Spinner.md<br/>Boot Splash Spinner ✅"]
 
     A --> G
     F --> G
@@ -66,6 +68,8 @@ graph TD
     J --> P
     H --> P
     B --> A
+    K --> K2
+    S --> K2
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -73,7 +77,8 @@ graph TD
 | ⭐ | Phase | TODO File                            | Sections                    | What It Delivers                                                     | Depends On             | Status |
 | -- | :---: | ------------------------------------ | --------------------------- | -------------------------------------------------------------------- | ---------------------- | :----: |
 | 💎 | **1** | `TODO-010-Bootloader.md`             | §7.1 Boot Config File       | `boot.conf` parser — enables debug/verbose flags                     | —                      |   ✅   |
-| 💎 | **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI enhancements (feeds into boot.conf)                             | —                      |   ⬜   |
+| 💎 | **1** | `TODO-010.01-UEFI.md`                | §1.1 Runtime Services ✅    | `SetVirtualAddressMap()` + RT function pointers preserved            | —                      |   ✅   |
+| 💎 | **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI variable services, reset, RTC, Secure Boot, etc.                | Phase 1 (§1.1)         |   ⬜   |
 | 💎 | **2** | `TODO-010.99-APIC-First-Boot.md`     | §1–3 (P0+P1)                | ACPI → LAPIC → IOAPIC before PIT; conditional PIC                    | —                      |   ⬜   |
 | 💎 | **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                     | —                      |   ⬜   |
 | 💎 | **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                            | Phase 2 (§1.1)         |   ⬜   |
@@ -87,6 +92,7 @@ graph TD
 | 💎 | **5** | `TODO-010.99-APIC-First-Boot.md`     | §8 Remove Debug Workarounds | Delete HV_BAR macros (replaced by `boot_progress()`)                 | Phase 4 (§1)           |   ⬜   |
 | ⭐ | **5** | `TODO-005-Debug.md`                  | §4.1 Crash Screenshot    | BMP framebuffer capture on panic → `B:\Crash_*.bmp`                  | Phase 2 (§1) + Ph 5    |   ⬜   |
 | 💎 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §6–7 Timer + Boot Viz       | Timer source hierarchy + Gantt chart                                 | Phase 3 (§4) + Ph 4    |   ⬜   |
+| 💎 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §6a Spinner PIT Migration   | Move spinner from PIT callback to `sleep_ms()` loop                  | Phase 6 (§6) + Spinner |   ⬜   |
 | ⭐ | **6** | `TODO-005-Debug.md`                  | §3 Hardware Report (DDK) | Full HW dump + SMBIOS + ACPI binary + USB + fingerprint              | Phase 2 (§1)           |   ⬜   |
 | 💎 | **6** | `TODO-005-Debug.md`                  | §6 Log Quality              | Timestamps, memory watermarks, subsystem filtering                   | Phase 2 (§1)           |   ⬜   |
 | 💎 | **6** | `TODO-010.99-APIC-First-Boot.md`     | §9 SMP Adjustment           | Verify AP boot with early LAPIC                                      | Phase 2 (§1–3)         |   ⬜   |
