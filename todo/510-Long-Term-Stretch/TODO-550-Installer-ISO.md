@@ -75,7 +75,7 @@
 - [ ] **Test 5:** Keyboard and mouse work inside Hyper-V
 - [ ] **Test 6:** Filesystem operations work (create, read, delete files)
 - [ ] **Test 7:** Window manager renders correctly at Hyper-V's resolution
-- [ ] **Test 8:** Graceful shutdown/reboot via ACPI (see TODO-100-Power-Management.md §9)
+- [ ] **Test 8:** Graceful shutdown/reboot via ACPI (see TODO-065-Power-Management.md §9)
 - [ ] Document any Hyper-V-specific issues and fixes
 
 ---

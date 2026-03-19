@@ -13,14 +13,14 @@
 > [!IMPORTANT]
 > **Spec Reference:** All register offsets, command encodings, and capability IDs reference the
 > [PCI Local Bus Spec 3.0](file:///home/derickpayne/impossible-os/specs/pci-3.0.md)
-> summary in the repo at `specs/pci-3.0.md`. PCIe ECAM references [TODO-042-ACPI §1.3](TODO-042-ACPI.md).
+> summary in the repo at `specs/pci-3.0.md`. PCIe ECAM references [TODO-012-ACPI §1.3](../010-Kernel-Foundations/TODO-012-ACPI.md).
 
 > [!NOTE]
 > **Cross-references:**
-> - [TODO-042-ACPI.md §1.3](TODO-042-ACPI.md) — MCFG table for PCIe ECAM base address
-> - [TODO-042-ACPI.md §8.1](TODO-042-ACPI.md) — ACPI `_PRT` for PCI interrupt routing
+> - [TODO-012-ACPI.md §1.3](../010-Kernel-Foundations/TODO-012-ACPI.md) — MCFG table for PCIe ECAM base address
+> - [TODO-012-ACPI.md §8.1](../010-Kernel-Foundations/TODO-012-ACPI.md) — ACPI `_PRT` for PCI interrupt routing
 > - [TODO-041-AHCI.md](TODO-041-AHCI.md) — AHCI SATA controller (PCI class 01:06)
-> - [TODO-080-Drivers.md](../060-Hardware-Drivers/TODO-080-Drivers.md) — All hardware drivers depend on PCI enumeration
+> - [TODO-063-Drivers.md](TODO-063-Drivers.md) — All hardware drivers depend on PCI enumeration
 > - [TODO-043-x86-64.md §7.1](TODO-043-x86-64.md) — MSR management (APIC base for MSI targeting)
 
 ---
@@ -150,7 +150,7 @@
 
 **Prompt:** Legacy PCI config access via I/O ports (0xCF8/0xCFC) only supports 256 bytes of config space per device. PCIe extends this to 4096 bytes per function via Memory-Mapped Configuration (ECAM). The ECAM base address comes from the ACPI MCFG table (see TODO-042 §1.3). Each function gets a 4K page at offset `(bus << 20) | (dev << 15) | (func << 12)` from the ECAM base. This enables access to PCIe extended capabilities (AER, SR-IOV, LTR, etc.) at offsets 0x100–0xFFF. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: PCIe ECAM config access"`. Add notes directly in this TODO section.
 
-- [ ] Get ECAM base from MCFG table (see TODO-042-ACPI §1.3)
+- [ ] Get ECAM base from MCFG table (see TODO-012-ACPI §1.3)
 - [ ] Calculate per-function address: `ecam_base + (bus << 20) | (dev << 15) | (func << 12)`
 - [ ] Map ECAM region: identity-map the ECAM range (256 MB for 256 buses)
 - [ ] Implement `pcie_read32(bus, dev, func, offset)` — MMIO read from ECAM

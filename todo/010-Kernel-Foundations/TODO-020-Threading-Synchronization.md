@@ -868,7 +868,7 @@ The AP trampoline code (`ap_trampoline.asm`) embeds its own temporary GDT with c
 When only 1 CPU is detected, the LAPIC/IOAPIC code is skipped entirely. The legacy PIC continues to deliver PIT timer interrupts. `smp_init()` still runs to set up per-CPU data for the BSP.
 
 > [!IMPORTANT]
-> → XREF: `TODO-080-Drivers.md §2.2` — On Hyper-V Gen 2, the MADT has `PCAT_COMPAT=0`
+> → XREF: `TODO-063-Drivers.md §2.2` — On Hyper-V Gen 2, the MADT has `PCAT_COMPAT=0`
 > (no PIC). The single-core fallback above assumes PIC is always present when only 1 CPU
 > is detected. After the `PCAT_COMPAT` check is implemented in the APIC/IOAPIC driver,
 > this fallback must be updated: if `PCAT_COMPAT=0`, use LAPIC timer even on single-core.

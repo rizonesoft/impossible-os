@@ -28,6 +28,8 @@
 | #   | TODO                                                                                                    | Status         |
 |-----|---------------------------------------------------------------------------------------------------------|----------------|
 | 010 | [Bootloader](010-Kernel-Foundations/TODO-010-Bootloader.md)                                             | 🔄 In progress |
+| 011 | [x86-64 Architecture (Intel & AMD)](010-Kernel-Foundations/TODO-011-x86-64.md)                          | 🔄 In progress |
+| 012 | [ACPI — Tables, Power, Interrupts](010-Kernel-Foundations/TODO-012-ACPI.md)                             |                |
 | 020 | [Threading & Synchronization](010-Kernel-Foundations/TODO-020-Threading-Synchronization.md)             | 🔄 In progress |
 | 021 | [Kernel Scheduler — CFS, RT, priorities](010-Kernel-Foundations/TODO-021-Scheduler.md)                  |                |
 | 022 | [IPC — Pipes, Signals, Shared Memory](010-Kernel-Foundations/TODO-022-IPC.md)                           | ✅ All done    |
@@ -40,7 +42,7 @@
 | 029 | [Memory Guardrails & Audit](010-Kernel-Foundations/TODO-029-Memory-Guardrails.md)                       |                |
 | 030 | [Memory Advanced](010-Kernel-Foundations/TODO-030-Memory-Advanced.md)                                   |                |
 | 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                             |                |
-| 045 | [Win32 VFS Compatibility](010-Kernel-Foundations/TODO-045-Win32-VFS-Compat.md)                          |                |
+| 047 | [NTFS](010-Kernel-Foundations/TODO-047-NTFS.md)                                                         |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
 
 
@@ -50,11 +52,12 @@
 
 | #   | TODO                                                                              | Status |
 |-----|-----------------------------------------------------------------------------------|--------|
-| 060 | [Keyboard](060-Hardware-Drivers/TODO-060-Keyboard.md)                             |        |
-| 070 | [Mouse](060-Hardware-Drivers/TODO-070-Mouse.md)                                   |        |
-| 080 | [Drivers](060-Hardware-Drivers/TODO-080-Drivers.md)                               |        |
-| 090 | [Guest Additions](060-Hardware-Drivers/TODO-090-Guest-Additions.md)               |        |
-| 100 | [Power Management](060-Hardware-Drivers/TODO-100-Power-Management.md)             |        |
+| 060 | [PCI/PCIe Bus Enumeration](060-Hardware-Drivers/TODO-060-PCI.md)                  |        |
+| 061 | [Keyboard](060-Hardware-Drivers/TODO-061-Keyboard.md)                             |        |
+| 062 | [Mouse](060-Hardware-Drivers/TODO-062-Mouse.md)                                   |        |
+| 063 | [Drivers](060-Hardware-Drivers/TODO-063-Drivers.md)                               |        |
+| 064 | [Guest Additions](060-Hardware-Drivers/TODO-064-Guest-Additions.md)               |        |
+| 065 | [Power Management](060-Hardware-Drivers/TODO-065-Power-Management.md)             |        |
 
 ---
 

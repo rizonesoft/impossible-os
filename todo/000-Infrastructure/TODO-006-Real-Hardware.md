@@ -172,7 +172,7 @@
 **Prompt:** On real hardware, the 8259 PIC may fire spurious IRQ7 (or IRQ15) during the transition from PIC to APIC mode. The current code masks the PIC, but some BIOSes partially unmask it during ACPI table parsing. Ensure the PIC mask sequence is: (1) save current PIC masks, (2) mask all PIC interrupts (OCW1: 0xFF to both PICs), (3) remap PIC to vectors 0x20-0x2F (even though masked — prevents vector collision), (4) initialize LAPIC + IOAPIC, (5) verify PIC stays masked. The MADT `PCAT_COMPAT` flag (bit 0) indicates whether the PIC is present at all — on pure APIC systems (Hyper-V Gen 2), skip PIC init entirely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: robust PIC→APIC transition for real hardware"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
-> → XREF: `TODO-080-Drivers.md §2.2` — MADT PCAT_COMPAT flag and APIC-only mode.
+> → XREF: `TODO-063-Drivers.md §2.2` — MADT PCAT_COMPAT flag and APIC-only mode.
 > → XREF: `TODO-005-Debug.md §3.4` — ACPI MADT dump must log the PCAT_COMPAT flag.
 > → XREF: `TODO-008-Hyper-V-Runner.md §2` — Hyper-V Gen 2 clears PCAT_COMPAT.
 
@@ -223,7 +223,7 @@
 **Prompt:** The current AHCI driver assumes a specific PCI location or relies on QEMU's VirtIO. On real hardware, the AHCI controller can be on any PCI bus/device/function. Implement proper discovery: scan all PCI devices for class 01h (Mass Storage), subclass 06h (SATA), progIF 01h (AHCI 1.0). Map the ABAR (AHCI Base Address Register — BAR 5) and verify the HBA capability registers. Some systems have multiple AHCI controllers (e.g., chipset + add-in card). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: PCI-based controller discovery"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
-> → XREF: `TODO-080-Drivers.md §3` — AHCI driver architecture. This section hardens
+> → XREF: `TODO-063-Drivers.md §3` — AHCI driver architecture. This section hardens
 > it for real hardware variance beyond QEMU's single-controller setup.
 
 - [ ] Scan PCI for class=01h, subclass=06h, progIF=01h (AHCI 1.0)
@@ -276,7 +276,7 @@
 
 > [!NOTE]
 > A native USB mass storage driver (XHCI + BOT/UAS) is a long-term goal tracked in
-> `TODO-080-Drivers.md`. For now, the UEFI-loaded initrd avoids this complexity.
+> `TODO-063-Drivers.md`. For now, the UEFI-loaded initrd avoids this complexity.
 
 - [ ] Bootloader: load initrd.img from ESP via UEFI Simple File System Protocol
 - [ ] Bootloader: pass initrd physical address + size in `boot_info.initrd_*`
@@ -377,7 +377,7 @@
 **Prompt:** PS/2 keyboard works in QEMU but real hardware may have initialization timing differences. Some BIOSes disable the PS/2 controller during UEFI boot and rely on USB HID. Ensure the PS/2 controller is explicitly re-enabled during kernel init: send 0xAE (Enable Keyboard) to port 0x64, flush the output buffer, then install IRQ1 handler. Some keyboards need a reset (0xFF) command with ACK (0xFA) response. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"keyboard: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
-> → XREF: `TODO-060-Keyboard.md` — PS/2 keyboard driver implementation.
+> → XREF: `TODO-061-Keyboard.md` — PS/2 keyboard driver implementation.
 
 - [ ] Send 0xAE to port 0x64 (enable first PS/2 port)
 - [ ] Flush output buffer: read port 0x60 until status bit 0 clears
@@ -393,7 +393,7 @@
 **Prompt:** Similar to keyboard, the PS/2 mouse (IRQ12) may need explicit re-initialization on real hardware. Touchpads on laptops typically expose PS/2 emulation but may need Synaptics or ALPS-specific initialization sequences for multi-touch or scrolling. For initial support, use standard PS/2 mouse protocol only. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mouse: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
-> → XREF: `TODO-070-Mouse.md` — PS/2 mouse driver implementation.
+> → XREF: `TODO-062-Mouse.md` — PS/2 mouse driver implementation.
 
 - [ ] Send 0xA8 to port 0x64 (enable second PS/2 port — mouse)
 - [ ] Send 0xF4 (enable data reporting) to mouse via port 0x64→0xD4→0x60
@@ -408,7 +408,7 @@
 **Prompt:** Most modern keyboards and mice use USB, not PS/2. On systems without PS/2 emulation, no input is available. The minimal USB stack needed: XHCI host controller driver (PCI class 0Ch/03h/30h), USB device enumeration, HID class driver for keyboard and mouse. This is a significant effort tracked as a stretch goal. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: USB HID keyboard and mouse"`. Add notes directly in this TODO section.
 
 > [!NOTE]
-> → XREF: `TODO-080-Drivers.md` — USB host controller is tracked there as a long-term driver.
+> → XREF: `TODO-063-Drivers.md` — USB host controller is tracked there as a long-term driver.
 
 - [ ] *(Stretch)* PCI scan for XHCI controller (class 0Ch, subclass 03h, progIF 30h)
 - [ ] *(Stretch)* XHCI initialization: CRCR, DCBAAP, command ring, event ring
@@ -471,15 +471,15 @@ After each test, update the test machine table (§ Current Architecture Audit �
 | §2.1 GOP Negotiation    | GOP framebuffer init              | `TODO-010-Bootloader.md §1.2`     |
 | §2.2 Memory Map         | UEFI memory discovery             | `TODO-010-Bootloader.md §1.3`     |
 | §2.3 Secure Boot        | Hyper-V Gen 2 Secure Boot         | `TODO-008-Hyper-V-Runner.md §1`   |
-| §3.1 PIC/APIC           | MADT PCAT_COMPAT flag             | `TODO-080-Drivers.md §2.2`        |
+| §3.1 PIC/APIC           | MADT PCAT_COMPAT flag             | `TODO-063-Drivers.md §2.2`        |
 | §3.1 MADT Dump          | ACPI table dump                   | `TODO-005-Debug.md §3.4`          |
 | §3.2 PIT Calibration    | LAPIC timer calibration           | `TODO-010-Bootloader.md §1.5`     |
-| §4.1 AHCI Discovery     | AHCI driver architecture          | `TODO-080-Drivers.md §3`          |
+| §4.1 AHCI Discovery     | AHCI driver architecture          | `TODO-063-Drivers.md §3`          |
 | §5.1 SMP Trampoline     | Threading and SMP                 | `TODO-020-Threading-Synchronization.md` |
 | §5.3 RCU                | Seqlocks                          | `TODO-020-Threading-Synchronization.md §6` |
 | §6.1 Pixel Format       | GFX rendering functions           | `TODO-110-UI-Framework.md §1`     |
-| §7.1 PS/2 Keyboard      | Keyboard driver                   | `TODO-060-Keyboard.md`            |
-| §7.2 PS/2 Mouse         | Mouse driver                      | `TODO-070-Mouse.md`               |
+| §7.1 PS/2 Keyboard      | Keyboard driver                   | `TODO-061-Keyboard.md`            |
+| §7.2 PS/2 Mouse         | Mouse driver                      | `TODO-062-Mouse.md`               |
 
 ---
 

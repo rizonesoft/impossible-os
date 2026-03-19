@@ -17,7 +17,7 @@
 
 ## 1. ELF Relocation Engine & Dynamic Linker
 
-**Prompt:** The ELF relocation engine is used by two subsystems: (1) **kernel module loading** (`.kmod` files in `TODO-080-Drivers.md`) which uses ELF relocations to link driver code against kernel symbols, and (2) the **Linux compatibility layer** (`TODO-540-Linux.md`) which runs ELF binaries and loads `.so` shared libraries. Implement: ELF symbol table scanning, relocation types (`R_X86_64_64`, `R_X86_64_PC32`, `R_X86_64_PLT32`, `R_X86_64_GLOB_DAT`, `R_X86_64_JUMP_SLOT`), GOT/PLT patching for lazy binding, and `dlopen`/`dlsym`/`dlclose` API for the Linux compat layer. The native PE equivalents (`LoadLibrary`/`GetProcAddress`) are implemented in `TODO-510-Native-Win32.md §4`. Start by implementing the relocation engine for kernel modules, then extend to user-mode ELF compat. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF relocation engine + dlopen"`. Add notes directly in this TODO section.
+**Prompt:** The ELF relocation engine is used by two subsystems: (1) **kernel module loading** (`.kmod` files in `TODO-063-Drivers.md`) which uses ELF relocations to link driver code against kernel symbols, and (2) the **Linux compatibility layer** (`TODO-540-Linux.md`) which runs ELF binaries and loads `.so` shared libraries. Implement: ELF symbol table scanning, relocation types (`R_X86_64_64`, `R_X86_64_PC32`, `R_X86_64_PLT32`, `R_X86_64_GLOB_DAT`, `R_X86_64_JUMP_SLOT`), GOT/PLT patching for lazy binding, and `dlopen`/`dlsym`/`dlclose` API for the Linux compat layer. The native PE equivalents (`LoadLibrary`/`GetProcAddress`) are implemented in `TODO-510-Native-Win32.md §4`. Start by implementing the relocation engine for kernel modules, then extend to user-mode ELF compat. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: ELF relocation engine + dlopen"`. Add notes directly in this TODO section.
 
 > **Native PE equivalent:** `LoadLibrary` / `GetProcAddress` / `FreeLibrary` — the
 > primary DLL loading API (see `TODO-510-Native-Win32.md §4.4`).
@@ -40,9 +40,9 @@
 
 ---
 
-## 2. Kernel Modules — See TODO-080-Drivers.md
+## 2. Kernel Modules — See TODO-063-Drivers.md
 
-> **Implemented in [TODO-080-Drivers.md §1](../060-Hardware-Drivers/TODO-080-Drivers.md)** — Loadable `.kmod` drivers,
+> **Implemented in [TODO-063-Drivers.md §1](../060-Hardware-Drivers/TODO-063-Drivers.md)** — Loadable `.kmod` drivers,
 > `EXPORT_SYMBOL`, `module_init`/`module_cleanup`, PCI auto-load, RTL8139 as PoC.
 >
 > **Dependency:** The ELF relocation engine from §1 above is shared — implement §1 first,
@@ -89,7 +89,7 @@
 | 🔴 P0    | 1. ELF symbol table + relocs   | Engine needed by kernel modules (TODO-080)      |
 | 🟠 P1    | 1. GOT/PLT patching            | Required for shared library dispatch (Linux compat) |
 | 🟡 P2    | 1. dlopen/dlsym/dlclose        | Linux compat layer (TODO-540) — PE `LoadLibrary` is native |
-| 🟡 P2    | 2. Kernel modules              | See TODO-080-Drivers.md — after Drivers phase   |
+| 🟡 P2    | 2. Kernel modules              | See TODO-063-Drivers.md — after Drivers phase   |
 | 🟡 P2    | 3. Symbol versioning           | ABI stability for system libraries              |
 | 🟡 P2    | 4. Library cache               | Performance — fast dlopen cold start            |
 

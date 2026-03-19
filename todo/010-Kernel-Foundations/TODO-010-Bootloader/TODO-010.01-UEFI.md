@@ -17,8 +17,8 @@
 > [!NOTE]
 > **Cross-references:**
 > - [TODO-010-Bootloader.md](TODO-010-Bootloader.md) — Current UEFI bootloader (✅ Done: GOP, memory map, ExitBootServices)
-> - [TODO-042-ACPI.md](TODO-042-ACPI.md) — ACPI tables discovered via UEFI Configuration Table
-> - [TODO-044-PCI.md §4.1](TODO-044-PCI.md) — PCIe ECAM via MCFG (found in UEFI config table)
+> - [TODO-012-ACPI.md](TODO-012-ACPI.md) — ACPI tables discovered via UEFI Configuration Table
+> - [TODO-060-PCI.md §4.1](TODO-060-PCI.md) — PCIe ECAM via MCFG (found in UEFI config table)
 > - [TODO-043-x86-64.md §8](TODO-043-x86-64.md) — Security extensions (SMEP/SMAP/CET complement Secure Boot)
 > - [TODO-550-Installer-ISO.md](../510-Long-Term-Stretch/TODO-550-Installer-ISO.md) — UEFI boot media creation
 

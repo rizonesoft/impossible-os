@@ -192,7 +192,7 @@ run `bash scripts/build.sh clean`, and commit as
 window and hysteresis.
 
 > **Cross-reference:** Low-level ACPI `_PSS` (Performance Supported States)
-> implementation is in `TODO-080-Drivers.md §9`. This section covers the
+> implementation is in `TODO-063-Drivers.md §9`. This section covers the
 > scheduler-side load measurement and the upscale/downscale decision.
 
 - [ ] Track idle fraction: `idle_ticks / total_ticks` over a 100ms sliding window

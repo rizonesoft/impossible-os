@@ -193,7 +193,7 @@
 | 🔵 P4     | 9. Hyper-V Validation       | Final testing                        |
 
 > [!NOTE]
-> **Cross-reference:** Low-level ACPI kernel implementation (PM1a register parsing, S3 wakeup trampoline, battery `_BST`, DVFS `_PSS`) is detailed in [TODO-080-Drivers.md §9](TODO-080-Drivers.md). This file covers the **user-facing power management layer** built on top of those primitives.
+> **Cross-reference:** Low-level ACPI kernel implementation (PM1a register parsing, S3 wakeup trampoline, battery `_BST`, DVFS `_PSS`) is detailed in [TODO-063-Drivers.md §9](TODO-063-Drivers.md). This file covers the **user-facing power management layer** built on top of those primitives.
 
 ---
 

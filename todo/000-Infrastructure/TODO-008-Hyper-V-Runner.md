@@ -66,7 +66,7 @@ UEFI Firmware (Hyper-V)
 
 ## 2. APIC-Only Interrupt Mode (No PIC)
 
-> **XREF:** [TODO-080-Drivers.md §2.2](../060-Hardware-Drivers/TODO-080-Drivers.md) — APIC / IOAPIC (Built-in)
+> **XREF:** [TODO-063-Drivers.md §2.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — APIC / IOAPIC (Built-in)
 
 **Prompt:** On Hyper-V Gen 2, the MADT `PCAT_COMPAT` flag (bit 0 at offset 36) is cleared to 0, meaning **no 8259 PIC exists**. The current kernel assumes PIC presence at boot. The APIC init must: parse MADT for the `PCAT_COMPAT` flag, skip all PIC I/O port accesses (`0x20`, `0x21`, `0xA0`, `0xA1`) when the flag is 0, and operate in APIC-only mode from the start. Without this, the PIC init writes are silently dropped (no crash, but interrupts may not route correctly). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: APIC-only mode for hardware-reduced ACPI"`. Add notes directly in this TODO section.
 
@@ -85,7 +85,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 3. VMBus Core Protocol
 
-> **XREF:** [TODO-080-Drivers.md §10.1](../060-Hardware-Drivers/TODO-080-Drivers.md) — VMBus Core Protocol
+> **XREF:** [TODO-063-Drivers.md §10.1](../060-Hardware-Drivers/TODO-063-Drivers.md) — VMBus Core Protocol
 
 **Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). This is the **foundation** — without VMBus, no synthetic device (disk, keyboard, mouse, video, network) can be accessed. Implement: discover Hyper-V via CPUID leaf `0x40000001`, set up the hypercall page via MSR `HV_X64_MSR_HYPERCALL`, negotiate VMBus protocol version, initiate the VMBus connection, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Clean-room implement from the public Hyper-V TLFS (Top-Level Functional Specification), NOT from Linux `hv_vmbus.c` (GPL). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
 
@@ -108,7 +108,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 4. Synthetic SCSI Storage Driver (storvsc)
 
-> **XREF:** [TODO-080-Drivers.md §10.2](../060-Hardware-Drivers/TODO-080-Drivers.md) — Synthetic SCSI
+> **XREF:** [TODO-063-Drivers.md §10.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic SCSI
 
 **Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS **cannot read any disk** — IXFS/FAT32 mount fails, no fonts, no icons, no wallpaper, no desktop. This is the **#1 blocker** for Hyper-V Gen 2 boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
 
@@ -126,8 +126,8 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 5. Synthetic HID Input Driver
 
-> **XREF:** [TODO-080-Drivers.md §10.3](../060-Hardware-Drivers/TODO-080-Drivers.md) — Synthetic HID
-> **XREF:** [TODO-090-Guest-Additions.md §6.2](../060-Hardware-Drivers/TODO-090-Guest-Additions.md) — Hyper-V Synthetic Mouse & Video
+> **XREF:** [TODO-063-Drivers.md §10.3](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic HID
+> **XREF:** [TODO-064-Guest-Additions.md §6.2](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — Hyper-V Synthetic Mouse & Video
 
 **Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop is **completely unresponsive** — no keyboard shortcuts, no mouse clicks, no window interaction. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
 
@@ -143,7 +143,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 6. Synthetic Video Driver (hvfb)
 
-> **XREF:** [TODO-080-Drivers.md §10.4](../060-Hardware-Drivers/TODO-080-Drivers.md) — Synthetic Video
+> **XREF:** [TODO-063-Drivers.md §10.4](../060-Hardware-Drivers/TODO-063-Drivers.md) — Synthetic Video
 
 **Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes (boot splash works), but proper VMBus video integration enables runtime resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
 
@@ -208,7 +208,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 10. Hyper-V Power Management
 
-> **XREF:** [TODO-100-Power-Management.md §9](../060-Hardware-Drivers/TODO-100-Power-Management.md) — Hyper-V Power Validation
+> **XREF:** [TODO-065-Power-Management.md §9](../060-Hardware-Drivers/TODO-065-Power-Management.md) — Hyper-V Power Validation
 
 **Prompt:** Validate power management operations (shutdown, reboot, sleep) on Hyper-V Gen 2. The standard ACPI shutdown (port `0xCF9`, `PM1a_CNT` SLP_TYP) may behave differently under the hypervisor. Hyper-V provides a hypercall-based shutdown mechanism. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"power: Hyper-V power management validation"`. Add notes directly in this TODO section.
 
@@ -223,7 +223,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 11. Hyper-V Guest Additions Integration
 
-> **XREF:** [TODO-090-Guest-Additions.md §6](../060-Hardware-Drivers/TODO-090-Guest-Additions.md) — VMBus Integration
+> **XREF:** [TODO-064-Guest-Additions.md §6](../060-Hardware-Drivers/TODO-064-Guest-Additions.md) — VMBus Integration
 
 **Prompt:** Once the core VMBus stack (§3) and synthetic drivers (§4-7) are functional, integrate them into the guest additions framework so the hypervisor detector (`detect.c`) automatically activates the Hyper-V backend when running on Hyper-V. The detection chain: CPUID `0x40000000` returns `"Microsoft Hv"` → activate VMBus backend → register synthetic drivers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions integration"`. Add notes directly in this TODO section.
 

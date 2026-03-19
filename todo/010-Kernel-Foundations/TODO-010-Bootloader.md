@@ -126,7 +126,7 @@
 
 > [!NOTE]
 > **Primary dev targets remain QEMU and VirtualBox (Gen 1).** Hyper-V Gen 2 support is
-> 🟢 P3 stretch. The VMBus driver stack (§10 in `TODO-080-Drivers.md`) is the largest
+> 🟢 P3 stretch. The VMBus driver stack (§10 in `TODO-063-Drivers.md`) is the largest
 > single piece of work and can be deferred until after the core driver model is complete.
 
 ---

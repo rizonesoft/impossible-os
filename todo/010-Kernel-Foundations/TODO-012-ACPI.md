@@ -16,9 +16,9 @@
 
 > [!NOTE]
 > **Cross-references:**
-> - [TODO-100-Power-Management.md](../060-Hardware-Drivers/TODO-100-Power-Management.md) — User-facing power (shutdown sequence, Start Menu, profiles)
-> - [TODO-080-Drivers.md §9](../060-Hardware-Drivers/TODO-080-Drivers.md) — ACPI shutdown/reboot registers, S3, battery
-> - [TODO-080-Drivers.md §2.2](../060-Hardware-Drivers/TODO-080-Drivers.md) — APIC/IOAPIC (depends on MADT)
+> - [TODO-065-Power-Management.md](../060-Hardware-Drivers/TODO-065-Power-Management.md) — User-facing power (shutdown sequence, Start Menu, profiles)
+> - [TODO-063-Drivers.md §9](../060-Hardware-Drivers/TODO-063-Drivers.md) — ACPI shutdown/reboot registers, S3, battery
+> - [TODO-063-Drivers.md §2.2](../060-Hardware-Drivers/TODO-063-Drivers.md) — APIC/IOAPIC (depends on MADT)
 
 ---
 

@@ -201,7 +201,7 @@
 > The ACPI parser must be in place before table-level dumping can work.
 
 > [!IMPORTANT]
-> → XREF: `TODO-080-Drivers.md §2.2` — The MADT `PCAT_COMPAT` flag (bit 0 at offset 36)
+> → XREF: `TODO-063-Drivers.md §2.2` — The MADT `PCAT_COMPAT` flag (bit 0 at offset 36)
 > indicates whether the 8259 PIC is present. On Hyper-V Gen 2, this flag is **cleared to 0**.
 > The hardware dump must log this flag so developers can instantly see whether PIC init
 > should be skipped. This is critical for debugging boot failures on legacy-free platforms.

@@ -21,7 +21,7 @@
 > - [TODO-040-Filesystem.md](TODO-040-Filesystem.md) — VFS layer that NTFS plugs into
 > - [TODO-045-Win32-VFS-Compat.md](TODO-045-Win32-VFS-Compat.md) — Win32 path translation (`C:\` → mount point)
 > - [TODO-041-AHCI.md](TODO-041-AHCI.md) — Block device layer (AHCI reads/writes)
-> - [TODO-044-PCI.md](TODO-044-PCI.md) — AHCI controller discovery via PCI
+> - [TODO-060-PCI.md](TODO-060-PCI.md) — AHCI controller discovery via PCI
 
 ---
 
