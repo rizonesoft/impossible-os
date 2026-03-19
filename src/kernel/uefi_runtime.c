@@ -425,3 +425,102 @@ void uefi_reset(uint32_t reset_type)
     for (;;)
         __asm__ volatile("hlt");
 }
+
+/* ============================================================================
+ * RTC Time Services (§2.1)
+ *
+ * GetTime/SetTime/GetWakeupTime wrappers.
+ * ============================================================================ */
+
+uint64_t uefi_get_time(struct efi_time *time,
+                       struct efi_time_capabilities *caps)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_GET_TIME)) return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->get_time(time, caps);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
+uint64_t uefi_set_time(const struct efi_time *time)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_SET_TIME)) return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->set_time((void *)time);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
+uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
+                              struct efi_time *time)
+{
+    if (!s_available || !s_rt) return UEFI_UNSUPPORTED;
+    if (!(s_supported & EFI_RT_SUPPORTED_GET_WAKEUP_TIME))
+        return UEFI_UNSUPPORTED;
+
+    spin_lock(&s_rt_lock);
+    efi_status_t status = s_rt->get_wakeup_time(enabled, pending, time);
+    spin_unlock(&s_rt_lock);
+
+    return status;
+}
+
+void uefi_time_init(void)
+{
+    struct efi_time t;
+    struct efi_time_capabilities caps;
+
+    efi_status_t status = uefi_get_time(&t, &caps);
+    if (status != UEFI_SUCCESS) {
+        klog(LOG_WARN, "UEFI", "GetTime failed — wall clock not seeded");
+        return;
+    }
+
+    /* Format: "YYYY-MM-DD HH:MM:SS" — manual zero-padding (no %02u in klog) */
+    char ts[20];
+    uint16_t y = t.year;
+    ts[0]  = '0' + (char)(y / 1000);
+    ts[1]  = '0' + (char)((y / 100) % 10);
+    ts[2]  = '0' + (char)((y / 10) % 10);
+    ts[3]  = '0' + (char)(y % 10);
+    ts[4]  = '-';
+    ts[5]  = '0' + (char)(t.month / 10);
+    ts[6]  = '0' + (char)(t.month % 10);
+    ts[7]  = '-';
+    ts[8]  = '0' + (char)(t.day / 10);
+    ts[9]  = '0' + (char)(t.day % 10);
+    ts[10] = ' ';
+    ts[11] = '0' + (char)(t.hour / 10);
+    ts[12] = '0' + (char)(t.hour % 10);
+    ts[13] = ':';
+    ts[14] = '0' + (char)(t.minute / 10);
+    ts[15] = '0' + (char)(t.minute % 10);
+    ts[16] = ':';
+    ts[17] = '0' + (char)(t.second / 10);
+    ts[18] = '0' + (char)(t.second % 10);
+    ts[19] = '\0';
+
+    klog(LOG_INFO, "UEFI", "RTC: %s", ts);
+
+    /* Timezone info */
+    if (t.timezone == (int16_t)EFI_UNSPECIFIED_TIMEZONE) {
+        klog(LOG_INFO, "UEFI", "RTC: timezone unspecified (local time)");
+    } else {
+        int16_t tz = t.timezone;
+        uint32_t abs_tz = (uint32_t)((tz >= 0) ? tz : -tz);
+        klog(LOG_INFO, "UEFI", "RTC: UTC%s%u:%s%u",
+             (tz >= 0) ? "+" : "-",
+             abs_tz / 60,
+             (abs_tz % 60 < 10) ? "0" : "",
+             abs_tz % 60);
+    }
+
+    klog(LOG_INFO, "UEFI", "RTC: resolution=%u Hz, accuracy=%u ppm",
+         caps.resolution, caps.accuracy);
+}

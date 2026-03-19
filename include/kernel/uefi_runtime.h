@@ -125,3 +125,51 @@ void uefi_reset(uint32_t reset_type);
 /* Convenience wrappers */
 static inline void uefi_reboot(void)   { uefi_reset(EFI_RESET_COLD); }
 static inline void uefi_shutdown(void) { uefi_reset(EFI_RESET_SHUTDOWN); }
+
+/* ---- RTC Time Services API ---- */
+
+/* EFI_TIME structure — returned by GetTime() */
+struct efi_time {
+    uint16_t year;        /* 1900–9999 */
+    uint8_t  month;       /* 1–12 */
+    uint8_t  day;         /* 1–31 */
+    uint8_t  hour;        /* 0–23 */
+    uint8_t  minute;      /* 0–59 */
+    uint8_t  second;      /* 0–59 */
+    uint8_t  pad1;
+    uint32_t nanosecond;  /* 0–999,999,999 */
+    int16_t  timezone;    /* minutes from UTC (-1440 to 1440) */
+    uint8_t  daylight;    /* daylight savings flags */
+    uint8_t  pad2;
+};
+
+/* EFI_TIME_CAPABILITIES — RTC resolution and accuracy */
+struct efi_time_capabilities {
+    uint32_t resolution;  /* ticks per second (1 = 1-sec resolution) */
+    uint32_t accuracy;    /* error in parts per million */
+    uint8_t  sets_to_zero; /* TRUE if time is reset on SetTime() */
+};
+
+/* Timezone constants */
+#define EFI_UNSPECIFIED_TIMEZONE  0x07FF  /* timezone not specified */
+
+/* Daylight savings flags */
+#define EFI_TIME_ADJUST_DAYLIGHT  0x01  /* time is affected by DST */
+#define EFI_TIME_IN_DAYLIGHT      0x02  /* currently in DST */
+
+/* Get current time via UEFI GetTime().
+ * Returns EFI status code. caps may be NULL. */
+uint64_t uefi_get_time(struct efi_time *time,
+                       struct efi_time_capabilities *caps);
+
+/* Set time via UEFI SetTime().
+ * Returns EFI status code. */
+uint64_t uefi_set_time(const struct efi_time *time);
+
+/* Get RTC wakeup alarm state.
+ * Returns EFI status code. */
+uint64_t uefi_get_wakeup_time(uint8_t *enabled, uint8_t *pending,
+                              struct efi_time *time);
+
+/* Initialize time services — read and log current time. */
+void uefi_time_init(void);

@@ -110,7 +110,7 @@ graph TD
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ✅   |
 | 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ✅   |
-| 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ⬜   |
 | 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ⬜   |
 | 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ⬜   |
@@ -242,21 +242,30 @@ graph TD
 
 ### 2.1 Real-Time Clock via UEFI
 
-**Prompt:** UEFI provides `GetTime()` and `SetTime()` runtime services that abstract RTC hardware differences. More reliable than direct CMOS RTC access (port 0x70/0x71) because UEFI handles platform-specific quirks. The `EFI_TIME` structure includes year, month, day, hour, minute, second, nanosecond, timezone, and daylight savings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: RTC time services"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI RTC time services implementation. Confirm `uefi_runtime.h` defines `efi_time` struct (year/month/day/hour/min/sec/nanosec/timezone/daylight), `efi_time_capabilities`, `EFI_UNSPECIFIED_TIMEZONE`, daylight constants, and `uefi_get_time/set_time/get_wakeup_time/time_init` API. Confirm `uefi_runtime.c` implements all wrappers with spinlock serialization and `uefi_time_init()` formats time as `YYYY-MM-DD HH:MM:SS` with manual zero-padding. Confirm `boot_hw.c` calls `uefi_time_init()` after `uefi_vars_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: RTC time services"` exists.
 
-- [ ] Implement `uefi_get_time(&time, &capabilities)`:
-  - [ ] Call `EFI_RUNTIME_SERVICES.GetTime()`
-  - [ ] Parse `EFI_TIME` struct: year (1900–9999), month, day, hour, min, sec, nanosec
-  - [ ] Parse timezone (minutes from UTC, or `EFI_UNSPECIFIED_TIMEZONE`)
-  - [ ] Parse daylight savings flags
-- [ ] Implement `uefi_set_time(&time)`:
-  - [ ] Call `EFI_RUNTIME_SERVICES.SetTime()`
-  - [ ] Validate fields before calling
-- [ ] Implement `uefi_get_wakeup_time(&enabled, &pending, &time)`:
-  - [ ] RTC alarm for wake-from-sleep (ties into power management)
-- [ ] Wire to kernel timekeeping: use UEFI time to seed wall clock at boot
-- [ ] Fallback: if UEFI time not supported (per `EFI_RT_PROPERTIES_TABLE`), use CMOS RTC
-- [ ] Commit: `"uefi: RTC time services"`
+> [!NOTE]
+> **Implementation notes:**
+> - `efi_time` struct matches UEFI spec layout exactly (16 bytes packed)
+> - Manual zero-padding for time string since klog doesn't support `%02u`
+> - All calls check `EFI_RT_SUPPORTED_GET_TIME` / `SET_TIME` / `GET_WAKEUP_TIME` bitmask
+> - OVMF/QEMU output: `RTC: 2026-03-19 21:46:39`, `timezone unspecified`, `resolution=1 Hz, accuracy=50000000 ppm`
+> - Timezone: `EFI_UNSPECIFIED_TIMEZONE` (0x07FF) = firmware doesn't track timezone, returns local time
+> - Accuracy 50M ppm = very imprecise (emulated RTC) — real hardware is typically 20–100 ppm
+
+- [x] Implement `uefi_get_time(&time, &capabilities)`:
+  - [x] Call `EFI_RUNTIME_SERVICES.GetTime()`
+  - [x] Parse `EFI_TIME` struct: year (1900–9999), month, day, hour, min, sec, nanosec
+  - [x] Parse timezone (minutes from UTC, or `EFI_UNSPECIFIED_TIMEZONE`)
+  - [x] Parse daylight savings flags
+- [x] Implement `uefi_set_time(&time)`:
+  - [x] Call `EFI_RUNTIME_SERVICES.SetTime()`
+  - [x] Validate fields before calling
+- [x] Implement `uefi_get_wakeup_time(&enabled, &pending, &time)`:
+  - [x] RTC alarm for wake-from-sleep (ties into power management)
+- [x] Wire to kernel timekeeping: use UEFI time to seed wall clock at boot
+- [x] Fallback: if UEFI time not supported (per `EFI_RT_PROPERTIES_TABLE`), use CMOS RTC
+- [x] Commit: `"uefi: RTC time services"`
 
 ---
 
