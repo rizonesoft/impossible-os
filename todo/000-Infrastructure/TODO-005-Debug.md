@@ -557,11 +557,17 @@
 
 ### 7.3 Remove Stale `serial.log` in Repository Root
 
-**Prompt:** There is a `serial.log` file in the repository root (tracked by git). This is a build/test artifact and should not be in the repository. Remove it and add to `.gitignore`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, and commit as `"cleanup: remove stale serial.log from repo"`. Add notes directly in this TODO section.
+**Prompt:** Verify that `serial.log` is no longer tracked by git (`git ls-files serial.log` returns empty) and that `serial.log` is listed in `.gitignore`. Run `git status` to confirm no untracked `serial.log` exists. Check commit `"cleanup: remove stale serial.log from repo"` exists.
 
-- [ ] `git rm serial.log`
-- [ ] Add `serial.log` to `.gitignore`
-- [ ] Commit: `"cleanup: remove stale serial.log from repo"`
+> [!NOTE]
+> **Implementation notes:**
+> - `serial.log` was already removed from git tracking (prior `git rm`)
+> - `serial.log` was already in `.gitignore` at line 21
+> - No additional changes needed — both items were previously completed
+
+- [x] `git rm serial.log`
+- [x] Add `serial.log` to `.gitignore`
+- [x] Commit: `"cleanup: remove stale serial.log from repo"`
 
 ---
 
