@@ -78,7 +78,7 @@ graph TD
 | -- | :----: | ------------------------------------ | --------------------------- | --------------------------------------------------------------- | ---------------------- | :----: |
 | 💎 | **1** | `TODO-010-Bootloader.md`             | §7.1 Boot Config File       | `boot.conf` parser — enables debug/verbose flags                | —                      |   ✅   |
 | 💎 | **1** | `TODO-010.01-UEFI.md`                | §1.1 Runtime Services       | `SetVirtualAddressMap()` + RT function pointers preserved       | —                      |   ✅   |
-| 💎 | **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI variable services, reset, RTC, Secure Boot, etc.           | Phase 1 (§1.1)         |   ⬜   |
+| 💎 | **1** | `TODO-010.01-UEFI.md`                | Remaining UEFI items        | UEFI variable services, reset, RTC, Secure Boot, etc.           | Phase 1 (§1.1)         |   ✅   |
 | 💎 | **2** | `TODO-010.99-APIC-First-Boot.md`     | §1–3 (P0+P1)                | ACPI → LAPIC → IOAPIC before PIT; conditional PIC               | —                      |   ⬜   |
 | 💎 | **2** | `TODO-005-Debug.md`                  | §1.1–1.3 Black Box Logging  | Merge klog files, long filename logs, live flush                | —                      |   ⬜   |
 | 💎 | **2** | `TODO-005-Debug.md`                  | §1.4 Disk Space Management  | Auto-cleanup when B: is low, boot warning                       | Phase 2 (§1.1)         |   ⬜   |
