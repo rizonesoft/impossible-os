@@ -120,7 +120,7 @@ if ($qemuImg) {
 
 Remove-Item $DISK_TEMP -Force -ErrorAction SilentlyContinue
 $vhdxSizeMB = [math]::Round((Get-Item $DISK_VHDX).Length / 1MB)
-Write-Ok "VHDX: $DISK_VHDX ($vhdxSizeMB MB)"
+Write-Ok "VHDX: $DISK_VHDX ($vhdxSizeMB` MB)"
 
 # ---- Create fresh VM ----
 $MemoryBytes = [int64]$MemoryMB * 1MB
@@ -147,7 +147,7 @@ Set-VMMemory -VMName $VmName -DynamicMemoryEnabled $false
 # ---- Serial COM1 for debug output ----
 if (-not $NoSerial) {
     Set-VMComPort -VMName $VmName -Number 1 -Path $SERIAL_PIPE
-    Write-Ok "COM1 → named pipe: $SERIAL_PIPE"
+    Write-Ok "COM1 -> named pipe: $SERIAL_PIPE"
 }
 
 Write-Ok "VM created: Gen 2, $MemoryMB MB RAM, $CpuCount vCPU, Secure Boot OFF"
@@ -165,7 +165,7 @@ if (-not $NoConnect) {
 
 # ---- Serial listener (background job reads from named pipe) ----
 if (-not $NoSerial) {
-    Write-Status "Starting serial listener (COM1 → $SERIAL_LOG)..."
+    Write-Status "Starting serial listener (COM1 -> $SERIAL_LOG)..."
     $serialJob = Start-Job -Name "${VmName}-serial" -ScriptBlock {
         param($pipePath, $logPath)
         # Wait for the pipe to appear (VM takes a moment to create it)
