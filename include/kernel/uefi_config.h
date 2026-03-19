@@ -84,3 +84,26 @@ uint32_t esrt_count(void);
 
 /* Returns pointer to n-th ESRT entry, or NULL if out of range. */
 const struct esrt_entry *esrt_get_entry(uint32_t index);
+
+/* ---- Memory Attributes Table (UEFI 2.6+ §4.6.4) ---- */
+
+/* EFI memory attribute flags (from UEFI spec) */
+#define EFI_MEMORY_RO   0x0000000000020000ULL  /* Read-only (no write) */
+#define EFI_MEMORY_XP   0x0000000000004000ULL  /* Non-executable (NX bit) */
+#define EFI_MEMORY_RP   0x0000000000002000ULL  /* Not present (guard page) */
+
+/* EFI_MEMORY_ATTRIBUTES_TABLE header */
+struct efi_memory_attributes_table {
+    uint32_t version;
+    uint32_t number_of_entries;
+    uint32_t descriptor_size;
+    uint32_t reserved;
+    /* followed by number_of_entries × EFI_MEMORY_DESCRIPTOR */
+};
+
+/* Initialize Memory Attributes Table — parse and log W^X status.
+ * Must be called after uefi_config_init(). */
+void mat_init(void);
+
+/* Returns 1 if MAT was present and all regions pass W^X check. */
+int mat_wxn_enforced(void);

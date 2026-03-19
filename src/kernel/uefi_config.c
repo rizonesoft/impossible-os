@@ -238,3 +238,118 @@ const struct esrt_entry *esrt_get_entry(uint32_t index)
         return (const struct esrt_entry *)0;
     return &s_esrt_entries[index];
 }
+
+/* ============================================================================
+ * Memory Attributes Table (UEFI 2.6+ §4.6.4)
+ *
+ * Declares fine-grained memory permissions (RO, XP, RP) for runtime regions.
+ * Enforces W^X: no region may be simultaneously writable AND executable.
+ * ============================================================================ */
+
+/* MAT memory descriptor — matches EFI_MEMORY_DESCRIPTOR layout */
+struct mat_descriptor {
+    uint32_t type;
+    uint32_t pad;
+    uint64_t physical_start;
+    uint64_t virtual_start;
+    uint64_t number_of_pages;
+    uint64_t attribute;
+};
+
+static int s_mat_present;
+static int s_wxn_ok;  /* 1 = all regions pass W^X check */
+
+void mat_init(void)
+{
+    s_mat_present = 0;
+    s_wxn_ok = 0;
+
+    struct boot_uefi_guid mat_guid = UEFI_GUID_MEM_ATTR;
+    uintptr_t table_addr = uefi_find_config_table(&mat_guid);
+
+    if (table_addr == 0) {
+        klog(LOG_INFO, "UEFI", "MAT: Not present "
+             "(runtime memory W^X not declared)");
+        return;
+    }
+
+    const struct efi_memory_attributes_table *mat =
+        (const struct efi_memory_attributes_table *)table_addr;
+
+    if (mat->version < 1) {
+        klog(LOG_WARN, "UEFI", "MAT: Unknown version %u", mat->version);
+        return;
+    }
+
+    s_mat_present = 1;
+
+    uint32_t count = mat->number_of_entries;
+    uint32_t desc_sz = mat->descriptor_size;
+
+    if (desc_sz < sizeof(struct mat_descriptor))
+        desc_sz = (uint32_t)sizeof(struct mat_descriptor);
+
+    /* Walk descriptors, verify W^X, classify regions */
+    uint32_t code_regions = 0;   /* RO + executable */
+    uint32_t data_regions = 0;   /* RW + non-executable */
+    uint32_t guard_regions = 0;  /* RP (not present) */
+    uint32_t wxn_violations = 0; /* writable AND executable */
+    uint64_t code_pages = 0;
+    uint64_t data_pages = 0;
+
+    const uint8_t *base = (const uint8_t *)(table_addr +
+        sizeof(struct efi_memory_attributes_table));
+
+    uint32_t i;
+    for (i = 0; i < count; i++) {
+        const struct mat_descriptor *d =
+            (const struct mat_descriptor *)(base + (uint64_t)i * desc_sz);
+
+        uint64_t attr = d->attribute;
+
+        int is_ro = (attr & EFI_MEMORY_RO) != 0;
+        int is_xp = (attr & EFI_MEMORY_XP) != 0;
+        int is_rp = (attr & EFI_MEMORY_RP) != 0;
+
+        if (is_rp) {
+            guard_regions++;
+        } else if (is_ro && !is_xp) {
+            /* Read-only + executable = code */
+            code_regions++;
+            code_pages += d->number_of_pages;
+        } else if (!is_ro && is_xp) {
+            /* Writable + non-executable = data */
+            data_regions++;
+            data_pages += d->number_of_pages;
+        } else if (!is_ro && !is_xp) {
+            /* Writable AND executable — W^X violation! */
+            wxn_violations++;
+        } else {
+            /* Read-only + non-executable — unusual but safe (e.g. constants) */
+            data_regions++;
+            data_pages += d->number_of_pages;
+        }
+    }
+
+    s_wxn_ok = (wxn_violations == 0) ? 1 : 0;
+
+    klog(LOG_INFO, "UEFI",
+         "MAT: %u descriptors — %u code (%u KB), %u data (%u KB), "
+         "%u guard",
+         count, code_regions, (uint32_t)(code_pages * 4),
+         data_regions, (uint32_t)(data_pages * 4),
+         guard_regions);
+
+    if (s_wxn_ok) {
+        klog(LOG_INFO, "UEFI", "MAT: W^X verified — "
+             "no writable+executable regions");
+    } else {
+        klog(LOG_WARN, "UEFI", "MAT: W^X VIOLATION — "
+             "%u regions are writable+executable", wxn_violations);
+    }
+}
+
+int mat_wxn_enforced(void)
+{
+    return s_mat_present && s_wxn_ok;
+}

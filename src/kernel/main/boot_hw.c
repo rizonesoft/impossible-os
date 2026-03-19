@@ -109,7 +109,10 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3e: ESRT firmware inventory */
     esrt_init();
 
-    /* Step 3f: Boot timing report (TSC + FPDT) */
+    /* Step 3f: Memory Attributes Table (W^X) */
+    mat_init();
+
+    /* Step 3g: Boot timing report (TSC + FPDT) */
     boot_timing_init();
 
     /* Step 4: Initialize physical memory manager */
