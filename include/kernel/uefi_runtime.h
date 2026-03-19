@@ -291,3 +291,60 @@ void uefi_crypto_agility_init(void);
 
 /* Returns parsed crypto agility state. */
 const struct crypto_agility_info *uefi_crypto_agility_info(void);
+
+/* ---- Capsule Firmware Update API (§6.1) ----
+ *
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║  ⚠️  DANGER: UpdateCapsule() CAN PERMANENTLY BRICK YOUR HARDWARE  ⚠️  ║
+ * ╠══════════════════════════════════════════════════════════════════════╣
+ * ║                                                                    ║
+ * ║  UpdateCapsule() writes DIRECTLY to firmware flash (SPI NOR).      ║
+ * ║  A wrong capsule, corrupted data, or power loss during flash       ║
+ * ║  will permanently brick the motherboard.  There is NO recovery     ║
+ * ║  short of a hardware flash programmer (SPI clip + CH341A).         ║
+ * ║                                                                    ║
+ * ║  BEFORE implementing UpdateCapsule():                              ║
+ * ║    1. Capsule must be cryptographically signed by the OEM          ║
+ * ║    2. Signature must be verified (RSA-2048/SHA-256 minimum)        ║
+ * ║    3. CapsuleGuid must match ESRT FwClass exactly                  ║
+ * ║    4. Version must be >= LowestSupportedVersion from ESRT          ║
+ * ║    5. System must be on AC power (not battery)                     ║
+ * ║    6. User must explicitly confirm ("This will update firmware")   ║
+ * ║    7. A full crypto stack (PKCS#7/CMS) must exist in the kernel    ║
+ * ║                                                                    ║
+ * ║  This API exposes ONLY QueryCapsuleCapabilities() — read-only.    ║
+ * ║  UpdateCapsule() is intentionally NOT exposed.                     ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * ---- */
+
+/* EFI_CAPSULE_HEADER (UEFI Spec §8.5.3) */
+struct efi_capsule_header {
+    struct boot_uefi_guid capsule_guid;
+    uint32_t header_size;
+    uint32_t flags;
+    uint32_t capsule_image_size;
+};
+
+/* Capsule flags */
+#define CAPSULE_FLAGS_PERSIST_ACROSS_RESET   0x00010000
+#define CAPSULE_FLAGS_POPULATE_SYSTEM_TABLE  0x00020000
+#define CAPSULE_FLAGS_INITIATE_RESET         0x00040000
+
+/* Capsule capability query result */
+struct capsule_capability_info {
+    uint64_t max_capsule_size;   /* largest capsule firmware will accept */
+    uint32_t reset_type;         /* reset type needed to apply (0=cold, 1=warm) */
+    uint8_t  supported;          /* 1 if firmware supports capsule updates */
+    uint8_t  pad[3];
+};
+
+/* Initialize capsule subsystem — query firmware capabilities.
+ * Read-only: does NOT call UpdateCapsule() or modify firmware.
+ * Must be called after uefi_runtime_init(). */
+void uefi_capsule_init(void);
+
+/* Returns 1 if firmware supports capsule updates. */
+int uefi_capsule_supported(void);
+
+/* Returns capsule capability info (valid after uefi_capsule_init). */
+const struct capsule_capability_info *uefi_capsule_info(void);

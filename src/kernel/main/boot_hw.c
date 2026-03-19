@@ -110,6 +110,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3b6: Crypto agility (UEFI 2.10 algorithm negotiation) */
     uefi_crypto_agility_init();
 
+    /* Step 3b7: Capsule firmware update capabilities (query-only) */
+    uefi_capsule_init();
+
     /* Step 3c: UEFI conformance profile (Full UEFI vs EBBR) */
     uefi_conformance_init();
 

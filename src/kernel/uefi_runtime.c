@@ -903,3 +903,113 @@ const struct crypto_agility_info *uefi_crypto_agility_info(void)
 {
     return &s_crypto_info;
 }
+
+/* ============================================================================
+ * Capsule Firmware Update (§6.1)
+ *
+ * ╔══════════════════════════════════════════════════════════════════════╗
+ * ║  ⚠️  DANGER — READ EVERY WORD BEFORE MODIFYING THIS SECTION  ⚠️     ║
+ * ╠══════════════════════════════════════════════════════════════════════╣
+ * ║                                                                    ║
+ * ║  UpdateCapsule() writes to SPI flash.  A bad capsule BRICKS the   ║
+ * ║  motherboard.  There is NO software recovery — you need a $5      ║
+ * ║  CH341A SPI programmer and steady hands to solder an SOIC clip.   ║
+ * ║                                                                    ║
+ * ║  Real-world bricking scenarios:                                    ║
+ * ║    • Wrong CapsuleGuid → firmware interprets data as wrong type   ║
+ * ║    • Truncated capsule → partial flash write, CMOS gone           ║
+ * ║    • Power loss mid-flash → half-written firmware image           ║
+ * ║    • Unsigned capsule → attacker reflashes with rootkit firmware  ║
+ * ║    • Version < LowestSupported → firmware rejects but may corrupt ║
+ * ║                                                                    ║
+ * ║  PREREQUISITES for safe UpdateCapsule() implementation:            ║
+ * ║    1. OEM-signed capsule (PKCS#7/CMS with RSA-2048+ signature)   ║
+ * ║    2. Kernel crypto stack for signature verification               ║
+ * ║    3. ESRT FwClass GUID matching to verify capsule target         ║
+ * ║    4. Version check against ESRT LowestSupportedFwVersion         ║
+ * ║    5. AC power detection (ACPI battery/power supply status)       ║
+ * ║    6. Explicit user confirmation with countdown timer             ║
+ * ║    7. Pre-update NVRAM backup of current firmware settings        ║
+ * ║                                                                    ║
+ * ║  This implementation provides QUERY ONLY.                          ║
+ * ║  UpdateCapsule() is NOT called, NOT exposed, NOT stubbed.          ║
+ * ╚══════════════════════════════════════════════════════════════════════╝
+ * ============================================================================ */
+
+static struct capsule_capability_info s_capsule_info;
+
+void uefi_capsule_init(void)
+{
+    uint32_t i;
+    uint8_t *p = (uint8_t *)&s_capsule_info;
+    for (i = 0; i < (uint32_t)sizeof(s_capsule_info); i++)
+        p[i] = 0;
+
+    if (!s_available || !s_rt) {
+        klog(LOG_INFO, "UEFI",
+             "Capsule updates: not available (no runtime services)");
+        return;
+    }
+
+    /* Check if firmware advertises capsule support via the
+     * EFI_RT_PROPERTIES_TABLE supported bitmask.
+     *
+     * This is the SAFE way to probe — it only reads a previously-cached
+     * bitmask (s_supported), no firmware calls are made.
+     *
+     * We deliberately do NOT call QueryCapsuleCapabilities() here because:
+     *   • It requires a valid EFI_CAPSULE_HEADER array with a real CapsuleGuid
+     *   • Using a dummy/zero GUID may confuse or crash some firmware
+     *   • The RT_SUPPORTED flag tells us everything we need for capability
+     *     reporting without any risk */
+    if (s_supported & EFI_RT_SUPPORTED_UPDATE_CAPSULE) {
+        s_capsule_info.supported = 1;
+
+        /* Log with appropriate warnings */
+        klog(LOG_INFO, "UEFI",
+             "Capsule updates: firmware supports UpdateCapsule()");
+        klog(LOG_WARN, "UEFI",
+             "Capsule updates: write path NOT implemented "
+             "(requires signed capsules + crypto verification)");
+
+        /* TODO: When we have ESRT parsing + crypto stack, implement:
+         *
+         * Phase 1 — Query (SAFE, read-only):
+         *   For each ESRT entry, build a minimal EFI_CAPSULE_HEADER with
+         *   the FwClass GUID and call QueryCapsuleCapabilities() to get
+         *   max_capsule_size and reset_type for that firmware component.
+         *
+         * Phase 2 — Validate (SAFE, no flash writes):
+         *   Given a capsule file:
+         *   a. Parse the capsule header (CapsuleGuid, size, flags)
+         *   b. Verify CapsuleGuid matches an ESRT FwClass entry
+         *   c. Extract embedded PKCS#7 signature
+         *   d. Verify signature against db (Authorized Signature Database)
+         *   e. Check capsule version >= ESRT LowestSupportedFwVersion
+         *   f. Check AC power via ACPI
+         *
+         * Phase 3 — Apply (DANGEROUS, writes firmware flash):
+         *   a. Display user confirmation with 10-second countdown
+         *   b. Allocate capsule in EfiRuntimeServicesData memory
+         *   c. Set CAPSULE_FLAGS_PERSIST_ACROSS_RESET
+         *   d. Call UpdateCapsule() — firmware stages for next reboot
+         *   e. Call ResetSystem(EfiResetCold) to trigger firmware update
+         *   f. On next boot, read CapsuleResultVariable for status
+         *
+         * NEVER implement Phase 3 without Phase 2.  An unsignated capsule
+         * write is a firmware rootkit delivery mechanism. */
+    } else {
+        klog(LOG_INFO, "UEFI",
+             "Capsule updates: not supported by this firmware");
+    }
+}
+
+int uefi_capsule_supported(void)
+{
+    return s_capsule_info.supported;
+}
+
+const struct capsule_capability_info *uefi_capsule_info(void)
+{
+    return &s_capsule_info;
+}
