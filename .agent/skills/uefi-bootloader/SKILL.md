@@ -56,7 +56,7 @@ Placed at physical address **0x10000** (64 KiB). Must match layout in both files
 - **No BIOS INT calls** — UEFI has no real-mode INT 10h/13h/15h
 - **No GRUB/Multiboot headers** — this is a custom UEFI bootloader, not GRUB
 - **No 32-bit entry** — UEFI boots directly into Long Mode, skip `entry.asm`
-- **No `#include <stdio.h>`** — freestanding only (`<stdint.h>`, `<stddef.h>`, etc.)
+- **No `#include <stdio.h>` or any angle-bracket headers** — `-nostdinc` strips the compiler's include path. For kernel code, use `#include "kernel/types.h"`. The UEFI bootloader has its own types in `efi.h`.
 
 ## Key Constants
 

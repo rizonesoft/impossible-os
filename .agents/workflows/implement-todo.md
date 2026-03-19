@@ -27,7 +27,7 @@ description: How to implement a TODO section from start to commit
    - Compile with: `-Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc`
    - Use `clang-19 --target=x86_64-elf` with `ld.lld-19`
    - Use `kmalloc()` only for small bookkeeping (< 4 KB), `pmm_alloc_contiguous()` for everything else
-   - No standard library headers — only `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`
+   - No angle-bracket headers (`<stdint.h>`, `<stddef.h>`, etc.) — use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`
 
 5. **Build and test:**
    ```bash

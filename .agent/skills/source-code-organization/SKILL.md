@@ -65,7 +65,9 @@ include/
 │   │   ├── vbox_mouse.h       # VirtualBox mouse integration
 │   │   ├── virtio.h           # VirtIO device support
 │   │   ├── virtio_blk.h       # VirtIO block device
-│   │   └── virtio_input.h     # VirtIO input devices
+│   │   ├── virtio_input.h     # VirtIO input devices
+│   │   └── hyperv/            # Hyper-V paravirtualization
+│   │       └── vmbus.h        # VMBus core protocol
 │   │
 │   ├── mm/                    # Memory management
 │   │   ├── pmm.h              # Physical memory manager
@@ -199,6 +201,7 @@ src/
 ## Include Style
 
 - **Always use subdirectory paths**: `#include "kernel/drivers/serial.h"` (NOT `#include "serial.h"`)
+- **NEVER use angle-bracket includes** (`<stdint.h>`, `<stddef.h>`, etc.) — `-nostdinc` strips the compiler's include path. Use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`.
 - **Use `#pragma once`** for include guards (no `#ifndef` boilerplate)
 - **Makefile uses `-Iinclude`** as the include root — all paths are relative to `include/`
 - **No circular includes** — use forward declarations when needed

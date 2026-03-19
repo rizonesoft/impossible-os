@@ -64,6 +64,8 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 
 - **Framebuffer back buffer must use PMM, not kmalloc.** The back buffer for 1280×720×32bpp is 3.6 MiB. `kmalloc` fails silently → `back_buf = hw_addr` → zero double buffering → compositor flicker. Always use `pmm_alloc_contiguous()`. Boot log must show `[OK] Framebuffer back buffer:` and `[OK] VBE page flip enabled` to confirm double buffering is active. *(Fixed in commit `9722a74`)*
 
+- **Never `#include <stdint.h>` or any angle-bracket header.** The build uses `-nostdinc` which strips the compiler's include search path entirely. Use `#include "kernel/types.h"` instead — it defines `uint8_t` through `uint64_t`, `int8_t` through `int64_t`, `size_t`, `ssize_t`, `uintptr_t`, and `NULL`. Only project-local headers via double-quotes are safe. *(Learned from VMBus build failure `daafc39`)*
+
 ## Hardware Constraints
 
 - **APIC-only interrupts.** Route all hardware interrupts via LAPIC/IOAPIC. Do NOT write new 8259 PIC routing code. The PIC is masked at boot. *(Legacy PIC masking code in `pic.c` is kept for boot-time disable only.)*
@@ -79,9 +81,10 @@ You are an expert low-level OS developer. You are operating **strictly inside a 
 
 ## Freestanding C
 
-- **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. Only freestanding headers are allowed: `<stdint.h>`, `<stddef.h>`, `<stdbool.h>`, `<stdarg.h>`.
+- **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. The build uses `-nostdinc` so even freestanding headers like `<stdint.h>`, `<stddef.h>`, `<stdbool.h>` are **NOT available**. Use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`.
 - **No malloc().** Use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()` (everything else). See memory-allocation skill for decision tree.
 - **No printf().** Use `printk()` for kernel output, `klog()` for logging.
+- **PMM returns `uintptr_t`, not `void *`.** Always cast: `(void *)(uintptr_t)pmm_alloc_contiguous(n)`.
 
 ## Code Intelligence
 
