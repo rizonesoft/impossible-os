@@ -7,10 +7,10 @@
  * The bitmap is placed immediately after the kernel image (__kernel_end).
  *
  * Initialization:
- *   1. Find the highest usable address from the Multiboot2 memory map
+ *   1. Find the highest usable address from the UEFI memory map
  *   2. Allocate bitmap (total_frames / 8 bytes)
  *   3. Mark ALL frames as used (safe default)
- *   4. Walk the memory map and mark "available" regions as free
+ *   4. Walk the UEFI memory map and mark usable regions as free
  *   5. Re-reserve: first 1 MiB, kernel image, bitmap itself
  * ============================================================================ */
 
@@ -117,14 +117,35 @@ void pmm_init(void)
         bitmap[i] = 0xFF;
     used_frames = total_frames;
 
-    /* Step 4: Walk memory map and free "available" regions (type 1) */
+    /* Step 4: Walk memory map and free usable regions using UEFI memory types.
+     *
+     * Free (usable by OS):
+     *   - EfiConventionalMemory  (7) — free RAM
+     *   - EfiLoaderCode/Data     (1,2) — bootloader memory, reclaimable after boot
+     *   - EfiBootServicesCode/Data (3,4) — reclaimable after ExitBootServices()
+     *
+     * Reserved (stays used):
+     *   - EfiRuntimeServicesCode/Data (5,6) — must preserve for runtime services
+     *   - EfiACPIReclaimMemory   (9) — ACPI tables (keep for now)
+     *   - EfiACPIMemoryNVS      (10) — ACPI firmware working memory
+     *   - EfiMemoryMappedIO     (11) — device MMIO
+     *   - EfiMemoryMappedIOPort (12) — device MMIO port space
+     *   - EfiReservedMemoryType  (0) — firmware reserved
+     *   - EfiUnusableMemory      (8) — bad RAM
+     */
     for (i = 0; i < g_boot_info.mmap_count; i++) {
-        if (g_boot_info.mmap[i].type == 1) {
+        uint32_t utype = g_boot_info.mmap[i].uefi_memory_type;
+        if (utype == UEFI_MMAP_CONVENTIONAL ||
+            utype == UEFI_MMAP_LOADER_CODE ||
+            utype == UEFI_MMAP_LOADER_DATA ||
+            utype == UEFI_MMAP_BOOT_SERVICES_CODE ||
+            utype == UEFI_MMAP_BOOT_SERVICES_DATA) {
             pmm_mark_region_free(
                 (uintptr_t)g_boot_info.mmap[i].base_addr,
                 g_boot_info.mmap[i].length
             );
         }
+        /* All other types stay marked as used (the safe default from Step 3) */
     }
 
     /* Step 5: Re-reserve critical regions */
@@ -137,6 +158,11 @@ void pmm_init(void)
 
     /* Bitmap itself */
     pmm_mark_region_used(kernel_end_phys, bitmap_end - kernel_end_phys);
+
+    /* Log UEFI memory map summary */
+    klog(LOG_INFO, "UEFI", "Memory map: %u MB RAM, %u descriptors",
+           (uint64_t)(total_frames * PMM_FRAME_SIZE / (1024 * 1024)),
+           (uint64_t)g_boot_info.mmap_count);
 
     klog(LOG_INFO, "mm", "PMM: %u MiB total, %u MiB free (%u/%u frames)",
            (uint64_t)(total_frames * PMM_FRAME_SIZE / (1024 * 1024)),

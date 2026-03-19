@@ -18,12 +18,14 @@
 #include "efi.h"
 
 /* --- Boot info structure (must match kernel/boot_info.h exactly) --- */
-#define BOOT_MMAP_MAX_ENTRIES 64
+#define BOOT_MMAP_MAX_ENTRIES 256
 
 struct boot_mmap_entry {
     UINT64 base_addr;
     UINT64 length;
-    UINT32 type;    /* 1=available, 2=reserved, 3=ACPI, 4=NVS, 5=bad */
+    UINT32 type;              /* simplified: 1=available, 2=reserved, 3=ACPI, 4=NVS, 5=bad */
+    UINT32 uefi_memory_type;  /* original EFI_MEMORY_TYPE enum value (0–14) */
+    UINT64 attribute;         /* UEFI memory attribute flags */
 };
 
 struct boot_framebuffer {
@@ -770,9 +772,21 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
             desc->NumberOfPages * EFI_PAGE_SIZE;
         g_boot_info_ptr->mmap[idx].type =
             uefi_to_mb2_memtype(desc->Type);
+        g_boot_info_ptr->mmap[idx].uefi_memory_type = desc->Type;
+        g_boot_info_ptr->mmap[idx].attribute = desc->Attribute;
 
-        if (g_boot_info_ptr->mmap[idx].type == 1)
-            total_mem += g_boot_info_ptr->mmap[idx].length;
+        /* Count all usable RAM (conventional + reclaimable boot/loader memory) */
+        switch (desc->Type) {
+        case EfiConventionalMemory:
+        case EfiBootServicesCode:
+        case EfiBootServicesData:
+        case EfiLoaderCode:
+        case EfiLoaderData:
+            total_mem += desc->NumberOfPages * EFI_PAGE_SIZE;
+            break;
+        default:
+            break;
+        }
 
         idx++;
     }

@@ -6,14 +6,36 @@
 
 #include "kernel/types.h"
 
-/* Maximum number of memory map entries we store */
-#define BOOT_MMAP_MAX_ENTRIES 64
+/* Maximum number of memory map entries we store.
+ * Real hardware (especially laptops with NVRAM, MMIO, etc.) can have 100+
+ * descriptors.  256 is generous and still fits comfortably at 0x10000. */
+#define BOOT_MMAP_MAX_ENTRIES 256
+
+/* UEFI memory type constants (matches EFI_MEMORY_TYPE enum 0–14).
+ * Defined here so kernel code can reference them without UEFI headers. */
+#define UEFI_MMAP_RESERVED              0   /* EfiReservedMemoryType */
+#define UEFI_MMAP_LOADER_CODE           1   /* EfiLoaderCode */
+#define UEFI_MMAP_LOADER_DATA           2   /* EfiLoaderData */
+#define UEFI_MMAP_BOOT_SERVICES_CODE    3   /* EfiBootServicesCode */
+#define UEFI_MMAP_BOOT_SERVICES_DATA    4   /* EfiBootServicesData */
+#define UEFI_MMAP_RUNTIME_CODE          5   /* EfiRuntimeServicesCode */
+#define UEFI_MMAP_RUNTIME_DATA          6   /* EfiRuntimeServicesData */
+#define UEFI_MMAP_CONVENTIONAL          7   /* EfiConventionalMemory */
+#define UEFI_MMAP_UNUSABLE              8   /* EfiUnusableMemory */
+#define UEFI_MMAP_ACPI_RECLAIM          9   /* EfiACPIReclaimMemory */
+#define UEFI_MMAP_ACPI_NVS             10   /* EfiACPIMemoryNVS */
+#define UEFI_MMAP_MMIO                 11   /* EfiMemoryMappedIO */
+#define UEFI_MMAP_MMIO_PORT            12   /* EfiMemoryMappedIOPortSpace */
+#define UEFI_MMAP_PAL_CODE             13   /* EfiPalCode */
+#define UEFI_MMAP_PERSISTENT           14   /* EfiPersistentMemory */
 
 /* A single memory region from the bootloader */
 struct boot_mmap_entry {
     uint64_t base_addr;
     uint64_t length;
-    uint32_t type;          /* 1=available, 2=reserved, 3=ACPI, 4=NVS, 5=bad */
+    uint32_t type;              /* simplified: 1=available, 2=reserved, 3=ACPI, 4=NVS, 5=bad */
+    uint32_t uefi_memory_type;  /* original EFI_MEMORY_TYPE (UEFI_MMAP_* constants above) */
+    uint64_t attribute;         /* UEFI memory attribute flags (EFI_MEMORY_RUNTIME, etc.) */
 };
 
 /* Framebuffer information from the bootloader */

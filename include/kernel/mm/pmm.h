@@ -2,7 +2,8 @@
  * pmm.h — Physical Memory Manager
  *
  * Bitmap-based allocator: 1 bit per 4 KiB physical frame.
- * Parses the Multiboot2 memory map to discover available RAM.
+ * Parses the UEFI memory map (with full type annotations) to discover
+ * available RAM and classify reserved regions.
  * ============================================================================ */
 
 #pragma once

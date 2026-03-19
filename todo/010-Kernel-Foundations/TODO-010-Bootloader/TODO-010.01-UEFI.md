@@ -99,26 +99,26 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| Phase | Section                          | What It Delivers                                            | Depends On                       | Status |
-| :---: | -------------------------------- | ----------------------------------------------------------- | -------------------------------- | :----: |
-| **1** | §3.1 Memory Map Preservation     | Full UEFI memory type info for PMM (runtime, ACPI, MMIO)    | —                                |   ⬜   |
-| **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID      | —                                |   ⬜   |
-| **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers        | Phase 1 (§3.1)                   |   ⬜   |
-| **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)             | Phase 1 (§4.1)                   |   ⬜   |
-| **2** | §9.1 TPM Measured Boot ⭐        | TCG event log + PCR values before ExitBootServices          | —                                |   ⬜   |
-| **2** | §10.1 ESRT Firmware Inventory ⭐ | Firmware version tracking + update health                   | Phase 1 (§4.1)                   |   ⬜   |
-| **2** | §11.1 Boot Timing (FPDT) ⭐      | Full power-on-to-desktop boot timeline                      | Phase 1 (§4.1)                   |   ⬜   |
-| **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers                  | Phase 2 (§1.1)                   |   ⬜   |
-| **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                         | Phase 2 (§1.1)                   |   ⬜   |
-| **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                       | Phase 2 (§1.1)                   |   ⬜   |
-| **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                            | Phase 1 + Phase 2 (§1.1)         |   ⬜   |
-| **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                     | Phase 3 (§1.2)                   |   ⬜   |
-| **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version               | Phase 1 (§4.1)                   |   ⬜   |
-| **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                          | Phase 4 (§5.1)                   |   ⬜   |
-| **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                             | — (independent)                  |   ⬜   |
-| **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                      | Phase 2 (§9.1)                   |   ⬜   |
-| **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                      | Phase 5 (§5.2)                   |   ⬜   |
-| **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                                 | Phase 2 (§1.1) + Phase 3 (§1.2)  |   ⬜   |
+| ⭐ | Phase | Section                          | What It Delivers                                         | Depends On                       | Status |
+| -- | :----: | -------------------------------- | -------------------------------------------------------- | -------------------------------- | :----: |
+| 💎 | **1** | §3.1 Memory Map Preservation     | Full UEFI memory type info for PMM (runtime, ACPI, MMIO) | —                                |   ✅   |
+| 💎 | **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID    | —                                |   ⬜   |
+| 💎 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers     | Phase 1 (§3.1)                   |   ⬜   |
+| 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ⬜   |
+| ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ⬜   |
+| ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ⬜   |
+| ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ⬜   |
+| 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ⬜   |
+| 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ⬜   |
+| 💎 | **4** | §7.1 SMBIOS System Information   | System manufacturer, model, RAM, BIOS version            | Phase 1 (§4.1)                   |   ⬜   |
+| 💎 | **5** | §5.2 Secure Boot Key Management  | Read/update db/dbx trust databases                       | Phase 4 (§5.1)                   |   ⬜   |
+| 💎 | **5** | §8.1 GOP Mode Enumeration        | Multi-resolution, multi-monitor                          | — (independent)                  |   ⬜   |
+| 💎 | **5** | §9.2 Boot Integrity Verification | PCR golden value comparison + UI panel                   | Phase 2 (§9.1)                   |   ⬜   |
+| 💎 | **6** | §5.3 Crypto Agility              | 2026 certificate rollover preparedness                   | Phase 5 (§5.2)                   |   ⬜   |
+| 💎 | **6** | §6.1 Capsule Firmware Updates    | In-band BIOS update from OS                              | Phase 2 (§1.1) + Phase 3 (§1.2)  |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–2** are the foundation. Runtime services, config table walker, and ⭐ features unblock everything else.
@@ -235,21 +235,28 @@ graph TD
 
 ### 3.1 Memory Map Preservation
 
-**Prompt:** The UEFI memory map (from `GetMemoryMap()`) describes all physical memory: conventional, reserved, ACPI, MMIO, runtime, and firmware reserved regions. The current bootloader passes a simplified memory map to the kernel. Preserve the full UEFI memory map with all type annotations for the physical memory manager and VMM. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: full memory map preservation"`. Add notes directly in this TODO section.
+**Prompt:** Verify the full UEFI memory map preservation implementation. Confirm that `boot_info.h` defines `UEFI_MMAP_*` constants (0–14) and `struct boot_mmap_entry` includes `uefi_memory_type` and `attribute` fields. Confirm `bootx64.c` mirrors the struct exactly and `fill_memory_map()` stores raw `desc->Type` and `desc->Attribute`. Confirm `pmm.c` uses `uefi_memory_type` to classify regions (conventional + loader + boot services = free; runtime + ACPI NVS + MMIO + reserved = used) and logs `[UEFI] Memory map:`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: full memory map preservation"` exists.
 
-- [ ] Preserve complete `EFI_MEMORY_DESCRIPTOR` array from `GetMemoryMap()`:
-  - [ ] `EfiConventionalMemory` — free RAM for OS use
-  - [ ] `EfiLoaderCode` / `EfiLoaderData` — bootloader memory (reclaimable after boot)
-  - [ ] `EfiBootServicesCode` / `EfiBootServicesData` — reclaimable after `ExitBootServices()`
-  - [ ] `EfiRuntimeServicesCode` / `EfiRuntimeServicesData` — must preserve
-  - [ ] `EfiACPIReclaimMemory` / `EfiACPIMemoryNVS` — ACPI tables
-  - [ ] `EfiMemoryMappedIO` / `EfiMemoryMappedIOPortSpace` — device MMIO
-  - [ ] `EfiReservedMemoryType` — do not touch
-- [ ] Pass full memory map in `boot_info` struct to kernel
-- [ ] PMM: iterate memory map, mark `EfiConventionalMemory` + reclaimable as free
-- [ ] PMM: mark runtime, ACPI NVS, MMIO, reserved as unavailable
-- [ ] Log: `[UEFI] Memory map: 4096 MB RAM, 127 descriptors`
-- [ ] Commit: `"uefi: full memory map preservation"`
+> [!NOTE]
+> **Implementation notes:**
+> - `BOOT_MMAP_MAX_ENTRIES` increased from 64 → 256 (real hardware has 100+ descriptors)
+> - Simplified `type` field preserved for backward compatibility alongside raw `uefi_memory_type`
+> - `EfiACPIReclaimMemory` kept reserved (not freed) — will be reclaimable after ACPI init in a future TODO
+> - `attribute` field stores UEFI memory attribute flags (e.g. `EFI_MEMORY_RUNTIME`) for §3.2 W^X enforcement
+
+- [x] Preserve complete `EFI_MEMORY_DESCRIPTOR` array from `GetMemoryMap()`:
+  - [x] `EfiConventionalMemory` — free RAM for OS use
+  - [x] `EfiLoaderCode` / `EfiLoaderData` — bootloader memory (reclaimable after boot)
+  - [x] `EfiBootServicesCode` / `EfiBootServicesData` — reclaimable after `ExitBootServices()`
+  - [x] `EfiRuntimeServicesCode` / `EfiRuntimeServicesData` — must preserve
+  - [x] `EfiACPIReclaimMemory` / `EfiACPIMemoryNVS` — ACPI tables
+  - [x] `EfiMemoryMappedIO` / `EfiMemoryMappedIOPortSpace` — device MMIO
+  - [x] `EfiReservedMemoryType` — do not touch
+- [x] Pass full memory map in `boot_info` struct to kernel
+- [x] PMM: iterate memory map, mark `EfiConventionalMemory` + reclaimable as free
+- [x] PMM: mark runtime, ACPI NVS, MMIO, reserved as unavailable
+- [x] Log: `[UEFI] Memory map: 4096 MB RAM, 127 descriptors`
+- [x] Commit: `"uefi: full memory map preservation"`
 
 ### 3.2 EFI_MEMORY_ATTRIBUTES_TABLE (W^X)
 
@@ -517,26 +524,26 @@ graph TD
 
 ## Priority Order
 
-| Priority | Section                               | Description                                                    |
-| -------- | ------------------------------------- | -------------------------------------------------------------- |
-| 🔴 P0    | 1.1 Runtime Services Preservation     | Foundation — everything else needs UEFI runtime calls          |
-| 🔴 P0    | 3.1 Memory Map Preservation           | PMM needs full memory type info (runtime, ACPI, MMIO)          |
-| 🔴 P0    | 4.1 Configuration Table Walker        | How we find ACPI, SMBIOS, MemAttr, ESRT tables                |
-| 🟠 P1    | 1.2 UEFI Variable Services            | Required for boot order, Secure Boot state, NVRAM access       |
-| 🟠 P1    | 1.3 System Reset via UEFI             | Clean shutdown/reboot — replaces raw ACPI register writes      |
-| 🟠 P1    | 2.1 RTC Time Services                 | Kernel wall clock seeding from UEFI RTC                        |
-| 🟠 P1    | 5.1 Secure Boot State Detection       | Know whether system was verified (trust decisions)             |
-| 🟡 P2    | 3.2 Memory Attributes (W^X)           | Runtime memory protection — NX enforcement                     |
-| 🟡 P2    | 7.1 SMBIOS System Information         | Hardware inventory for "About" dialog + HW Report DDK          |
-| 🟡 P2    | 4.2 Conformance Profile Detection     | IoT/embedded firmware capability detection                     |
-| 🟡 P2    | 9.1 TPM Measured Boot ⭐              | Boot integrity evidence — foundation for disk encryption       |
-| 🟡 P2    | 10.1 ESRT Firmware Inventory ⭐       | Firmware version tracking + update health                      |
-| 🟡 P2    | 11.1 Boot Timing (FPDT) ⭐            | Full power-on-to-desktop boot timeline                         |
-| 🟢 P3    | 5.2 Secure Boot Key Management        | Read/update db/dbx trust databases                             |
-| 🟢 P3    | 8.1 GOP Mode Enumeration              | Multi-resolution, multi-monitor discovery                      |
-| 🟢 P3    | 9.2 Boot Integrity Verification       | PCR golden value comparison + UI panel                         |
-| 🔵 P4    | 5.3 Crypto Agility                    | 2026 certificate rollover preparedness                         |
-| 🔵 P4    | 6.1 Capsule Firmware Updates          | In-band BIOS update from OS                                   |
+| ⭐ | Priority | Section                               | Description                                                    |
+| -- | -------- | ------------------------------------- | -------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 Runtime Services Preservation     | Foundation — everything else needs UEFI runtime calls          |
+| 💎 | 🔴 P0    | 3.1 Memory Map Preservation           | PMM needs full memory type info (runtime, ACPI, MMIO)          |
+| 💎 | 🔴 P0    | 4.1 Configuration Table Walker        | How we find ACPI, SMBIOS, MemAttr, ESRT tables                |
+| 💎 | 🟠 P1    | 1.2 UEFI Variable Services            | Required for boot order, Secure Boot state, NVRAM access       |
+| 💎 | 🟠 P1    | 1.3 System Reset via UEFI             | Clean shutdown/reboot — replaces raw ACPI register writes      |
+| 💎 | 🟠 P1    | 2.1 RTC Time Services                 | Kernel wall clock seeding from UEFI RTC                        |
+| 💎 | 🟠 P1    | 5.1 Secure Boot State Detection       | Know whether system was verified (trust decisions)             |
+| 💎 | 🟡 P2    | 3.2 Memory Attributes (W^X)           | Runtime memory protection — NX enforcement                     |
+| 💎 | 🟡 P2    | 7.1 SMBIOS System Information         | Hardware inventory for "About" dialog + HW Report DDK          |
+| 💎 | 🟡 P2    | 4.2 Conformance Profile Detection     | IoT/embedded firmware capability detection                     |
+| ⭐ | 🟡 P2    | 9.1 TPM Measured Boot              | Boot integrity evidence — foundation for disk encryption       |
+| ⭐ | 🟡 P2    | 10.1 ESRT Firmware Inventory       | Firmware version tracking + update health                      |
+| ⭐ | 🟡 P2    | 11.1 Boot Timing (FPDT)            | Full power-on-to-desktop boot timeline                         |
+| 💎 | 🟢 P3    | 5.2 Secure Boot Key Management        | Read/update db/dbx trust databases                             |
+| 💎 | 🟢 P3    | 8.1 GOP Mode Enumeration              | Multi-resolution, multi-monitor discovery                      |
+| 💎 | 🟢 P3    | 9.2 Boot Integrity Verification       | PCR golden value comparison + UI panel                         |
+| 💎 | 🔵 P4    | 5.3 Crypto Agility                    | 2026 certificate rollover preparedness                         |
+| 💎 | 🔵 P4    | 6.1 Capsule Firmware Updates          | In-band BIOS update from OS                                   |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -545,30 +552,30 @@ graph TD
 
 ## OS Comparison
 
-| Feature                                   | 🪟 Windows 11                          | 🐧 Linux 6.x                          | 🚀 Impossible OS                                |
-| ----------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------------ |
-| UEFI bootloader                           | ✅ `bootmgfw.efi`                      | ✅ `systemd-boot` / GRUB               | ✅ Custom `BOOTX64.EFI` — Done                   |
-| GOP framebuffer                           | ✅ Hands off to GPU driver              | ✅ `efifb` / `simplefb`                | ✅ Done (1280×720 BGRX)                           |
-| ExitBootServices()                        | ✅                                      | ✅                                      | ✅ Done                                           |
-| Boot configuration file                   | ✅ BCD store                            | ✅ `grub.cfg` / `loader.conf`          | ✅ `boot.conf` ini parser — Done                  |
-| Runtime services preservation             | ✅ Full                                 | ✅ `efi_runtime_services`               | ⬜ §1.1 — discarded after exit                    |
-| SetVirtualAddressMap()                    | ✅                                      | ✅                                      | ⬜ §1.1                                           |
-| UEFI variable read/write                  | ✅ `GetFirmwareEnvironmentVariable`     | ✅ `/sys/firmware/efi/vars/`            | ⬜ §1.2                                           |
-| System reset (ResetSystem)                | ✅                                      | ✅ `efi_reboot()`                       | ⬜ §1.3 — uses raw ACPI register writes           |
-| RTC via UEFI GetTime                      | ✅                                      | ✅ `efi_get_time()`                     | ⬜ §2.1 — uses CMOS RTC ports                     |
-| Full memory map preservation              | ✅                                      | ✅ `efi_memmap`                         | ⚠️ Simplified — `uefi_to_mb2_memtype()` loses info |
-| Memory Attributes Table (W^X)            | ✅ Enforced                             | ✅ (6.2+)                               | ⬜ §3.2                                           |
-| Configuration table walker                | ✅                                      | ✅ `efi_config_table_is_usable()`       | ⚠️ ACPI RSDP only — §4.1                         |
-| Conformance profiles                      | ✅                                      | ✅ (6.3+)                               | ⬜ §4.2                                           |
-| Secure Boot state detection               | ✅ Full                                 | ✅ `/sys/firmware/efi/secure_boot`      | ⬜ §5.1                                           |
-| Secure Boot db/dbx management             | ✅ Full                                 | ✅ `mokutil`, `sbsigntool`              | ⬜ §5.2                                           |
-| Crypto agility (2026)                     | ✅ Via Windows Update                   | 🔜 Patches in progress                 | ⬜ §5.3                                           |
-| Capsule firmware updates                  | ✅ `FirmwareUpdate` service             | ✅ `fwupd` + capsule                    | ⬜ §6.1                                           |
-| SMBIOS parsing                            | ✅ Full WMI                             | ✅ `/sys/class/dmi/`                    | ⬜ §7.1                                           |
-| GOP multi-mode                            | ✅                                      | ✅                                      | ⬜ §8.1 — single hardcoded mode                   |
-| **TPM measured boot event log** ⭐        | ✅ Required for install                 | ✅ `/sys/kernel/security/tpm0/`         | ⬜ §9.1 — not implemented                         |
-| **Boot integrity UI** ⭐                  | ❌ No user-facing panel                 | ❌ CLI only (`tpm2-tools`)              | ⬜ §9.2 — "Boot Integrity" panel                  |
-| **ESRT firmware inventory** ⭐            | ✅ Hidden (Windows Update)              | ✅ `fwupdmgr` CLI                       | ⬜ §10.1 — "Firmware Health" panel                 |
-| **Boot timing (full FPDT)** ⭐            | ⚠️ Post-ExitBS only                    | ⚠️ `systemd-analyze` (kernel only)     | ⬜ §11.1 — power-on-to-desktop timeline            |
-| Confidential Computing (TDX/SEV)         | ✅ Azure CC VMs                         | ✅ `CC_MEASUREMENT_PROTOCOL`            | ⬜ Not planned (bare-metal focus)                  |
+| ⭐ | Feature                                   | 🪟 Windows 11                          | 🐧 Linux 6.x                          | 🚀 Impossible OS                                |
+| -- | ----------------------------------------- | -------------------------------------- | -------------------------------------- | ------------------------------------------------ |
+| 💎 | UEFI bootloader                           | ✅ `bootmgfw.efi`                      | ✅ `systemd-boot` / GRUB               | ✅ Custom `BOOTX64.EFI` — Done                   |
+| 💎 | GOP framebuffer                           | ✅ Hands off to GPU driver              | ✅ `efifb` / `simplefb`                | ✅ Done (1280×720 BGRX)                           |
+| 💎 | ExitBootServices()                        | ✅                                      | ✅                                      | ✅ Done                                           |
+| 💎 | Boot configuration file                   | ✅ BCD store                            | ✅ `grub.cfg` / `loader.conf`          | ✅ `boot.conf` ini parser — Done                  |
+| 💎 | Runtime services preservation             | ✅ Full                                 | ✅ `efi_runtime_services`               | ⬜ §1.1 — discarded after exit                    |
+| 💎 | SetVirtualAddressMap()                    | ✅                                      | ✅                                      | ⬜ §1.1                                           |
+| 💎 | UEFI variable read/write                  | ✅ `GetFirmwareEnvironmentVariable`     | ✅ `/sys/firmware/efi/vars/`            | ⬜ §1.2                                           |
+| 💎 | System reset (ResetSystem)                | ✅                                      | ✅ `efi_reboot()`                       | ⬜ §1.3 — uses raw ACPI register writes           |
+| 💎 | RTC via UEFI GetTime                      | ✅                                      | ✅ `efi_get_time()`                     | ⬜ §2.1 — uses CMOS RTC ports                     |
+| 💎 | Full memory map preservation              | ✅                                      | ✅ `efi_memmap`                         | ⚠️ Simplified — `uefi_to_mb2_memtype()` loses info |
+| 💎 | Memory Attributes Table (W^X)            | ✅ Enforced                             | ✅ (6.2+)                               | ⬜ §3.2                                           |
+| 💎 | Configuration table walker                | ✅                                      | ✅ `efi_config_table_is_usable()`       | ⚠️ ACPI RSDP only — §4.1                         |
+| 💎 | Conformance profiles                      | ✅                                      | ✅ (6.3+)                               | ⬜ §4.2                                           |
+| 💎 | Secure Boot state detection               | ✅ Full                                 | ✅ `/sys/firmware/efi/secure_boot`      | ⬜ §5.1                                           |
+| 💎 | Secure Boot db/dbx management             | ✅ Full                                 | ✅ `mokutil`, `sbsigntool`              | ⬜ §5.2                                           |
+| 💎 | Crypto agility (2026)                     | ✅ Via Windows Update                   | 🔜 Patches in progress                 | ⬜ §5.3                                           |
+| 💎 | Capsule firmware updates                  | ✅ `FirmwareUpdate` service             | ✅ `fwupd` + capsule                    | ⬜ §6.1                                           |
+| 💎 | SMBIOS parsing                            | ✅ Full WMI                             | ✅ `/sys/class/dmi/`                    | ⬜ §7.1                                           |
+| 💎 | GOP multi-mode                            | ✅                                      | ✅                                      | ⬜ §8.1 — single hardcoded mode                   |
+| ⭐ | **TPM measured boot event log**        | ✅ Required for install                 | ✅ `/sys/kernel/security/tpm0/`         | ⬜ §9.1 — not implemented                         |
+| ⭐ | **Boot integrity UI**                  | ❌ No user-facing panel                 | ❌ CLI only (`tpm2-tools`)              | ⬜ §9.2 — "Boot Integrity" panel                  |
+| ⭐ | **ESRT firmware inventory**            | ✅ Hidden (Windows Update)              | ✅ `fwupdmgr` CLI                       | ⬜ §10.1 — "Firmware Health" panel                 |
+| ⭐ | **Boot timing (full FPDT)**            | ⚠️ Post-ExitBS only                    | ⚠️ `systemd-analyze` (kernel only)     | ⬜ §11.1 — power-on-to-desktop timeline            |
+| 💎 | Confidential Computing (TDX/SEV)         | ✅ Azure CC VMs                         | ✅ `CC_MEASUREMENT_PROTOCOL`            | ⬜ Not planned (bare-metal focus)                  |
 
