@@ -84,7 +84,7 @@ graph TD
 | -- | :----: | -------------------------------- | ---------------------------------------------------------- | --------------------------------- | :----: |
 | 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists   | —                                 |   ✅   |
 | 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ✅   |
-| 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ⬜   |
+| 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ✅   |
 | 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ⬜   |
 | 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ⬜   |
 | 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
@@ -506,13 +506,20 @@ boot_storage_init()
 
 ## 9. SMP Init Adjustment
 
-**Prompt:** With LAPIC initialized early, `smp_init()` can still run in `boot_storage_init()` — it only needs LAPIC for sending INIT-SIPI-SIPI. However, verify that moving LAPIC init earlier doesn't break the AP boot sequence. The APs need the GDT, IDT, and page tables to be ready when they wake up — all of which are set up before `boot_storage_init()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: verify SMP works with early LAPIC init"`. Add notes directly in this TODO section.
+**Prompt:** Verify that `smp_init()` works correctly with LAPIC initialized in `boot_interrupts_init()`. Confirm `smp_init()` only depends on `acpi_init()` and `lapic_init()` having been called (not their position). Test with 4 cores on QEMU: all APs should boot successfully. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Check commit `"boot: verify SMP works with early LAPIC init"`.
 
-- [ ] Verify `smp_init()` only depends on `lapic_init()` having been called (not its position)
-- [ ] Verify AP trampoline has access to GDT, IDT, page tables set up by BSP
-- [ ] Verify AP `lapic_init_ap()` call works with early-initialized LAPIC base address
-- [ ] Test SMP on QEMU with 4 cores: all APs should boot successfully
-- [ ] Commit: `"boot: verify SMP works with early LAPIC init"`
+> [!NOTE]
+> **Verification notes:**
+> - `smp_init()` dependencies: `acpi_get_cpu_count()`, `lapic_id()`, `lapic_send_init/sipi()`, `read_cr3()`, `gdt_get_gdtr()`, `idt_get_idtr()`, `pmm_alloc_contiguous()` — all available
+> - AP trampoline at 0x8000 receives BSP's CR3, GDT, IDT via shared data region
+> - `smp_init()` remains in `boot_storage_init()` — no code changes needed
+> - QEMU 4-core test: `4 CPUs online (BSP + 3 APs)` — all 3 APs booted successfully
+
+- [x] Verify `smp_init()` only depends on `lapic_init()` having been called (not its position)
+- [x] Verify AP trampoline has access to GDT, IDT, page tables set up by BSP
+- [x] Verify AP `lapic_init_ap()` call works with early-initialized LAPIC base address
+- [x] Test SMP on QEMU with 4 cores: all APs should boot successfully
+- [x] Commit: `"boot: verify SMP works with early LAPIC init"`
 
 ---
 
