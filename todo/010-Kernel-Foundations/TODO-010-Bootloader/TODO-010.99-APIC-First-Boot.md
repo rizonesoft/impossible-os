@@ -80,17 +80,17 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                          | What It Delivers                                          | Depends On                        | Status |
-| -- | :----: | -------------------------------- | --------------------------------------------------------- | --------------------------------- | :----: |
-| 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists  | —                                 |   ⬜   |
-| 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW   | Phase 1 (§1)                      |   ⬜   |
-| 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions          | Phase 1 (§1) + Phase 2 (§2)       |   ⬜   |
-| 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC      | Phase 2 (§2)                      |   ⬜   |
-| 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus         | Phase 3 (§3)                      |   ⬜   |
+| ⭐ | Phase | Section                          | What It Delivers                                           | Depends On                        | Status |
+| -- | :----: | -------------------------------- | ---------------------------------------------------------- | --------------------------------- | :----: |
+| 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists   | —                                 |   ✅   |
+| 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ⬜   |
+| 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ⬜   |
+| 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ⬜   |
+| 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ⬜   |
 | 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
 | 💎 | **5** | §5a Hyper-V Synthetic ISRs       | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ⬜   |
-| ⭐ | **5** | §6 Timer Source Hierarchy        | Auto-select best timer — TSC/STIMER/HPET/LAPIC/PIT       | Phase 4 (§4) + LAPIC calibration  |   ⬜   |
-| 💎 | **6** | §6a Spinner PIT Migration        | Spinner off PIT callback — `sleep_ms()` loop instead      | Phase 5 (§6) + Spinner §2         |   ⬜   |
+| ⭐ | **5** | §6 Timer Source Hierarchy        | Auto-select best timer — TSC/STIMER/HPET/LAPIC/PIT         | Phase 4 (§4) + LAPIC calibration  |   ⬜   |
+| 💎 | **6** | §6a Spinner PIT Migration        | Spinner off PIT callback — `sleep_ms()` loop instead       | Phase 5 (§6) + Spinner §2         |   ⬜   |
 | ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + Phase 5 (§6)       |   ⬜   |
 | 💎 | **7** | §8 Remove Debug Workarounds      | Cleanup: delete HV_BAR macros, stall detection, debug bars | Phase 3 (§3) + Phase 5 (§5a)      |   ⬜   |
 
@@ -199,19 +199,27 @@ boot_storage_init()
 
 ## 1. Move ACPI MADT Parsing Before Interrupt Setup
 
-**Prompt:** The ACPI MADT (Multiple APIC Description Table) must be parsed before `pic_init()` and `pit_init()` so the kernel knows whether a PIC exists (`PCAT_COMPAT` flag) and has the IOAPIC base address for IRQ routing. Currently `acpi_init()` lives in `boot_storage_init()`. Move it to run right after `idt_init()` in `boot_interrupts_init()`. The only prerequisite is heap (for ACPI table parsing) — which is already available after `boot_hw_init()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: move ACPI MADT parsing before interrupt setup"`. Add notes directly in this TODO section.
+**Prompt:** Verify that `acpi_init()` runs in `boot_interrupts_init()` (right after `idt_init()`, before `pic_init()`), NOT in `boot_storage_init()`. Confirm QEMU serial log shows `acpi: RSDP` and `acpi: ACPI: FADT` after `IDT loaded` and before `PIC` output. Confirm `boot_storage.c` no longer calls `acpi_init()` but still uses the already-parsed MADT for LAPIC/IOAPIC/SMP decisions. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Check commit `"boot: move ACPI MADT parsing before interrupt setup"`.
+
+> [!NOTE]
+> **Implementation notes:**
+> - `acpi_init()` dependencies verified: only `g_boot_info` (available after `boot_hw_init()`), `printk`, `klog`
+> - No PCI, GDT, interrupt, or filesystem dependencies
+> - RSDP info log + CPU count log moved alongside `acpi_init()` call
+> - `boot_storage.c` LAPIC/IOAPIC/SMP block left in place (consumes already-parsed MADT) — §2 moves this
+> - QEMU output: `RSDP v2` → `FADT` → `MADT: 2 CPUs` all before PIC/PIT init
 
 > [!NOTE]
 > **Prerequisite check:** `acpi_init()` calls `kmalloc()` for ACPI table copies
 > and uses `klog()` for output. Both are available after `boot_hw_init()`.
 
-- [ ] Verify `acpi_init()` has no dependency on PCI, GDT, or interrupt state
-- [ ] Remove `acpi_init()` call from `boot_storage_init()`
-- [ ] Add `acpi_init()` to `boot_interrupts_init()` right after `idt_init()`
-- [ ] Verify `acpi_pcat_compat()` returns correct value after early `acpi_init()`
-- [ ] Verify MADT LAPIC/IOAPIC base addresses are available after early parse
-- [ ] Build and test on QEMU: confirm ACPI tables parse correctly in new position
-- [ ] Commit: `"boot: move ACPI MADT parsing before interrupt setup"`
+- [x] Verify `acpi_init()` has no dependency on PCI, GDT, or interrupt state
+- [x] Remove `acpi_init()` call from `boot_storage_init()`
+- [x] Add `acpi_init()` to `boot_interrupts_init()` right after `idt_init()`
+- [x] Verify `acpi_pcat_compat()` returns correct value after early `acpi_init()`
+- [x] Verify MADT LAPIC/IOAPIC base addresses are available after early parse
+- [x] Build and test on QEMU: confirm ACPI tables parse correctly in new position
+- [x] Commit: `"boot: move ACPI MADT parsing before interrupt setup"`
 
 ---
 

@@ -93,18 +93,9 @@ void boot_storage_init(uint64_t magic)
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* ACPI */
+    /* ACPI — acpi_init() now runs in boot_interrupts_init() (before PIC/PIT).
+     * The LAPIC/IOAPIC/SMP block below consumes the already-parsed MADT. */
     if (g_boot_info.acpi_available) {
-        klog(LOG_INFO, "acpi", "RSDP v%u at %p",
-               (uint64_t)g_boot_info.acpi_version,
-               g_boot_info.acpi_rsdp_addr);
-
-        boot_splash_status("Parsing ACPI tables...");
-        acpi_init();
-
-        klog(LOG_INFO, "smp", "CPUs discovered: %u",
-             (uint64_t)acpi_get_cpu_count());
-
         /* Switch to LAPIC/IOAPIC when:
          *   (a) SMP (cpu_count > 1) — need LAPIC for inter-CPU IPI, or
          *   (b) APIC-only (PCAT_COMPAT=0) — no PIC exists (Hyper-V Gen 2).

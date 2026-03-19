@@ -59,6 +59,22 @@ void boot_interrupts_init(void)
     idt_init();
     HV_BAR(184, 0x0000FFFF);  /* CYAN = IDT OK */
 
+    /* ACPI MADT must be parsed before PIC/PIT so we know:
+     *   (a) PCAT_COMPAT — whether a PIC exists at all
+     *   (b) IOAPIC base — for routing IRQ0 through IOAPIC
+     *   (c) CPU count   — for SMP decision
+     * Prerequisites: only g_boot_info (available since boot_hw_init). */
+    if (g_boot_info.acpi_available) {
+        klog(LOG_INFO, "acpi", "RSDP v%u at %p",
+               (uint64_t)g_boot_info.acpi_version,
+               g_boot_info.acpi_rsdp_addr);
+        boot_splash_status("Parsing ACPI tables...");
+        acpi_init();
+        klog(LOG_INFO, "smp", "CPUs discovered: %u",
+             (uint64_t)acpi_get_cpu_count());
+    }
+    HV_BAR(190, 0x00FF4500);  /* DARK ORANGE = ACPI OK */
+
     pic_init();
     HV_BAR(196, 0x00FFFF00);  /* YELLOW = PIC OK */
 
