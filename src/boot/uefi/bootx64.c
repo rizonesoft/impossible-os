@@ -54,6 +54,14 @@ struct boot_config {
 };
 
 #define BOOT_CONFIG_TABLE_MAX 32
+#define BOOT_RT_MMAP_MAX      64
+
+struct boot_rt_mem_entry {
+    UINT64 phys_addr;
+    UINT64 num_pages;
+    UINT32 type;
+    UINT32 reserved;
+};
 
 struct boot_uefi_guid {
     UINT32  data1;
@@ -84,6 +92,13 @@ struct boot_info {
     /* UEFI Configuration Table */
     struct boot_uefi_config_entry config_table[BOOT_CONFIG_TABLE_MAX];
     UINT32  config_table_count;
+    /* UEFI Runtime Services */
+    UINT64  uefi_runtime_services;
+    UINT8   uefi_rt_available;
+    struct boot_rt_mem_entry rt_mmap[BOOT_RT_MMAP_MAX];
+    UINT32  rt_mmap_count;
+    UINT32  uefi_mmap_desc_size;
+    UINT32  uefi_mmap_desc_version;
 };
 
 /* --- ELF64 header structures --- */
@@ -717,7 +732,8 @@ static EFI_STATUS load_kernel(UINT64 *entry_point)
 static EFI_STATUS get_memory_map(UINTN *map_key_out,
                                   EFI_MEMORY_DESCRIPTOR **map_out,
                                   UINTN *map_size_out,
-                                  UINTN *desc_size_out)
+                                  UINTN *desc_size_out,
+                                  UINT32 *desc_version_out)
 {
     EFI_STATUS status;
     UINTN map_size = 0;
@@ -747,6 +763,7 @@ static EFI_STATUS get_memory_map(UINTN *map_key_out,
     *map_out = mmap;
     *map_size_out = map_size;
     *desc_size_out = desc_size;
+    *desc_version_out = desc_version;
 
     return EFI_SUCCESS;
 }
@@ -812,6 +829,38 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
     g_boot_info_ptr->mem_lower_kb = 640;   /* conventional: 640 KiB */
     g_boot_info_ptr->mem_upper_kb =
         (UINT32)((total_mem / 1024) - 1024);
+}
+
+/* ============================================================================
+ * Step 4b: Extract runtime memory regions for SetVirtualAddressMap
+ *
+ * Scans the UEFI memory map for EfiRuntimeServicesCode and
+ * EfiRuntimeServicesData regions.  These survive ExitBootServices and must
+ * be passed to SetVirtualAddressMap() so the firmware can relocate its
+ * internal pointers to match the kernel's virtual address layout.
+ * ============================================================================ */
+static void fill_runtime_map(EFI_MEMORY_DESCRIPTOR *mmap,
+                              UINTN map_size, UINTN desc_size)
+{
+    UINTN offset;
+    UINT32 idx = 0;
+
+    for (offset = 0; offset < map_size && idx < BOOT_RT_MMAP_MAX;
+         offset += desc_size) {
+        EFI_MEMORY_DESCRIPTOR *desc =
+            (EFI_MEMORY_DESCRIPTOR *)((UINT8 *)mmap + offset);
+
+        if (desc->Type == EfiRuntimeServicesCode ||
+            desc->Type == EfiRuntimeServicesData) {
+            g_boot_info_ptr->rt_mmap[idx].phys_addr = desc->PhysicalStart;
+            g_boot_info_ptr->rt_mmap[idx].num_pages = desc->NumberOfPages;
+            g_boot_info_ptr->rt_mmap[idx].type      = desc->Type;
+            g_boot_info_ptr->rt_mmap[idx].reserved   = 0;
+            idx++;
+        }
+    }
+
+    g_boot_info_ptr->rt_mmap_count = idx;
 }
 
 /* ============================================================================
@@ -936,6 +985,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     UINTN map_key;
     EFI_MEMORY_DESCRIPTOR *mmap;
     UINTN map_size, desc_size;
+    UINT32 desc_version;
 
     /* Save globals */
     gST = SystemTable;
@@ -1011,7 +1061,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 5: Get UEFI memory map */
     serial_early_print("BOOT: get_memory_map...\n");
-    status = get_memory_map(&map_key, &mmap, &map_size, &desc_size);
+    status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
+                            &desc_version);
     if (EFI_ERROR(status)) {
         serial_early_print("BOOT: FAIL get_memory_map\n");
         efi_print(u"[FAIL] GetMemoryMap failed\r\n");
@@ -1020,14 +1071,24 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     }
 
     fill_memory_map(mmap, map_size, desc_size);
+    fill_runtime_map(mmap, map_size, desc_size);
+
+    /* Step 5b: Preserve Runtime Services pointer + descriptor metadata */
+    g_boot_info_ptr->uefi_runtime_services = (UINTN)gST->RuntimeServices;
+    g_boot_info_ptr->uefi_rt_available     = (gST->RuntimeServices != (void *)0) ? 1 : 0;
+    g_boot_info_ptr->uefi_mmap_desc_size    = (UINT32)desc_size;
+    g_boot_info_ptr->uefi_mmap_desc_version = desc_version;
+    serial_early_print("BOOT: runtime services preserved\n");
 
     /* Step 6: ExitBootServices */
     serial_early_print("BOOT: ExitBootServices...\n");
     status = gBS->ExitBootServices(gImageHandle, map_key);
     if (EFI_ERROR(status)) {
-        status = get_memory_map(&map_key, &mmap, &map_size, &desc_size);
+        status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
+                                &desc_version);
         if (!EFI_ERROR(status)) {
             fill_memory_map(mmap, map_size, desc_size);
+            fill_runtime_map(mmap, map_size, desc_size);
             status = gBS->ExitBootServices(gImageHandle, map_key);
         }
         if (EFI_ERROR(status)) {

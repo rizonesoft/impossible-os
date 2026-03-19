@@ -83,7 +83,8 @@ typedef struct {
     UINT64                  Attribute;
 } EFI_MEMORY_DESCRIPTOR;
 
-#define EFI_PAGE_SIZE 4096
+#define EFI_PAGE_SIZE           4096
+#define EFI_MEMORY_RUNTIME      0x8000000000000000ULL  /* Survives ExitBootServices */
 
 typedef enum {
     AllocateAnyPages,
@@ -104,7 +105,72 @@ typedef struct {
 /* --- Forward declarations --- */
 struct EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL;
 struct EFI_BOOT_SERVICES;
-struct EFI_RUNTIME_SERVICES;
+
+/* --- EFI_RUNTIME_SERVICES --- */
+typedef EFI_STATUS (EFIAPI *EFI_GET_TIME)(
+    VOID *Time, VOID *Capabilities);
+typedef EFI_STATUS (EFIAPI *EFI_SET_TIME)(
+    VOID *Time);
+typedef EFI_STATUS (EFIAPI *EFI_GET_WAKEUP_TIME)(
+    BOOLEAN *Enabled, BOOLEAN *Pending, VOID *Time);
+typedef EFI_STATUS (EFIAPI *EFI_SET_WAKEUP_TIME)(
+    BOOLEAN Enable, VOID *Time);
+typedef EFI_STATUS (EFIAPI *EFI_SET_VIRTUAL_ADDRESS_MAP)(
+    UINTN MemoryMapSize, UINTN DescriptorSize,
+    UINT32 DescriptorVersion, EFI_MEMORY_DESCRIPTOR *VirtualMap);
+typedef EFI_STATUS (EFIAPI *EFI_CONVERT_POINTER)(
+    UINTN DebugDisposition, VOID **Address);
+typedef EFI_STATUS (EFIAPI *EFI_GET_VARIABLE)(
+    CHAR16 *VariableName, EFI_GUID *VendorGuid,
+    UINT32 *Attributes, UINTN *DataSize, VOID *Data);
+typedef EFI_STATUS (EFIAPI *EFI_GET_NEXT_VARIABLE_NAME)(
+    UINTN *VariableNameSize, CHAR16 *VariableName, EFI_GUID *VendorGuid);
+typedef EFI_STATUS (EFIAPI *EFI_SET_VARIABLE)(
+    CHAR16 *VariableName, EFI_GUID *VendorGuid,
+    UINT32 Attributes, UINTN DataSize, VOID *Data);
+typedef VOID (EFIAPI *EFI_RESET_SYSTEM)(
+    UINT32 ResetType, EFI_STATUS ResetStatus,
+    UINTN DataSize, VOID *ResetData);
+typedef EFI_STATUS (EFIAPI *EFI_UPDATE_CAPSULE)(
+    VOID **CapsuleHeaderArray, UINTN CapsuleCount, EFI_PHYSICAL_ADDRESS ScatterGatherList);
+typedef EFI_STATUS (EFIAPI *EFI_QUERY_CAPSULE_CAPABILITIES)(
+    VOID **CapsuleHeaderArray, UINTN CapsuleCount,
+    UINT64 *MaximumCapsuleSize, UINT32 *ResetType);
+typedef EFI_STATUS (EFIAPI *EFI_QUERY_VARIABLE_INFO)(
+    UINT32 Attributes, UINT64 *MaximumVariableStorageSize,
+    UINT64 *RemainingVariableStorageSize, UINT64 *MaximumVariableSize);
+typedef EFI_STATUS (EFIAPI *EFI_GET_NEXT_HIGH_MONO_COUNT)(
+    UINT32 *HighCount);
+
+typedef struct {
+    EFI_TABLE_HEADER                Hdr;
+
+    /* Time Services */
+    EFI_GET_TIME                    GetTime;
+    EFI_SET_TIME                    SetTime;
+    EFI_GET_WAKEUP_TIME             GetWakeupTime;
+    EFI_SET_WAKEUP_TIME             SetWakeupTime;
+
+    /* Virtual Memory Services */
+    EFI_SET_VIRTUAL_ADDRESS_MAP     SetVirtualAddressMap;
+    EFI_CONVERT_POINTER             ConvertPointer;
+
+    /* Variable Services */
+    EFI_GET_VARIABLE                GetVariable;
+    EFI_GET_NEXT_VARIABLE_NAME      GetNextVariableName;
+    EFI_SET_VARIABLE                SetVariable;
+
+    /* Miscellaneous Services */
+    EFI_GET_NEXT_HIGH_MONO_COUNT    GetNextHighMonotonicCount;
+    EFI_RESET_SYSTEM                ResetSystem;
+
+    /* Capsule Services (UEFI 2.0+) */
+    EFI_UPDATE_CAPSULE              UpdateCapsule;
+    EFI_QUERY_CAPSULE_CAPABILITIES  QueryCapsuleCapabilities;
+
+    /* Variable Info (UEFI 2.0+) */
+    EFI_QUERY_VARIABLE_INFO         QueryVariableInfo;
+} EFI_RUNTIME_SERVICES;
 
 /* --- Simple Text Output --- */
 typedef EFI_STATUS (EFIAPI *EFI_TEXT_STRING)(
@@ -385,7 +451,7 @@ typedef struct {
     EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *ConOut;
     EFI_HANDLE                      StandardErrorHandle;
     VOID                           *StdErr;
-    VOID                           *RuntimeServices;
+    EFI_RUNTIME_SERVICES           *RuntimeServices;
     EFI_BOOT_SERVICES              *BootServices;
     UINTN                           NumberOfTableEntries;
     EFI_CONFIGURATION_TABLE        *ConfigurationTable;

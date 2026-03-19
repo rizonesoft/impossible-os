@@ -22,6 +22,7 @@
 #include "kernel/version.h"
 #include "kernel/boot_splash.h"
 #include "kernel/uefi_config.h"
+#include "kernel/uefi_runtime.h"
 #include "main/main_internal.h"
 
 /* External: Multiboot2 parser */
@@ -87,6 +88,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 3: UEFI config table walker (log discovered tables) */
     uefi_config_init();
+
+    /* Step 3b: UEFI runtime services (SetVirtualAddressMap + RT props) */
+    uefi_runtime_init();
 
     /* Step 4: Initialize physical memory manager */
     pmm_init();

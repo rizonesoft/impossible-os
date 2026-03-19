@@ -81,6 +81,19 @@ struct boot_uefi_config_entry {
     ((struct boot_uefi_guid){ 0xb1b621d5, 0xf19c, 0x41a5, \
         { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } })
 
+/* UEFI memory attribute flag — marks regions that survive ExitBootServices */
+#define UEFI_MEMORY_ATTR_RUNTIME  0x8000000000000000ULL
+
+/* Runtime memory region descriptor (for SetVirtualAddressMap) */
+#define BOOT_RT_MMAP_MAX 64
+
+struct boot_rt_mem_entry {
+    uint64_t phys_addr;   /* physical start address */
+    uint64_t num_pages;   /* number of 4 KiB pages */
+    uint32_t type;        /* EFI_MEMORY_TYPE (UEFI_MMAP_RUNTIME_CODE or _DATA) */
+    uint32_t reserved;    /* alignment padding */
+};
+
 /* Framebuffer information from the bootloader */
 struct boot_framebuffer {
     uintptr_t addr;         /* physical address */
@@ -140,6 +153,14 @@ struct boot_info {
     /* UEFI Configuration Table (copied from EFI_SYSTEM_TABLE) */
     struct boot_uefi_config_entry config_table[BOOT_CONFIG_TABLE_MAX];
     uint32_t config_table_count;
+
+    /* UEFI Runtime Services (for kernel to call after ExitBootServices) */
+    uintptr_t uefi_runtime_services;  /* phys addr of EFI_RUNTIME_SERVICES table */
+    uint8_t   uefi_rt_available;      /* 1 if runtime services pointer was saved */
+    struct boot_rt_mem_entry rt_mmap[BOOT_RT_MMAP_MAX]; /* runtime memory regions */
+    uint32_t rt_mmap_count;           /* number of runtime regions */
+    uint32_t uefi_mmap_desc_size;     /* UEFI descriptor size (for SVAM) */
+    uint32_t uefi_mmap_desc_version;  /* UEFI descriptor version (for SVAM) */
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */

@@ -144,30 +144,40 @@ graph TD
 
 ### 1.1 Runtime Services Preservation
 
-**Prompt:** After `ExitBootServices()`, UEFI Runtime Services remain callable by the OS kernel. The current bootloader calls `ExitBootServices()` but discards the runtime services function pointers. We need to preserve the `EFI_RUNTIME_SERVICES` table, call `SetVirtualAddressMap()` to remap runtime memory into the kernel's virtual address space, and expose runtime services to the kernel. This is the foundation for UEFI variable access, RTC, firmware updates, and system reset. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: runtime services preservation"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI Runtime Services preservation implementation. Confirm that `efi.h` defines the full `EFI_RUNTIME_SERVICES` struct with all 14 function pointers (Time, Variable, Reset, Capsule, SVAM) and `EFI_MEMORY_RUNTIME` attribute flag. Confirm `bootx64.c` saves the `RuntimeServices` pointer, `desc_size`, and `desc_version` to `boot_info` before `ExitBootServices()`, and `fill_runtime_map()` extracts `EfiRuntimeServicesCode`/`Data` regions. Confirm `uefi_runtime.c` calls `SetVirtualAddressMap()` with identity mapping (virt = phys), reads `EFI_RT_PROPERTIES_TABLE` for supported service bitmask, and logs active services. Confirm `boot_hw.c` calls `uefi_runtime_init()` after `uefi_config_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: runtime services preservation"` exists.
 
-- [ ] Preserve `EFI_RUNTIME_SERVICES` pointer from `EFI_SYSTEM_TABLE` before `ExitBootServices()`
-- [ ] Save UEFI memory map (with descriptors marked `EFI_MEMORY_RUNTIME`)
-- [ ] Identify all runtime memory regions from `GetMemoryMap()`:
-  - [ ] `EfiRuntimeServicesCode` — firmware code that survives ExitBootServices
-  - [ ] `EfiRuntimeServicesData` — firmware data that survives ExitBootServices
-- [ ] Call `SetVirtualAddressMap()` early in kernel init:
-  - [ ] Map all runtime regions into kernel virtual address space
-  - [ ] Firmware relocates its internal pointers to match new virtual addresses
-  - [ ] This call can only be made ONCE — it's irreversible
-- [ ] Store runtime services function pointers in kernel global:
-  - [ ] `uefi_rt->GetTime()`, `uefi_rt->SetTime()`
-  - [ ] `uefi_rt->GetVariable()`, `uefi_rt->SetVariable()`
-  - [ ] `uefi_rt->GetNextVariableName()`
-  - [ ] `uefi_rt->ResetSystem()`
-  - [ ] `uefi_rt->UpdateCapsule()`
-- [ ] Check `EFI_RT_PROPERTIES_TABLE` (if present) for supported service bitmask:
-  - [ ] `EFI_RT_SUPPORTED_GET_TIME` (0x0001)
-  - [ ] `EFI_RT_SUPPORTED_SET_VARIABLE` (0x0040)
-  - [ ] etc. — gracefully handle unsupported services returning `EFI_UNSUPPORTED`
-- [ ] Serialize all runtime service calls with a spinlock (firmware is not reentrant)
-- [ ] Log: `[UEFI] Runtime services active: GetTime SetVariable ResetSystem`
-- [ ] Commit: `"uefi: runtime services preservation"`
+> [!NOTE]
+> **Implementation notes:**
+> - `EFI_RUNTIME_SERVICES` struct defined in both `efi.h` (bootloader) and `uefi_runtime.c` (kernel) with matching layouts
+> - Identity mapping used for `SetVirtualAddressMap()` (virt = phys) — safe because kernel maps first 4 GiB
+> - `boot_info` carries RT pointer + runtime memory map (`rt_mmap[]`, up to 64 entries) + descriptor metadata
+> - Bootloader `struct boot_info` in `bootx64.c` must mirror kernel's `boot_info.h` exactly — both updated
+> - `EFI_RT_PROPERTIES_TABLE` lookup via `uefi_find_config_table()` — if absent, all services assumed supported
+> - All runtime service calls serialized via `SPINLOCK_INIT` spinlock (firmware is not reentrant)
+> - OVMF returns 4 runtime regions, all 6 tested services available
+
+- [x] Preserve `EFI_RUNTIME_SERVICES` pointer from `EFI_SYSTEM_TABLE` before `ExitBootServices()`
+- [x] Save UEFI memory map (with descriptors marked `EFI_MEMORY_RUNTIME`)
+- [x] Identify all runtime memory regions from `GetMemoryMap()`:
+  - [x] `EfiRuntimeServicesCode` — firmware code that survives ExitBootServices
+  - [x] `EfiRuntimeServicesData` — firmware data that survives ExitBootServices
+- [x] Call `SetVirtualAddressMap()` early in kernel init:
+  - [x] Map all runtime regions into kernel virtual address space
+  - [x] Firmware relocates its internal pointers to match new virtual addresses
+  - [x] This call can only be made ONCE — it's irreversible
+- [x] Store runtime services function pointers in kernel global:
+  - [x] `uefi_rt->GetTime()`, `uefi_rt->SetTime()`
+  - [x] `uefi_rt->GetVariable()`, `uefi_rt->SetVariable()`
+  - [x] `uefi_rt->GetNextVariableName()`
+  - [x] `uefi_rt->ResetSystem()`
+  - [x] `uefi_rt->UpdateCapsule()`
+- [x] Check `EFI_RT_PROPERTIES_TABLE` (if present) for supported service bitmask:
+  - [x] `EFI_RT_SUPPORTED_GET_TIME` (0x0001)
+  - [x] `EFI_RT_SUPPORTED_SET_VARIABLE` (0x0040)
+  - [x] etc. — gracefully handle unsupported services returning `EFI_UNSUPPORTED`
+- [x] Serialize all runtime service calls with a spinlock (firmware is not reentrant)
+- [x] Log: `[UEFI] Runtime services active: GetTime SetVariable ResetSystem`
+- [x] Commit: `"uefi: runtime services preservation"`
 
 ### 1.2 UEFI Variable Services
 
