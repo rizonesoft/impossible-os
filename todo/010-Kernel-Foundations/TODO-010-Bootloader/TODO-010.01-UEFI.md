@@ -24,6 +24,106 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **This file is part of the Bootloader subsystem.** Its sections have internal
+> dependencies (runtime services → variables → reset) and external dependencies
+> to `TODO-010-Bootloader.md`, `TODO-005-Debug.md`, and `TODO-012-ACPI.md`.
+> This roadmap shows the correct sequence.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    A["§1.1 Runtime Services Preservation"]
+    B["§1.2 UEFI Variable Services"]
+    C["§1.3 System Reset via UEFI"]
+    D["§2.1 RTC Time Services"]
+    E["§3.1 Memory Map Preservation"]
+    F["§3.2 Memory Attributes (W^X)"]
+    G["§4.1 Configuration Table Walker"]
+    H["§4.2 Conformance Profile Detection"]
+    I["§5.1 Secure Boot State Detection"]
+    J["§5.2 Secure Boot Key Mgmt"]
+    K["§5.3 Crypto Agility"]
+    L["§6.1 Capsule Firmware Updates"]
+    M["§7.1 SMBIOS System Information"]
+    N["§8.1 GOP Mode Enumeration"]
+
+    %% External dependencies
+    X1["010-Bootloader.md §7.1<br/>boot.conf ✅"]
+    X2["005-Debug.md §3<br/>HW Report DDK"]
+    X3["012-ACPI.md<br/>ACPI Tables"]
+
+    %% Internal: runtime services are the foundation
+    A --> B
+    A --> C
+    A --> D
+    A --> F
+    A --> L
+
+    %% Variable services enable Secure Boot + capsule
+    B --> I
+    I --> J
+    J --> K
+    B --> L
+
+    %% Config table walker enables downstream lookups
+    G --> M
+    G --> H
+    G --> F
+
+    %% Memory map feeds W^X
+    E --> F
+
+    %% Cross-file
+    M --> X2
+    X1 --> A
+
+    %% ACPI needs config table
+    G --> X3
+```
+
+### Phase-by-Phase Implementation Order
+
+| Phase | Section | What It Delivers | Depends On |
+| :---: | ------- | ---------------- | ---------- |
+| **1** | §3.1 Memory Map Preservation | Full UEFI memory type info for PMM (runtime, ACPI, MMIO) | — |
+| **1** | §4.1 Configuration Table Walker | Find ACPI, SMBIOS, MemAttr, RtProps tables by GUID | — |
+| **2** | §1.1 Runtime Services Preservation | `SetVirtualAddressMap()` + runtime function pointers | Phase 1 (§3.1) |
+| **2** | §4.2 Conformance Profile Detection | Know if firmware is full UEFI or reduced (EBBR) | Phase 1 (§4.1) |
+| **3** | §1.2 UEFI Variable Services | GetVariable/SetVariable/Enumerate wrappers | Phase 2 (§1.1) |
+| **3** | §1.3 System Reset via UEFI | Clean ResetSystem() shutdown/reboot | Phase 2 (§1.1) |
+| **3** | §2.1 RTC Time Services | GetTime/SetTime for kernel wall clock | Phase 2 (§1.1) |
+| **3** | §3.2 Memory Attributes (W^X) | NX enforcement on runtime memory | Phase 1 (§3.1, §4.1) + Phase 2 (§1.1) |
+| **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read | Phase 3 (§1.2) |
+| **4** | §7.1 SMBIOS System Information | System manufacturer, model, RAM, BIOS version | Phase 1 (§4.1) |
+| **5** | §5.2 Secure Boot Key Management | Read/update db/dbx trust databases | Phase 4 (§5.1) |
+| **5** | §8.1 GOP Mode Enumeration | Multi-resolution, multi-monitor | — (independent) |
+| **6** | §5.3 Crypto Agility | 2026 certificate rollover preparedness | Phase 5 (§5.2) |
+| **6** | §6.1 Capsule Firmware Updates | In-band BIOS update from OS | Phase 2 (§1.1) + Phase 3 (§1.2) |
+
+> [!NOTE]
+> **Phases 1–2** are the foundation. Runtime services and config table walker unblock everything else.
+> **Phase 3** delivers the core runtime wrappers (variables, reset, RTC, W^X).
+> **Phases 4–5** add security (Secure Boot) and hardware inventory (SMBIOS).
+> **Phase 6** is stretch/future work (Crypto Agility 2026, Capsule Updates).
+
+> [!TIP]
+> **§8.1 GOP Mode Enumeration** has no internal dependencies — it can be done any time
+> as a standalone enhancement to the bootloader's existing `init_gop()`.
+>
+> **§7.1 SMBIOS** is a high-value quick win after §4.1 — it populates the Hardware Report
+> (→ `TODO-005-Debug.md §3`) and the "About This PC" dialog with real machine info.
+
+> [!WARNING]
+> **§1.1 Runtime Services** changes the memory layout. After calling `SetVirtualAddressMap()`,
+> all runtime service pointers are relocated to virtual addresses. This call is **irreversible**
+> and can only be made **once**. Test carefully with QEMU/OVMF before any hardware testing.
+
+---
+
 ## 1. UEFI Runtime Services
 
 ### 1.1 Runtime Services Preservation
