@@ -41,8 +41,8 @@ extern void boot_font_render(const char *text, int32_t x, int32_t y, uint32_t co
 /* Animation: each dot cycles through 16 frames of pulse */
 #define PULSE_FRAMES    16
 
-/* PIT callback rate: every 10 ticks at 100 Hz = 10 fps */
-#define ANIM_TICK_DIVISOR 10
+/* PIT callback rate: every 15 ticks at 100 Hz ≈ 6.5 fps */
+#define ANIM_TICK_DIVISOR 15
 
 /* ---- State ---- */
 static volatile uint8_t  splash_on;
@@ -211,16 +211,26 @@ static void splash_draw_dots(void)
             intensity = pulse_curve[phase];
         }
 
-        /* Map intensity (0..4) to radius and brightness */
+        /* Map intensity (0..4) to radius and color.
+         * Resting (0) = dark ice-blue, peak (4) = white.
+         * Intermediate stages blend from ice-blue → white. */
         int32_t r = g_dot_min_r + (g_dot_max_r - g_dot_min_r) * intensity / 4;
-        uint32_t brightness;
-        if (intensity == 0)      brightness = 0x44;  /* resting */
-        else if (intensity == 1) brightness = 0x77;
-        else if (intensity == 2) brightness = 0xAA;
-        else if (intensity == 3) brightness = 0xDD;
-        else                     brightness = 0xFF;  /* peak */
 
-        uint32_t color = (brightness << 16) | (brightness << 8) | brightness;
+        /* Ice-blue-to-white color ramp:
+         *   0: rgb(0x44, 0x55, 0x66) — dark ice-blue (resting)
+         *   1: rgb(0x66, 0x88, 0xAA) — muted blue
+         *   2: rgb(0x88, 0xBB, 0xDD) — ice-blue
+         *   3: rgb(0xCC, 0xDD, 0xEE) — pale blue-white
+         *   4: rgb(0xFF, 0xFF, 0xFF) — pure white (peak) */
+        uint32_t cr, cg, cb;
+        switch (intensity) {
+        case 0:  cr = 0x44; cg = 0x55; cb = 0x66; break;
+        case 1:  cr = 0x66; cg = 0x88; cb = 0xAA; break;
+        case 2:  cr = 0x88; cg = 0xBB; cb = 0xDD; break;
+        case 3:  cr = 0xCC; cg = 0xDD; cb = 0xEE; break;
+        default: cr = 0xFF; cg = 0xFF; cb = 0xFF; break;
+        }
+        uint32_t color = (cr << 16) | (cg << 8) | cb;
         splash_draw_dot(x, y, r, color);
     }
 }
@@ -250,16 +260,22 @@ static void splash_draw_dots_faded(uint8_t fade)
                              pulse_curve[phase] : 0;
 
         int32_t r = g_dot_min_r + (g_dot_max_r - g_dot_min_r) * intensity / 4;
-        uint32_t brightness;
-        if      (intensity == 0) brightness = 0x44;
-        else if (intensity == 1) brightness = 0x77;
-        else if (intensity == 2) brightness = 0xAA;
-        else if (intensity == 3) brightness = 0xDD;
-        else                     brightness = 0xFF;
+
+        /* Ice-blue-to-white ramp (same as splash_draw_dots) */
+        uint32_t cr, cg, cb;
+        switch (intensity) {
+        case 0:  cr = 0x44; cg = 0x55; cb = 0x66; break;
+        case 1:  cr = 0x66; cg = 0x88; cb = 0xAA; break;
+        case 2:  cr = 0x88; cg = 0xBB; cb = 0xDD; break;
+        case 3:  cr = 0xCC; cg = 0xDD; cb = 0xEE; break;
+        default: cr = 0xFF; cg = 0xFF; cb = 0xFF; break;
+        }
 
         /* Dim by fade factor */
-        brightness = (brightness * (uint32_t)fade) / 255;
-        uint32_t color = (brightness << 16) | (brightness << 8) | brightness;
+        cr = (cr * (uint32_t)fade) / 255;
+        cg = (cg * (uint32_t)fade) / 255;
+        cb = (cb * (uint32_t)fade) / 255;
+        uint32_t color = (cr << 16) | (cg << 8) | cb;
         splash_draw_dot(x, y, r, color);
     }
 }
