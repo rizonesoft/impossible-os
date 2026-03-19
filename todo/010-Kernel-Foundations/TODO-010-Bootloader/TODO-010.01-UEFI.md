@@ -102,7 +102,7 @@ graph TD
 | ⭐ | Phase | Section                          | What It Delivers                                         | Depends On                       | Status |
 | -- | :----: | -------------------------------- | -------------------------------------------------------- | -------------------------------- | :----: |
 | 💎 | **1** | §3.1 Memory Map Preservation     | Full UEFI memory type info for PMM (runtime, ACPI, MMIO) | —                                |   ✅   |
-| 💎 | **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID    | —                                |   ⬜   |
+| 💎 | **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID    | —                                |   ✅   |
 | 💎 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers     | Phase 1 (§3.1)                   |   ⬜   |
 | 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ⬜   |
 | ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ⬜   |
@@ -279,21 +279,28 @@ graph TD
 
 ### 4.1 Configuration Table Walking
 
-**Prompt:** The `EFI_SYSTEM_TABLE.ConfigurationTable` is an array of `{GUID, VendorTable}` pairs pointing to platform-specific data (ACPI tables, SMBIOS, device tree, etc.). The current bootloader extracts the ACPI RSDP from this table. Formalize this into a proper configuration table walker that finds and exposes all relevant entries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: configuration table walker"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI Configuration Table Walker implementation. Confirm that `boot_info.h` defines `boot_uefi_guid`, `boot_uefi_config_entry`, `BOOT_CONFIG_TABLE_MAX` (32), and 8 `UEFI_GUID_*` constants. Confirm `bootx64.c` has `copy_config_tables()` that copies all entries + extracts ACPI RSDP (replacing `find_acpi_rsdp()`). Confirm `uefi_config.c` provides `uefi_find_config_table(guid)` and `uefi_config_init()` (called from `boot_hw.c`). Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: configuration table walker"` exists.
 
-- [ ] Preserve `EFI_SYSTEM_TABLE.ConfigurationTable` pointer and `NumberOfTableEntries`
-- [ ] Implement `uefi_find_config_table(guid)` — search by GUID, return pointer
-- [ ] Known Configuration Table GUIDs:
-  - [ ] `EFI_ACPI_20_TABLE_GUID` — ACPI 2.0+ RSDP (currently used)
-  - [ ] `ACPI_TABLE_GUID` — ACPI 1.0 RSDP (legacy fallback)
-  - [ ] `SMBIOS3_TABLE_GUID` — SMBIOS 3.x entry point
-  - [ ] `SMBIOS_TABLE_GUID` — SMBIOS 2.x entry point
-  - [ ] `EFI_MEMORY_ATTRIBUTES_TABLE_GUID` — §3.2 above
-  - [ ] `EFI_RT_PROPERTIES_TABLE_GUID` — §1.1 above
-  - [ ] `EFI_CONFORMANCE_PROFILES_TABLE_GUID` — profiles §4.2
-  - [ ] `EFI_DTB_TABLE_GUID` — Device Tree Blob (non-x86 platforms)
-- [ ] Log: `[UEFI] Config tables: ACPI2.0 SMBIOS3 MemAttr RtProps`
-- [ ] Commit: `"uefi: configuration table walker"`
+> [!NOTE]
+> **Implementation notes:**
+> - Config table entries are copied byte-by-byte before `ExitBootServices()` (firmware memory becomes invalid after)
+> - `find_acpi_rsdp()` was fully replaced by `copy_config_tables()` which does both: copy all entries + extract ACPI RSDP
+> - `uefi_config_init()` logs a summary of all found known tables in a single line
+> - New files: `include/kernel/uefi_config.h`, `src/kernel/uefi_config.c`
+
+- [x] Preserve `EFI_SYSTEM_TABLE.ConfigurationTable` pointer and `NumberOfTableEntries`
+- [x] Implement `uefi_find_config_table(guid)` — search by GUID, return pointer
+- [x] Known Configuration Table GUIDs:
+  - [x] `EFI_ACPI_20_TABLE_GUID` — ACPI 2.0+ RSDP (currently used)
+  - [x] `ACPI_TABLE_GUID` — ACPI 1.0 RSDP (legacy fallback)
+  - [x] `SMBIOS3_TABLE_GUID` — SMBIOS 3.x entry point
+  - [x] `SMBIOS_TABLE_GUID` — SMBIOS 2.x entry point
+  - [x] `EFI_MEMORY_ATTRIBUTES_TABLE_GUID` — §3.2 above
+  - [x] `EFI_RT_PROPERTIES_TABLE_GUID` — §1.1 above
+  - [x] `EFI_CONFORMANCE_PROFILES_TABLE_GUID` — profiles §4.2
+  - [x] `EFI_DTB_TABLE_GUID` — Device Tree Blob (non-x86 platforms)
+- [x] Log: `[UEFI] Config tables: ACPI2.0 SMBIOS3 MemAttr RtProps`
+- [x] Commit: `"uefi: configuration table walker"`
 
 ### 4.2 UEFI Conformance Profile Detection
 

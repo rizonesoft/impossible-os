@@ -53,6 +53,20 @@ struct boot_config {
     UINT8   config_found;
 };
 
+#define BOOT_CONFIG_TABLE_MAX 32
+
+struct boot_uefi_guid {
+    UINT32  data1;
+    UINT16  data2;
+    UINT16  data3;
+    UINT8   data4[8];
+};
+
+struct boot_uefi_config_entry {
+    struct boot_uefi_guid guid;
+    UINT64  table_addr;
+};
+
 struct boot_info {
     struct boot_mmap_entry  mmap[BOOT_MMAP_MAX_ENTRIES];
     UINT32  mmap_count;
@@ -67,6 +81,9 @@ struct boot_info {
     UINT64  module_end;
     UINT8   module_available;
     struct boot_config config;
+    /* UEFI Configuration Table */
+    struct boot_uefi_config_entry config_table[BOOT_CONFIG_TABLE_MAX];
+    UINT32  config_table_count;
 };
 
 /* --- ELF64 header structures --- */
@@ -798,31 +815,51 @@ static void fill_memory_map(EFI_MEMORY_DESCRIPTOR *mmap,
 }
 
 /* ============================================================================
- * Step 5: Find ACPI RSDP from UEFI configuration tables
+ * Step 5: Copy UEFI Configuration Table + find ACPI RSDP
+ *
+ * The EFI_SYSTEM_TABLE.ConfigurationTable[] array contains {GUID, Pointer}
+ * pairs for ACPI, SMBIOS, Memory Attributes, and other firmware tables.
+ * We copy all entries into boot_info so the kernel can search by GUID.
+ * We also extract the ACPI RSDP here (backward compatibility).
  * ============================================================================ */
-static void find_acpi_rsdp(void)
+static void copy_config_tables(void)
 {
     EFI_GUID acpi20_guid = EFI_ACPI_20_TABLE_GUID;
     EFI_GUID acpi10_guid = EFI_ACPI_TABLE_GUID;
     UINTN i;
+    UINT32 count = 0;
 
-    for (i = 0; i < gST->NumberOfTableEntries; i++) {
+    for (i = 0; i < gST->NumberOfTableEntries && count < BOOT_CONFIG_TABLE_MAX;
+         i++) {
         EFI_CONFIGURATION_TABLE *entry = &gST->ConfigurationTable[i];
 
+        /* Copy GUID */
+        const UINT8 *src = (const UINT8 *)&entry->VendorGuid;
+        UINT8 *dst = (UINT8 *)&g_boot_info_ptr->config_table[count].guid;
+        UINTN j;
+        for (j = 0; j < 16; j++)
+            dst[j] = src[j];
+
+        /* Copy table pointer */
+        g_boot_info_ptr->config_table[count].table_addr =
+            (UINT64)(UINTN)entry->VendorTable;
+        count++;
+
+        /* Also extract ACPI RSDP for backward compatibility */
         if (guid_equal(&entry->VendorGuid, &acpi20_guid)) {
             g_boot_info_ptr->acpi_rsdp_addr = (UINT64)(UINTN)entry->VendorTable;
             g_boot_info_ptr->acpi_version = 2;
             g_boot_info_ptr->acpi_available = 1;
-            return;  /* Prefer ACPI 2.0 */
-        }
-
-        if (guid_equal(&entry->VendorGuid, &acpi10_guid)) {
+        } else if (guid_equal(&entry->VendorGuid, &acpi10_guid) &&
+                   !g_boot_info_ptr->acpi_available) {
+            /* Only use ACPI 1.0 if we haven't found 2.0 yet */
             g_boot_info_ptr->acpi_rsdp_addr = (UINT64)(UINTN)entry->VendorTable;
             g_boot_info_ptr->acpi_version = 1;
             g_boot_info_ptr->acpi_available = 1;
-            /* Don't return — keep looking for ACPI 2.0 */
         }
     }
+
+    g_boot_info_ptr->config_table_count = count;
 }
 
 /* ============================================================================
@@ -968,9 +1005,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     serial_early_print("BOOT: load_kernel OK\n");
     DRAW_BAR(12, 0x0000FF00);  /* GREEN = kernel loaded */
 
-    /* Step 4: Find ACPI RSDP */
-    serial_early_print("BOOT: find_acpi_rsdp...\n");
-    find_acpi_rsdp();
+    /* Step 4: Copy UEFI Configuration Table + find ACPI RSDP */
+    serial_early_print("BOOT: copy_config_tables...\n");
+    copy_config_tables();
 
     /* Step 5: Get UEFI memory map */
     serial_early_print("BOOT: get_memory_map...\n");

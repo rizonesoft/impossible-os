@@ -38,6 +38,49 @@ struct boot_mmap_entry {
     uint64_t attribute;         /* UEFI memory attribute flags (EFI_MEMORY_RUNTIME, etc.) */
 };
 
+/* --- UEFI Configuration Table ---
+ * Copied from EFI_SYSTEM_TABLE.ConfigurationTable[] before ExitBootServices.
+ * Each entry is a {GUID, VendorTable} pair pointing to platform data. */
+#define BOOT_CONFIG_TABLE_MAX 32
+
+struct boot_uefi_guid {
+    uint32_t data1;
+    uint16_t data2;
+    uint16_t data3;
+    uint8_t  data4[8];
+};
+
+struct boot_uefi_config_entry {
+    struct boot_uefi_guid guid;
+    uintptr_t             table_addr;   /* physical address of vendor table */
+};
+
+/* Well-known Configuration Table GUIDs (for kernel-side lookup) */
+#define UEFI_GUID_ACPI_20 \
+    ((struct boot_uefi_guid){ 0x8868e871, 0xe4f1, 0x11d3, \
+        { 0xbc, 0x22, 0x00, 0x80, 0xc7, 0x3c, 0x88, 0x81 } })
+#define UEFI_GUID_ACPI_10 \
+    ((struct boot_uefi_guid){ 0xeb9d2d30, 0x2d88, 0x11d3, \
+        { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } })
+#define UEFI_GUID_SMBIOS3 \
+    ((struct boot_uefi_guid){ 0xf2fd1544, 0x9794, 0x4a2c, \
+        { 0x99, 0x2e, 0xe5, 0xbb, 0xcf, 0x20, 0xe3, 0x94 } })
+#define UEFI_GUID_SMBIOS \
+    ((struct boot_uefi_guid){ 0xeb9d2d31, 0x2d88, 0x11d3, \
+        { 0x9a, 0x16, 0x00, 0x90, 0x27, 0x3f, 0xc1, 0x4d } })
+#define UEFI_GUID_MEM_ATTR \
+    ((struct boot_uefi_guid){ 0xdcfa911d, 0x26eb, 0x469f, \
+        { 0xa2, 0x20, 0x38, 0xb7, 0xdc, 0x46, 0x12, 0x20 } })
+#define UEFI_GUID_RT_PROPS \
+    ((struct boot_uefi_guid){ 0xeb66918a, 0x7eef, 0x402a, \
+        { 0x84, 0x2e, 0x93, 0x1d, 0x21, 0xc3, 0x8a, 0xe9 } })
+#define UEFI_GUID_CONFORMANCE \
+    ((struct boot_uefi_guid){ 0x36122546, 0xf7e7, 0x4c8f, \
+        { 0xbd, 0x9b, 0xeb, 0x85, 0x25, 0xb5, 0x0c, 0x0b } })
+#define UEFI_GUID_DTB \
+    ((struct boot_uefi_guid){ 0xb1b621d5, 0xf19c, 0x41a5, \
+        { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } })
+
 /* Framebuffer information from the bootloader */
 struct boot_framebuffer {
     uintptr_t addr;         /* physical address */
@@ -93,6 +136,10 @@ struct boot_info {
 
     /* Boot configuration (parsed from boot.conf) */
     struct boot_config config;
+
+    /* UEFI Configuration Table (copied from EFI_SYSTEM_TABLE) */
+    struct boot_uefi_config_entry config_table[BOOT_CONFIG_TABLE_MAX];
+    uint32_t config_table_count;
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */
