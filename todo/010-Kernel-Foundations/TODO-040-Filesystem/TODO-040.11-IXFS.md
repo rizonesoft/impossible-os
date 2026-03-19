@@ -546,32 +546,32 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 1.1 Superblock | Verify — foundation of entire filesystem |
-| 🔴 P0 | 2.1 Block Allocator | Verify — all writes depend on this |
-| 🔴 P0 | 3.1 Inode Table | Verify — all file access depends on this |
-| 🔴 P0 | 4.1 Extent Engine | Verify — file data mapping |
-| 🔴 P0 | 5.1 Journal | Verify — crash safety |
-| 🔴 P0 | 6.1 CoW & Snapshots | Verify — data integrity |
-| 🔴 P0 | 7.1 Checksums | Verify — corruption detection |
-| 🔴 P0 | 8.1 VFS Callbacks | Verify — usability |
-| 🟠 P1 | 3.2 Extended Inode | Enable — v3 format with new metadata fields |
-| 🟠 P1 | 9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams |
-| 🟠 P1 | 10.1 Security Descriptors | Win32 compat — ACLs for enterprise apps |
-| 🟠 P1 | 11.1 Hard Links | Win32 compat — WinSxS, VC++ redist |
-| 🟠 P1 | 11.2 Symbolic Links | Win32 compat — developer tools, junctions |
-| 🟠 P1 | 17.1 Format Tool v3 | Enable — can't use v3 features without formatter |
-| 🟡 P2 | 12.1 Compression ⭐ | Performance — save space + reduce I/O |
-| 🟡 P2 | 14.1 Deduplication ⭐ | Storage — similar files share blocks |
-| 🟡 P2 | 15.1 Reflinks ⭐ | UX — instant file copy |
-| 🟡 P2 | 16.1 Defragmentation ⭐ | Performance — consolidate extents |
-| 🟡 P2 | 1.2 Online Volume Grow ⭐ | Management — dynamic disk expansion |
-| 🟡 P2 | 7.2 Self-Healing ⭐ | Reliability — auto-repair corruption |
-| 🟢 P3 | 6.2 Auto Snapshots ⭐ | UX — "Previous Versions" without VSS |
-| 🟢 P3 | 13.1 Encryption ⭐ | Security — per-file AES-256 |
-| 🟢 P3 | 18.1 Health Dashboard ⭐ | Monitoring — unified volume health |
-| 🟢 P3 | 19.1 Test Suite | Quality — automated validation |
+| ⭐ | Priority | Section | Description |
+| -- |----------|---------|-------------|
+| 💎 | 🔴 P0 | 1.1 Superblock | Verify — foundation of entire filesystem |
+| 💎 | 🔴 P0 | 2.1 Block Allocator | Verify — all writes depend on this |
+| 💎 | 🔴 P0 | 3.1 Inode Table | Verify — all file access depends on this |
+| 💎 | 🔴 P0 | 4.1 Extent Engine | Verify — file data mapping |
+| 💎 | 🔴 P0 | 5.1 Journal | Verify — crash safety |
+| 💎 | 🔴 P0 | 6.1 CoW & Snapshots | Verify — data integrity |
+| 💎 | 🔴 P0 | 7.1 Checksums | Verify — corruption detection |
+| 💎 | 🔴 P0 | 8.1 VFS Callbacks | Verify — usability |
+| 💎 | 🟠 P1 | 3.2 Extended Inode | Enable — v3 format with new metadata fields |
+| 💎 | 🟠 P1 | 9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams |
+| 💎 | 🟠 P1 | 10.1 Security Descriptors | Win32 compat — ACLs for enterprise apps |
+| 💎 | 🟠 P1 | 11.1 Hard Links | Win32 compat — WinSxS, VC++ redist |
+| 💎 | 🟠 P1 | 11.2 Symbolic Links | Win32 compat — developer tools, junctions |
+| 💎 | 🟠 P1 | 17.1 Format Tool v3 | Enable — can't use v3 features without formatter |
+| ⭐ | 🟡 P2 | 12.1 Compression | Performance — save space + reduce I/O |
+| ⭐ | 🟡 P2 | 14.1 Deduplication | Storage — similar files share blocks |
+| ⭐ | 🟡 P2 | 15.1 Reflinks | UX — instant file copy |
+| ⭐ | 🟡 P2 | 16.1 Defragmentation | Performance — consolidate extents |
+| ⭐ | 🟡 P2 | 1.2 Online Volume Grow | Management — dynamic disk expansion |
+| ⭐ | 🟡 P2 | 7.2 Self-Healing | Reliability — auto-repair corruption |
+| ⭐ | 🟢 P3 | 6.2 Auto Snapshots | UX — "Previous Versions" without VSS |
+| ⭐ | 🟢 P3 | 13.1 Encryption | Security — per-file AES-256 |
+| ⭐ | 🟢 P3 | 18.1 Health Dashboard | Monitoring — unified volume health |
+| 💎 | 🟢 P3 | 19.1 Test Suite | Quality — automated validation |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -605,28 +605,28 @@
 
 ## OS Comparison
 
-| Feature                            | 🪟 NTFS                          | 🐧 ext4                     | 🌊 Btrfs/ZFS                 | 🚀 IXFS                              |
-| ---------------------------------- | --------------------------------- | ---------------------------- | ----------------------------- | ------------------------------------- |
-| Max volume size                    | 16 EB (NTFS)                      | 1 EB                         | 256 ZB (ZFS)                  | 64 TiB (64-bit blocks × 4 KiB)       |
-| Block size                         | 512–64K clusters                  | 1K–64K                       | 4K–128K                       | 4 KiB (page-aligned)                  |
-| Extent-based allocation            | ✅ Non-resident $DATA             | ✅ Extent tree               | ✅ B-tree extents             | ✅ §4 — 4 inline + overflow tree      |
-| Journaling                         | ✅ $LogFile (redo + undo)         | ✅ JBD2 (ordered)            | ✅ CoW (journal-free)         | ✅ §5 — WAL + CoW                     |
-| Copy-on-Write                      | ❌                                | ❌                           | ✅ Native                     | ✅ §6 — native CoW + refcounts        |
-| **Snapshots**                      | ⚠️ VSS (separate service)        | ❌ (LVM only)                | ✅ Native                     | ✅ §6 — filesystem-level, instant ⭐   |
-| **Auto snapshots** ⭐              | ❌ VSS scheduled task             | ❌                           | ⚠️ Manual scripts            | ⬜ §6.2 — configurable retention       |
-| Per-block checksums                | ❌                                | ✅ CRC32C (metadata only)    | ✅ All data + metadata        | ✅ §7 — CRC32C all blocks             |
-| **Self-healing** ⭐                | ❌ Requires chkdsk                | ❌ Requires fsck             | ✅ ZFS with mirrors           | ⬜ §7.2 — backup superblock + bitmap   |
-| Alternate Data Streams             | ✅ Native                         | ❌                           | ❌                            | ⬜ §9 — native via stream inodes      |
-| Security descriptors (ACLs)        | ✅ Full DACL/SACL                 | ✅ POSIX ACLs (different)    | ✅ POSIX ACLs                | ⬜ §10 — Win32-native DACLs           |
-| Hard links                         | ✅                                | ✅                           | ✅                            | ⬜ §11.1 — existing `i_links` field   |
-| Symbolic links                     | ✅ Reparse points                 | ✅ symlink()                 | ✅                            | ⬜ §11.2 — reparse-compatible         |
-| **Transparent compression** ⭐     | ⚠️ LZ77 (1993 algo, slow)        | ❌                           | ✅ Zstd/LZO                  | ⬜ §12 — LZ4 (fastest) + Zstd         |
-| **Per-file encryption** ⭐         | ⚠️ EFS (certificate nightmare)   | ✅ fscrypt (CLI setup)       | ✅ ZFS native encryption     | ⬜ §13 — simple master key model      |
-| **Inline deduplication** ⭐        | ❌                                | ❌                           | ✅ ZFS (needs huge RAM)       | ⬜ §14 — lightweight, uses CoW refs   |
-| **Reflinks (instant copy)** ⭐     | ⚠️ Server 2016+ only             | ❌                           | ✅ Native                    | ⬜ §15 — transparent via CopyFile     |
-| **Online defrag** ⭐               | ✅ Windows Defragmenter           | ✅ e4defrag (limited)        | ✅ btrfs defrag              | ⬜ §16 — extent consolidation          |
-| **Online resize** ⭐               | ✅ Grow only                      | ✅ Grow only (resize2fs)     | ✅ Grow + shrink             | ⬜ §1.2 — grow (shrink future)        |
-| Inline small files                 | ✅ Resident $DATA                 | ✅ Inline data               | ❌                            | ✅ §4 — ≤48 bytes in `i_extents`      |
-| Directory hash index               | ✅ B+ tree                        | ✅ HTree (Half MD4)          | ✅ B-tree                    | ✅ §3 — FNV-1a hash index             |
-| **Volume health dashboard** ⭐     | ❌ Requires chkdsk                | ❌ CLI tune2fs only          | ⚠️ ZFS `zpool status`        | ⬜ §18 — GUI health panel             |
-| **Feature count**                  | 11/20                             | 7/20                         | 14/20                        | **20/20** — all features combined ⭐   |
+| ⭐ | Feature                            | 🪟 NTFS                          | 🐧 ext4                     | 🌊 Btrfs/ZFS                 | 🚀 IXFS                              |
+| -- | ---------------------------------- | --------------------------------- | ---------------------------- | ----------------------------- | ------------------------------------- |
+| 💎 | Max volume size                    | 16 EB (NTFS)                      | 1 EB                         | 256 ZB (ZFS)                  | 64 TiB (64-bit blocks × 4 KiB)       |
+| 💎 | Block size                         | 512–64K clusters                  | 1K–64K                       | 4K–128K                       | 4 KiB (page-aligned)                  |
+| 💎 | Extent-based allocation            | ✅ Non-resident $DATA             | ✅ Extent tree               | ✅ B-tree extents             | ✅ §4 — 4 inline + overflow tree      |
+| 💎 | Journaling                         | ✅ $LogFile (redo + undo)         | ✅ JBD2 (ordered)            | ✅ CoW (journal-free)         | ✅ §5 — WAL + CoW                     |
+| 💎 | Copy-on-Write                      | ❌                                | ❌                           | ✅ Native                     | ✅ §6 — native CoW + refcounts        |
+| ⭐ | **Snapshots**                      | ⚠️ VSS (separate service)        | ❌ (LVM only)                | ✅ Native                     | ✅ §6 — filesystem-level, instant   |
+| ⭐ | **Auto snapshots**              | ❌ VSS scheduled task             | ❌                           | ⚠️ Manual scripts            | ⬜ §6.2 — configurable retention       |
+| 💎 | Per-block checksums                | ❌                                | ✅ CRC32C (metadata only)    | ✅ All data + metadata        | ✅ §7 — CRC32C all blocks             |
+| ⭐ | **Self-healing**                | ❌ Requires chkdsk                | ❌ Requires fsck             | ✅ ZFS with mirrors           | ⬜ §7.2 — backup superblock + bitmap   |
+| 💎 | Alternate Data Streams             | ✅ Native                         | ❌                           | ❌                            | ⬜ §9 — native via stream inodes      |
+| 💎 | Security descriptors (ACLs)        | ✅ Full DACL/SACL                 | ✅ POSIX ACLs (different)    | ✅ POSIX ACLs                | ⬜ §10 — Win32-native DACLs           |
+| 💎 | Hard links                         | ✅                                | ✅                           | ✅                            | ⬜ §11.1 — existing `i_links` field   |
+| 💎 | Symbolic links                     | ✅ Reparse points                 | ✅ symlink()                 | ✅                            | ⬜ §11.2 — reparse-compatible         |
+| ⭐ | **Transparent compression**     | ⚠️ LZ77 (1993 algo, slow)        | ❌                           | ✅ Zstd/LZO                  | ⬜ §12 — LZ4 (fastest) + Zstd         |
+| ⭐ | **Per-file encryption**         | ⚠️ EFS (certificate nightmare)   | ✅ fscrypt (CLI setup)       | ✅ ZFS native encryption     | ⬜ §13 — simple master key model      |
+| ⭐ | **Inline deduplication**        | ❌                                | ❌                           | ✅ ZFS (needs huge RAM)       | ⬜ §14 — lightweight, uses CoW refs   |
+| ⭐ | **Reflinks (instant copy)**     | ⚠️ Server 2016+ only             | ❌                           | ✅ Native                    | ⬜ §15 — transparent via CopyFile     |
+| ⭐ | **Online defrag**               | ✅ Windows Defragmenter           | ✅ e4defrag (limited)        | ✅ btrfs defrag              | ⬜ §16 — extent consolidation          |
+| ⭐ | **Online resize**               | ✅ Grow only                      | ✅ Grow only (resize2fs)     | ✅ Grow + shrink             | ⬜ §1.2 — grow (shrink future)        |
+| 💎 | Inline small files                 | ✅ Resident $DATA                 | ✅ Inline data               | ❌                            | ✅ §4 — ≤48 bytes in `i_extents`      |
+| 💎 | Directory hash index               | ✅ B+ tree                        | ✅ HTree (Half MD4)          | ✅ B-tree                    | ✅ §3 — FNV-1a hash index             |
+| ⭐ | **Volume health dashboard**     | ❌ Requires chkdsk                | ❌ CLI tune2fs only          | ⚠️ ZFS `zpool status`        | ⬜ §18 — GUI health panel             |
+| ⭐ | **Feature count**                  | 11/20                             | 7/20                         | 14/20                        | **20/20** — all features combined   |

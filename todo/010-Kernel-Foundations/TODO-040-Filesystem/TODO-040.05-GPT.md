@@ -505,34 +505,34 @@
 
 ## Priority Order
 
-| Priority | Section                              | Description                                                 |
-|----------|--------------------------------------|-------------------------------------------------------------|
-| ✅ Done   | 1.1 Primary Header Validation       | Foundation — signature + CRC32 validation                   |
-| ✅ Done   | 1.2 Partition Entry Array Parsing    | Foundation — entry parsing with array CRC32                 |
-| ✅ Done   | 1.3 PMBR Detection                   | Foundation — Protective MBR `0xEE` check                    |
-| 🔴 P0    | **2.1 Backup Header Fallback**       | **Reliability — don't fail on single-sector corruption**    |
-| 🔴 P0    | **5.1 Type GUID Registry**           | **Correctness — identify all partition types encountered**  |
-| 🟠 P1    | 2.2 Primary Header Auto-Recovery    | Redundancy — restore primary from valid backup              |
-| 🟠 P1    | 3.1 Dynamic Sector Size (4Kn)       | Compatibility — modern NVMe + AF drives                     |
-| 🟠 P1    | 4.1 GUID Encode + String Conversion | Write path — needed by §8–§9 write operations               |
-| 🟠 P1    | 6.1 UEFI Global Attributes          | Correctness — Required, BIOSBoot, hidden partition handling |
-| 🟠 P1    | 7.1 Hybrid MBR Detection            | Safety — warn and prefer GPT over conflicting MBR           |
-| 🟡 P2    | 2.3 Backup Sync on Write            | Redundancy — keep backup in sync after modifications        |
-| 🟡 P2    | 6.2 Microsoft Attributes            | Interop — read-only, hidden, no-automount on Basic Data     |
-| 🟡 P2    | 8.1 PMBR Writer                     | Write support — create Protective MBR                       |
-| 🟡 P2    | 8.2 GPT Header Writer               | Write support — serialize and write headers                 |
-| 🟡 P2    | 8.3 Partition Entry Writer           | Write support — serialize entries + array CRC32             |
-| 🟡 P2    | 9.1 Initialize GPT Disk            | Feature — create fresh GPT layout                           |
-| 🟡 P2    | 9.2 Create Partition                | Feature — add partitions with alignment + validation        |
-| 🟡 P2    | 9.3 Delete Partition                | Feature — remove partitions safely                          |
-| 🟡 P2    | 9.4 Modify Attributes              | Feature — set bootable, read-only, hidden flags             |
-| 🟡 P2    | 11.1 Volume Identification         | Feature — GUID-based persistent drive letter mapping        |
-| 🟡 P2    | 13.1 CRC Scrubbing ⭐              | **Proactive integrity validation** — no OS does this       |
-| 🟡 P2    | 14.1 GUID Collision ⭐             | **Clone disk safety** — transparent collision resolution   |
-| 🟢 P3    | 9.5 Partition Resize ⭐            | **GUI drag-to-resize** — Windows severely limited          |
-| 🟢 P3    | 10.1 Diskpart GPT Commands         | Tooling — CLI partition management                          |
-| 🟢 P3    | 12.1 GPT Test Suite                 | Quality — automated test coverage                           |
-| 🟢 P3    | 15.1 GPT Backup & Restore ⭐       | **Auto-backup partition table** — Windows has nothing      |
+| ⭐ | Priority | Section                              | Description                                                 |
+| -- |----------|--------------------------------------|-------------------------------------------------------------|
+| 💎 | ✅ Done   | 1.1 Primary Header Validation       | Foundation — signature + CRC32 validation                   |
+| 💎 | ✅ Done   | 1.2 Partition Entry Array Parsing    | Foundation — entry parsing with array CRC32                 |
+| 💎 | ✅ Done   | 1.3 PMBR Detection                   | Foundation — Protective MBR `0xEE` check                    |
+| 💎 | 🔴 P0    | **2.1 Backup Header Fallback**       | **Reliability — don't fail on single-sector corruption**    |
+| 💎 | 🔴 P0    | **5.1 Type GUID Registry**           | **Correctness — identify all partition types encountered**  |
+| 💎 | 🟠 P1    | 2.2 Primary Header Auto-Recovery    | Redundancy — restore primary from valid backup              |
+| 💎 | 🟠 P1    | 3.1 Dynamic Sector Size (4Kn)       | Compatibility — modern NVMe + AF drives                     |
+| 💎 | 🟠 P1    | 4.1 GUID Encode + String Conversion | Write path — needed by §8–§9 write operations               |
+| 💎 | 🟠 P1    | 6.1 UEFI Global Attributes          | Correctness — Required, BIOSBoot, hidden partition handling |
+| 💎 | 🟠 P1    | 7.1 Hybrid MBR Detection            | Safety — warn and prefer GPT over conflicting MBR           |
+| 💎 | 🟡 P2    | 2.3 Backup Sync on Write            | Redundancy — keep backup in sync after modifications        |
+| 💎 | 🟡 P2    | 6.2 Microsoft Attributes            | Interop — read-only, hidden, no-automount on Basic Data     |
+| 💎 | 🟡 P2    | 8.1 PMBR Writer                     | Write support — create Protective MBR                       |
+| 💎 | 🟡 P2    | 8.2 GPT Header Writer               | Write support — serialize and write headers                 |
+| 💎 | 🟡 P2    | 8.3 Partition Entry Writer           | Write support — serialize entries + array CRC32             |
+| 💎 | 🟡 P2    | 9.1 Initialize GPT Disk            | Feature — create fresh GPT layout                           |
+| 💎 | 🟡 P2    | 9.2 Create Partition                | Feature — add partitions with alignment + validation        |
+| 💎 | 🟡 P2    | 9.3 Delete Partition                | Feature — remove partitions safely                          |
+| 💎 | 🟡 P2    | 9.4 Modify Attributes              | Feature — set bootable, read-only, hidden flags             |
+| 💎 | 🟡 P2    | 11.1 Volume Identification         | Feature — GUID-based persistent drive letter mapping        |
+| ⭐ | 🟡 P2    | 13.1 CRC Scrubbing              | **Proactive integrity validation** — no OS does this       |
+| ⭐ | 🟡 P2    | 14.1 GUID Collision             | **Clone disk safety** — transparent collision resolution   |
+| ⭐ | 🟢 P3    | 9.5 Partition Resize            | **GUI drag-to-resize** — Windows severely limited          |
+| 💎 | 🟢 P3    | 10.1 Diskpart GPT Commands         | Tooling — CLI partition management                          |
+| 💎 | 🟢 P3    | 12.1 GPT Test Suite                 | Quality — automated test coverage                           |
+| ⭐ | 🟢 P3    | 15.1 GPT Backup & Restore       | **Auto-backup partition table** — Windows has nothing      |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -541,30 +541,30 @@
 
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11                       | 🐧 Linux (gdisk / parted)          | 🚀 Impossible OS                          |
-| -------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
-| GPT header parsing               | ✅ Full (partmgr.sys)               | ✅ Full (part/efi.c)                | ✅ Done §1.1 (primary only)               |
-| `"EFI PART"` signature check    | ✅                                   | ✅                                  | ✅ Done §1.1                               |
-| Header CRC32 validation          | ✅                                   | ✅                                  | ✅ Done §1.1                               |
-| Array CRC32 validation           | ✅ (assumes 128 entries)            | ✅ (uses actual NumberOfEntries)    | ✅ Done §1.2                               |
-| Protective MBR detection         | ✅                                   | ✅                                  | ✅ Done §1.3                               |
-| Backup header fallback           | ✅ Automatic                         | ✅ Automatic                        | ⬜ §2.1 P0                                |
-| Primary auto-recovery            | ✅ Silent repair                     | ✅ gdisk repair                     | ⬜ §2.2 P1                                |
-| Backup sync on write             | ✅                                   | ✅                                  | ⬜ §2.3 P2                                |
-| 4Kn sector support               | ✅ Native                            | ✅ Native                           | ⬜ §3.1 P1                                |
-| Mixed-endian GUID (read)         | ✅                                   | ✅                                  | ✅ Done §4.1                               |
-| Mixed-endian GUID (write)        | ✅                                   | ✅                                  | ⬜ §4.1 P1                                |
-| Full type GUID registry          | ✅ Exhaustive                        | ✅ Exhaustive                       | ⬜ §5.1 P0 (expanded: 25+ types)          |
-| UEFI global attributes           | ✅ Required, BIOSBoot               | ✅ Full                             | ⬜ §6.1 P1                                |
-| MS type-specific attributes      | ✅ ReadOnly, Hidden, NoMount        | ✅ Recognized                       | ⬜ §6.2 P2                                |
-| Hybrid MBR detection             | ⚠️ Partial                         | ✅ gdisk warns                      | ⬜ §7.1 P1                                |
-| GPT write / create partition     | ✅ Disk Management                   | ✅ gdisk / parted / sgdisk          | ⬜ §8–9 P2                                |
-| Delete partition                 | ✅                                   | ✅                                  | ⬜ §9.3 P2                                |
-| **Partition resize** ⭐          | ⚠️ Extend-only, last partition     | ⚠️ CLI parted/gdisk only           | ⬜ §9.5 P3 — GUI drag-to-resize           |
-| GUID-based volume tracking       | ✅ mountvol                          | ✅ /dev/disk/by-partuuid            | ⬜ §11.1 P2                               |
-| CLI partition tool               | ✅ diskpart                          | ✅ gdisk (interactive + scripted)   | ⬜ §10.1 P3                               |
-| **CRC scrubbing** ⭐             | ❌ Only checks on mount             | ❌ Only checks on mount             | ⬜ §13.1 P2 — proactive periodic scrub     |
-| **GUID collision detection** ⭐  | ⚠️ Silent, sometimes wrong         | ❌ No detection                     | ⬜ §14.1 P2 — GUI alert + one-click fix    |
-| **GPT backup & restore** ⭐     | ❌ No built-in backup               | ⚠️ `sgdisk --backup` CLI only      | ⬜ §15.1 P3 — auto-backup on every change  |
-| **128-entry interop**            | ✅ (enforces 128)                    | ✅ (flexible)                       | ✅ Uses `NumberOfEntries` from header      |
-| **CRC32 polynomial correctness** | ✅ CCITT `0xEDB88320`               | ✅ CCITT `0xEDB88320`              | ✅ Correct polynomial implemented          |
+| ⭐ | Feature                          | 🪟 Windows 11                       | 🐧 Linux (gdisk / parted)          | 🚀 Impossible OS                          |
+| -- | -------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
+| 💎 | GPT header parsing               | ✅ Full (partmgr.sys)               | ✅ Full (part/efi.c)                | ✅ Done §1.1 (primary only)               |
+| 💎 | `"EFI PART"` signature check    | ✅                                   | ✅                                  | ✅ Done §1.1                               |
+| 💎 | Header CRC32 validation          | ✅                                   | ✅                                  | ✅ Done §1.1                               |
+| 💎 | Array CRC32 validation           | ✅ (assumes 128 entries)            | ✅ (uses actual NumberOfEntries)    | ✅ Done §1.2                               |
+| 💎 | Protective MBR detection         | ✅                                   | ✅                                  | ✅ Done §1.3                               |
+| 💎 | Backup header fallback           | ✅ Automatic                         | ✅ Automatic                        | ⬜ §2.1 P0                                |
+| 💎 | Primary auto-recovery            | ✅ Silent repair                     | ✅ gdisk repair                     | ⬜ §2.2 P1                                |
+| 💎 | Backup sync on write             | ✅                                   | ✅                                  | ⬜ §2.3 P2                                |
+| 💎 | 4Kn sector support               | ✅ Native                            | ✅ Native                           | ⬜ §3.1 P1                                |
+| 💎 | Mixed-endian GUID (read)         | ✅                                   | ✅                                  | ✅ Done §4.1                               |
+| 💎 | Mixed-endian GUID (write)        | ✅                                   | ✅                                  | ⬜ §4.1 P1                                |
+| 💎 | Full type GUID registry          | ✅ Exhaustive                        | ✅ Exhaustive                       | ⬜ §5.1 P0 (expanded: 25+ types)          |
+| 💎 | UEFI global attributes           | ✅ Required, BIOSBoot               | ✅ Full                             | ⬜ §6.1 P1                                |
+| 💎 | MS type-specific attributes      | ✅ ReadOnly, Hidden, NoMount        | ✅ Recognized                       | ⬜ §6.2 P2                                |
+| 💎 | Hybrid MBR detection             | ⚠️ Partial                         | ✅ gdisk warns                      | ⬜ §7.1 P1                                |
+| 💎 | GPT write / create partition     | ✅ Disk Management                   | ✅ gdisk / parted / sgdisk          | ⬜ §8–9 P2                                |
+| 💎 | Delete partition                 | ✅                                   | ✅                                  | ⬜ §9.3 P2                                |
+| ⭐ | **Partition resize**          | ⚠️ Extend-only, last partition     | ⚠️ CLI parted/gdisk only           | ⬜ §9.5 P3 — GUI drag-to-resize           |
+| 💎 | GUID-based volume tracking       | ✅ mountvol                          | ✅ /dev/disk/by-partuuid            | ⬜ §11.1 P2                               |
+| 💎 | CLI partition tool               | ✅ diskpart                          | ✅ gdisk (interactive + scripted)   | ⬜ §10.1 P3                               |
+| ⭐ | **CRC scrubbing**             | ❌ Only checks on mount             | ❌ Only checks on mount             | ⬜ §13.1 P2 — proactive periodic scrub     |
+| ⭐ | **GUID collision detection**  | ⚠️ Silent, sometimes wrong         | ❌ No detection                     | ⬜ §14.1 P2 — GUI alert + one-click fix    |
+| ⭐ | **GPT backup & restore**     | ❌ No built-in backup               | ⚠️ `sgdisk --backup` CLI only      | ⬜ §15.1 P3 — auto-backup on every change  |
+| 💎 | **128-entry interop**            | ✅ (enforces 128)                    | ✅ (flexible)                       | ✅ Uses `NumberOfEntries` from header      |
+| 💎 | **CRC32 polynomial correctness** | ✅ CCITT `0xEDB88320`               | ✅ CCITT `0xEDB88320`              | ✅ Correct polynomial implemented          |

@@ -357,19 +357,19 @@
 
 ## Priority Order
 
-| Priority | Section                                | Description                                               |
-| :------: | -------------------------------------- | --------------------------------------------------------- |
-| 🔴 P0    | 4. LAPIC Error Handler                 | Vector 0xFE has no ISR — triple fault risk on real HW     |
-| 🟠 P1    | 2. PIT-Based Timer Calibration         | Hardcoded ICR fails on real hardware — must calibrate     |
-| 🟠 P1    | 3. Multi-IOAPIC + Redirection Hardening| Multi-IOAPIC and GSI routing required for server boards   |
-| 🟠 P1    | 6. IPI Handlers + TLB Shootdown        | Required for SMP correctness — silent corruption without  |
-| 🟡 P2    | 5. LVT Complete Config                 | NMI, Error, Thermal — needed for crash diagnostics        |
-| 🟡 P2    | 1. x2APIC Mode                         | High-core-count CPUs need 32-bit APIC IDs                 |
-| 🟡 P2    | 8. MSI/MSI-X                           | Required by NVMe, xHCI, modern NICs                       |
-| 🟡 P2    | 9. NMI Watchdog ⭐                     | Detect CPU lockups — no OS shows this in GUI              |
-| 🟢 P3    | 7. Directed EOI                        | Performance optimization, not correctness-critical        |
-| 🟢 P3    | 10. Interrupt Affinity ⭐              | Per-device IRQ CPU steering — first native GUI for this   |
-| 🟢 P3    | 11. Interrupt Latency Profiler ⭐      | Live latency heatmap — no consumer OS has this            |
+| ⭐ | Priority | Section                                | Description                                               |
+| -- | :------: | -------------------------------------- | --------------------------------------------------------- |
+| 💎 | 🔴 P0    | 4. LAPIC Error Handler                 | Vector 0xFE has no ISR — triple fault risk on real HW     |
+| 💎 | 🟠 P1    | 2. PIT-Based Timer Calibration         | Hardcoded ICR fails on real hardware — must calibrate     |
+| 💎 | 🟠 P1    | 3. Multi-IOAPIC + Redirection Hardening| Multi-IOAPIC and GSI routing required for server boards   |
+| 💎 | 🟠 P1    | 6. IPI Handlers + TLB Shootdown        | Required for SMP correctness — silent corruption without  |
+| 💎 | 🟡 P2    | 5. LVT Complete Config                 | NMI, Error, Thermal — needed for crash diagnostics        |
+| 💎 | 🟡 P2    | 1. x2APIC Mode                         | High-core-count CPUs need 32-bit APIC IDs                 |
+| 💎 | 🟡 P2    | 8. MSI/MSI-X                           | Required by NVMe, xHCI, modern NICs                       |
+| ⭐ | 🟡 P2    | 9. NMI Watchdog                     | Detect CPU lockups — no OS shows this in GUI              |
+| 💎 | 🟢 P3    | 7. Directed EOI                        | Performance optimization, not correctness-critical        |
+| ⭐ | 🟢 P3    | 10. Interrupt Affinity              | Per-device IRQ CPU steering — first native GUI for this   |
+| ⭐ | 🟢 P3    | 11. Interrupt Latency Profiler      | Live latency heatmap — no consumer OS has this            |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -378,21 +378,21 @@
 
 ## OS Comparison
 
-| Feature                              | 🪟 Windows 11                          | 🐧 Linux 6.x                            | 🚀 Impossible OS                                 |
-| ------------------------------------ | -------------------------------------- | ---------------------------------------- | ------------------------------------------------- |
-| xAPIC (MMIO)                         | ✅ HAL APIC driver                      | ✅ `arch/x86/kernel/apic/`                | ✅ `lapic.c` — xAPIC init, EOI, IPI               |
-| x2APIC (MSR)                         | ✅ Enabled by default                   | ✅ Enabled by default                     | ⬜ §1 — MADT type 9 parsed, no MSR path           |
-| LAPIC timer calibration              | ✅ PIT + HPET + TSC calibration         | ✅ PIT + HPET + CPUID.15H                 | ⚠️ Hardcoded ICR — §2 P1                         |
-| Multi-IOAPIC support                 | ✅ Full (HAL)                           | ✅ Full (`ioapic.c`)                      | ⬜ §3 — single IOAPIC only                        |
-| ISO polarity/trigger flags           | ✅ Full                                 | ✅ Full                                   | ⚠️ Applied for ISA IRQs only                     |
-| LAPIC Error ISR                      | ✅ WHEA error handler                   | ✅ `error_interrupt()` in apic.c           | ⬜ §4 P0 — vector assigned, no ISR                |
-| LVT NMI/Thermal/PMC                  | ✅ Full LVT config                      | ✅ Full LVT config                        | ⬜ §5 — all LVT entries masked (xv6 pattern)      |
-| TLB shootdown                        | ✅ `KeFlushTb()`                        | ✅ `native_flush_tlb_multi()`             | ⬜ §6 — IPI vectors defined but no handlers        |
-| Directed EOI                         | ✅ Enabled when supported               | ✅ `apic_set_eoi_cb()`                    | ⬜ §7 — broadcast EOI only                        |
-| MSI/MSI-X                            | ✅ Full (WDM/WDF)                       | ✅ Full (`pci_enable_msi*()`)             | ⬜ §8 — zero MSI infrastructure                   |
-| SMP Boot (SIPI)                      | ✅ `HalpStartProcessor()`               | ✅ `do_boot_cpu()`                        | ✅ `smp.c` — INIT-SIPI-SIPI                       |
-| PCAT_COMPAT check                    | ✅ HAL checks MADT flags                | ✅ `acpi_sci_override_gsi`                | ✅ `acpi_pcat_compat()` — PIC skipped when 0       |
-| IRQ load balancing                   | ⚠️ `IntPolicy` registry (hidden)       | ✅ `irqbalance` daemon (CLI, no GUI)      | ⬜ §10 — **per-device GUI affinity panel** ⭐      |
-| **NMI watchdog GUI** ⭐              | ❌ WHEA (kernel only, no GUI)           | ⚠️ `nmi_watchdog=1` (boot param, no GUI) | ⬜ §9 — per-core ❤️ health in Task Manager        |
-| **Interrupt latency profiler** ⭐    | ❌ Requires xperf/WPA (developer tools) | ❌ `perf sched latency` (CLI only)        | ⬜ §11 — live latency heatmap in Task Manager      |
-| **IRQ affinity GUI** ⭐             | ❌ Third-party tools only               | ❌ `/proc/irq/N/smp_affinity` (CLI only)  | ⬜ §10 — first native visual IRQ steering          |
+| ⭐ | Feature                              | 🪟 Windows 11                          | 🐧 Linux 6.x                            | 🚀 Impossible OS                                 |
+| -- | ------------------------------------ | -------------------------------------- | ---------------------------------------- | ------------------------------------------------- |
+| 💎 | xAPIC (MMIO)                         | ✅ HAL APIC driver                      | ✅ `arch/x86/kernel/apic/`                | ✅ `lapic.c` — xAPIC init, EOI, IPI               |
+| 💎 | x2APIC (MSR)                         | ✅ Enabled by default                   | ✅ Enabled by default                     | ⬜ §1 — MADT type 9 parsed, no MSR path           |
+| 💎 | LAPIC timer calibration              | ✅ PIT + HPET + TSC calibration         | ✅ PIT + HPET + CPUID.15H                 | ⚠️ Hardcoded ICR — §2 P1                         |
+| 💎 | Multi-IOAPIC support                 | ✅ Full (HAL)                           | ✅ Full (`ioapic.c`)                      | ⬜ §3 — single IOAPIC only                        |
+| 💎 | ISO polarity/trigger flags           | ✅ Full                                 | ✅ Full                                   | ⚠️ Applied for ISA IRQs only                     |
+| 💎 | LAPIC Error ISR                      | ✅ WHEA error handler                   | ✅ `error_interrupt()` in apic.c           | ⬜ §4 P0 — vector assigned, no ISR                |
+| 💎 | LVT NMI/Thermal/PMC                  | ✅ Full LVT config                      | ✅ Full LVT config                        | ⬜ §5 — all LVT entries masked (xv6 pattern)      |
+| 💎 | TLB shootdown                        | ✅ `KeFlushTb()`                        | ✅ `native_flush_tlb_multi()`             | ⬜ §6 — IPI vectors defined but no handlers        |
+| 💎 | Directed EOI                         | ✅ Enabled when supported               | ✅ `apic_set_eoi_cb()`                    | ⬜ §7 — broadcast EOI only                        |
+| 💎 | MSI/MSI-X                            | ✅ Full (WDM/WDF)                       | ✅ Full (`pci_enable_msi*()`)             | ⬜ §8 — zero MSI infrastructure                   |
+| 💎 | SMP Boot (SIPI)                      | ✅ `HalpStartProcessor()`               | ✅ `do_boot_cpu()`                        | ✅ `smp.c` — INIT-SIPI-SIPI                       |
+| 💎 | PCAT_COMPAT check                    | ✅ HAL checks MADT flags                | ✅ `acpi_sci_override_gsi`                | ✅ `acpi_pcat_compat()` — PIC skipped when 0       |
+| ⭐ | IRQ load balancing                   | ⚠️ `IntPolicy` registry (hidden)       | ✅ `irqbalance` daemon (CLI, no GUI)      | ⬜ §10 — **per-device GUI affinity panel**      |
+| ⭐ | **NMI watchdog GUI**              | ❌ WHEA (kernel only, no GUI)           | ⚠️ `nmi_watchdog=1` (boot param, no GUI) | ⬜ §9 — per-core ❤️ health in Task Manager        |
+| ⭐ | **Interrupt latency profiler**    | ❌ Requires xperf/WPA (developer tools) | ❌ `perf sched latency` (CLI only)        | ⬜ §11 — live latency heatmap in Task Manager      |
+| ⭐ | **IRQ affinity GUI**             | ❌ Third-party tools only               | ❌ `/proc/irq/N/smp_affinity` (CLI only)  | ⬜ §10 — first native visual IRQ steering          |

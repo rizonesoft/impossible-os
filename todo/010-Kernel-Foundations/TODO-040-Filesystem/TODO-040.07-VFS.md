@@ -514,22 +514,22 @@ filesystem TODO.
 
 ## Priority Order
 
-| Priority | Section | Description | Rationale |
-|----------|---------|-------------|-----------|
-| 🔴 P0    | 1.1 Case-insensitive lookup | Mandatory for nearly all Win32 apps | Without this, most apps fail with FILE_NOT_FOUND |
-| 🔴 P0    | 1.2 Mandatory file locking | Database corruption prevention | SQLite, Office, installers all depend on this |
-| 🔴 P0    | 3.1 Error code mapping | Correct app behavior on errors | Wrong error codes → wrong app code paths |
-| 🟠 P1    | 1.3 Deletion semantics | Installer compatibility | Installers overwrite/delete files in use |
-| 🟠 P1    | 1.4 Unique file IDs | Application identity checks | Used by many apps to detect same-file |
-| 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check | `GetFileAttributes` called thousands of times |
-| 🟠 P1    | 2.3 Volume information | App compatibility queries | Some apps refuse to run on unknown FS |
-| 🟡 P2    | 1.5 Memory-mapped files | PE loader demand paging | Performance-critical for large executables |
-| 🟡 P2    | 1.7 Byte-range locking ⭐ | Record-level DB concurrency | SQLite, Access use byte-range locks + deadlock detect |
-| 🟡 P2    | 2.1 ADS handling | Browser download compat | Zone.Identifier must not crash |
-| 🟡 P2    | 2.2 ACL stubs | Installer compat | MSI installers set permissions |
-| 🟡 P2    | 4.1 Change notifications ⭐ | File manager / IDE compat | **Recursive + cross-FS** — Linux inotify can't do recursive |
-| 🟢 P3    | 2.4 Hard links / reparse | WinSxS / MSVC runtime compat | Needed when running VC++ redistributable apps |
-| 🟢 P3    | 5.1 Overlapped I/O | High-perf app compat | Database engines, web servers need async I/O |
+| ⭐ | Priority | Section | Description | Rationale |
+| -- |----------|---------|-------------|-----------|
+| 💎 | 🔴 P0    | 1.1 Case-insensitive lookup | Mandatory for nearly all Win32 apps | Without this, most apps fail with FILE_NOT_FOUND |
+| 💎 | 🔴 P0    | 1.2 Mandatory file locking | Database corruption prevention | SQLite, Office, installers all depend on this |
+| 💎 | 🔴 P0    | 3.1 Error code mapping | Correct app behavior on errors | Wrong error codes → wrong app code paths |
+| 💎 | 🟠 P1    | 1.3 Deletion semantics | Installer compatibility | Installers overwrite/delete files in use |
+| 💎 | 🟠 P1    | 1.4 Unique file IDs | Application identity checks | Used by many apps to detect same-file |
+| 💎 | 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check | `GetFileAttributes` called thousands of times |
+| 💎 | 🟠 P1    | 2.3 Volume information | App compatibility queries | Some apps refuse to run on unknown FS |
+| 💎 | 🟡 P2    | 1.5 Memory-mapped files | PE loader demand paging | Performance-critical for large executables |
+| ⭐ | 🟡 P2    | 1.7 Byte-range locking | Record-level DB concurrency | SQLite, Access use byte-range locks + deadlock detect |
+| 💎 | 🟡 P2    | 2.1 ADS handling | Browser download compat | Zone.Identifier must not crash |
+| 💎 | 🟡 P2    | 2.2 ACL stubs | Installer compat | MSI installers set permissions |
+| ⭐ | 🟡 P2    | 4.1 Change notifications | File manager / IDE compat | **Recursive + cross-FS** — Linux inotify can't do recursive |
+| 💎 | 🟢 P3    | 2.4 Hard links / reparse | WinSxS / MSVC runtime compat | Needed when running VC++ redistributable apps |
+| 💎 | 🟢 P3    | 5.1 Overlapped I/O | High-perf app compat | Database engines, web servers need async I/O |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -555,21 +555,21 @@ filesystem TODO.
 
 ## OS Comparison
 
-| Feature                         | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
-| ------------------------------- | ------------------------------- | ------------------------ | ------------------------------------- |
-| Case-insensitive lookup         | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
-| Mandatory file locking          | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
-| Deferred deletion               | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
-| File IDs (inode-like)           | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
-| Memory-mapped I/O               | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
-| File attributes API             | ✅ GetFileAttributes (fast)      | ✅ stat                   | ⬜ §1.6 — attribute get/set + timestamps |
-| **Byte-range locking** ⭐       | ✅ LockFile (no deadlock detect) | ✅ fcntl (can deadlock)   | ⬜ §1.7 — with deadlock detection       |
-| ADS (streams)                   | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
-| ACL security descriptors        | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
-| Volume info queries             | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
-| Hard links / symlinks           | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
-| Extended attributes             | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
-| Transparent compression         | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
-| Precise error codes             | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |
-| **Change notifications** ⭐     | ✅ Per-dir (no recursive native) | ⚠️ inotify (no recursive) | ⬜ §4.1 — recursive + cross-FS          |
-| **Async overlapped I/O**        | ✅ OVERLAPPED struct             | ✅ io_uring / aio          | ⬜ §5.1 — OVERLAPPED compat             |
+| ⭐ | Feature                         | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
+| -- | ------------------------------- | ------------------------------- | ------------------------ | ------------------------------------- |
+| 💎 | Case-insensitive lookup         | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
+| 💎 | Mandatory file locking          | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
+| 💎 | Deferred deletion               | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
+| 💎 | File IDs (inode-like)           | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
+| 💎 | Memory-mapped I/O               | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
+| 💎 | File attributes API             | ✅ GetFileAttributes (fast)      | ✅ stat                   | ⬜ §1.6 — attribute get/set + timestamps |
+| ⭐ | **Byte-range locking**       | ✅ LockFile (no deadlock detect) | ✅ fcntl (can deadlock)   | ⬜ §1.7 — with deadlock detection       |
+| 💎 | ADS (streams)                   | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
+| 💎 | ACL security descriptors        | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
+| 💎 | Volume info queries             | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
+| 💎 | Hard links / symlinks           | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
+| 💎 | Extended attributes             | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
+| 💎 | Transparent compression         | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
+| 💎 | Precise error codes             | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |
+| ⭐ | **Change notifications**     | ✅ Per-dir (no recursive native) | ⚠️ inotify (no recursive) | ⬜ §4.1 — recursive + cross-FS          |
+| 💎 | **Async overlapped I/O**        | ✅ OVERLAPPED struct             | ✅ io_uring / aio          | ⬜ §5.1 — OVERLAPPED compat             |

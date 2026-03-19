@@ -617,37 +617,37 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ## Priority Order
 
-| Priority | Section                       | Description                                                     |
-| :------: | ----------------------------- | --------------------------------------------------------------- |
-| ✅ Done   | 2.2 APIC/IOAPIC (built-in)   | `lapic.c` + `ioapic.c` — see TODO-063.09 for enhancements      |
-| ✅ Done   | 9.1 ACPI Shutdown/Reboot      | `acpi_shutdown()` + `acpi_reboot()` with 3-method cascade       |
-| 🔴 P0    | 1.1 Kernel Symbol Table       | Foundation — modules can't call kernel functions without it     |
-| 🔴 P0    | 1.2 ELF Module Loader         | Foundation — load and relocate .kmod files                      |
-| 🔴 P0    | 1.3 Module Build System       | Foundation — compile drivers as .kmod                           |
-| 🔴 P0    | 1.4 Driver Model + HAL        | Foundation — PCI match, probe/remove lifecycle                  |
-| 🔴 P0    | 1.5 Auto-Load at Boot         | Foundation — scan `C:\System\Drivers\` on boot                  |
-| 🟠 P1    | 1.6 RTL8139 as Module         | Proof of concept — validate entire pipeline                     |
-| 🟠 P1    | 2.1 NVMe (built-in)           | Real hardware SSD support                                       |
-| 🟠 P1    | 3.1 Intel e1000 Module        | VirtualBox networking                                           |
-| 🟠 P1    | 9.2 ACPI S3 Suspend           | Sleep/resume — **required for laptop support**                  |
-| 🟡 P2    | 4.1 VMSVGA Module             | VirtualBox GPU + cursor + acceleration                          |
-| 🟡 P2    | 4.2 VirtIO-GPU Module         | QEMU GPU (restore reverted code)                                |
-| 🟡 P2    | 3.2 VirtIO-net Module         | Fast QEMU networking                                            |
-| 🟡 P2    | 9.3 Battery Status            | Laptop support — system tray battery indicator                  |
-| 🟡 P2    | 9.5 Power Button Handler      | Clean shutdown on physical button press                         |
-| 🟢 P3    | 6.1 VirtIO-input Module       | Convert existing code                                           |
-| 🟢 P3    | 3.3 RTL8169 Module            | Common real-world NIC                                           |
-| 🟢 P3    | 2.3 HPET Timer (built-in)     | High-precision timing                                           |
-| 🟢 P3    | 8.1 License Tracking          | Attribution compliance                                          |
-| 🟢 P3    | 9.4 CPU Freq. Scaling         | Power efficiency on laptops                                     |
-| 🟢 P3    | 9.6 Thermal Monitoring ⭐     | Per-core temp in Task Manager — no consumer OS has this         |
-| 🟢 P3    | 10.1 VMBus Core               | Hyper-V Gen 2 — channel protocol foundation                     |
-| 🟢 P3    | 10.2 Synthetic SCSI           | Hyper-V Gen 2 — VHDX disk access via VMBus                      |
-| 🟢 P3    | 10.3 Synthetic HID            | Hyper-V Gen 2 — keyboard/mouse via VMBus                        |
-| 🟢 P3    | 10.4 Synthetic Video          | Hyper-V Gen 2 — framebuffer via VMBus                           |
-| 🔵 P4    | 4.3 Bochs/BGA Module          | Simple fallback display                                         |
-| 🔵 P4    | 5.1 Audio as Modules          | Convert Phase 08 drivers to modules                             |
-| 🟢 P3    | 11. Device Manager GUI ⭐     | Live PCI/USB tree with interrupt rates — no OS has this natively |
+| ⭐ | Priority | Section                       | Description                                                     |
+| -- | :------: | ----------------------------- | --------------------------------------------------------------- |
+| 💎 | ✅ Done   | 2.2 APIC/IOAPIC (built-in)   | `lapic.c` + `ioapic.c` — see TODO-063.09 for enhancements      |
+| 💎 | ✅ Done   | 9.1 ACPI Shutdown/Reboot      | `acpi_shutdown()` + `acpi_reboot()` with 3-method cascade       |
+| 💎 | 🔴 P0    | 1.1 Kernel Symbol Table       | Foundation — modules can't call kernel functions without it     |
+| 💎 | 🔴 P0    | 1.2 ELF Module Loader         | Foundation — load and relocate .kmod files                      |
+| 💎 | 🔴 P0    | 1.3 Module Build System       | Foundation — compile drivers as .kmod                           |
+| 💎 | 🔴 P0    | 1.4 Driver Model + HAL        | Foundation — PCI match, probe/remove lifecycle                  |
+| 💎 | 🔴 P0    | 1.5 Auto-Load at Boot         | Foundation — scan `C:\System\Drivers\` on boot                  |
+| 💎 | 🟠 P1    | 1.6 RTL8139 as Module         | Proof of concept — validate entire pipeline                     |
+| 💎 | 🟠 P1    | 2.1 NVMe (built-in)           | Real hardware SSD support                                       |
+| 💎 | 🟠 P1    | 3.1 Intel e1000 Module        | VirtualBox networking                                           |
+| 💎 | 🟠 P1    | 9.2 ACPI S3 Suspend           | Sleep/resume — **required for laptop support**                  |
+| 💎 | 🟡 P2    | 4.1 VMSVGA Module             | VirtualBox GPU + cursor + acceleration                          |
+| 💎 | 🟡 P2    | 4.2 VirtIO-GPU Module         | QEMU GPU (restore reverted code)                                |
+| 💎 | 🟡 P2    | 3.2 VirtIO-net Module         | Fast QEMU networking                                            |
+| 💎 | 🟡 P2    | 9.3 Battery Status            | Laptop support — system tray battery indicator                  |
+| 💎 | 🟡 P2    | 9.5 Power Button Handler      | Clean shutdown on physical button press                         |
+| 💎 | 🟢 P3    | 6.1 VirtIO-input Module       | Convert existing code                                           |
+| 💎 | 🟢 P3    | 3.3 RTL8169 Module            | Common real-world NIC                                           |
+| 💎 | 🟢 P3    | 2.3 HPET Timer (built-in)     | High-precision timing                                           |
+| 💎 | 🟢 P3    | 8.1 License Tracking          | Attribution compliance                                          |
+| 💎 | 🟢 P3    | 9.4 CPU Freq. Scaling         | Power efficiency on laptops                                     |
+| ⭐ | 🟢 P3    | 9.6 Thermal Monitoring     | Per-core temp in Task Manager — no consumer OS has this         |
+| 💎 | 🟢 P3    | 10.1 VMBus Core               | Hyper-V Gen 2 — channel protocol foundation                     |
+| 💎 | 🟢 P3    | 10.2 Synthetic SCSI           | Hyper-V Gen 2 — VHDX disk access via VMBus                      |
+| 💎 | 🟢 P3    | 10.3 Synthetic HID            | Hyper-V Gen 2 — keyboard/mouse via VMBus                        |
+| 💎 | 🟢 P3    | 10.4 Synthetic Video          | Hyper-V Gen 2 — framebuffer via VMBus                           |
+| 💎 | 🔵 P4    | 4.3 Bochs/BGA Module          | Simple fallback display                                         |
+| 💎 | 🔵 P4    | 5.1 Audio as Modules          | Convert Phase 08 drivers to modules                             |
+| ⭐ | 🟢 P3    | 11. Device Manager GUI     | Live PCI/USB tree with interrupt rates — no OS has this natively |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -891,30 +891,30 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ## OS Comparison
 
-| Feature                              | 🪟 Windows 11                           | 🐧 Linux 6.x                          | 🚀 Impossible OS                                     |
-| ------------------------------------ | --------------------------------------- | -------------------------------------- | ---------------------------------------------------- |
-| Loadable kernel modules              | ✅ WDM drivers (`.sys`)                  | ✅ `.ko` modules (`insmod`)             | ⬜ §1 P0 — `.kmod` ELF objects                        |
-| Kernel symbol table                  | ✅ HAL exports                           | ✅ `EXPORT_SYMBOL` / `.kallsyms`        | ⬜ §1.1 P0 — `.ksymtab` linker section                |
-| Driver model (PCI match)             | ✅ PnP manager + INF files               | ✅ `struct pci_device_id` tables        | ⬜ §1.4 P0 — HAL + `struct driver`                    |
-| Auto-load drivers at boot            | ✅ Service manager + registry            | ✅ `modprobe` + `modules.dep`           | ⬜ §1.5 P0 — scan `C:\System\Drivers\`                |
-| NVMe storage                         | ✅ Stornvme.sys                          | ✅ `nvme` driver                        | ⬜ §2.1 P1 — port from SerenityOS BSD-2               |
-| APIC / IOAPIC                        | ✅ HAL APIC driver                       | ✅ `arch/x86/kernel/apic/`              | ✅ `lapic.c` + `ioapic.c` — see TODO-063.09           |
-| PCAT_COMPAT check                    | ✅ HAL checks MADT flags                 | ✅ `acpi_pic_sci_set_trigger()`         | ✅ `acpi_pcat_compat()` — PIC skipped when 0          |
-| ACPI shutdown / reboot               | ✅ Native                                | ✅ Native                               | ✅ `acpi_shutdown()` + `acpi_reboot()` — 3 fallbacks  |
-| SMP boot (SIPI)                      | ✅ `HalpStartProcessor()`                | ✅ `do_boot_cpu()`                      | ✅ `smp.c` — INIT-SIPI-SIPI                           |
-| Intel e1000 NIC                      | ✅ e1i65x64.sys                          | ✅ `e1000` / `e1000e`                   | ⬜ §3.1 P1 — port from SerenityOS BSD-2               |
-| VirtIO-net NIC                       | ✅ netkvm.sys                            | ✅ `virtio_net`                         | ⬜ §3.2 P2                                            |
-| GPU modesetting                      | ✅ WDDM 3.x                             | ✅ DRM/KMS                              | ⬜ §4 P2 — VMSVGA + VirtIO-GPU                        |
-| USB xHCI controller                  | ✅ USBXHCI.sys                           | ✅ `xhci_hcd`                           | ⬜ §7.2 — port from tinyusb MIT                       |
-| USB HID (keyboard/mouse)             | ✅ HIDCLASS.sys                          | ✅ `usbhid`                             | ⬜ §7.3 — port from tinyusb MIT                       |
-| ACPI S3 suspend/resume               | ✅ Native                                | ✅ pm-utils / systemd-suspend           | ⬜ §9.2 P1 — **required for laptops**                 |
-| Battery status (laptops)             | ✅ Control Panel + tray                  | ✅ UPower + system tray                 | ⬜ §9.3 P2 — ACPICA for `_BST` / `_BIF`              |
-| CPU frequency scaling (DVFS)         | ✅ Power plans + HWP                     | ✅ `cpufreq` + governors                | ⬜ §9.4 P3 — P-state via MSR                          |
-| Power button clean shutdown          | ✅ SCI handler (hidden)                  | ✅ `acpi_power_off` (hidden)            | ⬜ §9.5 P2 — SCI event handler                        |
-| VMBus paravirtualization             | ✅ Native (VSC built-in)                 | ✅ `hv_vmbus` + storvsc/hid-hyperv      | ⬜ §10 P3 — **missing entirely**                      |
-| Hyper-V Gen 2 boot                   | ✅ Native                                | ✅ With hv_* drivers                    | ⬜ §10 P3 — **cannot boot without VMBus**             |
-| Licensing compliance                 | ✅ Proprietary                           | ✅ GPL-2.0                              | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**               |
-| **CPU temperature in Task Manager** ⭐| ❌ Requires HWMonitor (third-party)      | ❌ Requires lm-sensors + GUI            | ⬜ §9.6 — per-core temp bars, color-coded              |
-| **HPET ns-resolution timestamps** ⭐ | ✅ QPC (but not user-visible)            | ✅ `clock_gettime` (but not user-visible)| ⬜ §2.3 — exposed as `hpet_read_ns()` API             |
-| **Live Device Manager GUI** ⭐       | ⚠️ Static tree (no live data)            | ❌ CLI only (`lspci`, `lsusb`)           | ⬜ §11 — live interrupt rates + driver health per device|
+| ⭐ | Feature                              | 🪟 Windows 11                           | 🐧 Linux 6.x                          | 🚀 Impossible OS                                     |
+| -- | ------------------------------------ | --------------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| 💎 | Loadable kernel modules              | ✅ WDM drivers (`.sys`)                  | ✅ `.ko` modules (`insmod`)             | ⬜ §1 P0 — `.kmod` ELF objects                        |
+| 💎 | Kernel symbol table                  | ✅ HAL exports                           | ✅ `EXPORT_SYMBOL` / `.kallsyms`        | ⬜ §1.1 P0 — `.ksymtab` linker section                |
+| 💎 | Driver model (PCI match)             | ✅ PnP manager + INF files               | ✅ `struct pci_device_id` tables        | ⬜ §1.4 P0 — HAL + `struct driver`                    |
+| 💎 | Auto-load drivers at boot            | ✅ Service manager + registry            | ✅ `modprobe` + `modules.dep`           | ⬜ §1.5 P0 — scan `C:\System\Drivers\`                |
+| 💎 | NVMe storage                         | ✅ Stornvme.sys                          | ✅ `nvme` driver                        | ⬜ §2.1 P1 — port from SerenityOS BSD-2               |
+| 💎 | APIC / IOAPIC                        | ✅ HAL APIC driver                       | ✅ `arch/x86/kernel/apic/`              | ✅ `lapic.c` + `ioapic.c` — see TODO-063.09           |
+| 💎 | PCAT_COMPAT check                    | ✅ HAL checks MADT flags                 | ✅ `acpi_pic_sci_set_trigger()`         | ✅ `acpi_pcat_compat()` — PIC skipped when 0          |
+| 💎 | ACPI shutdown / reboot               | ✅ Native                                | ✅ Native                               | ✅ `acpi_shutdown()` + `acpi_reboot()` — 3 fallbacks  |
+| 💎 | SMP boot (SIPI)                      | ✅ `HalpStartProcessor()`                | ✅ `do_boot_cpu()`                      | ✅ `smp.c` — INIT-SIPI-SIPI                           |
+| 💎 | Intel e1000 NIC                      | ✅ e1i65x64.sys                          | ✅ `e1000` / `e1000e`                   | ⬜ §3.1 P1 — port from SerenityOS BSD-2               |
+| 💎 | VirtIO-net NIC                       | ✅ netkvm.sys                            | ✅ `virtio_net`                         | ⬜ §3.2 P2                                            |
+| 💎 | GPU modesetting                      | ✅ WDDM 3.x                             | ✅ DRM/KMS                              | ⬜ §4 P2 — VMSVGA + VirtIO-GPU                        |
+| 💎 | USB xHCI controller                  | ✅ USBXHCI.sys                           | ✅ `xhci_hcd`                           | ⬜ §7.2 — port from tinyusb MIT                       |
+| 💎 | USB HID (keyboard/mouse)             | ✅ HIDCLASS.sys                          | ✅ `usbhid`                             | ⬜ §7.3 — port from tinyusb MIT                       |
+| 💎 | ACPI S3 suspend/resume               | ✅ Native                                | ✅ pm-utils / systemd-suspend           | ⬜ §9.2 P1 — **required for laptops**                 |
+| 💎 | Battery status (laptops)             | ✅ Control Panel + tray                  | ✅ UPower + system tray                 | ⬜ §9.3 P2 — ACPICA for `_BST` / `_BIF`              |
+| 💎 | CPU frequency scaling (DVFS)         | ✅ Power plans + HWP                     | ✅ `cpufreq` + governors                | ⬜ §9.4 P3 — P-state via MSR                          |
+| 💎 | Power button clean shutdown          | ✅ SCI handler (hidden)                  | ✅ `acpi_power_off` (hidden)            | ⬜ §9.5 P2 — SCI event handler                        |
+| 💎 | VMBus paravirtualization             | ✅ Native (VSC built-in)                 | ✅ `hv_vmbus` + storvsc/hid-hyperv      | ⬜ §10 P3 — **missing entirely**                      |
+| 💎 | Hyper-V Gen 2 boot                   | ✅ Native                                | ✅ With hv_* drivers                    | ⬜ §10 P3 — **cannot boot without VMBus**             |
+| 💎 | Licensing compliance                 | ✅ Proprietary                           | ✅ GPL-2.0                              | ✅ **§8 — strict MIT/BSD-2/BSD-3 only**               |
+| ⭐ | **CPU temperature in Task Manager**| ❌ Requires HWMonitor (third-party)      | ❌ Requires lm-sensors + GUI            | ⬜ §9.6 — per-core temp bars, color-coded              |
+| ⭐ | **HPET ns-resolution timestamps** | ✅ QPC (but not user-visible)            | ✅ `clock_gettime` (but not user-visible)| ⬜ §2.3 — exposed as `hpet_read_ns()` API             |
+| ⭐ | **Live Device Manager GUI**       | ⚠️ Static tree (no live data)            | ❌ CLI only (`lspci`, `lsusb`)           | ⬜ §11 — live interrupt rates + driver health per device|
 

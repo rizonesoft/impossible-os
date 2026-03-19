@@ -481,33 +481,33 @@
 
 ## Priority Order
 
-| Priority | Section                            | Description                                              |
-|----------|------------------------------------|----------------------------------------------------------|
-| 🔴 P0    | 1.1 Strict BPB Validation         | Correctness — reject malformed volumes early             |
-| 🔴 P0    | 1.3 Dirty Volume Detection        | Data integrity — detect improper unmount                 |
-| 🔴 P0    | 7.2 Safe Unmount Sequence         | Data integrity — prevents dirty volume on next mount     |
-| 🟠 P1    | 3.1 Dual-FAT Synchronization     | Spec compliance — FAT redundancy is mandatory            |
-| 🟠 P1    | 2.1 FSInfo Validation             | Correctness — free space from FSInfo is unreliable       |
-| 🟠 P1    | 4.1 LFN Write Support            | Feature — required for long filenames on create          |
-| 🟠 P1    | 1.2 Sub-Type by Cluster Count    | Correctness — never trust BS_FilSysType string           |
-| 🟠 P1    | 9.1 Large File Handling           | Correctness — enforce 4 GiB limit                        |
-| 🟡 P2    | 5.1 High-Res Creation Time       | Interop — Windows expects valid CrtTimeTenth             |
-| 🟡 P2    | 4.2 LFN Deletion & Orphan        | Correctness — prevent orphaned LFN entries               |
-| 🟡 P2    | 4.3 Full UCS-2 Unicode           | Interop — international filenames with Windows           |
-| 🟡 P2    | 6.2 Contiguous Cluster Coalescing| Performance — reduce I/O for non-fragmented files        |
-| 🟡 P2    | 6.4 Cluster Pre-Allocation ⭐    | **Anti-fragmentation** — Linux vfat doesn't pre-allocate |
-| 🟡 P2    | 2.2 Full FAT Scan Fallback       | Correctness — needed when FSInfo is unknown              |
-| 🟡 P2    | 3.2 Backup Boot Sector           | Recovery — survive sector 0 corruption                   |
-| 🟡 P2    | 8.1 Robust Formatting            | Feature — complete spec-compliant mkfs                   |
-| 🟡 P2    | 12.1 Transaction-Safe Writes ⭐  | **FAT32 crash protection** — world-first                 |
-| 🟢 P3    | 6.1 Sector Cache Tuning          | Performance — tunable cache size and telemetry           |
-| 🟢 P3    | 6.3 FAT Sector Caching           | Performance — reduce FAT region I/O during chain walks   |
-| 🟢 P3    | 7.1 Basic Consistency Check      | Recovery — detect and repair cross-links and orphans     |
-| 🟢 P3    | 9.2 Volume Label Operations      | Feature — proper volume label in root directory          |
-| 🟢 P3    | 5.2 Year 2107 Boundary           | Future-proofing — clamp and validate year range          |
-| 🟢 P3    | 11.1 Fragmentation Analyzer ⭐   | **Visual fragmentation map** — unique for FAT32          |
-| 🟢 P3    | 11.2 Online Defragmentation ⭐   | **GUI defrag for FAT32** — Linux has no built-in defrag  |
-| 🔵 P4    | 10.1 Cross-Platform Compat       | Interop — verify Windows/Linux round-trip                |
+| ⭐ | Priority | Section                            | Description                                              |
+| -- |----------|------------------------------------|----------------------------------------------------------|
+| 💎 | 🔴 P0    | 1.1 Strict BPB Validation         | Correctness — reject malformed volumes early             |
+| 💎 | 🔴 P0    | 1.3 Dirty Volume Detection        | Data integrity — detect improper unmount                 |
+| 💎 | 🔴 P0    | 7.2 Safe Unmount Sequence         | Data integrity — prevents dirty volume on next mount     |
+| 💎 | 🟠 P1    | 3.1 Dual-FAT Synchronization     | Spec compliance — FAT redundancy is mandatory            |
+| 💎 | 🟠 P1    | 2.1 FSInfo Validation             | Correctness — free space from FSInfo is unreliable       |
+| 💎 | 🟠 P1    | 4.1 LFN Write Support            | Feature — required for long filenames on create          |
+| 💎 | 🟠 P1    | 1.2 Sub-Type by Cluster Count    | Correctness — never trust BS_FilSysType string           |
+| 💎 | 🟠 P1    | 9.1 Large File Handling           | Correctness — enforce 4 GiB limit                        |
+| 💎 | 🟡 P2    | 5.1 High-Res Creation Time       | Interop — Windows expects valid CrtTimeTenth             |
+| 💎 | 🟡 P2    | 4.2 LFN Deletion & Orphan        | Correctness — prevent orphaned LFN entries               |
+| 💎 | 🟡 P2    | 4.3 Full UCS-2 Unicode           | Interop — international filenames with Windows           |
+| 💎 | 🟡 P2    | 6.2 Contiguous Cluster Coalescing| Performance — reduce I/O for non-fragmented files        |
+| ⭐ | 🟡 P2    | 6.4 Cluster Pre-Allocation    | **Anti-fragmentation** — Linux vfat doesn't pre-allocate |
+| 💎 | 🟡 P2    | 2.2 Full FAT Scan Fallback       | Correctness — needed when FSInfo is unknown              |
+| 💎 | 🟡 P2    | 3.2 Backup Boot Sector           | Recovery — survive sector 0 corruption                   |
+| 💎 | 🟡 P2    | 8.1 Robust Formatting            | Feature — complete spec-compliant mkfs                   |
+| ⭐ | 🟡 P2    | 12.1 Transaction-Safe Writes  | **FAT32 crash protection** — world-first                 |
+| 💎 | 🟢 P3    | 6.1 Sector Cache Tuning          | Performance — tunable cache size and telemetry           |
+| 💎 | 🟢 P3    | 6.3 FAT Sector Caching           | Performance — reduce FAT region I/O during chain walks   |
+| 💎 | 🟢 P3    | 7.1 Basic Consistency Check      | Recovery — detect and repair cross-links and orphans     |
+| 💎 | 🟢 P3    | 9.2 Volume Label Operations      | Feature — proper volume label in root directory          |
+| 💎 | 🟢 P3    | 5.2 Year 2107 Boundary           | Future-proofing — clamp and validate year range          |
+| ⭐ | 🟢 P3    | 11.1 Fragmentation Analyzer   | **Visual fragmentation map** — unique for FAT32          |
+| ⭐ | 🟢 P3    | 11.2 Online Defragmentation   | **GUI defrag for FAT32** — Linux has no built-in defrag  |
+| 💎 | 🔵 P4    | 10.1 Cross-Platform Compat       | Interop — verify Windows/Linux round-trip                |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -516,39 +516,39 @@
 
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11 (fastfat.sys)          | 🐧 Linux (vfat / msdos)                | 🚀 Impossible OS                                |
-| -------------------------------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| BPB parsing & mount              | ✅                                     | ✅                                        | ✅ Done (`fat32_init()`)                          |
-| Strict BPB validation            | ✅ Rejects invalid volumes             | ✅ `fat_fill_super()` checks              | ⚠️ Partial — §1.1 P0                             |
-| Sub-type by cluster count        | ✅                                     | ✅ `fat_clusters` check                   | ⬜ §1.2 P1 — may trust string                    |
-| Dirty volume detection (FAT[1])  | ✅ chkdsk on dirty mount               | ✅ `fat_set_state()`                      | ⬜ §1.3 P0 — not checked                         |
-| FSInfo read/write                | ✅ With validation                     | ✅ `fat_count_free_clusters()`            | ✅ Done (`fat32_fsinfo_flush()`)                  |
-| FSInfo signature validation      | ✅ All 3 signatures                    | ✅                                        | ⚠️ Partial — §2.1 P1                             |
-| Full FAT scan fallback           | ✅ chkdsk recalculates                 | ✅ On mount when FSInfo invalid            | ⬜ §2.2 P2                                       |
-| Dual-FAT mirroring               | ✅ Both copies updated                 | ✅ `fat_mirror_bhs()`                     | ⬜ §3.1 P1 — may only write FAT #1               |
-| Backup boot sector               | ✅ Sector 6 backup + restore           | ✅                                        | ⬜ §3.2 P2                                       |
-| LFN read                         | ✅                                     | ✅                                        | ✅ Done (`lfn_extract_chars()`)                   |
-| LFN write (create with LFN)      | ✅ Full Unicode                        | ✅ `vfat_build_slots()`                   | ⬜ §4.1 P1 — SFN only on create                  |
-| LFN deletion                     | ✅ All LFN + SFN entries               | ✅ `vfat_remove_entries()`                | ⬜ §4.2 P2 — may only delete SFN                 |
-| **LFN full UCS-2 Unicode**       | ✅ Full Unicode support                | ✅ NLS-based Unicode                      | ⬜ §4.3 P2 — currently ASCII-only                 |
-| Timestamps (CrtTimeTenth)        | ✅ 10ms resolution                     | ✅                                        | ⬜ §5.1 P2                                       |
-| NTRes casing flags                | ✅ Bits 3–4                            | ✅ `shortname_info` flags                 | ⬜ §5.1 P2                                       |
-| File read                        | ✅                                     | ✅                                        | ✅ Done (`fat32_file_read()`)                     |
-| File write                       | ✅                                     | ✅                                        | ✅ Done (`fat32_file_write_vfs()`)                |
-| File delete                      | ✅                                     | ✅                                        | ✅ Done (`fat32_delete_file_vol()`)               |
-| File rename                      | ✅                                     | ✅                                        | ✅ Done (`fat32_rename_vol()`)                    |
-| File truncate                    | ✅                                     | ✅                                        | ✅ Done (`fat32_truncate()`)                      |
-| Directory create/delete          | ✅ dot/dotdot entries                  | ✅                                        | ✅ Done (`fat32_create_dir_vol()`, `fat32_rmdir()`)  |
-| Sector cache (write-back)        | ✅ Windows cache manager               | ✅ Page cache                              | ✅ Done (`scache_*`)                              |
-| Contiguous cluster coalescing    | ✅ Automatic                           | ✅ `fat_get_cluster()`                    | ⬜ §6.2 P2                                       |
-| **Cluster pre-allocation** ⭐    | ✅ SetEndOfFile pre-extends            | ❌ vfat allocates on write only           | ⬜ §6.4 P2 — contiguous pre-alloc                 |
-| 4 GiB file size limit            | ✅ Enforced                            | ✅ `-EFBIG`                               | ⬜ §9.1 P1                                       |
-| Volume label operations          | ✅ Full support                        | ✅ `fat_read_root_dir()`                  | ⬜ §9.2 P3                                       |
-| Format (mkfs)                    | ✅ `format /FS:FAT32`                  | ✅ `mkfs.vfat`                            | ✅ Done (`fat32_format()`) — §8.1 enhance P2      |
-| Consistency check (chkdsk)       | ✅ chkdsk /F                           | ✅ `dosfsck`                              | ⬜ §7.1 P3                                       |
-| Safe unmount (clean flag)        | ✅                                     | ✅ `fat_put_super()`                      | ⬜ §7.2 P0                                       |
-| VFS integration                  | ✅ IFS driver model                    | ✅ Linux VFS                               | ✅ Done (`fat32_ops.c`)                           |
-| **Transaction-safe writes** ⭐   | ❌ No FAT32 journaling                 | ❌ No FAT32 journaling                    | ⬜ §12.1 P2 — WAL for crash protection            |
-| **Fragmentation analyzer** ⭐    | ⚠️ Only via defrag GUI                | ❌ No built-in FAT32 defrag               | ⬜ §11.1 P3 — visual heat map in Disk Manager     |
-| **Online defragmentation** ⭐    | ✅ `defrag.exe` (but not FAT32-aware)  | ❌ No built-in FAT32 defrag               | ⬜ §11.2 P3 — GUI defrag with progress            |
-| **Cross-platform round-trip**    | ✅                                     | ✅                                        | ⬜ §10.1 P4 — untested                           |
+| ⭐ | Feature                          | 🪟 Windows 11 (fastfat.sys)          | 🐧 Linux (vfat / msdos)                | 🚀 Impossible OS                                |
+| -- | -------------------------------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
+| 💎 | BPB parsing & mount              | ✅                                     | ✅                                        | ✅ Done (`fat32_init()`)                          |
+| 💎 | Strict BPB validation            | ✅ Rejects invalid volumes             | ✅ `fat_fill_super()` checks              | ⚠️ Partial — §1.1 P0                             |
+| 💎 | Sub-type by cluster count        | ✅                                     | ✅ `fat_clusters` check                   | ⬜ §1.2 P1 — may trust string                    |
+| 💎 | Dirty volume detection (FAT[1])  | ✅ chkdsk on dirty mount               | ✅ `fat_set_state()`                      | ⬜ §1.3 P0 — not checked                         |
+| 💎 | FSInfo read/write                | ✅ With validation                     | ✅ `fat_count_free_clusters()`            | ✅ Done (`fat32_fsinfo_flush()`)                  |
+| 💎 | FSInfo signature validation      | ✅ All 3 signatures                    | ✅                                        | ⚠️ Partial — §2.1 P1                             |
+| 💎 | Full FAT scan fallback           | ✅ chkdsk recalculates                 | ✅ On mount when FSInfo invalid            | ⬜ §2.2 P2                                       |
+| 💎 | Dual-FAT mirroring               | ✅ Both copies updated                 | ✅ `fat_mirror_bhs()`                     | ⬜ §3.1 P1 — may only write FAT #1               |
+| 💎 | Backup boot sector               | ✅ Sector 6 backup + restore           | ✅                                        | ⬜ §3.2 P2                                       |
+| 💎 | LFN read                         | ✅                                     | ✅                                        | ✅ Done (`lfn_extract_chars()`)                   |
+| 💎 | LFN write (create with LFN)      | ✅ Full Unicode                        | ✅ `vfat_build_slots()`                   | ⬜ §4.1 P1 — SFN only on create                  |
+| 💎 | LFN deletion                     | ✅ All LFN + SFN entries               | ✅ `vfat_remove_entries()`                | ⬜ §4.2 P2 — may only delete SFN                 |
+| 💎 | **LFN full UCS-2 Unicode**       | ✅ Full Unicode support                | ✅ NLS-based Unicode                      | ⬜ §4.3 P2 — currently ASCII-only                 |
+| 💎 | Timestamps (CrtTimeTenth)        | ✅ 10ms resolution                     | ✅                                        | ⬜ §5.1 P2                                       |
+| 💎 | NTRes casing flags                | ✅ Bits 3–4                            | ✅ `shortname_info` flags                 | ⬜ §5.1 P2                                       |
+| 💎 | File read                        | ✅                                     | ✅                                        | ✅ Done (`fat32_file_read()`)                     |
+| 💎 | File write                       | ✅                                     | ✅                                        | ✅ Done (`fat32_file_write_vfs()`)                |
+| 💎 | File delete                      | ✅                                     | ✅                                        | ✅ Done (`fat32_delete_file_vol()`)               |
+| 💎 | File rename                      | ✅                                     | ✅                                        | ✅ Done (`fat32_rename_vol()`)                    |
+| 💎 | File truncate                    | ✅                                     | ✅                                        | ✅ Done (`fat32_truncate()`)                      |
+| 💎 | Directory create/delete          | ✅ dot/dotdot entries                  | ✅                                        | ✅ Done (`fat32_create_dir_vol()`, `fat32_rmdir()`)  |
+| 💎 | Sector cache (write-back)        | ✅ Windows cache manager               | ✅ Page cache                              | ✅ Done (`scache_*`)                              |
+| 💎 | Contiguous cluster coalescing    | ✅ Automatic                           | ✅ `fat_get_cluster()`                    | ⬜ §6.2 P2                                       |
+| ⭐ | **Cluster pre-allocation**    | ✅ SetEndOfFile pre-extends            | ❌ vfat allocates on write only           | ⬜ §6.4 P2 — contiguous pre-alloc                 |
+| 💎 | 4 GiB file size limit            | ✅ Enforced                            | ✅ `-EFBIG`                               | ⬜ §9.1 P1                                       |
+| 💎 | Volume label operations          | ✅ Full support                        | ✅ `fat_read_root_dir()`                  | ⬜ §9.2 P3                                       |
+| 💎 | Format (mkfs)                    | ✅ `format /FS:FAT32`                  | ✅ `mkfs.vfat`                            | ✅ Done (`fat32_format()`) — §8.1 enhance P2      |
+| 💎 | Consistency check (chkdsk)       | ✅ chkdsk /F                           | ✅ `dosfsck`                              | ⬜ §7.1 P3                                       |
+| 💎 | Safe unmount (clean flag)        | ✅                                     | ✅ `fat_put_super()`                      | ⬜ §7.2 P0                                       |
+| 💎 | VFS integration                  | ✅ IFS driver model                    | ✅ Linux VFS                               | ✅ Done (`fat32_ops.c`)                           |
+| ⭐ | **Transaction-safe writes**   | ❌ No FAT32 journaling                 | ❌ No FAT32 journaling                    | ⬜ §12.1 P2 — WAL for crash protection            |
+| ⭐ | **Fragmentation analyzer**    | ⚠️ Only via defrag GUI                | ❌ No built-in FAT32 defrag               | ⬜ §11.1 P3 — visual heat map in Disk Manager     |
+| ⭐ | **Online defragmentation**    | ✅ `defrag.exe` (but not FAT32-aware)  | ❌ No built-in FAT32 defrag               | ⬜ §11.2 P3 — GUI defrag with progress            |
+| 💎 | **Cross-platform round-trip**    | ✅                                     | ✅                                        | ⬜ §10.1 P4 — untested                           |

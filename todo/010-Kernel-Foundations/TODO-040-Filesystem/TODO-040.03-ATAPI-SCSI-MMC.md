@@ -567,30 +567,30 @@
 
 ## Priority Order
 
-| Priority | Section                            | Description                                              |
-|----------|------------------------------------|----------------------------------------------------------|
-| 🔴 P0    | 1.1 ATAPI Signature Detection    | Foundation — must identify optical drives before any command |
-| 🔴 P0    | 1.2 IDENTIFY PACKET DEVICE       | Foundation — required to parse device capabilities       |
-| 🔴 P0    | 2.1 PIO Packet State Machine     | Foundation — basic ATAPI communication                   |
-| 🔴 P0    | 5.2 READ CAPACITY & READ(10)     | Foundation — read data from optical media                |
-| 🟠 P1    | 6.1 REQUEST SENSE                | Correctness — all error handling depends on sense data   |
-| 🟠 P1    | 5.1 TEST UNIT READY & INQUIRY    | Correctness — device probing and media presence check    |
-| 🟠 P1    | 4.1 Transport Abstraction        | Architecture — decouple SCSI from transport hardware     |
-| 🟠 P1    | 7.1 VFS Block Device             | Integration — expose optical drive to filesystem layer   |
-| 🟠 P1    | 5.4 GET CONFIGURATION            | Foundation — determine drive type and media capabilities |
-| 🟡 P2    | 3.2 AHCI ATAPI Delivery          | Performance — bypass PIO handshake via AHCI hardware     |
-| 🟡 P2    | 3.1 Bus Master DMA               | Performance — async DMA instead of PIO polling           |
-| 🟡 P2    | 5.3 Media Control Commands       | Feature — eject, load, lock tray, read TOC, disc struct  |
-| 🟡 P2    | 5.5 MODE SENSE                   | Feature — drive capabilities, speeds, mechanism type     |
-| 🟡 P2    | 6.2 Media Change Detection       | Correctness — handle disc swaps gracefully               |
-| 🟡 P2    | 10.1 Async I/O & Concurrency     | Performance — non-blocking optical drive access          |
-| 🟢 P3    | 8.1 ISO 9660 / Joliet            | Feature — standard CD/DVD filesystem support             |
-| 🟢 P3    | 8.2 UDF Filesystem               | Feature — DVD-ROM and Blu-ray filesystem support         |
-| 🟢 P3    | 12.1 Rock Ridge ⭐               | Feature — long filenames and POSIX attrs on ISO 9660     |
-| 🟢 P3    | 12.2 El Torito                   | Feature — bootable CD/DVD detection and display          |
-| 🔵 P4    | 9.1 Audio CD Extraction          | Feature — audio CD playback and digital extraction       |
-| 🔵 P4    | 9.2 Paranoia DAE + C2 ⭐         | **Bit-perfect ripping** — no OS ships this built-in     |
-| 🔵 P4    | 11.1 Drive Speed Control ⭐      | **Noise management** — no OS has a native GUI for this  |
+| ⭐ | Priority | Section                            | Description                                              |
+| -- |----------|------------------------------------|----------------------------------------------------------|
+| 💎 | 🔴 P0    | 1.1 ATAPI Signature Detection    | Foundation — must identify optical drives before any command |
+| 💎 | 🔴 P0    | 1.2 IDENTIFY PACKET DEVICE       | Foundation — required to parse device capabilities       |
+| 💎 | 🔴 P0    | 2.1 PIO Packet State Machine     | Foundation — basic ATAPI communication                   |
+| 💎 | 🔴 P0    | 5.2 READ CAPACITY & READ(10)     | Foundation — read data from optical media                |
+| 💎 | 🟠 P1    | 6.1 REQUEST SENSE                | Correctness — all error handling depends on sense data   |
+| 💎 | 🟠 P1    | 5.1 TEST UNIT READY & INQUIRY    | Correctness — device probing and media presence check    |
+| 💎 | 🟠 P1    | 4.1 Transport Abstraction        | Architecture — decouple SCSI from transport hardware     |
+| 💎 | 🟠 P1    | 7.1 VFS Block Device             | Integration — expose optical drive to filesystem layer   |
+| 💎 | 🟠 P1    | 5.4 GET CONFIGURATION            | Foundation — determine drive type and media capabilities |
+| 💎 | 🟡 P2    | 3.2 AHCI ATAPI Delivery          | Performance — bypass PIO handshake via AHCI hardware     |
+| 💎 | 🟡 P2    | 3.1 Bus Master DMA               | Performance — async DMA instead of PIO polling           |
+| 💎 | 🟡 P2    | 5.3 Media Control Commands       | Feature — eject, load, lock tray, read TOC, disc struct  |
+| 💎 | 🟡 P2    | 5.5 MODE SENSE                   | Feature — drive capabilities, speeds, mechanism type     |
+| 💎 | 🟡 P2    | 6.2 Media Change Detection       | Correctness — handle disc swaps gracefully               |
+| 💎 | 🟡 P2    | 10.1 Async I/O & Concurrency     | Performance — non-blocking optical drive access          |
+| 💎 | 🟢 P3    | 8.1 ISO 9660 / Joliet            | Feature — standard CD/DVD filesystem support             |
+| 💎 | 🟢 P3    | 8.2 UDF Filesystem               | Feature — DVD-ROM and Blu-ray filesystem support         |
+| ⭐ | 🟢 P3    | 12.1 Rock Ridge               | Feature — long filenames and POSIX attrs on ISO 9660     |
+| 💎 | 🟢 P3    | 12.2 El Torito                   | Feature — bootable CD/DVD detection and display          |
+| 💎 | 🔵 P4    | 9.1 Audio CD Extraction          | Feature — audio CD playback and digital extraction       |
+| ⭐ | 🔵 P4    | 9.2 Paranoia DAE + C2         | **Bit-perfect ripping** — no OS ships this built-in     |
+| ⭐ | 🔵 P4    | 11.1 Drive Speed Control      | **Noise management** — no OS has a native GUI for this  |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -599,36 +599,36 @@
 
 ## OS Comparison
 
-| Feature                            | 🪟 Windows 11 (cdrom.sys)            | 🐧 Linux (sr / ide-cd)               | 🚀 Impossible OS                               |
-| ---------------------------------- | ------------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| ATAPI device detection             | ✅ PnP + ATAPI signature              | ✅ `ata_dev_classify()`                | ⬜ §1.1 P0                                      |
-| IDENTIFY PACKET DEVICE             | ✅                                     | ✅ `__ata_dev_select()`                | ⬜ §1.2 P0                                      |
-| PIO packet protocol                | ✅ (legacy support)                    | ✅ `ide_do_drive_cmd()`                | ⬜ §2.1 P0                                      |
-| Bus Master DMA for ATAPI           | ✅                                     | ✅ `ide_dma_setup()`                   | ⬜ §3.1 P2                                      |
-| AHCI ATAPI (ACMD field)            | ✅ StorPort miniport                   | ✅ `ahci_exec_polled_cmd()`            | ⬜ §3.2 P2                                      |
-| Transport abstraction              | ✅ StorPort / WDF                      | ✅ `ata_std_qc_defer()`                | ⬜ §4.1 P1                                      |
-| TEST UNIT READY                    | ✅                                     | ✅ `sr_test_unit_ready()`              | ⬜ §5.1 P1                                      |
-| INQUIRY                            | ✅                                     | ✅ `scsi_inquiry()`                    | ⬜ §5.1 P1                                      |
-| READ CAPACITY                      | ✅                                     | ✅ `sr_read_capacity()`                | ⬜ §5.2 P0                                      |
-| READ (10) / READ (12)              | ✅                                     | ✅ `sr_block_read()`                   | ⬜ §5.2 P0                                      |
-| READ DISC STRUCTURE (DVD/BD)       | ✅ (via DeviceIoControl)               | ✅ `sr_do_ioctl()`                     | ⬜ §5.3 P2 (added)                              |
-| GET CONFIGURATION / Profiles       | ✅                                     | ✅ `sr_get_config()`                   | ⬜ §5.4 P1                                      |
-| MODE SENSE / Capabilities          | ✅                                     | ✅ `sr_mode_sense()`                   | ⬜ §5.5 P2                                      |
-| REQUEST SENSE                      | ✅                                     | ✅ `scsi_eh_prep_cmnd()`               | ⬜ §6.1 P1                                      |
-| Sense Key / ASC / ASCQ parsing     | ✅                                     | ✅ `scsi_sense_hdr`                    | ⬜ §6.1 P1                                      |
-| Media change detection             | ✅ AutoPlay / WM_DEVICECHANGE          | ✅ `sr_check_events()`                 | ⬜ §6.2 P2                                      |
-| Eject / Load tray                  | ✅ Explorer context menu               | ✅ `eject` command                     | ⬜ §5.3 P2                                      |
-| Tray lock                          | ✅                                     | ✅                                     | ⬜ §5.3 P2                                      |
-| READ TOC / multi-session           | ✅                                     | ✅ `sr_read_toc()`                     | ⬜ §5.3 P2                                      |
-| Block device registration          | ✅ CdRom class driver                  | ✅ `/dev/sr0`                          | ⬜ §7.1 P1                                      |
-| ISO 9660 filesystem                | ✅ CDFS.sys                            | ✅ `isofs` module                      | ⬜ §8.1 P3                                      |
-| Joliet Unicode filenames           | ✅                                     | ✅                                     | ⬜ §8.1 P3                                      |
-| **Rock Ridge (POSIX on ISO)** ⭐   | ❌ Not supported                       | ✅ `isofs` with RR                     | ⬜ §12.1 P3 — long names + POSIX on CD          |
-| **El Torito boot detection**       | ✅ (silent)                            | ✅ `isofs`                             | ⬜ §12.2 P3 — "Bootable" badge in Disk Manager  |
-| UDF filesystem                     | ✅ udfs.sys                            | ✅ `udf` module                        | ⬜ §8.2 P3                                      |
-| Audio CD playback                  | ✅ Windows Media Player                | ✅ `cdda` + various players            | ⬜ §9.1 P4                                      |
-| Audio extraction (ripping)         | ✅ WMP / iTunes                        | ✅ `cdparanoia` / `libcdio`            | ⬜ §9.1 P4                                      |
-| **C2 error ptr ripping** ⭐        | ❌ Third-party only (EAC)              | ❌ `cdparanoia` (separate package)     | ⬜ §9.2 P4 — built-in bit-perfect extraction    |
-| **Drive speed/noise GUI** ⭐       | ❌ Third-party only (Nero DriveSpeed)  | ❌ `hdparm` CLI only                   | ⬜ §11.1 P4 — native Drive Properties slider    |
-| Async I/O                          | ✅ Overlapped I/O                      | ✅ Block MQ                            | ⬜ §10.1 P2                                     |
-| **Full optical drive stack**       | ✅                                     | ✅                                     | ⬜ Requires §1–§8 at minimum                    |
+| ⭐ | Feature                            | 🪟 Windows 11 (cdrom.sys)            | 🐧 Linux (sr / ide-cd)               | 🚀 Impossible OS                               |
+| -- | ---------------------------------- | ------------------------------------- | -------------------------------------- | ----------------------------------------------- |
+| 💎 | ATAPI device detection             | ✅ PnP + ATAPI signature              | ✅ `ata_dev_classify()`                | ⬜ §1.1 P0                                      |
+| 💎 | IDENTIFY PACKET DEVICE             | ✅                                     | ✅ `__ata_dev_select()`                | ⬜ §1.2 P0                                      |
+| 💎 | PIO packet protocol                | ✅ (legacy support)                    | ✅ `ide_do_drive_cmd()`                | ⬜ §2.1 P0                                      |
+| 💎 | Bus Master DMA for ATAPI           | ✅                                     | ✅ `ide_dma_setup()`                   | ⬜ §3.1 P2                                      |
+| 💎 | AHCI ATAPI (ACMD field)            | ✅ StorPort miniport                   | ✅ `ahci_exec_polled_cmd()`            | ⬜ §3.2 P2                                      |
+| 💎 | Transport abstraction              | ✅ StorPort / WDF                      | ✅ `ata_std_qc_defer()`                | ⬜ §4.1 P1                                      |
+| 💎 | TEST UNIT READY                    | ✅                                     | ✅ `sr_test_unit_ready()`              | ⬜ §5.1 P1                                      |
+| 💎 | INQUIRY                            | ✅                                     | ✅ `scsi_inquiry()`                    | ⬜ §5.1 P1                                      |
+| 💎 | READ CAPACITY                      | ✅                                     | ✅ `sr_read_capacity()`                | ⬜ §5.2 P0                                      |
+| 💎 | READ (10) / READ (12)              | ✅                                     | ✅ `sr_block_read()`                   | ⬜ §5.2 P0                                      |
+| 💎 | READ DISC STRUCTURE (DVD/BD)       | ✅ (via DeviceIoControl)               | ✅ `sr_do_ioctl()`                     | ⬜ §5.3 P2 (added)                              |
+| 💎 | GET CONFIGURATION / Profiles       | ✅                                     | ✅ `sr_get_config()`                   | ⬜ §5.4 P1                                      |
+| 💎 | MODE SENSE / Capabilities          | ✅                                     | ✅ `sr_mode_sense()`                   | ⬜ §5.5 P2                                      |
+| 💎 | REQUEST SENSE                      | ✅                                     | ✅ `scsi_eh_prep_cmnd()`               | ⬜ §6.1 P1                                      |
+| 💎 | Sense Key / ASC / ASCQ parsing     | ✅                                     | ✅ `scsi_sense_hdr`                    | ⬜ §6.1 P1                                      |
+| 💎 | Media change detection             | ✅ AutoPlay / WM_DEVICECHANGE          | ✅ `sr_check_events()`                 | ⬜ §6.2 P2                                      |
+| 💎 | Eject / Load tray                  | ✅ Explorer context menu               | ✅ `eject` command                     | ⬜ §5.3 P2                                      |
+| 💎 | Tray lock                          | ✅                                     | ✅                                     | ⬜ §5.3 P2                                      |
+| 💎 | READ TOC / multi-session           | ✅                                     | ✅ `sr_read_toc()`                     | ⬜ §5.3 P2                                      |
+| 💎 | Block device registration          | ✅ CdRom class driver                  | ✅ `/dev/sr0`                          | ⬜ §7.1 P1                                      |
+| 💎 | ISO 9660 filesystem                | ✅ CDFS.sys                            | ✅ `isofs` module                      | ⬜ §8.1 P3                                      |
+| 💎 | Joliet Unicode filenames           | ✅                                     | ✅                                     | ⬜ §8.1 P3                                      |
+| ⭐ | **Rock Ridge (POSIX on ISO)**   | ❌ Not supported                       | ✅ `isofs` with RR                     | ⬜ §12.1 P3 — long names + POSIX on CD          |
+| 💎 | **El Torito boot detection**       | ✅ (silent)                            | ✅ `isofs`                             | ⬜ §12.2 P3 — "Bootable" badge in Disk Manager  |
+| 💎 | UDF filesystem                     | ✅ udfs.sys                            | ✅ `udf` module                        | ⬜ §8.2 P3                                      |
+| 💎 | Audio CD playback                  | ✅ Windows Media Player                | ✅ `cdda` + various players            | ⬜ §9.1 P4                                      |
+| 💎 | Audio extraction (ripping)         | ✅ WMP / iTunes                        | ✅ `cdparanoia` / `libcdio`            | ⬜ §9.1 P4                                      |
+| ⭐ | **C2 error ptr ripping**        | ❌ Third-party only (EAC)              | ❌ `cdparanoia` (separate package)     | ⬜ §9.2 P4 — built-in bit-perfect extraction    |
+| ⭐ | **Drive speed/noise GUI**       | ❌ Third-party only (Nero DriveSpeed)  | ❌ `hdparm` CLI only                   | ⬜ §11.1 P4 — native Drive Properties slider    |
+| 💎 | Async I/O                          | ✅ Overlapped I/O                      | ✅ Block MQ                            | ⬜ §10.1 P2                                     |
+| 💎 | **Full optical drive stack**       | ✅                                     | ✅                                     | ⬜ Requires §1–§8 at minimum                    |

@@ -509,27 +509,27 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 1.1 Boot Sector | Foundation — locate FAT, Data Region, root directory |
-| 🔴 P0 | 2.1 FAT Reader | Foundation — traverse fragmented file cluster chains |
-| 🔴 P0 | 5.1 Dir Entry Walker | Foundation — parse all entry types |
-| 🔴 P0 | 5.2 File Entry Set | Foundation — extract file metadata and data pointers |
-| 🟠 P1 | 3.1 Allocation Bitmap | Metadata — free space queries |
-| 🟠 P1 | 4.1 Up-case Table | Correctness — case-insensitive lookups |
-| 🟠 P1 | 5.3 Timestamp Decoder | Metadata — file times for VFS |
-| 🟠 P1 | 6.1 NoFatChain Reader | Performance — fast contiguous file reads |
-| 🟠 P1 | 6.2 Chained File Reader | Core feature — read fragmented file data |
-| 🟠 P1 | 7.1 NameHash Lookup | Performance — fast directory searches |
-| 🟠 P1 | 7.2 Path Resolution | Core feature — resolve full file paths |
-| 🟠 P1 | 9.1 VFS Registration | Integration — make exFAT mountable |
-| 🟡 P2 | 1.2 Boot Checksum | Integrity — validate boot region |
-| 🟡 P2 | 6.3 Cluster Chain Cache | Performance — O(1) mid-file reads |
-| 🟡 P2 | 8.1 Volume Label | Feature — volume name display |
-| 🟡 P2 | 11.1 TexFAT | Compat — embedded/automotive SD cards |
-| 🟢 P3 | 10.1 Test Suite | Quality — automated validation |
-| 🟢 P3 | 12.1 Health Dashboard ⭐ | **Removable media health** — no OS does this |
-| 🟢 P3 | 12.2 Deleted File Recovery ⭐ | **Built-in recovery** — Windows/Linux have nothing |
+| ⭐ | Priority | Section | Description |
+| -- |----------|---------|-------------|
+| 💎 | 🔴 P0 | 1.1 Boot Sector | Foundation — locate FAT, Data Region, root directory |
+| 💎 | 🔴 P0 | 2.1 FAT Reader | Foundation — traverse fragmented file cluster chains |
+| 💎 | 🔴 P0 | 5.1 Dir Entry Walker | Foundation — parse all entry types |
+| 💎 | 🔴 P0 | 5.2 File Entry Set | Foundation — extract file metadata and data pointers |
+| 💎 | 🟠 P1 | 3.1 Allocation Bitmap | Metadata — free space queries |
+| 💎 | 🟠 P1 | 4.1 Up-case Table | Correctness — case-insensitive lookups |
+| 💎 | 🟠 P1 | 5.3 Timestamp Decoder | Metadata — file times for VFS |
+| 💎 | 🟠 P1 | 6.1 NoFatChain Reader | Performance — fast contiguous file reads |
+| 💎 | 🟠 P1 | 6.2 Chained File Reader | Core feature — read fragmented file data |
+| 💎 | 🟠 P1 | 7.1 NameHash Lookup | Performance — fast directory searches |
+| 💎 | 🟠 P1 | 7.2 Path Resolution | Core feature — resolve full file paths |
+| 💎 | 🟠 P1 | 9.1 VFS Registration | Integration — make exFAT mountable |
+| 💎 | 🟡 P2 | 1.2 Boot Checksum | Integrity — validate boot region |
+| 💎 | 🟡 P2 | 6.3 Cluster Chain Cache | Performance — O(1) mid-file reads |
+| 💎 | 🟡 P2 | 8.1 Volume Label | Feature — volume name display |
+| 💎 | 🟡 P2 | 11.1 TexFAT | Compat — embedded/automotive SD cards |
+| 💎 | 🟢 P3 | 10.1 Test Suite | Quality — automated validation |
+| ⭐ | 🟢 P3 | 12.1 Health Dashboard | **Removable media health** — no OS does this |
+| ⭐ | 🟢 P3 | 12.2 Deleted File Recovery | **Built-in recovery** — Windows/Linux have nothing |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -538,32 +538,32 @@
 
 ## OS Comparison
 
-| Feature | 🪟 Windows 11 (exfat.sys) | 🐧 Linux (fs/exfat) | 🚀 Impossible OS |
-| ------------------------------ | --------------------------------- | ------------------------------- | ---------------------------------- |
-| Boot sector parsing | ✅ Native | ✅ Full | ⬜ §1.1 P0 |
-| Boot checksum validation | ✅ Full | ✅ Full | ⬜ §1.2 P2 |
-| Backup Boot Region failover | ✅ Full | ✅ Full | ⬜ §1.2 (backup path) |
-| FAT traversal | ✅ Full | ✅ Full | ⬜ §2.1 P0 |
-| NoFatChain contiguous files | ✅ Native | ✅ Full | ⬜ §6.1 P1 |
-| Allocation Bitmap | ✅ Full R/W | ✅ Full R/W | ⬜ §3.1 P1 (read-only) |
-| Up-case Table (compressed) | ✅ Native | ✅ Full | ⬜ §4.1 P1 |
-| Directory Entry Set parsing | ✅ Full | ✅ Full | ⬜ §5.1–5.3 P0 |
-| NameHash fast lookup | ✅ Native | ✅ Full | ⬜ §7.1 P1 |
-| Path resolution | ✅ Full | ✅ Full | ⬜ §7.2 P1 |
-| SetChecksum validation | ✅ Full | ✅ Full | ⬜ §5.2 (checksum field) |
-| Timestamps (timezone-aware) | ✅ Full (UTC offsets) | ✅ Full | ⬜ §5.3 P1 |
-| Volume Label | ✅ Full | ✅ Full | ⬜ §8.1 P2 |
-| Long filenames (255 chars) | ✅ Native | ✅ Full | ⬜ §5.2 (multi-0xC1) |
-| Files > 4 GB | ✅ Native | ✅ Full | ⬜ §6.1/6.2 (64-bit DataLength) |
-| Cluster chain caching | ✅ Windows cache manager | ✅ Page cache | ⬜ §6.3 P2 |
-| VFS integration | ✅ Native (exfat.sys) | ✅ Native (fs/exfat) | ⬜ §9.1 P1 |
-| Vendor Extensions (0xE0) | ✅ Supported | ✅ Ignored (benign) | ⬜ Ignored (benign) |
-| TexFAT (dual FAT/bitmap) | ✅ Full (Windows CE) | ❌ Not supported | ⬜ §11.1 P2 |
-| OEM Flash Parameters | ✅ Full | ❌ Ignored | ⬜ Future (flash alignment) |
-| Write support | ✅ Full R/W | ✅ Full R/W | ⬜ Future P3 |
-| **Removable media health** ⭐ | ❌ "Scan and fix" only | ❌ CLI `fsck.exfat` only | ⬜ §12.1 P3 — GUI health + safe eject |
-| **Deleted file recovery** ⭐ | ❌ No built-in recovery | ❌ No recovery tool exists | ⬜ §12.2 P3 — built-in GUI recovery |
-| **Read-only driver (minimum)** | ✅ | ✅ | ⬜ Requires §1–§7, §9 |
+| ⭐ | Feature | 🪟 Windows 11 (exfat.sys) | 🐧 Linux (fs/exfat) | 🚀 Impossible OS |
+| -- | ------------------------------ | --------------------------------- | ------------------------------- | ---------------------------------- |
+| 💎 | Boot sector parsing | ✅ Native | ✅ Full | ⬜ §1.1 P0 |
+| 💎 | Boot checksum validation | ✅ Full | ✅ Full | ⬜ §1.2 P2 |
+| 💎 | Backup Boot Region failover | ✅ Full | ✅ Full | ⬜ §1.2 (backup path) |
+| 💎 | FAT traversal | ✅ Full | ✅ Full | ⬜ §2.1 P0 |
+| 💎 | NoFatChain contiguous files | ✅ Native | ✅ Full | ⬜ §6.1 P1 |
+| 💎 | Allocation Bitmap | ✅ Full R/W | ✅ Full R/W | ⬜ §3.1 P1 (read-only) |
+| 💎 | Up-case Table (compressed) | ✅ Native | ✅ Full | ⬜ §4.1 P1 |
+| 💎 | Directory Entry Set parsing | ✅ Full | ✅ Full | ⬜ §5.1–5.3 P0 |
+| 💎 | NameHash fast lookup | ✅ Native | ✅ Full | ⬜ §7.1 P1 |
+| 💎 | Path resolution | ✅ Full | ✅ Full | ⬜ §7.2 P1 |
+| 💎 | SetChecksum validation | ✅ Full | ✅ Full | ⬜ §5.2 (checksum field) |
+| 💎 | Timestamps (timezone-aware) | ✅ Full (UTC offsets) | ✅ Full | ⬜ §5.3 P1 |
+| 💎 | Volume Label | ✅ Full | ✅ Full | ⬜ §8.1 P2 |
+| 💎 | Long filenames (255 chars) | ✅ Native | ✅ Full | ⬜ §5.2 (multi-0xC1) |
+| 💎 | Files > 4 GB | ✅ Native | ✅ Full | ⬜ §6.1/6.2 (64-bit DataLength) |
+| 💎 | Cluster chain caching | ✅ Windows cache manager | ✅ Page cache | ⬜ §6.3 P2 |
+| 💎 | VFS integration | ✅ Native (exfat.sys) | ✅ Native (fs/exfat) | ⬜ §9.1 P1 |
+| 💎 | Vendor Extensions (0xE0) | ✅ Supported | ✅ Ignored (benign) | ⬜ Ignored (benign) |
+| 💎 | TexFAT (dual FAT/bitmap) | ✅ Full (Windows CE) | ❌ Not supported | ⬜ §11.1 P2 |
+| 💎 | OEM Flash Parameters | ✅ Full | ❌ Ignored | ⬜ Future (flash alignment) |
+| 💎 | Write support | ✅ Full R/W | ✅ Full R/W | ⬜ Future P3 |
+| ⭐ | **Removable media health** | ❌ "Scan and fix" only | ❌ CLI `fsck.exfat` only | ⬜ §12.1 P3 — GUI health + safe eject |
+| ⭐ | **Deleted file recovery** | ❌ No built-in recovery | ❌ No recovery tool exists | ⬜ §12.2 P3 — built-in GUI recovery |
+| 💎 | **Read-only driver (minimum)** | ✅ | ✅ | ⬜ Requires §1–§7, §9 |
 
 ---
 

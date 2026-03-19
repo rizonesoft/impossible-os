@@ -500,26 +500,26 @@
 
 ## Priority Order
 
-| Priority | Section | Description |
-|----------|---------|-------------|
-| 🔴 P0 | 1.1 Superblock Parsing | Foundation — locate block groups and inodes |
-| 🔴 P0 | 1.2 Feature Flag Gating | Safety — reject unsafe mounts, handle ext2/ext3 |
-| 🔴 P0 | 2.1 Group Descriptor Table | Foundation — locate bitmaps and inode tables |
-| 🔴 P0 | 3.1 Inode Reader | Foundation — read any file's metadata |
-| 🔴 P0 | 4.1 Extent Tree Reader | Foundation — map logical to physical blocks |
-| 🟠 P1 | 3.2 Special Inode Handling | Metadata — root dir, journal detection |
-| 🟠 P1 | 4.2 File Data Reader | Core feature — actually read file contents |
-| 🟠 P1 | 6.1 Linear Directory Parser | Directory — read dir entries |
-| 🟠 P1 | 6.3 Path Resolution | Directory — resolve full paths |
-| 🟠 P1 | 8.1 VFS Registration | Integration — make ext4 mountable |
-| 🟡 P2 | 3.3 Extended Attributes | Interop — read xattrs, POSIX ACLs, SELinux labels |
-| 🟡 P2 | 5.1 Indirect Block Reader | Compat — mount ext2/ext3 volumes |
-| 🟡 P2 | 6.2 HTree Directory Index | Performance — fast lookup in large dirs |
-| 🟡 P2 | 7.1 CRC32C Checksumming | Integrity — detect metadata corruption |
-| 🟡 P2 | 10.1 Inode & Block Group Cache | Performance — avoid redundant disk reads |
-| 🟢 P3 | 9.1 Test Suite | Quality — automated validation |
-| 🟢 P3 | 11.1 Health Dashboard ⭐ | **At-a-glance ext4 health** — surfaces Linux error telemetry |
-| 🟢 P3 | 11.2 Deleted Inode Recovery ⭐ | **Built-in forensic recovery** — replaces `extundelete` |
+| ⭐ | Priority | Section | Description |
+| -- |----------|---------|-------------|
+| 💎 | 🔴 P0 | 1.1 Superblock Parsing | Foundation — locate block groups and inodes |
+| 💎 | 🔴 P0 | 1.2 Feature Flag Gating | Safety — reject unsafe mounts, handle ext2/ext3 |
+| 💎 | 🔴 P0 | 2.1 Group Descriptor Table | Foundation — locate bitmaps and inode tables |
+| 💎 | 🔴 P0 | 3.1 Inode Reader | Foundation — read any file's metadata |
+| 💎 | 🔴 P0 | 4.1 Extent Tree Reader | Foundation — map logical to physical blocks |
+| 💎 | 🟠 P1 | 3.2 Special Inode Handling | Metadata — root dir, journal detection |
+| 💎 | 🟠 P1 | 4.2 File Data Reader | Core feature — actually read file contents |
+| 💎 | 🟠 P1 | 6.1 Linear Directory Parser | Directory — read dir entries |
+| 💎 | 🟠 P1 | 6.3 Path Resolution | Directory — resolve full paths |
+| 💎 | 🟠 P1 | 8.1 VFS Registration | Integration — make ext4 mountable |
+| 💎 | 🟡 P2 | 3.3 Extended Attributes | Interop — read xattrs, POSIX ACLs, SELinux labels |
+| 💎 | 🟡 P2 | 5.1 Indirect Block Reader | Compat — mount ext2/ext3 volumes |
+| 💎 | 🟡 P2 | 6.2 HTree Directory Index | Performance — fast lookup in large dirs |
+| 💎 | 🟡 P2 | 7.1 CRC32C Checksumming | Integrity — detect metadata corruption |
+| 💎 | 🟡 P2 | 10.1 Inode & Block Group Cache | Performance — avoid redundant disk reads |
+| 💎 | 🟢 P3 | 9.1 Test Suite | Quality — automated validation |
+| ⭐ | 🟢 P3 | 11.1 Health Dashboard | **At-a-glance ext4 health** — surfaces Linux error telemetry |
+| ⭐ | 🟢 P3 | 11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces `extundelete` |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -528,30 +528,30 @@
 
 ## OS Comparison
 
-| Feature | 🪟 Windows 11 | 🐧 Linux (native ext4) | 🚀 Impossible OS |
-| ------------------------------- | -------------------- | --------------------------------- | --------------------------------- |
-| Superblock parsing | ❌ No ext4 support | ✅ Full | ⬜ §1.1 P0 |
-| Feature flag gating | ❌ | ✅ Full 3-tier (compat/incompat/ro) | ⬜ §1.2 P0 |
-| Block group descriptors | ❌ | ✅ Full (32/64-byte) | ⬜ §2.1 P0 |
-| Inode reading | ❌ | ✅ Full (128/256-byte) | ⬜ §3.1 P0 |
-| Extended attributes (xattr) | ❌ | ✅ Full (inline + external block) | ⬜ §3.3 P2 |
-| Extent tree traversal | ❌ | ✅ Full (extent cache + preread) | ⬜ §4.1 P0 |
-| Indirect block map (ext2/ext3) | ❌ | ✅ Full (triple indirect) | ⬜ §5.1 P2 |
-| Linear directory entries | ❌ | ✅ Full | ⬜ §6.1 P1 |
-| HTree directory index | ❌ | ✅ Full (Half MD4/TEA) | ⬜ §6.2 P2 |
-| Path resolution | ❌ | ✅ Full (symlinks, case-fold) | ⬜ §6.3 P1 |
-| CRC32C metadata checksums | ❌ | ✅ Full | ⬜ §7.1 P2 |
-| JBD2 journal replay | ❌ | ✅ Full recovery | ⬜ Future P3 (reject RECOVER) |
-| VFS integration | ❌ | ✅ Native | ⬜ §8.1 P1 |
-| Inline data (i_block payload) | ❌ | ✅ Full | ⬜ §4.2 P1 |
-| flex_bg support | ❌ | ✅ Full | ⬜ §2.1 (handled in GDT read) |
-| ext2/ext3 backward compat | ❌ | ✅ Full | ⬜ §5.1 + §8.1 P2 |
-| Uninitialized extents | ❌ | ✅ Full (return zeros) | ⬜ §4.1 (bit 15 handling) |
-| Inode / GDT caching | ❌ | ✅ Page cache + slab allocator | ⬜ §10.1 P2 |
-| Write support | ❌ | ✅ Full R/W | ⬜ Future P3 |
-| **Volume health dashboard** ⭐ | ❌ No ext4 support | ❌ `tune2fs -l` raw text only | ⬜ §11.1 P3 — GUI health panel |
-| **Deleted inode recovery** ⭐ | ❌ No ext4 support | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — built-in GUI recovery |
-| **Read-only driver (minimum)** | ❌ None | ✅ | ⬜ Requires §1–§4, §6, §8 |
+| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux (native ext4) | 🚀 Impossible OS |
+| -- | ------------------------------- | -------------------- | --------------------------------- | --------------------------------- |
+| 💎 | Superblock parsing | ❌ No ext4 support | ✅ Full | ⬜ §1.1 P0 |
+| 💎 | Feature flag gating | ❌ | ✅ Full 3-tier (compat/incompat/ro) | ⬜ §1.2 P0 |
+| 💎 | Block group descriptors | ❌ | ✅ Full (32/64-byte) | ⬜ §2.1 P0 |
+| 💎 | Inode reading | ❌ | ✅ Full (128/256-byte) | ⬜ §3.1 P0 |
+| 💎 | Extended attributes (xattr) | ❌ | ✅ Full (inline + external block) | ⬜ §3.3 P2 |
+| 💎 | Extent tree traversal | ❌ | ✅ Full (extent cache + preread) | ⬜ §4.1 P0 |
+| 💎 | Indirect block map (ext2/ext3) | ❌ | ✅ Full (triple indirect) | ⬜ §5.1 P2 |
+| 💎 | Linear directory entries | ❌ | ✅ Full | ⬜ §6.1 P1 |
+| 💎 | HTree directory index | ❌ | ✅ Full (Half MD4/TEA) | ⬜ §6.2 P2 |
+| 💎 | Path resolution | ❌ | ✅ Full (symlinks, case-fold) | ⬜ §6.3 P1 |
+| 💎 | CRC32C metadata checksums | ❌ | ✅ Full | ⬜ §7.1 P2 |
+| 💎 | JBD2 journal replay | ❌ | ✅ Full recovery | ⬜ Future P3 (reject RECOVER) |
+| 💎 | VFS integration | ❌ | ✅ Native | ⬜ §8.1 P1 |
+| 💎 | Inline data (i_block payload) | ❌ | ✅ Full | ⬜ §4.2 P1 |
+| 💎 | flex_bg support | ❌ | ✅ Full | ⬜ §2.1 (handled in GDT read) |
+| 💎 | ext2/ext3 backward compat | ❌ | ✅ Full | ⬜ §5.1 + §8.1 P2 |
+| 💎 | Uninitialized extents | ❌ | ✅ Full (return zeros) | ⬜ §4.1 (bit 15 handling) |
+| 💎 | Inode / GDT caching | ❌ | ✅ Page cache + slab allocator | ⬜ §10.1 P2 |
+| 💎 | Write support | ❌ | ✅ Full R/W | ⬜ Future P3 |
+| ⭐ | **Volume health dashboard** | ❌ No ext4 support | ❌ `tune2fs -l` raw text only | ⬜ §11.1 P3 — GUI health panel |
+| ⭐ | **Deleted inode recovery** | ❌ No ext4 support | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — built-in GUI recovery |
+| 💎 | **Read-only driver (minimum)** | ❌ None | ✅ | ⬜ Requires §1–§4, §6, §8 |
 
 ---
 

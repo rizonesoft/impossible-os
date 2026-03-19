@@ -601,34 +601,34 @@
 
 ## Priority Order
 
-| Priority | Section                            | Description                                      |
-| -------- | ---------------------------------- | ------------------------------------------------ |
-| 🔴 P0   | 7.3 Remove stale `serial.log`     | Quick cleanup — artifact in repo                 |
-| 🔴 P0   | 2.3 Remove `grub.cfg`             | Quick cleanup — dead file                        |
-| 🟠 P1   | 1.1 Merge klog files              | Foundation — unified logging                     |
-| 🟠 P1   | 1.2 Long filename boot logs       | Human-readable filenames with date/time          |
-| 🟠 P1   | 1.3 Live flush mode               | Critical for real hardware debugging             |
-| 🟠 P1   | 1.4 Disk space management         | Prevent silent logging failure                   |
-| 🟠 P1   | 3.1 Structured hw dump            | Extract from `klog_live.c`                       |
-| 🟠 P1   | 3.4 PCI device dump               | Full BARs, capabilities — driver dev             |
-| 🟠 P1   | 3.7 Storage/display/network       | Complete hardware picture                        |
-| 🟡 P2   | 2.1 Boot config file              | Depends on bootloader §7.1                       |
-| 🟡 P2   | 2.2 Decouple splash               | Depends on §2.1                                  |
-| 🟡 P2   | 3.2 Device fingerprint            | Hardware tracking hash                           |
-| 🟡 P2   | 3.3 CPU CPUID dump                | Nice to have — basic version exists              |
-| 🟡 P2   | 3.5 ACPI tables + binary dump     | Full ACPI export for `iasl` analysis             |
-| 🟡 P2   | 3.6 SMBIOS/DMI tables             | Machine identification — motherboard, BIOS, RAM  |
-| 🟡 P2   | 4.1 Crash screenshot ⭐           | BMP screenshot on panic — no other OS does this  |
-| 🟡 P2   | 6.1 Log content quality           | Polish — reduce noise                            |
-| 🟡 P2   | 6.2 Subsystem filtering           | Advanced — depends on registry                   |
-| 🟢 P3   | 1.5 Partition hiding              | Production polish — hide B: from file manager    |
-| 🟢 P3   | 3.8 USB descriptor dump           | Depends on USB HCI driver                        |
-| 🟢 P3   | 3.9 Hypervisor detection           | VM-specific diagnostics                          |
-| 🟢 P3   | 4.2 Event timeline ⭐             | Kernel "dashcam" — last 256 events before crash  |
-| 🟢 P3   | 4.3 Boot regression detection ⭐  | Auto-detect performance regressions              |
-| 🟢 P3   | 5.1-5.3 Cross-env verification    | Testing — verify all environments                |
-| 🟢 P3   | 7.2 Remove DEBUG file             | After §2.1 is complete                           |
-| 🟢 P3   | 8.1 Boot Time Profiler            | Performance measurement                          |
+| ⭐ | Priority | Section                            | Description                                      |
+| -- | -------- | ---------------------------------- | ------------------------------------------------ |
+| 💎 | 🔴 P0   | 7.3 Remove stale `serial.log`     | Quick cleanup — artifact in repo                 |
+| 💎 | 🔴 P0   | 2.3 Remove `grub.cfg`             | Quick cleanup — dead file                        |
+| 💎 | 🟠 P1   | 1.1 Merge klog files              | Foundation — unified logging                     |
+| 💎 | 🟠 P1   | 1.2 Long filename boot logs       | Human-readable filenames with date/time          |
+| 💎 | 🟠 P1   | 1.3 Live flush mode               | Critical for real hardware debugging             |
+| 💎 | 🟠 P1   | 1.4 Disk space management         | Prevent silent logging failure                   |
+| 💎 | 🟠 P1   | 3.1 Structured hw dump            | Extract from `klog_live.c`                       |
+| 💎 | 🟠 P1   | 3.4 PCI device dump               | Full BARs, capabilities — driver dev             |
+| 💎 | 🟠 P1   | 3.7 Storage/display/network       | Complete hardware picture                        |
+| 💎 | 🟡 P2   | 2.1 Boot config file              | Depends on bootloader §7.1                       |
+| 💎 | 🟡 P2   | 2.2 Decouple splash               | Depends on §2.1                                  |
+| 💎 | 🟡 P2   | 3.2 Device fingerprint            | Hardware tracking hash                           |
+| 💎 | 🟡 P2   | 3.3 CPU CPUID dump                | Nice to have — basic version exists              |
+| 💎 | 🟡 P2   | 3.5 ACPI tables + binary dump     | Full ACPI export for `iasl` analysis             |
+| 💎 | 🟡 P2   | 3.6 SMBIOS/DMI tables             | Machine identification — motherboard, BIOS, RAM  |
+| ⭐ | 🟡 P2   | 4.1 Crash screenshot           | BMP screenshot on panic — no other OS does this  |
+| 💎 | 🟡 P2   | 6.1 Log content quality           | Polish — reduce noise                            |
+| 💎 | 🟡 P2   | 6.2 Subsystem filtering           | Advanced — depends on registry                   |
+| 💎 | 🟢 P3   | 1.5 Partition hiding              | Production polish — hide B: from file manager    |
+| 💎 | 🟢 P3   | 3.8 USB descriptor dump           | Depends on USB HCI driver                        |
+| 💎 | 🟢 P3   | 3.9 Hypervisor detection           | VM-specific diagnostics                          |
+| ⭐ | 🟢 P3   | 4.2 Event timeline             | Kernel "dashcam" — last 256 events before crash  |
+| ⭐ | 🟢 P3   | 4.3 Boot regression detection  | Auto-detect performance regressions              |
+| 💎 | 🟢 P3   | 5.1-5.3 Cross-env verification    | Testing — verify all environments                |
+| 💎 | 🟢 P3   | 7.2 Remove DEBUG file             | After §2.1 is complete                           |
+| 💎 | 🟢 P3   | 8.1 Boot Time Profiler            | Performance measurement                          |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -637,27 +637,27 @@
 
 ## OS Comparison
 
-| Feature                              | 🪟 Windows 11                  | 🐧 Linux                   | 🚀 Impossible OS                        |
-| ------------------------------------ | ------------------------------ | --------------------------- | ---------------------------------------- |
-| Dedicated diagnostic partition       | ❌ No equivalent                | ❌ No equivalent             | ⬜ §1 — **Black Box** `B:\` (unique) ⭐ |
-| Boot log with timestamps             | ✅ `%windir%\Logs\CBS`          | ✅ journald                  | ⬜ §1.2 — long filename boot logs        |
-| Log auto-rotation                    | ✅ Automatic                    | ✅ logrotate                 | ⬜ §1.4 — auto cleanup with warnings     |
-| Live log flush (pre-hang)            | ✅ ETW real-time                | ✅ journald sync             | ⬜ §1.3 — exists but fragile             |
-| Boot config file                     | ✅ BCD                          | ✅ cmdline / grub.cfg        | ⬜ §2.1 — **missing**                    |
-| Debug mode toggle                    | ✅ `bcdedit /debug`             | ✅ `debug` cmdline           | ⬜ §2.1 — uses file flag                 |
-| **Comprehensive HW report** ⭐       | ⚠️ msinfo32 (GUI, not portable)| ⚠️ `lshw` (separate tool)  | ⬜ §3 — single-file driver dev kit       |
-| **SMBIOS dump** ⭐                   | ✅ msinfo32                     | ✅ `dmidecode`               | ⬜ §3.6 — in Hardware Report             |
-| **ACPI binary export** ⭐            | ⚠️ `acpidump` (dev tools)     | ✅ `acpidump`                | ⬜ §3.5 — auto-saved to `B:\ACPI_Tables` |
-| **Device fingerprint** ⭐            | ❌ No equivalent                | ❌ No equivalent             | ⬜ §3.2 — hardware config hash           |
-| PCI full enumeration                 | ✅ Full BARs, caps              | ✅ `lspci -vvv`              | ⬜ §3.4 — vendor:device only             |
-| **Crash screenshot** ⭐              | ❌ No equivalent                | ❌ No equivalent             | ⬜ §4.1 — BMP on panic                   |
-| **Event timeline** ⭐                | ❌ ETW post-hoc only            | ❌ No kernel ring            | ⬜ §4.2 — last 256 events before crash   |
-| **Boot regression detection** ⭐     | ❌ No equivalent                | ❌ No equivalent             | ⬜ §4.3 — auto-warns if slower           |
-| Kernel log ring buffer               | ✅ KD ring (64K)                | ✅ dmesg (256K)              | ✅ klog ring (128K)                       |
-| Serial console debug                 | ✅ Kernel debugger              | ✅ serial console            | ✅ COM1 via `klog.c`                      |
-| Multi-env (QEMU/VBox/HW)            | N/A                            | ✅ Works everywhere          | ✅ §5 — serial + B: logs                 |
-| Per-subsystem filtering              | ✅ ETW providers                | ✅ `printk` levels           | ⬜ §6.2 — **missing**                    |
-| Boot time profiling                  | ✅ Boot Event Collector         | ✅ `systemd-analyze blame`   | ⬜ §8 P3 — **missing**                   |
+| ⭐ | Feature                              | 🪟 Windows 11                  | 🐧 Linux                   | 🚀 Impossible OS                        |
+| -- | ------------------------------------ | ------------------------------ | --------------------------- | ---------------------------------------- |
+| ⭐ | Dedicated diagnostic partition       | ❌ No equivalent                | ❌ No equivalent             | ⬜ §1 — **Black Box** `B:\` (unique) |
+| 💎 | Boot log with timestamps             | ✅ `%windir%\Logs\CBS`          | ✅ journald                  | ⬜ §1.2 — long filename boot logs        |
+| 💎 | Log auto-rotation                    | ✅ Automatic                    | ✅ logrotate                 | ⬜ §1.4 — auto cleanup with warnings     |
+| 💎 | Live log flush (pre-hang)            | ✅ ETW real-time                | ✅ journald sync             | ⬜ §1.3 — exists but fragile             |
+| 💎 | Boot config file                     | ✅ BCD                          | ✅ cmdline / grub.cfg        | ⬜ §2.1 — **missing**                    |
+| 💎 | Debug mode toggle                    | ✅ `bcdedit /debug`             | ✅ `debug` cmdline           | ⬜ §2.1 — uses file flag                 |
+| ⭐ | **Comprehensive HW report**       | ⚠️ msinfo32 (GUI, not portable)| ⚠️ `lshw` (separate tool)  | ⬜ §3 — single-file driver dev kit       |
+| ⭐ | **SMBIOS dump**                   | ✅ msinfo32                     | ✅ `dmidecode`               | ⬜ §3.6 — in Hardware Report             |
+| ⭐ | **ACPI binary export**            | ⚠️ `acpidump` (dev tools)     | ✅ `acpidump`                | ⬜ §3.5 — auto-saved to `B:\ACPI_Tables` |
+| ⭐ | **Device fingerprint**            | ❌ No equivalent                | ❌ No equivalent             | ⬜ §3.2 — hardware config hash           |
+| 💎 | PCI full enumeration                 | ✅ Full BARs, caps              | ✅ `lspci -vvv`              | ⬜ §3.4 — vendor:device only             |
+| ⭐ | **Crash screenshot**              | ❌ No equivalent                | ❌ No equivalent             | ⬜ §4.1 — BMP on panic                   |
+| ⭐ | **Event timeline**                | ❌ ETW post-hoc only            | ❌ No kernel ring            | ⬜ §4.2 — last 256 events before crash   |
+| ⭐ | **Boot regression detection**     | ❌ No equivalent                | ❌ No equivalent             | ⬜ §4.3 — auto-warns if slower           |
+| 💎 | Kernel log ring buffer               | ✅ KD ring (64K)                | ✅ dmesg (256K)              | ✅ klog ring (128K)                       |
+| 💎 | Serial console debug                 | ✅ Kernel debugger              | ✅ serial console            | ✅ COM1 via `klog.c`                      |
+| 💎 | Multi-env (QEMU/VBox/HW)            | N/A                            | ✅ Works everywhere          | ✅ §5 — serial + B: logs                 |
+| 💎 | Per-subsystem filtering              | ✅ ETW providers                | ✅ `printk` levels           | ⬜ §6.2 — **missing**                    |
+| 💎 | Boot time profiling                  | ✅ Boot Event Collector         | ✅ `systemd-analyze blame`   | ⬜ §8 P3 — **missing**                   |
 
 > **After P0+P1 items:** Impossible OS has a reliable, robust logging system that works across
 > all environments and produces useful, named logs with hardware dumps on the Black Box.

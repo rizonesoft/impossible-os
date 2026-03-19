@@ -527,21 +527,21 @@
 
 ## Priority Order
 
-| Priority | Section                              | Description                                              |
-| :------: | ------------------------------------ | -------------------------------------------------------- |
-| 🔴 P0   | 1.1 Core API                        | Foundation — everything else depends on this              |
-| 🔴 P0   | 1.2 Instrument boot stages          | Replace ad-hoc HV_BAR and splash_status calls            |
-| 🟠 P1   | 2. POST hex code display            | Always-on — works on real hardware without serial         |
-| 🟠 P1   | 4.1–4.2 Panic forensic evidence     | Critical for real hardware debugging                     |
-| 🟠 P1   | 7. Pre-kernel POST codes (UEFI)     | Covers the gap before kernel starts                      |
-| 🟠 P1   | 8. Antigravity agent updates        | Agent must know about new API to use it correctly        |
-| 🟡 P2   | 1.3 klog integration                | Timestamps + live flush checkpoints                      |
-| 🟡 P2   | 2.3 POST code reference card        | Documentation for developers                             |
-| 🟡 P2   | 3. Debug color bar waterfall        | Developer UX — visible boot progress                     |
-| 🟡 P2   | 6. Alive blink pixel                | Simplest possible hang detection                         |
-| 🟢 P3   | 4.3 Panic QR code ⭐               | Scan crash info with phone — no OS encodes actual data   |
-| 🟢 P3   | 5.1–5.2 Vital signs strip ⭐       | Power user feature — kernel health at a glance           |
-| 🔵 P4   | 5.3 Developer overlay HUD ⭐       | Native kernel HUD — like Steam FPS but for the OS        |
+| ⭐ | Priority | Section                              | Description                                              |
+| -- | :------: | ------------------------------------ | -------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1.1 Core API                        | Foundation — everything else depends on this              |
+| 💎 | 🔴 P0   | 1.2 Instrument boot stages          | Replace ad-hoc HV_BAR and splash_status calls            |
+| 💎 | 🟠 P1   | 2. POST hex code display            | Always-on — works on real hardware without serial         |
+| 💎 | 🟠 P1   | 4.1–4.2 Panic forensic evidence     | Critical for real hardware debugging                     |
+| 💎 | 🟠 P1   | 7. Pre-kernel POST codes (UEFI)     | Covers the gap before kernel starts                      |
+| 💎 | 🟠 P1   | 8. Antigravity agent updates        | Agent must know about new API to use it correctly        |
+| 💎 | 🟡 P2   | 1.3 klog integration                | Timestamps + live flush checkpoints                      |
+| 💎 | 🟡 P2   | 2.3 POST code reference card        | Documentation for developers                             |
+| 💎 | 🟡 P2   | 3. Debug color bar waterfall        | Developer UX — visible boot progress                     |
+| 💎 | 🟡 P2   | 6. Alive blink pixel                | Simplest possible hang detection                         |
+| ⭐ | 🟢 P3   | 4.3 Panic QR code               | Scan crash info with phone — no OS encodes actual data   |
+| ⭐ | 🟢 P3   | 5.1–5.2 Vital signs strip       | Power user feature — kernel health at a glance           |
+| ⭐ | 🔵 P4   | 5.3 Developer overlay HUD       | Native kernel HUD — like Steam FPS but for the OS        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -550,17 +550,17 @@
 
 ## OS Comparison
 
-| Feature                            | 🪟 Windows 11                        | 🐧 Linux 6.x                         | 🚀 Impossible OS                       |
-| ---------------------------------- | ------------------------------------ | ------------------------------------- | --------------------------------------- |
-| Boot progress API                  | ✅ Internal (hidden from users)      | ✅ `printk` + initcall levels         | ⬜ §1 — unified `boot_progress()`      |
-| POST codes on screen               | ❌ Server BMC only (not on screen)   | ❌ No equivalent                      | ⬜ §2 — on-screen hex POST codes       |
-| Verbose boot mode                  | ⚠️ `bcdedit /bootlog` (text only)   | ✅ Remove `quiet` (scrolling text)    | ⬜ §3 — color-coded bar waterfall      |
-| Boot hang diagnosis                | ❌ Blank screen, no info             | ⚠️ Last dmesg line (if visible)      | ⬜ §2+§3 — frozen hex + last bar       |
-| **Panic boot context** ⭐         | ❌ BSOD shows registers only         | ❌ Oops shows call stack only         | ⬜ §4 — progress bars on BSOD          |
-| **Panic QR code** ⭐              | ⚠️ Generic URL (no crash data)      | ❌ No equivalent                      | ⬜ §4.3 — QR encodes actual crash data |
-| **Runtime vital signs** ⭐        | ❌ Task Manager (separate app)       | ❌ htop (CLI, separate process)       | ⬜ §5 — 1px strip, zero overhead       |
-| **Developer overlay HUD** ⭐      | ❌ Performance Monitor (hidden)      | ❌ No built-in HUD                    | ⬜ §5.3 — Ctrl+Shift+F12 toggle        |
-| Kernel alive indicator             | ❌ No equivalent                     | ❌ No equivalent                      | ⬜ §6 — blink pixel (ISR-driven)       |
-| UEFI-phase diagnostics             | ✅ WinLoad progress internally       | ⚠️ EFI stub has minimal logging      | ⬜ §7 — UEFI POST codes on screen      |
-| Boot stage timing                  | ❌ ETW + WPA (dev tools required)    | ⚠️ `systemd-analyze` (text CLI)      | ⬜ §1.3 — per-stage ms in progress API |
-| Agent/tooling awareness            | N/A                                  | N/A                                   | ⬜ §8 — rules + skills for AI agents   |
+| ⭐ | Feature                            | 🪟 Windows 11                        | 🐧 Linux 6.x                         | 🚀 Impossible OS                       |
+| -- | ---------------------------------- | ------------------------------------ | ------------------------------------- | --------------------------------------- |
+| 💎 | Boot progress API                  | ✅ Internal (hidden from users)      | ✅ `printk` + initcall levels         | ⬜ §1 — unified `boot_progress()`      |
+| 💎 | POST codes on screen               | ❌ Server BMC only (not on screen)   | ❌ No equivalent                      | ⬜ §2 — on-screen hex POST codes       |
+| 💎 | Verbose boot mode                  | ⚠️ `bcdedit /bootlog` (text only)   | ✅ Remove `quiet` (scrolling text)    | ⬜ §3 — color-coded bar waterfall      |
+| 💎 | Boot hang diagnosis                | ❌ Blank screen, no info             | ⚠️ Last dmesg line (if visible)      | ⬜ §2+§3 — frozen hex + last bar       |
+| ⭐ | **Panic boot context**         | ❌ BSOD shows registers only         | ❌ Oops shows call stack only         | ⬜ §4 — progress bars on BSOD          |
+| ⭐ | **Panic QR code**              | ⚠️ Generic URL (no crash data)      | ❌ No equivalent                      | ⬜ §4.3 — QR encodes actual crash data |
+| ⭐ | **Runtime vital signs**        | ❌ Task Manager (separate app)       | ❌ htop (CLI, separate process)       | ⬜ §5 — 1px strip, zero overhead       |
+| ⭐ | **Developer overlay HUD**      | ❌ Performance Monitor (hidden)      | ❌ No built-in HUD                    | ⬜ §5.3 — Ctrl+Shift+F12 toggle        |
+| 💎 | Kernel alive indicator             | ❌ No equivalent                     | ❌ No equivalent                      | ⬜ §6 — blink pixel (ISR-driven)       |
+| 💎 | UEFI-phase diagnostics             | ✅ WinLoad progress internally       | ⚠️ EFI stub has minimal logging      | ⬜ §7 — UEFI POST codes on screen      |
+| 💎 | Boot stage timing                  | ❌ ETW + WPA (dev tools required)    | ⚠️ `systemd-analyze` (text CLI)      | ⬜ §1.3 — per-stage ms in progress API |
+| 💎 | Agent/tooling awareness            | N/A                                  | N/A                                   | ⬜ §8 — rules + skills for AI agents   |

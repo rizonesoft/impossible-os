@@ -516,27 +516,27 @@
 
 ## Priority Order
 
-| Priority | Section                          | Description                                                   |
-|----------|----------------------------------|---------------------------------------------------------------|
-| 🔴 P0    | 1.1 Full MBR Layout Parser     | Foundation — decode entire 512-byte sector correctly          |
-| 🔴 P0    | 1.2 Partition Type Recognition  | Foundation — identify all filesystem types and GPT redirect   |
-| 🟠 P1    | 2.1 EBR Chain Walker            | Correctness — read logical partitions beyond the 4-entry limit|
-| 🟠 P1    | 3.1 CHS Extraction & Encoding  | Compatibility — legacy BIOS and diagnostic tool interop       |
-| 🟠 P1    | 4.1 1-MiB Alignment            | Performance — optimal 4K/SSD sector alignment                 |
-| 🟠 P1    | 7.1 Protective MBR             | Integration — GPT detection and Protective MBR generation     |
-| 🟡 P2    | 5.1 Partition Table Writer      | Feature — create and modify MBR partition tables              |
-| 🟡 P2    | 5.2 EBR Writer                  | Feature — write logical partition chains                      |
-| 🟡 P2    | 6.1 Create Primary Partition   | Feature — partition creation with alignment and validation    |
-| 🟡 P2    | 6.2 Extended & Logical         | Feature — exceed 4-partition limit                            |
-| 🟡 P2    | 6.3 Delete Partition           | Feature — partition removal and chain repair                  |
-| 🟡 P2    | 8.1 Disk Signature Management  | Feature — persistent volume identification                    |
-| 🟡 P2    | 13.1 Health Validation ⭐      | **Partition table health checker** — unique to Impossible OS |
-| 🟢 P3    | 9.1 Diskpart MBR Commands     | Tooling — CLI partition management                            |
-| 🟢 P3    | 10.1 MBR Test Suite            | Quality — automated test coverage for all scenarios           |
-| 🟢 P3    | 7.2 Hybrid MBR ⭐              | **Dual BIOS+UEFI boot** — Windows cannot create these        |
-| 🟢 P3    | 11.1 MBR→GPT Conversion ⭐    | **One-click GUI conversion** — Windows is CLI-only            |
-| 🟢 P3    | 11.2 GPT→MBR Conversion       | Feature — downgrade for legacy BIOS compatibility             |
-| 🟢 P3    | 12.1 Backup & Restore ⭐       | **Auto-backup partition table** — Windows has nothing         |
+| ⭐ | Priority | Section                          | Description                                                   |
+| -- |----------|----------------------------------|---------------------------------------------------------------|
+| 💎 | 🔴 P0    | 1.1 Full MBR Layout Parser     | Foundation — decode entire 512-byte sector correctly          |
+| 💎 | 🔴 P0    | 1.2 Partition Type Recognition  | Foundation — identify all filesystem types and GPT redirect   |
+| 💎 | 🟠 P1    | 2.1 EBR Chain Walker            | Correctness — read logical partitions beyond the 4-entry limit|
+| 💎 | 🟠 P1    | 3.1 CHS Extraction & Encoding  | Compatibility — legacy BIOS and diagnostic tool interop       |
+| 💎 | 🟠 P1    | 4.1 1-MiB Alignment            | Performance — optimal 4K/SSD sector alignment                 |
+| 💎 | 🟠 P1    | 7.1 Protective MBR             | Integration — GPT detection and Protective MBR generation     |
+| 💎 | 🟡 P2    | 5.1 Partition Table Writer      | Feature — create and modify MBR partition tables              |
+| 💎 | 🟡 P2    | 5.2 EBR Writer                  | Feature — write logical partition chains                      |
+| 💎 | 🟡 P2    | 6.1 Create Primary Partition   | Feature — partition creation with alignment and validation    |
+| 💎 | 🟡 P2    | 6.2 Extended & Logical         | Feature — exceed 4-partition limit                            |
+| 💎 | 🟡 P2    | 6.3 Delete Partition           | Feature — partition removal and chain repair                  |
+| 💎 | 🟡 P2    | 8.1 Disk Signature Management  | Feature — persistent volume identification                    |
+| ⭐ | 🟡 P2    | 13.1 Health Validation      | **Partition table health checker** — unique to Impossible OS |
+| 💎 | 🟢 P3    | 9.1 Diskpart MBR Commands     | Tooling — CLI partition management                            |
+| 💎 | 🟢 P3    | 10.1 MBR Test Suite            | Quality — automated test coverage for all scenarios           |
+| ⭐ | 🟢 P3    | 7.2 Hybrid MBR              | **Dual BIOS+UEFI boot** — Windows cannot create these        |
+| ⭐ | 🟢 P3    | 11.1 MBR→GPT Conversion    | **One-click GUI conversion** — Windows is CLI-only            |
+| 💎 | 🟢 P3    | 11.2 GPT→MBR Conversion       | Feature — downgrade for legacy BIOS compatibility             |
+| ⭐ | 🟢 P3    | 12.1 Backup & Restore       | **Auto-backup partition table** — Windows has nothing         |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -545,28 +545,28 @@
 
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11 (diskpart)           | 🐧 Linux (fdisk / parted)         | 🚀 Impossible OS                              |
-| -------------------------------- | ---------------------------------- | --------------------------------- | ---------------------------------------------- |
-| MBR sector parsing               | ✅ Full (disk.sys)                  | ✅ Full (partitions/msdos.c)       | ⬜ §1.1 P0 (basic exists, needs enhancement)   |
-| Boot signature `0xAA55` check    | ✅                                  | ✅                                 | ⬜ §1.1 P0                                     |
-| 32-bit Disk Signature            | ✅ Critical (volume tracking)       | ✅ Supported                       | ⬜ §1.1 P0 + §8.1 P2                           |
-| All partition type IDs           | ✅ Exhaustive                       | ✅ Exhaustive                      | ⬜ §1.2 P0 (expanded: 30+ types)               |
-| GPT Protective MBR (`0xEE`)     | ✅ Redirect to GPT                  | ✅ Redirect to GPT                 | ⬜ §7.1 P1                                     |
-| **Hybrid MBR** ⭐                | ❌ Cannot create                    | ⚠️ `gdisk` CLI only               | ⬜ §7.2 P3 — GUI bootable USB creation         |
-| Extended/Logical (EBR)           | ✅ Full chain traversal             | ✅ Full chain traversal            | ⬜ §2.1 P1                                     |
-| CHS bit-packing                  | ✅ Full encode/decode               | ✅ Full encode/decode              | ⬜ §3.1 P1                                     |
-| CHS overflow dummy (`FE FF FF`) | ✅                                  | ✅                                 | ⬜ §3.1 P1                                     |
-| 1-MiB alignment                  | ✅ Default since Vista              | ✅ Default since util-linux 2.17   | ⬜ §4.1 P1                                     |
-| Legacy 63-sector awareness       | ✅ Compatible                       | ✅ Compatible                      | ⬜ §4.1 P1 (warn but read)                     |
-| MBR write / create partition     | ✅ diskpart / Disk Management       | ✅ fdisk / parted                  | ⬜ §5.1–6.2 P2                                 |
-| Delete partition                 | ✅ diskpart                         | ✅ fdisk -d                        | ⬜ §6.3 P2                                     |
-| Set active/bootable              | ✅ diskpart active                  | ✅ fdisk -a                        | ⬜ §9.1 P3                                     |
-| Drive letter mapping via sig     | ✅ Registry-based                   | ✅ /dev/disk/by-id                 | ⬜ §8.1 P2                                     |
-| CLI partition tool               | ✅ diskpart (interactive)           | ✅ fdisk (interactive + scripted)  | ⬜ §9.1 P3                                     |
-| Test images / validation         | ✅ Windows PE test suite            | ✅ blktests                        | ⬜ §10.1 P3                                    |
-| **MBR→GPT conversion** ⭐       | ⚠️ `mbr2gpt.exe` CLI only          | ⚠️ `gdisk` CLI only               | ⬜ §11.1 P3 — one-click GUI conversion         |
-| **GPT→MBR conversion**          | ⚠️ diskpart CLI (destructive)      | ⚠️ `gdisk` CLI (non-destructive)  | ⬜ §11.2 P3 — GUI with validation              |
-| **Partition table backup** ⭐    | ❌ No built-in backup               | ⚠️ Manual `dd` / `sfdisk -d`      | ⬜ §12.1 P3 — auto-backup on every change      |
-| **Health validation** ⭐         | ❌ No partition table validator     | ⚠️ `fdisk --verify` (minimal CLI) | ⬜ §13.1 P2 — GUI health checker + auto-repair |
-| **2 TiB limit enforcement**     | ✅ Warns in Disk Management         | ✅ parted warns                    | ⬜ §6.1 P2                                     |
-| **Full MBR subsystem**           | ✅                                  | ✅                                 | ⬜ Requires §1–§7 at minimum                   |
+| ⭐ | Feature                          | 🪟 Windows 11 (diskpart)           | 🐧 Linux (fdisk / parted)         | 🚀 Impossible OS                              |
+| -- | -------------------------------- | ---------------------------------- | --------------------------------- | ---------------------------------------------- |
+| 💎 | MBR sector parsing               | ✅ Full (disk.sys)                  | ✅ Full (partitions/msdos.c)       | ⬜ §1.1 P0 (basic exists, needs enhancement)   |
+| 💎 | Boot signature `0xAA55` check    | ✅                                  | ✅                                 | ⬜ §1.1 P0                                     |
+| 💎 | 32-bit Disk Signature            | ✅ Critical (volume tracking)       | ✅ Supported                       | ⬜ §1.1 P0 + §8.1 P2                           |
+| 💎 | All partition type IDs           | ✅ Exhaustive                       | ✅ Exhaustive                      | ⬜ §1.2 P0 (expanded: 30+ types)               |
+| 💎 | GPT Protective MBR (`0xEE`)     | ✅ Redirect to GPT                  | ✅ Redirect to GPT                 | ⬜ §7.1 P1                                     |
+| ⭐ | **Hybrid MBR**                | ❌ Cannot create                    | ⚠️ `gdisk` CLI only               | ⬜ §7.2 P3 — GUI bootable USB creation         |
+| 💎 | Extended/Logical (EBR)           | ✅ Full chain traversal             | ✅ Full chain traversal            | ⬜ §2.1 P1                                     |
+| 💎 | CHS bit-packing                  | ✅ Full encode/decode               | ✅ Full encode/decode              | ⬜ §3.1 P1                                     |
+| 💎 | CHS overflow dummy (`FE FF FF`) | ✅                                  | ✅                                 | ⬜ §3.1 P1                                     |
+| 💎 | 1-MiB alignment                  | ✅ Default since Vista              | ✅ Default since util-linux 2.17   | ⬜ §4.1 P1                                     |
+| 💎 | Legacy 63-sector awareness       | ✅ Compatible                       | ✅ Compatible                      | ⬜ §4.1 P1 (warn but read)                     |
+| 💎 | MBR write / create partition     | ✅ diskpart / Disk Management       | ✅ fdisk / parted                  | ⬜ §5.1–6.2 P2                                 |
+| 💎 | Delete partition                 | ✅ diskpart                         | ✅ fdisk -d                        | ⬜ §6.3 P2                                     |
+| 💎 | Set active/bootable              | ✅ diskpart active                  | ✅ fdisk -a                        | ⬜ §9.1 P3                                     |
+| 💎 | Drive letter mapping via sig     | ✅ Registry-based                   | ✅ /dev/disk/by-id                 | ⬜ §8.1 P2                                     |
+| 💎 | CLI partition tool               | ✅ diskpart (interactive)           | ✅ fdisk (interactive + scripted)  | ⬜ §9.1 P3                                     |
+| 💎 | Test images / validation         | ✅ Windows PE test suite            | ✅ blktests                        | ⬜ §10.1 P3                                    |
+| ⭐ | **MBR→GPT conversion**       | ⚠️ `mbr2gpt.exe` CLI only          | ⚠️ `gdisk` CLI only               | ⬜ §11.1 P3 — one-click GUI conversion         |
+| 💎 | **GPT→MBR conversion**          | ⚠️ diskpart CLI (destructive)      | ⚠️ `gdisk` CLI (non-destructive)  | ⬜ §11.2 P3 — GUI with validation              |
+| ⭐ | **Partition table backup**    | ❌ No built-in backup               | ⚠️ Manual `dd` / `sfdisk -d`      | ⬜ §12.1 P3 — auto-backup on every change      |
+| ⭐ | **Health validation**         | ❌ No partition table validator     | ⚠️ `fdisk --verify` (minimal CLI) | ⬜ §13.1 P2 — GUI health checker + auto-repair |
+| 💎 | **2 TiB limit enforcement**     | ✅ Warns in Disk Management         | ✅ parted warns                    | ⬜ §6.1 P2                                     |
+| 💎 | **Full MBR subsystem**           | ✅                                  | ✅                                 | ⬜ Requires §1–§7 at minimum                   |
