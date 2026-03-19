@@ -385,3 +385,43 @@ void uefi_vars_init(void)
         klog(LOG_INFO, "UEFI", "BootCurrent: Boot%s", bc_str);
     }
 }
+
+/* ============================================================================
+ * System Reset (§1.3)
+ *
+ * ResetSystem() is a UEFI runtime service that handles all platform-specific
+ * details for shutdown, reboot, and power cycling.  Preferred over direct
+ * ACPI register writes or keyboard controller reset.
+ * ============================================================================ */
+
+/* x86 port I/O for keyboard controller fallback */
+static inline void outb(uint16_t port, uint8_t val)
+{
+    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+
+void uefi_reset(uint32_t reset_type)
+{
+    const char *type_names[] = { "Cold", "Warm", "Shutdown", "PlatformSpecific" };
+    const char *name = (reset_type < 4) ? type_names[reset_type] : "Unknown";
+
+    klog(LOG_INFO, "UEFI", "ResetSystem(%s)...", name);
+
+    if (s_available && s_rt &&
+        (s_supported & EFI_RT_SUPPORTED_RESET_SYSTEM)) {
+        spin_lock(&s_rt_lock);
+        /* ResetSystem() does NOT return on success */
+        s_rt->reset_system(reset_type, UEFI_SUCCESS, 0, (void *)0);
+        spin_unlock(&s_rt_lock);
+        /* If we get here, it failed */
+        klog(LOG_ERROR, "UEFI", "ResetSystem() returned — falling back");
+    }
+
+    /* Fallback: keyboard controller reset (0x64/0xFE) */
+    klog(LOG_WARN, "UEFI", "Fallback: keyboard controller reset");
+    outb(0x64, 0xFE);
+
+    /* If that failed too, halt */
+    for (;;)
+        __asm__ volatile("hlt");
+}

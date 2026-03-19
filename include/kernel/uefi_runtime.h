@@ -108,3 +108,20 @@ uint32_t uefi_enumerate_variables(void);
 /* Initialize variable services — enumerate + log summary.
  * Must be called after uefi_runtime_init(). */
 void uefi_vars_init(void);
+
+/* ---- System Reset API ---- */
+
+/* EFI_RESET_TYPE values */
+#define EFI_RESET_COLD              0  /* Full hardware power cycle */
+#define EFI_RESET_WARM              1  /* CPU reset, no power cycle */
+#define EFI_RESET_SHUTDOWN          2  /* Power off */
+#define EFI_RESET_PLATFORM_SPECIFIC 3  /* Platform-defined (recovery, etc.) */
+
+/* Reset the system via UEFI ResetSystem().
+ * This function does NOT return on success.
+ * Falls back to keyboard controller reset (0x64/0xFE) if UEFI unavailable. */
+void uefi_reset(uint32_t reset_type);
+
+/* Convenience wrappers */
+static inline void uefi_reboot(void)   { uefi_reset(EFI_RESET_COLD); }
+static inline void uefi_shutdown(void) { uefi_reset(EFI_RESET_SHUTDOWN); }

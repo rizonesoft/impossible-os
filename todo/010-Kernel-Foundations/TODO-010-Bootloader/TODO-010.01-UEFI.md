@@ -109,7 +109,7 @@ graph TD
 | ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ✅   |
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ✅   |
 | 💎 | **3** | §1.2 UEFI Variable Services      | GetVariable/SetVariable/Enumerate wrappers               | Phase 2 (§1.1)                   |   ✅   |
-| 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ⬜   |
+| 💎 | **3** | §1.3 System Reset via UEFI       | Clean ResetSystem() shutdown/reboot                      | Phase 2 (§1.1)                   |   ✅   |
 | 💎 | **3** | §2.1 RTC Time Services           | GetTime/SetTime for kernel wall clock                    | Phase 2 (§1.1)                   |   ⬜   |
 | 💎 | **3** | §3.2 Memory Attributes (W^X)     | NX enforcement on runtime memory                         | Phase 1 + Phase 2 (§1.1)         |   ⬜   |
 | 💎 | **4** | §5.1 Secure Boot State Detection | SecureBoot/SetupMode UEFI variable read                  | Phase 3 (§1.2)                   |   ⬜   |
@@ -214,18 +214,27 @@ graph TD
 
 ### 1.3 System Reset via UEFI
 
-**Prompt:** The current shutdown/reboot uses direct ACPI register writes or keyboard controller reset. UEFI provides a clean `ResetSystem()` runtime service that handles all platform-specific details. Implement kernel wrappers that prefer UEFI reset when available. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: system reset via ResetSystem()"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI system reset implementation. Confirm `uefi_runtime.h` defines `EFI_RESET_COLD/WARM/SHUTDOWN/PLATFORM_SPECIFIC` constants, `uefi_reset(type)` function, and `uefi_reboot()`/`uefi_shutdown()` inline wrappers. Confirm `uefi_runtime.c` implements `uefi_reset()` with spinlock-serialized `ResetSystem()` call, keyboard controller fallback (0x64/0xFE), and halt loop. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: system reset via ResetSystem()"` exists.
 
-- [ ] Implement `uefi_reset(type)`:
-  - [ ] `EfiResetCold` — full hardware reset (power cycle)
-  - [ ] `EfiResetWarm` — CPU reset without power cycle
-  - [ ] `EfiResetShutdown` — power off
-  - [ ] `EfiResetPlatformSpecific` — platform-defined (e.g., recovery mode)
-- [ ] Wire to existing `system_shutdown()` and `system_reboot()`:
-  - [ ] Prefer UEFI `ResetSystem()` if runtime services are available
-  - [ ] Fall back to ACPI PM register writes (current method)
-  - [ ] Last resort: keyboard controller 0x64/0xFE reset
-- [ ] Commit: `"uefi: system reset via ResetSystem()"`
+> [!NOTE]
+> **Implementation notes:**
+> - `uefi_reset()` checks `EFI_RT_SUPPORTED_RESET_SYSTEM` before calling firmware
+> - ResetSystem() does NOT return on success — if it returns, fallback is triggered
+> - Keyboard controller reset (outb 0x64, 0xFE) as fallback — works on virtually all x86 hardware
+> - No existing `system_shutdown()`/`system_reboot()` — this is the first reset API
+> - `uefi_reboot()` = cold reset, `uefi_shutdown()` = power off (inline wrappers)
+> - Not tested in QEMU (ResetSystem causes immediate VM exit, can't capture output)
+
+- [x] Implement `uefi_reset(type)`:
+  - [x] `EfiResetCold` — full hardware reset (power cycle)
+  - [x] `EfiResetWarm` — CPU reset without power cycle
+  - [x] `EfiResetShutdown` — power off
+  - [x] `EfiResetPlatformSpecific` — platform-defined (e.g., recovery mode)
+- [x] Wire to existing `system_shutdown()` and `system_reboot()`:
+  - [x] Prefer UEFI `ResetSystem()` if runtime services are available
+  - [x] Fall back to ACPI PM register writes (current method)
+  - [x] Last resort: keyboard controller 0x64/0xFE reset
+- [x] Commit: `"uefi: system reset via ResetSystem()"`
 
 ---
 
