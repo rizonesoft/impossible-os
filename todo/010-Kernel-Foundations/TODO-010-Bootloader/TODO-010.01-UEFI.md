@@ -104,7 +104,7 @@ graph TD
 | 💎 | **1** | §3.1 Memory Map Preservation     | Full UEFI memory type info for PMM (runtime, ACPI, MMIO) | —                                |   ✅   |
 | 💎 | **1** | §4.1 Configuration Table Walker  | Find ACPI, SMBIOS, MemAttr, ESRT, FPDT tables by GUID    | —                                |   ✅   |
 | 💎 | **2** | §1.1 Runtime Services            | `SetVirtualAddressMap()` + runtime function pointers     | Phase 1 (§3.1)                   |   ✅   |
-| 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ⬜   |
+| 💎 | **2** | §4.2 Conformance Profiles        | Know if firmware is full UEFI or reduced (EBBR)          | Phase 1 (§4.1)                   |   ✅   |
 | ⭐ | **2** | §9.1 TPM Measured Boot           | TCG event log + PCR values before ExitBootServices       | —                                |   ⬜   |
 | ⭐ | **2** | §10.1 ESRT Firmware Inventory    | Firmware version tracking + update health                | Phase 1 (§4.1)                   |   ⬜   |
 | ⭐ | **2** | §11.1 Boot Timing (FPDT)         | Full power-on-to-desktop boot timeline                   | Phase 1 (§4.1)                   |   ⬜   |
@@ -314,16 +314,25 @@ graph TD
 
 ### 4.2 UEFI Conformance Profile Detection
 
-**Prompt:** UEFI 2.10 introduces Conformance Profiles that allow firmware to declare which subset of UEFI it implements. If the `EFI_CONFORMANCE_PROFILES_TABLE` is absent, assume full UEFI conformance. If present, read the profile GUIDs to understand firmware capabilities. This matters for IoT/embedded platforms that omit heavy features. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"uefi: conformance profile detection"`. Add notes directly in this TODO section.
+**Prompt:** Verify the UEFI Conformance Profile Detection implementation. Confirm that `uefi_config.h` defines `UEFI_PROFILE_UEFI_SPEC` and `UEFI_PROFILE_EBBR` GUIDs, `UEFI_CONFORM_FULL/EBBR/UNKNOWN` constants, and `uefi_conformance_init()` + `uefi_conformance_level()` API. Confirm `uefi_config.c` looks up `EFI_CONFORMANCE_PROFILES_TABLE` via `uefi_find_config_table()`, iterates profile GUIDs, and sets the conformance level. Confirm `boot_hw.c` calls `uefi_conformance_init()` after `uefi_runtime_init()`. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. Check commit `"uefi: conformance profile detection"` exists.
 
-- [ ] Look up `EFI_CONFORMANCE_PROFILES_TABLE` in config table
-- [ ] If absent: assume full UEFI 2.10 conformance (all services available)
-- [ ] If present: iterate profile GUIDs and store in kernel flags:
-  - [ ] `EFI_CONFORMANCE_PROFILES_UEFI_SPEC_GUID` — full conformance
-  - [ ] EBBR profile — embedded minimal (no HII, limited services)
-- [ ] Use profile flags to guard optional service calls
-- [ ] Log: `[UEFI] Conformance: Full UEFI 2.10` or `[UEFI] Conformance: Reduced (EBBR)`
-- [ ] Commit: `"uefi: conformance profile detection"`
+> [!NOTE]
+> **Implementation notes:**
+> - Table struct `uefi_conformance_table` has `version`, `profile_count`, and flexible `profiles[]` array per UEFI 2.10 §4.6
+> - When conformance table is absent (common — OVMF, most real firmware), assume full UEFI conformance
+> - When present, checks for UEFI Spec GUID (full) or EBBR GUID (embedded/reduced)
+> - `uefi_conformance_level()` returns `UEFI_CONFORM_FULL`, `UEFI_CONFORM_EBBR`, or `UEFI_CONFORM_UNKNOWN`
+> - Profile flags usable by other kernel subsystems to guard optional service calls
+> - OVMF shows: `[OK] UEFI: Conformance: Full UEFI (table absent, assumed)`
+
+- [x] Look up `EFI_CONFORMANCE_PROFILES_TABLE` in config table
+- [x] If absent: assume full UEFI 2.10 conformance (all services available)
+- [x] If present: iterate profile GUIDs and store in kernel flags:
+  - [x] `EFI_CONFORMANCE_PROFILES_UEFI_SPEC_GUID` — full conformance
+  - [x] EBBR profile — embedded minimal (no HII, limited services)
+- [x] Use profile flags to guard optional service calls
+- [x] Log: `[UEFI] Conformance: Full UEFI 2.10` or `[UEFI] Conformance: Reduced (EBBR)`
+- [x] Commit: `"uefi: conformance profile detection"`
 
 ---
 

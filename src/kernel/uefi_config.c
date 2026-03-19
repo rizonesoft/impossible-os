@@ -81,3 +81,72 @@ void uefi_config_init(void)
     klog(LOG_INFO, "UEFI", "Config tables: %s (%u/%u known)",
          found_names, known_count, g_boot_info.config_table_count);
 }
+
+/* ============================================================================
+ * Conformance Profile Detection (UEFI 2.10 §4.6)
+ *
+ * The EFI_CONFORMANCE_PROFILES_TABLE contains a list of profile GUIDs that
+ * describe firmware capabilities.  If absent, assume full UEFI conformance
+ * (pre-2.10 firmware).  If present, check for:
+ * - UEFI Spec GUID → full conformance
+ * - EBBR GUID → embedded/minimal (no HII, limited services)
+ * ============================================================================ */
+
+/* EFI_CONFORMANCE_PROFILES_TABLE layout (per UEFI 2.10 spec) */
+struct uefi_conformance_table {
+    uint16_t version;                  /* table version, must be 0x1 */
+    uint16_t profile_count;            /* number of profile GUIDs */
+    struct boot_uefi_guid profiles[];  /* flexible array of GUIDs */
+};
+
+static int s_conformance_level = UEFI_CONFORM_FULL;
+
+void uefi_conformance_init(void)
+{
+    struct boot_uefi_guid conform_guid = UEFI_GUID_CONFORMANCE;
+    uintptr_t table_addr = uefi_find_config_table(&conform_guid);
+
+    if (table_addr == 0) {
+        /* Table absent — pre-UEFI 2.10 or firmware that omits it.
+         * Assume full UEFI conformance. */
+        s_conformance_level = UEFI_CONFORM_FULL;
+        klog(LOG_INFO, "UEFI", "Conformance: Full UEFI (table absent, assumed)");
+        return;
+    }
+
+    const struct uefi_conformance_table *ct =
+        (const struct uefi_conformance_table *)table_addr;
+
+    /* Search for known profile GUIDs */
+    struct boot_uefi_guid uefi_spec = UEFI_PROFILE_UEFI_SPEC;
+    struct boot_uefi_guid ebbr      = UEFI_PROFILE_EBBR;
+    int found_uefi = 0;
+    int found_ebbr = 0;
+
+    uint16_t i;
+    for (i = 0; i < ct->profile_count; i++) {
+        if (guid_equal(&ct->profiles[i], &uefi_spec))
+            found_uefi = 1;
+        if (guid_equal(&ct->profiles[i], &ebbr))
+            found_ebbr = 1;
+    }
+
+    if (found_uefi) {
+        s_conformance_level = UEFI_CONFORM_FULL;
+        klog(LOG_INFO, "UEFI", "Conformance: Full UEFI 2.10 (%u profiles)",
+             ct->profile_count);
+    } else if (found_ebbr) {
+        s_conformance_level = UEFI_CONFORM_EBBR;
+        klog(LOG_WARN, "UEFI", "Conformance: Reduced (EBBR) — "
+             "some services may be unavailable");
+    } else {
+        s_conformance_level = UEFI_CONFORM_UNKNOWN;
+        klog(LOG_WARN, "UEFI", "Conformance: Unknown profile (%u entries)",
+             ct->profile_count);
+    }
+}
+
+int uefi_conformance_level(void)
+{
+    return s_conformance_level;
+}

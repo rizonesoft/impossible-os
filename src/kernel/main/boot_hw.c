@@ -92,6 +92,9 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
     /* Step 3b: UEFI runtime services (SetVirtualAddressMap + RT props) */
     uefi_runtime_init();
 
+    /* Step 3c: UEFI conformance profile (Full UEFI vs EBBR) */
+    uefi_conformance_init();
+
     /* Step 4: Initialize physical memory manager */
     pmm_init();
     HV_BAR(96, 0x00FFFF00);   /* Row 96: YELLOW = PMM OK */
