@@ -214,9 +214,12 @@ void mouse_init(void)
     mouse_write(0xF4);
     mouse_read();
 
-    /* Flush */
-    while (inb(PS2_STATUS_PORT) & 0x01)
-        inb(PS2_DATA_PORT);
+    /* Flush — timeout prevents hang on platforms without i8042 */
+    {
+        uint32_t timeout = 1024;
+        while ((inb(PS2_STATUS_PORT) & 0x01) && --timeout)
+            inb(PS2_DATA_PORT);
+    }
 
     /* Register IRQ 12 (vector 44) */
     idt_register_handler(44, mouse_irq_handler);

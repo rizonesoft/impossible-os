@@ -233,9 +233,14 @@ done:
 
 void keyboard_init(void)
 {
-    /* Flush any pending data in the keyboard buffer */
-    while (inb(KB_STATUS_PORT) & 0x01)
-        inb(KB_DATA_PORT);
+    /* Flush any pending data in the keyboard buffer.
+     * Timeout prevents infinite loop on platforms without an i8042
+     * controller (e.g. Hyper-V Gen 2) where port 0x64 returns 0xFF. */
+    {
+        uint32_t timeout = 1024;
+        while ((inb(KB_STATUS_PORT) & 0x01) && --timeout)
+            inb(KB_DATA_PORT);
+    }
 
     /* Register IRQ 1 handler (interrupt vector 33) */
     idt_register_handler(33, keyboard_irq_handler);

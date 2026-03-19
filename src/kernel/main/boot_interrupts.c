@@ -32,27 +32,53 @@
 
 void boot_interrupts_init(void)
 {
+    /* Hyper-V debug bars — read FB from boot_info at 0x10000 */
+    volatile struct boot_info *_bi =
+        (volatile struct boot_info *)(uintptr_t)0x10000;
+    volatile uint32_t *_fb = (volatile uint32_t *)_bi->fb.addr;
+    uint32_t _pitch = _bi->fb.pitch / 4;
+    uint32_t _fbw = _bi->fb.width;
+    uint32_t _fbh = _bi->fb.height;
+#define HV_BAR(row, color) do { \
+    if (_fb && _fbw > 0) { \
+        uint32_t _r, _c; \
+        for (_r = (row); _r < (row) + 8 && _r < _fbh; _r++) \
+            for (_c = 0; _c < 100 && _c < _fbw; _c++) \
+                _fb[_r * _pitch + _c] = (color); \
+    } \
+} while (0)
+
+    HV_BAR(160, 0x00FF0000);  /* RED = entered boot_interrupts_init */
+
     klog(LOG_DEBUG, "boot", "--- Phase: interrupt controllers & timer ---");
-    /* GDT, IDT, PIC, PIT — must happen before boot splash
-     * so that sleep_ms() works correctly during the fade-in animation. */
     boot_splash_status("Setting up interrupts...");
+
     gdt_init();
+    HV_BAR(172, 0x0000FF00);  /* GREEN = GDT OK */
+
     idt_init();
-    pic_init();   /* Always remap PIC early — PIT needs IRQ0 for boot splash.
-                   * On APIC-only platforms (Hyper-V Gen 2), these writes are
-                   * harmlessly dropped.  pic_disable() is called later when
-                   * LAPIC/IOAPIC takes over (only if PCAT_COMPAT=1). */
+    HV_BAR(184, 0x0000FFFF);  /* CYAN = IDT OK */
+
+    pic_init();
+    HV_BAR(196, 0x00FFFF00);  /* YELLOW = PIC OK */
+
     pit_init();
+    HV_BAR(208, 0x000000FF);  /* BLUE = PIT OK */
+
     rtc_init();
+    HV_BAR(220, 0x00FF8000);  /* ORANGE = RTC OK */
+
     boot_splash_status("Initializing input...");
     keyboard_init();
+    HV_BAR(232, 0x00800080);  /* PURPLE = keyboard OK */
+
     mouse_init();
+    HV_BAR(244, 0x00FFFFFF);  /* WHITE = mouse OK */
 
     klog(LOG_DEBUG, "boot", "--- Phase: display & splash ---");
-    /* Initialize framebuffer */
     fb_init();
+    HV_BAR(256, 0x00FF00FF);  /* MAGENTA = fb_init OK */
 
-    /* Boot splash: black screen + icon + animated dots + status text. */
     boot_splash_init();
     boot_splash_status("Setting up hardware...");
 
@@ -73,11 +99,11 @@ void boot_interrupts_init(void)
     /* Start timer-driven splash animation (needs PIT IRQs running) */
     boot_splash_start_animation();
 
-    /* DHCP fire-and-forget — overlaps with disk scanning */
+    /* DHCP fire-and-forget */
     klog(LOG_DEBUG, "boot",
          "--- Phase: network (DHCP, async fire-and-forget) ---");
     dhcp_discover();
 
-    /* ACPI and SMP init — deferred to boot_storage_init via the
-     * main sequence, since ACPI parsing needs memory but not FS. */
+    HV_BAR(268, 0x0000FF00);  /* GREEN = boot_interrupts complete */
+#undef HV_BAR
 }

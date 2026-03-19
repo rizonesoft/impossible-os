@@ -33,8 +33,28 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 {
     uint32_t i;
 
-    /* Step 1: Initialize serial (always works, even without display) */
+    /* Hyper-V debug: framebuffer progress bars inside boot_hw_init.
+     * Read FB info from boot_info at 0x10000 (identity-mapped). */
+    volatile struct boot_info *_bi =
+        (volatile struct boot_info *)(uintptr_t)0x10000;
+    volatile uint32_t *_fb = (volatile uint32_t *)_bi->fb.addr;
+    uint32_t _pitch = _bi->fb.pitch / 4;
+    uint32_t _fbw = _bi->fb.width;
+    uint32_t _fbh = _bi->fb.height;
+
+#define HV_BAR(row, color) do { \
+    if (_fb && _fbw > 0) { \
+        uint32_t _r, _c; \
+        for (_r = (row); _r < (row) + 8 && _r < _fbh; _r++) \
+            for (_c = 0; _c < 100 && _c < _fbw; _c++) \
+                _fb[_r * _pitch + _c] = (color); \
+    } \
+} while (0)
+
+    /* Step 1: Initialize serial */
     serial_init();
+    HV_BAR(72, 0x0000FF00);   /* Row 72: GREEN = serial_init OK */
+
     klog(LOG_DEBUG, "", "========================================================================");
     klog(LOG_DEBUG, "", "  Impossible OS -- Boot Log");
     klog(LOG_DEBUG, "", "========================================================================");
@@ -54,15 +74,19 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
         serial_write("[FAIL] Unknown bootloader magic!\n");
         for (;;) __asm__ volatile ("hlt");
     }
+    HV_BAR(84, 0x0000FFFF);   /* Row 84: CYAN = boot info parsed */
 
     /* Step 4: Initialize physical memory manager */
     pmm_init();
+    HV_BAR(96, 0x00FFFF00);   /* Row 96: YELLOW = PMM OK */
 
     /* Step 5: Initialize virtual memory manager */
     vmm_init();
+    HV_BAR(108, 0x000000FF);  /* Row 108: BLUE = VMM OK */
 
     /* Step 6: Initialize kernel heap */
     heap_init();
+    HV_BAR(120, 0x00FF8000);  /* Row 120: ORANGE = heap OK */
 
     /* Step 6a: Probe CPU features via CPUID */
     cpuid_init();
@@ -73,6 +97,7 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
         klog(LOG_INFO, "simd", "AVX2 enabled (8 pixels/iter)");
     else
         klog(LOG_WARN, "simd", "AVX2 not available, using SSE2 fallback");
+    HV_BAR(132, 0x00FFFFFF);  /* Row 132: WHITE = CPUID+SIMD OK */
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Hardware ---------------------------------------------------------------");
@@ -84,4 +109,8 @@ void boot_hw_init(uint64_t magic, uint64_t mbi)
 
     /* Step 7d: Register block devices */
     blkdev_register_all();
+    HV_BAR(144, 0x00FF00FF);  /* Row 144: MAGENTA = boot_hw complete */
+
+#undef HV_BAR
 }
+

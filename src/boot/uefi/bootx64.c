@@ -713,15 +713,36 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
                 gFramebuffer[row * gFbPitch + col] = 0x00000000;
     }
 
+    /* Debug indicator: draw a bright red bar at top-left (100x10px).
+     * If this bar is visible on Hyper-V, it proves the UEFI bootloader
+     * loaded and GOP initialized successfully.
+     * Each subsequent stage adds a new colored bar below:
+     *   Row 0:  RED    = GOP init OK
+     *   Row 12: GREEN  = kernel loaded OK
+     *   Row 24: BLUE   = ExitBootServices OK
+     *   Row 36: YELLOW = page tables OK
+     *   Row 48: WHITE  = about to jump to kernel */
+#define DRAW_BAR(y_off, color) do { \
+    UINT32 _r, _c; \
+    for (_r = (y_off); _r < (y_off) + 10 && _r < gFbHeight; _r++) \
+        for (_c = 0; _c < 100 && _c < gFbWidth; _c++) \
+            gFramebuffer[_r * gFbPitch + _c] = (color); \
+} while (0)
+
+    DRAW_BAR(0, 0x00FF0000);  /* RED = GOP OK */
+
     /* Load kernel ELF */
     serial_early_print("BOOT: load_kernel...\n");
     status = load_kernel(&kernel_entry);
     if (EFI_ERROR(status)) {
         serial_early_print("BOOT: FAIL load_kernel\n");
         efi_print(u"[FAIL] Kernel load failed\r\n");
-        return status;
+        /* Draw orange bar to indicate kernel load failure */
+        DRAW_BAR(12, 0x00FF8000);
+        for (;;) __asm__ volatile("hlt");
     }
     serial_early_print("BOOT: load_kernel OK\n");
+    DRAW_BAR(12, 0x0000FF00);  /* GREEN = kernel loaded */
 
     /* Step 4: Find ACPI RSDP */
     serial_early_print("BOOT: find_acpi_rsdp...\n");
@@ -733,7 +754,8 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     if (EFI_ERROR(status)) {
         serial_early_print("BOOT: FAIL get_memory_map\n");
         efi_print(u"[FAIL] GetMemoryMap failed\r\n");
-        return status;
+        DRAW_BAR(24, 0x00FF8000);
+        for (;;) __asm__ volatile("hlt");
     }
 
     fill_memory_map(mmap, map_size, desc_size);
@@ -749,19 +771,23 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         }
         if (EFI_ERROR(status)) {
             serial_early_print("BOOT: FATAL ExitBootServices failed\n");
+            DRAW_BAR(24, 0x00FF8000);
             for (;;) __asm__ volatile("hlt");
         }
     }
     serial_early_print("BOOT: ExitBootServices OK\n");
+    DRAW_BAR(24, 0x000000FF);  /* BLUE = ExitBootServices OK */
 
     /* === NO MORE UEFI CALLS FROM HERE === */
 
     /* Step 7: Set up page tables */
     serial_early_print("BOOT: setup_page_tables...\n");
     setup_page_tables();
+    DRAW_BAR(36, 0x00FFFF00);  /* YELLOW = page tables OK */
 
     /* Step 8: Jump to kernel! */
     serial_early_print("BOOT: jumping to kernel_main\n");
+    DRAW_BAR(48, 0x00FFFFFF);  /* WHITE = about to jump */
     jump_to_kernel(kernel_entry);
 
     /* Never reached */

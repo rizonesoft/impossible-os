@@ -113,15 +113,22 @@ void sleep_ms(uint32_t ms)
 {
     uint64_t target;
     uint64_t flags;
-    /* Read tick_count and freq under the lock, then busy-wait without it
-     * so the PIT IRQ can still update tick_count while we sleep. */
     spin_lock_irqsave(&pit_lock, &flags);
     target = tick_count + ((uint64_t)ms * pit_actual_freq / 1000);
+    uint64_t start_tick = tick_count;
     spin_unlock_irqrestore(&pit_lock, flags);
 
-    /* Busy-wait until enough ticks have elapsed */
+    /* Quick stall check: spin briefly, then test if ticks advanced.
+     * On Hyper-V Gen 2 (no PIC), PIT IRQ0 never fires so tick_count
+     * is frozen. Bail out immediately instead of hanging on hlt. */
+    for (volatile uint32_t spin = 0; spin < 1000000; spin++)
+        ;
+    if (pit_get_ticks() == start_tick)
+        return;  /* PIT not ticking — bail out */
+
+    /* Normal sleep: wait for ticks */
     while (pit_get_ticks() < target)
-        __asm__ volatile("hlt");   /* Sleep until next interrupt */
+        __asm__ volatile("hlt");
 }
 
 uint64_t uptime(void)
