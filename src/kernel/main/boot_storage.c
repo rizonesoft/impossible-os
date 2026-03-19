@@ -93,71 +93,16 @@ void boot_storage_init(uint64_t magic)
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* ACPI — acpi_init() now runs in boot_interrupts_init() (before PIC/PIT).
-     * The LAPIC/IOAPIC/SMP block below consumes the already-parsed MADT. */
+    /* LAPIC/IOAPIC init already happened in boot_interrupts_init().
+     * Here we just start the LAPIC timer (if available) and bring up
+     * secondary CPUs via SMP init. */
     if (g_boot_info.acpi_available) {
-        /* Switch to LAPIC/IOAPIC when:
-         *   (a) SMP (cpu_count > 1) — need LAPIC for inter-CPU IPI, or
-         *   (b) APIC-only (PCAT_COMPAT=0) — no PIC exists (Hyper-V Gen 2).
-         *
-         * Single-CPU with PIC (QEMU default) stays on PIT timer to avoid
-         * LAPIC timer frequency issues on TCG emulation. */
-        if ((acpi_get_cpu_count() > 1 || !acpi_pcat_compat()) &&
-            acpi_get_ioapic_base() != 0) {
-            boot_splash_status("Initializing LAPIC...");
-            lapic_init();
+        if (ioapic_available() && lapic_available()) {
+            /* Start LAPIC timer as the primary tick source */
+            lapic_timer_init(100);
 
-            if (lapic_available()) {
-                ioapic_init();
-
-                if (ioapic_available()) {
-                    /* Only touch the PIC if the platform actually has one */
-                    if (acpi_pcat_compat()) {
-                        pic_disable();
-                        klog(LOG_INFO, "irq",
-                             "Switched to LAPIC/IOAPIC (PIC disabled)");
-                    } else {
-                        klog(LOG_INFO, "irq",
-                             "LAPIC/IOAPIC active (APIC-only, no PIC)");
-                    }
-
-                    /* Drain stale ISR bits from PIC→LAPIC transition */
-                    {
-                        uint32_t isr_dirty = 1;
-                        uint32_t drain_rounds = 0;
-                        while (isr_dirty && drain_rounds < 256) {
-                            isr_dirty = 0;
-                            uint32_t ri;
-                            for (ri = 0; ri < 8; ri++) {
-                                uint32_t isr_val =
-                                    lapic_read(0x100 + ri * 0x10);
-                                if (isr_val) {
-                                    isr_dirty = 1;
-                                    if (drain_rounds == 0)
-                                        klog(LOG_DEBUG, "lapic",
-                                             "ISR[%u]=0x%x (stale)",
-                                             (uint64_t)ri,
-                                             (uint64_t)isr_val);
-                                }
-                            }
-                            if (isr_dirty) {
-                                lapic_eoi();
-                                drain_rounds++;
-                            }
-                        }
-                        if (drain_rounds > 0)
-                            klog(LOG_INFO, "lapic",
-                                 "ISR drain: %u EOIs sent",
-                                 (uint64_t)drain_rounds);
-                    }
-
-                    /* Start LAPIC timer as the primary tick source */
-                    lapic_timer_init(100);
-                }
-
-                boot_splash_status("Initializing SMP...");
-                smp_init();
-            }
+            boot_splash_status("Initializing SMP...");
+            smp_init();
         } else {
             /* No IOAPIC — single CPU with PIC routing only */
             smp_init();

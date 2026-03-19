@@ -83,7 +83,7 @@ graph TD
 | ⭐ | Phase | Section                          | What It Delivers                                           | Depends On                        | Status |
 | -- | :----: | -------------------------------- | ---------------------------------------------------------- | --------------------------------- | :----: |
 | 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists   | —                                 |   ✅   |
-| 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ⬜   |
+| 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ✅   |
 | 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ⬜   |
 | 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ⬜   |
 | 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ⬜   |
@@ -225,7 +225,15 @@ boot_storage_init()
 
 ## 2. Move LAPIC/IOAPIC Init Before PIT
 
-**Prompt:** With ACPI MADT parsed, initialize the LAPIC and IOAPIC immediately so that PIT IRQ0 can be routed through the IOAPIC instead of the PIC. This means `lapic_init()` and `ioapic_init()` must run before `pit_init()`. Currently these live in `boot_storage_init()`. The LAPIC enables the local interrupt controller and EOI mechanism. The IOAPIC sets up the I/O interrupt redirect table for ISA IRQs (including IRQ0=PIT, IRQ1=keyboard, IRQ12=mouse). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: LAPIC/IOAPIC init before PIT for APIC-routed IRQ0"`. Add notes directly in this TODO section.
+**Prompt:** Verify that `lapic_init()` and `ioapic_init()` run in `boot_interrupts_init()` (after `acpi_init()`, before `pit_init()`), NOT in `boot_storage_init()`. Confirm QEMU serial log shows `LAPIC enabled` → `IOAPIC Route: ISA IRQ 0 -> GSI 2` → `Switched to LAPIC/IOAPIC (PIC disabled)` → `PIT timer: 100 Hz`. Confirm keyboard (IRQ1) and mouse (IRQ12) still work. Confirm `boot_storage.c` only contains SMP init and LAPIC timer init. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Check commit `"boot: LAPIC/IOAPIC init before PIT for APIC-routed IRQ0"`.
+
+> [!NOTE]
+> **Implementation notes:**
+> - Full LAPIC/IOAPIC/PIC-disable/ISR-drain block moved from `boot_storage.c` to `boot_interrupts.c`
+> - `pic_init()` made conditional: only runs when `!ioapic_available()` (also covers §3)
+> - ISR drain logic kept after PIC disable — firmware may leave stale ISR bits
+> - SMP init + LAPIC timer remain in `boot_storage.c` (separate concern)
+> - QEMU verified: `IRQ 0 → GSI 2, vec 32`, PIT 100Hz, keyboard/mouse, SMP 2 CPUs
 
 > [!CAUTION]
 > **ISR stale-bit drain:** The current `boot_storage.c` has ISR drain logic that
@@ -237,16 +245,16 @@ boot_storage_init()
 > when `ioapic_available()` returns true. Once the IOAPIC is initialized early,
 > this dispatch path activates automatically — no driver changes needed for EOI.
 
-- [ ] Remove `lapic_init()` from `boot_storage_init()`
-- [ ] Remove `ioapic_init()` from `boot_storage_init()`
-- [ ] Add `lapic_init()` to `boot_interrupts_init()` after `acpi_init()`
-- [ ] Add `ioapic_init()` to `boot_interrupts_init()` after `lapic_init()`
-- [ ] Verify `ioapic_init()` routes IRQ0 (PIT) to BSP LAPIC via IOAPIC redirect table
-- [ ] Verify `ioapic_init()` routes IRQ1 (keyboard) and IRQ12 (mouse) too
-- [ ] Verify `irq_eoi()` automatically sends LAPIC EOI (existing `ioapic_available()` check)
-- [ ] Move or remove ISR drain logic from `boot_storage.c` (no PIC→APIC transition)
-- [ ] Build and test on QEMU: PIT ticks still fire, keyboard/mouse still work
-- [ ] Commit: `"boot: LAPIC/IOAPIC init before PIT for APIC-routed IRQ0"`
+- [x] Remove `lapic_init()` from `boot_storage_init()`
+- [x] Remove `ioapic_init()` from `boot_storage_init()`
+- [x] Add `lapic_init()` to `boot_interrupts_init()` after `acpi_init()`
+- [x] Add `ioapic_init()` to `boot_interrupts_init()` after `lapic_init()`
+- [x] Verify `ioapic_init()` routes IRQ0 (PIT) to BSP LAPIC via IOAPIC redirect table
+- [x] Verify `ioapic_init()` routes IRQ1 (keyboard) and IRQ12 (mouse) too
+- [x] Verify `irq_eoi()` automatically sends LAPIC EOI (existing `ioapic_available()` check)
+- [x] Move or remove ISR drain logic from `boot_storage.c` (no PIC→APIC transition)
+- [x] Build and test on QEMU: PIT ticks still fire, keyboard/mouse still work
+- [x] Commit: `"boot: LAPIC/IOAPIC init before PIT for APIC-routed IRQ0"`
 
 ---
 
