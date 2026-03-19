@@ -308,6 +308,39 @@ boot_storage_init()
 - [ ] Build and test: QEMU uses PIT, Hyper-V uses STIMER, real hardware uses LAPIC/TSC
 - [ ] Commit: `"kernel: timer source hierarchy with automatic selection"`
 
+### 6a. Migrate Boot Splash Spinner Off PIT Callback
+
+> [!WARNING]
+> → XREF: `TODO-010.97-Progressive-Spinner.md` — The spinner currently uses
+> `pit_register_callback()` to drive its animation. When PIT is phased out,
+> the spinner must move to a `sleep_ms()` polling loop or a kernel timer API.
+
+> [!NOTE]
+> **Known bug (fixed):** `pit_get_ticks()` uses `spin_lock_irqsave(&pit_lock)`,
+> and the PIT ISR already holds `pit_lock` when calling registered callbacks.
+> Calling `pit_get_ticks()` from a PIT callback causes a deadlock. The spinner
+> was reverted to a simple frame counter. A `sleep_ms()` loop avoids this
+> entirely since it runs outside ISR context.
+
+- [ ] Replace `pit_register_callback()` in `spinner_start()` with a `sleep_ms()` polling loop:
+  ```
+  while (s_active) {
+      spinner_render(255);
+      fb_swap_rect(bx, by, bw, bh);
+      sleep_ms(100);  /* 10 fps */
+  }
+  ```
+- [ ] `boot_splash_start_animation()` already blocks the main thread — the polling loop fits naturally
+- [ ] Remove the PIT callback function (`spinner_timer_callback`) from `spinner.c`
+- [ ] Remove `#include "kernel/drivers/pit.h"` from `spinner.c`
+- [ ] Update `spinner_start()` to be blocking (returns when `spinner_stop()` is called from another context)
+  - [ ] Alternative: use the new timer API from §6 (`timer_set_periodic()`) instead of `sleep_ms()`
+- [ ] Update `spinner_stop()` to set `s_active = 0` — the polling loop exits on next iteration
+- [ ] With ISR dependency removed, the spinner can optionally use FPU/float math (not needed currently)
+- [ ] Build and test: spinner animates identically to PIT-driven version
+- [ ] Verify identical speed on QEMU and VirtualBox (no more PIT timing variance)
+- [ ] Commit: `"spinner: migrate from PIT callback to sleep_ms loop"`
+
 ---
 
 ## 7. Boot Time Visualization (🚀 Impossible OS Feature)
@@ -398,17 +431,18 @@ boot_storage_init()
 
 ## Priority Order
 
-| Priority | Section                                 | Description                                                   |
-| :------: | --------------------------------------- | ------------------------------------------------------------- |
-| 🔴 P0   | 1. Move ACPI MADT Parsing Early         | Prerequisite for everything — must know if PIC exists         |
-| 🔴 P0   | 2. Move LAPIC/IOAPIC Before PIT         | Core change — route IRQ0 through IOAPIC, not PIC              |
-| 🔴 P0   | 5. Full IDT Coverage                    | Prevents #GP BSOD on Hyper-V (observed crash at vector 0xF6) |
-| 🟠 P1   | 3. Conditional PIC Init                 | Guard all PIC calls with PCAT_COMPAT check                    |
-| 🟠 P1   | 4. Dynamic IRQ Registration API         | Foundation for MSI, VMBus, and interrupt affinity              |
-| 🟡 P2   | 6. Timer Source Hierarchy ⭐            | Auto-select best timer; expose in System Info                 |
-| 🟡 P2   | 7. Boot Time Visualization ⭐           | Gantt chart in System Info — no OS shows this natively        |
-| 🟡 P2   | 8. Remove Debug Workarounds             | Cleanup after APIC-first is verified                          |
-| 🟡 P2   | 9. SMP Init Adjustment                  | Verify AP boot still works with early LAPIC                   |
+| ⭐ | Priority | Section                                 | Description                                                   |
+| -- | :------: | --------------------------------------- | ------------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1. Move ACPI MADT Parsing Early         | Prerequisite for everything — must know if PIC exists         |
+| 💎 | 🔴 P0   | 2. Move LAPIC/IOAPIC Before PIT         | Core change — route IRQ0 through IOAPIC, not PIC              |
+| 💎 | 🔴 P0   | 5. Full IDT Coverage                    | Prevents #GP BSOD on Hyper-V (observed crash at vector 0xF6) |
+| 💎 | 🟠 P1   | 3. Conditional PIC Init                 | Guard all PIC calls with PCAT_COMPAT check                    |
+| 💎 | 🟠 P1   | 4. Dynamic IRQ Registration API         | Foundation for MSI, VMBus, and interrupt affinity              |
+| ⭐ | 🟡 P2   | 6. Timer Source Hierarchy            | Auto-select best timer; expose in System Info                 |
+| 💎 | 🟡 P2   | 6a. Spinner PIT Migration            | Move spinner from PIT callback to `sleep_ms()` loop          |
+| ⭐ | 🟡 P2   | 7. Boot Time Visualization           | Gantt chart in System Info — no OS shows this natively        |
+| 💎 | 🟡 P2   | 8. Remove Debug Workarounds             | Cleanup after APIC-first is verified                          |
+| 💎 | 🟡 P2   | 9. SMP Init Adjustment                  | Verify AP boot still works with early LAPIC                   |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -417,15 +451,112 @@ boot_storage_init()
 
 ## OS Comparison
 
-| Feature                             | 🪟 Windows 11                         | 🐧 Linux 6.x                          | 🚀 Impossible OS (Current)             | 🚀 After Refactor                       |
-| ----------------------------------- | ------------------------------------- | -------------------------------------- | --------------------------------------- | ---------------------------------------- |
-| APIC-first boot                     | ✅ HAL always uses APIC               | ✅ APIC init before PIT                | ❌ PIC → PIT → APIC (too late)          | ✅ ACPI → LAPIC → IOAPIC → PIT           |
-| PIC fallback                        | ✅ Only if MADT says PCAT_COMPAT      | ✅ Only if no IOAPIC found             | ⚠️ PIC always initialized              | ✅ Conditional on PCAT_COMPAT            |
-| Hyper-V Gen 2 boot                  | ✅ Native support                     | ✅ Native support                      | ❌ Hangs (no PIC = no PIT ticks)        | ✅ IOAPIC routes IRQ0                    |
-| PIT timer on APIC-only              | ✅ IRQ0 via IOAPIC pin 2              | ✅ IRQ0 via IOAPIC (ISO override)      | ❌ PIT IRQ0 routed through dead PIC     | ✅ IRQ0 via IOAPIC                       |
-| Full IDT coverage (256 entries)     | ✅ All 256 entries populated          | ✅ All 256 entries populated           | ❌ ~48 entries, rest null → #GP         | ✅ All 256 with handler dispatch         |
-| Dynamic IRQ registration            | ✅ `IoConnectInterruptEx`             | ✅ `request_irq()` / `free_irq()`     | ❌ Hardcoded vector→handler mapping     | ✅ `irq_register()` with vector alloc    |
-| EOI dispatch (PIC/LAPIC)            | ✅ Unified HAL EOI                    | ✅ `apic_eoi()` / `edge_ack()`        | ✅ `irq_eoi()` dispatches via flag      | ✅ Already working (no change needed)    |
-| **Timer source hierarchy** ⭐       | ✅ Internal (invisible to users)      | ✅ `clocksource` (CLI sysfs only)     | ❌ PIT only                             | ✅ TSC/STIMER/HPET/LAPIC/PIT + GUI      |
-| **Boot time visualization** ⭐      | ❌ Requires ETW + WPA (dev tools)     | ⚠️ `systemd-analyze blame` (text CLI) | ❌ Serial timestamps only               | ✅ Gantt chart in System Information     |
-| **IRQ statistics GUI** ⭐           | ❌ Performance Monitor (hidden)       | ❌ `/proc/interrupts` (CLI only)       | ❌ No IRQ counters                       | ✅ Per-vector counters in Task Manager   |
+| ⭐ | Feature                             | 🪟 Windows 11                         | 🐧 Linux 6.x                          | 🚀 Impossible OS (Current)             | 🚀 After Refactor                       |
+| -- | ----------------------------------- | ------------------------------------- | -------------------------------------- | --------------------------------------- | ---------------------------------------- |
+| 💎 | APIC-first boot                     | ✅ HAL always uses APIC               | ✅ APIC init before PIT                | ❌ PIC → PIT → APIC (too late)          | ✅ ACPI → LAPIC → IOAPIC → PIT           |
+| 💎 | PIC fallback                        | ✅ Only if MADT says PCAT_COMPAT      | ✅ Only if no IOAPIC found             | ⚠️ PIC always initialized              | ✅ Conditional on PCAT_COMPAT            |
+| 💎 | Hyper-V Gen 2 boot                  | ✅ Native support                     | ✅ Native support                      | ❌ Hangs (no PIC = no PIT ticks)        | ✅ IOAPIC routes IRQ0                    |
+| 💎 | PIT timer on APIC-only              | ✅ IRQ0 via IOAPIC pin 2              | ✅ IRQ0 via IOAPIC (ISO override)      | ❌ PIT IRQ0 routed through dead PIC     | ✅ IRQ0 via IOAPIC                       |
+| 💎 | Full IDT coverage (256 entries)     | ✅ All 256 entries populated          | ✅ All 256 entries populated           | ❌ ~48 entries, rest null → #GP         | ✅ All 256 with handler dispatch         |
+| 💎 | Dynamic IRQ registration            | ✅ `IoConnectInterruptEx`             | ✅ `request_irq()` / `free_irq()`     | ❌ Hardcoded vector→handler mapping     | ✅ `irq_register()` with vector alloc    |
+| 💎 | EOI dispatch (PIC/LAPIC)            | ✅ Unified HAL EOI                    | ✅ `apic_eoi()` / `edge_ack()`        | ✅ `irq_eoi()` dispatches via flag      | ✅ Already working (no change needed)    |
+| ⭐ | **Timer source hierarchy**       | ✅ Internal (invisible to users)      | ✅ `clocksource` (CLI sysfs only)     | ❌ PIT only                             | ✅ TSC/STIMER/HPET/LAPIC/PIT + GUI      |
+| ⭐ | **Boot time visualization**      | ❌ Requires ETW + WPA (dev tools)     | ⚠️ `systemd-analyze blame` (text CLI) | ❌ Serial timestamps only               | ✅ Gantt chart in System Information     |
+| ⭐ | **IRQ statistics GUI**           | ❌ Performance Monitor (hidden)       | ❌ `/proc/interrupts` (CLI only)       | ❌ No IRQ counters                       | ✅ Per-vector counters in Task Manager   |
+
+---
+
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **This file is part of the Bootloader subsystem.** Sections have a strict
+> dependency chain: ACPI parsing → interrupt controller init → conditional PIC →
+> dynamic IRQ API → IDT coverage → timer hierarchy → cleanup. External
+> dependencies include `TODO-010-Bootloader.md` (Boot Splash, Interrupts),
+> `TODO-063.09-APIC-Architecture.md` (full APIC subsystem), and
+> `TODO-010.97-Progressive-Spinner.md` (spinner PIT migration).
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    S1["§1 Move ACPI MADT Early"]
+    S2["§2 LAPIC/IOAPIC Before PIT"]
+    S3["§3 Conditional PIC Init"]
+    S4["§4 Dynamic IRQ Registration"]
+    S5a["§5a Hyper-V Synthetic ISRs"]
+    S5b["§5b Catch-All IDT Stubs"]
+    S6["§6 Timer Source Hierarchy"]
+    S6a["§6a Spinner PIT Migration"]
+    S7["§7 Boot Time Visualization"]
+    S8["§8 Remove Debug Workarounds"]
+    S9["§9 SMP Init Adjustment"]
+
+    %% External dependencies
+    X1["010-Bootloader.md §2<br/>Boot Splash ✅"]
+    X2["010.97-Spinner.md §2<br/>Animation Engine ✅"]
+    X3["063.09-APIC.md §2<br/>LAPIC Calibration"]
+    X4["063.09-APIC.md §8<br/>MSI/MSI-X Support"]
+
+    %% Core chain: ACPI → LAPIC/IOAPIC → conditional PIC
+    S1 --> S2
+    S2 --> S3
+    S2 --> S9
+
+    %% IRQ infrastructure
+    S3 --> S4
+    S4 --> S5a
+    S4 --> S5b
+    S4 --> S6
+
+    %% Timer hierarchy and spinner migration
+    S6 --> S6a
+    S2 --> S6
+
+    %% Cleanup and profiling
+    S3 --> S8
+    S5a --> S8
+    S6 --> S7
+    S1 --> S7
+
+    %% Cross-file dependencies
+    X1 --> S6a
+    X2 --> S6a
+    X3 --> S6
+    X4 --> S4
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase | Section                          | What It Delivers                                          | Depends On                        | Status |
+| -- | :----: | -------------------------------- | --------------------------------------------------------- | --------------------------------- | :----: |
+| 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists  | —                                 |   ⬜   |
+| 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW   | Phase 1 (§1)                      |   ⬜   |
+| 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions          | Phase 1 (§1) + Phase 2 (§2)       |   ⬜   |
+| 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC      | Phase 2 (§2)                      |   ⬜   |
+| 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus         | Phase 3 (§3)                      |   ⬜   |
+| 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
+| 💎 | **5** | §5a Hyper-V Synthetic ISRs       | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ⬜   |
+| ⭐ | **5** | §6 Timer Source Hierarchy        | Auto-select best timer — TSC/STIMER/HPET/LAPIC/PIT       | Phase 4 (§4) + LAPIC calibration  |   ⬜   |
+| 💎 | **6** | §6a Spinner PIT Migration        | Spinner off PIT callback — `sleep_ms()` loop instead      | Phase 5 (§6) + Spinner §2         |   ⬜   |
+| ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + Phase 5 (§6)       |   ⬜   |
+| 💎 | **7** | §8 Remove Debug Workarounds      | Cleanup: delete HV_BAR macros, stall detection, debug bars | Phase 3 (§3) + Phase 5 (§5a)      |   ⬜   |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
+> Phases 1–3 are the critical APIC-first boot chain that fixes Hyper-V Gen 2.
+> Phases 4–5 build the modern interrupt/timer infrastructure.
+> Phases 6–7 are polish and cleanup.
+
+> [!TIP]
+> **§6a (Spinner PIT Migration) is low-risk.** The spinner already uses a frame
+> counter and `smoothstep256()` — no PIT-specific math. The migration is purely
+> mechanical: replace `pit_register_callback()` with `while (active) { render(); sleep_ms(100); }`.
+> This can be done independently once §6 establishes the timer API, or even
+> earlier by using `sleep_ms()` directly (which already works via PIT today).
+
+> [!CAUTION]
+> **Phase 1–2 ordering is critical.** If LAPIC/IOAPIC init fails (e.g., bad MADT
+> parse), no interrupts work at all — not even PIT. Always test on QEMU first
+> before Hyper-V. The serial console is your only debugging tool if the screen
+> goes black.
