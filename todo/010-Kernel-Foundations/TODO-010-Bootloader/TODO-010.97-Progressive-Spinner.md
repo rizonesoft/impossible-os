@@ -81,15 +81,15 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                          | What It Delivers                                         | Depends On                       | Status |
-| -- | :----: | -------------------------------- | -------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **1** | §1.1 Sine/Cosine LUT            | 256-entry fixed-point table — math foundation            | —                                |   ⬜   |
+| ⭐ | Phase | Section                         | What It Delivers                                         | Depends On                       | Status |
+| -- | :----: | ------------------------------- | -------------------------------------------------------- | ------------------------------- | :----: |
+| 💎 | **1** | §1.1 Sine/Cosine LUT            | 256-entry fixed-point table — math foundation            | —                                |   ✅   |
 | 💎 | **1** | §2.1 Easing LUT                 | 64-entry ease-in-out curve — animation smoothness        | —                                |   ⬜   |
-| 💎 | **2** | §1.2 Arc Drawing Function       | Anti-aliased arc ring renderer — the core primitive      | Phase 1 (§1.1)                   |   ⬜   |
-| 💎 | **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ⬜   |
-| 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2) |   ⬜   |
-| 💎 | **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash ✅                   |   ⬜   |
-| 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)    |   ⬜   |
+| 💎 | **2** | §1.2 Arc Drawing Function       | Anti-aliased arc ring renderer — the core primitive      | Phase 1 (§1.1)                   |   ✅   |
+| 💎 | **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ✅   |
+| 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ⬜   |
+| 💎 | **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash                      |   ✅   |
+| 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ⬜   |
 | 💎 | **4** | §2.3 Accent Color Theming       | System accent color from Registry                        | Phase 3 (§2.2)                   |   ⬜   |
 | 💎 | **5** | §3.3 Update Sizing Reference    | Documentation: update parent TODO sizing table           | Phase 4 (§3.2)                   |   ⬜   |
 | 💎 | **5** | §4.1 Multi-Instance API         | Reusable spinner for dialogs, shell, settings            | Phase 3 (§2.2)                   |   ⬜   |
@@ -157,64 +157,73 @@ In a freestanding kernel, we replicate this with:
 
 ---
 
-## 1. Arc Ring Renderer *(agent)*
+## 1. Arc Ring Renderer ✅ *(agent)*
 
-**Prompt:** Implement the core arc ring drawing primitive: a filled anti-aliased arc of configurable radius, stroke width, start angle, and sweep angle. This is the pixel-level foundation — everything else builds on it. The renderer must work entirely with integer math (no FPU/SSE) since it runs in timer ISR context. Use a pre-computed sine/cosine lookup table (256 entries, fixed-point 8.8) to avoid runtime trigonometry. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: anti-aliased arc ring renderer"`. Add notes directly in this TODO section.
+**Prompt:** ✅ VERIFICATION — Arc ring renderer is implemented. Verify:
+(1) `tools/gen_arc_lut.py` generates `src/kernel/gfx/arc_lut.h` with `arc_sin_lut[256]` and `arc_cos_lut[256]` (int16_t, fixed-point 8.8);
+(2) `arc_sin_lut[0]==0`, `arc_sin_lut[64]==256`, `arc_sin_lut[128]==0`, `arc_cos_lut[0]==256`, `arc_cos_lut[64]==0`;
+(3) `include/kernel/gfx/arc_ring.h` declares `arc_ring_draw()` (buffer-based API) and `arc_ring_size_for_height()`;
+(4) `src/kernel/gfx/arc_ring.c` implements: per-pixel radial+angular test, AA blend zones (inner/outer/angular), rounded end caps, integer atan2 via octant decomposition;
+(5) `arc_ring_size_for_height()` returns correct values for <1080p (20/3), ≥1080p (24/3), ≥1440p (32/4), ≥2160p (48/5);
+(6) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-> [!TIP]
-> **Key insight:** The arc is NOT drawn by computing sin/cos per pixel. Instead:
-> pre-compute 256 unit-circle points → scale by radius → draw thick strokes
-> between consecutive points using Bresenham circles. The stroke width is
-> achieved by drawing multiple concentric arcs (inner to outer radius).
+> [!NOTE]
+> **Implementation notes (2026-03-19):**
+> - **Buffer-based API**: `arc_ring_draw()` takes a pixel buffer + dimensions instead of
+>   calling `fb_put_pixel()` directly. This decouples the renderer from framebuffer globals
+>   so it works with both the boot splash (direct backbuffer) and the compositor (window surfaces).
+> - **Algorithm**: Per-pixel test over the arc's bounding box. For each pixel: (1) compute
+>   distance² → determine if inside [r_inner, r_outer] ring; (2) compute angle via integer
+>   atan2 (octant decomposition, ~0.7° max error); (3) check if angle is within [start, start+sweep].
+>   AA uses smooth blend zones: 2px on radial edges (same technique as `splash_draw_dot()`) and
+>   3 LUT-step angular blending at arc endpoints.
+> - **End caps**: Rounded caps drawn as small AA filled circles at the midpoint of the ring
+>   thickness, at both arc start and end angles. Uses `arc_sin_lut`/`arc_cos_lut` to compute
+>   cap center positions.
+> - **Include path gotcha**: The LUT is at `src/kernel/gfx/arc_lut.h` — include as `"gfx/arc_lut.h"`
+>   (relative to `-Isrc/kernel`), not `"kernel/gfx/arc_lut.h"`.
+> - **No Makefile changes**: `find $(KERNEL_DIR) -name '*.c'` auto-discovers `arc_ring.c`.
+>   No SSE needed — compiled with default `CFLAGS` (including `-mno-sse`).
 
 ### 1.1 Sine/Cosine Lookup Table
 
-- [ ] Create `src/kernel/gfx/arc_lut.h` — 256-entry sin/cos table (fixed-point 8.8)
-- [ ] Table covers 0°–360° in 256 steps (1.40625° per step)
-- [ ] Format: `int16_t sin_lut[256]` where value = `sin(angle) * 256`
-- [ ] Generate at compile time via `tools/gen_arc_lut.py` (Python script → C header)
-- [ ] Verify: `sin_lut[0] = 0`, `sin_lut[64] = 256` (sin 90°), `sin_lut[128] = 0` (sin 180°)
-- [ ] Commit (with §1.2): `"gfx: anti-aliased arc ring renderer"`
+- [x] Create `src/kernel/gfx/arc_lut.h` — 256-entry sin/cos table (fixed-point 8.8)
+- [x] Table covers 0°–360° in 256 steps (1.40625° per step)
+- [x] Format: `int16_t arc_sin_lut[256]` and `int16_t arc_cos_lut[256]`, values = func(angle) × 256
+- [x] Generate via `tools/gen_arc_lut.py` (Python script → redirected to C header)
+- [x] Verify: `arc_sin_lut[0] = 0`, `arc_sin_lut[64] = 256`, `arc_sin_lut[128] = 0`, `arc_cos_lut[0] = 256`
+- [x] Commit (with §1.2): `"gfx: anti-aliased arc ring renderer"`
 
 ### 1.2 Arc Drawing Function
 
-- [ ] Create `src/kernel/gfx/arc_ring.c` and `include/kernel/gfx/arc_ring.h`
-- [ ] Core function:
+- [x] Create `src/kernel/gfx/arc_ring.c` and `include/kernel/gfx/arc_ring.h`
+- [x] Buffer-based API (decoupled from framebuffer globals):
   ```c
-  /* Draw an anti-aliased arc ring to the framebuffer.
-   * cx,cy      — center of the ring
-   * radius     — outer radius in pixels
-   * stroke     — ring thickness in pixels
-   * start_256  — start angle (0–255, maps to 0°–360°)
-   * sweep_256  — arc sweep length (0–255, maps to 0°–360°)
-   * color      — ARGB32 fill color */
-  void arc_ring_draw(int32_t cx, int32_t cy,
+  void arc_ring_draw(uint32_t *buf, uint32_t buf_w, uint32_t buf_h,
+                     int32_t cx, int32_t cy,
                      int32_t radius, int32_t stroke,
                      uint8_t start_256, uint8_t sweep_256,
                      uint32_t color);
   ```
-- [ ] Render algorithm:
-  - [ ] For each angle step in `[start_256, start_256 + sweep_256]`:
-    - [ ] Compute outer point: `(cx + cos*radius/256, cy + sin*radius/256)`
-    - [ ] Compute inner point: `(cx + cos*(radius-stroke)/256, cy + sin*(radius-stroke)/256)`
-    - [ ] Draw filled line between inner and outer points
-  - [ ] For arc endpoints: draw rounded caps (small filled circles at stroke/2 radius)
-- [ ] Anti-aliasing: 2px blend zone on inner and outer edges (same technique as `splash_draw_dot`)
-- [ ] Bounds checking: skip pixels outside framebuffer dimensions
-- [ ] No FPU — all math is integer with the 8.8 fixed-point LUT
-- [ ] Commit: `"gfx: anti-aliased arc ring renderer"`
+- [x] Render algorithm: per-pixel radial test (distance²) + angular test (integer atan2)
+- [x] Anti-aliasing: 2px blend zone on inner/outer radial edges + 3-step angular AA at endpoints
+- [x] Rounded end caps: AA filled circles at stroke/2 radius on ring midline
+- [x] Alpha blending: proper source-over blend onto existing buffer contents
+- [x] Bounds checking: all pixel writes clamped to buffer dimensions
+- [x] No FPU — all math is integer with the 8.8 fixed-point LUT
+- [x] Commit: `"gfx: anti-aliased arc ring renderer"`
 
 ### 1.3 HiDPI Scaling
 
-- [ ] Ring dimensions scale with screen height (same strategy as dot geometry):
+- [x] Ring dimensions scale with screen height (same strategy as dot geometry):
   | Screen height | Ring radius | Stroke width |
   |---|---|---|
   | < 1080p       | 20px       | 3px          |
   | ≥ 1080p       | 24px       | 3px          |
   | ≥ 1440p       | 32px       | 4px          |
   | ≥ 2160p (4K)  | 48px       | 5px          |
-- [ ] `arc_ring_size_for_height(scr_h)` — returns `{radius, stroke}` pair
-- [ ] Commit (with §1.2): `"gfx: anti-aliased arc ring renderer"`
+- [x] `arc_ring_size_for_height(scr_h)` — returns `struct arc_ring_size {radius, stroke}` pair
+- [x] Commit (with §1.2): `"gfx: anti-aliased arc ring renderer"`
 
 ---
 
