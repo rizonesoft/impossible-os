@@ -48,6 +48,10 @@ void pic_unmask_irq(uint8_t irq);
 /* Disable both PICs entirely (for APIC migration later) */
 void pic_disable(void);
 
+/* Check if the PIC is initialized and active.
+ * Returns 0 on APIC-only platforms (PCAT_COMPAT=0). */
+int  pic_available(void);
+
 /* ---- Unified EOI ----
  * Use irq_eoi() in IRQ handlers instead of pic_send_eoi() directly.
  * When the LAPIC is active, this sends EOI to the LAPIC; otherwise

@@ -134,11 +134,22 @@ void boot_interrupts_init(void)
         HV_BAR(193, 0x0080FF00);  /* LIME = LAPIC/IOAPIC OK */
     }
 
-    /* PIC init — only when no IOAPIC took over routing.
-     * When IOAPIC is active, PIC is already disabled above.
-     * pic_init() remaps PIC vectors to 32-47 for the legacy path. */
+    /* PIC init — only when a PIC exists AND IOAPIC has NOT taken over.
+     *
+     * Three states:
+     *   1. No ACPI: assume legacy PIC → pic_init()
+     *   2. PCAT_COMPAT=1, no IOAPIC: PIC is the IRQ controller → pic_init()
+     *   3. PCAT_COMPAT=1, IOAPIC active: PIC already disabled above → skip
+     *   4. PCAT_COMPAT=0: no PIC exists (APIC-only) → skip
+     *
+     * pic_unmask_irq/pic_mask_irq are self-guarding (no-op when pic_ready=0). */
     if (!ioapic_available()) {
-        pic_init();
+        if (!g_boot_info.acpi_available || acpi_pcat_compat()) {
+            pic_init();
+        } else {
+            klog(LOG_INFO, "irq",
+                 "PIC: skipped (PCAT_COMPAT=0, APIC-only platform)");
+        }
     }
     HV_BAR(196, 0x00FFFF00);  /* YELLOW = PIC OK */
 

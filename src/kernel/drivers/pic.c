@@ -14,6 +14,9 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
+/* PIC state — set by pic_init(), cleared by pic_disable() */
+static int pic_ready = 0;
+
 /* Inline port I/O helpers */
 static inline void outb(uint16_t port, uint8_t val)
 {
@@ -82,14 +85,23 @@ void pic_init(void)
     /* Unmask cascade IRQ2 so slave PIC can reach the CPU */
     pic_unmask_irq(IRQ_CASCADE);
 
+    pic_ready = 1;
+
     klog(LOG_INFO, "irq", "PIC remapped (IRQ 0-7 → INT 32-39, IRQ 8-15 → INT 40-47)");
 
     (void)mask1;
     (void)mask2;
 }
 
+int pic_available(void)
+{
+    return pic_ready;
+}
+
 void pic_send_eoi(uint8_t irq)
 {
+    if (!pic_ready)
+        return;
     /* If the IRQ came from the slave PIC (IRQ 8-15),
      * we must send EOI to both slave AND master */
     if (irq >= 8)
@@ -101,6 +113,9 @@ void pic_mask_irq(uint8_t irq)
 {
     uint16_t port;
     uint8_t val;
+
+    if (!pic_ready)
+        return;  /* No PIC — IOAPIC handles masking */
 
     if (irq < 8) {
         port = PIC1_DATA;
@@ -118,6 +133,9 @@ void pic_unmask_irq(uint8_t irq)
     uint16_t port;
     uint8_t val;
 
+    if (!pic_ready)
+        return;  /* No PIC — IOAPIC handles unmasking */
+
     if (irq < 8) {
         port = PIC1_DATA;
     } else {
@@ -133,6 +151,7 @@ void pic_disable(void)
 {
     outb(PIC1_DATA, 0xFF);
     outb(PIC2_DATA, 0xFF);
+    pic_ready = 0;
 }
 
 void irq_eoi(uint8_t irq)

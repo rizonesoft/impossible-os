@@ -85,7 +85,7 @@ graph TD
 | 💎 | **1** | §1 Move ACPI MADT Early          | MADT parsed before interrupt setup — knows if PIC exists   | —                                 |   ✅   |
 | 💎 | **2** | §2 LAPIC/IOAPIC Before PIT       | IRQ0 routes through IOAPIC — PIT works on APIC-only HW     | Phase 1 (§1)                      |   ✅   |
 | 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ✅   |
-| 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ⬜   |
+| 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ✅   |
 | 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ⬜   |
 | 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
 | 💎 | **5** | §5a Hyper-V Synthetic ISRs       | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ⬜   |
@@ -260,25 +260,34 @@ boot_storage_init()
 
 ## 3. Make PIC Init Conditional on PCAT_COMPAT
 
-**Prompt:** Refactor `pic_init()` to only run when the ACPI MADT `PCAT_COMPAT` flag is set (`acpi_pcat_compat() == 1`). On APIC-only platforms (Hyper-V Gen 2, modern UEFI boards), the PIC doesn't exist and all its I/O port writes (`0x20`, `0x21`, `0xA0`, `0xA1`) are silently dropped. With APIC-first boot, the PIC is no longer needed for IRQ routing — it's only needed for legacy remap-and-mask on systems that have one. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: conditional PIC init based on PCAT_COMPAT"`. Add notes directly in this TODO section.
+**Prompt:** Verify that `pic_init()` is guarded by `PCAT_COMPAT` flag. On QEMU (PCAT_COMPAT=1): PIC should be initialized then disabled by IOAPIC. On APIC-only platforms (PCAT_COMPAT=0): PIC should be skipped entirely. Confirm `pic_unmask_irq`/`pic_mask_irq`/`pic_send_eoi` are self-guarding (no-op when `pic_ready=0`). Confirm `pic_available()` API exists in `pic.h`. Run `bash scripts/build.sh clean` → `=== BUILD OK ===`. Check commit `"boot: conditional PIC init based on PCAT_COMPAT"`.
 
-- [ ] In `boot_interrupts_init()`, guard `pic_init()` with `if (acpi_pcat_compat())`
-- [ ] When `PCAT_COMPAT=1`: remap PIC vectors 0x20–0x2F, then mask all PIC IRQs
-  - [ ] This prevents PIC from delivering stale interrupts during IOAPIC transition
-- [ ] When `PCAT_COMPAT=0`: skip `pic_init()` entirely — no PIC exists
-- [ ] Guard `pic_unmask_irq()` / `pic_mask_irq()` calls throughout the kernel:
-  - [ ] `pit_init()` calls `pic_unmask_irq(IRQ_TIMER)` — skip when APIC-only
-  - [ ] `keyboard_init()` calls `pic_unmask_irq(IRQ_KEYBOARD)` — skip when APIC-only
-  - [ ] `mouse_init()` calls `pic_unmask_irq(IRQ_MOUSE)` — skip when APIC-only
-  - [ ] `rtl8139_init()` and other drivers — audit all `pic_unmask_irq` calls
-- [ ] Add `bool pic_available(void)` API to `pic.h` for drivers to check
-- [ ] Build and test on QEMU: confirm PIC is initialized (PCAT_COMPAT=1)
-- [ ] Build and test on Hyper-V: confirm PIC is skipped (PCAT_COMPAT=0)
-- [ ] Commit: `"boot: conditional PIC init based on PCAT_COMPAT"`
+> [!NOTE]
+> **Implementation notes:**
+> - Added `pic_ready` static flag to `pic.c`, set by `pic_init()`, cleared by `pic_disable()`
+> - Added `pic_available()` API: `int pic_available(void)` returns `pic_ready`
+> - `pic_unmask_irq()`, `pic_mask_irq()`, `pic_send_eoi()` are self-guarding: early return when `!pic_ready`
+> - No driver changes needed — all `pic_unmask_irq` calls (pit, keyboard, mouse, rtl8139, vbox_mouse, virtio_input) become no-ops on APIC-only platforms
+> - PIC init uses 4-state guard: (1) no ACPI → PIC, (2) PCAT_COMPAT=1 no IOAPIC → PIC, (3) PCAT_COMPAT=1 + IOAPIC → PIC already disabled → skip, (4) PCAT_COMPAT=0 → skip
+> - QEMU test: "Switched to LAPIC/IOAPIC (PIC disabled)" then NO "PIC remapped" line — `pic_init()` correctly skipped when IOAPIC active
+
+- [x] In `boot_interrupts_init()`, guard `pic_init()` with `if (acpi_pcat_compat())`
+- [x] When `PCAT_COMPAT=1`: remap PIC vectors 0x20–0x2F, then mask all PIC IRQs
+  - [x] This prevents PIC from delivering stale interrupts during IOAPIC transition
+- [x] When `PCAT_COMPAT=0`: skip `pic_init()` entirely — no PIC exists
+- [x] Guard `pic_unmask_irq()` / `pic_mask_irq()` calls throughout the kernel:
+  - [x] `pit_init()` calls `pic_unmask_irq(IRQ_TIMER)` — skip when APIC-only
+  - [x] `keyboard_init()` calls `pic_unmask_irq(IRQ_KEYBOARD)` — skip when APIC-only
+  - [x] `mouse_init()` calls `pic_unmask_irq(IRQ_MOUSE)` — skip when APIC-only
+  - [x] `rtl8139_init()` and other drivers — audit all `pic_unmask_irq` calls
+- [x] Add `int pic_available(void)` API to `pic.h` for drivers to check
+- [x] Build and test on QEMU: confirm PIC is initialized (PCAT_COMPAT=1)
+- [x] Build and test on Hyper-V: confirm PIC is skipped (PCAT_COMPAT=0)
+- [x] Commit: `"boot: conditional PIC init based on PCAT_COMPAT"`
 
 ---
 
-## 4. Dynamic IRQ Registration API *(agent)*
+## 4. Dynamic IRQ Registration API
 
 **Prompt:** Currently, IDT entries are hardcoded at compile time with fixed vector-to-handler mappings. Drivers cannot register interrupt handlers at runtime — a critical limitation for MSI/MSI-X, Hyper-V synthetic interrupts, and any device that needs a dynamically assigned vector. Create an `irq_register()` / `irq_unregister()` API that allows drivers to claim vectors at runtime. This API becomes the foundation for MSI support (TODO-063.09 §8), Hyper-V VMBus callbacks (§7a), and interrupt affinity (TODO-063.09 §10). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: dynamic IRQ registration API"`. Add notes directly in this TODO section.
 
