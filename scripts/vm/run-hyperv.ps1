@@ -120,7 +120,7 @@ if ($qemuImg) {
 
 Remove-Item $DISK_TEMP -Force -ErrorAction SilentlyContinue
 $vhdxSizeMB = [math]::Round((Get-Item $DISK_VHDX).Length / 1MB)
-Write-Ok "VHDX: $DISK_VHDX ($vhdxSizeMB` MB)"
+Write-Ok ("VHDX: {0} ({1} MB)" -f $DISK_VHDX, $vhdxSizeMB)
 
 # ---- Create fresh VM ----
 $MemoryBytes = [int64]$MemoryMB * 1MB
