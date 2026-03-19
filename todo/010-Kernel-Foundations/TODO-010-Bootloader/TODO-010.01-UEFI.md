@@ -727,24 +727,24 @@ graph TD
 | 💎 | GOP framebuffer                   | ✅ Hands off to GPU driver            | ✅ `efifb` / `simplefb`               | ✅ Done (1280×720 BGRX)                              |
 | 💎 | ExitBootServices()                | ✅                                    | ✅                                    | ✅ Done                                              |
 | 💎 | Boot configuration file           | ✅ BCD store                          | ✅ `grub.cfg` / `loader.conf`         | ✅ `boot.conf` ini parser — Done                     |
-| 💎 | Runtime services preservation     | ✅ Full                               | ✅ `efi_runtime_services`             | ⬜ §1.1 — discarded after exit                       |
-| 💎 | SetVirtualAddressMap()            | ✅                                    | ✅                                    | ⬜ §1.1                                              |
-| 💎 | UEFI variable read/write          | ✅ `GetFirmwareEnvironmentVariable`   | ✅ `/sys/firmware/efi/vars/`          | ⬜ §1.2                                              |
-| 💎 | System reset (ResetSystem)        | ✅                                    | ✅ `efi_reboot()`                     | ⬜ §1.3 — uses raw ACPI register writes              |
-| 💎 | RTC via UEFI GetTime              | ✅                                    | ✅ `efi_get_time()`                   | ⬜ §2.1 — uses CMOS RTC ports                        |
-| 💎 | Full memory map preservation      | ✅                                    | ✅ `efi_memmap`                       | ⚠️ Simplified — `uefi_to_mb2_memtype()` loses info   |
-| 💎 | Memory Attributes Table (W^X)     | ✅ Enforced                           | ✅ (6.2+)                             | ⬜ §3.2                                              |
-| 💎 | Configuration table walker        | ✅                                    | ✅ `efi_config_table_is_usable()`     | ⚠️ ACPI RSDP only — §4.1                             |
-| 💎 | Conformance profiles              | ✅                                    | ✅ (6.3+)                             | ⬜ §4.2                                              |
-| 💎 | Secure Boot state detection       | ✅ Full                               | ✅ `/sys/firmware/efi/secure_boot`    | ⬜ §5.1                                              |
-| 💎 | Secure Boot db/dbx management     | ✅ Full                               | ✅ `mokutil`, `sbsigntool`            | ⬜ §5.2                                              |
-| 💎 | Crypto agility (2026)             | ✅ Via Windows Update                 | 🔜 Patches in progress                | ⬜ §5.3                                              |
-| 💎 | Capsule firmware updates          | ✅ `FirmwareUpdate` service           | ✅ `fwupd` + capsule                  | ⬜ §6.1                                              |
-| 💎 | SMBIOS parsing                    | ✅ Full WMI                           | ✅ `/sys/class/dmi/`                  | ⬜ §7.1                                              |
-| 💎 | GOP multi-mode                    | ✅                                    | ✅                                    | ⬜ §8.1 — single hardcoded mode                      |
-| ⭐ | **TPM measured boot event log**   | ✅ Required for install               | ✅ `/sys/kernel/security/tpm0/`       | ⬜ §9.1 — not implemented                            |
-| ⭐ | **Boot integrity UI**             | ❌ No user-facing panel               | ❌ CLI only (`tpm2-tools`)            | ⬜ §9.2 — "Boot Integrity" panel                     |
-| ⭐ | **ESRT firmware inventory**       | ✅ Hidden (Windows Update)            | ✅ `fwupdmgr` CLI                     | ⬜ §10.1 — "Firmware Health" panel                   |
-| ⭐ | **Boot timing (full FPDT)**       | ⚠️ Post-ExitBS only                   | ⚠️ `systemd-analyze` (kernel only)    | ⬜ §11.1 — power-on-to-desktop timeline              |
+| 💎 | Runtime services preservation     | ✅ Full                               | ✅ `efi_runtime_services`             | ✅ §1.1 — RT table + mmap preserved                  |
+| 💎 | SetVirtualAddressMap()            | ✅                                    | ✅                                    | ✅ §1.1 — identity-mapped, SVAM called               |
+| 💎 | UEFI variable read/write          | ✅ `GetFirmwareEnvironmentVariable`   | ✅ `/sys/firmware/efi/vars/`          | ✅ §1.2 — Get/Set/GetNextVariableName                |
+| 💎 | System reset (ResetSystem)        | ✅                                    | ✅ `efi_reboot()`                     | ✅ §1.3 — Cold/Warm/Shutdown + ACPI fallback         |
+| 💎 | RTC via UEFI GetTime              | ✅                                    | ✅ `efi_get_time()`                   | ✅ §2.1 — Get/Set/WakeupTime + timezone              |
+| 💎 | Full memory map preservation      | ✅                                    | ✅ `efi_memmap`                       | ✅ §3.1 — full EFI memory map with attributes        |
+| 💎 | Memory Attributes Table (W^X)     | ✅ Enforced                           | ✅ (6.2+)                             | ✅ §3.2 — MAT parsed, W^X page permissions set       |
+| 💎 | Configuration table walker        | ✅                                    | ✅ `efi_config_table_is_usable()`     | ✅ §4.1 — generic GUID walker for all tables         |
+| 💎 | Conformance profiles              | ✅                                    | ✅ (6.3+)                             | ✅ §4.2 — Full UEFI vs EBBR detection                |
+| 💎 | Secure Boot state detection       | ✅ Full                               | ✅ `/sys/firmware/efi/secure_boot`    | ✅ §5.1 — SecureBoot/SetupMode/PK/KEK read           |
+| 💎 | Secure Boot db/dbx management     | ✅ Full                               | ✅ `mokutil`, `sbsigntool`            | ✅ §5.2 — db/dbx/dbt parsed (write deferred)         |
+| 💎 | Crypto agility (2026)             | ✅ Via Windows Update                 | 🔜 Patches in progress                | ✅ §5.3 — CryptoIndications reader (write deferred)  |
+| 💎 | Capsule firmware updates          | ✅ `FirmwareUpdate` service           | ✅ `fwupd` + capsule                  | ✅ §6.1 — query-only (write blocked: bricking risk)  |
+| 💎 | SMBIOS parsing                    | ✅ Full WMI                           | ✅ `/sys/class/dmi/`                  | ✅ §7.1 — Type 0/1/2/4/17, SMBIOS 2.x + 3.x         |
+| 💎 | GOP multi-mode                    | ✅                                    | ✅                                    | ✅ §8.1 — 30 modes enumerated, pixel format tracked  |
+| ⭐ | **TPM measured boot event log**   | ✅ Required for install               | ✅ `/sys/kernel/security/tpm0/`       | ✅ §9.1 — crypto-agile log parser, SHA-256/384/512   |
+| ⭐ | **Boot integrity UI**             | ❌ No user-facing panel               | ❌ CLI only (`tpm2-tools`)            | ✅ §9.2 — report struct ready (PCR verify pending)   |
+| ⭐ | **ESRT firmware inventory**       | ✅ Hidden (Windows Update)            | ✅ `fwupdmgr` CLI                     | ✅ §10.1 — parsed, "Firmware Health" panel ready     |
+| ⭐ | **Boot timing (full FPDT)**       | ⚠️ Post-ExitBS only                   | ⚠️ `systemd-analyze` (kernel only)    | ✅ §11.1 — full FPDT + TSC timeline, power-to-kernel |
 | 💎 | Confidential Computing (TDX/SEV)  | ✅ Azure CC VMs                       | ✅ `CC_MEASUREMENT_PROTOCOL`          | ⬜ Not planned (bare-metal focus)                    |
 
