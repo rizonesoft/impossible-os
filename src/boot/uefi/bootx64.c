@@ -105,7 +105,36 @@ struct boot_info {
     UINT8   tpm_available;
     UINT8   tpm_version;
     UINT16  tpm_event_count;
+    /* Boot Timing */
+    struct {
+        UINT64 reset_end;
+        UINT64 os_loader_load_start;
+        UINT64 os_loader_start_start;
+        UINT64 exit_bs_entry;
+        UINT64 exit_bs_exit;
+        UINT8  fpdt_available;
+        UINT64 bl_entry;
+        UINT64 gop_start;
+        UINT64 gop_end;
+        UINT64 conf_start;
+        UINT64 conf_end;
+        UINT64 kernel_load_start;
+        UINT64 kernel_load_end;
+        UINT64 splash_start;
+        UINT64 splash_end;
+        UINT64 exit_bs;
+        UINT64 kernel_jump;
+        UINT64 tsc_freq;
+    } timing;
 };
+
+/* Inline rdtsc for boot timing */
+static inline UINT64 boot_rdtsc(void)
+{
+    UINT32 lo, hi;
+    __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((UINT64)hi << 32) | lo;
+}
 
 /* --- ELF64 header structures --- */
 #define ELF_MAGIC 0x464C457F  /* \x7FELF */
@@ -998,6 +1027,132 @@ static void retrieve_tpm_event_log(void)
 }
 
 /* ============================================================================
+ * Step 4d: Parse Firmware Performance Data Table (FPDT)
+ *
+ * The FPDT provides precise timestamps for firmware boot phases.
+ * It's found in the UEFI Configuration Table.  The table contains
+ * performance record pointers; we follow the Firmware Basic Boot
+ * Performance Pointer to get the FBPT (Firmware Basic Boot
+ * Performance Table), which has ResetEnd, OSLoaderLoad, etc.
+ * ============================================================================ */
+
+/* FPDT record types */
+#define FPDT_RECORD_TYPE_FIRMWARE_BASIC_BOOT  0x0000
+#define FPDT_RECORD_TYPE_S3_PERF              0x0001
+
+/* FPDT header — at the config table address */
+struct fpdt_header {
+    UINT32 signature;       /* 'FPDT' */
+    UINT32 length;
+    UINT8  revision;
+    UINT8  checksum;
+    UINT8  oem_id[6];
+    UINT8  oem_table_id[8];
+    UINT32 oem_revision;
+    UINT32 creator_id;
+    UINT32 creator_revision;
+};
+
+/* FPDT performance record header */
+struct fpdt_perf_record_hdr {
+    UINT16 type;
+    UINT8  length;
+    UINT8  revision;
+};
+
+/* Firmware Basic Boot Performance Pointer Record */
+struct fpdt_boot_perf_ptr {
+    UINT16 type;            /* 0x0000 */
+    UINT8  length;
+    UINT8  revision;
+    UINT32 reserved;
+    UINT64 fbpt_address;    /* physical address of FBPT */
+};
+
+/* Firmware Basic Boot Performance Table (FBPT) entry */
+struct fbpt_record {
+    UINT16 type;            /* 0x0002 = basic boot */
+    UINT8  length;
+    UINT8  revision;
+    UINT32 reserved;
+    UINT64 reset_end;                /* SEC phase complete (ns since reset) */
+    UINT64 os_loader_load_start;     /* bootloader load began (ns) */
+    UINT64 os_loader_start_start;    /* bootloader started executing (ns) */
+    UINT64 exit_bs_entry;            /* ExitBootServices called (ns) */
+    UINT64 exit_bs_exit;             /* ExitBootServices returned (ns) */
+};
+
+static void parse_fpdt(void)
+{
+    g_boot_info_ptr->timing.fpdt_available = 0;
+
+    /* FPDT can be in UEFI config table or ACPI table.
+     * Try config table first (via the GUID the kernel already copied). */
+    EFI_GUID fpdt_guid = { 0x564b1aaa, 0xafe3, 0x4b6c,
+        { 0x83, 0xa9, 0x27, 0x00, 0x80, 0x50, 0x01, 0x00 } };
+
+    /* Search config table */
+    UINTN i;
+    UINT64 fpdt_addr = 0;
+    for (i = 0; i < gST->NumberOfTableEntries; i++) {
+        EFI_GUID *tg = &gST->ConfigurationTable[i].VendorGuid;
+        if (tg->Data1 == fpdt_guid.Data1 &&
+            tg->Data2 == fpdt_guid.Data2 &&
+            tg->Data3 == fpdt_guid.Data3) {
+            fpdt_addr = (UINT64)(UINTN)gST->ConfigurationTable[i].VendorTable;
+            break;
+        }
+    }
+
+    if (fpdt_addr == 0) {
+        serial_early_print("BOOT: FPDT: not found\n");
+        return;
+    }
+
+    /* Walk FPDT records to find the Firmware Basic Boot Perf Pointer */
+    const struct fpdt_header *hdr = (const struct fpdt_header *)(UINTN)fpdt_addr;
+    UINT32 table_len = hdr->length;
+    UINTN offset = sizeof(struct fpdt_header);
+
+    while (offset + sizeof(struct fpdt_perf_record_hdr) < table_len) {
+        const struct fpdt_boot_perf_ptr *rec =
+            (const struct fpdt_boot_perf_ptr *)((UINTN)fpdt_addr + offset);
+
+        if (rec->type == FPDT_RECORD_TYPE_FIRMWARE_BASIC_BOOT &&
+            rec->fbpt_address != 0) {
+            /* Follow the pointer to the FBPT */
+            const struct fbpt_record *fbpt =
+                (const struct fbpt_record *)(UINTN)rec->fbpt_address;
+
+            /* The FBPT starts with an ACPI table header (36 bytes),
+             * followed by performance records.  The first record
+             * at offset 36 is the basic boot record. */
+            const struct fbpt_record *boot_rec =
+                (const struct fbpt_record *)((UINTN)rec->fbpt_address + 36);
+            (void)fbpt;
+
+            if (boot_rec->type == 0x0002) {
+                g_boot_info_ptr->timing.reset_end = boot_rec->reset_end;
+                g_boot_info_ptr->timing.os_loader_load_start =
+                    boot_rec->os_loader_load_start;
+                g_boot_info_ptr->timing.os_loader_start_start =
+                    boot_rec->os_loader_start_start;
+                g_boot_info_ptr->timing.exit_bs_entry = boot_rec->exit_bs_entry;
+                g_boot_info_ptr->timing.exit_bs_exit = boot_rec->exit_bs_exit;
+                g_boot_info_ptr->timing.fpdt_available = 1;
+                serial_early_print("BOOT: FPDT: firmware boot record found\n");
+                return;
+            }
+        }
+
+        if (rec->length < 4) break;
+        offset += rec->length;
+    }
+
+    serial_early_print("BOOT: FPDT: no basic boot record\n");
+}
+
+/* ============================================================================
  * Step 5: Copy UEFI Configuration Table + find ACPI RSDP
  *
  * The EFI_SYSTEM_TABLE.ConfigurationTable[] array contains {GUID, Pointer}
@@ -1137,8 +1292,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     g_boot_info_ptr = (struct boot_info *)BOOT_INFO_PHYS_ADDR;
     efi_memset(g_boot_info_ptr, 0, sizeof(struct boot_info));
 
+    /* Record bootloader entry time */
+    g_boot_info_ptr->timing.bl_entry = boot_rdtsc();
+
     /* Step 1: Initialize graphics */
     serial_early_print("BOOT: init_gop...\n");
+    g_boot_info_ptr->timing.gop_start = boot_rdtsc();
     status = init_gop();
     if (EFI_ERROR(status)) {
         serial_early_print("BOOT: FAIL init_gop\n");
@@ -1146,9 +1305,12 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
         return status;
     }
     serial_early_print("BOOT: init_gop OK\n");
+    g_boot_info_ptr->timing.gop_end = boot_rdtsc();
 
     /* Step 1b: Parse boot.conf (must run while UEFI Boot Services available) */
+    g_boot_info_ptr->timing.conf_start = boot_rdtsc();
     parse_boot_conf();
+    g_boot_info_ptr->timing.conf_end = boot_rdtsc();
 
     /* Clear screen to black before loading the kernel. */
     {
@@ -1178,7 +1340,9 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Load kernel ELF */
     serial_early_print("BOOT: load_kernel...\n");
+    g_boot_info_ptr->timing.kernel_load_start = boot_rdtsc();
     status = load_kernel(&kernel_entry);
+    g_boot_info_ptr->timing.kernel_load_end = boot_rdtsc();
     if (EFI_ERROR(status)) {
         serial_early_print("BOOT: FAIL load_kernel\n");
         efi_print(u"[FAIL] Kernel load failed\r\n");
@@ -1195,6 +1359,17 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 4c: Retrieve TPM event log (if available) */
     retrieve_tpm_event_log();
+
+    /* Step 4d: Parse FPDT for firmware boot timing */
+    parse_fpdt();
+
+    /* Estimate TSC frequency using UEFI Stall (1ms) */
+    {
+        UINT64 t0 = boot_rdtsc();
+        gBS->Stall(1000);  /* 1ms */
+        UINT64 t1 = boot_rdtsc();
+        g_boot_info_ptr->timing.tsc_freq = (t1 - t0) * 1000;  /* Hz */
+    }
 
     /* Step 5: Get UEFI memory map */
     serial_early_print("BOOT: get_memory_map...\n");
@@ -1219,6 +1394,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
 
     /* Step 6: ExitBootServices */
     serial_early_print("BOOT: ExitBootServices...\n");
+    g_boot_info_ptr->timing.exit_bs = boot_rdtsc();
     status = gBS->ExitBootServices(gImageHandle, map_key);
     if (EFI_ERROR(status)) {
         status = get_memory_map(&map_key, &mmap, &map_size, &desc_size,
@@ -1247,6 +1423,7 @@ EFI_STATUS EFIAPI efi_main(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE *SystemTable
     /* Step 8: Jump to kernel! */
     serial_early_print("BOOT: jumping to kernel_main\n");
     DRAW_BAR(48, 0x00FFFFFF);  /* WHITE = about to jump */
+    g_boot_info_ptr->timing.kernel_jump = boot_rdtsc();
     jump_to_kernel(kernel_entry);
 
     /* Never reached */

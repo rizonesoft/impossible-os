@@ -80,6 +80,9 @@ struct boot_uefi_config_entry {
 #define UEFI_GUID_DTB \
     ((struct boot_uefi_guid){ 0xb1b621d5, 0xf19c, 0x41a5, \
         { 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0 } })
+#define UEFI_GUID_FPDT \
+    ((struct boot_uefi_guid){ 0x564b1aaa, 0xafe3, 0x4b6c, \
+        { 0x83, 0xa9, 0x27, 0x00, 0x80, 0x50, 0x01, 0x00 } })
 
 /* UEFI memory attribute flag — marks regions that survive ExitBootServices */
 #define UEFI_MEMORY_ATTR_RUNTIME  0x8000000000000000ULL
@@ -168,6 +171,30 @@ struct boot_info {
     uint8_t   tpm_available;          /* 1 if TPM was detected */
     uint8_t   tpm_version;            /* 0=none, 1=TPM 1.2, 2=TPM 2.0 */
     uint16_t  tpm_event_count;        /* number of events in log */
+
+    /* Boot Timing (TSC timestamps from bootloader + FPDT) */
+    struct {
+        /* FPDT firmware performance record (nanoseconds, from firmware) */
+        uint64_t reset_end;               /* SEC phase complete */
+        uint64_t os_loader_load_start;    /* bootloader load began */
+        uint64_t os_loader_start_start;   /* bootloader started executing */
+        uint64_t exit_bs_entry;           /* ExitBootServices called */
+        uint64_t exit_bs_exit;            /* ExitBootServices returned */
+        uint8_t  fpdt_available;          /* 1 if FPDT was found */
+        /* Bootloader phase timestamps (TSC ticks via rdtsc) */
+        uint64_t bl_entry;                /* efi_main entered */
+        uint64_t gop_start;               /* init_gop start */
+        uint64_t gop_end;                 /* init_gop end */
+        uint64_t conf_start;              /* parse_boot_conf start */
+        uint64_t conf_end;                /* parse_boot_conf end */
+        uint64_t kernel_load_start;       /* load_kernel start */
+        uint64_t kernel_load_end;         /* load_kernel end */
+        uint64_t splash_start;            /* boot_splash start */
+        uint64_t splash_end;              /* boot_splash end */
+        uint64_t exit_bs;                 /* just before ExitBootServices */
+        uint64_t kernel_jump;             /* just before jumping to kernel */
+        uint64_t tsc_freq;                /* TSC frequency in Hz (0 = unknown) */
+    } timing;
 };
 
 /* Global boot info — populated by multiboot2_parse() or UEFI bootloader */
