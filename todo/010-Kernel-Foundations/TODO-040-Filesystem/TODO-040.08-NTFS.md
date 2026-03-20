@@ -26,6 +26,131 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Four TODO files and one spec** feed into the NTFS driver. They have
+> cross-dependencies that dictate implementation order. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    SPEC["specs/filesystem/ntfs-3.1.md<br/>NTFS 3.1 Specification"]
+    BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
+    PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x07)"]
+    VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
+
+    A["§1.1 BPB Parsing"]
+    B["§2.1 MFT Record Reader"]
+    C["§2.2 Fixup (USA)"]
+    D["§3.1 Attribute Iterator"]
+    E["§3.3 $FILE_NAME Decoder"]
+    F["§3.2 $STANDARD_INFORMATION"]
+    G["§4.1 Run-List Decoder"]
+    H["§4.2 File Data Reader"]
+    I["§5.1 $INDEX_ROOT Parser"]
+    J["§5.2 INDX Buffer Reader"]
+    K["§5.3 Directory Lookup"]
+    L["§6.1 VFS Registration"]
+    M["§3.4 $ATTRIBUTE_LIST"]
+    N["§3.5 $SECURITY_DESCRIPTOR"]
+    O["§3.6 $REPARSE_POINT"]
+    P["§5.4 Directory Enumeration"]
+    Q["§7.1 System Metafiles"]
+    R["§9.1 LZNT1 Decompression"]
+    S["§10.1 MFT Record Cache"]
+    T["§8.1 Test Suite"]
+    U["§11.1 Health Dashboard"]
+    V["§11.2 Deleted File Recovery"]
+
+    SPEC --> A
+    BLK --> A
+    PART --> A
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    D --> F
+    D --> G
+    G --> H
+    E --> I
+    D --> I
+    I --> J
+    J --> K
+    K --> L
+    H --> L
+    VFS --> L
+    D --> M
+    N --> L
+    O --> L
+    I --> P
+    J --> P
+    C --> Q
+    H --> R
+    B --> S
+    L --> T
+    Q --> U
+    Q --> V
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
+| -- | :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
+| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md`        | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ✅   |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
+| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → NTFS partition found              | Phase 0 (block)              |   ✅   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §1.1 BPB Parsing                 | Locate MFT on disk, extract cluster size, FRS size                        | Phase 0 (partitions)         |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §2.1 MFT Record Reader           | Read any file's raw MFT record by inode number                            | Phase 1 (§1.1)               |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §2.2 Fixup (USA) Verification    | Sector-tear integrity check — **must run before ANY attribute parsing**    | Phase 1 (§2.1)               |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §3.1 Attribute Iterator          | Walk attributes in MFT records — unlocks ALL attribute decoders           | Phase 1 (§2.2)               |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §3.3 `$FILE_NAME` Decoder        | Extract filenames, parent references, namespaces                          | Phase 2 (§3.1)               |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §4.1 Run-List Decoder            | VCN → LCN translation — enables reading ANY non-resident data             | Phase 2 (§3.1)               |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md`                 | §3.2 `$STANDARD_INFORMATION`     | Timestamps (FILETIME → Unix), DOS permissions                             | Phase 2 (§3.1)               |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md`                 | §4.2 File Data Reader            | Actually read file contents (resident + non-resident)                     | Phase 2 (§4.1)               |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.1 `$INDEX_ROOT` Parser        | Root node of directory B+ tree                                            | Phase 2 (§3.1, §3.3)        |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.2 INDX Buffer Reader          | Child nodes of B+ tree (4 KB INDX records)                                | Phase 4 (§5.1)               |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.3 Directory Lookup            | Full path resolution: `C:\path\to\file`                                   | Phase 4 (§5.2)               |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §6.1 VFS Registration            | Mount NTFS volumes, wire `vfs_ops` callbacks                              | Phase 3 (§4.2) + Phase 4 (§5.3) + VFS (040.07) |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §5.4 Directory Enumeration       | `FindFirstFile` / `FindNextFile` support                                  | Phase 4 (§5.1, §5.2)        |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §3.4 `$ATTRIBUTE_LIST`           | Handle MFT record overflow (extension records)                            | Phase 2 (§3.1)               |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §3.5 `$SECURITY_DESCRIPTOR`      | Read NTFS ACLs → route to `GetFileSecurity()`                             | Phase 2 (§3.1) + VFS §2.2   |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §3.6 `$REPARSE_POINT`            | Follow symlinks and junctions during path resolution                      | Phase 4 (§5.3)               |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §7.1 System Metafiles            | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`              | Phase 1 (§2.2)               |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §9.1 LZNT1 Decompression         | Read compressed Windows system files                                      | Phase 3 (§4.2)               |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §10.1 MFT Record Cache           | LRU cache — avoid redundant disk reads                                    | Phase 1 (§2.1)               |   ⬜   |
+| 💎 | **7**  | `TODO-040.08-NTFS.md`                 | §8.1 Test Suite                  | Automated validation with NTFS test images                                | Phase 5 (§6.1)               |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md`                 | §11.1 Health Dashboard           | At-a-glance NTFS volume health — **no OS does this**                      | Phase 6 (§7.1)               |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md`                 | §11.2 Deleted File Recovery      | Built-in GUI forensic recovery — **Windows needs 3rd-party**              | Phase 6 (§7.1)               |   ⬜   |
+
+> [!NOTE]
+> **Phases 0–1** are prerequisites — block I/O, partition tables, BPB, and MFT reading.
+> **Phase 2** is the cornerstone — the attribute iterator and data run decoder unlock
+> everything else. Get these right and the rest flows naturally.
+> **Phases 3–5** build up file reading, directory traversal, and VFS integration — this
+> gives you a mountable, browsable NTFS volume.
+> **Phase 6** adds robustness (extension records, security, reparse, compression, caching).
+> **Phase 7** delivers the competitive features (⭐): Health Dashboard and Deleted File Recovery.
+
+> [!TIP]
+> **Quick wins after Phase 2:**
+> - §3.2 `$STANDARD_INFORMATION` and §3.3 `$FILE_NAME` are both simple resident attribute
+>   decoders — fast to implement once the attribute iterator works.
+> - §10.1 MFT Record Cache can be added at any time after §2.1 for an immediate performance
+>   boost during development (fewer disk reads while debugging B+ tree traversal).
+>
+> **Critical gotcha:** §2.2 Fixup (USA) is **non-negotiable**. Without it, every MFT record
+> and every INDX buffer will contain corrupted last-2-bytes-per-sector. The attribute
+> iterator will silently parse garbage data. **Always fixup before parsing.**
+>
+> **Memory rule reminder:** MFT records (1 KiB) and INDX buffers (4 KiB) should use
+> `pmm_alloc_contiguous()`, not `kmalloc()`. The kernel heap is only 2 MiB — scanning
+> large directories could allocate hundreds of INDX buffers.
+
+---
+
 ## 1. Volume Boot Record & BPB Parsing
 
 ### 1.1 BIOS Parameter Block Extraction
