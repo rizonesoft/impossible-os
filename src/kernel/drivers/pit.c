@@ -87,16 +87,15 @@ void pit_stop(void)
     outb(PIT_CHANNEL0, 0);
 }
 
-/* IRQ 0 handler — called on every PIT tick (when PIT is tick source).
- * Returns a frame pointer: same frame if no task switch, or a
- * different task's saved frame for preemptive context switch. */
+/* IRQ 0 handler — called on every PIT tick.
+ * Handles tick counting and spinner callback only.
+ * Preemptive scheduling is driven by the LAPIC timer handler.
+ * Returns the same frame (no context switch from PIT). */
 static uint64_t pit_irq_handler(struct interrupt_frame *frame)
 {
     pit_tick_increment();
     irq_eoi(IRQ_TIMER);
-
-    /* Let the scheduler decide if it's time to switch tasks */
-    return schedule(frame);
+    return (uint64_t)frame;
 }
 
 void pit_init(void)

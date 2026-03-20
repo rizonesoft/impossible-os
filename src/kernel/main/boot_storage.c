@@ -106,14 +106,25 @@ void boot_storage_init(uint64_t magic)
             /* Calibrate LAPIC timer frequency using PIT channel 2 */
             lapic_timer_calibrate();
 
-            /* Start LAPIC timer as the primary tick source (100 Hz) */
+            /* Decide tick source based on PIT hardware availability.
+             *
+             * PCAT_COMPAT=0 (Hyper-V Gen 2, modern APIC-only boards):
+             *   No PIT hardware → LAPIC timer drives tick_count.
+             *   These platforms always have VT-x, no TCG concern.
+             *
+             * PCAT_COMPAT=1 (VBox, QEMU, most boards):
+             *   PIT drives tick_count at wall-clock rate.
+             *   LAPIC timer only does preemptive scheduling.
+             *   Critical for QEMU TCG where LAPIC timer runs from
+             *   QEMU_CLOCK_VIRTUAL (~10x slower than wall time). */
+            if (!acpi_pcat_compat()) {
+                /* APIC-only: LAPIC timer is the sole tick source */
+                lapic_timer_set_tick_source(1);
+                pit_set_freq(100);
+                pit_stop();
+            }
+
             lapic_timer_init(100);
-
-            /* Tell tick infrastructure the actual frequency */
-            pit_set_freq(100);
-
-            /* PIT is no longer needed — stop it */
-            pit_stop();
 
             boot_splash_status("Initializing SMP...");
             smp_init();

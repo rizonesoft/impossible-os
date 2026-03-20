@@ -401,11 +401,32 @@ uint32_t lapic_timer_ticks_per_ms(void)
 }
 
 /* ---- LAPIC timer IRQ handler ----
- * Increments system tick counter, sends EOI, and returns the scheduler's
- * choice of stack frame (same frame = no switch, different = context switch). */
+ * Always handles preemptive scheduling.  Tick counting depends on
+ * whether a PIT exists:
+ *
+ *   PCAT_COMPAT=1 (VBox, QEMU, most boards):
+ *     PIT drives tick_count via pit_irq_handler (uses real host
+ *     timers on QEMU TCG = wall-clock accurate).  LAPIC timer
+ *     only does schedule().  This avoids a 10x boot regression
+ *     on QEMU TCG where LAPIC timer runs from QEMU_CLOCK_VIRTUAL.
+ *
+ *   PCAT_COMPAT=0 (Hyper-V Gen 2, modern APIC-only boards):
+ *     No PIT hardware — LAPIC timer drives BOTH tick_count and
+ *     schedule().  No TCG concern because these platforms always
+ *     have hardware virtualization (VT-x).
+ *
+ * Flag is set by lapic_timer_set_tick_source(). */
+static uint8_t lapic_is_tick_source;
+
+void lapic_timer_set_tick_source(int enable)
+{
+    lapic_is_tick_source = enable ? 1 : 0;
+}
+
 static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
 {
-    pit_tick_increment();
+    if (lapic_is_tick_source)
+        pit_tick_increment();
     lapic_eoi();
     return schedule(frame);
 }

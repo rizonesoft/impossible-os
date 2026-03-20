@@ -126,9 +126,15 @@ void lapic_timer_calibrate(void);
 /* Start the LAPIC timer in periodic mode at the given frequency (Hz)
  * on LAPIC_TIMER_VECTOR. Uses the calibrated frequency from
  * lapic_timer_calibrate(), or a hardcoded fallback.
- * Registers a timer IRQ handler that increments tick_count and
- * calls the scheduler. */
+ * Registers a timer IRQ handler that calls the scheduler, and
+ * optionally increments tick_count (if LAPIC is tick source). */
 void lapic_timer_init(uint32_t hz);
+
+/* Set whether the LAPIC timer drives tick_count.
+ *   enable=1: LAPIC timer increments ticks (APIC-only, no PIT)
+ *   enable=0: PIT drives ticks, LAPIC only does scheduling
+ * Call before lapic_timer_init(). */
+void lapic_timer_set_tick_source(int enable);
 
 /* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
 uint32_t lapic_timer_ticks_per_ms(void);
