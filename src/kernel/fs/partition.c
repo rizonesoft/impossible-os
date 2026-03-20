@@ -9,6 +9,7 @@
  * for known filesystem signatures:
  *   - FAT32: BPB boot signature 0x55AA + "FAT32   " at offset 82
  *   - IXFS:  Superblock magic 0x49584653 at offset 0
+ *   - NTFS:  OEM ID "NTFS    " at offset 0x03 + boot signature 0x55AA
  *   - ext2:  Magic 0xEF53 at superblock offset 56 (1024 bytes into partition)
  * ============================================================================ */
 
@@ -17,6 +18,7 @@
 #include "kernel/fs/gpt.h"
 #include "kernel/fs/fat32.h"
 #include "kernel/fs/ixfs.h"
+#include "kernel/fs/ntfs.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/drivers/serial.h"
@@ -151,6 +153,9 @@ static int probe_filesystem(const struct blkdev *sub_dev)
     if (probe_fat32(sect))
         return PART_FS_FAT32;
 
+    if (ntfs_probe(sect))
+        return PART_FS_NTFS;
+
     /* For ext2, need to read sector 2 (byte 1024) */
     if (blkdev_read(sub_dev, 2, 1, sect) == 0) {
         if (probe_ext2_sector2(sect))
@@ -166,6 +171,7 @@ const char *partition_fs_name(int fs_type)
     case PART_FS_FAT32: return "FAT32";
     case PART_FS_IXFS:  return "IXFS";
     case PART_FS_EXT2:  return "ext2";
+    case PART_FS_NTFS:  return "NTFS";
     default:            return "Unknown";
     }
 }

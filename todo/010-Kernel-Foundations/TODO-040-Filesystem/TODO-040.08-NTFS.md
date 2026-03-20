@@ -97,33 +97,32 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec                 | Sections                       | What It Delivers                                                       | Depends On                                      | Status |
-| -- | :----: | -------------------------------- | ------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------- | :----: |
-| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md`   | Full spec                      | Wire formats, offset tables, algorithms — **read before coding**       | —                                               |   ✅   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`    | Block device layer             | `blkdev_read()` via VirtIO or AHCI                                     | —                                               |   ✅   |
-| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`    | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found             | Phase 0 (block)                                 |   ✅   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size                     | Phase 0 (partitions)                            |   ⬜   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                         | Phase 1 (§1.1)                                  |   ⬜   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **must run before ANY attribute parsing** | Phase 1 (§2.1)                                  |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders        | Phase 1 (§2.2)                                  |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                       | Phase 2 (§3.1)                                  |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data          | Phase 2 (§3.1)                                  |   ⬜   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md`            | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                          | Phase 2 (§3.1)                                  |   ⬜   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md`            | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)                  | Phase 2 (§4.1)                                  |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                         | Phase 2 (§3.1, §3.3)                            |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                             | Phase 4 (§5.1)                                  |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                                | Phase 4 (§5.2)                                  |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §6.1 VFS Registration          | Mount NTFS volumes, wire `vfs_ops` callbacks                           | Phase 3 (§4.2) + Phase 4 (§5.3) + VFS (040.07) |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                               | Phase 4 (§5.1, §5.2)                            |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                         | Phase 2 (§3.1)                                  |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                          | Phase 2 (§3.1) + VFS §2.2                       |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution                   | Phase 4 (§5.3)                                  |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`           | Phase 1 (§2.2)                                  |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §9.1 LZNT1 Decompression       | Read compressed Windows system files                                   | Phase 3 (§4.2)                                  |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                                 | Phase 1 (§2.1)                                  |   ⬜   |
-| 💎 | **7**  | `TODO-040.08-NTFS.md`            | §8.1 Test Suite                | Automated validation with NTFS test images                             | Phase 5 (§6.1)                                  |   ⬜   |
-| ⭐ | **7**  | `TODO-040.08-NTFS.md`            | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**                   | Phase 6 (§7.1)                                  |   ⬜   |
-| ⭐ | **7**  | `TODO-040.08-NTFS.md`            | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**           | Phase 6 (§7.1)                                  |   ⬜   |
+| ⭐ | Phase  | TODO File / Spec      | Sections                       | What It Delivers                                                 | Depends On                             | Status |
+| -- | :----: | ---------------------- | ------------------------------ | ---------------------------------------------------------------- | -------------------------------------- | :----: |
+| 💎 | **0**  | `TODO-040.01/02`      | Block device layer             | `blkdev_read()` via VirtIO or AHCI                               | —                                      |   ✅   |
+| 💎 | **0**  | `TODO-040.04/05`      | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found        | Phase 0 (block)                        |   ✅   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                   |   ✅   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                         |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS volumes, wire `vfs_ops` callbacks                     | P3 (§4.2) + P4 (§5.3) + VFS (040.07)   |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md` | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | Phase 4 (§5.1, §5.2)                   |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md` | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md` | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | Phase 2 (§3.1) + VFS §2.2              |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md` | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | Phase 4 (§5.3)                         |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md` | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | Phase 1 (§2.2)                         |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md` | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | Phase 3 (§4.2)                         |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md` | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | Phase 1 (§2.1)                         |   ⬜   |
+| 💎 | **7**  | `TODO-040.08-NTFS.md` | §8.1 Test Suite                | Automated validation with NTFS test images                       | Phase 5 (§6.1)                         |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md` | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | Phase 6 (§7.1)                         |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md` | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | Phase 6 (§7.1)                         |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–1** are prerequisites — block I/O, partition tables, BPB, and MFT reading.
@@ -155,27 +154,35 @@ graph TD
 
 ### 1.1 BIOS Parameter Block Extraction
 
-**Prompt:** Read the first sector (LBA 0) of the NTFS partition into a 512-byte buffer. Validate the OEM ID at offset `0x03` as `"NTFS    "` (padded with spaces). Extract all critical BPB fields: Bytes Per Sector, Sectors Per Cluster, Total Sectors (64-bit at `0x28`), LCN of `$MFT` (offset `0x30`), LCN of `$MFTMirr` (offset `0x38`), Clusters Per File Record Segment (offset `0x40`), and Volume Serial (offset `0x48`). Handle the Clusters Per FRS quirk: if the value is negative, interpret as `2^|value|` (e.g., `0xF6` = −10 → 2^10 = 1024 bytes). Validate the boot signature `0x55 0xAA` at offset `0x1FE`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: BPB parsing and MFT location"`. Add notes directly in this TODO section.
+**Verification:** NTFS BPB parsing is implemented in `ntfs_core.c` (`ntfs_init()`). Verify: `bash scripts/build.sh clean` passes. When an NTFS partition is present, serial log shows `[NTFS] Volume: N sectors, cluster=N bytes, MFT at LCN N (byte 0xN)` and `[NTFS] FRS size=N bytes, INDX size=N bytes`. The partition scanner (`partition.c`) now detects NTFS via `ntfs_probe()` and reports `PART_FS_NTFS`. The `ntfs_volume` struct stores all parsed BPB values.
 
-- [ ] Read partition first sector (512 bytes or `dev->sector_size`)
-- [ ] Validate OEM ID at `0x03`: must match `"NTFS    "` (8 bytes, space-padded)
-- [ ] Extract `bytes_per_sector` at `0x0B` (2 bytes LE) — typically 512 or 4096
-- [ ] Extract `sectors_per_cluster` at `0x0D` (1 byte) — typically 8
-- [ ] Calculate `cluster_size = bytes_per_sector × sectors_per_cluster`
-- [ ] Extract `total_sectors` at `0x28` (8 bytes LE, 64-bit)
-- [ ] Extract `mft_lcn` at `0x30` (8 bytes LE) — Logical Cluster Number of `$MFT`
-- [ ] Extract `mftmirr_lcn` at `0x38` (8 bytes LE) — LCN of `$MFTMirr`
-- [ ] Extract `clusters_per_frs` at `0x40` (4 bytes, **signed interpretation**):
-  - [ ] If positive: `frs_size = clusters_per_frs × cluster_size`
-  - [ ] If negative: `frs_size = 2^|clusters_per_frs|` (e.g., `0xF6` → −10 → 1024 bytes)
-- [ ] Extract `clusters_per_index` at `0x44` (same signed interpretation)
-- [ ] Extract `volume_serial` at `0x48` (8 bytes LE)
-- [ ] Validate boot signature `0x55 0xAA` at offset `0x1FE`
-- [ ] Calculate `mft_byte_offset = mft_lcn × cluster_size`
-- [ ] Log: `[NTFS] Volume: %llu sectors, cluster=%u bytes, MFT at LCN %llu (byte %llu)`
-- [ ] Log: `[NTFS] FRS size=%u bytes, INDX size=%u bytes`
-- [ ] Store all values in `struct ntfs_volume` context
-- [ ] Commit: `"ntfs: BPB parsing and MFT location"`
+- [x] Read partition first sector (512 bytes or `dev->sector_size`)
+- [x] Validate OEM ID at `0x03`: must match `"NTFS    "` (8 bytes, space-padded)
+- [x] Extract `bytes_per_sector` at `0x0B` (2 bytes LE) — typically 512 or 4096
+- [x] Extract `sectors_per_cluster` at `0x0D` (1 byte) — typically 8
+- [x] Calculate `cluster_size = bytes_per_sector × sectors_per_cluster`
+- [x] Extract `total_sectors` at `0x28` (8 bytes LE, 64-bit)
+- [x] Extract `mft_lcn` at `0x30` (8 bytes LE) — Logical Cluster Number of `$MFT`
+- [x] Extract `mftmirr_lcn` at `0x38` (8 bytes LE) — LCN of `$MFTMirr`
+- [x] Extract `clusters_per_frs` at `0x40` (4 bytes, **signed interpretation**):
+  - [x] If positive: `frs_size = clusters_per_frs × cluster_size`
+  - [x] If negative: `frs_size = 2^|clusters_per_frs|` (e.g., `0xF6` → −10 → 1024 bytes)
+- [x] Extract `clusters_per_index` at `0x44` (same signed interpretation)
+- [x] Extract `volume_serial` at `0x48` (8 bytes LE)
+- [x] Validate boot signature `0x55 0xAA` at offset `0x1FE`
+- [x] Calculate `mft_byte_offset = mft_lcn × cluster_size`
+- [x] Log: `[NTFS] Volume: %llu sectors, cluster=%u bytes, MFT at LCN %llu (byte %llu)`
+- [x] Log: `[NTFS] FRS size=%u bytes, INDX size=%u bytes`
+- [x] Store all values in `struct ntfs_volume` context
+- [x] Committed
+
+> **Notes:**
+> - Files: `include/kernel/fs/ntfs.h`, `src/kernel/fs/ntfs/ntfs_core.c`.
+> - `ntfs_probe()` checks OEM ID + boot signature — used by `partition.c:probe_filesystem()`.
+> - `PART_FS_NTFS` (4) added to `partition.h` alongside FAT32 (1), IXFS (2), ext2 (3).
+> - `decode_record_size()` handles the signed Clusters-Per-FRS quirk correctly — negative values encode `2^|val|` bytes, not a cluster count.
+> - BPB sanity checks: bytes_per_sector and sectors_per_cluster must be non-zero powers of 2.
+> - Volume context uses `kmalloc()` — only ~72 bytes, well within the rules.md guideline for small kernel bookkeeping structs.
 
 ---
 

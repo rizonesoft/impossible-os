@@ -19,6 +19,7 @@
 #define PART_FS_FAT32    1
 #define PART_FS_IXFS     2
 #define PART_FS_EXT2     3
+#define PART_FS_NTFS     4
 
 /* Partition info (stored alongside each sub-blkdev) */
 struct partition_info {
