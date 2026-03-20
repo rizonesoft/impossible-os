@@ -223,8 +223,10 @@ static int port_init(struct ahci_port *p, int port_num)
     /* Clear interrupt status */
     port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
 
-    /* Enable interrupts for this port */
-    port_write(pregs, AHCI_PxIE, 0x01);  /* D2H Register FIS interrupt */
+    /* Disable per-port interrupts — we use polling, not IRQ-driven I/O.
+     * Under WHPX, enabling AHCI interrupts without a registered handler
+     * creates an unhandled interrupt storm on the PCI IRQ line. */
+    port_write(pregs, AHCI_PxIE, 0x00);
 
     /* Start command engine */
     port_start_cmd(pregs);
@@ -754,9 +756,10 @@ int ahci_init(void)
     /* Clear global interrupt status */
     ahci_write32(abar, AHCI_IS, ahci_read32(abar, AHCI_IS));
 
-    /* Enable global interrupts */
+    /* Disable global interrupts — we use polling, not IRQ-driven I/O.
+     * Under WHPX, unhandled AHCI interrupts cause interrupt storms. */
     ghc = ahci_read32(abar, AHCI_GHC);
-    ghc |= AHCI_GHC_IE;
+    ghc &= ~AHCI_GHC_IE;
     ahci_write32(abar, AHCI_GHC, ghc);
 
     /* Initialize each implemented port */
