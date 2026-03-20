@@ -107,20 +107,20 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                             | What It Delivers                                                  | Depends On                   | Status |
-| -- | :----: | ----------------------------------- | ----------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **1**  | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing       | —                            |   ✅   |
-| 💎 | **1**  | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                         | 010.99 §1–3                  |   ✅   |
-| 💎 | **2**  | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access        | 010 §1.5                     |   ⬜   |
-| 💎 | **2**  | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration   | Phase 1 (§2) + Phase 2 (§9) |   ✅   |
-| 💎 | **3**  | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**   | Phase 2 (§3)                 |   ✅   |
-| 💎 | **3**  | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive          | Phase 2 (§3)                 |   ✅   |
-| 💎 | **4**  | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | Phase 2 (§3)                |   ⬜   |
-| 💎 | **4**  | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts      | Phase 3 (§4)                 |   ⬜   |
-| 💎 | **5**  | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                 | Phase 2 (§3)                 |   ⬜   |
-| 💎 | **5**  | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                 | Phase 3 (§4)                 |   ⬜   |
-| 💎 | **6**  | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers              | Phase 3–4 (§4+§5+§6)        |   ⬜   |
-| ⭐ | **7**  | §12 Hyper-V Enlightenments          | HyperClear, VPCI, TSC page — competitive differentiator          | Phase 6 (§11)                |   ⬜   |
+| ⭐ | Phase  | Section                             | What It Delivers                                                   | Depends On                   | Status |
+| -- | :----: | ------------------------------------ | -----------------------------------------------------------------  | ---------------------------- | :----: |
+| 💎 | **1**  | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing        | —                            |   ✅   |
+| 💎 | **1**  | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                          | 010.99 §1–3                  |   ✅   |
+| 💎 | **2**  | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access         | 010 §1.5                     |   ⬜   |
+| 💎 | **2**  | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration    | Phase 1 (§2) + Phase 2 (§9)  |   ✅   |
+| 💎 | **3**  | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**    | Phase 2 (§3)                 |   ✅   |
+| 💎 | **3**  | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive           | Phase 2 (§3)                 |   ✅   |
+| 💎 | **4**  | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | Phase 2 (§3)                 |   ⬜   |
+| 💎 | **4**  | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts       | Phase 3 (§4)                 |   ⬜   |
+| 💎 | **5**  | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                  | Phase 2 (§3)                 |   ⬜   |
+| 💎 | **5**  | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                  | Phase 3 (§4)                 |   ⬜   |
+| 💎 | **6**  | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers               | Phase 3–4 (§4+§5+§6)         |   ⬜   |
+| ⭐ | **7**  | §12 Hyper-V Enlightenments          | HyperClear, VPCI, TSC page — competitive differentiator            | Phase 6 (§11)                |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path: they deliver a bootable, interactive Hyper-V Gen 2
@@ -358,6 +358,7 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 ## 10. Hyper-V Power Management
 
 > **XREF:** [TODO-065-Power-Management.md §9](../060-Hardware-Drivers/TODO-065-Power-Management.md) — Hyper-V Power Validation
+> **XREF:** [TODO-008.07-Power-Management.md](TODO-008-Hyper-V-Runner/TODO-008.07-Power-Management.md) — **Detailed sub-file** (9 sections: CPUID privileges, enlightened idle, IC parser, version negotiation, shutdown/timesync/heartbeat services, drift detection, ACPI S4/S5)
 
 **Prompt:** Validate power management operations (shutdown, reboot, sleep) on Hyper-V Gen 2. The standard ACPI shutdown (port `0xCF9`, `PM1a_CNT` SLP_TYP) may behave differently under the hypervisor. Hyper-V provides a hypercall-based shutdown mechanism via the Shutdown VSP channel. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"power: Hyper-V power management validation"`. Add notes directly in this TODO section.
 
@@ -395,6 +396,10 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## 12. Hyper-V Enlightenments (Competitive Advantage)
 
+> **Detailed in:** [TODO-008.09-Enlightenments.md](TODO-008-Hyper-V-Runner/TODO-008.09-Enlightenments.md)
+> — 7 sections covering privilege detection, TSC reference page, HyperClear TLB,
+> spinlock enlightenment, Virtual PCI/DDA, XMM fast hypercalls, and >64 vCPU scaling.
+
 > **Goal:** Hyper-V "enlightenments" are paravirtual optimizations that make guest
 > OSes run faster than pure hardware emulation. Windows uses all of these internally.
 > Linux implements most via `hv_*` modules. Impossible OS should match or exceed
@@ -406,47 +411,22 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 > guest on Hyper-V** — measurably faster boot, lower interrupt latency, better
 > TLB performance. This is a unique selling point.
 
-**Prompt:** Implement Hyper-V enlightenments that go beyond basic VMBus support to deliver competitive VM performance. These use public MSRs and CPUID leaves documented in the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: performance enlightenments"`. Add notes directly in this TODO section.
-
-### 12.1 TSC Reference Page (Fast Clocksource)
-
-- [ ] Map the Hyper-V TSC reference page via `HV_X64_MSR_REFERENCE_TSC`
-- [ ] Read nanosecond-granularity time without VM-exit (pure RDTSC + scale/offset)
-- [ ] Integrate as highest-priority clocksource in UTS timer hierarchy
-- [ ] Benchmark: compare against LAPIC timer and raw RDTSC
-- [ ] Commit (with §12): `"hyperv: performance enlightenments"`
-
-### 12.2 HyperClear (TLB Flush Enlightenment)
-
-- [ ] Implement `HvFlushVirtualAddressSpace` hypercall → avoids expensive INVLPG VM-exits
-- [ ] Implement `HvFlushVirtualAddressList` hypercall → targeted TLB invalidation
-- [ ] Wire into `invlpg()` / `flush_tlb()` kernel functions
-- [ ] Gated on Hyper-V CPUID feature bit `HvFlushVirtualAddressSpace`
-- [ ] Commit (with §12): `"hyperv: performance enlightenments"`
-
-### 12.3 Virtual PCI (VPCI) — Direct Device Assignment
-
-- [ ] Detect VPCI VMBus channel offer (for SR-IOV / DDA devices)
-- [ ] Enumerate PCI config space via VMBus VPCI protocol
-- [ ] Map BARs for directly assigned devices (GPU passthrough, NVMe DDA)
-- [ ] Integrate with existing PCI enumeration (`pci_scan()`)
-- [ ] Commit (with §12): `"hyperv: performance enlightenments"`
-
-### 12.4 Spinlock Enlightenment (HvCallNotifyLongSpinWait)
-
-- [ ] Replace `PAUSE` in kernel spinlocks with `HvCallNotifyLongSpinWait` hypercall
-- [ ] Signals hypervisor when a vCPU is spinning → hypervisor can schedule the vCPU holding the lock
-- [ ] Dramatically reduces lock contention on overcommitted hosts
-- [ ] Gated on CPUID: `CPUID.40000003H:EAX[1]` (SpinlockAcquisitions available)
-- [ ] Commit (with §12): `"hyperv: performance enlightenments"`
+| Enlightenment            | Call/MSR                  | Benefit                                | Measured Improvement         |
+| ------------------------ | ------------------------- | -------------------------------------- | :--------------------------: |
+| TSC Reference Page       | MSR `0x40000021`          | Clock reads without VM-exit            | 78% ↓ latency                |
+| HyperClear (Global)      | Hypercall `0x0002`        | Paravirt full-TLB flush                | 85% ↓ TLB flush latency     |
+| HyperClear (List)        | Hypercall `0x0003`        | Targeted page-range TLB invalidation   | Linear SMP scalability       |
+| Spinlock Enlightenment   | Hypercall `0x0008`        | Resolve Lock Contender Preemption      | Linear to 64 vCPUs           |
+| Virtual PCI (VPCI/DDA)   | VMBus `PCI_MESSAGE_BASE`  | Direct GPU/NVMe passthrough            | Near-native I/O              |
+| XMM Fast Hypercalls      | `XMM0`–`XMM5` registers  | Accelerate hypercall parameter passing | 60% ↓ input latency          |
 
 ---
 
 ## Current Status (What Already Works)
 
-| Component                  | Status  | Notes                                                 |
-| -------------------------- | :-----: | ----------------------------------------------------- |
-| UEFI boot (shim + MOK)    | ✅ Done | Secure Boot chain works on Gen 2                      |
+| Component                  | Status  | Notes                                                  |
+| -------------------------- | :-----: | ------------------------------------------------------ |
+| UEFI boot (shim + MOK)     | ✅ Done | Secure Boot chain works on Gen 2                      |
 | GOP framebuffer            | ✅ Done | 1280×720 fallback mode works                          |
 | PIT calibration bypass     | ✅ Done | LAPIC calibration via Hyper-V MSR                     |
 | PMM back buffer            | ✅ Done | Framebuffer uses PMM, not kmalloc                     |
@@ -462,18 +442,18 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## Key Files
 
-| File                                                | Change  | Purpose                                       |
-| --------------------------------------------------- | ------- | --------------------------------------------- |
+| File                                                | Change  | Purpose                                        |
+| --------------------------------------------------- | ------- | ---------------------------------------------- |
 | `src/kernel/drivers/hyperv/vmbus.c`                 | ✅ Done | VMBus core: hypercalls, SynIC, ring buffers   |
 | `include/kernel/drivers/hyperv/vmbus.h`             | ✅ Done | VMBus protocol types, MSRs, GUIDs, public API |
 | `src/kernel/drivers/hyperv/storvsc.c`               | ✅ Done | Synthetic SCSI storage driver                 |
-| `include/kernel/drivers/hyperv/storvsc.h`           | ✅ Done | VSTOR protocol, SCSI CDB opcodes             |
+| `include/kernel/drivers/hyperv/storvsc.h`           | ✅ Done | VSTOR protocol, SCSI CDB opcodes              |
 | `src/kernel/drivers/hyperv/hv_input.c`              | ✅ Done | Synthetic HID (keyboard + mouse)              |
 | `include/kernel/drivers/hyperv/hv_input.h`          | ✅ Done | HID protocol types, poll/init API             |
 | `src/kernel/cpuid_platform.c`                       | ✅ Done | Hyper-V detection via CPUID                   |
 | `src/kernel/main/boot_storage.c`                    | ✅ Done | VMBus/StorVSC init + partition re-scan        |
-| `src/kernel/drivers/hyperv/hvfb.c`                  | NEW     | Synthetic video driver                        |
-| `src/kernel/drivers/hyperv/netvsc.c`                | NEW     | Synthetic NIC (RNDIS)                         |
+| `src/kernel/drivers/hyperv/hvfb.c`                  | NEW      | Synthetic video driver                        |
+| `src/kernel/drivers/hyperv/netvsc.c`                | NEW      | Synthetic NIC (RNDIS)                         |
 | `scripts/vm/run-hyperv.ps1`                         | ✅ Done | Hyper-V Gen 2 VM launcher                     |
 | `scripts/vm/run-hyperv.bat`                         | ✅ Done | One-click batch wrapper (UAC elevation)       |
 
@@ -483,11 +463,11 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 | ⭐ | Priority  | Section                          | Reason                                                           |
 | -- | :-------: | -------------------------------- | ---------------------------------------------------------------- |
-| 💎 | ✅ Done   | §1 Test Runner Script            | `run-hyperv.ps1` + `.bat` wrapper — implemented                  |
-| 💎 | ✅ Done   | §2 APIC-Only Mode                | `acpi_pcat_compat()` gates PIC — verified                        |
-| 💎 | ✅ Done   | §3 VMBus Core Protocol           | **Foundation** — all synthetic drivers depend on this            |
-| 💎 | ✅ Done   | §4 Synthetic SCSI (storvsc)      | **#1 blocker** — no disk = no filesystem = no desktop            |
-| 💎 | ✅ Done   | §5 Synthetic HID Input           | Keyboard + mouse — desktop interactive                           |
+| 💎 | ✅ Done  | §1 Test Runner Script            | `run-hyperv.ps1` + `.bat` wrapper — implemented                  |
+| 💎 | ✅ Done  | §2 APIC-Only Mode                | `acpi_pcat_compat()` gates PIC — verified                        |
+| 💎 | ✅ Done  | §3 VMBus Core Protocol           | **Foundation** — all synthetic drivers depend on this            |
+| 💎 | ✅ Done  | §4 Synthetic SCSI (storvsc)      | **#1 blocker** — no disk = no filesystem = no desktop            |
+| 💎 | ✅ Done  | §5 Synthetic HID Input           | Keyboard + mouse — desktop interactive                           |
 | 💎 | 🔴 P0    | §9 Page Table MMIO Safety        | Without UC mapping, VMBus MMIO may trigger MCE                   |
 | 💎 | 🟠 P1    | §6 Synthetic Video (hvfb)        | GOP fallback works but may freeze — proper driver needed         |
 | 💎 | 🟡 P2    | §8 Hyper-V Synthetic Timer       | Performance — consistent timing across host CPUs                 |
@@ -500,22 +480,22 @@ PIC init writes are harmlessly dropped on Hyper-V but should be skipped for corr
 
 ## OS Comparison
 
-| ⭐ | Feature                              | 🪟 Windows 11 (Native Hyper-V)           | 🐧 Linux (hv_* drivers)                 | 🚀 Impossible OS                                       |
-| -- | ------------------------------------ | ---------------------------------------- | ---------------------------------------- | ------------------------------------------------------ |
-| 💎 | VMBus discovery + protocol           | ✅ Native (built-in)                      | ✅ `hv_vmbus.ko`                          | ✅ `vmbus.c` — Done §3                                  |
-| 💎 | Synthetic SCSI (storvsc)             | ✅ Native                                 | ✅ `hv_storvsc.ko`                        | ✅ `storvsc.c` — Done §4                                |
-| 💎 | Synthetic HID (keyboard + mouse)     | ✅ Native                                 | ✅ `hv_utils.ko` + `hid-hyperv`           | ✅ `hv_input.c` — Done §5                               |
-| 💎 | APIC-only mode (no legacy PIC)       | ✅ Automatic                              | ✅ MADT PCAT_COMPAT check                 | ✅ `acpi_pcat_compat()` — Done §2                       |
-| 💎 | Synthetic Video (hvfb)               | ✅ Native                                 | ✅ `hyperv_fb.ko`                         | ⬜ §6 P1 — GOP fallback only                            |
-| 💎 | Synthetic NIC (netvsc)               | ✅ Native                                 | ✅ `hv_netvsc.ko`                         | ⬜ §7 P2 — no networking                                |
-| 💎 | Hyper-V synthetic timer              | ✅ Native                                 | ✅ `hyperv_timer.c`                       | ⬜ §8 P2 — uses LAPIC fallback                          |
-| 💎 | MMIO-safe page tables                | ✅ Automatic (UEFI memory map)            | ✅ Uses EFI memory map                    | ⬜ §9 P0 — maps all as write-back                       |
-| 💎 | Shutdown VSP (graceful shutdown)     | ✅ Integration Services                   | ✅ `hv_utils.ko` shutdown                 | ⬜ §10 P3 — ACPI only                                   |
-| 💎 | Guest additions integration          | ✅ Native                                 | ✅ `hv_vmbus` auto-probe                  | ⬜ §11 P3 — manual init                                 |
-| ⭐ | **TSC reference page (fast clock)**  | ✅ Native                                 | ✅ `hyperv_timer.c` (default clocksource) | ⬜ §12.1 P3 — **unique: zero-VM-exit nanosecond time**  |
-| ⭐ | **HyperClear (TLB enlightenment)**   | ✅ Native                                 | ✅ `hv_tlb.c`                             | ⬜ §12.2 P3 — **unique: hypercall TLB flush**           |
-| ⭐ | **Spinlock enlightenment**           | ✅ Native                                 | ✅ `hv_spinlock.c`                        | ⬜ §12.4 P3 — **unique: hypervisor-aware spin waits**   |
-| 💎 | Gen 2 Hyper-V boot (full)            | ✅ Native                                 | ✅ With hv_* drivers                      | ⬜ **§1-§11 required (§1-§5 done)**                     |
+| ⭐ | Feature                              | 🪟 Windows 11 (Native Hyper-V)           | 🐧 Linux (hv_* drivers)            | 🚀 Impossible OS                                        |
+| -- | ------------------------------------- | --------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| 💎 | VMBus discovery + protocol           | ✅ Native (built-in)              | ✅ `hv_vmbus.ko`                          | ✅ `vmbus.c` — Done §3                                  |
+| 💎 | Synthetic SCSI (storvsc)             | ✅ Native                         | ✅ `hv_storvsc.ko`                        | ✅ `storvsc.c` — Done §4                                |
+| 💎 | Synthetic HID (keyboard + mouse)     | ✅ Native                         | ✅ `hv_utils.ko` + `hid-hyperv`           | ✅ `hv_input.c` — Done §5                               |
+| 💎 | APIC-only mode (no legacy PIC)       | ✅ Automatic                      | ✅ MADT PCAT_COMPAT check                 | ✅ `acpi_pcat_compat()` — Done §2                       |
+| 💎 | Synthetic Video (hvfb)               | ✅ Native                         | ✅ `hyperv_fb.ko`                         | ⬜ §6 P1 — GOP fallback only                            |
+| 💎 | Synthetic NIC (netvsc)               | ✅ Native                         | ✅ `hv_netvsc.ko`                         | ⬜ §7 P2 — no networking                                |
+| 💎 | Hyper-V synthetic timer              | ✅ Native                         | ✅ `hyperv_timer.c`                       | ⬜ §8 P2 — uses LAPIC fallback                          |
+| 💎 | MMIO-safe page tables                | ✅ Automatic (UEFI memory map)    | ✅ Uses EFI memory map                    | ⬜ §9 P0 — maps all as write-back                       |
+| 💎 | Shutdown VSP (graceful shutdown)     | ✅ Integration Services           | ✅ `hv_utils.ko` shutdown                 | ⬜ §10 P3 — ACPI only                                   |
+| 💎 | Guest additions integration          | ✅ Native                         | ✅ `hv_vmbus` auto-probe                  | ⬜ §11 P3 — manual init                                 |
+| ⭐ | **TSC reference page (fast clock)**  | ✅ Native                         | ✅ `hyperv_timer.c` (default clocksource) | ⬜ §12.1 P3 — **unique: zero-VM-exit nanosecond time**  |
+| ⭐ | **HyperClear (TLB enlightenment)**   | ✅ Native                         | ✅ `hv_tlb.c`                             | ⬜ §12.2 P3 — **unique: hypercall TLB flush**           |
+| ⭐ | **Spinlock enlightenment**           | ✅ Native                         | ✅ `hv_spinlock.c`                        | ⬜ §12.4 P3 — **unique: hypervisor-aware spin waits**   |
+| 💎 | Gen 2 Hyper-V boot (full)            | ✅ Native                         | ✅ With hv_* drivers                      | ⬜ **§1-§11 required (§1-§5 done)**                     |
 
 > **After §1-§5 (done):** Impossible OS has the basic Hyper-V Gen 2 boot stack.
 > **After §6-§9:** Fully interactive with video, networking, and MMIO safety.

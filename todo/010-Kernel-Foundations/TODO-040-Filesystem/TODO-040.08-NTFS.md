@@ -97,33 +97,33 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
-| -- | :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md` | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ✅   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
-| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → NTFS partition found              | Phase 0 (block)              |   ✅   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §1.1 BPB Parsing                 | Locate MFT on disk, extract cluster size, FRS size                        | Phase 0 (partitions)         |   ⬜   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §2.1 MFT Record Reader           | Read any file's raw MFT record by inode number                            | Phase 1 (§1.1)               |   ⬜   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §2.2 Fixup (USA) Verification    | Sector-tear integrity check — **must run before ANY attribute parsing**    | Phase 1 (§2.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §3.1 Attribute Iterator          | Walk attributes in MFT records — unlocks ALL attribute decoders           | Phase 1 (§2.2)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §3.3 `$FILE_NAME` Decoder        | Extract filenames, parent references, namespaces                          | Phase 2 (§3.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md`                 | §4.1 Run-List Decoder            | VCN → LCN translation — enables reading ANY non-resident data             | Phase 2 (§3.1)               |   ⬜   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md`                 | §3.2 `$STANDARD_INFORMATION`     | Timestamps (FILETIME → Unix), DOS permissions                             | Phase 2 (§3.1)               |   ⬜   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md`                 | §4.2 File Data Reader            | Actually read file contents (resident + non-resident)                     | Phase 2 (§4.1)               |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.1 `$INDEX_ROOT` Parser        | Root node of directory B+ tree                                            | Phase 2 (§3.1, §3.3)        |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.2 INDX Buffer Reader          | Child nodes of B+ tree (4 KB INDX records)                                | Phase 4 (§5.1)               |   ⬜   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md`                 | §5.3 Directory Lookup            | Full path resolution: `C:\path\to\file`                                   | Phase 4 (§5.2)               |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §6.1 VFS Registration            | Mount NTFS volumes, wire `vfs_ops` callbacks                              | Phase 3 (§4.2) + Phase 4 (§5.3) + VFS (040.07) |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §5.4 Directory Enumeration       | `FindFirstFile` / `FindNextFile` support                                  | Phase 4 (§5.1, §5.2)        |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md`                 | §3.4 `$ATTRIBUTE_LIST`           | Handle MFT record overflow (extension records)                            | Phase 2 (§3.1)               |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §3.5 `$SECURITY_DESCRIPTOR`      | Read NTFS ACLs → route to `GetFileSecurity()`                             | Phase 2 (§3.1) + VFS §2.2   |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §3.6 `$REPARSE_POINT`            | Follow symlinks and junctions during path resolution                      | Phase 4 (§5.3)               |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §7.1 System Metafiles            | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`              | Phase 1 (§2.2)               |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §9.1 LZNT1 Decompression         | Read compressed Windows system files                                      | Phase 3 (§4.2)               |   ⬜   |
-| 💎 | **6**  | `TODO-040.08-NTFS.md`                 | §10.1 MFT Record Cache           | LRU cache — avoid redundant disk reads                                    | Phase 1 (§2.1)               |   ⬜   |
-| 💎 | **7**  | `TODO-040.08-NTFS.md`                 | §8.1 Test Suite                  | Automated validation with NTFS test images                                | Phase 5 (§6.1)               |   ⬜   |
-| ⭐ | **7**  | `TODO-040.08-NTFS.md`                 | §11.1 Health Dashboard           | At-a-glance NTFS volume health — **no OS does this**                      | Phase 6 (§7.1)               |   ⬜   |
-| ⭐ | **7**  | `TODO-040.08-NTFS.md`                 | §11.2 Deleted File Recovery      | Built-in GUI forensic recovery — **Windows needs 3rd-party**              | Phase 6 (§7.1)               |   ⬜   |
+| ⭐ | Phase  | TODO File / Spec                 | Sections                       | What It Delivers                                                       | Depends On                                      | Status |
+| -- | :----: | -------------------------------- | ------------------------------ | ---------------------------------------------------------------------- | ----------------------------------------------- | :----: |
+| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md`   | Full spec                      | Wire formats, offset tables, algorithms — **read before coding**       | —                                               |   ✅   |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`    | Block device layer             | `blkdev_read()` via VirtIO or AHCI                                     | —                                               |   ✅   |
+| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`    | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found             | Phase 0 (block)                                 |   ✅   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size                     | Phase 0 (partitions)                            |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                         | Phase 1 (§1.1)                                  |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md`            | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **must run before ANY attribute parsing** | Phase 1 (§2.1)                                  |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders        | Phase 1 (§2.2)                                  |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                       | Phase 2 (§3.1)                                  |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md`            | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data          | Phase 2 (§3.1)                                  |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md`            | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                          | Phase 2 (§3.1)                                  |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md`            | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)                  | Phase 2 (§4.1)                                  |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                         | Phase 2 (§3.1, §3.3)                            |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                             | Phase 4 (§5.1)                                  |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md`            | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                                | Phase 4 (§5.2)                                  |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §6.1 VFS Registration          | Mount NTFS volumes, wire `vfs_ops` callbacks                           | Phase 3 (§4.2) + Phase 4 (§5.3) + VFS (040.07) |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                               | Phase 4 (§5.1, §5.2)                            |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md`            | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                         | Phase 2 (§3.1)                                  |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                          | Phase 2 (§3.1) + VFS §2.2                       |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution                   | Phase 4 (§5.3)                                  |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`           | Phase 1 (§2.2)                                  |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §9.1 LZNT1 Decompression       | Read compressed Windows system files                                   | Phase 3 (§4.2)                                  |   ⬜   |
+| 💎 | **6**  | `TODO-040.08-NTFS.md`            | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                                 | Phase 1 (§2.1)                                  |   ⬜   |
+| 💎 | **7**  | `TODO-040.08-NTFS.md`            | §8.1 Test Suite                | Automated validation with NTFS test images                             | Phase 5 (§6.1)                                  |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md`            | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**                   | Phase 6 (§7.1)                                  |   ⬜   |
+| ⭐ | **7**  | `TODO-040.08-NTFS.md`            | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**           | Phase 6 (§7.1)                                  |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–1** are prerequisites — block I/O, partition tables, BPB, and MFT reading.
@@ -1044,44 +1044,101 @@ graph TD
   - [ ] Update `$STANDARD_INFORMATION` timestamp fields
 - [ ] Commit: `"ntfs: file write engine"`
 
+---
+
+## 17. Alternate Data Streams Explorer (🚀 Impossible OS Feature)
+
+### 17.1 ADS Enumeration & Viewer
+
+**Prompt:** NTFS Alternate Data Streams (ADS) are hidden named `$DATA` attributes that can store arbitrary data alongside the primary file content. Malware commonly abuses ADS to hide payloads — Windows provides no built-in GUI to view them (only `dir /r` or PowerShell). Implement a File Manager extension that lists all named `$DATA` streams for any file and allows viewing/exporting their contents. This is a security and transparency feature — no desktop OS provides this natively in a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: ADS explorer"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows hides ADS behind `dir /r` and PowerShell. Linux `ntfs-3g`
+> exposes them via `getfattr` but requires CLI expertise. Impossible OS shows ADS in the
+> File Manager properties panel — one-click transparency for security-conscious users.
+
+- [ ] Implement `ntfs_enum_streams(vol, inode, callback)`:
+  - [ ] Walk all `$DATA` (type `0x80`) attributes in MFT record
+  - [ ] For unnamed `$DATA` → primary stream (skip)
+  - [ ] For named `$DATA` → ADS: extract stream name (UTF-16LE), size
+  - [ ] Handle `$ATTRIBUTE_LIST` extension records for files with many streams
+  - [ ] Callback: `{ stream_name, size, resident_flag }`
+- [ ] Implement `ntfs_read_stream(vol, inode, stream_name, offset, len, buf)`:
+  - [ ] Locate named `$DATA` attribute matching `stream_name`
+  - [ ] Read data (resident or non-resident) using §4.2 reader
+- [ ] Wire to File Manager: "Streams" tab in file properties panel
+  - [ ] List all named streams with size and type
+  - [ ] Preview text streams; export any stream to a separate file
+  - [ ] Security indicator: ⚠️ icon if file has hidden ADS (malware signal)
+- [ ] Commit: `"ntfs: ADS explorer"`
+
+---
+
+## 18. NTFS-to-IXFS Live Migration (🚀 Impossible OS Feature)
+
+### 18.1 Volume Migration Engine
+
+**Prompt:** Implement a one-click migration tool that copies the entire contents of an NTFS volume to an IXFS volume, preserving all metadata (timestamps, permissions, directory structure). This enables users to convert their Windows partitions to IXFS for better Impossible OS integration without booting Windows. The migration runs from within Impossible OS and requires both the NTFS read-only driver and IXFS write support. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: NTFS-to-IXFS migration engine"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux provides a built-in GUI tool for
+> migrating between NTFS and their native filesystem. Users must use third-party
+> cloning tools (Clonezilla, Macrium) or manual copy. Impossible OS does it natively.
+
+- [ ] Implement `ntfs_migrate_to_ixfs(vol, target_drive)`:
+  - [ ] Walk entire NTFS directory tree (recursive MFT + B+ tree traversal)
+  - [ ] For each directory: `vfs_create()` on target IXFS volume
+  - [ ] For each file: read via NTFS `$DATA` → write to IXFS file
+  - [ ] Preserve timestamps: map FILETIME → IXFS timestamps
+  - [ ] Preserve file attributes: map DOS flags → IXFS attributes
+  - [ ] Skip system metafiles ($MFT, $Volume, etc.) — IXFS has its own
+  - [ ] Handle symlinks/junctions: create equivalent IXFS links if supported
+- [ ] Progress UI: file count, bytes copied, ETA, current file path
+- [ ] Resume on failure: checkpoint last-copied inode, skip completed files
+- [ ] Verification pass: compare file sizes and checksums after migration
+- [ ] Wire to Disk Manager: "Migrate to IXFS" button on NTFS volumes
+- [ ] Commit: `"ntfs: NTFS-to-IXFS migration engine"`
+
 ## Priority Order
 
-| ⭐ | Priority | Section                       | Description                                                    |
-| -- | -------- | ----------------------------- | -------------------------------------------------------------- |
-| 💎 | 🔴 P0   | 1.1 BPB Parsing               | Foundation — locate MFT on disk                                |
-| 💎 | 🔴 P0   | 2.1 MFT Record Reader         | Foundation — read any file's metadata                          |
-| 💎 | 🔴 P0   | 2.2 Fixup Verification        | Integrity — must be done before ANY attribute parsing          |
-| 💎 | 🔴 P0   | 3.1 Attribute Iterator        | Foundation — walk attributes in MFT records                    |
-| 💎 | 🔴 P0   | 3.3 `$FILE_NAME` Decoder      | Foundation — extract filenames                                 |
-| 💎 | 🔴 P0   | 4.1 Run-List Decoder          | Foundation — translate VCN → LCN for file reads                |
-| 💎 | 🟠 P1   | 3.2 `$STANDARD_INFORMATION`   | Metadata — timestamps and permissions                          |
-| 💎 | 🟠 P1   | 4.2 File Data Reader          | Core feature — actually read file contents                     |
-| 💎 | 🟠 P1   | 5.1 `$INDEX_ROOT` Parser      | Directory — root of B+ tree                                    |
-| 💎 | 🟠 P1   | 5.2 INDX Buffer Reader        | Directory — child nodes of B+ tree                             |
-| 💎 | 🟠 P1   | 5.3 Directory Lookup          | Directory — path resolution (`C:\path\to\file`)                |
-| 💎 | 🟠 P1   | 6.1 VFS Registration          | Integration — make NTFS mountable                              |
-| 💎 | 🟡 P2   | 3.4 `$ATTRIBUTE_LIST`         | Robustness — handle fragmented/overflowing MFT records         |
-| 💎 | 🟡 P2   | 3.5 `$SECURITY_DESCRIPTOR`    | Interop — read NTFS ACLs for GetFileSecurity                   |
-| 💎 | 🟡 P2   | 3.6 `$REPARSE_POINT`          | Feature — follow symlinks and junctions                        |
-| 💎 | 🟡 P2   | 5.4 Directory Enumeration     | Feature — `FindFirstFile`/`FindNextFile` support               |
-| 💎 | 🟡 P2   | 7.1 System Metafiles          | Feature — volume name, dirty flag, free space, `$UpCase`       |
-| 💎 | 🟡 P2   | 9.1 LZNT1 Decompression       | Interop — read compressed Windows system files                 |
-| 💎 | 🟡 P2   | 10.1 MFT Record Cache         | Performance — avoid redundant disk reads                       |
-| 💎 | 🟢 P3   | 8.1 Test Suite                | Quality — automated validation with test images                |
-| ⭐ | 🟢 P3   | 11.1 Health Dashboard         | **At-a-glance NTFS health** — no OS does this                  |
-| ⭐ | 🟢 P3   | 11.2 Deleted File Recovery    | **Built-in forensic recovery** — Windows needs 3rd-party       |
-| 💎 | 🟣 P4   | 12.1 Cluster Allocator        | Write — `$Bitmap` alloc/free with MFT Zone awareness            |
-| 💎 | 🟣 P4   | 12.2 USA Regeneration         | Write — fixup generation for MFT/INDX writes                   |
-| 💎 | 🟣 P4   | 12.3 MFT Record Allocator     | Write — allocate/free MFT inodes, extend `$MFT`                |
-| 💎 | 🟣 P4   | 12.4 Attribute Writer         | Write — add/update/remove attributes, encode data runs         |
-| 💎 | 🟣 P4   | 12.5 File Create/Delete/Rename | Write — full file lifecycle on NTFS                            |
-| 💎 | 🟣 P4   | 13.1 Journal Engine           | Crash safety — `$LogFile` redo/undo transaction logging         |
-| 💎 | 🟣 P4   | 13.2 Recovery Replay          | Crash safety — dirty mount redo/undo replay                    |
-| 💎 | 🟣 P4   | 14.1 B+ Tree Insert/Delete    | Write — directory mutation with node split/merge               |
-| 💎 | 🟣 P4   | 16.1 File Write Engine        | Write — resident/non-resident data writes + truncation          |
-| ⭐ | 🟣 P4   | 15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
-| ⭐ | 🟣 P4   | 15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS      |
-| ⭐ | 🟣 P4   | 15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation        |
+| ⭐ | Priority | Section                        | Description                                                      |
+| -- | -------- | ------------------------------ | ---------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 BPB Parsing                | Foundation — locate MFT on disk                                  |
+| 💎 | 🔴 P0    | 2.1 MFT Record Reader          | Foundation — read any file's metadata                            |
+| 💎 | 🔴 P0    | 2.2 Fixup Verification         | Integrity — must be done before ANY attribute parsing            |
+| 💎 | 🔴 P0    | 3.1 Attribute Iterator         | Foundation — walk attributes in MFT records                      |
+| 💎 | 🔴 P0    | 3.3 `$FILE_NAME` Decoder       | Foundation — extract filenames                                   |
+| 💎 | 🔴 P0    | 4.1 Run-List Decoder           | Foundation — translate VCN → LCN for file reads                  |
+| 💎 | 🟠 P1    | 3.2 `$STANDARD_INFORMATION`    | Metadata — timestamps and permissions                            |
+| 💎 | 🟠 P1    | 4.2 File Data Reader           | Core feature — actually read file contents                       |
+| 💎 | 🟠 P1    | 5.1 `$INDEX_ROOT` Parser       | Directory — root of B+ tree                                      |
+| 💎 | 🟠 P1    | 5.2 INDX Buffer Reader         | Directory — child nodes of B+ tree                               |
+| 💎 | 🟠 P1    | 5.3 Directory Lookup           | Directory — path resolution (`C:\path\to\file`)                  |
+| 💎 | 🟠 P1    | 6.1 VFS Registration           | Integration — make NTFS mountable                                |
+| 💎 | 🟡 P2    | 3.4 `$ATTRIBUTE_LIST`          | Robustness — handle fragmented/overflowing MFT records           |
+| 💎 | 🟡 P2    | 3.5 `$SECURITY_DESCRIPTOR`     | Interop — read NTFS ACLs for `GetFileSecurity()`                 |
+| 💎 | 🟡 P2    | 3.6 `$REPARSE_POINT`           | Feature — follow symlinks and junctions                          |
+| 💎 | 🟡 P2    | 5.4 Directory Enumeration      | Feature — `FindFirstFile`/`FindNextFile` support                 |
+| 💎 | 🟡 P2    | 7.1 System Metafiles           | Feature — volume name, dirty flag, free space, `$UpCase`         |
+| 💎 | 🟡 P2    | 9.1 LZNT1 Decompression        | Interop — read compressed Windows system files                   |
+| 💎 | 🟡 P2    | 10.1 MFT Record Cache          | Performance — avoid redundant disk reads                         |
+| 💎 | 🟢 P3    | 8.1 Test Suite                 | Quality — automated validation with test images                  |
+| ⭐ | 🟢 P3    | 11.1 Health Dashboard          | **At-a-glance NTFS health** — no OS does this                    |
+| ⭐ | 🟢 P3    | 11.2 Deleted File Recovery     | **Built-in forensic recovery** — Windows needs 3rd-party         |
+| ⭐ | 🟢 P3    | 17.1 ADS Explorer              | **GUI ADS viewer** — hidden data transparency                    |
+| 💎 | 🟣 P4    | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness             |
+| 💎 | 🟣 P4    | 12.2 USA Regeneration          | Write — fixup generation for MFT/INDX writes                     |
+| 💎 | 🟣 P4    | 12.3 MFT Record Allocator      | Write — allocate/free MFT inodes, extend `$MFT`                  |
+| 💎 | 🟣 P4    | 12.4 Attribute Writer          | Write — add/update/remove attributes, encode data runs           |
+| 💎 | 🟣 P4    | 12.5 File Create/Delete/Rename | Write — full file lifecycle on NTFS                              |
+| 💎 | 🟣 P4    | 13.1 Journal Engine            | Crash safety — `$LogFile` redo/undo transaction logging          |
+| 💎 | 🟣 P4    | 13.2 Recovery Replay           | Crash safety — dirty mount redo/undo replay                      |
+| 💎 | 🟣 P4    | 14.1 B+ Tree Insert/Delete     | Write — directory mutation with node split/merge                 |
+| 💎 | 🟣 P4    | 16.1 File Write Engine         | Write — resident/non-resident data writes + truncation           |
+| ⭐ | 🟣 P4    | 15.1 Boot-Time Init            | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
+| ⭐ | 🟣 P4    | 15.2 System File Layout        | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS       |
+| ⭐ | 🟣 P4    | 15.3 NTFS Volume Formatter     | **NTFS as `C:\`** — format tool for boot volume creation         |
+| ⭐ | 🔵 Future | 18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -1091,54 +1148,61 @@ graph TD
 
 ## OS Comparison
 
-| ⭐ | Feature                             | 🪟 Windows 11 (ntfs.sys)          | 🐧 Linux (ntfs3 / ntfs-3g)        | 🚀 Impossible OS                        |
-| -- | ----------------------------------- | ---------------------------------- | ---------------------------------- | ---------------------------------------- |
-| 💎 | BPB parsing                         | ✅ Native                          | ✅ Full                            | ⬜ §1.1 P0                              |
-| 💎 | MFT record reading                  | ✅ Native                          | ✅ Full                            | ⬜ §2.1 P0                              |
-| 💎 | Update Sequence Array (fixup)       | ✅ Full                            | ✅ Full                            | ⬜ §2.2 P0                              |
-| 💎 | Attribute parsing (all types)       | ✅ All 14 types                    | ✅ All types                       | ⬜ §3.1–3.6 (core + security + reparse)  |
-| 💎 | `$STANDARD_INFORMATION`             | ✅ Full                            | ✅ Full                            | ⬜ §3.2 P1                              |
-| 💎 | `$FILE_NAME` (multi-namespace)      | ✅ Win32 + DOS + POSIX             | ✅ Full                            | ⬜ §3.3 P0                              |
-| 💎 | `$ATTRIBUTE_LIST` (extensions)      | ✅ Full                            | ✅ Full                            | ⬜ §3.4 P2                              |
-| 💎 | `$SECURITY_DESCRIPTOR` / ACLs       | ✅ Full DACL/SACL                  | ✅ ntfs3 full / ntfs-3g limited    | ⬜ §3.5 P2                              |
-| 💎 | `$REPARSE_POINT` (symlinks)         | ✅ Full (symlinks, junctions)      | ✅ ntfs3 full                      | ⬜ §3.6 P2                              |
-| 💎 | Data run decoding                   | ✅ Full                            | ✅ Full                            | ⬜ §4.1 P0                              |
-| 💎 | Sparse file support                 | ✅ Native                          | ✅ Full                            | ⬜ §4.1 (sparse runs)                   |
-| 💎 | File reading (resident + non-res)   | ✅ Full                            | ✅ Full                            | ⬜ §4.2 P1                              |
-| 💎 | B+ tree directory indexing          | ✅ Full                            | ✅ Full                            | ⬜ §5.1–5.3 P1                          |
-| 💎 | Directory enumeration (readdir)     | ✅ Full                            | ✅ Full                            | ⬜ §5.4 P2                              |
-| 💎 | Path resolution                     | ✅ Full                            | ✅ Full                            | ⬜ §5.3 P1                              |
-| 💎 | VFS / kernel integration            | ✅ Native (ntfs.sys)               | ✅ FUSE (ntfs-3g) / Native (ntfs3) | ⬜ §6.1 P1                              |
-| 💎 | Volume label / dirty flag           | ✅ Full                            | ✅ Full                            | ⬜ §7.1 P2                              |
-| 💎 | Free space queries                  | ✅ Full                            | ✅ Full                            | ⬜ §7.1 P2                              |
-| 💎 | `$UpCase` case folding              | ✅ Full Unicode                    | ✅ Full Unicode                    | ⬜ §7.1 P2 (ASCII fallback)             |
-| 💎 | LZNT1 compressed file reading       | ✅ Native                          | ✅ ntfs-3g read-only / ntfs3 full  | ⬜ §9.1 P2                              |
-| 💎 | MFT record caching                  | ✅ Windows cache manager           | ✅ Page cache                      | ⬜ §10.1 P2                             |
-| 💎 | Write support                       | ✅ Full R/W                        | ✅ Full R/W (ntfs-3g)              | ⬜ §12 P4 — full R/W (cluster alloc + attrs)  |
-| 💎 | Journaling recovery (`$LogFile`)    | ✅ Full                            | ✅ ntfs-3g replays log             | ⬜ §13 P4 — txn engine + dirty replay       |
-| 💎 | Alternate Data Streams              | ✅ Native                          | ✅ ntfs-3g / ntfs3                 | ⬜ Future (routed via VFS §2.1)          |
-| ⭐ | **Volume health dashboard**         | ❌ Spread across multiple tools    | ❌ CLI `ntfsinfo` only             | ⬜ §11.1 P3 — one-panel health           |
-| ⭐ | **Deleted file recovery**           | ❌ Requires third-party (Recuva)   | ⚠️ CLI `ntfsundelete` only         | ⬜ §11.2 P3 — built-in GUI recovery      |
-| ⭐ | **MFT fragmentation heatmap**       | ❌ Hidden in `defrag /a` output    | ❌ Not available                   | ⬜ §11.1 — visual MFT density map        |
-| ⭐ | **Smart file search (MFT scan)**    | ⚠️ Windows Search (requires index) | ❌ `find` / `locate` (CLI only)    | ⬜ Direct MFT walk + metadata filter     |
-| ⭐ | **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                   | ⬜ §15 P4 — boot-time init + layout        |
-| 💎 | **Full read-only driver**           | ✅                                 | ✅                                 | ⬜ Requires §1–§6 at minimum             |
-| 💎 | **Full read-write driver**          | ✅                                 | ✅ ntfs-3g (FUSE)                  | ⬜ Requires §1–§14 + §16               |
+| Feature                              | 🪟 Windows 11 (ntfs.sys)           | 🐧 Linux (ntfs3 / ntfs-3g)         | 🚀 Impossible OS                                  |
+| ------------------------------------ | ---------------------------------- | ----------------------------------- | ------------------------------------------------- |
+| BPB parsing                          | ✅ Native                           | ✅ Full                              | ⬜ §1.1 P0                                         |
+| MFT record reading                   | ✅ Native                           | ✅ Full                              | ⬜ §2.1 P0                                         |
+| Update Sequence Array (fixup)        | ✅ Full                             | ✅ Full                              | ⬜ §2.2 P0                                         |
+| Attribute parsing (all types)        | ✅ All 14 types                     | ✅ All types                         | ⬜ §3.1–3.6 (core + security + reparse)            |
+| `$STANDARD_INFORMATION`              | ✅ Full                             | ✅ Full                              | ⬜ §3.2 P1                                         |
+| `$FILE_NAME` (multi-namespace)       | ✅ Win32 + DOS + POSIX              | ✅ Full                              | ⬜ §3.3 P0                                         |
+| `$ATTRIBUTE_LIST` (extensions)       | ✅ Full                             | ✅ Full                              | ⬜ §3.4 P2                                         |
+| `$SECURITY_DESCRIPTOR` / ACLs        | ✅ Full DACL/SACL                   | ✅ ntfs3 full / ntfs-3g limited      | ⬜ §3.5 P2                                         |
+| `$REPARSE_POINT` (symlinks)          | ✅ Full (symlinks, junctions)       | ✅ ntfs3 full                        | ⬜ §3.6 P2                                         |
+| Data run decoding                    | ✅ Full                             | ✅ Full                              | ⬜ §4.1 P0                                         |
+| Sparse file support                  | ✅ Native                           | ✅ Full                              | ⬜ §4.1 (sparse runs)                              |
+| File reading (resident + non-res)    | ✅ Full                             | ✅ Full                              | ⬜ §4.2 P1                                         |
+| B+ tree directory indexing           | ✅ Full                             | ✅ Full                              | ⬜ §5.1–5.3 P1                                     |
+| Directory enumeration (readdir)      | ✅ Full                             | ✅ Full                              | ⬜ §5.4 P2                                         |
+| Path resolution                      | ✅ Full                             | ✅ Full                              | ⬜ §5.3 P1                                         |
+| VFS / kernel integration             | ✅ Native (ntfs.sys)                | ✅ FUSE (ntfs-3g) / Native (ntfs3)   | ⬜ §6.1 P1                                         |
+| Volume label / dirty flag            | ✅ Full                             | ✅ Full                              | ⬜ §7.1 P2                                         |
+| Free space queries                   | ✅ Full                             | ✅ Full                              | ⬜ §7.1 P2                                         |
+| `$UpCase` case folding               | ✅ Full Unicode                     | ✅ Full Unicode                      | ⬜ §7.1 P2 (ASCII fallback)                        |
+| LZNT1 compressed file reading        | ✅ Native                           | ✅ ntfs-3g read-only / ntfs3 full    | ⬜ §9.1 P2                                         |
+| MFT record caching                   | ✅ Windows cache manager            | ✅ Page cache                        | ⬜ §10.1 P2                                        |
+| Write support                        | ✅ Full R/W                         | ✅ Full R/W (ntfs3 / ntfs-3g FUSE)   | ⬜ §12 P4 — full R/W                               |
+| Journaling recovery (`$LogFile`)     | ✅ Full                             | ✅ ntfs-3g replays log               | ⬜ §13 P4 — txn engine + dirty replay              |
+| Alternate Data Streams               | ✅ Native                           | ✅ ntfs-3g / ntfs3                   | ⬜ Future (routed via VFS §2.1)                    |
+| Full read-only driver                | ✅                                  | ✅                                   | ⬜ Requires §1–§6 at minimum                       |
+| Full read-write driver               | ✅                                  | ✅ ntfs-3g (FUSE) / ntfs3 (native)   | ⬜ Requires §1–§14 + §16                           |
+| **Volume health dashboard**          | ❌ Spread across multiple tools     | ❌ CLI `ntfsinfo` only               | ⬜ **§11.1 P3 — one-panel health** ⭐               |
+| **Deleted file recovery**            | ❌ Requires third-party (Recuva)    | ⚠️ CLI `ntfsundelete` only           | ⬜ **§11.2 P3 — built-in GUI recovery** ⭐          |
+| **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output     | ❌ Not available                     | ⬜ **§11.1 — visual MFT density map** ⭐            |
+| **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)  | ❌ `find` / `locate` (CLI only)      | ⬜ **Direct MFT walk + metadata filter** ⭐         |
+| **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **§17.1 P3 — hidden data transparency** ⭐       |
+| **NTFS-to-IXFS migration**           | ❌ Not available                    | ❌ Not available                     | ⬜ **§18.1 Future — one-click migration** ⭐        |
+| **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                     | ⬜ **§15 P4 — boot-time init + layout** ⭐          |
+| **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                | ❌ CLI only                          | ✅ **Done — Selawik Semibold, atlas pre-baked** ⭐   |
+
+> **After P0+P1 items:** Impossible OS has a mountable, browsable, read-only NTFS driver.
+> **After P2+P3 items:** Full interoperability with Windows volumes + unique health/recovery features.
+> **After P4 items:** Full R/W NTFS with journaling — enables NTFS as the boot volume.
 
 ---
 
 ## Key Files
 
-| File                             | Purpose                                                          |
-| -------------------------------- | ---------------------------------------------------------------- |
-| `src/kernel/fs/ntfs.c`           | [NEW] NTFS driver — BPB, MFT, attributes, data runs, VFS        |
-| `include/kernel/fs/ntfs.h`       | [NEW] Public API, on-disk structures, error codes                |
-| `src/kernel/fs/ntfs_lznt1.c`     | [NEW] LZNT1 decompression engine                                 |
-| `src/kernel/fs/partition.c`      | **Needs `probe_ntfs()` and `PART_FS_NTFS`** — currently missing  |
-| `include/kernel/fs/partition.h`  | **Needs `PART_FS_NTFS` constant** (add after `PART_FS_EXT2 = 3`) |
-| `src/kernel/fs/vfs.c`            | Drive letter assignment for auto-mounted NTFS volumes            |
-| `src/kernel/fs/gpt.c`            | GPT GUID `EBD0A0A2-B887-...` detection for Microsoft Basic Data  |
-| `specs/filesystem/ntfs-3.1.md`   | NTFS 3.1 on-disk format specification (offsets, algorithms)      |
+| File                            | Purpose                                                            |
+| ------------------------------- | ------------------------------------------------------------------ |
+| `src/kernel/fs/ntfs.c`          | [NEW] NTFS driver — BPB, MFT, attributes, data runs, VFS          |
+| `include/kernel/fs/ntfs.h`      | [NEW] Public API, on-disk structures, error codes                  |
+| `src/kernel/fs/ntfs_lznt1.c`    | [NEW] LZNT1 decompression engine                                   |
+| `src/kernel/fs/partition.c`     | **Needs `probe_ntfs()` and `PART_FS_NTFS`** — currently missing    |
+| `include/kernel/fs/partition.h` | **Needs `PART_FS_NTFS` constant** (add after `PART_FS_EXT2 = 3`)   |
+| `src/kernel/fs/vfs.c`           | Drive letter assignment for auto-mounted NTFS volumes              |
+| `src/kernel/fs/gpt.c`           | GPT GUID `EBD0A0A2-B9E5-…` detection for Microsoft Basic Data     |
+| `specs/filesystem/ntfs-3.1.md`  | NTFS 3.1 on-disk format specification (offsets, algorithms)        |
 
 > [!WARNING]
 > **Codebase gap:** `partition.c` currently probes for FAT32, IXFS, and ext2 — but
@@ -1147,6 +1211,12 @@ graph TD
 > 2. `probe_ntfs()` to `partition.c` (check OEM ID `"NTFS    "` at offset `0x03`)
 > 3. `case PART_FS_NTFS: return "NTFS";` to `partition_fs_name()`
 > 4. Call `probe_ntfs(sect)` in `probe_filesystem()` after `probe_fat32()`
+
+> [!NOTE]
+> **VFS gap:** `vfs.h` does not currently define `VFS_SYMLINK` or a `readlink()` callback.
+> §3.6 (`$REPARSE_POINT` reader) needs both. Add `#define VFS_SYMLINK 0x08` to `vfs.h`
+> and add `int (*readlink)(struct vfs_node *node, char *buf, uint32_t bufsz);` to
+> `struct vfs_ops` before implementing reparse point support.
 
 ---
 
@@ -1159,14 +1229,15 @@ graph TD
 
 ### Common Failure Modes When Mounting NTFS from Impossible OS
 
-| # | Failure Mode                      | Symptom                                         | Root Cause                                                                         | Fix                                                                    |
-| - | --------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 1 | **No NTFS driver loaded**         | Windows partition seen as RAW/unknown           | `ntfs_detect()` not registered before `partition_scan()`                           | Register NTFS filesystem type BEFORE partition scan in `boot_storage.c` |
-| 2 | **Partition type not recognized** | NTFS partition skipped entirely                 | `partition.c` has no `probe_ntfs()` — see Key Files codebase gap warning           | Add `PART_FS_NTFS` and `probe_ntfs()` to `partition.c`                 |
-| 3 | **Storage controller not ready**  | Block device not available for NTFS disk reads  | On Hyper-V Gen 2: VMBus/StorVSC not ready before NTFS mount attempted              | Ensure VMBus → StorVSC → re-scan sequence (commit `cd6f749`)           |
-| 4 | **Dirty volume rejection**        | NTFS mounts but operations fail unpredictably   | Windows didn't cleanly unmount (dirty flag set in `$Volume`)                       | §7.1: check dirty flag on mount, log warning, mount read-only          |
-| 5 | **Cluster size mismatch**         | BPB values parsed but data reads return garbage | NTFS formatted with 4096-byte clusters but driver assumes 512                      | Use `bytes_per_sector` from BPB, not hardcoded 512                     |
-| 6 | **4K-native sector disks**        | Fixup fails — USA expects 512-byte sectors      | Advanced Format disks (AF 4Kn) have 4096-byte physical sectors                     | Use BPB `bytes_per_sector` field for USA stride, not hardcoded 512     |
+| #   | Failure Mode                    | Symptom                                        | Root Cause                                                              | Fix                                                                    |
+| --- | ------------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 1   | **No NTFS driver loaded**       | Windows partition seen as RAW/unknown          | `ntfs_detect()` not registered before `partition_scan()`                | Register NTFS filesystem type BEFORE partition scan in `boot_storage.c` |
+| 2   | **Partition type not recognized** | NTFS partition skipped entirely              | `partition.c` has no `probe_ntfs()` — see Key Files warning             | Add `PART_FS_NTFS` and `probe_ntfs()` to `partition.c`                 |
+| 3   | **Storage controller not ready** | Block device unavailable for NTFS disk reads  | On Hyper-V Gen 2: VMBus/StorVSC not ready before NTFS mount             | Ensure VMBus → StorVSC → re-scan sequence (commit `cd6f749`)           |
+| 4   | **Dirty volume rejection**      | NTFS mounts but operations fail unpredictably  | Windows didn't cleanly unmount (dirty flag set in `$Volume`)            | §7.1: check dirty flag on mount, log warning, mount read-only          |
+| 5   | **Cluster size mismatch**       | BPB values parsed but data reads return garbage | NTFS formatted with 4096-byte clusters but driver assumes 512          | Use `bytes_per_sector` from BPB, not hardcoded 512                     |
+| 6   | **4K-native sector disks**      | Fixup fails — USA expects 512-byte sectors     | Advanced Format disks (AF 4Kn) have 4096-byte physical sectors         | Use BPB `bytes_per_sector` field for USA stride, not hardcoded 512     |
+| 7   | **Hibernated Windows volumes**  | NTFS metadata silently stale                   | Windows Fast Startup leaves NTFS in hibernated state (`$Volume` flag)  | Detect `VOLUME_IS_HIBERNATED` flag → mount read-only with warning      |
 
 ### Hyper-V Gen 2 Dependency Chain for NTFS Access
 
@@ -1175,7 +1246,7 @@ VMBus init → StorVSC init → GPADL handshake → SCSI INQUIRY
     ↓
 Block device "hyperv0" registered
     ↓
-Partition scan: GPT → find type GUID EBD0A0A2-B887-... → detect NTFS OEM "NTFS    "
+Partition scan: GPT → find type GUID EBD0A0A2-B9E5-… → detect NTFS OEM "NTFS    "
     ↓
 ntfs_init(blkdev) → read BPB → locate MFT → mount as D: (or next free letter)
 ```
@@ -1185,3 +1256,5 @@ ntfs_init(blkdev) → read BPB → locate MFT → mount as D: (or next free lett
 > IXFS is `C:\` (the Impossible OS system partition). Windows NTFS partitions are detected
 > during partition scanning and auto-assigned the next available drive letter (`D:`, `E:`, etc.).
 > The NTFS read-only driver enables browsing Windows files without rebooting.
+
+

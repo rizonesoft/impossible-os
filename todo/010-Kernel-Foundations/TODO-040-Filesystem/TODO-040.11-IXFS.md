@@ -28,11 +28,217 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Four TODO files and the existing codebase** feed into the IXFS driver. IXFS is unique
+> among the filesystem TODOs because it already has a **working implementation** — most of
+> Phase 1 is verification, not green-field coding. This roadmap shows the correct sequence
+> — completing items out of order will cause rework (especially: extending inodes to v3
+> before verifying v2 correctness will lose the ability to validate the current disk format).
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
+    PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (magic 0x49584653)"]
+    VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
+
+    A["§1.1 Superblock Verify ✅*"]
+    B["§2.1 Block Allocator Verify ✅*"]
+    C["§3.1 Inode Table Verify ✅*"]
+    D["§4.1 Extent Engine Verify ✅*"]
+    E["§5.1 Journal Verify ✅*"]
+    F["§6.1 CoW & Snapshots Verify ✅*"]
+    G["§7.1 Checksums Verify ✅*"]
+    H["§8.1 VFS Callbacks Verify ✅*"]
+
+    I["§3.2 Extended Inode (v3)"]
+    J["§9.1 Alternate Data Streams"]
+    K["§10.1 Security Descriptors"]
+    L["§11.1 Hard Links"]
+    M["§11.2 Symbolic Links"]
+    N["§17.1 Format Tool v3"]
+
+    O["§12.1 Compression (LZ4/Zstd)"]
+    P["§14.1 Deduplication"]
+    Q["§15.1 Reflinks"]
+    R["§16.1 Defragmentation"]
+
+    S["§1.2 Online Volume Grow"]
+    T["§7.2 Self-Healing"]
+    U["§6.2 Auto Snapshots"]
+    V["§13.1 Encryption"]
+    W["§18.1 Health Dashboard"]
+    X["§19.1 Test Suite"]
+
+    BLK --> A
+    PART --> A
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    F --> G
+    G --> H
+    VFS --> H
+
+    %% v3 format gate
+    C --> I
+    H --> I
+
+    %% Win32 features depend on v3 inode fields
+    I --> J
+    I --> K
+    I --> L
+    I --> M
+    I --> N
+    I --> O
+    I --> V
+
+    %% Format tool must support all v3 features
+    J --> N
+    K --> N
+    L --> N
+    M --> N
+
+    %% Advanced features build on CoW infra
+    F --> P
+    F --> Q
+    D --> R
+    B --> S
+
+    %% Self-healing depends on checksum infra
+    G --> T
+    A --> T
+
+    %% Auto snapshots depend on snapshot infra
+    F --> U
+
+    %% New features
+    Y["§20.1 Case-Insensitive Paths"]
+    Z["§21.1 Sparse Files"]
+    AA["§22.1 Change Journal (USN)"]
+    AB["§23.1 Volume Quotas"]
+    AC["§24.1 TRIM / Discard"]
+
+    H --> Y
+    I --> Z
+    D --> Z
+    H --> AA
+    E --> AA
+    B --> AB
+    C --> AB
+    B --> AC
+
+    %% Dashboard aggregates everything
+    A --> W
+    E --> W
+    F --> W
+    G --> W
+    B --> W
+
+    %% Test suite validates everything
+    H --> X
+    N --> X
+    J --> X
+    L --> X
+    O --> X
+    Q --> X
+    Y --> X
+    Z --> X
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File / Dependency                | Sections                          | What It Delivers                                                          | Depends On                           | Status |
+| -- | :----: | ------------------------------------- | --------------------------------- | ------------------------------------------------------------------------- | ------------------------------------ | :----: |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                    | —                                    |   ✅   |
+| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection               | IXFS magic `0x49584653` → partition found                                 | Phase 0 (block)                      |   ✅   |
+| 💎 | **0**  | `TODO-040.07-VFS.md`                  | VFS core layer                    | `vfs_ops` struct, mount framework, basic file operations                  | —                                    |   ✅   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §1.1 Superblock Verify            | Confirm: magic, version, block size, layout fields, CRC32C               | Phase 0 (partitions)                 |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §2.1 Block Allocator Verify       | Confirm: bitmap ops, block groups, locality-aware alloc                   | Phase 1 (§1.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §3.1 Inode Table Verify           | Confirm: 128-byte inodes, mode flags, extents, hash index                | Phase 1 (§2.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §4.1 Extent Engine Verify         | Confirm: block mapping, overflow extents, inline data                     | Phase 1 (§3.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §5.1 Journal Verify               | Confirm: WAL header, txn API, recovery replay, checksum                   | Phase 1 (§4.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §6.1 CoW & Snapshot Verify        | Confirm: refcount table, CoW on write, snapshot create/restore/delete     | Phase 1 (§5.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §7.1 Checksum Verify              | Confirm: CRC32C per-block, scrub, checksum table persistence              | Phase 1 (§6.1)                       |   ⬜   |
+| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §8.1 VFS Callbacks Verify         | Confirm: all VFS ops (14+), dir entries, mount sequence                   | Phase 1 (§7.1) + VFS (040.07)       |   ⬜   |
+| 💎 | **2**  | `TODO-040.11-IXFS.md`                 | §3.2 Extended Inode (v3)          | 256-byte inodes: Win32 attrs, crtime, ADS chain, security, compression    | Phase 1 (§3.1, §8.1)                |   ⬜   |
+| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §9.1 Alternate Data Streams       | `filename:stream` syntax, stream inodes, Zone.Identifier                  | Phase 2 (§3.2)                       |   ⬜   |
+| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §10.1 Security Descriptors        | Win32 DACL/SACL, hash-deduped security table, inheritance                 | Phase 2 (§3.2)                       |   ⬜   |
+| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §11.1 Hard Links                  | `CreateHardLink`, `i_links` management, cascade-delete                    | Phase 2 (§3.2)                       |   ⬜   |
+| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §11.2 Symbolic Links              | Reparse points, `CreateSymbolicLink`, loop detection (8 max)              | Phase 2 (§3.2)                       |   ⬜   |
+| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §20.1 Case-Insensitive Paths      | `ixfs_name_cmp()` replaces `ixfs_strcmp()` — Win32 mandatory              | Phase 1 (§8.1)                       |   ⬜   |
+| 💎 | **4**  | `TODO-040.11-IXFS.md`                 | §17.1 Format Tool v3              | `ixfs_format()` upgrade: v3 superblock, 256B inodes, all reserved tables  | Phase 3 (§9–§11, §20)               |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §12.1 Compression (LZ4/Zstd)     | Transparent per-file compression — LZ4 for speed, Zstd for ratio          | Phase 2 (§3.2)                       |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §14.1 Inline Deduplication       | xxHash64 block dedup reusing CoW refcounts — lightweight storage savings  | Phase 1 (§6.1)                       |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §15.1 Reflink Copy               | Instant zero-copy file cloning via `CopyFile` — uses CoW refcounts       | Phase 1 (§6.1)                       |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §16.1 Online Defragmentation     | Extent consolidation with CoW safety — background + on-demand             | Phase 1 (§4.1)                       |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §21.1 Sparse Files               | Hole extents, `FSCTL_SET_ZERO_DATA` — sparse + CoW integration           | Phase 2 (§3.2) + Phase 1 (§4.1)     |   ⬜   |
+| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §24.1 TRIM / Discard             | Journal-batched TRIM on block free — SSD performance + longevity          | Phase 1 (§2.1)                       |   ⬜   |
+| ⭐ | **6**  | `TODO-040.11-IXFS.md`                 | §1.2 Online Volume Grow          | Extend volume while mounted — bitmap + superblock + block group update    | Phase 1 (§2.1)                       |   ⬜   |
+| ⭐ | **6**  | `TODO-040.11-IXFS.md`                 | §7.2 Self-Healing Metadata       | Backup superblock + bitmap — auto-fallback on corruption                  | Phase 1 (§1.1, §7.1)                |   ⬜   |
+| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §6.2 Automatic Snapshots         | Scheduled hourly/daily snapshots with retention policy                    | Phase 1 (§6.1)                       |   ⬜   |
+| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §13.1 Per-File Encryption        | AES-256-XTS, per-file keys, master key derivation (PBKDF2)               | Phase 2 (§3.2)                       |   ⬜   |
+| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §22.1 Change Journal (USN)       | Persistent circular buffer — Search, antivirus, backup integration       | Phase 1 (§8.1, §5.1)                |   ⬜   |
+| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §23.1 Volume Quotas              | Per-user disk limits — enterprise environments                            | Phase 1 (§2.1, §3.1)                |   ⬜   |
+| ⭐ | **8**  | `TODO-040.11-IXFS.md`                 | §18.1 Volume Health Dashboard    | Unified health panel: superblock, journal, checksums, dedup, snapshots    | Phase 1 (§1.1, §5.1, §6.1, §7.1)   |   ⬜   |
+| 💎 | **8**  | `TODO-040.11-IXFS.md`                 | §19.1 Comprehensive Test Suite   | Full CRUD, large files, hard/symlinks, ADS, snapshots, CoW, compression   | Phase 4 (§17.1) + Phase 3 + Phase 5 |   ⬜   |
+
+> [!NOTE]
+> **Phase 0** is already done — block devices, partition detection, and VFS core are in place.
+> **Phase 1** is verification only — no new code, just confirming the existing v2 implementation
+> is correct. This is the **critical path**: every subsequent phase builds on Phase 1 correctness.
+> **Phase 2** is the format upgrade gate — v3 inodes (256 bytes) unlock all Win32 features.
+> **Phase 3** delivers Win32 compatibility: ADS, ACLs, hard/symlinks, case-insensitive, and the v3 format tool.
+> **Phase 4** updates the format tool for all v3 features.
+> **Phase 5** delivers advanced storage features (⭐): compression, dedup, reflinks, defrag, sparse, TRIM.
+> **Phases 6–7** add management and automation: online grow, self-healing, auto-snapshots, encryption, USN, quotas.
+> **Phase 8** caps everything with the health dashboard and comprehensive test suite.
+
+> [!TIP]
+> **Quick wins after Phase 1:**
+> - §14.1 Deduplication, §15.1 Reflinks, and §16.1 Defragmentation all depend only on
+>   Phase 1 (CoW refcounts and extents). They can be started as soon as verification is done.
+> - §6.2 Auto Snapshots, §1.2 Online Volume Grow, and §24.1 TRIM also only need Phase 1.
+> - §20.1 Case-Insensitive Paths needs only §8.1 — it can start as soon as verification is done.
+>
+> **Critical gate: Phase 2 (Extended Inodes).** ADS needs `i_ads_first`, security
+> descriptors need `i_security_id`, compression needs `i_compress_type`, and encryption
+> needs `i_encrypt_key_id` — all fields that live in the v3 inode. **Do NOT start Phase 3
+> Win32 features without completing Phase 2.** Also note that Phase 2 is a **format-breaking
+> change** (`IXFS_VERSION → 3`) — existing v2 test volumes become read-only after this.
+>
+> **Memory rule reminder:** IXFS allocates large in-memory tables (bitmap, refcount table,
+> checksum table, dedup hash table). **Every one of these must use `pmm_alloc_contiguous()`**.
+> The kernel heap is only 2 MiB. A 32 GiB volume has a ~128 KB bitmap, ~256 KB refcount
+> table, and ~256 KB checksum table — these will silently exhaust `kmalloc`.
+>
+> **VFS thread safety.** The VFS layer currently has no locking (noted in `TODO-010-Bootloader.md
+> §5.4`). Before IXFS serves as root (`C:\`), `vfs_lock()`/`vfs_unlock()` reader-writer
+> mutexes must be added. Until then, concurrent file access from multiple tasks will corrupt
+> in-memory state. This is tracked in `TODO-040.07-VFS.md`.
+>
+> **IXFS is the only filesystem you control.** Unlike NTFS, ext4, FAT32, and exFAT where
+> the on-disk format is defined by external specs, IXFS format decisions are yours. This
+> means you can redesign layouts freely — but it also means there are no external validators.
+> §19.1 Test Suite is critical for catching regressions.
+
+---
+
 ## 1. Superblock & Volume Management (Existing — Verify)
 
 ### 1.1 Superblock Verification *(verify)*
 
 **Prompt:** Verify the existing superblock implementation in `ixfs_format.c` and `ixfs_core.c`. Confirm: magic `0x49584653` at offset 0, version 2, 4 KiB block size, 64-bit `s_total_blocks`/`s_free_blocks`, correct bitmap/inode/data region offsets, volume name, journal region, refcount table, snapshot table, checksum table. Verify CRC32C integrity check of the superblock. Verify the superblock fits in 512 bytes. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify superblock"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> **Code bug: stale header comment.** `ixfs.h` line 14 says `"Inodes hold 12 direct + 1
+> single-indirect + 1 double-indirect ptr"` — this is leftover from an older design. The
+> actual implementation uses **extent-based allocation** (4 inline extents + overflow tree).
+> Fix the comment during this verification step.
 
 - [x] Superblock struct defined: `struct ixfs_superblock` (512 bytes, packed)
 - [x] Magic: `IXFS_MAGIC = 0x49584653`
@@ -44,7 +250,8 @@
 - [x] Journal fields: `s_journal_start`, `s_journal_blocks`, `s_journal_seq`
 - [x] CoW fields: `s_refcount_start`, `s_refcount_blocks`, `s_snapshot_start`, `s_snapshot_count`
 - [x] Checksum fields: `s_checksum_start`, `s_checksum_blocks`, `s_checksum`
-- [ ] Verify: `s_checksum` is CRC32C over bytes [0..111] — correct range?
+- [ ] Verify: `s_checksum` is CRC32C over bytes [0..**127**] — `s_checksum` lives at offset 128, so all fields before it (snapshot and checksum-table fields at bytes 112–127) **must** be covered. The current code comment says `[0..111]` which leaves 16 bytes unprotected — fix if wrong.
+- [ ] Fix: `ixfs.h` header comment — replace indirect pointer description with extent-based description
 - [ ] Commit: `"ixfs: verify superblock"`
 
 ### 1.2 Volume Resize (Online) *(agent)*
@@ -92,6 +299,13 @@
 
 **Prompt:** Verify the existing inode system in `ixfs_inode.c`. Confirm: 128-byte inodes (32 per block), mode/type flags, uid/gid, 64-bit size, ctime/mtime/atime, 4 inline extents, overflow extent block pointer, hard link count. Verify vnode allocation/lookup, directory hash index (`ixfs_fnv1a` hash). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify inode table"`. Add notes directly in this TODO section.
 
+> [!WARNING]
+> **Timestamp naming ambiguity.** `ixfs.h:151` comments `i_ctime` as `"creation time"` but
+> in POSIX semantics `ctime` = **inode change time** (metadata modification), NOT creation
+> time. The v3 inode (§3.2) adds `i_crtime` for true creation time (Win32 `ftCreationTime`).
+> During verification, clarify which semantic `i_ctime` currently uses and document the
+> decision. If it's behaving as creation time, rename to `i_crtime` in v3.
+
 - [x] `struct ixfs_inode` — 128 bytes, packed
 - [x] Mode flags: `IXFS_S_FILE`, `IXFS_S_DIR`, `IXFS_S_TYPEMASK`
 - [x] Permission bits: Unix-style (9 bits)
@@ -102,6 +316,7 @@
 - [x] `ixfs_fnv1a` — FNV-1a hash for directory index
 - [x] `ixfs_hash_build`, `ixfs_hash_lookup` — O(1) dir lookups
 - [ ] Verify: `i_links` hard link count incremented/decremented correctly
+- [ ] Verify: `i_ctime` semantic — is it creation time or inode change time? Document decision
 - [ ] Commit: `"ixfs: verify inode table"`
 
 ### 3.2 Extended Inode Attributes *(agent)*
@@ -242,15 +457,25 @@
 
 ### 8.1 VFS Callbacks Verification *(verify)*
 
-**Prompt:** Verify the existing VFS integration in `ixfs_ops.c`. Confirm all `vfs_ops` callbacks work: `open`, `close`, `read`, `write`, `readdir`, `finddir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`. Verify directory entries (`struct ixfs_dir_entry` — 64 bytes, 64 per block). Verify the mount sequence in `ixfs_init`. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify VFS callbacks"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing VFS integration in `ixfs_ops.c`. Confirm all `vfs_ops` callbacks work: `open`, `close`, `read`, `write`, `readdir`, `finddir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`, `truncate`, `flush`. Verify directory entries (`struct ixfs_dir_entry` — 256 bytes, 16 per block). Verify the mount sequence in `ixfs_init`. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify VFS callbacks"`. Add notes directly in this TODO section.
 
-- [x] `ixfs_file_ops` — file VFS callbacks
-- [x] `ixfs_dir_ops` — directory VFS callbacks
+> [!WARNING]
+> **Code bug: directory entry comment.** `ixfs.h:163` says `"64 bytes each (64 entries per
+> block)"` but the actual struct is `d_inode` (4B) + `d_name[252]` = **256 bytes** →
+> `IXFS_DIRENTS_PER_BLOCK = 4096/256 = 16`. The comment is wrong. Fix during verification.
+
+- [x] `ixfs_file_ops` — file VFS callbacks (open, close, read, write)
+- [x] `ixfs_dir_ops` — directory VFS callbacks (readdir, finddir, create, unlink, mkdir, rmdir)
+- [x] `ixfs_vfs_stat` — stat callback for file metadata
+- [x] `ixfs_vfs_truncate` — truncate callback for file size changes
+- [x] `ixfs_vfs_flush` — flush callback for dirty data writeback
 - [x] `ixfs_init` — mount: read superblock, bitmap, journal, refcounts, checksums
 - [x] `ixfs_format` — mkfs: create superblock, bitmap, root dir
-- [x] Directory entries: 64 bytes each (4B inode + 252B name)
-- [ ] Verify: all 12 VFS callbacks return correct error codes
+- [x] Directory entries: **256 bytes** each (4B inode + 252B name), **16 per block**
+- [ ] Fix: `ixfs.h` comment on line 163 — change `"64 bytes each"` → `"256 bytes each"`
+- [ ] Verify: all VFS callbacks return correct error codes (`-ENOENT`, `-EEXIST`, etc.)
 - [ ] Verify: creating + deleting files updates bitmap and inode table atomically
+- [ ] Verify: `ixfs_rename` works for cross-directory rename (currently same-dir only)
 - [ ] Commit: `"ixfs: verify VFS callbacks"`
 
 ---
@@ -540,38 +765,163 @@
 - [ ] Journal recovery: kill mid-write, remount, verify no corruption
 - [ ] Scrub: corrupt a block, run scrub, verify detection
 - [ ] Defrag: fragment file with 10+ extents, defrag, verify ≤ 2 extents
+- [ ] Unicode: create file with mixed-case name, verify case-insensitive lookup
+- [ ] Sparse: create sparse file, verify `actual_blocks < logical_blocks`
+- [ ] Change journal: write file, verify USN record created with correct reason code
+- [ ] Quotas: set 1 MiB quota, write 2 MiB, verify `STATUS_DISK_FULL`
+- [ ] TRIM: free blocks, verify `blkdev_discard()` called for freed range
 - [ ] Commit: `"test: IXFS comprehensive test suite"`
+
+---
+
+## 20. Unicode & Case-Insensitive Paths *(🚀 Impossible OS Feature)*
+
+### 20.1 Case-Insensitive Path Resolution *(agent)*
+
+**Prompt:** Implement case-insensitive filename comparison as the default for IXFS — Win32 applications expect `"README.TXT"` and `"readme.txt"` to resolve to the same file. Use a simple ASCII case-fold table for Phase 1 (code points 0x41–0x5A → 0x61–0x7A). Store filenames in their original case (case-preserving). The comparison function `ixfs_name_cmp()` replaces `ixfs_strcmp()` for all directory lookups. A mount flag `IXFS_MOUNT_CASE_SENSITIVE` overrides for Linux compat layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: case-insensitive path resolution"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** NTFS is case-insensitive by default (Win32 requirement). ext4 added
+> casefolding in 5.2 (2019) but it's opt-in and requires UTF-8 normalization at format time.
+> Btrfs has no native case-insensitivity. IXFS is case-insensitive by default with a per-mount
+> override — the best of both worlds.
+
+- [ ] Implement `ixfs_name_cmp(a, b)` — case-insensitive ASCII comparison
+  - [ ] Fold A-Z → a-z using lookup table (no Unicode NFC/NFD yet — Phase 2)
+  - [ ] Zero-cost: single table lookup per character vs `ixfs_strcmp`
+- [ ] Replace `ixfs_strcmp` with `ixfs_name_cmp` in:
+  - [ ] `ixfs_hash_lookup` (directory hash index)
+  - [ ] `ixfs_ops.c` finddir, unlink, rename
+- [ ] `ixfs_fnv1a` hash: fold to lowercase before hashing (case-insensitive index)
+- [ ] Mount flag: `IXFS_MOUNT_CASE_SENSITIVE` for Linux compat layer
+- [ ] Phase 2 (future): Unicode NFC normalization via `ixfs_unicode.c`
+- [ ] Commit: `"ixfs: case-insensitive path resolution"`
+
+---
+
+## 21. Sparse File Support
+
+### 21.1 Sparse Regions *(agent)*
+
+**Prompt:** Implement sparse file support — files with large zero regions that don't consume disk blocks. A sparse file has `FILE_ATTRIBUTE_SPARSE_FILE` set. When `FSCTL_SET_ZERO_DATA` is called, free the data blocks in the specified range and mark the extents as holes. On read, return zeroes for hole regions without disk I/O. `ixfs_stat()` already returns `logical_size` and `actual_blocks` — sparse files will have `actual_blocks < logical_size / block_size`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: sparse file support"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** NTFS supports sparse files natively. ext4 supports sparse via
+> `fallocate(FALLOC_FL_PUNCH_HOLE)`. Btrfs supports sparse via CoW. IXFS sparse files
+> integrate with CoW — punching a hole in a shared (CoW) block only affects the punching
+> file, not the snapshot. No other filesystem combines sparse + CoW this cleanly.
+
+- [ ] Define hole extent: `e_start = 0, e_count > 0` → zero-filled region
+- [ ] `FSCTL_SET_ZERO_DATA` — free blocks in range, replace with hole extents
+- [ ] `FSCTL_SET_SPARSE` — set `FILE_ATTRIBUTE_SPARSE_FILE` in `i_win32_attrs`
+- [ ] Read path: detect hole extents → `memset(buf, 0, ...)` without disk I/O
+- [ ] Write path: writing into a hole → allocate blocks normally
+- [ ] `ixfs_stat`: `actual_blocks` excludes hole extents
+- [ ] Commit: `"ixfs: sparse file support"`
+
+---
+
+## 22. Change Journal (USN) *(🚀 Impossible OS Feature)*
+
+### 22.1 USN Change Journal *(agent)*
+
+**Prompt:** Implement a change journal that records all file modifications — Windows Search, antivirus, and backup software depend on this to efficiently detect what changed since the last scan. NTFS calls this the USN (Update Sequence Number) journal. IXFS stores change records in a circular buffer on disk. Each record contains: USN, timestamp, inode number, filename, reason code (create/delete/modify/rename). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: USN change journal"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** NTFS has the USN journal ($UsnJrnl). ext4 has no change journal — Linux
+> relies on inotify/fanotify (in-memory only, lost on reboot). Btrfs has send/receive
+> (different model). IXFS change journal is persistent across reboots and simpler than NTFS's
+> $UsnJrnl which uses the complex MFT $DATA stream format.
+
+- [ ] Define change journal region in superblock:
+  - [ ] `s_usn_start`, `s_usn_blocks` — reserved blocks for circular buffer
+  - [ ] `s_usn_current` — current USN (monotonically increasing 64-bit counter)
+- [ ] USN record format (32 bytes):
+  - [ ] `usn` (8B), `timestamp` (4B), `inode` (4B), `name_hash` (4B), `reason` (4B), `parent_inode` (4B), `reserved` (4B)
+- [ ] Reason codes: `USN_REASON_FILE_CREATE`, `_DELETE`, `_DATA_OVERWRITE`, `_RENAME`, `_SECURITY_CHANGE`
+- [ ] Record on: create, delete, write, rename, truncate, security change
+- [ ] `FSCTL_QUERY_USN_JOURNAL` — return journal metadata
+- [ ] `FSCTL_READ_USN_JOURNAL` — read records from specified USN onwards
+- [ ] Circular buffer: oldest records overwritten when full
+- [ ] Commit: `"ixfs: USN change journal"`
+
+---
+
+## 23. Volume Quotas
+
+### 23.1 Per-User Disk Quotas *(agent)*
+
+**Prompt:** Implement volume quotas — limit disk space usage per user or group. Enterprise environments need this to prevent a single user from filling an entire volume. Store quota information in a reserved quota table on disk. Each entry maps a UID to a usage limit and current usage. On block allocation, check if the owner's quota would be exceeded. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: volume quotas"`. Add notes directly in this TODO section.
+
+- [ ] Define quota table: reserved blocks after encryption key table
+  - [ ] Quota entry (16B): `uid` (2B), `gid` (2B), `limit_blocks` (4B), `used_blocks` (4B), `flags` (4B)
+- [ ] On `ixfs_alloc_block`: check writing user's `used_blocks < limit_blocks`
+  - [ ] If exceeded: return `-ENOSPC` (maps to Win32 `STATUS_DISK_FULL`)
+- [ ] On `ixfs_free_block`: decrement owner's `used_blocks`
+- [ ] `FSCTL_GET_VOLUME_QUOTA` / `FSCTL_SET_VOLUME_QUOTA` — manage quotas
+- [ ] Default: no quota (unlimited) until explicitly configured
+- [ ] Wire to Disk Manager: quota configuration panel per volume
+- [ ] Commit: `"ixfs: volume quotas"`
+
+---
+
+## 24. TRIM / Discard Support *(🚀 Impossible OS Feature)*
+
+### 24.1 SSD TRIM on Block Free *(agent)*
+
+**Prompt:** Implement TRIM/discard support — when blocks are freed, notify the underlying storage device so SSDs can erase the corresponding flash cells. This improves SSD write performance and longevity. Issue TRIM via the block device layer's `blkdev_discard()` (ATA TRIM for AHCI, UNMAP for VirtIO-SCSI). Batch discard requests to amortize overhead. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: TRIM/discard support"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** NTFS issues TRIM since Windows 7 (2009) but only via the Optimize
+> Drives scheduler — not in real-time. ext4 supports `discard` mount option for real-time
+> TRIM. IXFS batches TRIM in the journal commit path — combining the reliability of
+> deferred TRIM with near-real-time notification. No wasted erase cycles from premature TRIM.
+
+- [ ] Add `blkdev_discard(dev, lba, count)` prototype to block device layer
+- [ ] AHCI: issue DATA SET MANAGEMENT (TRIM) command for freed block ranges
+- [ ] VirtIO: issue VIRTIO_BLK_T_DISCARD request
+- [ ] Batch strategy: collect freed blocks during transaction, issue TRIM on `ixfs_txn_commit`
+  - [ ] Coalesce adjacent freed blocks into single TRIM range
+  - [ ] Max 64 ranges per TRIM command (ATA limit)
+- [ ] Mount option: `IXFS_MOUNT_DISCARD` (default: on for SSDs, off for HDDs)
+  - [ ] Detect SSD via ATA IDENTIFY word 217 (nominal media rotation rate = 1 → SSD)
+- [ ] Commit: `"ixfs: TRIM/discard support"`
 
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section | Description |
-| -- |----------|---------|-------------|
-| 💎 | 🔴 P0 | 1.1 Superblock | Verify — foundation of entire filesystem |
-| 💎 | 🔴 P0 | 2.1 Block Allocator | Verify — all writes depend on this |
-| 💎 | 🔴 P0 | 3.1 Inode Table | Verify — all file access depends on this |
-| 💎 | 🔴 P0 | 4.1 Extent Engine | Verify — file data mapping |
-| 💎 | 🔴 P0 | 5.1 Journal | Verify — crash safety |
-| 💎 | 🔴 P0 | 6.1 CoW & Snapshots | Verify — data integrity |
-| 💎 | 🔴 P0 | 7.1 Checksums | Verify — corruption detection |
-| 💎 | 🔴 P0 | 8.1 VFS Callbacks | Verify — usability |
-| 💎 | 🟠 P1 | 3.2 Extended Inode | Enable — v3 format with new metadata fields |
-| 💎 | 🟠 P1 | 9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams |
-| 💎 | 🟠 P1 | 10.1 Security Descriptors | Win32 compat — ACLs for enterprise apps |
-| 💎 | 🟠 P1 | 11.1 Hard Links | Win32 compat — WinSxS, VC++ redist |
-| 💎 | 🟠 P1 | 11.2 Symbolic Links | Win32 compat — developer tools, junctions |
-| 💎 | 🟠 P1 | 17.1 Format Tool v3 | Enable — can't use v3 features without formatter |
-| ⭐ | 🟡 P2 | 12.1 Compression | Performance — save space + reduce I/O |
-| ⭐ | 🟡 P2 | 14.1 Deduplication | Storage — similar files share blocks |
-| ⭐ | 🟡 P2 | 15.1 Reflinks | UX — instant file copy |
-| ⭐ | 🟡 P2 | 16.1 Defragmentation | Performance — consolidate extents |
-| ⭐ | 🟡 P2 | 1.2 Online Volume Grow | Management — dynamic disk expansion |
-| ⭐ | 🟡 P2 | 7.2 Self-Healing | Reliability — auto-repair corruption |
-| ⭐ | 🟢 P3 | 6.2 Auto Snapshots | UX — "Previous Versions" without VSS |
-| ⭐ | 🟢 P3 | 13.1 Encryption | Security — per-file AES-256 |
-| ⭐ | 🟢 P3 | 18.1 Health Dashboard | Monitoring — unified volume health |
-| 💎 | 🟢 P3 | 19.1 Test Suite | Quality — automated validation |
+| ⭐ | Priority | Section                    | Description                                       |
+| -- | -------- | -------------------------- | ------------------------------------------------- |
+| 💎 | 🔴 P0   | 1.1 Superblock             | Verify — foundation of entire filesystem          |
+| 💎 | 🔴 P0   | 2.1 Block Allocator        | Verify — all writes depend on this                |
+| 💎 | 🔴 P0   | 3.1 Inode Table            | Verify — all file access depends on this          |
+| 💎 | 🔴 P0   | 4.1 Extent Engine          | Verify — file data mapping                        |
+| 💎 | 🔴 P0   | 5.1 Journal                | Verify — crash safety                             |
+| 💎 | 🔴 P0   | 6.1 CoW & Snapshots        | Verify — data integrity                           |
+| 💎 | 🔴 P0   | 7.1 Checksums              | Verify — corruption detection                     |
+| 💎 | 🔴 P0   | 8.1 VFS Callbacks          | Verify — usability                                |
+| 💎 | 🟠 P1   | 3.2 Extended Inode         | Enable — v3 format with new metadata fields       |
+| 💎 | 🟠 P1   | 9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams     |
+| 💎 | 🟠 P1   | 10.1 Security Descriptors  | Win32 compat — ACLs for enterprise apps           |
+| 💎 | 🟠 P1   | 11.1 Hard Links            | Win32 compat — WinSxS, VC++ redist               |
+| 💎 | 🟠 P1   | 11.2 Symbolic Links        | Win32 compat — developer tools, junctions         |
+| 💎 | 🟠 P1   | 17.1 Format Tool v3        | Enable — can't use v3 features without formatter  |
+| 💎 | 🟠 P1   | 20.1 Case-Insensitive      | Win32 compat — case-insensitive is mandatory       |
+| ⭐ | 🟡 P2   | 12.1 Compression           | Performance — save space + reduce I/O             |
+| ⭐ | 🟡 P2   | 14.1 Deduplication         | Storage — similar files share blocks              |
+| ⭐ | 🟡 P2   | 15.1 Reflinks              | UX — instant file copy                            |
+| ⭐ | 🟡 P2   | 16.1 Defragmentation       | Performance — consolidate extents                 |
+| ⭐ | 🟡 P2   | 1.2 Online Volume Grow     | Management — dynamic disk expansion               |
+| ⭐ | 🟡 P2   | 7.2 Self-Healing           | Reliability — auto-repair corruption              |
+| ⭐ | 🟡 P2   | 21.1 Sparse Files          | Win32 compat — zero-region optimization           |
+| ⭐ | 🟡 P2   | 24.1 TRIM / Discard        | Performance — SSD longevity + write speed         |
+| ⭐ | 🟢 P3   | 6.2 Auto Snapshots         | UX — "Previous Versions" without VSS              |
+| ⭐ | 🟢 P3   | 13.1 Encryption            | Security — per-file AES-256                       |
+| ⭐ | 🟢 P3   | 22.1 Change Journal (USN)  | Indexing — Search, antivirus, backup              |
+| ⭐ | 🟢 P3   | 23.1 Volume Quotas         | Enterprise — per-user disk limits                 |
+| ⭐ | 🟢 P3   | 18.1 Health Dashboard      | Monitoring — unified volume health                |
+| 💎 | 🟢 P3   | 19.1 Test Suite            | Quality — automated validation                    |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -634,53 +984,67 @@ Boot splash → Desktop
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `include/kernel/fs/ixfs.h` | Public API, on-disk structures, constants |
-| `src/kernel/fs/ixfs/ixfs_internal.h` | Internal types, function declarations |
-| `src/kernel/fs/ixfs/ixfs_core.c` | Disk I/O, buffer cache, CRC32C, string helpers |
-| `src/kernel/fs/ixfs/ixfs_alloc.c` | Bitmap, block groups, alloc/free |
-| `src/kernel/fs/ixfs/ixfs_inode.c` | Inode R/W, vnodes, directory hash index |
-| `src/kernel/fs/ixfs/ixfs_extent.c` | Extent-based block mapping |
-| `src/kernel/fs/ixfs/ixfs_journal.c` | WAL journal, transactions, recovery |
-| `src/kernel/fs/ixfs/ixfs_cow.c` | Copy-on-Write, refcounts, snapshots |
-| `src/kernel/fs/ixfs/ixfs_format.c` | mkfs — format tool |
-| `src/kernel/fs/ixfs/ixfs_ops.c` | VFS callbacks (file + directory) |
-| `src/kernel/fs/ixfs/ixfs_test.c` | Test suite |
-| `src/kernel/fs/ixfs/ixfs_ads.c` | [NEW] Alternate Data Streams |
-| `src/kernel/fs/ixfs/ixfs_security.c` | [NEW] Security descriptors / ACLs |
-| `src/kernel/fs/ixfs/ixfs_compress.c` | [NEW] LZ4/Zstd transparent compression |
-| `src/kernel/fs/ixfs/ixfs_encrypt.c` | [NEW] AES-256-XTS per-file encryption |
-| `src/kernel/fs/ixfs/ixfs_dedup.c` | [NEW] Inline block deduplication |
-| `src/kernel/fs/ixfs/ixfs_defrag.c` | [NEW] Online defragmentation |
-| `src/kernel/fs/partition.c` | IXFS detection (magic `0x49584653`) |
+| File                                      | Purpose                                         |
+| ----------------------------------------- | ----------------------------------------------- |
+| `include/kernel/fs/ixfs.h`                | Public API, on-disk structures, constants       |
+| `src/kernel/fs/ixfs/ixfs_internal.h`      | Internal types, function declarations           |
+| `src/kernel/fs/ixfs/ixfs_core.c`          | Disk I/O, buffer cache, CRC32C, string helpers  |
+| `src/kernel/fs/ixfs/ixfs_alloc.c`         | Bitmap, block groups, alloc/free                |
+| `src/kernel/fs/ixfs/ixfs_inode.c`         | Inode R/W, vnodes, directory hash index         |
+| `src/kernel/fs/ixfs/ixfs_extent.c`        | Extent-based block mapping                      |
+| `src/kernel/fs/ixfs/ixfs_journal.c`       | WAL journal, transactions, recovery             |
+| `src/kernel/fs/ixfs/ixfs_cow.c`           | Copy-on-Write, refcounts, snapshots             |
+| `src/kernel/fs/ixfs/ixfs_format.c`        | mkfs — format tool                              |
+| `src/kernel/fs/ixfs/ixfs_ops.c`           | VFS callbacks (file + directory)                |
+| `src/kernel/fs/ixfs/ixfs_test.c`          | Test suite                                      |
+| `src/kernel/fs/ixfs/ixfs_ads.c`           | [NEW] Alternate Data Streams                    |
+| `src/kernel/fs/ixfs/ixfs_security.c`      | [NEW] Security descriptors / ACLs               |
+| `src/kernel/fs/ixfs/ixfs_compress.c`      | [NEW] LZ4/Zstd transparent compression          |
+| `src/kernel/fs/ixfs/ixfs_encrypt.c`       | [NEW] AES-256-XTS per-file encryption           |
+| `src/kernel/fs/ixfs/ixfs_dedup.c`         | [NEW] Inline block deduplication                |
+| `src/kernel/fs/ixfs/ixfs_defrag.c`        | [NEW] Online defragmentation                    |
+| `src/kernel/fs/ixfs/ixfs_reflink.c`       | [NEW] Reflink (instant zero-copy clone)         |
+| `src/kernel/fs/ixfs/ixfs_usn.c`           | [NEW] USN change journal                        |
+| `src/kernel/fs/ixfs/ixfs_unicode.c`       | [NEW] Case-insensitive comparison, Unicode      |
+| `src/kernel/fs/partition.c`               | IXFS detection (magic `0x49584653`)             |
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                            | 🪟 NTFS                          | 🐧 ext4                     | 🌊 Btrfs/ZFS                 | 🚀 IXFS                              |
-| -- | ---------------------------------- | --------------------------------- | ---------------------------- | ----------------------------- | ------------------------------------- |
-| 💎 | Max volume size                    | 16 EB (NTFS)                      | 1 EB                         | 256 ZB (ZFS)                  | 64 TiB (64-bit blocks × 4 KiB)       |
-| 💎 | Block size                         | 512–64K clusters                  | 1K–64K                       | 4K–128K                       | 4 KiB (page-aligned)                  |
-| 💎 | Extent-based allocation            | ✅ Non-resident $DATA             | ✅ Extent tree               | ✅ B-tree extents             | ✅ §4 — 4 inline + overflow tree      |
-| 💎 | Journaling                         | ✅ $LogFile (redo + undo)         | ✅ JBD2 (ordered)            | ✅ CoW (journal-free)         | ✅ §5 — WAL + CoW                     |
-| 💎 | Copy-on-Write                      | ❌                                | ❌                           | ✅ Native                     | ✅ §6 — native CoW + refcounts        |
-| ⭐ | **Snapshots**                      | ⚠️ VSS (separate service)        | ❌ (LVM only)                | ✅ Native                     | ✅ §6 — filesystem-level, instant   |
-| ⭐ | **Auto snapshots**              | ❌ VSS scheduled task             | ❌                           | ⚠️ Manual scripts            | ⬜ §6.2 — configurable retention       |
-| 💎 | Per-block checksums                | ❌                                | ✅ CRC32C (metadata only)    | ✅ All data + metadata        | ✅ §7 — CRC32C all blocks             |
-| ⭐ | **Self-healing**                | ❌ Requires chkdsk                | ❌ Requires fsck             | ✅ ZFS with mirrors           | ⬜ §7.2 — backup superblock + bitmap   |
-| 💎 | Alternate Data Streams             | ✅ Native                         | ❌                           | ❌                            | ⬜ §9 — native via stream inodes      |
-| 💎 | Security descriptors (ACLs)        | ✅ Full DACL/SACL                 | ✅ POSIX ACLs (different)    | ✅ POSIX ACLs                | ⬜ §10 — Win32-native DACLs           |
-| 💎 | Hard links                         | ✅                                | ✅                           | ✅                            | ⬜ §11.1 — existing `i_links` field   |
-| 💎 | Symbolic links                     | ✅ Reparse points                 | ✅ symlink()                 | ✅                            | ⬜ §11.2 — reparse-compatible         |
-| ⭐ | **Transparent compression**     | ⚠️ LZ77 (1993 algo, slow)        | ❌                           | ✅ Zstd/LZO                  | ⬜ §12 — LZ4 (fastest) + Zstd         |
-| ⭐ | **Per-file encryption**         | ⚠️ EFS (certificate nightmare)   | ✅ fscrypt (CLI setup)       | ✅ ZFS native encryption     | ⬜ §13 — simple master key model      |
-| ⭐ | **Inline deduplication**        | ❌                                | ❌                           | ✅ ZFS (needs huge RAM)       | ⬜ §14 — lightweight, uses CoW refs   |
-| ⭐ | **Reflinks (instant copy)**     | ⚠️ Server 2016+ only             | ❌                           | ✅ Native                    | ⬜ §15 — transparent via CopyFile     |
-| ⭐ | **Online defrag**               | ✅ Windows Defragmenter           | ✅ e4defrag (limited)        | ✅ btrfs defrag              | ⬜ §16 — extent consolidation          |
-| ⭐ | **Online resize**               | ✅ Grow only                      | ✅ Grow only (resize2fs)     | ✅ Grow + shrink             | ⬜ §1.2 — grow (shrink future)        |
-| 💎 | Inline small files                 | ✅ Resident $DATA                 | ✅ Inline data               | ❌                            | ✅ §4 — ≤48 bytes in `i_extents`      |
-| 💎 | Directory hash index               | ✅ B+ tree                        | ✅ HTree (Half MD4)          | ✅ B-tree                    | ✅ §3 — FNV-1a hash index             |
-| ⭐ | **Volume health dashboard**     | ❌ Requires chkdsk                | ❌ CLI tune2fs only          | ⚠️ ZFS `zpool status`        | ⬜ §18 — GUI health panel             |
-| ⭐ | **Feature count**                  | 11/20                             | 7/20                         | 14/20                        | **20/20** — all features combined   |
+| Feature                            | 🪟 NTFS                             | 🐧 ext4                          | 🌊 Btrfs/ZFS                      | 🚀 Impossible OS (IXFS)                            |
+| ---------------------------------- | ----------------------------------- | -------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| Max volume size                    | ✅ 16 EB                            | ✅ 1 EB                          | ✅ 256 ZB (ZFS)                    | ✅ 64 TiB (64-bit blocks × 4 KiB)                   |
+| Block size                         | ✅ 512 B–64 KiB clusters            | ✅ 1 KiB–64 KiB                  | ✅ 4 KiB–128 KiB                   | ✅ 4 KiB (page-aligned)                              |
+| Extent-based allocation            | ✅ Non-resident $DATA               | ✅ Extent tree                    | ✅ B-tree extents                   | ✅ §4 Done — 4 inline + overflow tree                |
+| Journaling                         | ✅ $LogFile (redo + undo)           | ✅ JBD2 (ordered)                 | ✅ CoW (journal-free)               | ✅ §5 Done — WAL + CoW                               |
+| Copy-on-Write                      | ❌                                  | ❌                                | ✅ Native                           | ✅ §6 Done — native CoW + refcounts                  |
+| **Snapshots**                      | ⚠️ VSS (separate service)          | ❌ (LVM only)                     | ✅ Native                           | ✅ §6 Done — filesystem-level, instant               |
+| **Auto snapshots**                 | ❌ VSS scheduled task               | ❌                                | ⚠️ Manual scripts                  | ⬜ §6.2 P3 — **configurable retention policy**       |
+| Per-block checksums                | ❌                                  | ⚠️ Metadata only (CRC32C)        | ✅ All data + metadata              | ✅ §7 Done — CRC32C all blocks                       |
+| **Self-healing metadata**          | ❌ Requires chkdsk                  | ❌ Requires fsck                  | ✅ ZFS with mirrors                 | ⬜ §7.2 P2 — **backup superblock + bitmap**          |
+| Alternate Data Streams             | ✅ Native                           | ❌                                | ❌                                  | ⬜ §9 P1 — native via stream inodes                  |
+| Security descriptors (ACLs)        | ✅ Full DACL/SACL                   | ✅ POSIX ACLs (different model)   | ✅ POSIX ACLs                       | ⬜ §10 P1 — Win32-native DACLs                       |
+| Hard links                         | ✅                                  | ✅                                | ✅                                  | ⬜ §11.1 P1 — existing `i_links` field               |
+| Symbolic links                     | ✅ Reparse points                   | ✅ `symlink()`                    | ✅                                  | ⬜ §11.2 P1 — reparse-compatible                     |
+| **Transparent compression**        | ⚠️ LZ77 (1993 algo, slow)          | ❌                                | ✅ Zstd/LZO                         | ⬜ §12 P2 — **LZ4 (fastest) + Zstd (best ratio)**   |
+| **Per-file encryption**            | ⚠️ EFS (certificate nightmare)     | ✅ fscrypt (CLI setup)            | ✅ ZFS native encryption            | ⬜ §13 P3 — **simple master key model**              |
+| **Inline deduplication**           | ❌                                  | ❌                                | ✅ ZFS (needs huge RAM)             | ⬜ §14 P2 — **lightweight, uses CoW refs**           |
+| **Reflinks (instant copy)**        | ⚠️ Server 2016+ only               | ❌                                | ✅ Native (Btrfs/XFS)               | ⬜ §15 P2 — **transparent via CopyFile**             |
+| **Online defrag**                  | ✅ Windows Defragmenter             | ✅ `e4defrag` (limited)           | ✅ `btrfs defrag`                   | ⬜ §16 P2 — extent consolidation                     |
+| **Online resize**                  | ✅ Grow only                        | ✅ Grow only (`resize2fs`)        | ✅ Grow + shrink                    | ⬜ §1.2 P2 — grow (shrink future)                    |
+| Inline small files                 | ✅ Resident $DATA                   | ✅ Inline data                    | ❌                                  | ✅ §4 Done — ≤48 bytes in `i_extents`                |
+| Directory hash index               | ✅ B+ tree                          | ✅ HTree (Half MD4)               | ✅ B-tree                           | ✅ §3 Done — FNV-1a hash index                       |
+| **Case-insensitive paths**         | ✅ Default                          | ⚠️ Opt-in (5.2+, casefolding)    | ❌                                  | ⬜ §20 P1 — **default + per-mount override**         |
+| **Sparse file support**            | ✅ `FSCTL_SET_SPARSE`               | ✅ `fallocate` hole punch         | ✅ CoW-native                       | ⬜ §21 P2 — **sparse + CoW integration**             |
+| **Change journal (USN)**           | ✅ `$UsnJrnl`                       | ❌ (inotify = in-memory only)     | ⚠️ Send/receive (different model)  | ⬜ §22 P3 — **persistent circular buffer**           |
+| **Volume quotas**                  | ✅                                  | ✅                                | ✅ (ZFS/Btrfs)                      | ⬜ §23 P3 — per-user limits                          |
+| **TRIM / discard**                 | ✅ Scheduled only                   | ✅ `discard` mount option          | ✅ Native                           | ⬜ §24 P2 — **journal-batched TRIM**                 |
+| **Volume health dashboard**        | ❌ Requires chkdsk                  | ❌ CLI `tune2fs` only             | ⚠️ ZFS `zpool status`              | ⬜ §18 P3 — **GUI health panel**                     |
+| **Feature count**                  | 14/26                               | 10/26                             | 17/26                              | **26/26** — all features combined                    |
+
+> **After all phases:** Impossible OS is the **only OS** to offer every feature in a single native filesystem.
+> NTFS has 14/26 (missing CoW, dedup, reflinks, auto-snap, checksums, self-healing, health dashboard, and extras).
+> ext4 has 10/26 (missing CoW, snapshots, ADS, compression, dedup, reflinks, USN, and more).
+> Btrfs/ZFS get close at 17/26 but lack Win32 semantics (ADS, DACLs, case-insensitive), health GUI, and USN journal.
+

@@ -17,13 +17,224 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Seven TODO files, one spec, and the existing driver** feed into AHCI
+> production readiness. They have cross-dependencies that dictate
+> implementation order. This roadmap shows the correct sequence —
+> completing items out of order will cause rework or silent data
+> corruption.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    SPEC["specs/storage/ahci-1.3.1.md<br/>AHCI 1.3.1 Specification"]
+    DRV["src/kernel/drivers/ahci.c<br/>Existing Driver (824 lines, polling)"]
+    VIRTIO["TODO-040.01-VirtIO.md<br/>VirtIO Block (parallel transport)"]
+    MBR["TODO-040.04-MBR.md<br/>MBR Partition Detection"]
+    GPT["TODO-040.05-GPT.md<br/>GPT Partition Detection"]
+    VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
+    FAT32["TODO-040.06-FAT32.md<br/>FAT32 Filesystem"]
+    IXFS["TODO-040.11-IXFS.md<br/>IXFS Native Filesystem"]
+    NTFS["TODO-040.08-NTFS.md<br/>NTFS Read-Only Driver"]
+    ATAPI["TODO-040.03-ATAPI-SCSI-MMC.md<br/>ATAPI Optical / SCSI"]
+
+    A["§1.1 Interrupt-Driven I/O"]
+    B["§1.2 MSI / MSI-X"]
+    C["§2.1 NCQ (FPDMA)"]
+    D["§2.2 Interrupt Coalescing"]
+    E["§2.3 NCQ Priority"]
+    F["§2.4 NCQ Autosense"]
+    G["§3.1 CLO Recovery"]
+    H["§3.2 Port Error Handling"]
+    I["§4.1 Hot-Plug Detection"]
+    J["§4.2 Staggered Spin-Up"]
+    K["§5.1 TRIM / Discard"]
+    L["§5.2 Force Unit Access"]
+    M["§6.1 Link Power Mgmt"]
+    N["§6.2 DevSleep"]
+    O["§7.1 BIOS/OS Handoff"]
+    P["§8.1 Enclosure LEDs"]
+    Q["§9.1 Port Multiplier"]
+    R["§9.2 Enhanced ATAPI"]
+    S["§10.1 SMART"]
+    T["§11.1 ATA Security Erase"]
+    U["§11.2 SANITIZE"]
+    V["§12.1 I/O Statistics"]
+    W["§13.1 ZPODD"]
+
+    %% External prerequisites
+    SPEC --> O
+    SPEC --> A
+    DRV --> A
+    DRV --> O
+    DRV --> G
+
+    %% Phase 0: Handoff must happen first
+    O --> A
+
+    %% Phase 1: Interrupts + Error Recovery
+    A --> C
+    A --> B
+    A --> G
+    G --> H
+
+    %% Phase 2: NCQ builds on interrupts
+    A --> C
+    C --> D
+    C --> E
+    C --> F
+    C --> K
+    C --> L
+
+    %% Phase 2: TRIM/FUA depend on NCQ for queued variants
+    K --> FAT32
+    K --> IXFS
+    L --> FAT32
+    L --> IXFS
+
+    %% Phase 3: Hot-plug, MSI, power, SMART
+    A --> I
+    I --> J
+    A --> M
+    M --> N
+    A --> S
+
+    %% Phase 3: MSI enhances interrupt path
+    B --> D
+
+    %% Phase 4: Advanced features
+    H --> T
+    H --> U
+    A --> V
+    C --> V
+    R --> ATAPI
+    N --> W
+
+    %% Phase 4: Enclosure and port multiplier
+    A --> P
+    A --> Q
+
+    %% Downstream filesystem consumers
+    A --> MBR
+    A --> GPT
+    MBR --> FAT32
+    MBR --> NTFS
+    GPT --> FAT32
+    GPT --> IXFS
+    GPT --> NTFS
+    VFS --> FAT32
+    VFS --> IXFS
+    VFS --> NTFS
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase | TODO File / Spec                | Sections                    | What It Delivers                                                        | Depends On                       | Status |
+| -- | :---: | ------------------------------- | --------------------------- | ----------------------------------------------------------------------- | -------------------------------- | :----: |
+| 💎 | **0** | `specs/storage/ahci-1.3.1.md`   | Full spec                   | Register maps, bit definitions, state machines — **read before coding** | —                                |   ✅   |
+| 💎 | **0** | `src/kernel/drivers/ahci.c`     | Existing driver             | PCI detect, ABAR mapping, port init, DMA R/W, IDENTIFY, ATAPI (polling) | —                                |   ✅   |
+| 💎 | **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                  | —                                |   ✅   |
+| 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports              | —                                |   ✅   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)          |   ⬜   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                   |   ⬜   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                 |   ⬜   |
+| 💎 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                   |   ⬜   |
+| 💎 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
+| 💎 | **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache               | Phase 2 (§2.1 for NCQ FUA)      |   ⬜   |
+| ⭐ | **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                 |   ⬜   |
+| 💎 | **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **3** | `TODO-040.02-AHCI.md`           | §6.1 Link Power Management  | Partial/Slumber states — save laptop battery during SATA idle           | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **3** | `TODO-040.02-AHCI.md`           | §10.1 SMART Monitoring      | Drive health → temperature, reallocated sectors, power-on hours         | Phase 1 (§1.1)                   |   ⬜   |
+| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.3 NCQ Priority           | PRIO bit for latency-sensitive I/O — **neither Win nor Linux uses**     | Phase 2 (§2.1)                   |   ⬜   |
+| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.4 NCQ Autosense          | Sense Data Reporting — surgical error recovery without queue drain       | Phase 2 (§2.1)                   |   ⬜   |
+| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.5 NCQ Auto-Depth         | Workload-adaptive queue depth — **neither Win nor Linux tunes this**    | Phase 2 (§2.1)                   |   ⬜   |
+| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §10.2 Predictive Failure    | SMART trend analysis → predict failure days ahead                       | Phase 3 (§10.1)                  |   ⬜   |
+| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §12.1 I/O Statistics        | Per-port IOPS, throughput, per-NCQ-tag latency histograms               | Phase 1 (§1.1) + Phase 2 (§2.1) |   ⬜   |
+| 💎 | **4** | `TODO-040.02-AHCI.md`           | §2.2 Interrupt Coalescing   | Command Completion Coalescing — prevent interrupt storms under load      | Phase 2 (§2.1) + Phase 3 (§1.2) |   ⬜   |
+| 💎 | **4** | `TODO-040.02-AHCI.md`           | §6.2 DevSleep               | Ultra-low-power PHY shutdown (\<5 mW) — AHCI 1.3.1 deep sleep           | Phase 3 (§6.1)                   |   ⬜   |
+| 💎 | **4** | `TODO-040.02-AHCI.md`           | §4.2 Staggered Spin-Up      | Sequential port spin-up — prevent inrush current in multi-drive systems  | Phase 3 (§4.1)                   |   ⬜   |
+| 💎 | **4** | `TODO-040.02-AHCI.md`           | §9.2 Enhanced ATAPI         | Full SCSI command set over AHCI — eject, sense, TOC, config profiles    | Phase 1 (§1.1)                   |   ⬜   |
+| ⭐ | **4** | `TODO-040.02-AHCI.md`           | §15.1 Write Cache Mgmt      | GUI write cache toggle — **Win hides, Linux needs hdparm**              | Phase 0 (driver)                 |   ⬜   |
+| ⭐ | **5** | `TODO-040.02-AHCI.md`           | §11.1 ATA Security Erase   | GUI secure erase — **Windows blocks this since Win 8**                  | Phase 2 (§3.2)                   |   ⬜   |
+| ⭐ | **5** | `TODO-040.02-AHCI.md`           | §11.2 SANITIZE              | BLOCK ERASE / CRYPTO SCRAMBLE / OVERWRITE — enterprise wipe             | Phase 2 (§3.2)                   |   ⬜   |
+| 💎 | **5** | `TODO-040.02-AHCI.md`           | §8.1 Enclosure LEDs         | Activity/Fault/Locate LEDs for server/NAS drive bays                    | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **5** | `TODO-040.02-AHCI.md`           | §9.1 Port Multiplier        | Fan-out single port to 15 devices via PM                                | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **5** | `TODO-040.02-AHCI.md`           | §13.1 ZPODD                 | Zero-power optical drive — 0W draw when tray empty                      | Phase 4 (§6.2)                   |   ⬜   |
+|    |       |                                 |                             |                                                                         |                                  |        |
+| 💎 | —     | `TODO-040.06-FAT32.md`          | Downstream: TRIM + FUA      | `fat32_unlink()` → `blkdev_discard()`, metadata writes → FUA           | Phase 2 (§5.1, §5.2)            |   ⬜   |
+| 💎 | —     | `TODO-040.11-IXFS.md`           | Downstream: TRIM + FUA      | `ixfs_delete()` → `blkdev_discard()`, journal commits → FUA            | Phase 2 (§5.1, §5.2)            |   ⬜   |
+| 💎 | —     | `TODO-040.08-NTFS.md`           | Downstream: block I/O       | NTFS read-only driver relies on `blkdev_read()` backed by AHCI         | Phase 0 (existing driver, ✅)    |   ⬜   |
+| 💎 | —     | `TODO-040.03-ATAPI-SCSI-MMC.md` | Downstream: AHCI transport  | ATAPI AHCI command delivery routes through AHCI port infrastructure     | Phase 4 (§9.2)                   |   ⬜   |
+| 💎 | —     | `TODO-040.01-VirtIO.md`         | Parallel transport          | VirtIO block driver — shares `blkdev` API but separate hardware path    | Independent (VirtIO ≠ AHCI)      |   ⬜   |
+
+> [!NOTE]
+> **Phase 0** is already complete — the existing driver handles PCI discovery, ABAR mapping,
+> DMA read/write, and IDENTIFY via polling. Partition tables and VFS are operational.
+>
+> **Phase 1** is the critical path: BIOS/OS handoff + interrupt-driven I/O + CLO recovery.
+> These three items replace polling, establish clean controller ownership, and provide the
+> error recovery foundation. **All subsequent phases depend on Phase 1.**
+>
+> **Phase 2** delivers NCQ (32-deep queuing) + TRIM + FUA + 4Kn sector support — the features
+> that transform AHCI from "functional" to "production-grade." NCQ unlocks concurrent I/O,
+> TRIM keeps SSDs healthy, FUA ensures journal commits survive power loss, and 4Kn eliminates
+> the 512e emulation penalty on modern drives.
+>
+> **Phase 3** adds MSI, hot-plug, power management, SMART, and the competitive features
+> (⭐): NCQ Priority, NCQ Autosense, NCQ Auto-Depth Tuning, Predictive Failure Analysis,
+> and I/O Statistics with per-tag latency histograms.
+>
+> **Phases 4–5** are polish: interrupt coalescing, DevSleep, staggered spin-up, enhanced
+> ATAPI, write cache management, ATA Security Erase (GUI), SANITIZE, enclosure LEDs,
+> port multipliers, and ZPODD.
+
+> [!TIP]
+> **Quick wins after Phase 1:**
+> - §3.1 CLO Recovery is low-complexity but prevents hard lockups on unresponsive drives.
+>   Implement it immediately after interrupts work — you will need it while debugging NCQ.
+> - §7.1 BIOS/OS Handoff is a ~20-line register dance but prevents mysterious SMM interference
+>   that manifests as random command timeouts on bare-metal AHCI controllers.
+>
+> **Critical gotcha — NCQ tag management:**
+> NCQ tags (0–31) map 1:1 to Command List slots. You MUST set `PxSACT` *before* `PxCI`
+> for NCQ commands, or the HBA interprets the command as a standard DMA transfer and
+> silently corrupts the completion tracking. This is the #1 NCQ implementation bug.
+>
+> **Critical gotcha — interrupt ACK order:**
+> Clear `PxIS` *before* clearing `IS`. If you clear `IS` first, a new interrupt from the
+> same port will be lost because the global bit gets set and immediately cleared before the
+> ISR checks `PxIS`. The AHCI spec (§3.3.5) explicitly mandates this order.
+>
+> **Downstream wiring:**
+> TRIM and FUA are only useful once filesystems call them. After implementing §5.1 and §5.2,
+> update `TODO-040.06-FAT32.md` (`fat32_unlink()` → `blkdev_discard()`) and
+> `TODO-040.11-IXFS.md` (`ixfs_txn_commit()` → FUA). These are small hooks, not full features.
+>
+> **Parallel work:**
+> `TODO-040.01-VirtIO.md` is a completely independent transport. VirtIO and AHCI never
+> interact — they share the `blkdev` API surface but have no code dependencies. Work on
+> both in parallel without coordination.
+>
+> **Memory rule reminder:**
+> ALL DMA buffers (command lists, FIS receive areas, PRDT entries, IDENTIFY buffers) MUST
+> use `pmm_alloc_contiguous()`. The kernel heap is only 2 MiB — a 32-slot command list +
+> 32 command tables + FIS buffers per port is ~130 KiB per port. With 32 ports possible,
+> this would exhaust `kmalloc` instantly.
+
+---
+
 ## 1. Interrupt-Driven I/O
 
 ### 1.1 AHCI Interrupt Handler
 
 **Prompt:** The current driver uses polling (`while ((port_read(PxCI) & (1 << slot))`) to wait for command completion — this wastes CPU cycles and blocks the calling thread. Replace with interrupt-driven I/O: register an IRQ handler for the AHCI PCI interrupt, enable `GHC.IE` (Global HBA Control, Interrupt Enable), and set `PxIE` (Port Interrupt Enable) bits for each active port. The ISR reads the global `IS` register to identify which ports fired, then reads `PxIS` to determine the cause (DHRS for D2H FIS, PSS for PIO Setup, etc.). Clear `PxIS` by writing-1-to-clear, then clear `IS`. Wake the blocked thread via a per-port completion event. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: interrupt-driven I/O"`. Add notes directly in this TODO section.
 
-- [ ] Register AHCI IRQ handler via `idt_register_handler()` (PCI interrupt line from config space)
+- [ ] Register AHCI IRQ handler via IOAPIC routing (PCI interrupt line from config space offset `3Ch`)
 - [ ] Enable `GHC.IE` (bit 1 of Global HBA Control, offset `04h`)
 - [ ] Enable `PxIE` for each active port: at minimum `DHRS` (D2H Register FIS), `PSS` (PIO Setup), `DSS` (DMA Setup), `SDBS` (Set Device Bits), `TFES` (Task File Error)
 - [ ] ISR: read `IS` → for each set bit, read `PxIS` → handle completion/error → clear `PxIS` → clear `IS`
@@ -54,7 +265,7 @@
 **Prompt:** Native Command Queuing allows up to 32 concurrent I/O requests per port, enabling the drive to reorder them for optimal performance (elevator algorithm). NCQ uses FPDMA (First Party DMA) commands: `READ FPDMA QUEUED` (0x60) and `WRITE FPDMA QUEUED` (0x61). Each command uses a unique tag (0–31) written to the count register bits 7:3. The drive reports completion via Set Device Bits FIS, which sets bits in `PxSACT`. The ISR checks `PxSACT` to determine which tags completed. Check `CAP.SNCQ` to verify NCQ support, and read `CAP.NCS` for the number of command slots. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: NCQ read/write (FPDMA)"`. Add notes directly in this TODO section.
 
 - [ ] Check `CAP.SNCQ` (bit 30) — verify HBA supports NCQ
-- [ ] Read `CAP.NCS` (bits 12:8) — number of command slots (0-based, max 32)
+- [ ] Read `CAP.NCS` (bits 12:8) — number of command slots minus one (0-based, add 1 for actual count, max 32)
 - [ ] Implement `ahci_ncq_read(port, lba, count, buf, tag)` using `READ FPDMA QUEUED` (0x60)
 - [ ] Implement `ahci_ncq_write(port, lba, count, buf, tag)` using `WRITE FPDMA QUEUED` (0x61)
 - [ ] FIS setup: command in Features register, LBA in standard LBA fields, tag in Count bits 7:3
@@ -116,6 +327,27 @@
 - [ ] Retry only the FAILED command (not entire queue) when error is recoverable
 - [ ] Expose error details via Registry: `HKLM\HARDWARE\AHCI\PortX\LastError\SenseKey`, `ASC`, `ASCQ`
 - [ ] Commit: `"ahci: NCQ Autosense and sense data reporting"`
+
+### 2.5 NCQ Automatic Depth Tuning
+
+**Prompt:** Neither Windows StorAHCI nor Linux libata dynamically adjusts NCQ queue depth based on workload — both use a fixed 32-deep queue. For random 4K workloads (database OLTP, VM disk images), shallower queues (4–8 tags) reduce latency because the drive's internal re-ordering overhead drops. For sequential workloads (file copy, streaming video), deeper queues (16–32) maximize throughput by keeping the drive's pipeline full. Implement adaptive depth tuning: monitor IOPS vs latency ratio over a sliding window, and adjust the active tag ceiling per port. Check `CAP.NCS` for the hardware maximum. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: NCQ automatic depth tuning"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux tunes NCQ depth at runtime. Windows
+> uses a fixed 32, Linux exposes `nr_requests` via sysfs but never auto-adjusts. Impossible
+> OS can measure and adapt — a measurable latency advantage for mixed workloads.
+
+- [ ] Add per-port `uint8_t ncq_depth_current` and `uint8_t ncq_depth_max` (from `CAP.NCS + 1`)
+- [ ] Sliding window: track last 100 completions — compute avg latency and IOPS
+- [ ] Depth policy:
+  - [ ] If avg_latency > 5ms AND iops < 1000: reduce depth by 4 (floor 4)
+  - [ ] If avg_latency < 1ms AND depth < max: increase depth by 4 (ceiling max)
+  - [ ] Hysteresis: don't adjust more often than every 500ms
+- [ ] Tag allocator: limit `find_first_zero_bit()` to `ncq_depth_current` bits
+- [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\AHCI\PortX\NCQDepth\Current`, `Max`, `Policy`
+- [ ] Policy override: `HKLM\SYSTEM\Drivers\AHCI\NCQDepthPolicy` = `auto` | `fixed:N`
+- [ ] Log: `[AHCI] Port %d: NCQ depth adjusted %u → %u (avg_lat=%uµs, iops=%u)`
+- [ ] Commit: `"ahci: NCQ automatic depth tuning"`
 
 ---
 
@@ -350,6 +582,28 @@
 - [ ] Expose via Registry: `HKLM\HARDWARE\AHCI\PortX\SMART\Temperature`, etc.
 - [ ] Commit: `"ahci: SMART health monitoring"`
 
+### 10.2 Predictive Failure Analysis
+
+**Prompt:** Go beyond raw SMART attribute reading — track SMART attribute trends over time to predict drive failure days or weeks before catastrophic data loss. Store historical snapshots in the Registry at `HKLM\HARDWARE\AHCI\PortX\SMART\History\*`. Compute rate-of-change for critical attributes (Reallocated Sectors, Pending Sectors, CRC Errors). If the rate exceeds a threshold, emit a desktop notification with recommended action (backup now, replace drive). Neither Windows nor Linux provides built-in predictive failure — third-party tools (CrystalDiskInfo, smartd) require manual setup. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: predictive failure analysis"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has no built-in SMART trend analysis — users rely on CrystalDiskInfo.
+> Linux `smartd` can email alerts but has no GUI and no trend prediction. Impossible OS can predict
+> failure days ahead and show a desktop notification with one-click backup — a safety differentiator.
+
+- [ ] Periodic SMART poll: read attributes every 30 minutes (configurable)
+- [ ] Store snapshots in Registry: `HKLM\HARDWARE\AHCI\PortX\SMART\History\{timestamp}\*`
+- [ ] Keep last 30 days of snapshots (auto-prune oldest)
+- [ ] Compute rate-of-change for critical attributes:
+  - [ ] Reallocated Sectors (ID 5): delta > 0 in 24h → WARNING
+  - [ ] Pending Sectors (ID 197): delta > 5 in 24h → CRITICAL
+  - [ ] CRC Error Count (ID 199): delta > 10 in 24h → cable/connector issue
+  - [ ] Temperature (ID 194): > 55°C sustained → thermal warning
+- [ ] Failure prediction: if Reallocated > 100 AND rate > 2/day → "Drive may fail within 7 days"
+- [ ] Desktop notification: toast with drive model, estimated time to failure, "Backup Now" button
+- [ ] Expose via Registry: `HKLM\HARDWARE\AHCI\PortX\SMART\HealthScore` (0–100%)
+- [ ] Commit: `"ahci: predictive failure analysis"`
+
 ---
 
 ## 11. ATA Security & Drive Sanitization
@@ -390,10 +644,10 @@
   - [ ] Bit 13: OVERWRITE supported
   - [ ] Bit 14: CRYPTO SCRAMBLE supported
 - [ ] Implement `SANITIZE DEVICE` command (0xB4) with subcommands:
-  - [ ] Feature 0x11: SANITIZE STATUS EXT — poll completion
-  - [ ] Feature 0x12: CRYPTO SCRAMBLE EXT — instant crypto erase
-  - [ ] Feature 0x14: BLOCK ERASE EXT — NAND block erase
-  - [ ] Feature 0x14: OVERWRITE EXT — pattern overwrite
+  - [ ] Feature 0x0011: SANITIZE STATUS EXT — poll completion
+  - [ ] Feature 0x0012: CRYPTO SCRAMBLE EXT — instant crypto erase
+  - [ ] Feature 0x0011: BLOCK ERASE EXT — NAND block erase (count=0x0001)
+  - [ ] Feature 0x0014: OVERWRITE EXT — pattern overwrite
 - [ ] Track progress: `SANITIZE STATUS EXT` returns percent complete
 - [ ] Expose via Disk Manager: "Sanitize Drive" with mode selection dropdown
 - [ ] Commit: `"ahci: SANITIZE device command"`
@@ -448,33 +702,85 @@
 
 ---
 
+## 14. Advanced Format (4Kn / 512e) Support
+
+### 14.1 4Kn Native Sector Support
+
+**Prompt:** Modern drives use 4096-byte physical sectors (Advanced Format). Most expose a 512-byte logical sector via 512e emulation — but native 4Kn drives report 4096 as both logical AND physical sector size. Check IDENTIFY DEVICE words 106 (physical/logical sector size) and 209 (logical-to-physical alignment). If logical sector size > 512, all DMA transfers, PRDT entries, and LBA calculations must use the actual logical sector size. The existing driver hardcodes 512-byte sectors in several places (`sector_size = 512`). Without 4Kn support, native 4Kn SSDs are unusable. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: 4Kn native sector support"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows uses 512e emulation for most drives — native 4Kn support has
+> edge-case bugs. Linux supports 4Kn but many user-space tools assume 512-byte sectors.
+> Impossible OS can handle 4Kn natively from day one — zero performance penalty, zero emulation.
+
+- [ ] Parse IDENTIFY DEVICE word 106:
+  - [ ] Bit 12: logical sector size > 256 words (4Kn indicator)
+  - [ ] Bits 3:0: 2^N logical sectors per physical sector
+- [ ] Parse IDENTIFY DEVICE word 117–118: logical sector size in words (if word 106 bit 12 set)
+- [ ] Store actual `sector_size` in `struct ahci_port` (currently hardcoded to 512)
+- [ ] Update `ahci_do_rw()`: PRDT byte count must be multiple of `sector_size`
+- [ ] Update `blkdev_register()` call: pass actual `sector_size` instead of hardcoded 512
+- [ ] Alignment check: warn if partition start LBA not aligned to physical sector boundary
+- [ ] Parse word 209: logical-to-physical alignment offset
+- [ ] Log: `[AHCI] Port %d: %s (%u-byte logical, %u-byte physical sectors)`
+- [ ] Commit: `"ahci: 4Kn native sector support"`
+
+---
+
+## 15. Write Cache Management
+
+### 15.1 Write Cache Enable / Disable
+
+**Prompt:** SATA drives have a volatile write cache (typically 32–256 MiB of DRAM) that accelerates writes by acknowledging completion before data reaches the media. While FUA (§5.2) bypasses the cache per-command, the cache itself can be globally enabled or disabled via `SET FEATURES` subcommand 0x02 (enable) and 0x82 (disable). Disabling the write cache is appropriate for battery-backed RAID controllers and guarantees every write hits the media — but at significant performance cost. Expose this as a toggle in the Disk Manager GUI with a clear warning about performance impact. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: write cache management"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows buries write cache control in Device Manager → Policies → "Enable
+> write caching" with no explanation. Linux requires manual `hdparm -W 0|1`. Impossible OS can
+> expose this in the Disk Manager with a clear performance vs safety toggle and an explanation.
+
+- [ ] Check IDENTIFY DEVICE word 82 bit 5 — write cache supported
+- [ ] Check IDENTIFY DEVICE word 85 bit 5 — write cache currently enabled
+- [ ] Implement `ahci_set_write_cache(port, enable)` via `SET FEATURES`:
+  - [ ] Enable: subcommand 0x02
+  - [ ] Disable: subcommand 0x82
+- [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\AHCI\PortX\WriteCacheEnabled` (0 or 1)
+- [ ] Disk Manager GUI: toggle switch with warning: "Disabling reduces performance but improves crash safety"
+- [ ] Persist setting across reboots: re-apply on `ahci_init()` port setup
+- [ ] Commit: `"ahci: write cache management"`
+
+---
+
 ## Priority Order
 
-| ⭐ | Priority | Section                       | Description                                        |
-| -- |----------|-------------------------------|----------------------------------------------------|
-| 💎 | 🔴 P0    | 1.1 Interrupt-Driven I/O      | Eliminates CPU-wasting polling — foundational      |
-| 💎 | 🔴 P0    | 3.1 Command List Override     | Required for any error recovery — drives get stuck |
-| 💎 | 🟠 P1    | 2.1 NCQ (FPDMA)              | Major performance gain for concurrent I/O          |
-| 💎 | 🟠 P1    | 3.2 Port Error Handling       | Production systems need robust error handling      |
-| 💎 | 🟠 P1    | 5.1 TRIM / Discard           | SSD performance degrades without TRIM              |
-| 💎 | 🟠 P1    | 5.2 Force Unit Access (FUA)  | Data durability — journal commits must survive crash|
-| 💎 | 🟠 P1    | 7.1 BIOS/OS Handoff          | Prevents SMM firmware interference                 |
-| ⭐ | 🟡 P2    | 2.3 NCQ Priority          | **Latency edge** — neither Win nor Linux uses this |
-| ⭐ | 🟡 P2    | 2.4 NCQ Autosense         | **Surgical error recovery** — better than queue drain|
-| 💎 | 🟡 P2    | 4.1 Hot-Plug Detection       | eSATA and hot-swap bay support                     |
-| 💎 | 🟡 P2    | 1.2 MSI Support              | Better interrupt routing (no IRQ sharing)          |
-| 💎 | 🟡 P2    | 6.1 Link Power Management    | Battery life on laptops with SATA SSDs             |
-| 💎 | 🟡 P2    | 10.1 SMART Monitoring        | Drive health visible in Disk Manager               |
-| ⭐ | 🟡 P2    | 12.1 I/O Statistics       | **Per-NCQ-tag latency histograms** — beyond both OSes|
-| 💎 | 🟢 P3    | 2.2 Interrupt Coalescing     | Performance under heavy I/O workloads              |
-| 💎 | 🟢 P3    | 6.2 DevSleep (AHCI 1.3.1)   | Ultra-low-power idle for laptops                   |
-| 💎 | 🟢 P3    | 9.2 Enhanced ATAPI/CD-ROM   | Full CD/DVD support                                |
-| 💎 | 🟢 P3    | 4.2 Staggered Spin-Up       | Multi-drive server/NAS environments                |
-| ⭐ | 🟢 P3    | 11.1 ATA Security Erase  | **GUI secure erase** — Win blocks this from live OS|
-| ⭐ | 🟢 P3    | 11.2 SANITIZE             | Modern crypto/block erase — enterprise standard    |
-| 💎 | 🔵 P4    | 8.1 Enclosure Management    | Server rack LED identification                     |
-| 💎 | 🔵 P4    | 9.1 Port Multiplier         | External multi-drive enclosures                    |
-| 💎 | 🔵 P4    | 13.1 ZPODD                  | Zero-power optical drive for laptops               |
+| ⭐ | Priority | Section                        | Description                                           |
+| -- | -------- | ------------------------------ | ----------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 Interrupt-Driven I/O       | Eliminates CPU-wasting polling — foundational         |
+| 💎 | 🔴 P0    | 3.1 Command List Override      | Required for any error recovery — drives get stuck    |
+| 💎 | 🟠 P1    | 2.1 NCQ (FPDMA)               | Major performance gain for concurrent I/O             |
+| 💎 | 🟠 P1    | 3.2 Port Error Handling        | Production systems need robust error handling         |
+| 💎 | 🟠 P1    | 5.1 TRIM / Discard            | SSD performance degrades without TRIM                 |
+| 💎 | 🟠 P1    | 5.2 Force Unit Access (FUA)   | Data durability — journal commits must survive crash   |
+| 💎 | 🟠 P1    | 7.1 BIOS/OS Handoff           | Prevents SMM firmware interference                    |
+| ⭐ | 🟡 P2    | 2.3 NCQ Priority              | **Latency edge** — neither Win nor Linux uses this    |
+| ⭐ | 🟡 P2    | 2.4 NCQ Autosense             | **Surgical error recovery** — better than queue drain |
+| ⭐ | 🟡 P2    | 2.5 NCQ Auto-Depth Tuning     | **Workload-adaptive** — neither OS tunes dynamically  |
+| 💎 | 🟡 P2    | 4.1 Hot-Plug Detection        | eSATA and hot-swap bay support                        |
+| 💎 | 🟡 P2    | 1.2 MSI Support               | Better interrupt routing (no IRQ sharing)             |
+| 💎 | 🟡 P2    | 6.1 Link Power Management     | Battery life on laptops with SATA SSDs                |
+| 💎 | 🟡 P2    | 10.1 SMART Monitoring         | Drive health visible in Disk Manager                  |
+| ⭐ | 🟡 P2    | 10.2 Predictive Failure       | **SMART trend analysis** — predict failure ahead      |
+| ⭐ | 🟡 P2    | 12.1 I/O Statistics           | **Per-NCQ-tag latency histograms** — beyond both OSes |
+| ⭐ | 🟡 P2    | 14.1 4Kn Sector Support       | **Native 4Kn** — no 512e performance penalty          |
+| 💎 | 🟢 P3    | 2.2 Interrupt Coalescing      | Performance under heavy I/O workloads                 |
+| 💎 | 🟢 P3    | 6.2 DevSleep (AHCI 1.3.1)    | Ultra-low-power idle for laptops                      |
+| 💎 | 🟢 P3    | 9.2 Enhanced ATAPI/CD-ROM    | Full CD/DVD support                                   |
+| 💎 | 🟢 P3    | 4.2 Staggered Spin-Up        | Multi-drive server/NAS environments                   |
+| ⭐ | 🟢 P3    | 11.1 ATA Security Erase      | **GUI secure erase** — Win blocks this from live OS   |
+| ⭐ | 🟢 P3    | 11.2 SANITIZE                 | Modern crypto/block erase — enterprise standard       |
+| ⭐ | 🟢 P3    | 15.1 Write Cache Management   | **GUI toggle** — Win hides, Linux needs `hdparm`      |
+| 💎 | 🔵 P4    | 8.1 Enclosure Management     | Server rack LED identification                        |
+| 💎 | 🔵 P4    | 9.1 Port Multiplier          | External multi-drive enclosures                       |
+| 💎 | 🔵 P4    | 13.1 ZPODD                   | Zero-power optical drive for laptops                  |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -483,31 +789,37 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Windows 11 (StorAHCI)           | 🐧 Linux (libata / ahci.c)           | 🚀 Impossible OS                             |
-| -- | ------------------------------- | ----------------------------------- | ------------------------------------ | --------------------------------------------- |
-| 💎 | Basic AHCI read/write           | ✅                                 | ✅                                    | ✅ Done (polling DMA)                       |
-| 💎 | IDENTIFY DEVICE                 | ✅                                 | ✅                                    | ✅ Done                                     |
-| 💎 | ATAPI / CD-ROM                  | ✅ Full SCSI passthrough           | ✅ Full (sr, sg)                      | ⚠️ Basic (READ, IDENTIFY only) — §9.2       |
-| 💎 | Interrupt-driven I/O            | ✅ MSI-X multi-queue               | ✅ MSI / per-port IRQ                 | ⬜ §1.1 P0 — currently polling              |
-| 💎 | MSI / MSI-X                     | ✅ MSI-X preferred                 | ✅ MSI / MSI-X                        | ⬜ §1.2 P2                                  |
-| 💎 | Native Command Queuing (NCQ)    | ✅ 32-deep queue                   | ✅ 32-deep, auto-detect               | ⬜ §2.1 P1 — sequential only                |
-| 💎 | Interrupt coalescing            | ✅ Adaptive                        | ✅ CCC support                        | ⬜ §2.2 P3                                  |
-| ⭐ | **NCQ Priority (PRIO bit)**     | ❌ Not used                        | ❌ Not used                           | ⬜ §2.3 P2 — latency advantage              |
-| ⭐ | **NCQ Autosense**               | ❌ Basic error log only            | ⚠️ Partial (libata-scsi)              | ⬜ §2.4 P2 — surgical error recovery        |
-| 💎 | Error recovery (CLO)            | ✅ Automatic retry + CLO           | ✅ libata EH (error handler)          | ⬜ §3.1 P0 — no recovery                    |
-| 💎 | Comprehensive error handling    | ✅ WHEA integration                | ✅ libata error handler               | ⬜ §3.2 P1                                  |
-| 💎 | Hot-plug (eSATA / swap bay)     | ✅ Full hot-plug                   | ✅ Full hot-plug                      | ⬜ §4.1 P2                                  |
-| 💎 | Staggered spin-up               | ✅                                 | ✅                                    | ⬜ §4.2 P3                                  |
-| 💎 | TRIM / discard                  | ✅ Optimize Drives                 | ✅ `fstrim`, auto-discard             | ⬜ §5.1 P1                                  |
-| ⭐ | **Force Unit Access (FUA)**     | ⚠️ Relies on FLUSH CACHE mostly    | ✅ XFS uses FUA natively              | ⬜ §5.2 P1 — per-command FUA                |
-| 💎 | Link power management (ALPM)    | ✅ Balanced / Performance          | ✅ `min_power` / `med_power_with_dipm`| ⬜ §6.1 P2                                  |
-| 💎 | DevSleep (AHCI 1.3.1)           | ✅ Connected Standby               | ✅ Supported                          | ⬜ §6.2 P3                                  |
-| 💎 | BIOS/OS handoff (BOHC)          | ✅                                 | ✅                                    | ⬜ §7.1 P1                                  |
-| 💎 | Enclosure management (LEDs)     | ✅ enclosure aware                 | ✅ `ledtrig-disk`                     | ⬜ §8.1 P4                                  |
-| 💎 | Port multiplier                 | ✅ (limited)                       | ✅ `libata-pmp`                       | ⬜ §9.1 P4                                  |
-| 💎 | SMART monitoring                | ✅ Storage Spaces / CrystalDisk    | ✅ `smartctl` (smartmontools)         | ⬜ §10.1 P2                                 |
-| ⭐ | **ATA Security Erase**          | ❌ Blocked since Win 8 (WinPE only)| ⚠️ Manual `hdparm` only               | ⬜ §11.1 P3 — GUI Disk Manager erase        |
-| ⭐ | **SANITIZE (crypto/block)**     | ⚠️ NVMe only via IOCTL             | ✅ `sg_sanitize`                      | ⬜ §11.2 P3 — GUI with mode selector        |
-| ⭐ | **I/O Stats (per-NCQ-tag)**     | ⚠️ PerfMon (aggregate only)        | ⚠️ `/proc/diskstats` (aggregate)      | ⬜ §12.1 P2 — per-tag latency histograms    |
-| 💎 | **ZPODD** (zero-power ODD)      | ✅ Supported                       | ✅ Since kernel 3.9                   | ⬜ §13.1 P4                                 |
-| 💎 | **NCQ + IRQ-driven (default)**  | ✅                                 | ✅                                    | ⬜ §1.1 + §2.1 — polling today              |
+| ⭐ | Feature                        | 🪟 Windows 11 (StorAHCI)            | 🐧 Linux (libata / ahci.c)            | 🚀 Impossible OS                                |
+| -- | ------------------------------ | ----------------------------------- | ------------------------------------- | ----------------------------------------------- |
+| 💎 | Basic AHCI read/write          | ✅ `bootmgfw.efi` → StorAHCI        | ✅ `ahci.c` + `libata`                | ✅ Done (polling DMA)                            |
+| 💎 | IDENTIFY DEVICE                | ✅                                   | ✅                                     | ✅ Done                                          |
+| 💎 | ATAPI / CD-ROM                 | ✅ Full SCSI passthrough             | ✅ Full (`sr`, `sg`)                   | ⚠️ Basic (READ, IDENTIFY only) — §9.2            |
+| 💎 | Interrupt-driven I/O           | ✅ MSI-X multi-queue                 | ✅ MSI / per-port IRQ                  | ⬜ §1.1 P0 — currently polling                   |
+| 💎 | MSI / MSI-X                    | ✅ MSI-X preferred                   | ✅ MSI / MSI-X                         | ⬜ §1.2 P2                                       |
+| 💎 | Native Command Queuing (NCQ)   | ✅ 32-deep queue                     | ✅ 32-deep, auto-detect                | ⬜ §2.1 P1 — sequential only                     |
+| 💎 | Interrupt coalescing           | ✅ Adaptive                          | ✅ CCC support                         | ⬜ §2.2 P3                                       |
+| ⭐ | **NCQ Priority (PRIO bit)**    | ❌ Not used                          | ❌ Not used                            | ⬜ §2.3 P2 — **latency advantage**               |
+| ⭐ | **NCQ Autosense**              | ❌ Basic error log only              | ⚠️ Partial (libata-scsi)               | ⬜ §2.4 P2 — **surgical error recovery**         |
+| ⭐ | **NCQ Auto-Depth Tuning**      | ❌ Fixed 32                          | ❌ Fixed (configurable via sysfs)      | ⬜ §2.5 P2 — **workload-adaptive queue depth**   |
+| 💎 | Error recovery (CLO)           | ✅ Automatic retry + CLO             | ✅ libata EH (error handler)           | ⬜ §3.1 P0 — no recovery                        |
+| 💎 | Comprehensive error handling   | ✅ WHEA integration                  | ✅ libata error handler                | ⬜ §3.2 P1                                       |
+| 💎 | Hot-plug (eSATA / swap bay)    | ✅ Full hot-plug                     | ✅ Full hot-plug                       | ⬜ §4.1 P2                                       |
+| 💎 | Staggered spin-up              | ✅                                   | ✅                                     | ⬜ §4.2 P3                                       |
+| 💎 | TRIM / discard                 | ✅ Optimize Drives                   | ✅ `fstrim`, auto-discard              | ⬜ §5.1 P1                                       |
+| ⭐ | **Force Unit Access (FUA)**    | ⚠️ Relies on FLUSH CACHE mostly      | ✅ XFS uses FUA natively               | ⬜ §5.2 P1 — **per-command FUA**                 |
+| 💎 | Link power management (ALPM)   | ✅ Balanced / Performance            | ✅ `min_power` / `med_power_with_dipm` | ⬜ §6.1 P2                                       |
+| 💎 | DevSleep (AHCI 1.3.1)         | ✅ Connected Standby                 | ✅ Supported                           | ⬜ §6.2 P3                                       |
+| 💎 | BIOS/OS handoff (BOHC)        | ✅                                   | ✅                                     | ⬜ §7.1 P1                                       |
+| 💎 | Enclosure management (LEDs)   | ✅ Enclosure aware                   | ✅ `ledtrig-disk`                      | ⬜ §8.1 P4                                       |
+| 💎 | Port multiplier               | ✅ (limited)                         | ✅ `libata-pmp`                        | ⬜ §9.1 P4                                       |
+| 💎 | SMART monitoring              | ✅ Storage Spaces / CrystalDisk      | ✅ `smartctl` (smartmontools)          | ⬜ §10.1 P2                                      |
+| ⭐ | **Predictive failure**        | ❌ No trend analysis                 | ❌ Raw SMART only (smartd)             | ⬜ §10.2 P2 — **ML-style trend prediction**      |
+| ⭐ | **ATA Security Erase**        | ❌ Blocked since Win 8 (WinPE only)  | ⚠️ Manual `hdparm` only                | ⬜ §11.1 P3 — **GUI Disk Manager erase**         |
+| ⭐ | **SANITIZE (crypto/block)**   | ⚠️ NVMe only via IOCTL               | ✅ `sg_sanitize`                       | ⬜ §11.2 P3 — **GUI with mode selector**         |
+| ⭐ | **I/O Stats (per-NCQ-tag)**   | ⚠️ PerfMon (aggregate only)           | ⚠️ `/proc/diskstats` (aggregate)       | ⬜ §12.1 P2 — **per-tag latency histograms**     |
+| 💎 | ZPODD (zero-power ODD)       | ✅ Supported                         | ✅ Since kernel 3.9                    | ⬜ §13.1 P4                                      |
+| ⭐ | **4Kn native sector**         | ⚠️ 512e shim (performance penalty)    | ⚠️ 512e fallback, 4Kn partial          | ⬜ §14.1 P2 — **native 4Kn, zero overhead**      |
+| ⭐ | **Write cache management**    | ❌ Hidden in Device Manager          | ⚠️ Manual `hdparm -W` only             | ⬜ §15.1 P3 — **GUI toggle in Disk Manager**     |
+
+> **After P0+P1 items:** Impossible OS matches Windows and Linux feature-for-feature on SATA hardware.
+> **After P2 items (⭐):** Exceeds both — NCQ Priority, Autosense, per-tag telemetry, predictive failure, and native 4Kn are differentiators unique to Impossible OS.

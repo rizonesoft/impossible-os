@@ -7,6 +7,17 @@
 > truncate), timestamp encoding, VFS integration, and basic formatting.
 > This TODO covers missing spec compliance, robustness, performance, and interoperability
 > gaps identified against `specs/filesystem/fat32.md`.
+>
+> **Codebase scan findings** (verified against source):
+> - `fat32_set_fat_entry()` already writes to ALL FAT copies (`fi = 0..num_fats-1`) but ignores `BPB_ExtFlags` mirroring mode
+> - `fat32_format.c` already writes backup boot sector at sector 6, but no mount fallback or repair function exists
+> - FSInfo validation already checks all 3 signatures, but does NOT range-check `FSI_Free_Count` against total clusters
+> - `seconds_to_fat_datetime()` hardcodes epoch year 2025 instead of using RTC — all timestamps are wrong
+> - `fat32_vfs_stat()` returns zero for `ctime`/`mtime`/`atime` — FAT date/time fields are not decoded
+> - Short name generation hardcodes `~1` suffix — no collision detection for `~2`, `~3`, etc.
+> - `fat32_delete_file_vol()` only marks the SFN entry as `0xE5` — LFN entries are orphaned on delete
+> - `fat32_bpb` struct is missing `BPB_ExtFlags` and `BPB_BkBootSec` fields
+> - `fat32_volume` struct has no `total_clusters` field (needed for FSInfo range-check and fragmentation analysis)
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for large I/O buffers (multi-sector reads, FAT sector caches). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
@@ -18,19 +29,184 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Five TODO files** directly interact with the FAT32 driver. They have
+> cross-dependencies that dictate implementation order. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    %% ── FAT32 Internal Sections ──
+    A["040.06 §1.1<br/>Strict BPB Validation"]
+    B["040.06 §1.2<br/>Sub-Type by Cluster Count"]
+    C["040.06 §1.3<br/>Dirty Volume Detection (FAT[1])"]
+    C2["040.06 §1.4<br/>Read-Only Mount Mode"]
+    D["040.06 §2.1<br/>FSInfo Validation"]
+    E["040.06 §2.2<br/>Full FAT Scan Fallback"]
+    F["040.06 §3.1<br/>Dual-FAT Mirroring"]
+    G["040.06 §3.2<br/>Backup Boot Sector"]
+    H["040.06 §4.1<br/>LFN Write Support"]
+    I["040.06 §4.2<br/>LFN Deletion & Orphan"]
+    J["040.06 §4.3<br/>Full UCS-2 Unicode"]
+    K["040.06 §5.1<br/>High-Res Timestamps"]
+    L["040.06 §5.2<br/>Year 2107 Boundary"]
+    M["040.06 §6.1<br/>Sector Cache Tuning"]
+    N["040.06 §6.2<br/>Contiguous Cluster Coalescing"]
+    O["040.06 §6.3<br/>FAT Sector Caching"]
+    P["040.06 §6.4<br/>Cluster Pre-Allocation"]
+    Q["040.06 §7.1<br/>Basic fsck"]
+    R["040.06 §7.2<br/>Safe Unmount Sequence"]
+    S["040.06 §8.1<br/>Robust Formatting"]
+    T["040.06 §9.1<br/>4 GiB File Size Limit"]
+    U["040.06 §9.2<br/>Volume Label Operations"]
+    U2["040.06 §9.3<br/>Byte-Range File Locking"]
+    V["040.06 §10.1<br/>Cross-Platform Compat"]
+    W["040.06 §11.1<br/>Fragmentation Analyzer"]
+    X["040.06 §11.2<br/>Online Defragmentation"]
+    Y["040.06 §12.1<br/>Transaction-Safe WAL"]
+    Z["040.06 §13.1<br/>Deleted File Recovery"]
+
+    %% ── Cross-File Dependencies ──
+    VFS["040.07 §3.6<br/>Win32 File API (CreateFile)"]
+    VFS_CI["040.07 §1.1<br/>Case-Insensitive Lookup"]
+    VFS_VOL["040.07 §2.3<br/>GetVolumeInformation"]
+    VFS_LOCK["040.07 §3.7<br/>Win32 LockFile API"]
+    PART["040.04 MBR / 040.05 GPT<br/>Partition Detection"]
+    STOR["040.01 VirtIO / 040.02 AHCI<br/>Block Device I/O"]
+    NTFS["040.08 §1.1–1.3<br/>NTFS Read-Only Driver"]
+    EXFAT["040.10 §1.1<br/>exFAT Read-Only Driver"]
+
+    %% ── Intra-file edges ──
+    A --> B
+    A --> C
+    A --> D
+    C --> R
+    C --> Q
+    C --> C2
+    D --> E
+    F --> O
+    F --> R
+    H --> I
+    H --> J
+    K --> L
+    D --> S
+    Q --> X
+    Q --> Z
+    W --> X
+    N --> P
+
+    %% ── Cross-file edges ──
+    STOR --> A
+    PART --> A
+    VFS --> R
+    VFS --> T
+    VFS --> U
+    VFS_CI --> V
+    VFS_VOL --> V
+    VFS_LOCK --> U2
+    NTFS -.-> V
+    EXFAT -.-> V
+
+    %% ── Styling ──
+    classDef cross fill:#2d3748,stroke:#63b3ed,color:#e2e8f0
+    class VFS,VFS_CI,VFS_VOL,VFS_LOCK,PART,STOR,NTFS,EXFAT cross
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File                 | Sections                        | What It Delivers                                                           | Depends On               | Status |
+| -- | :----: | ------------------------- | ------------------------------- | -------------------------------------------------------------------------- | ------------------------ | :----: |
+| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.1 Strict BPB Validation     | Reject malformed volumes early — all BPB invariants checked                | Block Device I/O         |   ⬜   |
+| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.3 Dirty Volume Detection    | Detect improper unmount via FAT[1] flags — trigger fsck or warn            | —                        |   ⬜   |
+| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.4 Read-Only Mount Mode      | Mount damaged/dirty volumes safely without risk of further corruption      | Phase 1 (§1.3)           |   ⬜   |
+| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §7.2 Safe Unmount Sequence     | Flush caches, update FSInfo, set clean flag, issue blkdev flush            | Phase 1 (§1.3)           |   ⬜   |
+| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §1.2 Sub-Type by Cluster Count | Confirm FAT32 via data cluster count — never trust `BS_FilSysType`         | Phase 1 (§1.1)           |   ⬜   |
+| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §2.1 FSInfo Validation         | Range-check free count + next-free against total clusters, backup write    | Phase 1 (§1.1)           |   ⬜   |
+| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §3.1 Dual-FAT Mirroring       | Add `BPB_ExtFlags` awareness — current code writes all FATs unconditionally | Phase 1 (§1.1)           |   ⬜   |
+| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §9.1 Large File Handling       | Enforce 4 GiB – 1 byte file size limit on write and truncate              | VFS §3.6 (CreateFile)    |   ⬜   |
+| 💎 | **3**  | `TODO-040.06-FAT32.md`   | §4.1 LFN Write Support         | Create files with names > 8.3: LFN entries, checksum, numeric tail        | Phase 2 (§3.1)           |   ⬜   |
+| 💎 | **3**  | `TODO-040.06-FAT32.md`   | §2.2 Full FAT Scan Fallback    | Compute true free cluster count when FSInfo is unknown or invalid          | Phase 2 (§2.1)           |   ⬜   |
+| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §4.2 LFN Deletion & Orphan    | Mark all LFN entries `0xE5` on delete, detect/clean orphans               | Phase 3 (§4.1)           |   ⬜   |
+| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §4.3 Full UCS-2 Unicode        | UCS-2LE ↔ UTF-8 conversion for international filenames                    | Phase 3 (§4.1)           |   ⬜   |
+| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §5.1 High-Res Creation Time    | `DIR_CrtTimeTenth` (10ms) + `DIR_NTRes` casing + fix `vfs_stat` timestamps | —                        |   ⬜   |
+| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §3.2 Backup Boot Sector        | Add mount fallback + repair (format already writes backup at sector 6)     | Phase 2 (§3.1)           |   ⬜   |
+| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §6.2 Contiguous Coalescing     | Single multi-sector DMA for contiguous cluster runs                        | —                        |   ⬜   |
+| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §6.3 FAT Sector Caching        | Dedicated FAT region cache — >95% hit rate on sequential reads             | Phase 2 (§3.1)           |   ⬜   |
+| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §8.1 Robust Formatting         | Spec-compliant `mkfs`: MS FATSz32 algorithm, backup FSInfo, cluster check  | Phase 2 (§2.1)           |   ⬜   |
+| ⭐ | **5**  | `TODO-040.06-FAT32.md`   | §6.4 Cluster Pre-Allocation    | Contiguous pre-alloc for new files — reduces fragmentation to near-zero    | Phase 5 (§6.2)           |   ⬜   |
+| ⭐ | **6**  | `TODO-040.06-FAT32.md`   | §12.1 Transaction-Safe WAL     | Write-ahead log in reserved sectors — FAT32 crash protection (world-first) | Phase 1 (§7.2) + Ph 2    |   ⬜   |
+| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §6.1 Sector Cache Tuning       | Registry-configurable cache size, hit/miss telemetry, batch flush          | —                        |   ⬜   |
+| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §5.2 Year 2107 Boundary        | Clamp year to 127, validate all timestamp fields on read                   | Phase 4 (§5.1)           |   ⬜   |
+| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.2 Volume Label Operations   | Get/set volume label in root directory + boot sector sync                  | —                        |   ⬜   |
+| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.3 Byte-Range File Locking   | Win32 `LockFile`/`UnlockFile` backed by in-memory range tree               | VFS §3.7 (LockFile)      |   ⬜   |
+| 💎 | **7**  | `TODO-040.06-FAT32.md`   | §7.1 Basic fsck                | Cluster bitmap cross-link detection, orphan recovery, chain validation     | Phase 1 (§1.3) + Ph 3    |   ⬜   |
+| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.1 Fragmentation Analyzer   | Per-file extent count, volume fragmentation %, visual cluster heat map     | —                        |   ⬜   |
+| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.2 Online Defragmentation   | Relocate file clusters to contiguous runs — GUI progress in Disk Manager   | Phase 7 (§7.1, §11.1)   |   ⬜   |
+| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §13.1 Deleted File Recovery    | Scan `0xE5` entries, reconstruct cluster chains — built-in undelete        | Phase 7 (§7.1)           |   ⬜   |
+| 💎 | **8**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1     |   ⬜   |
+
+> [!NOTE]
+> **Phases 1–2** are the critical path — mount hardening, data integrity, and spec compliance.
+> They unblock everything else by ensuring the volume is correctly validated, safely
+> unmountable, and FAT writes are mirrored. **§1.4 Read-Only Mount** is also Phase 1:
+> dirty or damaged volumes should be mountable read-only immediately.
+>
+> **Phase 3** adds LFN write support, which is a prerequisite for file creation with
+> long names, and FAT scan fallback for free-space accuracy.
+>
+> **Phases 4–5** are correctness and performance — Unicode, timestamps, caching,
+> formatting, and the competitive pre-allocation feature.
+>
+> **Phase 6** delivers the world-first transaction-safe WAL for FAT32 crash protection,
+> tuning features, and byte-range file locking for Win32 `LockFile` support.
+> **Phase 7** adds fsck, the competitive defrag/fragmentation features, and the
+> built-in deleted file recovery (undelete) — a unique feature.
+> **Phase 8** is interop testing.
+
+> [!TIP]
+> **Quick wins (any time):** §5.1 (timestamps) and §9.2 (volume labels) are self-contained
+> with zero intra-file dependencies — they can be done in parallel with any phase. §6.1
+> (sector cache tuning) only needs the existing `scache_*` functions.
+
+> [!IMPORTANT]
+> **Cross-file unblock order:**
+> 1. **Block device I/O** (`TODO-040.01 VirtIO` or `TODO-040.02 AHCI`) ← drives are
+>    detected and readable before FAT32 mount can happen (already working).
+> 2. **Partition detection** (`TODO-040.04 MBR` / `TODO-040.05 GPT`) ← partitions
+>    with FAT32 type are identified and handed to the FAT32 driver (already working).
+> 3. **VFS Win32 API** (`TODO-040.07 §3.6`) ← `CreateFile`, `ReadFile`, `WriteFile`
+>    wrappers expose FAT32 to user-space. §9.1 (4 GiB limit enforcement) and §10.1
+>    (interop) depend on this.
+> 4. **NTFS read-only** (`TODO-040.08 §1.1`) ← needed for cross-platform round-trip
+>    testing in §10.1 (reading NTFS volumes formatted by Windows).
+> 5. **VFS LockFile API** (`TODO-040.07 §3.7`) ← needed for §9.3 byte-range locking.
+>    **exFAT read-only** (`TODO-040.10 §1.1`) ← needed for §10.1 interop testing
+>    with exFAT-formatted removable media.
+
+---
+
 ## 1. Volume Mounting & Validation
 
 ### 1.1 Strict BPB Validation
 
 **Prompt:** The current `fat32_init()` reads BPB fields but may not validate all invariants mandated by the spec. Add strict validation: `BPB_BytsPerSec` must be one of {512, 1024, 2048, 4096}. `BPB_SecPerClus` must be a power of 2 (1–128) and the resulting cluster size must not exceed 32 KB. `BPB_RootEntCnt` must be 0 for FAT32. `BPB_TotSec16` must be 0. `BPB_FATSz16` must be 0. `BPB_FSVer` must be `0x0000` — any other version triggers mount rejection. Validate the boot sector signature `0xAA55` at offset `0x1FE`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: strict BPB validation"`. Add notes directly in this TODO section.
 
+- [ ] **Struct prerequisite:** Add `BPB_ExtFlags` (uint16, offset `0x28`) to `fat32_bpb` — needed by §3.1
+- [ ] **Struct prerequisite:** Add `BPB_BkBootSec` (uint16, offset `0x32`) to `fat32_bpb` — needed by §3.2
+- [ ] **Struct prerequisite:** Add `total_clusters` (uint32) to `fat32_volume` — needed by §2.1, §7.1, §11.1
 - [ ] Validate `BPB_BytsPerSec` ∈ {512, 1024, 2048, 4096}
 - [ ] Validate `BPB_SecPerClus` is power of 2 and `BytsPerSec × SecPerClus ≤ 32768`
 - [ ] Validate `BPB_RootEntCnt == 0`, `BPB_TotSec16 == 0`, `BPB_FATSz16 == 0` (FAT32 requirements)
-- [ ] Validate `BPB_FSVer == 0x0000` — reject mount if non-zero
-- [ ] Validate boot sector signature `0xAA55` at byte offset `0x1FE`
+- [ ] Validate `BPB_FSVer == 0x0000` (offset `0x2A`) — reject mount if non-zero
+- [ ] Validate boot sector signature `0xAA55` at byte offset `0x1FE` (already checked but add logging)
 - [ ] Validate `BPB_NumFATs >= 1` (typically 2)
-- [ ] Validate `BS_BootSig` is `0x28` or `0x29`
+- [ ] Validate `BS_BootSig` (offset `0x42`) is `0x28` or `0x29`
+- [ ] Validate `BPB_Media` (offset `0x15`) ∈ {`0xF0`, `0xF8`–`0xFF`}
+- [ ] Compute and store `vol->total_clusters = (total_sectors - first_data_sector) / sectors_per_cluster`
 - [ ] Log all validation failures with specific field names and values
 - [ ] Commit: `"fat32: strict BPB validation"`
 
@@ -59,13 +235,29 @@
 - [ ] Preserve upper 4 bits when writing to FAT[1]: `(fat1 & 0xF0000000) | value`
 - [ ] Commit: `"fat32: dirty volume detection via FAT[1]"`
 
+### 1.4 Read-Only Mount Mode
+
+**Prompt:** When a volume is dirty (§1.3) or has I/O errors, or when the user explicitly requests read-only access, mount the volume in read-only mode. All write operations (`fat32_set_fat_entry()`, `fat32_write_sector()`, `fat32_create_file_vol()`, etc.) must check `vol->read_only` and return `-EROFS` if set. This prevents further corruption of damaged volumes and is critical for forensic use. Windows supports read-only FAT32 mounts; Linux supports `mount -o ro`. Impossible OS should also auto-remount read-only on I/O error during write. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: read-only mount mode"`. Add notes directly in this TODO section.
+
+- [ ] Add `int read_only` flag to `struct fat32_volume`
+- [ ] Set `read_only = 1` when:
+  - [ ] Volume is dirty on mount (FAT[1] bit 31 clear) and auto-fsck is not enabled
+  - [ ] Hardware I/O error flag set (FAT[1] bit 30 clear)
+  - [ ] Explicit request via mount flags (`VFS_MOUNT_READONLY`)
+- [ ] Guard all write paths: `fat32_write_sector()`, `fat32_set_fat_entry()`, `fat32_create_file_vol()`, `fat32_delete_file_vol()`, `fat32_rename_vol()`, `fat32_truncate()`
+- [ ] Return `-EROFS` (read-only filesystem) on write attempt to read-only volume
+- [ ] Auto-remount read-only on I/O error during write (with log warning)
+- [ ] Log: `[FAT32] Mounted read-only (dirty volume / user request)`
+- [ ] Expose via VFS: `vfs_is_readonly(mount_point)` query
+- [ ] Commit: `"fat32: read-only mount mode"`
+
 ---
 
 ## 2. FSInfo Sector
 
 ### 2.1 FSInfo Validation & Synchronization
 
-**Prompt:** The FSInfo sector (typically sector 1) provides cached free cluster count and next-free-cluster hints for fast allocation. The current driver reads/writes FSInfo, but the spec warns these hints are unreliable after power failure. Add rigorous validation: check all three signatures (`0x41615252` at `0x00`, `0x61417272` at `0x1E4`, `0xAA550000` at `0x1FC`). If any signature fails, reject the FSInfo data (set free count = `0xFFFFFFFF`, hint = `0xFFFFFFFF`). Range-check `FSI_Free_Count` against total cluster count. Range-check `FSI_Nxt_Free` (must be ≥ 2 and ≤ max cluster). On any allocation/free, update both fields and flush to disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: FSInfo validation and synchronization"`. Add notes directly in this TODO section.
+**Prompt:** The FSInfo sector (typically sector 1) provides cached free cluster count and next-free-cluster hints for fast allocation. The current driver reads/writes FSInfo and **already validates all three signatures** (`0x41615252` at offset 0, `0x61417272` at offset 484, trail at offset 508) and range-checks `next_free`. However, it does NOT range-check `FSI_Free_Count` against total clusters, and does NOT write the backup FSInfo sector. Add: range-check `FSI_Free_Count ≤ vol->total_clusters`. Write FSInfo to both primary (`BPB_FSInfo`) and backup (`BPB_BkBootSec + BPB_FSInfo`) locations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: FSInfo validation and synchronization"`. Add notes directly in this TODO section.
 
 - [ ] Validate all three FSInfo signatures on mount:
   - [ ] Lead Signature at `0x00`: must be `0x41615252`
@@ -99,26 +291,25 @@
 
 ### 3.1 Dual-FAT Synchronization
 
-**Prompt:** Standard FAT32 volumes maintain two identical FAT copies for redundancy. The `BPB_ExtFlags` field (offset `0x28`) controls mirroring behavior: if bit 7 is clear (0), ALL FAT copies must be updated simultaneously on every write. If bit 7 is set (1), only the active FAT (specified by bits 0–3) is updated. The current driver may only update FAT #1. Implement full dual-FAT synchronization: on every `fat32_set_fat_entry()` call, write to both FAT offsets (`FatStartSector` and `FatStartSector + FATSz32`). Respect the `BPB_ExtFlags` mirroring mode. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: dual-FAT mirroring"`. Add notes directly in this TODO section.
+**Prompt:** Standard FAT32 volumes maintain two identical FAT copies for redundancy. The `BPB_ExtFlags` field (offset `0x28`) controls mirroring behavior: if bit 7 is clear (0), ALL FAT copies must be updated simultaneously on every write. If bit 7 is set (1), only the active FAT (specified by bits 0–3) is updated. The current `fat32_set_fat_entry()` **already writes to all FAT copies** (loop `fi = 0..num_fats-1` in `fat32_core.c`), but does NOT check `BPB_ExtFlags` — it unconditionally mirrors regardless of the mirroring mode flag. Add `BPB_ExtFlags` parsing so that when bit 7 = 1, only the active FAT is written. Also update `fat32_get_fat_entry()` to read from the active FAT when mirroring is disabled. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `\"fat32: BPB_ExtFlags-aware FAT mirroring\"`. Add notes directly in this TODO section.
 
-- [ ] Read `BPB_ExtFlags` (offset `0x28`) during mount
+- [ ] Read `BPB_ExtFlags` (offset `0x28`) during mount — store in `vol->bpb.ext_flags`
 - [ ] Parse bit 7: mirroring mode (0 = mirror all, 1 = single active FAT)
 - [ ] Parse bits 0–3: active FAT index (only when bit 7 = 1)
 - [ ] When mirroring enabled (bit 7 = 0):
-  - [ ] `fat32_set_fat_entry()`: write to FAT #1 at `FatStartSector + sector_offset`
-  - [ ] Also write to FAT #2 at `FatStartSector + FATSz32 + sector_offset`
-  - [ ] For N FATs: write to `FatStartSector + (i * FATSz32) + offset` for i in 0..NumFATs-1
+  - [ ] ✅ `fat32_set_fat_entry()` already writes to all FAT copies — verify correct
 - [ ] When mirroring disabled (bit 7 = 1):
-  - [ ] Only write to the active FAT: `FatStartSector + (active_fat_idx * FATSz32) + offset`
+  - [ ] Modify `fat32_set_fat_entry()`: only write to the active FAT
+  - [ ] Modify `fat32_get_fat_entry()`: read from the active FAT
 - [ ] Read always from FAT #1 (or active FAT if mirroring disabled)
-- [ ] Commit: `"fat32: dual-FAT mirroring"`
+- [ ] Commit: `\"fat32: BPB_ExtFlags-aware FAT mirroring\"`
 
 ### 3.2 Backup Boot Sector
 
-**Prompt:** The FAT32 spec stores a backup copy of the boot sector at `BPB_BkBootSec` (typically sector 6). This allows recovery if sector 0 is corrupted. Implement: (1) on mount, if sector 0 fails to read or has invalid signature, try reading from `BPB_BkBootSec`; (2) expose `fat32_repair_boot_sector()` that copies the backup to sector 0; (3) on format, write boot sector to both sector 0 and sector `BPB_BkBootSec`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: backup boot sector support"`. Add notes directly in this TODO section.
+**Prompt:** The FAT32 spec stores a backup copy of the boot sector at `BPB_BkBootSec` (typically sector 6). This allows recovery if sector 0 is corrupted. The current `fat32_format()` **already writes the backup** at sector 6, but there is no mount fallback or repair function. Implement: (1) on mount, if sector 0 fails to read or has invalid signature, try reading from `BPB_BkBootSec`; (2) expose `fat32_repair_boot_sector()` that copies the backup to sector 0. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: backup boot sector support"`. Add notes directly in this TODO section.
 
 - [ ] Read `BPB_BkBootSec` (offset `0x32`) during mount — typically 6
-- [ ] On format: write boot sector to both sector 0 and sector `BPB_BkBootSec`
+- [ ] ✅ Format already writes backup boot sector at sector 6 (`fat32_format.c:104`)
 - [ ] On mount failure (bad signature at sector 0): attempt mount from backup sector
   - [ ] Log: `[FAT32] Sector 0 corrupt — mounting from backup at sector %u`
 - [ ] Implement `fat32_repair_boot_sector(vol)`:
@@ -145,6 +336,7 @@
   - [ ] Pad unused characters with `0xFFFF`, null-terminate with `0x0000`
   - [ ] Scatter chars across three arrays: 5 at `0x01` (10 bytes), 6 at `0x0E` (12 bytes), 2 at `0x1C` (4 bytes)
 - [ ] Implement SFN numeric tail collision avoidance: `FILENA~1.TXT`, `~2`, `~3`, etc.
+  - [ ] **Bug fix:** Current `fat32_make_short_name()` hardcodes `~1` — never checks for collision or increments
 - [ ] Find contiguous free directory slots: `ceil(name_len / 13) + 1` (LFN entries + SFN)
 - [ ] Write LFN entries followed by SFN entry atomically
 - [ ] Extend directory cluster chain if no contiguous slots available
@@ -189,10 +381,14 @@
 
 **Prompt:** The spec defines `DIR_CrtTimeTenth` (offset `0x0D`) as a 10ms-resolution field (values 0–199) that adds sub-2-second granularity to the creation timestamp. The current driver may not populate this field. Implement: on file creation, set `DIR_CrtTimeTenth = (seconds_remainder_ms / 10) + (odd_second ? 100 : 0)`. Also implement `DIR_NTRes` (offset `0x0C`) casing flags: bit 3 = lowercase filename, bit 4 = lowercase extension (Windows NT extension). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: high-resolution timestamps and NTRes casing"`. Add notes directly in this TODO section.
 
+- [ ] **Bug fix:** `seconds_to_fat_datetime()` hardcodes `year = 2025` as epoch — replace with actual RTC time source
+- [ ] **Bug fix:** `fat32_vfs_stat()` returns `ctime=0, mtime=0, atime=0` — decode FAT date/time fields from dir entry
+- [ ] Implement `fat_datetime_to_seconds(uint16_t date, uint16_t time)` — FAT date/time → UNIX epoch converter
+- [ ] Wire `fat_datetime_to_seconds()` into `fat32_vfs_stat()` for `ctime`, `mtime`, `atime`
 - [ ] On file/dir creation: compute `DIR_CrtTimeTenth`:
   - [ ] Range 0–199: `(ms_within_2s_interval / 10)`
   - [ ] If second is odd: add 100 to the value
-- [ ] On file/dir creation: set `DIR_CrtTime` and `DIR_CrtDate` from current time
+- [ ] On file/dir creation: set `DIR_CrtTime` and `DIR_CrtDate` from current RTC time
 - [ ] Implement `DIR_NTRes` (offset `0x0C`) casing flags:
   - [ ] Bit 3: entire filename portion is lowercase
   - [ ] Bit 4: entire extension portion is lowercase
@@ -372,6 +568,23 @@
 - [ ] Expose via Registry: `HKLM\HARDWARE\FAT32\Volume0\Label`
 - [ ] Commit: `"fat32: volume label operations"`
 
+### 9.3 Byte-Range File Locking
+
+**Prompt:** Win32 programs expect `LockFile()`/`UnlockFile()` to work on any filesystem, including FAT32. FAT32 has no on-disk lock structure, so locking must be purely in-memory (advisory locks valid only within the current OS session). Implement an interval tree (or sorted list) of locked byte ranges per open file handle on a FAT32 volume. Support `LOCKFILE_EXCLUSIVE_LOCK` (exclusive) and shared (read) locks. Check for overlapping ranges before granting. Locks are released on `CloseHandle()` or explicit `UnlockFile()`. This feature is missing from both Windows (FAT32 LockFile returns `ERROR_INVALID_FUNCTION` on some configurations) and Linux (`flock()` on vfat is advisory-only with no enforcement). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: byte-range file locking"`. Add notes directly in this TODO section.
+
+- [ ] Define `struct fat32_lock_range { uint64_t offset; uint64_t length; uint32_t flags; pid_t owner; }`
+- [ ] Add per-volume lock list or interval tree to `struct fat32_volume`
+- [ ] Implement `fat32_lock_range(vol, file_cluster, offset, length, exclusive)`:
+  - [ ] Check for overlapping exclusive locks → return `-EACCES` if conflict
+  - [ ] Allow overlapping shared locks
+  - [ ] Insert range into lock tree
+- [ ] Implement `fat32_unlock_range(vol, file_cluster, offset, length)`:
+  - [ ] Find and remove matching lock range
+- [ ] Wire into VFS `lock` / `unlock` ops
+- [ ] Release all locks for a file handle on `close()`
+- [ ] Thread-safe: protect lock tree with `vol->lock` spinlock
+- [ ] Commit: `"fat32: byte-range file locking"`
+
 ---
 
 ## 10. Interoperability
@@ -479,35 +692,62 @@
 
 ---
 
+## 13. Deleted File Recovery ⭐
+
+### 13.1 Undelete (Built-In File Recovery)
+
+**Prompt:** FAT32 deletion only marks directory entries with `0xE5` and frees the cluster chain — the actual file data remains on disk until overwritten. Implement a built-in undelete feature: scan a directory for `0xE5` entries, reconstruct the original filename (first byte is lost; use LFN entries if intact), walk the cluster chain to verify data integrity (check for overwrites by verifying clusters are still `0x00000000` in the FAT), and restore the file. This is a **world-first** for an OS kernel — neither Windows nor Linux provides built-in FAT32 undelete (third-party tools like Recuva or PhotoRec are needed). Integrate with File Explorer right-click → "Recover Deleted Files". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: deleted file recovery (undelete)"`. Add notes directly in this TODO section.
+
+- [ ] Implement `fat32_scan_deleted(vol, dir_cluster)`:
+  - [ ] Iterate directory entries, collect those with `name[0] == 0xE5`
+  - [ ] For each deleted entry: extract file size, first cluster, timestamps
+  - [ ] If preceding LFN entries still intact (not reused): reconstruct full name
+  - [ ] If no LFN: show short name with `?` replacing first byte (e.g., `?EADME.TXT`)
+- [ ] Implement `fat32_undelete(vol, dir_cluster, entry_offset, replacement_first_byte)`:
+  - [ ] Verify all clusters in the chain are still free (`FAT entry == 0x00000000`)
+  - [ ] If clusters are free: re-link the cluster chain, restore directory entry
+  - [ ] If some clusters overwritten: report partial recovery with byte count
+  - [ ] Restore `name[0]` with user-provided first character
+  - [ ] Update FSInfo free count
+- [ ] Implement `fat32_recovery_report(vol, dir_cluster)`:
+  - [ ] Return list of recoverable files with confidence level (100% = all clusters free, partial = some overwritten)
+- [ ] Expose via Win32 API: `RecoverDeletedFile(path, original_name)` or via File Explorer integration
+- [ ] Commit: `"fat32: deleted file recovery (undelete)"`
+
+---
+
 ## Priority Order
 
-| ⭐ | Priority | Section                            | Description                                              |
-| -- |----------|------------------------------------|----------------------------------------------------------|
-| 💎 | 🔴 P0    | 1.1 Strict BPB Validation         | Correctness — reject malformed volumes early             |
-| 💎 | 🔴 P0    | 1.3 Dirty Volume Detection        | Data integrity — detect improper unmount                 |
-| 💎 | 🔴 P0    | 7.2 Safe Unmount Sequence         | Data integrity — prevents dirty volume on next mount     |
-| 💎 | 🟠 P1    | 3.1 Dual-FAT Synchronization     | Spec compliance — FAT redundancy is mandatory            |
-| 💎 | 🟠 P1    | 2.1 FSInfo Validation             | Correctness — free space from FSInfo is unreliable       |
-| 💎 | 🟠 P1    | 4.1 LFN Write Support            | Feature — required for long filenames on create          |
-| 💎 | 🟠 P1    | 1.2 Sub-Type by Cluster Count    | Correctness — never trust BS_FilSysType string           |
-| 💎 | 🟠 P1    | 9.1 Large File Handling           | Correctness — enforce 4 GiB limit                        |
-| 💎 | 🟡 P2    | 5.1 High-Res Creation Time       | Interop — Windows expects valid CrtTimeTenth             |
-| 💎 | 🟡 P2    | 4.2 LFN Deletion & Orphan        | Correctness — prevent orphaned LFN entries               |
-| 💎 | 🟡 P2    | 4.3 Full UCS-2 Unicode           | Interop — international filenames with Windows           |
-| 💎 | 🟡 P2    | 6.2 Contiguous Cluster Coalescing| Performance — reduce I/O for non-fragmented files        |
-| ⭐ | 🟡 P2    | 6.4 Cluster Pre-Allocation    | **Anti-fragmentation** — Linux vfat doesn't pre-allocate |
-| 💎 | 🟡 P2    | 2.2 Full FAT Scan Fallback       | Correctness — needed when FSInfo is unknown              |
-| 💎 | 🟡 P2    | 3.2 Backup Boot Sector           | Recovery — survive sector 0 corruption                   |
-| 💎 | 🟡 P2    | 8.1 Robust Formatting            | Feature — complete spec-compliant mkfs                   |
-| ⭐ | 🟡 P2    | 12.1 Transaction-Safe Writes  | **FAT32 crash protection** — world-first                 |
-| 💎 | 🟢 P3    | 6.1 Sector Cache Tuning          | Performance — tunable cache size and telemetry           |
-| 💎 | 🟢 P3    | 6.3 FAT Sector Caching           | Performance — reduce FAT region I/O during chain walks   |
-| 💎 | 🟢 P3    | 7.1 Basic Consistency Check      | Recovery — detect and repair cross-links and orphans     |
-| 💎 | 🟢 P3    | 9.2 Volume Label Operations      | Feature — proper volume label in root directory          |
-| 💎 | 🟢 P3    | 5.2 Year 2107 Boundary           | Future-proofing — clamp and validate year range          |
-| ⭐ | 🟢 P3    | 11.1 Fragmentation Analyzer   | **Visual fragmentation map** — unique for FAT32          |
-| ⭐ | 🟢 P3    | 11.2 Online Defragmentation   | **GUI defrag for FAT32** — Linux has no built-in defrag  |
-| 💎 | 🔵 P4    | 10.1 Cross-Platform Compat       | Interop — verify Windows/Linux round-trip                |
+| Priority  | Section                         | Description                                                      |
+| --------- | ------------------------------- | ---------------------------------------------------------------- |
+| 🔴 P0     | 1.1 Strict BPB Validation      | Correctness — reject malformed volumes early                     |
+| 🔴 P0     | 1.3 Dirty Volume Detection     | Data integrity — detect improper unmount                         |
+| 🔴 P0     | 1.4 Read-Only Mount Mode       | Safety — mount dirty/damaged volumes without risk                |
+| 🔴 P0     | 7.2 Safe Unmount Sequence      | Data integrity — prevents dirty volume on next mount             |
+| 🟠 P1     | 3.1 Dual-FAT Synchronization   | Spec compliance — add `BPB_ExtFlags` awareness to existing code  |
+| 🟠 P1     | 2.1 FSInfo Validation          | Correctness — range-check free count, write backup FSInfo        |
+| 🟠 P1     | 4.1 LFN Write Support          | Feature — required for long filenames on create                  |
+| 🟠 P1     | 1.2 Sub-Type by Cluster Count  | Correctness — never trust `BS_FilSysType` string                 |
+| 🟠 P1     | 9.1 Large File Handling        | Correctness — enforce 4 GiB limit                                |
+| 🟡 P2     | 5.1 High-Res Creation Time     | Interop — fix timestamp bugs + `CrtTimeTenth` + `NTRes`         |
+| 🟡 P2     | 4.2 LFN Deletion & Orphan     | Correctness — prevent orphaned LFN entries                       |
+| 🟡 P2     | 4.3 Full UCS-2 Unicode         | Interop — international filenames with Windows                   |
+| 🟡 P2     | 6.2 Contiguous Cluster Coal.   | Performance — reduce I/O for non-fragmented files                |
+| 🟡 P2 ⭐  | 6.4 Cluster Pre-Allocation     | **Anti-fragmentation** — Linux vfat doesn't pre-allocate         |
+| 🟡 P2     | 2.2 Full FAT Scan Fallback     | Correctness — needed when FSInfo is unknown                      |
+| 🟡 P2     | 3.2 Backup Boot Sector         | Recovery — add mount fallback (format already writes backup)     |
+| 🟡 P2     | 8.1 Robust Formatting          | Feature — complete spec-compliant mkfs                           |
+| 🟡 P2 ⭐  | 12.1 Transaction-Safe Writes   | **FAT32 crash protection** — world-first                        |
+| 🟡 P2     | 9.3 Byte-Range File Locking    | Win32 compat — `LockFile`/`UnlockFile` for FAT32                |
+| 🟢 P3     | 6.1 Sector Cache Tuning        | Performance — tunable cache size and telemetry                   |
+| 🟢 P3     | 6.3 FAT Sector Caching         | Performance — reduce FAT region I/O during chain walks           |
+| 🟢 P3     | 7.1 Basic Consistency Check    | Recovery — detect and repair cross-links and orphans             |
+| 🟢 P3     | 9.2 Volume Label Operations    | Feature — proper volume label in root directory                  |
+| 🟢 P3     | 5.2 Year 2107 Boundary         | Future-proofing — clamp and validate year range                  |
+| 🟢 P3 ⭐  | 11.1 Fragmentation Analyzer    | **Visual fragmentation map** — unique for FAT32                  |
+| 🟢 P3 ⭐  | 11.2 Online Defragmentation    | **GUI defrag for FAT32** — Linux has no built-in defrag          |
+| 🟢 P3 ⭐  | 13.1 Deleted File Recovery     | **Built-in undelete** — neither Windows nor Linux has this       |
+| 🔵 P4     | 10.1 Cross-Platform Compat     | Interop — verify Windows/Linux round-trip                        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -516,39 +756,46 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                          | 🪟 Windows 11 (fastfat.sys)          | 🐧 Linux (vfat / msdos)                | 🚀 Impossible OS                                |
-| -- | -------------------------------- | ------------------------------------- | ---------------------------------------- | ------------------------------------------------ |
-| 💎 | BPB parsing & mount              | ✅                                     | ✅                                        | ✅ Done (`fat32_init()`)                          |
-| 💎 | Strict BPB validation            | ✅ Rejects invalid volumes             | ✅ `fat_fill_super()` checks              | ⚠️ Partial — §1.1 P0                             |
-| 💎 | Sub-type by cluster count        | ✅                                     | ✅ `fat_clusters` check                   | ⬜ §1.2 P1 — may trust string                    |
-| 💎 | Dirty volume detection (FAT[1])  | ✅ chkdsk on dirty mount               | ✅ `fat_set_state()`                      | ⬜ §1.3 P0 — not checked                         |
-| 💎 | FSInfo read/write                | ✅ With validation                     | ✅ `fat_count_free_clusters()`            | ✅ Done (`fat32_fsinfo_flush()`)                  |
-| 💎 | FSInfo signature validation      | ✅ All 3 signatures                    | ✅                                        | ⚠️ Partial — §2.1 P1                             |
-| 💎 | Full FAT scan fallback           | ✅ chkdsk recalculates                 | ✅ On mount when FSInfo invalid            | ⬜ §2.2 P2                                       |
-| 💎 | Dual-FAT mirroring               | ✅ Both copies updated                 | ✅ `fat_mirror_bhs()`                     | ⬜ §3.1 P1 — may only write FAT #1               |
-| 💎 | Backup boot sector               | ✅ Sector 6 backup + restore           | ✅                                        | ⬜ §3.2 P2                                       |
-| 💎 | LFN read                         | ✅                                     | ✅                                        | ✅ Done (`lfn_extract_chars()`)                   |
-| 💎 | LFN write (create with LFN)      | ✅ Full Unicode                        | ✅ `vfat_build_slots()`                   | ⬜ §4.1 P1 — SFN only on create                  |
-| 💎 | LFN deletion                     | ✅ All LFN + SFN entries               | ✅ `vfat_remove_entries()`                | ⬜ §4.2 P2 — may only delete SFN                 |
-| 💎 | **LFN full UCS-2 Unicode**       | ✅ Full Unicode support                | ✅ NLS-based Unicode                      | ⬜ §4.3 P2 — currently ASCII-only                 |
-| 💎 | Timestamps (CrtTimeTenth)        | ✅ 10ms resolution                     | ✅                                        | ⬜ §5.1 P2                                       |
-| 💎 | NTRes casing flags                | ✅ Bits 3–4                            | ✅ `shortname_info` flags                 | ⬜ §5.1 P2                                       |
-| 💎 | File read                        | ✅                                     | ✅                                        | ✅ Done (`fat32_file_read()`)                     |
-| 💎 | File write                       | ✅                                     | ✅                                        | ✅ Done (`fat32_file_write_vfs()`)                |
-| 💎 | File delete                      | ✅                                     | ✅                                        | ✅ Done (`fat32_delete_file_vol()`)               |
-| 💎 | File rename                      | ✅                                     | ✅                                        | ✅ Done (`fat32_rename_vol()`)                    |
-| 💎 | File truncate                    | ✅                                     | ✅                                        | ✅ Done (`fat32_truncate()`)                      |
-| 💎 | Directory create/delete          | ✅ dot/dotdot entries                  | ✅                                        | ✅ Done (`fat32_create_dir_vol()`, `fat32_rmdir()`)  |
-| 💎 | Sector cache (write-back)        | ✅ Windows cache manager               | ✅ Page cache                              | ✅ Done (`scache_*`)                              |
-| 💎 | Contiguous cluster coalescing    | ✅ Automatic                           | ✅ `fat_get_cluster()`                    | ⬜ §6.2 P2                                       |
-| ⭐ | **Cluster pre-allocation**    | ✅ SetEndOfFile pre-extends            | ❌ vfat allocates on write only           | ⬜ §6.4 P2 — contiguous pre-alloc                 |
-| 💎 | 4 GiB file size limit            | ✅ Enforced                            | ✅ `-EFBIG`                               | ⬜ §9.1 P1                                       |
-| 💎 | Volume label operations          | ✅ Full support                        | ✅ `fat_read_root_dir()`                  | ⬜ §9.2 P3                                       |
-| 💎 | Format (mkfs)                    | ✅ `format /FS:FAT32`                  | ✅ `mkfs.vfat`                            | ✅ Done (`fat32_format()`) — §8.1 enhance P2      |
-| 💎 | Consistency check (chkdsk)       | ✅ chkdsk /F                           | ✅ `dosfsck`                              | ⬜ §7.1 P3                                       |
-| 💎 | Safe unmount (clean flag)        | ✅                                     | ✅ `fat_put_super()`                      | ⬜ §7.2 P0                                       |
-| 💎 | VFS integration                  | ✅ IFS driver model                    | ✅ Linux VFS                               | ✅ Done (`fat32_ops.c`)                           |
-| ⭐ | **Transaction-safe writes**   | ❌ No FAT32 journaling                 | ❌ No FAT32 journaling                    | ⬜ §12.1 P2 — WAL for crash protection            |
-| ⭐ | **Fragmentation analyzer**    | ⚠️ Only via defrag GUI                | ❌ No built-in FAT32 defrag               | ⬜ §11.1 P3 — visual heat map in Disk Manager     |
-| ⭐ | **Online defragmentation**    | ✅ `defrag.exe` (but not FAT32-aware)  | ❌ No built-in FAT32 defrag               | ⬜ §11.2 P3 — GUI defrag with progress            |
-| 💎 | **Cross-platform round-trip**    | ✅                                     | ✅                                        | ⬜ §10.1 P4 — untested                           |
+| Feature                            | 🪟 Windows 11 (fastfat.sys)         | 🐧 Linux (vfat / msdos)              | 🚀 Impossible OS                                     |
+| ---------------------------------- | ------------------------------------ | ------------------------------------- | ----------------------------------------------------- |
+| BPB parsing & mount                | ✅                                    | ✅                                     | ✅ Done (`fat32_init()`)                               |
+| Strict BPB validation              | ✅ Rejects invalid volumes            | ✅ `fat_fill_super()` checks           | ⚠️ Partial — §1.1 P0                                  |
+| Sub-type by cluster count          | ✅                                    | ✅ `fat_clusters` check                | ⬜ §1.2 P1 — may trust string                         |
+| Dirty volume detection (FAT[1])    | ✅ chkdsk on dirty mount              | ✅ `fat_set_state()`                   | ⬜ §1.3 P0 — not checked                              |
+| Read-only mount mode               | ✅                                    | ✅ `mount -o ro`                       | ⬜ §1.4 P0 — not implemented                          |
+| FSInfo read/write                  | ✅ With validation                    | ✅ `fat_count_free_clusters()`         | ✅ Done (`fat32_fsinfo_flush()`)                       |
+| FSInfo signature validation        | ✅ All 3 signatures                   | ✅                                     | ✅ All 3 checked — §2.1 adds range-check + backup      |
+| Full FAT scan fallback             | ✅ chkdsk recalculates                | ✅ On mount when FSInfo invalid         | ⬜ §2.2 P2                                            |
+| Dual-FAT mirroring                 | ✅ BPB_ExtFlags aware                 | ✅ `fat_mirror_bhs()`                  | ⚠️ Writes all FATs — §3.1 adds BPB_ExtFlags awareness |
+| Backup boot sector                 | ✅ Sector 6 backup + restore          | ✅                                     | ⚠️ Format writes backup — §3.2 adds mount fallback    |
+| LFN read                           | ✅                                    | ✅                                     | ✅ Done (`lfn_extract_chars()`)                        |
+| LFN write (create with LFN)        | ✅ Full Unicode                       | ✅ `vfat_build_slots()`                | ⬜ §4.1 P1 — SFN only on create                       |
+| LFN deletion                       | ✅ All LFN + SFN entries              | ✅ `vfat_remove_entries()`             | ⬜ §4.2 P2 — only deletes SFN entry                   |
+| Full UCS-2 Unicode                  | ✅ Full Unicode support               | ✅ NLS-based Unicode                   | ⬜ §4.3 P2 — currently ASCII-only                      |
+| Timestamps (CrtTimeTenth)          | ✅ 10ms resolution                    | ✅                                     | ⬜ §5.1 P2 — `vfs_stat` returns zeros                 |
+| NTRes casing flags                  | ✅ Bits 3–4                           | ✅ `shortname_info` flags              | ⬜ §5.1 P2                                            |
+| File read                           | ✅                                    | ✅                                     | ✅ Done (`fat32_file_read()`)                          |
+| File write                          | ✅                                    | ✅                                     | ✅ Done (`fat32_file_write_vfs()`)                     |
+| File delete                         | ✅                                    | ✅                                     | ✅ Done (`fat32_delete_file_vol()`)                    |
+| File rename                         | ✅                                    | ✅                                     | ✅ Done (`fat32_rename_vol()`)                         |
+| File truncate                       | ✅                                    | ✅                                     | ✅ Done (`fat32_truncate()`)                           |
+| Directory create/delete             | ✅ dot/dotdot entries                 | ✅                                     | ✅ Done (`fat32_create_dir_vol()`, `fat32_rmdir()`)    |
+| Sector cache (write-back)           | ✅ Windows cache manager              | ✅ Page cache                           | ✅ Done (`scache_*`)                                   |
+| Contiguous cluster coalescing       | ✅ Automatic                          | ✅ `fat_get_cluster()`                 | ⬜ §6.2 P2                                            |
+| 4 GiB file size limit               | ✅ Enforced                           | ✅ `-EFBIG`                            | ⬜ §9.1 P1                                            |
+| Volume label operations             | ✅ Full support                       | ✅ `fat_read_root_dir()`               | ⬜ §9.2 P3                                            |
+| Byte-range file locking             | ⚠️ `LockFile` may fail on FAT32      | ⚠️ Advisory only (`flock`)             | ⬜ §9.3 P2 — enforced range locks                     |
+| Format (mkfs)                       | ✅ `format /FS:FAT32`                 | ✅ `mkfs.vfat`                         | ✅ Done (`fat32_format()`) — §8.1 enhance P2           |
+| Consistency check (chkdsk)          | ✅ chkdsk /F                          | ✅ `dosfsck`                           | ⬜ §7.1 P3                                            |
+| Safe unmount (clean flag)           | ✅                                    | ✅ `fat_put_super()`                   | ⬜ §7.2 P0                                            |
+| VFS integration                     | ✅ IFS driver model                   | ✅ Linux VFS                            | ✅ Done (`fat32_ops.c`)                                |
+| **Cluster pre-allocation**          | ✅ SetEndOfFile pre-extends           | ❌ vfat allocates on write only        | ⬜ **§6.4 P2 — beats Linux**                          |
+| **Transaction-safe writes**         | ❌ No FAT32 journaling                | ❌ No FAT32 journaling                 | ⬜ **§12.1 P2 — world-first WAL for FAT32**           |
+| **Fragmentation analyzer**          | ⚠️ Only via defrag GUI               | ❌ No built-in FAT32 defrag            | ⬜ **§11.1 P3 — visual heat map in Disk Manager**     |
+| **Online defragmentation**          | ✅ `defrag.exe` (not FAT32-aware)     | ❌ No built-in FAT32 defrag            | ⬜ **§11.2 P3 — GUI defrag with progress**            |
+| **Deleted file recovery**           | ❌ Third-party tools only             | ❌ Third-party tools only              | ⬜ **§13.1 P3 — built-in undelete (world-first)**     |
+| Cross-platform round-trip           | ✅                                    | ✅                                     | ⬜ §10.1 P4 — untested                                |
+
+> **After P0+P1 items:** Impossible OS matches Windows and Linux on FAT32 core functionality.
+> **After P2 items:** Impossible OS becomes the **only OS with crash-protected FAT32 writes** (WAL).
+> **After P3 items:** Impossible OS adds **visual defrag, fragmentation analysis, and built-in undelete** — unique features not found in any other OS.

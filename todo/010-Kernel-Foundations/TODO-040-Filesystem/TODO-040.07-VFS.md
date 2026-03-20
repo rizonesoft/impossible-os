@@ -136,14 +136,14 @@ graph TD
 
 > **When & How to Enhance the VFS:** The VFS architecture is well-designed and
 > mostly complete at the driver interface level. The `vfs_ops` struct already has
-> all 14 callbacks (`open`, `close`, `read`, `write`, `readdir`, `finddir`,
+> all 16 callbacks (`open`, `close`, `read`, `write`, `readdir`, `finddir`,
 > `create`, `unlink`, `rename`, `stat`, `truncate`, `mkdir`, `rmdir`, `set_attr`,
 > `set_times`, `flush`). Both IXFS and FAT32 implement these. The real question
 > isn't "when to enhance the VFS" — it's **when to build the Win32 API on top of it.**
 
 ### What's Already Done ✅
 
-- `vfs_ops` driver interface — **complete** (14 callbacks)
+- `vfs_ops` driver interface — **complete** (16 callbacks)
 - `vfs_node`, `vfs_mount()`, `vfs_finddir()`, `vfs_get_drive_root()` — **working**
 - FAT32 + IXFS registered as VFS drivers
 - Drive letter mounting works
@@ -270,6 +270,14 @@ filesystem TODO.
 - [ ] Edge case: two files differing only by case (`readme.txt` vs `README.TXT`) — first-match wins (Windows behavior)
 - [ ] Commit: `"vfs: case-insensitive path resolution"`
 
+> [!WARNING]
+> **Codebase discovery:** FAT32's `fat32_finddir()` in `fat32_ops.c` **already uses
+> `fat32_strcasecmp()`** — it is case-insensitive at the driver level. IXFS's
+> `ixfs_finddir()` in `ixfs_ops.c` uses **case-sensitive `ixfs_strcmp()`**. However,
+> the VFS-level `walk_path()` in `vfs.c` calls `ops->finddir()` directly — it has
+> **no case folding**. The fix must go in `walk_path()` so that all filesystems
+> (including future NTFS and ext4) get uniform behavior at the VFS level.
+
 ### 1.2 Mandatory File Locking (Share Modes) *(agent)*
 
 **Prompt:** Windows uses **mandatory** file locking via `CreateFile`'s `dwShareMode` parameter. When a process opens a file with `FILE_SHARE_READ` but NOT `FILE_SHARE_WRITE`, any other process attempting to open the same file for writing must receive `ERROR_SHARING_VIOLATION (32)`. This is NOT advisory — the kernel must enforce it. Many applications (SQLite, Office, installers) rely on sharing violations for concurrency control. Add a per-file lock table that tracks open handles and their share modes. On each `CreateFile` call, check compatibility with existing opens. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: mandatory file locking (share modes)"`. Add notes directly in this TODO section.
@@ -326,6 +334,13 @@ filesystem TODO.
 **Prompt:** Win32 applications use `GetFileInformationByHandle()` to retrieve `nFileIndexHigh` and `nFileIndexLow` — a 64-bit unique file ID (analogous to a Unix inode number). Programs use this to check if two different file handles (possibly opened via different paths, symlinks, or hard links) point to the same physical file. Your VFS nodes must generate consistent, unique IDs. For IXFS this maps directly to the inode number. For FAT32, synthesize an ID from the directory cluster + entry index (since FAT32 has no inodes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: unique file identifiers"`. Add notes directly in this TODO section.
 
 - [ ] Add `uint64_t file_id` field to `vfs_node`
+
+> [!WARNING]
+> **Codebase discovery:** `vfs_node.inode` is currently `uint32_t` (line 81 of
+> `vfs.h`). This is insufficient for NTFS MFT record numbers (48-bit) and
+> synthesized FAT32 IDs (`dir_cluster << 32 | offset`). Either widen `inode`
+> to `uint64_t` or add a separate `file_id` field. Widening `inode` is simpler
+> but changes the `vfs_dirent` struct too.
 - [ ] IXFS: set `file_id = inode_number` (already unique)
 - [ ] FAT32: synthesize `file_id = (dir_cluster << 32) | entry_offset_in_dir`
 - [ ] NTFS: set `file_id = MFT_record_number`
@@ -473,7 +488,7 @@ filesystem TODO.
 - [ ] Implement `GetSecurityInfo()` / `SetSecurityInfo()` (same routing strategy)
 - [ ] Test: `SetFileSecurity` on IXFS → persisted and retrievable
 - [ ] Test: `SetFileSecurity` on FAT32 → returns `TRUE`, no error, descriptor discarded
-- [ ] Commit: `"vfs: ACL routing (native + stub fallback)"
+- [ ] Commit: `"vfs: ACL routing (native + stub fallback)"`
 
 ### 2.3 Volume Information Spoofing *(agent)*
 
@@ -644,62 +659,196 @@ filesystem TODO.
 
 ## Priority Order
 
-| ⭐ | Priority | Section | Description | Rationale |
-| -- |----------|---------|-------------|-----------|
-| 💎 | 🔴 P0    | 1.1 Case-insensitive lookup | Mandatory for nearly all Win32 apps | Without this, most apps fail with FILE_NOT_FOUND |
-| 💎 | 🔴 P0    | 1.2 Mandatory file locking | Database corruption prevention | SQLite, Office, installers all depend on this |
-| 💎 | 🔴 P0    | 3.1 Error code mapping | Correct app behavior on errors | Wrong error codes → wrong app code paths |
-| 💎 | 🟠 P1    | 1.3 Deletion semantics | Installer compatibility | Installers overwrite/delete files in use |
-| 💎 | 🟠 P1    | 1.4 Unique file IDs | Application identity checks | Used by many apps to detect same-file |
-| 💎 | 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check | `GetFileAttributes` called thousands of times |
-| 💎 | 🟠 P1    | 2.3 Volume information | App compatibility queries | Some apps refuse to run on unknown FS |
-| 💎 | 🟡 P2    | 1.5 Memory-mapped files | PE loader demand paging | Performance-critical for large executables |
-| ⭐ | 🟡 P2    | 1.7 Byte-range locking | Record-level DB concurrency | SQLite, Access use byte-range locks + deadlock detect |
-| 💎 | 🟡 P2    | 2.1 ADS handling | Browser download compat | Zone.Identifier must not crash |
-| 💎 | 🟡 P2    | 2.2 ACL stubs | Installer compat | MSI installers set permissions |
-| ⭐ | 🟡 P2    | 4.1 Change notifications | File manager / IDE compat | **Recursive + cross-FS** — Linux inotify can't do recursive |
-| 💎 | 🟢 P3    | 2.4 Hard links / reparse | WinSxS / MSVC runtime compat | Needed when running VC++ redistributable apps |
-| 💎 | 🟢 P3    | 5.1 Overlapped I/O | High-perf app compat | Database engines, web servers need async I/O |
+| ⭐ | Priority | Section                          | Description                                                      | Rationale                                                        |
+| -- | -------- | -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 Case-insensitive lookup      | Mandatory for nearly all Win32 apps                              | Without this, most apps fail with FILE_NOT_FOUND                 |
+| 💎 | 🔴 P0    | 1.2 Mandatory file locking       | Database corruption prevention                                   | SQLite, Office, installers all depend on this                    |
+| 💎 | 🔴 P0    | 3.1 Error code mapping           | Correct app behavior on errors                                   | Wrong error codes → wrong app code paths                         |
+| 💎 | 🔴 P0    | 6.1 VFS concurrency control      | Thread-safe VFS operations                                       | VFS has no locks — concurrent I/O causes data corruption         |
+| 💎 | 🟠 P1    | 1.3 Deletion semantics           | Installer compatibility                                          | Installers overwrite/delete files in use                         |
+| 💎 | 🟠 P1    | 1.4 Unique file IDs              | Application identity checks                                     | Used by many apps to detect same-file                            |
+| 💎 | 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check                                     | `GetFileAttributes` called thousands of times                    |
+| 💎 | 🟠 P1    | 2.3 Volume information           | App compatibility queries                                        | Some apps refuse to run on unknown FS                            |
+| 💎 | 🟡 P2    | 1.5 Memory-mapped files          | PE loader demand paging                                          | Performance-critical for large executables                       |
+| ⭐ | 🟡 P2    | 1.7 Byte-range locking           | Record-level DB concurrency                                      | SQLite, Access use byte-range locks + deadlock detect            |
+| 💎 | 🟡 P2    | 2.1 ADS handling                 | Browser download compat                                          | Zone.Identifier must not crash                                   |
+| 💎 | 🟡 P2    | 2.2 ACL stubs                    | Installer compat                                                 | MSI installers set permissions                                   |
+| ⭐ | 🟡 P2    | 4.1 Change notifications         | File manager / IDE compat                                        | **Recursive + cross-FS** — Linux inotify can't do recursive     |
+| 💎 | 🟢 P3    | 2.4 Hard links / reparse         | WinSxS / MSVC runtime compat                                    | Needed when running VC++ redistributable apps                    |
+| 💎 | 🟢 P3    | 5.1 Overlapped I/O               | High-perf app compat                                             | Database engines, web servers need async I/O                     |
+| ⭐ | 🟢 P3    | 6.2 I/O Completion Ports         | Scalable async I/O for servers                                   | **Beats Linux epoll** — unified file + socket + pipe completion  |
+| ⭐ | 🟢 P3    | 6.3 FS filter drivers            | AV, encryption, auditing integration                             | **Beats both** — minifilter API simpler than Linux FUSE/LSM      |
+| 💎 | 🔵 P4    | 6.4 Disk quotas                  | Per-user storage limits                                          | Enterprise deployments need storage governance                   |
+| ⭐ | 🔵 P4    | 6.5 Symlink loop detection       | Safe recursive path resolution                                  | **Beats both** — configurable max depth + clear error reporting  |
+| 💎 | 🔵 P4    | 6.6 Cross-drive operations       | Move/copy files across drive letters                             | Current `vfs_rename()` is same-drive only                        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 
 ---
 
+## 6. Advanced VFS Features (🚀 Impossible OS Differentiators)
+
+### 6.1 VFS Concurrency Control *(agent)*
+
+**Prompt:** The VFS layer currently has **zero concurrency control** — `walk_path()`, `vfs_open()`, `vfs_close()`, and `vfs_create()` have no locking. While individual FS drivers (FAT32, IXFS) have per-volume spinlocks, the VFS mount table and path resolution are unprotected. When the process model enables preemptive multitasking, concurrent file operations will corrupt the mount table, race on `ref_count`, and produce double-free bugs. Add a reader-writer lock to the VFS: readers for path resolution and stat, writers for mount/unmount/create/unlink/rename. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: reader-writer concurrency control"`. Add notes directly in this TODO section.
+
+> [!CAUTION]
+> **Codebase discovery:** `vfs.c` has no `#include` of any lock header. The `mounts[]`
+> array and `ref_count` field in `vfs_node` are accessed without any synchronization.
+> `boot_parallel_init.md` explicitly notes: *"VFS/FAT32 has no locking. Enabling
+> [parallel init] requires adding a `vfs_lock()`/`vfs_unlock()` reader-writer mutex first."*
+> This is the **highest-priority infrastructure gap** in the VFS.
+
+- [ ] Add `rwlock_t vfs_lock` global — readers for `walk_path`/`vfs_stat`, writers for `vfs_mount`/`vfs_create`/`vfs_unlink`
+- [ ] Wrap `vfs_open()`: read-lock during path walk, upgrade to write-lock for `ref_count++`
+- [ ] Wrap `vfs_close()`: write-lock for `ref_count--`
+- [ ] Wrap `vfs_mount()` / `vfs_unmount()`: write-lock on `mounts[]`
+- [ ] Wrap `vfs_create()` / `vfs_unlink()` / `vfs_rename()`: write-lock
+- [ ] Ensure FAT32 per-volume `spinlock_t` nests safely inside the VFS rwlock (lock ordering: VFS → FS)
+- [ ] Test: concurrent `vfs_open()` from two kernel threads → no race on `ref_count`
+- [ ] Commit: `"vfs: reader-writer concurrency control"`
+
+### 6.2 I/O Completion Ports (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Windows I/O Completion Ports (IOCP) are the most scalable async I/O mechanism on any OS — they enable a fixed pool of threads to service thousands of concurrent file and socket operations. Linux has `epoll` and `io_uring`, but neither unifies file I/O, socket I/O, and pipe I/O into a single completion queue. Implement `CreateIoCompletionPort()`, `GetQueuedCompletionStatus()`, and `PostQueuedCompletionStatus()`. This builds on §5.1 (OVERLAPPED) and is the foundation for high-performance Win32 servers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: I/O completion ports"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux `epoll` cannot watch regular files — only sockets and pipes.
+> `io_uring` is powerful but has a completely different API. Impossible OS can provide IOCP
+> that works for **all handle types** — a true superset of both Windows IOCP and Linux io_uring.
+
+- [ ] Implement `CreateIoCompletionPort(FileHandle, ExistingCompletionPort, CompletionKey, NumberOfConcurrentThreads)`
+- [ ] Implement completion port kernel object: lock-free MPMC queue of `OVERLAPPED_ENTRY`
+- [ ] Implement `GetQueuedCompletionStatus(CompletionPort, lpNumberOfBytes, lpCompletionKey, lpOverlapped, dwMilliseconds)`
+- [ ] Implement `PostQueuedCompletionStatus()` — manual completion injection for custom events
+- [ ] Wire `ReadFile`/`WriteFile` OVERLAPPED completion to post to associated IOCP
+- [ ] Thread pool: wake exactly `NumberOfConcurrentThreads` threads from completion queue
+- [ ] Test: associate file handle with IOCP, async read → completion received by worker thread
+- [ ] Commit: `"vfs: I/O completion ports"`
+
+### 6.3 Filesystem Filter Drivers (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Windows has a mature minifilter framework that allows kernel drivers to intercept and modify file I/O transparently — used by antivirus, encryption (BitLocker), backup, and auditing software. Linux has FUSE and LSM hooks but no unified filter stack. Implement a lightweight filter driver API that sits between the Win32 file API and the VFS `vfs_ops` dispatch. Filters register pre/post callbacks for each operation (create, read, write, close, delete). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: filesystem filter driver framework"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows minifilters require WDK and complex altitude management.
+> Linux FUSE runs in userspace (slow). Impossible OS can provide a **simple, fast,
+> kernel-mode filter API** with < 100 lines of boilerplate per filter.
+
+- [ ] Define `struct vfs_filter_ops`: pre/post callbacks for `open`, `read`, `write`, `close`, `create`, `unlink`
+- [ ] Implement `vfs_filter_register(name, altitude, ops)` — insert filter into ordered chain
+- [ ] Implement `vfs_filter_unregister(name)` — remove filter from chain
+- [ ] Pre-callbacks: can modify arguments or return `VFS_FILTER_BLOCK` to deny the operation
+- [ ] Post-callbacks: can inspect and modify results (e.g., encrypt data after read)
+- [ ] Example filter: audit log (log all file creates/deletes to `B:\audit.log`)
+- [ ] Test: register filter, create file → pre-callback fires, post-callback fires
+- [ ] Commit: `"vfs: filesystem filter driver framework"`
+
+### 6.4 Disk Quota Management *(agent)*
+
+**Prompt:** Enterprise deployments need per-user storage quotas. Windows NTFS has native quota support via `IDiskQuotaControl`. Linux has `quota(1)` utilities for ext4/XFS. Implement disk quota tracking in the VFS layer with configurable soft/hard limits per user. Quotas are enforced at the VFS level (not per-FS) so they work uniformly across IXFS, FAT32, and NTFS. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: disk quota management"`. Add notes directly in this TODO section.
+
+- [ ] Define `struct vfs_quota`: `{ uid, bytes_used, bytes_soft_limit, bytes_hard_limit, grace_period }`
+- [ ] Store quota table per drive letter in VFS mount table
+- [ ] On `vfs_write()`: check quota before dispatching to FS — return `ERROR_DISK_FULL` if over hard limit
+- [ ] On `vfs_unlink()`: credit freed bytes back to user's quota
+- [ ] Implement `GetDiskQuotaInformation()` / `SetDiskQuotaInformation()` Win32 API
+- [ ] Soft limit: warn user but allow write; hard limit: deny write
+- [ ] Test: set 1 MiB quota, write 2 MiB → `ERROR_DISK_FULL` after 1 MiB
+- [ ] Commit: `"vfs: disk quota management"`
+
+### 6.5 Symbolic Link Loop Detection (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Neither Windows nor Linux provides clear error reporting when symbolic links form cycles. Windows returns `ERROR_CANT_RESOLVE_FILENAME` after an undocumented internal limit. Linux returns `ELOOP` after 40 hops but gives no diagnostic about which link caused the loop. Implement configurable max symlink traversal depth in `walk_path()` with detailed error reporting that identifies the exact link that triggered the cycle. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: symlink loop detection"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Impossible OS can be the first OS to report **which symlink
+> caused the loop** in the error message — invaluable for debugging broken installations.
+
+- [ ] Add `symlink_depth` counter to `walk_path()`, increment on each symlink resolution
+- [ ] Define `VFS_MAX_SYMLINK_DEPTH` = 40 (configurable via registry)
+- [ ] On limit exceeded: return `ERROR_CANT_RESOLVE_FILENAME` with diagnostic log
+- [ ] Log: `"vfs: symlink loop at depth %u: %s -> %s"` — shows the offending link
+- [ ] Store last N symlink targets in a small stack for cycle detection (O(n) check per hop)
+- [ ] Test: create A → B → C → A, resolve A → `ERROR_CANT_RESOLVE_FILENAME`
+- [ ] Commit: `"vfs: symlink loop detection"`
+
+### 6.6 Cross-Drive File Operations *(agent)*
+
+**Prompt:** The current `vfs_rename()` rejects cross-drive moves (`old_idx != new_idx → return -1`). Windows `MoveFileEx()` transparently handles cross-volume moves by falling back to copy + delete. Implement cross-drive support for `MoveFile` and `CopyFile` at the VFS level. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: cross-drive move and copy"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> **Codebase discovery:** `vfs_rename()` in `vfs.c` lines 373–426 explicitly rejects
+> cross-drive renames: `if (old_idx != new_idx) return -1;` and also rejects
+> cross-directory renames: `if (old_parent != new_parent) return -1;`. Both must
+> be addressed for full Win32 `MoveFile()` compatibility.
+
+- [ ] Implement `MoveFileEx(lpExistingName, lpNewName, dwFlags)`:
+  - [ ] Same drive + same parent → fast `ops->rename()` (current path)
+  - [ ] Same drive + different parent → cross-directory rename via create-in-new + unlink-from-old
+  - [ ] Different drive → copy + delete fallback (preserve attributes + timestamps)
+  - [ ] `MOVEFILE_REPLACE_EXISTING` flag: delete target first if exists
+- [ ] Implement `CopyFile(lpExistingName, lpNewName, bFailIfExists)`:
+  - [ ] Open source, create dest, read/write loop, copy attributes + timestamps
+  - [ ] Honour `bFailIfExists` — return `ERROR_FILE_EXISTS` if target exists
+- [ ] Test: `MoveFile("C:\\file.txt", "D:\\file.txt")` → file appears on D:, disappears from C:
+- [ ] Test: `CopyFile("C:\\file.txt", "D:\\copy.txt", TRUE)` → both files exist
+- [ ] Commit: `"vfs: cross-drive move and copy"`
+
+---
+
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/fs/vfs.c` | Case-insensitive lookup, file lock table, change notifications |
-| `src/kernel/fs/fileapi.c` | CreateFile share mode enforcement, deletion semantics, attributes |
-| `include/kernel/fs/win32_errors.h` | [NEW] Win32 error code constants |
-| `include/kernel/fs/fileapi.h` | Handle type definitions, error codes, OVERLAPPED struct |
-| `src/kernel/fs/vol_info.c` | [NEW] GetVolumeInformation, GetDiskFreeSpace |
-| `src/kernel/fs/security.c` | [NEW] ACL routing (native on IXFS, stub on FAT32) |
-| `src/kernel/fs/flock.c` | [NEW] Byte-range locking with deadlock detection |
-| `src/kernel/fs/notify.c` | [NEW] File change notification queue + recursive watches |
-| `src/kernel/fs/async_io.c` | [NEW] Overlapped I/O request queue + worker thread |
-| `src/kernel/mm/mmap.c` | Memory-mapped file I/O |
+| File                                | Purpose                                                          |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `include/kernel/fs/vfs.h`          | VFS node, ops struct, mount API — **16 callbacks**               |
+| `src/kernel/fs/vfs.c`              | Path resolution, mount table, case-insensitive lookup, rwlock    |
+| `src/kernel/fs/fileapi.c`          | [NEW] CreateFile share mode enforcement, deletion semantics      |
+| `include/kernel/fs/fileapi.h`      | [NEW] Handle definitions, OVERLAPPED, Win32 constants            |
+| `include/kernel/fs/win32_errors.h` | [NEW] Win32 error code constants and mapping function            |
+| `src/kernel/fs/vol_info.c`         | [NEW] GetVolumeInformation, GetDiskFreeSpace                     |
+| `src/kernel/fs/security.c`         | [NEW] ACL routing (native on IXFS, stub on FAT32)                |
+| `src/kernel/fs/flock.c`            | [NEW] Byte-range locking with deadlock detection                 |
+| `src/kernel/fs/notify.c`           | [NEW] File change notification queue + recursive watches         |
+| `src/kernel/fs/async_io.c`         | [NEW] Overlapped I/O request queue + worker thread               |
+| `src/kernel/fs/iocp.c`             | [NEW] I/O Completion Ports — unified async completion            |
+| `src/kernel/fs/filter.c`           | [NEW] Filesystem filter driver framework                         |
+| `src/kernel/mm/mmap.c`             | [NEW] Memory-mapped file I/O + page fault integration            |
+| `src/kernel/test/test_vfs.c`       | VFS unit tests — roundtrip, nonexistent open, mkdir/rmdir        |
+| `src/kernel/fs/fat32/fat32_ops.c`  | FAT32 VFS ops (16 callbacks, case-insensitive `finddir`)         |
+| `src/kernel/fs/ixfs/ixfs_ops.c`    | IXFS VFS ops (16 callbacks, case-sensitive `finddir`)            |
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Windows 11                    | 🐧 Linux                  | 🚀 Impossible OS                       |
-| -- | ------------------------------- | ------------------------------- | ------------------------ | ------------------------------------- |
-| 💎 | Case-insensitive lookup         | ✅ Native (OBJ_CASE_INSENSITIVE) | ❌ Case-sensitive         | ⬜ §1.1 — VFS flag                     |
-| 💎 | Mandatory file locking          | ✅ dwShareMode enforced          | ❌ Advisory only (flock)  | ⬜ §1.2 — lock table                   |
-| 💎 | Deferred deletion               | ✅ pending_delete                | ❌ Immediate unlink       | ⬜ §1.3 — pending flag                 |
-| 💎 | File IDs (inode-like)           | ✅ nFileIndex                    | ✅ ino_t                  | ⬜ §1.4 — file_id                      |
-| 💎 | Memory-mapped I/O               | ✅ CreateFileMapping             | ✅ mmap                   | ⬜ §1.5 — demand paging                |
-| 💎 | File attributes API             | ✅ GetFileAttributes (fast)      | ✅ stat                   | ⬜ §1.6 — attribute get/set + timestamps |
-| ⭐ | **Byte-range locking**       | ✅ LockFile (no deadlock detect) | ✅ fcntl (can deadlock)   | ⬜ §1.7 — with deadlock detection       |
-| 💎 | ADS (streams)                   | ✅ Native NTFS                   | ❌ No equivalent          | ⬜ §2.1 stub → TODO-040 §5.9.5 native  |
-| 💎 | ACL security descriptors        | ✅ Full DACL/SACL                | ✅ POSIX ACLs (different) | ⬜ §2.2 stub → TODO-040 §5.9.6 native  |
-| 💎 | Volume info queries             | ✅ GetVolumeInformation          | ✅ statfs / statvfs       | ⬜ §2.3 — accurate reporting           |
-| 💎 | Hard links / symlinks           | ✅ CreateHardLink                | ✅ link() / symlink()     | ⬜ §2.4 route → TODO-040 §5.9.7 native |
-| 💎 | Extended attributes             | ✅ NtSetEaFile                   | ✅ setxattr               | ⬜ TODO-040 §5.9.8 native              |
-| 💎 | Transparent compression         | ✅ NTFS compression              | ✅ btrfs/zstd             | ⬜ TODO-040 §5.9.9 native              |
-| 💎 | Precise error codes             | ✅ 15,000+ distinct codes        | ✅ errno (limited set)    | ⬜ §3.1 — mapping table                |
-| ⭐ | **Change notifications**     | ✅ Per-dir (no recursive native) | ⚠️ inotify (no recursive) | ⬜ §4.1 — recursive + cross-FS          |
-| 💎 | **Async overlapped I/O**        | ✅ OVERLAPPED struct             | ✅ io_uring / aio          | ⬜ §5.1 — OVERLAPPED compat             |
+| Feature                            | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                                    |
+| ---------------------------------- | --------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| Case-insensitive lookup            | ✅ Native (OBJ_CASE_INSENSITIVE)  | ❌ Case-sensitive                   | ⬜ §1.1 — VFS-level flag                             |
+| Mandatory file locking             | ✅ dwShareMode enforced            | ❌ Advisory only (flock)            | ⬜ §1.2 — per-file lock table                        |
+| Deferred deletion                  | ✅ pending_delete                  | ❌ Immediate unlink                 | ⬜ §1.3 — pending flag + CloseHandle unlink           |
+| File IDs (inode-like)              | ✅ nFileIndex                      | ✅ ino_t                            | ⬜ §1.4 — uint64_t file_id                           |
+| Memory-mapped I/O                  | ✅ CreateFileMapping               | ✅ mmap                             | ⬜ §1.5 — demand paging via VMM                      |
+| File attributes API                | ✅ GetFileAttributes (fast)        | ✅ stat                             | ⬜ §1.6 — attribute get/set + FILETIME timestamps    |
+| **Byte-range locking**             | ✅ LockFile (no deadlock detect)   | ✅ fcntl (can deadlock)             | ⬜ §1.7 — **with deadlock detection** ⭐              |
+| ADS (streams)                      | ✅ Native NTFS                     | ❌ No equivalent                    | ⬜ §2.1 stub → TODO-040.11 §5.9.5 native             |
+| ACL security descriptors           | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different model)     | ⬜ §2.2 stub → TODO-040.11 §5.9.6 native             |
+| Volume info queries                | ✅ GetVolumeInformation            | ✅ statfs / statvfs                 | ⬜ §2.3 — accurate FS name + capability flags        |
+| Hard links / symlinks              | ✅ CreateHardLink                  | ✅ link() / symlink()               | ⬜ §2.4 route → TODO-040.11 §5.9.7 native            |
+| Extended attributes                | ✅ NtSetEaFile                     | ✅ setxattr                         | ⬜ TODO-040.11 §5.9.8 native                          |
+| Transparent compression            | ✅ NTFS compression                | ✅ btrfs/zstd                       | ⬜ TODO-040.11 §5.9.9 native                          |
+| Precise error codes                | ✅ 15,000+ distinct codes          | ✅ errno (limited set)              | ⬜ §3.1 — mapping table                               |
+| **Change notifications**           | ✅ Per-dir (no recursive native)   | ⚠️ inotify (no recursive)          | ⬜ §4.1 — **recursive + cross-FS** ⭐                 |
+| Async overlapped I/O               | ✅ OVERLAPPED struct               | ✅ io_uring / aio                   | ⬜ §5.1 — OVERLAPPED compat                           |
+| **VFS concurrency**                | ✅ IRP dispatch + ERESOURCE        | ✅ VFS mutex + RCU                  | ⬜ §6.1 — **rwlock — beats Linux simplicity** ⭐      |
+| **I/O Completion Ports**           | ✅ IOCP (files + sockets + pipes)  | ⚠️ epoll (no regular files)        | ⬜ §6.2 — **unified IOCP for all handle types** ⭐    |
+| **FS filter drivers**              | ✅ Minifilter (complex WDK)        | ⚠️ FUSE (userspace, slow)          | ⬜ §6.3 — **simple kernel-mode filter API** ⭐        |
+| Disk quotas                        | ✅ NTFS quotas                     | ✅ quota(1) on ext4/XFS             | ⬜ §6.4 — VFS-level (uniform across all FS)           |
+| **Symlink loop detection**         | ⚠️ Silent limit, no diagnostic    | ⚠️ ELOOP (no link identification)  | ⬜ §6.5 — **reports offending link** ⭐               |
+| Cross-drive move/copy              | ✅ MoveFileEx (transparent)        | ✅ mv (copy + unlink fallback)      | ⬜ §6.6 — transparent cross-drive MoveFile            |
+| Anti-aliased TTF boot font         | ✅                                 | ⚠️ Bitmap fonts                    | ✅ **Done — Selawik Semibold, atlas pre-baked**       |
+
+> **After P0+P1 items:** Impossible OS matches Windows feature-for-feature on VFS semantics.
+> **After §6.1–6.3:** Exceeds both Windows and Linux — simpler filter API, unified IOCP, and safer symlink resolution.
+

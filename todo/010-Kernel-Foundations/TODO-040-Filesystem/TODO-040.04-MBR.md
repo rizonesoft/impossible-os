@@ -4,13 +4,20 @@
 > for the Impossible OS storage stack. Support primary partitions (4 max),
 > Extended Boot Record (EBR) linked list traversal for logical partitions,
 > CHS↔LBA translation, 1-MiB alignment enforcement, GPT Protective MBR
-> detection, and Disk Signature management. The existing `mbr.c` provides
-> basic 4-entry parsing — this TODO enhances it to a complete, robust MBR
-> subsystem with write support, EBR traversal, partition creation, and
-> the `diskpart` CLI tooling.
+> detection, Disk Signature management, and 4Kn native sector awareness.
+> The existing `mbr.c` provides basic 4-entry parsing — this TODO enhances
+> it to a complete, robust MBR subsystem with write support, EBR traversal,
+> partition creation, secure wipe, partition resize, disk cloning, and the
+> `diskpart` CLI tooling.
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for sector buffers (512 bytes+). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
+> **Note:** The current `partition.c` uses stack-allocated `uint8_t sect[512]` — this must be migrated to PMM.
+
+> [!WARNING]
+> **`blkdev->disk_id` does not exist yet.** The current `struct blkdev` in `include/kernel/drivers/blkdev.h`
+> has no `disk_id` field. §1.1 and §8.1 require adding a `uint32_t disk_id` field to `struct blkdev`
+> before the disk signature can be stored there. Alternatively, store it in a new `struct mbr_disk_info`.
 
 > [!WARNING]
 > **Little-Endian Awareness:** All multi-byte fields in MBR partition entries (Starting LBA, Total Sectors, Disk Signature) are stored in **Little-Endian** format. On x86-64 this is native byte order — no swapping needed. However, CHS fields use a **fractured bit-packed** layout where the 10-bit cylinder is split across two bytes. Always use bitwise extraction, never raw struct overlays for CHS.
@@ -22,16 +29,184 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Five TODO files** contribute to the MBR subsystem. They have
+> cross-dependencies that dictate implementation order. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer (blkdev_read/write)"]
+    GPT["TODO-040.05-GPT.md<br/>GPT Parser (Protective MBR ↔ GPT handoff)"]
+    VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
+    FAT["TODO-040.06-FAT32.md<br/>FAT32 Driver (partition mounting)"]
+    SPEC["specs/storage/mbr.md<br/>MBR Specification"]
+
+    A["§1.1 Full MBR Layout Parser"]
+    B["§1.2 Partition Type Recognition"]
+    C["§2.1 EBR Chain Walker"]
+    D["§3.1 CHS Extraction & Encoding"]
+    E["§4.1 1-MiB Alignment"]
+    E2["§4.2 4Kn Sector Awareness"]
+    F["§7.1 Protective MBR Detection"]
+    G["§5.1 Partition Table Writer"]
+    H["§5.2 EBR Writer"]
+    I["§6.1 Create Primary Partition"]
+    J["§6.2 Extended & Logical Partitions"]
+    K["§6.3 Delete Partition"]
+    K2["§6.4 Secure Partition Wipe"]
+    K3["§6.5 Partition Resize"]
+    L["§8.1 Disk Signature Management"]
+    M["§9.1 Diskpart MBR Commands"]
+    N["§10.1 MBR Test Suite"]
+    O["§7.2 Hybrid MBR"]
+    P["§11.1 MBR→GPT Conversion"]
+    Q["§11.2 GPT→MBR Conversion"]
+    R["§12.1 Backup & Restore"]
+    S["§13.1 Health Validation"]
+    T["§14.1 Disk Cloning"]
+    U["§14.2 Live Partition Map"]
+
+    SPEC --> A
+    BLK --> A
+    A --> B
+    B --> C
+    B --> F
+    A --> D
+    D --> G
+    E --> G
+    A --> E
+    E --> E2
+    BLK --> E2
+    G --> H
+    G --> I
+    E --> I
+    E2 --> I
+    I --> J
+    H --> J
+    I --> K
+    J --> K
+    K --> K2
+    G --> K2
+    I --> K3
+    G --> K3
+    A --> L
+    G --> L
+    F --> GPT
+    GPT --> O
+    G --> O
+    G --> P
+    GPT --> P
+    GPT --> Q
+    G --> Q
+    G --> R
+    C --> R
+    I --> M
+    K --> M
+    K2 --> M
+    K3 --> M
+    VFS --> M
+    B --> S
+    C --> S
+    A --> N
+    M --> N
+    FAT --> N
+    G --> T
+    C --> T
+    R --> T
+    A --> U
+    VFS --> U
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File / Spec              | Sections                        | What It Delivers                                                      | Depends On                       | Status |
+| -- | :----: | ----------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------- | :----: |
+| 💎 | **0**  | `specs/storage/mbr.md`        | Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer              | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                 | —                                |   ✅   |
+| 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.1 Full MBR Layout Parser    | Decode complete 512-byte MBR sector, disk signature, boot magic       | Phase 0 (block + spec)           |   ⬜   |
+| 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.2 Partition Type Recognition | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)           | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **2**  | `TODO-040.04-MBR.md`          | §2.1 EBR Chain Walker          | Traverse extended partition linked list, read logical partitions ≥5   | Phase 1 (§1.2)                   |   ⬜   |
+| 💎 | **2**  | `TODO-040.04-MBR.md`          | §3.1 CHS Extraction & Encoding | Bidirectional CHS↔LBA translation, overflow detection (`FE FF FF`)    | Phase 1 (§1.1)                   |   ⬜   |
+| 💎 | **2**  | `TODO-040.04-MBR.md`          | §4.1 1-MiB Alignment           | Enforce LBA 2048 alignment for new partitions, warn on legacy 63      | Phase 1 (§1.1)                   |   ⬜   |
+| ⭐ | **2**  | `TODO-040.04-MBR.md`          | §4.2 4Kn Sector Awareness      | Detect 4096-byte native sector drives, adjust alignment accordingly   | Phase 2 (§4.1) + block device    |   ⬜   |
+| 💎 | **2**  | `TODO-040.04-MBR.md`          | §7.1 Protective MBR Detection  | Detect `0xEE` → redirect to GPT parser, write Protective MBR for GPT | Phase 1 (§1.2)                   |   ⬜   |
+| 💎 | **3**  | `TODO-040.04-MBR.md`          | §5.1 Partition Table Writer    | Read-modify-write MBR sector with correct entry encoding              | Phase 2 (§3.1, §4.1)            |   ⬜   |
+| 💎 | **3**  | `TODO-040.04-MBR.md`          | §5.2 EBR Writer                | Write EBR linked list for logical partitions                          | Phase 3 (§5.1)                   |   ⬜   |
+| 💎 | **3**  | `TODO-040.04-MBR.md`          | §8.1 Disk Signature Management | Generate, store, and track 32-bit disk signatures for volume mapping  | Phase 1 (§1.1) + Phase 3 (§5.1) |   ⬜   |
+| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.1 Create Primary Partition  | Find free space, align, validate overlap, write MBR                   | Phase 3 (§5.1) + Phase 2 (§4.1) |   ⬜   |
+| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.2 Extended & Logical        | Create extended container + logical partitions via EBR chain          | Phase 4 (§6.1) + Phase 3 (§5.2) |   ⬜   |
+| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.3 Delete Partition          | Zero MBR entries, unlink EBR nodes, unmount filesystems               | Phase 4 (§6.1, §6.2)            |   ⬜   |
+| ⭐ | **4**  | `TODO-040.04-MBR.md`          | §13.1 Health Validation        | Overlap, bounds, CHS/LBA mismatch, EBR chain checks + auto-repair    | Phase 1 (§1.2) + Phase 2 (§2.1) |   ⬜   |
+| 💎 | **5**  | `TODO-040.04-MBR.md`          | §9.1 Diskpart MBR Commands    | `diskpart list/create/delete/active/info` CLI commands                 | Phase 4 (§6.1, §6.3) + VFS      |   ⬜   |
+| 💎 | **5**  | `TODO-040.04-MBR.md`          | §10.1 MBR Test Suite          | Test images: 4 primary, extended+logical, protective, hybrid, corrupt | Phase 1–5 + FAT32                |   ⬜   |
+| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §7.2 Hybrid MBR               | GPT disk + real MBR entries for dual BIOS/UEFI boot USB creation      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §11.1 MBR→GPT Conversion     | Non-destructive partition table migration with type GUID mapping      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| 💎 | **6**  | `TODO-040.04-MBR.md`          | §11.2 GPT→MBR Conversion     | Downgrade GPT to MBR for legacy BIOS compatibility                    | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §12.1 Backup & Restore       | MBR + EBR chain snapshot to file, auto-backup on every partition change | Phase 3 (§5.1) + Phase 2 (§2.1) |   ⬜   |
+| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §6.4 Secure Partition Wipe    | Crypto-erase or zero-fill deleted partition space                     | Phase 4 (§6.3) + Phase 3 (§5.1) |   ⬜   |
+| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §6.5 Partition Resize         | Non-destructive shrink/grow MBR partitions in-place                   | Phase 4 (§6.1) + Phase 3 (§5.1) |   ⬜   |
+| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.1 Disk Cloning           | Clone entire MBR + partition data to another disk                     | Phase 3 (§5.1) + Phase 2 (§2.1) + Phase 6 (§12.1) |   ⬜   |
+| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.2 Live Partition Map     | Real-time graphical partition layout in Disk Manager with I/O heatmap | Phase 1 (§1.1) + VFS            |   ⬜   |
+
+> [!NOTE]
+> **Phases 0–2** are the critical path. They deliver full read-only MBR parsing:
+> sector decoding, type recognition, EBR traversal, CHS translation, alignment
+> detection, 4Kn awareness, and GPT redirect. All downstream features depend on these.
+> **Phases 3–4** add write support: the partition table writer, EBR writer,
+> partition creation/deletion, and health validation. These unlock the `diskpart`
+> CLI and test suite in Phase 5.
+> **Phase 6** delivers conversion and backup features (⭐): Hybrid MBR creation,
+> non-destructive MBR↔GPT conversion, and auto-backup/restore.
+> **Phase 7** delivers the competitive-edge features (⭐): Secure wipe, partition
+> resize, disk cloning, and live partition map visualization.
+
+> [!TIP]
+> **Quick wins (any time after Phase 1):**
+> - §4.1 alignment detection (read-only warning) can be tested immediately after §1.1.
+> - §13.1 health validation (read-only checks) can start after §1.2 + §2.1.
+>
+> **Critical cross-file dependency:** §7.1 (Protective MBR) creates a two-way link
+> with `TODO-040.05-GPT.md`. The MBR parser must detect type `0xEE` and redirect to
+> `gpt_parse()` — and the GPT writer must call `mbr_write_protective()` to stamp
+> LBA 0. Implement §7.1 in Phase 2 but defer §7.2 (Hybrid MBR) to Phase 6 after
+> GPT write support is complete.
+>
+> **Memory rule reminder:** All sector buffers (512 bytes) must use
+> `pmm_alloc_contiguous()`, not `kmalloc()`. Even though 512 bytes fits in the
+> 2 MiB heap, MBR operations may allocate many buffers when walking long EBR chains
+> or performing backup/restore of numerous logical partitions.
+
+---
+
 ## 1. MBR Sector Parsing
 
 ### 1.1 Full 512-Byte MBR Layout Parser
 
-**Prompt:** The existing `mbr.c` parses the 4 partition entries but doesn't extract the 32-bit Unique Disk Signature (offsets `0x1B8`–`0x1BB`) or validate the Boot Record Signature (`0xAA55`). Enhance the parser to decode the complete MBR anatomy: bootstrap code region (440 bytes, not interpreted), disk signature (4 bytes LE), reserved bytes (2 bytes), all 4 partition entries (16 bytes each), and the `0xAA55` magic. Reject MBR sectors where the magic is absent. Store the disk signature in `blkdev->disk_id` for persistent volume tracking. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: full 512-byte layout parser"`. Add notes directly in this TODO section.
+**Prompt:** The existing `mbr.c` parses the 4 partition entries but doesn't extract the 32-bit Unique Disk Signature (offsets `0x1B8`–`0x1BB`) or validate the Boot Record Signature (`0xAA55`). Enhance the parser to decode the complete MBR anatomy: bootstrap code region (440 bytes, not interpreted), disk signature (4 bytes LE), reserved bytes (2 bytes), all 4 partition entries (16 bytes each), and the `0xAA55` magic. Reject MBR sectors where the magic is absent. Store the disk signature in `mbr_table.disk_signature` (add field to struct). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: full 512-byte layout parser"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Current codebase state (`src/kernel/fs/mbr.c`, `include/kernel/fs/mbr.h`):**
+> - ✅ `MBR_SIGNATURE` (`0xAA55`) check exists but only sets `tbl.valid = 0` on failure (no error code)
+> - ✅ 4 partition entries parsed (type, status, start_lba, sector_count)
+> - ❌ Disk Signature at offsets 440–443: **not extracted** — `mbr_table` has no `disk_signature` field
+> - ❌ Reserved bytes 444–445: **not checked**
+> - ❌ Boot Indicator validation: accepts any value (should only allow `0x00` or `0x80`)
+> - ❌ CHS fields: **not extracted** — only LBA-based parsing
+> - ❌ Multiple `0x80` boot flag detection: **not checked**
+> - ❌ `mbr_type_name()` only handles 6 types (Empty, FAT32 CHS/LBA, Linux, IXFS, GPT)
+> - ❌ `struct blkdev` has no `disk_id` field — must add or use `mbr_table.disk_signature`
+> - ❌ `partition.c` has no EBR traversal — extended partitions are silently skipped
 
 - [ ] Validate Boot Record Signature: bytes 510–511 must be `0x55`, `0xAA`
 - [ ] Reject sector if signature missing — return `MBR_ERR_NO_SIGNATURE`
 - [ ] Extract 32-bit Disk Signature from offsets 440–443 (Little-Endian, native on x86)
-- [ ] Store disk signature: `blkdev->disk_id = disk_signature`
+- [ ] Add `uint32_t disk_signature` field to `struct mbr_table` in `mbr.h`
+- [ ] Store in `tbl.disk_signature` — caller passes to `partition_info` or Registry
 - [ ] Log: `[MBR] Disk Signature: 0x%08X`
 - [ ] Extract reserved/copy-protection field at offsets 444–445 (log if non-zero)
 - [ ] Parse all 4 × 16-byte partition entries at offsets 446, 462, 478, 494
@@ -161,6 +336,25 @@
 - [ ] Never auto-modify existing partition alignment (data destructive)
 - [ ] Commit: `"mbr: 1-MiB partition alignment"`
 
+### 4.2 4Kn Native Sector Size Awareness (🚀 Impossible OS Feature)
+
+**Prompt:** Modern NVMe and enterprise SATA/SAS drives use 4096-byte native sectors (4Kn) instead of 512-byte sectors. When `blkdev->sector_size` is 4096, the standard 2048-sector alignment resolves to 8 MiB instead of 1 MiB. Detect the underlying physical sector size and adjust alignment calculations accordingly. Report mismatched logical/physical sector sizes (512e drives that emulate 512-byte sectors over 4096-byte physical) as a performance warning. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: 4Kn sector size awareness"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows `diskpart` does not warn about 4Kn sector
+> alignment mismatches. Linux `fdisk` shows physical sector size but doesn't
+> adjust alignment automatically. Impossible OS detecting 4Kn drives and
+> auto-adjusting alignment is a proactive data-integrity advantage.
+
+- [ ] Read `blkdev->sector_size` — detect 4096-byte native sectors
+- [ ] If 4Kn: adjust `MBR_ALIGNMENT_SECTORS` to match 1 MiB boundary in 4K sectors (256 sectors)
+- [ ] Detect 512e (512-byte logical over 4096-byte physical) via IDENTIFY DEVICE data
+- [ ] Log: `[MBR] 4Kn drive detected — sector_size=%u, alignment adjusted`
+- [ ] Log 512e warning: `[MBR] WARNING: 512e drive — physical 4K, logical 512, ensure alignment`
+- [ ] Ensure partition creation aligns to both logical AND physical sector boundaries
+- [ ] Validate existing partitions: warn if start LBA is not aligned to physical sector size
+- [ ] Commit: `"mbr: 4Kn sector size awareness"`
+
 ---
 
 ## 5. MBR Write Support
@@ -271,6 +465,52 @@
 - [ ] Log: `[MBR] Deleted partition %d`
 - [ ] Commit: `"mbr: delete partition"`
 
+### 6.4 Secure Partition Wipe (🚀 Impossible OS Feature)
+
+**Prompt:** After deleting a partition, its data remains on disk and can be recovered with forensic tools. Implement a secure wipe option that zero-fills or crypto-erases the deleted partition's sectors. Offer three wipe levels: quick (zero first/last MiB), standard (single-pass zero), and DoD (3-pass overwrite). For NVMe/SATA SSDs, issue ATA SECURITY ERASE or NVMe Format command instead of sector-by-sector overwrite. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: secure partition wipe"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has NO built-in secure partition wipe — users need
+> third-party tools (DBAN, Eraser). Linux has `shred` and `blkdiscard` but these
+> are CLI-only. Impossible OS offering a "Secure Erase" button in Disk Manager
+> with progress bar is a clear security advantage.
+
+- [ ] Implement `mbr_wipe_partition(blkdev, start_lba, sector_count, wipe_level)`:
+  - [ ] `WIPE_QUICK`: zero first 2048 sectors + last 2048 sectors (destroy headers/footers)
+  - [ ] `WIPE_STANDARD`: single-pass zero-fill of entire partition
+  - [ ] `WIPE_DOD`: 3-pass overwrite (0x00, 0xFF, random) per DoD 5220.22-M
+- [ ] For SSDs: detect SSD via IDENTIFY DEVICE, use TRIM/UNMAP instead of overwrite
+- [ ] Progress callback: `wipe_progress(current_sector, total_sectors)` for GUI progress bar
+- [ ] Integrate with `mbr_delete_partition()`: optional `secure=true` flag
+- [ ] Log: `[MBR] Secure wipe: partition %d, %u sectors, level=%s`
+- [ ] Commit: `"mbr: secure partition wipe"`
+
+### 6.5 Non-Destructive Partition Resize (🚀 Impossible OS Feature)
+
+**Prompt:** Resize an existing MBR partition without data loss. Shrinking reduces the sector count and updates the MBR entry (the filesystem must be shrunk first). Growing extends the sector count into adjacent free space. Validate that no overlap occurs after resize. For extended partitions, grow/shrink the container and re-link EBR chain if needed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive partition resize"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Disk Management can shrink/grow NTFS volumes but
+> cannot resize FAT32 or move partitions. Linux `fdisk` cannot resize at all —
+> users need `parted` or GParted. Impossible OS offering a "Resize Partition"
+> button in Disk Manager with filesystem-aware resizing is a major usability win.
+
+> [!CAUTION]
+> **Filesystem must be resized BEFORE shrinking the partition.** Shrinking the
+> partition table entry without first shrinking the filesystem will truncate data.
+> Always call `fs_resize()` → then `mbr_resize_partition()`.
+
+- [ ] Implement `mbr_resize_partition(blkdev, partition_number, new_size_sectors)`:
+  - [ ] For shrink: verify `new_size >= filesystem_used_sectors` (query FS driver)
+  - [ ] For grow: verify adjacent free space >= `new_size - current_size`
+  - [ ] Update MBR entry: total_sectors, ending CHS (recalculate)
+  - [ ] For extended container: adjust EBR chain bounds if needed
+  - [ ] Validate: no overlap with adjacent partitions after resize
+  - [ ] Write updated MBR via `mbr_write()`
+- [ ] Auto-backup partition table before resize (§12.1)
+- [ ] Log: `[MBR] Resized partition %d: %u → %u sectors`
+- [ ] Commit: `"mbr: non-destructive partition resize"`
+
 ---
 
 ## 7. GPT Protective MBR & Hybrid MBR
@@ -324,9 +564,11 @@
 
 ### 8.1 Persistent Volume Identification
 
-**Prompt:** The 32-bit Disk Signature at MBR offsets 440–443 uniquely identifies each physical disk, allowing the OS to maintain stable volume-to-drive-letter mappings across reboots even if disk ordering changes. Generate a new random signature when formatting a fresh disk (`mbr_create_fresh()`). Store signatures in the Registry (`HKLM\SYSTEM\Storage\Disks\{signature}\`) with volume mount points. Check for signature collisions on multi-disk systems. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk signature management"`. Add notes directly in this TODO section.
+**Prompt:** The 32-bit Disk Signature at MBR offsets 440–443 uniquely identifies each physical disk, allowing the OS to maintain stable volume-to-drive-letter mappings across reboots even if disk ordering changes. Generate a new random signature when formatting a fresh disk (`mbr_create_fresh()`). Store signatures in the Registry (`HKLM\SYSTEM\Storage\Disks\{signature}\`) with volume mount points. Check for signature collisions on multi-disk systems. **Note:** `struct blkdev` currently has no `disk_id` field — either add `uint32_t disk_id` to `blkdev.h` or store the signature in `partition_info`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk signature management"`. Add notes directly in this TODO section.
 
-- [ ] On MBR parse: extract disk signature, store in `blkdev->disk_id`
+- [ ] On MBR parse: extract disk signature from `mbr_table.disk_signature` (added in §1.1)
+- [ ] Add `uint32_t disk_id` to `struct blkdev` in `include/kernel/drivers/blkdev.h`
+- [ ] Store: `blkdev->disk_id = mbr_table.disk_signature` in `partition.c scan_device()`
 - [ ] On MBR create: generate random 32-bit signature (use RDRAND or PIT-seeded PRNG)
 - [ ] Collision detection: check all registered blkdevs for duplicate signatures
   - [ ] If collision: log warning, do not auto-fix (user intervention required)
@@ -514,29 +756,85 @@
 
 ---
 
+## 14. Disk Cloning & Live Visualization
+
+### 14.1 Disk Cloning (🚀 Impossible OS Feature)
+
+**Prompt:** Clone an entire MBR disk to another disk: copy the MBR sector, all partition data, and all EBR sectors. Support same-size and larger-target cloning (expand the last partition to fill the target). This is equivalent to `dd if=/dev/sda of=/dev/sdb` but with partition-awareness, progress reporting, and error recovery. Offer both sector-level (raw) and filesystem-aware (used blocks only) clone modes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk cloning"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows has NO built-in disk clone — users need
+> Clonezilla, Macrium Reflect, or Acronis. Linux requires `dd` CLI expertise.
+> Impossible OS having a GUI "Clone Disk" wizard in Disk Manager with
+> progress bar, verification, and partition expansion is a standout feature.
+
+- [ ] Implement `mbr_clone_disk(src_dev, dst_dev, mode)`:
+  - [ ] `CLONE_RAW`: sector-by-sector copy (slow, complete)
+  - [ ] `CLONE_SMART`: copy only used blocks per filesystem (fast, requires FS driver)
+  - [ ] Copy MBR sector to destination LBA 0
+  - [ ] Copy each partition's data sectors
+  - [ ] Copy all EBR sectors for extended partitions
+- [ ] If destination is larger: option to expand last partition to fill remaining space
+- [ ] If destination is smaller: reject unless all data fits (verify per-partition usage)
+- [ ] Progress callback: `clone_progress(bytes_copied, bytes_total)` for GUI
+- [ ] Verification pass: re-read cloned data and compare CRC32s
+- [ ] Log: `[MBR] Disk clone: %s → %s, %u sectors, mode=%s`
+- [ ] Commit: `"mbr: disk cloning"`
+
+### 14.2 Live Partition Map Visualization (🚀 Impossible OS Feature)
+
+**Prompt:** Render a real-time graphical partition map in the Disk Manager showing each partition as a colored bar proportional to its size. Color-code by filesystem type (FAT32=yellow, NTFS=blue, IXFS=purple, ext4=green, free=gray). Show partition labels, sizes, LBA ranges, and filesystem fill percentage. Overlay I/O activity as a heat bar (green=idle, yellow=moderate, red=heavy) using block device I/O counters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ui: live partition map visualization"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Disk Management has a static partition bar.
+> Linux `GParted` has a static bar with fill percentage. Neither shows live
+> I/O activity. Impossible OS showing real-time I/O heatmap per partition
+> in the Disk Manager GUI is a visually stunning, genuinely useful innovation.
+
+- [ ] Implement `partition_map_render(canvas, disk_index)`:
+  - [ ] Draw horizontal bar for each disk, subdivided by partitions
+  - [ ] Width proportional to sector count (min 20px per partition)
+  - [ ] Color by filesystem type: FAT32=`#FFD700`, NTFS=`#4169E1`, IXFS=`#9B59B6`, ext4=`#2ECC71`, free=`#555555`
+  - [ ] Label: partition number, size (GiB/MiB), filesystem name
+  - [ ] Show LBA start–end on hover/tooltip
+- [ ] Implement `partition_map_io_overlay(canvas, disk_index)`:
+  - [ ] Track per-partition I/O bytes/sec via block device counters
+  - [ ] Draw heat bar: gradient from green (0 IOPS) to red (>1000 IOPS)
+  - [ ] Update at 1 Hz (register timer callback)
+- [ ] Show fill percentage per partition (query filesystem used/total)
+- [ ] Disk Manager integration: embed map at top of Disk Manager window
+- [ ] Commit: `"ui: live partition map visualization"`
+
+---
+
 ## Priority Order
 
-| ⭐ | Priority | Section                          | Description                                                   |
-| -- |----------|----------------------------------|---------------------------------------------------------------|
-| 💎 | 🔴 P0    | 1.1 Full MBR Layout Parser     | Foundation — decode entire 512-byte sector correctly          |
-| 💎 | 🔴 P0    | 1.2 Partition Type Recognition  | Foundation — identify all filesystem types and GPT redirect   |
-| 💎 | 🟠 P1    | 2.1 EBR Chain Walker            | Correctness — read logical partitions beyond the 4-entry limit|
-| 💎 | 🟠 P1    | 3.1 CHS Extraction & Encoding  | Compatibility — legacy BIOS and diagnostic tool interop       |
-| 💎 | 🟠 P1    | 4.1 1-MiB Alignment            | Performance — optimal 4K/SSD sector alignment                 |
-| 💎 | 🟠 P1    | 7.1 Protective MBR             | Integration — GPT detection and Protective MBR generation     |
-| 💎 | 🟡 P2    | 5.1 Partition Table Writer      | Feature — create and modify MBR partition tables              |
-| 💎 | 🟡 P2    | 5.2 EBR Writer                  | Feature — write logical partition chains                      |
-| 💎 | 🟡 P2    | 6.1 Create Primary Partition   | Feature — partition creation with alignment and validation    |
-| 💎 | 🟡 P2    | 6.2 Extended & Logical         | Feature — exceed 4-partition limit                            |
-| 💎 | 🟡 P2    | 6.3 Delete Partition           | Feature — partition removal and chain repair                  |
-| 💎 | 🟡 P2    | 8.1 Disk Signature Management  | Feature — persistent volume identification                    |
-| ⭐ | 🟡 P2    | 13.1 Health Validation      | **Partition table health checker** — unique to Impossible OS |
-| 💎 | 🟢 P3    | 9.1 Diskpart MBR Commands     | Tooling — CLI partition management                            |
-| 💎 | 🟢 P3    | 10.1 MBR Test Suite            | Quality — automated test coverage for all scenarios           |
-| ⭐ | 🟢 P3    | 7.2 Hybrid MBR              | **Dual BIOS+UEFI boot** — Windows cannot create these        |
-| ⭐ | 🟢 P3    | 11.1 MBR→GPT Conversion    | **One-click GUI conversion** — Windows is CLI-only            |
-| 💎 | 🟢 P3    | 11.2 GPT→MBR Conversion       | Feature — downgrade for legacy BIOS compatibility             |
-| ⭐ | 🟢 P3    | 12.1 Backup & Restore       | **Auto-backup partition table** — Windows has nothing         |
+| ⭐ | Priority | Section                             | Description                                                        |
+| -- | -------- | ----------------------------------- | ------------------------------------------------------------------ |
+| 💎 | 🔴 P0    | 1.1 Full MBR Layout Parser          | Foundation — decode entire 512-byte sector correctly               |
+| 💎 | 🔴 P0    | 1.2 Partition Type Recognition      | Foundation — identify all filesystem types and GPT redirect        |
+| 💎 | 🟠 P1    | 2.1 EBR Chain Walker                | Correctness — read logical partitions beyond the 4-entry limit     |
+| 💎 | 🟠 P1    | 3.1 CHS Extraction & Encoding      | Compatibility — legacy BIOS and diagnostic tool interop            |
+| 💎 | 🟠 P1    | 4.1 1-MiB Alignment                 | Performance — optimal 4K/SSD sector alignment                      |
+| ⭐ | 🟠 P1    | 4.2 4Kn Sector Awareness            | **4Kn native sector detection** — proactive alignment adjustment   |
+| 💎 | 🟠 P1    | 7.1 Protective MBR                  | Integration — GPT detection and Protective MBR generation          |
+| 💎 | 🟡 P2    | 5.1 Partition Table Writer           | Feature — create and modify MBR partition tables                   |
+| 💎 | 🟡 P2    | 5.2 EBR Writer                       | Feature — write logical partition chains                           |
+| 💎 | 🟡 P2    | 6.1 Create Primary Partition        | Feature — partition creation with alignment and validation         |
+| 💎 | 🟡 P2    | 6.2 Extended & Logical              | Feature — exceed 4-partition limit                                 |
+| 💎 | 🟡 P2    | 6.3 Delete Partition                | Feature — partition removal and chain repair                       |
+| 💎 | 🟡 P2    | 8.1 Disk Signature Management       | Feature — persistent volume identification                         |
+| ⭐ | 🟡 P2    | 13.1 Health Validation              | **Partition table health checker** — unique to Impossible OS       |
+| 💎 | 🟢 P3    | 9.1 Diskpart MBR Commands          | Tooling — CLI partition management                                 |
+| 💎 | 🟢 P3    | 10.1 MBR Test Suite                 | Quality — automated test coverage for all scenarios                |
+| ⭐ | 🟢 P3    | 7.2 Hybrid MBR                      | **Dual BIOS+UEFI boot** — Windows cannot create these             |
+| ⭐ | 🟢 P3    | 11.1 MBR→GPT Conversion            | **One-click GUI conversion** — Windows is CLI-only                 |
+| 💎 | 🟢 P3    | 11.2 GPT→MBR Conversion            | Feature — downgrade for legacy BIOS compatibility                  |
+| ⭐ | 🟢 P3    | 12.1 Backup & Restore              | **Auto-backup partition table** — Windows has nothing              |
+| ⭐ | 🔵 P4    | 6.4 Secure Partition Wipe           | **Secure erase on delete** — Windows has no built-in wipe          |
+| ⭐ | 🔵 P4    | 6.5 Partition Resize                | **Non-destructive resize** — Windows cannot resize FAT32           |
+| ⭐ | 🔵 P4    | 14.1 Disk Cloning                   | **GUI disk clone wizard** — Windows has no built-in clone          |
+| ⭐ | 🔵 P4    | 14.2 Live Partition Map             | **Real-time I/O heatmap** — unique to Impossible OS                |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -545,28 +843,37 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                          | 🪟 Windows 11 (diskpart)           | 🐧 Linux (fdisk / parted)         | 🚀 Impossible OS                              |
-| -- | -------------------------------- | ---------------------------------- | --------------------------------- | ---------------------------------------------- |
-| 💎 | MBR sector parsing               | ✅ Full (disk.sys)                  | ✅ Full (partitions/msdos.c)       | ⬜ §1.1 P0 (basic exists, needs enhancement)   |
-| 💎 | Boot signature `0xAA55` check    | ✅                                  | ✅                                 | ⬜ §1.1 P0                                     |
-| 💎 | 32-bit Disk Signature            | ✅ Critical (volume tracking)       | ✅ Supported                       | ⬜ §1.1 P0 + §8.1 P2                           |
-| 💎 | All partition type IDs           | ✅ Exhaustive                       | ✅ Exhaustive                      | ⬜ §1.2 P0 (expanded: 30+ types)               |
-| 💎 | GPT Protective MBR (`0xEE`)     | ✅ Redirect to GPT                  | ✅ Redirect to GPT                 | ⬜ §7.1 P1                                     |
-| ⭐ | **Hybrid MBR**                | ❌ Cannot create                    | ⚠️ `gdisk` CLI only               | ⬜ §7.2 P3 — GUI bootable USB creation         |
-| 💎 | Extended/Logical (EBR)           | ✅ Full chain traversal             | ✅ Full chain traversal            | ⬜ §2.1 P1                                     |
-| 💎 | CHS bit-packing                  | ✅ Full encode/decode               | ✅ Full encode/decode              | ⬜ §3.1 P1                                     |
-| 💎 | CHS overflow dummy (`FE FF FF`) | ✅                                  | ✅                                 | ⬜ §3.1 P1                                     |
-| 💎 | 1-MiB alignment                  | ✅ Default since Vista              | ✅ Default since util-linux 2.17   | ⬜ §4.1 P1                                     |
-| 💎 | Legacy 63-sector awareness       | ✅ Compatible                       | ✅ Compatible                      | ⬜ §4.1 P1 (warn but read)                     |
-| 💎 | MBR write / create partition     | ✅ diskpart / Disk Management       | ✅ fdisk / parted                  | ⬜ §5.1–6.2 P2                                 |
-| 💎 | Delete partition                 | ✅ diskpart                         | ✅ fdisk -d                        | ⬜ §6.3 P2                                     |
-| 💎 | Set active/bootable              | ✅ diskpart active                  | ✅ fdisk -a                        | ⬜ §9.1 P3                                     |
-| 💎 | Drive letter mapping via sig     | ✅ Registry-based                   | ✅ /dev/disk/by-id                 | ⬜ §8.1 P2                                     |
-| 💎 | CLI partition tool               | ✅ diskpart (interactive)           | ✅ fdisk (interactive + scripted)  | ⬜ §9.1 P3                                     |
-| 💎 | Test images / validation         | ✅ Windows PE test suite            | ✅ blktests                        | ⬜ §10.1 P3                                    |
-| ⭐ | **MBR→GPT conversion**       | ⚠️ `mbr2gpt.exe` CLI only          | ⚠️ `gdisk` CLI only               | ⬜ §11.1 P3 — one-click GUI conversion         |
-| 💎 | **GPT→MBR conversion**          | ⚠️ diskpart CLI (destructive)      | ⚠️ `gdisk` CLI (non-destructive)  | ⬜ §11.2 P3 — GUI with validation              |
-| ⭐ | **Partition table backup**    | ❌ No built-in backup               | ⚠️ Manual `dd` / `sfdisk -d`      | ⬜ §12.1 P3 — auto-backup on every change      |
-| ⭐ | **Health validation**         | ❌ No partition table validator     | ⚠️ `fdisk --verify` (minimal CLI) | ⬜ §13.1 P2 — GUI health checker + auto-repair |
-| 💎 | **2 TiB limit enforcement**     | ✅ Warns in Disk Management         | ✅ parted warns                    | ⬜ §6.1 P2                                     |
-| 💎 | **Full MBR subsystem**           | ✅                                  | ✅                                 | ⬜ Requires §1–§7 at minimum                   |
+| Feature                              | 🪟 Windows 11 (diskpart)          | 🐧 Linux (fdisk / parted)         | 🚀 Impossible OS                              |
+| ------------------------------------ | --------------------------------- | ---------------------------------- | --------------------------------------------- |
+| Custom MBR sector parsing            | ✅ Full (disk.sys)                 | ✅ Full (partitions/msdos.c)       | ⬜ §1.1 P0 (basic exists, needs enhancement)  |
+| Boot signature `0xAA55` check        | ✅                                 | ✅                                  | ⬜ §1.1 P0                                    |
+| 32-bit Disk Signature                | ✅ Critical (volume tracking)      | ✅ Supported                        | ⬜ §1.1 P0 + §8.1 P2                          |
+| All partition type IDs               | ✅ Exhaustive                      | ✅ Exhaustive                       | ⬜ §1.2 P0 (expanded: 30+ types)              |
+| GPT Protective MBR (`0xEE`)         | ✅ Redirect to GPT                 | ✅ Redirect to GPT                  | ⬜ §7.1 P1                                    |
+| Extended/Logical (EBR)               | ✅ Full chain traversal            | ✅ Full chain traversal             | ⬜ §2.1 P1                                    |
+| CHS bit-packing                      | ✅ Full encode/decode              | ✅ Full encode/decode               | ⬜ §3.1 P1                                    |
+| CHS overflow dummy (`FE FF FF`)     | ✅                                 | ✅                                  | ⬜ §3.1 P1                                    |
+| 1-MiB alignment                      | ✅ Default since Vista             | ✅ Default since util-linux 2.17    | ⬜ §4.1 P1                                    |
+| Legacy 63-sector awareness           | ✅ Compatible                      | ✅ Compatible                       | ⬜ §4.1 P1 (warn but read)                    |
+| MBR write / create partition         | ✅ diskpart / Disk Management      | ✅ fdisk / parted                   | ⬜ §5.1–6.2 P2                                |
+| Delete partition                     | ✅ diskpart                        | ✅ fdisk -d                         | ⬜ §6.3 P2                                    |
+| Set active/bootable                  | ✅ diskpart active                 | ✅ fdisk -a                         | ⬜ §9.1 P3                                    |
+| Drive letter mapping via sig         | ✅ Registry-based                  | ✅ /dev/disk/by-id                  | ⬜ §8.1 P2                                    |
+| CLI partition tool                   | ✅ diskpart (interactive)          | ✅ fdisk (interactive + scripted)   | ⬜ §9.1 P3                                    |
+| Test images / validation             | ✅ Windows PE test suite           | ✅ blktests                         | ⬜ §10.1 P3                                   |
+| 2 TiB limit enforcement             | ✅ Warns in Disk Management        | ✅ parted warns                     | ⬜ §6.1 P2                                    |
+| **Hybrid MBR**                       | ❌ Cannot create                   | ⚠️ `gdisk` CLI only                | ⬜ **§7.2 P3 — GUI bootable USB creation**    |
+| **MBR→GPT conversion**              | ⚠️ `mbr2gpt.exe` CLI only         | ⚠️ `gdisk` CLI only                | ⬜ **§11.1 P3 — one-click GUI conversion**    |
+| **GPT→MBR conversion**              | ⚠️ diskpart CLI (destructive)     | ⚠️ `gdisk` CLI (non-destructive)   | ⬜ **§11.2 P3 — GUI with validation**         |
+| **Partition table backup**           | ❌ No built-in backup              | ⚠️ Manual `dd` / `sfdisk -d`       | ⬜ **§12.1 P3 — auto-backup on every change** |
+| **Health validation**                | ❌ No partition table validator    | ⚠️ `fdisk --verify` (minimal CLI)  | ⬜ **§13.1 P2 — GUI health checker + repair** |
+| **4Kn sector awareness**            | ⚠️ No proactive warning           | ⚠️ Shows physical size, no adjust  | ⬜ **§4.2 P1 — auto-detect and adjust**       |
+| **Secure partition wipe**            | ❌ No built-in wipe                | ⚠️ `shred` / `blkdiscard` CLI only | ⬜ **§6.4 P4 — GUI secure erase**             |
+| **Non-destructive partition resize** | ⚠️ NTFS only, no FAT32            | ⚠️ `parted` / GParted (CLI/third)  | ⬜ **§6.5 P4 — GUI resize for all FS types**  |
+| **Disk cloning**                     | ❌ No built-in clone               | ⚠️ `dd` CLI only, no progress      | ⬜ **§14.1 P4 — GUI clone wizard**            |
+| **Live partition map with I/O**      | ⚠️ Static bar in Disk Management  | ⚠️ Static bar in GParted           | ⬜ **§14.2 P4 — real-time I/O heatmap**       |
+| Full MBR subsystem                   | ✅                                 | ✅                                  | ⬜ Requires §1–§7 at minimum                  |
+
+> **After P0+P1 items:** Impossible OS matches Windows and Linux on core MBR parsing feature-for-feature.
+> **After P2–P3 items:** Full write support, conversion, and health validation — exceeds both on UX.
+> **After P4 items (⭐):** Secure wipe, resize, disk cloning, and live I/O visualization — features neither Windows nor Linux offer natively.

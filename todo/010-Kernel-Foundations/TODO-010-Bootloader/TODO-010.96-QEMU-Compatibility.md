@@ -205,11 +205,11 @@
 
 | File                                      | Change  | Purpose                                             |
 | ----------------------------------------- | ------- | --------------------------------------------------- |
-| `src/kernel/drivers/ahci.c`              | MODIFY  | Disabled interrupts, removed PAUSE, added timeouts  |
-| `src/kernel/drivers/lapic.c`             | MODIFY  | Init Level De-Assert guard, ICR/IPI timeouts        |
-| `src/kernel/main/boot_storage.c`         | MODIFY  | Re-scan partitions after StorVSC init               |
-| `scripts/vm/run-qemu.ps1`               | MODIFY  | WHPX acceleration, CPU model, OVMF auto-copy        |
-| `scripts/vm/run-qemu-kvm.bat`           | MODIFY  | Explicit `-Accel whpx`                              |
+| `src/kernel/drivers/ahci.c`               | MODIFY  | Disabled interrupts, removed PAUSE, added timeouts  |
+| `src/kernel/drivers/lapic.c`              | MODIFY  | Init Level De-Assert guard, ICR/IPI timeouts        |
+| `src/kernel/main/boot_storage.c`          | MODIFY  | Re-scan partitions after StorVSC init               |
+| `scripts/vm/run-qemu.ps1`                 | MODIFY  | WHPX acceleration, CPU model, OVMF auto-copy        |
+| `scripts/vm/run-qemu-kvm.bat`             | MODIFY  | Explicit `-Accel whpx`                              |
 
 ---
 

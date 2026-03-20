@@ -40,6 +40,7 @@ graph TD
     FAT["TODO-040.06-FAT32 / 040.10-exFAT<br/>MS Basic Data GUID"]
 
     A["§1.1–1.3 Primary Header + Entries ✅"]
+    X["§12.1 Test Suite"]
     B["§2.1 Backup Header Fallback"]
     C["§2.2 Primary Auto-Recovery"]
     D["§5.1 Type GUID Registry"]
@@ -100,58 +101,67 @@ graph TD
     N --> W
     O --> W
     U --> W
+    N --> X
+    O --> X
+    P --> X
 ```
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec                      | Sections                          | What It Delivers                                                            | Depends On                      | Status |
-| -- | :----: | ------------------------------------- | --------------------------------- | --------------------------------------------------------------------------- | ------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/gpt.md`                | Full spec                         | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**    | —                               |   ✅   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                               |   ✅   |
-| 💎 | **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse            | Signature, CRC32, entry array, PMBR detection — **foundation complete**      | Phase 0 (block + spec)          |   ✅   |
-| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback       | Don't fail on single-sector corruption — read backup at last LBA             | Phase 0 (§1)                    |   ⬜   |
-| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §5.1 Type GUID Registry           | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.     | Phase 0 (§1)                    |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §2.2 Primary Auto-Recovery        | Restore primary header from valid backup — full structural redundancy        | Phase 1 (§2.1)                  |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | Phase 0 (§1)                    |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | Phase 0 (§1 read path)          |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                                | Phase 0 (§1)                    |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries               | Phase 0 (§1) + MBR (040.04 §7) |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops        | Phase 2 (§2.2)                  |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §6.2 Microsoft Attributes         | Read-only, hidden, no-automount on Basic Data partitions                     | Phase 2 (§6.1)                  |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.1 PMBR Writer                  | Create Protective MBR at LBA 0 — entry point for GPT disk init              | Phase 2 (§4.1) + MBR (040.04)  |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.2 GPT Header Writer            | Serialize and write primary/backup headers with CRC32                        | Phase 2 (§4.1 + §3.1)          |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.3 Partition Entry Writer        | Serialize entries + compute array CRC32 — write path for entry array         | Phase 2 (§4.1)                  |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.1 Initialize GPT Disk          | Fresh GPT layout: PMBR + headers + empty entry array                         | Phase 3 (§8.1–8.3)             |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.2 Create Partition              | Add partition with 1-MiB alignment, overlap validation, GUID generation      | Phase 3 (§2.3) + Phase 4 (§9.1)|   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.3 Delete Partition              | Zero entry slot, respect Required flag, unmount first                         | Phase 4 (§9.2)                  |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.4 Modify Attributes            | Set/clear bootable, read-only, hidden, no-automount bits                     | Phase 4 (§9.2) + Phase 2–3 (§6)|   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §11.1 Volume Identification       | GUID-based persistent drive letters via Registry                             | Phase 0 (§1) + VFS (040.07)    |   ⬜   |
-| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §13.1 CRC Scrubbing 🚀            | Proactive periodic GPT integrity validation + auto-repair                    | Phase 1 (§2.1) + Phase 2 (§2.2)|   ⬜   |
-| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §14.1 GUID Collision 🚀           | Clone-disk safety: detect duplicate GUIDs, offer regeneration                | Phase 4 (§11.1)                 |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §9.5 Partition Resize 🚀          | GUI drag-to-resize — grow/shrink in-place, Windows severely limited          | Phase 4 (§9.2)                  |   ⬜   |
-| 💎 | **6**  | `TODO-040.05-GPT.md`                  | §10.1 Diskpart GPT Commands       | CLI: `diskpart list/create/delete/gptinit/info`                              | Phase 4 (§9.2, §9.3)           |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §15.1 GPT Backup & Restore 🚀    | Auto-backup partition table before every write + one-click restore           | Phase 4 (§9.1, §9.2)           |   ⬜   |
-| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §7.1–7.2 Protective + Hybrid MBR  | MBR `0xEE` redirect to GPT parser + Hybrid MBR sync                         | Phase 0 (§1)                    |   ⬜   |
-| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §11.1–11.2 MBR↔GPT Conversion     | Non-destructive MBR→GPT and GPT→MBR disk conversion                         | Phase 4 (§9.1)                  |   ⬜   |
-| 💎 | **—**  | `TODO-040.07-VFS.md`                  | Drive letter assignment            | VFS volume mount + GUID→drive letter Registry lookup                         | Phase 4 (§11.1)                 |   ⬜   |
+| ⭐ | Phase  | TODO File / Spec                      | Sections                           | What It Delivers                                                            | Depends On                       | Status |
+| -- | :----: | ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | :----: |
+| 💎 | **0**  | `specs/storage/gpt.md`                | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                 | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                                |   ✅   |
+| 💎 | **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse             | Signature, CRC32, entry array, PMBR detection — **foundation complete**     | Phase 0 (block + spec)           |   ✅   |
+| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback        | Don't fail on single-sector corruption — read backup at last LBA            | Phase 0 (§1)                     |   ✅   |
+| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §5.1 Type GUID Registry            | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.    | Phase 0 (§1)                     |   ✅   |
+| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §2.2 Primary Auto-Recovery         | Restore primary header from valid backup — full structural redundancy       | Phase 1 (§2.1)                   |   ⬜   |
+| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §3.1 Dynamic Sector Size           | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | Phase 0 (§1)                     |   ⬜   |
+| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §4.1 GUID Encode + String          | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | Phase 0 (§1 read path)           |   ⬜   |
+| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §6.1 UEFI Global Attributes        | Required, BIOSBoot, hidden partition handling                               | Phase 0 (§1)                     |   ⬜   |
+| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §7.1 Hybrid MBR Detection          | Warn and always prefer GPT over conflicting legacy MBR entries              | Phase 0 (§1) + MBR (040.04 §7)  |   ⬜   |
+| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §2.3 Backup Sync on Write          | Mirror every primary write to backup — prerequisite for all write ops       | Phase 2 (§2.2)                   |   ⬜   |
+| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §6.2 Microsoft Attributes          | Read-only, hidden, no-automount on Basic Data partitions                    | Phase 2 (§6.1)                   |   ⬜   |
+| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.1 PMBR Writer                   | Create Protective MBR at LBA 0 — entry point for GPT disk init             | Phase 2 (§4.1) + MBR (040.04)   |   ⬜   |
+| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.2 GPT Header Writer             | Serialize and write primary/backup headers with CRC32                       | Phase 2 (§4.1 + §3.1)           |   ⬜   |
+| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.3 Partition Entry Writer         | Serialize entries + compute array CRC32 — write path for entry array        | Phase 2 (§4.1)                   |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.1 Initialize GPT Disk           | Fresh GPT layout: PMBR + headers + empty entry array                        | Phase 3 (§8.1–8.3)              |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.2 Create Partition               | Add partition with 1-MiB alignment, overlap validation, GUID generation     | Phase 3 (§2.3) + Phase 4 (§9.1) |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.3 Delete Partition               | Zero entry slot, respect Required flag, unmount first                        | Phase 4 (§9.2)                   |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.4 Modify Attributes             | Set/clear bootable, read-only, hidden, no-automount bits                    | Phase 4 (§9.2) + Phase 2–3 (§6) |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §11.1 Volume Identification        | GUID-based persistent drive letters via Registry                            | Phase 0 (§1) + VFS (040.07)     |   ⬜   |
+| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §12.1 GPT Test Suite               | QEMU-based test images validating all parser + writer paths                 | Phase 4 (§9.1–9.3)              |   ⬜   |
+| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §13.1 CRC Scrubbing 🚀             | Proactive periodic GPT integrity validation + auto-repair                   | Phase 1 (§2.1) + Phase 2 (§2.2) |   ⬜   |
+| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §14.1 GUID Collision 🚀            | Clone-disk safety: detect duplicate GUIDs, offer regeneration               | Phase 4 (§11.1)                  |   ⬜   |
+| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §9.5 Partition Resize 🚀           | GUI drag-to-resize — grow/shrink in-place, Windows severely limited         | Phase 4 (§9.2)                   |   ⬜   |
+| 💎 | **6**  | `TODO-040.05-GPT.md`                  | §10.1 Diskpart GPT Commands        | CLI: `diskpart list/create/delete/gptinit/info`                             | Phase 4 (§9.2, §9.3)            |   ⬜   |
+| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §15.1 GPT Backup & Restore 🚀     | Auto-backup partition table before every write + one-click restore          | Phase 4 (§9.1, §9.2)            |   ⬜   |
+| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §16.1 Hot-Swap Detection 🚀        | Runtime disk insertion/removal → auto re-scan GPT on hot-plug events        | Phase 1 (§2.1) + VFS (040.07)   |   ⬜   |
+| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §17.1 Partition Health Dashboard 🚀 | GUI surface GPT integrity + SMART + fragmentation in Disk Manager           | Phase 5 (§13.1, §14.1)          |   ⬜   |
+| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §7.1–7.2 Protective + Hybrid MBR   | MBR `0xEE` redirect to GPT parser + Hybrid MBR sync                        | Phase 0 (§1)                     |   ⬜   |
+| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §11.1–11.2 MBR↔GPT Conversion      | Non-destructive MBR→GPT and GPT→MBR disk conversion                        | Phase 4 (§9.1)                   |   ⬜   |
+| 💎 | **—**  | `TODO-040.07-VFS.md`                  | Drive letter assignment             | VFS volume mount + GUID→drive letter Registry lookup                        | Phase 4 (§11.1)                  |   ⬜   |
 
 > [!NOTE]
-> **Phase 0** is already complete — primary-side read-only GPT parsing works.
-> **Phases 1–2** are the critical path: backup fallback, 4Kn support, GUID write path,
-> attribute decoding, and Hybrid MBR detection. These unblock all write operations.
+> **Phase 0–1** are already complete — primary + backup GPT parsing and full Type GUID
+> registry are working. The parser reads primary at LBA 1 and falls back to backup at
+> last LBA on CRC32 failure.
+> **Phase 2** is the critical path: 4Kn support, GUID write path, attribute decoding,
+> and Hybrid MBR detection. These unblock all write operations.
 > **Phases 3–4** build the full write path: header/entry writers → disk init → partition
-> create/delete/modify → volume identification.
+> create/delete/modify → volume identification → test suite.
 > **Phases 5–6** deliver competitive features (⭐): CRC scrubbing, GUID collision detection,
-> drag-to-resize, and auto-backup — features no other OS provides.
+> drag-to-resize, auto-backup, hot-swap detection, and partition health dashboard — features
+> no other OS provides.
 > MBR (040.04) and VFS (040.07) are **cross-domain** dependencies that proceed in
 > parallel but connect at specific integration points.
 
 > [!TIP]
-> **Quick wins after Phase 1:**
-> - §5.1 Type GUID Registry is a pure data expansion — no algorithm changes, just adding
->   `GPT_GUID_*` constants and `gpt_type_name()` strings. Fast to implement, high value.
+> **Quick wins after Phase 1 (both complete ✅):**
 > - §6.1 UEFI Global Attributes is a trivial bitmask decode of the existing `attributes`
 >   field — minimal code, immediate visibility in `diskpart list parts`.
+> - §4.1 GUID Encode — `write_guid()` is just the reverse of the existing `read_guid()`,
+>   and `guid_to_string()` is a simple hex-format helper. Quick to implement, unlocks §8–9.
 >
 > **Critical ordering rule:** §2.3 Backup Sync on Write **must** be implemented BEFORE
 > any partition create/delete operations (§9). Without it, writes update only the primary
@@ -216,18 +226,21 @@ graph TD
 ---
 ## 2. Backup Header & Structural Redundancy
 
-### 2.1 Backup Header Fallback
+### 2.1 Backup Header Fallback ✅
 
-**Prompt:** The current parser reads only the primary header at LBA 1 and returns failure if CRC32 validation fails. Implement automatic fallback to the backup GPT header at the last LBA of the disk. When the primary header fails CRC32 validation, calculate the backup location (`blkdev->sector_count - 1`), read that sector, validate its signature and CRC32, and use it to parse the partition entry array from the backup array location (end of disk, before the backup header). Log a critical warning when falling back. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: backup header fallback recovery"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` `gpt_parse()` attempts the primary header at LBA 1 first, and on CRC32 failure calculates `backup_lba = dev->sector_count - 1`, reads the backup sector, validates its signature and CRC32, verifies `my_lba` matches the last LBA and `alt_lba == 1`, and uses the backup to parse the partition entry array from the backup array location. Confirm a `LOG_WARN` is logged when falling back. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-- [ ] Calculate backup header LBA: `dev->sector_count - 1`
-- [ ] On primary header CRC32 failure: attempt reading backup header
-- [ ] Validate backup header: signature `"EFI PART"`, CRC32 (same zeroing procedure)
-- [ ] Verify backup header's `my_lba` matches the last LBA
-- [ ] Verify backup header's `alt_lba == 1` (points back to primary)
-- [ ] Parse partition entries from backup array (located before backup header)
-- [ ] Log: `[GPT] WARNING: Primary header corrupt — using backup at LBA %llu`
-- [ ] Commit: `"gpt: backup header fallback recovery"`
+> [!NOTE]
+> **Implementation note:** Backup fallback was implemented directly in `gpt_parse()` at `gpt.c:375-403`. When the primary header at LBA 1 fails `parse_header()`, the code reads `dev->sector_count - 1`, validates the backup header's `my_lba` and `alt_lba` fields, and logs via `klog(LOG_WARN, ...)`. The `using_backup` flag is set for future §2.2 auto-recovery use.
+
+- [x] Calculate backup header LBA: `dev->sector_count - 1`
+- [x] On primary header CRC32 failure: attempt reading backup header
+- [x] Validate backup header: signature `"EFI PART"`, CRC32 (same zeroing procedure)
+- [x] Verify backup header's `my_lba` matches the last LBA
+- [x] Verify backup header's `alt_lba == 1` (points back to primary)
+- [x] Parse partition entries from backup array (located before backup header)
+- [x] Log: `[GPT] WARNING: Primary header corrupt — using backup at LBA %llu`
+- [x] Commit: `"gpt: backup header fallback recovery"`
 
 ### 2.2 Primary Header Auto-Recovery
 
@@ -295,37 +308,40 @@ graph TD
 
 ## 5. Type GUID Registry Expansion
 
-### 5.1 Comprehensive Type GUID Registry
+### 5.1 Comprehensive Type GUID Registry ✅
 
-**Prompt:** The current `gpt.c` recognizes only 4 partition types: EFI System, MS Basic Data, Linux Filesystem, and IXFS. Expand the registry to cover all GUIDs from the spec (§9): BIOS Boot, MS Reserved, MS LDM, MS Recovery, Linux Swap, Linux Root (x86-64), Apple HFS+, Apple APFS, FreeBSD ZFS, ChromeOS Kernel. Add `GPT_GUID_*` constants and update `gpt_type_name()` to return meaningful strings for all types. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: expanded type GUID registry"`. Add notes directly in this TODO section.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` defines all 25+ partition type GUIDs as `const struct gpt_guid` constants and `gpt_type_name()` returns human-readable strings for all types including BIOS Boot, MS Reserved, MS LDM Meta/Data, MS Recovery, MS Storage Spaces, Linux Swap/Root/Home/Srv/LVM/RAID, Apple HFS+/APFS, FreeBSD ZFS, Solaris Root, VMware VMFS, ChromeOS Kernel, and Ceph OSD. Confirm `gpt.h` declares all `extern` constants. Confirm unknown types return `"Unknown"`. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
+
+> [!NOTE]
+> **Implementation note:** All 25 GUIDs are defined in `gpt.c:24-164` with corresponding `extern` declarations in `gpt.h:70-93`. The `gpt_type_name()` function at `gpt.c:245-271` returns strings for all known types and `"Unknown"` for unrecognized GUIDs.
 
 - [x] `GPT_GUID_EMPTY` — `00000000-0000-0000-0000-000000000000`
 - [x] `GPT_GUID_EFI_SYSTEM` — `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`
 - [x] `GPT_GUID_MS_BASIC_DATA` — `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`
 - [x] `GPT_GUID_LINUX_FS` — `0FC63DAF-8483-4772-8E79-3D69D8477DE4`
 - [x] `GPT_GUID_IXFS` — `DA000000-0000-4978-4653-000000000001`
-- [ ] Add `GPT_GUID_BIOS_BOOT` — `21686148-6449-6E6F-744E-656564454649`
-- [ ] Add `GPT_GUID_MS_RESERVED` — `E3C9E316-0B5C-4DB8-817D-F92DF00215AE`
-- [ ] Add `GPT_GUID_MS_LDM_META` — `5808C8AA-7E8F-42E0-85D2-E1E90434CFB3`
-- [ ] Add `GPT_GUID_MS_LDM_DATA` — `AF9B60A0-1431-4F62-BC68-3311714A69AD`
-- [ ] Add `GPT_GUID_MS_RECOVERY` — `DE94BBA4-06D1-4D40-A16A-BFD50179D6AC`
-- [ ] Add `GPT_GUID_MS_STORAGE_SPACES` — `E75CAF8F-F680-4CEE-AFA3-B001E56EFC2D`
-- [ ] Add `GPT_GUID_LINUX_SWAP` — `0657FD6D-A4AB-43C4-84E5-0933C84B4F4F`
-- [ ] Add `GPT_GUID_LINUX_ROOT_X64` — `4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709`
-- [ ] Add `GPT_GUID_LINUX_HOME` — `933AC7E1-2EB4-4F13-B844-0E14E2AEF915`
-- [ ] Add `GPT_GUID_LINUX_SRV` — `3B8F8425-20E0-4F3B-907F-1A25A76F98E8`
-- [ ] Add `GPT_GUID_LINUX_LVM` — `E6D6D379-F507-44C2-A23C-238F2A3DF928`
-- [ ] Add `GPT_GUID_LINUX_RAID` — `A19D880F-05FC-4D3B-A006-743F0F84911E`
-- [ ] Add `GPT_GUID_APPLE_HFS` — `48465300-0000-11AA-AA11-00306543ECAC`
-- [ ] Add `GPT_GUID_APPLE_APFS` — `7C3457EF-0000-11AA-AA11-00306543ECAC`
-- [ ] Add `GPT_GUID_FREEBSD_ZFS` — `516E7CB5-6ECF-11D6-8FF8-00022D09712B`
-- [ ] Add `GPT_GUID_SOLARIS_ROOT` — `6A85CF4D-1DD2-11B2-99A6-080020736631`
-- [ ] Add `GPT_GUID_VMWARE_VMFS` — `AA31E02A-400F-11DB-9590-000C2911D1B8`
-- [ ] Add `GPT_GUID_CHROMEOS_KERNEL` — `FE3A2A5D-4F32-41A7-B725-ACCC3285A309`
-- [ ] Add `GPT_GUID_CEPH_OSD` — `4FBD7E29-9D25-41B8-AFD0-062C0CEFF05D`
-- [ ] For unknown types: display as `"Unknown ({GUID string})"` — never crash
-- [ ] Update `gpt_type_name()` to return human-readable strings for all types
-- [ ] Commit: `"gpt: expanded type GUID registry"`
+- [x] `GPT_GUID_BIOS_BOOT` — `21686148-6449-6E6F-744E-656564454649`
+- [x] `GPT_GUID_MS_RESERVED` — `E3C9E316-0B5C-4DB8-817D-F92DF00215AE`
+- [x] `GPT_GUID_MS_LDM_META` — `5808C8AA-7E8F-42E0-85D2-E1E90434CFB3`
+- [x] `GPT_GUID_MS_LDM_DATA` — `AF9B60A0-1431-4F62-BC68-3311714A69AD`
+- [x] `GPT_GUID_MS_RECOVERY` — `DE94BBA4-06D1-4D40-A16A-BFD50179D6AC`
+- [x] `GPT_GUID_MS_STORAGE_SPACES` — `E75CAF8F-F680-4CEE-AFA3-B001E56EFC2D`
+- [x] `GPT_GUID_LINUX_SWAP` — `0657FD6D-A4AB-43C4-84E5-0933C84B4F4F`
+- [x] `GPT_GUID_LINUX_ROOT_X64` — `4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709`
+- [x] `GPT_GUID_LINUX_HOME` — `933AC7E1-2EB4-4F13-B844-0E14E2AEF915`
+- [x] `GPT_GUID_LINUX_SRV` — `3B8F8425-20E0-4F3B-907F-1A25A76F98E8`
+- [x] `GPT_GUID_LINUX_LVM` — `E6D6D379-F507-44C2-A23C-238F2A3DF928`
+- [x] `GPT_GUID_LINUX_RAID` — `A19D880F-05FC-4D3B-A006-743F0F84911E`
+- [x] `GPT_GUID_APPLE_HFS` — `48465300-0000-11AA-AA11-00306543ECAC`
+- [x] `GPT_GUID_APPLE_APFS` — `7C3457EF-0000-11AA-AA11-00306543ECAC`
+- [x] `GPT_GUID_FREEBSD_ZFS` — `516E7CB5-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_SOLARIS_ROOT` — `6A85CF4D-1DD2-11B2-99A6-080020736631`
+- [x] `GPT_GUID_VMWARE_VMFS` — `AA31E02A-400F-11DB-9590-000C2911D1B8`
+- [x] `GPT_GUID_CHROMEOS_KERNEL` — `FE3A2A5D-4F32-41A7-B725-ACCC3285A309`
+- [x] `GPT_GUID_CEPH_OSD` — `4FBD7E29-9D25-41B8-AFD0-062C0CEFF05D`
+- [x] For unknown types: display as `"Unknown"` — never crash
+- [x] Update `gpt_type_name()` to return human-readable strings for all types
+- [x] Commit: `"gpt: expanded type GUID registry"`
 
 ---
 
@@ -661,34 +677,36 @@ graph TD
 
 ## Priority Order
 
-| ⭐ | Priority | Section                              | Description                                                 |
-| -- |----------|--------------------------------------|-------------------------------------------------------------|
-| 💎 | ✅ Done   | 1.1 Primary Header Validation       | Foundation — signature + CRC32 validation                   |
-| 💎 | ✅ Done   | 1.2 Partition Entry Array Parsing    | Foundation — entry parsing with array CRC32                 |
-| 💎 | ✅ Done   | 1.3 PMBR Detection                   | Foundation — Protective MBR `0xEE` check                    |
-| 💎 | 🔴 P0    | **2.1 Backup Header Fallback**       | **Reliability — don't fail on single-sector corruption**    |
-| 💎 | 🔴 P0    | **5.1 Type GUID Registry**           | **Correctness — identify all partition types encountered**  |
-| 💎 | 🟠 P1    | 2.2 Primary Header Auto-Recovery    | Redundancy — restore primary from valid backup              |
-| 💎 | 🟠 P1    | 3.1 Dynamic Sector Size (4Kn)       | Compatibility — modern NVMe + AF drives                     |
-| 💎 | 🟠 P1    | 4.1 GUID Encode + String Conversion | Write path — needed by §8–§9 write operations               |
-| 💎 | 🟠 P1    | 6.1 UEFI Global Attributes          | Correctness — Required, BIOSBoot, hidden partition handling |
-| 💎 | 🟠 P1    | 7.1 Hybrid MBR Detection            | Safety — warn and prefer GPT over conflicting MBR           |
-| 💎 | 🟡 P2    | 2.3 Backup Sync on Write            | Redundancy — keep backup in sync after modifications        |
-| 💎 | 🟡 P2    | 6.2 Microsoft Attributes            | Interop — read-only, hidden, no-automount on Basic Data     |
-| 💎 | 🟡 P2    | 8.1 PMBR Writer                     | Write support — create Protective MBR                       |
-| 💎 | 🟡 P2    | 8.2 GPT Header Writer               | Write support — serialize and write headers                 |
-| 💎 | 🟡 P2    | 8.3 Partition Entry Writer           | Write support — serialize entries + array CRC32             |
-| 💎 | 🟡 P2    | 9.1 Initialize GPT Disk            | Feature — create fresh GPT layout                           |
-| 💎 | 🟡 P2    | 9.2 Create Partition                | Feature — add partitions with alignment + validation        |
-| 💎 | 🟡 P2    | 9.3 Delete Partition                | Feature — remove partitions safely                          |
-| 💎 | 🟡 P2    | 9.4 Modify Attributes              | Feature — set bootable, read-only, hidden flags             |
-| 💎 | 🟡 P2    | 11.1 Volume Identification         | Feature — GUID-based persistent drive letter mapping        |
-| ⭐ | 🟡 P2    | 13.1 CRC Scrubbing              | **Proactive integrity validation** — no OS does this       |
-| ⭐ | 🟡 P2    | 14.1 GUID Collision             | **Clone disk safety** — transparent collision resolution   |
-| ⭐ | 🟢 P3    | 9.5 Partition Resize            | **GUI drag-to-resize** — Windows severely limited          |
-| 💎 | 🟢 P3    | 10.1 Diskpart GPT Commands         | Tooling — CLI partition management                          |
-| 💎 | 🟢 P3    | 12.1 GPT Test Suite                 | Quality — automated test coverage                           |
-| ⭐ | 🟢 P3    | 15.1 GPT Backup & Restore       | **Auto-backup partition table** — Windows has nothing      |
+| ⭐ | Priority  | Section                               | Description                                                    |
+| -- | --------- | ------------------------------------- | -------------------------------------------------------------- |
+| 💎 | ✅ Done    | 1.1 Primary Header Validation        | Foundation — signature + CRC32 validation                      |
+| 💎 | ✅ Done    | 1.2 Partition Entry Array Parsing    | Foundation — entry parsing with array CRC32                    |
+| 💎 | ✅ Done    | 1.3 PMBR Detection                   | Foundation — Protective MBR `0xEE` check                       |
+| 💎 | ✅ Done    | 2.1 Backup Header Fallback          | Reliability — backup at last LBA on primary CRC32 failure      |
+| 💎 | ✅ Done    | 5.1 Type GUID Registry              | Correctness — 25+ partition types recognized                   |
+| 💎 | 🟠 P1     | 2.2 Primary Header Auto-Recovery    | Redundancy — restore primary from valid backup                 |
+| 💎 | 🟠 P1     | 3.1 Dynamic Sector Size (4Kn)       | Compatibility — modern NVMe + AF drives                        |
+| 💎 | 🟠 P1     | 4.1 GUID Encode + String Conversion | Write path — needed by §8–§9 write operations                  |
+| 💎 | 🟠 P1     | 6.1 UEFI Global Attributes          | Correctness — Required, BIOSBoot, hidden partition handling    |
+| 💎 | 🟠 P1     | 7.1 Hybrid MBR Detection            | Safety — warn and prefer GPT over conflicting MBR              |
+| 💎 | 🟡 P2     | 2.3 Backup Sync on Write            | Redundancy — keep backup in sync after modifications           |
+| 💎 | 🟡 P2     | 6.2 Microsoft Attributes            | Interop — read-only, hidden, no-automount on Basic Data        |
+| 💎 | 🟡 P2     | 8.1 PMBR Writer                     | Write support — create Protective MBR                          |
+| 💎 | 🟡 P2     | 8.2 GPT Header Writer               | Write support — serialize and write headers                    |
+| 💎 | 🟡 P2     | 8.3 Partition Entry Writer           | Write support — serialize entries + array CRC32                |
+| 💎 | 🟡 P2     | 9.1 Initialize GPT Disk             | Feature — create fresh GPT layout                              |
+| 💎 | 🟡 P2     | 9.2 Create Partition                 | Feature — add partitions with alignment + validation           |
+| 💎 | 🟡 P2     | 9.3 Delete Partition                 | Feature — remove partitions safely                             |
+| 💎 | 🟡 P2     | 9.4 Modify Attributes               | Feature — set bootable, read-only, hidden flags                |
+| 💎 | 🟡 P2     | 11.1 Volume Identification          | Feature — GUID-based persistent drive letter mapping           |
+| 💎 | 🟡 P2     | 12.1 GPT Test Suite                  | Quality — automated QEMU-based test coverage                   |
+| ⭐ | 🟡 P2     | 13.1 CRC Scrubbing                  | **Proactive integrity validation** — no OS does this           |
+| ⭐ | 🟡 P2     | 14.1 GUID Collision                  | **Clone disk safety** — transparent collision resolution       |
+| ⭐ | 🟢 P3     | 9.5 Partition Resize                 | **GUI drag-to-resize** — Windows severely limited              |
+| 💎 | 🟢 P3     | 10.1 Diskpart GPT Commands          | Tooling — CLI partition management                             |
+| ⭐ | 🟢 P3     | 15.1 GPT Backup & Restore           | **Auto-backup partition table** — Windows has nothing          |
+| ⭐ | 🟢 P3     | 16.1 Hot-Swap Detection             | **Runtime disk plug/unplug** — auto re-scan GPT on hot-plug   |
+| ⭐ | 🟢 P3     | 17.1 Partition Health Dashboard      | **GUI GPT integrity + SMART** — unified disk health surface   |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -697,30 +715,119 @@ graph TD
 
 ## OS Comparison
 
-| ⭐ | Feature                          | 🪟 Windows 11                       | 🐧 Linux (gdisk / parted)          | 🚀 Impossible OS                          |
-| -- | -------------------------------- | ---------------------------------- | ---------------------------------- | ----------------------------------------- |
-| 💎 | GPT header parsing               | ✅ Full (partmgr.sys)               | ✅ Full (part/efi.c)                | ✅ Done §1.1 (primary only)               |
-| 💎 | `"EFI PART"` signature check    | ✅                                   | ✅                                  | ✅ Done §1.1                               |
-| 💎 | Header CRC32 validation          | ✅                                   | ✅                                  | ✅ Done §1.1                               |
-| 💎 | Array CRC32 validation           | ✅ (assumes 128 entries)            | ✅ (uses actual NumberOfEntries)    | ✅ Done §1.2                               |
-| 💎 | Protective MBR detection         | ✅                                   | ✅                                  | ✅ Done §1.3                               |
-| 💎 | Backup header fallback           | ✅ Automatic                         | ✅ Automatic                        | ⬜ §2.1 P0                                |
-| 💎 | Primary auto-recovery            | ✅ Silent repair                     | ✅ gdisk repair                     | ⬜ §2.2 P1                                |
-| 💎 | Backup sync on write             | ✅                                   | ✅                                  | ⬜ §2.3 P2                                |
-| 💎 | 4Kn sector support               | ✅ Native                            | ✅ Native                           | ⬜ §3.1 P1                                |
-| 💎 | Mixed-endian GUID (read)         | ✅                                   | ✅                                  | ✅ Done §4.1                               |
-| 💎 | Mixed-endian GUID (write)        | ✅                                   | ✅                                  | ⬜ §4.1 P1                                |
-| 💎 | Full type GUID registry          | ✅ Exhaustive                        | ✅ Exhaustive                       | ⬜ §5.1 P0 (expanded: 25+ types)          |
-| 💎 | UEFI global attributes           | ✅ Required, BIOSBoot               | ✅ Full                             | ⬜ §6.1 P1                                |
-| 💎 | MS type-specific attributes      | ✅ ReadOnly, Hidden, NoMount        | ✅ Recognized                       | ⬜ §6.2 P2                                |
-| 💎 | Hybrid MBR detection             | ⚠️ Partial                         | ✅ gdisk warns                      | ⬜ §7.1 P1                                |
-| 💎 | GPT write / create partition     | ✅ Disk Management                   | ✅ gdisk / parted / sgdisk          | ⬜ §8–9 P2                                |
-| 💎 | Delete partition                 | ✅                                   | ✅                                  | ⬜ §9.3 P2                                |
-| ⭐ | **Partition resize**          | ⚠️ Extend-only, last partition     | ⚠️ CLI parted/gdisk only           | ⬜ §9.5 P3 — GUI drag-to-resize           |
-| 💎 | GUID-based volume tracking       | ✅ mountvol                          | ✅ /dev/disk/by-partuuid            | ⬜ §11.1 P2                               |
-| 💎 | CLI partition tool               | ✅ diskpart                          | ✅ gdisk (interactive + scripted)   | ⬜ §10.1 P3                               |
-| ⭐ | **CRC scrubbing**             | ❌ Only checks on mount             | ❌ Only checks on mount             | ⬜ §13.1 P2 — proactive periodic scrub     |
-| ⭐ | **GUID collision detection**  | ⚠️ Silent, sometimes wrong         | ❌ No detection                     | ⬜ §14.1 P2 — GUI alert + one-click fix    |
-| ⭐ | **GPT backup & restore**     | ❌ No built-in backup               | ⚠️ `sgdisk --backup` CLI only      | ⬜ §15.1 P3 — auto-backup on every change  |
-| 💎 | **128-entry interop**            | ✅ (enforces 128)                    | ✅ (flexible)                       | ✅ Uses `NumberOfEntries` from header      |
-| 💎 | **CRC32 polynomial correctness** | ✅ CCITT `0xEDB88320`               | ✅ CCITT `0xEDB88320`              | ✅ Correct polynomial implemented          |
+| Feature                            | 🪟 Windows 11                    | 🐧 Linux (gdisk / parted)       | 🚀 Impossible OS                                    |
+| ---------------------------------- | ------------------------------- | ------------------------------- | -------------------------------------------------- |
+| GPT header parsing                 | ✅ Full (partmgr.sys)            | ✅ Full (part/efi.c)             | ✅ §1.1 Done — primary + backup                     |
+| `"EFI PART"` signature check       | ✅                               | ✅                               | ✅ §1.1 Done                                        |
+| Header CRC32 validation            | ✅                               | ✅                               | ✅ §1.1 Done                                        |
+| Array CRC32 validation             | ✅ (assumes 128 entries)         | ✅ (uses actual NumberOfEntries) | ✅ §1.2 Done                                        |
+| Protective MBR detection           | ✅                               | ✅                               | ✅ §1.3 Done                                        |
+| Backup header fallback             | ✅ Automatic                     | ✅ Automatic                     | ✅ §2.1 Done                                        |
+| Primary auto-recovery              | ✅ Silent repair                 | ✅ gdisk repair                  | ⬜ §2.2 P1                                          |
+| Backup sync on write               | ✅                               | ✅                               | ⬜ §2.3 P2                                          |
+| 4Kn sector support                 | ✅ Native                        | ✅ Native                        | ⬜ §3.1 P1                                          |
+| Mixed-endian GUID (read)           | ✅                               | ✅                               | ✅ §4.1 Done                                        |
+| Mixed-endian GUID (write)          | ✅                               | ✅                               | ⬜ §4.1 P1                                          |
+| Full type GUID registry            | ✅ Exhaustive                    | ✅ Exhaustive                    | ✅ §5.1 Done — 25+ types                            |
+| UEFI global attributes             | ✅ Required, BIOSBoot            | ✅ Full                          | ⬜ §6.1 P1                                          |
+| MS type-specific attributes        | ✅ ReadOnly, Hidden, NoMount     | ✅ Recognized                    | ⬜ §6.2 P2                                          |
+| Hybrid MBR detection               | ⚠️ Partial                      | ✅ gdisk warns                   | ⬜ §7.1 P1                                          |
+| GPT write / create partition       | ✅ Disk Management               | ✅ gdisk / parted / sgdisk       | ⬜ §8–9 P2                                          |
+| Delete partition                   | ✅                               | ✅                               | ⬜ §9.3 P2                                          |
+| **Partition resize**               | ⚠️ Extend-only, last partition  | ⚠️ CLI parted/gdisk only        | ⬜ §9.5 P3 — **GUI drag-to-resize**                 |
+| GUID-based volume tracking         | ✅ mountvol                      | ✅ /dev/disk/by-partuuid         | ⬜ §11.1 P2                                         |
+| CLI partition tool                 | ✅ diskpart                      | ✅ gdisk (interactive + scripted) | ⬜ §10.1 P3                                         |
+| GPT test suite                     | ✅ Internal (WDK tests)          | ✅ gdisk test images             | ⬜ §12.1 P2                                         |
+| **CRC scrubbing**                  | ❌ Only checks on mount          | ❌ Only checks on mount          | ⬜ §13.1 P2 — **proactive periodic scrub**           |
+| **GUID collision detection**       | ⚠️ Silent, sometimes wrong      | ❌ No detection                  | ⬜ §14.1 P2 — **GUI alert + one-click fix**          |
+| **GPT backup & restore**          | ❌ No built-in backup            | ⚠️ `sgdisk --backup` CLI only   | ⬜ §15.1 P3 — **auto-backup on every change**        |
+| **Hot-swap disk detection**        | ✅ PnP manager                   | ✅ udev + kernel hotplug         | ⬜ §16.1 P3 — **auto re-scan GPT on plug**           |
+| **Partition health dashboard**     | ❌ No unified view               | ❌ CLI-only (`smartctl`)         | ⬜ §17.1 P3 — **GUI GPT + SMART + fragmentation**    |
+| 128-entry interop                  | ✅ (enforces 128)                | ✅ (flexible)                    | ✅ Uses `NumberOfEntries` from header                |
+| CRC32 polynomial correctness       | ✅ CCITT `0xEDB88320`            | ✅ CCITT `0xEDB88320`            | ✅ Correct polynomial implemented                    |
+| **Anti-aliased TTF in diskpart**   | ❌ Console bitmap font           | ❌ Terminal fonts only           | ⬜ **Planned — Selawik in shell**                    |
+
+> **After P1 items:** Impossible OS matches Windows and Linux GPT feature-for-feature on read path.
+> **After P2 items:** Full write support + competitive features (CRC scrubbing, collision detection).
+> **After P3 items:** Exceeds both — drag-resize, auto-backup, hot-swap, and health dashboard.
+
+---
+
+## 12. GPT Test Suite
+
+### 12.1 QEMU-Based Test Images
+
+**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system to create test images: a standard GPT disk with 128 entries, a GPT disk with backup header only (corrupt primary), a GPT disk with 4Kn sectors, a Hybrid MBR GPT disk, a disk with maximum 128 partitions, and a disk with non-standard entry count (9 entries like OpenZFS). Attach each via QEMU and verify the parser handles all correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section.
+
+- [ ] Test image: Standard GPT disk with 4 partitions (EFI, IXFS, Basic Data, Linux)
+  - [ ] Verify all 4 entries parsed correctly with correct types and LBAs
+- [ ] Test image: Corrupt primary header (zero bytes 0–7), valid backup at last LBA
+  - [ ] Verify backup fallback path activates and all partitions still found
+- [ ] Test image: 4Kn logical sector size (`-drive logical_block_size=4096`)
+  - [ ] Verify parser reads sector size from device and calculates LBAs correctly
+- [ ] Test image: Hybrid MBR (partial `0xEE` + real entries in slots 2–4)
+  - [ ] Verify Hybrid MBR detection warning and GPT-preferred parsing
+- [ ] Test image: Maximum 128 partitions (stress test)
+  - [ ] Verify `GPT_MAX_RESULTS` cap works and no buffer overflow
+- [ ] Test image: Non-standard entry count (9 entries, OpenZFS-style)
+  - [ ] Verify CRC32 calculated over actual `NumberOfEntries × EntrySize`
+- [ ] Test image: Empty GPT disk (valid headers, all entries zeroed)
+  - [ ] Verify `tbl.valid == 1` and `tbl.count == 0`
+- [ ] Test: Write path round-trip — create partition → re-read → verify match
+- [ ] Test: Delete partition → verify entry zeroed, CRC updated
+- [ ] Test: Resize partition → verify new LBA range, no overlap
+- [ ] Commit: `"test: GPT partition test suite"`
+
+---
+
+## 16. Hot-Swap Disk Detection (🚀 Impossible OS Feature)
+
+### 16.1 Runtime Disk Plug/Unplug Detection
+
+**Prompt:** When an AHCI or USB disk is hot-plugged at runtime, automatically re-scan GPT structures on the new device and register any partitions with VFS for drive letter assignment. On hot-unplug, gracefully unmount all partitions from the removed disk, flush caches, and notify the user via Disk Manager. Windows does this via the PnP Manager; Linux uses udev + kernel hotplug. Impossible OS must handle this at the kernel level with immediate GPT re-scan. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: hot-swap disk detection"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** While Windows and Linux both support hot-swap, neither proactively
+> validates GPT integrity on plug. Impossible OS can run `gpt_scrub()` (§13.1) on every
+> newly detected disk — catching corruption before the user accesses any data.
+
+- [ ] Register AHCI port change interrupt handler for device insertion/removal
+- [ ] On hot-plug: run `blkdev_scan()` → `gpt_parse()` → register partitions with VFS
+- [ ] On hot-plug: automatically run `gpt_scrub()` to validate GPT integrity (§13.1)
+- [ ] On hot-unplug: flush filesystem caches → unmount partitions → remove `blkdev`
+- [ ] Notify Disk Manager GUI: show toast "Disk connected: {Disk GUID}" or "Disk removed"
+- [ ] Handle edge case: disk removed while file is open → return `STATUS_DEVICE_REMOVED`
+- [ ] USB mass storage: wire into USB driver's device enumeration callback
+- [ ] Log: `[GPT] Hot-plug: detected GPT disk at port %d, GUID %s`
+- [ ] Log: `[GPT] Hot-unplug: unmounted %d partitions from disk %s`
+- [ ] Commit: `"gpt: hot-swap disk detection"`
+
+---
+
+## 17. Partition Health Dashboard (🚀 Impossible OS Feature)
+
+### 17.1 Unified Disk Health Surface
+
+**Prompt:** Create a unified "Disk Health" tab in Disk Manager that combines GPT structural integrity (from §13.1 CRC scrubbing), GUID collision status (from §14.1), SMART data from the underlying block device, and per-partition fragmentation analysis. No OS provides a single unified view — Windows scatters this across Disk Management, Event Viewer, and `chkdsk`; Linux requires separate CLI tools (`smartctl`, `gdisk`, `filefrag`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition health dashboard"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows Disk Management shows zero health data. Linux requires
+> `smartctl` (CLI), `gdisk` (CLI), and `filefrag` (CLI) — three separate tools with no
+> unified view. Impossible OS can surface all three in a single Disk Manager panel with
+> color-coded indicators: 🟢 Healthy, 🟡 Warning, 🔴 Critical.
+
+- [ ] Data sources:
+  - [ ] GPT integrity: primary CRC OK, backup CRC OK, last scrub time (from §13.1)
+  - [ ] GUID collision: any duplicate GUIDs detected (from §14.1)
+  - [ ] SMART: temperature, reallocated sectors, pending sectors, power-on hours
+  - [ ] Filesystem fragmentation: % fragmented files (from filesystem-specific queries)
+- [ ] Implement `disk_health_report(dev)` → aggregate all metrics into a single struct
+- [ ] Health indicator per disk: 🟢 / 🟡 / 🔴 based on worst-case metric
+- [ ] Per-partition drill-down: filesystem type, used/free space, fragmentation %
+- [ ] Registry: `HKLM\SYSTEM\Storage\Disks\{guid}\LastHealthCheck` (timestamp)
+- [ ] Schedule: run health check on boot + when Disk Manager panel is opened
+- [ ] Disk Manager GUI: "Health" tab with disk overview + per-partition cards
+- [ ] Export: "Save Health Report" → text file with all metrics for support tickets
+- [ ] Log: `[GPT] Health check: disk %s, overall=%s, GPT=%s, SMART=%s`
+- [ ] Commit: `"gpt: partition health dashboard"`
+

@@ -8,11 +8,7 @@
  * single-byte type IDs. The header and partition array are both protected
  * by CRC32 checksums.
  *
- * Recognized partition type GUIDs:
- *   EFI System Partition   — C12A7328-F81F-11D2-BA4B-00A0C93EC93B
- *   Microsoft Basic Data   — EBD0A0A2-B9E5-4433-87C0-68B6B72699C7
- *   Linux Filesystem       — 0FC63DAF-8483-4772-8E79-3D69D8477DE4
- *   IXFS (custom)          — DA000000-0000-4978-4653-000000000001
+ * Full type GUID registry (25+ types) — see gpt.c for definitions.
  * ============================================================================ */
 
 #pragma once
@@ -24,7 +20,7 @@
 #define GPT_HEADER_LBA      1
 #define GPT_ENTRY_SIZE      128
 #define GPT_MAX_PARTITIONS  128
-#define GPT_MAX_RESULTS     16   /* Max partitions we report */
+#define GPT_MAX_RESULTS     32   /* Max partitions we report */
 #define GPT_NAME_MAX        36   /* UTF-16LE chars in entry name field */
 
 /* 16-byte GUID (stored in mixed-endian per UEFI spec) */
@@ -76,6 +72,25 @@ extern const struct gpt_guid GPT_GUID_EFI_SYSTEM;
 extern const struct gpt_guid GPT_GUID_MS_BASIC_DATA;
 extern const struct gpt_guid GPT_GUID_LINUX_FS;
 extern const struct gpt_guid GPT_GUID_IXFS;
+extern const struct gpt_guid GPT_GUID_BIOS_BOOT;
+extern const struct gpt_guid GPT_GUID_MS_RESERVED;
+extern const struct gpt_guid GPT_GUID_MS_LDM_META;
+extern const struct gpt_guid GPT_GUID_MS_LDM_DATA;
+extern const struct gpt_guid GPT_GUID_MS_RECOVERY;
+extern const struct gpt_guid GPT_GUID_MS_STORAGE_SPACES;
+extern const struct gpt_guid GPT_GUID_LINUX_SWAP;
+extern const struct gpt_guid GPT_GUID_LINUX_ROOT_X64;
+extern const struct gpt_guid GPT_GUID_LINUX_HOME;
+extern const struct gpt_guid GPT_GUID_LINUX_SRV;
+extern const struct gpt_guid GPT_GUID_LINUX_LVM;
+extern const struct gpt_guid GPT_GUID_LINUX_RAID;
+extern const struct gpt_guid GPT_GUID_APPLE_HFS;
+extern const struct gpt_guid GPT_GUID_APPLE_APFS;
+extern const struct gpt_guid GPT_GUID_FREEBSD_ZFS;
+extern const struct gpt_guid GPT_GUID_SOLARIS_ROOT;
+extern const struct gpt_guid GPT_GUID_VMWARE_VMFS;
+extern const struct gpt_guid GPT_GUID_CHROMEOS_KERNEL;
+extern const struct gpt_guid GPT_GUID_CEPH_OSD;
 
 /* ---- API ---- */
 

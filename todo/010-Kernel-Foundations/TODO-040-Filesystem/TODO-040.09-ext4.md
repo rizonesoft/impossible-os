@@ -27,6 +27,144 @@
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Four TODO files and one spec** feed into the ext4 driver. They have
+> cross-dependencies that dictate implementation order. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    SPEC["specs/filesystem/ext4.md<br/>ext4 On-Disk Specification"]
+    BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
+    PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x83)"]
+    VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
+
+    A["§1.1 Superblock Parsing"]
+    B["§1.2 Feature Flag Gating"]
+    SB["§12.1 Superblock Backup Reader"]
+    C["§2.1 Group Descriptor Table"]
+    D["§3.1 Inode Table Reader"]
+    E["§3.2 Special Inode Handling"]
+    F["§3.3 Extended Attributes"]
+    G["§4.1 Extent Tree Reader"]
+    H["§4.2 File Data Reader"]
+    I["§5.1 Indirect Block Reader"]
+    J["§6.1 Linear Directory Parser"]
+    K["§6.2 HTree Directory Index"]
+    L["§6.3 Path Resolution"]
+    M["§7.1 CRC32C Checksumming"]
+    N["§8.1 VFS Registration"]
+    O["§9.1 Test Suite"]
+    P["§10.1 Inode & GDT Cache"]
+    Q["§11.1 Health Dashboard"]
+    R["§11.2 Deleted Inode Recovery"]
+    S["§11.3 Fragmentation Analyzer"]
+    T["§11.4 Cross-OS Timestamp Inspector"]
+
+    SPEC --> A
+    BLK --> A
+    PART --> A
+    A --> B
+    A --> C
+    A --> SB
+    A --> M
+    C --> D
+    D --> E
+    D --> G
+    D --> F
+    D --> I
+    D --> J
+    D --> P
+    G --> H
+    I --> H
+    H --> L
+    H --> N
+    J --> K
+    J --> L
+    K --> L
+    L --> N
+    VFS --> N
+    B --> N
+    I --> N
+    N --> O
+    E --> Q
+    E --> R
+    G --> S
+    E --> T
+    SB --> Q
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File / Spec              | Sections                    | What It Delivers                                                           | Depends On                          | Status |
+| -- | :----: | ----------------------------- | --------------------------- | -------------------------------------------------------------------------- | ----------------------------------- | :----: |
+| 💎 | **0**  | `specs/filesystem/ext4.md`    | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
+| 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer          | `blkdev_read()` via VirtIO or AHCI                                         | —                                   |   ✅   |
+| 💎 | **0**  | `TODO-040.04` / `TODO-040.05` | Partition detection         | MBR type `0x83` / GPT `0FC63DAF-...` → Linux partition found               | Phase 0 (block)                     |   ✅   |
+| 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.1 Superblock Parsing     | Parse superblock at byte 1024, locate block groups and inodes              | Phase 0 (partitions)                |   ⬜   |
+| 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.2 Feature Flag Gating    | Three-tier safety: incompat → reject, ro_compat → read-only, compat → ok  | Phase 1 (§1.1)                      |   ⬜   |
+| 💎 | **1**  | `TODO-040.09-ext4.md`         | §2.1 Group Descriptor Table | Read GDT — locate bitmaps and inode tables per block group                 | Phase 1 (§1.1)                      |   ⬜   |
+| 💎 | **2**  | `TODO-040.09-ext4.md`         | §3.1 Inode Table Reader     | Read any inode by number — metadata for every file on the volume           | Phase 1 (§2.1)                      |   ⬜   |
+| 💎 | **2**  | `TODO-040.09-ext4.md`         | §3.2 Special Inode Handling | Root directory (inode 2), journal detection, first user inode              | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **2**  | `TODO-040.09-ext4.md`         | §4.1 Extent Tree Reader     | Logical → physical block mapping via extent header/entries                 | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **3**  | `TODO-040.09-ext4.md`         | §4.2 File Data Reader       | Actually read file contents — extent + inline data + hole handling         | Phase 2 (§4.1)                      |   ⬜   |
+| 💎 | **3**  | `TODO-040.09-ext4.md`         | §6.1 Linear Dir Parser      | Walk `ext4_dir_entry_2` records in directory data blocks                   | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **3**  | `TODO-040.09-ext4.md`         | §6.3 Path Resolution        | Full path traversal from root inode 2 — symlinks, case-fold               | Phase 3 (§4.2, §6.1)               |   ⬜   |
+| 💎 | **4**  | `TODO-040.09-ext4.md`         | §8.1 VFS Registration       | Mount ext4/ext3/ext2 volumes, wire `vfs_ops` callbacks                     | Phase 3 (§4.2, §6.3) + VFS (040.07) |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §5.1 Indirect Block Reader  | ext2/ext3 backward compat — triple indirect block chains                   | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §6.2 HTree Directory Index  | Fast lookup in large directories via Half MD4/TEA hashing                  | Phase 3 (§6.1)                      |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §7.1 CRC32C Checksumming    | Validate metadata integrity — superblock, GDT, inodes, extents            | Phase 1 (§1.1)                      |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §3.3 Extended Attributes    | Read xattrs, POSIX ACLs, SELinux labels — inline + external block         | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §10.1 Inode & GDT Cache     | LRU inode cache + pinned GDT — avoid redundant disk reads                 | Phase 2 (§3.1)                      |   ⬜   |
+| 💎 | **5**  | `TODO-040.09-ext4.md`         | §12.1 Superblock Backup     | Read sparse backups — survive primary corruption                           | Phase 1 (§1.1)                      |   ⬜   |
+| 💎 | **6**  | `TODO-040.09-ext4.md`         | §9.1 Test Suite             | Automated validation: ext4/ext3/ext2 images, HTree, symlinks, checksums   | Phase 4 (§8.1)                      |   ⬜   |
+| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.1 Health Dashboard      | **At-a-glance ext4 health** — surfaces Linux error telemetry nobody shows  | Phase 2 (§3.2) + §12.1             |   ⬜   |
+| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces unmaintained `extundelete`      | Phase 2 (§3.2)                      |   ⬜   |
+| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.3 Fragmentation Analyzer | **Visual block map** — shows extent fragmentation no OS displays          | Phase 2 (§4.1)                      |   ⬜   |
+| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.4 Timestamp Inspector   | **Cross-OS timestamp viewer** — nanosecond + creation time display         | Phase 2 (§3.2)                      |   ⬜   |
+
+> [!NOTE]
+> **Phases 0–1** are prerequisites — block I/O, partition tables, superblock, and GDT reading.
+> **Phase 2** is the cornerstone — the inode reader, special inodes, and extent tree decoder
+> unlock everything else. Get these right and the rest flows naturally.
+> **Phases 3–4** build up file reading, directory parsing, path resolution, and VFS integration —
+> this gives you a mountable, browsable ext4 volume.
+> **Phase 5** adds robustness and performance (ext2/ext3 compat, HTree, CRC32C, xattrs, caching,
+> superblock backup reading).
+> **Phase 6** delivers the competitive features (⭐): Health Dashboard, Deleted Inode Recovery,
+> Fragmentation Analyzer, and Cross-OS Timestamp Inspector.
+
+> [!TIP]
+> **Quick wins after Phase 2:**
+> - §3.2 Special Inode Handling is trivial — just define constants and validate inode 2 is a
+>   directory. Fast to implement once the inode reader works.
+> - §10.1 Inode & GDT Cache can be added at any time after §3.1 for an immediate performance
+>   boost during development (fewer disk reads while debugging directory traversal).
+>
+> **Critical gotcha:** §1.2 Feature Flag Gating is **non-negotiable**. Without it, the driver
+> will attempt to mount volumes with unsupported incompat features (encryption, journal replay
+> required) and silently produce garbage data. **Always check incompat flags before proceeding.**
+>
+> **ext2/ext3 backward compat:** The same `0xEF53` magic covers ext2, ext3, and ext4. The only
+> difference is feature flags — no `INCOMPAT_EXTENTS` means indirect blocks (§5.1), no
+> `COMPAT_HAS_JOURNAL` means ext2. The inode reader and GDT reader are identical across all three.
+> Phase 5 adds indirect block support so you can mount older volumes, but it's not needed for
+> modern ext4 (which always has extents).
+>
+> **Memory rule reminder:** The GDT for a 256 GB ext4 volume is only ~64 KB — cache it entirely
+> at mount time via `pmm_alloc_contiguous()`. Inode table reads are per-block-group and can be
+> much larger — always use PMM, never `kmalloc()`.
+>
+> **CRC32C reuse:** The IXFS driver already has a working `ixfs_crc32c()` in
+> `src/kernel/fs/ixfs/ixfs_core.c` using the Castagnoli polynomial `0x82F63B78`. Factor it out
+> to a shared `kernel/crc32c.c` so ext4 can reuse it — same polynomial, same algorithm.
+
+---
+
 ## 1. Superblock Parsing & Validation
 
 ### 1.1 Superblock Reader
@@ -72,20 +210,38 @@
   - [ ] `INCOMPAT_EXTENTS` (`0x0040`) — extent-based allocation (mandatory for ext4)
   - [ ] `INCOMPAT_64BIT` (`0x0080`) — 64-bit block numbers
   - [ ] `INCOMPAT_FLEX_BG` (`0x0200`) — flexible block groups
+  - [ ] `INCOMPAT_INLINE_DATA` (`0x8000`) — small files store data in `i_block` (optional support)
 - [ ] Reject mount if any UNSUPPORTED incompat bits are set:
   - [ ] `INCOMPAT_RECOVER` (`0x0004`) — needs journal replay (we don't support)
+  - [ ] `INCOMPAT_JOURNAL_DEV` (`0x0008`) — external journal device (not a data volume)
+  - [ ] `INCOMPAT_META_BG` (`0x0010`) — meta block group layout (rare, advanced)
+  - [ ] `INCOMPAT_MMP` (`0x0100`) — multi-mount protection lock
+  - [ ] `INCOMPAT_EA_INODE` (`0x0400`) — xattrs in dedicated inodes
+  - [ ] `INCOMPAT_DIRDATA` (`0x1000`) — directory entries with extra data
+  - [ ] `INCOMPAT_CSUM_SEED` (`0x2000`) — checksum seed in superblock (support if `METADATA_CSUM`)
+  - [ ] `INCOMPAT_LARGEDIR` (`0x4000`) — 3-level HTree directories
   - [ ] `INCOMPAT_ENCRYPT` (`0x10000`) — encrypted inodes
+  - [ ] `INCOMPAT_CASEFOLD` (`0x20000`) — case-insensitive lookups
   - [ ] Any other unknown bits → reject
   - [ ] Log: `[ext4] FATAL: Unsupported incompat features: 0x%08X — refusing mount`
 - [ ] Parse `s_feature_ro_compat` — mount read-only if unrecognized bits present:
   - [ ] `RO_COMPAT_SPARSE_SUPER` (`0x0001`) — sparse superblock backups
   - [ ] `RO_COMPAT_LARGE_FILE` (`0x0002`) — files > 2 GiB
   - [ ] `RO_COMPAT_HUGE_FILE` (`0x0008`) — block counts in FS units
+  - [ ] `RO_COMPAT_GDT_CSUM` (`0x0010`) — group descriptor checksums (ext3-style CRC16)
+  - [ ] `RO_COMPAT_DIR_NLINK` (`0x0020`) — directories with > 65000 subdirectories
   - [ ] `RO_COMPAT_EXTRA_ISIZE` (`0x0040`) — extended inode fields
+  - [ ] `RO_COMPAT_QUOTA` (`0x0100`) — quota support
+  - [ ] `RO_COMPAT_BIGALLOC` (`0x0200`) — bitmap tracks clusters, not blocks
   - [ ] `RO_COMPAT_METADATA_CSUM` (`0x0400`) — CRC32C checksumming
+  - [ ] `RO_COMPAT_PROJECT` (`0x2000`) — project quota support
+  - [ ] `RO_COMPAT_VERITY` (`0x8000`) — fs-verity protected files
 - [ ] Parse `s_feature_compat` — log for informational purposes:
   - [ ] `COMPAT_HAS_JOURNAL` (`0x0004`) — has JBD2 journal
+  - [ ] `COMPAT_EXT_ATTR` (`0x0008`) — extended attributes supported
+  - [ ] `COMPAT_RESIZE_INODE` (`0x0010`) — online resize reserved GDT blocks
   - [ ] `COMPAT_DIR_INDEX` (`0x0020`) — HTree directory indexing
+  - [ ] `COMPAT_ORPHAN_FILE` (`0x1000`) — orphan file for tracking orphaned inodes
 - [ ] Log all detected features: `[ext4] Features: incompat=0x%X, ro_compat=0x%X, compat=0x%X`
 - [ ] Commit: `"ext4: feature flag gating"`
 
@@ -365,18 +521,27 @@
 - [ ] Register with partition scanner:
   - [ ] MBR type `0x83` (Linux native)
   - [ ] GPT GUID `0FC63DAF-8483-4772-8E79-3D69D8477DE4` (Linux filesystem)
-- [ ] Implement `vfs_ops` callbacks:
-  - [ ] `ext4_open(node)` — read inode, cache extent tree
+- [ ] Implement `vfs_ops` callbacks (must match `struct vfs_ops` in `include/kernel/fs/vfs.h`):
+  - [ ] `ext4_open(node, flags)` — read inode, cache extent tree
   - [ ] `ext4_close(node)` — free cached extents
   - [ ] `ext4_read(node, offset, size, buf)` — extent/indirect read
   - [ ] `ext4_readdir(node, index)` — directory enumeration
   - [ ] `ext4_finddir(node, name)` — directory lookup (HTree or linear)
-  - [ ] `ext4_stat(node, stat)` — populate from inode metadata
-  - [ ] Write ops → return `-EROFS`
+  - [ ] `ext4_stat(node, stat)` — populate `vfs_stat` from inode metadata
+  - [ ] Write ops (`write`, `create`, `unlink`, `rename`, `truncate`, `mkdir`, `rmdir`, `set_attr`, `set_times`, `flush`) → return `-EROFS`
 - [ ] Handle ext2/ext3 detection:
   - [ ] No `INCOMPAT_EXTENTS` → assume ext2/ext3, use indirect blocks
   - [ ] No `COMPAT_HAS_JOURNAL` → ext2 (no journaling concern)
   - [ ] Has journal but no extents → ext3
+
+> [!WARNING]
+> **Codebase gap:** `partition.c` already has `probe_ext2_sector2()` and `PART_FS_EXT2 = 3`
+> but the ext4 driver doesn't exist yet. When implementing, **rename** the detection to
+> `probe_ext4()` and change `PART_FS_EXT2` to `PART_FS_EXT4` (since ext4 is the superset).
+> The existing probe reads sector 2 (byte 1024) and checks `0xEF53` at offset 56 — this is
+> correct for ext2/ext3/ext4 (all share the same magic). The line `partition.c:366` that
+> skips non-FAT32/non-IXFS partitions must be updated to include `PART_FS_EXT4`.
+
 - [ ] Log: `[ext4] Mounted %s volume on drive %c: (%llu bytes, %s)`
 - [ ] Commit: `"ext4: VFS driver registration"`
 
@@ -496,30 +661,116 @@
   - [ ] Show: inode number, size, deletion time, file type, confidence icon
 - [ ] Commit: `"ext4: deleted inode recovery"`
 
+### 11.3 Fragmentation Analyzer (🚀 Impossible OS Feature)
+
+**Prompt:** ext4 with extents should be less fragmented than ext2/ext3, but files can still become fragmented over time (especially if the volume was nearly full during writes). Implement a fragmentation analyzer that reads the extent tree for any file and computes: total extent count, ideal extent count (1 for contiguous), fragmentation ratio, and a visual block map. For directories, show extent fragmentation of the `$INDEX_ROOT`. Aggregate per-volume: scan all inodes, bucket files by fragmentation level, display a heat map in Disk Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: fragmentation analyzer"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux has `filefrag` and `e4defrag` — both CLI-only, per-file, no
+> GUI visualization. Windows has zero ext4 support. Impossible OS can show a visual block
+> map of any ext4 file's extents, plus a whole-volume fragmentation heat map — a feature
+> no operating system currently provides.
+
+- [ ] Implement `ext4_file_fragmentation(vol, inode_number)`:
+  - [ ] Read extent tree for the inode
+  - [ ] Count extents: 1 = perfect (contiguous), 2+ = fragmented
+  - [ ] Compute fragmentation ratio: `(extent_count - 1) / ideal_extent_count`
+  - [ ] Detect gaps between extents (holes vs fragmentation)
+  - [ ] Return: `{ extent_count, total_blocks, contiguous_runs, frag_ratio }`
+- [ ] Implement `ext4_volume_fragmentation(vol)`:
+  - [ ] Walk all inodes sequentially (similar to deleted inode scanner)
+  - [ ] Skip free inodes, directories < 3 extents
+  - [ ] Bucket files: 1 extent = 🟢, 2–5 = 🟡, 6–20 = 🟠, 21+ = 🔴
+  - [ ] Report: total files scanned, per-bucket counts, worst offenders (top 10)
+- [ ] Visual block map for Disk Manager:
+  - [ ] For a selected file: show extent layout as colored blocks
+  - [ ] For volume: show aggregate heat map (block groups colored by fragmentation level)
+- [ ] Commit: `"ext4: fragmentation analyzer"`
+
+### 11.4 Cross-OS Timestamp Inspector (🚀 Impossible OS Feature)
+
+**Prompt:** ext4 records up to 4 timestamps per inode, each with nanosecond precision (if `EXTRA_ISIZE` ≥ 32): `i_atime` (access), `i_ctime` (inode change), `i_mtime` (modification), and `i_crtime` (creation — stored in the extended inode area at offset 144). The creation time is unique to ext4 — NTFS has it, but ext2/ext3 do not. Linux `stat` shows atime/mtime/ctime but omits crtime in most distributions. Windows can't read ext4 at all. Display all 4 timestamps with nanosecond precision in file properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: cross-OS timestamp inspector"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux `stat` shows 3 timestamps but hides creation time (`crtime`).
+> The `debugfs` tool can show it, but only via CLI. Windows shows timestamps for NTFS files
+> but has no ext4 support at all. Impossible OS showing all 4 ext4 timestamps with nanosecond
+> precision in a GUI file properties panel is a unique, forensics-grade feature.
+
+- [ ] Read extended inode timestamps (requires `EXTRA_ISIZE` ≥ 32):
+  - [ ] `i_crtime` at inode offset `0x90` (4 bytes epoch) + `i_crtime_extra` at `0x94` (4 bytes)
+  - [ ] Decode extra field: bits 0–1 = epoch high bits, bits 2–31 = nanoseconds
+  - [ ] Reconstruct full timestamp: `seconds = (extra_bits_0_1 << 32) | i_*time`, `ns = extra >> 2`
+- [ ] Display all 4 timestamps in file properties:
+  - [ ] Created: `i_crtime` — ext4-exclusive, not in ext2/ext3
+  - [ ] Modified: `i_mtime` — content last changed
+  - [ ] Changed: `i_ctime` — metadata last changed (permissions, links)
+  - [ ] Accessed: `i_atime` — last read (may be disabled via `noatime` mount)
+- [ ] Format: `YYYY-MM-DD HH:MM:SS.nnnnnnnnn` (9 decimal places for ns)
+- [ ] Handle missing crtime: if `EXTRA_ISIZE < 32`, show "N/A (ext2/ext3 inode)"
+- [ ] Wire to File Properties panel in Disk Manager for ext4 volumes
+- [ ] Commit: `"ext4: cross-OS timestamp inspector"`
+
+---
+
+## 12. Superblock Resilience
+
+### 12.1 Superblock Backup Reader
+
+**Prompt:** ext4 stores superblock backups at predefined block group boundaries. With `SPARSE_SUPER` (the common case), backups exist only in block groups 0, 1, and powers of 3, 5, and 7 (i.e., groups 0, 1, 3, 5, 7, 9, 25, 27, 49, 125, ...). Implement reading backup superblocks for two purposes: (1) resilience — if the primary superblock at byte 1024 is corrupt or unreadable, try backups; (2) health — compare primary vs backup to detect silent corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: superblock backup reader"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Linux `e2fsck -b` can use backup superblocks for repair, but it's a
+> CLI tool and requires knowing the backup location. Windows has no ext4 support. Impossible OS
+> can automatically fall back to backup superblocks on primary corruption AND display backup
+> consistency status in the Health Dashboard — silent corruption detection no OS shows in a GUI.
+
+- [ ] Implement `ext4_has_super_backup(group)`:
+  - [ ] Group 0 and 1 always have backups
+  - [ ] For `SPARSE_SUPER`: check if group is a power of 3, 5, or 7
+  - [ ] Algorithm: for each base (3, 5, 7), divide group by base repeatedly — if result is 1, it's a power
+- [ ] Implement `ext4_read_backup_superblock(vol, group_number)`:
+  - [ ] Calculate backup block: `group_number × blocks_per_group + (group_number == 0 ? 0 : s_first_data_block)`
+  - [ ] Read 1024 bytes starting at `backup_block × block_size + 1024`
+  - [ ] Validate: check magic `0xEF53`, compare `s_uuid` against primary
+  - [ ] Return parsed superblock or error
+- [ ] Primary superblock fallback:
+  - [ ] If primary read fails or CRC mismatch, try group 1 backup
+  - [ ] If group 1 fails, try groups 3, 5, 7 in order
+  - [ ] Log: `[ext4] Primary superblock corrupt — using backup from group %u`
+- [ ] Health Dashboard integration:
+  - [ ] Compare primary `s_wtime` (last write time) against backup
+  - [ ] Mismatch count > threshold → `⚠️ Superblock backups stale`
+  - [ ] All match → `✅ Superblock backups consistent`
+- [ ] Commit: `"ext4: superblock backup reader"`
+
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section | Description |
-| -- |----------|---------|-------------|
-| 💎 | 🔴 P0 | 1.1 Superblock Parsing | Foundation — locate block groups and inodes |
-| 💎 | 🔴 P0 | 1.2 Feature Flag Gating | Safety — reject unsafe mounts, handle ext2/ext3 |
-| 💎 | 🔴 P0 | 2.1 Group Descriptor Table | Foundation — locate bitmaps and inode tables |
-| 💎 | 🔴 P0 | 3.1 Inode Reader | Foundation — read any file's metadata |
-| 💎 | 🔴 P0 | 4.1 Extent Tree Reader | Foundation — map logical to physical blocks |
-| 💎 | 🟠 P1 | 3.2 Special Inode Handling | Metadata — root dir, journal detection |
-| 💎 | 🟠 P1 | 4.2 File Data Reader | Core feature — actually read file contents |
-| 💎 | 🟠 P1 | 6.1 Linear Directory Parser | Directory — read dir entries |
-| 💎 | 🟠 P1 | 6.3 Path Resolution | Directory — resolve full paths |
-| 💎 | 🟠 P1 | 8.1 VFS Registration | Integration — make ext4 mountable |
-| 💎 | 🟡 P2 | 3.3 Extended Attributes | Interop — read xattrs, POSIX ACLs, SELinux labels |
-| 💎 | 🟡 P2 | 5.1 Indirect Block Reader | Compat — mount ext2/ext3 volumes |
-| 💎 | 🟡 P2 | 6.2 HTree Directory Index | Performance — fast lookup in large dirs |
-| 💎 | 🟡 P2 | 7.1 CRC32C Checksumming | Integrity — detect metadata corruption |
-| 💎 | 🟡 P2 | 10.1 Inode & Block Group Cache | Performance — avoid redundant disk reads |
-| 💎 | 🟢 P3 | 9.1 Test Suite | Quality — automated validation |
-| ⭐ | 🟢 P3 | 11.1 Health Dashboard | **At-a-glance ext4 health** — surfaces Linux error telemetry |
-| ⭐ | 🟢 P3 | 11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces `extundelete` |
+| ⭐ | Priority | Section                       | Description                                                         |
+| -- | -------- | ----------------------------- | ------------------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1.1 Superblock Parsing        | Foundation — locate block groups and inodes                         |
+| 💎 | 🔴 P0   | 1.2 Feature Flag Gating       | Safety — reject unsafe mounts, handle ext2/ext3                    |
+| 💎 | 🔴 P0   | 2.1 Group Descriptor Table    | Foundation — locate bitmaps and inode tables                        |
+| 💎 | 🔴 P0   | 3.1 Inode Reader              | Foundation — read any file's metadata                               |
+| 💎 | 🔴 P0   | 4.1 Extent Tree Reader        | Foundation — map logical to physical blocks                         |
+| 💎 | 🟠 P1   | 3.2 Special Inode Handling     | Metadata — root dir, journal detection                              |
+| 💎 | 🟠 P1   | 4.2 File Data Reader          | Core feature — actually read file contents                          |
+| 💎 | 🟠 P1   | 6.1 Linear Directory Parser   | Directory — read dir entries                                        |
+| 💎 | 🟠 P1   | 6.3 Path Resolution           | Directory — resolve full paths                                      |
+| 💎 | 🟠 P1   | 8.1 VFS Registration          | Integration — make ext4 mountable                                   |
+| 💎 | 🟡 P2   | 3.3 Extended Attributes       | Interop — read xattrs, POSIX ACLs, SELinux labels                  |
+| 💎 | 🟡 P2   | 5.1 Indirect Block Reader     | Compat — mount ext2/ext3 volumes                                    |
+| 💎 | 🟡 P2   | 6.2 HTree Directory Index     | Performance — fast lookup in large dirs                             |
+| 💎 | 🟡 P2   | 7.1 CRC32C Checksumming       | Integrity — detect metadata corruption                              |
+| 💎 | 🟡 P2   | 10.1 Inode & Block Group Cache | Performance — avoid redundant disk reads                           |
+| 💎 | 🟡 P2   | 12.1 Superblock Backup Reader | Resilience — read sparse backups, survive primary corruption        |
+| 💎 | 🟢 P3   | 9.1 Test Suite                | Quality — automated validation                                      |
+| ⭐ | 🟢 P3   | 11.1 Health Dashboard         | **At-a-glance ext4 health** — surfaces Linux error telemetry        |
+| ⭐ | 🟢 P3   | 11.2 Deleted Inode Recovery   | **Built-in forensic recovery** — replaces `extundelete`             |
+| ⭐ | 🟢 P3   | 11.3 Fragmentation Analyzer   | **Visual block map** — extent fragmentation nobody shows            |
+| ⭐ | 🟢 P3   | 11.4 Timestamp Inspector      | **Cross-OS timestamp viewer** — nanosecond + creation time display  |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -528,38 +779,58 @@
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Windows 11 | 🐧 Linux (native ext4) | 🚀 Impossible OS |
-| -- | ------------------------------- | -------------------- | --------------------------------- | --------------------------------- |
-| 💎 | Superblock parsing | ❌ No ext4 support | ✅ Full | ⬜ §1.1 P0 |
-| 💎 | Feature flag gating | ❌ | ✅ Full 3-tier (compat/incompat/ro) | ⬜ §1.2 P0 |
-| 💎 | Block group descriptors | ❌ | ✅ Full (32/64-byte) | ⬜ §2.1 P0 |
-| 💎 | Inode reading | ❌ | ✅ Full (128/256-byte) | ⬜ §3.1 P0 |
-| 💎 | Extended attributes (xattr) | ❌ | ✅ Full (inline + external block) | ⬜ §3.3 P2 |
-| 💎 | Extent tree traversal | ❌ | ✅ Full (extent cache + preread) | ⬜ §4.1 P0 |
-| 💎 | Indirect block map (ext2/ext3) | ❌ | ✅ Full (triple indirect) | ⬜ §5.1 P2 |
-| 💎 | Linear directory entries | ❌ | ✅ Full | ⬜ §6.1 P1 |
-| 💎 | HTree directory index | ❌ | ✅ Full (Half MD4/TEA) | ⬜ §6.2 P2 |
-| 💎 | Path resolution | ❌ | ✅ Full (symlinks, case-fold) | ⬜ §6.3 P1 |
-| 💎 | CRC32C metadata checksums | ❌ | ✅ Full | ⬜ §7.1 P2 |
-| 💎 | JBD2 journal replay | ❌ | ✅ Full recovery | ⬜ Future P3 (reject RECOVER) |
-| 💎 | VFS integration | ❌ | ✅ Native | ⬜ §8.1 P1 |
-| 💎 | Inline data (i_block payload) | ❌ | ✅ Full | ⬜ §4.2 P1 |
-| 💎 | flex_bg support | ❌ | ✅ Full | ⬜ §2.1 (handled in GDT read) |
-| 💎 | ext2/ext3 backward compat | ❌ | ✅ Full | ⬜ §5.1 + §8.1 P2 |
-| 💎 | Uninitialized extents | ❌ | ✅ Full (return zeros) | ⬜ §4.1 (bit 15 handling) |
-| 💎 | Inode / GDT caching | ❌ | ✅ Page cache + slab allocator | ⬜ §10.1 P2 |
-| 💎 | Write support | ❌ | ✅ Full R/W | ⬜ Future P3 |
-| ⭐ | **Volume health dashboard** | ❌ No ext4 support | ❌ `tune2fs -l` raw text only | ⬜ §11.1 P3 — GUI health panel |
-| ⭐ | **Deleted inode recovery** | ❌ No ext4 support | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — built-in GUI recovery |
-| 💎 | **Read-only driver (minimum)** | ❌ None | ✅ | ⬜ Requires §1–§4, §6, §8 |
+| Feature                             | 🪟 Windows 11                      | 🐧 Linux (native ext4)             | 🚀 Impossible OS                          |
+| ----------------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------- |
+| Superblock parsing                  | ❌ No ext4 support                  | ✅ Full                             | ⬜ §1.1 P0                               |
+| Feature flag gating                 | ❌                                  | ✅ Full 3-tier (compat/incompat/ro) | ⬜ §1.2 P0                               |
+| Block group descriptors             | ❌                                  | ✅ Full (32/64-byte)                | ⬜ §2.1 P0                               |
+| Inode reading                       | ❌                                  | ✅ Full (128/256-byte)              | ⬜ §3.1 P0                               |
+| Extended attributes (xattr)         | ❌                                  | ✅ Full (inline + external block)   | ⬜ §3.3 P2                               |
+| Extent tree traversal               | ❌                                  | ✅ Full (extent cache + preread)    | ⬜ §4.1 P0                               |
+| Indirect block map (ext2/ext3)      | ❌                                  | ✅ Full (triple indirect)           | ⬜ §5.1 P2                               |
+| Linear directory entries            | ❌                                  | ✅ Full                             | ⬜ §6.1 P1                               |
+| HTree directory index               | ❌                                  | ✅ Full (Half MD4/TEA)              | ⬜ §6.2 P2                               |
+| Path resolution                     | ❌                                  | ✅ Full (symlinks, case-fold)       | ⬜ §6.3 P1                               |
+| CRC32C metadata checksums           | ❌                                  | ✅ Full                             | ⬜ §7.1 P2                               |
+| JBD2 journal replay                 | ❌                                  | ✅ Full recovery                    | ⬜ Future P3 (reject `RECOVER`)           |
+| VFS integration                     | ❌                                  | ✅ Native                           | ⬜ §8.1 P1                               |
+| Inline data (`i_block` payload)     | ❌                                  | ✅ Full                             | ⬜ §4.2 P1                               |
+| flex_bg support                     | ❌                                  | ✅ Full                             | ⬜ §2.1 (handled in GDT read)            |
+| ext2/ext3 backward compat           | ❌                                  | ✅ Full                             | ⬜ §5.1 + §8.1 P2                        |
+| Uninitialized extents               | ❌                                  | ✅ Full (return zeros)              | ⬜ §4.1 (bit 15 handling)                |
+| Inode / GDT caching                 | ❌                                  | ✅ Page cache + slab allocator      | ⬜ §10.1 P2                              |
+| Superblock backup reading           | ❌                                  | ✅ `e2fsck` automatic               | ⬜ §12.1 P2                              |
+| Write support                       | ❌                                  | ✅ Full R/W                         | ⬜ Future P3                              |
+| **Volume health dashboard**         | ❌ No ext4 support                  | ❌ `tune2fs -l` raw text only       | ⬜ §11.1 P3 — **GUI health panel**       |
+| **Deleted inode recovery**          | ❌ No ext4 support                  | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — **built-in GUI recovery**  |
+| **Fragmentation analyzer**          | ❌ No ext4 support                  | ❌ `filefrag` per-file CLI only     | ⬜ §11.3 P3 — **visual block heat map**  |
+| **Cross-OS timestamp inspector**    | ❌ No ext4 support                  | ⚠️ `stat` CLI (no GUI, no crtime)   | ⬜ §11.4 P3 — **GUI ns + crtime viewer** |
+| **Read-only driver (minimum)**      | ❌ None                             | ✅                                  | ⬜ Requires §1–§4, §6, §8               |
+
+> **After Phase 4:** Impossible OS can read any ext4/ext3/ext2 volume — matches what third-party
+> Windows tools (Ext2Fsd, DiskInternals) attempt, but built-in and more reliable.
+> **After §11 features:** Exceeds both Windows and Linux — GUI health, recovery, fragmentation,
+> and timestamp analysis are unique to Impossible OS.
 
 ---
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `src/kernel/fs/ext4.c` | [NEW] ext4/ext3/ext2 driver implementation |
-| `include/kernel/fs/ext4.h` | [NEW] ext4 structures, constants, feature flags |
-| `src/kernel/fs/partition.c` | Register ext4 detection on MBR `0x83` / GPT Linux GUID |
-| `specs/filesystem/ext4.md` | Full on-disk specification reference |
+| File                                   | Purpose                                                                  |
+| -------------------------------------- | ------------------------------------------------------------------------ |
+| `src/kernel/fs/ext4.c`                 | [NEW] ext4/ext3/ext2 driver implementation                               |
+| `include/kernel/fs/ext4.h`             | [NEW] ext4 structures, constants, feature flags                          |
+| `src/kernel/fs/partition.c`            | **Has `probe_ext2_sector2()` + `PART_FS_EXT2`** — rename to ext4         |
+| `include/kernel/fs/partition.h`        | **Has `PART_FS_EXT2 = 3`** — rename to `PART_FS_EXT4`                   |
+| `src/kernel/fs/ixfs/ixfs_core.c`       | `ixfs_crc32c()` — **factor out** to shared `kernel/crc32c.c` for reuse   |
+| `src/kernel/fs/gpt.c`                  | Has `GPT_GUID_LINUX_FS` (`0FC63DAF-...`) — ext4 partitions use this GUID |
+| `include/kernel/fs/gpt.h`              | `gpt_crc32()` — CRC32 (IEEE), different polynomial from CRC32C          |
+| `specs/filesystem/ext4.md`             | Full on-disk specification reference (753 lines)                         |
+
+> [!WARNING]
+> **Codebase gaps to close before ext4 driver:**
+> 1. `partition.c` already detects `0xEF53` but labels it `ext2` — rename to ext4 (superset)
+> 2. `partition.c:366` skips non-FAT32/non-IXFS partitions — add `PART_FS_EXT4`
+> 3. `ixfs_crc32c()` is private to IXFS — extract to `src/kernel/crc32c.c` for ext4 reuse
+> 4. `vfs_ops.open()` takes `(node, flags)` — ext4 must match this signature
+
