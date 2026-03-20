@@ -15,6 +15,18 @@
 /* Initialize PIT channel 0 at the target frequency */
 void pit_init(void);
 
+/* Increment the tick counter from an external timer source (e.g., LAPIC timer).
+ * Also fires the registered callback if one is active.
+ * Returns non-zero if a callback was fired (for caller info). */
+int pit_tick_increment(void);
+
+/* Set the actual timer frequency (used when LAPIC timer replaces PIT). */
+void pit_set_freq(uint32_t hz);
+
+/* Stop the PIT hardware (channel 0). Called after LAPIC timer takes over.
+ * Leaves the tick counter and sleep_ms/uptime infrastructure intact. */
+void pit_stop(void);
+
 /* Get current tick count (increments at PIT_TARGET_FREQ Hz) */
 uint64_t pit_get_ticks(void);
 

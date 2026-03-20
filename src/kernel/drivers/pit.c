@@ -49,16 +49,13 @@ static volatile uint64_t tick_count = 0;
 static uint32_t pit_divisor;
 static uint32_t pit_actual_freq;
 
-/* IRQ 0 handler — called on every PIT tick.
- * Returns a frame pointer: same frame if no task switch, or a
- * different task's saved frame for preemptive context switch. */
-static uint64_t pit_irq_handler(struct interrupt_frame *frame)
+/* Increment tick counter and fire callback. Called from either
+ * pit_irq_handler (PIT-as-tick-source) or LAPIC timer handler. */
+int pit_tick_increment(void)
 {
+    int callback_fired = 0;
     uint64_t flags;
 
-    /* Protect tick_count and callback state.  IRQs are already off inside
-     * an IRQ handler; irqsave records that so irqrestore won't accidentally
-     * re-enable them mid-handler. */
     spin_lock_irqsave(&pit_lock, &flags);
     tick_count++;
 
@@ -68,10 +65,34 @@ static uint64_t pit_irq_handler(struct interrupt_frame *frame)
         if (pit_callback_counter >= pit_callback_divisor) {
             pit_callback_counter = 0;
             pit_callback_fn();
+            callback_fired = 1;
         }
     }
     spin_unlock_irqrestore(&pit_lock, flags);
+    return callback_fired;
+}
 
+/* Set the actual timer frequency (when LAPIC timer replaces PIT). */
+void pit_set_freq(uint32_t hz)
+{
+    pit_actual_freq = hz;
+}
+
+/* Stop PIT channel 0 hardware. Tick counter + sleep_ms remain usable. */
+void pit_stop(void)
+{
+    /* Program PIT channel 0 to mode 0, count = 0 → stops generating IRQs */
+    outb(PIT_CMD, 0x30);   /* channel 0, lobyte/hibyte, mode 0, binary */
+    outb(PIT_CHANNEL0, 0);
+    outb(PIT_CHANNEL0, 0);
+}
+
+/* IRQ 0 handler — called on every PIT tick (when PIT is tick source).
+ * Returns a frame pointer: same frame if no task switch, or a
+ * different task's saved frame for preemptive context switch. */
+static uint64_t pit_irq_handler(struct interrupt_frame *frame)
+{
+    pit_tick_increment();
     irq_eoi(IRQ_TIMER);
 
     /* Let the scheduler decide if it's time to switch tasks */

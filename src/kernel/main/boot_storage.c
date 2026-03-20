@@ -18,6 +18,7 @@
 #include "kernel/drivers/lapic.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/drivers/pit.h"
 #include "kernel/smp.h"
 #include "kernel/drivers/hyperv/vmbus.h"
 #include "kernel/drivers/hyperv/storvsc.h"
@@ -94,17 +95,31 @@ void boot_storage_init(uint64_t magic)
          (uint64_t)g_boot_info.mmap_count);
 
     /* LAPIC/IOAPIC init already happened in boot_interrupts_init().
-     * Here we just start the LAPIC timer (if available) and bring up
-     * secondary CPUs via SMP init. */
+     * Here we calibrate the LAPIC timer using PIT channel 2, start the
+     * LAPIC timer as the primary tick source, disable PIT, and bring up
+     * secondary CPUs via SMP init.
+     *
+     * Linux approach: PIT used briefly for calibration only, then disabled.
+     * LAPIC timer + TSC handle all scheduling/timing thereafter. */
     if (g_boot_info.acpi_available) {
         if (ioapic_available() && lapic_available()) {
-            /* Start LAPIC timer as the primary tick source */
+            /* Calibrate LAPIC timer frequency using PIT channel 2 */
+            lapic_timer_calibrate();
+
+            /* Start LAPIC timer as the primary tick source (100 Hz) */
             lapic_timer_init(100);
+
+            /* Tell tick infrastructure the actual frequency */
+            pit_set_freq(100);
+
+            /* PIT is no longer needed — stop it */
+            pit_stop();
 
             boot_splash_status("Initializing SMP...");
             smp_init();
         } else {
-            /* No IOAPIC — single CPU with PIC routing only */
+            /* No IOAPIC — single CPU with PIC routing only.
+             * PIT remains the tick source via pit_irq_handler. */
             smp_init();
         }
     }

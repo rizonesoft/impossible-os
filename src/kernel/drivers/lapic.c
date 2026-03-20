@@ -19,6 +19,9 @@
  * ============================================================================ */
 
 #include "kernel/drivers/lapic.h"
+#include "kernel/drivers/pit.h"
+#include "kernel/idt.h"
+#include "kernel/sched/task.h"
 #include "kernel/acpi.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -296,44 +299,168 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 
 /* ---- LAPIC Timer ---- */
 
-/* xv6-style LAPIC timer initialization.
- *
- * Instead of calibrating with the PIT (which hangs on VBox NEM due to
- * extremely slow port I/O under Hyper-V paravirtualization), we use a
- * hardcoded initial count based on typical LAPIC timer frequencies.
- *
- * The LAPIC timer counts down from ICR at (bus_clock / divider) Hz.
- * With divider=1:
- *   - QEMU TCG:   ~26 MHz bus → ICR = 260,000 for 100 Hz
- *   - VBox NEM:    ~1 GHz bus  → ICR = 10,000,000 for 100 Hz
- *   - Real Intel:  ~100-400 MHz → ICR varies
- *
- * xv6 uses ICR=10000000 with divider X1 and it works everywhere.
- * We do the same. The tick rate won't be exactly 100 Hz, but the
- * timer WILL fire, and that's what matters for boot progress. */
+/* Calibrated ticks per millisecond (0 = uncalibrated / fallback) */
+static uint32_t cal_ticks_per_ms = 0;
 
-void lapic_timer_init(uint32_t hz)
+/* PIT base frequency (Hz) — the 8254 oscillator runs at this exact rate */
+#define PIT_OSC_FREQ  1193182
+
+/* Calibration window: 10ms via PIT channel 2 one-shot */
+#define CAL_MS        10
+#define CAL_PIT_COUNT (PIT_OSC_FREQ * CAL_MS / 1000)  /* ~11932 */
+
+/* Inline port I/O for calibration code */
+static inline void cal_outb(uint16_t port, uint8_t val)
 {
-    /* xv6-style: hardcoded initial count, divider 1 */
-    uint32_t ticr = 10000000;
-    (void)hz; /* we use xv6's fixed count instead of computing from hz */
+    __asm__ volatile("outb %0, %1" : : "a"(val), "Nd"(port));
+}
+static inline uint8_t cal_inb(uint16_t port)
+{
+    uint8_t ret;
+    __asm__ volatile("inb %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+/* Calibrate LAPIC timer frequency using PIT channel 2 (speaker gate).
+ *
+ * How it works:
+ *   1. Program PIT channel 2 in one-shot mode for CAL_MS milliseconds.
+ *   2. Start the LAPIC timer counting down from 0xFFFFFFFF.
+ *   3. Busy-wait for PIT output bit (port 0x61, bit 5) to go high.
+ *   4. Read remaining LAPIC count → elapsed = 0xFFFFFFFF - remaining.
+ *   5. ticks_per_ms = elapsed / CAL_MS.
+ *
+ * If PIT polling hangs (VBox NEM, some Hyper-V configs), a spin-counter
+ * timeout fires and we fall back to the xv6 hardcoded ICR. */
+void lapic_timer_calibrate(void)
+{
+    uint8_t gate;
+    uint32_t lapic_remaining, lapic_elapsed;
+    uint32_t timeout;
 
     if (!lapic_base)
         return;
 
+    /* ---- 1. Prepare PIT channel 2 (speaker) ---- */
 
-    /* Divide configuration = 1 (no division) */
-    lapic_write(LAPIC_REG_TIMER_DCR, 0x0B); /* divide by 1 = 0b1011 */
+    /* Read current gate state; disable speaker output (bit 1), enable gate (bit 0) */
+    gate = cal_inb(0x61);
+    gate = (gate & 0xFC) | 0x01;     /* bit 0 = gate ON, bit 1 = speaker OFF */
+    cal_outb(0x61, gate);
 
-    /* Configure periodic timer on vector 32 (same as PIT IRQ0) */
-    lapic_write(LAPIC_REG_LVT_TIMER,
-                LVT_TIMER_PERIODIC | 32);
+    /* Program PIT channel 2: mode 0 (one-shot), lobyte/hibyte, binary */
+    cal_outb(0x43, 0xB0);  /* 10110000: ch2, lobyte/hibyte, mode 0, binary */
+    cal_outb(0x42, (uint8_t)(CAL_PIT_COUNT & 0xFF));
+    cal_outb(0x42, (uint8_t)((CAL_PIT_COUNT >> 8) & 0xFF));
 
-    /* Set initial count — starts the timer immediately */
-    lapic_write(LAPIC_REG_TIMER_ICR, ticr);
+    /* Re-arm gate: OFF then ON starts the countdown */
+    gate = cal_inb(0x61);
+    cal_outb(0x61, gate & ~0x01);  /* gate OFF */
+    cal_outb(0x61, gate | 0x01);   /* gate ON → PIT starts counting */
+
+    /* ---- 2. Start LAPIC timer from max value (one-shot, masked) ---- */
+    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
+    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
+
+    /* ---- 3. Wait for PIT output (bit 5 of port 0x61) ---- */
+    timeout = 200000000;  /* generous spin timeout */
+    while (!(cal_inb(0x61) & 0x20) && --timeout > 0)
+        ;
+
+    /* ---- 4. Read LAPIC timer current count ---- */
+    lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
+    lapic_elapsed = 0xFFFFFFFF - lapic_remaining;
+
+    /* Stop LAPIC timer */
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+
+    /* Disable PIT channel 2 gate */
+    cal_outb(0x61, cal_inb(0x61) & ~0x01);
+
+    /* ---- 5. Calculate ticks per ms ---- */
+    if (timeout == 0 || lapic_elapsed < 1000) {
+        /* Calibration failed — use xv6 hardcoded fallback.
+         * xv6 ICR=10000000, div=1 → works on QEMU and most hardware. */
+        cal_ticks_per_ms = 0;
+        klog(LOG_WARN, "lapic",
+             "Timer calibration timeout — using hardcoded fallback");
+    } else {
+        cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+        klog(LOG_INFO, "lapic",
+             "Timer calibrated: %u ticks in %ums → %u ticks/ms (%u MHz bus)",
+             (uint64_t)lapic_elapsed, (uint64_t)CAL_MS,
+             (uint64_t)cal_ticks_per_ms,
+             (uint64_t)(cal_ticks_per_ms / 1000));
+    }
+}
+
+uint32_t lapic_timer_ticks_per_ms(void)
+{
+    return cal_ticks_per_ms;
+}
+
+/* ---- LAPIC timer IRQ handler ----
+ * Increments system tick counter, sends EOI, and returns the scheduler's
+ * choice of stack frame (same frame = no switch, different = context switch). */
+static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
+{
+    pit_tick_increment();
+    lapic_eoi();
+    return schedule(frame);
+}
+
+void lapic_timer_init(uint32_t hz)
+{
+    uint32_t icr;
+
+    if (!lapic_base)
+        return;
+
+    /* Calculate ICR from calibrated frequency, or use xv6 fallback */
+    if (cal_ticks_per_ms > 0) {
+        icr = cal_ticks_per_ms * 1000 / hz;
+    } else {
+        /* xv6 hardcoded: ICR=10000000 with div=1 works on QEMU + most HW */
+        icr = 10000000;
+    }
+
+    /* Register handler on dedicated LAPIC timer vector */
+    idt_register_handler(LAPIC_TIMER_VECTOR, lapic_timer_handler);
+
+    /* ---- Drain stale ISR bits ----
+     * During early boot, hardware interrupts may fire before handlers are
+     * registered (between IOAPIC route setup and sti).  If an interrupt
+     * completes without proper EOI, its ISR bit stays set and blocks ALL
+     * interrupts in the same priority class (same 16-vector group).
+     *
+     * The LAPIC timer fires on LAPIC_TIMER_VECTOR (priority class 2 = vec
+     * 32-47).  A stuck ISR bit anywhere in 32-47 (e.g., mouse vec 44)
+     * prevents the engine from delivering our timer interrupt.
+     *
+     * Fix: send multiple EOIs to drain any stale ISR bits before starting
+     * the timer.  lapic_eoi() clears the highest-priority ISR bit each
+     * time; 16 iterations clears the entire 32-47 class. */
+    {
+        uint32_t drain;
+        uint32_t isr_before = lapic_read(0x110);  /* ISR bits 32-63 */
+        for (drain = 0; drain < 16; drain++)
+            lapic_eoi();
+        if (isr_before) {
+            klog(LOG_WARN, "lapic",
+                 "Drained stale ISR bits: 0x%x (cleared %u EOIs)",
+                 (uint64_t)isr_before, (uint64_t)drain);
+        }
+    }
+
+    /* Configure LAPIC timer: divide by 1, periodic mode, dedicated vector */
+    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_TIMER_PERIODIC | LAPIC_TIMER_VECTOR);
+    lapic_write(LAPIC_REG_TIMER_ICR, icr);
 
     klog(LOG_INFO, "lapic",
-         "LAPIC timer: periodic, vec=32, ICR=%u, div=1 (xv6-style)",
-         (uint64_t)ticr);
-
+         "LAPIC timer: periodic, vec=%u, ICR=%u, div=1 (%s, %u Hz target)",
+         (uint64_t)LAPIC_TIMER_VECTOR, (uint64_t)icr,
+         cal_ticks_per_ms > 0 ? "calibrated" : "fallback",
+         (uint64_t)hz);
 }

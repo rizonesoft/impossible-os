@@ -110,9 +110,28 @@ void lapic_send_init(uint8_t target_apic_id);
 /* Send Startup IPI (SIPI) to target CPU with startup vector page */
 void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page);
 
-/* Start the LAPIC timer in periodic mode at the given frequency (Hz).
- * Uses PIT for calibration. */
+/* ---- LAPIC Timer ---- */
+
+/* Dedicated vector for LAPIC timer.
+ * Uses vector 34 (IRQ 2 cascade — doesn't exist on APIC systems).
+ * Must be within 32-47 (the IDT-stub-covered hardware IRQ range). */
+#define LAPIC_TIMER_VECTOR    34
+
+/* Calibrate the LAPIC timer frequency using PIT channel 2.
+ * Must be called after lapic_init() and before lapic_timer_init().
+ * Uses a 10ms PIT-based measurement window, with fallback to
+ * hardcoded frequency if calibration hangs (VBox NEM / Hyper-V). */
+void lapic_timer_calibrate(void);
+
+/* Start the LAPIC timer in periodic mode at the given frequency (Hz)
+ * on LAPIC_TIMER_VECTOR. Uses the calibrated frequency from
+ * lapic_timer_calibrate(), or a hardcoded fallback.
+ * Registers a timer IRQ handler that increments tick_count and
+ * calls the scheduler. */
 void lapic_timer_init(uint32_t hz);
+
+/* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
+uint32_t lapic_timer_ticks_per_ms(void);
 
 /* Returns 1 if the LAPIC is available and initialized */
 int lapic_available(void);
