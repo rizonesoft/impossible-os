@@ -302,6 +302,9 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 /* Calibrated ticks per millisecond (0 = uncalibrated / fallback) */
 static uint32_t cal_ticks_per_ms = 0;
 
+/* Calibration window in milliseconds — shared by all tiers */
+#define CAL_MS  10
+
 /* ---- MSR / CPUID helpers for calibration ---- */
 
 static inline uint64_t cal_rdmsr(uint32_t msr)
@@ -437,11 +440,163 @@ static int cal_try_cpuid_15h(void)
     return 1;
 }
 
+/* ---- Tier 2: Modern Hardware Timers (10ms Delay, No PIT) ---- */
+
+#include "kernel/acpi.h"
+
+/* HPET register offsets (MMIO) */
+#define HPET_CAP_REG    0x000   /* General Capabilities — bits 32-63: period (fs) */
+#define HPET_CFG_REG    0x010   /* General Configuration */
+#define HPET_COUNTER    0x0F0   /* Main Counter Value (64-bit) */
+
+/* Read a 32-bit HPET register via MMIO */
+static inline uint32_t hpet_read32(uint64_t base, uint32_t offset)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(base + offset);
+    return *reg;
+}
+
+/* Read a 64-bit HPET register via MMIO */
+static inline uint64_t hpet_read64(uint64_t base, uint32_t offset)
+{
+    volatile uint64_t *reg = (volatile uint64_t *)(uintptr_t)(base + offset);
+    return *reg;
+}
+
+/* Write a 32-bit HPET register */
+static inline void hpet_write32(uint64_t base, uint32_t offset, uint32_t val)
+{
+    volatile uint32_t *reg = (volatile uint32_t *)(uintptr_t)(base + offset);
+    *reg = val;
+}
+
+/* HPET-based calibration: read HPET counter, run LAPIC for 10ms, measure ticks.
+ * No PIT hardware touched.  HPET is memory-mapped (identity-mapped in first 4 GiB). */
+static int cal_try_hpet(void)
+{
+    uint64_t hpet_base;
+    uint64_t cap;
+    uint32_t period_fs;    /* HPET period in femtoseconds */
+    uint64_t hpet_freq;
+    uint64_t start_hpet, target_hpet, cur_hpet;
+    uint32_t lapic_remaining, lapic_elapsed;
+
+    hpet_base = acpi_get_hpet_base();
+    if (hpet_base == 0)
+        return 0;
+
+    /* Read HPET capabilities — upper 32 bits = period in femtoseconds */
+    cap = hpet_read64(hpet_base, HPET_CAP_REG);
+    period_fs = (uint32_t)(cap >> 32);
+    if (period_fs == 0 || period_fs > 100000000) {
+        /* Invalid period (>100ns per tick is unreasonable) */
+        return 0;
+    }
+
+    /* freq = 10^15 / period_fs */
+    hpet_freq = 1000000000000000ULL / period_fs;
+
+    /* Enable HPET counter if not already running */
+    hpet_write32(hpet_base, HPET_CFG_REG,
+                 hpet_read32(hpet_base, HPET_CFG_REG) | 0x01);
+
+    /* Start LAPIC timer from max (one-shot, masked) */
+    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
+    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
+
+    /* Wait 10ms worth of HPET ticks */
+    start_hpet = hpet_read64(hpet_base, HPET_COUNTER);
+    target_hpet = start_hpet + (hpet_freq * CAL_MS / 1000);
+
+    do {
+        cur_hpet = hpet_read64(hpet_base, HPET_COUNTER);
+    } while (cur_hpet < target_hpet);
+
+    /* Read LAPIC remaining count */
+    lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
+    lapic_elapsed = 0xFFFFFFFF - lapic_remaining;
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+
+    if (lapic_elapsed < 1000)
+        return 0;  /* Too few ticks — unreliable */
+
+    cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    klog(LOG_INFO, "lapic",
+         "Tier 2: HPET calibration → %u ticks/ms (%u MHz bus, HPET %u MHz)",
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000),
+         (uint64_t)(hpet_freq / 1000000));
+    return 1;
+}
+
+/* ACPI PM Timer frequency: exactly 3.579545 MHz (ACPI spec §4.8.3.3) */
+#define PMTIMER_FREQ     3579545
+/* 10ms worth of PM Timer ticks */
+#define PMTIMER_10MS     (PMTIMER_FREQ / 100)   /* ≈ 35795 */
+#define PMTIMER_24BIT_MASK  0x00FFFFFF
+
+/* Read the ACPI PM Timer counter (32-bit I/O read) */
+static inline uint32_t pmtimer_read(uint16_t port)
+{
+    uint32_t ret;
+    __asm__ volatile("inl %1, %0" : "=a"(ret) : "Nd"(port));
+    return ret;
+}
+
+/* PM Timer-based calibration: pace a 10ms LAPIC window via the ACPI PM Timer.
+ * The PM Timer is an I/O port, NOT PIT hardware — it works even when
+ * the 8254 PIT is absent (Hyper-V Gen 2, HW-reduced ACPI). */
+static int cal_try_pmtimer(void)
+{
+    uint16_t port;
+    int is_32bit;
+    uint32_t mask;
+    uint32_t start_pm, cur_pm, elapsed_pm;
+    uint32_t lapic_remaining, lapic_elapsed;
+
+    port = acpi_get_pmtimer_port();
+    if (port == 0)
+        return 0;
+
+    is_32bit = acpi_pmtimer_is_32bit();
+    mask = is_32bit ? 0xFFFFFFFF : PMTIMER_24BIT_MASK;
+
+    /* Start LAPIC timer from max (one-shot, masked) */
+    lapic_write(LAPIC_REG_TIMER_DCR, TIMER_DIV_1);
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED | LVT_TIMER_ONESHOT | 0xFF);
+    lapic_write(LAPIC_REG_TIMER_ICR, 0xFFFFFFFF);
+
+    /* Wait 10ms worth of PM Timer ticks */
+    start_pm = pmtimer_read(port) & mask;
+    do {
+        cur_pm = pmtimer_read(port) & mask;
+        elapsed_pm = (cur_pm - start_pm) & mask;
+    } while (elapsed_pm < PMTIMER_10MS);
+
+    /* Read LAPIC remaining count */
+    lapic_remaining = lapic_read(LAPIC_REG_TIMER_CCR);
+    lapic_elapsed = 0xFFFFFFFF - lapic_remaining;
+    lapic_write(LAPIC_REG_LVT_TIMER, LVT_MASKED);
+
+    if (lapic_elapsed < 1000)
+        return 0;  /* Too few ticks — unreliable */
+
+    cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    klog(LOG_INFO, "lapic",
+         "Tier 2: PM Timer calibration → %u ticks/ms (%u MHz bus, port=%x %s)",
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000),
+         (uint64_t)port,
+         is_32bit ? "32-bit" : "24-bit");
+    return 1;
+}
+
 /* ---- Calibration Waterfall Dispatcher ----
  * Called from timer_hal_init() (§6.4).  Tries in order:
  *   Tier 1: MSR/CPUID (instant, no PIT)
- *   Tier 2: HPET / PM Timer (future — not yet implemented)
- *   Tier 3: PIT channel 2 (existing lapic_timer_calibrate, legacy fallback)
+ *   Tier 2: HPET / PM Timer (~10ms delay, no PIT)
+ *   Tier 3: PIT channel 2 (legacy fallback)
  */
 void lapic_timer_calibrate_waterfall(void)
 {
@@ -455,19 +610,21 @@ void lapic_timer_calibrate_waterfall(void)
         return;
     }
 
-    /* Tier 2: HPET / PM Timer — not yet implemented, fall through */
+    /* Tier 2: Modern hardware timers (HPET → PM Timer) */
+    if (cal_try_hpet() || cal_try_pmtimer()) {
+        klog(LOG_INFO, "lapic",
+             "Calibration: Tier 2 succeeded — no PIT needed");
+        return;
+    }
 
     /* Tier 3: PIT channel 2 (legacy, existing implementation) */
     klog(LOG_INFO, "lapic",
-         "Calibration: Tier 1 failed — falling back to PIT channel 2");
+         "Calibration: Tier 1+2 failed — falling back to PIT channel 2");
     lapic_timer_calibrate();
 }
 
 /* PIT base frequency (Hz) — the 8254 oscillator runs at this exact rate */
 #define PIT_OSC_FREQ  1193182
-
-/* Calibration window: 10ms via PIT channel 2 one-shot */
-#define CAL_MS        10
 #define CAL_PIT_COUNT (PIT_OSC_FREQ * CAL_MS / 1000)  /* ~11932 */
 
 /* Inline port I/O for calibration code */

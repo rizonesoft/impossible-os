@@ -698,38 +698,40 @@ boot_storage_init()
 #### Tier 2: Modern Hardware Timers (10ms Delay, No PIT)
 
 > [!NOTE]
-> If Tier 1 fails (no hypervisor freq reporting, no CPUID 0x15), use a
-> modern timer to pace the calibration window. The HPET and ACPI PM Timer
-> are memory-mapped, universally available on ACPI platforms, and do NOT
-> depend on the 8254 PIT.
+> **Tier 2 implemented.** `cal_try_hpet()` uses HPET main counter MMIO,
+> `cal_try_pmtimer()` uses ACPI PM Timer (3.579545 MHz, 24/32-bit mask).
+> Four new ACPI helpers added: `acpi_get_hpet_base()`, `acpi_get_pmtimer_port()`,
+> `acpi_pmtimer_is_32bit()`, `acpi_hw_reduced()`.
 
-- [ ] Implement `cal_try_hpet()` in `lapic.c`:
-  - [ ] Guard: check if ACPI HPET table exists (`acpi_get_hpet_base() != 0`)
-  - [ ] NOTE: `acpi_get_hpet_base()` doesn't exist yet — add HPET table parsing to `acpi.c`
-    - [ ] Parse ACPI "HPET" table: base address at offset 44 (8 bytes)
-    - [ ] Add `uint64_t acpi_get_hpet_base(void)` to `acpi.h`
-  - [ ] Map HPET MMIO base (identity-mapped in first 4 GiB)
-  - [ ] Read HPET general capabilities (offset 0x00): bits 32-63 = period in femtoseconds
-  - [ ] Calculate HPET frequency: `freq = 10^15 / period_fs`
-  - [ ] Start LAPIC timer counting down from 0xFFFFFFFF
-  - [ ] Read HPET main counter, wait for 10ms worth of HPET ticks
-  - [ ] Read LAPIC remaining count → `cal_ticks_per_ms = elapsed / 10`
-  - [ ] Log: `[lapic] Tier 2: HPET calibration → %u ticks/ms`
-- [ ] Implement `cal_try_pmtimer()` in `lapic.c`:
-  - [ ] Guard: check FADT PM Timer exists (`acpi_get_pmtimer_port() != 0`)
-  - [ ] NOTE: `acpi_get_pmtimer_port()` doesn't exist yet — extract from FADT:
-    - [ ] FADT offset 76: `PM_TMR_BLK` (4-byte I/O port for PM Timer)
-    - [ ] FADT offset 112, bit 8: `TMR_VAL_EXT` (1 = 32-bit timer, 0 = 24-bit)
-    - [ ] Add `uint16_t acpi_get_pmtimer_port(void)` and `int acpi_pmtimer_is_32bit(void)` to `acpi.h`
-  - [ ] PM Timer runs at exactly 3.579545 MHz (universally guaranteed by ACPI spec)
-  - [ ] Start LAPIC timer counting down from 0xFFFFFFFF
-  - [ ] Read PM Timer, wait for 35795 ticks (≈10ms at 3.579545 MHz)
-  - [ ] Handle 24-bit wraparound: mask with `0x00FFFFFF` if not 32-bit
-  - [ ] Read LAPIC remaining → `cal_ticks_per_ms = elapsed / 10`
-  - [ ] Log: `[lapic] Tier 2: PM Timer calibration → %u ticks/ms`
-- [ ] Add `int acpi_hw_reduced(void)` to `acpi.h`/`acpi.c`:
-  - [ ] Parse FADT offset 112 (flags), bit 20 = `HW_REDUCED_ACPI`
-  - [ ] Returns 1 if legacy devices (PIT, PIC, RTC) do NOT exist
+- [x] Implement `cal_try_hpet()` in `lapic.c`:
+  - [x] Guard: check if ACPI HPET table exists (`acpi_get_hpet_base() != 0`)
+  - [x] `acpi_get_hpet_base()` added to `acpi.c` — parses HPET table, GAS.address at offset 44
+    - [x] Parse ACPI "HPET" table: base address at offset 44 (8 bytes)
+    - [x] Add `uint64_t acpi_get_hpet_base(void)` to `acpi.h`
+  - [x] Map HPET MMIO base (identity-mapped in first 4 GiB)
+  - [x] Read HPET general capabilities (offset 0x00): bits 32-63 = period in femtoseconds
+  - [x] Calculate HPET frequency: `freq = 10^15 / period_fs`
+  - [x] Start LAPIC timer counting down from 0xFFFFFFFF
+  - [x] Read HPET main counter, wait for 10ms worth of HPET ticks
+  - [x] Read LAPIC remaining count → `cal_ticks_per_ms = elapsed / 10`
+  - [x] Log: `[lapic] Tier 2: HPET calibration → %u ticks/ms`
+- [x] Implement `cal_try_pmtimer()` in `lapic.c`:
+  - [x] Guard: check FADT PM Timer exists (`acpi_get_pmtimer_port() != 0`)
+  - [x] `acpi_get_pmtimer_port()` added to `acpi.c` — reads FADT `pm_timer_block`
+    - [x] FADT offset 76: `PM_TMR_BLK` (4-byte I/O port for PM Timer)
+    - [x] FADT offset 112, bit 8: `TMR_VAL_EXT` (1 = 32-bit timer, 0 = 24-bit)
+    - [x] Add `uint16_t acpi_get_pmtimer_port(void)` and `int acpi_pmtimer_is_32bit(void)` to `acpi.h`
+  - [x] PM Timer runs at exactly 3.579545 MHz (universally guaranteed by ACPI spec)
+  - [x] Start LAPIC timer counting down from 0xFFFFFFFF
+  - [x] Read PM Timer, wait for 35795 ticks (≈10ms at 3.579545 MHz)
+  - [x] Handle 24-bit wraparound: mask with `0x00FFFFFF` if not 32-bit
+  - [x] Read LAPIC remaining → `cal_ticks_per_ms = elapsed / 10`
+  - [x] Log: `[lapic] Tier 2: PM Timer calibration → %u ticks/ms`
+- [x] Add `int acpi_hw_reduced(void)` to `acpi.h`/`acpi.c`:
+  - [x] Parse FADT offset 112 (flags), bit 20 = `HW_REDUCED_ACPI`
+  - [x] Returns 1 if legacy devices (PIT, PIC, RTC) do NOT exist
+- [x] Build: `=== BUILD OK === (9.8s)`
+- [x] Commit: `"kernel: Tier 2 LAPIC calibration (HPET + PM Timer) and ACPI helpers"`
 
 #### Tier 3: Legacy PIT Fallback (Only If Safe)
 

@@ -560,3 +560,59 @@ uint8_t acpi_pcat_compat(void)
 {
     return pcat_compat;
 }
+
+/* ---- Timer calibration helpers ---- */
+
+/* HPET table structure (ACPI spec: Table 5-37)
+ * Offset 0:  standard header (36 bytes)
+ * Offset 36: event_timer_block_id (uint32_t)
+ * Offset 40: base_address (GAS — 12 bytes: space=0, width=64, offset=0, size=0, addr)
+ * The MMIO base is at GAS.address (offset 44 in the table). */
+
+uint64_t acpi_get_hpet_base(void)
+{
+    const struct acpi_rsdp *rsdp;
+    const struct acpi_sdt_header *hpet_hdr;
+    const uint8_t *data;
+
+    if (!g_boot_info.acpi_available || !g_boot_info.acpi_rsdp_addr)
+        return 0;
+
+    rsdp = (const struct acpi_rsdp *)g_boot_info.acpi_rsdp_addr;
+    hpet_hdr = find_acpi_table(rsdp, "HPET");
+    if (!hpet_hdr)
+        return 0;
+
+    /* HPET table must be at least 56 bytes (header + block_id + GAS) */
+    if (hpet_hdr->length < 56)
+        return 0;
+
+    data = (const uint8_t *)hpet_hdr;
+
+    /* Base address is at offset 44 (GAS.address field) */
+    uint64_t base = *(const uint64_t *)(data + 44);
+    return base;
+}
+
+uint16_t acpi_get_pmtimer_port(void)
+{
+    if (!fadt_ptr)
+        return 0;
+    return (uint16_t)fadt_ptr->pm_timer_block;
+}
+
+int acpi_pmtimer_is_32bit(void)
+{
+    if (!fadt_ptr)
+        return 0;
+    /* FADT flags bit 8: TMR_VAL_EXT — 1 = 32-bit PM Timer */
+    return (fadt_ptr->flags & (1u << 8)) ? 1 : 0;
+}
+
+int acpi_hw_reduced(void)
+{
+    if (!fadt_ptr)
+        return 0;
+    /* FADT flags bit 20: HW_REDUCED_ACPI — legacy devices absent */
+    return (fadt_ptr->flags & (1u << 20)) ? 1 : 0;
+}

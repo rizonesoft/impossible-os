@@ -216,3 +216,21 @@ const struct madt_int_override *acpi_get_override(uint32_t index);
 /* Returns 1 if MADT reports dual-8259 legacy PICs (PCAT_COMPAT=1).
  * Returns 0 for APIC-only platforms (Hyper-V Gen 2, hardware-reduced ACPI). */
 uint8_t acpi_pcat_compat(void);
+
+/* ---- Timer calibration helpers ---- */
+
+/* HPET MMIO base address from the ACPI "HPET" table.
+ * Returns 0 if no HPET table found. */
+uint64_t acpi_get_hpet_base(void);
+
+/* PM Timer I/O port from FADT PM_TMR_BLK (offset 76).
+ * Returns 0 if FADT not available or PM Timer block not set. */
+uint16_t acpi_get_pmtimer_port(void);
+
+/* Returns 1 if PM Timer is 32-bit (FADT flags bit 8: TMR_VAL_EXT).
+ * Returns 0 for 24-bit PM Timer. */
+int acpi_pmtimer_is_32bit(void);
+
+/* Returns 1 if FADT flags bit 20 (HW_REDUCED_ACPI) is set.
+ * When set, legacy devices (PIT, PIC, RTC) do NOT exist. */
+int acpi_hw_reduced(void);
