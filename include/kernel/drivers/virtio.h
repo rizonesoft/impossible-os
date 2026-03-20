@@ -62,11 +62,12 @@ static inline void mmio_write64(volatile uint8_t *base, uint32_t off, uint64_t v
 #define VIRTIO_COMMON_Q_USED         0x30  /* 64-bit: used ring addr */
 
 /* ---- VirtIO device status bits ---- */
-#define VIRTIO_STATUS_ACKNOWLEDGE  0x01
-#define VIRTIO_STATUS_DRIVER       0x02
-#define VIRTIO_STATUS_DRIVER_OK    0x04
-#define VIRTIO_STATUS_FEATURES_OK  0x08
-#define VIRTIO_STATUS_FAILED       0x80
+#define VIRTIO_STATUS_ACKNOWLEDGE       0x01
+#define VIRTIO_STATUS_DRIVER            0x02
+#define VIRTIO_STATUS_DRIVER_OK         0x04
+#define VIRTIO_STATUS_FEATURES_OK       0x08
+#define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
+#define VIRTIO_STATUS_FAILED            0x80
 
 /* ---- Virtqueue descriptor flags ---- */
 #define VIRTQ_DESC_F_NEXT      0x01  /* Descriptor continues via 'next' */
@@ -156,6 +157,9 @@ void virtq_free_desc(struct virtqueue *vq, uint16_t idx);
 /* Read/write device status via common config MMIO */
 uint8_t virtio_get_status(struct virtio_pci_dev *dev);
 void    virtio_set_status(struct virtio_pci_dev *dev, uint8_t status);
+
+/* Read config_generation counter (for atomic device config reads) */
+uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev);
 
 /* Read ISR status (clears interrupt) */
 uint8_t virtio_read_isr(struct virtio_pci_dev *dev);

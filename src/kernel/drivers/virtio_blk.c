@@ -19,7 +19,6 @@
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/virtio.h"
 #include "kernel/drivers/pci.h"
-#include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/idt.h"
@@ -307,14 +306,32 @@ int virtio_blk_init(void)
     status |= VIRTIO_STATUS_DRIVER_OK;
     virtio_set_status(&blk_dev, status);
 
-    /* Read disk capacity from device-specific config MMIO */
+    /* Read disk capacity from device-specific config MMIO.
+     * Use config_generation counter for atomic read — a live-resize
+     * event between the two 32-bit MMIO reads would corrupt the
+     * 64-bit value.  Retry if generation changed. */
     if (blk_dev.device_cfg) {
-        volatile uint32_t *cap_lo = (volatile uint32_t *)
-            (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY);
-        volatile uint32_t *cap_hi = (volatile uint32_t *)
-            (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY + 4);
-        disk_capacity = ((uint64_t)mmio_read32(cap_hi) << 32) |
-                        (uint64_t)mmio_read32(cap_lo);
+        uint8_t gen1, gen2;
+        do {
+            gen1 = virtio_read_config_generation(&blk_dev);
+            volatile uint32_t *cap_lo = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY);
+            volatile uint32_t *cap_hi = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY + 4);
+            disk_capacity = ((uint64_t)mmio_read32(cap_hi) << 32) |
+                            (uint64_t)mmio_read32(cap_lo);
+            gen2 = virtio_read_config_generation(&blk_dev);
+        } while (gen1 != gen2);
+    }
+
+    /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */
+    {
+        uint8_t cur = virtio_get_status(&blk_dev);
+        if (cur & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
+            klog(LOG_DEBUG, "virtio", "Device needs reset after init — aborting");
+            virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
+            return -1;
+        }
     }
 
     initialized = 1;

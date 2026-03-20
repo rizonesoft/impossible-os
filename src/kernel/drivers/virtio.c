@@ -14,7 +14,7 @@
 
 #include "kernel/drivers/virtio.h"
 #include "kernel/drivers/pci.h"
-#include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/mm/vmm.h"
@@ -282,12 +282,16 @@ int virtq_init(struct virtqueue *vq, struct virtio_pci_dev *dev,
     used_sz  = vq_align(6 + (uint64_t)qsz * 8, 4);    /* used ring */
     total    = desc_sz + avail_sz + used_sz;
 
-    desc_mem = (uint8_t *)kmalloc((size_t)total);
-    if (!desc_mem) {
-        klog(LOG_DEBUG, "virtio", "Cannot allocate %u bytes for queue %u",
-               (uint64_t)total, (uint64_t)queue_idx);
+    /* Use PMM — virtqueue buffers can be large with multi-queue,
+     * and the kernel heap is only 2 MiB (rules.md Known Gotchas). */
+    uint64_t pages_needed = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    uintptr_t phys = pmm_alloc_contiguous(pages_needed);
+    if (!phys) {
+        klog(LOG_DEBUG, "virtio", "Cannot allocate %u bytes (%u pages) for queue %u",
+               (uint64_t)total, (uint64_t)pages_needed, (uint64_t)queue_idx);
         return -1;
     }
+    desc_mem = (uint8_t *)phys;
     vio_memset(desc_mem, 0, total);
 
     avail_mem = desc_mem + desc_sz;
@@ -414,4 +418,9 @@ void virtio_set_status(struct virtio_pci_dev *dev, uint8_t status)
 uint8_t virtio_read_isr(struct virtio_pci_dev *dev)
 {
     return mmio_read8(dev->isr_cfg);
+}
+
+uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev)
+{
+    return mmio_read8(dev->common_cfg + VIRTIO_COMMON_CFGGEN);
 }
