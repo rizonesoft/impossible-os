@@ -743,46 +743,32 @@ boot_storage_init()
 >
 > Only QEMU TCG, VirtualBox, and old BIOS PCs pass both checks.
 
-- [ ] Rename existing `lapic_timer_calibrate()` to `cal_try_pit()` in `lapic.c`:
-  - [ ] This is the existing PIT channel 2 code (ports 0x42/0x43/0x61)
-  - [ ] Add guard at top: `if (!acpi_pcat_compat() || acpi_hw_reduced()) return 0;`
-  - [ ] Keep existing spin timeout + xv6 fallback behavior
-  - [ ] Log: `[lapic] Tier 3: PIT ch2 calibration → %u ticks/ms`
+- [x] Rename existing `lapic_timer_calibrate()` to `cal_try_pit()` in `lapic.c`:
+  - [x] This is the existing PIT channel 2 code (ports 0x42/0x43/0x61)
+  - [x] Add guard at top: `if (!acpi_pcat_compat() || acpi_hw_reduced()) return 0;`
+  - [x] Returns 0 on timeout/too-few-ticks (instead of setting cal_ticks_per_ms=0)
+  - [x] Log: `[lapic] Tier 3: PIT ch2 calibration → %u ticks/ms`
 
 #### Waterfall Orchestrator
 
-- [ ] Rewrite `lapic_timer_calibrate()` as waterfall:
-  ```c
-  void lapic_timer_calibrate(void) {
-      /* Tier 1: instant frequency from CPUID/MSR (no delay) */
-      if (cal_try_hyperv_msr())   return;   /* Hyper-V Gen 1 & 2 */
-      if (cal_try_vmware_cpuid()) return;   /* VMware, KVM */
-      if (cal_try_cpuid_15h())    return;   /* Intel Skylake+ bare metal */
-
-      /* Tier 2: modern timer delay loop (no PIT) */
-      if (cal_try_hpet())         return;   /* HPET MMIO */
-      if (cal_try_pmtimer())      return;   /* ACPI PM Timer (3.579 MHz) */
-
-      /* Tier 3: legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
-      if (cal_try_pit())          return;   /* existing PIT ch2 code */
-
-      /* All tiers failed — use xv6 hardcoded ICR as last resort */
-      cal_ticks_per_ms = 100;  /* ~100 MHz bus — safe conservative estimate */
-      klog(LOG_WARN, "lapic",
-           "All calibration tiers failed — using hardcoded 100 ticks/ms");
-  }
-  ```
-- [ ] Each `cal_try_*()` returns 1 on success (sets `cal_ticks_per_ms`), 0 on failure
+- [x] Rewrite `lapic_timer_calibrate()` as waterfall:
+  - [x] Merged `lapic_timer_calibrate_waterfall()` into `lapic_timer_calibrate()` (unified entry point)
+  - [x] Removed `lapic_timer_calibrate_waterfall()` from `lapic.h`
+  - [x] `boot_storage.c:107` still calls `lapic_timer_calibrate()` — no caller changes needed
+  - [x] Hardcoded fallback: `cal_ticks_per_ms = 100` if all tiers fail
+- [x] Each `cal_try_*()` returns 1 on success (sets `cal_ticks_per_ms`), 0 on failure
 - [ ] After calibration succeeds, immediately call `lapic_timer_init(100)`:
   - [ ] This starts the LAPIC timer ticking at 100 Hz
   - [ ] On non-TCG: `lapic_timer_set_tick_source(1)` so LAPIC drives `tick_count`
   - [ ] On QEMU TCG: skip — PIT will drive `tick_count` instead
-- [ ] Log final result: `[timer] LAPIC calibrated (tier N): %u ticks/ms (%u MHz bus)`
-- [ ] Build and test on QEMU KVM: Tier 1 (CPUID 0x40000010) used
-- [ ] Build and test on QEMU TCG: Tier 3 (PIT) used — only safe environment
-- [ ] Build and test on Hyper-V Gen 2: Tier 1 (MSR 0x40000023) used, no PIT touch
-- [ ] Build and test on VirtualBox: Tier 2 (PM Timer) or Tier 3 (PIT) used
-- [ ] Commit: `"timer: legacy-free calibration waterfall (3 tiers)"`
+  - [ ] → Deferred to §6.4 (timer lock-in)
+- [ ] Log final result: `[timer] LAPIC calibrated (tier N): %u ticks/ms (%u MHz bus)` — deferred to §6.4
+- [ ] Build and test on QEMU KVM: Tier 1 (CPUID 0x40000010) used — deferred to §6.4
+- [ ] Build and test on QEMU TCG: Tier 3 (PIT) used — deferred to §6.4
+- [ ] Build and test on Hyper-V Gen 2: Tier 1 (MSR 0x40000023) used — deferred to §6.4
+- [ ] Build and test on VirtualBox: Tier 2 (PM Timer) or Tier 3 (PIT) used — deferred to §6.4
+- [x] Build: `=== BUILD OK === (8.6s)`, 135 objects
+- [x] Commit: `"timer: legacy-free calibration waterfall (3 tiers)"`
 
 ### 6.4 Timer Lock-In & Single Uptime Variable
 

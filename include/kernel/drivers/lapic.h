@@ -117,18 +117,12 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page);
  * Must be within 32-47 (the IDT-stub-covered hardware IRQ range). */
 #define LAPIC_TIMER_VECTOR    34
 
-/* Calibrate the LAPIC timer frequency using PIT channel 2.
- * Must be called after lapic_init() and before lapic_timer_init().
- * Uses a 10ms PIT-based measurement window, with fallback to
- * hardcoded frequency if calibration hangs (VBox NEM / Hyper-V). */
+/* Calibrate the LAPIC timer via a 3-tier waterfall:
+ *   Tier 1: MSR/CPUID (instant, no PIT) — Hyper-V, VMware, KVM, CPUID 0x15
+ *   Tier 2: HPET / ACPI PM Timer (10ms delay, no PIT)
+ *   Tier 3: PIT channel 2 (10ms delay, only if PCAT_COMPAT && !HW_REDUCED)
+ * Falls back to a hardcoded conservative estimate if all tiers fail. */
 void lapic_timer_calibrate(void);
-
-/* Calibration waterfall — cascades through frequency sources:
- *   Tier 1: MSR/CPUID (instant, no PIT): Hyper-V, VMware, KVM, CPUID 0x15
- *   Tier 2: HPET / PM Timer (future)
- *   Tier 3: PIT channel 2 (legacy fallback)
- * Replaces direct lapic_timer_calibrate() calls. */
-void lapic_timer_calibrate_waterfall(void);
 
 /* Start the LAPIC timer in periodic mode at the given frequency (Hz)
  * on LAPIC_TIMER_VECTOR. Uses the calibrated frequency from

@@ -592,13 +592,17 @@ static int cal_try_pmtimer(void)
     return 1;
 }
 
-/* ---- Calibration Waterfall Dispatcher ----
- * Called from timer_hal_init() (§6.4).  Tries in order:
- *   Tier 1: MSR/CPUID (instant, no PIT)
- *   Tier 2: HPET / PM Timer (~10ms delay, no PIT)
- *   Tier 3: PIT channel 2 (legacy fallback)
+/* Forward declaration — defined below after PIT I/O helpers */
+static int cal_try_pit(void);
+
+/* ---- Calibration Waterfall ----
+ * THE single calibration entry point.  Cascades through 3 tiers:
+ *   Tier 1: MSR/CPUID  (instant, no PIT)
+ *   Tier 2: HPET / PM Timer (~10ms, no PIT)
+ *   Tier 3: PIT channel 2 (~10ms, legacy only)
+ * Falls back to hardcoded estimate if ALL tiers fail.
  */
-void lapic_timer_calibrate_waterfall(void)
+void lapic_timer_calibrate(void)
 {
     if (!lapic_base)
         return;
@@ -617,10 +621,18 @@ void lapic_timer_calibrate_waterfall(void)
         return;
     }
 
-    /* Tier 3: PIT channel 2 (legacy, existing implementation) */
-    klog(LOG_INFO, "lapic",
-         "Calibration: Tier 1+2 failed — falling back to PIT channel 2");
-    lapic_timer_calibrate();
+    /* Tier 3: Legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
+    if (cal_try_pit()) {
+        klog(LOG_INFO, "lapic",
+             "Calibration: Tier 3 succeeded — PIT channel 2");
+        return;
+    }
+
+    /* All tiers failed — use conservative hardcoded estimate */
+    cal_ticks_per_ms = 100;
+    klog(LOG_WARN, "lapic",
+         "All calibration tiers failed — using hardcoded %u ticks/ms",
+         (uint64_t)cal_ticks_per_ms);
 }
 
 /* PIT base frequency (Hz) — the 8254 oscillator runs at this exact rate */
@@ -639,7 +651,11 @@ static inline uint8_t cal_inb(uint16_t port)
     return ret;
 }
 
-/* Calibrate LAPIC timer frequency using PIT channel 2 (speaker gate).
+/* Tier 3: PIT channel 2 calibration (legacy fallback).
+ *
+ * SAFETY: Only touches PIT ports if BOTH:
+ *   1. acpi_pcat_compat() == 1  (MADT says PIC/PIT/RTC exist)
+ *   2. acpi_hw_reduced() == 0   (FADT does NOT set HW_REDUCED_ACPI)
  *
  * How it works:
  *   1. Program PIT channel 2 in one-shot mode for CAL_MS milliseconds.
@@ -649,15 +665,19 @@ static inline uint8_t cal_inb(uint16_t port)
  *   5. ticks_per_ms = elapsed / CAL_MS.
  *
  * If PIT polling hangs (VBox NEM, some Hyper-V configs), a spin-counter
- * timeout fires and we fall back to the xv6 hardcoded ICR. */
-void lapic_timer_calibrate(void)
+ * timeout fires and we return 0 (failure). */
+static int cal_try_pit(void)
 {
     uint8_t gate;
     uint32_t lapic_remaining, lapic_elapsed;
     uint32_t timeout;
 
+    /* Safety guard: never touch PIT ports on PIT-less platforms */
+    if (!acpi_pcat_compat() || acpi_hw_reduced())
+        return 0;
+
     if (!lapic_base)
-        return;
+        return 0;
 
     /* ---- 1. Prepare PIT channel 2 (speaker) ---- */
 
@@ -698,19 +718,18 @@ void lapic_timer_calibrate(void)
 
     /* ---- 5. Calculate ticks per ms ---- */
     if (timeout == 0 || lapic_elapsed < 1000) {
-        /* Calibration failed — use xv6 hardcoded fallback.
-         * xv6 ICR=10000000, div=1 → works on QEMU and most hardware. */
-        cal_ticks_per_ms = 0;
+        /* Calibration failed — timeout or too few ticks */
         klog(LOG_WARN, "lapic",
-             "Timer calibration timeout — using hardcoded fallback");
-    } else {
-        cal_ticks_per_ms = lapic_elapsed / CAL_MS;
-        klog(LOG_INFO, "lapic",
-             "Timer calibrated: %u ticks in %ums → %u ticks/ms (%u MHz bus)",
-             (uint64_t)lapic_elapsed, (uint64_t)CAL_MS,
-             (uint64_t)cal_ticks_per_ms,
-             (uint64_t)(cal_ticks_per_ms / 1000));
+             "Tier 3: PIT calibration timeout or too few ticks");
+        return 0;
     }
+
+    cal_ticks_per_ms = lapic_elapsed / CAL_MS;
+    klog(LOG_INFO, "lapic",
+         "Tier 3: PIT ch2 calibration → %u ticks/ms (%u MHz bus)",
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000));
+    return 1;
 }
 
 uint32_t lapic_timer_ticks_per_ms(void)
