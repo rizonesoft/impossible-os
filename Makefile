@@ -18,11 +18,10 @@ CFLAGS  := --target=x86_64-elf \
            -fno-stack-protector -fno-pie \
            -mno-red-zone -mno-mmx -mno-sse -mno-sse2 \
            -mcmodel=kernel -std=gnu11 -O2 -g \
-           -ffunction-sections -fdata-sections \
            -MMD -MP \
            -DCONFIG_SMP
 ASFLAGS := -f elf64 -g
-LDFLAGS := -nostdlib -static -z max-page-size=0x1000 --gc-sections
+LDFLAGS := -nostdlib -static -z max-page-size=0x1000
 
 # --- Directories ---
 SRC_DIR    := src
