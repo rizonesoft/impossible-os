@@ -15,6 +15,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/hyperv/vmbus.h"
+#include "kernel/irq.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -449,6 +450,8 @@ static int vmbus_enumerate(void)
                 channels[offer_count].gpadl_handle = 0;
                 channels[offer_count].connection_id = 0;
                 channels[offer_count].ring_pages = NULL;
+                channels[offer_count].callback = (vmbus_channel_callback_t)0;
+                channels[offer_count].callback_ctx = (void *)0;
 
                 klog(LOG_INFO, "hyperv",
                      "  Channel %u: type=%08x-%04x-%04x relid=%u",
@@ -822,23 +825,69 @@ void vmbus_signal_channel(struct vmbus_channel *ch)
     (void)status;
 }
 
-/* ---- §11. VMBus ISR (called from IDT vector 0xF0) ---- */
+/* ---- §11. VMBus ISR (called from IDT vector 0xF0 via irq_register) ---- */
 
-/* This ISR will be registered in the IDT by the interrupt subsystem.
- * For now, we use polling in vmbus_wait_message(). The ISR is provided
- * for future interrupt-driven operation. */
-void vmbus_isr(void)
+/* Bridge irq_handler_t signature to vmbus_isr() */
+static void vmbus_irq_handler(uint8_t vector, void *ctx)
 {
-    struct hv_message *msg = &sim_page->messages[VMBUS_MESSAGE_SINT];
+    (void)vector;
+    (void)ctx;
 
-    if (msg->header.message_type == HV_MESSAGE_TYPE_NONE)
+    /* ---- Handle SIM messages (SINT2 message slot) ---- */
+    if (sim_page) {
+        struct hv_message *msg = &sim_page->messages[VMBUS_MESSAGE_SINT];
+        if (msg->header.message_type != HV_MESSAGE_TYPE_NONE) {
+            /* Message pending — pollers (vmbus_wait_message) will pick it up.
+             * Future: wake blocked tasks here. */
+        }
+    }
+
+    /* ---- Handle SIEF event flags (per-channel callbacks) ---- */
+    if (sief_page) {
+        struct hv_synic_event_flags *flags = &sief_page->sint[VMBUS_MESSAGE_SINT];
+        int word;
+
+        for (word = 0; word < 64; word++) {
+            uint32_t bits = flags->flags[word];
+            if (bits == 0)
+                continue;
+
+            /* Atomically clear all set bits we're about to process */
+            __asm__ volatile("lock xchgl %0, %1"
+                : "=r"(bits), "+m"(flags->flags[word])
+                : "0"(0)
+                : "memory");
+
+            while (bits) {
+                /* Find lowest set bit */
+                int bit;
+                __asm__ volatile("bsfl %1, %0" : "=r"(bit) : "r"(bits));
+
+                uint32_t relid = (uint32_t)(word * 32 + bit);
+
+                /* Dispatch to channel callback if registered */
+                if (relid < VMBUS_MAX_CHANNELS &&
+                    channels[relid].callback) {
+                    channels[relid].callback(&channels[relid],
+                                             channels[relid].callback_ctx);
+                }
+
+                /* Clear the bit */
+                bits &= ~(1u << bit);
+            }
+        }
+    }
+
+    /* Note: AutoEOI is set on SINT2, so LAPIC EOI is handled by irq_dispatch_wrapper */
+}
+
+void vmbus_set_channel_callback(struct vmbus_channel *ch,
+                                vmbus_channel_callback_t cb, void *ctx)
+{
+    if (!ch)
         return;
-
-    /* For now, just mark that a message is available.
-     * Synthetic drivers will process it via vmbus_wait_message().
-     * Future: wake blocked channel waiters here. */
-
-    /* Note: AutoEOI is set on SINT2, so we don't need to send LAPIC EOI */
+    ch->callback = cb;
+    ch->callback_ctx = ctx;
 }
 
 /* ---- Public API ---- */
@@ -860,6 +909,17 @@ int vmbus_init(void)
     /* Step 2: Set up SynIC (messages + interrupts) */
     if (hv_setup_synic() < 0)
         return -1;
+
+    /* Step 2.5: Register VMBus ISR at SINT2 vector (0xF0) via dynamic IRQ API.
+     * This replaces the catch-all IDT stub with a proper handler that
+     * scans SIEF event flags and dispatches to per-channel callbacks. */
+    if (irq_register(VMBUS_INTERRUPT_VECTOR, vmbus_irq_handler,
+                     NULL, "vmbus") != IRQ_OK) {
+        klog(LOG_WARN, "hyperv",
+             "Failed to register ISR at vec 0x%x — using catch-all stub",
+             (uint64_t)VMBUS_INTERRUPT_VECTOR);
+        /* Non-fatal: polling still works, ISR is an optimization */
+    }
 
     /* Step 3: Connect to VMBus (version negotiation) */
     if (vmbus_connect() < 0)

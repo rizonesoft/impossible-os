@@ -113,6 +113,22 @@ static int hv_hid_negotiate(struct vmbus_channel *ch, const char *name)
     return 0;
 }
 
+/* ---- Channel callbacks (fired by VMBus ISR on SIEF event) ---- */
+
+static void hv_kbd_channel_cb(struct vmbus_channel *ch, void *ctx)
+{
+    (void)ch;
+    (void)ctx;
+    hv_kbd_poll();
+}
+
+static void hv_mouse_channel_cb(struct vmbus_channel *ch, void *ctx)
+{
+    (void)ch;
+    (void)ctx;
+    hv_mouse_poll();
+}
+
 /* ---- Keyboard ---- */
 
 int hv_kbd_init(void)
@@ -139,6 +155,9 @@ int hv_kbd_init(void)
 
     if (hv_hid_negotiate(kbd_channel, "kbd") < 0)
         return -1;
+
+    /* Register channel callback so VMBus ISR dispatches events here */
+    vmbus_set_channel_callback(kbd_channel, hv_kbd_channel_cb, NULL);
 
     kbd_active = 1;
     printk("[OK] HV Keyboard: synthetic input active\n");
@@ -204,6 +223,9 @@ int hv_mouse_init(void)
 
     if (hv_hid_negotiate(mouse_channel, "mouse") < 0)
         return -1;
+
+    /* Register channel callback so VMBus ISR dispatches events here */
+    vmbus_set_channel_callback(mouse_channel, hv_mouse_channel_cb, NULL);
 
     mouse_active = 1;
     printk("[OK] HV Mouse: synthetic input active\n");

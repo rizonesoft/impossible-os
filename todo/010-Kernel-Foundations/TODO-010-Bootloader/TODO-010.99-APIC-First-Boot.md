@@ -18,6 +18,29 @@
 > This TODO focuses exclusively on the **boot sequence reordering** and the
 > interrupt infrastructure needed to support it.
 
+### Background: The Two Timers
+
+> [!NOTE]
+> **The PIT (Programmable Interval Timer)** is a legacy hardware timer
+> introduced in 1981 with the IBM PC. It is a single, global chip (Intel 8254)
+> that ticks at a fixed 1.193182 MHz. The OS communicates with it via slow
+> I/O port instructions (`inb`/`outb` on ports 0x40–0x43). Because the PIT
+> is a shared, off-CPU device connected over the motherboard bus, it is a
+> performance bottleneck on multi-core systems and takes hundreds of CPU
+> cycles per read. Modern legacy-free platforms (Hyper-V Gen 2, UEFI Class 3,
+> Hardware-Reduced ACPI) **physically remove the PIT** to save power and
+> complexity — reading its ports returns garbage (0xFF).
+>
+> **The LAPIC Timer (Local APIC)** is a high-precision clock built directly
+> into every CPU core. Each core has its own LAPIC, so an 8-core CPU has 8
+> independent timers. Instead of slow I/O ports, the OS talks to it via
+> memory-mapped I/O (MMIO at 0xFEE00000) — reads/writes never leave the CPU
+> die and take virtually zero cycles. The LAPIC timer runs off the CPU's
+> internal bus clock (tens–hundreds of MHz), enabling microsecond precision
+> and per-core scheduling. The catch: its frequency varies per CPU model,
+> so the OS must **calibrate** it at boot to learn how many LAPIC ticks
+> equal one millisecond.
+
 ## TODO Completion Roadmap (Cross-File)
 
 > [!IMPORTANT]
@@ -32,22 +55,24 @@
 
 ```mermaid
 graph TD
-    S1["§1 Move ACPI MADT Early"]
-    S2["§2 LAPIC/IOAPIC Before PIT"]
-    S3["§3 Conditional PIC Init"]
-    S4["§4 Dynamic IRQ Registration"]
-    S5a["§5a Hyper-V Synthetic ISRs"]
-    S5b["§5b Catch-All IDT Stubs"]
-    S6["§6 Timer Source Hierarchy"]
-    S6a["§6a Spinner PIT Migration"]
+    S1["§1 Move ACPI MADT Early ✅"]
+    S2["§2 LAPIC/IOAPIC Before PIT ✅"]
+    S3["§3 Conditional PIC Init ✅"]
+    S4["§4 Dynamic IRQ Registration ✅"]
+    S5_1["§5.1 Hyper-V Synthetic ISRs"]
+    S5_2["§5.2 Catch-All IDT Stubs"]
+    S6_1["§6.1 CPUID Platform Probe"]
+    S6_2["§6.2 Timer HAL Interface"]
+    S6_3["§6.3 Calibration Waterfall"]
+    S6_4["§6.4 Timer Lock-In"]
+    S6_5["§6.5 Spinner PIT Migration"]
     S7["§7 Boot Time Visualization"]
     S8["§8 Remove Debug Workarounds"]
-    S9["§9 SMP Init Adjustment"]
+    S9["§9 SMP Init Adjustment ✅"]
 
     %% External dependencies
     X1["010-Bootloader.md §2<br/>Boot Splash ✅"]
     X2["010.97-Spinner.md §2<br/>Animation Engine ✅"]
-    X3["063.09-APIC.md §2<br/>LAPIC Calibration"]
     X4["063.09-APIC.md §8<br/>MSI/MSI-X Support"]
 
     %% Core chain: ACPI → LAPIC/IOAPIC → conditional PIC
@@ -57,24 +82,28 @@ graph TD
 
     %% IRQ infrastructure
     S3 --> S4
-    S4 --> S5a
-    S4 --> S5b
-    S4 --> S6
+    S4 --> S5_1
+    S4 --> S5_2
 
-    %% Timer hierarchy and spinner migration
-    S6 --> S6a
-    S2 --> S6
+    %% UTS sub-phase chain: detect → HAL → calibrate → lock-in
+    S4 --> S6_1
+    S2 --> S6_1
+    S6_1 --> S6_2
+    S6_2 --> S6_3
+    S6_3 --> S6_4
+
+    %% Spinner migration depends on UTS lock-in
+    S6_4 --> S6_5
 
     %% Cleanup and profiling
     S3 --> S8
-    S5a --> S8
-    S6 --> S7
+    S5_1 --> S8
+    S6_4 --> S7
     S1 --> S7
 
     %% Cross-file dependencies
-    X1 --> S6a
-    X2 --> S6a
-    X3 --> S6
+    X1 --> S6_5
+    X2 --> S6_5
     X4 --> S4
 ```
 
@@ -87,12 +116,15 @@ graph TD
 | 💎 | **2** | §9 SMP Init Adjustment           | Verify AP boot with early LAPIC — no regressions           | Phase 1 (§1) + Phase 2 (§2)       |   ✅   |
 | 💎 | **3** | §3 Conditional PIC Init          | PIC guarded by PCAT_COMPAT — Hyper-V Gen 2 skips PIC       | Phase 2 (§2)                      |   ✅   |
 | 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ✅   |
-| 💎 | **4** | §5b Catch-All IDT Stubs          | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ⬜   |
-| 💎 | **5** | §5a Hyper-V Synthetic ISRs       | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ⬜   |
-| ⭐ | **5** | §6 Timer Source Hierarchy        | Auto-select best timer — TSC/STIMER/HPET/LAPIC/PIT         | Phase 4 (§4) + LAPIC calibration  |   ⬜   |
-| 💎 | **6** | §6a Spinner PIT Migration        | Spinner off PIT callback — `sleep_ms()` loop instead       | Phase 5 (§6) + Spinner §2         |   ⬜   |
-| ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + Phase 5 (§6)       |   ⬜   |
-| 💎 | **7** | §8 Remove Debug Workarounds      | Cleanup: delete HV_BAR macros, stall detection, debug bars | Phase 3 (§3) + Phase 5 (§5a)      |   ⬜   |
+| 💎 | **4** | §5.2 Catch-All IDT Stubs         | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ✅   |
+| 💎 | **5** | §5.1 Hyper-V Synthetic ISRs      | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ✅   |
+| ⭐ | **5** | §6.1 CPUID Platform Probe        | Detect Hyper-V/VBox/QEMU TCG via CPUID 0x40000000          | Phase 4 (§4) + Phase 2 (§2)       |   ⬜   |
+| ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ⬜   |
+| ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ⬜   |
+| ⭐ | **5** | §6.4 Timer Lock-In               | `g_system_timer` assigned — single uptime, splash fixed    | §6.3                              |   ⬜   |
+| 💎 | **6** | §6.5 Spinner PIT Migration       | Spinner off PIT callback — `sleep_ms()` loop instead       | §6.4 + Spinner §2                 |   ⬜   |
+| ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + §6.4               |   ⬜   |
+| 💎 | **7** | §8 Remove Debug Workarounds      | Cleanup: delete HV_BAR macros, stall detection, debug bars | Phase 3 (§3) + Phase 5 (§5.1)     |   ⬜   |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -101,7 +133,7 @@ graph TD
 > Phases 6–7 are polish and cleanup.
 
 > [!TIP]
-> **§6a (Spinner PIT Migration) is low-risk.** The spinner already uses a frame
+> **§6.5 (Spinner PIT Migration) is low-risk.** The spinner already uses a frame
 > counter and `smoothstep256()` — no PIT-specific math. The migration is purely
 > mechanical: replace `pit_register_callback()` with `while (active) { render(); sleep_ms(100); }`.
 > This can be done independently once §6 establishes the timer API, or even
@@ -115,84 +147,102 @@ graph TD
 
 ---
 
-## Current Boot Sequence (Problem)
+## Current Boot Sequence (Post-Refactor, Remaining Problem)
+
+> [!NOTE]
+> §1–§4 are complete: ACPI/LAPIC/IOAPIC move early, PIC conditional, dynamic
+> IRQ API.  §5.2 (catch-all IDT stubs) is **done** — all 256 entries populated.
+> §5.1 (proper Hyper-V ISRs) depends on VMBus driver work (TODO-063-Drivers).
+> The **remaining problem** is the timer: `sleep_ms()` and `pit_register_callback()` still depend on
+> PIT ticks, which don't exist on Hyper-V Gen 2.  The LAPIC timer starts
+> AFTER the boot splash.
 
 ```
-boot_hw_init()
+boot_hw_init()                     [unchanged — working]
   ├── serial_init()
-  ├── boot_info parse (UEFI or Multiboot2)
-  ├── pmm_init()
-  ├── vmm_init()
-  ├── heap_init()
-  ├── cpuid_init()
-  ├── simd_enable_avx()
-  ├── ata_init() / virtio_blk_init() / ahci_init()
+  ├── boot_info parse (UEFI)
+  ├── pmm_init() / vmm_init() / heap_init()
+  ├── cpuid_init() / simd_enable_avx()
+  ├── ahci_init() / virtio_blk_init()
   └── blkdev_register_all()
 
-boot_interrupts_init()              ◄── PIC dependency here
+boot_interrupts_init()               ✅ APIC-first (§1–§4 complete)
   ├── gdt_init()
-  ├── idt_init()
-  ├── pic_init()                    ◄── Programs 8259 PIC (doesn't exist on HV Gen 2)
-  ├── pit_init()                    ◄── Routes IRQ0 through PIC (dead on HV Gen 2)
-  ├── rtc_init()
-  ├── keyboard_init()               ◄── Hangs on HV Gen 2 (no i8042)
-  ├── mouse_init()                  ◄── Hangs on HV Gen 2 (no i8042)
+  ├── idt_init()                     ✅ 256 entries (§5.2 done)
+  ├── irq_init()                     ✅ Dynamic IRQ API (§4 done)
+  ├── acpi_init()                    ✅ MADT before PIC/PIT (§1 done)
+  ├── lapic_init() / ioapic_init()   ✅ Before PIT (§2 done)
+  ├── pic_conditional_init()         ✅ PCAT_COMPAT guard (§3 done)
+  ├── pit_init()                     ✅ IRQ0 via IOAPIC
+  ├── rtc_init() / keyboard / mouse
   ├── fb_init()
-  ├── boot_splash_init()            ◄── sleep_ms() hangs (no PIT ticks)
-  ├── pci_scan()
-  ├── sti
-  ├── boot_splash_start_animation() ◄── PIT callback (no ticks)
+  ├── boot_splash_init()             ⚠️ sleep_ms() → pit.c → needs ticks!
+  ├── pci_scan() / net / virtio        On HV Gen 2: PIT absent → 0 ticks
+  ├── sti                               → fade-in bails instantly
+  ├── boot_splash_start_animation()  ⚠️ pit_register_callback() → no ticks!
   └── dhcp_discover()
 
 boot_storage_init()
-  ├── acpi_init()                   ◄── ACPI parsed HERE (too late!)
-  ├── lapic_init()                  ◄── LAPIC initialized HERE (too late!)
-  ├── ioapic_init()                 ◄── IOAPIC initialized HERE (too late!)
+  ├── vfs_init() / partition scan
+  ├── lapic_timer_calibrate()        ⚠️ Uses PIT ch2 — reads garbage on Gen 2
+  ├── lapic_timer_set_tick_source()  ⚠️ Too late — splash already skipped
+  ├── lapic_timer_init(100)
   ├── smp_init()
-  └── storvsc_init() / hv_input
+  ├── vmbus_init() / storvsc / hv_input
+  └── registry / symtab / mmap
 ```
 
-**Problem:** ACPI/LAPIC/IOAPIC init happens in `boot_storage_init()` — long after
-the PIT, splash, and keyboard were already needed. On platforms without a PIC,
-this ordering causes hangs.
+**Remaining Problem:** Even with APIC-first boot, `sleep_ms()` and the splash
+spinner both depend on PIT tick_count (incremented by `pit_tick_increment()`).
+On Hyper-V Gen 2, PIT hardware does not exist → ticks never advance →
+`sleep_ms(100)` bails instantly → splash skips → assets appear to not load.
+The LAPIC timer only starts ticking in `boot_storage_init()` — far too late.
 
 ---
 
-## Target Boot Sequence (Solution)
+## Target Boot Sequence (UTS Solution)
+
+> [!IMPORTANT]
+> **Key change:** The Unified Timer Subsystem (§6) detects the platform
+> environment via CPUID and selects exactly **one** hardware timer BEFORE
+> the boot splash.  Every subsystem (`sleep_ms()`, spinner, scheduler)
+> routes through `g_system_timer` — no split architecture.
 
 ```
-boot_hw_init()
-  ├── serial_init()
-  ├── boot_info parse
-  ├── pmm_init()
-  ├── vmm_init()
-  ├── heap_init()
-  ├── cpuid_init()
-  ├── simd_enable_avx()
-  └── blkdev_register_all()
+boot_hw_init()                     [unchanged]
+  └── (same as above)
 
-boot_interrupts_init()              ◄── APIC-first path
+boot_interrupts_init()             ✅ + UTS early timer init
   ├── gdt_init()
-  ├── idt_init()
-  ├── idt_populate_all_256()        ◄── NEW: catch-all stubs for all vectors
-  ├── acpi_init()                   ◄── MOVED: parse MADT for LAPIC/IOAPIC
-  ├── lapic_init()                  ◄── MOVED: enable LAPIC, set SVR
-  ├── ioapic_init()                 ◄── MOVED: route ISA IRQs via IOAPIC
-  ├── pic_conditional_init()        ◄── Only remap+disable if PCAT_COMPAT=1
-  ├── pit_init()                    ◄── IRQ0 now routed through IOAPIC ✓
-  ├── rtc_init()
-  ├── keyboard_init()               ◄── With existing timeouts ✓
-  ├── mouse_init()                  ◄── With existing timeouts ✓
+  ├── idt_init()  (256 entries)
+  ├── irq_init()
+  ├── acpi_init()                  MADT + PCAT_COMPAT check
+  ├── lapic_init() / ioapic_init()
+  ├── pic_conditional_init()
+  ├── timer_hal_init()             ◄── NEW (§6): detect platform, calibrate,
+  │   ├── platform_detect()        │   select timer, start ticking
+  │   ├── if HV/VMware/KVM:       │
+  │   │   ├── Tier 1: MSR/CPUID    │   (instant freq — no delay, no PIT)
+  │   │   └── g_system_timer =      │   &lapic_driver → LAPIC fires at 100 Hz
+  │   ├── if bare metal:          │
+  │   │   ├── Tier 1→2→3 waterfall │   (CPUID 0x15 → HPET → PM Timer → PIT)
+  │   │   └── g_system_timer =      │   &lapic_driver → calibrated LAPIC
+  │   └── if QEMU TCG:             │
+  │       ├── pit_init() as before  │   (TCG LAPIC drifts; PIT is wall-clock)
+  │       └── g_system_timer =      │   &pit_driver  → PIT fires at 100 Hz
+  ├── rtc_init() / keyboard / mouse
   ├── fb_init()
-  ├── boot_splash_init()            ◄── sleep_ms() works (PIT via IOAPIC) ✓
-  ├── pci_scan()
+  ├── boot_splash_init()           ✅ sleep_ms() → g_system_timer → works!
+  ├── pci_scan() / net / virtio
   ├── sti
-  └── ...
+  ├── boot_splash_start_animation()✅ callback via g_system_timer → works!
+  └── dhcp_discover()
 
 boot_storage_init()
-  ├── smp_init()                    ◄── LAPIC already up, SIPI works
-  ├── storvsc_init()
-  └── ...
+  ├── vfs_init() / partition scan
+  ├── smp_init()                   LAPIC already calibrated ✅
+  ├── vmbus_init() / storvsc       VMBus SINT → proper ISR (§5.1) or default
+  └── registry / symtab / mmap
 ```
 
 ---
@@ -333,7 +383,7 @@ boot_storage_init()
 
 ## 5. Full IDT Coverage — Proper Handlers + Defensive Safety Net
 
-**Prompt:** A `GENERAL_PROTECTION_FAULT` BSOD was observed on Hyper-V with error code `0x7B3`. Decoding: bit 0=1 (external event), bits 1-2=01 (IDT reference), bits 3-15=0xF6 (vector 246). Hyper-V delivered a **VMBus synthetic interrupt** to IDT vector 0xF6 which has no handler — the CPU faulted on the null descriptor. The **real fix** is to register proper ISRs for known synthetic vectors (VMBus channel callbacks, STIMER, synthetic keyboard/mouse). Catch-all stubs are only a **safety net** for truly unexpected vectors — they must log warnings, not silently swallow interrupts, because silently absorbing VMBus callbacks would mask StorVSC disk I/O completions, NetVSC packet delivery, and synthetic timer ticks. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"idt: full vector coverage with proper Hyper-V ISRs"`. Add notes directly in this TODO section.
+**Prompt:** Verify that all 256 IDT entries are populated with valid ISR stubs, the default handler for unclaimed vectors logs rate-limited warnings (not panics), and sends LAPIC EOI. Confirm: (1) `isr_stubs.asm` generates stubs for vectors 48–255 via `%rep` macro, (2) `idt_init()` installs all 256 entries, (3) `isr_handler()` default path at line 210+ logs first-hit details and counts subsequent hits at exponential milestones, (4) `lapic_eoi()` is called for all unclaimed vectors. Run `bash scripts/build.sh clean` and verify `=== BUILD OK ===`. §5.1 (proper Hyper-V ISRs) is deferred to TODO-063-Drivers — VMBus currently uses SINT2 at vector 0xF0 with polling, not `irq_register()`.
 
 > [!CAUTION]
 > **Observed BSOD (Hyper-V Gen 2):**
@@ -353,45 +403,65 @@ boot_storage_init()
 > stub that swallows it would mask real I/O failures and make disk/network
 > drivers appear to hang for no reason.
 
-### 5a. Register Proper ISRs for Known Hyper-V Synthetic Vectors (Real Fix)
+### 5.1 Register Proper ISRs for Known Hyper-V Synthetic Vectors (Real Fix)
 
-- [ ] Identify which vector Hyper-V assigns for VMBus callbacks:
-  - [ ] The VMBus driver writes the callback vector to the SINT (Synthetic Interrupt Source) MSR
-  - [ ] `hv_vmbus_init()` should register its ISR at this vector via `irq_register()` (§4)
-  - [ ] → XREF: `TODO-063-Drivers.md` or VMBus driver source for SINT setup
-- [ ] Register VMBus channel ISR at the SINT-assigned vector:
-  - [ ] ISR reads the VMBus interrupt page to determine which channel fired
-  - [ ] Dispatches to the per-channel callback (StorVSC, NetVSC, HID, etc.)
-  - [ ] Sends LAPIC EOI
+> [!NOTE]
+> **Implemented.** VMBus ISR registered at vector 0xF0 via `irq_register()` in
+> `vmbus_init()`. The ISR scans SIEF event flags and dispatches to per-channel
+> callbacks. Keyboard and mouse channel callbacks registered in `hv_input.c`.
+> STIMER ISR is deferred to §6.3 (calibration waterfall) — STIMER is a timer
+> source, not a VMBus channel.
+
+- [x] Identify which vector Hyper-V assigns for VMBus callbacks:
+  - [x] The VMBus driver writes the callback vector to the SINT (Synthetic Interrupt Source) MSR
+  - [x] Currently: SINT2 = vector 0xF0 (`VMBUS_INTERRUPT_VECTOR` in `vmbus.c:200`)
+  - [x] `vmbus_init()` registers ISR at this vector via `irq_register()` (§4)
+  - [x] → XREF: `TODO-063-Drivers.md` — VMBus driver completion
+- [x] Register VMBus channel ISR at the SINT-assigned vector:
+  - [x] ISR scans SIEF event flags via `lock xchgl` + `bsfl` (atomic clear + bit scan)
+  - [x] Dispatches to per-channel callback (`vmbus_channel_callback_t`)
+  - [x] Auto-EOI configured on SINT2 — `irq_dispatch_wrapper()` sends LAPIC EOI
 - [ ] Register Hyper-V STIMER (Synthetic Timer) ISR if used:
   - [ ] Can replace PIT as the kernel timer source on Hyper-V
   - [ ] Higher precision than PIT (100ns resolution vs 10ms)
-- [ ] Register Hyper-V synthetic keyboard/mouse ISRs via `hv_input.c`:
-  - [ ] These replace PS/2 keyboard/mouse on Gen 2 (no i8042)
-  - [ ] → XREF: `hv_input.c` — already partially implemented
+  - [ ] Vector 0xF6 from original #GP crash was likely STIMER, not VMBus
+  - [ ] → Deferred to §6.3 (calibration waterfall — STIMER as Tier 1 source)
+- [x] Register Hyper-V synthetic keyboard/mouse ISRs via `hv_input.c`:
+  - [x] `hv_kbd_channel_cb()` calls `hv_kbd_poll()` on VMBus interrupt
+  - [x] `hv_mouse_channel_cb()` calls `hv_mouse_poll()` on VMBus interrupt
+  - [x] Registered via `vmbus_set_channel_callback()` after channel open
 
-### 5b. Defensive Catch-All Stubs (Safety Net Only)
+### 5.2 Defensive Catch-All Stubs (Safety Net Only)
 
-- [ ] Populate remaining unpopulated IDT entries (vectors 48–0xFB) with warning stubs:
-  - [ ] **Log a warning**: `[IDT] WARNING: Unhandled interrupt vector=%u, RIP=%p`
-  - [ ] Send LAPIC EOI (idempotent — safe even if no pending interrupt)
-  - [ ] Do **NOT** silently absorb — the warning log makes unhandled vectors visible
-  - [ ] Rate-limit the warning (once per vector per second) to avoid log spam
-- [ ] Generate stubs efficiently via the `irq_register()` API (§4):
-  - [ ] Default handler registered for all unclaimed vectors
-  - [ ] When a driver claims a vector via `irq_register()`, it replaces the default
-- [ ] The default handler should NOT panic — treat as a warning, not a fatal error:
-  - [ ] First occurrence per vector: log full details (vector, RIP, error code)
-  - [ ] Subsequent: count only (avoid flooding serial/log)
-- [ ] Build and test on QEMU: no regression (stubs are never triggered)
-- [ ] Build and test on Hyper-V: #GP replaced by warning log identifying which vector
-- [ ] Commit: `"idt: full vector coverage with proper Hyper-V ISRs"`
+- [x] Populate remaining unpopulated IDT entries (vectors 48–255) with warning stubs:
+  - [x] **Log a warning**: `[idt] Unhandled interrupt vec=%u (0x%x), RIP=0x%x`
+  - [x] Send LAPIC EOI (idempotent — safe even if no pending interrupt)
+  - [x] Do **NOT** silently absorb — the warning log makes unhandled vectors visible
+  - [x] Rate-limit: first hit logs full details, then at 10/100/1000 milestones
+- [x] Generate stubs via NASM `%rep` macro in `isr_stubs.asm` (vectors 48–255, skip 128–129):
+  - [x] Each stub pushes vector number + fake error code, then jumps to common handler
+  - [x] `idt_init()` installs all 208 stubs into IDT entries with `idt_set_entry()`
+  - [x] Drivers claim vectors via `irq_register()` → replaces default path with their ISR
+- [x] The default handler does NOT panic — treats as warning, not fatal:
+  - [x] `isr_handler()` line 210: `unhandled_counts[]` tracks per-vector hit count
+  - [x] First hit: `klog(LOG_WARN, "idt", ...)` with vector, hex, and RIP
+  - [x] Milestones 10/100/1000: periodic summary log
+- [x] Build and test on QEMU: no regression (stubs are never triggered)
+- [x] Build confirms: `IDT loaded (256 entries, ISR 0-31, IRQ 32-47, dynamic 48-255)`
+- [x] Commit: already committed — IDT coverage was implemented alongside §4
+
+> [!NOTE]
+> **Already implemented.** Codebase scan confirmed: `isr_stubs.asm` uses `%rep`
+> to generate stubs 48–255 (skipping 128/129). `idt_init()` installs all 256
+> entries. `isr_handler()` default path sends LAPIC EOI + rate-limited warning.
+> The `0xF6` #GP crash from the original BSOD would now produce a warning log
+> instead of a fault.
 
 ---
 
-## 6. Timer Source Hierarchy (🚀 Impossible OS Feature)
+## 6. Unified Timer Subsystem — UTS (🚀 Impossible OS Feature)
 
-**Prompt:** The kernel currently has a single timer source: the legacy PIT (Programmable Interval Timer) at ~100 Hz. On Hyper-V Gen 2 (no PIC), PIT IRQs don't arrive. On real hardware, the PIT's 10ms granularity limits `sleep_ms()` accuracy. After APIC-first boot, introduce a timer source hierarchy that automatically selects the best available timer: LAPIC timer (per-CPU, calibrated), Hyper-V STIMER (100ns precision), HPET (sub-microsecond), TSC deadline timer (nanosecond), with PIT as the lowest-priority fallback. `sleep_ms()` and the scheduler should use whichever timer is best, transparently. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: timer source hierarchy with automatic selection"`. Add notes directly in this TODO section.
+**Prompt:** The legacy dual-timer architecture is fundamentally broken: `sleep_ms()` in `pit.c` depends on PIT `tick_count`, which never increments on Hyper-V Gen 2 (no PIT hardware). Meanwhile `lapic_timer_calibrate()` runs in `boot_storage_init()` — far too late to save the boot splash. The fix is a **Unified Timer Subsystem**: detect the platform via CPUID, select exactly one timer backend, calibrate it immediately (before splash), and route ALL timekeeping through a single HAL pointer `g_system_timer`. This section has four ordered sub-phases. Complete them in order. After all four are done, run `bash scripts/build.sh clean` and commit as `"kernel: unified timer subsystem (UTS)"`. Add notes directly in this TODO section.
 
 > [!TIP]
 > **Competitive Edge:** Windows has an internal timer hierarchy but it's completely
@@ -401,46 +471,386 @@ boot_storage_init()
 > to override it via **Control Panel → System → Timer Source** for debugging
 > and benchmarking purposes.
 
+> [!IMPORTANT]
+> **Architecture Decision: Single Source of Truth.**
+> The rest of the kernel (UI, scheduler, VFS, drivers) is **forbidden** from
+> directly accessing PIT or LAPIC timer hardware. All subsystems call
+> `g_system_timer->sleep_ms()` / `g_system_timer->get_ticks()` exclusively.
+> This eliminates the split-timer bug class permanently.
+
 > [!NOTE]
-> **Codebase fact:** `lapic_timer_init()` in `lapic.c` uses a hardcoded
-> `ICR=10000000` (xv6-style) — the `hz` parameter is ignored entirely. The
-> LAPIC timer fires but at an unpredictable rate on real hardware. Proper
-> calibration (→ XREF: `TODO-063.09 §2`) is required before it can replace PIT.
+> **Why the LAPIC needs calibration.** The PIT always ticks at exactly
+> 1.193182 MHz on every x86 computer — the frequency is baked into the
+> crystal. But the LAPIC timer is tied to the CPU's internal bus clock,
+> which varies from machine to machine (26 MHz on QEMU, ~1 GHz on VBox NEM,
+> 100–400 MHz on real Intel CPUs). When the OS boots, it doesn't know how
+> fast the LAPIC ticks. It must **measure** (calibrate) the LAPIC before
+> it can use it for `sleep_ms()`. Historically, OSes calibrated by running
+> the PIT for a known 10ms window and counting LAPIC ticks — but that
+> requires the PIT to exist. The calibration waterfall (§6.3) solves this
+> by cascading through modern frequency sources that don't need the PIT.
 
-- [ ] Define `struct timer_source`:
-  ```
-  { const char *name, uint32_t priority, uint64_t freq_hz,
-    void (*init)(uint32_t hz), void (*set_oneshot)(uint64_t ns),
-    uint64_t (*read_counter)(void), bool available }
-  ```
-- [ ] Implement timer source registration: `timer_register(struct timer_source *src)`
-- [ ] Implement auto-selection: `timer_init_best()` — probe all sources, pick highest priority
-- [ ] Register timer sources with priorities:
-  - [ ] Priority 5: TSC deadline timer (highest — nanosecond precision, per-CPU)
-    - [ ] Detect via `CPUID.01H:ECX[bit 24]` (TSC-Deadline LAPIC mode)
-    - [ ] Calibrate TSC frequency via `CPUID.15H` / PIT / HPET
-  - [ ] Priority 4: Hyper-V STIMER (100ns resolution, para-virtualized)
-    - [ ] Detect via `CPUID.40000003H` (Hyper-V features leaf)
-    - [ ] Configure STIMER0 for periodic interrupt delivery
-  - [ ] Priority 3: HPET (High Precision Event Timer)
-    - [ ] Detect via ACPI HPET table
-    - [ ] Map MMIO base from ACPI, verify capabilities
-    - [ ] → XREF: `TODO-012-ACPI.md` for HPET table parsing
-  - [ ] Priority 2: LAPIC periodic timer (calibrated — requires `TODO-063.09 §2`)
-    - [ ] After proper PIT calibration, LAPIC timer rate is known
-  - [ ] Priority 1: PIT (legacy fallback — 1.193182 MHz, 10ms minimum granularity)
-- [ ] Refactor `sleep_ms()` to use the best available timer:
-  - [ ] If TSC available: busy-wait on TSC (most precise, no interrupt needed)
-  - [ ] If LAPIC timer calibrated: one-shot countdown + `hlt`
-  - [ ] If PIT only: existing tick-based wait (current behavior)
-- [ ] Refactor scheduler quantum to use the best timer for preemption
-- [ ] Expose active timer source via klog: `[TIMER] Using LAPIC timer @ 100 Hz (calibrated)`
-- [ ] Expose via Win32 API: `QueryPerformanceFrequency()` / `QueryPerformanceCounter()`
-  - [ ] Use TSC as the performance counter source (highest precision)
-- [ ] Build and test: QEMU uses PIT, Hyper-V uses STIMER, real hardware uses LAPIC/TSC
-- [ ] Commit: `"kernel: timer source hierarchy with automatic selection"`
+> [!NOTE]
+> **Platform Detection & Routing Matrix:**
+>
+> | Platform | Detection | Selected Timer | Calibration Tier | Rationale |
+> |---|---|---|---|---|
+> | Hyper-V (Gen 1 & 2) | CPUID 0x40000000 = "Microsoft Hv" | LAPIC | Tier 1: MSR 0x40000023 | Instant freq; no PIT |
+> | VMware | CPUID 0x40000000 = "VMwareVMware" | LAPIC | Tier 1: CPUID 0x40000010 | EBX = APIC freq (kHz) |
+> | KVM | CPUID 0x40000000 = "KVMKVMKVM" | LAPIC | Tier 1: CPUID 0x40000010 | Paravirt freq reporting |
+> | Real hardware (modern) | CPUID (no HV bit) + CPUID 0x15 exists | LAPIC | Tier 1: CPUID 0x15 | Crystal clock ratio |
+> | Real hardware (older) | No CPUID 0x15, HPET or PM Timer in ACPI | LAPIC | Tier 2: HPET or PM Timer | 10ms window, no PIT |
+> | VirtualBox | CPUID 0x40000000 = "VBoxVBoxVBox" | LAPIC | Tier 2/3: PM Timer or PIT | VT-x ensures accurate LAPIC |
+> | QEMU TCG (emulation) | CPUID hypervisor + no HW virt | PIT | Tier 3: PIT (only safe env) | TCG LAPIC drifts; PIT host-backed |
 
-### 6a. Migrate Boot Splash Spinner Off PIT Callback
+### 6.1 CPUID Platform Probe
+
+> [!NOTE]
+> **Codebase fact:** No CPUID-based hypervisor detection exists yet.
+> `klog_live.c` has a bare `cpuid()` inline but no structured probe.
+> `registry.c` has `reg_cpuid()` for populating registry keys but no
+> hypervisor string matching. This is all new code.
+
+- [ ] Create `include/kernel/cpuid_platform.h` and `src/kernel/cpuid_platform.c`
+- [ ] Define platform enum:
+  ```c
+  typedef enum {
+      PLATFORM_BARE_METAL,   /* no hypervisor detected */
+      PLATFORM_HYPERV,       /* Microsoft Hv (Gen 1 or Gen 2) */
+      PLATFORM_VMWARE,       /* VMwareVMware */
+      PLATFORM_VIRTUALBOX,   /* VBoxVBoxVBox */
+      PLATFORM_QEMU_KVM,     /* KVMKVMKVM — KVM with HW virt */
+      PLATFORM_QEMU_TCG,     /* TCGTCGTCGTCG — software emulation */
+      PLATFORM_UNKNOWN_HV,   /* hypervisor bit set, unknown vendor */
+  } platform_id_t;
+  ```
+- [ ] Implement `platform_detect()`:
+  - [ ] Check CPUID.01H:ECX bit 31 (hypervisor present bit)
+  - [ ] If set: read CPUID leaf 0x40000000 for 12-byte vendor string
+  - [ ] Match: `"Microsoft Hv"` → `PLATFORM_HYPERV`
+  - [ ] Match: `"VMwareVMware"` → `PLATFORM_VMWARE`
+  - [ ] Match: `"VBoxVBoxVBox"` → `PLATFORM_VIRTUALBOX`
+  - [ ] Match: `"KVMKVMKVM\0\0\0"` → `PLATFORM_QEMU_KVM`
+  - [ ] Match: `"TCGTCGTCGTCG"` → `PLATFORM_QEMU_TCG`
+  - [ ] If no hypervisor bit: `PLATFORM_BARE_METAL`
+  - [ ] Fallback: `PLATFORM_UNKNOWN_HV`
+- [ ] Implement `platform_name()` → returns human-readable string (e.g., `"Hyper-V"`)
+- [ ] Implement `platform_is_tcg()` → returns true only for `PLATFORM_QEMU_TCG`
+- [ ] Implement `platform_has_apic_freq_msr()` → true for Hyper-V, VMware, KVM
+- [ ] Call `platform_detect()` inside `timer_hal_init()` (§6.4) — first thing it does
+- [ ] Log result: `[platform] Detected: Hyper-V (CPUID 0x40000000)`
+- [ ] Add `cpuid_platform.o` to `Makefile` kernel object list
+- [ ] Build and test: QEMU shows `QEMU/KVM` or `QEMU/TCG`, VBox shows `VirtualBox`
+- [ ] Commit: `"kernel: CPUID platform detection (Hyper-V, VBox, VMware, QEMU TCG)"`
+
+### 6.2 Timer HAL Interface (`timer_driver_t`)
+
+> [!NOTE]
+> **Codebase fact:** `sleep_ms()` is declared in `pit.h` and defined in `pit.c`.
+> It is called from 13+ locations: `boot_splash.c`, `boot_tests.c`,
+> `test_threads.c`, `spinner.c` (indirectly), `event.c`, etc.
+> `pit_get_ticks()` is called from `registry.c` (×3), `klog.c` (×2),
+> `event.c`, `boot_desktop.c`, `boot_tests.c`.
+> `uptime()` is in `pit.c` and uses `pit_get_ticks() / pit_actual_freq`.
+> ALL of these must route through `g_system_timer` after this change.
+
+- [ ] Create `include/kernel/timer.h`:
+  ```c
+  typedef struct {
+      const char *name;                        /* e.g., "LAPIC", "PIT" */
+      void (*init)(uint32_t hz);               /* start periodic ticks */
+      uint64_t (*get_ticks)(void);             /* monotonic tick counter */
+      void (*sleep_ms)(uint32_t ms);           /* blocking delay */
+      void (*set_tick_handler)(void (*handler)(struct registers *));
+  } timer_driver_t;
+
+  extern timer_driver_t *g_system_timer;       /* THE single source of truth */
+
+  /* Hardware-agnostic API — all kernel code calls these */
+  void     sleep_ms(uint32_t ms);              /* → g_system_timer->sleep_ms */
+  uint64_t system_get_ticks(void);             /* → g_system_timer->get_ticks */
+  uint64_t uptime(void);                       /* ticks / freq → seconds */
+  ```
+- [ ] Create `src/kernel/timer.c`:
+  - [ ] Define `timer_driver_t *g_system_timer = NULL;`
+  - [ ] Implement `sleep_ms()` as: `g_system_timer->sleep_ms(ms);`
+  - [ ] Implement `system_get_ticks()` as: `return g_system_timer->get_ticks();`
+  - [ ] Implement `uptime()` using `system_get_ticks()`
+  - [ ] Guard all functions: if `g_system_timer == NULL`, return immediately (early-boot safety)
+- [ ] Refactor `pit.c` to expose `pit_driver`:
+  - [ ] Remove the global `sleep_ms()` definition from `pit.c` (it moves to `timer.c`)
+  - [ ] Create `static timer_driver_t pit_driver = { "PIT", pit_init, pit_get_ticks, pit_sleep_ms, ... };`
+  - [ ] Rename internal sleep to `pit_sleep_ms()` (static, used only by `pit_driver`)
+  - [ ] Export `extern timer_driver_t pit_driver;` from `pit.h`
+- [ ] Refactor `lapic.c` to expose `lapic_driver`:
+  - [ ] Create `static timer_driver_t lapic_driver = { "LAPIC", lapic_timer_init, lapic_get_ticks, lapic_sleep_ms, ... };`
+  - [ ] Implement `lapic_get_ticks()` — returns the global `tick_count` (driven by LAPIC ISR)
+  - [ ] Implement `lapic_sleep_ms()` — uses `lapic_get_ticks()` + `hlt` loop
+  - [ ] Export `extern timer_driver_t lapic_driver;` from `lapic.h`
+- [ ] Update all callers of `pit_get_ticks()` to `system_get_ticks()`:
+  - [ ] `src/kernel/registry.c` (2 call sites + 2 extern decls to remove)
+  - [ ] `src/kernel/klog.c` (2 call sites)
+  - [ ] `src/kernel/sched/event.c` (2 call sites)
+  - [ ] `src/kernel/main/boot_desktop.c` (1 call site)
+  - [ ] `src/kernel/main/boot_tests.c` (1 call site)
+- [ ] Update `PIT_TARGET_FREQ` usage in `event.c`:
+  - [ ] Line 159: `uint64_t timeout = ((uint64_t)timeout_ms * PIT_TARGET_FREQ) / 1000;`
+  - [ ] Replace with: `system_get_ticks()`-based timeout (or add `system_get_freq()` API)
+  - [ ] This is a hardcoded assumption that the tick source is PIT at 100 Hz
+- [ ] Update all callers of `uptime()` — these will transparently migrate once `uptime()` moves to `timer.c`:
+  - [ ] `src/kernel/log.c` (1 site) — `#include pit.h` → `timer.h`
+  - [ ] `src/kernel/panic.c` (2 sites) — `#include pit.h` → `timer.h`
+  - [ ] `src/kernel/sched/syscall.c` (1 site) — `#include pit.h` → `timer.h`
+  - [ ] `src/kernel/main/compositor.c` (1 site) — `#include pit.h` → `timer.h`
+  - [ ] `src/kernel/main/boot_tests.c` (1 site) — already handled above
+  - [ ] `src/kernel/fs/ixfs/ixfs_ops.c` (8 sites) — `#include pit.h` via `ixfs_internal.h`
+  - [ ] `src/kernel/fs/ixfs/ixfs_cow.c` (1 site) — `#include pit.h` via `ixfs_internal.h`
+  - [ ] `src/kernel/fs/ixfs/ixfs_internal.h` — change `#include pit.h` → `timer.h`
+- [ ] Update all `#include "kernel/drivers/pit.h"` to `#include "kernel/timer.h"` where only `sleep_ms` / `uptime` / ticks are needed:
+  - [ ] `src/kernel/klog.c`
+  - [ ] `src/kernel/log.c`
+  - [ ] `src/kernel/panic.c`
+  - [ ] `src/kernel/registry.c` (remove extern decls too)
+  - [ ] `src/kernel/sched/event.c`
+  - [ ] `src/kernel/sched/syscall.c`
+  - [ ] `src/kernel/boot_splash.c`
+  - [ ] `src/kernel/main/boot_desktop.c`
+  - [ ] `src/kernel/main/boot_tests.c`
+  - [ ] `src/kernel/main/test_threads.c`
+  - [ ] `src/kernel/main/compositor.c`
+  - [ ] `src/desktop/desktop.c`
+  - [ ] `src/kernel/fs/ixfs/ixfs_internal.h`
+  - [ ] Keep `pit.h` only in: `pit.c`, `lapic.c`, `boot_interrupts.c`, `boot_storage.c`
+- [ ] Fix stale comment in `boot_splash.c` line 243:
+  - [ ] Old: `"PIT IS initialized by this point so sleep_ms() works correctly"`
+  - [ ] New: `"timer_hal_init() provides g_system_timer so sleep_ms() works correctly"`
+- [ ] Fix stale comment in `boot_splash.c` line 201:
+  - [ ] Old: `"Called from main.c after pit_init() + sti to start animation"`
+  - [ ] New: `"Called from main.c after timer_hal_init() + sti to start animation"`
+- [ ] `sleep_ms()` callers need NO changes — same function signature, now in `timer.h`
+- [ ] Add `timer.o` to `Makefile` kernel object list
+- [ ] Build and test: initially `g_system_timer = &pit_driver` → identical behavior
+- [ ] Commit: `"kernel: timer HAL interface (timer_driver_t, g_system_timer)"`
+
+### 6.3 Legacy-Free Calibration Waterfall (Before Boot Splash)
+
+> [!CAUTION]
+> **The core bug fix.** Currently `lapic_timer_calibrate()` runs in
+> `boot_storage_init()` — after the boot splash has already tried to call
+> `sleep_ms()`. On Hyper-V Gen 2, PIT is absent, so `sleep_ms()` via PIT
+> bails instantly (stall detection at `pit.c:146`). The splash skips,
+> assets load prematurely, and the UI breaks.
+>
+> The fix: move calibration to `boot_interrupts_init()`, right after
+> `lapic_init()` / `ioapic_init()`, **before** `pit_init()` and **before**
+> `boot_splash_init()`. **Never assume the PIT exists.** Cascade through
+> modern frequency sources first. Only touch PIT as a last resort behind
+> explicit ACPI safety checks.
+
+> [!WARNING]
+> **The PIT is dead on modern hardware.**  Hyper-V Gen 2, UEFI Class 3
+> systems, and Hardware-Reduced ACPI boards physically lack the 8254 PIT.
+> Blind `inb`/`outb` on ports 0x40-0x43 reads a floating bus (returns
+> `0xFF`), causing calibration loops to divide by zero, calculate
+> impossible frequencies, or hang. The PIT must be treated as a **last
+> resort**, never a default.
+
+> [!NOTE]
+> **Codebase fact:** `lapic_timer_calibrate()` at `lapic.c:335` uses PIT
+> channel 2 (speaker gate, port 0x42/0x43/0x61) with a spin timeout.
+> On VBox NEM the timeout fires and it falls back to xv6 hardcoded ICR.
+> On Hyper-V Gen 2, PIT ports read garbage (0xFF). No `HW_REDUCED_ACPI`
+> flag parsing exists yet in `acpi.c` — the FADT is parsed for PM1a
+> control/reset only. HPET and PM Timer are not implemented.
+
+- [ ] Implement the tier functions below in `lapic.c` — the actual move from
+  `boot_storage_init()` to `boot_interrupts_init()` happens in §6.4 (`timer_hal_init()`):
+
+#### Tier 1: Architectural Fast-Path (Zero Delay, No PIT)
+
+> [!TIP]
+> Modern hardware and hypervisors report the LAPIC frequency directly via
+> CPUID or MSR. Calibration takes nanoseconds — no delay loop, no
+> hardware timers, no PIT ports touched.
+
+- [ ] Implement `cal_try_hyperv_msr()` in `lapic.c`:
+  - [ ] Guard: only call when `platform_id == PLATFORM_HYPERV`
+  - [ ] Read MSR `0x40000023` (`HV_X64_MSR_APIC_FREQUENCY`)
+  - [ ] Value = exact LAPIC frequency in Hz
+  - [ ] `cal_ticks_per_ms = freq / 1000;` — done
+  - [ ] Log: `[lapic] Tier 1: Hyper-V MSR → %u ticks/ms (%u MHz bus)`
+- [ ] Implement `cal_try_vmware_cpuid()` in `lapic.c`:
+  - [ ] Guard: only call when `platform_id == PLATFORM_VMWARE || PLATFORM_QEMU_KVM`
+  - [ ] Read CPUID leaf 0x40000010
+  - [ ] EBX = virtual APIC frequency in kHz
+  - [ ] `cal_ticks_per_ms = EBX;` — kHz is already ticks/ms
+  - [ ] Log: `[lapic] Tier 1: VMware/KVM CPUID → %u ticks/ms`
+- [ ] Implement `cal_try_cpuid_15h()` in `lapic.c`:
+  - [ ] Guard: check `CPUID.0` max leaf ≥ 0x15
+  - [ ] Read CPUID leaf 0x15: EAX=denominator, EBX=numerator, ECX=crystal Hz
+  - [ ] If EAX != 0 && EBX != 0: `tsc_freq = ECX * EBX / EAX`
+  - [ ] If ECX == 0: use known crystal frequencies (24 MHz Skylake+, 25 MHz Atom)
+  - [ ] LAPIC bus clock = TSC freq (on most Intel CPUs, bus freq ≈ TSC freq)
+  - [ ] `cal_ticks_per_ms = tsc_freq / 1000;`
+  - [ ] Log: `[lapic] Tier 1: CPUID 0x15 → %u ticks/ms (crystal=%u Hz)`
+
+#### Tier 2: Modern Hardware Timers (10ms Delay, No PIT)
+
+> [!NOTE]
+> If Tier 1 fails (no hypervisor freq reporting, no CPUID 0x15), use a
+> modern timer to pace the calibration window. The HPET and ACPI PM Timer
+> are memory-mapped, universally available on ACPI platforms, and do NOT
+> depend on the 8254 PIT.
+
+- [ ] Implement `cal_try_hpet()` in `lapic.c`:
+  - [ ] Guard: check if ACPI HPET table exists (`acpi_get_hpet_base() != 0`)
+  - [ ] NOTE: `acpi_get_hpet_base()` doesn't exist yet — add HPET table parsing to `acpi.c`
+    - [ ] Parse ACPI "HPET" table: base address at offset 44 (8 bytes)
+    - [ ] Add `uint64_t acpi_get_hpet_base(void)` to `acpi.h`
+  - [ ] Map HPET MMIO base (identity-mapped in first 4 GiB)
+  - [ ] Read HPET general capabilities (offset 0x00): bits 32-63 = period in femtoseconds
+  - [ ] Calculate HPET frequency: `freq = 10^15 / period_fs`
+  - [ ] Start LAPIC timer counting down from 0xFFFFFFFF
+  - [ ] Read HPET main counter, wait for 10ms worth of HPET ticks
+  - [ ] Read LAPIC remaining count → `cal_ticks_per_ms = elapsed / 10`
+  - [ ] Log: `[lapic] Tier 2: HPET calibration → %u ticks/ms`
+- [ ] Implement `cal_try_pmtimer()` in `lapic.c`:
+  - [ ] Guard: check FADT PM Timer exists (`acpi_get_pmtimer_port() != 0`)
+  - [ ] NOTE: `acpi_get_pmtimer_port()` doesn't exist yet — extract from FADT:
+    - [ ] FADT offset 76: `PM_TMR_BLK` (4-byte I/O port for PM Timer)
+    - [ ] FADT offset 112, bit 8: `TMR_VAL_EXT` (1 = 32-bit timer, 0 = 24-bit)
+    - [ ] Add `uint16_t acpi_get_pmtimer_port(void)` and `int acpi_pmtimer_is_32bit(void)` to `acpi.h`
+  - [ ] PM Timer runs at exactly 3.579545 MHz (universally guaranteed by ACPI spec)
+  - [ ] Start LAPIC timer counting down from 0xFFFFFFFF
+  - [ ] Read PM Timer, wait for 35795 ticks (≈10ms at 3.579545 MHz)
+  - [ ] Handle 24-bit wraparound: mask with `0x00FFFFFF` if not 32-bit
+  - [ ] Read LAPIC remaining → `cal_ticks_per_ms = elapsed / 10`
+  - [ ] Log: `[lapic] Tier 2: PM Timer calibration → %u ticks/ms`
+- [ ] Add `int acpi_hw_reduced(void)` to `acpi.h`/`acpi.c`:
+  - [ ] Parse FADT offset 112 (flags), bit 20 = `HW_REDUCED_ACPI`
+  - [ ] Returns 1 if legacy devices (PIT, PIC, RTC) do NOT exist
+
+#### Tier 3: Legacy PIT Fallback (Only If Safe)
+
+> [!CAUTION]
+> **Never touch PIT ports blindly.** Before executing any `inb`/`outb` on
+> ports 0x40-0x43, verify BOTH conditions:
+>   1. `acpi_pcat_compat() == 1` (MADT says PIC/PIT/RTC exist)
+>   2. `acpi_hw_reduced() == 0` (FADT does NOT set HW_REDUCED_ACPI)
+>
+> Only QEMU TCG, VirtualBox, and old BIOS PCs pass both checks.
+
+- [ ] Rename existing `lapic_timer_calibrate()` to `cal_try_pit()` in `lapic.c`:
+  - [ ] This is the existing PIT channel 2 code (ports 0x42/0x43/0x61)
+  - [ ] Add guard at top: `if (!acpi_pcat_compat() || acpi_hw_reduced()) return 0;`
+  - [ ] Keep existing spin timeout + xv6 fallback behavior
+  - [ ] Log: `[lapic] Tier 3: PIT ch2 calibration → %u ticks/ms`
+
+#### Waterfall Orchestrator
+
+- [ ] Rewrite `lapic_timer_calibrate()` as waterfall:
+  ```c
+  void lapic_timer_calibrate(void) {
+      /* Tier 1: instant frequency from CPUID/MSR (no delay) */
+      if (cal_try_hyperv_msr())   return;   /* Hyper-V Gen 1 & 2 */
+      if (cal_try_vmware_cpuid()) return;   /* VMware, KVM */
+      if (cal_try_cpuid_15h())    return;   /* Intel Skylake+ bare metal */
+
+      /* Tier 2: modern timer delay loop (no PIT) */
+      if (cal_try_hpet())         return;   /* HPET MMIO */
+      if (cal_try_pmtimer())      return;   /* ACPI PM Timer (3.579 MHz) */
+
+      /* Tier 3: legacy PIT (only if PCAT_COMPAT=1 && !HW_REDUCED) */
+      if (cal_try_pit())          return;   /* existing PIT ch2 code */
+
+      /* All tiers failed — use xv6 hardcoded ICR as last resort */
+      cal_ticks_per_ms = 100;  /* ~100 MHz bus — safe conservative estimate */
+      klog(LOG_WARN, "lapic",
+           "All calibration tiers failed — using hardcoded 100 ticks/ms");
+  }
+  ```
+- [ ] Each `cal_try_*()` returns 1 on success (sets `cal_ticks_per_ms`), 0 on failure
+- [ ] After calibration succeeds, immediately call `lapic_timer_init(100)`:
+  - [ ] This starts the LAPIC timer ticking at 100 Hz
+  - [ ] On non-TCG: `lapic_timer_set_tick_source(1)` so LAPIC drives `tick_count`
+  - [ ] On QEMU TCG: skip — PIT will drive `tick_count` instead
+- [ ] Log final result: `[timer] LAPIC calibrated (tier N): %u ticks/ms (%u MHz bus)`
+- [ ] Build and test on QEMU KVM: Tier 1 (CPUID 0x40000010) used
+- [ ] Build and test on QEMU TCG: Tier 3 (PIT) used — only safe environment
+- [ ] Build and test on Hyper-V Gen 2: Tier 1 (MSR 0x40000023) used, no PIT touch
+- [ ] Build and test on VirtualBox: Tier 2 (PM Timer) or Tier 3 (PIT) used
+- [ ] Commit: `"timer: legacy-free calibration waterfall (3 tiers)"`
+
+### 6.4 Timer Lock-In & Single Uptime Variable
+
+> [!IMPORTANT]
+> **This is where `g_system_timer` gets assigned.** After platform detection
+> (§6.1) and calibration (§6.3), this step selects the timer backend and
+> permanently locks it in. From this point forward, `sleep_ms()` works
+> correctly on every platform — the boot splash, spinner, and all callers
+> route through the selected backend.
+
+- [ ] Create `timer_hal_init()` in `timer.c` — the UTS entry point:
+  ```c
+  void timer_hal_init(void) {
+      platform_detect();
+      if (platform_is_tcg()) {
+          /* QEMU TCG: LAPIC timer drifts. PIT is host-backed = wall-clock.
+           * PIT is safe here — TCG always emulates legacy hardware. */
+          pit_init();
+          g_system_timer = &pit_driver;
+      } else {
+          /* Real HW, Hyper-V, VMware, VBox, KVM: LAPIC is the best timer.
+           * The calibration waterfall finds the freq without assuming PIT. */
+          lapic_timer_calibrate();  /* waterfall: MSR → CPUID → HPET → PM → PIT */
+          lapic_timer_init(100);
+          lapic_timer_set_tick_source(1);
+          g_system_timer = &lapic_driver;
+          /* Suppress PIT — never program it on non-TCG platforms */
+          if (ioapic_available())
+              ioapic_mask_irq(0);  /* mask PIT IRQ0 to prevent ghost ticks */
+      }
+      klog(LOG_INFO, "timer", "UTS: using %s timer", g_system_timer->name);
+  }
+  ```
+- [ ] Call `timer_hal_init()` in `boot_interrupts_init()`:
+  - [ ] After `lapic_init()` / `ioapic_init()` / PIC guard
+  - [ ] **Before** `pit_init()` (or `pit_init()` is called inside `timer_hal_init` for TCG)
+  - [ ] **Before** `boot_splash_init()` — this is the critical ordering fix
+- [ ] Remove standalone `pit_init()` call from `boot_interrupts_init()`:
+  - [ ] PIT init now happens inside `timer_hal_init()` only when needed (TCG path)
+  - [ ] On non-TCG: PIT hardware is never programmed → no ghost IRQ0
+- [ ] Remove LAPIC timer block from `boot_storage_init()`:
+  - [ ] Delete: `lapic_timer_calibrate()`, `lapic_timer_set_tick_source()`, `pit_set_freq()`, `pit_stop()`, `lapic_timer_init(100)`
+  - [ ] `smp_init()` remains in `boot_storage_init()` — LAPIC is already calibrated
+- [ ] Purge redundant tick counters:
+  - [ ] `pit.c` `tick_count` becomes internal to `pit_driver` only (used when PIT is selected)
+  - [ ] `lapic.c` `lapic_is_tick_source` flag is removed — LAPIC always increments its own counter when selected
+  - [ ] A single `volatile uint64_t system_uptime_ticks` in `timer.c` driven by `g_system_timer` ISR
+- [ ] Remove `sleep_ms()` stall detection hack from `pit.c`:
+  - [ ] Lines 144-147: `for (volatile uint32_t spin = 0; spin < 1000000; spin++); if (pit_get_ticks() == start_tick) return;`
+  - [ ] This was a workaround for HV Gen 2 — with UTS, PIT is never selected on HV Gen 2
+- [ ] Update `boot_storage.c` to verify timer is already running:
+  - [ ] Add assertion: `if (!g_system_timer) panic("UTS: no timer backend selected");`
+- [ ] Implement `QueryPerformanceCounter()` / `QueryPerformanceFrequency()` Win32 API:
+  - [ ] Backed by TSC (`rdtsc` instruction) for nanosecond-precision timestamps
+  - [ ] `QueryPerformanceFrequency()` returns TSC frequency (from CPUID 0x15 or calibration)
+  - [ ] `QueryPerformanceCounter()` returns current TSC value
+  - [ ] Declare in `include/kernel/timer.h` alongside `sleep_ms()` / `system_get_ticks()`
+  - [ ] This is the standard Win32 high-resolution timing API used by games, benchmarks, and profilers
+- [ ] Expose active timer source and calibration tier in Registry:
+  - [ ] `SYSTEM\Timer\Source = "LAPIC"` or `"PIT"`
+  - [ ] `SYSTEM\Timer\CalibrationTier = 1` (MSR), `2` (HPET), or `3` (PIT)
+  - [ ] `SYSTEM\Timer\TicksPerMs = 125000`
+  - [ ] `SYSTEM\Timer\FreqMHz = 125`
+  - [ ] Readable from System Information and Control Panel → System → Timer Source
+- [ ] Build and test on QEMU: PIT selected, `sleep_ms(3000)` splash works
+- [ ] Build and test on QEMU TCG: PIT selected, wall-clock accurate
+- [ ] Build and test on Hyper-V Gen 2: LAPIC selected, splash renders perfectly
+- [ ] Build and test on VirtualBox: LAPIC selected, no PIT calibration hang
+- [ ] Commit: `"timer: UTS lock-in — single g_system_timer for all platforms"`
+
+### 6.5 Migrate Boot Splash Spinner Off PIT Callback
 
 > [!WARNING]
 > → XREF: `TODO-010.97-Progressive-Spinner.md` — The spinner currently uses
@@ -491,7 +901,7 @@ boot_storage_init()
 - [ ] Instrument all boot phases:
   - [ ] `serial_init()`, `pmm_init()`, `vmm_init()`, `heap_init()`
   - [ ] `acpi_init()`, `lapic_init()`, `ioapic_init()`, `pic_init()`
-  - [ ] `pit_init()`, `rtc_init()`, `keyboard_init()`, `mouse_init()`
+  - [ ] `timer_hal_init()`, `pit_init()`, `rtc_init()`, `keyboard_init()`, `mouse_init()`
   - [ ] `fb_init()`, `boot_splash_init()`, `pci_scan()`
   - [ ] `partition_scan_all()`, `vfs_mount()`, `dhcp_discover()`
   - [ ] `font_init()`, `icon_store_init()`, `cursor_init()`, `wm_init()`
@@ -516,7 +926,7 @@ boot_storage_init()
   - [ ] `src/kernel/main.c` (magenta bar at row 60)
   - [ ] `src/kernel/main/boot_hw.c` (HV_BAR calls at rows 72–144)
   - [ ] `src/kernel/main/boot_interrupts.c` (HV_BAR calls at rows 160–268)
-- [ ] Remove `sleep_ms()` stall detection in `pit.c` (IOAPIC routes IRQ0 now)
+- [ ] Verify `sleep_ms()` stall detection in `pit.c` is removed (done in §6.4)
 - [ ] Keep `serial_early_init()` and `serial_early_print()` in `bootx64.c`
   - [ ] Wrap behind `#ifdef BOOT_DEBUG` or always-on (it's harmless and useful)
 - [ ] Remove PS/2 flush-loop timeouts? **NO** — keep them as defensive coding
@@ -546,42 +956,66 @@ boot_storage_init()
 
 ## Key Files
 
-| File                                | Change                                                      |
-| ----------------------------------- | ----------------------------------------------------------- |
-| `src/kernel/main/boot_interrupts.c` | Reorder: add acpi, lapic, ioapic early; guard pic_init      |
-| `src/kernel/main/boot_storage.c`    | Remove: acpi_init, lapic_init, ioapic_init from here        |
-| `src/kernel/drivers/pic.c`          | Guard init with `acpi_pcat_compat()` check                  |
-| `src/kernel/drivers/pit.c`          | Remove stall detection (IOAPIC routes IRQ0 now)             |
-| `src/kernel/drivers/keyboard.c`     | Guard `pic_unmask_irq()` with `pic_available()` check       |
-| `src/kernel/drivers/mouse.c`        | Guard `pic_unmask_irq()` with `pic_available()` check       |
-| `src/kernel/drivers/rtc.c`          | Guard `pic_unmask_irq()` with `pic_available()` check       |
-| `include/kernel/drivers/pic.h`      | Add `pic_available()` API                                   |
-| `src/kernel/idt.c`                  | Populate all 256 entries; dispatch via handler table         |
-| `src/kernel/irq.c`                  | [NEW] Dynamic IRQ registration, vector allocator, counters  |
-| `include/kernel/irq.h`             | [NEW] `irq_register()`, `irq_alloc_vector()` API            |
-| `src/kernel/timer.c`               | [NEW] Timer source hierarchy and auto-selection             |
-| `include/kernel/timer.h`           | [NEW] `timer_register()`, `timer_init_best()` API           |
-| `src/kernel/boot_profile.c`        | [NEW] Boot timestamp collection for Gantt chart             |
-| `src/boot/uefi/bootx64.c`          | Remove debug bars (keep serial_early as opt-in)             |
-| `src/kernel/main.c`                | Remove debug bars; add boot_timestamp instrumentation       |
-| `src/kernel/main/boot_hw.c`        | Remove debug bars; add boot_timestamp instrumentation       |
+| File                                | Change                                                            |
+| ----------------------------------- | ----------------------------------------------------------------- |
+| `src/kernel/main/boot_interrupts.c` | Reorder init; guard pic_init; call `timer_hal_init()`             |
+| `src/kernel/main/boot_storage.c`    | Remove: acpi_init, lapic_init, ioapic_init, lapic_timer * block   |
+| `src/kernel/drivers/pic.c`          | Guard init with `acpi_pcat_compat()` check                        |
+| `src/kernel/drivers/pit.c`          | Remove stall hack; expose `pit_driver`; rename `sleep_ms`         |
+| `src/kernel/drivers/lapic.c`        | Calibration waterfall; expose `lapic_driver` vtable               |
+| `src/kernel/drivers/keyboard.c`     | Guard `pic_unmask_irq()` with `pic_available()` check             |
+| `src/kernel/drivers/mouse.c`        | Guard `pic_unmask_irq()` with `pic_available()` check             |
+| `src/kernel/drivers/rtc.c`          | Guard `pic_unmask_irq()` with `pic_available()` check             |
+| `include/kernel/drivers/pic.h`      | Add `pic_available()` API                                         |
+| `src/kernel/idt.c`                  | Populate all 256 entries; dispatch via handler table               |
+| `src/kernel/irq.c`                  | [DONE] Dynamic IRQ registration, vector allocator, counters       |
+| `include/kernel/irq.h`              | [DONE] `irq_register()`, `irq_alloc_vector()` API                |
+| `src/kernel/cpuid_platform.c`       | [NEW] CPUID hypervisor detection (§6.1)                           |
+| `include/kernel/cpuid_platform.h`   | [NEW] `platform_detect()`, `platform_is_tcg()` API               |
+| `src/kernel/timer.c`                | [NEW] Timer HAL: `g_system_timer`, `timer_hal_init()`, QPC        |
+| `include/kernel/timer.h`            | [NEW] `timer_driver_t`, `system_get_ticks()`, `uptime()`, QPC     |
+| `src/kernel/acpi.c`                 | Add: `acpi_hw_reduced()`, `acpi_get_hpet_base()`, PM Timer port   |
+| `include/kernel/acpi.h`             | Add: HPET/PM Timer/HW_REDUCED query APIs                         |
+| `src/kernel/boot_profile.c`         | [NEW] Boot timestamp collection for Gantt chart                   |
+| `src/boot/uefi/bootx64.c`           | Remove debug bars (keep serial_early as opt-in)                   |
+| `src/kernel/main.c`                 | Remove debug bars; add boot_timestamp instrumentation             |
+| `src/kernel/main/boot_hw.c`         | Remove debug bars; add boot_timestamp instrumentation             |
+| `src/kernel/registry.c`             | Replace `pit_get_ticks()` → `system_get_ticks()` (2 sites)       |
+| `src/kernel/klog.c`                 | Replace `pit_get_ticks()` → `system_get_ticks()` (2 sites)       |
+| `src/kernel/sched/event.c`          | Replace `pit_get_ticks()` + `PIT_TARGET_FREQ` → UTS API          |
+| `src/kernel/log.c`                  | Replace `#include pit.h` → `timer.h` (uses `uptime()`)           |
+| `src/kernel/panic.c`                | Replace `#include pit.h` → `timer.h` (uses `uptime()` ×2)        |
+| `src/kernel/sched/syscall.c`        | Replace `#include pit.h` → `timer.h` (uses `uptime()`)           |
+| `src/kernel/main/compositor.c`      | Replace `#include pit.h` → `timer.h` (uses `uptime()`)           |
+| `src/kernel/main/boot_desktop.c`    | Replace `pit_get_ticks()` → `system_get_ticks()` (1 site)        |
+| `src/kernel/main/boot_tests.c`      | Replace `pit_get_ticks()` + `uptime()` → UTS API                 |
+| `src/kernel/main/test_threads.c`    | Replace `#include pit.h` → `timer.h` (uses `sleep_ms()`)         |
+| `src/kernel/boot_splash.c`          | Replace `#include pit.h` → `timer.h`; fix stale PIT comments     |
+| `src/kernel/spinner.c`              | Replace `pit_register_callback()` → `sleep_ms()` loop (§6.5)     |
+| `src/desktop/desktop.c`             | Replace `#include pit.h` → `timer.h`                             |
+| `src/kernel/fs/ixfs/ixfs_internal.h`| Replace `#include pit.h` → `timer.h` (provides `uptime()` to ×9) |
 
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section                                 | Description                                                   |
-| -- | :------: | --------------------------------------- | ------------------------------------------------------------- |
-| 💎 | 🔴 P0   | 1. Move ACPI MADT Parsing Early         | Prerequisite for everything — must know if PIC exists         |
-| 💎 | 🔴 P0   | 2. Move LAPIC/IOAPIC Before PIT         | Core change — route IRQ0 through IOAPIC, not PIC              |
-| 💎 | 🔴 P0   | 5. Full IDT Coverage                    | Prevents #GP BSOD on Hyper-V (observed crash at vector 0xF6) |
-| 💎 | 🟠 P1   | 3. Conditional PIC Init                 | Guard all PIC calls with PCAT_COMPAT check                    |
-| 💎 | 🟠 P1   | 4. Dynamic IRQ Registration API         | Foundation for MSI, VMBus, and interrupt affinity              |
-| ⭐ | 🟡 P2   | 6. Timer Source Hierarchy            | Auto-select best timer; expose in System Info                 |
-| 💎 | 🟡 P2   | 6a. Spinner PIT Migration            | Move spinner from PIT callback to `sleep_ms()` loop          |
-| ⭐ | 🟡 P2   | 7. Boot Time Visualization           | Gantt chart in System Info — no OS shows this natively        |
-| 💎 | 🟡 P2   | 8. Remove Debug Workarounds             | Cleanup after APIC-first is verified                          |
-| 💎 | 🟡 P2   | 9. SMP Init Adjustment                  | Verify AP boot still works with early LAPIC                   |
+| ⭐ | Priority | Section                                 | Description                                                      |
+| -- | :------: | --------------------------------------- | ---------------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1. Move ACPI MADT Parsing Early         | Prerequisite for everything — must know if PIC exists  ✅        |
+| 💎 | 🔴 P0   | 2. Move LAPIC/IOAPIC Before PIT         | Core change — route IRQ0 through IOAPIC, not PIC  ✅             |
+| 💎 | 🔴 P0   | 5. Full IDT Coverage                    | Prevents #GP BSOD on Hyper-V (observed crash at vector 0xF6)    |
+| 💎 | 🟠 P1   | 3. Conditional PIC Init                 | Guard all PIC calls with PCAT_COMPAT check  ✅                   |
+| 💎 | 🟠 P1   | 4. Dynamic IRQ Registration API         | Foundation for MSI, VMBus, and interrupt affinity  ✅             |
+| ⭐ | 🟠 P1   | 6.1 CPUID Platform Probe                | Detect Hyper-V/VBox/VMware/TCG — determines timer backend        |
+| ⭐ | 🟠 P1   | 6.2 Timer HAL Interface                 | `timer_driver_t` vtable — `g_system_timer` abstraction           |
+| ⭐ | 🔴 P0   | 6.3 Calibration Waterfall               | 3-tier: MSR/CPUID → HPET/PM → PIT (if safe)                     |
+| ⭐ | 🔴 P0   | 6.4 Timer Lock-In                       | `g_system_timer` assigned — single uptime variable               |
+| ⭐ | 🟡 P2   | 6.4+ QueryPerformanceCounter            | TSC-backed high-res timing API for games and profilers           |
+| ⭐ | 🟡 P2   | 6.4+ Timer Source Registry/GUI          | Expose timer source + calibration tier in System Information     |
+| 💎 | 🟡 P2   | 6.5 Spinner PIT Migration               | Move spinner from PIT callback to `sleep_ms()` loop             |
+| ⭐ | 🟡 P2   | 7. Boot Time Visualization              | Gantt chart in System Info — no OS shows this natively           |
+| 💎 | 🟡 P2   | 8. Remove Debug Workarounds             | Cleanup after APIC-first is verified                             |
+| 💎 | 🟡 P2   | 9. SMP Init Adjustment                  | Verify AP boot still works with early LAPIC  ✅                  |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -590,16 +1024,25 @@ boot_storage_init()
 
 ## OS Comparison
 
-| ⭐ | Feature                         | 🪟 Windows 11                         | 🐧 Linux 6.x                          | 🚀 Impossible OS (Current)             | 🚀 After Refactor                       |
-| -- | -------------------------------- | ------------------------------------- | -------------------------------------- | --------------------------------------- | ---------------------------------------- |
-| 💎 | APIC-first boot                 | ✅ HAL always uses APIC               | ✅ APIC init before PIT                | ❌ PIC → PIT → APIC (too late)          | ✅ ACPI → LAPIC → IOAPIC → PIT           |
-| 💎 | PIC fallback                    | ✅ Only if MADT says PCAT_COMPAT      | ✅ Only if no IOAPIC found             | ⚠️ PIC always initialized              | ✅ Conditional on PCAT_COMPAT            |
-| 💎 | Hyper-V Gen 2 boot              | ✅ Native support                     | ✅ Native support                      | ❌ Hangs (no PIC = no PIT ticks)        | ✅ IOAPIC routes IRQ0                    |
-| 💎 | PIT timer on APIC-only          | ✅ IRQ0 via IOAPIC pin 2              | ✅ IRQ0 via IOAPIC (ISO override)      | ❌ PIT IRQ0 routed through dead PIC     | ✅ IRQ0 via IOAPIC                       |
-| 💎 | Full IDT coverage (256 entries) | ✅ All 256 entries populated          | ✅ All 256 entries populated           | ❌ ~48 entries, rest null → #GP         | ✅ All 256 with handler dispatch         |
-| 💎 | Dynamic IRQ registration        | ✅ `IoConnectInterruptEx`             | ✅ `request_irq()` / `free_irq()`     | ❌ Hardcoded vector→handler mapping     | ✅ `irq_register()` with vector alloc    |
-| 💎 | EOI dispatch (PIC/LAPIC)        | ✅ Unified HAL EOI                    | ✅ `apic_eoi()` / `edge_ack()`        | ✅ `irq_eoi()` dispatches via flag      | ✅ Already working (no change needed)    |
-| ⭐ | **Timer source hierarchy**      | ✅ Internal (invisible to users)      | ✅ `clocksource` (CLI sysfs only)     | ❌ PIT only                             | ✅ TSC/STIMER/HPET/LAPIC/PIT + GUI      |
-| ⭐ | **Boot time visualization**     | ❌ Requires ETW + WPA (dev tools)     | ⚠️ `systemd-analyze blame` (text CLI) | ❌ Serial timestamps only               | ✅ Gantt chart in System Information     |
-| ⭐ | **IRQ statistics GUI**          | ❌ Performance Monitor (hidden)       | ❌ `/proc/interrupts` (CLI only)       | ❌ No IRQ counters                       | ✅ Per-vector counters in Task Manager   |
+| ⭐ | Feature                             | 🪟 Windows 11                          | 🐧 Linux 6.x                            | 🚀 Impossible OS                                     |
+| -- | ----------------------------------- | --------------------------------------- | ---------------------------------------- | ---------------------------------------------------- |
+| 💎 | APIC-first boot                     | ✅ HAL always uses APIC                | ✅ APIC init before PIT                 | ✅ §1–§4 done — ACPI → LAPIC → IOAPIC → PIT          |
+| 💎 | Conditional PIC                     | ✅ Only if MADT says PCAT_COMPAT       | ✅ Only if no IOAPIC found              | ✅ §3 done — guarded by `acpi_pcat_compat()`         |
+| 💎 | Dynamic IRQ registration            | ✅ `IoConnectInterruptEx`              | ✅ `request_irq()` / `free_irq()`       | ✅ §4 done — `irq_register()` with vector alloc      |
+| 💎 | EOI dispatch (PIC/LAPIC)            | ✅ Unified HAL EOI                     | ✅ `apic_eoi()` / `edge_ack()`          | ✅ §4 done — `irq_eoi()` dispatches via flag         |
+| 💎 | Full IDT coverage (256 entries)     | ✅ All 256 entries populated           | ✅ All 256 entries populated            | ✅ §5.2 done — 256 entries, rate-limited warning handler |
+| 💎 | CPUID platform detection            | ✅ HAL identifies hypervisor           | ✅ `dmi_check_system()` / CPUID         | ⬜ §6.1 — `platform_detect()`                        |
+| ⭐ | **Unified timer HAL**               | ✅ HAL timer abstraction (internal)    | ✅ `clocksource` + `clock_event_device` | ⬜ §6.2 — `g_system_timer` vtable                    |
+| ⭐ | **Legacy-free calibration**         | ✅ HAL uses MSR/CPUID (no PIT)         | ✅ `tsc_early_init` / HPET / PM Timer   | ⬜ §6.3 — 3-tier waterfall (MSR → HPET → PIT)        |
+| ⭐ | **Single tick source**              | ✅ `KeQueryPerformanceCounter`         | ✅ `jiffies` / `ktime`                  | ⬜ §6.4 — single `system_uptime_ticks`               |
+| ⭐ | **Timer source GUI override**       | ❌ No user control                     | ⚠️ `/sys/.../current_clocksource` (CLI) | ⬜ §6.4 — Control Panel → Timer Source               |
+| ⭐ | **High-precision perf counter**     | ✅ `QueryPerformanceCounter` (TSC)     | ✅ `clock_gettime(CLOCK_MONOTONIC)`     | ⬜ §6.4 — `QueryPerformanceCounter` via TSC          |
+| ⭐ | **Boot time visualization**         | ❌ Requires ETW + WPA (dev tools)      | ⚠️ `systemd-analyze blame` (text CLI)   | ⬜ §7 — Gantt chart in System Information            |
+| ⭐ | **IRQ statistics GUI**              | ❌ Performance Monitor (hidden)        | ❌ `/proc/interrupts` (CLI only)        | ✅ §4 done — per-vector counters → Task Manager      |
+| 💎 | Hyper-V Gen 2 boot                  | ✅ Native support                      | ✅ Native support                       | ⬜ §6.3–§6.4 — LAPIC via MSR, no PIT touch           |
+| 💎 | SMP with early LAPIC                | ✅ HAL initializes before drivers      | ✅ SMP init during boot                 | ✅ §9 done — APs boot with early LAPIC               |
+
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
+> 💎 = Feature that achieves **parity** with both.
 

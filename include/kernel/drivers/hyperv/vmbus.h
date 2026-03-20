@@ -250,6 +250,11 @@ struct vmbus_ring_buffer_header {
     uint32_t reserved[12];       /* pad to 64 bytes */
 } __attribute__((packed));
 
+/* ---- VMBus channel callback (set by drivers, fired by ISR) ---- */
+
+struct vmbus_channel;  /* forward declaration */
+typedef void (*vmbus_channel_callback_t)(struct vmbus_channel *ch, void *ctx);
+
 /* ---- VMBus channel state ---- */
 
 #define VMBUS_MAX_CHANNELS          256
@@ -270,6 +275,10 @@ struct vmbus_channel {
     uint8_t                           *send_data;    /* points past send_ring header */
     uint8_t                           *recv_data;    /* points past recv_ring header */
     uint32_t                           data_size;    /* ring_size - sizeof(header) */
+
+    /* Per-channel callback (fired by VMBus ISR on SIEF event) */
+    vmbus_channel_callback_t           callback;
+    void                              *callback_ctx;
 };
 
 /* ---- Public API ---- */
@@ -314,3 +323,8 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
 /* Signal the host that data is available on the send ring.
  * Uses the hypercall page to send an event. */
 void vmbus_signal_channel(struct vmbus_channel *ch);
+
+/* Register a per-channel callback, fired by VMBus ISR when the host
+ * sets the channel's event flag bit.  Pass NULL to unregister. */
+void vmbus_set_channel_callback(struct vmbus_channel *ch,
+                                vmbus_channel_callback_t cb, void *ctx);
