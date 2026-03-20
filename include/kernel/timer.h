@@ -49,3 +49,11 @@ uint32_t system_get_freq(void);
 /* Return seconds elapsed since boot (ticks / freq).
  * Safe to call before g_system_timer is set (returns 0). */
 uint64_t uptime(void);
+
+/* ---- UTS initialization ---- */
+
+/* Initialize the Unified Timer Subsystem.
+ * Detects platform, selects timer backend (PIT for TCG, LAPIC for all else),
+ * calibrates the LAPIC timer via 3-tier waterfall, and assigns g_system_timer.
+ * Must be called AFTER lapic_init()/ioapic_init() and BEFORE boot_splash_init(). */
+void timer_hal_init(void);

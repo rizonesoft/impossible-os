@@ -19,6 +19,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/lapic.h"
+#include "kernel/timer.h"
 #include "kernel/drivers/pit.h"
 #include "kernel/idt.h"
 #include "kernel/sched/task.h"
@@ -737,33 +738,48 @@ uint32_t lapic_timer_ticks_per_ms(void)
     return cal_ticks_per_ms;
 }
 
-/* ---- LAPIC timer IRQ handler ----
- * Always handles preemptive scheduling.  Tick counting depends on
- * whether a PIT exists:
- *
- *   PCAT_COMPAT=1 (VBox, QEMU, most boards):
- *     PIT drives tick_count via pit_irq_handler (uses real host
- *     timers on QEMU TCG = wall-clock accurate).  LAPIC timer
- *     only does schedule().  This avoids a 10x boot regression
- *     on QEMU TCG where LAPIC timer runs from QEMU_CLOCK_VIRTUAL.
- *
- *   PCAT_COMPAT=0 (Hyper-V Gen 2, modern APIC-only boards):
- *     No PIT hardware — LAPIC timer drives BOTH tick_count and
- *     schedule().  No TCG concern because these platforms always
- *     have hardware virtualization (VT-x).
- *
- * Flag is set by lapic_timer_set_tick_source(). */
-static uint8_t lapic_is_tick_source;
+/* ---- LAPIC timer driver (UTS backend) ---- */
 
-void lapic_timer_set_tick_source(int enable)
+static volatile uint64_t lapic_tick_count = 0;
+static uint32_t          lapic_timer_hz   = 0;
+
+static uint64_t lapic_get_ticks(void)
 {
-    lapic_is_tick_source = enable ? 1 : 0;
+    return lapic_tick_count;
 }
+
+static void lapic_sleep_ms(uint32_t ms)
+{
+    if (lapic_timer_hz == 0)
+        return;
+    uint64_t target = lapic_tick_count +
+                      ((uint64_t)ms * lapic_timer_hz / 1000);
+    while (lapic_tick_count < target)
+        __asm__ volatile("hlt");
+}
+
+static uint32_t lapic_get_freq(void)
+{
+    return lapic_timer_hz;
+}
+
+static void lapic_init_wrapper(uint32_t hz)
+{
+    lapic_timer_init(hz);
+}
+
+/* Exported vtable for timer HAL selection */
+timer_driver_t lapic_driver = {
+    .name      = "LAPIC",
+    .init      = lapic_init_wrapper,
+    .get_ticks = lapic_get_ticks,
+    .sleep_ms  = lapic_sleep_ms,
+    .get_freq  = lapic_get_freq,
+};
 
 static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
 {
-    if (lapic_is_tick_source)
-        pit_tick_increment();
+    lapic_tick_count++;
     lapic_eoi();
     return schedule(frame);
 }
@@ -774,6 +790,8 @@ void lapic_timer_init(uint32_t hz)
 
     if (!lapic_base)
         return;
+
+    lapic_timer_hz = hz;
 
     /* Calculate ICR from calibrated frequency, or use xv6 fallback */
     if (cal_ticks_per_ms > 0) {

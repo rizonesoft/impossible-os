@@ -138,18 +138,11 @@ static void pit_sleep_ms(uint32_t ms)
     uint64_t flags;
     spin_lock_irqsave(&pit_lock, &flags);
     target = tick_count + ((uint64_t)ms * pit_actual_freq / 1000);
-    uint64_t start_tick = tick_count;
     spin_unlock_irqrestore(&pit_lock, flags);
 
-    /* Quick stall check: spin briefly, then test if ticks advanced.
-     * On Hyper-V Gen 2 (no PIC), PIT IRQ0 never fires so tick_count
-     * is frozen. Bail out immediately instead of hanging on hlt. */
-    for (volatile uint32_t spin = 0; spin < 1000000; spin++)
-        ;
-    if (pit_get_ticks() == start_tick)
-        return;  /* PIT not ticking — bail out */
-
-    /* Normal sleep: wait for ticks */
+    /* Normal sleep: wait for ticks.
+     * Note: PIT is only selected as g_system_timer on QEMU TCG,
+     * where PIT hardware is always emulated and ticks always fire. */
     while (pit_get_ticks() < target)
         __asm__ volatile("hlt");
 }

@@ -126,19 +126,20 @@ void lapic_timer_calibrate(void);
 
 /* Start the LAPIC timer in periodic mode at the given frequency (Hz)
  * on LAPIC_TIMER_VECTOR. Uses the calibrated frequency from
- * lapic_timer_calibrate(), or a hardcoded fallback.
- * Registers a timer IRQ handler that calls the scheduler, and
- * optionally increments tick_count (if LAPIC is tick source). */
+ * lapic_timer_calibrate(), or a hardcoded fallback. */
 void lapic_timer_init(uint32_t hz);
-
-/* Set whether the LAPIC timer drives tick_count.
- *   enable=1: LAPIC timer increments ticks (APIC-only, no PIT)
- *   enable=0: PIT drives ticks, LAPIC only does scheduling
- * Call before lapic_timer_init(). */
-void lapic_timer_set_tick_source(int enable);
 
 /* Returns the calibrated LAPIC timer ticks per millisecond (0 if uncalibrated). */
 uint32_t lapic_timer_ticks_per_ms(void);
 
 /* Returns 1 if the LAPIC is available and initialized */
 int lapic_available(void);
+
+/* ---- UTS driver vtable ---- */
+
+/* Forward declaration — full definition in timer.h */
+struct timer_driver;
+typedef struct timer_driver timer_driver_t;
+
+/* LAPIC timer driver for g_system_timer selection */
+extern timer_driver_t lapic_driver;

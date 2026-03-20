@@ -13,6 +13,7 @@
 #include "kernel/irq.h"
 #include "kernel/drivers/pic.h"
 #include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/drivers/rtc.h"
 #include "kernel/drivers/keyboard.h"
 #include "kernel/drivers/mouse.h"
@@ -155,8 +156,12 @@ void boot_interrupts_init(void)
     }
     HV_BAR(196, 0x00FFFF00);  /* YELLOW = PIC OK */
 
-    pit_init();
-    HV_BAR(208, 0x000000FF);  /* BLUE = PIT OK */
+    /* UTS: select timer backend (PIT for TCG, LAPIC for all else).
+     * This MUST happen before boot_splash_init() so sleep_ms() works.
+     * On non-TCG: calibrates LAPIC, starts timer, masks PIT IRQ0.
+     * On TCG: initializes PIT as wall-clock timer. */
+    timer_hal_init();
+    HV_BAR(208, 0x000000FF);  /* BLUE = timer OK */
 
     rtc_init();
     HV_BAR(220, 0x00FF8000);  /* ORANGE = RTC OK */

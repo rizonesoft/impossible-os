@@ -94,45 +94,12 @@ void boot_storage_init(uint64_t magic)
          (uint64_t)(total_ram / (1024 * 1024)),
          (uint64_t)g_boot_info.mmap_count);
 
-    /* LAPIC/IOAPIC init already happened in boot_interrupts_init().
-     * Here we calibrate the LAPIC timer using PIT channel 2, start the
-     * LAPIC timer as the primary tick source, disable PIT, and bring up
-     * secondary CPUs via SMP init.
-     *
-     * Linux approach: PIT used briefly for calibration only, then disabled.
-     * LAPIC timer + TSC handle all scheduling/timing thereafter. */
+    /* Timer init already happened in boot_interrupts_init() → timer_hal_init().
+     * By this point g_system_timer is assigned and sleep_ms() works.
+     * We just need to bring up secondary CPUs via SMP init. */
     if (g_boot_info.acpi_available) {
-        if (ioapic_available() && lapic_available()) {
-            /* Calibrate LAPIC timer frequency using PIT channel 2 */
-            lapic_timer_calibrate();
-
-            /* Decide tick source based on PIT hardware availability.
-             *
-             * PCAT_COMPAT=0 (Hyper-V Gen 2, modern APIC-only boards):
-             *   No PIT hardware → LAPIC timer drives tick_count.
-             *   These platforms always have VT-x, no TCG concern.
-             *
-             * PCAT_COMPAT=1 (VBox, QEMU, most boards):
-             *   PIT drives tick_count at wall-clock rate.
-             *   LAPIC timer only does preemptive scheduling.
-             *   Critical for QEMU TCG where LAPIC timer runs from
-             *   QEMU_CLOCK_VIRTUAL (~10x slower than wall time). */
-            if (!acpi_pcat_compat()) {
-                /* APIC-only: LAPIC timer is the sole tick source */
-                lapic_timer_set_tick_source(1);
-                pit_set_freq(100);
-                pit_stop();
-            }
-
-            lapic_timer_init(100);
-
-            boot_splash_status("Initializing SMP...");
-            smp_init();
-        } else {
-            /* No IOAPIC — single CPU with PIC routing only.
-             * PIT remains the tick source via pit_irq_handler. */
-            smp_init();
-        }
+        boot_splash_status("Initializing SMP...");
+        smp_init();
     }
 
     /* Hyper-V VMBus — discover and connect if running on Hyper-V.
