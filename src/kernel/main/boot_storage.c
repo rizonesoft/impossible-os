@@ -26,6 +26,7 @@
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "kernel/symtab.h"
+#include "kernel/cpuid_platform.h"
 #include "main/main_internal.h"
 
 void boot_storage_init(uint64_t magic)
@@ -46,6 +47,7 @@ void boot_storage_init(uint64_t magic)
     partition_scan_all();
     boot_splash_status("Mounting filesystems...");
     partition_mount_filesystems();
+    boot_splash_status("Checking boot flags...");
 
     /* Check for debug boot flag */
     if (vfs_is_mounted('X')) {
@@ -63,11 +65,13 @@ void boot_storage_init(uint64_t magic)
         }
     }
 
-    klog_disk_flush();
+    /* Flush accumulated log to disk — but skip on TCG because writing
+     * 100+ entries via software-emulated AHCI DMA stalls for minutes. */
+    if (!platform_is_tcg())
+        klog_disk_flush();
     boot_splash_tick();
 
-    boot_splash_status("Configuring network...");
-    boot_splash_tick();
+    boot_splash_status("Configuring system...");
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- System Summary ---------------------------------------------------------");
