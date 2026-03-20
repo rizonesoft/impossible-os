@@ -757,16 +757,16 @@ boot_storage_init()
   - [x] `boot_storage.c:107` still calls `lapic_timer_calibrate()` — no caller changes needed
   - [x] Hardcoded fallback: `cal_ticks_per_ms = 100` if all tiers fail
 - [x] Each `cal_try_*()` returns 1 on success (sets `cal_ticks_per_ms`), 0 on failure
-- [ ] After calibration succeeds, immediately call `lapic_timer_init(100)`:
-  - [ ] This starts the LAPIC timer ticking at 100 Hz
-  - [ ] On non-TCG: `lapic_timer_set_tick_source(1)` so LAPIC drives `tick_count`
-  - [ ] On QEMU TCG: skip — PIT will drive `tick_count` instead
-  - [ ] → Deferred to §6.4 (timer lock-in)
-- [ ] Log final result: `[timer] LAPIC calibrated (tier N): %u ticks/ms (%u MHz bus)` — deferred to §6.4
-- [ ] Build and test on QEMU KVM: Tier 1 (CPUID 0x40000010) used — deferred to §6.4
-- [ ] Build and test on QEMU TCG: Tier 3 (PIT) used — deferred to §6.4
-- [ ] Build and test on Hyper-V Gen 2: Tier 1 (MSR 0x40000023) used — deferred to §6.4
-- [ ] Build and test on VirtualBox: Tier 2 (PM Timer) or Tier 3 (PIT) used — deferred to §6.4
+- [x] After calibration succeeds, immediately call `lapic_timer_init(100)`:
+  - [x] `timer_hal_init()` calls `lapic_timer_init(100)` on non-TCG path
+  - [x] LAPIC always counts its own ticks (`lapic_tick_count` via `lapic_driver`)
+  - [x] On QEMU TCG: `pit_init()` + `g_system_timer = &pit_driver` instead
+  - [x] Done in §6.4 (commit `aa5b04c`)
+- [x] Log final result: `UTS: LAPIC selected (%s, %u ticks/ms = %u MHz bus)` — done in §6.4
+- [x] Build and test on QEMU KVM: LAPIC selected, boot completes, VFS mounts — done in §6.4
+- [ ] Build and test on QEMU TCG: PIT selected — requires `-accel tcg` flag (real hardware test)
+- [ ] Build and test on Hyper-V Gen 2: LAPIC selected — requires Hyper-V VM
+- [ ] Build and test on VirtualBox: LAPIC selected — requires VBox
 - [x] Build: `=== BUILD OK === (8.6s)`, 135 objects
 - [x] Commit: `"timer: legacy-free calibration waterfall (3 tiers)"`
 
