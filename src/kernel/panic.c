@@ -22,7 +22,7 @@
 #include "kernel/printk.h"
 #include "kernel/version.h"
 #include "kernel/fs/vfs.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/boot_splash.h"
 #include "registry.h"
 #include "bsod_icon.h"

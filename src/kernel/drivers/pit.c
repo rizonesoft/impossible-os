@@ -8,6 +8,7 @@
 
 #include "kernel/drivers/pit.h"
 #include "kernel/drivers/pic.h"
+#include "kernel/timer.h"
 #include "kernel/idt.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
@@ -129,7 +130,9 @@ uint64_t pit_get_ticks(void)
     return t;
 }
 
-void sleep_ms(uint32_t ms)
+/* ---- PIT-specific sleep (used by pit_driver vtable) ---- */
+
+static void pit_sleep_ms(uint32_t ms)
 {
     uint64_t target;
     uint64_t flags;
@@ -151,11 +154,27 @@ void sleep_ms(uint32_t ms)
         __asm__ volatile("hlt");
 }
 
-uint64_t uptime(void)
+uint32_t pit_get_freq(void)
 {
-    if (pit_actual_freq == 0) return 0;  /* PIT not yet initialized */
-    return pit_get_ticks() / pit_actual_freq;
+    return pit_actual_freq;
 }
+
+/* Wrapper to match timer_driver_t.init signature (PIT ignores hz — always PIT_TARGET_FREQ) */
+static void pit_init_wrapper(uint32_t hz)
+{
+    (void)hz;
+    pit_init();
+}
+
+/* ---- PIT driver vtable (exposed for timer HAL selection) ---- */
+
+timer_driver_t pit_driver = {
+    .name      = "PIT",
+    .init      = pit_init_wrapper,
+    .get_ticks = pit_get_ticks,
+    .sleep_ms  = pit_sleep_ms,
+    .get_freq  = pit_get_freq,
+};
 
 void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks)
 {

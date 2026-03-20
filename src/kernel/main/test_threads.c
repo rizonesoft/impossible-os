@@ -12,7 +12,7 @@
 #include "kernel/sched/task.h"
 #include "kernel/mm/heap.h"
 #include "kernel/fs/vfs.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/sched/mutex.h"
 #include "kernel/sched/semaphore.h"
 #include "kernel/ipc/pipe.h"

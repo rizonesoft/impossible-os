@@ -16,7 +16,7 @@
 
 #include "kernel/fs/vfs.h"
 #include "kernel/mm/heap.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/net/net.h"
 #include "kernel/acpi.h"
 #include "kernel/ipc/pipe.h"

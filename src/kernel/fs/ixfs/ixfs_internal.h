@@ -9,7 +9,7 @@
 #include "kernel/fs/ixfs.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/printk.h"
 #include "kernel/klog.h"
 

@@ -18,7 +18,8 @@
 #include "kernel/spinner.h"
 #include "kernel/gfx/arc_ring.h"
 #include "kernel/drivers/framebuffer.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
+#include "kernel/drivers/pit.h"  /* pit_register_callback — PIT-specific */
 
 /* ---- Animation timing ---- */
 

@@ -2,11 +2,19 @@
  * pit.h — Programmable Interval Timer (8253/8254) driver
  *
  * Programs PIT channel 0 to fire IRQ 0 at ~100 Hz for system timekeeping.
+ *
+ * NOTE: For sleep_ms(), uptime(), and system_get_ticks(), use
+ *       #include "kernel/timer.h" — the unified timer HAL.
+ *       This header is for PIT-specific internals only.
  * ============================================================================ */
 
 #pragma once
 
 #include "kernel/types.h"
+
+/* Forward declaration — full definition in timer.h */
+struct timer_driver;
+typedef struct timer_driver timer_driver_t;
 
 /* PIT frequency constants */
 #define PIT_BASE_FREQ   1193182     /* PIT oscillator frequency (Hz) */
@@ -30,11 +38,8 @@ void pit_stop(void);
 /* Get current tick count (increments at PIT_TARGET_FREQ Hz) */
 uint64_t pit_get_ticks(void);
 
-/* Sleep for approximately the given number of milliseconds */
-void sleep_ms(uint32_t ms);
-
-/* Get seconds elapsed since boot */
-uint64_t uptime(void);
+/* Get current PIT tick frequency in Hz */
+uint32_t pit_get_freq(void);
 
 /* Register a periodic callback that fires from the PIT IRQ handler.
  * fn is called every 'every_n_ticks' PIT ticks (e.g., 7 = ~15 fps at 100 Hz).
@@ -43,3 +48,6 @@ void pit_register_callback(void (*fn)(void), uint32_t every_n_ticks);
 
 /* Unregister the PIT callback. */
 void pit_unregister_callback(void);
+
+/* PIT driver vtable for timer HAL selection */
+extern timer_driver_t pit_driver;

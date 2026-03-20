@@ -715,11 +715,11 @@ static reg_key_t *reg_walk_path(reg_key_t *start, const char *path, int create)
 
 /* ---- PIT ticks for timestamps ---- */
 
-extern uint64_t pit_get_ticks(void);
+#include "kernel/timer.h"
 
-static uint64_t reg_now(void)
+static uint64_t reg_get_uptime_ticks(void)
 {
-    return pit_get_ticks();
+    return system_get_ticks();
 }
 
 /* ---- RegOpenKeyEx ---- */
@@ -797,7 +797,7 @@ long RegCreateKeyEx(HKEY hKey, const char *lpSubKey, uint32_t dwReserved,
 
     /* Update parent's last-write time */
     if (target->parent)
-        target->parent->last_write_time = reg_now();
+        target->parent->last_write_time = reg_get_uptime_ticks();
 
     if (lpdwDisposition) {
         *lpdwDisposition = pre_existing
@@ -1037,7 +1037,7 @@ long RegSetValueEx(HKEY hKey, const char *lpValueName, uint32_t Reserved,
         reg_memcpy(v->data, lpData, cbData);
 
     /* Timestamp */
-    key->last_write_time = reg_now();
+    key->last_write_time = reg_get_uptime_ticks();
 
     /* Mark hive dirty for periodic flush */
     registry_mark_dirty(key);
@@ -1201,7 +1201,7 @@ long RegDeleteValue(HKEY hKey, const char *lpValueName)
             doomed->name[0] = '\0';
             doomed->next = (reg_value_t *)0;
             key->value_count--;
-            key->last_write_time = reg_now();
+            key->last_write_time = reg_get_uptime_ticks();
             registry_mark_dirty(key);
             return ERROR_SUCCESS;
         }
@@ -1728,7 +1728,7 @@ extern uintptr_t pmm_alloc_contiguous(uint32_t num_pages);
 extern void      pmm_free_frame(uintptr_t addr);
 
 /* External: PIT ticks for timestamp */
-extern uint64_t pit_get_ticks(void);
+
 
 /* VFS flags shorthand */
 #define HIVE_VFS_O_READ  VFS_O_READ
@@ -1988,7 +1988,7 @@ int hive_save(reg_key_t *root, const char *filepath)
     hdr->magic        = HIVE_MAGIC;
     hdr->version      = HIVE_VERSION;
     hdr->checksum     = 0;
-    hdr->timestamp    = pit_get_ticks();
+    hdr->timestamp    = system_get_ticks();
     hdr->total_keys   = total_keys;
     hdr->total_values = total_values;
     hdr->data_offset  = HIVE_HEADER_SIZE;

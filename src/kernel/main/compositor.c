@@ -13,7 +13,7 @@
 #include "kernel/drivers/vbox_mouse.h"
 #include "kernel/drivers/hyperv/hv_input.h"
 #include "kernel/drivers/rtc.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/sched/task.h"
 #include "kernel/klog.h"
 #include "cursor.h"

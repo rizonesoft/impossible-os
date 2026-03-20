@@ -18,7 +18,7 @@
 
 #include "kernel/boot_splash.h"
 #include "kernel/drivers/framebuffer.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/types.h"
 #include "kernel/klog.h"
 #include "kernel/spinner.h"
@@ -198,7 +198,7 @@ void boot_splash_init(void)
     }
 }
 
-/* Called from main.c after pit_init() + sti to start animation */
+/* Called from main.c after timer_hal_init() + sti to start animation */
 void boot_splash_start_animation(void)
 {
     if (!splash_on) return;
@@ -240,7 +240,7 @@ void boot_splash_finish(void)
 
     /* ---- Fade-out: 5 frames × 67ms ≈ 330ms total ----
      * Dim splash to black before handing off to the desktop compositor.
-     * PIT IS initialized by this point so sleep_ms() works correctly. */
+     * timer_hal_init() provides g_system_timer so sleep_ms() works correctly. */
     static const uint8_t fade_out[5] = { 204, 153, 102, 51, 0 };
     for (int fi = 0; fi < 5; fi++) {
         if (fade_out[fi] > 0) {

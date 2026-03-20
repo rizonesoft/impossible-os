@@ -14,7 +14,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/swap.h"
 #include "kernel/mm/mmap.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/ahci.h"
 #include "kernel/fs/vfs.h"
@@ -158,7 +158,7 @@ void boot_tests_run(void)
     klog(LOG_DEBUG, "test", "Timer: sleeping 1 second...");
     sleep_ms(1000);
     klog(LOG_DEBUG, "test", "Timer OK (ticks: %u, uptime: %u sec)",
-         pit_get_ticks(), uptime());
+         system_get_ticks(), uptime());
 
     klog(LOG_DEBUG, "", "");
     klog(LOG_DEBUG, "", "--- Scheduler Tests --------------------------------------------------------");

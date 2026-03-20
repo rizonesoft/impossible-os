@@ -11,7 +11,7 @@
 #include "kernel/klog.h"
 #include "kernel/drivers/serial.h"
 #include "kernel/drivers/framebuffer.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 
 
 /* GCC built-in variadic args (no libc needed) */
@@ -260,7 +260,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
         klog_entry_t *e = &klog_ring[klog_ring_head];
         e->level = level;
         e->subsystem = subsystem;
-        e->timestamp = (uint32_t)pit_get_ticks();
+        e->timestamp = (uint32_t)system_get_ticks();
 
         va_start(ap, fmt);
         vformat_buf(e->message, sizeof(e->message), fmt, ap);
@@ -275,7 +275,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
     {
         /* Timestamp: [  1.234]  (seconds space-padded to 4, ms zero-padded to 3)
          * PIT is 100 Hz → 1 tick = 10 ms.  Before pit_init() ticks = 0. */
-        uint64_t ms  = pit_get_ticks() * 10;
+        uint64_t ms  = system_get_ticks() * 10;
         uint32_t sec = (uint32_t)(ms / 1000);
         uint32_t fms = (uint32_t)(ms % 1000);
 

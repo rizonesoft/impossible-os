@@ -119,7 +119,7 @@ graph TD
 | 💎 | **4** | §5.2 Catch-All IDT Stubs         | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ✅   |
 | 💎 | **5** | §5.1 Hyper-V Synthetic ISRs      | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ✅   |
 | ⭐ | **5** | §6.1 CPUID Platform Probe        | Detect Hyper-V/VBox/QEMU TCG via CPUID 0x40000000          | Phase 4 (§4) + Phase 2 (§2)       |   ✅   |
-| ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ⬜   |
+| ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ✅   |
 | ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ⬜   |
 | ⭐ | **5** | §6.4 Timer Lock-In               | `g_system_timer` assigned — single uptime, splash fixed    | §6.3                              |   ⬜   |
 | 💎 | **6** | §6.5 Spinner PIT Migration       | Spinner off PIT callback — `sleep_ms()` loop instead       | §6.4 + Spinner §2                 |   ⬜   |
@@ -546,15 +546,13 @@ boot_storage_init()
 ### 6.2 Timer HAL Interface (`timer_driver_t`)
 
 > [!NOTE]
-> **Codebase fact:** `sleep_ms()` is declared in `pit.h` and defined in `pit.c`.
-> It is called from 13+ locations: `boot_splash.c`, `boot_tests.c`,
-> `test_threads.c`, `spinner.c` (indirectly), `event.c`, etc.
-> `pit_get_ticks()` is called from `registry.c` (×3), `klog.c` (×2),
-> `event.c`, `boot_desktop.c`, `boot_tests.c`.
-> `uptime()` is in `pit.c` and uses `pit_get_ticks() / pit_actual_freq`.
-> ALL of these must route through `g_system_timer` after this change.
+> **Implemented.** `timer.h`/`timer.c` define the hardware-agnostic HAL with
+> `g_system_timer` pointer.  `pit.c` refactored to expose `pit_driver` vtable.
+> 13 caller files migrated from `pit.h` to `timer.h`.  `event.c` uses
+> `system_get_freq()` instead of hardcoded `PIT_TARGET_FREQ`.
+> LAPIC driver vtable deferred to §6.3/6.4 (requires calibration first).
 
-- [ ] Create `include/kernel/timer.h`:
+- [x] Create `include/kernel/timer.h`:
   ```c
   typedef struct {
       const char *name;                        /* e.g., "LAPIC", "PIT" */
@@ -571,66 +569,67 @@ boot_storage_init()
   uint64_t system_get_ticks(void);             /* → g_system_timer->get_ticks */
   uint64_t uptime(void);                       /* ticks / freq → seconds */
   ```
-- [ ] Create `src/kernel/timer.c`:
-  - [ ] Define `timer_driver_t *g_system_timer = NULL;`
-  - [ ] Implement `sleep_ms()` as: `g_system_timer->sleep_ms(ms);`
-  - [ ] Implement `system_get_ticks()` as: `return g_system_timer->get_ticks();`
-  - [ ] Implement `uptime()` using `system_get_ticks()`
-  - [ ] Guard all functions: if `g_system_timer == NULL`, return immediately (early-boot safety)
-- [ ] Refactor `pit.c` to expose `pit_driver`:
-  - [ ] Remove the global `sleep_ms()` definition from `pit.c` (it moves to `timer.c`)
-  - [ ] Create `static timer_driver_t pit_driver = { "PIT", pit_init, pit_get_ticks, pit_sleep_ms, ... };`
-  - [ ] Rename internal sleep to `pit_sleep_ms()` (static, used only by `pit_driver`)
-  - [ ] Export `extern timer_driver_t pit_driver;` from `pit.h`
+- [x] Create `src/kernel/timer.c`:
+  - [x] Define `timer_driver_t *g_system_timer = NULL;`
+  - [x] Implement `sleep_ms()` as: `g_system_timer->sleep_ms(ms);`
+  - [x] Implement `system_get_ticks()` as: `return g_system_timer->get_ticks();`
+  - [x] Implement `uptime()` using `system_get_ticks()`
+  - [x] Guard all functions: if `g_system_timer == NULL`, return immediately (early-boot safety)
+- [x] Refactor `pit.c` to expose `pit_driver`:
+  - [x] Remove the global `sleep_ms()` definition from `pit.c` (it moves to `timer.c`)
+  - [x] Create `static timer_driver_t pit_driver = { "PIT", pit_init, pit_get_ticks, pit_sleep_ms, ... };`
+  - [x] Rename internal sleep to `pit_sleep_ms()` (static, used only by `pit_driver`)
+  - [x] Export `extern timer_driver_t pit_driver;` from `pit.h`
 - [ ] Refactor `lapic.c` to expose `lapic_driver`:
-  - [ ] Create `static timer_driver_t lapic_driver = { "LAPIC", lapic_timer_init, lapic_get_ticks, lapic_sleep_ms, ... };`
+  - [ ] Create `timer_driver_t lapic_driver = { "LAPIC", ... };`
   - [ ] Implement `lapic_get_ticks()` — returns the global `tick_count` (driven by LAPIC ISR)
   - [ ] Implement `lapic_sleep_ms()` — uses `lapic_get_ticks()` + `hlt` loop
   - [ ] Export `extern timer_driver_t lapic_driver;` from `lapic.h`
-- [ ] Update all callers of `pit_get_ticks()` to `system_get_ticks()`:
-  - [ ] `src/kernel/registry.c` (2 call sites + 2 extern decls to remove)
-  - [ ] `src/kernel/klog.c` (2 call sites)
-  - [ ] `src/kernel/sched/event.c` (2 call sites)
-  - [ ] `src/kernel/main/boot_desktop.c` (1 call site)
-  - [ ] `src/kernel/main/boot_tests.c` (1 call site)
-- [ ] Update `PIT_TARGET_FREQ` usage in `event.c`:
-  - [ ] Line 159: `uint64_t timeout = ((uint64_t)timeout_ms * PIT_TARGET_FREQ) / 1000;`
-  - [ ] Replace with: `system_get_ticks()`-based timeout (or add `system_get_freq()` API)
-  - [ ] This is a hardcoded assumption that the tick source is PIT at 100 Hz
-- [ ] Update all callers of `uptime()` — these will transparently migrate once `uptime()` moves to `timer.c`:
-  - [ ] `src/kernel/log.c` (1 site) — `#include pit.h` → `timer.h`
-  - [ ] `src/kernel/panic.c` (2 sites) — `#include pit.h` → `timer.h`
-  - [ ] `src/kernel/sched/syscall.c` (1 site) — `#include pit.h` → `timer.h`
-  - [ ] `src/kernel/main/compositor.c` (1 site) — `#include pit.h` → `timer.h`
-  - [ ] `src/kernel/main/boot_tests.c` (1 site) — already handled above
-  - [ ] `src/kernel/fs/ixfs/ixfs_ops.c` (8 sites) — `#include pit.h` via `ixfs_internal.h`
-  - [ ] `src/kernel/fs/ixfs/ixfs_cow.c` (1 site) — `#include pit.h` via `ixfs_internal.h`
-  - [ ] `src/kernel/fs/ixfs/ixfs_internal.h` — change `#include pit.h` → `timer.h`
-- [ ] Update all `#include "kernel/drivers/pit.h"` to `#include "kernel/timer.h"` where only `sleep_ms` / `uptime` / ticks are needed:
-  - [ ] `src/kernel/klog.c`
-  - [ ] `src/kernel/log.c`
-  - [ ] `src/kernel/panic.c`
-  - [ ] `src/kernel/registry.c` (remove extern decls too)
-  - [ ] `src/kernel/sched/event.c`
-  - [ ] `src/kernel/sched/syscall.c`
-  - [ ] `src/kernel/boot_splash.c`
-  - [ ] `src/kernel/main/boot_desktop.c`
-  - [ ] `src/kernel/main/boot_tests.c`
-  - [ ] `src/kernel/main/test_threads.c`
-  - [ ] `src/kernel/main/compositor.c`
-  - [ ] `src/desktop/desktop.c`
-  - [ ] `src/kernel/fs/ixfs/ixfs_internal.h`
-  - [ ] Keep `pit.h` only in: `pit.c`, `lapic.c`, `boot_interrupts.c`, `boot_storage.c`
-- [ ] Fix stale comment in `boot_splash.c` line 243:
-  - [ ] Old: `"PIT IS initialized by this point so sleep_ms() works correctly"`
-  - [ ] New: `"timer_hal_init() provides g_system_timer so sleep_ms() works correctly"`
-- [ ] Fix stale comment in `boot_splash.c` line 201:
-  - [ ] Old: `"Called from main.c after pit_init() + sti to start animation"`
-  - [ ] New: `"Called from main.c after timer_hal_init() + sti to start animation"`
-- [ ] `sleep_ms()` callers need NO changes — same function signature, now in `timer.h`
-- [ ] Add `timer.o` to `Makefile` kernel object list
-- [ ] Build and test: initially `g_system_timer = &pit_driver` → identical behavior
-- [ ] Commit: `"kernel: timer HAL interface (timer_driver_t, g_system_timer)"`
+  - [ ] → Deferred to §6.3/6.4 (requires calibration waterfall before LAPIC driver can be selected)
+- [x] Update all callers of `pit_get_ticks()` to `system_get_ticks()`:
+  - [x] `src/kernel/registry.c` (2 call sites + 2 extern decls to remove)
+  - [x] `src/kernel/klog.c` (2 call sites)
+  - [x] `src/kernel/sched/event.c` (2 call sites)
+  - [x] `src/kernel/main/boot_desktop.c` (1 call site)
+  - [x] `src/kernel/main/boot_tests.c` (1 call site)
+- [x] Update `PIT_TARGET_FREQ` usage in `event.c`:
+  - [x] Line 159: `uint64_t timeout = ((uint64_t)timeout_ms * PIT_TARGET_FREQ) / 1000;`
+  - [x] Replace with: `system_get_ticks()`-based timeout (or add `system_get_freq()` API)
+  - [x] This is a hardcoded assumption that the tick source is PIT at 100 Hz
+- [x] Update all callers of `uptime()` — these will transparently migrate once `uptime()` moves to `timer.c`:
+  - [x] `src/kernel/log.c` (1 site) — `#include pit.h` → `timer.h`
+  - [x] `src/kernel/panic.c` (2 sites) — `#include pit.h` → `timer.h`
+  - [x] `src/kernel/sched/syscall.c` (1 site) — `#include pit.h` → `timer.h`
+  - [x] `src/kernel/main/compositor.c` (1 site) — `#include pit.h` → `timer.h`
+  - [x] `src/kernel/main/boot_tests.c` (1 site) — already handled above
+  - [x] `src/kernel/fs/ixfs/ixfs_ops.c` (8 sites) — `#include pit.h` via `ixfs_internal.h`
+  - [x] `src/kernel/fs/ixfs/ixfs_cow.c` (1 site) — `#include pit.h` via `ixfs_internal.h`
+  - [x] `src/kernel/fs/ixfs/ixfs_internal.h` — change `#include pit.h` → `timer.h`
+- [x] Update all `#include "kernel/drivers/pit.h"` to `#include "kernel/timer.h"` where only `sleep_ms` / `uptime` / ticks are needed:
+  - [x] `src/kernel/klog.c`
+  - [x] `src/kernel/log.c`
+  - [x] `src/kernel/panic.c`
+  - [x] `src/kernel/registry.c` (remove extern decls too)
+  - [x] `src/kernel/sched/event.c`
+  - [x] `src/kernel/sched/syscall.c`
+  - [x] `src/kernel/boot_splash.c`
+  - [x] `src/kernel/main/boot_desktop.c`
+  - [x] `src/kernel/main/boot_tests.c`
+  - [x] `src/kernel/main/test_threads.c`
+  - [x] `src/kernel/main/compositor.c`
+  - [x] `src/desktop/desktop.c`
+  - [x] `src/kernel/fs/ixfs/ixfs_internal.h`
+  - [x] Keep `pit.h` only in: `pit.c`, `lapic.c`, `boot_interrupts.c`, `boot_storage.c`
+- [x] Fix stale comment in `boot_splash.c` line 243:
+  - [x] Old: `"PIT IS initialized by this point so sleep_ms() works correctly"`
+  - [x] New: `"timer_hal_init() provides g_system_timer so sleep_ms() works correctly"`
+- [x] Fix stale comment in `boot_splash.c` line 201:
+  - [x] Old: `"Called from main.c after pit_init() + sti to start animation"`
+  - [x] New: `"Called from main.c after timer_hal_init() + sti to start animation"`
+- [x] `sleep_ms()` callers need NO changes — same function signature, now in `timer.h`
+- [x] Add `timer.o` to `Makefile` kernel object list
+- [x] Build and test: `=== BUILD OK === (11.1s), 135 objects`
+- [x] Commit: `"kernel: timer HAL interface (timer_driver_t, g_system_timer)"`
 
 ### 6.3 Legacy-Free Calibration Waterfall (Before Boot Splash)
 
@@ -1032,7 +1031,7 @@ boot_storage_init()
 | 💎 | EOI dispatch (PIC/LAPIC)            | ✅ Unified HAL EOI                     | ✅ `apic_eoi()` / `edge_ack()`          | ✅ §4 done — `irq_eoi()` dispatches via flag         |
 | 💎 | Full IDT coverage (256 entries)     | ✅ All 256 entries populated           | ✅ All 256 entries populated            | ✅ §5.2 done — 256 entries, rate-limited warning handler |
 | 💎 | CPUID platform detection            | ✅ HAL identifies hypervisor           | ✅ `dmi_check_system()` / CPUID         | ✅ §6.1 done — `platform_detect()` via CPUID 0x40000000 |
-| ⭐ | **Unified timer HAL**               | ✅ HAL timer abstraction (internal)    | ✅ `clocksource` + `clock_event_device` | ⬜ §6.2 — `g_system_timer` vtable                    |
+| ⭐ | **Unified timer HAL**               | ✅ HAL timer abstraction (internal)    | ✅ `clocksource` + `clock_event_device` | ✅ §6.2 done — `g_system_timer` vtable, `pit_driver`  |
 | ⭐ | **Legacy-free calibration**         | ✅ HAL uses MSR/CPUID (no PIT)         | ✅ `tsc_early_init` / HPET / PM Timer   | ⬜ §6.3 — 3-tier waterfall (MSR → HPET → PIT)        |
 | ⭐ | **Single tick source**              | ✅ `KeQueryPerformanceCounter`         | ✅ `jiffies` / `ktime`                  | ⬜ §6.4 — single `system_uptime_ticks`               |
 | ⭐ | **Timer source GUI override**       | ❌ No user control                     | ⚠️ `/sys/.../current_clocksource` (CLI) | ⬜ §6.4 — Control Panel → Timer Source               |

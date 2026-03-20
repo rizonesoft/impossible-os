@@ -10,7 +10,7 @@
 #include "kernel/printk.h"
 #include "kernel/klog.h"
 #include "kernel/mm/heap.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/sched/task.h"
 #include "kernel/boot_splash.h"
@@ -77,7 +77,7 @@ void boot_desktop_init(void)
 
     /* Boot complete timing marker */
     {
-        uint64_t ms = pit_get_ticks() * 10;
+        uint64_t ms = system_get_ticks() * 10;
         klog(LOG_INFO, "boot",
              "Boot complete in %u.%03us (PIT uptime from interrupt init)",
              (uint64_t)(ms / 1000), (uint64_t)(ms % 1000));

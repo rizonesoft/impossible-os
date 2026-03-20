@@ -12,7 +12,7 @@
 
 #include "kernel/sched/event.h"
 #include "kernel/sched/task.h"
-#include "kernel/drivers/pit.h"   /* pit_get_ticks(), PIT_TARGET_FREQ */
+#include "kernel/timer.h"         /* system_get_ticks(), system_get_freq() */
 #include "kernel/printk.h"
 
 /* ---------------------------------------------------------------------------
@@ -155,12 +155,13 @@ void event_reset(event_t *ev)
  * ------------------------------------------------------------------------- */
 int event_wait_timeout(event_t *ev, uint32_t timeout_ms)
 {
-    uint64_t start   = pit_get_ticks();
-    uint64_t timeout = ((uint64_t)timeout_ms * PIT_TARGET_FREQ) / 1000;
+    uint64_t start   = system_get_ticks();
+    uint32_t freq    = system_get_freq();
+    uint64_t timeout = freq ? ((uint64_t)timeout_ms * freq) / 1000 : 0;
 
     while (!atomic_read(&ev->state)) {
         /* Check deadline before blocking */
-        if ((pit_get_ticks() - start) >= timeout)
+        if ((system_get_ticks() - start) >= timeout)
             return 0;  /* timed out */
 
         enqueue_and_block(ev);

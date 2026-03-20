@@ -13,7 +13,7 @@
 #include "desktop/font.h"       /* bitmap font — kept for early boot fallback */
 #include "font_mgr.h"            /* TrueType fonts — primary rendering */
 #include "kernel/fs/vfs.h"
-#include "kernel/drivers/pit.h"
+#include "kernel/timer.h"
 #include "kernel/drivers/rtc.h"
 #include "desktop/wm.h"
 #include "kernel/mm/heap.h"
