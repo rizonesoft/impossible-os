@@ -48,6 +48,94 @@ UEFI Firmware (Hyper-V)
 
 ---
 
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **This file covers Hyper-V Gen 2 boot support — a legacy-free environment.**
+> Sections have a strict dependency chain: test runner → APIC-only mode →
+> MMIO safety → VMBus core → synthetic drivers (SCSI → HID → video → NIC) →
+> timer → power → guest additions integration. External dependencies include
+> `TODO-010.99-APIC-First-Boot.md` (APIC init ordering),
+> `TODO-010-Bootloader.md §1.5` (MMIO page tables), and
+> `TODO-010.96-QEMU-Compatibility.md` (AHCI interrupt fixes).
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    S1["§1 Test Runner Script ✅"]
+    S2["§2 APIC-Only Interrupt Mode ✅"]
+    S3["§3 VMBus Core Protocol ✅"]
+    S4["§4 Synthetic SCSI (storvsc) ✅"]
+    S5["§5 Synthetic HID Input ✅"]
+    S6["§6 Synthetic Video (hvfb)"]
+    S7["§7 Synthetic NIC (netvsc)"]
+    S8["§8 Hyper-V Synthetic Timer"]
+    S9["§9 Page Table MMIO Safety"]
+    S10["§10 Power Management"]
+    S11["§11 Guest Additions Integration"]
+
+    %% External dependencies
+    X1["010.99-APIC-First-Boot.md §1–3<br/>ACPI → LAPIC → IOAPIC ✅"]
+    X2["010-Bootloader.md §1.5<br/>Memory-Type Page Tables"]
+    X3["010.96-QEMU-Compat.md<br/>AHCI Interrupt Fixes ✅"]
+
+    %% Core chain: infrastructure → VMBus → drivers
+    S1 --> S2
+    S2 --> S3
+    S9 --> S3
+    S3 --> S4
+    S3 --> S5
+    S3 --> S6
+    S3 --> S7
+    S4 --> S8
+
+    %% Integration comes last
+    S4 --> S10
+    S5 --> S11
+    S4 --> S11
+    S6 --> S11
+
+    %% External links
+    X1 --> S2
+    X2 --> S9
+    X3 --> S4
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase | Section                             | What It Delivers                                                 | Depends On                  | Status |
+| -- | :----: | ----------------------------------- | ---------------------------------------------------------------- | --------------------------- | :----: |
+| 💎 | **1** | §1 Test Runner Script               | `run-hyperv.ps1` + `.bat` — one-click Hyper-V Gen 2 testing      | —                           |   ✅   |
+| 💎 | **1** | §2 APIC-Only Interrupt Mode         | `PCAT_COMPAT` gate — PIC skipped on Gen 2                        | 010.99 §1–3                 |   ✅   |
+| 💎 | **2** | §9 Page Table MMIO Safety           | UC mapping for MMIO regions — prevents MCE on VMBus access       | 010 §1.5                    |   ⬜   |
+| 💎 | **2** | §3 VMBus Core Protocol              | Hypercall page, SynIC, version negotiation, channel enumeration  | Phase 1 (§2) + Phase 2 (§9) |   ✅   |
+| 💎 | **3** | §4 Synthetic SCSI (storvsc)         | Disk access via SCSI over VMBus — **#1 blocker for Gen 2 boot**  | Phase 2 (§3)                |   ✅   |
+| 💎 | **3** | §5 Synthetic HID Input              | Keyboard + mouse via VMBus — desktop becomes interactive         | Phase 2 (§3)                |   ✅   |
+| 💎 | **4** | §6 Synthetic Video (hvfb)           | Proper VMBus video — runtime resolution changes, no display freeze | Phase 2 (§3)              |   ⬜   |
+| 💎 | **4** | §8 Hyper-V Synthetic Timer          | Per-vCPU µs-precision timer — consistent timing across hosts     | Phase 3 (§4)                |   ⬜   |
+| 💎 | **5** | §7 Synthetic NIC (netvsc)           | RNDIS-based networking on Hyper-V                                | Phase 2 (§3)                |   ⬜   |
+| 💎 | **5** | §10 Power Management                | Shutdown / reboot validation + hypercall fallback                | Phase 3 (§4)                |   ⬜   |
+| 💎 | **6** | §11 Guest Additions Integration     | Auto-detect Hyper-V → activate all synthetic drivers             | Phase 3–4 (§4+§5+§6)       |   ⬜   |
+
+> [!NOTE]
+> **Phases 1–3** are the critical path: they deliver a bootable, interactive Hyper-V Gen 2
+> system with disk access and keyboard/mouse input. **Phases 4–5** add video, networking,
+> and timer polish. **Phase 6** wraps everything into the guest additions framework.
+
+> [!TIP]
+> **§9 (MMIO Safety) can be done early or late.** It's listed as Phase 2 because VMBus MMIO
+> regions will trigger MCE without UC mapping. However, on some Hyper-V configs the
+> firmware-provided MTRR settings may mask the issue temporarily. If VMBus works without
+> it, §9 can be deferred — but it MUST be done before shipping on real hardware.
+
+> [!WARNING]
+> **§3 VMBus and §4 StorVSC are implemented but not yet verified on Hyper-V Gen 2.**
+> They work structurally (code compiles, `blkdev_register` succeeds) but the VMBus
+> ring buffer protocol has not been tested against a real Hyper-V host. The partition
+> re-scan fix from `TODO-010.96` ensures StorVSC → partition → C:\ mount ordering
+> is correct.
+
 ## 1. Test Runner Script
 
 **Prompt:** ~~Create~~ **Verify** `scripts/vm/run-hyperv.ps1` creates or updates a Hyper-V Generation 2 VM with Secure Boot disabled, 512 MB RAM, and the system disk attached as a VHDX. Confirm the script handles: VM doesn't exist (create), VM exists but is running (stop first), and VM exists but settings changed (update). Verify `scripts/vm/run-hyperv.bat` launches the PowerShell script elevated. Run on a Windows host with Hyper-V enabled to validate.
@@ -329,14 +417,14 @@ graph LR
 ## OS Comparison
 
 | Feature                          | 🪟 Windows 11 (Native Hyper-V) | 🐧 Linux (hv_* drivers)         | 🚀 Impossible OS                      |
-| -------------------------------- | ----------------------------- | ------------------------------ | ------------------------------------ |
+| -------------------------------- | ------------------------------- | ------------------------------- | -------------------------------------- |
 | VMBus discovery + protocol       | ✅ Native (built-in)           | ✅ `hv_vmbus.ko`                | ⬜ §3 P0 — **cannot boot on Hyper-V** |
 | Synthetic SCSI (storvsc)         | ✅ Native                      | ✅ `hv_storvsc.ko`              | ⬜ §4 P0 — no disk access             |
 | Synthetic HID (keyboard + mouse) | ✅ Native                      | ✅ `hv_utils.ko` + `hid-hyperv` | ⬜ §5 P1 — no input                   |
 | Synthetic Video (hvfb)           | ✅ Native                      | ✅ `hyperv_fb.ko`               | ⬜ §6 P1 — GOP fallback only          |
 | Synthetic NIC (netvsc)           | ✅ Native                      | ✅ `hv_netvsc.ko`               | ⬜ §7 P2 — no networking              |
 | Hyper-V synthetic timer          | ✅ Native                      | ✅ `hyperv_timer.c`             | ⬜ §8 P2 — uses LAPIC fallback        |
-| APIC-only mode (no legacy PIC)   | ✅ Automatic                   | ✅ MADT PCAT_COMPAT check       | ✅ `acpi_pcat_compat()` — Done §2      |
+| APIC-only mode (no legacy PIC)   | ✅ Automatic                   | ✅ MADT PCAT_COMPAT check       | ✅ `acpi_pcat_compat()` — Done §2     |
 | MMIO-safe page tables            | ✅ Automatic (UEFI memory map) | ✅ Uses EFI memory map          | ⬜ §9 P0 — maps all as write-back     |
 | Gen 2 Hyper-V boot (full)        | ✅ Native                      | ✅ With hv_* drivers            | ⬜ **Full stack required (§1-§11)**   |
 
