@@ -160,7 +160,7 @@ graph TD
 | 💎 | **0**  | VFS core (040.07)                | —                             |   ✅   |
 | 💎 | **1**  | §1.1 PCI Capability Discovery    | Phase 0                       |   ✅   |
 | 💎 | **1**  | §1.2 Modern Init Sequence        | Phase 1 (§1.1)                |   ✅   |
-| 💎 | **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ⬜   |
+| 💎 | **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ✅   |
 | 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ⬜   |
 | 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ⬜   |
 | 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ⬜   |
@@ -399,20 +399,27 @@ graph TD
 
 ### 3.1 MSI-X Interrupts
 
-**Prompt:** The current driver uses legacy PIC interrupts, which violates the `rules.md` APIC-only mandate. Modern VirtIO PCI devices support MSI-X for per-queue interrupt vectors. Walk the PCI capability list for MSI-X (cap ID `0x11`). Map the MSI-X Table BAR. Program each table entry with the LAPIC destination address (`0xFEE00000 | (cpu << 12)`) and message data (IDT vector). Assign vectors to virtqueues via `queue_msix_vector` in common_cfg, and a separate vector for config changes via `config_msix_vector`. Enable MSI-X in the PCI Message Control register. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: MSI-X interrupt support"`. Add notes directly in this TODO section.
+**Verification:** MSI-X interrupt support is implemented in `virtio.c` (`virtio_pci_setup_msix()`) and `virtio_blk.c` (handler registration). Verify: `bash scripts/build.sh run` → serial log shows `MSI-X enabled: N entries, queue→vec 0xNN, config→vec 0xNN` and the OS boots with working disk I/O. The old PIC-based interrupt code (ports 0x21/0xA1 mask manipulation, `idt_register_handler`) is fully removed. MSI-X table entries are programmed with LAPIC destination `0xFEE00000` and dynamically allocated IDT vectors. Legacy INTx is disabled via PCI Command Register bit 10.
 
-- [ ] Walk PCI capabilities for MSI-X capability (cap ID `0x11`)
-- [ ] Read MSI-X Control: table size, Table BAR + offset, PBA BAR + offset
-- [ ] Map MSI-X Table BAR into kernel memory
-- [ ] Allocate IDT vectors: 1 for request queue + 1 for config changes
-- [ ] Program MSI-X table entry 0: `msg_addr = 0xFEE00000`, `msg_data = idt_vector_queue`
-- [ ] Program MSI-X table entry 1: `msg_addr = 0xFEE00000`, `msg_data = idt_vector_config`
-- [ ] Write `queue_msix_vector = 0` for request queue in common_cfg
-- [ ] Write `config_msix_vector = 1` in common_cfg
-- [ ] Enable MSI-X: set bit 15 in PCI MSI-X Message Control register
-- [ ] Disable legacy INTx: set PCI Command Register bit 10
-- [ ] Register IDT handlers for both vectors
-- [ ] Commit: `"virtio-blk: MSI-X interrupt support"`
+- [x] Walk PCI capabilities for MSI-X capability (cap ID `0x11`)
+- [x] Read MSI-X Control: table size, Table BAR + offset, PBA BAR + offset
+- [x] Map MSI-X Table BAR into kernel memory
+- [x] Allocate IDT vectors: 1 for request queue + 1 for config changes
+- [x] Program MSI-X table entry 0: `msg_addr = 0xFEE00000`, `msg_data = idt_vector_queue`
+- [x] Program MSI-X table entry 1: `msg_addr = 0xFEE00000`, `msg_data = idt_vector_config`
+- [x] Write `queue_msix_vector = 0` for request queue in common_cfg
+- [x] Write `config_msix_vector = 1` in common_cfg
+- [x] Enable MSI-X: set bit 15 in PCI MSI-X Message Control register
+- [x] Disable legacy INTx: set PCI Command Register bit 10
+- [x] Register IDT handlers for both vectors via `irq_register()`
+- [x] Committed
+
+> **Notes:**
+> - `virtio_pci_setup_msix()` in `virtio.c` (line 427+) handles all MSI-X setup — reusable for virtio-input or any future VirtIO device.
+> - Two separate IRQ handlers: `virtio_blk_queue_irq()` sets `virtio_irq_fired = 1` for I/O completion; `virtio_blk_config_irq()` logs config changes (full handling deferred to §14.1).
+> - Vector allocation uses `irq_alloc_vector()` from the dynamic range `0x30–0xEF` — no conflict with ISA IRQs or CPU exceptions.
+> - `irq_register()` installs a wrapper that calls `irq_eoi()` → `lapic_eoi()` automatically (APIC-only path).
+> - Falls back gracefully to polling-only mode if MSI-X setup fails (e.g., legacy QEMU without MSI-X).
 
 ### 3.2 Async I/O Path
 

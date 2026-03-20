@@ -19,31 +19,39 @@
 #include "kernel/drivers/virtio_blk.h"
 #include "kernel/drivers/virtio.h"
 #include "kernel/drivers/pci.h"
+#include "kernel/irq.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
-#include "kernel/idt.h"
-
-/* Forward declaration */
-struct interrupt_frame;
 
 /* ---- Driver state ---- */
 static struct virtio_pci_dev  blk_dev;         /* Modern PCI transport */
 static struct virtqueue       blk_vq;          /* Request queue (queue 0) */
 static uint64_t               disk_capacity;   /* Total 512-byte sectors */
 static int                    initialized;     /* 1 if init succeeded */
-static volatile int           virtio_irq_fired; /* IRQ flag */
-static uint8_t                blk_irq_line;    /* PCI IRQ line */
+static volatile int           virtio_irq_fired; /* Queue completion flag */
+static uint8_t                msix_vec_queue;  /* MSI-X IDT vector: queue */
+static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
 
-/* ---- IRQ handler ---- */
-static uint64_t virtio_blk_irq_handler(struct interrupt_frame *frame)
+/* ---- MSI-X IRQ handlers ---- */
+
+/* Queue completion interrupt — device placed buffers in the used ring */
+static void virtio_blk_queue_irq(uint8_t vector, void *ctx)
 {
-    (void)frame;
-    /* Read ISR status to acknowledge the interrupt */
+    (void)vector;
+    (void)ctx;
+    virtio_irq_fired = 1;
+}
+
+/* Config change interrupt — device resized, topology changed, etc. */
+static void virtio_blk_config_irq(uint8_t vector, void *ctx)
+{
+    (void)vector;
+    (void)ctx;
+    /* Read ISR to acknowledge; config change handling is TODO §14.1 */
     if (blk_dev.isr_cfg) {
         (void)virtio_read_isr(&blk_dev);
     }
-    virtio_irq_fired = 1;
-    return 0;
+    klog(LOG_DEBUG, "virtio", "Config change interrupt received");
 }
 
 /* ---- Feature negotiation ---- */
@@ -248,9 +256,6 @@ int virtio_blk_init(void)
         pci_write16(dev.bus, dev.dev, dev.func, 0x04, cmd);
     }
 
-    /* Read IRQ line for interrupt handling */
-    blk_irq_line = pci_read8(dev.bus, dev.dev, dev.func, 0x3C);
-
     /* Initialize modern PCI transport (walk capabilities, map BARs) */
     if (virtio_pci_init(&blk_dev, dev.bus, dev.dev, dev.func) != 0) {
         klog(LOG_DEBUG, "virtio", "Failed to init modern PCI transport");
@@ -336,25 +341,15 @@ int virtio_blk_init(void)
 
     initialized = 1;
 
-    /* Register IRQ handler */
-    if (blk_irq_line < 16) {
-        idt_register_handler(32 + blk_irq_line, virtio_blk_irq_handler);
-        /* Unmask the IRQ on the PIC */
-        if (blk_irq_line < 8) {
-            uint8_t mask;
-            __asm__ volatile ("inb $0x21, %0" : "=a"(mask));
-            mask &= ~(1 << blk_irq_line);
-            __asm__ volatile ("outb %0, $0x21" :: "a"(mask));
-        } else {
-            uint8_t mask;
-            __asm__ volatile ("inb $0xA1, %0" : "=a"(mask));
-            mask &= ~(1 << (blk_irq_line - 8));
-            __asm__ volatile ("outb %0, $0xA1" :: "a"(mask));
-            /* Ensure cascade IRQ 2 is unmasked */
-            __asm__ volatile ("inb $0x21, %0" : "=a"(mask));
-            mask &= ~(1 << 2);
-            __asm__ volatile ("outb %0, $0x21" :: "a"(mask));
-        }
+    /* Set up MSI-X interrupts (replaces legacy PIC — rules.md APIC-only) */
+    if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
+                              &msix_vec_queue, &msix_vec_config) != 0) {
+        klog(LOG_DEBUG, "virtio", "MSI-X setup failed — falling back to polling only");
+        /* Polling-only mode still works via the timeout loop in do_io */
+    } else {
+        /* Register IRQ handlers for both MSI-X vectors */
+        irq_register(msix_vec_queue, virtio_blk_queue_irq, NULL, "virtio-blk-q0");
+        irq_register(msix_vec_config, virtio_blk_config_irq, NULL, "virtio-blk-cfg");
     }
 
     klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors)",

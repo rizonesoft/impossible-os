@@ -42,6 +42,17 @@ static inline void mmio_write64(volatile uint8_t *base, uint32_t off, uint64_t v
 /* PCI capability ID for vendor-specific (VirtIO uses this) */
 #define PCI_CAP_ID_VENDOR       0x09
 
+/* PCI capability ID for MSI-X */
+#define PCI_CAP_ID_MSIX         0x11
+
+/* MSI-X table entry (16 bytes, naturally aligned) */
+struct msix_table_entry {
+    uint32_t msg_addr_lo;   /* Message Address (lower 32 bits) */
+    uint32_t msg_addr_hi;   /* Message Address (upper 32 bits) */
+    uint32_t msg_data;      /* Message Data (IDT vector) */
+    uint32_t vector_ctrl;   /* 0 = unmasked, 1 = masked */
+} __attribute__((packed));
+
 /* ---- VirtIO common configuration registers (MMIO offsets) ---- */
 /* These are offsets within the common config MMIO region */
 #define VIRTIO_COMMON_DFSELECT       0x00  /* 32-bit: device feature select */
@@ -163,3 +174,12 @@ uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev);
 
 /* Read ISR status (clears interrupt) */
 uint8_t virtio_read_isr(struct virtio_pci_dev *dev);
+
+/* Set up MSI-X interrupts for a VirtIO PCI device.
+ * Allocates IDT vectors, programs MSI-X table entries, assigns vectors
+ * to virtqueues and config changes in common_cfg, and enables MSI-X.
+ * queue_vector/config_vector: filled with allocated IDT vector numbers.
+ * Returns 0 on success, -1 on failure. */
+int virtio_pci_setup_msix(struct virtio_pci_dev *dev,
+                          uint8_t bus, uint8_t pci_dev, uint8_t func,
+                          uint8_t *queue_vector, uint8_t *config_vector);

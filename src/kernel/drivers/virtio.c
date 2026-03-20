@@ -15,6 +15,7 @@
 #include "kernel/drivers/virtio.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/irq.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/mm/vmm.h"
@@ -423,4 +424,164 @@ uint8_t virtio_read_isr(struct virtio_pci_dev *dev)
 uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev)
 {
     return mmio_read8(dev->common_cfg + VIRTIO_COMMON_CFGGEN);
+}
+
+/* ---- MSI-X setup ---- */
+
+int virtio_pci_setup_msix(struct virtio_pci_dev *dev,
+                          uint8_t bus, uint8_t pci_dev, uint8_t func,
+                          uint8_t *queue_vector, uint8_t *config_vector)
+{
+    uint16_t status;
+    uint8_t cap_off;
+    uint8_t msix_cap_off = 0;
+    uint16_t msix_ctrl;
+    uint16_t table_size;
+    uint8_t  table_bir;     /* BAR Indicator Register (which BAR) */
+    uint32_t table_offset;
+    uint64_t bar_addr;
+    volatile struct msix_table_entry *msix_table;
+    uint8_t vec_queue, vec_config;
+    uint16_t readback;
+
+    /* Walk PCI capability list for MSI-X (cap ID 0x11) */
+    status = pci_read16(bus, pci_dev, func, 0x06);
+    if (!(status & (1 << 4))) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: no PCI capabilities list");
+        return -1;
+    }
+
+    cap_off = pci_read8(bus, pci_dev, func, 0x34) & 0xFC;
+    while (cap_off != 0) {
+        uint8_t cap_id = pci_read8(bus, pci_dev, func, cap_off);
+        if (cap_id == PCI_CAP_ID_MSIX) {
+            msix_cap_off = cap_off;
+            break;
+        }
+        cap_off = pci_read8(bus, pci_dev, func, cap_off + 1) & 0xFC;
+    }
+
+    if (!msix_cap_off) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: capability not found");
+        return -1;
+    }
+
+    /* Read MSI-X Message Control (cap_off + 2) */
+    msix_ctrl = pci_read16(bus, pci_dev, func, msix_cap_off + 2);
+    table_size = (msix_ctrl & 0x07FF) + 1;  /* bits 10:0 = N-1 */
+
+    if (table_size < 2) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: table too small (%u entries)",
+               (uint64_t)table_size);
+        return -1;
+    }
+
+    /* Read Table BIR and offset (cap_off + 4) */
+    {
+        uint32_t table_reg = pci_read32(bus, pci_dev, func, msix_cap_off + 4);
+        table_bir    = (uint8_t)(table_reg & 0x07);
+        table_offset = table_reg & 0xFFFFFFF8;
+    }
+
+    /* Read BAR for MSI-X table */
+    {
+        uint32_t bar_val = pci_read32(bus, pci_dev, func,
+                                       PCI_BAR0 + table_bir * 4);
+        if (bar_val & 0x01) {
+            klog(LOG_DEBUG, "virtio", "MSI-X: BAR%u is I/O space", (uint64_t)table_bir);
+            return -1;
+        }
+
+        uint8_t bar_type = (bar_val >> 1) & 0x03;
+        bar_addr = (uint64_t)(bar_val & 0xFFFFFFF0);
+
+        if (bar_type == 0x02) {
+            uint32_t bar_hi = pci_read32(bus, pci_dev, func,
+                                          PCI_BAR0 + (table_bir + 1) * 4);
+            bar_addr |= ((uint64_t)bar_hi << 32);
+        }
+    }
+
+    /* Map the MSI-X table BAR */
+    ensure_bar_mapped(bar_addr, table_bir, bus, pci_dev, func);
+
+    msix_table = (volatile struct msix_table_entry *)(bar_addr + table_offset);
+
+    /* Allocate IDT vectors from dynamic range */
+    vec_queue = irq_alloc_vector();
+    if (!vec_queue) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: no free IDT vector for queue");
+        return -1;
+    }
+
+    vec_config = irq_alloc_vector();
+    if (!vec_config) {
+        irq_free_vector(vec_queue);
+        klog(LOG_DEBUG, "virtio", "MSI-X: no free IDT vector for config");
+        return -1;
+    }
+
+    /* Program MSI-X table entry 0: request queue interrupt */
+    msix_table[0].msg_addr_lo = 0xFEE00000;  /* LAPIC base, CPU 0 */
+    msix_table[0].msg_addr_hi = 0;
+    msix_table[0].msg_data    = vec_queue;    /* IDT vector */
+    msix_table[0].vector_ctrl = 0;            /* Unmasked */
+
+    /* Program MSI-X table entry 1: config change interrupt */
+    msix_table[1].msg_addr_lo = 0xFEE00000;
+    msix_table[1].msg_addr_hi = 0;
+    msix_table[1].msg_data    = vec_config;
+    msix_table[1].vector_ctrl = 0;
+
+    /* Assign MSI-X vectors in VirtIO common config:
+     * queue_msix_vector for queue 0, config_msix_vector for config changes */
+    volatile uint8_t *cfg = dev->common_cfg;
+
+    /* Select queue 0 and assign MSI-X vector 0 */
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_SELECT), 0);
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_MSIX_VECTOR), 0);
+
+    /* Readback: device returns 0xFFFF if vector assignment failed */
+    readback = mmio_read16(
+        (volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_MSIX_VECTOR));
+    if (readback == 0xFFFF) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: queue vector assignment rejected");
+        irq_free_vector(vec_queue);
+        irq_free_vector(vec_config);
+        return -1;
+    }
+
+    /* Assign config change vector (MSI-X table entry 1) */
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_MSIX_CONFIG), 1);
+
+    readback = mmio_read16(
+        (volatile uint16_t *)(cfg + VIRTIO_COMMON_MSIX_CONFIG));
+    if (readback == 0xFFFF) {
+        klog(LOG_DEBUG, "virtio", "MSI-X: config vector assignment rejected");
+        irq_free_vector(vec_queue);
+        irq_free_vector(vec_config);
+        return -1;
+    }
+
+    /* Enable MSI-X: set bit 15 in Message Control, clear function mask (bit 14) */
+    msix_ctrl = pci_read16(bus, pci_dev, func, msix_cap_off + 2);
+    msix_ctrl |= (1 << 15);    /* MSI-X Enable */
+    msix_ctrl &= ~(1 << 14);   /* Clear Function Mask */
+    pci_write16(bus, pci_dev, func, msix_cap_off + 2, msix_ctrl);
+
+    /* Disable legacy INTx: set bit 10 in PCI Command Register */
+    {
+        uint16_t cmd = pci_read16(bus, pci_dev, func, PCI_COMMAND);
+        cmd |= PCI_CMD_INT_DISABLE;
+        pci_write16(bus, pci_dev, func, PCI_COMMAND, cmd);
+    }
+
+    *queue_vector  = vec_queue;
+    *config_vector = vec_config;
+
+    klog(LOG_DEBUG, "virtio",
+           "MSI-X enabled: %u entries, queue→vec 0x%x, config→vec 0x%x",
+           (uint64_t)table_size, (uint64_t)vec_queue, (uint64_t)vec_config);
+
+    return 0;
 }
