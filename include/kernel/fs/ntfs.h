@@ -174,3 +174,47 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
                                     uint32_t type_id,
                                     const char *name,
                                     struct ntfs_attr_header *out);
+
+/* ---- $FILE_NAME Decoder (attribute type 0x30) ---- */
+
+/* Filename namespace values */
+#define NTFS_NS_POSIX     0x00  /* Case-sensitive, any chars */
+#define NTFS_NS_WIN32     0x01  /* Case-insensitive, restricted chars */
+#define NTFS_NS_DOS       0x02  /* 8.3 short name */
+#define NTFS_NS_WIN32DOS  0x03  /* Compliant with both Win32 and DOS */
+
+/* Maximum filename length (NTFS allows up to 255 UTF-16 chars) */
+#define NTFS_MAX_NAME  255
+
+/* Parsed $FILE_NAME attribute content */
+struct ntfs_file_name {
+    /* Parent directory reference */
+    uint64_t parent_inode;       /* Low 48 bits of parent MFT ref */
+    uint16_t parent_seq;         /* High 16 bits — sequence number */
+
+    /* Duplicated timestamps (100-ns intervals since 1601-01-01) */
+    uint64_t creation_time;      /* 0x08 */
+    uint64_t modification_time;  /* 0x10 */
+    uint64_t mft_change_time;    /* 0x18 */
+    uint64_t access_time;        /* 0x20 */
+
+    /* Sizes */
+    uint64_t allocated_size;     /* 0x28 */
+    uint64_t real_size;          /* 0x30 */
+
+    /* Flags and name */
+    uint32_t flags;              /* 0x38: directory, compressed, hidden, etc. */
+    uint8_t  name_length;        /* 0x40: filename length in UTF-16 chars */
+    uint8_t  name_space;         /* 0x41: NTFS_NS_* */
+    char     name[NTFS_MAX_NAME + 1]; /* Decoded ASCII (lossy for non-ASCII) */
+};
+
+/* Decode the first (or best) $FILE_NAME attribute from an MFT record.
+ * Scans all $FILE_NAME attrs, prefers Win32 (0x01) or Win32/DOS (0x03).
+ * record: raw MFT record buffer (after fixup).
+ * hdr: parsed MFT record header.
+ * out: filled with decoded filename data.
+ * Returns NTFS_OK on success, NTFS_ERR_BAD_MAGIC if no $FILE_NAME found. */
+int ntfs_decode_file_name(const uint8_t *record,
+                          const struct ntfs_mft_header *hdr,
+                          struct ntfs_file_name *out);

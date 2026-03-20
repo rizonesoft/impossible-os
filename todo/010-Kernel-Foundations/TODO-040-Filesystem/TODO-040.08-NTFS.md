@@ -106,7 +106,7 @@ graph TD
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ✅   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ⬜   |
@@ -313,25 +313,33 @@ graph TD
 
 ### 3.3 `$FILE_NAME` Decoder (0x30)
 
-**Prompt:** Parse the always-resident `$FILE_NAME` attribute to extract filenames, parent directory references, and filename namespaces. The parent reference at `0x00` is 8 bytes: low 6 bytes = MFT inode of parent, high 2 bytes = sequence number. The filename at `0x42` is UTF-16LE, NOT null-terminated — use the length byte at `0x40`. There may be multiple `$FILE_NAME` attributes per record (Win32 + DOS 8.3 names). Prefer the Win32 (`0x01`) or Win32/DOS (`0x03`) namespace name. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $FILE_NAME decoder"`. Add notes directly in this TODO section.
+**Verification:** `$FILE_NAME` decoding is implemented in `ntfs_core.c` (`ntfs_decode_file_name()`). Verify: `bash scripts/build.sh clean` passes. The function iterates all `$FILE_NAME` (0x30) attributes in a record, parses parent reference (48-bit inode + 16-bit seq), timestamps, sizes, flags, namespace, and filename (UTF-16LE → ASCII). Prefers Win32/Win32DOS namespace over POSIX, with DOS 8.3 as last resort.
 
-- [ ] Locate all `$FILE_NAME` (type `0x30`) attributes (may be multiple)
-- [ ] Parse parent directory reference at `0x00`:
-  - [ ] Low 48 bits (6 bytes): parent MFT inode number
-  - [ ] High 16 bits (2 bytes): sequence number
-- [ ] Parse duplicated timestamps at `0x08`–`0x28` (creation, modification, MFT change, access)
-- [ ] Parse allocated size at `0x28` and real size at `0x30`
-- [ ] Parse flags at `0x38` (4 bytes — directory, compressed, hidden, etc.)
-- [ ] Parse filename length at `0x40` (1 byte, in UTF-16 characters)
-- [ ] Parse namespace at `0x41`:
-  - [ ] `0x00` = POSIX (case-sensitive, any chars)
-  - [ ] `0x01` = Win32 (case-insensitive, restricted chars)
-  - [ ] `0x02` = DOS (8.3 short name)
-  - [ ] `0x03` = Win32/DOS (compliant with both)
-- [ ] Decode filename at `0x42`: read `name_length × 2` bytes as UTF-16LE → convert to ASCII
-- [ ] Selection: prefer namespace `0x01` or `0x03` for display, fall back to `0x00`
-- [ ] Ignore namespace `0x02` (DOS 8.3 short name) unless specifically requested
-- [ ] Commit: `"ntfs: $FILE_NAME decoder"`
+- [x] Locate all `$FILE_NAME` (type `0x30`) attributes (may be multiple)
+- [x] Parse parent directory reference at `0x00`:
+  - [x] Low 48 bits (6 bytes): parent MFT inode number
+  - [x] High 16 bits (2 bytes): sequence number
+- [x] Parse duplicated timestamps at `0x08`–`0x28` (creation, modification, MFT change, access)
+- [x] Parse allocated size at `0x28` and real size at `0x30`
+- [x] Parse flags at `0x38` (4 bytes — directory, compressed, hidden, etc.)
+- [x] Parse filename length at `0x40` (1 byte, in UTF-16 characters)
+- [x] Parse namespace at `0x41`:
+  - [x] `0x00` = POSIX (case-sensitive, any chars)
+  - [x] `0x01` = Win32 (case-insensitive, restricted chars)
+  - [x] `0x02` = DOS (8.3 short name)
+  - [x] `0x03` = Win32/DOS (compliant with both)
+- [x] Decode filename at `0x42`: read `name_length × 2` bytes as UTF-16LE → convert to ASCII
+- [x] Selection: prefer namespace `0x01` or `0x03` for display, fall back to `0x00`
+- [x] Ignore namespace `0x02` (DOS 8.3 short name) unless only option
+- [x] Committed
+
+> **Notes:**
+> - API: `ntfs_decode_file_name(record, hdr, out)` — scans all `$FILE_NAME` attrs, returns best name.
+> - Namespace priority: Win32/Win32DOS (3) > POSIX (2) > DOS (1). Highest-priority name wins.
+> - UTF-16LE → ASCII conversion is lossy: non-ASCII chars become `'?'`. Full Unicode support is a future enhancement.
+> - `ntfs_file_name` struct has a 256-byte name buffer (NTFS_MAX_NAME + 1) — always null-terminated.
+> - `parse_fn_content()` is a static helper — validates minimum content length (0x42 bytes) before parsing.
+> - Constants added: `NTFS_NS_POSIX` (0), `NTFS_NS_WIN32` (1), `NTFS_NS_DOS` (2), `NTFS_NS_WIN32DOS` (3).
 
 ### 3.4 `$ATTRIBUTE_LIST` Handler (0x20)
 
