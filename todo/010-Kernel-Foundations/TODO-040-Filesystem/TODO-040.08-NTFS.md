@@ -684,6 +684,366 @@ graph TD
 
 ---
 
+## 12. NTFS Write Support (Full R/W — Required for C:\ Primary)
+
+> [!CAUTION]
+> **This entire section is required if NTFS replaces IXFS as the `C:\` root filesystem.**
+> Read-only NTFS (§1–§11) is sufficient for dual-boot browsing. Full R/W NTFS is
+> required for boot volume (`C:\`), Registry storage, user profiles, and application data.
+> This is the most complex undertaking in the entire NTFS driver — NTFS write support
+> is widely considered harder than ext4 write support due to journaling, Update Sequence
+> Array regeneration, and MFT zone management.
+
+### 12.1 Cluster Allocator
+
+**Prompt:** Implement the cluster allocation engine using the `$Bitmap` (inode 6) metadata file. The bitmap has one bit per cluster — `0` = free, `1` = allocated. Implement `ntfs_alloc_clusters(vol, count, hint_lcn)` which searches the bitmap for `count` contiguous free clusters near `hint_lcn` (locality-aware allocation). Implement `ntfs_free_clusters(vol, lcn, count)` to clear bits. The bitmap itself is a non-resident `$DATA` attribute — read/modify it using the data run infrastructure from §4. When the MFT Zone (reserved MFT growth area) is reached, skip over it unless no other space is available. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: cluster allocator"`. Add notes directly in this TODO section.
+
+- [ ] Load `$Bitmap` (inode 6) data runs at mount time
+- [ ] Implement `ntfs_alloc_clusters(vol, count, hint_lcn)`:
+  - [ ] Search bitmap for `count` contiguous free bits starting near `hint_lcn`
+  - [ ] If not found near hint, wrap around and search from LCN 0
+  - [ ] Skip MFT Zone (first 12.5% of volume, reserved for MFT growth)
+  - [ ] Set allocated bits in bitmap → mark clusters as in-use
+  - [ ] Write modified bitmap sectors back to disk
+  - [ ] Return starting LCN of allocated run
+- [ ] Implement `ntfs_free_clusters(vol, lcn, count)`:
+  - [ ] Clear `count` bits starting at `lcn` in bitmap
+  - [ ] Write modified bitmap sectors back to disk
+  - [ ] Update free cluster count in `vol->free_clusters`
+- [ ] Implement `ntfs_get_free_space(vol)` → count free bits in bitmap
+- [ ] MFT Zone management:
+  - [ ] Track MFT Zone start/end (from `$MFT` data runs + 12.5% reserve)
+  - [ ] Only allocate from MFT Zone as last resort (all other space exhausted)
+  - [ ] Log warning: `[NTFS] MFT Zone breached — volume nearly full`
+- [ ] Cache bitmap in memory (or cache hot regions) for performance
+- [ ] Thread-safety: spinlock on bitmap modifications
+- [ ] Commit: `"ntfs: cluster allocator"`
+
+### 12.2 Update Sequence Array Regeneration
+
+**Prompt:** When writing MFT records and INDX buffers back to disk, the Update Sequence Array must be regenerated. This is the reverse of §2.2: before writing, save the last 2 bytes of each sector into the USA array, then stamp every sector's last 2 bytes with the USN (Update Sequence Number). Increment the USN on every write. If the USN wraps to 0, skip to 1 (USN 0 is invalid). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: USA write regeneration"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_regenerate_fixup(buffer, record_size, sector_size)`:
+  - [ ] Increment USN at `buffer[usa_offset]` (wrap 0 → 1)
+  - [ ] For each sector `i` (0-based):
+    - [ ] Save original last 2 bytes: `usa_array[i + 1] = buffer[sector_size * (i + 1) - 2]`
+    - [ ] Stamp last 2 bytes with new USN: `buffer[sector_size * (i + 1) - 2] = usn`
+  - [ ] Record is now safe to write to disk
+- [ ] Apply to both `"FILE"` and `"INDX"` record writes
+- [ ] Commit: `"ntfs: USA write regeneration"`
+
+### 12.3 MFT Record Allocator
+
+**Prompt:** To create new files and directories, the driver must allocate new MFT records. Search the `$MFT` bitmap (`$MFT`'s own `$BITMAP` attribute — NOT `$Bitmap` inode 6) for the first free inode slot. If the MFT is full, extend it by allocating clusters from the MFT Zone and updating `$MFT`'s data runs. Initialize the new record: set magic to `"FILE"`, clear all flags, set first-attribute offset, generate USA. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record allocator"`. Add notes directly in this TODO section.
+
+- [ ] Read `$MFT`'s own `$BITMAP` attribute (NOT inode 6 — this is the MFT-internal bitmap)
+- [ ] Implement `ntfs_alloc_mft_record(vol)`:
+  - [ ] Scan MFT bitmap for first clear bit → that's the new inode number
+  - [ ] Set bit in MFT bitmap
+  - [ ] If no free bits → extend `$MFT`:
+    - [ ] Allocate clusters from MFT Zone via `ntfs_alloc_clusters()`
+    - [ ] Append new data run to `$MFT`'s run-list
+    - [ ] Extend MFT bitmap by one page
+    - [ ] Update `$MFTMirr` with new first-4 records if affected
+  - [ ] Initialize new record at calculated byte offset:
+    - [ ] Magic: `"FILE"` (0x454C4946)
+    - [ ] USA offset: `0x30` (standard for 1024-byte records)
+    - [ ] USA size: 3 words (for 2 sectors × 512 bytes)
+    - [ ] Sequence number: increment previous occupant's sequence (stale ref detection)
+    - [ ] Flags: `0x01` (in-use) or `0x03` (in-use + directory)
+    - [ ] First attribute offset: `0x38`
+    - [ ] Used size: header + `$END` marker
+    - [ ] Write `$END` terminator (`0xFFFFFFFF`) at first attribute offset
+  - [ ] Apply USA regeneration (§12.2) before writing to disk
+  - [ ] Return new inode number
+- [ ] Implement `ntfs_free_mft_record(vol, inode)`:
+  - [ ] Clear in-use flag (bit 0) — do NOT zero the record (preserves deleted file recovery)
+  - [ ] Clear bit in MFT bitmap
+  - [ ] Increment sequence number (stale reference detection)
+- [ ] Commit: `"ntfs: MFT record allocator"`
+
+### 12.4 Attribute Writer
+
+**Prompt:** Implement creating, modifying, and removing attributes within MFT records. For resident attributes: insert/update attribute data directly in the record. For non-resident attributes: allocate clusters via §12.1, encode data runs (reverse of §4.1), and write the run-list into the attribute header. Handle attribute growth: if a resident attribute grows beyond the record's free space, convert it to non-resident. Handle attribute creation order (NTFS requires attributes sorted by type ID). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: attribute writer"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_attr_add(record, type, name, data, len)`:
+  - [ ] Find insertion point: attributes must be sorted by type ID
+  - [ ] Shift subsequent attributes to make room
+  - [ ] Write attribute header (type, length, resident flag, name)
+  - [ ] If data fits in record → create as resident
+  - [ ] If data too large → create as non-resident (allocate clusters, encode runs)
+  - [ ] Check record doesn't exceed `frs_size` — if so, create `$ATTRIBUTE_LIST`
+- [ ] Implement `ntfs_attr_update(record, type, name, data, len)`:
+  - [ ] Locate existing attribute
+  - [ ] If resident: update content in-place, adjust lengths
+  - [ ] If non-resident: write data to existing clusters, extend/truncate runs as needed
+  - [ ] Handle resident → non-resident conversion if data grows
+- [ ] Implement `ntfs_attr_remove(record, type, name)`:
+  - [ ] Free allocated clusters if non-resident
+  - [ ] Shift subsequent attributes to close gap
+  - [ ] Update record used size
+- [ ] Implement `ntfs_encode_data_runs(runs, count, buffer)`:
+  - [ ] Reverse of §4.1: encode run array into on-disk byte format
+  - [ ] For each run: compute relative offset, determine size fields, encode header byte
+  - [ ] Write `0x00` terminator
+- [ ] Apply USA regeneration (§12.2) after any MFT record modification
+- [ ] Commit: `"ntfs: attribute writer"`
+
+### 12.5 File Create / Delete / Rename
+
+**Prompt:** Implement the core file lifecycle operations on NTFS. `CreateFile`: allocate MFT record (§12.3), add `$STANDARD_INFORMATION` (timestamps), add `$FILE_NAME` (Win32 namespace), add `$DATA` (empty or with initial content), insert directory entry into parent's B+ tree (§12.6). `DeleteFile`: remove directory entry from parent's B+ tree, clear MFT record in-use flag, free data clusters. `RenameFile`: remove old directory entry, add new one, update `$FILE_NAME` attribute in MFT record. All operations MUST be journaled via `$LogFile` (§13). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file create/delete/rename"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_create_file(vol, parent_inode, name, attrs)`:
+  - [ ] Allocate new MFT record via `ntfs_alloc_mft_record()`
+  - [ ] Add `$STANDARD_INFORMATION` (type `0x10`): current time for all 4 timestamps
+  - [ ] Add `$FILE_NAME` (type `0x30`): parent ref, name (UTF-16LE), namespace `0x03`
+  - [ ] Generate 8.3 DOS short name if needed → add second `$FILE_NAME` (namespace `0x02`)
+  - [ ] Add empty `$DATA` (type `0x80`): resident, zero length
+  - [ ] Insert entry into parent directory B+ tree (§12.6)
+  - [ ] Update parent's `$STANDARD_INFORMATION` modification timestamp
+- [ ] Implement `ntfs_create_directory(vol, parent_inode, name)`:
+  - [ ] Same as `ntfs_create_file` but set directory flag (bit 1)
+  - [ ] Add `$INDEX_ROOT` (type `0x90`, named `$I30`): empty root node
+  - [ ] Add `$INDEX_ALLOCATION` (type `0xA0`) placeholder if needed
+- [ ] Implement `ntfs_delete_file(vol, parent_inode, name)`:
+  - [ ] Look up file in parent's B+ tree → get inode
+  - [ ] Read MFT record, check hard link count
+  - [ ] Remove directory entry from parent's B+ tree (§12.6)
+  - [ ] Decrement hard link count
+  - [ ] If link count == 0:
+    - [ ] Free all `$DATA` clusters via `ntfs_free_clusters()`
+    - [ ] Free MFT record via `ntfs_free_mft_record()`
+  - [ ] Update parent's modification timestamp
+- [ ] Implement `ntfs_rename_file(vol, old_parent, old_name, new_parent, new_name)`:
+  - [ ] Verify target doesn't already exist (unless replacing)
+  - [ ] Remove entry from old parent's B+ tree
+  - [ ] Update `$FILE_NAME` attributes in MFT record (parent ref, name)
+  - [ ] Insert entry into new parent's B+ tree
+  - [ ] Update both parents' modification timestamps
+- [ ] Commit: `"ntfs: file create/delete/rename"`
+
+---
+
+## 13. `$LogFile` Journal Integration (Write Transactions)
+
+> [!CAUTION]
+> **Every write operation must be journaled.** Without `$LogFile` transaction logging,
+> a power failure during a write operation will leave the volume in an inconsistent state
+> that Windows' `chkdsk` cannot repair. This is non-negotiable for a boot volume.
+
+### 13.1 Journal Transaction Engine
+
+**Prompt:** Implement NTFS transaction logging via `$LogFile` (inode 2). Every metadata modification (MFT record change, bitmap update, index update) must be wrapped in a transaction: begin → record redo/undo pairs → commit. The `$LogFile` is a circular buffer of log records. Each record has: LSN (Log Sequence Number, monotonically increasing), redo operation (what to apply on commit), and undo operation (what to revert on rollback). On mount, replay committed but unapplied transactions; undo incomplete ones. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $LogFile journal engine"`. Add notes directly in this TODO section.
+
+- [ ] Read `$LogFile` (inode 2) data runs at mount time
+- [ ] Parse `$LogFile` restart area:
+  - [ ] Current LSN (last committed transaction)
+  - [ ] Log client records (NTFS always has one client)
+  - [ ] Checkpoint LSN (safe replay point)
+- [ ] Implement `ntfs_txn_begin(vol)` → allocate transaction context, record start LSN
+- [ ] Implement `ntfs_txn_log(txn, redo_op, redo_data, undo_op, undo_data)`:
+  - [ ] Write log record to `$LogFile` at current write position
+  - [ ] Each record: this LSN, previous LSN, redo op code, redo data, undo op code, undo data
+  - [ ] Redo ops: `UpdateResidentAttribute`, `UpdateNonResidentAttribute`, `SetBitsInBitmap`, `ClearBitsInBitmap`, `AddIndexEntry`, `DeleteIndexEntry`
+  - [ ] Advance write position (circular — wrap at end of log)
+- [ ] Implement `ntfs_txn_commit(txn)`:
+  - [ ] Write commit record to `$LogFile`
+  - [ ] Flush `$LogFile` to disk (write barrier)
+  - [ ] Update restart area with new LSN
+  - [ ] Now safe to write actual metadata to disk (write-ahead logging)
+- [ ] Implement `ntfs_txn_abort(txn)`:
+  - [ ] Walk undo records backward
+  - [ ] Apply each undo operation
+  - [ ] Write abort record to `$LogFile`
+- [ ] Commit: `"ntfs: $LogFile journal engine"`
+
+### 13.2 Recovery Replay (Dirty Mount)
+
+**Prompt:** When an NTFS volume is mounted with the dirty flag set (§7.1), replay the `$LogFile` to restore consistency. Walk the log forward from the checkpoint LSN: for each committed transaction, apply redo operations (in case they weren't flushed to disk). For incomplete transactions (no commit record), apply undo operations to roll back. Clear the dirty flag after successful recovery. This makes NTFS boot-safe — a power failure never corrupts the volume beyond repair. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: journal recovery replay"`. Add notes directly in this TODO section.
+
+- [ ] On mount: check dirty flag in `$Volume` → if set, enter recovery mode
+- [ ] Read `$LogFile` restart area → get checkpoint LSN
+- [ ] Scan forward from checkpoint:
+  - [ ] Build transaction table: txn ID → { start LSN, state (active/committed) }
+  - [ ] Build dirty page table: (target file, offset) → LSN of last modification
+- [ ] Redo pass: replay all committed operations whose target pages may be stale
+- [ ] Undo pass: roll back all active (uncommitted) transactions in reverse LSN order
+- [ ] Clear dirty flag in `$Volume`
+- [ ] Clear `$LogFile` (reset restart area for fresh writes)
+- [ ] Log: `[NTFS] Recovery complete: %u transactions replayed, %u rolled back`
+- [ ] Commit: `"ntfs: journal recovery replay"`
+
+---
+
+## 14. Directory B+ Tree Mutation
+
+### 14.1 B+ Tree Insert / Delete
+
+**Prompt:** Implement inserting and removing entries in NTFS directory B+ trees. This is the write-side counterpart of §5.1–§5.3. Insertion: find the correct leaf position via case-insensitive comparison, insert the index entry, split the node if it overflows (promote median entry to parent, allocate new INDX buffer). Deletion: find and remove the entry, merge underflowing nodes, update parent pointers. All INDX buffer modifications must apply USA regeneration (§12.2) and be journaled (§13). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree insert/delete"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_index_insert(vol, dir_inode, entry)`:
+  - [ ] Read `$INDEX_ROOT` and navigate B+ tree to find insertion point
+  - [ ] Insert entry in sorted position (case-insensitive comparison via `$UpCase`)
+  - [ ] If root node overflows (exceeds `$INDEX_ROOT` capacity):
+    - [ ] Allocate INDX buffer via `ntfs_alloc_clusters()`
+    - [ ] Move entries to INDX buffer, keep median in root as separator
+    - [ ] Create/extend `$INDEX_ALLOCATION` data runs
+    - [ ] Set root's `has_children` flag
+    - [ ] Update `$BITMAP` (`$I30`) to mark new VCN as active
+  - [ ] If INDX buffer overflows:
+    - [ ] Split: allocate new INDX buffer
+    - [ ] Promote median entry to parent node
+    - [ ] Update parent's child VCN pointers
+    - [ ] Recursive split if parent also overflows
+  - [ ] Apply USA regeneration to modified INDX buffers before writing
+- [ ] Implement `ntfs_index_delete(vol, dir_inode, name)`:
+  - [ ] Find entry in B+ tree
+  - [ ] If leaf entry → remove directly, compact remaining entries
+  - [ ] If internal entry → replace with predecessor/successor from child, then delete from child
+  - [ ] If node underflows (< 50% full):
+    - [ ] Try redistributing entries with sibling
+    - [ ] If redistribution fails → merge with sibling, remove separator from parent
+    - [ ] Free empty INDX buffer (clear `$BITMAP` bit, free clusters)
+  - [ ] Apply USA regeneration to modified INDX buffers before writing
+- [ ] Commit: `"ntfs: B+ tree insert/delete"`
+
+---
+
+## 15. NTFS as Primary Boot Volume (`C:\`)
+
+> [!IMPORTANT]
+> **This section enables booting Impossible OS from an NTFS partition instead of IXFS.**
+> This requires: full R/W NTFS support (§12–§14), boot-time driver initialization, and
+> changes to `partition.c` to recognize NTFS as a bootable root filesystem.
+
+### 15.1 Boot-Time NTFS Driver Initialization
+
+**Prompt:** Modify the boot initialization sequence so that the NTFS driver is compiled into the kernel and initialized early enough to mount `C:\` from an NTFS partition. Currently, `partition_mount_filesystems()` in `partition.c` hardcodes `C: = first IXFS`. Add NTFS as a mountable root filesystem with higher or equal priority. The NTFS driver must be fully operational (BPB → MFT → attribute engine → VFS callbacks) before `C:\` is accessed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: boot-time driver initialization"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> **`partition.c` line 366 currently skips all non-FAT32/non-IXFS partitions:**
+> `if (pi->fs_type != PART_FS_FAT32 && pi->fs_type != PART_FS_IXFS) continue;`
+> This line MUST be updated to include `PART_FS_NTFS` or the NTFS partition
+> will be silently skipped during boot.
+
+- [ ] Add `PART_FS_NTFS = 4` to `include/kernel/fs/partition.h`
+- [ ] Add `probe_ntfs()` to `partition.c`: check OEM ID `"NTFS    "` at offset `0x03`
+- [ ] Add `case PART_FS_NTFS: return "NTFS";` to `partition_fs_name()`
+- [ ] Update `probe_filesystem()` to call `probe_ntfs(sect)` after `probe_fat32()`
+- [ ] Update `partition_mount_filesystems()` to handle NTFS:
+  - [ ] Line 366: add `|| pi->fs_type == PART_FS_NTFS` to the continue guard
+  - [ ] Add NTFS mount block: `ntfs_init(sub_dev)` → `vfs_mount('C', ...)`
+  - [ ] Priority logic: check for NTFS root partition by GPT name or flag
+  - [ ] Fallback: IXFS first, NTFS second (or configurable via boot config)
+- [ ] Implement `ntfs_init(blkdev)`:
+  - [ ] Parse BPB (§1.1)
+  - [ ] Read MFT (§2.1), apply fixup (§2.2)
+  - [ ] Initialize attribute engine (§3.1)
+  - [ ] Load `$UpCase` table (§7.1)
+  - [ ] Check dirty flag → replay journal if needed (§13.2)
+  - [ ] Register VFS callbacks (§6.1)
+  - [ ] Return 0 on success
+- [ ] Implement `ntfs_get_driver()` → return `struct vfs_fs_driver *`
+- [ ] Implement `ntfs_get_root()` → return VFS node for inode 5 (root directory)
+- [ ] Log: `[NTFS] Mounted as C: — volume '%s', %llu bytes, R/W`
+- [ ] Commit: `"ntfs: boot-time driver initialization"`
+
+### 15.2 System File Layout on NTFS
+
+**Prompt:** Define where Impossible OS stores its system files when booting from NTFS. On IXFS, the layout is controlled by the custom format tool. On NTFS, we must create the standard Windows-style directory hierarchy and ensure the kernel, drivers, and Registry can be read from NTFS before the full filesystem stack is running. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: system file layout"`. Add notes directly in this TODO section.
+
+- [ ] Define system directory structure on NTFS `C:\`:
+  - [ ] `C:\Impossible\System32\` — kernel, drivers, system DLLs
+  - [ ] `C:\Impossible\System32\config\` — Registry hives
+  - [ ] `C:\Impossible\System32\drivers\` — driver binaries
+  - [ ] `C:\Program Files\` — application installations
+  - [ ] `C:\Users\` — user profiles
+  - [ ] `C:\Impossible\Logs\` — system logs (replaces `X:` Logs partition)
+- [ ] Create directory hierarchy on first boot (or format):
+  - [ ] `ntfs_create_directory()` for each path component (§12.5)
+  - [ ] Set appropriate `$SECURITY_DESCRIPTOR` on system dirs (admin-only write)
+- [ ] Registry on NTFS:
+  - [ ] Verify Registry file read/write works via NTFS `$DATA` attribute I/O
+  - [ ] Registry hive files: `SYSTEM`, `SOFTWARE`, `DEFAULT`, `SAM`, `SECURITY`
+  - [ ] Ensure journal protects Registry writes (§13 — atomicity on power failure)
+- [ ] Boot configuration:
+  - [ ] Store boot config in `C:\Impossible\System32\config\BOOT`
+  - [ ] Define root filesystem type: `NTFS` or `IXFS` (switchable)
+- [ ] Commit: `"ntfs: system file layout"`
+
+### 15.3 NTFS Volume Formatter
+
+**Prompt:** Implement formatting a partition as NTFS from within Impossible OS. This is required for creating NTFS boot volumes without depending on Windows or external tools. Write: the boot sector with BPB, the `$MFT` with initial system inodes (0–26), `$MFTMirr`, `$LogFile`, `$Volume`, `$Bitmap`, `$UpCase`, and the root directory (inode 5) with an empty `$INDEX_ROOT`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: volume formatter"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_format(blkdev, label, cluster_size)`:
+  - [ ] Calculate total clusters: `total_sectors × sector_size / cluster_size`
+  - [ ] Write boot sector (LBA 0):
+    - [ ] OEM ID: `"NTFS    "`
+    - [ ] BPB fields: bytes_per_sector, sectors_per_cluster, total_sectors
+    - [ ] MFT LCN (typically at cluster ~786432 for alignment)
+    - [ ] MFTMirr LCN (typically at volume midpoint)
+    - [ ] Clusters per FRS: `0xF6` (→ 1024 bytes)
+    - [ ] Volume serial: generate from timestamp
+    - [ ] Boot signature: `0x55AA`
+  - [ ] Create `$MFT` (inode 0): self-referencing MFT record with `$DATA` runs
+  - [ ] Create `$MFTMirr` (inode 1): mirror of first 4 MFT records
+  - [ ] Create `$LogFile` (inode 2): pre-allocated journal (typically 64 MB)
+  - [ ] Create `$Volume` (inode 3): volume name, NTFS version 3.1, clean flag
+  - [ ] Create `$AttrDef` (inode 4): attribute type definitions table
+  - [ ] Create root directory (inode 5): empty `$INDEX_ROOT` (`$I30`)
+  - [ ] Create `$Bitmap` (inode 6): cluster allocation bitmap (all free except system)
+  - [ ] Create `$Boot` (inode 7): backup boot sector reference
+  - [ ] Create `$BadClus` (inode 8): empty bad cluster list
+  - [ ] Create `$Secure` (inode 9): security descriptor stream (with default ACLs)
+  - [ ] Create `$UpCase` (inode 10): 128 KB uppercase mapping table
+  - [ ] Create `$Extend` (inode 11): extension directory for `$Quota`, `$ObjId`, `$Reparse`
+  - [ ] Reserve inodes 12–23 for future system use (standard NTFS convention)
+  - [ ] Mark system clusters as allocated in `$Bitmap`
+- [ ] Write backup boot sector at last sector of volume
+- [ ] Log: `[NTFS] Formatted: %llu clusters, %u bytes/cluster, label '%s'`
+- [ ] Commit: `"ntfs: volume formatter"`
+
+---
+
+## 16. Write Data Path
+
+### 16.1 File Write Engine
+
+**Prompt:** Implement writing data to NTFS files. For small files (< ~700 bytes), write the data directly into the MFT record as a resident `$DATA` attribute. For larger files, allocate clusters, encode data runs, and write data to the allocated clusters. Handle file growth (extend existing runs or add new runs), file truncation (free freed clusters), and partial writes (overwrite data within existing runs without reallocating). All writes must be journaled (§13). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file write engine"`. Add notes directly in this TODO section.
+
+- [ ] Implement `ntfs_write_data(vol, inode, offset, length, buffer)`:
+  - [ ] Read MFT record, locate `$DATA` attribute
+  - [ ] If resident + data still fits → update resident content in-place
+  - [ ] If resident + data now too large → convert to non-resident:
+    - [ ] Allocate clusters for existing + new data
+    - [ ] Copy resident data to clusters
+    - [ ] Remove resident content, write data runs into attribute header
+  - [ ] If non-resident:
+    - [ ] Map offset → VCN → existing run
+    - [ ] If writing within existing runs → overwrite cluster data on disk
+    - [ ] If writing beyond current allocation → extend:
+      - [ ] Allocate additional clusters via `ntfs_alloc_clusters()`
+      - [ ] Try extending last run (adjacent clusters) for contiguity
+      - [ ] Else add new run to run-list
+      - [ ] Re-encode data runs in attribute (§12.4)
+    - [ ] Write data to clusters via `blkdev_write()`
+  - [ ] Update `$DATA` attribute sizes: real_size, allocated_size, initialized_size
+  - [ ] Update `$STANDARD_INFORMATION` modification timestamp
+  - [ ] Journal: log old run-list + new run-list for crash recovery
+  - [ ] Apply USA regeneration to modified MFT record
+  - [ ] Write MFT record back to disk
+- [ ] Implement `ntfs_truncate(vol, inode, new_size)`:
+  - [ ] If new_size == 0 and file is non-resident → free all clusters, convert to resident
+  - [ ] If shrinking → free clusters beyond new_size, shorten last run, re-encode runs
+  - [ ] If growing → allocate clusters, extend runs
+  - [ ] Update all size fields
+- [ ] Implement `ntfs_set_file_attributes(vol, inode, attrs)`:
+  - [ ] Update `$STANDARD_INFORMATION` DOS permission flags
+- [ ] Implement `ntfs_set_file_time(vol, inode, create, modify, access)`:
+  - [ ] Convert Unix timestamps → FILETIME (reverse of §3.2)
+  - [ ] Update `$STANDARD_INFORMATION` timestamp fields
+- [ ] Commit: `"ntfs: file write engine"`
+
 ## Priority Order
 
 | ⭐ | Priority | Section                       | Description                                                    |
@@ -710,9 +1070,22 @@ graph TD
 | 💎 | 🟢 P3   | 8.1 Test Suite                | Quality — automated validation with test images                |
 | ⭐ | 🟢 P3   | 11.1 Health Dashboard         | **At-a-glance NTFS health** — no OS does this                  |
 | ⭐ | 🟢 P3   | 11.2 Deleted File Recovery    | **Built-in forensic recovery** — Windows needs 3rd-party       |
+| 💎 | 🟣 P4   | 12.1 Cluster Allocator        | Write — `$Bitmap` alloc/free with MFT Zone awareness            |
+| 💎 | 🟣 P4   | 12.2 USA Regeneration         | Write — fixup generation for MFT/INDX writes                   |
+| 💎 | 🟣 P4   | 12.3 MFT Record Allocator     | Write — allocate/free MFT inodes, extend `$MFT`                |
+| 💎 | 🟣 P4   | 12.4 Attribute Writer         | Write — add/update/remove attributes, encode data runs         |
+| 💎 | 🟣 P4   | 12.5 File Create/Delete/Rename | Write — full file lifecycle on NTFS                            |
+| 💎 | 🟣 P4   | 13.1 Journal Engine           | Crash safety — `$LogFile` redo/undo transaction logging         |
+| 💎 | 🟣 P4   | 13.2 Recovery Replay          | Crash safety — dirty mount redo/undo replay                    |
+| 💎 | 🟣 P4   | 14.1 B+ Tree Insert/Delete    | Write — directory mutation with node split/merge               |
+| 💎 | 🟣 P4   | 16.1 File Write Engine        | Write — resident/non-resident data writes + truncation          |
+| ⭐ | 🟣 P4   | 15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
+| ⭐ | 🟣 P4   | 15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS      |
+| ⭐ | 🟣 P4   | 15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
+> 🟣 P4 = Required for NTFS as primary `C:\` boot volume (replaces IXFS).
 
 ---
 
@@ -741,14 +1114,16 @@ graph TD
 | 💎 | `$UpCase` case folding              | ✅ Full Unicode                    | ✅ Full Unicode                    | ⬜ §7.1 P2 (ASCII fallback)             |
 | 💎 | LZNT1 compressed file reading       | ✅ Native                          | ✅ ntfs-3g read-only / ntfs3 full  | ⬜ §9.1 P2                              |
 | 💎 | MFT record caching                  | ✅ Windows cache manager           | ✅ Page cache                      | ⬜ §10.1 P2                             |
-| 💎 | Write support                       | ✅ Full R/W                        | ✅ Full R/W (ntfs-3g)              | ⬜ Future P3 (read-only first)           |
-| 💎 | Journaling recovery (`$LogFile`)    | ✅ Full                            | ✅ ntfs-3g replays log             | ⬜ Future P3                             |
+| 💎 | Write support                       | ✅ Full R/W                        | ✅ Full R/W (ntfs-3g)              | ⬜ §12 P4 — full R/W (cluster alloc + attrs)  |
+| 💎 | Journaling recovery (`$LogFile`)    | ✅ Full                            | ✅ ntfs-3g replays log             | ⬜ §13 P4 — txn engine + dirty replay       |
 | 💎 | Alternate Data Streams              | ✅ Native                          | ✅ ntfs-3g / ntfs3                 | ⬜ Future (routed via VFS §2.1)          |
 | ⭐ | **Volume health dashboard**         | ❌ Spread across multiple tools    | ❌ CLI `ntfsinfo` only             | ⬜ §11.1 P3 — one-panel health           |
 | ⭐ | **Deleted file recovery**           | ❌ Requires third-party (Recuva)   | ⚠️ CLI `ntfsundelete` only         | ⬜ §11.2 P3 — built-in GUI recovery      |
 | ⭐ | **MFT fragmentation heatmap**       | ❌ Hidden in `defrag /a` output    | ❌ Not available                   | ⬜ §11.1 — visual MFT density map        |
 | ⭐ | **Smart file search (MFT scan)**    | ⚠️ Windows Search (requires index) | ❌ `find` / `locate` (CLI only)    | ⬜ Direct MFT walk + metadata filter     |
+| ⭐ | **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                   | ⬜ §15 P4 — boot-time init + layout        |
 | 💎 | **Full read-only driver**           | ✅                                 | ✅                                 | ⬜ Requires §1–§6 at minimum             |
+| 💎 | **Full read-write driver**          | ✅                                 | ✅ ntfs-3g (FUSE)                  | ⬜ Requires §1–§14 + §16               |
 
 ---
 
