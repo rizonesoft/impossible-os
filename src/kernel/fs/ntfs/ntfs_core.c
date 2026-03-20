@@ -174,3 +174,90 @@ struct ntfs_volume *ntfs_init(const struct blkdev *dev)
 
     return vol;
 }
+
+/* ============================================================================
+ * ntfs_read_mft_record — Read and parse a single MFT record by inode number.
+ *
+ * Calculates byte offset: mft_byte_offset + (inode × frs_size)
+ * Converts to LBA and reads frs_size/sector_size sectors.
+ * Parses the record header and validates magic + flags.
+ *
+ * The caller must provide a buffer of at least vol->frs_size bytes.
+ * ============================================================================ */
+
+int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
+                         void *buf, struct ntfs_mft_header *hdr)
+{
+    uint64_t byte_offset;
+    uint64_t lba;
+    uint32_t sector_count;
+    uint8_t *rec;
+    uint32_t magic;
+
+    if (!vol || !buf || !hdr) {
+        return NTFS_ERR_IO;
+    }
+
+    /* Calculate disk byte offset of this MFT record */
+    byte_offset = vol->mft_byte_offset + (inode * (uint64_t)vol->frs_size);
+
+    /* Convert byte offset to LBA */
+    lba = byte_offset / (uint64_t)vol->bytes_per_sector;
+
+    /* Number of sectors to read for one FRS */
+    sector_count = vol->frs_size / vol->bytes_per_sector;
+    if (sector_count == 0)
+        sector_count = 1;
+
+    /* Read from disk */
+    if (blkdev_read(vol->dev, lba, sector_count, buf) != 0) {
+        klog(LOG_DEBUG, "ntfs", "MFT read failed: inode %u, LBA %u",
+             inode, lba);
+        return NTFS_ERR_IO;
+    }
+
+    /* Parse the record header */
+    rec = (uint8_t *)buf;
+
+    /* 0x00: Magic number (4 bytes LE) */
+    magic = ntfs_le32(rec + 0x00);
+
+    if (magic == NTFS_MAGIC_BAAD) {
+        klog(LOG_DEBUG, "ntfs", "MFT Record %u: BAAD (corrupt)", inode);
+        return NTFS_ERR_BAD_RECORD;
+    }
+
+    if (magic != NTFS_MAGIC_FILE) {
+        klog(LOG_DEBUG, "ntfs", "MFT Record %u: bad magic 0x%x",
+             inode, (uint64_t)magic);
+        return NTFS_ERR_BAD_MAGIC;
+    }
+
+    /* Fill parsed header struct */
+    hdr->magic           = magic;
+    hdr->usa_offset      = ntfs_le16(rec + 0x04);
+    hdr->usa_size        = ntfs_le16(rec + 0x06);
+    hdr->lsn             = ntfs_le64(rec + 0x08);
+    hdr->seq_number      = ntfs_le16(rec + 0x10);
+    hdr->hard_link_count = ntfs_le16(rec + 0x12);
+    hdr->attrs_offset    = ntfs_le16(rec + 0x14);
+    hdr->flags           = ntfs_le16(rec + 0x16);
+    hdr->used_size       = ntfs_le32(rec + 0x18);
+    hdr->alloc_size      = ntfs_le32(rec + 0x1C);
+    hdr->base_record_ref = ntfs_le64(rec + 0x20);
+
+    /* Check in-use flag */
+    if (!(hdr->flags & NTFS_MFT_FLAG_IN_USE)) {
+        klog(LOG_DEBUG, "ntfs", "MFT Record %u: not in-use (deleted/free)",
+             inode);
+        return NTFS_ERR_FREE;
+    }
+
+    klog(LOG_DEBUG, "ntfs",
+         "MFT Record %u: flags=0x%x, attrs_at=0x%x, links=%u",
+         inode, (uint64_t)hdr->flags,
+         (uint64_t)hdr->attrs_offset,
+         (uint64_t)hdr->hard_link_count);
+
+    return NTFS_OK;
+}

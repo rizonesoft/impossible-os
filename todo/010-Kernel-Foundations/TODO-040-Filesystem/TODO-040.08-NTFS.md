@@ -102,7 +102,7 @@ graph TD
 | 💎 | **0**  | `TODO-040.01/02`      | Block device layer             | `blkdev_read()` via VirtIO or AHCI                               | —                                      |   ✅   |
 | 💎 | **0**  | `TODO-040.04/05`      | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found        | Phase 0 (block)                        |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                   |   ✅   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ⬜   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ⬜   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ⬜   |
@@ -190,29 +190,36 @@ graph TD
 
 ### 2.1 MFT Record Reader
 
-**Prompt:** Implement reading a single MFT record by its inode number. Calculate the byte offset on disk: `mft_byte_offset + (inode × frs_size)`. Read `frs_size` bytes (typically 1024) from the block device. Parse the record header: magic number (`"FILE"`), USA offset, USA size, sequence number, flags, first attribute offset. Reject records with magic `"BAAD"` or unrecognized magic. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record reader"`. Add notes directly in this TODO section.
+**Verification:** MFT record reading is implemented in `ntfs_core.c` (`ntfs_read_mft_record()`). Verify: `bash scripts/build.sh clean` passes. The function reads any inode's raw MFT record from disk and parses all 11 header fields. Errors return distinct codes: `NTFS_ERR_BAD_RECORD` (BAAD magic), `NTFS_ERR_BAD_MAGIC` (unknown magic), `NTFS_ERR_FREE` (deleted). The `ntfs_mft_header` struct captures magic, USA offset/size, LSN, sequence number, hard link count, first attribute offset, flags, used/allocated size, and base record reference.
 
-- [ ] Implement `ntfs_read_mft_record(vol, inode, buffer)`:
-  - [ ] Calculate disk byte offset: `vol->mft_byte_offset + (inode × vol->frs_size)`
-  - [ ] Convert byte offset to LBA: `byte_offset / vol->bytes_per_sector`
-  - [ ] Read `frs_size / sector_size` sectors via `blkdev_read()`
-  - [ ] Allocate record buffer via `pmm_alloc_contiguous()` (1024 bytes)
-- [ ] Parse record header at offsets:
-  - [ ] `0x00`: Magic number — must be `"FILE"` (0x454C4946 LE)
-  - [ ] `0x04`: USA offset (2 bytes)
-  - [ ] `0x06`: USA size in words (2 bytes)
-  - [ ] `0x08`: `$LogFile` Sequence Number (8 bytes, store for journaling)
-  - [ ] `0x10`: Sequence number (2 bytes — for stale reference detection)
-  - [ ] `0x12`: Hard link count (2 bytes)
-  - [ ] `0x14`: Offset to first attribute (2 bytes, typically `0x38`)
-  - [ ] `0x16`: Flags — bit 0: in-use, bit 1: directory
-  - [ ] `0x18`: Used size of record (4 bytes)
-  - [ ] `0x1C`: Allocated size (4 bytes, should == `frs_size`)
-  - [ ] `0x20`: Base record reference (8 bytes — 0 if this IS the base record)
-- [ ] Reject: magic == `"BAAD"` → `NTFS_ERR_BAD_RECORD`
-- [ ] Reject: flags bit 0 clear → record is deleted/free
-- [ ] Log: `[NTFS] MFT Record %u: flags=0x%04X, attrs_at=0x%X, links=%d`
-- [ ] Commit: `"ntfs: MFT record reader"`
+- [x] Implement `ntfs_read_mft_record(vol, inode, buffer)`:
+  - [x] Calculate disk byte offset: `vol->mft_byte_offset + (inode × vol->frs_size)`
+  - [x] Convert byte offset to LBA: `byte_offset / vol->bytes_per_sector`
+  - [x] Read `frs_size / sector_size` sectors via `blkdev_read()`
+  - [x] Caller provides record buffer (sized to `vol->frs_size`)
+- [x] Parse record header at offsets:
+  - [x] `0x00`: Magic number — must be `"FILE"` (0x454C4946 LE)
+  - [x] `0x04`: USA offset (2 bytes)
+  - [x] `0x06`: USA size in words (2 bytes)
+  - [x] `0x08`: `$LogFile` Sequence Number (8 bytes, stored for journaling)
+  - [x] `0x10`: Sequence number (2 bytes — for stale reference detection)
+  - [x] `0x12`: Hard link count (2 bytes)
+  - [x] `0x14`: Offset to first attribute (2 bytes, typically `0x38`)
+  - [x] `0x16`: Flags — bit 0: in-use, bit 1: directory
+  - [x] `0x18`: Used size of record (4 bytes)
+  - [x] `0x1C`: Allocated size (4 bytes, should == `frs_size`)
+  - [x] `0x20`: Base record reference (8 bytes — 0 if this IS the base record)
+- [x] Reject: magic == `"BAAD"` → `NTFS_ERR_BAD_RECORD`
+- [x] Reject: flags bit 0 clear → `NTFS_ERR_FREE`
+- [x] Log: `[NTFS] MFT Record %u: flags=0x%04X, attrs_at=0x%X, links=%d`
+- [x] Committed
+
+> **Notes:**
+> - API: `ntfs_read_mft_record(vol, inode, buf, hdr)` — caller provides buffer + header struct.
+> - Buffer ownership is with the caller (allows reuse during directory scans without repeated allocation).
+> - Error codes: `NTFS_OK` (0), `NTFS_ERR_IO` (-1), `NTFS_ERR_BAD_RECORD` (-2), `NTFS_ERR_BAD_MAGIC` (-3), `NTFS_ERR_FREE` (-4).
+> - Constants added to `ntfs.h`: `NTFS_MAGIC_FILE`, `NTFS_MAGIC_BAAD`, `NTFS_MFT_FLAG_IN_USE`, `NTFS_MFT_FLAG_DIRECTORY`.
+> - Note: USA fixup must be applied AFTER this read and BEFORE attribute parsing (§2.2).
 
 ### 2.2 Update Sequence Array (Fixup) Verification
 
