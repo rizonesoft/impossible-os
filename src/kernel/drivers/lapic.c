@@ -137,13 +137,21 @@ void lapic_init(void)
     /* Enable error vector now (after masking everything else) */
     lapic_write(LAPIC_REG_LVT_ERROR, 0xFE); /* vector 0xFE for errors */
 
-    /* Send Init Level De-Assert to synchronize arbitration IDs (xv6) */
+    /* Send Init Level De-Assert to synchronize arbitration IDs (xv6).
+     * Under WHPX, the delivery status bit may never clear for broadcast
+     * IPIs — add a timeout to prevent infinite hang. */
     lapic_write(LAPIC_REG_ICR_HI, 0);
     lapic_write(LAPIC_REG_ICR_LO,
                 ICR_INIT | ICR_DEST_ALL |
                 ICR_LEVEL_DEASSERT | ICR_TRIGGER_LEVEL);
-    while (lapic_read(LAPIC_REG_ICR_LO) & (1 << 12))
-        barrier();
+    {
+        uint32_t icr_timeout = 1000000;  /* ~1M iterations */
+        while ((lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) && icr_timeout--)
+            barrier();
+        if (icr_timeout == 0)
+            klog(LOG_WARN, "lapic",
+                 "ICR delivery status timeout (WHPX? single-vCPU?)");
+    }
 
     /* Final EOI */
     lapic_write(LAPIC_REG_EOI, 0);
@@ -217,11 +225,12 @@ int lapic_available(void)
 
 /* ---- IPI ---- */
 
-/* Wait for the ICR delivery status bit to clear */
+/* Wait for the ICR delivery status bit to clear (with timeout for WHPX) */
 static void ipi_wait_delivery(void)
 {
     /* ICR low bit 12 = delivery status: 0=idle, 1=pending */
-    while (lapic_read(LAPIC_REG_ICR_LO) & (1 << 12))
+    uint32_t timeout = 1000000;
+    while ((lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) && timeout--)
         barrier();
 }
 
