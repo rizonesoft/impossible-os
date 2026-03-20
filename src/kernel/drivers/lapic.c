@@ -78,7 +78,7 @@ void lapic_init(void)
     }
 
     lapic_base = (volatile uint32_t *)(uintptr_t)base_addr;
-
+    klog(LOG_DEBUG, "lapic", "init: base=%x", (uint64_t)base_addr);
 
     /* Enable the APIC via the IA32_APIC_BASE MSR (set bit 11 = global enable)
      * This is required on some hardware before MMIO access works. */
@@ -88,6 +88,7 @@ void lapic_init(void)
         lo |= (1 << 11);  /* global enable */
         __asm__ volatile("wrmsr" : : "c"(0x1B), "a"(lo), "d"(hi));
     }
+    klog(LOG_DEBUG, "lapic", "init: MSR enabled");
 
 
     /* Set Spurious Vector Register: enable APIC + set spurious vector */
@@ -100,6 +101,7 @@ void lapic_init(void)
     /* Clear Error Status Register (write twice per Intel manual) */
     lapic_write(LAPIC_REG_ESR, 0);
     lapic_write(LAPIC_REG_ESR, 0);
+    klog(LOG_DEBUG, "lapic", "init: SVR/TPR/ESR done");
 
     /* ---- Mask ALL LVT entries (xv6 pattern) ----
      * This prevents any stray interrupts during the PIC→APIC transition.
@@ -130,6 +132,7 @@ void lapic_init(void)
     if (max_lvt >= 6) {
         lapic_write(LAPIC_REG_LVT_THERMAL, LVT_MASKED);
     }
+    klog(LOG_DEBUG, "lapic", "init: LVT masked (maxLVT=%u)", (uint64_t)max_lvt);
 
     /* Send EOI to clear any pending interrupts from init */
     lapic_write(LAPIC_REG_EOI, 0);
@@ -139,18 +142,26 @@ void lapic_init(void)
 
     /* Send Init Level De-Assert to synchronize arbitration IDs (xv6).
      * Under WHPX, the delivery status bit may never clear for broadcast
-     * IPIs — add a timeout to prevent infinite hang. */
-    lapic_write(LAPIC_REG_ICR_HI, 0);
-    lapic_write(LAPIC_REG_ICR_LO,
-                ICR_INIT | ICR_DEST_ALL |
-                ICR_LEVEL_DEASSERT | ICR_TRIGGER_LEVEL);
-    {
-        uint32_t icr_timeout = 1000000;  /* ~1M iterations */
-        while ((lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) && icr_timeout--)
-            barrier();
-        if (icr_timeout == 0)
-            klog(LOG_WARN, "lapic",
-                 "ICR delivery status timeout (WHPX? single-vCPU?)");
+     * IPIs — add a timeout to prevent infinite hang.
+     * On modern CPUs (P6+), this IPI is actually a no-op anyway. Skip it
+     * entirely on single-CPU systems where it serves no purpose. */
+    if (acpi_get_cpu_count() > 1) {
+        klog(LOG_DEBUG, "lapic", "init: sending Init Level De-Assert...");
+        lapic_write(LAPIC_REG_ICR_HI, 0);
+        lapic_write(LAPIC_REG_ICR_LO,
+                    ICR_INIT | ICR_DEST_ALL |
+                    ICR_LEVEL_DEASSERT | ICR_TRIGGER_LEVEL);
+        {
+            uint32_t icr_timeout = 1000000;  /* ~1M iterations */
+            while ((lapic_read(LAPIC_REG_ICR_LO) & (1 << 12)) && icr_timeout--)
+                barrier();
+            if (icr_timeout == 0)
+                klog(LOG_WARN, "lapic",
+                     "ICR delivery status timeout (WHPX? single-vCPU?)");
+        }
+    } else {
+        klog(LOG_DEBUG, "lapic",
+             "init: single CPU — skipping Init Level De-Assert");
     }
 
     /* Final EOI */
