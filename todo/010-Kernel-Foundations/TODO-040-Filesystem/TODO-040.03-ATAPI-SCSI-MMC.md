@@ -21,6 +21,164 @@
 > [ATAPI & SCSI MMC Specification](file:///home/derickpayne/impossible-os/specs/storage/atapi-scsi-mmc.md)
 > in the repo at `specs/storage/atapi-scsi-mmc.md`.
 
+> [!NOTE]
+> **Existing Implementation:** The AHCI driver (`src/kernel/drivers/ahci.c`, 828 lines)
+> already implements basic ATAPI support: `AHCI_SIG_ATAPI` signature detection,
+> `IDENTIFY PACKET DEVICE` (`atapi_do_identify()`), `READ CAPACITY` (`atapi_read_capacity()`),
+> `READ(10)` (`atapi_do_read()`), and AHCI packet command delivery (`atapi_packet_cmd()`).
+> ATAPI devices are registered as block devices (`cdrom0`, `cdrom1`, ...) via `blkdev_adapters.c`.
+> **This TODO extends and refactors that foundation** — it does NOT start from scratch.
+> See: [ahci.h](file:///home/derickpayne/impossible-os/include/kernel/drivers/ahci.h),
+> [ahci.c](file:///home/derickpayne/impossible-os/src/kernel/drivers/ahci.c),
+> [blkdev_adapters.c](file:///home/derickpayne/impossible-os/src/kernel/main/blkdev_adapters.c).
+
+---
+
+## TODO Completion Roadmap (Cross-File)
+
+> [!IMPORTANT]
+> **Seven TODO files** contribute to the optical drive subsystem. The ATAPI driver
+> depends on the AHCI transport layer, the VFS block device interface, and the
+> filesystem drivers (ISO 9660, UDF). Internal sections also have strict ordering:
+> you cannot implement DMA before PIO, error handling before sense data, or
+> filesystem integration before block device registration. This roadmap shows
+> the correct sequence — completing items out of order will cause rework.
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    A["040.03 §1.1<br/>ATAPI Signature Detection"]
+    B["040.03 §1.2<br/>IDENTIFY PACKET DEVICE"]
+    C["040.03 §2.1<br/>PIO Packet State Machine"]
+    D["040.03 §5.1<br/>TEST UNIT READY & INQUIRY"]
+    E["040.03 §5.2<br/>READ CAPACITY & READ(10)"]
+    F["040.03 §6.1<br/>REQUEST SENSE & Error Handling"]
+    G["040.03 §5.4<br/>GET CONFIGURATION & Profiles"]
+    H["040.03 §4.1<br/>Transport Abstraction Layer"]
+    I["040.03 §3.1<br/>Bus Master DMA"]
+    J["040.03 §3.2<br/>AHCI ATAPI Command Delivery"]
+    K["040.03 §7.1<br/>VFS Block Device Registration"]
+    L["040.03 §5.3<br/>Media Control Commands"]
+    M["040.03 §5.5<br/>MODE SENSE & Capabilities"]
+    N["040.03 §6.2<br/>Media Change Detection"]
+    O["040.03 §10.1<br/>Async I/O & Concurrency"]
+    P["040.03 §8.1<br/>ISO 9660 / Joliet"]
+    Q["040.03 §8.2<br/>UDF Filesystem"]
+    R["040.03 §9.1<br/>Audio CD Extraction"]
+    S["040.03 §9.2<br/>Paranoia DAE + C2"]
+    T["040.03 §11.1<br/>Drive Speed & Noise Control"]
+    U["040.03 §12.1<br/>Rock Ridge Extensions"]
+    V["040.03 §12.2<br/>El Torito Boot Detection"]
+    W["040.02-AHCI §1.1<br/>Interrupt-Driven I/O"]
+    X["040-Filesystem §3.6<br/>Win32 File API"]
+    Y["040.02-AHCI §9.2<br/>Enhanced ATAPI/CD-ROM"]
+    Z["040.03 §13.1<br/>SCSI Passthrough API"]
+    AA["040.03 §13.2<br/>Disc Imaging & Burning"]
+    AB["040.03 §13.3<br/>Optical Media Health"]
+
+    A --> B
+    B --> C
+    C --> E
+    C --> D
+    C --> F
+    E --> K
+    F --> D
+    F --> N
+    D --> G
+    C --> I
+    C --> J
+    I --> H
+    J --> H
+    H --> K
+    K --> P
+    K --> Q
+    K --> L
+    L --> N
+    G --> M
+    N --> P
+    N --> Q
+    D --> L
+    M --> T
+    M --> S
+    L --> R
+    P --> U
+    P --> V
+    R --> S
+    W --> J
+    W --> O
+    X --> K
+    Y --> J
+    K --> Z
+    R --> AA
+    M --> AB
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase  | TODO File                             | Sections                         | What It Delivers                                                  | Depends On                               | Status |
+| -- | :----: | ------------------------------------- | -------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- | :----: |
+| 💎 | **1**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §1.1 ATAPI Signature            | Identify optical drives during port enumeration                   | —                                        |   ⬜   |
+| 💎 | **1**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §1.2 IDENTIFY PACKET DEVICE     | Parse device capabilities, model name, DMA modes                  | Phase 1 (§1.1)                           |   ⬜   |
+| 💎 | **2**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §2.1 PIO Packet Protocol        | ATAPI command transport — all SCSI commands depend on this        | Phase 1 (§1.2)                           |   ⬜   |
+| 💎 | **2**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §6.1 REQUEST SENSE              | Error classification (Sense Key/ASC/ASCQ) for all commands        | Phase 2 (§2.1)                           |   ⬜   |
+| 💎 | **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.2 READ CAPACITY & READ       | Read data from optical media — core I/O capability                | Phase 2 (§2.1)                           |   ⬜   |
+| 💎 | **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.1 TEST UNIT READY & INQ      | Media presence check and device probing                           | Phase 2 (§6.1)                           |   ⬜   |
+| 💎 | **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.4 GET CONFIGURATION          | Drive/media type detection (CD/DVD/BD profiles)                   | Phase 3 (§5.1)                           |   ⬜   |
+| 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.1 Bus Master DMA             | Async DMA transfer — stop wasting CPU on PIO                      | Phase 2 (§2.1)                           |   ⬜   |
+| 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.2 AHCI ATAPI Delivery        | AHCI hardware-automated ATAPI handshake                           | Phase 2 (§2.1) + AHCI §1.1              |   ⬜   |
+| 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §4.1 Transport Abstraction      | Unified SCSI transport interface (PIO/DMA/AHCI)                   | Phase 4 (§3.1 + §3.2)                   |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §7.1 VFS Block Device           | Expose optical drive as block device with drive letter             | Phase 3 (§5.2) + Phase 4 + FS §3.6      |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.3 Media Control Commands     | Eject, load tray, lock, READ TOC, disc structure                  | Phase 3 (§5.1) + Phase 5 (§7.1)         |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.5 MODE SENSE & Caps          | Drive speeds, buffer size, mechanism type, audio caps              | Phase 3 (§5.4)                           |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §6.2 Media Change Detection     | Detect disc swaps, invalidate caches, auto-remount                 | Phase 2 (§6.1) + Phase 5 (§5.3)         |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §10.1 Async I/O                 | Non-blocking optical drive access with per-device events           | Phase 4 (§4.1) + AHCI §1.1              |   ⬜   |
+| 💎 | **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §8.1 ISO 9660 / Joliet          | Standard CD/DVD filesystem — mount data discs                      | Phase 5 (§7.1 + §6.2)                   |   ⬜   |
+| 💎 | **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §8.2 UDF Filesystem             | DVD-ROM and Blu-ray filesystem support                             | Phase 5 (§7.1 + §6.2)                   |   ⬜   |
+| 💎 | **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §9.1 Audio CD Extraction        | CD playback and digital audio extraction                           | Phase 5 (§5.3)                           |   ⬜   |
+| ⭐ | **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §12.1 Rock Ridge                | Long filenames + POSIX attributes on ISO 9660                      | Phase 6 (§8.1)                           |   ⬜   |
+| 💎 | **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §12.2 El Torito                  | Bootable CD/DVD detection and "Bootable" badge                     | Phase 6 (§8.1)                           |   ⬜   |
+| ⭐ | **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §9.2 Paranoia DAE + C2          | **Bit-perfect ripping** with C2 error pointer detection            | Phase 6 (§9.1) + Phase 5 (§5.5)         |   ⬜   |
+| ⭐ | **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §11.1 Drive Speed Control       | **Native noise/speed GUI** — no third-party tools needed           | Phase 5 (§5.5)                           |   ⬜   |
+| ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.1 SCSI Passthrough API      | **Direct SCSI access** — no third-party tools needed               | Phase 5 (§7.1)                           |   ⬜   |
+| ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.2 Disc Imaging & Burning    | **Built-in ISO creation and CD/DVD burning**                       | Phase 6 (§9.1)                           |   ⬜   |
+| ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.3 Optical Media Health      | **Disc quality scanner** — surface error mapping                   | Phase 5 (§5.5)                           |   ⬜   |
+| 💎 | —      | `TODO-040.02-AHCI.md`                 | §1.1 Interrupt-Driven I/O       | AHCI interrupts — enables §3.2 AHCI transport + §10.1 async       | —                                        |   ⬜   |
+| 💎 | —      | `TODO-040.02-AHCI.md`                 | §9.2 Enhanced ATAPI/CD-ROM      | AHCI-side SCSI commands — supplements §3.2                         | AHCI §1.1                               |   ⬜   |
+| 💎 | —      | `TODO-040-Filesystem.md`              | §3.6 Win32 File API             | Handle system (CreateFile, etc.) — enables §7.1 block device       | —                                        |   ⬜   |
+
+> [!NOTE]
+> **Phases 1–3** are the critical path. They deliver a working read-only optical
+> drive with PIO transport — enough to verify hardware detection and basic reads.
+> **Phases 4–5** add DMA/AHCI performance, the transport abstraction, block
+> device registration, and media management — a production-viable driver.
+> **Phases 6–7** deliver filesystem integration and competitive features (⭐):
+> ISO 9660, UDF, audio CD extraction, paranoia-grade ripping, and drive noise control.
+> **Phase 8** delivers Impossible OS exclusives: SCSI passthrough, disc imaging/burning,
+> and optical media health scanning.
+> The AHCI and VFS/Filesystem rows are **cross-domain dependencies** — they can proceed in
+> parallel but must complete before their dependents.
+
+> [!TIP]
+> **Quick wins (any time after Phase 2):** §6.1 REQUEST SENSE can be tested
+> standalone against the PIO state machine — it's the error path foundation.
+> §5.1 TEST UNIT READY is also a good early smoke test: it confirms the device
+> responds to SCSI commands without requiring any data transfer.
+
+> [!WARNING]
+> **Do not skip Phase 4 (Transport Abstraction).** If you implement §7.1 and
+> §8.1 directly on top of PIO, you'll have to refactor every SCSI command callsite
+> when DMA/AHCI support arrives. The `scsi_transport_ops_t` interface in §4.1
+> ensures all downstream code (§5–§13) is transport-agnostic from the start.
+
+> [!NOTE]
+> **Existing code to refactor:** The current `atapi_packet_cmd()` in `ahci.c`
+> (line 373) is tightly coupled to the AHCI transport. Phase 4 (§4.1) must
+> extract this into a generic `scsi_transport_ops_t` implementation. Similarly,
+> `ahci_atapi_read()` (line 638) should route through the transport abstraction.
+> The SCSI command defines (`SCSI_TEST_UNIT_READY`, `SCSI_INQUIRY`, etc.) in
+> `ahci.h` (lines 98–102) should move to a dedicated `scsi.h` header.
+
 ---
 
 ## 1. Device Discovery & Signature Detection
@@ -28,6 +186,12 @@
 ### 1.1 ATAPI Signature Evaluation
 
 **Prompt:** After a hardware reset, software reset (SRST), or EXECUTE DEVICE DIAGNOSTIC, ATA/ATAPI devices place a signature into the task file registers. The kernel must read LBA Mid and LBA High to detect the ATAPI signature (`0x14`, `0xEB`). This is the only standardized method to differentiate optical/tape drives from magnetic hard drives. Never use the Status register alone — it fails on modern hardware. Under AHCI, read the port's Signature register (`PxSIG`). If the ATAPI signature is detected, do not send native ATA commands (READ SECTORS `0x20`, etc.) — they will fail. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: device signature detection"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Existing code:** `ahci.c` line 168 already reads `PxSIG` and checks for
+> `AHCI_SIG_ATAPI` (`0xEB140101`) at line 171. The `ahci_port.is_atapi` field
+> is set at line 172. This section formalizes and extends that detection to
+> include legacy IDE task file register checking and edge cases.
 
 - [ ] On each ATA/AHCI port during enumeration:
   - [ ] Read task file registers: Sector Count, LBA Low, LBA Mid, LBA High
@@ -37,12 +201,21 @@
 - [ ] If ATAPI detected: set `port->device_type = DEVICE_ATAPI`
 - [ ] If ATAPI detected: suppress all native ATA commands for this port
 - [ ] Handle no-device case: `PxSIG = 0xFFFFFFFF` or status register reads `0xFF`
+- [ ] Handle SEMB signature: `PxSIG = 0xC33C0101` (enclosure management bridge — skip)
+- [ ] Handle PM signature: `PxSIG = 0x96690101` (port multiplier — defer to §9.1)
 - [ ] Log: `[ATAPI] Port %d: ATAPI device detected (signature 0x14/0xEB)`
 - [ ] Commit: `"atapi: device signature detection"`
 
 ### 1.2 IDENTIFY PACKET DEVICE (`0xA1`)
 
 **Prompt:** Once the ATAPI signature is confirmed, issue IDENTIFY PACKET DEVICE (`0xA1`) — **never** IDENTIFY DEVICE (`0xEC`), which will abort on ATAPI hardware. This returns a 512-byte (256-word) data structure via PIO. Parse: Word 0 for protocol type (bits 15–14 = `10b`), SCSI device type (bits 12–8: `0x05` = CD/DVD), DRQ timing (bits 6–5), and command packet size (bits 1–0: `00b` = 12 bytes, `01b` = 16 bytes). Extract serial number (words 10–19, byte-swapped), model name (words 27–46, byte-swapped), and DMA capabilities (words 63, 88). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: IDENTIFY PACKET DEVICE parsing"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Existing code:** `atapi_do_identify()` in `ahci.c` (line 422) already issues
+> `ATA_CMD_IDENTIFY_PACKET` (`0xA1`), parses model (words 27–46) and serial
+> (words 10–19) with byte-swapping. However, it does NOT parse Word 0 (general
+> config), DMA modes (words 63, 88), or firmware revision (words 23–26).
+> This section adds the missing fields.
 
 - [ ] Issue `0xA1` (IDENTIFY PACKET DEVICE) — not `0xEC`
 - [ ] Read 256 words (512 bytes) from data port after DRQ asserts
@@ -52,10 +225,12 @@
   - [ ] Bits 6–5: DRQ timing (accelerated vs. delayed)
   - [ ] Bits 1–0: command packet size (`00b` = 12-byte, `01b` = 16-byte)
 - [ ] Parse Words 10–19: serial number (20 chars, byte-swap each pair)
+- [ ] Parse Words 23–26: firmware revision (8 chars, byte-swap each pair)
 - [ ] Parse Words 27–46: model number (40 chars, byte-swap each pair)
 - [ ] Parse Word 49: capabilities (bit 8 = LBA, bit 11 = IORDY)
 - [ ] Parse Word 63: Multiword DMA modes (bits 2–0 = supported modes)
 - [ ] Parse Word 88: Ultra DMA modes (bits 6–0 = supported modes)
+- [ ] Parse Word 76: SATA capabilities (bit 8 = NCQ, bit 2 = Gen2, bit 1 = Gen1)
 - [ ] Store results in `atapi_device_t` struct
 - [ ] Select highest supported DMA mode and program controller
 - [ ] Register device: `blkdev_register("cdrom0", model, capacity)`
@@ -117,6 +292,13 @@
 
 **Prompt:** Under AHCI, the HBA automates the entire ATAPI handshake in silicon. The driver builds memory structures and rings a doorbell — no PIO polling required. Configure the Command Header: set CFL=5 (H2D FIS length in DWORDs), set the `a` bit (bit 5) to signal ATAPI mode, set `w` for write direction, set PRDTL for scatter-gather entries. In the Command Table: build FIS_REG_H2D (`0x27`) in the CFIS field with command=`0xA0`, place the raw SCSI CDB in the 16-byte ACMD field. Populate PRDT entries, write PxCI to issue. Completion arrives via MSI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: AHCI command delivery"`. Add notes directly in this TODO section.
 
+> [!NOTE]
+> **Existing code:** `atapi_packet_cmd()` in `ahci.c` (line 373) already
+> implements this: builds H2D FIS with `ATA_CMD_PACKET`, sets features=1 (DMA),
+> copies 12-byte CDB to `acmd[]`, sets bit 5 (ATAPI) in command header flags.
+> This section formalizes the existing implementation and extends it with
+> 16-byte CDB support and proper error checking via `PxTFD`.
+
 - [ ] Implement `ahci_atapi_command(port, cdb, cdb_len, buf, buf_len, direction)`:
   - [ ] Find free Command List slot (check PxCI and PxSACT)
   - [ ] Configure `HBA_CMD_HEADER`:
@@ -144,6 +326,13 @@
 
 **Prompt:** The ATAPI SCSI logic must be completely decoupled from the physical transport. Create a `scsi_transport_t` interface with a single `send_command()` callback. Legacy IDE PIO, Legacy IDE DMA, and AHCI each implement this interface. The ATAPI device object calls `transport->send_command(cdb, data, len, direction)` without knowing or caring which hardware path is active. This guarantees the same SCSI READ(10) code works on a vintage 40-pin PATA cable and a modern SATA-III port. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: transport abstraction layer"`. Add notes directly in this TODO section.
 
+> [!NOTE]
+> **Refactoring required:** The SCSI command defines (`SCSI_TEST_UNIT_READY`,
+> `SCSI_INQUIRY`, `SCSI_READ_CAPACITY`, `SCSI_READ_10`) in `ahci.h` (lines
+> 98–102) must move to a new `include/kernel/drivers/scsi.h` header. The
+> `atapi_packet_cmd()` function becomes the `ahci_transport` implementation.
+
+- [ ] Create `include/kernel/drivers/scsi.h` — move SCSI command opcodes from `ahci.h`
 - [ ] Define `scsi_transport_ops_t`:
   ```c
   typedef struct scsi_transport_ops {
@@ -168,6 +357,11 @@
 
 **Prompt:** Implement the two most fundamental SCSI commands. TEST UNIT READY (`0x00`) is a no-data command that checks if the device is ready (media present, spun up). It must be sent repeatedly during spin-up, with delays between retries. INQUIRY (`0x12`) retrieves 36 bytes of device identification: peripheral type, vendor name, product name, revision. Both commands must be padded to the device's CDB size (12 bytes). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: TEST UNIT READY and INQUIRY"`. Add notes directly in this TODO section.
 
+> [!NOTE]
+> **Existing defines:** `SCSI_TEST_UNIT_READY` (`0x00`) and `SCSI_INQUIRY`
+> (`0x12`) are already defined in `ahci.h` (lines 99–100) but have no
+> implementation functions. This section adds the actual command functions.
+
 - [ ] Implement `atapi_test_unit_ready(dev)`:
   - [ ] CDB: `{ 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }` (12 bytes, zero-padded)
   - [ ] No data transfer — check status only
@@ -178,6 +372,7 @@
   - [ ] CDB: `{ 0x12, 0x00, 0x00, 0x00, 0x24, 0x00, ... }` (allocation length = 36)
   - [ ] Parse 36-byte response:
     - [ ] Byte 0 bits 4–0: peripheral device type (`0x05` = CD/DVD)
+    - [ ] Byte 0 bits 7–5: peripheral qualifier (0 = connected, 1 = not connected)
     - [ ] Bytes 8–15: vendor identification (8 bytes, space-padded ASCII)
     - [ ] Bytes 16–31: product identification (16 bytes)
     - [ ] Bytes 32–35: product revision (4 bytes)
@@ -188,6 +383,12 @@
 ### 5.2 READ CAPACITY & READ (10)
 
 **Prompt:** READ CAPACITY (`0x25`) returns the last LBA and block size (typically 2048 for data CDs). Both fields are 32-bit Big-Endian — they MUST be byte-swapped on x86. Total capacity = `(Last_LBA + 1) × Block_Size`. READ (10) (`0x28`) reads data blocks. The transfer length field is block count, not byte count. For a 2048-byte-sector CD, reading 512 blocks reads 1 MB. LBA and transfer length are Big-Endian in the CDB. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: READ CAPACITY and READ(10)"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> **Existing code:** `atapi_read_capacity()` in `ahci.c` (line 490) and
+> `atapi_do_read()` (line 523) already implement these commands with correct
+> Big-Endian byte-swapping. This section formalizes and adds READ(12) for
+> large media (>2 TB optical) and proper error handling on capacity queries.
 
 - [ ] Implement `atapi_read_capacity(dev, *last_lba, *block_size)`:
   - [ ] CDB: `{ 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }`
@@ -203,6 +404,9 @@
   - [ ] Buffer size = `block_count * dev->block_size`
   - [ ] For requests > 65535 blocks: split into multiple READ(10) commands
   - [ ] Allocate read buffer via `pmm_alloc_contiguous()` for DMA
+- [ ] Implement `atapi_read12(dev, lba, block_count, buf)`:
+  - [ ] CDB: `{ 0xA8, 0x00, LBA[3..0], Len[3..0], 0x00, 0x00 }`
+  - [ ] For transfer lengths > 65535 blocks (exceeds READ(10) 16-bit field)
 - [ ] Log: `[ATAPI] Capacity: %u MB (%u blocks × %u bytes)`
 - [ ] Commit: `"atapi: READ CAPACITY and READ(10)"`
 
@@ -222,6 +426,7 @@
   - [ ] CDB: `{ 0x43, (msf << 1), format, 0, 0, 0, track, Len[1], Len[0], 0, 0, 0 }`
   - [ ] Format 0: TOC — returns track list with start LBAs
   - [ ] Format 1: Multi-session info — returns last session start LBA
+  - [ ] Format 2: Raw TOC (Full TOC) — complete session/track structure
   - [ ] Parse TOC header: data length (2 bytes BE), first track, last track
   - [ ] Parse track descriptors: track number, ADR/Control, start LBA (4 bytes BE)
   - [ ] Byte-swap all multi-byte fields
@@ -230,6 +435,7 @@
   - [ ] Format 0x00: Physical Format Info (DVD layer info: track path, density, sectors)
   - [ ] Format 0x01: DVD Copyright (CSS/CPRM protected status)
   - [ ] Format 0x04: DVD Manufacturing Info
+  - [ ] Format 0x10: Blu-ray Disc Information
   - [ ] Byte-swap all BE response fields
 - [ ] Wire eject to device manager / Explorer context menu
 - [ ] Commit: `"atapi: media control commands"`
@@ -249,7 +455,9 @@
   - [ ] Key profiles:
     - [ ] `0x0008` CD-ROM, `0x0009` CD-R, `0x000A` CD-RW
     - [ ] `0x0010` DVD-ROM, `0x0011` DVD-R, `0x001A` DVD+RW, `0x001B` DVD+R
+    - [ ] `0x002B` DVD+R DL (Dual Layer)
     - [ ] `0x0040` BD-ROM, `0x0041` BD-R, `0x0043` BD-RE
+- [ ] Parse Feature Code `0x0108` — Logical Unit Serial Number
 - [ ] Detect drive type from profile list (CD-only, DVD combo, BD combo)
 - [ ] Detect current media type from current profile
 - [ ] Store capabilities in `dev->profiles[]` and `dev->current_profile`
@@ -267,6 +475,10 @@
   - [ ] Mode Data Length (2 bytes BE), Medium Type, Device Specific Parameter
 - [ ] Parse Page `0x01` — Read/Write Error Recovery:
   - [ ] Error recovery flags, read retry count, write retry count
+- [ ] Parse Page `0x0D` — CD Device Parameters:
+  - [ ] Inactivity timer multiplier, S-units per M-unit, F-units per S-unit
+- [ ] Parse Page `0x0E` — CD Audio Control:
+  - [ ] IMMED bit, SOTC bit, output port channel selection, output port volume
 - [ ] Parse Page `0x2A` — Capabilities and Mechanical Status:
   - [ ] Read capabilities: CD-R read, CD-RW read, DVD-ROM read, DVD-R read, etc.
   - [ ] Write capabilities: CD-R write, CD-RW write, DVD-R write, etc.
@@ -275,6 +487,7 @@
   - [ ] Maximum write speed (KB/s), current write speed
   - [ ] Buffer size (KB)
   - [ ] Audio capabilities: digital audio output, accurate DAE stream, C2 error pointers
+  - [ ] Disc-at-once (DAO) capability, multi-session capability
 - [ ] Store in `dev->capabilities`
 - [ ] Log: `[ATAPI] Capabilities: %s, max_read=%u KB/s, buf=%u KB, mech=%s`
 - [ ] Commit: `"atapi: MODE SENSE and drive capabilities"`
@@ -293,18 +506,26 @@
 - [ ] Parse sense data:
   - [ ] Byte 0 bits 6–0: response code (`0x70` = current, `0x71` = deferred)
   - [ ] Byte 2 bits 3–0: Sense Key
+  - [ ] Byte 7: Additional Sense Length (number of valid bytes beyond byte 7)
   - [ ] Byte 12: Additional Sense Code (ASC)
   - [ ] Byte 13: Additional Sense Code Qualifier (ASCQ)
 - [ ] Map Sense Key / ASC / ASCQ to kernel errors:
   - [ ] `0x00` No Sense → success (command completed)
+  - [ ] `0x01` Recovered Error → success with warning (log degraded media)
   - [ ] `0x02 / 0x3A / 0x00` Not Ready, Medium Not Present → `-ENOMEDIUM`
+  - [ ] `0x02 / 0x3A / 0x01` Not Ready, Medium Not Present, Tray Closed → `-ENOMEDIUM`
+  - [ ] `0x02 / 0x3A / 0x02` Not Ready, Medium Not Present, Tray Open → `-ENOMEDIUM`
   - [ ] `0x02 / 0x04 / 0x01` Not Ready, Becoming Ready → `-EAGAIN` (retry after delay)
+  - [ ] `0x02 / 0x04 / 0x02` Not Ready, Start Unit Required → call `atapi_spin_up()`
   - [ ] `0x03` Medium Error → `-EIO` (scratched/unreadable media)
+  - [ ] `0x03 / 0x11 / 0x00` Unrecovered Read Error → `-EIO` (bad sector)
   - [ ] `0x04` Hardware Error → `-EIO` (internal drive failure)
   - [ ] `0x05 / 0x20 / 0x00` Illegal Request, Invalid Opcode → `-ENOSYS`
   - [ ] `0x05 / 0x24 / 0x00` Illegal Request, Invalid Field → `-EINVAL`
+  - [ ] `0x05 / 0x26 / 0x00` Illegal Request, Invalid Field in Parameter List → `-EINVAL`
   - [ ] `0x06 / 0x28 / 0x00` Unit Attention, Media Changed → `-EMEDIUMTYPE` + cache invalidate
   - [ ] `0x06 / 0x29 / 0x00` Unit Attention, Power On/Reset → re-initialize
+  - [ ] `0x06 / 0x2A / 0x01` Unit Attention, Mode Parameters Changed → refresh MODE SENSE
   - [ ] `0x0B` Aborted Command → retry
 - [ ] Auto-retry on transient errors (Sense Key 0x02 with ASC 0x04): up to 10 retries
 - [ ] Log: `[ATAPI] Sense: key=0x%02x ASC=0x%02x ASCQ=0x%02x (%s)`
@@ -318,6 +539,7 @@
   - [ ] Invalidate all sector caches for this device
   - [ ] Unmount any mounted filesystem on this device
   - [ ] Re-read capacity (media may have changed size/type)
+  - [ ] Re-read GET CONFIGURATION for new media profile
   - [ ] Notify VFS: `vfs_media_changed(dev)`
   - [ ] Notify Disk Manager GUI: media removal event
 - [ ] Implement `atapi_poll_media_change(dev)`:
@@ -325,6 +547,7 @@
   - [ ] Polled mode (bit 0 of byte 1 = 1)
   - [ ] Parse event header: NEA (No Event Available), notification class, supported events
   - [ ] Media event class = `0x04`: check for media removal, insertion, eject request
+  - [ ] Operational Change class = `0x02`: feature change, spinning change
 - [ ] Periodic polling: timer callback every 2 seconds when no I/O active
 - [ ] On media insertion: auto-detect filesystem (ISO 9660 / UDF) and offer auto-mount
 - [ ] Log: `[ATAPI] Media change detected — invalidating caches`
@@ -338,6 +561,14 @@
 
 **Prompt:** Register the ATAPI device as a read-only block device with the VFS layer. The block size is the media's native sector size (2048 for data CDs/DVDs). Expose standard block device operations: read, ioctl (eject, lock, read TOC). Write operations should return `-EROFS` for read-only media (most optical drives). For CD-RW/DVD-RW, detect write capability from the device type and feature profiles. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: VFS block device registration"`. Add notes directly in this TODO section.
 
+> [!NOTE]
+> **Existing code:** `blkdev_adapters.c` (line 242) already registers ATAPI
+> devices as `cdrom0`, `cdrom1`, etc. with `blkdev_register()`. The read
+> callback wraps `ahci_atapi_read()`, write is set to `NULL`. This section
+> adds ioctl support (eject, lock, TOC) and proper write capability detection.
+> The `struct blkdev` in `blkdev.h` needs an `ioctl` function pointer.
+
+- [ ] Add `blkdev_ioctl_fn ioctl` to `struct blkdev` in `blkdev.h`
 - [ ] Implement `atapi_blkdev_ops`:
   - [ ] `read(dev, lba, count, buf)` → `atapi_read()` with 2048-byte sectors
   - [ ] `write(dev, lba, count, buf)` → `-EROFS` for read-only media
@@ -348,6 +579,8 @@
     - [ ] `CDROM_UNLOCK_DOOR` → `atapi_lock_tray(false)`
     - [ ] `CDROM_READ_TOC` → `atapi_read_toc()`
     - [ ] `CDROM_GET_CAPACITY` → `atapi_read_capacity()`
+    - [ ] `CDROM_DISC_STATUS` → read current profile, return media type
+    - [ ] `CDROM_GET_EVENT` → `atapi_poll_media_change()`
   - [ ] `flush(dev)` → no-op for read-only media
 - [ ] Register with block device layer: `blkdev_register("cdrom0", ...)`
 - [ ] Assign drive letter: `D:\` (or next available)
@@ -372,6 +605,7 @@
     - [ ] Volume size in blocks (both-endian — use LE copy at offset 80)
     - [ ] Root directory record (34 bytes at offset 156): LBA, data length
     - [ ] Path table LBA and size
+    - [ ] Volume creation date, modification date (17-byte format)
   - [ ] Scan for Supplementary Volume Descriptor (type=`0x02`) for Joliet:
     - [ ] Check escape sequences at offset 88: `%/@`, `%/C`, `%/E`
     - [ ] If found: prefer Joliet root directory and filenames (UCS-2)
@@ -382,7 +616,8 @@
     - [ ] Byte 0: record length (0 = padding to sector boundary)
     - [ ] Bytes 2–9: LBA of file data (both-endian, use LE at offset 2)
     - [ ] Bytes 10–17: data length (both-endian)
-    - [ ] Byte 25: file flags (bit 1 = directory)
+    - [ ] Byte 25: file flags (bit 1 = directory, bit 7 = multi-extent)
+    - [ ] Byte 26: interleave file unit size (handle if non-zero)
     - [ ] Byte 32: filename length, followed by filename
     - [ ] Handle `;1` version suffix (strip for display)
     - [ ] Handle `.` (self) and `..` (parent) records
@@ -400,10 +635,12 @@
   - [ ] Read LBA 256 for Anchor Volume Descriptor Pointer (AVDP)
     - [ ] Validate descriptor tag: tag ID = `0x0002`
     - [ ] Extract Main VDS extent (location + length) and Reserve VDS extent
+  - [ ] Also check LBA N-256 (backup AVDP, where N = last LBA)
   - [ ] Read Main Volume Descriptor Sequence:
     - [ ] Parse Primary Volume Descriptor (tag ID `0x0001`)
     - [ ] Parse Partition Descriptor (tag ID `0x0005`): partition start LBA, length
     - [ ] Parse Logical Volume Descriptor (tag ID `0x0006`): partition map, FSD location
+    - [ ] Parse Implementation Use Volume Descriptor (tag ID `0x0004`)
   - [ ] Read File Set Descriptor from logical volume
   - [ ] Locate root ICB (Information Control Block) from FSD
 - [ ] Implement File Entry / Extended File Entry parsing:
@@ -413,8 +650,11 @@
 - [ ] Implement File Identifier Descriptor parsing for directories:
   - [ ] Extract filename (d-string format: length byte + UTF-8/UTF-16 data)
   - [ ] Handle parent directory entry (`..\` equivalent)
+  - [ ] Handle hidden and deleted entries
+- [ ] UDF version support: 1.02 (DVD-ROM), 1.50 (CD-RW), 2.01 (BD), 2.50 (BD-RE)
 - [ ] Wire to VFS with read-only operations
 - [ ] Auto-detect: try UDF after ISO 9660 fails (some DVDs are UDF-only)
+- [ ] Handle UDF bridge discs (ISO 9660 + UDF on same disc — prefer UDF)
 - [ ] Log: `[UDF] Mounted: partition at LBA %u, %u MB`
 - [ ] Commit: `"udf: basic read-only filesystem driver"`
 
@@ -439,7 +679,9 @@
 - [ ] Implement `atapi_read_subchannel(dev, *position)`:
   - [ ] CDB: `{ 0x42, 0x02, 0x40, 0x01, 0, 0, 0, 0x00, 0x10, 0, 0, 0 }`
   - [ ] Parse: current position in MSF, playback status (playing/paused/stopped)
+  - [ ] Parse: ISRC and MCN (Media Catalog Number) for CD metadata
 - [ ] SET CD SPEED (`0xBB`): set read speed for quieter operation or max throughput
+- [ ] Detect CD-TEXT: read subchannel data in Pack mode for embedded title/artist
 - [ ] Wire to audio player application / CD Player applet
 - [ ] Commit: `"atapi: audio CD extraction and playback"`
 
@@ -466,7 +708,11 @@
 - [ ] On C2 errors detected:
   - [ ] Re-read sector up to 8 times
   - [ ] Use overlapping reads (read sector N ± 1) to verify alignment
+  - [ ] Compare multiple reads at byte level to detect jitter offset
   - [ ] If all retries have errors → mark sector as uncorrectable, log warning
+- [ ] Drive read offset correction:
+  - [ ] Query AccurateRip database for drive read offset value
+  - [ ] Apply sample-level offset correction to extracted audio
 - [ ] Expose via API: `cdrom_rip_track(dev, track, buf, *quality_report)`
 - [ ] Quality report per track: total sectors, error-free sectors, retried sectors, uncorrectable
 - [ ] Wire to CD Player applet: "Rip Track" with quality meter
@@ -480,6 +726,14 @@
 
 **Prompt:** Optical drives have extremely high latency (seconds for spin-up, hundreds of milliseconds for seek). The ATAPI driver must never block the kernel during I/O. Implement fully asynchronous command submission: submit SCSI CDB, return immediately, wake caller via event when ISR fires on completion. For AHCI, this is native (MSI on PxCI clearance). For legacy IDE, register IRQ14/IRQ15 handlers. Use per-device mutexes to prevent concurrent Task File/Command Table corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: async I/O and concurrency"`. Add notes directly in this TODO section.
 
+> [!NOTE]
+> **Current state:** The AHCI driver in `ahci.c` uses polling (`port_issue_cmd()`
+> at line 238 polls `PxCI` with a 5M iteration timeout). Global interrupts are
+> explicitly disabled (line 762: `GHC.IE = 0`; line 229: `PxIE = 0x00`).
+> This section depends on `TODO-040.02-AHCI.md §1.1` (Interrupt-Driven I/O)
+> completing first. The ATAPI async path builds on top of the AHCI interrupt
+> infrastructure.
+
 - [ ] Add `event_t command_complete` to `atapi_device_t`
 - [ ] Add `mutex_t port_lock` to prevent concurrent access
 - [ ] Legacy IDE:
@@ -492,6 +746,7 @@
 - [ ] Timeout: 30 seconds for spin-up, 10 seconds for normal I/O
 - [ ] On timeout: log error, attempt device reset (write SRST or COMRESET)
 - [ ] Pre-scheduler fallback: if interrupts not available, use PIO polling
+- [ ] Command queueing: queue up to 4 pending SCSI commands per device
 - [ ] Commit: `"atapi: async I/O and concurrency"`
 
 ---
@@ -512,12 +767,15 @@
   - [ ] CDB: `{ 0xBB, 0, Read[1], Read[0], Write[1], Write[0], 0, 0, 0, 0, 0, 0 }`
   - [ ] Values in KB/s (e.g., CD 1x = 176, DVD 1x = 1385, BD 1x = 4500)
   - [ ] `0xFFFF` = maximum speed (let drive decide)
+- [ ] Implement `atapi_get_speed(dev, *current_read, *current_write, *max_read, *max_write)`:
+  - [ ] Read MODE SENSE Page `0x2A` for current and maximum speeds
 - [ ] Speed presets:
   - [ ] Performance: `0xFFFF` (maximum)
-  - [ ] Balanced: CD 24x (4224), DVD 8x (11080)
-  - [ ] Quiet: CD 8x (1408), DVD 4x (5540)
-  - [ ] Silent: CD 4x (704), DVD 2x (2770)
+  - [ ] Balanced:    CD 24x (4224 KB/s), DVD 8x (11080 KB/s), BD 4x (18000 KB/s)
+  - [ ] Quiet:       CD 8x (1408 KB/s), DVD 4x (5540 KB/s), BD 2x (9000 KB/s)
+  - [ ] Silent:      CD 4x (704 KB/s), DVD 2x (2770 KB/s), BD 1x (4500 KB/s)
 - [ ] Auto-quiet: reduce speed when laptop is on battery power
+- [ ] Auto-max: increase speed when ripping or copying (detect sustained sequential reads)
 - [ ] Expose via Drive Properties: speed preset dropdown
 - [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\ATAPI\DriveSpeedPreset`
 - [ ] Log: `[ATAPI] Speed set to %u KB/s (read), %u KB/s (write)`
@@ -543,6 +801,7 @@
   - [ ] `PL` (Parent Link): parent of relocated directory
   - [ ] `RE` (Relocated): marks entry as relocated (skip in normal listing)
   - [ ] `TF` (Timestamps): creation, modification, access, attributes times
+- [ ] Handle SUSP (System Use Sharing Protocol) continuation areas
 - [ ] If Rock Ridge detected, prefer `NM` names over ISO 8.3 names
 - [ ] Map POSIX permissions to VFS stat → support `chmod` semantics (read-only)
 - [ ] Commit: `"iso9660: Rock Ridge extension support"`
@@ -559,38 +818,123 @@
   - [ ] Validation Entry (32 bytes): Header ID `0x01`, platform ID, checksum
   - [ ] Default Entry (32 bytes): boot indicator, boot media type, load segment, LBA, sector count
   - [ ] Boot media types: 0=no emulation, 1=1.2M floppy, 2=1.44M floppy, 3=2.88M floppy, 4=hard disk
+  - [ ] Section Header Entries: for multi-platform boot support
 - [ ] Detect UEFI boot entries: platform ID = `0xEF` (EFI)
+- [ ] Detect legacy BIOS boot entries: platform ID = `0x00` (x86)
 - [ ] Display in Disk Manager: "Bootable" badge on bootable optical media
+- [ ] Show boot type in properties: "UEFI Bootable", "Legacy Bootable", or "Dual Boot"
 - [ ] Commit: `"iso9660: El Torito boot detection"`
+
+---
+
+## 13. Advanced Features (🚀 Impossible OS Exclusives)
+
+### 13.1 SCSI Passthrough API
+
+**Prompt:** Expose a raw SCSI passthrough API that allows user-space applications to send arbitrary SCSI CDBs to optical drives. This enables third-party tools (disc checking, forensic imaging, vendor diagnostics) without requiring kernel modifications. Windows provides `IOCTL_SCSI_PASS_THROUGH`, Linux provides `SG_IO`. Impossible OS should provide a `DeviceIoControl`-compatible interface. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: SCSI passthrough API"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Windows requires admin privileges AND specific CDB
+> whitelisting for optical SCSI passthrough. Linux requires `sg` group membership.
+> Impossible OS can offer a cleaner API with per-command capability checks.
+
+- [ ] Define `IOCTL_SCSI_PASS_THROUGH` and `IOCTL_SCSI_PASS_THROUGH_DIRECT`
+- [ ] Implement `scsi_passthrough(dev, cdb, cdb_len, data, data_len, direction, sense, timeout)`:
+  - [ ] Validate CDB: reject destructive commands (FORMAT UNIT, BLANK) without admin
+  - [ ] Route through `dev->transport->send_command()`
+  - [ ] Return full sense data on error
+  - [ ] Timeout enforcement per command
+- [ ] User-space API: `DeviceIoControl(hDevice, IOCTL_SCSI_PASS_THROUGH, ...)`
+- [ ] Capability-based security: read commands (INQUIRY, READ) = normal user; write commands (WRITE, BLANK) = admin only
+- [ ] Wire to Device Manager: "Send SCSI Command" developer tool
+- [ ] Commit: `"atapi: SCSI passthrough API"`
+
+### 13.2 Disc Imaging & Burning (🚀 Impossible OS Feature)
+
+**Prompt:** Implement native disc imaging (read disc → ISO file) and burning (ISO file → writable disc). Windows requires third-party tools for full-featured burning (ImgBurn, Nero). Windows 10+ has basic "Burn disc image" but no ripping. Linux uses `wodim`/`cdrecord` (CLI tools). Impossible OS can ship a complete read + write optical disc solution with a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: disc imaging and burning"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux ships a full-featured disc
+> burning application as part of the OS itself. Windows 10+ removed disc burning
+> from Windows Media Player. Impossible OS can provide native disc imaging and
+> burning with a polished GUI — no third-party tools required.
+
+- [ ] Implement `cdrom_create_iso(dev, output_path)`:
+  - [ ] Read entire disc sector-by-sector using READ(10)
+  - [ ] Write to ISO file on local filesystem
+  - [ ] Progress callback: sectors read / total sectors
+  - [ ] Verify checksum after imaging (optional MD5/SHA-256)
+- [ ] Implement CD/DVD/BD writing (if write-capable drive detected):
+  - [ ] Check GET CONFIGURATION for write profiles (CD-R, DVD-R, DVD+RW, BD-R)
+  - [ ] WRITE(10) (`0x2A`) for writing data sectors
+  - [ ] CLOSE TRACK/SESSION (`0x5B`) for finalizing
+  - [ ] BLANK (`0xA1`) for erasing CD-RW/DVD-RW/BD-RE
+  - [ ] SEND OPC INFORMATION (`0x54`) for optimal power calibration
+  - [ ] RESERVE TRACK (`0x53`) for track reservation
+- [ ] Implement disc-at-once (DAO) writing for audio CDs:
+  - [ ] SET WRITE PARAMETERS MODE PAGE (`0x05`)
+  - [ ] Write lead-in, program area, lead-out
+- [ ] Wire to File Manager: right-click ISO → "Burn to Disc"
+- [ ] Wire to Disk Manager: "Create Disc Image" button
+- [ ] Commit: `"atapi: disc imaging and burning"`
+
+### 13.3 Optical Media Health Dashboard (🚀 Impossible OS Feature)
+
+**Prompt:** Implement a media quality scanner that reads the entire disc surface and reports error rates per sector. Use READ CD (`0xBE`) with C2 error pointer reporting to map disc quality across the entire surface. Generate a visual heat map showing good sectors (green), degraded sectors (yellow), and unreadable sectors (red). No consumer OS provides built-in optical media quality analysis. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: optical media health dashboard"`. Add notes directly in this TODO section.
+
+> [!TIP]
+> **Competitive Edge:** Disc quality scanning requires third-party tools on every
+> OS: PlexTools (discontinued), Nero DiscSpeed (Windows only), no equivalent on
+> Linux. Impossible OS can provide native disc health reporting in the Disk Manager
+> — unique among all operating systems.
+
+- [ ] Implement `cdrom_scan_surface(dev, *report)`:
+  - [ ] Read every sector on disc using READ CD with C2 error flags
+  - [ ] Track per-sector error count and read retry count
+  - [ ] Calculate PI/PO error rates for DVD (if drive supports PI/PO reporting)
+  - [ ] Progress callback: current LBA / total LBA
+- [ ] Generate quality report:
+  - [ ] Total sectors, readable sectors, unreadable sectors
+  - [ ] C2 error distribution (histogram by disc region)
+  - [ ] Average read speed across disc surface
+  - [ ] Estimated remaining disc lifespan (heuristic based on error trends)
+- [ ] Visual heat map: render disc surface as radial plot in Disk Manager
+  - [ ] Green: error-free, Yellow: correctable errors, Red: uncorrectable
+- [ ] Expose via Disk Manager: "Scan Disc" button on optical drive properties
+- [ ] Save scan results: `C:\Impossible\System\DiscScans\scan_YYYYMMDD.json`
+- [ ] Commit: `"atapi: optical media health dashboard"`
 
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section                            | Description                                              |
-| -- |----------|------------------------------------|----------------------------------------------------------|
-| 💎 | 🔴 P0    | 1.1 ATAPI Signature Detection    | Foundation — must identify optical drives before any command |
-| 💎 | 🔴 P0    | 1.2 IDENTIFY PACKET DEVICE       | Foundation — required to parse device capabilities       |
-| 💎 | 🔴 P0    | 2.1 PIO Packet State Machine     | Foundation — basic ATAPI communication                   |
-| 💎 | 🔴 P0    | 5.2 READ CAPACITY & READ(10)     | Foundation — read data from optical media                |
-| 💎 | 🟠 P1    | 6.1 REQUEST SENSE                | Correctness — all error handling depends on sense data   |
-| 💎 | 🟠 P1    | 5.1 TEST UNIT READY & INQUIRY    | Correctness — device probing and media presence check    |
-| 💎 | 🟠 P1    | 4.1 Transport Abstraction        | Architecture — decouple SCSI from transport hardware     |
-| 💎 | 🟠 P1    | 7.1 VFS Block Device             | Integration — expose optical drive to filesystem layer   |
-| 💎 | 🟠 P1    | 5.4 GET CONFIGURATION            | Foundation — determine drive type and media capabilities |
-| 💎 | 🟡 P2    | 3.2 AHCI ATAPI Delivery          | Performance — bypass PIO handshake via AHCI hardware     |
-| 💎 | 🟡 P2    | 3.1 Bus Master DMA               | Performance — async DMA instead of PIO polling           |
-| 💎 | 🟡 P2    | 5.3 Media Control Commands       | Feature — eject, load, lock tray, read TOC, disc struct  |
-| 💎 | 🟡 P2    | 5.5 MODE SENSE                   | Feature — drive capabilities, speeds, mechanism type     |
-| 💎 | 🟡 P2    | 6.2 Media Change Detection       | Correctness — handle disc swaps gracefully               |
-| 💎 | 🟡 P2    | 10.1 Async I/O & Concurrency     | Performance — non-blocking optical drive access          |
-| 💎 | 🟢 P3    | 8.1 ISO 9660 / Joliet            | Feature — standard CD/DVD filesystem support             |
-| 💎 | 🟢 P3    | 8.2 UDF Filesystem               | Feature — DVD-ROM and Blu-ray filesystem support         |
-| ⭐ | 🟢 P3    | 12.1 Rock Ridge               | Feature — long filenames and POSIX attrs on ISO 9660     |
-| 💎 | 🟢 P3    | 12.2 El Torito                   | Feature — bootable CD/DVD detection and display          |
-| 💎 | 🔵 P4    | 9.1 Audio CD Extraction          | Feature — audio CD playback and digital extraction       |
-| ⭐ | 🔵 P4    | 9.2 Paranoia DAE + C2         | **Bit-perfect ripping** — no OS ships this built-in     |
-| ⭐ | 🔵 P4    | 11.1 Drive Speed Control      | **Noise management** — no OS has a native GUI for this  |
+| ⭐ | Priority | Section                                | Description                                                         |
+| -- | -------- | -------------------------------------- | ------------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 ATAPI Signature Detection         | Foundation — must identify optical drives before any command        |
+| 💎 | 🔴 P0    | 1.2 IDENTIFY PACKET DEVICE            | Foundation — required to parse device capabilities                  |
+| 💎 | 🔴 P0    | 2.1 PIO Packet State Machine          | Foundation — basic ATAPI communication                              |
+| 💎 | 🔴 P0    | 5.2 READ CAPACITY & READ(10)          | Foundation — read data from optical media                           |
+| 💎 | 🟠 P1    | 6.1 REQUEST SENSE                     | Correctness — all error handling depends on sense data              |
+| 💎 | 🟠 P1    | 5.1 TEST UNIT READY & INQUIRY         | Correctness — device probing and media presence check               |
+| 💎 | 🟠 P1    | 4.1 Transport Abstraction             | Architecture — decouple SCSI from transport hardware                |
+| 💎 | 🟠 P1    | 7.1 VFS Block Device                  | Integration — expose optical drive to filesystem layer              |
+| 💎 | 🟠 P1    | 5.4 GET CONFIGURATION                 | Foundation — determine drive type and media capabilities            |
+| 💎 | 🟡 P2    | 3.2 AHCI ATAPI Delivery               | Performance — bypass PIO handshake via AHCI hardware                |
+| 💎 | 🟡 P2    | 3.1 Bus Master DMA                    | Performance — async DMA instead of PIO polling                      |
+| 💎 | 🟡 P2    | 5.3 Media Control Commands            | Feature — eject, load, lock tray, read TOC, disc struct             |
+| 💎 | 🟡 P2    | 5.5 MODE SENSE                        | Feature — drive capabilities, speeds, mechanism type                |
+| 💎 | 🟡 P2    | 6.2 Media Change Detection            | Correctness — handle disc swaps gracefully                          |
+| 💎 | 🟡 P2    | 10.1 Async I/O & Concurrency          | Performance — non-blocking optical drive access                     |
+| 💎 | 🟢 P3    | 8.1 ISO 9660 / Joliet                 | Feature — standard CD/DVD filesystem support                        |
+| 💎 | 🟢 P3    | 8.2 UDF Filesystem                    | Feature — DVD-ROM and Blu-ray filesystem support                    |
+| ⭐ | 🟢 P3    | 12.1 Rock Ridge                       | Feature — long filenames and POSIX attrs on ISO 9660                |
+| 💎 | 🟢 P3    | 12.2 El Torito                        | Feature — bootable CD/DVD detection and display                     |
+| 💎 | 🔵 P4    | 9.1 Audio CD Extraction               | Feature — audio CD playback and digital extraction                  |
+| ⭐ | 🔵 P4    | 9.2 Paranoia DAE + C2                 | **Bit-perfect ripping** — no OS ships this built-in                 |
+| ⭐ | 🔵 P4    | 11.1 Drive Speed Control              | **Noise management** — no OS has a native GUI for this              |
+| ⭐ | 🔵 P4    | 13.1 SCSI Passthrough API             | **Direct SCSI access** — cleaner than Win/Linux APIs                |
+| ⭐ | 🔵 P4    | 13.2 Disc Imaging & Burning           | **Built-in burning** — no OS ships a full burner natively           |
+| ⭐ | 🔵 P4    | 13.3 Optical Media Health             | **Disc quality scanner** — unique among all consumer OSes           |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -599,36 +943,47 @@
 
 ## OS Comparison
 
-| ⭐ | Feature                            | 🪟 Windows 11 (cdrom.sys)            | 🐧 Linux (sr / ide-cd)               | 🚀 Impossible OS                               |
-| -- | ---------------------------------- | ------------------------------------- | -------------------------------------- | ----------------------------------------------- |
-| 💎 | ATAPI device detection             | ✅ PnP + ATAPI signature              | ✅ `ata_dev_classify()`                | ⬜ §1.1 P0                                      |
-| 💎 | IDENTIFY PACKET DEVICE             | ✅                                     | ✅ `__ata_dev_select()`                | ⬜ §1.2 P0                                      |
-| 💎 | PIO packet protocol                | ✅ (legacy support)                    | ✅ `ide_do_drive_cmd()`                | ⬜ §2.1 P0                                      |
-| 💎 | Bus Master DMA for ATAPI           | ✅                                     | ✅ `ide_dma_setup()`                   | ⬜ §3.1 P2                                      |
-| 💎 | AHCI ATAPI (ACMD field)            | ✅ StorPort miniport                   | ✅ `ahci_exec_polled_cmd()`            | ⬜ §3.2 P2                                      |
-| 💎 | Transport abstraction              | ✅ StorPort / WDF                      | ✅ `ata_std_qc_defer()`                | ⬜ §4.1 P1                                      |
-| 💎 | TEST UNIT READY                    | ✅                                     | ✅ `sr_test_unit_ready()`              | ⬜ §5.1 P1                                      |
-| 💎 | INQUIRY                            | ✅                                     | ✅ `scsi_inquiry()`                    | ⬜ §5.1 P1                                      |
-| 💎 | READ CAPACITY                      | ✅                                     | ✅ `sr_read_capacity()`                | ⬜ §5.2 P0                                      |
-| 💎 | READ (10) / READ (12)              | ✅                                     | ✅ `sr_block_read()`                   | ⬜ §5.2 P0                                      |
-| 💎 | READ DISC STRUCTURE (DVD/BD)       | ✅ (via DeviceIoControl)               | ✅ `sr_do_ioctl()`                     | ⬜ §5.3 P2 (added)                              |
-| 💎 | GET CONFIGURATION / Profiles       | ✅                                     | ✅ `sr_get_config()`                   | ⬜ §5.4 P1                                      |
-| 💎 | MODE SENSE / Capabilities          | ✅                                     | ✅ `sr_mode_sense()`                   | ⬜ §5.5 P2                                      |
-| 💎 | REQUEST SENSE                      | ✅                                     | ✅ `scsi_eh_prep_cmnd()`               | ⬜ §6.1 P1                                      |
-| 💎 | Sense Key / ASC / ASCQ parsing     | ✅                                     | ✅ `scsi_sense_hdr`                    | ⬜ §6.1 P1                                      |
-| 💎 | Media change detection             | ✅ AutoPlay / WM_DEVICECHANGE          | ✅ `sr_check_events()`                 | ⬜ §6.2 P2                                      |
-| 💎 | Eject / Load tray                  | ✅ Explorer context menu               | ✅ `eject` command                     | ⬜ §5.3 P2                                      |
-| 💎 | Tray lock                          | ✅                                     | ✅                                     | ⬜ §5.3 P2                                      |
-| 💎 | READ TOC / multi-session           | ✅                                     | ✅ `sr_read_toc()`                     | ⬜ §5.3 P2                                      |
-| 💎 | Block device registration          | ✅ CdRom class driver                  | ✅ `/dev/sr0`                          | ⬜ §7.1 P1                                      |
-| 💎 | ISO 9660 filesystem                | ✅ CDFS.sys                            | ✅ `isofs` module                      | ⬜ §8.1 P3                                      |
-| 💎 | Joliet Unicode filenames           | ✅                                     | ✅                                     | ⬜ §8.1 P3                                      |
-| ⭐ | **Rock Ridge (POSIX on ISO)**   | ❌ Not supported                       | ✅ `isofs` with RR                     | ⬜ §12.1 P3 — long names + POSIX on CD          |
-| 💎 | **El Torito boot detection**       | ✅ (silent)                            | ✅ `isofs`                             | ⬜ §12.2 P3 — "Bootable" badge in Disk Manager  |
-| 💎 | UDF filesystem                     | ✅ udfs.sys                            | ✅ `udf` module                        | ⬜ §8.2 P3                                      |
-| 💎 | Audio CD playback                  | ✅ Windows Media Player                | ✅ `cdda` + various players            | ⬜ §9.1 P4                                      |
-| 💎 | Audio extraction (ripping)         | ✅ WMP / iTunes                        | ✅ `cdparanoia` / `libcdio`            | ⬜ §9.1 P4                                      |
-| ⭐ | **C2 error ptr ripping**        | ❌ Third-party only (EAC)              | ❌ `cdparanoia` (separate package)     | ⬜ §9.2 P4 — built-in bit-perfect extraction    |
-| ⭐ | **Drive speed/noise GUI**       | ❌ Third-party only (Nero DriveSpeed)  | ❌ `hdparm` CLI only                   | ⬜ §11.1 P4 — native Drive Properties slider    |
-| 💎 | Async I/O                          | ✅ Overlapped I/O                      | ✅ Block MQ                            | ⬜ §10.1 P2                                     |
-| 💎 | **Full optical drive stack**       | ✅                                     | ✅                                     | ⬜ Requires §1–§8 at minimum                    |
+| ⭐ | Feature                                | 🪟 Windows 11 (cdrom.sys)                | 🐧 Linux (sr / ide-cd)                   | 🚀 Impossible OS                                       |
+| -- | -------------------------------------- | ---------------------------------------- | ----------------------------------------- | ------------------------------------------------------- |
+| 💎 | ATAPI device detection                 | ✅ PnP + ATAPI signature                 | ✅ `ata_dev_classify()`                    | ⬜ §1.1 P0                                              |
+| 💎 | IDENTIFY PACKET DEVICE                 | ✅                                        | ✅ `__ata_dev_select()`                    | ⬜ §1.2 P0                                              |
+| 💎 | PIO packet protocol                    | ✅ (legacy support)                       | ✅ `ide_do_drive_cmd()`                    | ⬜ §2.1 P0                                              |
+| 💎 | Bus Master DMA for ATAPI               | ✅                                        | ✅ `ide_dma_setup()`                       | ⬜ §3.1 P2                                              |
+| 💎 | AHCI ATAPI (ACMD field)                | ✅ StorPort miniport                      | ✅ `ahci_exec_polled_cmd()`                | ⬜ §3.2 P2                                              |
+| 💎 | Transport abstraction                  | ✅ StorPort / WDF                         | ✅ `ata_std_qc_defer()`                    | ⬜ §4.1 P1                                              |
+| 💎 | TEST UNIT READY                        | ✅                                        | ✅ `sr_test_unit_ready()`                  | ⬜ §5.1 P1                                              |
+| 💎 | INQUIRY                                | ✅                                        | ✅ `scsi_inquiry()`                        | ⬜ §5.1 P1                                              |
+| 💎 | READ CAPACITY                          | ✅                                        | ✅ `sr_read_capacity()`                    | ⬜ §5.2 P0                                              |
+| 💎 | READ (10) / READ (12)                  | ✅                                        | ✅ `sr_block_read()`                       | ⬜ §5.2 P0                                              |
+| 💎 | READ DISC STRUCTURE (DVD/BD)           | ✅ (via DeviceIoControl)                  | ✅ `sr_do_ioctl()`                         | ⬜ §5.3 P2                                              |
+| 💎 | GET CONFIGURATION / Profiles           | ✅                                        | ✅ `sr_get_config()`                       | ⬜ §5.4 P1                                              |
+| 💎 | MODE SENSE / Capabilities              | ✅                                        | ✅ `sr_mode_sense()`                       | ⬜ §5.5 P2                                              |
+| 💎 | REQUEST SENSE                          | ✅                                        | ✅ `scsi_eh_prep_cmnd()`                   | ⬜ §6.1 P1                                              |
+| 💎 | Sense Key / ASC / ASCQ parsing         | ✅                                        | ✅ `scsi_sense_hdr`                        | ⬜ §6.1 P1                                              |
+| 💎 | Media change detection                 | ✅ AutoPlay / WM_DEVICECHANGE            | ✅ `sr_check_events()`                     | ⬜ §6.2 P2                                              |
+| 💎 | Eject / Load tray                      | ✅ Explorer context menu                  | ✅ `eject` command                         | ⬜ §5.3 P2                                              |
+| 💎 | Tray lock                              | ✅                                        | ✅                                         | ⬜ §5.3 P2                                              |
+| 💎 | READ TOC / multi-session               | ✅                                        | ✅ `sr_read_toc()`                         | ⬜ §5.3 P2                                              |
+| 💎 | Block device registration              | ✅ CdRom class driver                     | ✅ `/dev/sr0`                              | ⬜ §7.1 P1                                              |
+| 💎 | ISO 9660 filesystem                    | ✅ CDFS.sys                               | ✅ `isofs` module                          | ⬜ §8.1 P3                                              |
+| 💎 | Joliet Unicode filenames               | ✅                                        | ✅                                         | ⬜ §8.1 P3                                              |
+| ⭐ | **Rock Ridge (POSIX on ISO)**          | ❌ Not supported                          | ✅ `isofs` with RR                         | ⬜ §12.1 P3 — long names + POSIX on CD                  |
+| 💎 | El Torito boot detection               | ✅ (silent)                               | ✅ `isofs`                                 | ⬜ §12.2 P3 — "Bootable" badge in Disk Manager          |
+| 💎 | UDF filesystem                         | ✅ udfs.sys                               | ✅ `udf` module                            | ⬜ §8.2 P3                                              |
+| 💎 | Audio CD playback                      | ✅ Windows Media Player                   | ✅ `cdda` + various players                | ⬜ §9.1 P4                                              |
+| 💎 | Audio extraction (ripping)             | ✅ WMP / iTunes                           | ✅ `cdparanoia` / `libcdio`                | ⬜ §9.1 P4                                              |
+| ⭐ | **C2 error ptr ripping**               | ❌ Third-party only (EAC)                 | ❌ `cdparanoia` (separate package)         | ⬜ §9.2 P4 — built-in bit-perfect extraction            |
+| ⭐ | **Drive speed/noise GUI**              | ❌ Third-party only (Nero DriveSpeed)     | ❌ `hdparm` CLI only                       | ⬜ §11.1 P4 — native Drive Properties slider            |
+| ⭐ | **SCSI passthrough API**               | ⚠️ Admin + CDB whitelist only             | ⚠️ `sg` group required                     | ⬜ §13.1 P4 — capability-based, cleaner API             |
+| ⭐ | **Built-in disc burning**              | ⚠️ Basic "Burn disc image" only           | ❌ `wodim`/`cdrecord` (CLI, separate pkg)  | ⬜ §13.2 P4 — full GUI burner, no third-party           |
+| ⭐ | **Disc quality scanner**               | ❌ Third-party only (Nero DiscSpeed)      | ❌ No equivalent                           | ⬜ §13.3 P4 — native heat map in Disk Manager           |
+| 💎 | Async I/O                              | ✅ Overlapped I/O                         | ✅ Block MQ                                | ⬜ §10.1 P2                                              |
+| 💎 | **Full optical drive stack**           | ✅                                        | ✅                                         | ⬜ Requires §1–§8 at minimum                            |
+
+> **After P0+P1 items:** Impossible OS has a functional read-only optical drive with error handling.
+> **After P2+P3:** Full filesystem support (ISO 9660, UDF, Rock Ridge) with media management.
+> **After P4:** Impossible OS surpasses both Windows and Linux with 6 exclusive features (⭐):
+> bit-perfect ripping, drive noise GUI, SCSI passthrough, disc burning, disc quality scanning,
+> and Rock Ridge support (which Windows lacks entirely).
+
+---
