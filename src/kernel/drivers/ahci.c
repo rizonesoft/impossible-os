@@ -118,9 +118,10 @@ static void port_stop_cmd(volatile uint8_t *pregs)
 static void port_start_cmd(volatile uint8_t *pregs)
 {
     uint32_t cmd;
+    uint32_t timeout = 500000;
 
-    /* Wait for CR to clear before starting */
-    while (port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_CR)
+    /* Wait for CR to clear before starting (with timeout) */
+    while ((port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_CR) && timeout--)
         __asm__ volatile ("pause");
 
     cmd = port_read(pregs, AHCI_PxCMD);
