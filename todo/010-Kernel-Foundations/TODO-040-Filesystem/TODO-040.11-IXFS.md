@@ -578,6 +578,60 @@
 
 ---
 
+## Boot Integration Gotchas (IXFS as Root Partition)
+
+> [!CAUTION]
+> **IXFS is a custom filesystem — the kernel MUST have the IXFS driver fully initialized
+> before attempting to mount `C:\`.** This is non-negotiable. Unlike NTFS or FAT32 which
+> have drivers baked into every OS, IXFS exists only in Impossible OS. If the boot
+> sequence tries to mount `C:\` before the driver is ready, the result is `"C:\ not mounted"`.
+
+### Known Failure Modes
+
+| # | Failure Mode                        | Symptom                                      | Root Cause                                                                             | Fix                                                                              |
+| - | ----------------------------------- | -------------------------------------------- | -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| 1 | **No boot-time IXFS driver**        | `C:\` seen as RAW partition                   | IXFS parsing logic not compiled into kernel or not loaded before mount                 | Ensure `ixfs_init()` runs in `boot_storage.c` BEFORE `partition_scan_and_mount()` |
+| 2 | **Bootloader blindness**            | Kernel never starts                          | Bootloader can't read IXFS to find `kernel.exe`                                        | Keep bootloader + kernel on FAT32 EFI partition; IXFS is the data partition only  |
+| 3 | **Hyper-V Gen 2 SCSI controller**   | Block device not visible                     | IXFS driver initialized but VMBus/StorVSC not ready → no block device to read from     | Initialize VMBus → StorVSC → re-scan partitions (fixed in commit `cd6f749`)       |
+| 4 | **Missing partition type GUID**     | Partition scanner skips IXFS partition         | IXFS partition has no recognizable MBR type code or GPT GUID                            | Register IXFS GPT GUID in `partition.c`; use magic `0x49584653` as secondary check |
+| 5 | **Driver init order race**          | `C:\` mount fails intermittently             | Storage controller init is async; IXFS mount runs before disk is ready                  | Add `blkdev_wait_ready()` or poll for device availability before mount attempt    |
+
+### Boot Sequence Checklist
+
+```
+UEFI GOP + Memory Map → ExitBootServices()
+    ↓
+Kernel entry (identity-mapped, long mode)
+    ↓
+PMM → VMM → Heap → Interrupts → Timer
+    ↓
+Storage controller init:
+  ├─ QEMU:   VirtIO-SCSI (virtio_init)
+  ├─ Bare:   AHCI (ahci_init)
+  └─ HyperV: VMBus → StorVSC (vmbus_init → storvsc_init)  ← ⚠️ MUST complete
+    ↓
+Partition scan: MBR/GPT → detect IXFS magic 0x49584653
+    ↓
+ixfs_init() → mount C:\    ← ⚠️ FAILS if any step above incomplete
+    ↓
+Boot splash → Desktop
+```
+
+> [!TIP]
+> **Troubleshooting tip:** If `C:\` fails to mount, boot with verbose logging enabled
+> (`boot.conf: verbose=1`) and check the serial log for the last successful init step.
+> Common culprits: StorVSC GPADL creation failure (Hyper-V), AHCI port not spinning up
+> (bare metal), or `partition.c` not recognizing the IXFS partition type.
+
+> [!WARNING]
+> **Hyper-V Gen 2 is the hardest target.** Generation 2 VMs use Synthetic SCSI (StorVSC)
+> exclusively — there is no emulated IDE fallback. The full VMBus → StorVSC → GPADL
+> → VSCSI handshake must complete before ANY disk I/O. If VMBus version negotiation
+> fails or the ring buffer GPADL isn't created, the disk is simply invisible.
+> See commit `cd6f749` and [StorVSC spec](file:///specs/hyper-v/storvsc-synthetic-scsi.md).
+
+---
+
 ## Key Files
 
 | File | Purpose |

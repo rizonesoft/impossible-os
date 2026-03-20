@@ -99,7 +99,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
 | -- | :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md`        | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ✅   |
+| 💎 | **0**  | `specs/filesystem/ntfs-3.1.md` | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ✅   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
 | 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → NTFS partition found              | Phase 0 (block)              |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md`                 | §1.1 BPB Parsing                 | Locate MFT on disk, extract cluster size, FRS size                        | Phase 0 (partitions)         |   ⬜   |
@@ -747,3 +747,40 @@ graph TD
 | ⭐ | **Volume health dashboard** | ❌ Spread across multiple tools | ❌ CLI `ntfsinfo` only | ⬜ §11.1 P3 — one-panel health |
 | ⭐ | **Deleted file recovery** | ❌ Requires third-party (Recuva) | ⚠️ CLI `ntfsundelete` only | ⬜ §11.2 P3 — built-in GUI recovery |
 | 💎 | **Full read-only driver** | ✅ | ✅ | ⬜ Requires §1–§6 at minimum |
+
+---
+
+## Dual-Boot & Mounting Gotchas
+
+> [!CAUTION]
+> **The NTFS driver MUST be fully initialized before partition scanning attempts to
+> mount Windows volumes.** A custom OS has no built-in knowledge of NTFS — the driver
+> must be explicitly compiled into the kernel and initialized in the correct order.
+
+### Common Failure Modes When Mounting NTFS from Impossible OS
+
+| # | Failure Mode                         | Symptom                                          | Root Cause                                                                          | Fix                                                                                  |
+| - | ------------------------------------ | ------------------------------------------------ | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| 1 | **No NTFS driver loaded**            | Windows partition seen as RAW/unknown             | `ntfs_detect()` not registered with partition scanner before `partition_scan()`      | Register NTFS filesystem type BEFORE partition scan in `boot_storage.c`               |
+| 2 | **Partition type not recognized**    | NTFS partition skipped entirely                   | Partition scanner doesn't check MBR type `0x07` or GPT GUID `EBD0A0A2-B887-...`     | Add NTFS type codes to `partition.c` type table                                      |
+| 3 | **Storage controller not ready**     | Block device not available for NTFS disk reads    | On Hyper-V Gen 2: VMBus/StorVSC handshake not complete before NTFS mount attempted   | Ensure VMBus → StorVSC → re-scan sequence (commit `cd6f749`)                         |
+| 4 | **Dirty volume rejection**           | NTFS mounts but operations fail unpredictably     | Windows didn't cleanly unmount (dirty flag set in `$Volume`)                         | §7.1: check dirty flag on mount, log warning, mount read-only                        |
+| 5 | **Cluster size mismatch**            | BPB values parsed but data reads return garbage   | NTFS uses 4096-byte sectors (Advanced Format) but driver assumes 512                 | Use `bytes_per_sector` from BPB, not hardcoded 512                                   |
+
+### Hyper-V Gen 2 Dependency Chain for NTFS Access
+
+```
+VMBus init → StorVSC init → GPADL handshake → SCSI INQUIRY
+    ↓
+Block device "hyperv0" registered
+    ↓
+Partition scan: GPT → find type GUID EBD0A0A2-B887-... → detect NTFS OEM "NTFS    "
+    ↓
+ntfs_init(blkdev) → read BPB → locate MFT → mount as D: (or next free letter)
+```
+
+> [!TIP]
+> **Dual-boot scenario:** The bootloader and kernel live on the FAT32 EFI System Partition.
+> IXFS is `C:\` (the Impossible OS system partition). Windows NTFS partitions are detected
+> during partition scanning and auto-assigned the next available drive letter (`D:`, `E:`, etc.).
+> The NTFS read-only driver enables browsing Windows files without rebooting.
