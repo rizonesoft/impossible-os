@@ -225,8 +225,8 @@ void boot_splash_status(const char *msg)
 
 void boot_splash_tick(void)
 {
-    /* No-op: animation is now timer-driven via PIT callback */
-    (void)0;
+    if (!splash_on) return;
+    spinner_advance();  /* advance one animation frame */
 }
 
 void boot_splash_finish(void)

@@ -186,33 +186,37 @@ void spinner_init(int32_t cx, int32_t cy,
     s_active = 0;
 }
 
-/* Blocking animation loop — runs until spinner_stop() is called from
- * another context (e.g., boot_splash completion).  Uses sleep_ms() via
- * g_system_timer so it works on every platform (PIT on TCG, LAPIC elsewhere).
- * Runs at ~10fps (100ms per frame). */
+/* Non-blocking start — just marks the spinner as active.
+ * Animation frames are driven by calling spinner_advance() from
+ * boot_splash_tick() during normal boot flow. This ensures spinner
+ * animation runs concurrently with other boot phases without blocking
+ * the main boot thread. */
 void spinner_start(void)
 {
     if (s_active) return;
     s_active = 1;
     s_frame  = 0;
+}
 
-    while (s_active) {
-        s_frame++;
-        spinner_render(255);
+/* Advance one animation frame.  Called from boot_splash_tick() or any
+ * periodic boot callback.  Renders the current frame and swaps the
+ * spinner bounding rect.  Returns immediately — caller controls timing. */
+void spinner_advance(void)
+{
+    if (!s_active) return;
 
-        /* Swap only the spinner's bounding rect (no full-screen swap) */
-        uint32_t bx, by, bw, bh;
-        spinner_get_bounds(&bx, &by, &bw, &bh);
-        fb_swap_rect(bx, by, bw, bh);
+    s_frame++;
+    spinner_render(255);
 
-        sleep_ms(100);  /* ~10 fps */
-    }
+    /* Swap only the spinner's bounding rect (no full-screen swap) */
+    uint32_t bx, by, bw, bh;
+    spinner_get_bounds(&bx, &by, &bw, &bh);
+    fb_swap_rect(bx, by, bw, bh);
 }
 
 void spinner_stop(void)
 {
     s_active = 0;
-    /* The polling loop in spinner_start() exits on next iteration */
 }
 
 void spinner_draw_faded(uint8_t fade)
