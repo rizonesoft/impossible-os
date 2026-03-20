@@ -537,7 +537,7 @@ boot_storage_init()
 - [x] Implement `platform_name()` → returns human-readable string (e.g., `"Hyper-V"`)
 - [x] Implement `platform_is_tcg()` → returns true only for `PLATFORM_QEMU_TCG`
 - [x] Implement `platform_has_apic_freq_msr()` → true for Hyper-V, VMware, KVM + bare metal with CPUID 0x15
-- [ ] Call `platform_detect()` inside `timer_hal_init()` (§6.4) — first thing it does
+- [x] Call `platform_detect()` inside `timer_hal_init()` (§6.4) — first thing it does
 - [x] Log result: `[platform] Detected: Hyper-V (CPUID 0x40000000)`
 - [x] Add `cpuid_platform.o` to `Makefile` kernel object list (auto-discovered via `find`)
 - [x] Build and test: `=== BUILD OK ===` (10.2s, 134 objects)
