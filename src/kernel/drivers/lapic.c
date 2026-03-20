@@ -780,6 +780,7 @@ timer_driver_t lapic_driver = {
 static uint64_t lapic_timer_handler(struct interrupt_frame *frame)
 {
     lapic_tick_count++;
+    timer_tick_callback_fire();
     lapic_eoi();
     return schedule(frame);
 }

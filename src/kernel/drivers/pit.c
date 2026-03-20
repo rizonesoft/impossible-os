@@ -50,7 +50,7 @@ static volatile uint64_t tick_count = 0;
 static uint32_t pit_divisor;
 static uint32_t pit_actual_freq;
 
-/* Increment tick counter and fire callback. Called from either
+/* Increment tick counter and fire callbacks. Called from either
  * pit_irq_handler (PIT-as-tick-source) or LAPIC timer handler. */
 int pit_tick_increment(void)
 {
@@ -60,7 +60,10 @@ int pit_tick_increment(void)
     spin_lock_irqsave(&pit_lock, &flags);
     tick_count++;
 
-    /* Fire optional callback (e.g., boot splash animation) */
+    /* Fire HAL tick callback (platform-agnostic: spinner, heartbeat, etc.) */
+    timer_tick_callback_fire();
+
+    /* Fire PIT-specific callback (legacy mechanism) */
     if (pit_callback_fn) {
         pit_callback_counter++;
         if (pit_callback_counter >= pit_callback_divisor) {

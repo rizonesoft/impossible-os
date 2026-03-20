@@ -15,10 +15,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **C sources** (`.c`) | 129 | 64154 |
-| **Headers** (`.h`) | 113 | 25596 |
+| **C sources** (`.c`) | 129 | 64186 |
+| **Headers** (`.h`) | 113 | 25612 |
 | **Assembly** (`.asm`) | 7 | 807 |
-| **Subtotal** | **249** | **90557** |
+| **Subtotal** | **249** | **90605** |
 
 ## Build System & Scripts
 
@@ -33,10 +33,10 @@
 
 | | Files | Lines |
 |---|---:|---:|
-| **All project code** | **269** | **94091** |
+| **All project code** | **269** | **94139** |
 
 > Vendored code excluded: ~13612 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 
 ---
 
-*Last updated: 2026-03-20 17:38 · commit `6dcb8d2`*
+*Last updated: 2026-03-20 17:57 · commit `03286ef`*

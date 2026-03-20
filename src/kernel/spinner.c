@@ -186,21 +186,20 @@ void spinner_init(int32_t cx, int32_t cy,
     s_active = 0;
 }
 
-/* Non-blocking start — just marks the spinner as active.
- * Animation frames are driven by calling spinner_advance() from
- * boot_splash_tick() during normal boot flow. This ensures spinner
- * animation runs concurrently with other boot phases without blocking
- * the main boot thread. */
+/* Non-blocking start — registers a periodic timer tick callback.
+ * The timer ISR drives animation at ~10fps (100Hz / 10).
+ * spinner_advance() runs in interrupt context — keep it fast. */
 void spinner_start(void)
 {
     if (s_active) return;
     s_active = 1;
     s_frame  = 0;
+    timer_register_tick_callback(spinner_advance, 10);
 }
 
-/* Advance one animation frame.  Called from boot_splash_tick() or any
- * periodic boot callback.  Renders the current frame and swaps the
- * spinner bounding rect.  Returns immediately — caller controls timing. */
+/* Advance one animation frame.  Called from timer tick ISR callback.
+ * Renders the current frame and swaps the spinner bounding rect.
+ * Runs in interrupt context — no sleeping, no locks. */
 void spinner_advance(void)
 {
     if (!s_active) return;
@@ -217,6 +216,7 @@ void spinner_advance(void)
 void spinner_stop(void)
 {
     s_active = 0;
+    timer_unregister_tick_callback();
 }
 
 void spinner_draw_faded(uint8_t fade)

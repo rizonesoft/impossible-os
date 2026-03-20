@@ -50,6 +50,22 @@ uint32_t system_get_freq(void);
  * Safe to call before g_system_timer is set (returns 0). */
 uint64_t uptime(void);
 
+/* ---- Timer tick callback (ISR-context) ----
+ * One global callback invoked from the active timer ISR at configurable
+ * frequency.  Used for animation (spinner), heartbeat LED, etc.
+ * The callback runs in interrupt context — keep it short, no sleeping. */
+
+/* Register a periodic callback called every `every_n_ticks` timer ticks.
+ * At 100 Hz timer, every_n_ticks=10 gives ~10 fps. */
+void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks);
+
+/* Unregister the tick callback. */
+void timer_unregister_tick_callback(void);
+
+/* Called from PIT/LAPIC ISR to fire the registered callback at the
+ * configured frequency.  Not for external use. */
+void timer_tick_callback_fire(void);
+
 /* ---- UTS initialization ---- */
 
 /* Initialize the Unified Timer Subsystem.

@@ -45,7 +45,35 @@ uint64_t uptime(void)
     return system_get_ticks() / freq;
 }
 
-/* ---- UTS initialization (§6.4) ---- */
+/* ---- Timer tick callback (ISR-context periodic callback) ---- */
+
+static void (*tick_cb_fn)(void) = (void *)0;
+static uint32_t tick_cb_divisor = 0;
+static uint32_t tick_cb_counter = 0;
+
+void timer_register_tick_callback(void (*fn)(void), uint32_t every_n_ticks)
+{
+    tick_cb_counter = 0;
+    tick_cb_divisor = every_n_ticks;
+    tick_cb_fn = fn;
+}
+
+void timer_unregister_tick_callback(void)
+{
+    tick_cb_fn = (void *)0;
+    tick_cb_divisor = 0;
+    tick_cb_counter = 0;
+}
+
+void timer_tick_callback_fire(void)
+{
+    if (!tick_cb_fn) return;
+    tick_cb_counter++;
+    if (tick_cb_counter >= tick_cb_divisor) {
+        tick_cb_counter = 0;
+        tick_cb_fn();
+    }
+}
 
 #include "kernel/cpuid_platform.h"
 #include "kernel/drivers/pit.h"
