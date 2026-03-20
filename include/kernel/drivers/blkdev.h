@@ -15,11 +15,12 @@
 /* Maximum registered block devices */
 #define BLKDEV_MAX  16
 
-/* Block device read/write function pointer types */
+/* Block device read/write/flush function pointer types */
 typedef int (*blkdev_read_fn)(uint64_t lba, uint32_t count, void *buf,
                                void *driver_data);
 typedef int (*blkdev_write_fn)(uint64_t lba, uint32_t count, const void *buf,
                                 void *driver_data);
+typedef int (*blkdev_flush_fn)(void *driver_data);
 
 /* Block device descriptor */
 struct blkdev {
@@ -28,7 +29,8 @@ struct blkdev {
     uint64_t     sector_count;   /* Total sectors */
     blkdev_read_fn  read;        /* Driver read function */
     blkdev_write_fn write;       /* Driver write function */
-    void        *driver_data;    /* Opaque pointer passed to read/write */
+    blkdev_flush_fn flush;       /* Driver flush function (NULL = no cache) */
+    void        *driver_data;    /* Opaque pointer passed to callbacks */
     uint8_t      active;         /* 1 if registered and valid */
 };
 
@@ -52,6 +54,11 @@ int blkdev_read(const struct blkdev *dev, uint64_t lba, uint32_t count,
  * Returns 0 on success, -1 on error. */
 int blkdev_write(const struct blkdev *dev, uint64_t lba, uint32_t count,
                  const void *buf);
+
+/* Flush volatile write cache to persistent storage.
+ * Calls the driver's flush callback if available.
+ * Returns 0 on success (or if no flush needed), -1 on error. */
+int blkdev_sync(const struct blkdev *dev);
 
 /* Get total number of registered block devices. */
 int blkdev_count(void);

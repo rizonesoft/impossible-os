@@ -51,6 +51,7 @@ int blkdev_register(const struct blkdev *dev)
     d->sector_count = dev->sector_count;
     d->read         = dev->read;
     d->write        = dev->write;
+    d->flush        = dev->flush;
     d->driver_data  = dev->driver_data;
     d->active       = 1;
 
@@ -91,6 +92,16 @@ int blkdev_write(const struct blkdev *dev, uint64_t lba, uint32_t count,
     if (!dev || !dev->write || !dev->active)
         return -1;
     return dev->write(lba, count, buf, dev->driver_data);
+}
+
+int blkdev_sync(const struct blkdev *dev)
+{
+    if (!dev || !dev->active)
+        return -1;
+    /* If no flush callback, device has no cache — success by default */
+    if (!dev->flush)
+        return 0;
+    return dev->flush(dev->driver_data);
 }
 
 int blkdev_count(void)

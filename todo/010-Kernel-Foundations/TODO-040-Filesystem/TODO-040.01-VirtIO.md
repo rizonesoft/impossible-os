@@ -355,18 +355,26 @@ graph TD
 
 ### 2.2 Flush (Write Barriers)
 
-**Prompt:** The current driver has no cache flush support, meaning filesystem write barriers (e.g., FAT32 metadata commit, IXFS journal) cannot guarantee durability. Negotiate `VIRTIO_BLK_F_FLUSH` (bit 6). When negotiated, implement `virtio_blk_flush()` that sends a `VIRTIO_BLK_T_FLUSH` (type 4) request — a 2-descriptor chain (header + status, no data buffer). The `sector` field is ignored for flush. Also negotiate `VIRTIO_BLK_F_CONFIG_WCE` (bit 9) to read/toggle the writeback cache mode via device config offset `0x20`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: flush and write cache control"`. Add notes directly in this TODO section.
+**Verification:** Flush and write cache control are implemented. `virtio_blk_flush()` sends a `VIRTIO_BLK_T_FLUSH` (type 4) request as a 2-descriptor chain (header + status, no data buffer per VirtIO 1.2 §5.2.6). `VIRTIO_BLK_F_CONFIG_WCE` (bit 9) allows reading/toggling writeback mode via config offset `0x20`. The `blkdev_sync()` API provides block-layer flush abstraction. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`. Feature bit constants in `virtio_blk.h` were corrected to match the VirtIO 1.2 spec exactly.
 
-- [ ] Negotiate `VIRTIO_BLK_F_FLUSH` (bit 6) — cache flush supported
-- [ ] Implement `virtio_blk_flush()`:
-  - [ ] Build 2-descriptor chain: header (type = `VIRTIO_BLK_T_FLUSH`, sector = 0) + status byte
-  - [ ] Submit to request queue, wait for completion
-  - [ ] Return `VIRTIO_BLK_S_OK` / `VIRTIO_BLK_S_IOERR`
-- [ ] Negotiate `VIRTIO_BLK_F_CONFIG_WCE` (bit 9) — writeback cache enable
-- [ ] Read/write `writeback` field at device config offset `0x20` (0 = writethrough, 1 = writeback)
-- [ ] Expose: `virtio_blk_set_write_cache(bool enable)` public API
-- [ ] Wire to block device layer: `blkdev_sync()` → `virtio_blk_flush()`
-- [ ] Commit: `"virtio-blk: flush and write cache control"`
+- [x] Negotiate `VIRTIO_BLK_F_FLUSH` (bit 6) — cache flush supported
+- [x] Implement `virtio_blk_flush()`:
+  - [x] Build 2-descriptor chain: header (type = `VIRTIO_BLK_T_FLUSH`, sector = 0) + status byte
+  - [x] Submit to request queue, wait for completion
+  - [x] Return `VIRTIO_BLK_S_OK` / `VIRTIO_BLK_S_IOERR`
+- [x] Negotiate `VIRTIO_BLK_F_CONFIG_WCE` (bit 9) — writeback cache enable
+- [x] Read/write `writeback` field at device config offset `0x20` (0 = writethrough, 1 = writeback)
+- [x] Expose: `virtio_blk_set_write_cache(int enable)` public API
+- [x] Wire to block device layer: `blkdev_sync()` → `virtio_blk_flush()`
+- [x] Committed
+
+> **Notes:**
+> - Feature bit constants in `virtio_blk.h` were **all wrong** (shifted by +1 to +3 relative to the VirtIO 1.2 spec §5.2.3). Fixed: `F_SIZE_MAX=0, F_SEG_MAX=1, F_GEOMETRY=2, F_RO=4, F_BLK_SIZE=5, F_FLUSH=6, F_TOPOLOGY=7, F_CONFIG_WCE=9`.
+> - `virtio_blk_flush()` returns `1` (not `-1`) when flush wasn't negotiated — callers can distinguish "not supported" from "flush failed".
+> - Flush uses a 10-second timeout (doubled from normal I/O) since cache flush involves actual disk writes.
+> - `blkdev_sync()` added to the blkdev layer with `blkdev_flush_fn` callback — returns 0 if no flush callback (device has no cache).
+> - Writeback mode is logged at init and can be toggled via `virtio_blk_set_write_cache()`.
+> - The QEMU `run` target uses AHCI (`ide-hd`), not virtio-blk. To test flush with virtio, use: `-drive file=disk.img,format=raw,if=none,id=vdisk0 -device virtio-blk-pci,drive=vdisk0`.
 
 ### 2.3 Device Identification (GET_ID)
 

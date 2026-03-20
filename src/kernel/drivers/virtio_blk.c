@@ -14,6 +14,7 @@
  *   7. Set DRIVER_OK
  *
  * I/O: 3-descriptor chain per request (header, data, status).
+ * Flush: 2-descriptor chain (header, status) — no data buffer.
  * ============================================================================ */
 
 #include "kernel/drivers/virtio_blk.h"
@@ -31,6 +32,10 @@ static int                    initialized;     /* 1 if init succeeded */
 static volatile int           virtio_irq_fired; /* Queue completion flag */
 static uint8_t                msix_vec_queue;  /* MSI-X IDT vector: queue */
 static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
+
+/* Feature negotiation results */
+static int                    has_flush;       /* F_FLUSH negotiated */
+static int                    has_config_wce;  /* F_CONFIG_WCE negotiated */
 
 /* ---- MSI-X IRQ handlers ---- */
 
@@ -180,6 +185,97 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
 }
 
+/* ---- Flush I/O (2-descriptor chain: header + status, no data) ---- */
+static int virtio_blk_do_flush(void)
+{
+    struct virtio_blk_req req;
+    uint8_t status_byte = 0xFF;
+    int d0, d1;
+    uint32_t timeout;
+    uint64_t rflags;
+
+    if (!initialized)
+        return -1;
+
+    /* Build flush request header — sector field is ignored */
+    req.type     = VIRTIO_BLK_T_FLUSH;
+    req.reserved = 0;
+    req.sector   = 0;
+
+    /* Allocate 2 descriptors from the virtqueue free list */
+    if (blk_vq.num_free < 2) {
+        klog(LOG_DEBUG, "virtio", "No free descriptors for flush");
+        return -1;
+    }
+
+    /* Descriptor 0: request header (device-readable) */
+    d0 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d0].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+
+    /* Descriptor 1: status byte (device-writable) — no data descriptor */
+    d1 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d1].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].next = (uint16_t)d1;
+
+    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vq.desc[d1].len   = 1;
+    blk_vq.desc[d1].flags = VIRTQ_DESC_F_WRITE;
+    blk_vq.desc[d1].next  = 0;
+
+    /* Add chain head to available ring */
+    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
+    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+
+    __asm__ volatile ("mfence" ::: "memory");
+    blk_vq.avail->idx++;
+    __asm__ volatile ("mfence" ::: "memory");
+
+    /* Enable interrupts for IRQ delivery */
+    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+    virtio_irq_fired = 0;
+    __asm__ volatile ("sti");
+
+    /* Notify device */
+    virtq_kick(&blk_vq);
+
+    /* Poll for completion — flush may take longer than normal I/O */
+    timeout = 10000000;
+    while (timeout-- > 0) {
+        __asm__ volatile ("mfence" ::: "memory");
+        if (blk_vq.used->idx != blk_vq.last_used)
+            break;
+        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    }
+
+    /* Restore interrupt state */
+    if (!(rflags & (1 << 9))) {
+        __asm__ volatile ("cli");
+    }
+
+    if (timeout == 0) {
+        klog(LOG_DEBUG, "virtio", "Flush timeout");
+        virtq_free_desc(&blk_vq, (uint16_t)d0);
+        virtq_free_desc(&blk_vq, (uint16_t)d1);
+        return -1;
+    }
+
+    /* Consume the used ring entry */
+    blk_vq.last_used++;
+
+    /* Free both descriptors */
+    virtq_free_desc(&blk_vq, (uint16_t)d0);
+    virtq_free_desc(&blk_vq, (uint16_t)d1);
+
+    return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+}
+
 /* ---- Public API ---- */
 
 int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
@@ -190,6 +286,37 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
 {
     return virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * 512, (void *)buffer);
+}
+
+int virtio_blk_flush(void)
+{
+    if (!initialized)
+        return -1;
+
+    /* If F_FLUSH was not negotiated, flush is a no-op (writethrough mode) */
+    if (!has_flush)
+        return 1;
+
+    return virtio_blk_do_flush();
+}
+
+int virtio_blk_set_write_cache(int enable)
+{
+    if (!initialized || !has_config_wce)
+        return -1;
+
+    if (!blk_dev.device_cfg)
+        return -1;
+
+    /* Write the writeback field at device config offset 0x20 */
+    volatile uint8_t *wb = (volatile uint8_t *)
+        (blk_dev.device_cfg + VIRTIO_BLK_CFG_WRITEBACK);
+    mmio_write8(wb, enable ? 1 : 0);
+
+    klog(LOG_DEBUG, "virtio", "Write cache mode: %s",
+           enable ? "writeback" : "writethrough");
+
+    return 0;
 }
 
 uint64_t virtio_blk_capacity(void)
@@ -210,6 +337,7 @@ int virtio_blk_init(void)
     int found = 0;
     uint8_t bus, slot, func;
     uint32_t feat_lo;
+    uint32_t driver_feat_lo;
     uint8_t status;
 
     /* Scan PCI for virtio-blk: modern ID 0x1042 or transitional ID 0x1001 */
@@ -277,13 +405,30 @@ int virtio_blk_init(void)
     feat_lo = read_device_features(0);
     klog(LOG_DEBUG, "virtio", "Device features[0]: %x", (uint64_t)feat_lo);
 
+    /* Build driver feature set — accept features we support */
+    driver_feat_lo = 0;
+
+    /* Negotiate F_FLUSH (bit 6): cache flush for write barriers */
+    if (feat_lo & (1u << VIRTIO_BLK_F_FLUSH)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_FLUSH);
+        has_flush = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_FLUSH (write barriers)");
+    }
+
+    /* Negotiate F_CONFIG_WCE (bit 9): writeback cache control */
+    if (feat_lo & (1u << VIRTIO_BLK_F_CONFIG_WCE)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_CONFIG_WCE);
+        has_config_wce = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_CONFIG_WCE (write cache control)");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
     {
         uint32_t feat_hi = read_device_features(1);
         (void)feat_hi;
         /* We must negotiate VERSION_1 for modern transport */
         write_driver_features(1, 1);  /* Bit 0 of page 1 = VIRTIO_F_VERSION_1 */
-        write_driver_features(0, 0);  /* No optional block features needed */
+        write_driver_features(0, driver_feat_lo);
     }
 
     /* Step 5: FEATURES_OK (modern transport requires this) */
@@ -329,6 +474,15 @@ int virtio_blk_init(void)
         } while (gen1 != gen2);
     }
 
+    /* Read writeback cache mode if F_CONFIG_WCE negotiated */
+    if (has_config_wce && blk_dev.device_cfg) {
+        volatile uint8_t *wb = (volatile uint8_t *)
+            (blk_dev.device_cfg + VIRTIO_BLK_CFG_WRITEBACK);
+        uint8_t wb_val = mmio_read8(wb);
+        klog(LOG_DEBUG, "virtio", "Write cache: %s",
+               wb_val ? "writeback" : "writethrough");
+    }
+
     /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */
     {
         uint8_t cur = virtio_get_status(&blk_dev);
@@ -352,9 +506,11 @@ int virtio_blk_init(void)
         irq_register(msix_vec_config, virtio_blk_config_irq, NULL, "virtio-blk-cfg");
     }
 
-    klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors)",
+    klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors)%s%s",
            (uint64_t)(disk_capacity / 2048),
-           (uint64_t)disk_capacity);
+           (uint64_t)disk_capacity,
+           has_flush ? ", flush" : "",
+           has_config_wce ? ", wce" : "");
 
     return 0;
 }
