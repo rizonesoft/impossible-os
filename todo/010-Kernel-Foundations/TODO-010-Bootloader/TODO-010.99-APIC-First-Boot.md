@@ -580,12 +580,12 @@ boot_storage_init()
   - [x] Create `static timer_driver_t pit_driver = { "PIT", pit_init, pit_get_ticks, pit_sleep_ms, ... };`
   - [x] Rename internal sleep to `pit_sleep_ms()` (static, used only by `pit_driver`)
   - [x] Export `extern timer_driver_t pit_driver;` from `pit.h`
-- [ ] Refactor `lapic.c` to expose `lapic_driver`:
-  - [ ] Create `timer_driver_t lapic_driver = { "LAPIC", ... };`
-  - [ ] Implement `lapic_get_ticks()` — returns the global `tick_count` (driven by LAPIC ISR)
-  - [ ] Implement `lapic_sleep_ms()` — uses `lapic_get_ticks()` + `hlt` loop
-  - [ ] Export `extern timer_driver_t lapic_driver;` from `lapic.h`
-  - [ ] → Deferred to §6.3/6.4 (requires calibration waterfall before LAPIC driver can be selected)
+- [x] Refactor `lapic.c` to expose `lapic_driver`:
+  - [x] Create `timer_driver_t lapic_driver = { "LAPIC", ... };`
+  - [x] Implement `lapic_get_ticks()` — returns `lapic_tick_count` (driven by LAPIC ISR)
+  - [x] Implement `lapic_sleep_ms()` — uses `lapic_get_ticks()` + `hlt` loop
+  - [x] Export `extern timer_driver_t lapic_driver;` from `lapic.h`
+  - [x] Done in §6.4 (commit `aa5b04c`)
 - [x] Update all callers of `pit_get_ticks()` to `system_get_ticks()`:
   - [x] `src/kernel/registry.c` (2 call sites + 2 extern decls to remove)
   - [x] `src/kernel/klog.c` (2 call sites)
