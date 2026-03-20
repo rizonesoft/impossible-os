@@ -1,4 +1,4 @@
-# run-windows.ps1 — Launch Impossible OS in QEMU on Windows
+# run-qemu.ps1 — Launch Impossible OS in QEMU on Windows
 #
 # Parameters:
 #   -Xres   Horizontal resolution (default: 1280)
@@ -10,8 +10,8 @@
 #   tcg:       CPUID → "TCGTCGTCGTCG" → PIT timer selected
 #
 # Usage:
-#   Double-click run-windows.bat             → 1280×720, auto accel
-#   Double-click run-windows-tcg.bat         → 1280×720, TCG (PIT timer)
+#   Double-click run-qemu-kvm.bat             → 1280×720, auto accel
+#   Double-click run-qemu-tcg.bat         → 1280×720, TCG (PIT timer)
 #   Double-click run-windows-1080p.bat       → 1920×1080  scale=1×
 #   Double-click run-windows-1440p.bat       → 2560×1440  scale=2×
 #   Double-click run-windows-4k.bat          → 3840×2160  scale=2×
