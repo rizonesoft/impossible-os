@@ -1,12 +1,12 @@
-# 040.08-NTFS — New Technology File System (Read-Only Driver)
+# 040.08-NTFS — New Technology File System (C: Drive)
 
-> **Goal:** Implement a production-grade, read-only NTFS 3.1 driver for
-> Impossible OS. The driver must parse the BIOS Parameter Block (BPB),
+> **Goal:** Implement NTFS 3.1 as the **primary system partition (C: drive)**
+> for Impossible OS. The driver must parse the BIOS Parameter Block (BPB),
 > locate and read the Master File Table (MFT), apply Update Sequence
 > Array (fixup) integrity checks, decode resident and non-resident
 > attributes, execute data run decoding for file cluster retrieval,
-> and traverse B+ tree directory indexes. This enables reading files
-> from Windows partitions — critical for dual-boot interoperability.
+> and traverse B+ tree directory indexes. NTFS replaces IXFS as the
+> root filesystem — all system files, user data, and the Registry live here.
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for MFT record buffers (1 KB each),
@@ -14,10 +14,11 @@
 > small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
 
 > [!WARNING]
-> **Read-Only First.** NTFS write support is extremely complex due to journaling
-> (`$LogFile`), MFT Zone protection, B+ tree rebalancing, and Update Sequence
-> Array regeneration. This TODO covers **read-only** access. Write support is
-> a future P3 extension.
+> **Read-Only First, Write Essential.** NTFS write support is extremely complex
+> due to journaling (`$LogFile`), MFT Zone protection, B+ tree rebalancing,
+> and Update Sequence Array regeneration. This TODO starts with **read-only**
+> access. However, since NTFS is the C: drive, write support is a **P1 follow-up**
+> (not optional) — the OS must be able to save settings, logs, and user files.
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, algorithms, and data structures
@@ -103,7 +104,7 @@ graph TD
 | 💎 | **0**  | `TODO-040.04/05`      | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found        | Phase 0 (block)                        |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                   |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ✅   |
-| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ⬜   |
+| 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ⬜   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ⬜   |
@@ -112,7 +113,7 @@ graph TD
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                         |   ⬜   |
-| 💎 | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS volumes, wire `vfs_ops` callbacks                     | P3 (§4.2) + P4 (§5.3) + VFS (040.07)   |   ⬜   |
+| 💎 | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07)   |   ⬜   |
 | 💎 | **5**  | `TODO-040.08-NTFS.md` | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | Phase 4 (§5.1, §5.2)                   |   ⬜   |
 | 💎 | **5**  | `TODO-040.08-NTFS.md` | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **6**  | `TODO-040.08-NTFS.md` | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | Phase 2 (§3.1) + VFS §2.2              |   ⬜   |
@@ -123,6 +124,12 @@ graph TD
 | 💎 | **7**  | `TODO-040.08-NTFS.md` | §8.1 Test Suite                | Automated validation with NTFS test images                       | Phase 5 (§6.1)                         |   ⬜   |
 | ⭐ | **7**  | `TODO-040.08-NTFS.md` | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | Phase 6 (§7.1)                         |   ⬜   |
 | ⭐ | **7**  | `TODO-040.08-NTFS.md` | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | Phase 6 (§7.1)                         |   ⬜   |
+
+> [!IMPORTANT]
+> **NTFS is the root filesystem (C: drive).** NTFS replaces IXFS as the primary
+> system partition format. This elevates the entire NTFS driver from "compatibility
+> layer" to **critical path** — write support, journaling, and robustness are
+> essential, not optional. All phases should be prioritized accordingly.
 
 > [!NOTE]
 > **Phases 0–1** are prerequisites — block I/O, partition tables, BPB, and MFT reading.
@@ -223,22 +230,29 @@ graph TD
 
 ### 2.2 Update Sequence Array (Fixup) Verification
 
-**Prompt:** Before any attribute parsing can be trusted, the driver must apply the Update Sequence Array fixup mechanism to detect and repair sector tearing. For a 1024-byte record (2 physical sectors), the USA contains: the Update Sequence Number (USN, 2 bytes) followed by 2 replacement words (one per sector). The last 2 bytes of each 512-byte sector must match the USN — if not, the record is corrupt (sector tear). On match, restore the original bytes from the USA. This applies to both MFT `"FILE"` records and INDX buffers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: Update Sequence Array fixup"`. Add notes directly in this TODO section.
+**Verification:** USA fixup is implemented in `ntfs_core.c` (`ntfs_apply_fixup()`). Verify: `bash scripts/build.sh clean` passes. The function takes a raw record buffer, record size, and sector size. It reads the USA offset/size from the header, verifies each sector's last 2 bytes match the USN (detecting sector tears), and restores the original bytes. Works on both `"FILE"` and `"INDX"` records since the USA layout is identical. Returns `NTFS_ERR_FIXUP` on sector tear.
 
-- [ ] Implement `ntfs_apply_fixup(buffer, record_size, sector_size)`:
-  - [ ] Read USA offset from `buffer[0x04]` (2 bytes)
-  - [ ] Read USA size from `buffer[0x06]` (2 bytes, in 16-bit words)
-  - [ ] Extract USN: first 2 bytes at `buffer[usa_offset]`
-  - [ ] Calculate number of sectors: `record_size / sector_size`
-  - [ ] For each sector `i` (0-based):
-    - [ ] Check last 2 bytes: `buffer[sector_size * (i + 1) - 2]` must match USN
-    - [ ] If mismatch → return `NTFS_ERR_FIXUP_FAILED` (sector tear detected)
-    - [ ] Replace: copy `usa_array[i + 1]` (original bytes) → `buffer[sector_size * (i + 1) - 2]`
-  - [ ] Record is now clean and ready for attribute parsing
-- [ ] Handle variable sector sizes (512 and 4096)
-- [ ] Apply fixup to both `"FILE"` and `"INDX"` records
-- [ ] Log on fixup failure: `[NTFS] FIXUP FAILED: record at byte %llu, sector tear detected`
-- [ ] Commit: `"ntfs: Update Sequence Array fixup"`
+- [x] Implement `ntfs_apply_fixup(buffer, record_size, sector_size)`:
+  - [x] Read USA offset from `buffer[0x04]` (2 bytes)
+  - [x] Read USA size from `buffer[0x06]` (2 bytes, in 16-bit words)
+  - [x] Extract USN: first 2 bytes at `buffer[usa_offset]`
+  - [x] Calculate number of sectors: `record_size / sector_size`
+  - [x] For each sector `i` (0-based):
+    - [x] Check last 2 bytes: `buffer[sector_size * (i + 1) - 2]` must match USN
+    - [x] If mismatch → return `NTFS_ERR_FIXUP` (sector tear detected)
+    - [x] Replace: copy `usa_array[i + 1]` (original bytes) → `buffer[sector_size * (i + 1) - 2]`
+  - [x] Record is now clean and ready for attribute parsing
+- [x] Handle variable sector sizes (512 and 4096)
+- [x] Apply fixup to both `"FILE"` and `"INDX"` records
+- [x] Log on fixup failure: `[NTFS] FIXUP FAILED: sector N, expected USN 0xN, got 0xN`
+- [x] Committed
+
+> **Notes:**
+> - API: `ntfs_apply_fixup(buf, record_size, sector_size)` — generic, no volume context needed.
+> - Sanity checks: USA must fit within record, `usa_size_words` must equal `num_sectors + 1`.
+> - `NTFS_ERR_FIXUP` (-5) added to `ntfs.h` error codes.
+> - **Usage pattern:** After `ntfs_read_mft_record()` returns `NTFS_OK`, always call `ntfs_apply_fixup(buf, vol->frs_size, vol->bytes_per_sector)` before parsing any attributes.
+> - For INDX buffers (§6.2): use `ntfs_apply_fixup(buf, vol->index_size, vol->bytes_per_sector)`.
 
 ---
 

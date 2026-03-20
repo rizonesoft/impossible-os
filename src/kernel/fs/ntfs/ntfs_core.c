@@ -261,3 +261,81 @@ int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
 
     return NTFS_OK;
 }
+
+/* ============================================================================
+ * ntfs_apply_fixup — Update Sequence Array fixup
+ *
+ * NTFS writes a 2-byte "Update Sequence Number" (USN) over the last 2 bytes
+ * of each sector in a multi-sector record (FILE, INDX).  The original bytes
+ * are saved in the Update Sequence Array (USA) that follows the USN.
+ *
+ * On read, we must:
+ *   1. Verify that each sector's last 2 bytes match the USN (detect tears)
+ *   2. Restore the original bytes from the USA replacement entries
+ *
+ * Layout of USA (starting at usa_offset in the record):
+ *   [USN: 2 bytes] [replacement_0: 2 bytes] [replacement_1: 2 bytes] ...
+ *
+ * usa_size (in words) = 1 (USN) + num_sectors.
+ * ============================================================================ */
+
+int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size, uint16_t sector_size)
+{
+    uint16_t usa_offset;
+    uint16_t usa_size_words;
+    uint16_t usn;
+    uint32_t num_sectors;
+    uint32_t i;
+    uint16_t *usa_array;
+
+    if (!buf || sector_size == 0 || record_size < sector_size)
+        return NTFS_ERR_FIXUP;
+
+    /* Read USA offset and size from the record header */
+    usa_offset     = ntfs_le16(buf + 0x04);
+    usa_size_words = ntfs_le16(buf + 0x06);
+
+    /* Sanity: USA must fit within the record */
+    if (usa_offset + usa_size_words * 2 > record_size) {
+        klog(LOG_DEBUG, "ntfs",
+             "FIXUP: USA overflows record (off=%u, words=%u, rec=%u)",
+             (uint64_t)usa_offset, (uint64_t)usa_size_words,
+             (uint64_t)record_size);
+        return NTFS_ERR_FIXUP;
+    }
+
+    num_sectors = record_size / sector_size;
+
+    /* usa_size_words should be 1 (USN) + num_sectors */
+    if (usa_size_words != num_sectors + 1) {
+        klog(LOG_DEBUG, "ntfs",
+             "FIXUP: USA size mismatch (words=%u, expected %u)",
+             (uint64_t)usa_size_words, (uint64_t)(num_sectors + 1));
+        return NTFS_ERR_FIXUP;
+    }
+
+    /* Pointer to the USA array in the buffer */
+    usa_array = (uint16_t *)(buf + usa_offset);
+
+    /* First entry is the Update Sequence Number */
+    usn = usa_array[0];
+
+    /* Verify and replace for each sector */
+    for (i = 0; i < num_sectors; i++) {
+        uint32_t last_word_off = (i + 1) * sector_size - 2;
+        uint16_t on_disk_val   = ntfs_le16(buf + last_word_off);
+
+        if (on_disk_val != usn) {
+            klog(LOG_DEBUG, "ntfs",
+                 "FIXUP FAILED: sector %u, expected USN 0x%x, got 0x%x (sector tear)",
+                 (uint64_t)i, (uint64_t)usn, (uint64_t)on_disk_val);
+            return NTFS_ERR_FIXUP;
+        }
+
+        /* Restore original bytes from USA replacement entry [i+1] */
+        buf[last_word_off]     = (uint8_t)(usa_array[i + 1] & 0xFF);
+        buf[last_word_off + 1] = (uint8_t)(usa_array[i + 1] >> 8);
+    }
+
+    return NTFS_OK;
+}

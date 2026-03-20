@@ -66,6 +66,7 @@ int ntfs_probe(const uint8_t *sector);
 #define NTFS_ERR_BAD_RECORD -2  /* Magic is "BAAD" — corrupt record */
 #define NTFS_ERR_BAD_MAGIC  -3  /* Magic is unrecognized */
 #define NTFS_ERR_FREE       -4  /* Record is not in-use (deleted) */
+#define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
 
 /* Parsed MFT record header — matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
@@ -88,3 +89,13 @@ struct ntfs_mft_header {
  * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
 int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
                          void *buf, struct ntfs_mft_header *hdr);
+
+/* Apply Update Sequence Array fixup to a raw record buffer.
+ * Detects sector tears and restores original last-2-bytes-per-sector.
+ * Must be called AFTER reading from disk, BEFORE parsing attributes.
+ * Works on both "FILE" (MFT) and "INDX" (index) records.
+ * record_size: typically vol->frs_size (1024) or vol->index_size (4096).
+ * sector_size: typically vol->bytes_per_sector (512).
+ * Returns NTFS_OK on success, NTFS_ERR_FIXUP on sector tear. */
+int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size,
+                     uint16_t sector_size);
