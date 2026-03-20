@@ -99,3 +99,78 @@ int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
  * Returns NTFS_OK on success, NTFS_ERR_FIXUP on sector tear. */
 int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size,
                      uint16_t sector_size);
+
+/* ---- Attribute Iterator ---- */
+
+/* Well-known attribute type IDs */
+#define NTFS_ATTR_STANDARD_INFORMATION  0x10
+#define NTFS_ATTR_ATTRIBUTE_LIST        0x20
+#define NTFS_ATTR_FILE_NAME             0x30
+#define NTFS_ATTR_OBJECT_ID             0x40
+#define NTFS_ATTR_SECURITY_DESCRIPTOR   0x50
+#define NTFS_ATTR_VOLUME_NAME           0x60
+#define NTFS_ATTR_VOLUME_INFORMATION    0x70
+#define NTFS_ATTR_DATA                  0x80
+#define NTFS_ATTR_INDEX_ROOT            0x90
+#define NTFS_ATTR_INDEX_ALLOCATION      0xA0
+#define NTFS_ATTR_BITMAP                0xB0
+#define NTFS_ATTR_REPARSE_POINT         0xC0
+#define NTFS_ATTR_LOGGED_UTILITY_STREAM 0x100
+#define NTFS_ATTR_END                   0xFFFFFFFF  /* $END marker */
+
+/* Attribute flags (at common header offset 0x0C) */
+#define NTFS_ATTR_FLAG_COMPRESSED  0x0001
+#define NTFS_ATTR_FLAG_ENCRYPTED   0x4000
+#define NTFS_ATTR_FLAG_SPARSE      0x8000
+
+/* Parsed attribute common header — works for both resident and non-resident.
+ * The iterator fills this from raw record bytes at each position. */
+struct ntfs_attr_header {
+    /* Common header (all attributes) */
+    uint32_t type;               /* 0x00: Attribute type ID */
+    uint32_t total_length;       /* 0x04: Total length including header */
+    uint8_t  non_resident;       /* 0x08: 0=resident, 1=non-resident */
+    uint8_t  name_length;        /* 0x09: Name length in UTF-16LE chars */
+    uint16_t name_offset;        /* 0x0A: Offset to name from attr start */
+    uint16_t flags;              /* 0x0C: NTFS_ATTR_FLAG_* */
+    uint16_t attr_id;            /* 0x0E: Per-record attribute instance ID */
+
+    /* Resident-only fields (valid when non_resident == 0) */
+    uint32_t content_length;     /* 0x10: Length of attribute content */
+    uint16_t content_offset;     /* 0x14: Offset to content from attr start */
+
+    /* Raw pointer into the record buffer (not a copy) */
+    const uint8_t *raw;          /* Points to start of this attribute */
+};
+
+/* Get pointer to the first attribute in a raw MFT record buffer.
+ * Uses attrs_offset from the parsed header (hdr->attrs_offset).
+ * Returns pointer into buf, or NULL if offset is invalid. */
+const uint8_t *ntfs_attr_first(const uint8_t *record,
+                               const struct ntfs_mft_header *hdr);
+
+/* Advance to the next attribute. Returns NULL at $END or on bounds error.
+ * used_size: hdr->used_size (bounds check). */
+const uint8_t *ntfs_attr_next(const uint8_t *attr, const uint8_t *record,
+                              uint32_t used_size);
+
+/* Parse the common header fields from a raw attribute pointer.
+ * Returns NTFS_OK, or NTFS_ERR_BAD_MAGIC if type == NTFS_ATTR_END. */
+int ntfs_attr_parse(const uint8_t *attr, struct ntfs_attr_header *out);
+
+/* Find the first attribute of a given type in a record.
+ * Iterates from first to $END. Returns the raw pointer, or NULL.
+ * If out is non-NULL, fills it with parsed header fields. */
+const uint8_t *ntfs_attr_find(const uint8_t *record,
+                              const struct ntfs_mft_header *hdr,
+                              uint32_t type_id,
+                              struct ntfs_attr_header *out);
+
+/* Find a named attribute (type + UTF-16LE name match).
+ * name is a kernel ASCII string — compared against UTF-16LE attr name.
+ * Returns the raw pointer, or NULL if not found. */
+const uint8_t *ntfs_attr_find_named(const uint8_t *record,
+                                    const struct ntfs_mft_header *hdr,
+                                    uint32_t type_id,
+                                    const char *name,
+                                    struct ntfs_attr_header *out);

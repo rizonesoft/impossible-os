@@ -105,7 +105,7 @@ graph TD
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                   |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                         |   ✅   |
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ✅   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ⬜   |
@@ -260,25 +260,32 @@ graph TD
 
 ### 3.1 Attribute Iterator
 
-**Prompt:** Implement the core attribute walking loop. Starting at the first attribute offset (from header field at `0x14`), read each attribute's common header (type ID at `0x00`, total length at `0x04`, non-resident flag at `0x08`). Advance by the total length to reach the next attribute. Stop when type ID == `0xFFFFFFFF` (`$END` marker). Handle named attributes (name length at `0x09`, name offset at `0x0A`, UTF-16LE). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: attribute iterator"`. Add notes directly in this TODO section.
+**Verification:** Attribute iterator is implemented in `ntfs_core.c`. Verify: `bash scripts/build.sh clean` passes. Five functions: `ntfs_attr_first()` returns first attr pointer, `ntfs_attr_next()` advances by total_length with bounds checks, `ntfs_attr_parse()` fills the 7-field common header + resident sub-header, `ntfs_attr_find()` scans for a type, `ntfs_attr_find_named()` matches type + UTF-16LE name (via ASCII comparison). All handle `$END` (0xFFFFFFFF) termination and used_size bounds. 14 attribute type constants defined in `ntfs.h`.
 
-- [ ] Implement `ntfs_attr_first(record)` → pointer to first attribute
-- [ ] Implement `ntfs_attr_next(attr)` → advance by `attr->total_length`
-- [ ] Implement `ntfs_attr_find(record, type_id)` → scan for specific attribute type
-- [ ] Implement `ntfs_attr_find_named(record, type_id, name)` → match type + name
-- [ ] Common header parsing (all attributes):
-  - [ ] `0x00`: Type ID (4 bytes) — e.g., `0x10`, `0x30`, `0x80`
-  - [ ] `0x04`: Total length of attribute including header (4 bytes)
-  - [ ] `0x08`: Non-resident flag (1 byte: `0x00` = resident, `0x01` = non-resident)
-  - [ ] `0x09`: Name length in chars (1 byte)
-  - [ ] `0x0A`: Name offset (2 bytes)
-  - [ ] `0x0C`: Flags — compressed (`0x0001`), encrypted (`0x4000`), sparse (`0x8000`)
-  - [ ] `0x0E`: Attribute ID (2 bytes)
-- [ ] Termination: stop at type ID `0xFFFFFFFF` (`$END`)
-- [ ] Safety: stop if attribute offset exceeds record's used size
-- [ ] For resident attributes: parse content length at `0x10`, content offset at `0x14`
-- [ ] For non-resident attributes: defer to data run decoder (§4)
-- [ ] Commit: `"ntfs: attribute iterator"`
+- [x] Implement `ntfs_attr_first(record, hdr)` → pointer to first attribute
+- [x] Implement `ntfs_attr_next(attr, record, used_size)` → advance by `attr->total_length`
+- [x] Implement `ntfs_attr_find(record, hdr, type_id, out)` → scan for specific attribute type
+- [x] Implement `ntfs_attr_find_named(record, hdr, type_id, name, out)` → match type + name
+- [x] Common header parsing (all attributes):
+  - [x] `0x00`: Type ID (4 bytes) — e.g., `0x10`, `0x30`, `0x80`
+  - [x] `0x04`: Total length of attribute including header (4 bytes)
+  - [x] `0x08`: Non-resident flag (1 byte: `0x00` = resident, `0x01` = non-resident)
+  - [x] `0x09`: Name length in chars (1 byte)
+  - [x] `0x0A`: Name offset (2 bytes)
+  - [x] `0x0C`: Flags — compressed (`0x0001`), encrypted (`0x4000`), sparse (`0x8000`)
+  - [x] `0x0E`: Attribute ID (2 bytes)
+- [x] Termination: stop at type ID `0xFFFFFFFF` (`$END`)
+- [x] Safety: stop if attribute offset exceeds record's used size
+- [x] For resident attributes: parse content length at `0x10`, content offset at `0x14`
+- [x] For non-resident attributes: defer to data run decoder (§4)
+- [x] Committed
+
+> **Notes:**
+> - `ntfs_attr_header` struct includes `raw` pointer — allows callers to directly access attribute data without re-scanning.
+> - `ntfs_attr_parse()` returns `NTFS_ERR_BAD_MAGIC` at `$END` — callers can use this to detect end-of-list.
+> - `ntfs_name_match()` compares kernel ASCII strings against UTF-16LE attribute names — works for all standard NTFS names (`$DATA`, `$I30`, etc.) since they're ASCII-range.
+> - Bounds checking: `ntfs_attr_next()` checks both `length > 0` (prevent infinite loop on corrupt records) and `offset + 4 > used_size` (prevent overread).
+> - All 14 well-known attribute type constants added to `ntfs.h` (0x10 through 0x100 + 0xFFFFFFFF).
 
 ### 3.2 `$STANDARD_INFORMATION` Decoder (0x10)
 

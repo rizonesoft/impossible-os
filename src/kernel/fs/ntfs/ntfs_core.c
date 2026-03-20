@@ -339,3 +339,165 @@ int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size, uint16_t sector_size)
 
     return NTFS_OK;
 }
+
+/* ============================================================================
+ * Attribute Iterator
+ *
+ * NTFS MFT records contain a sequence of variable-length attributes.
+ * Each attribute has a common header (16+ bytes) followed by type-specific
+ * data. The sequence ends with a 4-byte $END marker (0xFFFFFFFF).
+ *
+ * Layout per attribute:
+ *   [type:4][length:4][non_res:1][name_len:1][name_off:2][flags:2][id:2]
+ *   For resident:   [content_len:4][content_off:2][indexed:2]
+ *   For non-resident: (run-list fields — decoded in §4)
+ * ============================================================================ */
+
+const uint8_t *ntfs_attr_first(const uint8_t *record,
+                               const struct ntfs_mft_header *hdr)
+{
+    if (!record || !hdr)
+        return NULL;
+
+    /* attrs_offset must be at least past the fixed header (0x38 typical) */
+    if (hdr->attrs_offset < 0x18 || hdr->attrs_offset >= hdr->used_size)
+        return NULL;
+
+    return record + hdr->attrs_offset;
+}
+
+const uint8_t *ntfs_attr_next(const uint8_t *attr, const uint8_t *record,
+                              uint32_t used_size)
+{
+    uint32_t type;
+    uint32_t length;
+    uint32_t offset;
+
+    if (!attr || !record)
+        return NULL;
+
+    type = ntfs_le32(attr + 0x00);
+    if (type == NTFS_ATTR_END)
+        return NULL;
+
+    length = ntfs_le32(attr + 0x04);
+    if (length == 0 || length > used_size)
+        return NULL;  /* Prevent infinite loop on corrupt records */
+
+    offset = (uint32_t)(attr - record) + length;
+    if (offset + 4 > used_size)
+        return NULL;  /* Next attr would be out of bounds */
+
+    /* Check if next position is $END */
+    type = ntfs_le32(record + offset);
+    if (type == NTFS_ATTR_END)
+        return NULL;
+
+    return record + offset;
+}
+
+int ntfs_attr_parse(const uint8_t *attr, struct ntfs_attr_header *out)
+{
+    uint32_t type;
+
+    if (!attr || !out)
+        return NTFS_ERR_IO;
+
+    type = ntfs_le32(attr + 0x00);
+    if (type == NTFS_ATTR_END)
+        return NTFS_ERR_BAD_MAGIC;
+
+    out->type         = type;
+    out->total_length = ntfs_le32(attr + 0x04);
+    out->non_resident = attr[0x08];
+    out->name_length  = attr[0x09];
+    out->name_offset  = ntfs_le16(attr + 0x0A);
+    out->flags        = ntfs_le16(attr + 0x0C);
+    out->attr_id      = ntfs_le16(attr + 0x0E);
+    out->raw          = attr;
+
+    /* Parse resident-specific fields */
+    if (out->non_resident == 0) {
+        out->content_length = ntfs_le32(attr + 0x10);
+        out->content_offset = ntfs_le16(attr + 0x14);
+    } else {
+        out->content_length = 0;
+        out->content_offset = 0;
+    }
+
+    return NTFS_OK;
+}
+
+const uint8_t *ntfs_attr_find(const uint8_t *record,
+                              const struct ntfs_mft_header *hdr,
+                              uint32_t type_id,
+                              struct ntfs_attr_header *out)
+{
+    const uint8_t *attr;
+
+    attr = ntfs_attr_first(record, hdr);
+    while (attr) {
+        uint32_t type = ntfs_le32(attr + 0x00);
+        if (type == NTFS_ATTR_END)
+            break;
+
+        if (type == type_id) {
+            if (out)
+                ntfs_attr_parse(attr, out);
+            return attr;
+        }
+
+        attr = ntfs_attr_next(attr, record, hdr->used_size);
+    }
+    return NULL;
+}
+
+/* Compare ASCII kernel string against UTF-16LE attribute name.
+ * NTFS attribute names are stored as UTF-16LE (2 bytes per char).
+ * For standard names ($DATA, $I30, etc.) all chars are ASCII-range. */
+static int ntfs_name_match(const uint8_t *utf16le_name, uint8_t name_len,
+                           const char *ascii_name)
+{
+    uint8_t i;
+    for (i = 0; i < name_len; i++) {
+        uint16_t wc = ntfs_le16(utf16le_name + i * 2);
+        uint8_t  ac = (uint8_t)ascii_name[i];
+        if (ac == 0 || wc != (uint16_t)ac)
+            return 0;
+    }
+    /* Both must end at the same length */
+    return (ascii_name[name_len] == '\0') ? 1 : 0;
+}
+
+const uint8_t *ntfs_attr_find_named(const uint8_t *record,
+                                    const struct ntfs_mft_header *hdr,
+                                    uint32_t type_id,
+                                    const char *name,
+                                    struct ntfs_attr_header *out)
+{
+    const uint8_t *attr;
+
+    if (!name)
+        return ntfs_attr_find(record, hdr, type_id, out);
+
+    attr = ntfs_attr_first(record, hdr);
+    while (attr) {
+        uint32_t type = ntfs_le32(attr + 0x00);
+        if (type == NTFS_ATTR_END)
+            break;
+
+        if (type == type_id) {
+            uint8_t  nlen = attr[0x09];
+            uint16_t noff = ntfs_le16(attr + 0x0A);
+
+            if (nlen > 0 && ntfs_name_match(attr + noff, nlen, name)) {
+                if (out)
+                    ntfs_attr_parse(attr, out);
+                return attr;
+            }
+        }
+
+        attr = ntfs_attr_next(attr, record, hdr->used_size);
+    }
+    return NULL;
+}
