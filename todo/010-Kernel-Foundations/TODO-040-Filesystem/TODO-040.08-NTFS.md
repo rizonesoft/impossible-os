@@ -111,7 +111,7 @@ graph TD
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ✅   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ✅   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ✅   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                         |   ⬜   |
 | 💎 | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07)   |   ⬜   |
 | 💎 | **5**  | `TODO-040.08-NTFS.md` | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | Phase 4 (§5.1, §5.2)                   |   ⬜   |
@@ -513,22 +513,29 @@ graph TD
 
 ### 5.2 INDX Buffer Reader (0xA0)
 
-**Prompt:** When the B+ tree extends beyond the root, child nodes are stored as 4 KB INDX records pointed to by the `$INDEX_ALLOCATION` attribute's data runs. Read the INDX buffer at the specified VCN, validate its magic (`"INDX"`), apply fixup (§2.2 — INDX buffers also use USAs), and parse index entries. The INDX header has its own node header at offset `0x18` with the same entry layout as `$INDEX_ROOT`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: INDX buffer reader"`. Add notes directly in this TODO section.
+**Verification:** INDX buffer reading is implemented in `ntfs_core.c` (`ntfs_read_indx()` + `ntfs_parse_indx_entries()`). Verify: `bash scripts/build.sh clean` passes. Reads INDX record from $INDEX_ALLOCATION runs by VCN, validates "INDX" magic, applies USA fixup, parses node header at 0x18. The existing `ntfs_index_entry_first/next()` iterator works identically on INDX entries.
 
-- [ ] Locate `$INDEX_ALLOCATION` (type `0xA0`, named `$I30`) in directory record
-- [ ] Decode its data runs to map VCN → LCN (reuse §4.1 decoder)
-- [ ] Implement `ntfs_read_indx(vol, index_runs, vcn, buffer)`:
-  - [ ] Translate VCN to LCN via run-list
-  - [ ] Read `index_record_size` bytes (typically 4096) from disk
-  - [ ] Validate magic: must be `"INDX"` (0x58444E49 LE)
-  - [ ] Apply fixup (§2.2) — INDX uses USA just like FILE records
-- [ ] Parse INDX node header at offset `0x18`:
-  - [ ] `0x18 + 0x00`: Offset to first entry (4 bytes)
-  - [ ] `0x18 + 0x04`: Total size of entries (4 bytes)
-  - [ ] `0x18 + 0x08`: Allocated size (4 bytes)
-  - [ ] `0x18 + 0x0C`: Flags — `0x01` = has children (not leaf)
-- [ ] Walk index entries (same format as §5.1)
-- [ ] Commit: `"ntfs: INDX buffer reader"`
+- [x] Locate `$INDEX_ALLOCATION` (type `0xA0`, named `$I30`) — done by caller using `ntfs_attr_find_named()`
+- [x] Decode its data runs to map VCN → LCN (reuse §4.1 decoder)
+- [x] Implement `ntfs_read_indx(vol, index_runs, index_run_count, vcn, index_record_size, buffer)`:
+  - [x] Translate VCN to LCN via run-list
+  - [x] Read `index_record_size` bytes (typically 4096) from disk
+  - [x] Validate magic: must be `"INDX"` (`0x58444E49` LE)
+  - [x] Apply fixup (§2.2) — `ntfs_apply_fixup()` handles INDX buffers
+- [x] Parse INDX node header via `ntfs_parse_indx_entries()`:
+  - [x] `0x18 + 0x00`: Offset to first entry (4 bytes)
+  - [x] `0x18 + 0x04`: Total size of entries (4 bytes)
+  - [x] `0x18 + 0x08`: Allocated size (4 bytes)
+  - [x] `0x18 + 0x0C`: Flags — `0x01` = has children (not leaf)
+- [x] Walk index entries (reuses `ntfs_index_entry_first/next()` from §5.1)
+- [x] Committed
+
+> **Notes:**
+> - `ntfs_read_indx()` translates child_vcn → byte offset → run-list lookup → LCN → blkdev_read(). Handles multi-cluster INDX records.
+> - `ntfs_parse_indx_entries()` is the INDX equivalent of the node header parsing in `ntfs_parse_index_root()`.
+> - Sparse INDX records (shouldn't occur) return `NTFS_ERR_BAD_MAGIC` after zeroing the buffer.
+> - `NTFS_INDX_MAGIC` = `0x58444E49` ("INDX" in LE).
+> - The `ntfs_parse_index_entry()` static helper is shared between $INDEX_ROOT and INDX — one implementation for both.
 
 ### 5.3 Directory Lookup Algorithm
 

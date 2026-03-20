@@ -409,3 +409,31 @@ const uint8_t *ntfs_index_entry_next(const uint8_t *entry,
                                      const uint8_t *entries_base,
                                      const struct ntfs_index_node_header *nh,
                                      struct ntfs_index_entry *out);
+
+/* ---- INDX Buffer Reader (§5.2, attribute type 0xA0) ---- */
+
+/* INDX magic: "INDX" in little-endian */
+#define NTFS_INDX_MAGIC  0x58444E49U
+
+/* Read an INDX buffer from disk at the specified VCN.
+ * vol: NTFS volume context.
+ * index_runs: decoded data runs from $INDEX_ALLOCATION.
+ * index_run_count: number of runs.
+ * vcn: Virtual Cluster Number of the INDX record to read.
+ * index_record_size: size of one INDX record (from $INDEX_ROOT header).
+ * buffer: output buffer (must be >= index_record_size bytes).
+ * Returns NTFS_OK on success, error code on failure. */
+int ntfs_read_indx(struct ntfs_volume *vol,
+                   const struct ntfs_data_run *index_runs,
+                   int index_run_count,
+                   uint64_t vcn, uint32_t index_record_size,
+                   uint8_t *buffer);
+
+/* Parse a validated INDX buffer to extract node header and entries base.
+ * buffer: INDX record (already read + fixup applied by ntfs_read_indx).
+ * node_hdr: filled with parsed node header.
+ * entries_base: set to pointer where index entries start.
+ * Returns NTFS_OK on success. */
+int ntfs_parse_indx_entries(const uint8_t *buffer,
+                            struct ntfs_index_node_header *node_hdr,
+                            const uint8_t **entries_base);

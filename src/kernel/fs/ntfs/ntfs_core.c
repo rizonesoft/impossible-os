@@ -1258,3 +1258,118 @@ const uint8_t *ntfs_index_entry_next(const uint8_t *entry,
 
     return next;
 }
+
+/* ============================================================================
+ * INDX Buffer Reader — §5.2 (attribute type 0xA0)
+ *
+ * When a directory's B+ tree overflows the $INDEX_ROOT, child nodes are
+ * stored as INDX records on disk via the $INDEX_ALLOCATION attribute.
+ *
+ * Each INDX record:
+ *   0x00  Magic: "INDX" (4 bytes)
+ *   0x04  USA offset (2 bytes)
+ *   0x06  USA size (2 bytes, in 16-bit words)
+ *   0x08  LSN (8 bytes)
+ *   0x10  VCN of this INDX record (8 bytes)
+ *   0x18  Node header (16 bytes):
+ *         0x00  Offset to first entry (from node header start)
+ *         0x04  Total size of entries
+ *         0x08  Allocated size of entries
+ *         0x0C  Flags (0x01 = has children)
+ *   0x28+ Index entries (same format as $INDEX_ROOT entries)
+ *
+ * The INDX buffer must be fixup-verified (USA) before parsing entries.
+ * ============================================================================ */
+
+int ntfs_read_indx(struct ntfs_volume *vol,
+                   const struct ntfs_data_run *index_runs,
+                   int index_run_count,
+                   uint64_t vcn, uint32_t index_record_size,
+                   uint8_t *buffer)
+{
+    uint64_t byte_offset;
+    uint64_t clusters_per_indx;
+    uint64_t target_vcn;
+    uint64_t run_vcn_end;
+    uint64_t vcn_in_run;
+    uint64_t disk_lcn;
+    uint64_t lba;
+    uint32_t sectors;
+    uint32_t magic;
+    int i;
+    int rc;
+
+    if (!vol || !index_runs || !buffer || index_run_count <= 0)
+        return NTFS_ERR_IO;
+
+    /* How many allocation clusters per INDX record? */
+    clusters_per_indx = index_record_size / vol->cluster_size;
+    if (clusters_per_indx == 0)
+        clusters_per_indx = 1;
+
+    /* The VCN in $INDEX_ALLOCATION maps to INDX records, each spanning
+     * clusters_per_indx clusters. The VCN from the index entry's child_vcn
+     * is relative to the $INDEX_ALLOCATION's data runs. */
+    byte_offset = vcn * vol->cluster_size;
+    target_vcn = byte_offset / vol->cluster_size;
+
+    /* Find the run covering this VCN */
+    for (i = 0; i < index_run_count; i++) {
+        run_vcn_end = index_runs[i].vcn_start + index_runs[i].length;
+        if (target_vcn >= index_runs[i].vcn_start && target_vcn < run_vcn_end)
+            break;
+    }
+    if (i >= index_run_count)
+        return NTFS_ERR_IO;  /* VCN not found in runs */
+
+    if (index_runs[i].lcn == NTFS_LCN_SPARSE) {
+        /* Sparse INDX — shouldn't happen but handle gracefully */
+        ntfs_memset(buffer, 0, index_record_size);
+        return NTFS_ERR_BAD_MAGIC;
+    }
+
+    vcn_in_run = target_vcn - index_runs[i].vcn_start;
+    disk_lcn   = index_runs[i].lcn + vcn_in_run;
+
+    /* Read from disk */
+    lba     = disk_lcn * vol->sectors_per_cluster;
+    sectors = index_record_size / vol->bytes_per_sector;
+
+    if (blkdev_read(vol->dev, lba, sectors, buffer) != 0)
+        return NTFS_ERR_IO;
+
+    /* Validate INDX magic */
+    magic = ntfs_le32(buffer);
+    if (magic != NTFS_INDX_MAGIC)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Apply fixup (USA) — same as FILE records */
+    rc = ntfs_apply_fixup(buffer, index_record_size, vol->bytes_per_sector);
+    if (rc != NTFS_OK)
+        return rc;
+
+    return NTFS_OK;
+}
+
+int ntfs_parse_indx_entries(const uint8_t *buffer,
+                            struct ntfs_index_node_header *node_hdr,
+                            const uint8_t **entries_base)
+{
+    const uint8_t *node;
+
+    if (!buffer || !node_hdr || !entries_base)
+        return NTFS_ERR_IO;
+
+    /* Node header is at offset 0x18 in the INDX record */
+    node = buffer + 0x18;
+
+    node_hdr->entries_offset = ntfs_le32(node + 0x00);
+    node_hdr->total_size     = ntfs_le32(node + 0x04);
+    node_hdr->alloc_size     = ntfs_le32(node + 0x08);
+    node_hdr->flags          = node[0x0C];
+
+    /* Entries start at node + entries_offset */
+    *entries_base = node + node_hdr->entries_offset;
+
+    return NTFS_OK;
+}
