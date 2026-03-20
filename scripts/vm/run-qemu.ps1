@@ -95,7 +95,10 @@ $QemuArgs = @()
 switch ($Accel) {
     'tcg'  { $QemuArgs += '-accel', 'tcg' }
     'whpx' { $QemuArgs += '-accel', 'whpx' }
-    # 'auto': no -accel flag, QEMU auto-detects
+    'auto' {
+        # Try WHPX first (near-native), fall back to TCG (slow but works)
+        $QemuArgs += '-accel', 'whpx', '-accel', 'tcg'
+    }
 }
 
 $QemuArgs += @(
