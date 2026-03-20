@@ -167,3 +167,20 @@ IRQ 15, 47           ; Secondary ATA
 ; =============================================================================
 ISR_NOERRCODE 128     ; syscall — INT 0x80 (user → kernel)
 ISR_NOERRCODE 129     ; yield() — cooperative task switch (INT 0x81)
+
+; =============================================================================
+; Dynamic / Synthetic interrupt stubs (vectors 48–255)
+;
+; Covers MSI/MSI-X, VMBus SINT, STIMER, LAPIC spurious, and any other
+; vector Hyper-V or hardware may deliver.  Without these, any interrupt
+; on an unpopulated IDT entry causes #GP (null descriptor).
+;
+; Vectors 128-129 are skipped — already defined above.
+; =============================================================================
+%assign i 48
+%rep (256 - 48)
+  %if i != 128 && i != 129
+    ISR_NOERRCODE i
+  %endif
+  %assign i i+1
+%endrep
