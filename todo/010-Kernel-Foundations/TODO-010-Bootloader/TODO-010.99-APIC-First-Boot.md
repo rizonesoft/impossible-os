@@ -120,7 +120,7 @@ graph TD
 | 💎 | **5** | §5.1 Hyper-V Synthetic ISRs      | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ✅   |
 | ⭐ | **5** | §6.1 CPUID Platform Probe        | Detect Hyper-V/VBox/QEMU TCG via CPUID 0x40000000          | Phase 4 (§4) + Phase 2 (§2)       |   ✅   |
 | ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ✅   |
-| ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ⬜   |
+| ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ✅   |
 | ⭐ | **5** | §6.4 Timer Lock-In               | `g_system_timer` assigned — single uptime, splash fixed    | §6.3                              |   ⬜   |
 | 💎 | **6** | §6.5 Spinner PIT Migration       | Spinner off PIT callback — `sleep_ms()` loop instead       | §6.4 + Spinner §2                 |   ⬜   |
 | ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + §6.4               |   ⬜   |
@@ -655,14 +655,13 @@ boot_storage_init()
 > resort**, never a default.
 
 > [!NOTE]
-> **Codebase fact:** `lapic_timer_calibrate()` at `lapic.c:335` uses PIT
-> channel 2 (speaker gate, port 0x42/0x43/0x61) with a spin timeout.
-> On VBox NEM the timeout fires and it falls back to xv6 hardcoded ICR.
-> On Hyper-V Gen 2, PIT ports read garbage (0xFF). No `HW_REDUCED_ACPI`
-> flag parsing exists yet in `acpi.c` — the FADT is parsed for PM1a
-> control/reset only. HPET and PM Timer are not implemented.
+> **Tier 1 implemented.** `lapic.c` now has `cal_try_hyperv_msr()`,
+> `cal_try_vmware_cpuid()`, `cal_try_cpuid_15h()`, and
+> `lapic_timer_calibrate_waterfall()` dispatcher.  Tier 2 (HPET/PM Timer)
+> and Tier 3 PIT fallback are called from the waterfall.  HPET/PM Timer
+> parsing not yet implemented — uses existing PIT fallback.
 
-- [ ] Implement the tier functions below in `lapic.c` — the actual move from
+- [x] Implement the tier functions below in `lapic.c` — the actual move from
   `boot_storage_init()` to `boot_interrupts_init()` happens in §6.4 (`timer_hal_init()`):
 
 #### Tier 1: Architectural Fast-Path (Zero Delay, No PIT)
@@ -672,26 +671,29 @@ boot_storage_init()
 > CPUID or MSR. Calibration takes nanoseconds — no delay loop, no
 > hardware timers, no PIT ports touched.
 
-- [ ] Implement `cal_try_hyperv_msr()` in `lapic.c`:
-  - [ ] Guard: only call when `platform_id == PLATFORM_HYPERV`
-  - [ ] Read MSR `0x40000023` (`HV_X64_MSR_APIC_FREQUENCY`)
-  - [ ] Value = exact LAPIC frequency in Hz
-  - [ ] `cal_ticks_per_ms = freq / 1000;` — done
-  - [ ] Log: `[lapic] Tier 1: Hyper-V MSR → %u ticks/ms (%u MHz bus)`
-- [ ] Implement `cal_try_vmware_cpuid()` in `lapic.c`:
-  - [ ] Guard: only call when `platform_id == PLATFORM_VMWARE || PLATFORM_QEMU_KVM`
-  - [ ] Read CPUID leaf 0x40000010
-  - [ ] EBX = virtual APIC frequency in kHz
-  - [ ] `cal_ticks_per_ms = EBX;` — kHz is already ticks/ms
-  - [ ] Log: `[lapic] Tier 1: VMware/KVM CPUID → %u ticks/ms`
-- [ ] Implement `cal_try_cpuid_15h()` in `lapic.c`:
-  - [ ] Guard: check `CPUID.0` max leaf ≥ 0x15
-  - [ ] Read CPUID leaf 0x15: EAX=denominator, EBX=numerator, ECX=crystal Hz
-  - [ ] If EAX != 0 && EBX != 0: `tsc_freq = ECX * EBX / EAX`
-  - [ ] If ECX == 0: use known crystal frequencies (24 MHz Skylake+, 25 MHz Atom)
-  - [ ] LAPIC bus clock = TSC freq (on most Intel CPUs, bus freq ≈ TSC freq)
-  - [ ] `cal_ticks_per_ms = tsc_freq / 1000;`
-  - [ ] Log: `[lapic] Tier 1: CPUID 0x15 → %u ticks/ms (crystal=%u Hz)`
+- [x] Implement `cal_try_hyperv_msr()` in `lapic.c`:
+  - [x] Guard: only call when `platform_id == PLATFORM_HYPERV`
+  - [x] Read MSR `0x40000023` (`HV_X64_MSR_APIC_FREQUENCY`)
+  - [x] Value = exact LAPIC frequency in Hz
+  - [x] `cal_ticks_per_ms = freq / 1000;` — done
+  - [x] Log: `[lapic] Tier 1: Hyper-V MSR → %u ticks/ms (%u MHz bus)`
+- [x] Implement `cal_try_vmware_cpuid()` in `lapic.c`:
+  - [x] Guard: only call when `platform_id == PLATFORM_VMWARE || PLATFORM_QEMU_KVM`
+  - [x] Read CPUID leaf 0x40000010
+  - [x] EBX = virtual APIC frequency in kHz
+  - [x] `cal_ticks_per_ms = EBX;` — kHz is already ticks/ms
+  - [x] Log: `[lapic] Tier 1: VMware/KVM CPUID → %u ticks/ms`
+- [x] Implement `cal_try_cpuid_15h()` in `lapic.c`:
+  - [x] Guard: check `CPUID.0` max leaf ≥ 0x15
+  - [x] Read CPUID leaf 0x15: EAX=denominator, EBX=numerator, ECX=crystal Hz
+  - [x] If EAX != 0 && EBX != 0: `tsc_freq = ECX * EBX / EAX`
+  - [x] If ECX == 0: use known crystal frequencies (24 MHz Skylake+, 19.2 MHz Atom)
+  - [x] LAPIC bus clock = TSC freq (on most Intel CPUs, bus freq ≈ TSC freq)
+  - [x] `cal_ticks_per_ms = tsc_freq / 1000;`
+  - [x] Log: `[lapic] Tier 1: CPUID 0x15 → %u ticks/ms (crystal=%u Hz)`
+- [x] Added `lapic_timer_calibrate_waterfall()` to `lapic.h` — cascades Tier 1 → Tier 3
+- [x] Build: `=== BUILD OK === (10.3s)`
+- [x] Commit: `"kernel: Tier 1 LAPIC calibration waterfall (MSR, CPUID, crystal clock)"`
 
 #### Tier 2: Modern Hardware Timers (10ms Delay, No PIT)
 
@@ -1032,7 +1034,7 @@ boot_storage_init()
 | 💎 | Full IDT coverage (256 entries)     | ✅ All 256 entries populated           | ✅ All 256 entries populated            | ✅ §5.2 done — 256 entries, rate-limited warning handler |
 | 💎 | CPUID platform detection            | ✅ HAL identifies hypervisor           | ✅ `dmi_check_system()` / CPUID         | ✅ §6.1 done — `platform_detect()` via CPUID 0x40000000 |
 | ⭐ | **Unified timer HAL**               | ✅ HAL timer abstraction (internal)    | ✅ `clocksource` + `clock_event_device` | ✅ §6.2 done — `g_system_timer` vtable, `pit_driver`  |
-| ⭐ | **Legacy-free calibration**         | ✅ HAL uses MSR/CPUID (no PIT)         | ✅ `tsc_early_init` / HPET / PM Timer   | ⬜ §6.3 — 3-tier waterfall (MSR → HPET → PIT)        |
+| ⭐ | **Legacy-free calibration**         | ✅ HAL uses MSR/CPUID (no PIT)         | ✅ `tsc_early_init` / HPET / PM Timer   | ✅ §6.3 done — 3-tier waterfall (MSR → HPET → PIT)   |
 | ⭐ | **Single tick source**              | ✅ `KeQueryPerformanceCounter`         | ✅ `jiffies` / `ktime`                  | ⬜ §6.4 — single `system_uptime_ticks`               |
 | ⭐ | **Timer source GUI override**       | ❌ No user control                     | ⚠️ `/sys/.../current_clocksource` (CLI) | ⬜ §6.4 — Control Panel → Timer Source               |
 | ⭐ | **High-precision perf counter**     | ✅ `QueryPerformanceCounter` (TSC)     | ✅ `clock_gettime(CLOCK_MONOTONIC)`     | ⬜ §6.4 — `QueryPerformanceCounter` via TSC          |

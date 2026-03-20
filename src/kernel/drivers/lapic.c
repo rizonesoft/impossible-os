@@ -302,6 +302,167 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page)
 /* Calibrated ticks per millisecond (0 = uncalibrated / fallback) */
 static uint32_t cal_ticks_per_ms = 0;
 
+/* ---- MSR / CPUID helpers for calibration ---- */
+
+static inline uint64_t cal_rdmsr(uint32_t msr)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+static inline void cal_cpuid(uint32_t leaf,
+                              uint32_t *eax, uint32_t *ebx,
+                              uint32_t *ecx, uint32_t *edx)
+{
+    __asm__ volatile("cpuid"
+        : "=a"(*eax), "=b"(*ebx), "=c"(*ecx), "=d"(*edx)
+        : "a"(leaf));
+}
+
+/* ---- Tier 1: Architectural Fast-Path (Zero Delay, No PIT) ---- */
+
+#include "kernel/cpuid_platform.h"
+
+/* Hyper-V: MSR 0x40000023 (HV_X64_MSR_APIC_FREQUENCY)
+ * Returns exact LAPIC frequency in Hz — 0ns latency, no hardware probing. */
+#define HV_MSR_APIC_FREQUENCY  0x40000023
+
+static int cal_try_hyperv_msr(void)
+{
+    uint64_t freq;
+
+    if (platform_get() != PLATFORM_HYPERV)
+        return 0;
+
+    freq = cal_rdmsr(HV_MSR_APIC_FREQUENCY);
+    if (freq == 0 || freq > 0xFFFFFFFFULL)
+        return 0;
+
+    cal_ticks_per_ms = (uint32_t)(freq / 1000);
+    klog(LOG_INFO, "lapic",
+         "Tier 1: Hyper-V MSR 0x40000023 → %u ticks/ms (%u MHz bus)",
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000));
+    return 1;
+}
+
+/* VMware / KVM: CPUID leaf 0x40000010
+ * EBX = virtual APIC bus frequency in kHz — already ticks/ms! */
+static int cal_try_vmware_cpuid(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    platform_id_t plat = platform_get();
+
+    if (plat != PLATFORM_VMWARE && plat != PLATFORM_QEMU_KVM)
+        return 0;
+
+    cal_cpuid(0x40000010, &eax, &ebx, &ecx, &edx);
+    if (ebx == 0)
+        return 0;
+
+    cal_ticks_per_ms = ebx;  /* kHz = ticks per ms */
+    klog(LOG_INFO, "lapic",
+         "Tier 1: %s CPUID 0x40000010 → %u ticks/ms (%u MHz bus)",
+         platform_name(),
+         (uint64_t)cal_ticks_per_ms,
+         (uint64_t)(cal_ticks_per_ms / 1000));
+    return 1;
+}
+
+/* Intel CPUID leaf 0x15: Time Stamp Counter / Core Crystal Clock
+ *   EAX = denominator (TSC / crystal ratio)
+ *   EBX = numerator   (TSC / crystal ratio)
+ *   ECX = crystal frequency in Hz (0 on some CPUs → use lookup table)
+ *
+ * TSC freq = ECX * EBX / EAX.
+ * On most Intel CPUs, LAPIC bus freq ≈ TSC freq (the LAPIC timer is
+ * clocked from the core crystal, same as TSC). */
+static int cal_try_cpuid_15h(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    uint32_t max_leaf;
+    uint64_t crystal_hz;
+    uint64_t tsc_freq;
+
+    /* Check max CPUID leaf */
+    cal_cpuid(0x00, &max_leaf, &ebx, &ecx, &edx);
+    if (max_leaf < 0x15)
+        return 0;
+
+    cal_cpuid(0x15, &eax, &ebx, &ecx, &edx);
+    if (eax == 0 || ebx == 0)
+        return 0;
+
+    crystal_hz = ecx;
+
+    /* ECX == 0 on some CPUs — use known crystal frequencies.
+     * Check CPUID.01H model/family for identification. */
+    if (crystal_hz == 0) {
+        uint32_t eax1, ebx1, ecx1, edx1;
+        uint32_t family, model;
+
+        cal_cpuid(0x01, &eax1, &ebx1, &ecx1, &edx1);
+        family = (eax1 >> 8) & 0xF;
+        model  = (eax1 >> 4) & 0xF;
+        if (family == 6)
+            model |= ((eax1 >> 16) & 0xF) << 4;
+
+        /* Known crystal frequencies by CPU model:
+         * Skylake/Kaby Lake/Coffee Lake: 24 MHz
+         * Atom Goldmont/Tremont: 19.2 MHz
+         * Reference: Intel SDM Vol. 3 Table 18-85 */
+        if (model == 0x55 || model == 0x4E || model == 0x5E ||
+            model == 0x8E || model == 0x9E || model == 0xA5 ||
+            model == 0xA6 || model == 0xA7) {
+            crystal_hz = 24000000;   /* 24 MHz — Skylake+ */
+        } else if (model == 0x5C || model == 0x5F || model == 0x7A ||
+                   model == 0x86) {
+            crystal_hz = 19200000;   /* 19.2 MHz — Atom */
+        } else {
+            return 0;  /* Unknown model — can't determine crystal */
+        }
+    }
+
+    tsc_freq = crystal_hz * ebx / eax;
+    if (tsc_freq == 0)
+        return 0;
+
+    cal_ticks_per_ms = (uint32_t)(tsc_freq / 1000);
+    klog(LOG_INFO, "lapic",
+         "Tier 1: CPUID 0x15 → %u ticks/ms (crystal=%u Hz, ratio=%u/%u)",
+         (uint64_t)cal_ticks_per_ms,
+         crystal_hz,
+         (uint64_t)ebx, (uint64_t)eax);
+    return 1;
+}
+
+/* ---- Calibration Waterfall Dispatcher ----
+ * Called from timer_hal_init() (§6.4).  Tries in order:
+ *   Tier 1: MSR/CPUID (instant, no PIT)
+ *   Tier 2: HPET / PM Timer (future — not yet implemented)
+ *   Tier 3: PIT channel 2 (existing lapic_timer_calibrate, legacy fallback)
+ */
+void lapic_timer_calibrate_waterfall(void)
+{
+    if (!lapic_base)
+        return;
+
+    /* Tier 1: Instant frequency from MSR/CPUID */
+    if (cal_try_hyperv_msr() || cal_try_vmware_cpuid() || cal_try_cpuid_15h()) {
+        klog(LOG_INFO, "lapic",
+             "Calibration: Tier 1 succeeded — no PIT/HPET needed");
+        return;
+    }
+
+    /* Tier 2: HPET / PM Timer — not yet implemented, fall through */
+
+    /* Tier 3: PIT channel 2 (legacy, existing implementation) */
+    klog(LOG_INFO, "lapic",
+         "Calibration: Tier 1 failed — falling back to PIT channel 2");
+    lapic_timer_calibrate();
+}
+
 /* PIT base frequency (Hz) — the 8254 oscillator runs at this exact rate */
 #define PIT_OSC_FREQ  1193182
 

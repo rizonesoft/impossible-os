@@ -123,6 +123,13 @@ void lapic_send_sipi(uint8_t target_apic_id, uint8_t vector_page);
  * hardcoded frequency if calibration hangs (VBox NEM / Hyper-V). */
 void lapic_timer_calibrate(void);
 
+/* Calibration waterfall — cascades through frequency sources:
+ *   Tier 1: MSR/CPUID (instant, no PIT): Hyper-V, VMware, KVM, CPUID 0x15
+ *   Tier 2: HPET / PM Timer (future)
+ *   Tier 3: PIT channel 2 (legacy fallback)
+ * Replaces direct lapic_timer_calibrate() calls. */
+void lapic_timer_calibrate_waterfall(void);
+
 /* Start the LAPIC timer in periodic mode at the given frequency (Hz)
  * on LAPIC_TIMER_VECTOR. Uses the calibrated frequency from
  * lapic_timer_calibrate(), or a hardcoded fallback.
