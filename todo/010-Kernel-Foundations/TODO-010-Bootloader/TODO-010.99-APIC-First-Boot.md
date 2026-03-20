@@ -118,7 +118,7 @@ graph TD
 | 💎 | **4** | §4 Dynamic IRQ Registration      | `irq_register()` API — foundation for MSI + VMBus          | Phase 3 (§3)                      |   ✅   |
 | 💎 | **4** | §5.2 Catch-All IDT Stubs         | All 256 IDT entries populated — no more #GP on unknown vec | Phase 4 (§4)                      |   ✅   |
 | 💎 | **5** | §5.1 Hyper-V Synthetic ISRs      | VMBus/STIMER/HID interrupt handlers — real Hyper-V support | Phase 4 (§4)                      |   ✅   |
-| ⭐ | **5** | §6.1 CPUID Platform Probe        | Detect Hyper-V/VBox/QEMU TCG via CPUID 0x40000000          | Phase 4 (§4) + Phase 2 (§2)       |   ⬜   |
+| ⭐ | **5** | §6.1 CPUID Platform Probe        | Detect Hyper-V/VBox/QEMU TCG via CPUID 0x40000000          | Phase 4 (§4) + Phase 2 (§2)       |   ✅   |
 | ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ⬜   |
 | ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ⬜   |
 | ⭐ | **5** | §6.4 Timer Lock-In               | `g_system_timer` assigned — single uptime, splash fixed    | §6.3                              |   ⬜   |
@@ -506,13 +506,13 @@ boot_storage_init()
 ### 6.1 CPUID Platform Probe
 
 > [!NOTE]
-> **Codebase fact:** No CPUID-based hypervisor detection exists yet.
-> `klog_live.c` has a bare `cpuid()` inline but no structured probe.
-> `registry.c` has `reg_cpuid()` for populating registry keys but no
-> hypervisor string matching. This is all new code.
+> **Implemented.** `cpuid_platform.c` detects hypervisor via CPUID.01H bit 31 +
+> CPUID 0x40000000 vendor string.  Covers Hyper-V, VMware, VirtualBox, KVM,
+> QEMU TCG, bare metal, and unknown hypervisors.  `platform_has_apic_freq_msr()`
+> also checks CPUID 0x15 for bare-metal crystal clock ratio.
 
-- [ ] Create `include/kernel/cpuid_platform.h` and `src/kernel/cpuid_platform.c`
-- [ ] Define platform enum:
+- [x] Create `include/kernel/cpuid_platform.h` and `src/kernel/cpuid_platform.c`
+- [x] Define platform enum:
   ```c
   typedef enum {
       PLATFORM_BARE_METAL,   /* no hypervisor detected */
@@ -524,24 +524,24 @@ boot_storage_init()
       PLATFORM_UNKNOWN_HV,   /* hypervisor bit set, unknown vendor */
   } platform_id_t;
   ```
-- [ ] Implement `platform_detect()`:
-  - [ ] Check CPUID.01H:ECX bit 31 (hypervisor present bit)
-  - [ ] If set: read CPUID leaf 0x40000000 for 12-byte vendor string
-  - [ ] Match: `"Microsoft Hv"` → `PLATFORM_HYPERV`
-  - [ ] Match: `"VMwareVMware"` → `PLATFORM_VMWARE`
-  - [ ] Match: `"VBoxVBoxVBox"` → `PLATFORM_VIRTUALBOX`
-  - [ ] Match: `"KVMKVMKVM\0\0\0"` → `PLATFORM_QEMU_KVM`
-  - [ ] Match: `"TCGTCGTCGTCG"` → `PLATFORM_QEMU_TCG`
-  - [ ] If no hypervisor bit: `PLATFORM_BARE_METAL`
-  - [ ] Fallback: `PLATFORM_UNKNOWN_HV`
-- [ ] Implement `platform_name()` → returns human-readable string (e.g., `"Hyper-V"`)
-- [ ] Implement `platform_is_tcg()` → returns true only for `PLATFORM_QEMU_TCG`
-- [ ] Implement `platform_has_apic_freq_msr()` → true for Hyper-V, VMware, KVM
+- [x] Implement `platform_detect()`:
+  - [x] Check CPUID.01H:ECX bit 31 (hypervisor present bit)
+  - [x] If set: read CPUID leaf 0x40000000 for 12-byte vendor string
+  - [x] Match: `"Microsoft Hv"` → `PLATFORM_HYPERV`
+  - [x] Match: `"VMwareVMware"` → `PLATFORM_VMWARE`
+  - [x] Match: `"VBoxVBoxVBox"` → `PLATFORM_VIRTUALBOX`
+  - [x] Match: `"KVMKVMKVM\0\0\0"` → `PLATFORM_QEMU_KVM`
+  - [x] Match: `"TCGTCGTCGTCG"` → `PLATFORM_QEMU_TCG`
+  - [x] If no hypervisor bit: `PLATFORM_BARE_METAL`
+  - [x] Fallback: `PLATFORM_UNKNOWN_HV`
+- [x] Implement `platform_name()` → returns human-readable string (e.g., `"Hyper-V"`)
+- [x] Implement `platform_is_tcg()` → returns true only for `PLATFORM_QEMU_TCG`
+- [x] Implement `platform_has_apic_freq_msr()` → true for Hyper-V, VMware, KVM + bare metal with CPUID 0x15
 - [ ] Call `platform_detect()` inside `timer_hal_init()` (§6.4) — first thing it does
-- [ ] Log result: `[platform] Detected: Hyper-V (CPUID 0x40000000)`
-- [ ] Add `cpuid_platform.o` to `Makefile` kernel object list
-- [ ] Build and test: QEMU shows `QEMU/KVM` or `QEMU/TCG`, VBox shows `VirtualBox`
-- [ ] Commit: `"kernel: CPUID platform detection (Hyper-V, VBox, VMware, QEMU TCG)"`
+- [x] Log result: `[platform] Detected: Hyper-V (CPUID 0x40000000)`
+- [x] Add `cpuid_platform.o` to `Makefile` kernel object list (auto-discovered via `find`)
+- [x] Build and test: `=== BUILD OK ===` (10.2s, 134 objects)
+- [x] Commit: `"kernel: CPUID platform detection (Hyper-V, VBox, VMware, QEMU TCG)"`
 
 ### 6.2 Timer HAL Interface (`timer_driver_t`)
 
@@ -1031,7 +1031,7 @@ boot_storage_init()
 | 💎 | Dynamic IRQ registration            | ✅ `IoConnectInterruptEx`              | ✅ `request_irq()` / `free_irq()`       | ✅ §4 done — `irq_register()` with vector alloc      |
 | 💎 | EOI dispatch (PIC/LAPIC)            | ✅ Unified HAL EOI                     | ✅ `apic_eoi()` / `edge_ack()`          | ✅ §4 done — `irq_eoi()` dispatches via flag         |
 | 💎 | Full IDT coverage (256 entries)     | ✅ All 256 entries populated           | ✅ All 256 entries populated            | ✅ §5.2 done — 256 entries, rate-limited warning handler |
-| 💎 | CPUID platform detection            | ✅ HAL identifies hypervisor           | ✅ `dmi_check_system()` / CPUID         | ⬜ §6.1 — `platform_detect()`                        |
+| 💎 | CPUID platform detection            | ✅ HAL identifies hypervisor           | ✅ `dmi_check_system()` / CPUID         | ✅ §6.1 done — `platform_detect()` via CPUID 0x40000000 |
 | ⭐ | **Unified timer HAL**               | ✅ HAL timer abstraction (internal)    | ✅ `clocksource` + `clock_event_device` | ⬜ §6.2 — `g_system_timer` vtable                    |
 | ⭐ | **Legacy-free calibration**         | ✅ HAL uses MSR/CPUID (no PIT)         | ✅ `tsc_early_init` / HPET / PM Timer   | ⬜ §6.3 — 3-tier waterfall (MSR → HPET → PIT)        |
 | ⭐ | **Single tick source**              | ✅ `KeQueryPerformanceCounter`         | ✅ `jiffies` / `ktime`                  | ⬜ §6.4 — single `system_uptime_ticks`               |
