@@ -297,3 +297,46 @@ uint64_t ntfs_filetime_to_unix(uint64_t filetime);
 int ntfs_decode_std_info(const uint8_t *record,
                          const struct ntfs_mft_header *hdr,
                          struct ntfs_std_info *out);
+
+/* ---- File Data Reader (§4.2) ---- */
+
+/* Read file data from non-resident runs.
+ * vol: NTFS volume context (for cluster_size, sector_size, dev).
+ * runs: decoded run array from ntfs_decode_data_runs().
+ * run_count: number of runs in the array.
+ * real_size: file's actual data size (from non-resident header).
+ * file_offset: byte offset within the file to start reading.
+ * length: number of bytes to read.
+ * buffer: output buffer (must be at least 'length' bytes).
+ * Returns bytes actually read, or -1 on error. */
+int64_t ntfs_read_data(struct ntfs_volume *vol,
+                       const struct ntfs_data_run *runs, int run_count,
+                       uint64_t real_size,
+                       uint64_t file_offset, uint64_t length,
+                       void *buffer);
+
+/* Read data from a resident attribute (inline content).
+ * attr: raw attribute pointer (from iterator).
+ * offset: byte offset within the attribute content.
+ * length: number of bytes to read.
+ * buffer: output buffer.
+ * Returns bytes actually read, or -1 on error. */
+int64_t ntfs_read_resident_data(const uint8_t *attr,
+                                uint64_t offset, uint64_t length,
+                                void *buffer);
+
+/* Auto-detecting file data reader.
+ * Finds the unnamed $DATA attribute in the record, determines if it is
+ * resident or non-resident, and reads data accordingly.
+ * record: raw MFT record buffer (after fixup).
+ * hdr: parsed MFT record header.
+ * vol: NTFS volume context.
+ * file_offset: byte offset within the file.
+ * length: number of bytes to read.
+ * buffer: output buffer.
+ * Returns bytes actually read, or -1 on error. */
+int64_t ntfs_read_file_data(const uint8_t *record,
+                            const struct ntfs_mft_header *hdr,
+                            struct ntfs_volume *vol,
+                            uint64_t file_offset, uint64_t length,
+                            void *buffer);

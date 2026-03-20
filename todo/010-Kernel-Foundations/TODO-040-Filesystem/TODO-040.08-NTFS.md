@@ -109,7 +109,7 @@ graph TD
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ✅   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ✅   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                         |   ⬜   |
@@ -449,23 +449,30 @@ graph TD
 
 ### 4.2 File Data Reader
 
-**Prompt:** Using the decoded run-list, implement reading file data by VCN range. Given a file offset and length, calculate which runs cover the requested range, translate VCNs to LCNs, and issue `blkdev_read()` for each run's cluster range. Handle sparse runs by filling the output buffer with zeros. Handle reads that span multiple runs. Handle reads within a single cluster (sub-cluster reads). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file data reader"`. Add notes directly in this TODO section.
+**Verification:** File data reader is implemented in `ntfs_core.c`. Three functions: `ntfs_read_data()` reads non-resident data via run-list (VCN→LCN→blkdev_read), `ntfs_read_resident_data()` copies inline attribute content, `ntfs_read_file_data()` auto-detects resident vs non-resident and dispatches. Verify: `bash scripts/build.sh clean` passes. Handles sparse runs (zero-fill), partial cluster reads (bounce buffer via PMM), multi-run spanning, and real_size capping.
 
-- [ ] Implement `ntfs_read_data(vol, runs, file_offset, length, buffer)`:
-  - [ ] Convert `file_offset` to VCN: `vcn = file_offset / cluster_size`
-  - [ ] Calculate offset within cluster: `cluster_offset = file_offset % cluster_size`
-  - [ ] Find the run containing the target VCN
-  - [ ] For each run covering the requested range:
-    - [ ] If sparse (LCN == SPARSE) → `memset(buffer, 0, run_length × cluster_size)`
-    - [ ] Else: `blkdev_read(dev, lcn × sectors_per_cluster, sectors, buffer)`
-  - [ ] Handle partial cluster reads (start/end of request not cluster-aligned)
-  - [ ] Handle reads spanning multiple runs (stitch runs together)
-  - [ ] Cap read at file's `real_size` (actual data), not `allocated_size`
-- [ ] Implement `ntfs_read_resident_data(attr, offset, length, buffer)`:
-  - [ ] Direct memory copy from attribute's resident content
-  - [ ] Content starts at `attr_base + content_offset` (from attr header at `0x14`)
-- [ ] Auto-detect: if `$DATA` is resident → `ntfs_read_resident_data()`, else data runs
-- [ ] Commit: `"ntfs: file data reader"`
+- [x] Implement `ntfs_read_data(vol, runs, run_count, real_size, file_offset, length, buffer)`:
+  - [x] Convert `file_offset` to VCN: `vcn = file_offset / cluster_size`
+  - [x] Calculate offset within cluster: `cluster_offset = file_offset % cluster_size`
+  - [x] Find the run containing the target VCN
+  - [x] For each run covering the requested range:
+    - [x] If sparse (LCN == SPARSE) → `ntfs_memset(buffer, 0, chunk)`
+    - [x] Else: `blkdev_read(dev, lcn × sectors_per_cluster, sectors, buffer)`
+  - [x] Handle partial cluster reads (bounce buffer via `pmm_alloc_contiguous(1)`)
+  - [x] Handle reads spanning multiple runs (loop until bytes_read == length)
+  - [x] Cap read at file's `real_size` (actual data), not `allocated_size`
+- [x] Implement `ntfs_read_resident_data(attr, offset, length, buffer)`:
+  - [x] Direct memory copy from attribute's resident content
+  - [x] Content starts at `attr_base + content_offset` (from attr header at `0x14`)
+- [x] Auto-detect: `ntfs_read_file_data()` finds unnamed `$DATA`, dispatches resident vs non-resident
+- [x] Committed
+
+> **Notes:**
+> - `ntfs_read_data()` has two paths: aligned full-cluster (direct read to output buffer) and partial (single-cluster bounce buffer via PMM).
+> - Bounce buffer is 1 PMM page (4 KB) — sufficient for typical 4 KB clusters. Freed after each use via `pmm_free_frame()`.
+> - `ntfs_read_file_data()` skips named $DATA attributes (alternate data streams / ADS) — only reads the default unnamed stream.
+> - `NTFS_MAX_DATA_RUNS` = 64 — handles files with up to 64 extents. Heavily fragmented files may need `$ATTRIBUTE_LIST` (§3.4).
+> - Returns `int64_t`: bytes actually read (≥ 0), or -1 on error. Returns 0 if file_offset ≥ real_size.
 
 ---
 

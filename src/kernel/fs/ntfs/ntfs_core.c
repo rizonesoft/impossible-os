@@ -11,6 +11,7 @@
 #include "kernel/fs/ntfs.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 
 /* ---- Little-endian field readers ---- */
@@ -845,4 +846,251 @@ int ntfs_decode_std_info(const uint8_t *record,
     out->dos_permissions = ntfs_le32(data + 0x20);
 
     return NTFS_OK;
+}
+
+/* ============================================================================
+ * File Data Reader — §4.2
+ *
+ * Reads actual file content via two paths:
+ *   1. Resident: small files stored inline in the MFT record attribute
+ *   2. Non-resident: data stored on disk clusters, accessed via run-list
+ *
+ * For non-resident reads:
+ *   - Convert file_offset to VCN (which cluster?)
+ *   - Find the run covering that VCN
+ *   - Translate VCN to LCN via the run's base LCN
+ *   - Read clusters from disk via blkdev_read()
+ *   - Handle partial first/last cluster, sparse runs, multi-run spanning
+ * ============================================================================ */
+
+/* Local helpers — no stdlib available in freestanding kernel */
+static void ntfs_memset(void *dst, uint8_t val, uint64_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    uint64_t i;
+    for (i = 0; i < n; i++)
+        d[i] = val;
+}
+
+static void ntfs_memcpy(void *dst, const void *src, uint64_t n)
+{
+    uint8_t *d = (uint8_t *)dst;
+    const uint8_t *s = (const uint8_t *)src;
+    uint64_t i;
+    for (i = 0; i < n; i++)
+        d[i] = s[i];
+}
+
+int64_t ntfs_read_resident_data(const uint8_t *attr,
+                                uint64_t offset, uint64_t length,
+                                void *buffer)
+{
+    uint32_t content_len;
+    uint16_t content_off;
+    const uint8_t *data;
+    uint64_t avail;
+
+    if (!attr || !buffer)
+        return -1;
+
+    /* Must be resident */
+    if (attr[0x08] != 0)
+        return -1;
+
+    content_len = ntfs_le32(attr + 0x10);
+    content_off = ntfs_le16(attr + 0x14);
+    data = attr + content_off;
+
+    if (offset >= content_len)
+        return 0;  /* Past end of content */
+
+    avail = content_len - offset;
+    if (length > avail)
+        length = avail;
+
+    ntfs_memcpy(buffer, data + offset, length);
+    return (int64_t)length;
+}
+
+int64_t ntfs_read_data(struct ntfs_volume *vol,
+                       const struct ntfs_data_run *runs, int run_count,
+                       uint64_t real_size,
+                       uint64_t file_offset, uint64_t length,
+                       void *buffer)
+{
+    uint8_t *buf = (uint8_t *)buffer;
+    uint64_t cluster_size;
+    uint64_t bytes_read = 0;
+    int i;
+
+    if (!vol || !runs || !buffer || run_count <= 0)
+        return -1;
+
+    cluster_size = vol->cluster_size;
+
+    /* Cap read at real_size */
+    if (file_offset >= real_size)
+        return 0;
+    if (file_offset + length > real_size)
+        length = real_size - file_offset;
+
+    while (bytes_read < length) {
+        uint64_t remaining = length - bytes_read;
+        uint64_t vcn = (file_offset + bytes_read) / cluster_size;
+        uint64_t cluster_off = (file_offset + bytes_read) % cluster_size;
+        uint64_t run_vcn_end;
+        uint64_t clusters_in_run;
+        uint64_t vcn_in_run;
+        uint64_t chunk;
+
+        /* Find the run covering this VCN */
+        for (i = 0; i < run_count; i++) {
+            run_vcn_end = runs[i].vcn_start + runs[i].length;
+            if (vcn >= runs[i].vcn_start && vcn < run_vcn_end)
+                break;
+        }
+        if (i >= run_count)
+            break;  /* VCN not covered by any run — truncated file? */
+
+        vcn_in_run = vcn - runs[i].vcn_start;
+        clusters_in_run = runs[i].length - vcn_in_run;
+
+        /* How many bytes can we read from this run? */
+        chunk = clusters_in_run * cluster_size - cluster_off;
+        if (chunk > remaining)
+            chunk = remaining;
+
+        if (runs[i].lcn == NTFS_LCN_SPARSE) {
+            /* Sparse run — fill with zeros */
+            ntfs_memset(buf + bytes_read, 0, chunk);
+        } else {
+            uint64_t disk_lcn = runs[i].lcn + vcn_in_run;
+
+            if (cluster_off == 0 && chunk >= cluster_size) {
+                /* Aligned, full-cluster read — fast path */
+                uint64_t full_clusters = chunk / cluster_size;
+                uint64_t full_bytes = full_clusters * cluster_size;
+                uint64_t lba = disk_lcn * vol->sectors_per_cluster;
+                uint32_t sectors = (uint32_t)(full_clusters *
+                                              vol->sectors_per_cluster);
+
+                if (blkdev_read(vol->dev, lba, sectors,
+                                buf + bytes_read) != 0)
+                    return -1;
+
+                /* Handle trailing partial cluster */
+                if (full_bytes < chunk) {
+                    /* Read one more cluster into a bounce buffer */
+                    uintptr_t bounce_phys = pmm_alloc_contiguous(1);
+                    uint8_t *bounce = (uint8_t *)(uintptr_t)bounce_phys;
+                    uint64_t trail_lba;
+                    if (!bounce)
+                        return -1;
+
+                    trail_lba = (disk_lcn + full_clusters) *
+                                 vol->sectors_per_cluster;
+                    if (blkdev_read(vol->dev, trail_lba,
+                                    vol->sectors_per_cluster,
+                                    bounce) != 0) {
+                        pmm_free_frame(bounce_phys);
+                        return -1;
+                    }
+                    ntfs_memcpy(buf + bytes_read + full_bytes, bounce,
+                                chunk - full_bytes);
+                    pmm_free_frame(bounce_phys);
+                }
+            } else {
+                /* Partial cluster read — use bounce buffer */
+                uintptr_t bounce_phys = pmm_alloc_contiguous(1);
+                uint8_t *bounce = (uint8_t *)(uintptr_t)bounce_phys;
+                uint64_t pos = 0;
+                uint64_t cur_off = cluster_off;
+                uint64_t cur_lcn = disk_lcn;
+
+                if (!bounce)
+                    return -1;
+
+                /* Read one cluster at a time */
+                while (pos < chunk) {
+                    uint64_t lba = cur_lcn * vol->sectors_per_cluster;
+                    uint64_t avail = cluster_size - cur_off;
+                    uint64_t to_copy = chunk - pos;
+                    if (to_copy > avail)
+                        to_copy = avail;
+
+                    if (blkdev_read(vol->dev, lba,
+                                    vol->sectors_per_cluster,
+                                    bounce) != 0) {
+                        pmm_free_frame(bounce_phys);
+                        return -1;
+                    }
+                    ntfs_memcpy(buf + bytes_read + pos,
+                                bounce + cur_off, to_copy);
+
+                    pos += to_copy;
+                    cur_off = 0;  /* Subsequent clusters start at offset 0 */
+                    cur_lcn++;
+                }
+
+                pmm_free_frame(bounce_phys);
+            }
+        }
+
+        bytes_read += chunk;
+    }
+
+    return (int64_t)bytes_read;
+}
+
+/* Maximum data runs we decode for a single $DATA attribute */
+#define NTFS_MAX_DATA_RUNS  64
+
+int64_t ntfs_read_file_data(const uint8_t *record,
+                            const struct ntfs_mft_header *hdr,
+                            struct ntfs_volume *vol,
+                            uint64_t file_offset, uint64_t length,
+                            void *buffer)
+{
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+
+    if (!record || !hdr || !vol || !buffer)
+        return -1;
+
+    /* Find the unnamed $DATA attribute (type 0x80) */
+    attr = ntfs_attr_find(record, hdr, NTFS_ATTR_DATA, &ah);
+    if (!attr)
+        return -1;
+
+    /* Skip named $DATA attributes (ADS — alternate data streams) */
+    while (attr && ah.name_length > 0) {
+        attr = ntfs_attr_next(attr, record, hdr->used_size);
+        if (attr) {
+            uint32_t type = ntfs_le32(attr + 0x00);
+            if (type != NTFS_ATTR_DATA)
+                attr = NULL;
+            else
+                ntfs_attr_parse(attr, &ah);
+        }
+    }
+    if (!attr)
+        return -1;
+
+    if (ah.non_resident == 0) {
+        /* Resident — direct copy from attribute content */
+        return ntfs_read_resident_data(attr, file_offset, length, buffer);
+    } else {
+        /* Non-resident — decode runs and read from disk */
+        struct ntfs_data_run runs[NTFS_MAX_DATA_RUNS];
+        struct ntfs_nonres_header nrhdr;
+        int run_count;
+
+        run_count = ntfs_decode_data_runs(attr, runs, NTFS_MAX_DATA_RUNS,
+                                          &nrhdr);
+        if (run_count <= 0)
+            return -1;
+
+        return ntfs_read_data(vol, runs, run_count, nrhdr.real_size,
+                              file_offset, length, buffer);
+    }
 }
