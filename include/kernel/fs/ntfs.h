@@ -340,3 +340,72 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                             struct ntfs_volume *vol,
                             uint64_t file_offset, uint64_t length,
                             void *buffer);
+
+/* ---- $INDEX_ROOT Parser (§5.1, attribute type 0x90) ---- */
+
+/* Index entry flags */
+#define NTFS_INDEX_ENTRY_SUBNODE  0x01  /* Entry has sub-node (child VCN) */
+#define NTFS_INDEX_ENTRY_LAST    0x02  /* Last entry (sentinel, no filename) */
+
+/* Parsed index root header (from $INDEX_ROOT attribute content) */
+struct ntfs_index_root_header {
+    uint32_t indexed_attr_type;   /* 0x00: Type of attr being indexed (0x30) */
+    uint32_t collation_rule;      /* 0x04: Collation rule (0x01 = filename) */
+    uint32_t index_record_size;   /* 0x08: Size of INDX records (typ. 4096) */
+    uint8_t  clusters_per_index;  /* 0x0C: Clusters per index record */
+};
+
+/* Parsed index node header (follows the index root header) */
+struct ntfs_index_node_header {
+    uint32_t entries_offset;    /* Offset to first entry (from node start) */
+    uint32_t total_size;        /* Total size of entries area */
+    uint32_t alloc_size;        /* Allocated size of entries area */
+    uint8_t  flags;             /* 0x01 = has children (not a leaf) */
+};
+
+/* A single parsed index entry */
+struct ntfs_index_entry {
+    /* From entry header */
+    uint64_t mft_reference;     /* MFT ref (low 48 = inode, high 16 = seq) */
+    uint64_t mft_inode;         /* Extracted: low 48 bits */
+    uint16_t mft_seq;           /* Extracted: high 16 bits */
+    uint16_t entry_length;      /* Total length of this entry */
+    uint16_t stream_length;     /* Length of $FILE_NAME payload */
+    uint8_t  flags;             /* NTFS_INDEX_ENTRY_* flags */
+
+    /* Decoded $FILE_NAME from payload (valid if !LAST) */
+    struct ntfs_file_name fn;
+
+    /* Child INDX VCN (valid if flags & SUBNODE) */
+    uint64_t child_vcn;
+
+    /* Raw pointer for advanced use */
+    const uint8_t *raw;
+};
+
+/* Parse $INDEX_ROOT from a directory's MFT record.
+ * root_hdr: filled with index root header fields.
+ * node_hdr: filled with index node header fields.
+ * entries_base: set to pointer where index entries start.
+ * Returns NTFS_OK, or NTFS_ERR_BAD_MAGIC if not found/invalid. */
+int ntfs_parse_index_root(const uint8_t *record,
+                          const struct ntfs_mft_header *hdr,
+                          struct ntfs_index_root_header *root_hdr,
+                          struct ntfs_index_node_header *node_hdr,
+                          const uint8_t **entries_base);
+
+/* Get the first index entry from a parsed index node.
+ * entries_base: from ntfs_parse_index_root().
+ * node_hdr: parsed node header.
+ * out: filled with parsed entry data.
+ * Returns pointer to entry, or NULL if empty. */
+const uint8_t *ntfs_index_entry_first(const uint8_t *entries_base,
+                                      const struct ntfs_index_node_header *nh,
+                                      struct ntfs_index_entry *out);
+
+/* Advance to the next index entry.
+ * Returns pointer to next entry, or NULL at end. */
+const uint8_t *ntfs_index_entry_next(const uint8_t *entry,
+                                     const uint8_t *entries_base,
+                                     const struct ntfs_index_node_header *nh,
+                                     struct ntfs_index_entry *out);

@@ -110,7 +110,7 @@ graph TD
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ✅   |
-| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
+| 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ✅   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                         |   ⬜   |
 | 💎 | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07)   |   ⬜   |
@@ -480,28 +480,36 @@ graph TD
 
 ### 5.1 `$INDEX_ROOT` Parser (0x90)
 
-**Prompt:** Parse the always-resident `$INDEX_ROOT` attribute which forms the root node of the directory B+ tree. The root contains a small number of index entries sorted alphabetically. Each index entry has: MFT reference (8B at `0x00`), entry length (2B at `0x08`), stream length (2B at `0x0A`), flags (1B at `0x0C` — bit 0: has sub-node, bit 1: last entry), and a `$FILE_NAME` payload at `0x10`. If the entry has a sub-node (flag `0x01`), the last 8 bytes of the entry contain the VCN of the child INDX buffer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $INDEX_ROOT parser"`. Add notes directly in this TODO section.
+**Verification:** `$INDEX_ROOT` parsing is implemented in `ntfs_core.c` (`ntfs_parse_index_root()`, `ntfs_index_entry_first/next()`, `ntfs_parse_index_entry()`). Verify: `bash scripts/build.sh clean` passes. Locates attr type 0x90 named "$I30", parses root header + node header, then walks index entries extracting MFT references, flags, child VCNs, and embedded $FILE_NAME payloads.
 
-- [ ] Locate `$INDEX_ROOT` (type `0x90`, named `$I30`) in directory's MFT record
-- [ ] Parse index root header:
-  - [ ] Attribute type being indexed (should be `0x30` = `$FILE_NAME`)
-  - [ ] Collation rule (should be `0x01` = filename collation)
-  - [ ] Index record size (typically 4096)
-  - [ ] Clusters per index record
-- [ ] Parse node header:
-  - [ ] Offset to first index entry (relative to node header start)
-  - [ ] Total size of index entries
-  - [ ] Allocated size of index entries
-  - [ ] Flags: `0x01` = has children (not a leaf)
-- [ ] Walk index entries within the root:
-  - [ ] `0x00`: MFT Reference (8 bytes — low 6 = inode, high 2 = sequence)
-  - [ ] `0x08`: Entry length (2 bytes) — advance by this
-  - [ ] `0x0A`: Stream (filename payload) length (2 bytes)
-  - [ ] `0x0C`: Flags — `0x01` = has sub-node, `0x02` = last entry
-  - [ ] `0x10`: `$FILE_NAME` payload (decode with §3.3 logic)
-  - [ ] If flag `0x01`: read child VCN from last 8 bytes of entry
-  - [ ] If flag `0x02`: last entry (sentinel, no filename), stop iteration
-- [ ] Commit: `"ntfs: $INDEX_ROOT parser"`
+- [x] Locate `$INDEX_ROOT` (type `0x90`, named `$I30`) in directory's MFT record
+- [x] Parse index root header:
+  - [x] Attribute type being indexed (should be `0x30` = `$FILE_NAME`)
+  - [x] Collation rule (should be `0x01` = filename collation)
+  - [x] Index record size (typically 4096)
+  - [x] Clusters per index record
+- [x] Parse node header:
+  - [x] Offset to first index entry (relative to node header start)
+  - [x] Total size of index entries
+  - [x] Allocated size of index entries
+  - [x] Flags: `0x01` = has children (not a leaf)
+- [x] Walk index entries within the root:
+  - [x] `0x00`: MFT Reference (8 bytes — low 6 = inode, high 2 = sequence)
+  - [x] `0x08`: Entry length (2 bytes) — advance by this
+  - [x] `0x0A`: Stream (filename payload) length (2 bytes)
+  - [x] `0x0C`: Flags — `0x01` = has sub-node, `0x02` = last entry
+  - [x] `0x10`: `$FILE_NAME` payload (decoded via `parse_fn_content()` from §3.3)
+  - [x] If flag `0x01`: read child VCN from last 8 bytes of entry
+  - [x] If flag `0x02`: last entry (sentinel, no filename), stop iteration
+- [x] Committed
+
+> **Notes:**
+> - `ntfs_parse_index_root()` uses `ntfs_attr_find_named(record, hdr, 0x90, "$I30", &ah)` — the "$I30" name is the standard NTFS filename index.
+> - Three structs: `ntfs_index_root_header` (4 fields), `ntfs_index_node_header` (4 fields), `ntfs_index_entry` (MFT ref, lengths, flags, child_vcn, embedded `ntfs_file_name`).
+> - `ntfs_parse_index_entry()` is a static helper reused by both `$INDEX_ROOT` and INDX buffer parsing (§5.2).
+> - `ntfs_index_entry_first/next()` iterator pair — same pattern as `ntfs_attr_first/next()`.
+> - Bounds check in `ntfs_index_entry_next()`: stops when entry offset ≥ `total_size`.
+> - Zero-length entry protection: `entry_length == 0` → return NULL to prevent infinite loops.
 
 ### 5.2 INDX Buffer Reader (0xA0)
 

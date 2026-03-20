@@ -1094,3 +1094,167 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                               file_offset, length, buffer);
     }
 }
+
+/* ============================================================================
+ * $INDEX_ROOT Parser — §5.1 (attribute type 0x90)
+ *
+ * Directories in NTFS store filenames in a B+ tree. The root node of the
+ * tree lives in the always-resident $INDEX_ROOT attribute (named "$I30").
+ *
+ * $INDEX_ROOT content layout:
+ *   0x00  Index Root Header (16 bytes):
+ *         0x00  Indexed attribute type (4B) — always 0x30 ($FILE_NAME)
+ *         0x04  Collation rule (4B) — 0x01 = filename collation
+ *         0x08  Index record size (4B) — typically 4096
+ *         0x0C  Clusters per index record (1B)
+ *   0x10  Node Header (16 bytes):
+ *         0x00  Offset to first entry (from node header start, 4B)
+ *         0x04  Total size of entries (4B)
+ *         0x08  Allocated size of entries (4B)
+ *         0x0C  Flags (1B) — 0x01 = has children
+ *   0x20+ Index Entries (variable length):
+ *         Each entry: MFT ref (8B), length (2B), stream len (2B),
+ *                     flags (4B, but only low byte used), $FILE_NAME payload,
+ *                     optional child VCN (8B at end if has-sub-node flag set)
+ * ============================================================================ */
+
+/* Parse a single index entry at 'entry' into 'out'.
+ * Returns 0 on success, -1 if entry looks corrupt. */
+static int ntfs_parse_index_entry(const uint8_t *entry,
+                                  struct ntfs_index_entry *out)
+{
+    uint64_t ref;
+
+    out->raw = entry;
+
+    /* MFT reference at 0x00 */
+    ref = ntfs_le64(entry + 0x00);
+    out->mft_reference = ref;
+    out->mft_inode = ref & 0x0000FFFFFFFFFFFFULL;
+    out->mft_seq   = (uint16_t)((ref >> 48) & 0xFFFF);
+
+    /* Entry header */
+    out->entry_length  = ntfs_le16(entry + 0x08);
+    out->stream_length = ntfs_le16(entry + 0x0A);
+    out->flags         = entry[0x0C];
+
+    if (out->entry_length < 0x10)
+        return -1;  /* Entry too small */
+
+    /* Child VCN (if sub-node flag is set, stored at end of entry) */
+    if (out->flags & NTFS_INDEX_ENTRY_SUBNODE) {
+        out->child_vcn = ntfs_le64(entry + out->entry_length - 8);
+    } else {
+        out->child_vcn = 0;
+    }
+
+    /* Decode embedded $FILE_NAME payload if not the last (sentinel) entry */
+    if (!(out->flags & NTFS_INDEX_ENTRY_LAST) && out->stream_length > 0) {
+        parse_fn_content(entry + 0x10, out->stream_length, &out->fn);
+    } else {
+        /* Sentinel entry — clear filename */
+        out->fn.name[0] = '\0';
+        out->fn.name_length = 0;
+    }
+
+    return 0;
+}
+
+int ntfs_parse_index_root(const uint8_t *record,
+                          const struct ntfs_mft_header *hdr,
+                          struct ntfs_index_root_header *root_hdr,
+                          struct ntfs_index_node_header *node_hdr,
+                          const uint8_t **entries_base)
+{
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+    const uint8_t *data;
+    const uint8_t *node;
+
+    if (!record || !hdr || !root_hdr || !node_hdr || !entries_base)
+        return NTFS_ERR_IO;
+
+    /* Find $INDEX_ROOT named "$I30" (directory index on $FILE_NAME) */
+    attr = ntfs_attr_find_named(record, hdr, NTFS_ATTR_INDEX_ROOT,
+                                "$I30", &ah);
+    if (!attr)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Must be resident */
+    if (ah.non_resident != 0)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Need at least 0x20 bytes (root header + node header) */
+    if (ah.content_length < 0x20)
+        return NTFS_ERR_BAD_MAGIC;
+
+    data = attr + ah.content_offset;
+
+    /* Parse Index Root Header at data+0x00 */
+    root_hdr->indexed_attr_type  = ntfs_le32(data + 0x00);
+    root_hdr->collation_rule     = ntfs_le32(data + 0x04);
+    root_hdr->index_record_size  = ntfs_le32(data + 0x08);
+    root_hdr->clusters_per_index = data[0x0C];
+
+    /* Parse Node Header at data+0x10 */
+    node = data + 0x10;
+    node_hdr->entries_offset = ntfs_le32(node + 0x00);
+    node_hdr->total_size     = ntfs_le32(node + 0x04);
+    node_hdr->alloc_size     = ntfs_le32(node + 0x08);
+    node_hdr->flags          = node[0x0C];
+
+    /* Entries start at node + entries_offset */
+    *entries_base = node + node_hdr->entries_offset;
+
+    return NTFS_OK;
+}
+
+const uint8_t *ntfs_index_entry_first(const uint8_t *entries_base,
+                                      const struct ntfs_index_node_header *nh,
+                                      struct ntfs_index_entry *out)
+{
+    if (!entries_base || !nh || !out)
+        return NULL;
+
+    if (nh->total_size < nh->entries_offset)
+        return NULL;
+
+    if (ntfs_parse_index_entry(entries_base, out) != 0)
+        return NULL;
+
+    return entries_base;
+}
+
+const uint8_t *ntfs_index_entry_next(const uint8_t *entry,
+                                     const uint8_t *entries_base,
+                                     const struct ntfs_index_node_header *nh,
+                                     struct ntfs_index_entry *out)
+{
+    const uint8_t *next;
+    struct ntfs_index_entry prev;
+
+    if (!entry || !entries_base || !nh || !out)
+        return NULL;
+
+    /* Parse current entry to get its length (need to advance by it) */
+    if (ntfs_parse_index_entry(entry, &prev) != 0)
+        return NULL;
+
+    /* If current entry is the last (sentinel), stop */
+    if (prev.flags & NTFS_INDEX_ENTRY_LAST)
+        return NULL;
+
+    if (prev.entry_length == 0)
+        return NULL;  /* Prevent infinite loop */
+
+    next = entry + prev.entry_length;
+
+    /* Bounds check: don't walk past allocated entries area */
+    if ((uint32_t)(next - entries_base) >= nh->total_size)
+        return NULL;
+
+    if (ntfs_parse_index_entry(next, out) != 0)
+        return NULL;
+
+    return next;
+}
