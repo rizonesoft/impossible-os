@@ -113,7 +113,15 @@ void boot_storage_init(uint64_t magic)
     if (vmbus_init() == 0) {
         /* VMBus connected — initialize synthetic devices */
         boot_splash_status("Initializing Hyper-V storage...");
-        storvsc_init();
+        if (storvsc_init() == 0) {
+            /* StorVSC registered "hyperv0" as a new block device.
+             * Re-scan partitions and mount filesystems — this is needed
+             * on Hyper-V Gen 2 where there is no AHCI, only StorVSC. */
+            boot_splash_status("Scanning Hyper-V partitions...");
+            partition_scan_all();
+            boot_splash_status("Mounting Hyper-V filesystems...");
+            partition_mount_filesystems();
+        }
 
         boot_splash_status("Initializing Hyper-V input...");
         hv_kbd_init();
