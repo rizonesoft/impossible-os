@@ -2,7 +2,8 @@
  * spinner.c — Progressive arc-ring spinner (breathing animation engine)
  *
  * Windows 11-style Fluent 2 spinner: a dynamic arc that rotates while its
- * length oscillates.  Animation is driven by PIT timer callbacks.
+ * length oscillates.  Animation is driven by sleep_ms() polling loop
+ * via the Unified Timer Subsystem (UTS).
  *
  * Two concurrent behaviors (per Fluent Design spec):
  *   1. Continuous base rotation at constant speed (100°/s)
@@ -19,11 +20,10 @@
 #include "kernel/gfx/arc_ring.h"
 #include "kernel/drivers/framebuffer.h"
 #include "kernel/timer.h"
-#include "kernel/drivers/pit.h"  /* pit_register_callback — PIT-specific */
 
 /* ---- Animation timing ---- */
 
-#define SPINNER_TICK_DIVISOR  10  /* PIT at 100Hz / 10 = 10 fps */
+/* Animation runs at ~10fps via sleep_ms(100) polling loop */
 #define SPINNER_CYCLE_FRAMES 20  /* frames per cycle (2.0s @ 10fps) */
 #define SPINNER_HALF_CYCLE   10  /* expand phase = contract phase */
 
@@ -171,21 +171,6 @@ static void spinner_render(uint8_t fade)
                   start, sweep, color);
 }
 
-/* ---- PIT timer callback ---- */
-
-static void spinner_timer_callback(void)
-{
-    if (!s_active) return;
-
-    s_frame++;
-    spinner_render(255);
-
-    /* Swap only the spinner's bounding rect (no full-screen swap) */
-    uint32_t bx, by, bw, bh;
-    spinner_get_bounds(&bx, &by, &bw, &bh);
-    fb_swap_rect(bx, by, bw, bh);
-}
-
 /* ---- Public API ---- */
 
 void spinner_init(int32_t cx, int32_t cy,
@@ -201,19 +186,33 @@ void spinner_init(int32_t cx, int32_t cy,
     s_active = 0;
 }
 
+/* Blocking animation loop — runs until spinner_stop() is called from
+ * another context (e.g., boot_splash completion).  Uses sleep_ms() via
+ * g_system_timer so it works on every platform (PIT on TCG, LAPIC elsewhere).
+ * Runs at ~10fps (100ms per frame). */
 void spinner_start(void)
 {
     if (s_active) return;
     s_active = 1;
     s_frame  = 0;
-    pit_register_callback(spinner_timer_callback, SPINNER_TICK_DIVISOR);
+
+    while (s_active) {
+        s_frame++;
+        spinner_render(255);
+
+        /* Swap only the spinner's bounding rect (no full-screen swap) */
+        uint32_t bx, by, bw, bh;
+        spinner_get_bounds(&bx, &by, &bw, &bh);
+        fb_swap_rect(bx, by, bw, bh);
+
+        sleep_ms(100);  /* ~10 fps */
+    }
 }
 
 void spinner_stop(void)
 {
-    if (!s_active) return;
     s_active = 0;
-    pit_unregister_callback();
+    /* The polling loop in spinner_start() exits on next iteration */
 }
 
 void spinner_draw_faded(uint8_t fade)

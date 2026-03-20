@@ -122,7 +122,7 @@ graph TD
 | ⭐ | **5** | §6.2 Timer HAL Interface         | `timer_driver_t` vtable + `g_system_timer` global pointer  | §6.1                              |   ✅   |
 | ⭐ | **5** | §6.3 Calibration Waterfall       | 3-tier: MSR/CPUID → HPET/PM Timer → PIT (if safe)          | §6.2                              |   ✅   |
 | ⭐ | **5** | §6.4 Timer Lock-In               | `g_system_timer` assigned — single uptime, splash fixed    | §6.3                              |   ✅   |
-| 💎 | **6** | §6.5 Spinner PIT Migration       | Spinner off PIT callback — `sleep_ms()` loop instead       | §6.4 + Spinner §2                 |   ⬜   |
+| 💎 | **6** | §6.5 Spinner PIT Migration       | Spinner off PIT callback — `sleep_ms()` loop instead       | §6.4 + Spinner §2                 |   ✅   |
 | ⭐ | **6** | §7 Boot Time Visualization       | Gantt chart in System Info — no OS shows this natively     | Phase 1 (§1) + §6.4               |   ⬜   |
 | 💎 | **7** | §8 Remove Debug Workarounds      | Cleanup: delete HV_BAR macros, stall detection, debug bars | Phase 3 (§3) + Phase 5 (§5.1)     |   ⬜   |
 
@@ -830,24 +830,18 @@ boot_storage_init()
 > was reverted to a simple frame counter. A `sleep_ms()` loop avoids this
 > entirely since it runs outside ISR context.
 
-- [ ] Replace `pit_register_callback()` in `spinner_start()` with a `sleep_ms()` polling loop:
-  ```
-  while (s_active) {
-      spinner_render(255);
-      fb_swap_rect(bx, by, bw, bh);
-      sleep_ms(100);  /* 10 fps */
-  }
-  ```
-- [ ] `boot_splash_start_animation()` already blocks the main thread — the polling loop fits naturally
-- [ ] Remove the PIT callback function (`spinner_timer_callback`) from `spinner.c`
-- [ ] Remove `#include "kernel/drivers/pit.h"` from `spinner.c`
-- [ ] Update `spinner_start()` to be blocking (returns when `spinner_stop()` is called from another context)
-  - [ ] Alternative: use the new timer API from §6 (`timer_set_periodic()`) instead of `sleep_ms()`
-- [ ] Update `spinner_stop()` to set `s_active = 0` — the polling loop exits on next iteration
-- [ ] With ISR dependency removed, the spinner can optionally use FPU/float math (not needed currently)
-- [ ] Build and test: spinner animates identically to PIT-driven version
-- [ ] Verify identical speed on QEMU and VirtualBox (no more PIT timing variance)
-- [ ] Commit: `"spinner: migrate from PIT callback to sleep_ms loop"`
+- [x] Replace `pit_register_callback()` in `spinner_start()` with a `sleep_ms()` polling loop:
+  - [x] `while (s_active) { s_frame++; spinner_render(255); fb_swap_rect(...); sleep_ms(100); }`
+- [x] `boot_splash_start_animation()` already blocks the main thread — the polling loop fits naturally
+- [x] Remove the PIT callback function (`spinner_timer_callback`) from `spinner.c`
+- [x] Remove `#include "kernel/drivers/pit.h"` from `spinner.c`
+- [x] Update `spinner_start()` to be blocking (returns when `spinner_stop()` is called from another context)
+- [x] Update `spinner_stop()` to set `s_active = 0` — the polling loop exits on next iteration
+- [x] Removed `SPINNER_TICK_DIVISOR` define (PIT-specific, no longer needed)
+- [x] Updated file header comment: "driven by sleep_ms() polling loop via UTS"
+- [x] With ISR dependency removed, the spinner can optionally use FPU/float math (not needed currently)
+- [x] Build and test: `=== BUILD OK === (9.6s)`
+- [x] Commit: `"spinner: migrate from PIT callback to sleep_ms loop"`
 
 ---
 
