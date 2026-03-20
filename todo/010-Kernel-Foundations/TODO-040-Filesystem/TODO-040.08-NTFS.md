@@ -108,7 +108,7 @@ graph TD
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ✅   |
-| 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                         |   ⬜   |
@@ -289,27 +289,34 @@ graph TD
 
 ### 3.2 `$STANDARD_INFORMATION` Decoder (0x10)
 
-**Prompt:** Parse the always-resident `$STANDARD_INFORMATION` attribute to extract file timestamps and DOS permissions. NTFS timestamps are 64-bit values representing 100-nanosecond intervals since January 1, 1601 (Windows FILETIME). Extract: Creation Time (`0x00`), Modification Time (`0x08`), MFT Change Time (`0x10`), Last Access Time (`0x18`), and DOS Permissions flags (`0x20`). Map permissions: `0x0001` = Read-Only, `0x0002` = Hidden, `0x0004` = System, `0x0020` = Archive, `0x0800` = Compressed, `0x4000` = Encrypted. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $STANDARD_INFORMATION decoder"`. Add notes directly in this TODO section.
+**Verification:** `$STANDARD_INFORMATION` decoding is implemented in `ntfs_core.c` (`ntfs_decode_std_info()` + `ntfs_filetime_to_unix()`). Verify: `bash scripts/build.sh clean` passes. Locates attr type 0x10, verifies resident, extracts 4 timestamps + DOS flags, converts all timestamps to Unix epoch. 13 `NTFS_FILE_ATTR_*` constants defined in `ntfs.h`.
 
-- [ ] Locate `$STANDARD_INFORMATION` (type `0x10`) via attribute iterator
-- [ ] Verify it is resident (must always be resident per NTFS spec)
-- [ ] Extract timestamps (all 64-bit LE, FILETIME format):
-  - [ ] `0x00`: Creation time (C time)
-  - [ ] `0x08`: Modification time (A time — content altered)
-  - [ ] `0x10`: MFT change time (M time — metadata altered)
-  - [ ] `0x18`: Last access time (R time — often disabled)
-- [ ] Implement `ntfs_filetime_to_unix(filetime)`:
-  - [ ] Subtract Windows epoch delta: `11644473600` seconds (1601-01-01 → 1970-01-01)
-  - [ ] Divide by 10,000,000 to convert 100ns intervals to seconds
-- [ ] Extract DOS permissions at `0x20` (4 bytes):
-  - [ ] `FILE_ATTRIBUTE_READONLY (0x0001)`
-  - [ ] `FILE_ATTRIBUTE_HIDDEN (0x0002)`
-  - [ ] `FILE_ATTRIBUTE_SYSTEM (0x0004)`
-  - [ ] `FILE_ATTRIBUTE_ARCHIVE (0x0020)`
-  - [ ] `FILE_ATTRIBUTE_COMPRESSED (0x0800)`
-  - [ ] `FILE_ATTRIBUTE_ENCRYPTED (0x4000)`
-- [ ] Populate `vfs_node` with converted timestamps and attribute flags
-- [ ] Commit: `"ntfs: $STANDARD_INFORMATION decoder"`
+- [x] Locate `$STANDARD_INFORMATION` (type `0x10`) via attribute iterator
+- [x] Verify it is resident (must always be resident per NTFS spec)
+- [x] Extract timestamps (all 64-bit LE, FILETIME format):
+  - [x] `0x00`: Creation time (C time)
+  - [x] `0x08`: Modification time (A time — content altered)
+  - [x] `0x10`: MFT change time (M time — metadata altered)
+  - [x] `0x18`: Last access time (R time — often disabled)
+- [x] Implement `ntfs_filetime_to_unix(filetime)`:
+  - [x] Subtract Windows epoch delta: `11644473600` seconds (1601-01-01 → 1970-01-01)
+  - [x] Divide by 10,000,000 to convert 100ns intervals to seconds
+- [x] Extract DOS permissions at `0x20` (4 bytes):
+  - [x] `FILE_ATTRIBUTE_READONLY (0x0001)`
+  - [x] `FILE_ATTRIBUTE_HIDDEN (0x0002)`
+  - [x] `FILE_ATTRIBUTE_SYSTEM (0x0004)`
+  - [x] `FILE_ATTRIBUTE_ARCHIVE (0x0020)`
+  - [x] `FILE_ATTRIBUTE_COMPRESSED (0x0800)`
+  - [x] `FILE_ATTRIBUTE_ENCRYPTED (0x4000)`
+- [x] VFS population deferred to §6.1 (VFS Registration phase)
+- [x] Committed
+
+> **Notes:**
+> - `ntfs_filetime_to_unix()`: handles zero timestamps (returns 0) and pre-epoch dates (returns 0).
+> - `ntfs_std_info` stores both raw FILETIME and converted Unix timestamps — callers can use either.
+> - 13 `NTFS_FILE_ATTR_*` constants cover the full WIN32_FILE_ATTRIBUTE_DATA set (readonly through encrypted).
+> - Minimum content length check: 0x24 bytes (4×8 timestamps + 4 flags) — NTFS 1.2 records may lack extended fields.
+> - NTFS 3.0+ records have 72-byte content (adds owner/security/quota/USN at 0x30+), but we only need the first 0x24.
 
 ### 3.3 `$FILE_NAME` Decoder (0x30)
 

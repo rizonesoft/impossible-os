@@ -249,3 +249,51 @@ struct ntfs_nonres_header {
  * Returns the number of runs decoded (0..max_runs), or -1 on error. */
 int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
                           int max_runs, struct ntfs_nonres_header *nrhdr);
+
+/* ---- $STANDARD_INFORMATION Decoder (attribute type 0x10) ---- */
+
+/* DOS file attribute flags (from $STANDARD_INFORMATION offset 0x20) */
+#define NTFS_FILE_ATTR_READONLY    0x0001
+#define NTFS_FILE_ATTR_HIDDEN      0x0002
+#define NTFS_FILE_ATTR_SYSTEM      0x0004
+#define NTFS_FILE_ATTR_ARCHIVE     0x0020
+#define NTFS_FILE_ATTR_DEVICE      0x0040
+#define NTFS_FILE_ATTR_NORMAL      0x0080
+#define NTFS_FILE_ATTR_TEMPORARY   0x0100
+#define NTFS_FILE_ATTR_SPARSE      0x0200
+#define NTFS_FILE_ATTR_REPARSE     0x0400
+#define NTFS_FILE_ATTR_COMPRESSED  0x0800
+#define NTFS_FILE_ATTR_OFFLINE     0x1000
+#define NTFS_FILE_ATTR_NOT_INDEXED 0x2000
+#define NTFS_FILE_ATTR_ENCRYPTED   0x4000
+
+/* Parsed $STANDARD_INFORMATION attribute content */
+struct ntfs_std_info {
+    /* Timestamps — raw FILETIME (100-ns intervals since 1601-01-01) */
+    uint64_t creation_time;      /* 0x00 */
+    uint64_t modification_time;  /* 0x08 */
+    uint64_t mft_change_time;    /* 0x10 */
+    uint64_t access_time;        /* 0x18 */
+
+    /* Converted Unix timestamps (seconds since 1970-01-01) */
+    uint64_t creation_unix;
+    uint64_t modification_unix;
+    uint64_t mft_change_unix;
+    uint64_t access_unix;
+
+    /* DOS permission flags */
+    uint32_t dos_permissions;    /* 0x20: NTFS_FILE_ATTR_* */
+};
+
+/* Convert a Windows FILETIME (100-ns since 1601-01-01) to Unix timestamp.
+ * Returns seconds since 1970-01-01, or 0 if the FILETIME is before epoch. */
+uint64_t ntfs_filetime_to_unix(uint64_t filetime);
+
+/* Decode the $STANDARD_INFORMATION attribute from an MFT record.
+ * record: raw MFT record buffer (after fixup).
+ * hdr: parsed MFT record header.
+ * out: filled with timestamps and DOS permissions.
+ * Returns NTFS_OK on success, NTFS_ERR_BAD_MAGIC if attr not found. */
+int ntfs_decode_std_info(const uint8_t *record,
+                         const struct ntfs_mft_header *hdr,
+                         struct ntfs_std_info *out);

@@ -760,3 +760,89 @@ int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
 
     return count;
 }
+
+/* ============================================================================
+ * $STANDARD_INFORMATION Decoder — attribute type 0x10
+ *
+ * Every MFT record has exactly one $STANDARD_INFORMATION attribute.
+ * It is always resident (content is small — 48 or 72 bytes).
+ *
+ * Content layout:
+ *   0x00  Creation time         (8 bytes, FILETIME)
+ *   0x08  Modification time     (8 bytes, FILETIME)
+ *   0x10  MFT change time       (8 bytes, FILETIME)
+ *   0x18  Last access time      (8 bytes, FILETIME)
+ *   0x20  DOS permissions/flags (4 bytes)
+ *   (0x24+ : Max versions, version number, class ID — NTFS 3.0+)
+ *   (0x30+ : Owner ID, Security ID, Quota, USN — NTFS 3.0+)
+ *
+ * FILETIME = 100-nanosecond intervals since January 1, 1601 00:00:00 UTC.
+ * To convert to Unix: subtract 11644473600 seconds, divide by 10,000,000.
+ * ============================================================================ */
+
+/* Delta between Windows (1601-01-01) and Unix (1970-01-01) epochs in seconds */
+#define NTFS_EPOCH_DELTA  11644473600ULL
+
+/* 100-nanosecond intervals per second */
+#define NTFS_TICKS_PER_SEC  10000000ULL
+
+uint64_t ntfs_filetime_to_unix(uint64_t filetime)
+{
+    uint64_t secs;
+
+    if (filetime == 0)
+        return 0;
+
+    /* Convert 100-ns ticks to seconds */
+    secs = filetime / NTFS_TICKS_PER_SEC;
+
+    /* Subtract epoch delta (1601 → 1970) */
+    if (secs <= NTFS_EPOCH_DELTA)
+        return 0;  /* Before Unix epoch */
+
+    return secs - NTFS_EPOCH_DELTA;
+}
+
+int ntfs_decode_std_info(const uint8_t *record,
+                         const struct ntfs_mft_header *hdr,
+                         struct ntfs_std_info *out)
+{
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+    const uint8_t *data;
+
+    if (!record || !hdr || !out)
+        return NTFS_ERR_IO;
+
+    /* Find the $STANDARD_INFORMATION attribute */
+    attr = ntfs_attr_find(record, hdr, NTFS_ATTR_STANDARD_INFORMATION, &ah);
+    if (!attr)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Must be resident */
+    if (ah.non_resident != 0)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Need at least 0x24 bytes (4 timestamps + flags) */
+    if (ah.content_length < 0x24)
+        return NTFS_ERR_BAD_MAGIC;
+
+    data = attr + ah.content_offset;
+
+    /* Extract raw FILETIME timestamps */
+    out->creation_time     = ntfs_le64(data + 0x00);
+    out->modification_time = ntfs_le64(data + 0x08);
+    out->mft_change_time   = ntfs_le64(data + 0x10);
+    out->access_time       = ntfs_le64(data + 0x18);
+
+    /* Convert to Unix timestamps */
+    out->creation_unix     = ntfs_filetime_to_unix(out->creation_time);
+    out->modification_unix = ntfs_filetime_to_unix(out->modification_time);
+    out->mft_change_unix   = ntfs_filetime_to_unix(out->mft_change_time);
+    out->access_unix       = ntfs_filetime_to_unix(out->access_time);
+
+    /* DOS permission flags */
+    out->dos_permissions = ntfs_le32(data + 0x20);
+
+    return NTFS_OK;
+}
