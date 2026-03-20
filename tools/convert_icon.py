@@ -144,12 +144,9 @@ def main():
         f.write("/* Pick the splash logo matching screen height — exact size, no scaling */\n")
         f.write("#define OS_LOGO_FOR_HEIGHT(scr_h) \\\n")
         f.write("    ((scr_h) >= 2160 ? os_logo_256_pixels : \\\n")
-        f.write("     (scr_h) >= 1440 ? os_logo_192_pixels : \\\n")
         f.write("                       os_logo_128_pixels)\n\n")
         f.write("#define OS_LOGO_SIZE_FOR_HEIGHT(scr_h) \\\n")
-        f.write("    ((scr_h) >= 2160 ? 256 : \\\n")
-        f.write("     (scr_h) >= 1440 ? 192 : \\\n")
-        f.write("                       128)\n")
+        f.write("    ((scr_h) >= 2160 ? 256 : 128)\n")
 
     # Write source: all pixel data
     with open(src_path, 'w') as f:
