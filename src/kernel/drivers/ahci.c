@@ -97,7 +97,7 @@ static void port_stop_cmd(volatile uint8_t *pregs)
     while (timeout--) {
         if (!(port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_CR))
             break;
-        __asm__ volatile ("pause");
+        /* No PAUSE — triggers Hyper-V PLE (~100ms stall per iter) */
     }
 
     /* Clear FRE (stop FIS receive) */
@@ -110,7 +110,6 @@ static void port_stop_cmd(volatile uint8_t *pregs)
     while (timeout--) {
         if (!(port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_FR))
             break;
-        __asm__ volatile ("pause");
     }
 }
 
@@ -122,7 +121,7 @@ static void port_start_cmd(volatile uint8_t *pregs)
 
     /* Wait for CR to clear before starting (with timeout) */
     while ((port_read(pregs, AHCI_PxCMD) & AHCI_PxCMD_CR) && timeout--)
-        __asm__ volatile ("pause");
+        ;  /* MMIO read is yield point; no PAUSE (Hyper-V PLE) */
 
     cmd = port_read(pregs, AHCI_PxCMD);
     cmd |= AHCI_PxCMD_FRE;
@@ -259,7 +258,7 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
                 return -1;
             }
         }
-        __asm__ volatile ("pause");
+        /* No PAUSE — triggers Hyper-V PLE (~100ms stall per iter) */
     }
 
     if (timeout == 0) {
