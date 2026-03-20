@@ -218,3 +218,34 @@ struct ntfs_file_name {
 int ntfs_decode_file_name(const uint8_t *record,
                           const struct ntfs_mft_header *hdr,
                           struct ntfs_file_name *out);
+
+/* ---- Data Run Decoder (§4.1) ---- */
+
+/* Sentinel LCN value for sparse (unallocated) runs — reads as all zeros */
+#define NTFS_LCN_SPARSE  ((uint64_t)-1)
+
+/* A single data run: maps a range of Virtual Cluster Numbers to disk LCNs */
+struct ntfs_data_run {
+    uint64_t vcn_start;    /* First VCN this run covers */
+    uint64_t lcn;          /* Starting LCN on disk (NTFS_LCN_SPARSE if sparse) */
+    uint64_t length;       /* Number of clusters in this run */
+};
+
+/* Non-resident attribute header fields (parsed from attr raw bytes) */
+struct ntfs_nonres_header {
+    uint64_t start_vcn;      /* 0x10: Starting VCN */
+    uint64_t last_vcn;       /* 0x18: Last VCN */
+    uint16_t data_run_off;   /* 0x20: Offset to data runs from attr start */
+    uint64_t alloc_size;     /* 0x28: Allocated size in bytes */
+    uint64_t real_size;      /* 0x30: Real (used) size in bytes */
+    uint64_t init_size;      /* 0x38: Initialized size in bytes */
+};
+
+/* Decode data runs from a non-resident attribute.
+ * attr: raw pointer to the attribute (from iterator).
+ * runs: output array to fill with decoded runs.
+ * max_runs: capacity of runs[].
+ * nrhdr: if non-NULL, filled with non-resident header fields.
+ * Returns the number of runs decoded (0..max_runs), or -1 on error. */
+int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
+                          int max_runs, struct ntfs_nonres_header *nrhdr);

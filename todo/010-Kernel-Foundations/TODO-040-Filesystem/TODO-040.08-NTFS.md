@@ -107,7 +107,7 @@ graph TD
 | 💎 | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                         |   ✅   |
 | 💎 | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                         |   ✅   |
-| 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ⬜   |
+| 💎 | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                         |   ✅   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                         |   ⬜   |
 | 💎 | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                         |   ⬜   |
 | 💎 | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                   |   ⬜   |
@@ -407,30 +407,38 @@ graph TD
 
 ### 4.1 Run-List Decoder
 
-**Prompt:** Implement the core data run decoder for non-resident `$DATA` attributes. This is the most algorithmically critical component — it translates Virtual Cluster Numbers (VCNs) to physical Logical Cluster Numbers (LCNs). Each run starts with a header byte: low nibble = length field size (L), high nibble = offset field size (F). Read L bytes as unsigned run length (cluster count), then F bytes as **signed** relative offset. The offset is relative to the PREVIOUS run's LCN (or LCN 0 for the first run). A header byte of `0x00` terminates the list. Handle sparse runs: F=0 means the clusters are all zeros (no disk I/O). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: data run decoder"`. Add notes directly in this TODO section.
+**Verification:** Data run decoder is implemented in `ntfs_core.c` (`ntfs_decode_data_runs()`). Verify: `bash scripts/build.sh clean` passes. The function parses the non-resident attribute header (6 fields), then walks the variable-length run-list encoding: header byte splits into length_size (low nibble) and offset_size (high nibble), followed by unsigned length and signed relative offset fields. Sign extension handles negative offsets correctly. Sparse runs (offset_size==0) get `NTFS_LCN_SPARSE` sentinel.
 
-- [ ] Implement `ntfs_decode_data_runs(attr, runs[], max_runs)`:
-  - [ ] Locate run-list start: for non-resident attrs, at `attr->data_run_offset`
-  - [ ] Parse non-resident header fields:
-    - [ ] Starting VCN (8 bytes at attr_offset `0x10`)
-    - [ ] Last VCN (8 bytes at attr_offset `0x18`)
-    - [ ] Data runs offset (2 bytes at attr_offset `0x20`)
-    - [ ] Allocated size (8 bytes at `0x28`)
-    - [ ] Real (used) size (8 bytes at `0x30`)
-    - [ ] Initialized size (8 bytes at `0x38`)
-  - [ ] Walk the run-list:
-    - [ ] Read header byte. If `0x00` → end of list
-    - [ ] `length_size = header & 0x0F` (low nibble)
-    - [ ] `offset_size = (header >> 4) & 0x0F` (high nibble)
-    - [ ] Read next `length_size` bytes as **unsigned** integer → cluster count
-    - [ ] Read next `offset_size` bytes as **signed** integer → relative offset
-    - [ ] **Sign-extend** the offset: if high bit set, fill upper bytes with `0xFF`
-    - [ ] `absolute_lcn = previous_lcn + relative_offset`
-    - [ ] Store run: `{ lcn, length, vcn_start }`
-    - [ ] Update `previous_lcn = absolute_lcn`
-  - [ ] Handle sparse runs: `offset_size == 0` → LCN = SPARSE (return zeros)
-- [ ] Log: `[NTFS] Run: VCN %llu → LCN %llu, %llu clusters`
-- [ ] Commit: `"ntfs: data run decoder"`
+- [x] Implement `ntfs_decode_data_runs(attr, runs[], max_runs, nrhdr)`:
+  - [x] Locate run-list start: offset at `attr[0x20]`
+  - [x] Parse non-resident header fields:
+    - [x] Starting VCN (8 bytes at attr_offset `0x10`)
+    - [x] Last VCN (8 bytes at attr_offset `0x18`)
+    - [x] Data runs offset (2 bytes at attr_offset `0x20`)
+    - [x] Allocated size (8 bytes at `0x28`)
+    - [x] Real (used) size (8 bytes at `0x30`)
+    - [x] Initialized size (8 bytes at `0x38`)
+  - [x] Walk the run-list:
+    - [x] Read header byte. If `0x00` → end of list
+    - [x] `length_size = header & 0x0F` (low nibble)
+    - [x] `offset_size = (header >> 4) & 0x0F` (high nibble)
+    - [x] Read next `length_size` bytes as **unsigned** integer → cluster count
+    - [x] Read next `offset_size` bytes as **signed** integer → relative offset
+    - [x] **Sign-extend** the offset: if high bit set, fill upper bytes with `0xFF`
+    - [x] `absolute_lcn = previous_lcn + relative_offset`
+    - [x] Store run: `{ lcn, length, vcn_start }`
+    - [x] Update `previous_lcn = absolute_lcn`
+  - [x] Handle sparse runs: `offset_size == 0` → LCN = `NTFS_LCN_SPARSE`
+- [x] Corrupt run-list detection: `len_size == 0` or field sizes > 8 → stop
+- [x] Committed
+
+> **Notes:**
+> - API: `ntfs_decode_data_runs(attr, runs, max_runs, nrhdr)` — returns count of decoded runs (0..max_runs), or -1 on error.
+> - `read_unsigned()` / `read_signed()`: generic N-byte LE readers for variable-width fields (N ≤ 8).
+> - Sign extension: `if (p[n-1] & 0x80) val |= ~((1ULL << (n*8)) - 1)` — fills upper bits with 1s.
+> - `NTFS_LCN_SPARSE` = `(uint64_t)-1` — sentinel value, callers must check and return zeros instead of reading disk.
+> - `ntfs_nonres_header` struct captures all 6 non-resident fields for callers that need alloc/real/init sizes.
+> - The run-list VCN tracking starts from the attribute's `start_vcn` (0x10), not always 0 — extension records may start mid-file.
 
 ### 4.2 File Data Reader
 
