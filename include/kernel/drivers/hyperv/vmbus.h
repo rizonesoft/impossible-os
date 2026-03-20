@@ -250,6 +250,42 @@ struct vmbus_ring_buffer_header {
     uint32_t reserved[12];       /* pad to 64 bytes */
 } __attribute__((packed));
 
+/* ---- VMBus packet descriptor (TLFS §11.10) ---- */
+
+/* Packet types for the ring buffer framing layer */
+#define VMBUS_PACKET_TYPE_DATA_INBAND       6   /* data embedded in ring */
+#define VMBUS_PACKET_TYPE_DATA_XFER_PAGES   7   /* data via transfer pages */
+#define VMBUS_PACKET_TYPE_COMPLETION        11  /* completion notification */
+
+/* Packet flags */
+#define VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED  0x0001
+
+/* Every packet in the ring buffer starts with this 16-byte descriptor.
+ * Sizes are in 8-byte (qword) units. */
+struct vmpacket_descriptor {
+    uint16_t type;       /* VMBUS_PACKET_TYPE_* */
+    uint16_t offset8;    /* offset to payload in 8-byte units */
+    uint16_t len8;       /* total packet length in 8-byte units */
+    uint16_t flags;      /* VMBUS_DATA_PACKET_FLAG_* */
+    uint64_t trans_id;   /* unique transaction ID for request matching */
+} __attribute__((packed));
+
+/* Transfer page range for VMBUS_PACKET_TYPE_DATA_XFER_PAGES packets.
+ * Used by StorVSC to reference the data buffer GPADL. */
+struct vmbus_transfer_page_range {
+    uint32_t byte_count;
+    uint32_t byte_offset;
+} __attribute__((packed));
+
+/* Header for transfer-page packets. Follows vmpacket_descriptor in ring. */
+struct vmbus_transfer_page_header {
+    uint16_t transfer_pageset_id;  /* matches GPADL handle of data buffer */
+    uint8_t  sender_owns_set;     /* 1 = sender owns pages (for writes) */
+    uint8_t  reserved;
+    uint32_t range_count;          /* number of ranges that follow */
+    /* Followed by range_count × vmbus_transfer_page_range */
+} __attribute__((packed));
+
 /* ---- VMBus channel callback (set by drivers, fired by ISR) ---- */
 
 struct vmbus_channel;  /* forward declaration */
@@ -311,14 +347,49 @@ struct vmbus_channel *vmbus_find_channel_by_guid(const struct hv_guid *guid);
  * Returns 0 on success, -1 on failure. */
 int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count);
 
-/* Write data to the channel's send ring buffer. Returns 0 on success. */
+/* ---- Ring buffer raw I/O (internal, used by sendpacket wrappers) ---- */
+
+/* Write raw bytes to send ring. Returns 0 on success, -1 if full. */
 int vmbus_ring_write(struct vmbus_channel *ch,
                      const void *data, uint32_t len);
 
-/* Read data from the channel's receive ring buffer.
- * Returns number of bytes read, or 0 if ring is empty. */
+/* Read raw bytes from receive ring.
+ * Returns bytes read (0 = empty). */
 uint32_t vmbus_ring_read(struct vmbus_channel *ch,
                          void *buf, uint32_t max_len);
+
+/* ---- High-level packet send/recv (correct vmpacket_descriptor framing) ---- */
+
+/* Send an in-band data packet (control messages, storvsc init, etc.).
+ * Wraps data with vmpacket_descriptor + trailing previous_pkt_offset.
+ * Returns 0 on success. */
+int vmbus_sendpacket(struct vmbus_channel *ch,
+                     const void *data, uint32_t len,
+                     uint64_t trans_id, uint16_t type, uint16_t flags);
+
+/* Receive a packet from the recv ring. Strips vmpacket_descriptor header.
+ * Writes payload into buf (up to max_len). Returns payload bytes, 0 = empty.
+ * If out_trans_id is non-NULL, the transaction ID is written there. */
+uint32_t vmbus_recvpacket(struct vmbus_channel *ch,
+                          void *buf, uint32_t max_len,
+                          uint64_t *out_trans_id);
+
+/* Send a transfer-page packet (SCSI READ/WRITE data buffers).
+ * References a GPADL-shared buffer via transfer_pageset_id.
+ * The header_data is the VSTOR_PACKET (or similar) control message.
+ * page_ranges describe which portions of the GPADL buffer are involved. */
+int vmbus_sendpacket_pagebuffer(struct vmbus_channel *ch,
+                                const void *header_data, uint32_t header_len,
+                                uint64_t trans_id,
+                                uint16_t transfer_pageset_id,
+                                const struct vmbus_transfer_page_range *ranges,
+                                uint32_t range_count);
+
+/* Create a GPADL for an externally-allocated buffer (e.g. StorVSC transfer
+ * buffer). The buffer must be PMM-allocated (identity-mapped, contiguous).
+ * Returns 0 on success and writes GPADL handle to *out_handle. */
+int vmbus_create_gpadl_external(struct vmbus_channel *ch, void *buffer,
+                                uint32_t page_count, uint32_t *out_handle);
 
 /* Signal the host that data is available on the send ring.
  * Uses the hypercall page to send an event. */

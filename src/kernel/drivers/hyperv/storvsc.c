@@ -46,33 +46,40 @@ static struct vmbus_channel *stor_channel;
 static struct storvsc_disk_info disk_info;
 static int storvsc_initialized;
 
-/* Data buffer for SCSI read/write — allocated from PMM (identity-mapped).
- * Uses a dedicated transfer buffer because the VMBus ring buffer carries
- * only the VSTOR_PACKET metadata; actual disk data goes through this
- * GPADL-shared buffer. For simplicity, we use a fixed 64 KiB buffer
- * and break large I/O into chunks. */
+/* Data buffer for SCSI read/write — allocated from PMM (identity-mapped)
+ * and shared with the host via a separate GPADL. The VMBus ring buffer
+ * carries only the VSTOR_PACKET metadata; actual disk data goes through
+ * this GPADL-shared transfer buffer. */
 #define STORVSC_XFER_PAGES      16  /* 64 KiB = 16 pages */
 static void *xfer_buffer;
+static uint32_t xfer_gpadl_handle;  /* GPADL handle for xfer_buffer */
+
+/* Transaction ID counter for storvsc requests */
+static uint64_t storvsc_next_tid = 0x1000;
 
 /* Ring buffer page count: 32 pages = 16 send + 16 recv = 64 KiB each */
 #define STORVSC_RING_PAGES      32
 
 /* ---- Protocol helpers ---- */
 
-/* Send a VSTOR_PACKET and wait for the completion response.
- * The response is written back into the same packet struct. */
+/* Send a VSTOR_PACKET (in-band, no data buffer) and wait for response.
+ * Used for protocol init messages. Response is written back into pkt. */
 static int storvsc_send_packet(struct vstor_packet *pkt)
 {
     struct vstor_packet response;
     uint32_t bytes_read;
     uint32_t attempts;
+    uint64_t tid = storvsc_next_tid++;
 
     pkt->flags |= VSTOR_FLAG_REQUEST_COMPLETION;
 
-    /* Write packet to send ring */
-    if (vmbus_ring_write(stor_channel, pkt,
-                         (uint32_t)sizeof(struct vstor_packet)) < 0) {
-        klog(LOG_ERROR, "storvsc", "Ring write failed for op %u",
+    /* Send as in-band data packet with proper vmpacket_descriptor framing */
+    if (vmbus_sendpacket(stor_channel, pkt,
+                         (uint32_t)sizeof(struct vstor_packet),
+                         tid,
+                         VMBUS_PACKET_TYPE_DATA_INBAND,
+                         VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED) < 0) {
+        klog(LOG_ERROR, "storvsc", "sendpacket failed for op %u",
              (uint64_t)pkt->operation);
         return -1;
     }
@@ -80,12 +87,12 @@ static int storvsc_send_packet(struct vstor_packet *pkt)
     /* Signal the host */
     vmbus_signal_channel(stor_channel);
 
-    /* Poll for response on receive ring */
-    for (attempts = 0; attempts < 50000; attempts++) {
-        __asm__ volatile("pause" ::: "memory");
+    /* Poll for response (NO PAUSE — avoids Hyper-V PLE slowdown) */
+    for (attempts = 0; attempts < 5000000; attempts++) {
+        __asm__ volatile("" ::: "memory");  /* compiler barrier only */
 
-        bytes_read = vmbus_ring_read(stor_channel, &response,
-                                     (uint32_t)sizeof(response));
+        bytes_read = vmbus_recvpacket(stor_channel, &response,
+                                      (uint32_t)sizeof(response), NULL);
         if (bytes_read >= sizeof(struct vstor_packet)) {
             storvsc_memcpy(pkt, &response, sizeof(struct vstor_packet));
             return 0;
@@ -181,13 +188,20 @@ static int storvsc_negotiate(void)
 
 /* ---- SCSI command helpers ---- */
 
+/* Send a SCSI command with data transfer via transfer pages (GPADL).
+ * Uses vmbus_sendpacket_pagebuffer() for proper Hyper-V framing. */
 static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
                              uint8_t data_in, uint32_t xfer_len)
 {
     struct vstor_packet pkt;
+    struct vstor_packet response;
+    uint32_t bytes_read;
+    uint32_t attempts;
+    uint64_t tid = storvsc_next_tid++;
 
     storvsc_memset(&pkt, 0, sizeof(pkt));
     pkt.operation = VSTOR_OPERATION_EXECUTE_SRB;
+    pkt.flags     = VSTOR_FLAG_REQUEST_COMPLETION;
 
     pkt.srb.length              = sizeof(struct vstor_srb);
     pkt.srb.target_id           = 0;
@@ -199,8 +213,52 @@ static int storvsc_scsi_cmd(uint8_t *cdb, uint8_t cdb_len,
 
     storvsc_memcpy(pkt.srb.cdb, cdb, cdb_len);
 
-    if (storvsc_send_packet(&pkt) < 0)
+    if (xfer_len > 0 && xfer_buffer) {
+        /* Send as transfer-page packet — references xfer_buffer GPADL */
+        struct vmbus_transfer_page_range range;
+        range.byte_count  = xfer_len;
+        range.byte_offset = 0;
+
+        if (vmbus_sendpacket_pagebuffer(
+                stor_channel, &pkt, (uint32_t)sizeof(pkt),
+                tid, (uint16_t)xfer_gpadl_handle,
+                &range, 1) < 0) {
+            klog(LOG_ERROR, "storvsc", "sendpacket_pagebuffer failed for CDB 0x%x",
+                 (uint64_t)cdb[0]);
+            return -1;
+        }
+    } else {
+        /* No data — send in-band */
+        if (vmbus_sendpacket(
+                stor_channel, &pkt, (uint32_t)sizeof(pkt),
+                tid, VMBUS_PACKET_TYPE_DATA_INBAND,
+                VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED) < 0) {
+            klog(LOG_ERROR, "storvsc", "sendpacket failed for CDB 0x%x",
+                 (uint64_t)cdb[0]);
+            return -1;
+        }
+    }
+
+    /* Signal the host */
+    vmbus_signal_channel(stor_channel);
+
+    /* Poll for response (NO PAUSE — avoids Hyper-V PLE slowdown) */
+    for (attempts = 0; attempts < 5000000; attempts++) {
+        __asm__ volatile("" ::: "memory");  /* compiler barrier only */
+
+        bytes_read = vmbus_recvpacket(stor_channel, &response,
+                                      (uint32_t)sizeof(response), NULL);
+        if (bytes_read >= sizeof(struct vstor_packet)) {
+            storvsc_memcpy(&pkt, &response, sizeof(struct vstor_packet));
+            break;
+        }
+    }
+
+    if (attempts >= 5000000) {
+        klog(LOG_ERROR, "storvsc", "Timeout waiting for SCSI response (CDB 0x%x)",
+             (uint64_t)cdb[0]);
         return -1;
+    }
 
     if (pkt.srb.srb_status != 0x01 && pkt.srb.srb_status != 0x00) {
         /* SRB_STATUS_SUCCESS = 0x01, some hosts use 0x00 */
@@ -461,6 +519,19 @@ int storvsc_init(void)
         return -1;
     }
     storvsc_memset(xfer_buffer, 0, STORVSC_XFER_PAGES * 4096);
+
+    /* Create GPADL for the transfer buffer — makes it visible to the host
+     * for DMA-based SCSI data transfers. Without this, the host cannot
+     * read/write the data buffer, causing silent I/O failures. */
+    if (vmbus_create_gpadl_external(stor_channel, xfer_buffer,
+                                     STORVSC_XFER_PAGES,
+                                     &xfer_gpadl_handle) < 0) {
+        klog(LOG_ERROR, "storvsc", "Failed to create transfer buffer GPADL");
+        return -1;
+    }
+    klog(LOG_INFO, "storvsc", "Transfer buffer GPADL=0x%x (%u pages at 0x%x)",
+         (uint64_t)xfer_gpadl_handle, (uint64_t)STORVSC_XFER_PAGES,
+         (uint64_t)(uintptr_t)xfer_buffer);
 
     /* Negotiate StorVSC protocol */
     if (storvsc_negotiate() < 0) {

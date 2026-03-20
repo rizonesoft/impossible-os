@@ -578,6 +578,14 @@ static int vmbus_create_gpadl(struct vmbus_channel *ch, void *buffer,
     return 0;
 }
 
+/* Public wrapper — allows drivers (e.g. storvsc) to create GPADLs for
+ * their own data buffers that need to be visible to the host. */
+int vmbus_create_gpadl_external(struct vmbus_channel *ch, void *buffer,
+                                uint32_t page_count, uint32_t *out_handle)
+{
+    return vmbus_create_gpadl(ch, buffer, page_count, out_handle);
+}
+
 int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count)
 {
     struct vmbus_channel_open_channel open_msg;
@@ -673,10 +681,16 @@ int vmbus_open_channel(struct vmbus_channel *ch, uint32_t ring_page_count)
 
 /* ---- §9. Ring buffer I/O ---- */
 
+/* Transaction ID counter (monotonic, never 0) */
+static uint64_t next_trans_id = 1;
+
+/* ---- Raw ring buffer write (no framing — caller provides full bytes) ---- */
+
 int vmbus_ring_write(struct vmbus_channel *ch,
                      const void *data, uint32_t len)
 {
     uint32_t write_idx;
+    uint32_t read_idx;
     uint32_t avail;
     const uint8_t *src = (const uint8_t *)data;
     uint32_t first_chunk, second_chunk;
@@ -685,33 +699,24 @@ int vmbus_ring_write(struct vmbus_channel *ch,
         return -1;
 
     write_idx = ch->send_ring->write_index;
+    read_idx  = ch->send_ring->read_index;
 
-    /* Calculate available space (simple single-producer model) */
-    uint32_t read_idx = ch->send_ring->read_index;
+    /* Available space (leave 1 byte to distinguish full from empty) */
     if (write_idx >= read_idx)
         avail = ch->data_size - (write_idx - read_idx) - 1;
     else
         avail = (read_idx - write_idx) - 1;
 
-    /* Need space for data + 8-byte packet header (64-bit length prefix) */
-    if (avail < len + 8)
+    if (avail < len)
         return -1;
 
-    /* Write 64-bit length prefix */
-    uint64_t pkt_len = (uint64_t)len;
-    uint8_t *len_bytes = (uint8_t *)&pkt_len;
-    uint32_t i;
-    for (i = 0; i < 8; i++) {
-        ch->send_data[write_idx % ch->data_size] = len_bytes[i];
-        write_idx++;
-    }
-
-    /* Write data with wrap-around */
-    first_chunk = ch->data_size - (write_idx % ch->data_size);
+    /* Write with wrap-around */
+    uint32_t wr_off = write_idx % ch->data_size;
+    first_chunk = ch->data_size - wr_off;
     if (first_chunk > len)
         first_chunk = len;
 
-    vmbus_memcpy(&ch->send_data[write_idx % ch->data_size], src, first_chunk);
+    vmbus_memcpy(&ch->send_data[wr_off], src, first_chunk);
     second_chunk = len - first_chunk;
     if (second_chunk > 0)
         vmbus_memcpy(&ch->send_data[0], src + first_chunk, second_chunk);
@@ -725,15 +730,16 @@ int vmbus_ring_write(struct vmbus_channel *ch,
     return 0;
 }
 
+/* ---- Raw ring buffer read ---- */
+
 uint32_t vmbus_ring_read(struct vmbus_channel *ch,
                          void *buf, uint32_t max_len)
 {
     uint32_t read_idx, write_idx;
     uint32_t avail;
     uint8_t *dst = (uint8_t *)buf;
-    uint64_t pkt_len;
     uint32_t first_chunk, second_chunk;
-    uint32_t i;
+    uint32_t to_read;
 
     if (!ch || !ch->is_open || !ch->recv_ring)
         return 0;
@@ -753,41 +759,178 @@ uint32_t vmbus_ring_read(struct vmbus_channel *ch,
     else
         avail = ch->data_size - (read_idx - write_idx);
 
-    if (avail < 8)
-        return 0;  /* Not enough for length prefix */
+    to_read = avail;
+    if (to_read > max_len)
+        to_read = max_len;
 
-    /* Read 64-bit length prefix */
-    uint8_t *len_bytes = (uint8_t *)&pkt_len;
-    for (i = 0; i < 8; i++) {
-        len_bytes[i] = ch->recv_data[read_idx % ch->data_size];
-        read_idx++;
-    }
+    /* Read with wrap-around */
+    uint32_t rd_off = read_idx % ch->data_size;
+    first_chunk = ch->data_size - rd_off;
+    if (first_chunk > to_read)
+        first_chunk = to_read;
 
-    if (pkt_len == 0 || pkt_len > max_len) {
-        /* Packet too large for buffer — skip it */
-        read_idx += (uint32_t)pkt_len;
-        __asm__ volatile("sfence" ::: "memory");
-        ch->recv_ring->read_index = read_idx % ch->data_size;
-        return 0;
-    }
-
-    /* Read data with wrap-around */
-    first_chunk = ch->data_size - (read_idx % ch->data_size);
-    if (first_chunk > (uint32_t)pkt_len)
-        first_chunk = (uint32_t)pkt_len;
-
-    vmbus_memcpy(dst, &ch->recv_data[read_idx % ch->data_size], first_chunk);
-    second_chunk = (uint32_t)pkt_len - first_chunk;
+    vmbus_memcpy(dst, &ch->recv_data[rd_off], first_chunk);
+    second_chunk = to_read - first_chunk;
     if (second_chunk > 0)
         vmbus_memcpy(dst + first_chunk, &ch->recv_data[0], second_chunk);
 
-    read_idx += (uint32_t)pkt_len;
+    read_idx += to_read;
 
     /* Update read index */
     __asm__ volatile("sfence" ::: "memory");
     ch->recv_ring->read_index = read_idx % ch->data_size;
 
-    return (uint32_t)pkt_len;
+    return to_read;
+}
+
+/* ---- High-level packet send with vmpacket_descriptor framing ---- */
+
+/* Align value up to 8-byte boundary */
+static inline uint32_t align8(uint32_t v)
+{
+    return (v + 7) & ~7u;
+}
+
+int vmbus_sendpacket(struct vmbus_channel *ch,
+                     const void *data, uint32_t len,
+                     uint64_t trans_id, uint16_t type, uint16_t flags)
+{
+    struct vmpacket_descriptor desc;
+    uint32_t desc_size = (uint32_t)sizeof(desc);
+    uint32_t total_len = desc_size + len;
+    uint32_t aligned_len = align8(total_len);
+    /* The ring buffer requires a 64-bit "previous packet start offset"
+     * written AFTER the packet data (used by host to walk packets). */
+    uint32_t wire_len = aligned_len + 8;
+    uint8_t pad[8];
+
+    vmbus_memset(&desc, 0, sizeof(desc));
+    desc.type     = type;
+    desc.offset8  = (uint16_t)(desc_size >> 3);  /* descriptor size in qwords */
+    desc.len8     = (uint16_t)(aligned_len >> 3); /* total aligned packet in qwords */
+    desc.flags    = flags;
+    desc.trans_id = trans_id ? trans_id : next_trans_id++;
+
+    /* Build a contiguous wire buffer:
+     * [vmpacket_descriptor][payload][padding][prev_pkt_offset_64] */
+    uint8_t wire_buf[512];  /* large enough for any control message */
+    if (wire_len > sizeof(wire_buf))
+        return -1;
+
+    vmbus_memset(wire_buf, 0, wire_len);
+    vmbus_memcpy(wire_buf, &desc, desc_size);
+    vmbus_memcpy(wire_buf + desc_size, data, len);
+
+    /* Trailing 64-bit previous packet start offset (always 0 for simplicity;
+     * the host uses it for ring walk but 0 is acceptable) */
+    vmbus_memset(pad, 0, 8);
+    vmbus_memcpy(wire_buf + aligned_len, pad, 8);
+
+    if (vmbus_ring_write(ch, wire_buf, wire_len) < 0)
+        return -1;
+
+    return 0;
+}
+
+/* ---- High-level packet receive (strips vmpacket_descriptor) ---- */
+
+uint32_t vmbus_recvpacket(struct vmbus_channel *ch,
+                          void *buf, uint32_t max_len,
+                          uint64_t *out_trans_id)
+{
+    uint8_t pkt_buf[512];
+    uint32_t bytes_read;
+    struct vmpacket_descriptor *desc;
+    uint32_t payload_offset;
+    uint32_t payload_len;
+    uint32_t total_pkt_len;
+
+    bytes_read = vmbus_ring_read(ch, pkt_buf, sizeof(pkt_buf));
+    if (bytes_read < sizeof(struct vmpacket_descriptor))
+        return 0;
+
+    desc = (struct vmpacket_descriptor *)pkt_buf;
+    payload_offset = (uint32_t)desc->offset8 << 3;
+    total_pkt_len  = (uint32_t)desc->len8 << 3;
+
+    if (payload_offset > bytes_read || total_pkt_len > bytes_read)
+        return 0;
+
+    payload_len = total_pkt_len - payload_offset;
+    if (payload_len > max_len)
+        payload_len = max_len;
+
+    vmbus_memcpy(buf, pkt_buf + payload_offset, payload_len);
+
+    if (out_trans_id)
+        *out_trans_id = desc->trans_id;
+
+    return payload_len;
+}
+
+/* ---- Transfer page packet send (for StorVSC SCSI data I/O) ---- */
+
+int vmbus_sendpacket_pagebuffer(struct vmbus_channel *ch,
+                                const void *header_data, uint32_t header_len,
+                                uint64_t trans_id,
+                                uint16_t transfer_pageset_id,
+                                const struct vmbus_transfer_page_range *ranges,
+                                uint32_t range_count)
+{
+    /* Wire format:
+     * [vmpacket_descriptor]
+     * [vmbus_transfer_page_header]
+     * [range_count × vmbus_transfer_page_range]
+     * [header_data (e.g. VSTOR_PACKET)]
+     * [padding to 8-byte alignment]
+     * [prev_pkt_offset_64] */
+
+    struct vmpacket_descriptor desc;
+    struct vmbus_transfer_page_header xfer_hdr;
+    uint32_t desc_size    = (uint32_t)sizeof(desc);
+    uint32_t xfer_size    = (uint32_t)sizeof(xfer_hdr);
+    uint32_t ranges_size  = range_count * (uint32_t)sizeof(struct vmbus_transfer_page_range);
+    uint32_t data_offset  = desc_size + xfer_size + ranges_size;
+    uint32_t total_len    = data_offset + header_len;
+    uint32_t aligned_len  = align8(total_len);
+    uint32_t wire_len     = aligned_len + 8;  /* +8 for trailing offset */
+
+    uint8_t wire_buf[512];
+    if (wire_len > sizeof(wire_buf))
+        return -1;
+
+    vmbus_memset(wire_buf, 0, wire_len);
+
+    /* Packet descriptor */
+    vmbus_memset(&desc, 0, sizeof(desc));
+    desc.type     = VMBUS_PACKET_TYPE_DATA_XFER_PAGES;
+    desc.offset8  = (uint16_t)(data_offset >> 3);
+    desc.len8     = (uint16_t)(aligned_len >> 3);
+    desc.flags    = VMBUS_DATA_PACKET_FLAG_COMPLETION_REQUESTED;
+    desc.trans_id = trans_id ? trans_id : next_trans_id++;
+    vmbus_memcpy(wire_buf, &desc, desc_size);
+
+    /* Transfer page header */
+    vmbus_memset(&xfer_hdr, 0, sizeof(xfer_hdr));
+    xfer_hdr.transfer_pageset_id = transfer_pageset_id;
+    xfer_hdr.sender_owns_set     = 1;
+    xfer_hdr.range_count         = range_count;
+    vmbus_memcpy(wire_buf + desc_size, &xfer_hdr, xfer_size);
+
+    /* Transfer page ranges */
+    if (range_count > 0 && ranges)
+        vmbus_memcpy(wire_buf + desc_size + xfer_size, ranges, ranges_size);
+
+    /* Control message (e.g. VSTOR_PACKET) */
+    vmbus_memcpy(wire_buf + data_offset, header_data, header_len);
+
+    /* Trailing 64-bit previous packet offset */
+    /* (already zeroed by memset) */
+
+    if (vmbus_ring_write(ch, wire_buf, wire_len) < 0)
+        return -1;
+
+    return 0;
 }
 
 /* ---- §10. Signal host ---- */
