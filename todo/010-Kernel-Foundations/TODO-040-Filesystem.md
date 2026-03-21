@@ -73,12 +73,12 @@ graph TD
 
     subgraph "Layer 3: VFS + Win32 API"
         VFS["040.07 VFS<br/>✅ base — Win32 compat pending"]
-        WIN32API["§1 Win32 File API<br/>CreateFile / ReadFile"]
+        WIN32API["040.17 Win32 FS API<br/>CreateFile / ReadFile"]
     end
 
     subgraph "Layer 4: Integration"
         AUTOMOUNT["§3 Auto-Mount<br/>Drive Letters"]
-        MIGRATE["§1.6 Shell + Kernel<br/>Migration"]
+        MIGRATE["040.17 §13.6<br/>Shell + Kernel Migration"]
     end
 
     subgraph "Layer 5: Tools and Apps"
@@ -111,7 +111,7 @@ graph TD
     PARTSCAN --> NTFS
     NTFS_WRITE["040.08 NTFS Write<br/>§12–16 pending"]
     NTFS --> NTFS_WRITE
-    NTFS_WRITE --> MIGRATE["040-FS §6<br/>IXFS→NTFS C: Switch"]
+    NTFS_WRITE --> IXFS_NTFS["§6 IXFS→NTFS<br/>C: Drive Switch"]
     PARTSCAN --> EXT4
     PARTSCAN --> EXFAT
     PARTSCAN --> IXFS
@@ -198,12 +198,12 @@ graph TD
 | 💎 | **5**  | `040.07-VFS.md`     | §1.5 Memory-Mapped Exec            | DLL/EXE mmap loading                                          | Phase 5 (§1.4)           |   ⬜   |
 | 💎 | **5**  | `040.07-VFS.md`     | §1.6 Attributes + Times            | FILETIME API (100ns since 1601)                               | VFS base                 |   ⬜   |
 | 💎 | **5**  | `040.07-VFS.md`     | §1.7 Byte-Range Locks              | LockFile / UnlockFile                                         | Phase 5 (§1.2)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.1 Handle Table                  | HANDLE type, error codes, std handles                         | VFS base                 |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.2 CreateFile                    | CreateFile / CloseHandle                                      | Phase 5 (§1.1)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.3 ReadFile                      | ReadFile / WriteFile / SetFilePointer                         | Phase 5 (§1.2)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.4 Directories                   | FindFirstFile / CreateDirectory                               | Phase 5 (§1.2)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.5 File Mgmt                     | DeleteFile / MoveFile / CopyFile                              | Phase 5 (§1.2)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.6 Shell Migration               | Shell + kernel → Win32 API (15 files)                         | Phase 5 (§1.2–5)         |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.1 Handle Table              | HANDLE type, error codes, std handles                         | VFS base                 |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.2 CreateFile                | CreateFile / CloseHandle                                      | Phase 5 (§13.1)          |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.3 ReadFile                  | ReadFile / WriteFile / SetFilePointer                         | Phase 5 (§13.2)          |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.4 Directories               | FindFirstFile / CreateDirectory                               | Phase 5 (§13.2)          |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.5 File Mgmt                 | DeleteFile / MoveFile / CopyFile                              | Phase 5 (§13.2)          |   ⬜   |
+| 💎 | **5**  | `040.17-Win32-FS-API.md` | §13.6 Shell Migration           | Shell + kernel → Win32 API (15 files)                         | Phase 5 (§13.2–5)        |   ⬜   |
 | 💎 | **5**  | `040.07-VFS.md`     | §2.1–2.4 Feature Spoofing          | ADS, ACL stubs, vol info, reparse                             | Phase 5 (§1)             |   ⬜   |
 | 💎 | **6**  | `040-Filesystem.md` | §3.1 Auto-Mount                    | Drive letter assignment from real disks                       | All FS drivers + VFS     |   ⬜   |
 | 💎 | **6**  | `040-Filesystem.md` | §3.2 Mount/Unmount                 | Shell `mount` / `umount` commands                             | Phase 6 (§3.1)           |   ⬜   |
@@ -261,10 +261,10 @@ graph TD
 > (FAT32 hardening, NTFS C: drive, ext4 read-only).
 >
 > **Phase 5** delivers the Win32-compatible file API (`CreateFile`/`ReadFile`/`WriteFile`)
-> and completes VFS enhancements (case-insensitive paths, share modes, deletion
-> semantics). This is the **critical single gate**: all shell commands, font loading,
-> icon loading, registry I/O, crash dumps, and swap must migrate from `vfs_*()` to
-> Win32 API. Expect ~15 files to touch in the migration step (§1.6).
+> via `040.17-Win32-FS-API.md §13` and completes VFS enhancements (case-insensitive
+> paths, share modes, deletion semantics). This is the **critical single gate**: all
+> shell commands, font loading, icon loading, registry I/O, crash dumps, and swap must
+> migrate from `vfs_*()` to Win32 API. Expect ~15 files to touch in §13.6.
 >
 > **Phases 6–7** wire everything together: auto-mount drive letters, exFAT/ISO 9660,
 > driver hardening (NCQ, error recovery, GPT write), and IXFS verification.
@@ -292,7 +292,7 @@ graph TD
 > (§5.3 directory lookup + §3.1 VFS registration) is the final gate before
 > NTFS serves as the boot volume.
 >
-> **The biggest single task** is `§1 Win32 File API` + `§1.6 Migration` —
+> **The biggest single task** is `040.17 §13 Win32 File API` + `§13.6 Migration` —
 > it touches every kernel file that does I/O. Plan for 2–3 days of focused work.
 >
 > **Sub-file roadmaps exist** within each of the 11 TODO files (e.g.,
@@ -308,11 +308,11 @@ graph TD
 > See `rules.md` Known Gotchas.
 
 > [!CAUTION]
-> **Never implement Phase 5 (Win32 API) before Phase 4 (FS drivers).** The Win32
-> API functions (`CreateFile`, `ReadFile`) dispatch through `vfs_ops` callbacks.
-> If the NTFS or ext4 drivers aren't registered, `CreateFile("D:\\...")` will fail
-> silently with `ERROR_PATH_NOT_FOUND`. Complete at least NTFS VFS registration
-> (§3.1) and ext4 VFS integration (§5) before migrating the shell.
+> **Never implement Phase 5 (Win32 API — 040.17 §13) before Phase 4 (FS drivers).**
+> The Win32 API functions (`CreateFile`, `ReadFile`) dispatch through `vfs_ops`
+> callbacks. If the NTFS or ext4 drivers aren't registered, `CreateFile("D:\\...")`
+> will fail silently with `ERROR_PATH_NOT_FOUND`. Complete at least NTFS VFS
+> registration (040.08 §3.1) and ext4 VFS integration (040.09 §5) before migrating.
 
 ---
 
@@ -793,7 +793,7 @@ graph TD
 
 | Priority  | Section / Sub-File                            | Reason                                                           |
 |-----------|-----------------------------------------------|------------------------------------------------------------------|
-| 🔴 P0     | **§1 Win32-Compatible File API**            | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle**  |
+| 🔴 P0     | **040.17 §13 Win32 File API**               | **Native file API — CreateFile/ReadFile/WriteFile/CloseHandle**  |
 | 🟠 P1     | §3.1 Auto-Mount                               | Drive letters from real disks                                    |
 | 🟡 P2     | §3.2 Mount/Unmount Commands                   | Manual storage management                                        |
 | 🟡 P2     | §4 Disk Management GUI                        | Visual partition management                                      |
@@ -834,6 +834,7 @@ graph TD
 > | `040.14-HFSPlus.md`         | 🟢 P3             | HFS+ read-only — all pending                       |
 > | `040.15-NVMe-2.0.md`        | 🔵 P4             | NVMe 2.0 SSD controller — all pending              |
 > | `040.16-NVMe-2.1.md`        | 🔵 P4             | NVMe 2.1 SSD controller — all pending              |
+> | `040.17-Win32-FS-API.md`    | 🔴 P0             | Win32 I/O subsystem — §13 API + §1–12 I/O Manager  |
 
 ---
 
@@ -856,7 +857,7 @@ graph TD
 | Per-block checksums              | ❌ (NTFS — none)                    | ⚠️ btrfs only (not default)      | ✅ **CRC32C on IXFS data blocks Done**                 |
 | Inline small-file data           | ❌                                  | ✅ ext4 inline data              | ✅ IXFS inline ≤48 B Done                              |
 | Sparse file support              | ✅                                  | ✅                               | ✅ Done                                                |
-| Win32 file API (`CreateFile`)    | ✅ Native                           | ❌ (POSIX only)                  | ⬜ §1 P0 — native Win32 API                          |
+| Win32 file API (`CreateFile`)    | ✅ Native                           | ❌ (POSIX only)                  | ⬜ 040.17 §13 P0 — native Win32 API                  |
 | Write-ahead journal              | ✅ NTFS log                         | ✅ ext4 journal                  | ✅ IXFS WAL Done                                       |
 | `chkdsk` / `fsck`               | ✅ `chkdsk`                         | ✅ `fsck.ext4`                   | ⬜ §5.2 P2 — CLI + GUI                                 |
 | Defrag / TRIM                    | ✅ Optimize Drive                   | ✅ `e4defrag` + `fstrim`         | ⬜ §5.4 P3 — CLI + visual block map GUI                |
@@ -874,7 +875,7 @@ graph TD
 | **Disk benchmark built-in**      | ❌ (third-party only)               | ❌ (third-party only)            | ⬜ **§5.7 — built-in sequential/random IOPS testing**  |
 | **Anti-aliased boot font on FS** | ✅                                  | ❌ (bitmap fonts)                | ✅ **Done — Selawik Semibold TTF on NTFS boot**        |
 
-> **After §1 (P0):** Impossible OS has a native Win32 file API — the only OS besides Windows itself.
+> **After 040.17 §13 (P0):** Impossible OS has a native Win32 file API — the only OS besides Windows itself.
 > **C:\ is NTFS** for full Windows compatibility. IXFS serves on secondary data volumes.
 > **After 040.11 (P2/P3):** IXFS data volumes match NTFS feature-for-feature and **exceed btrfs** with CoW, checksums, and snapshots.
 > **After §4–5 (P2/P3):** Impossible OS ships a tighter-integrated disk tool suite than either competitor.
