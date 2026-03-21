@@ -791,6 +791,56 @@ int ahci_init(void)
 
     klog(LOG_DEBUG, "ahci", "ABAR at 0x%x", abar_addr);
 
+    /* ---- BIOS/OS Handoff (BOHC) ----
+     * The BIOS may own the AHCI controller via System Management Mode (SMM).
+     * We must request ownership before touching any HBA registers.
+     * See AHCI 1.3.1 spec §10.6 "BIOS/OS Handoff". */
+    {
+        uint32_t cap2 = ahci_read32(abar, AHCI_CAP2);
+        if (cap2 & AHCI_CAP2_BOH) {
+            uint32_t bohc = ahci_read32(abar, AHCI_BOHC);
+
+            /* Request OS ownership */
+            bohc |= AHCI_BOHC_OOS;
+            ahci_write32(abar, AHCI_BOHC, bohc);
+
+            /* Wait up to 25ms for BIOS to release (BOS → 0) */
+            {
+                uint32_t wait = 25000;
+                while (wait--) {
+                    bohc = ahci_read32(abar, AHCI_BOHC);
+                    if (!(bohc & AHCI_BOHC_BOS))
+                        break;
+                    /* ~1µs per MMIO read iteration */
+                }
+
+                if (bohc & AHCI_BOHC_BOS) {
+                    /* BIOS didn't release — force ownership change.
+                     * OOC (bit 3) is defined in the spec but some HBAs
+                     * don't implement it; we set it and proceed. */
+                    bohc |= (1U << 3);  /* BOHC.OOC */
+                    ahci_write32(abar, AHCI_BOHC, bohc);
+                    klog(LOG_WARN, "ahci",
+                           "BOHC: BIOS did not release, forced ownership");
+                }
+            }
+
+            /* If BIOS Busy (BB) is set, the BIOS is still cleaning up.
+             * Wait up to 2 seconds for BB to clear (per AHCI spec §10.6). */
+            {
+                uint32_t wait = 2000000;
+                bohc = ahci_read32(abar, AHCI_BOHC);
+                while ((bohc & AHCI_BOHC_BB) && wait--) {
+                    bohc = ahci_read32(abar, AHCI_BOHC);
+                }
+            }
+
+            klog(LOG_INFO, "ahci", "BIOS/OS handoff complete");
+        } else {
+            klog(LOG_DEBUG, "ahci", "BOHC not supported — skipping handoff");
+        }
+    }
+
     /* Read version */
     ver = ahci_read32(abar, AHCI_VS);
     klog(LOG_DEBUG, "ahci", "Version %u.%u",

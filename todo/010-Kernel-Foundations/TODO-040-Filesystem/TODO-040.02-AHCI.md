@@ -148,7 +148,7 @@ graph TD
 | 💎 | **0** | `src/kernel/drivers/ahci.c`     | Existing driver             | PCI detect, ABAR mapping, port init, DMA R/W, IDENTIFY, ATAPI (polling) | —                               |   ✅   |
 | 💎 | **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                   | —                               |   ✅   |
 | 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports               | —                               |   ✅   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ⬜   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ⬜   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ⬜   |
@@ -520,18 +520,27 @@ graph TD
 
 ## 7. BIOS/OS Handoff
 
-### 7.1 BOHC (BIOS/OS Handoff Control)
+### 7.1 BOHC (BIOS/OS Handoff Control) *(done)* ✅
 
-**Prompt:** During boot, the BIOS owns the AHCI controller. The OS must request ownership via the BOHC register (offset `28h`). Set `BOHC.OOS` (OS Ownership) to 1, then wait for `BOHC.BOS` (BIOS Ownership) to clear. If the BIOS doesn't release within 25ms, set `BOHC.OOC` (OS Ownership Change) and forcibly take control. Without proper handoff, SMM firmware may interfere with OS disk operations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: BIOS/OS handoff"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that AHCI BIOS/OS Handoff is correctly implemented: (1) `ahci.h` defines `AHCI_BOHC` (offset `0x28`), `AHCI_CAP2_BOH` (bit 0), `AHCI_BOHC_BOS` (bit 0), `AHCI_BOHC_OOS` (bit 1), `AHCI_BOHC_BB` (bit 4). (2) `ahci_init()` reads `CAP2.BOH` after ABAR mapping and before version read. (3) If supported: sets `BOHC.OOS`, waits 25ms (25000 MMIO read iterations ~1µs each) for `BOS` to clear, forces via `OOC` (bit 3) on timeout, waits 2s for `BB` to clear. (4) Logs `"BIOS/OS handoff complete"` or `"BOHC not supported — skipping handoff"`. (5) Build passes with `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Check `CAP2.BOH` (bit 0, offset `24h`) — BIOS/OS handoff supported
-- [ ] If supported:
-  - [ ] Set `BOHC.OOS` (bit 1, offset `28h`) — request OS ownership
-  - [ ] Wait up to 25ms for `BOHC.BOS` (bit 0) to clear
-  - [ ] If timeout: set `BOHC.OOC` (bit 3) — force ownership change
-  - [ ] Wait additional 2s for BIOS cleanup (per spec recommendation)
-- [ ] Log: `[AHCI] BIOS/OS handoff complete` or `[AHCI] BOHC not supported — skipping handoff`
-- [ ] Commit: `"ahci: BIOS/OS handoff"`
+> [!NOTE]
+> **Implementation Notes:**
+> - BOHC handoff placed after ABAR mapping, before version read and AHCI mode enable
+> - 25ms timeout uses ~25000 MMIO read iterations (~1µs per volatile MMIO read)
+> - 2s BB cleanup wait uses ~2000000 iterations for BIOS SMM cleanup
+> - OOC (bit 3) forced on timeout — some HBAs don't implement it, but safe to set
+> - QEMU emulates BOHC but BIOS typically releases immediately (BOS auto-clears)
+> - On real hardware, SMM firmware may hold BOS for up to 25ms during cleanup
+
+- [x] Check `CAP2.BOH` (bit 0, offset `24h`) — BIOS/OS handoff supported
+- [x] If supported:
+  - [x] Set `BOHC.OOS` (bit 1, offset `28h`) — request OS ownership
+  - [x] Wait up to 25ms for `BOHC.BOS` (bit 0) to clear
+  - [x] If timeout: set `BOHC.OOC` (bit 3) — force ownership change
+  - [x] Wait additional 2s for BIOS cleanup (per spec recommendation)
+- [x] Log: `[AHCI] BIOS/OS handoff complete` or `[AHCI] BOHC not supported — skipping handoff`
+- [x] Commit: `"ahci: BIOS/OS handoff"`
 
 ---
 

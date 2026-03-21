@@ -29,6 +29,15 @@
 #define AHCI_PI             0x0C   /* Ports Implemented */
 #define AHCI_VS             0x10   /* Version */
 #define AHCI_CAP2           0x24   /* Extended Capabilities */
+#define AHCI_BOHC           0x28   /* BIOS/OS Handoff Control and Status */
+
+/* CAP2 bits */
+#define AHCI_CAP2_BOH       (1U << 0)   /* BIOS/OS Handoff supported */
+
+/* BOHC bits */
+#define AHCI_BOHC_BOS       (1U << 0)   /* BIOS Owned Semaphore */
+#define AHCI_BOHC_OOS       (1U << 1)   /* OS Owned Semaphore */
+#define AHCI_BOHC_BB        (1U << 4)   /* BIOS Busy (BIOS is cleaning up) */
 
 /* GHC bits */
 #define AHCI_GHC_AE         (1U << 31)  /* AHCI Enable */
