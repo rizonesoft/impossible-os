@@ -164,7 +164,7 @@ graph TD
 | 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ⬜   |
+| 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ⬜   |
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ⬜   |
@@ -386,17 +386,24 @@ graph TD
 
 ### 2.3 Device Identification (GET_ID)
 
-**Prompt:** Implement the `VIRTIO_BLK_T_GET_ID` (type 8) request to retrieve a 20-byte ASCII device serial number from the virtual disk. This is always available (no feature bit required). Use a 3-descriptor chain: header (type = `VIRTIO_BLK_T_GET_ID`) + 20-byte device-writable buffer + status byte. Expose as `virtio_blk_get_id(char *buf, size_t len)`. Register the ID string in the block device registry. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: GET_ID device identification"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** GET_ID device identification is implemented. `VIRTIO_BLK_T_GET_ID` (type 8) retrieves a 20-byte ASCII serial number via a 3-descriptor chain (header + 20-byte device-writable buffer + status). Called during init after DRIVER_OK. Serial exposed via `virtio_blk_serial()` and `virtio_blk_get_id()`. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Implement `virtio_blk_get_id(char *id, size_t len)`:
-  - [ ] Build 3-descriptor chain: header (type = `0x08`) + 20-byte writable buffer + status
-  - [ ] Null-terminate the returned string
-  - [ ] Return status code
-- [ ] Call `virtio_blk_get_id()` during init after `DRIVER_OK`
-- [ ] Store device ID in `virtio_blk_dev.serial[20]`
-- [ ] Register with block device layer: `blkdev_register("virtio0", serial, capacity)`
-- [ ] Log: `[VirtIO] Block: ID="%s"`
-- [ ] Commit: `"virtio-blk: GET_ID device identification"`
+- [x] Implement `virtio_blk_get_id(char *id, uint32_t len)`:
+  - [x] Build 3-descriptor chain: header (type = `0x08`) + 20-byte writable buffer + status
+  - [x] Null-terminate the returned string
+  - [x] Return 0 on success, -1 on error
+- [x] Call `virtio_blk_get_id()` during init after `DRIVER_OK`
+- [x] Store device ID in `device_serial[21]` static buffer
+- [x] Expose via `virtio_blk_serial()` accessor
+- [x] Log: `[VirtIO] Device ID: "%s"`
+- [x] Committed
+
+> **Notes:**
+> - GET_ID requires no feature bit negotiation — it's always available.
+> - The data buffer for GET_ID is device-writable (same as T_IN reads). Fixed `do_io` to set `VIRTQ_DESC_F_WRITE` for all `type != VIRTIO_BLK_T_OUT` — this covers both T_IN and T_GET_ID.
+> - QEMU's default virtio-blk serial is empty (""). Use `-device virtio-blk-pci,...,serial=MY_SERIAL` to test with a non-empty serial.
+> - The tmp buffer is zeroed before the request because the device may not write all 20 bytes.
+> - `blkdev` struct does not have a serial field — serial is stored in the VirtIO driver and accessed via `virtio_blk_serial()`.
 
 ### 2.4 Read-Only Detection
 

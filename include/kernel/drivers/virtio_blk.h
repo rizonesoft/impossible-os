@@ -24,6 +24,10 @@
 #define VIRTIO_BLK_T_IN    0   /* read */
 #define VIRTIO_BLK_T_OUT   1   /* write */
 #define VIRTIO_BLK_T_FLUSH 4   /* flush volatile cache to persistent storage */
+#define VIRTIO_BLK_T_GET_ID 8  /* retrieve device serial number (20 bytes) */
+
+/* Device serial number length (VirtIO 1.2 §5.2.6.1) */
+#define VIRTIO_BLK_ID_BYTES 20
 
 /* VirtIO block request status values */
 #define VIRTIO_BLK_S_OK        0
@@ -109,3 +113,12 @@ const struct virtio_blk_topology *virtio_blk_topology(void);
 
 /* Check if a virtio-blk device was detected and initialized. */
 int virtio_blk_present(void);
+
+/* Retrieve device serial number (up to 20 bytes).
+ * Copies into 'buf' (null-terminated), at most 'len' bytes.
+ * Returns 0 on success, -1 on error. */
+int virtio_blk_get_id(char *buf, uint32_t len);
+
+/* Get the cached serial string (null-terminated, max 20 chars).
+ * Returns empty string if GET_ID was not performed. */
+const char *virtio_blk_serial(void);

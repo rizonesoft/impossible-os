@@ -45,6 +45,9 @@ static int                    is_read_only;    /* F_RO detected */
 /* Block size and topology info */
 static struct virtio_blk_topology topo;
 
+/* Device serial number (GET_ID result) */
+static char device_serial[VIRTIO_BLK_ID_BYTES + 1]; /* +1 for null terminator */
+
 /* ---- MSI-X IRQ handlers ---- */
 
 /* Queue completion interrupt — device placed buffers in the used ring */
@@ -132,7 +135,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)buffer;
     blk_vq.desc[d1].len   = len;
     blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;
-    if (type == VIRTIO_BLK_T_IN)
+    if (type != VIRTIO_BLK_T_OUT)
         blk_vq.desc[d1].flags |= VIRTQ_DESC_F_WRITE;  /* device writes to buf */
 
     /* Descriptor 2: status byte (device-writable) */
@@ -358,6 +361,39 @@ uint32_t virtio_blk_block_size(void)
 const struct virtio_blk_topology *virtio_blk_topology(void)
 {
     return &topo;
+}
+
+int virtio_blk_get_id(char *buf, uint32_t len)
+{
+    char tmp[VIRTIO_BLK_ID_BYTES];
+    uint32_t i;
+    int ret;
+
+    if (!initialized || !buf || len == 0)
+        return -1;
+
+    /* Zero the temp buffer — device may not write all 20 bytes */
+    for (i = 0; i < VIRTIO_BLK_ID_BYTES; i++)
+        tmp[i] = 0;
+
+    /* GET_ID: 3-descriptor chain — header (type=8, sector=0) +
+     * 20-byte device-writable buffer + status byte.
+     * do_io sets F_WRITE on data descriptor for all non-OUT types. */
+    ret = virtio_blk_do_io(VIRTIO_BLK_T_GET_ID, 0, VIRTIO_BLK_ID_BYTES, tmp);
+    if (ret != 0)
+        return -1;
+
+    /* Copy and null-terminate */
+    for (i = 0; i < len - 1 && i < VIRTIO_BLK_ID_BYTES; i++)
+        buf[i] = tmp[i];
+    buf[i] = '\0';
+
+    return 0;
+}
+
+const char *virtio_blk_serial(void)
+{
+    return device_serial;
 }
 
 /* ---- Initialization ---- */
@@ -630,6 +666,14 @@ int virtio_blk_init(void)
            (uint64_t)topo.opt_io_size,
            has_flush ? ", flush" : "",
            has_config_wce ? ", wce" : "");
+
+    /* Retrieve device serial number via GET_ID */
+    if (virtio_blk_get_id(device_serial, sizeof(device_serial)) == 0) {
+        klog(LOG_DEBUG, "virtio", "Device ID: \"%s\"", device_serial);
+    } else {
+        device_serial[0] = '\0';
+        klog(LOG_DEBUG, "virtio", "GET_ID failed — no device serial");
+    }
 
     return 0;
 }
