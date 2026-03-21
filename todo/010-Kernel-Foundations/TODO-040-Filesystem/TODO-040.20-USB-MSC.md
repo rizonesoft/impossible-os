@@ -1,4 +1,4 @@
-# 040.19-USB-MSC — USB Mass Storage Class Driver
+# 040.20-USB-MSC — USB Mass Storage Class Driver
 
 > **Goal:** Implement a complete USB Mass Storage Class (MSC) driver for Impossible OS,
 > enabling hot-pluggable USB flash drives and external hard disks. Currently no USB or xHCI

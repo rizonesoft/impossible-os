@@ -40,7 +40,11 @@
 
 ---
 
-## TODO Completion Roadma```mermaid
+## TODO Completion Roadmap
+
+### Dependency Graph
+
+```mermaid
 graph TD
     VFS["040.07-VFS<br/>VFS Semantics + Locks"]
     NTFS["040.08-NTFS<br/>NTFS Driver + $Secure"]
@@ -87,9 +91,6 @@ graph TD
     J --> L
     M --> L
     A --> P
-```   H --> K
-    J --> L
-    M --> L
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -601,25 +602,31 @@ graph TD
 
 ## New Files Summary
 
-| File                                   | Purpose                                                          |
-|----------------------------------------|------------------------------------------------------------------|
-| `include/kernel/io/irp.h`             | IRP structure, major function codes, IO_STATUS_BLOCK             |
-| `include/kernel/io/iomgr.h`           | I/O Manager API: IoAllocateIrp, IoCallDriver, IoCompleteRequest  |
-| `src/kernel/io/iomgr.c`               | I/O Manager implementation                                      |
-| `include/kernel/io/device.h`          | DEVICE_OBJECT, DRIVER_OBJECT, device stack                       |
-| `include/kernel/io/mdl.h`             | MDL structure, MmProbeAndLockPages, MmMapLockedPages             |
-| `src/kernel/io/mdl.c`                 | MDL allocation, probing, locking, mapping                        |
-| `include/kernel/io/handle.h`          | Multi-level handle table, HANDLE_TABLE_ENTRY                     |
-| `src/kernel/io/handle.c`              | Handle table hierarchy, ref counting                             |
-| `include/kernel/io/obdir.h`           | Object Manager namespace, symbolic links                         |
-| `src/kernel/io/obdir.c`               | Namespace resolution, `\\?\` and `\Global??\` support             |
-| `include/kernel/io/ntstatus.h`        | NTSTATUS code definitions                                        |
-| `src/kernel/io/status.c`              | NTSTATUS → Win32 error translation table                         |
-| `include/kernel/io/fileinfo.h`        | FILE_BASIC_INFO, FILE_STANDARD_INFO, etc.                        |
-| `include/kernel/io/security.h`        | SECURITY_DESCRIPTOR, ACL, ACE, SID, SeAccessCheck                |
-| `src/kernel/io/security.c`            | DACL evaluation, $Secure integration                             |
-| `include/kernel/io/fltmgr.h`         | Filter Manager, FLT_REGISTRATION, altitude model                 |
-| `src/kernel/io/fltmgr.c`             | Minifilter dispatch, pre/post-operation callbacks                |
+| File                               | Purpose                                                         |
+| ---------------------------------- | --------------------------------------------------------------- |
+| `include/kernel/io/irp.h`         | IRP structure, major function codes, IO_STATUS_BLOCK            |
+| `include/kernel/io/iomgr.h`       | I/O Manager API: IoAllocateIrp, IoCallDriver, IoCompleteRequest |
+| `src/kernel/io/iomgr.c`           | I/O Manager implementation                                     |
+| `include/kernel/io/device.h`      | DEVICE_OBJECT, DRIVER_OBJECT, device stack                      |
+| `include/kernel/io/mdl.h`         | MDL structure, MmProbeAndLockPages, MmMapLockedPages            |
+| `src/kernel/io/mdl.c`             | MDL allocation, probing, locking, mapping                       |
+| `include/kernel/io/handle.h`      | Multi-level handle table, HANDLE_TABLE_ENTRY                    |
+| `src/kernel/io/handle.c`          | Handle table hierarchy, ref counting                            |
+| `include/kernel/io/obdir.h`       | Object Manager namespace, symbolic links                        |
+| `src/kernel/io/obdir.c`           | Namespace resolution, `\\?\` and `\Global??\` support           |
+| `include/kernel/io/ntstatus.h`    | NTSTATUS code definitions                                       |
+| `src/kernel/io/status.c`          | NTSTATUS → Win32 error translation table                        |
+| `include/kernel/io/fileinfo.h`    | FILE_BASIC_INFO, FILE_STANDARD_INFO, etc.                       |
+| `include/kernel/io/security.h`    | SECURITY_DESCRIPTOR, ACL, ACE, SID, SeAccessCheck               |
+| `src/kernel/io/security.c`        | DACL evaluation, $Secure integration                            |
+| `include/kernel/io/fltmgr.h`      | Filter Manager, FLT_REGISTRATION, altitude model                |
+| `src/kernel/io/fltmgr.c`          | Minifilter dispatch, pre/post-operation callbacks               |
+| `include/kernel/io/fsctl.h`       | FSCTL codes, CTL_CODE macro, DeviceIoControl                    |
+| `src/kernel/io/fsctl.c`           | FSCTL dispatch framework                                        |
+| `include/kernel/io/fastio.h`      | FAST_IO_DISPATCH, FastIoRead/Write prototypes                   |
+| `include/kernel/io/ioprio.h`      | IO_PRIORITY_HINT enum, IoSetIoPriorityHint                      |
+| `include/kernel/io/iotrace.h`     | I/O tracing structs, histogram buckets                          |
+| `src/kernel/io/iotrace.c`         | Per-IRP latency tracing, IOPS counters                          |
 
 ---
 
@@ -800,3 +807,101 @@ graph TD
   - [ ] Remove `vfs_stat()`, `vfs_truncate()`, `vfs_readdir()`
   - [ ] Keep: `vfs_mount()`, `vfs_unmount()`, `vfs_get_drive_root()`, `vfs_finddir()`, `vfs_is_mounted()`
 - [ ] Commit: `"vfs: migrate shell + kernel to Win32 file API"`
+
+---
+
+## 14. FSCTL / DeviceIoControl Dispatch
+
+### 14.1 FSCTL Framework
+
+**Prompt:** Implement `DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped)` and the kernel-side FSCTL dispatch framework. When the control code's device type is `FILE_DEVICE_FILE_SYSTEM`, the I/O Manager builds an `IRP_MJ_FILE_SYSTEM_CONTROL` IRP with `MinorFunction = IRP_MN_USER_FS_REQUEST` and dispatches it to the filesystem driver's `FsCtl` handler. Define core FSCTL codes: `FSCTL_LOCK_VOLUME (0x00090018)`, `FSCTL_UNLOCK_VOLUME (0x0009001C)`, `FSCTL_GET_VOLUME_INFORMATION`, `FSCTL_IS_VOLUME_MOUNTED`, `FSCTL_SET_SPARSE`, `FSCTL_SET_ZERO_DATA`, `FSCTL_QUERY_ALLOCATED_RANGES`. Each filesystem driver registers its FSCTL handler in the `DRIVER_OBJECT`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"io: FSCTL / DeviceIoControl dispatch"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Implement `DeviceIoControl(hDevice, dwIoControlCode, lpInBuffer, nInBufferSize, lpOutBuffer, nOutBufferSize, lpBytesReturned, lpOverlapped)`
+- [ ] Build `IRP_MJ_FILE_SYSTEM_CONTROL` IRP with FSCTL code in parameters
+- [ ] Define FSCTL code encoding: `CTL_CODE(DeviceType, Function, Method, Access)` macro
+- [ ] Define transfer methods: `METHOD_BUFFERED`, `METHOD_IN_DIRECT`, `METHOD_OUT_DIRECT`, `METHOD_NEITHER`
+- [ ] Implement core FSCTL codes:
+  - [ ] `FSCTL_LOCK_VOLUME` — exclusive volume access for backup/imaging
+  - [ ] `FSCTL_UNLOCK_VOLUME` — release exclusive lock
+  - [ ] `FSCTL_IS_VOLUME_MOUNTED` — quick mount check
+  - [ ] `FSCTL_GET_VOLUME_INFORMATION` — label, serial, FS type
+  - [ ] `FSCTL_SET_SPARSE` — mark file as sparse
+  - [ ] `FSCTL_SET_ZERO_DATA` — zero-fill byte range without allocation
+  - [ ] `FSCTL_QUERY_ALLOCATED_RANGES` — sparse file extents
+  - [ ] Reparse point FSCTLs (§11.1): `FSCTL_SET_REPARSE_POINT`, `FSCTL_GET_REPARSE_POINT`, `FSCTL_DELETE_REPARSE_POINT`
+- [ ] Wire filesystem drivers to handle FSCTLs in their `IRP_MJ_FILE_SYSTEM_CONTROL` dispatch
+- [ ] Add `SYS_DEVICEIOCONTROL` syscall
+- [ ] Commit: `"io: FSCTL / DeviceIoControl dispatch"`
+
+---
+
+## 15. Fast I/O (🚀 Exclusive)
+
+### 15.1 Fast I/O Dispatch
+
+**Prompt:** Implement the Fast I/O path for cached file reads and writes per the NT model. When a file's data is already in the file system cache, the normal IRP path (allocate IRP → build stack → dispatch → complete) is unnecessary overhead. The Fast I/O path bypasses IRP allocation entirely: the I/O Manager calls `FastIoRead(FileObject, Offset, Length, Buffer)` directly on the FSD. If the FSD can satisfy the request from cache, it returns `TRUE` and the data immediately. If it returns `FALSE`, the I/O Manager falls back to the normal IRP path. This eliminates IRP allocation overhead for hot cached reads — a significant win for file servers and databases. Neither Linux nor other hobby OSes implement this pattern. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"io: Fast I/O dispatch"`. After implementation, save gotchas to MCP memory.
+
+> [!NOTE]
+> This is an **Impossible OS exclusive** — Linux's VFS always goes through the
+> full dispatch path. Windows' Fast I/O is little-documented outside kernel driver
+> guides, making this a competitive advantage for I/O-intensive workloads.
+
+- [ ] Define `FAST_IO_DISPATCH` struct: table of function pointers per fast path
+- [ ] Add `FastIoCheckIfPossible`, `FastIoRead`, `FastIoWrite`, `FastIoQueryBasicInfo`, `FastIoQueryStandardInfo`
+- [ ] Wire `DRIVER_OBJECT.FastIoDispatch` pointer
+- [ ] In `ReadFile` path: check `FastIoDispatch→FastIoRead` first, fall back to IRP on `FALSE`
+- [ ] In `WriteFile` path: check `FastIoDispatch→FastIoWrite` first, fall back to IRP on `FALSE`
+- [ ] In `GetFileAttributes` path: check `FastIoQueryBasicInfo` first
+- [ ] Telemetry: count fast-path hits vs IRP fallbacks per volume
+- [ ] Commit: `"io: Fast I/O dispatch"`
+
+---
+
+## 16. I/O Priority & QoS (🚀 Exclusive)
+
+### 16.1 IRP Priority Mapping
+
+**Prompt:** Implement per-IRP I/O priority hints that map directly to hardware queue priorities. Windows has `IoPriorityHint` with 5 levels (Very Low → Critical) but doesn't expose direct hardware queue mapping. Linux has `ionice` with 3 classes but it's a process-level hint, not per-request. Impossible OS maps IRP priority → NVMe submission queue priority / AHCI NCQ priority tag. Define `IO_PRIORITY_HINT`: `IoPriorityVeryLow (0)`, `IoPriorityLow (1)`, `IoPriorityNormal (2)`, `IoPriorityHigh (3)`, `IoPriorityCritical (4)`. Store in `IRP.Flags`. The block device layer reads the priority and sets the corresponding hardware queue or NCQ tag. This gives apps true end-to-end I/O priority — not just a scheduling hint. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"io: I/O priority and QoS"`. After implementation, save gotchas to MCP memory.
+
+> [!NOTE]
+> This is an **Impossible OS exclusive** — no other OS maps per-IRP priority
+> directly to hardware queue selection (NVMe Weighted Round Robin) or AHCI NCQ
+> priority tags. This gives applications true end-to-end QoS control.
+
+- [ ] Define `IO_PRIORITY_HINT` enum: VeryLow, Low, Normal, High, Critical
+- [ ] Add `IoPriorityHint` field to `IRP` struct
+- [ ] `IoSetIoPriorityHint(Irp, Priority)` — set priority on IRP
+- [ ] Default priority: inherit from calling thread's I/O priority class
+- [ ] In AHCI driver: map priority → NCQ tag priority
+- [ ] In NVMe driver: map priority → submission queue selection (if WRR enabled)
+- [ ] Registry tunable: `HKLM\SYSTEM\Drivers\IoManager\DefaultPriority`
+- [ ] Shell command: `iopriority <pid> <level>` — set process I/O priority
+- [ ] Commit: `"io: I/O priority and QoS"`
+
+---
+
+## 17. I/O Tracing & Profiling (🚀 Exclusive)
+
+### 17.1 Per-IRP Latency Histograms
+
+**Prompt:** Implement built-in per-IRP latency tracing with nanosecond-resolution histograms. Windows requires external tools (xperf/WPR) to trace I/O latency. Linux requires blktrace or bpftrace. Impossible OS builds tracing directly into the I/O Manager — every IRP records its creation timestamp (`rdtsc`) and completion timestamp. The delta is bucketed into a logarithmic histogram (1µs, 10µs, 100µs, 1ms, 10ms, 100ms, 1s+). Histograms are maintained per-device and per-major-function. A shell command `iotrace` displays live I/O statistics. A registry key enables/disables tracing at runtime. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"io: I/O tracing and profiling"`. After implementation, save gotchas to MCP memory.
+
+> [!NOTE]
+> This is an **Impossible OS exclusive** — built-in ns-resolution I/O profiling
+> with zero external tool dependencies. Neither Windows nor Linux ships built-in
+> per-IRP latency histograms accessible from a shell command.
+
+- [ ] Add `CreateTimestamp` and `CompleteTimestamp` fields to `IRP` struct (64-bit TSC values)
+- [ ] In `IoAllocateIrp`: record `rdtsc()` → `CreateTimestamp`
+- [ ] In `IoCompleteRequest`: record `rdtsc()` → `CompleteTimestamp`, compute delta
+- [ ] Define histogram buckets: `<1µs`, `1–10µs`, `10–100µs`, `100µs–1ms`, `1–10ms`, `10–100ms`, `>100ms`
+- [ ] Per-device stats: `io_stats_t` with histogram array + total IRP count + total bytes
+- [ ] Per-major-function breakdown: separate histograms for READ, WRITE, CREATE, FSCTL
+- [ ] IOPS counter: rolling 1-second window with atomic increment
+- [ ] Shell command: `iotrace` — display live I/O stats per device
+  - [ ] Show IOPS, bandwidth (MB/s), avg latency, p50/p99 latency
+  - [ ] Show histogram bars for latency distribution
+- [ ] Shell command: `iotrace reset` — clear all counters
+- [ ] Registry tunable: `HKLM\SYSTEM\Drivers\IoManager\EnableTracing` (default: enabled)
+- [ ] Overhead: < 50 cycles per IRP when enabled (two `rdtsc` + one atomic add)
+- [ ] Commit: `"io: I/O tracing and profiling"`
