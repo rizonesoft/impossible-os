@@ -64,6 +64,10 @@ graph TD
     R["§10.2 Subvolume Browser"]
     S["§10.3 Scrub Verifier"]
     T["§10.4 Space Analyzer"]
+    U["§10.5 Device Stats Dashboard"]
+    V["§10.6 Quota Group Reader"]
+    W["§10.7 Send/Receive Stream Parser"]
+    X["§10.8 Generation Timeline"]
 
     SPEC --> A
     BLK --> A
@@ -72,6 +76,8 @@ graph TD
     A --> C
     C --> D
     A --> E
+    A --> N
+    N --> E
     E --> F
     E --> G
     D --> F
@@ -86,8 +92,6 @@ graph TD
     K --> M
     M --> O
     VFS --> O
-    A --> N
-    N --> E
     O --> P
     I --> Q
     B --> Q
@@ -97,6 +101,14 @@ graph TD
     D --> S
     C --> T
     H --> T
+    H --> U
+    A --> U
+    I --> V
+    H --> V
+    K --> W
+    M --> W
+    H --> X
+    A --> X
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -595,7 +607,78 @@ graph TD
 - [ ] Log: `[btrfs] Space: Data %llu/%llu (%u%%), Metadata %llu/%llu (%u%%)`
 - [ ] Commit: `"btrfs: block group space analyzer"`
 
----
+### 10.5 Device Stats Dashboard
+
+**Prompt:** Btrfs tracks per-device I/O error counters in the `DEV_STATS_KEY` (type 249) items in the Device Tree (objectid 4). These counters record: write errors, read errors, flush errors, corruption errors, and generation errors. Implement a dashboard that reads these counters and displays them per device. Linux exposes these only via `btrfs device stats` CLI. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"btrfs: device stats dashboard"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Linux requires `btrfs device stats /mount` CLI. Windows has zero
+> Btrfs support. Impossible OS surfaces per-device error counters directly in the Disk
+> Manager device properties panel — visible at a glance without CLI knowledge.
+
+- [ ] Access Device Tree (objectid 4) via Root Tree
+- [ ] Search for `DEV_STATS_KEY` (type 249) items for each devid
+- [ ] Parse 5 error counters (each 8B LE): write_errs, read_errs, flush_errs, corruption_errs, generation_errs
+- [ ] Display in Disk Manager: per-device table with error counts and status indicator
+- [ ] Health scoring: all zeros = "Healthy", any non-zero = "Errors Detected ⚠️"
+- [ ] Log: `[btrfs] Device %llu: write_err=%llu, read_err=%llu, corrupt=%llu`
+- [ ] Commit: `"btrfs: device stats dashboard"`
+
+### 10.6 Quota Group Reader
+
+**Prompt:** Btrfs quota groups (qgroups) track space usage and enforce limits per subvolume. Qgroup items are stored in the Quota Tree (objectid 8) as `QGROUP_INFO_KEY` (type 242) and `QGROUP_LIMIT_KEY` (type 244). Implement a reader that displays per-subvolume usage (referenced bytes, exclusive bytes) and any configured limits. Linux requires `btrfs qgroup show` CLI. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"btrfs: quota group reader"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Linux `btrfs qgroup show` CLI output is notoriously confusing.
+> Windows has no Btrfs support. A GUI table mapping subvolume → used / exclusive / limit
+> with visual progress bars would be a significant usability improvement.
+
+- [ ] Access Quota Tree (objectid 8) via Root Tree — may not exist if quotas disabled
+- [ ] Search for `QGROUP_INFO_KEY` (type 242) items:
+  - [ ] Parse: `generation` (8B), `rfer` (8B, referenced bytes), `excl` (8B, exclusive bytes)
+- [ ] Search for `QGROUP_LIMIT_KEY` (type 244) items:
+  - [ ] Parse: `flags` (8B), `max_rfer` (8B), `max_excl` (8B)
+- [ ] Map qgroup ID to subvolume name (cross-reference Root Tree)
+- [ ] Display in Disk Manager: table with subvolume name, referenced, exclusive, limit, % used
+- [ ] Log: `[btrfs] Qgroup %llu/%llu: rfer=%llu, excl=%llu, limit=%llu`
+- [ ] Commit: `"btrfs: quota group reader"`
+
+### 10.7 Send/Receive Stream Parser
+
+**Prompt:** Btrfs `send` generates a binary stream describing filesystem differences (for incremental backups and migration). The stream format consists of TLV (type-length-value) commands: create, mkdir, rename, link, unlink, write, clone, truncate, chmod, chown, utimes, etc. Implement a parser that can read a `.btrfs-send` stream file and display its contents — useful for inspecting backup streams before restore. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"btrfs: send stream parser"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux provides a GUI tool to inspect Btrfs
+> send streams. Linux users must use `btrfs receive --dump` CLI. A visual stream inspector
+> showing operations, affected files, and data sizes would be unique to Impossible OS.
+
+- [ ] Parse send stream header: magic `btrfs-stream\0`, version (4B LE)
+- [ ] Parse commands: `len` (4B), `cmd` (2B), `crc32c` (4B), then TLV attributes
+- [ ] Decode command types: create, mkdir, rename, link, unlink, write, clone, truncate, etc.
+- [ ] Decode TLV attributes: path, uuid, ctransid, data, mode, uid, gid, etc.
+- [ ] Verify per-command CRC32C integrity
+- [ ] Display: operation summary table (files created/modified/deleted, total data bytes)
+- [ ] Log: `[btrfs] Send stream: %u commands, %llu bytes data, %u files affected`
+- [ ] Commit: `"btrfs: send stream parser"`
+
+### 10.8 Filesystem Generation Timeline
+
+**Prompt:** Every Btrfs transaction increments the global `generation` counter. Snapshots capture a point-in-time `generation`. Subvolume creation times are stored in `otime` fields. Implement a timeline visualization showing: filesystem creation date, all snapshot generations with timestamps, and the current generation. This provides a visual history of the volume's evolution. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"btrfs: generation timeline"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** No OS visualizes Btrfs transaction history. Linux `btrfs subvolume
+> show` lists creation time per snapshot, but there is no timeline view aggregating all
+> snapshots and showing the generation progression. This is a novel visualization.
+
+- [ ] Read superblock `generation` (current) and `mkfs_generation` (creation)
+- [ ] Enumerate all root items: extract `generation`, `otime` (creation timestamp), flags
+- [ ] Sort by generation to build chronological timeline
+- [ ] Identify snapshot relationships (parent subvolume via `ROOT_BACKREF`)
+- [ ] Display in Disk Manager: horizontal timeline with snapshot markers
+  - [ ] Show generation gaps (periods of high/low activity)
+  - [ ] Color-code: blue = subvolume creation, green = snapshot, red = deleted
+- [ ] Log: `[btrfs] Timeline: gen %llu to %llu, %u snapshots over %u days`
+- [ ] Commit: `"btrfs: generation timeline"`
 
 ## Priority Order
 
@@ -641,32 +724,38 @@ graph TD
 
 ## OS Comparison
 
-| Feature                             | Windows 11                         | Linux (native Btrfs)                | Impossible OS                             |
-| ----------------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------- |
-| Superblock parsing                  | No Btrfs support                   | Full                                | ⬜ §1.1 P0                                |
-| Superblock mirror fallback          | No                                 | Full (3 mirrors + auto-recovery)    | ⬜ §1.2 P2                                |
-| Chunk Tree bootstrap                | No                                 | Full                                | ⬜ §2.1 P0                                |
-| Logical-to-physical translation     | No                                 | Full (all RAID profiles)            | ⬜ §2.2 P0 (Single only)                  |
-| B-tree node traversal               | No                                 | Full (lock-coupling, COW)           | ⬜ §3.1-3.3 P0 (read-only)               |
-| Root Tree / subvolume enumeration   | No                                 | Full (read + create + delete)       | ⬜ §4.1 P1 (read-only)                    |
-| Inode reading                       | No                                 | Full (160B + extended)              | ⬜ §4.2 P1                                |
-| File data reading                   | No                                 | Full (inline + regular + prealloc)  | ⬜ §5.1-5.2 P1                            |
-| Directory enumeration               | No                                 | Full (DIR_ITEM + DIR_INDEX)         | ⬜ §6.1 P1                                |
-| Path resolution                     | No                                 | Full (subvol crossing, symlinks)    | ⬜ §6.2 P1                                |
-| CRC32C data checksumming            | No                                 | Full (4 algorithms)                 | ⬜ §7.1 P2 (CRC32C only)                  |
-| VFS / mountable volumes             | No (WinBtrfs unstable 3rd-party)   | Full (native)                       | ⬜ §8.1 P1                                |
-| Write / COW / transactions          | No                                 | Full                                | Future P4 (read-only only)               |
-| Subvolume creation / deletion       | No                                 | Full                                | Future P4 (read-only only)               |
-| Snapshots (create / restore)        | No                                 | Full                                | Future P4 (read-only only)               |
-| RAID0/1/10 support                  | No                                 | Full                                | Future P4 (single-device only)            |
-| Transparent compression             | No                                 | Full (zlib/LZO/ZSTD)               | Future P4 (uncompressed only)            |
-| **Volume health dashboard**         | No Btrfs support                   | CLI only (`btrfs fi show`)          | ⬜ §10.1 P3: **GUI health panel**         |
-| **Subvolume/snapshot browser**      | No                                 | CLI only (`btrfs subvol list`)      | ⬜ §10.2 P3: **GUI tree view**            |
-| **Non-destructive scrub**           | No                                 | `btrfs scrub` (requires write)      | ⬜ §10.3 P3: **read-only verification**   |
-| **Space/ENOSPC analyzer**           | No                                 | CLI only (`btrfs fi df`)            | ⬜ §10.4 P3: **GUI + imbalance alert**   |
+| Feature                              | 🪟 Windows 11                      | 🐧 Linux (native Btrfs)              | 🚀 Impossible OS                                     |
+| ------------------------------------ | ----------------------------------- | ------------------------------------ | -------------------------------------------------- |
+| Superblock parsing                   | ⬜ No Btrfs support                  | ✅ Full                               | ⬜ §1.1 P0                                            |
+| Superblock mirror fallback           | ⬜ No                                | ✅ Full (3 mirrors + auto-recovery)   | ⬜ §1.2 P2                                            |
+| Chunk Tree bootstrap                 | ⬜ No                                | ✅ Full                               | ⬜ §2.1 P0                                            |
+| Logical-to-physical translation      | ⬜ No                                | ✅ Full (all RAID profiles)           | ⬜ §2.2 P0 (Single only)                              |
+| B-tree node traversal                | ⬜ No                                | ✅ Full (lock-coupling, COW)          | ⬜ §3.1-3.3 P0 (read-only)                           |
+| Root Tree / subvolume enumeration    | ⬜ No                                | ✅ Full (read + create + delete)      | ⬜ §4.1 P1 (read-only)                                |
+| Inode reading                        | ⬜ No                                | ✅ Full (160B + extended)             | ⬜ §4.2 P1                                            |
+| File data reading                    | ⬜ No                                | ✅ Full (inline + regular + prealloc) | ⬜ §5.1-5.2 P1                                        |
+| Directory enumeration                | ⬜ No                                | ✅ Full (DIR_ITEM + DIR_INDEX)        | ⬜ §6.1 P1                                            |
+| Path resolution                      | ⬜ No                                | ✅ Full (subvol crossing, symlinks)   | ⬜ §6.2 P1                                            |
+| CRC32C data checksumming             | ⬜ No                                | ✅ Full (4 algorithms)                | ⬜ §7.1 P2 (CRC32C only)                              |
+| VFS / mountable volumes              | ⬜ No (WinBtrfs unstable 3rd-party)  | ✅ Full (native)                      | ⬜ §8.1 P1                                            |
+| Write / COW / transactions           | ⬜ No                                | ✅ Full                               | Future P4 (read-only only)                         |
+| Subvolume creation / deletion        | ⬜ No                                | ✅ Full                               | Future P4 (read-only only)                         |
+| Snapshots (create / restore)         | ⬜ No                                | ✅ Full                               | Future P4 (read-only only)                         |
+| RAID0/1/10 support                   | ⬜ No                                | ✅ Full                               | Future P4 (single-device only)                     |
+| Transparent compression              | ⬜ No                                | ✅ Full (zlib/LZO/ZSTD)              | Future P4 (uncompressed only)                      |
+| **Volume health dashboard**          | ⬜ No Btrfs support                  | ⚠️ CLI only (`btrfs fi show`)        | ⬜ §10.1 P3 — **GUI health panel** 🚀                 |
+| **Subvolume/snapshot browser**       | ⬜ No                                | ⚠️ CLI only (`btrfs subvol list`)    | ⬜ §10.2 P3 — **GUI tree view** 🚀                   |
+| **Non-destructive scrub**            | ⬜ No                                | ⚠️ `btrfs scrub` (requires write)    | ⬜ §10.3 P3 — **read-only verification** 🚀           |
+| **Space/ENOSPC analyzer**            | ⬜ No                                | ⚠️ CLI only (`btrfs fi df`)           | ⬜ §10.4 P3 — **GUI + imbalance alert** 🚀           |
+| **Device stats dashboard**           | ⬜ No                                | ⚠️ CLI only (`btrfs device stats`)   | ⬜ §10.5 P4 — **GUI error counters** 🚀              |
+| **Quota group viewer**               | ⬜ No                                | ⚠️ CLI only (`btrfs qgroup show`)    | ⬜ §10.6 P4 — **GUI usage + limits** 🚀              |
+| **Send stream inspector**            | ⬜ No                                | ⚠️ CLI only (`btrfs receive --dump`)  | ⬜ §10.7 P4 — **visual stream analysis** 🚀          |
+| **Generation timeline**              | ⬜ No                                | ⬜ No visualization                   | ⬜ §10.8 P4 — **first to implement** 🚀              |
 
 > **After P0+P1 items:** Impossible OS can mount and read any single-device Btrfs volume.
 > **After P2 items:** Data integrity verification and superblock resilience.
 > **After P3 exclusive features:** Exceeds both Windows (zero support) and Linux
 > (CLI-only tools) with GUI-based volume health, subvolume browsing, non-destructive
 > scrub, and ENOSPC diagnosis — features no OS currently provides in a GUI.
+> **After P4 exclusive features:** Full Btrfs intelligence suite with device stats,
+> quota groups, send stream inspection, and transaction timeline visualization.

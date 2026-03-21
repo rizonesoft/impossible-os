@@ -72,6 +72,12 @@ graph TD
     Y["§17.1 Namespace Management"]
     Z["§18.1 TCG Opal 2.0 SED"]
     AA["§19.1 Zoned Namespaces"]
+    BB["§20.1 Asynchronous Event Requests"]
+    CC["§20.2 SGL Support"]
+    DD["§21.1 APST Power Management"]
+    EE["§22.1 SMART Dashboard"]
+    FF["§23.1 Firmware Update"]
+    GG["§24.1 FDP Write Hints"]
 
     SPEC21 --> A
     SPEC20 --> A
@@ -116,6 +122,12 @@ graph TD
     I --> Y
     I --> Z
     I --> AA
+    I --> BB
+    G --> CC
+    I --> DD
+    O --> EE
+    I --> FF
+    I --> GG
 
     M --> FAT32
     M --> IXFS
@@ -936,6 +948,173 @@ this prompt to a verification prompt, run `bash scripts/build.sh clean`, and com
 - [ ] Track per-zone write pointers and conditions
 - [ ] Enforce sequential write constraint for sequential zones
 - [ ] Commit: `"nvme: zoned namespaces"`
+
+---
+
+## 20. Advanced Features
+
+### 20.1 Asynchronous Event Requests (AER)
+
+**Prompt:** Submit AER commands (admin opcode `0x0C`) during init. The controller holds them
+pending and completes one when a critical event occurs (error, SMART threshold breach,
+namespace change). Process by reading CQE CDW0 event type (bits 2:0) and issuing Get Log
+Page for details. Resubmit a fresh AER after processing. Per NVMe 2.1 §Asynchronous Event
+Requests. After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"nvme: asynchronous event requests"`. After implementation, save gotchas to MCP memory.
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.15 §6.2` — NVMe 2.0 TODO has matching AER section
+
+- [ ] Submit 2 AER commands during init (admin opcode `0x0C`, no data transfer)
+- [ ] AERs remain pending until controller fires one
+- [ ] Admin CQ ISR: detect AER completion by matching CID
+- [ ] Parse CQE CDW0 event type (bits 2:0):
+  - [ ] Type 0: Error Status — read Error Information log (LID `0x01`)
+  - [ ] Type 1: SMART/Health — read SMART log, check thresholds
+  - [ ] Type 2: Notice — namespace attribute change, firmware activation
+  - [ ] Type 6: I/O Command Set Specific — ZNS zone changes
+- [ ] Issue Get Log Page to retrieve full event details
+- [ ] Resubmit fresh AER to replenish pending pool
+- [ ] Configure event mask via Set Features (FID `0x0B`)
+- [ ] Log: `[NVMe] AER: event type=%u info=%u — %s`
+- [ ] Commit: `"nvme: asynchronous event requests"`
+
+### 20.2 SGL Support (Optional)
+
+**Prompt:** Scatter Gather Lists (SGLs) are optional — check Identify Controller `SGLS`
+field (offset 536, 4B) for support. SGLs allow byte-aligned, arbitrary-length transfers vs
+PRP's page-aligned constraint. Each SGL descriptor is 16 bytes: `{ address(8B), length(4B),
+rsvd(3B), sgl_id(1B) }`. Set PSDT field in SQE CDW0 (bits 15:14) to indicate SGL usage.
+Per NVMe 2.1 §Scatter Gather Lists. After completing all items, mark every item as `[x]`,
+update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit
+as `"nvme: SGL support"`. After implementation, save gotchas to MCP memory.
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.15 §7.2` — NVMe 2.0 TODO has matching SGL section
+
+- [ ] Check Identify Controller `SGLS` field (offset 536) for SGL support
+- [ ] If supported, set PSDT field in SQE CDW0 (bits 15:14) to indicate SGL
+- [ ] Build SGL descriptor: `{ address, length, rsvd, sgl_id }` (16 bytes)
+- [ ] Support SGL Data Block descriptor type (type `0x00`)
+- [ ] Support SGL Segment descriptor type (type `0x02`) for chaining
+- [ ] Support SGL Last Segment descriptor type (type `0x03`)
+- [ ] Fallback: always use PRPs if SGL not supported
+- [ ] Commit: `"nvme: SGL support"`
+
+---
+
+## 21. Power Management
+
+### 21.1 Autonomous Power State Transition (APST)
+
+**Prompt:** Implement NVMe power management via Set Features (FID `0x0C`, Power Management)
+and APST (FID `0x0C`, Autonomous Power State Transition). Read Identify Controller for
+number of power states (NPSS, offset 263) and power state descriptors (starting offset 2048,
+32B each). Configure APST table with idle timeout → power state mappings. Balance latency
+vs power savings — disable APST for latency-sensitive workloads. Per NVMe 2.1 §Power
+Management. After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"nvme: power management APST"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Read NPSS (offset 263, 1B) from Identify Controller — number of power states (0-based)
+- [ ] Parse power state descriptors (offset 2048, 32B × NPSS+1):
+  - [ ] Max Power (offset 0, 2B) — in 0.01W units
+  - [ ] Entry Latency (offset 4, 4B) — µs to enter state
+  - [ ] Exit Latency (offset 8, 4B) — µs to exit state
+  - [ ] Relative Read/Write Throughput/Latency (offsets 12–15)
+  - [ ] NOPS (bit 25 of flags) — non-operational state
+- [ ] Set Features (FID `0x02`): set current power state
+- [ ] Enable APST: Set Features (FID `0x0C`) with APST table:
+  - [ ] Map idle timeouts to progressively deeper power states
+  - [ ] Skip states with exit latency > 100ms for interactive workloads
+- [ ] Expose via Registry: `HKLM\\SYSTEM\\Drivers\\NVMe\\PowerManagement\\APST` (default: enabled)
+- [ ] Disable APST for latency-sensitive mode: Registry tunable
+- [ ] Log: `[NVMe] APST enabled: %u power states, deepest=%s (exit=%ums)`
+- [ ] Commit: `"nvme: power management APST"`
+
+---
+
+## 22. SMART Dashboard (🚀 Impossible OS Exclusive)
+
+### 22.1 Built-in SMART Visualization
+
+**Prompt:** Expose SMART health data as a rich GUI panel in Disk Manager. Show temperature
+gauge, spare capacity bar, lifespan progress, total data read/written, power-on hours,
+unsafe shutdown count. Neither Windows nor Linux provide built-in SMART visualization for
+NVMe — users need third-party tools (CrystalDiskInfo, smartctl, nvme-cli). Requires §8.1
+SMART Health Monitoring. After completing all items, mark every item as `[x]`, update
+this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"nvme: SMART dashboard"`. After implementation, save gotchas to MCP memory.
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.15 §9.5` — NVMe 2.0 TODO has matching SMART Dashboard section
+
+- [ ] Temperature gauge: real-time °C with color zones (green/yellow/red)
+- [ ] Spare capacity bar: available spare % with threshold warning
+- [ ] Lifespan progress: percentage used with estimated remaining life
+- [ ] Cumulative stats: total data read/written in human-readable units (GiB/TiB)
+- [ ] Power-on hours display with uptime calculation
+- [ ] Unsafe shutdown counter with history trend
+- [ ] Critical warning alert: flashing notification on `critical_warning != 0`
+- [ ] Wire to Disk Manager panel via shared memory or IPC
+- [ ] Commit: `"nvme: SMART dashboard"`
+
+---
+
+## 23. Firmware Management (Stretch)
+
+### 23.1 Firmware Update
+
+**Prompt:** Implement NVMe firmware download (admin opcode `0x11`) and commit (admin opcode
+`0x10`). Check Identify Controller `OACS` bit 2 for firmware update support. Firmware images
+are downloaded in chunks (NUMD in CDW10), then committed to a slot (CDW10 FS bits). Supports
+immediate activation or next-reset activation. This is a stretch goal. Per NVMe 2.1 §Firmware
+Update Process. After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"nvme: firmware update"`. After implementation, save gotchas to MCP memory.
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.15 §10.2` — NVMe 2.0 TODO has matching Firmware Update section
+
+- [ ] Check `OACS` (offset 256) bit 2: Firmware Download/Commit supported
+- [ ] Read firmware slot info log page (LID `0x03`): active slot, slot count
+- [ ] Implement `nvme_fw_download(data, offset, size)`: admin opcode `0x11`
+  - [ ] CDW10: NUMD (number of dwords - 1)
+  - [ ] CDW11: OFST (offset in dwords)
+  - [ ] PRP1 = firmware data buffer
+- [ ] Implement `nvme_fw_commit(slot, action)`: admin opcode `0x10`
+  - [ ] CDW10: FS (firmware slot), CA (commit action)
+- [ ] Progress tracking: show download progress in Disk Manager
+- [ ] Commit: `"nvme: firmware update"`
+
+---
+
+## 24. Flexible Data Placement (🚀 Impossible OS Exclusive)
+
+### 24.1 FDP Write Hints
+
+**Prompt:** NVMe 2.1 introduces Flexible Data Placement (FDP) — the host provides placement
+hints so the controller can co-locate related data, reducing write amplification. Linux 6.16
+adds block write streams for FDP. Windows does not support FDP. Impossible OS can be an early
+adopter. Check Identify Controller for FDP support via Endurance Group Identify. Map
+filesystem metadata vs user data to different Reclaim Units. After completing all items,
+mark every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"nvme: flexible data placement"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Check FDP support via I/O Command Set Identify (CNS `0x1D`)
+- [ ] Parse FDP configuration: Reclaim Unit Handle count, Placement Handle count
+- [ ] Map filesystem write types to Placement Handles:
+  - [ ] Handle 0: Filesystem metadata (superblock, FAT, MFT)
+  - [ ] Handle 1: Hot user data (frequently written)
+  - [ ] Handle 2: Cold user data (archive, media)
+  - [ ] Handle 3: Journal / log data
+- [ ] Set Placement Handle in NVMe Write command CDW13 (Directive Specific field)
+- [ ] Expose via Registry: `HKLM\\SYSTEM\\Drivers\\NVMe\\FDP\\Enabled` (default: auto-detect)
+- [ ] Track FDP statistics: writes per handle, WAF improvement estimate
+- [ ] Log: `[NVMe] FDP enabled: %u reclaim units, %u placement handles`
+- [ ] Commit: `"nvme: flexible data placement"`
 
 ---
 

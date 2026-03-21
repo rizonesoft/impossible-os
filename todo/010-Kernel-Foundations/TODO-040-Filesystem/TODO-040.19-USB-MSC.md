@@ -1,4 +1,4 @@
-# 040.18-USB-MSC — USB Mass Storage Class Driver
+# 040.19-USB-MSC — USB Mass Storage Class Driver
 
 > **Goal:** Implement a complete USB Mass Storage Class (MSC) driver for Impossible OS,
 > enabling hot-pluggable USB flash drives and external hard disks. Currently no USB or xHCI
@@ -753,3 +753,239 @@ MCP memory.
 - [ ] Commit: `"usb: defensive descriptor validation"`
 
 ---
+
+## 7. Polish
+
+### 7.1 Safe Eject (START STOP UNIT)
+
+**Prompt:** Implement SCSI START STOP UNIT (`0x1B`) for safe device ejection per USB MSC
+spec §"START STOP UNIT". 6-byte CDB: opcode=`0x1B`, byte 4 bits 1:0 = LoEj/Start
+(`0x02` = eject). Before ejecting: flush all dirty buffers, unmount filesystems, unregister
+blkdev. After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"usb: safe eject START STOP UNIT"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Implement `usb_msc_eject(dev)`:
+  - [ ] Flush all dirty buffers (cache_flush if disk cache exists)
+  - [ ] Unmount all filesystems on this device
+  - [ ] Unregister `blkdev`
+- [ ] Build START STOP UNIT CDB (6 bytes): opcode=`0x1B`, byte 1 Immed=1, byte 4=`0x02` (eject)
+- [ ] Send via `bot_transaction()`: direction=none, data_len=0
+- [ ] Wire to shell command: `eject X:` where X is the drive letter
+- [ ] Notify desktop: "Drive X: safely removed — you may disconnect the USB device"
+- [ ] Commit: `"usb: safe eject START STOP UNIT"`
+
+### 7.2 USB Hub Traversal
+
+**Prompt:** Support USB devices connected through USB hubs. Hubs appear as a separate USB
+device class (bDeviceClass=`0x09`). Parse hub descriptors to discover downstream ports.
+Handle port power-on, reset, and enumeration for each downstream port. Track route strings
+for xHCI Slot Context. Support up to 5 tiers of hub nesting (USB spec limit). After
+completing all items, mark every item as `[x]`, update this prompt to a verification prompt,
+run `bash scripts/build.sh clean`, and commit as `"usb: hub traversal"`. After implementation,
+save gotchas to MCP memory.
+
+- [ ] Detect hub devices: `bDeviceClass == 0x09`
+- [ ] Parse Hub Descriptor: number of downstream ports, power characteristics
+- [ ] Issue SetPortFeature(PORT_POWER) for each downstream port
+- [ ] Monitor hub status change interrupt endpoint for port connect events
+- [ ] On downstream connect: reset port, enumerate device via parent hub
+- [ ] Track route string for xHCI (each hub tier contributes 4 bits to Slot Context)
+- [ ] Support up to 5 tiers of hub nesting (USB spec max = 7 total, root hub = tier 1)
+- [ ] Log: `[USB-HUB] Port %u: device connected via %u-tier hub chain`
+- [ ] Commit: `"usb: hub traversal"`
+
+---
+
+## 8. Impossible OS Exclusive Features
+
+### 8.1 Adaptive I/O Coalescing (🚀 Exclusive)
+
+**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage batch multiple small I/O
+requests into fewer BOT transactions. Implement adaptive I/O coalescing: queue incoming
+read/write requests, detect sequential LBA patterns, merge adjacent requests into single
+larger BOT transactions (up to device max transfer size). Track a rolling 100ms IOPS window.
+At low IOPS (<100), submit immediately for latency. At high IOPS (>100), batch for 1ms
+before sending merged request. After completing all items, mark every item as `[x]`, update
+this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"usb: adaptive I/O coalescing"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Implement I/O request queue per USB MSC device
+- [ ] Detect sequential LBA patterns (consecutive sector ranges)
+- [ ] Merge adjacent requests: combine into single READ/WRITE with larger transfer length
+- [ ] Adaptive threshold based on rolling IOPS:
+  - [ ] < 100 IOPS: submit immediately (latency-optimized)
+  - [ ] > 100 IOPS: batch for 1ms, then submit merged (throughput-optimized)
+- [ ] Cap merged transfer at device max transfer size
+- [ ] Configurable via Registry: `HKLM\SYSTEM\Drivers\USB\IOCoalescing\*`
+- [ ] Track stats: `{ requests_merged, bytes_saved, avg_batch_size }`
+- [ ] Log: `[USB-MSC] I/O coalescing: merged %u requests → %u`
+- [ ] Commit: `"usb: adaptive I/O coalescing"`
+
+### 8.2 USB Telemetry Dashboard (🚀 Exclusive)
+
+**Prompt:** Neither Windows nor Linux expose per-device USB I/O telemetry in a built-in GUI.
+Track ns-resolution per-request latency using `rdtsc`, build histogram (buckets: <100µs,
+100µs–1ms, 1–10ms, 10–100ms, >100ms). Track throughput (MB/s rolling average), IOPS,
+error rates, and BOT reset count. Expose via Registry for Disk Manager GUI integration.
+After completing all items, mark every item as `[x]`, update this prompt to a verification
+prompt, run `bash scripts/build.sh clean`, and commit as `"usb: telemetry dashboard"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Record `rdtsc` at BOT transaction submit and completion
+- [ ] Compute per-request latency in nanoseconds
+- [ ] Histogram buckets: <100µs, 100µs–1ms, 1–10ms, 10–100ms, >100ms
+- [ ] Track rolling throughput: MB/s over 1-second window (read + write separate)
+- [ ] Track IOPS: operations/second over 1-second window
+- [ ] Track error rates: stalls/sec, resets/sec, sense errors/sec
+- [ ] Expose via Registry: `HKLM\HARDWARE\USB\usb0\Telemetry\*`
+- [ ] Wire to Disk Manager GUI: real-time latency histogram, throughput gauge
+- [ ] Commit: `"usb: telemetry dashboard"`
+
+### 8.3 Predictive Prefetch (🚀 Exclusive)
+
+**Prompt:** Neither Windows Usbstor.sys nor Linux usb-storage implement driver-level
+predictive prefetch for USB storage. Track last N read LBAs per device. If sequential
+access pattern detected, issue background READ(10) for next M blocks. Store in small LRU
+cache (default 256 KiB). On cache hit, return data without BOT transaction. Invalidate on
+write to overlapping LBA range. After completing all items, mark every item as `[x]`, update
+this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"usb: predictive prefetch"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Track last 8 read LBAs per device in circular buffer
+- [ ] Detect sequential access pattern (consecutive LBA ranges, stride ≤ 1)
+- [ ] On pattern match: issue background READ(10) for next 64 KiB (configurable)
+- [ ] Store prefetched data in per-device LRU cache (default 256 KiB, max 1 MiB)
+- [ ] On read hit: return data from cache (zero BOT overhead)
+- [ ] Invalidate cache entries on write to overlapping LBA range
+- [ ] Configurable via Registry: `HKLM\SYSTEM\Drivers\USB\Prefetch\*`
+- [ ] Track cache stats: `{ hits, misses, hit_rate_pct, prefetches_issued }`
+- [ ] Commit: `"usb: predictive prefetch"`
+
+### 8.4 Safe Eject UX (🚀 Exclusive)
+
+**Prompt:** Neither Windows nor Linux provide a polished safe eject experience. Windows
+shows a tiny tray icon; Linux requires `udisksctl`. Impossible OS integrates safe eject
+into the desktop: system tray icon shows connected USB devices, right-click for "Safely
+Remove", progress indicator while flushing, confirmation toast, and warning dialog if files
+are still open. After completing all items, mark every item as `[x]`, update this prompt to
+a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"usb: safe eject UX"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Desktop system tray: USB icon appears when USB storage is connected
+- [ ] Right-click menu: list connected USB drives with name and drive letter
+- [ ] "Safely Remove" action per drive:
+  - [ ] Check for open file handles — if any, show warning dialog with file list
+  - [ ] Progress indicator: "Flushing buffers..." with spinner
+  - [ ] Issue START STOP UNIT eject (§7.1)
+  - [ ] Confirmation toast: "Drive X: safely removed"
+- [ ] "Eject All USB Drives" option
+- [ ] Keyboard shortcut: Win+E → opens eject dialog
+- [ ] Commit: `"usb: safe eject UX"`
+
+---
+
+## 9. Stretch Goals
+
+### 9.1 IOMMU DMA Isolation
+
+**Prompt:** If the platform supports an IOMMU (Intel VT-d, AMD-Vi), configure DMA remapping
+to restrict the xHCI controller's DMA access to only allocated TRB rings and data buffers
+per USB MSC spec §"IOMMU Integration". This prevents a compromised controller or malicious
+USB device from reading/writing arbitrary kernel memory. After completing all items, mark
+every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"usb: IOMMU DMA isolation"`. After
+implementation, save gotchas to MCP memory.
+
+- [ ] Detect IOMMU: scan ACPI DMAR table (Intel VT-d) or IVRS table (AMD-Vi)
+- [ ] Build I/O page tables mapping only xHCI allocated pages
+- [ ] Configure DMA remapping for xHCI PCI device
+- [ ] Block all DMA access outside allocated regions
+- [ ] Wire to xHCI init: set up IOMMU before enabling controller
+- [ ] Commit: `"usb: IOMMU DMA isolation"`
+
+### 9.2 UASP (USB Attached SCSI Protocol)
+
+**Prompt:** UASP provides up to 70% faster read speeds and 40% faster write speeds over BOT
+by using USB 3.0 bulk streams and command queuing. Detect UASP support via Interface
+Descriptor: `bInterfaceClass=0x08`, `bInterfaceSubClass=0x06`, `bInterfaceProtocol=0x62`.
+UASP uses 4 pipe endpoints (Command, Status, Data-In, Data-Out) instead of BOT's 2.
+Implement stream-based transfers for SuperSpeed devices. Fall back to BOT for non-UASP
+devices. After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as `"usb: UASP support"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Detect UASP interface: bInterfaceProtocol=`0x62`
+- [ ] Parse 4 UASP pipe endpoints: Command, Status, Data-In, Data-Out
+- [ ] Implement USB 3.0 bulk stream support on xHCI Transfer Rings
+- [ ] Implement UASP command queuing (multiple outstanding SCSI commands)
+- [ ] Implement UASP Information Unit (IU) framing
+- [ ] Fall back to BOT (§3.1) if UASP not supported
+- [ ] Benchmark: compare BOT vs UASP throughput
+- [ ] Commit: `"usb: UASP support"`
+
+---
+
+## Priority Order
+
+| Priority  | Section                                    | Description                                                      |
+| --------- | ------------------------------------------ | ---------------------------------------------------------------- |
+| 🔴 P0     | §1.1 xHCI PCI Discovery & BAR Mapping    | Controller detection — everything depends on this                |
+| 🔴 P0     | §1.2 xHCI Controller Initialization      | Controller halt/reset/start, DCBAA, scratchpad                   |
+| 🔴 P0     | §1.3 TRB Ring Architecture               | Command/Event/Transfer rings — core communication mechanism      |
+| 🔴 P0     | §2.1 USB Device Enumeration              | Port detect, slot enable, address, descriptors                   |
+| 🔴 P0     | §2.2 MSC Identification & Endpoint Cfg   | Match BOT triple, discover Bulk-IN/OUT endpoints                 |
+| 🔴 P0     | §3.1 BOT: CBW/CSW Transport              | Core protocol — send commands, receive status                    |
+| 🔴 P0     | §3.2 SCSI: INQUIRY + TEST UNIT READY     | Device identification and readiness check                        |
+| �� P0     | §3.3 SCSI: READ CAPACITY + READ(10)      | Read disk geometry and sectors — read-only USB storage works     |
+| 🟠 P1     | §3.4 SCSI: WRITE(10)                     | Write support for USB storage                                    |
+| 🟠 P1     | §3.5 Block Device Registration           | Expose as `blkdev`, auto-mount with drive letter                 |
+| 🟠 P1     | §4.1 REQUEST SENSE Error Decoding        | Detailed error reporting for failed commands                     |
+| 🟠 P1     | §4.2 Reset Recovery (3-Step)             | Handle phase errors and stalled endpoints                        |
+| 🟠 P1     | §4.3 Retry Policy & Timeout Handling     | Robust I/O with retries and timeouts                             |
+| 🟠 P1     | §2.3 MSI/MSI-X Interrupt Handling        | Replace polling with interrupt-driven I/O                        |
+| 🟡 P2     | §5.1 Hot-Plug Detection                  | Dynamic connect + auto-mount + desktop notification              |
+| 🟡 P2     | §5.2 Surprise Removal & Safe Eject        | Graceful disconnect without data loss                            |
+| 🟡 P2     | §6.1 Multi-LUN Support                   | Multi-slot card readers, multi-partition devices                 |
+| 🟡 P2     | §6.2 Scatter-Gather (64 KiB TRB Split)   | Large transfers without boundary violations                      |
+| 🟢 P3     | §6.3 Defensive Descriptor Validation     | Security hardening against malicious USB devices                 |
+| 🟢 P3     | §7.1 Safe Eject (START STOP UNIT)        | User-initiated unmount + media eject                             |
+| 🟢 P3     | §7.2 USB Hub Traversal                   | Devices behind hubs — multi-tier topology                        |
+| 🟢 P3     | §8.1 Adaptive I/O Coalescing            | 🚀 **Exclusive** — request merging for throughput                |
+| 🟢 P3     | §8.2 USB Telemetry Dashboard             | 🚀 **Exclusive** — per-device latency/IOPS GUI                  |
+| 🟢 P3     | §8.3 Predictive Prefetch                 | 🚀 **Exclusive** — driver-level sequential read-ahead            |
+| 🟢 P3     | §8.4 Safe Eject UX                       | 🚀 **Exclusive** — polished tray icon + progress + confirmation  |
+| 🔵 P4     | §9.1 IOMMU DMA Isolation                | Restrict xHCI DMA to allocated pages                             |
+| 🔵 P4     | §9.2 UASP (USB Attached SCSI)           | USB 3.0 bulk streams for 40–70% faster throughput                |
+
+---
+
+## OS Comparison
+
+| Feature                          | 🪟 Windows 11                        | 🐧 Linux                              | 🚀 Impossible OS                                   |
+| -------------------------------- | ----------------------------------- | ------------------------------------- | -------------------------------------------------- |
+| xHCI host controller             | ✅ Native (usbxhci.sys)              | ✅ Native (xhci_hcd)                   | ⬜ §1.1–1.3 P0 — full xHCI from scratch            |
+| USB device enumeration           | ✅ Native (usbhub3.sys)              | ✅ Native (usb-core)                   | ⬜ §2.1 P0 — port detect + desc parsing            |
+| BOT mass storage                 | ✅ Native (Usbstor.sys)              | ✅ Native (usb-storage)                | ⬜ §3.1 P0 — CBW/CSW transport                     |
+| SCSI command set                 | ✅ Native (disk.sys)                  | ✅ Native (sd_mod)                     | ⬜ §3.2–3.4 P0/P1 — INQUIRY/READ/WRITE             |
+| Block device registration        | ✅ Auto (PnP manager)                | ✅ Auto (block layer)                  | ⬜ §3.5 P1 — blkdev → partition scan → mount       |
+| Error recovery (Reset Recovery)  | ✅ Built-in                           | ✅ Built-in                            | ⬜ §4.1–4.3 P1 — 3-step reset + retry              |
+| MSI/MSI-X interrupts             | ✅ Native                             | ✅ Native                              | ⬜ §2.3 P1 — interrupt-driven I/O                   |
+| Hot-plug detection               | ✅ PnP + tray icon                   | ✅ udevd + automount                   | ⬜ §5.1 P2 — desktop toast + auto-mount             |
+| Surprise removal                 | ✅ Safe removal wizard                | ✅ umount + udisksctl                  | ⬜ §5.2 P2 — quarantine + teardown                  |
+| Multi-LUN support                | ✅ Native                             | ✅ Native                              | ⬜ §6.1 P2 — Get Max LUN + per-LUN blkdev          |
+| Scatter-gather I/O               | ✅ URB sg lists                       | ✅ sg lists                            | ⬜ §6.2 P2 — 64 KiB TRB boundary handling          |
+| Defensive descriptor parsing     | ⚠️ Basic validation                   | ⚠️ Quirk table for bad devices         | ⬜ §6.3 P3 — strict bounds + cap + two-stage        |
+| Safe eject (media eject)         | ✅ START STOP UNIT                    | ✅ eject command                       | ⬜ §7.1 P3 — flush + unmount + SCSI eject           |
+| USB hub support                  | ✅ Full (up to 7 tiers)               | ✅ Full (up to 7 tiers)                | ⬜ §7.2 P3 — route string + hub enumeration         |
+| UASP (USB 3.0 streams)          | ✅ Uaspstor.sys                       | ✅ uas driver                          | ⬜ §9.2 P4 — bulk streams + command queuing         |
+| IOMMU DMA isolation              | ✅ Hyper-V / VBS                      | ✅ iommu=strict                        | ⬜ §9.1 P4 — VT-d/AMD-Vi page tables               |
+| **Adaptive I/O coalescing**      | ⬜ Not implemented                    | ⬜ Not implemented                     | ⬜ §8.1 P3 — **request merging — first to ship** 🚀 |
+| **USB telemetry dashboard**      | ⬜ No built-in GUI                    | ⬜ No built-in GUI                     | ⬜ §8.2 P3 — **latency/IOPS GUI — first** 🚀       |
+| **Predictive prefetch**          | ⬜ No driver-level prefetch           | ⬜ No driver-level prefetch            | ⬜ §8.3 P3 — **sequential read-ahead** 🚀          |
+| **Safe eject UX**                | ⚠️ Tiny tray icon (poor UX)           | ⬜ CLI only (udisksctl)                | ⬜ §8.4 P3 — **tray + progress + warning** 🚀      |
+
+> **After P0+P1 items:** Impossible OS reads and writes USB flash drives — matches Windows/Linux core functionality.
+> **After P2 items:** Full hot-plug, surprise removal, multi-LUN, scatter-gather — production-quality USB storage.
+> **After P3 exclusive features:** Exceeds both — adaptive I/O coalescing, telemetry dashboard, prefetch, and polished safe eject.
+> **After P4 items:** IOMMU isolation and UASP for enterprise security and USB 3.0 throughput parity.

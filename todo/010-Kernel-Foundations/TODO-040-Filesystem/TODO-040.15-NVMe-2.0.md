@@ -139,7 +139,9 @@ graph TD
     VFS --> IXFS
 ```
 
-### Pha| ⭐ | Phase | Sections                              | Depends On              | Status |
+### Phase-by-Phase Implementation Order
+
+| ⭐ | Phase | Sections                              | Depends On              | Status |
 | -- | :---: | ------------------------------------- | ----------------------- | :----: |
 | 💎 | **0** | NVMe 2.0 spec (`nvme-2.0.md`)         | —                       |   ✅   |
 | 💎 | **0** | PCI driver (`pci.c`)                  | —                       |   ✅   |
@@ -172,9 +174,7 @@ graph TD
 | ⭐ | **8** | §9.8 Command Lockdown                 | Phase 3 (§3.4)          |   ⬜   |
 | 🔵 | **9** | §10.1 Namespace Management            | Phase 1 (§1.3)          |   ⬜   |
 | 🔵 | **9** | §10.2 Firmware Update                 | Phase 3 (§3.4)          |   ⬜   |
-| 🔵 | **9** | §10.3 NVMe Reservations               | Phase 3 (§3.4)          |   ⬜   |(§1.3)                |   ⬜   |
-| 🔵 | **9**  | §10.2 Firmware Update                | Phase 3 (§3.4)                |   ⬜   |
-| 🔵 | **9**  | §10.3 NVMe Reservations              | Phase 3 (§3.4)                |   ⬜   |
+| 🔵 | **9** | §10.3 NVMe Reservations               | Phase 3 (§3.4)          |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — the PCI driver can enumerate devices and the NVMe 2.0 spec
@@ -992,33 +992,36 @@ After implementation, save gotchas to MCP memory.
 
 ## OS Comparison
 
-| Feature                          | �� Windows 11                       | 🐧 Linux                            | 🚀 Impossible OS                                |
-| -------------------------------- | ----------------------------------- | ------------------------------------ | ----------------------------------------------- |
-| NVMe detection                   | ✅ StorNVMe / solidnvm.sys           | ✅ Native nvme driver                 | ⬜ §1.1 P0                                      |
-| Controller init                  | ✅ Full spec compliance              | ✅ Full spec compliance               | ⬜ §1.2 P0                                      |
-| Identify Controller/NS           | ✅ Full parsing                      | ✅ Full parsing                       | ⬜ §1.3 P0                                      |
-| Per-core I/O queues              | ✅ Per-CPU queue pairs               | ✅ Per-CPU queue pairs                | ⬜ §2.1 P0                                      |
-| MSI-X interrupts                 | ✅ Per-queue vectors                 | ✅ Per-queue vectors                  | ⬜ §2.2 P1                                      |
-| Read/Write/Flush                 | ✅ Full NVM command set              | ✅ Full NVM command set               | ⬜ §3.1-3.3 P0                                  |
-| Block device integration         | ✅ StorPort miniport                 | ✅ blk-mq integration                | ⬜ §3.4 P0                                      |
-| Graceful shutdown                | ✅ CC.SHN on OS shutdown             | ✅ CC.SHN on shutdown/suspend         | ⬜ §4.1 P1                                      |
-| Error recovery                   | ✅ Controller reset + retry          | ✅ Controller reset + retry           | ⬜ §4.2 P1                                      |
-| TRIM / Dataset Management        | ✅ Automatic TRIM                    | ✅ fstrim + discard mount option      | ⬜ §5.1 P2                                      |
-| Write Zeroes                     | ✅ Supported                         | ✅ REQ_OP_WRITE_ZEROES               | ⬜ §5.2 P2                                      |
-| Multiple namespaces              | ✅ Per-namespace volume              | ✅ /dev/nvmeXnY                       | ⬜ §5.3 P2                                      |
-| SMART monitoring                 | ⬜ Requires third-party tools        | ✅ nvme-cli / smartctl               | ⬜ §6.1 P2 — built-in GUI 🚀                    |
-| Asynchronous events              | ✅ AER support                       | ✅ AER support                        | ⬜ §6.2 P2                                      |
-| PRP List multi-page              | ✅ Full PRP support                  | ✅ Full PRP support                   | ⬜ §7.1 P1                                      |
-| SGL support                      | ✅ Optional                          | ✅ Optional                           | ⬜ §7.2 P3                                      |
-| Polling mode                     | ⬜ No dedicated poll mode            | ✅ io_poll / blk-mq poll             | ⬜ §8.1 P2                                      |
-| **Adaptive hybrid polling**      | ⬜ No adaptive switching             | ⬜ No adaptive switching              | ⬜ §9.1 P3 — **first to implement** 🚀          |
-| **I/O priority → NVMe QPRIO**   | ⬜ No QPRIO mapping                  | ⬜ No QPRIO mapping                   | ⬜ §9.2 P3 — **first to implement** 🚀          |
-| **Latency telemetry**            | ⬜ No per-request histograms         | ⬜ No built-in histograms             | ⬜ §9.3 P3 — **first to implement** 🚀          |
-| **Predictive I/O scheduling**    | ⬜ No driver-level prefetch          | ⬜ No driver-level prefetch           | ⬜ §9.4 P3 — **first to implement** 🚀          |
-| **SMART dashboard**              | ⬜ No built-in GUI                   | ⬜ CLI only (smartctl)                | ⬜ §9.5 P3 — **built-in GUI** 🚀                |
-| Namespace management             | ✅ Enterprise support                | ✅ nvme-cli create-ns                | ⬜ §10.1 P4                                     |
-| Firmware update                  | ✅ Windows Update / vendor tools     | ✅ nvme-cli fw-download              | ⬜ §10.2 P4                                     |
-| Reservations                     | ✅ Enterprise support                | ✅ nvme-cli resv-*                   | ⬜ §10.3 P4                                     |
+| Feature                          | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                                 |
+| -------------------------------- | --------------------------------- | ---------------------------------- | ------------------------------------------------ |
+| NVMe detection                   | ✅ StorNVMe / solidnvm.sys         | ✅ Native nvme driver               | ⬜ §1.1 P0                                       |
+| Controller init                  | ✅ Full spec compliance            | ✅ Full spec compliance             | ⬜ §1.2 P0                                       |
+| Identify Controller/NS           | ✅ Full parsing                    | ✅ Full parsing                     | ⬜ §1.3 P0                                       |
+| Per-core I/O queues              | ✅ Per-CPU queue pairs             | ✅ Per-CPU queue pairs              | ⬜ §2.1 P0                                       |
+| MSI-X interrupts                 | ✅ Per-queue vectors               | ✅ Per-queue vectors                | ⬜ §2.2 P1                                       |
+| Read/Write/Flush                 | ✅ Full NVM command set            | ✅ Full NVM command set             | ⬜ §3.1-3.3 P0                                   |
+| Block device integration         | ✅ StorPort miniport               | ✅ blk-mq integration              | ⬜ §3.4 P0                                       |
+| Graceful shutdown                | ✅ CC.SHN on OS shutdown           | ✅ CC.SHN on shutdown/suspend       | ⬜ §4.1 P1                                       |
+| Error recovery                   | ✅ Controller reset + retry        | ✅ Controller reset + retry         | ⬜ §4.2 P1                                       |
+| TRIM / Dataset Management        | ✅ Automatic TRIM                  | ✅ fstrim + discard mount option    | ⬜ §5.1 P2                                       |
+| Write Zeroes                     | ✅ Supported                       | ✅ REQ_OP_WRITE_ZEROES             | ⬜ §5.2 P2                                       |
+| Multiple namespaces              | ✅ Per-namespace volume            | ✅ /dev/nvmeXnY                     | ⬜ §5.3 P2                                       |
+| SMART monitoring                 | ⬜ Requires third-party tools      | ✅ nvme-cli / smartctl             | ⬜ §6.1 P2 — built-in GUI 🚀                     |
+| Asynchronous events              | ✅ AER support                     | ✅ AER support                      | ⬜ §6.2 P2                                       |
+| PRP List multi-page              | ✅ Full PRP support                | ✅ Full PRP support                 | ⬜ §7.1 P1                                       |
+| SGL support                      | ✅ Optional                        | ✅ Optional                         | ⬜ §7.2 P3                                       |
+| Polling mode                     | ⬜ No dedicated poll mode          | ✅ io_poll / blk-mq poll           | ⬜ §8.1 P2                                       |
+| **Adaptive hybrid polling**      | ⬜ No adaptive switching           | ⬜ No adaptive switching            | ⬜ §9.1 P3 — **first to implement** 🚀           |
+| **I/O priority → NVMe QPRIO**   | ⬜ No QPRIO mapping                | ⬜ No QPRIO mapping                 | ⬜ §9.2 P3 — **first to implement** 🚀           |
+| **Latency telemetry**            | ⬜ No per-request histograms       | ⬜ No built-in histograms           | ⬜ §9.3 P3 — **first to implement** 🚀           |
+| **Predictive I/O scheduling**    | ⬜ No driver-level prefetch        | ⬜ No driver-level prefetch         | ⬜ §9.4 P3 — **first to implement** 🚀           |
+| **SMART dashboard**              | ⬜ No built-in GUI                 | ⬜ CLI only (smartctl)              | ⬜ §9.5 P3 — **built-in GUI** 🚀                 |
+| **Simple Copy offload**          | ⬜ Not exposed to FS layer         | ⬜ No driver-level copy offload     | ⬜ §9.6 P3 — **on-drive copy** 🚀                |
+| **Zoned Namespace (ZNS)**        | ⬜ No native ZNS driver            | ✅ Kernel ZNS + zonefs             | ⬜ §9.7 P3 — **zone-aware GUI** 🚀               |
+| **Command Lockdown**             | ⬜ No lockdown support             | ⬜ No lockdown support              | ⬜ §9.8 P3 — **first to implement** 🚀           |
+| Namespace management             | ✅ Enterprise support              | ✅ nvme-cli create-ns              | ⬜ §10.1 P4                                      |
+| Firmware update                  | ✅ Windows Update / vendor tools   | ✅ nvme-cli fw-download            | ⬜ §10.2 P4                                      |
+| Reservations                     | ✅ Enterprise support              | ✅ nvme-cli resv-*                 | ⬜ §10.3 P4                                      |
 
 > **After P0+P1 items:** Impossible OS has a fully functional NVMe driver with per-core queues,
 > MSI-X interrupts, Read/Write/Flush, shutdown, error recovery, and multi-page PRP transfers.
@@ -1028,8 +1031,9 @@ After implementation, save gotchas to MCP memory.
 > multi-namespace, SMART health, AER, and polling mode.
 >
 > **After P3 exclusive features:** Exceeds both — adaptive hybrid polling, hardware I/O QoS
-> via QPRIO mapping, per-request latency telemetry, predictive prefetch, and built-in SMART
-> dashboard. No other OS offers these at the NVMe driver level.
+> via QPRIO mapping, per-request latency telemetry, predictive prefetch, built-in SMART
+> dashboard, on-drive copy offload, zone-aware storage management, and command lockdown
+> security. No other OS offers all of these at the NVMe driver level.
 >
 > **After P4 items:** Full enterprise parity — namespace management, firmware update,
 > reservations.

@@ -550,29 +550,34 @@ graph TD
 
 ## OS Comparison
 
-| Feature                            | 🪟 Windows 11                       | 🐧 Linux                             | 🚀 Impossible OS                                    |
-| ---------------------------------- | ----------------------------------- | ------------------------------------- | --------------------------------------------------- |
-| I/O Request Packets                | ✅ Full IRP model (NT kernel)        | ❌ No equivalent (VFS ops direct)      | ⬜ §1 P0 — IRP dispatch engine                      |
-| Device stack layering              | ✅ Filter DO → FDO → PDO            | ❌ No device stack                     | ⬜ §2 P1 — three-tier device model                  |
-| Direct I/O (MDL / zero-copy)       | ✅ MDL + DMA                         | ✅ Direct I/O (O_DIRECT)              | ⬜ §3.1 P1 — MDL-based zero-copy                    |
-| Buffered I/O                       | ✅ SystemBuffer                      | ✅ Buffered by default                 | ⬜ §3.2 P1 — intermediate kernel buffer             |
-| Multi-level handle tables          | ✅ 3-level paging                    | ❌ fd table (flat array)               | ⬜ §4.1 P2 — dynamic level promotion                |
-| Object reference counting          | ✅ ObReferenceObject                 | ✅ refcount (different model)          | ⬜ §4.2 P2 — type-aware ref counting                |
-| Object Manager namespace           | ✅ \Global??\ + \\?\                 | ❌ No equivalent (paths are strings)   | ⬜ §5.1 P3 — full namespace + 32K paths             |
-| NTSTATUS → error translation       | ✅ RtlNtStatusToDosError             | ❌ errno is direct                     | ⬜ §6.1 P1 — 200+ status mappings                   |
-| File information classes           | ✅ 70+ info classes                  | ✅ stat/statx (limited)                | ⬜ §7.1 P1 — core classes                            |
-| Security descriptor enforcement    | ✅ Full DACL/SACL + $Secure          | ✅ POSIX ACLs (simpler model)          | ⬜ §8 P2 — Win32-compatible DACL                    |
-| IRP completion routines            | ✅ IoSetCompletionRoutine             | ❌ No equivalent                       | ⬜ §9.1 P2 — bottom-up chain                         |
-| Cancel I/O                         | ✅ CancelIoEx                        | ❌ No standard cancel                  | ⬜ §9.2 P3                                           |
-| Filter Manager (minifilters)       | ✅ FltMgr + altitude model           | ❌ No equivalent (eBPF is different)   | ⬜ §10.1 P3 — altitude-based pre/post callbacks     |
-| Reparse points                     | ✅ Symlinks, junctions, mount pts    | ✅ symlinks (simpler model)            | ⬜ §11.1 P3 — full reparse tag dispatch             |
-| **System file picker (COM)**       | ✅ IFileOpenDialog                   | ❌ No system standard                  | ⬜ §12.1 P4 — **system COM dialog** 🚀             |
-| **Built-in metadata CLI**          | ⚠️ `fsutil` (limited, not intuitive) | ⚠️ `stat`/`getfattr` (separate tools) | ⬜ §12.2 P3 — **`fileinfo` + `streams`** 🚀        |
+| Feature                            | 🪟 Windows 11                        | 🐧 Linux                              | 🚀 Impossible OS                                      |
+| ---------------------------------- | ------------------------------------ | -------------------------------------- | ----------------------------------------------------- |
+| I/O Request Packets                | ✅ Full IRP model (NT kernel)         | ⬜ No equivalent (VFS ops direct)       | ⬜ §1.1–1.2 P0 — IRP dispatch engine                  |
+| Device stack layering              | ✅ Filter DO → FDO → PDO             | ⬜ No device stack                      | ⬜ §2.1 P1 — three-tier device model                   |
+| Direct I/O (MDL / zero-copy)       | ✅ MDL + DMA                          | ✅ Direct I/O (O_DIRECT)               | ⬜ §3.1 P1 — MDL-based zero-copy                      |
+| Buffered I/O                       | ✅ SystemBuffer                       | ✅ Buffered by default                  | ⬜ §3.2 P1 — intermediate kernel buffer                |
+| Multi-level handle tables          | ✅ 3-level paging                     | ⬜ fd table (flat array)                | ⬜ §4.1 P2 — dynamic level promotion                   |
+| Object reference counting          | ✅ ObReferenceObject                  | ✅ refcount (different model)           | ⬜ §4.2 P2 — type-aware ref counting                   |
+| Object Manager namespace           | ✅ `\Global??\` + `\\?\`             | ⬜ No equivalent (paths are strings)    | ⬜ §5.1 P3 — full namespace + 32K paths                |
+| NTSTATUS → error translation       | ✅ RtlNtStatusToDosError              | ⬜ errno is direct                      | ⬜ §6.1 P1 — 200+ status mappings                      |
+| File information classes           | ✅ 70+ info classes                   | ✅ stat/statx (limited)                 | ⬜ §7.1 P1 — core classes                              |
+| Security descriptor enforcement    | ✅ Full DACL/SACL + $Secure           | ✅ POSIX ACLs (simpler model)           | ⬜ §8.1 P2 — Win32-compatible DACL                     |
+| IRP completion routines            | ✅ IoSetCompletionRoutine              | ⬜ No equivalent                        | ⬜ §9.1 P2 — bottom-up chain                           |
+| Cancel I/O                         | ✅ CancelIoEx                         | ⬜ No standard cancel                   | ⬜ §9.2 P3 — graceful timeout + shutdown               |
+| Filter Manager (minifilters)       | ✅ FltMgr + altitude model            | ⬜ No equivalent (eBPF is different)    | ⬜ §10.1 P3 — altitude-based pre/post callbacks        |
+| Reparse points                     | ✅ Symlinks, junctions, mount pts     | ✅ symlinks (simpler model)             | ⬜ §11.1 P3 — full reparse tag dispatch                |
+| FSCTL / DeviceIoControl            | ✅ 100+ FSCTL codes                   | ✅ ioctl (unstructured)                 | ⬜ §14.1 P2 — structured FSCTL dispatch                |
+| Fast I/O (cache bypass)            | ✅ FastIoRead/Write in FSD            | ⬜ No equivalent                        | ⬜ §15.1 P2 — **zero-IRP cached reads** 🚀            |
+| I/O priority / QoS                 | ✅ IoPriorityHint (5 levels)          | ✅ ionice (3 classes)                   | ⬜ §16.1 P2 — **hardware queue mapping** 🚀           |
+| **System file picker (COM)**       | ✅ IFileOpenDialog                    | ⬜ No system standard                   | ⬜ §12.1 P4 — **system COM dialog** 🚀                |
+| **Built-in metadata CLI**          | ⚠️ `fsutil` (limited, not intuitive)  | ⚠️ `stat`/`getfattr` (separate tools)  | ⬜ §12.2 P3 — **`fileinfo` + `streams`** 🚀           |
+| **Per-IRP latency tracing**        | ⬜ Needs xperf/WPR (external)         | ⬜ Needs blktrace/bpftrace (external)   | ⬜ §17.1 P3 — **built-in ns-resolution histograms** 🚀 |
 
 > **After P0+P1 items:** Impossible OS has a full I/O Manager with IRP dispatch, MDLs,
 > device stacks, and proper error translation — matching the NT kernel's I/O model.
-> **After P2–P3 items:** Multi-level handles, security enforcement, minifilters, and
-> reparse points bring full Win32 semantic parity.
+> **After P2–P3 items:** Multi-level handles, security enforcement, minifilters, FSCTL
+> dispatch, Fast I/O, I/O priority, and reparse points bring full Win32 semantic parity
+> plus exclusive performance features.
 > **After P4 (§12.1):** System-level COM file picker — a feature no other hobby OS ships.
 
 ---
