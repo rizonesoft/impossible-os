@@ -69,6 +69,8 @@ graph TD
     X["040.06 §11.2<br/>Online Defragmentation"]
     Y["040.06 §12.1<br/>Transaction-Safe WAL"]
     Z["040.06 §13.1<br/>Deleted File Recovery"]
+    AA["040.06 §14.1<br/>Health Dashboard"]
+    AB["040.06 §14.2<br/>Readahead & Prefetch"]
 
     %% ── Cross-File Dependencies ──
     VFS["040.17 §13.2<br/>Win32 File API (CreateFile)"]
@@ -98,6 +100,8 @@ graph TD
     Q --> Z
     W --> X
     N --> P
+    M --> AA
+    O --> AB
 
     %% ── Cross-file edges ──
     STOR --> A
@@ -147,7 +151,9 @@ graph TD
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.1 Fragmentation Analyzer   | Per-file extent count, volume fragmentation %, visual cluster heat map     | —                        |   ⬜   |
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.2 Online Defragmentation   | Relocate file clusters to contiguous runs — GUI progress in Disk Manager   | Phase 7 (§7.1, §11.1)   |   ⬜   |
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §13.1 Deleted File Recovery    | Scan `0xE5` entries, reconstruct cluster chains — built-in undelete        | Phase 7 (§7.1)           |   ⬜   |
-| 💎 | **8**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1    |   ⬜   |
+| ⭐ | **8**  | `TODO-040.06-FAT32.md`   | §14.1 FAT32 Health Dashboard   | Real-time volume health metrics in Disk Manager GUI — world-first          | Phase 5 (§6.1)           |   ⬜   |
+| ⭐ | **8**  | `TODO-040.06-FAT32.md`   | §14.2 Readahead & Prefetch     | Driver-level sequential readahead with configurable depth                  | Phase 5 (§6.3)           |   ⬜   |
+| 💎 | **9**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1    |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–2** are the critical path — mount hardening, data integrity, and spec compliance.
@@ -165,7 +171,8 @@ graph TD
 > tuning features, and byte-range file locking for Win32 `LockFile` support.
 > **Phase 7** adds fsck, the competitive defrag/fragmentation features, and the
 > built-in deleted file recovery (undelete) — a unique feature.
-> **Phase 8** is interop testing.
+> **Phase 8** delivers the health dashboard and readahead/prefetch exclusives.
+> **Phase 9** is interop testing.
 
 > [!TIP]
 > **Quick wins (any time):** §5.1 (timestamps) and §9.2 (volume labels) are self-contained
@@ -798,6 +805,8 @@ graph TD
 | 🟢 P3 ⭐  | 11.1 Fragmentation Analyzer    | **Visual fragmentation map** — unique for FAT32                  |
 | 🟢 P3 ⭐  | 11.2 Online Defragmentation    | **GUI defrag for FAT32** — Linux has no built-in defrag          |
 | 🟢 P3 ⭐  | 13.1 Deleted File Recovery     | **Built-in undelete** — neither Windows nor Linux has this       |
+| 🟢 P3 ⭐  | 14.1 FAT32 Health Dashboard    | **Real-time volume telemetry** — no OS has FAT32 health metrics  |
+| 🟢 P3 ⭐  | 14.2 Readahead & Prefetch      | **Driver-level sequential prefetch** — beats VFS-level readahead |
 | 🔵 P4     | 10.1 Cross-Platform Compat     | Interop — verify Windows/Linux round-trip                        |
 
 > [!NOTE]
@@ -845,8 +854,11 @@ graph TD
 | **Fragmentation analyzer**          | ⚠️ Only via defrag GUI               | ❌ No built-in FAT32 defrag            | ⬜ **§11.1 P3 — visual heat map in Disk Manager**     |
 | **Online defragmentation**          | ✅ `defrag.exe` (not FAT32-aware)     | ❌ No built-in FAT32 defrag            | ⬜ **§11.2 P3 — GUI defrag with progress**            |
 | **Deleted file recovery**           | ❌ Third-party tools only             | ❌ Third-party tools only              | ⬜ **§13.1 P3 — built-in undelete (world-first)**     |
+| **Volume health dashboard**         | ❌ No per-volume FAT32 telemetry      | ❌ No FAT32 health metrics             | ⬜ **§14.1 P3 — real-time health in Disk Manager** 🚀 |
+| **Driver-level readahead**          | ⚠️ `SEQUENTIAL_SCAN` hint only       | ⚠️ VFS-level readahead (not FAT-aware) | ⬜ **§14.2 P3 — cluster-chain prefetch** 🚀           |
 | Cross-platform round-trip           | ✅                                    | ✅                                     | ⬜ §10.1 P4 — untested                                |
 
 > **After P0+P1 items:** Impossible OS matches Windows and Linux on FAT32 core functionality.
 > **After P2 items:** Impossible OS becomes the **only OS with crash-protected FAT32 writes** (WAL).
-> **After P3 items:** Impossible OS adds **visual defrag, fragmentation analysis, and built-in undelete** — unique features not found in any other OS.
+> **After P3 exclusive features:** Impossible OS adds **visual defrag, fragmentation analysis, built-in undelete, real-time health dashboard, and driver-level readahead** — unique features not found in any other OS.
+> **After P4 items:** Full cross-platform interop verified.

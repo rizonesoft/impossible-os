@@ -40,8 +40,8 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/storage/virtio-1.2.md<br/>VirtIO 1.2 Specification"]
-    DRV["src/kernel/drivers/virtio_blk.c<br/>Existing Driver (~350 lines, MMIO polling)"]
+    SPEC["specs/storage/controllers/virtio-1.2.md<br/>VirtIO 1.2 Specification"]
+    DRV["src/kernel/drivers/virtio_blk.c<br/>VirtIO Block Driver (~2000 lines, PCI MSI-X)"]
     AHCI["TODO-040.02-AHCI.md<br/>AHCI SATA (parallel transport)"]
     MBR["TODO-040.04-MBR.md<br/>MBR Partition Detection"]
     GPT["TODO-040.05-GPT.md<br/>GPT Partition Detection"]
@@ -79,6 +79,8 @@ graph TD
     AA["§17.1 Predictive Prefetch"]
     BB["§18.1 I/O Request Merging"]
     CC["§19.1 Multi-Device Striping"]
+    DD["§20.1 Force Unit Access Writes"]
+    EE["§21.1 Inline Encryption"]
 
     %% External prerequisites
     SPEC --> A
@@ -137,6 +139,11 @@ graph TD
     %% Phase 6: Stretch goals
     H --> U
 
+    %% Phase 5 continued: new exclusives
+    D --> DD
+    H --> DD
+    H --> EE
+
     %% Downstream filesystem consumers
     B --> MBR
     B --> GPT
@@ -184,6 +191,8 @@ graph TD
 | ⭐ | **5**  | §17.1 Predictive Prefetch        | Phase 3 (§3.2)                |   ⬜   |
 | ⭐ | **5**  | §18.1 I/O Request Merging        | Phase 5 (§7.1)                |   ⬜   |
 | ⭐ | **5**  | §19.1 Multi-Device Striping      | Phase 3 (§3.2)                |   ⬜   |
+| ⭐ | **5**  | §20.1 Force Unit Access Writes   | Phase 2 (§2.2) + Phase 3 (§3.2) |   ⬜   |
+| ⭐ | **5**  | §21.1 Inline Encryption          | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **6**  | §8.1 Packed Virtqueue            | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **6**  | §9.1 Secure Erase                | Phase 3 (§5.1)                |   ⬜   |
 | 💎 | **6**  | §11.1 Zoned Block Device         | Phase 3 (§3.2)                |   ⬜   |
