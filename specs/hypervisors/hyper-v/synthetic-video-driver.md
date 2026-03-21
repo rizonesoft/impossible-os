@@ -384,7 +384,7 @@ Introduced in **Linux kernel 5.14**, `hyperv_drm` exposes the synthetic video de
 | ----------------------- | ---------------------------------------------------------- |
 | Driver                  | `hypervideo.sys` + Integration Services VSCs               |
 | Supported guests        | Windows 8.1+ / Server 2012 R2+ through Server 2025        |
-| WMI classes             | `Msvm_Synthetic3DDisplayController`, `Msvm_Synth3dVideoPool` |
+| WMI classes             | `Msvm_SyntheticDisplayController`, `Msvm_VideoHead`          |
 | Resolution limit        | 1920×1080 (basic session), 4K+ (Enhanced Session)          |
 | Legacy (XP)             | Must revert to unaccelerated "Standard VGA" for 32-bit color |
 
@@ -468,9 +468,10 @@ GPU-P replaces the software-based shared-memory ring buffers of synthetic video 
 > [!CAUTION]
 > Framebuffer memory mapped via `SYNTHVID_VRAM_LOCATION` **cannot be ballooned, swapped,
 > or dynamically resized**. The 8 MiB is permanently sequestered from the host's memory
-> pool. Hyper-V does **not** support memory over-commit, so every framebuffer allocation
-> represents a **1:1 footprint** on physical RAM. This is the architectural rationale
-> for capping synthetic VRAM strictly.
+> pool. While Hyper-V supports memory oversubscription via Dynamic Memory for general VM
+> RAM, pinned VRAM is excluded from ballooning — every framebuffer allocation represents a
+> **1:1 footprint** on physical RAM. This is the architectural rationale for capping
+> synthetic VRAM strictly.
 
 ### Impossible OS Memory Model
 

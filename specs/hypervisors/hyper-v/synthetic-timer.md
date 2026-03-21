@@ -120,7 +120,7 @@ In the Linux kernel architecture, this memory structure is identified as the `hy
 - A corresponding **offset value**
 
 **Computation Flow:**
-```
+```text
 1. Guest executes RDTSC         → acquires current hardware tick count
 2. Guest reads shared page      → retrieves hypervisor-provided scale + offset
 3. Guest applies math           → computes exact reference time
@@ -136,7 +136,7 @@ This mechanism is so highly optimized that during the kernel boot sequence, enli
 
 #### Hardware TSC Frequency Scaling for Live Migration
 
-Starting with Windows Server 2022, Hyper-V utilizes **hardware-backed TSC frequency scaling** (such as Intel TSC Scaling or AMD VMCB TSC Ratio). This vital hardware feature allows seamless live migrations of virtual machines across disparate Hyper-V host clusters where the physical CPUs might possess fundamentally different base TSC frequencies.
+Starting with Windows Server 2025 hosts (running Windows Server 2022 or later VMs on Cascade Lake / Zen2+ hardware), Hyper-V utilizes **hardware-backed TSC frequency scaling** (such as Intel TSC Scaling or AMD VMCB TSC Ratio). This vital hardware feature allows seamless live migrations of virtual machines across disparate Hyper-V host clusters where the physical CPUs might possess fundamentally different base TSC frequencies.
 
 By scaling the TSC in hardware, the hypervisor ensures the guest OS does not experience catastrophic time discontinuities or kernel panics upon resuming execution on a target node with different silicon characteristics.
 
@@ -460,7 +460,7 @@ To provide systems administrators and cloud architects with deep, actionable vis
 
 By combining these highly granular counters, systems architects can calculate the absolute Contention Delay in milliseconds:
 
-```
+```text
                     Contention Time Per Dispatch [ns] × Dispatches/sec
 Contention Delay = ———————————————————————————————————————————————————
            (ms)                     1,000,000
@@ -502,10 +502,10 @@ If a third-party virtualization stack (such as QEMU) forcibly exposes HPET avail
 
 #### HPET Emulation Overhead
 
-The emulated HPET relies entirely on a **Platform Power Management Timer (PMT)** that is hardcoded to run at a fixed hardware frequency of **3.580 MHz**. Because HPET is an active hardware timer that must constantly and relentlessly generate hardware interrupts to maintain system time, emulating it in software requires the host hypervisor to:
+The HPET specification mandates a minimum counter frequency of 10 MHz; most physical implementations run at **14.31818 MHz** (four times the ACPI PM Timer's 3.579545 MHz). Because HPET is an active hardware timer that must constantly and relentlessly generate hardware interrupts to maintain system time, emulating it in software requires the host hypervisor to:
 
-1. Continuously trap HPET register accesses
-2. Emulate tick generation at 3.580 MHz
+1. Continuously trap memory-mapped HPET register accesses
+2. Emulate tick generation at the configured HPET frequency
 3. Forcefully inject HPET ticks into the guest APIC millions of times per second
 
 This continuous software emulation causes:
@@ -535,13 +535,13 @@ The architecture of the Hyper-V Synthetic Timer represents a fundamental, necess
 
 ### Key Architectural Milestones
 
-| Era | Technology | Mechanism | Overhead |
-|:----|:-----------|:----------|:---------|
-| Legacy | 8254 PIT, HPET (3.580 MHz) | Trap-and-emulate on every tick | **Catastrophic** |
-| Viridian (2008) | Partition Reference Counter | Constant-rate MSR, immune to power states | **Low** (MSR trap) |
-| TSC Enlightenment | Shared memory page + `RDTSC` | Exit-less calibration via scale/offset | **Zero** |
-| Classic Mode | SynIC + VMBus message delivery | Software demultiplexer pipeline | **Moderate** |
-| Direct Mode (2016+) | APICv / AVIC hardware injection | Architectural interrupt vector | **Near-zero** |
+| Era                | Technology                       | Mechanism                              | Overhead           |
+| :----------------- | :------------------------------- | :------------------------------------- | :----------------- |
+| Legacy             | 8254 PIT, HPET (14.31818 MHz)    | Trap-and-emulate on every tick         | **Catastrophic**   |
+| Viridian (2008)    | Partition Reference Counter      | Constant-rate MSR, immune to power states | **Low** (MSR trap) |
+| TSC Enlightenment  | Shared memory page + `RDTSC`     | Exit-less calibration via scale/offset | **Zero**           |
+| Classic Mode       | SynIC + VMBus message delivery   | Software demultiplexer pipeline        | **Moderate**       |
+| Direct Mode (2016+)| APICv / AVIC hardware injection  | Architectural interrupt vector         | **Near-zero**      |
 
 ### Outstanding Challenges
 

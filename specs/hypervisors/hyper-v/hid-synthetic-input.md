@@ -132,16 +132,16 @@ The VMBus is the critical conduit connecting VSP and VSC. For HID input, it prov
 dedicated channels for keyboard and mouse/digitizer devices.
 
 > **Full VMBus protocol details:** See the
-> [VMBus Core Protocol spec](file:///specs/hyper-v/vmbus-core-protocol.md).
+> [VMBus Core Protocol spec](file:///specs/hypervisors/hyper-v/vmbus-core-protocol.md).
 
 ### 3.1 Shared Memory Ring Buffers and Channel Architecture
 
 HID channels use explicitly bifurcated ring buffers:
 
-| Buffer                            | Purpose                                         |
-| --------------------------------- | ----------------------------------------------- |
-| `INPUTVSC_SEND_RING_BUFFER_SIZE`  | Guest → Host (key state queries, ack messages)  |
-| `INPUTVSC_RECV_RING_BUFFER_SIZE`  | Host → Guest (keyboard events, mouse coords)    |
+| Buffer                           | Purpose                                        |
+| -------------------------------- | ---------------------------------------------- |
+| `INPUTVSC_SEND_RING_BUFFER_SIZE` | Guest → Host (key state queries, ack messages) |
+| `INPUTVSC_RECV_RING_BUFFER_SIZE` | Host → Guest (keyboard events, mouse coords)   |
 
 When a user moves the mouse or types on the keyboard in VMConnect:
 
@@ -175,11 +175,11 @@ occurs exclusively in this private copy. The host cannot modify the data post-re
 Synthetic devices use **128-bit GUIDs** (not VID/PID) for enumeration. During VMBus
 initialization, the hypervisor broadcasts these GUIDs over the control channel.
 
-| Device Classification    | Description                                     | GUID                                         |
-| ------------------------ | ----------------------------------------------- | -------------------------------------------- |
-| **Synthetic Mouse/HID**  | Absolute pointing, multi-touch, digitizer       | `{CFA8B69E-5B4A-4CC0-B98B-8BA1A1F3F95A}`    |
-| **Synthetic Keyboard**   | Dedicated keystroke delivery, keymap sync        | `{F912AD6D-2B17-48EA-BD65-F927A61C7684}`    |
-| **Synthetic Video**      | Framebuffer, output sync for input layers        | `{DA0A7802-E377-4AAC-8E77-0558EB1073F8}`    |
+| Device Classification   | Description                                | GUID                                      |
+| ----------------------- | ------------------------------------------ | ----------------------------------------- |
+| **Synthetic Mouse/HID** | Absolute pointing, multi-touch, digitizer  | `{CFA8B69E-5B4A-4CC0-B98B-8BA1A1F3F95A}` |
+| **Synthetic Keyboard**  | Dedicated keystroke delivery, keymap sync  | `{F912AD6D-2B17-48EA-BD65-F927A61C7684}` |
+| **Synthetic Video**     | Framebuffer, output sync for input layers  | `{DA0A7802-E377-4AAC-8E77-0558EB1073F8}` |
 
 In low-level C headers, these GUIDs are defined in **little-endian byte arrays** for rapid
 memory matching. For example, `HV_MOUSE_GUID`:
@@ -275,14 +275,14 @@ and passes it to the guest during channel initialization.
 
 For multi-touch recognition, the descriptor must declare:
 
-| HID Usage              | Usage ID | Page  | Purpose                                    |
-| ---------------------- | :------: | :---: | ------------------------------------------ |
-| **Touch Screen**       |   0x04   | 0x0D  | Top-level application usage (Digitizer)    |
-| **Contact Identifier** |   0x51   | 0x0D  | Unique persistent ID per finger            |
-| **Contact Count**      |   0x54   | 0x0D  | Active touch points in current packet      |
-| **Contact Count Max**  |   0x55   | 0x0D  | Maximum simultaneous touch capacity        |
-| **Tip Switch**         |   0x42   | 0x0D  | Physical contact detected (finger/stylus)  |
-| **In Range**           |   0x32   | 0x0D  | Hovering detected (stylus only)            |
+| HID Usage              | Usage ID | Page | Purpose                                   |
+| ---------------------- | :------: | :--: | ----------------------------------------- |
+| **Touch Screen**       |   0x04   | 0x0D | Top-level application usage (Digitizer)   |
+| **Contact Identifier** |   0x51   | 0x0D | Unique persistent ID per finger           |
+| **Contact Count**      |   0x54   | 0x0D | Active touch points in current packet     |
+| **Contact Count Max**  |   0x55   | 0x0D | Maximum simultaneous touch capacity       |
+| **Tip Switch**         |   0x42   | 0x0D | Physical contact detected (finger/stylus) |
+| **In Range**           |   0x32   | 0x0D | Hovering detected (stylus only)           |
 
 **Contact Identifier persistence rules:**
 - Each distinct physical pressure point gets a unique, arbitrary ID
@@ -291,10 +291,10 @@ For multi-touch recognition, the descriptor must declare:
 
 ### 6.2 Serial versus Hybrid Reporting Protocols
 
-| Protocol    | Mechanism                                           | Bandwidth         |
-| ----------- | --------------------------------------------------- | ------------------ |
-| **Serial**  | One HID packet per contact (5 fingers = 5 packets)  | Higher (more IRQs) |
-| **Hybrid**  | Multiple contacts packed into single payload         | Lower (coalesced)  |
+| Protocol   | Mechanism                                          | Bandwidth           |
+| ---------- | -------------------------------------------------- | ------------------- |
+| **Serial** | One HID packet per contact (5 fingers = 5 packets) | Higher (more IRQs)  |
+| **Hybrid** | Multiple contacts packed into single payload       | Lower (coalesced)   |
 
 Hybrid packet parsing is critical — empty contact slots must be padded with NULL values or
 the Contact Count adjusted precisely. Failure causes **ghost inputs**: basic drawing works
@@ -304,15 +304,15 @@ but pinch-to-zoom fails entirely.
 
 Active stylus support requires additional usages beyond basic pointing:
 
-| State        | HID Usage     | Behavior                                             |
-| ------------ | ------------- | ---------------------------------------------------- |
-| **Hovering** | In Range      | Pen detected above surface, cursor preview shown     |
-| **Contact**  | Tip Switch    | Physical pressure applied (drawing)                  |
-| **Barrel**   | BTN_STYLUS    | Side button pressed (right-click equivalent)         |
-| **Palm**     | Rejected      | Palm rejection via input topology classification     |
+| State        | HID Usage      | Behavior                                         |
+| ------------ | -------------- | ------------------------------------------------ |
+| **Hovering** | In Range       | Pen detected above surface, cursor preview shown |
+| **Contact**  | Tip Switch     | Physical pressure applied (drawing)              |
+| **Barrel**   | Barrel Switch  | Side button pressed (right-click equivalent)     |
+| **Palm**     | Rejected       | Palm rejection via input topology classification |
 
 The synthetic driver appends `"Pen"` to the stylus input topology and forces targeted
-synchronization events (`BTN_STYLUS`) to distinguish pen input from palm touches.
+synchronization events (Barrel Switch / `BTN_STYLUS`) to distinguish pen input from palm touches.
 
 ---
 
@@ -323,15 +323,15 @@ The Windows synthetic input stack is constructed dynamically by the Windows Driv
 
 ### 7.1 Driver Stack Topology and Load Sequence
 
-| Layer | Driver Component                    | System File         | Role                                                          |
-| :---: | ----------------------------------- | ------------------- | ------------------------------------------------------------- |
-|   7   | Mouse/Keyboard Class Drivers        | `mouclass.sys` / `kbdclass.sys` | Delivers finalized input to user-mode (`csrss.exe`)  |
-|   6   | HID Client Mapper Drivers           | `mouhid.sys` / `kbdhid.sys` | Converts HID usages to coordinates/scan codes          |
-|   5   | HID Class Library & Parser          | `hidclass.sys` / `hidparse.sys` | Parses HID descriptors, generates PDOs per collection |
-|   4   | Pass-through HID to KMDF Filter     | `mshidkmdf.sys`     | Lower filter for vendor-specific KMDF modifications     |
-|   3   | VMBus HID Miniport (VSC)            | `VMBusHID.sys`      | Reads VMBus ring buffer, translates to HID reports      |
-|   2   | Virtual Machine Bus Child Driver    | `vmbus.sys`         | VMBus PnP enumerator, ring buffers, GUID matching       |
-|   1   | Virtualization Infrastructure       | `vid.sys` / `vmgid.sys` | Root hypervisor communication and partition management |
+| Layer | Driver Component                | System File                     | Role                                                 |
+| :---: | ------------------------------- | ------------------------------- | ---------------------------------------------------- |
+|   7   | Mouse/Keyboard Class Drivers   | `mouclass.sys` / `kbdclass.sys` | Delivers finalized input to user-mode (`csrss.exe`)  |
+|   6   | HID Client Mapper Drivers      | `mouhid.sys` / `kbdhid.sys`     | Converts HID usages to coordinates/scan codes        |
+|   5   | HID Class Library & Parser     | `hidclass.sys` / `hidparse.sys` | Parses HID descriptors, generates PDOs per collection|
+|   4   | Pass-through HID to KMDF Filter| `mshidkmdf.sys`                 | Lower filter for vendor-specific KMDF modifications  |
+|   3   | VMBus HID Miniport (VSC)       | `VMBusHID.sys`                  | Reads VMBus ring buffer, translates to HID reports   |
+|   2   | Virtual Machine Bus Child Driver| `vmbus.sys`                    | VMBus PnP enumerator, ring buffers, GUID matching    |
+|   1   | Virtualization Infrastructure  | `vid.sys` / `vmgid.sys`         | Root hypervisor communication, partition management  |
 
 The `mshidkmdf.sys` pass-through driver allows proprietary host-side filter drivers
 (smoothing algorithms, custom pen pressure curves) to operate within the guest without
@@ -389,13 +389,13 @@ Unlike pointer input, the keyboard:
 
 This ensures:
 
-| Feature                    | Supported via Serio |
-| -------------------------- | :-----------------: |
-| Complex localized keymaps  |         ✅          |
-| Low-level console input    |         ✅          |
-| Magic SysRq keys           |         ✅          |
-| Kernel-level debugging     |         ✅          |
-| Zero latency penalty       |         ✅          |
+| Feature                   | Supported via Serio |
+| ------------------------- | :-----------------: |
+| Complex localized keymaps |         ✅          |
+| Low-level console input   |         ✅          |
+| Magic SysRq keys          |         ✅          |
+| Kernel-level debugging    |         ✅          |
+| Zero latency penalty      |         ✅          |
 
 ---
 
@@ -431,33 +431,33 @@ The **HIDMouseAbsolutePointerDxe** UEFI module:
 
 ### 10.1 Version Mismatches and Initialization Failures
 
-| Event ID | Log Source                    | Description                                                   |
-| :------: | ----------------------------- | ------------------------------------------------------------- |
-|  23014   | Hyper-V-Worker                | VSP/VSC protocol version mismatch (e.g., 3.0 vs 3.2)         |
-| Code 10  | Device Manager                | "This device cannot start" — HAL misconfiguration             |
-| Code 12  | Device Manager                | "Cannot find free resources" — I/O memory allocation failure  |
+| Event ID | Log Source     | Description                                                  |
+| :------: | -------------- | ------------------------------------------------------------ |
+|  23014   | Hyper-V-Worker | VSP/VSC protocol version mismatch (e.g., 3.0 vs 3.2)        |
+| Code 10  | Device Manager | "This device cannot start" — HAL misconfiguration            |
+| Code 12  | Device Manager | "Cannot find free resources" — I/O memory allocation failure |
 
 **Resolution:** Update Integration Services or upgrade guest kernel for architectural parity.
 
 ### 10.2 Service Principal Name (SPN) and Heartbeat Monitoring
 
-| Event ID | Source     | Impact                                                            |
-| :------: | ---------- | ----------------------------------------------------------------- |
-|  14050   | VMMS Admin | SCP/SPN registration failure → VMMS.exe hang → VSP channel loss  |
-|    41    | Host       | Heartbeat timeout → forced VM restart (guest OS assumed crashed)  |
+| Event ID | Source     | Impact                                                           |
+| :------: | --------- | ---------------------------------------------------------------- |
+|  14050   | VMMS Admin| SCP/SPN registration failure → VMMS.exe hang → VSP channel loss |
+|    41    | Host      | Heartbeat timeout → forced VM restart (guest OS assumed crashed) |
 
 ### 10.3 Vulnerability Mitigation and Endpoint Validation
 
 The VMBus HID architecture processes complex, variable-length HID Report Descriptors from
 the host, making it a potential attack surface:
 
-| Attack Vector                         | Mitigation                                                  |
-| ------------------------------------- | ----------------------------------------------------------- |
-| Malformed HID descriptors             | Private buffer copy + validation before parsing             |
-| Inflated Contact Count                | Strict bounds checking against Contact Count Maximum        |
-| Buffer overflow via oversized packets | Ring buffer size limits + packet length validation           |
-| Post-validation memory manipulation   | TOCTOU: copy to private memory before any validation        |
-| Synthetic interrupt injection         | All interrupts routed through SynIC (monitored, controlled) |
+| Attack Vector                         | Mitigation                                                 |
+| ------------------------------------- | ---------------------------------------------------------- |
+| Malformed HID descriptors             | Private buffer copy + validation before parsing            |
+| Inflated Contact Count                | Strict bounds checking against Contact Count Maximum       |
+| Buffer overflow via oversized packets | Ring buffer size limits + packet length validation          |
+| Post-validation memory manipulation   | TOCTOU: copy to private memory before any validation       |
+| Synthetic interrupt injection         | All interrupts routed through SynIC (monitored, controlled)|
 
 > [!WARNING]
 > Security researchers actively fuzz VMBus HID endpoints. The VSC must **never**
@@ -470,15 +470,15 @@ the host, making it a potential attack surface:
 
 ### Current Implementation
 
-| Component          | File                                                        | Status   |
-| ------------------ | ----------------------------------------------------------- | -------- |
-| HID Input Driver   | [`hv_input.c`](file:///src/kernel/drivers/hyperv/hv_input.c) | ✅ Done |
-| VMBus Core         | [`vmbus.c`](file:///src/kernel/drivers/hyperv/vmbus.c)       | ✅ Done |
-| Mouse Integration  | Absolute coords → `mouse_update_absolute()`                  | ✅ Done |
-| Keyboard Integration | Scan codes → `keyboard_handle_scancode()`                  | ✅ Done |
-| Multi-touch        | —                                                            | 🔲 Future |
-| Stylus/Pen         | —                                                            | 🔲 Future |
-| UEFI Pre-boot HID  | —                                                            | 🔲 Future |
+| Component            | File                                                         | Status    |
+| -------------------- | ------------------------------------------------------------ | --------- |
+| HID Input Driver     | [`hv_input.c`](file:///src/kernel/drivers/hyperv/hv_input.c) | ✅ Done   |
+| VMBus Core           | [`vmbus.c`](file:///src/kernel/drivers/hyperv/vmbus.c)       | ✅ Done   |
+| Mouse Integration    | Absolute coords → `mouse_update_absolute()`                  | ✅ Done   |
+| Keyboard Integration | Scan codes → `keyboard_handle_scancode()`                    | ✅ Done   |
+| Multi-touch          | —                                                            | 🔲 Future |
+| Stylus/Pen           | —                                                            | 🔲 Future |
+| UEFI Pre-boot HID    | —                                                            | 🔲 Future |
 
 ### Initialization Sequence
 
@@ -507,13 +507,13 @@ sequenceDiagram
 
 ### Key Design Principles
 
-| Principle                           | Implementation                                            |
-| ----------------------------------- | --------------------------------------------------------- |
-| **Absolute pointer only**           | No relative deltas — direct coordinate injection          |
-| **Private buffer parsing**          | `vmbus_recvpacket()` → stack-local buffer (TOCTOU-safe)   |
-| **No PAUSE in polling**             | Compiler barrier only (avoids Hyper-V PLE)                |
-| **Separate channels**               | Keyboard and mouse on distinct VMBus channels             |
-| **Scan code passthrough**           | Keyboard events delivered as raw scan codes                |
+| Principle                  | Implementation                                          |
+| -------------------------- | ------------------------------------------------------- |
+| **Absolute pointer only**  | No relative deltas — direct coordinate injection        |
+| **Private buffer parsing** | `vmbus_recvpacket()` → stack-local buffer (TOCTOU-safe) |
+| **No PAUSE in polling**    | Compiler barrier only (avoids Hyper-V PLE)              |
+| **Separate channels**      | Keyboard and mouse on distinct VMBus channels           |
+| **Scan code passthrough**  | Keyboard events delivered as raw scan codes              |
 
 ---
 
