@@ -43,27 +43,32 @@ Before writing the doc, **confirm the TODO content matches the actual implementa
 
 Choose the most appropriate location under `docs/` based on the content — not just the TODO category. The doc should land where a developer would naturally look for it.
 
-**Common directories (create subdirectories as needed):**
+**Domain directories (create subdirectories as needed):**
 
 | Directory                 | Content Type                                              |
 |---------------------------|-----------------------------------------------------------|
-| `docs/architecture/`      | OS internals: kernel, drivers, filesystem, networking     |
-| `docs/guides/`            | How-to guides, tutorials, getting-started docs            |
+| `docs/kernel/`            | Boot chain, memory (PMM/VMM/heap), scheduler, IPC         |
+| `docs/storage/`           | Controllers (AHCI, VirtIO), partitioning (GPT), filesystems (FAT32, ext4) |
+| `docs/networking/`        | Network drivers (RTL8139), protocols (ARP, IPv4, DHCP)    |
+| `docs/graphics/`          | 2D rendering, compositing, desktop shell                  |
+| `docs/hypervisors/`       | Hyper-V, VirtualBox integration                           |
+| `docs/hardware/`          | CPU architecture, PCI bus, ACPI/UEFI firmware, APIC       |
 | `docs/infrastructure/`    | Build system, CI/CD, tooling, development environment     |
-| `docs/specs/`             | External reference specs (AHCI, FAT32, UEFI, etc.)       |
+| `docs/getting-started/`   | Setup guides and tutorials                                |
 
 **Examples:**
 
-| TODO                       | Doc path                                            | Rationale                         |
-|----------------------------|-----------------------------------------------------|-----------------------------------|
-| AHCI driver                | `docs/architecture/drivers/ahci.md`                 | OS internal — driver architecture |
-| FAT32 filesystem           | `docs/architecture/filesystem/fat32.md`             | OS internal — filesystem          |
-| Build system tooling       | `docs/infrastructure/development-tooling.md`        | Dev tooling, not OS internals     |
-| GitHub CI/CD setup         | `docs/infrastructure/github-setup.md`               | Repo infrastructure               |
-| UEFI bootloader            | `docs/architecture/boot/uefi-bootloader.md`         | OS internal — boot chain          |
-| USB boot guide             | `docs/guides/usb-boot.md`                           | How-to guide                      |
+| TODO                       | Doc path                                            | Rationale                          |
+|----------------------------|-----------------------------------------------------|------------------------------------|
+| AHCI driver                | `docs/storage/controllers/ahci.md`                  | Storage controller implementation  |
+| FAT32 filesystem           | `docs/storage/filesystems/fat32.md`                 | Filesystem driver                  |
+| Build system tooling       | `docs/infrastructure/development-tooling.md`        | Dev tooling, not OS internals      |
+| GitHub CI/CD setup         | `docs/infrastructure/github-setup.md`               | Repo infrastructure                |
+| UEFI bootloader            | `docs/kernel/boot/uefi-bootloader.md`               | Kernel boot chain                  |
+| VMBus driver               | `docs/hypervisors/hyper-v/vmbus.md`                 | Hypervisor integration             |
+| RTL8139 NIC                | `docs/networking/drivers/rtl8139.md`                | Network driver                     |
 
-> Use your judgement. If the doc is about how the OS works internally → `architecture/`. If it's about how to use/build/deploy → `guides/` or `infrastructure/`.
+> Match the domain, not the TODO category. The doc should land where a developer would naturally look for it.
 
 ### 3b. Check for topic duplication (MANDATORY)
 

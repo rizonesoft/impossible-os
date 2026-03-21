@@ -60,14 +60,24 @@ Check that docs follow the expected organization:
 
 ```
 docs/
-├── Index.md               ← Top-level manifest (links to category indexes)
-├── architecture/          ← OS internals (kernel, drivers, filesystem, networking, boot, desktop)
+├── Index.md                ← Top-level landing page (links to all categories)
+├── kernel/                 ← Boot chain, memory, scheduler, IPC
 │   └── Index.md
-├── getting-started/       ← Setup guides, emulator configuration
+├── storage/                ← Controllers, partitioning, filesystems
 │   └── Index.md
-├── infrastructure/        ← Build system, CI/CD, tooling, development environment
+├── networking/             ← Network drivers and protocols
 │   └── Index.md
-└── specs/                 ← External reference specs (AHCI, FAT32, UEFI, etc.)
+├── graphics/               ← 2D rendering, compositing, desktop shell
+│   └── Index.md
+├── hypervisors/            ← Hyper-V, VirtualBox integration
+│   └── Index.md
+├── hardware/               ← CPU, bus, firmware, interrupts
+│   └── Index.md
+├── infrastructure/         ← Build system, CI/CD, tooling
+│   └── Index.md
+├── getting-started/        ← Setup guides, emulator configuration
+│   └── Index.md
+└── specs/                  ← External reference specs (mirrors domain structure)
     └── Index.md
 ```
 

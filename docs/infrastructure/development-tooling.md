@@ -586,4 +586,4 @@ scripts/
 - Source: `scripts/`, `tools/`, `src/kernel/test/`, `include/kernel/test/`
 - Makefile: `Makefile` (root)
 - Build info: `include/build_info.h` (auto-generated)
-- Spec: [UEFI 2.10](../specs/firmware/uefi-2.10.md)
+- Spec: [UEFI 2.10](../specs/hardware/firmware/uefi-2.10.md)
