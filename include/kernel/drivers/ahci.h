@@ -74,7 +74,31 @@
 #define AHCI_PxIS_PSS       (1U << 1)   /* PIO Setup FIS Interrupt */
 #define AHCI_PxIS_DSS       (1U << 2)   /* DMA Setup FIS Interrupt */
 #define AHCI_PxIS_SDBS      (1U << 3)   /* Set Device Bits Interrupt */
+#define AHCI_PxIS_UFS       (1U << 4)   /* Unknown FIS Interrupt */
+#define AHCI_PxIS_DPS       (1U << 5)   /* Descriptor Processed */
+#define AHCI_PxIS_PCS       (1U << 6)   /* Port Connect Change Status */
+#define AHCI_PxIS_PRCS      (1U << 22)  /* PhyRdy Change Status */
+#define AHCI_PxIS_IPMS      (1U << 23)  /* Incorrect Port Multiplier Status */
+#define AHCI_PxIS_OFS       (1U << 24)  /* Overflow Status (non-fatal) */
+#define AHCI_PxIS_INFS      (1U << 26)  /* Interface Non-Fatal Error */
+#define AHCI_PxIS_IFS       (1U << 27)  /* Interface Fatal Error */
+#define AHCI_PxIS_HBDS      (1U << 28)  /* Host Bus Data Error (fatal) */
+#define AHCI_PxIS_HBFS      (1U << 29)  /* Host Bus Fatal Error */
 #define AHCI_PxIS_TFES      (1U << 30)  /* Task File Error Status */
+#define AHCI_PxIS_CPDS      (1U << 31)  /* Cold Port Detect Status */
+
+/* Composite error masks */
+#define AHCI_PxIS_FATAL     (AHCI_PxIS_HBFS | AHCI_PxIS_HBDS | \
+                             AHCI_PxIS_IFS  | AHCI_PxIS_TFES)
+#define AHCI_PxIS_NONFATAL  (AHCI_PxIS_INFS | AHCI_PxIS_OFS)
+
+/* PxSERR diagnostic and error bits (write-1-to-clear) */
+#define AHCI_PxSERR_DIAG_X  (1U << 26)  /* Exchanged (hot-plug event) */
+#define AHCI_PxSERR_DIAG_N  (1U << 16)  /* PhyRdy change detected */
+#define AHCI_PxSERR_ERR_E   (1U << 11)  /* Internal error */
+#define AHCI_PxSERR_ERR_C   (1U << 9)   /* Non-recovered persistent comm error */
+#define AHCI_PxSERR_ERR_T   (1U << 8)   /* Non-recovered transient data integrity */
+#define AHCI_PxSERR_ERR_M   (1U << 1)   /* Recovered communication error (CRC) */
 
 /* PxCMD bits */
 #define AHCI_PxCMD_ST       (1U << 0)   /* Start */
@@ -174,6 +198,15 @@ struct ahci_cmd_tbl {
     struct ahci_prdt_entry prdt[AHCI_MAX_PRDT];
 } __attribute__((packed));
 
+/* ---- Per-port error counters ---- */
+struct ahci_error_counters {
+    uint32_t fatal_errors;      /* HBFS + HBDS + IFS + TFES count */
+    uint32_t nonfatal_errors;   /* INFS + OFS count */
+    uint32_t crc_errors;        /* PxSERR.ERR.M (recovered comm errors) */
+    uint32_t link_resets;       /* COMRESET recovery count */
+    uint32_t cmd_failures;      /* Commands that failed after all retries */
+};
+
 /* ---- AHCI port state ---- */
 struct ahci_port {
     uint8_t  active;       /* 1 if drive attached */
@@ -189,6 +222,7 @@ struct ahci_port {
     void    *fis_base;     /* FIS receive buffer (256 bytes) */
     struct ahci_cmd_tbl *cmdtbl[32]; /* Command tables */
     event_t  completion;   /* Per-port I/O completion event (IRQ-driven) */
+    struct ahci_error_counters errors; /* Error tracking */
 };
 
 /* Max ports supported */

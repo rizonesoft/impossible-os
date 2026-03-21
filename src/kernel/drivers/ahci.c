@@ -280,6 +280,30 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
         uint32_t pxis = port_read(ports[i].regs, AHCI_PxIS);
         port_write(ports[i].regs, AHCI_PxIS, pxis);
 
+        /* ---- Error classification ---- */
+        if (pxis & AHCI_PxIS_FATAL) {
+            ports[i].errors.fatal_errors++;
+
+            /* Read PxSERR for detailed diagnostics */
+            uint32_t serr = port_read(ports[i].regs, AHCI_PxSERR);
+            port_write(ports[i].regs, AHCI_PxSERR, serr);
+
+            if (serr & AHCI_PxSERR_ERR_M)
+                ports[i].errors.crc_errors++;
+
+            klog(LOG_WARN, "ahci",
+                   "Port %u: fatal error PxIS=0x%x PxSERR=0x%x",
+                   (uint64_t)ports[i].port_num,
+                   (uint64_t)pxis, (uint64_t)serr);
+        }
+
+        if (pxis & AHCI_PxIS_NONFATAL) {
+            ports[i].errors.nonfatal_errors++;
+            klog(LOG_DEBUG, "ahci",
+                   "Port %u: non-fatal error PxIS=0x%x",
+                   (uint64_t)ports[i].port_num, (uint64_t)pxis);
+        }
+
         /* Wake the thread waiting on this port */
         event_set(&ports[i].completion);
     }
@@ -363,6 +387,7 @@ static int port_clo_reset(struct ahci_port *p)
 
     klog(LOG_INFO, "ahci", "Port %u: CLO recovery complete",
            (uint64_t)p->port_num);
+    p->errors.link_resets++;
     return 0;
 }
 
@@ -432,6 +457,9 @@ retry:
             }
         }
     }
+
+    if (result != 0)
+        p->errors.cmd_failures++;
 
     return result;
 }
