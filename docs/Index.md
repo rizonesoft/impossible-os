@@ -1,30 +1,23 @@
 # Impossible OS Documentation
 
-> Complete documentation wiki for Impossible OS — architecture, infrastructure, guides, and reference specs.
+Welcome to the Impossible OS documentation — a 64-bit operating system built from scratch for modern x86-64 hardware.
 
-## Categories
+## 📖 Categories
 
-| Category                                 | Description                                             |
-| ---------------------------------------- | ------------------------------------------------------- |
-| [Architecture](architecture/Index.md)    | OS internals: kernel, drivers, filesystem, boot, desktop |
-| [Infrastructure](infrastructure/Index.md) | Build system, CI/CD, tooling, development environment   |
-| [Getting Started](getting-started/Index.md) | Setup guides, emulator configuration                  |
-| [Specs](specs/Index.md)                  | External reference specifications                       |
+| Category                                    | Description                                                 |
+| ------------------------------------------- | ----------------------------------------------------------- |
+| [🏗️ Architecture](architecture/Index.md)   | OS internals — kernel, drivers, filesystem, boot, desktop   |
+| [🔧 Infrastructure](infrastructure/Index.md) | Build system, CI/CD, tooling, development environment      |
+| [🚀 Getting Started](getting-started/Index.md) | Setup guides and emulator configuration                  |
+| [📋 Specs](specs/Index.md)                  | External reference specifications                           |
 
-## Topic Ownership Rules
+## 🗺️ Quick Links
 
-Each concept is explained in **exactly one** canonical document. Other docs link to it instead of re-explaining.
-
-### How to Find the Right Doc
-
-1. Check the **Index.md** in the relevant category folder
-2. Look at the **Owned Topics** column — each topic belongs to one doc
-3. If your topic is already owned, **link to it** — don't duplicate the explanation
-4. If no doc owns the topic, create a new doc and register it in the Index.md
-
-### What Counts as Duplication
-
-- ❌ Explaining how the build system works in both `development-tooling.md` and `github-setup.md`
-- ✅ `github-setup.md` saying "Build CI runs `build.sh` — see [Development Tooling](infrastructure/development-tooling.md#build-script) for details"
-- ❌ Describing AHCI register layouts in both the driver doc and the spec
-- ✅ Driver doc linking to `[AHCI 1.3.1 Spec](../specs/storage/ahci-1.3.1.md#register-layout)` for register details
+| I want to...                    | Go to                                                                     |
+| ------------------------------- | ------------------------------------------------------------------------- |
+| Build and run the OS            | [Getting Started → QEMU](getting-started/qemu.md)                        |
+| Understand the build system     | [Infrastructure → Development Tooling](infrastructure/development-tooling.md) |
+| Set up CI/CD                    | [Infrastructure → GitHub Setup](infrastructure/github-setup.md)           |
+| Read a hardware spec            | [Specs](specs/Index.md)                                                   |
+| Contribute to the project       | [CONTRIBUTING.md](../CONTRIBUTING.md)                                     |
+| Find work items                 | [TODO Index](../todo/TODO-000-INDEX.md)                                   |
