@@ -206,13 +206,13 @@ encapsulation framework optimized for virtualized SCSI execution.
 The protocol is strictly versioned via the `VMSTOR_PROTO_VERSION` macro, combining major
 and minor version indices using bitwise shifting.
 
-| Protocol Version               | Major.Minor | Host OS                     | Key Additions                                              |
-| ------------------------------ | :---------: | --------------------------- | ---------------------------------------------------------- |
-| `VMSTOR_PROTO_VERSION_WIN6`    |     2.0     | Windows Server 2008         | Baseline enlightened SCSI                                  |
-| `VMSTOR_PROTO_VERSION_WIN7`    |     4.2     | Server 2008 R2 / Win 7      | Larger transfer lengths, early hot-add                     |
-| `VMSTOR_PROTO_VERSION_WIN8`    |     5.1     | Server 2012 / Win 8         | VHDX support, 4K alignment, TRIM/UNMAP                     |
-| `VMSTOR_PROTO_VERSION_WIN8_1`  |     6.0     | Server 2012 R2              | Storage QoS, Shared VHDX                                   |
-| `VMSTOR_PROTO_VERSION_WIN10`   |     6.2     | Server 2016 / Win 10        | Multi-queue (VMMQ), massive scalability                    |
+| Protocol Version               | Major.Minor | Host OS                      | Key Additions                           |
+| ------------------------------ | :---------: | ---------------------------- | --------------------------------------- |
+| `VMSTOR_PROTO_VERSION_WIN6`    |     2.0     | Windows Server 2008          | Baseline enlightened SCSI               |
+| `VMSTOR_PROTO_VERSION_WIN7`    |     4.2     | Server 2008 R2 / Win 7       | Larger transfer lengths, early hot-add  |
+| `VMSTOR_PROTO_VERSION_WIN8`    |     5.1     | Server 2012 / Win 8          | VHDX support, 4K alignment, TRIM/UNMAP  |
+| `VMSTOR_PROTO_VERSION_WIN8_1`  |     6.0     | Server 2012 R2 / Win 8.1     | Storage QoS, Shared VHDX                |
+| `VMSTOR_PROTO_VERSION_WIN10`   |     6.2     | Server 2016 / Win 10         | Multi-queue (VMMQ), massive scalability |
 
 > **Impossible OS context:** Our StorVSC negotiates protocol version in
 > `storvsc_negotiate()`, trying `VMSTOR_PROTO_VERSION_WIN10` first, falling back to
@@ -229,7 +229,7 @@ struct vstor_packet {
     uint32_t flags;        /* VSTOR_FLAG_REQUEST_COMPLETION etc. */
     uint32_t status;       /* Completion status from host */
     union {
-        struct vstor_srb srb;           /* For EXECUTE_SRB */
+        struct vmscsi_request vm_srb;   /* For EXECUTE_SRB */
         /* protocol negotiation fields, etc. */
     };
 } __attribute__((packed));
@@ -237,42 +237,64 @@ struct vstor_packet {
 
 #### Operation Types
 
-| Enum Value | Operation                         | Purpose                                              |
-| :--------: | --------------------------------- | ---------------------------------------------------- |
-|     1      | `VSTOR_OPERATION_COMPLETE_IO`     | I/O completion returned from host                    |
-|     2      | `VSTOR_OPERATION_REMOVE_DEVICE`   | Hot-remove sequence for virtual disk                  |
-|     3      | `VSTOR_OPERATION_EXECUTE_SRB`     | Execute SCSI Request Block (primary data I/O)         |
-|     4      | `VSTOR_OPERATION_RESET_LUN`       | LUN reset during error handling                      |
-|     5      | `VSTOR_OPERATION_RESET_ADAPTER`   | Total synthetic SCSI adapter reset                   |
-|     6      | `VSTOR_OPERATION_RESET_BUS`       | Bus-level reset                                      |
-|     7      | `VSTOR_OPERATION_BEGIN_INITIALIZATION` | Start device enumeration / capability negotiation |
-|     8      | `VSTOR_OPERATION_END_INITIALIZATION`   | Complete initialization                           |
+| Enum Value | Operation                                  | Purpose                                       |
+| :--------: | ------------------------------------------ | --------------------------------------------- |
+|     1      | `VSTOR_OPERATION_COMPLETE_IO`              | I/O completion returned from host             |
+|     2      | `VSTOR_OPERATION_REMOVE_DEVICE`            | Hot-remove sequence for virtual disk          |
+|     3      | `VSTOR_OPERATION_EXECUTE_SRB`              | Execute SCSI Request Block (primary data I/O) |
+|     4      | `VSTOR_OPERATION_RESET_LUN`                | LUN reset during error handling               |
+|     5      | `VSTOR_OPERATION_RESET_ADAPTER`            | Total synthetic SCSI adapter reset            |
+|     6      | `VSTOR_OPERATION_RESET_BUS`                | Bus-level reset                               |
+|     7      | `VSTOR_OPERATION_BEGIN_INITIALIZATION`     | Start device enumeration                      |
+|     8      | `VSTOR_OPERATION_END_INITIALIZATION`       | Complete initialization                       |
+|     9      | `VSTOR_OPERATION_QUERY_PROTOCOL_VERSION`   | Negotiate VMSTOR protocol version             |
+|    10      | `VSTOR_OPERATION_QUERY_PROPERTIES`         | Query channel properties (max targets, etc.)  |
+|    11      | `VSTOR_OPERATION_ENUMERATE_BUS`            | Enumerate virtual bus devices                 |
+|    12      | `VSTOR_OPERATION_FCHBA_DATA`               | Fibre Channel HBA WWN data                    |
+|    13      | `VSTOR_OPERATION_CREATE_SUB_CHANNELS`      | Create multi-queue sub-channels               |
 
 For standard disk read/write, `operation = EXECUTE_SRB`. The packet traverses VMBus, is
 processed by the host, and the host responds with `status = STATUS_SUCCESS` or populates
 SCSI sense data on error.
 
-#### The SRB (SCSI Request Block)
+#### The vmscsi_request (SCSI Request Block)
 
 ```c
-struct vstor_srb {
-    uint16_t length;                    /* sizeof(vstor_srb) */
+struct vmscsi_request {
+    uint16_t length;                    /* sizeof(vmscsi_request) */
     uint8_t  srb_status;               /* SRB_STATUS_SUCCESS = 0x01 */
     uint8_t  scsi_status;              /* SCSI status byte */
+    uint8_t  port_number;             /* Port number */
     uint8_t  path_id;                  /* SCSI path (always 0) */
     uint8_t  target_id;               /* SCSI target */
     uint8_t  lun;                     /* Logical Unit Number */
     uint8_t  cdb_length;              /* Length of CDB (6, 10, 12, or 16) */
-    uint8_t  sense_data_length;       /* Length of returned sense data */
-    uint8_t  data_in;                 /* 0=write, 1=read, 2=bidirectional */
+    uint8_t  sense_info_length;       /* Length of returned sense data */
+    uint8_t  data_in;                 /* WRITE_TYPE=0, READ_TYPE=1, UNKNOWN_TYPE=2 */
+    uint8_t  reserved;
     uint32_t data_transfer_length;    /* Bytes to transfer */
-    uint8_t  cdb[16];                 /* SCSI Command Descriptor Block */
-    uint8_t  sense_data[20];          /* Auto-sense on error */
-    /* ... additional fields ... */
+    union {
+        uint8_t cdb[16];              /* SCSI Command Descriptor Block */
+        uint8_t sense_data[20];       /* Auto-sense on error (overlay) */
+        uint8_t reserved_array[20];   /* Padded to 20 bytes */
+    };
+    /* Win8+ extended fields: */
+    uint16_t reserve;
+    uint8_t  queue_tag;
+    uint8_t  queue_action;
+    uint32_t srb_flags;               /* SRB_FLAGS_DATA_IN = 0x40, etc. */
+    uint32_t time_out_value;
+    uint32_t queue_sort_key;
 } __attribute__((packed));
 ```
 
-> **Impossible OS context:** `struct vstor_srb` is defined in
+> [!NOTE]
+> The `cdb` and `sense_data` fields occupy the same memory as a union. The host writes
+> sense data into this union on error, overwriting the CDB. The `data_in` field uses
+> `WRITE_TYPE=0` (guest → disk), `READ_TYPE=1` (disk → guest), `UNKNOWN_TYPE=2`
+> (no data transfer). Extended fields after the union were added in the Win8 protocol.
+
+> **Impossible OS context:** `struct vmscsi_request` is defined in
 > [`storvsc.c`](file:///src/kernel/drivers/hyperv/storvsc.c). Our implementation supports
 > CDB-6, CDB-10, and CDB-16 commands for READ/WRITE, INQUIRY, READ CAPACITY, and
 > TEST UNIT READY.
@@ -473,7 +495,7 @@ Hyper-V's built-in storage load balancer can inadvertently throttle critical VMs
 
 | Registry Key                                                          | Value  | Effect                          |
 | --------------------------------------------------------------------- | ------ | ------------------------------- |
-| `HKLM\System\CurrentControlSet\Services\StorVsp\IOBalance\Enabled`    | `0`    | Disable I/O balancer            |
+| `HKLM\System\CurrentControlSet\Control\StorVsp\IOBalance\Enabled`     | `0`    | Disable I/O balancer            |
 | Default threshold                                                     | 83 ms  | Latency trigger for throttling  |
 
 > [!TIP]
