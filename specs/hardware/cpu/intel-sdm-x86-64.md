@@ -28,12 +28,12 @@ Volume 2, which is frequently distributed across multiple discrete files designa
 
 Every reference page contained within Volume 2 is constructed adhering to a strict, standardized typographical format to guarantee semantic precision and eliminate ambiguity. This structured format guarantees that software behaves predictably across all compliant hardware iterations.
 
-| Instruction Reference Field | Architectural Purpose and Description |
-|------------------------------|---------------------------------------|
-| **Opcode and Mnemonic** | Defines the exact hexadecimal byte sequence of the instruction alongside its human-readable assembly mnemonic, establishing the primary linkage between binary execution and software representation. |
-| **Operand Encoding (Op/En)** | Maps the instruction's operands to the highly complex ModR/M and SIB (Scale-Index-Base) bytes, dictating exactly how physical memory addresses and registers are calculated and accessed during the execution pipeline. |
-| **64/32-bit Mode Support** | An explicit Boolean indicator demonstrating architectural validity across different execution modes, preventing software from attempting to decode invalid opcodes in 64-bit mode. |
-| **CPUID Feature Flag** | Specifies the precise CPUID leaf, subleaf, and bit field required by software to dynamically verify hardware support prior to execution, preventing fatal `#UD` (Undefined Opcode) exceptions on older silicon. |
+| Instruction Reference Field    | Architectural Purpose and Description                                                                                                                                                                      |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Opcode and Mnemonic**        | Defines the exact hexadecimal byte sequence of the instruction alongside its human-readable assembly mnemonic, establishing the primary linkage between binary execution and software representation.       |
+| **Operand Encoding (Op/En)**   | Maps the instruction's operands to the highly complex ModR/M and SIB (Scale-Index-Base) bytes, dictating exactly how physical memory addresses and registers are calculated and accessed.                   |
+| **64/32-bit Mode Support**     | An explicit Boolean indicator demonstrating architectural validity across different execution modes, preventing software from attempting to decode invalid opcodes in 64-bit mode.                          |
+| **CPUID Feature Flag**         | Specifies the precise CPUID leaf, subleaf, and bit field required by software to dynamically verify hardware support prior to execution, preventing fatal `#UD` (Undefined Opcode) exceptions.             |
 | **Description and Pseudocode** | Provides a highly detailed, programmatic breakdown of the instruction's algorithmic behavior, explicitly detailing mathematical operations, status flag modifications, and synchronous hardware state changes. |
 
 ### 2.3 Volume 3: System Programming Guide
@@ -56,7 +56,7 @@ Because MSR availability and bitwise definitions are strictly tied to specific m
 
 Operating parallel to the core normative SDM volumes is the Intel 64 and IA-32 Architectures Optimization Reference Manual (ORM), which has reached version 050 as of early 2026. While the SDM defines *what* an instruction does, the ORM bridges the gap between raw architectural capabilities and maximum empirical throughput by defining *how long* an instruction takes to execute. It provides deep throughput and latency matrices for individual instructions across various microarchitectures, effectively guiding compiler heuristics on instruction scheduling and loop unrolling.
 
-The ORM details specific tuning guidelines for asymmetric processor topologies. In processors supporting hybrid architecture, the ORM provides critical software application and driver guidance. This ensures that software thread directors optimally map heavy computational, vector-bound workloads to Performance-cores while deferring background processing tasks to Efficient-cores. The manual details how these hardware directors interact closely with Windows Processor Power Management (PPM) parameters to balance system performance against strict battery life and thermal goals. The ORM also offers specific, workload-bound tuning guides, such as optimizations for Generative AI inference, Microsoft SQL Server Online Transaction Processing (OLTP), and the OpenVINO Toolkit running atop 3rd, 4th, and 6th generation Intel Xeon Scalable Processors (including Sapphire Rapids and Skymont microarchitectures).
+The ORM details specific tuning guidelines for asymmetric processor topologies. In processors supporting hybrid architecture, the ORM provides critical software application and driver guidance. This ensures that software thread directors optimally map heavy computational, vector-bound workloads to Performance-cores while deferring background processing tasks to Efficient-cores. The manual details how these hardware directors interact closely with Windows Processor Power Management (PPM) parameters to balance system performance against strict battery life and thermal goals. The ORM also offers specific, workload-bound tuning guides, such as optimizations for Generative AI inference, Microsoft SQL Server Online Transaction Processing (OLTP), and the OpenVINO Toolkit running atop 3rd, 4th, and 6th generation Intel Xeon Scalable Processors (including the Sapphire Rapids and Granite Rapids microarchitectures).
 
 Furthermore, the Architecture Instruction Set Extensions Programming Reference serves as an incubator document. It meticulously details upcoming instructions and paradigm shifts (such as those associated with the Panther Lake, Clearwater Forest, and Diamond Rapids platforms) months or years before they are formally integrated into the mainline Volume 2 SDM.
 
@@ -98,13 +98,20 @@ Intel AVX10 is a major architectural reset designed specifically to eliminate th
 
 The central mechanism of the AVX10 architecture is its support for converged vector lengths. Under the AVX10 specification, all processors will support the advanced capabilities of the legacy AVX-512 ISA (such as highly efficient EVEX encoding, 32 distinct vector registers, embedded rounding algorithms, and 8 opmask registers utilized for precise mathematical masking).
 
-However, to accommodate hybrid designs, the architectural vector length is scalable. On E-cores, these operations will be clamped to a maximum hardware vector length of 256 bits, officially designated as the **AVX10/256** execution environment. Concurrently, P-cores, which possess the necessary thermal and physical budgets, will maintain the ability to execute the full 512-bit vector length (**AVX10/512**). This functions conceptually similarly to ARM's Scalable Vector Extension (SVE), where the instruction set architecture scales dynamically to match the hardware's physical width capabilities without requiring the application code to be entirely recompiled. To support this, AVX10 introduces specific embedded rounding and Suppress All Exceptions (SAE) controls natively for 256-bit YMM versions of the instructions, features that were previously exclusive strictly to 512-bit ZMM registers. It also provides advanced VMX capability settings, allowing hypervisors to create hardware-enforced AVX10/256 virtual machines running securely atop an AVX10/512 capable physical processor.
+> [!IMPORTANT]
+> **AVX10 Revision 3.0 (March 2025) mandated 512-bit vector support on all cores.** Earlier
+> revisions allowed E-cores to be limited to 256-bit vectors (designated AVX10/256), but this
+> configuration has been removed. All future AVX10 hardware — including both P-cores and
+> E-cores — will universally support 512-bit vector width. Compiler projects (GCC 15, LLVM/Clang)
+> have already removed 256-bit-only options for AVX10.2 in response to this change.
+
+Under the current specification, all AVX10-enabled cores support all instruction vector lengths (128, 256, and 512 bits). AVX10 retains embedded rounding and Suppress All Exceptions (SAE) controls for 256-bit YMM versions of instructions, features that were previously exclusive to 512-bit ZMM registers. It also provides advanced VMX capability settings, allowing hypervisors to create vector-length-constrained virtual machines running securely atop a fully capable physical processor.
 
 To drastically simplify software development and alleviate the pain points caused by the previous iteration, AVX10 completely abandons the complex, fragmented web of individual CPUID feature flags that plagued AVX-512 development. Instead, it utilizes a strictly monotonic, version-based enumeration paradigm.
 
 Software developers now only need to verify two highly specific data points to confirm feature support: a single CPUID bit enumerating that the overarching AVX10 ISA is supported (the "AVX10 Converged Vector ISA Enable" bit), and the specific version number located within the AVX10 Converged Vector ISA leaf (e.g., AVX10.1 or AVX10.2). The ISA is governed by strict inclusivity; if a processor reports support for AVX10.2, it is mathematically and architecturally guaranteed to support all instructions and features defined in AVX10.1.
 
-The upcoming Granite Rapids server microarchitecture establishes the foundational silicon for AVX10.1, while subsequent processor architectures will implement AVX10.2. AVX10.2 introduces novel capabilities, including new AI-focused data types, FP16 optimizations, advanced data movement semantics, and wider support for industry standards. For legacy compatibility, the baseline AVX-512 framework will be permanently frozen in its current state, and all future SIMD development, feature extensions, and compiler optimizations will route strictly through the AVX10 converged framework.
+The Granite Rapids server microarchitecture establishes the foundational silicon for AVX10.1, while subsequent processor architectures will implement AVX10.2. AVX10.2 introduces novel capabilities, including new AI-focused data types, FP16 optimizations, advanced data movement semantics, and wider support for industry standards. For legacy compatibility, the baseline AVX-512 framework will be permanently frozen in its current state, and all future SIMD development, feature extensions, and compiler optimizations will route strictly through the AVX10 converged framework.
 
 ## 4. System-Level Architecture and Control-Flow Transitions
 
@@ -153,13 +160,13 @@ The receiver application, upon completion of its local interrupt handling routin
 
 The empirical performance implications of User Interrupts are staggering compared to legacy software routing:
 
-| IPC Mechanism | Relative Latency (Normalized against User IPI) |
-|---------------|------------------------------------------------|
-| **User IPI (UINTR hardware delivery)** | 1.0x (Baseline) |
-| Eventfd (Kernel event descriptor) | 9.7x slower |
-| UNIX Signal | 14.8x slower |
-| Standard Pipe | 16.3x slower |
-| UNIX Domain Socket | 17.3x slower |
+| IPC Mechanism                          | Relative Latency (Normalized against User IPI) |
+| -------------------------------------- | ----------------------------------------------- |
+| **User IPI (UINTR hardware delivery)** | 1.0x (Baseline)                                 |
+| Eventfd (Kernel event descriptor)      | 9.7x slower                                     |
+| UNIX Signal                            | 14.8x slower                                    |
+| Standard Pipe                          | 16.3x slower                                    |
+| UNIX Domain Socket                     | 17.3x slower                                    |
 
 By achieving relative latency reductions of up to 17x compared to domain sockets, the architecture enforces a fundamental shift in how asynchronous, event-driven software must be engineered at the edge and in the cloud.
 
@@ -187,9 +194,15 @@ Similarly, the presence of the advanced FRED architecture is safely isolated to 
 
 The rigorous specifications documented within the current Intel 64 and IA-32 SDM volumes act as a normative technical preamble for the physical silicon roadmap stretching into the latter half of the decade. The microarchitectural integration of these features spans several highly anticipated processor generations.
 
-The **Granite Rapids** server microarchitecture formally establishes the baseline physical silicon for AVX10 execution. Following closely, the **Clearwater Forest** architecture aggressively implements the critical system-level enhancements required by modern hypervisors, officially introducing the FRED event delivery system, the independent LKGS instruction, User-Timer Events, NMI-Source Reporting, and advanced APIC-Timer Virtualization into the data center ecosystem.
+The **Granite Rapids** server microarchitecture formally establishes the baseline physical silicon for AVX10 execution. On the client side, the **Panther Lake** architecture (Core Ultra Series 3, Intel 18A process) introduces the critical system-level enhancements required by modern operating systems, officially incorporating the FRED event delivery system, the independent `LKGS` instruction, and advanced interrupt management. In the data center, the **Diamond Rapids** architecture is expected to bring these same FRED capabilities alongside its own high-performance core enhancements.
 
-The true realization of the vastly expanded user-space execution model arrives with the **Diamond Rapids** architecture, which physically incorporates the Advanced Performance Extensions (APX) alongside the cumulative system-level features inherited from Clearwater Forest. On the client side, the transition to Intel 18A process node technologies, which debuted with the Core Ultra Series 3 processors in early 2026, ensures that these architectural optimizations—specifically the universally converged vector ISA and the highly power-efficient NDD instructions—are deployed seamlessly across highly constrained thermal envelopes, delivering advanced AI compute capabilities directly to the edge.
+> [!NOTE]
+> Earlier analyses attributed FRED introduction to **Clearwater Forest** (Xeon 6+ E-core). However,
+> authoritative sources and Linux kernel patches indicate FRED targets **Panther Lake** (client) and
+> **Diamond Rapids** (server) as the initial implementations. Clearwater Forest (Darkmont E-cores)
+> has not been independently confirmed to include FRED support.
+
+The true realization of the vastly expanded user-space execution model arrives with the **Diamond Rapids** architecture, which physically incorporates the Advanced Performance Extensions (APX) alongside the cumulative system-level features. On the client side, the transition to Intel 18A process node technologies, which debuted with the Core Ultra Series 3 (Panther Lake) processors in early 2026, ensures that these architectural optimizations — specifically the universally converged vector ISA and the highly power-efficient NDD instructions — are deployed seamlessly across highly constrained thermal envelopes, delivering advanced AI compute capabilities directly to the edge.
 
 ## 7. Architectural Synthesis
 
@@ -197,7 +210,7 @@ The iterations of the Intel 64 and IA-32 Architectures Software Developer's Manu
 
 The implementation of **Intel APX** represents a brilliant architectural compromise between the desire for RISC-like register depth and the absolute necessity of x86 backward compatibility. By intelligently utilizing the deprecated 128-byte XSAVE footprint originally intended for MPX, and simultaneously introducing the REX2 and extended EVEX prefixes, the architecture successfully doubles the execution register file to 32 GPRs. The implementation of non-destructive three-operand logic occurs without bloating the processor's legacy footprint, decisively alleviating historical x86 register pressure and dramatically reducing memory latency penalties.
 
-Concurrently, the **AVX10** specification elegantly resolves the deep software fragmentation inadvertently introduced by the rollout of AVX-512. By standardizing the ISA on a converged 256-bit baseline applicable to both P-cores and E-cores in hybrid environments, while still retaining a versioned scaling model for 512-bit capable enterprise silicon, the specification provides compiler developers with a stable, highly predictable execution target for future SIMD and heavily vectorized AI acceleration workloads.
+Concurrently, the **AVX10** specification elegantly resolves the deep software fragmentation inadvertently introduced by the rollout of AVX-512. By standardizing the ISA on a converged framework with universal 512-bit vector support across both P-cores and E-cores (following the Revision 3.0 mandate), the specification provides compiler developers with a stable, highly predictable execution target for future SIMD and heavily vectorized AI acceleration workloads.
 
 Finally, deeply privileged system-level execution is entirely unbottlenecked by the formal deprecation of the archaic IDT in favor of the **FRED** architecture. By moving to a paradigm that atomically generates mathematically secure full context states, actively protects shadow stacks, and provides distinct, highly optimized ERETS and ERETU return paths, operating systems are permanently shielded from the most complex nested exception vulnerabilities. When combined with the massive IPC latency reductions of **User-Level Interrupts (UINTR)** and the direct GS base management afforded by the **LKGS instruction**, the architectural cost of privilege transitions is effectively reduced by an order of magnitude.
 

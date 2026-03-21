@@ -10,11 +10,11 @@ The VirtIO block device (`virtio-blk`) is the simplest VirtIO device type and se
 
 ### Version History and Compatibility
 
-| Version | Date | Key Additions |
-|---------|------|---------------|
-| VirtIO 1.0 | April 2016 | Modern PCI transport, split virtqueues, feature negotiation, `VIRTIO_F_VERSION_1` |
-| VirtIO 1.1 | February 2019 | Packed virtqueues (`VIRTIO_F_RING_PACKED`), in-order completion (`VIRTIO_F_IN_ORDER`) |
-| VirtIO 1.2 | July 2022 | Multi-queue block (`VIRTIO_BLK_F_MQ`), secure erase, lifetime metrics, zone append (zoned storage) |
+| Version    | Date       | Key Additions                                                                                       |
+| ---------- | ---------- | --------------------------------------------------------------------------------------------------- |
+| VirtIO 1.0 | March 2016 | Modern PCI transport, split virtqueues, feature negotiation, `VIRTIO_F_VERSION_1`                   |
+| VirtIO 1.1 | April 2019 | Packed virtqueues (`VIRTIO_F_RING_PACKED`), in-order completion (`VIRTIO_F_IN_ORDER`)                |
+| VirtIO 1.2 | July 2022  | Multi-queue block (`VIRTIO_BLK_F_MQ`), secure erase, lifetime metrics, zone append (zoned storage) |
 
 A modern VirtIO 1.0+ driver negotiates `VIRTIO_F_VERSION_1` (feature bit 32) to signal compliance with the modern spec. Legacy (pre-1.0) devices used PIO-based I/O ports; modern devices use MMIO via PCI capabilities.
 
@@ -307,24 +307,24 @@ Feature bits are the extensibility mechanism of VirtIO. The device advertises al
 | 39 | `VIRTIO_F_NOTIF_CONFIG_DATA` | Driver passes notification data in notify write |
 | 40 | `VIRTIO_F_RING_RESET` | Individual virtqueue reset (VirtIO 1.2+) |
 
-### Block Device Features (Bits 0–15)
+### Block Device Features (Bits 0–17)
 
-| Bit | Name | Description |
-|-----|------|-------------|
-| 0 | `VIRTIO_BLK_F_SIZE_MAX` | Maximum segment size in `size_max` config field |
-| 1 | `VIRTIO_BLK_F_SEG_MAX` | Maximum segments per request in `seg_max` config field |
-| 2 | `VIRTIO_BLK_F_GEOMETRY` | Legacy disk geometry available in config (cylinders/heads/sectors) |
-| 4 | `VIRTIO_BLK_F_RO` | Device is read-only |
-| 5 | `VIRTIO_BLK_F_BLK_SIZE` | Block size available in `blk_size` config field (may differ from 512) |
-| 6 | `VIRTIO_BLK_F_FLUSH` | Cache flush command (`VIRTIO_BLK_T_FLUSH`) supported |
-| 7 | `VIRTIO_BLK_F_TOPOLOGY` | Optimal I/O alignment info in config (physical block exponent, alignment offset, min/opt I/O sizes) |
-| 9 | `VIRTIO_BLK_F_CONFIG_WCE` | Writeback cache enable is negotiable (config field `writeback`) |
-| 11 | `VIRTIO_BLK_F_DISCARD` | Discard (TRIM) command supported |
-| 12 | `VIRTIO_BLK_F_WRITE_ZEROES` | Write-zeroes command supported |
-| 13 | `VIRTIO_BLK_F_LIFETIME` | Device lifetime metrics available |
-| 14 | `VIRTIO_BLK_F_SECURE_ERASE` | Secure erase command supported (VirtIO 1.2+) |
-| 15 | `VIRTIO_BLK_F_ZONED` | Zoned block device support (VirtIO 1.2+) |
-| 22 | `VIRTIO_BLK_F_MQ` | Multi-queue support (VirtIO 1.2+) |
+| Bit | Name                        | Description                                                                                        |
+| --- | --------------------------- | -------------------------------------------------------------------------------------------------- |
+| 1   | `VIRTIO_BLK_F_SIZE_MAX`    | Maximum segment size in `size_max` config field                                                    |
+| 2   | `VIRTIO_BLK_F_SEG_MAX`     | Maximum segments per request in `seg_max` config field                                             |
+| 4   | `VIRTIO_BLK_F_GEOMETRY`    | Legacy disk geometry available in config (cylinders/heads/sectors)                                  |
+| 5   | `VIRTIO_BLK_F_RO`          | Device is read-only                                                                                |
+| 6   | `VIRTIO_BLK_F_BLK_SIZE`    | Block size available in `blk_size` config field (may differ from 512)                              |
+| 9   | `VIRTIO_BLK_F_FLUSH`       | Cache flush command (`VIRTIO_BLK_T_FLUSH`) supported                                               |
+| 10  | `VIRTIO_BLK_F_TOPOLOGY`    | Optimal I/O alignment info in config (physical block exponent, alignment offset, min/opt I/O sizes) |
+| 11  | `VIRTIO_BLK_F_CONFIG_WCE`  | Writeback cache enable is negotiable (config field `writeback`)                                     |
+| 12  | `VIRTIO_BLK_F_MQ`          | Multi-queue support (VirtIO 1.2+)                                                                  |
+| 13  | `VIRTIO_BLK_F_DISCARD`     | Discard (TRIM) command supported                                                                   |
+| 14  | `VIRTIO_BLK_F_WRITE_ZEROES`| Write-zeroes command supported                                                                     |
+| 15  | `VIRTIO_BLK_F_LIFETIME`    | Device lifetime metrics available (VirtIO 1.2+)                                                    |
+| 16  | `VIRTIO_BLK_F_SECURE_ERASE`| Secure erase command supported (VirtIO 1.2+)                                                       |
+| 17  | `VIRTIO_BLK_F_ZONED`       | Zoned block device support (VirtIO 1.2+)                                                           |
 
 ### Minimum Feature Set for a Production Driver
 
