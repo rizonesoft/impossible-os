@@ -17,11 +17,11 @@ Run this workflow after any structural change to `docs/` — file moves, renames
 
 ### 1. Scan for broken internal links
 
-Search all `.md` files under `docs/`, `todo/`, and project root for markdown links pointing to files that don't exist:
+Search all `.md` files under `docs/`, `specs/`, `todo/`, and project root for markdown links pointing to files that don't exist:
 
 ```bash
 # Find all markdown links [text](path) and verify targets exist
-grep -rnoP '\[.*?\]\(((?!https?://|mailto:|#)[^)]+)\)' docs/ todo/ README.md CONTRIBUTING.md --include="*.md" \
+grep -rnoP '\[.*?\]\(((?!https?://|mailto:|#)[^)]+)\)' docs/ specs/ todo/ README.md CONTRIBUTING.md --include="*.md" \
   | while IFS=: read -r file line match; do
       target=$(echo "$match" | grep -oP '\(([^)]+)\)' | tr -d '()')
       # Resolve relative to file's directory
@@ -75,15 +75,15 @@ docs/
 │   └── index.md
 ├── infrastructure/         ← Build system, CI/CD, tooling
 │   └── index.md
-├── getting-started/        ← Setup guides, emulator configuration
-│   └── index.md
-└── specs/                  ← External reference specs (mirrors domain structure)
+└── getting-started/        ← Setup guides, emulator configuration
     └── index.md
 ```
 
+> **Note:** `specs/` lives at the project root (not under `docs/`). It mirrors the domain structure but is managed separately.
+
 Violations to check:
 - Files directly in `docs/` root (except `index.md` — should be in a subdirectory)
-- Misplaced files (e.g., a driver doc in `infrastructure/`, a CI doc in `architecture/`)
+- Misplaced files (e.g., a driver doc in `infrastructure/`, a CI doc in `kernel/`)
 - Empty directories (clean up after moves)
 - Missing `index.md` in any category folder
 
@@ -96,7 +96,7 @@ For each violation:
 For each doc, verify:
 - **Title matches filename:** `# AHCI Driver` should be in a file like `ahci.md` or `ahci-driver.md`
 - **Internal links use relative paths:** no absolute filesystem paths (except in code blocks)
-- **Spec references point to `docs/specs/`:** not old `specs/` root path
+- **Spec references point to root `specs/`:** not old `docs/specs/` path (specs are at project root)
 
 ### 4b. Check for topic duplication
 

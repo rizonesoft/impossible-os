@@ -187,8 +187,8 @@ Use `> [!CAUTION]` blocks for the most critical ones.
 
 ## References
 
-- Spec: [AHCI 1.3.1](../specs/storage/ahci-1.3.1.md)
-- Related: [VirtIO Driver](../drivers/virtio.md)
+- Spec: [AHCI 1.3.1](../../specs/storage/controllers/ahci-1.3.1.md)
+- Related: [VirtIO Driver](../storage/controllers/virtio.md)
 - Source: `src/kernel/drivers/ahci.c`
 ```
 
@@ -200,7 +200,7 @@ Replace the original TODO file content (do NOT delete the file) with:
 # TODO-NNN.NN — <Title> ✅
 
 **Status:** Completed — YYYY-MM-DD
-**Documentation:** [component-name.md](../../docs/architecture/<path>/component-name.md)
+**Documentation:** [component-name.md](../../docs/<domain>/<subdomain>/component-name.md)
 **Commits:** `abc1234`, `def5678`, ...
 
 ## Gotchas
@@ -222,7 +222,7 @@ Replace the original TODO file content (do NOT delete the file) with:
 Open `todo/TODO-000-INDEX.md` and mark the converted TODO entry with ✅ and a link to the docs:
 
 ```markdown
-- [x] TODO-040.02 — AHCI Driver → [docs](docs/architecture/drivers/ahci.md) ✅
+- [x] TODO-040.02 — AHCI Driver → [docs](docs/storage/controllers/ahci.md) ✅
 ```
 
 ### 7. Scan existing docs for consistency
@@ -232,7 +232,7 @@ After creating the new doc, scan the `docs/` folder for issues:
 - **Stale references:** Search all docs for links to the old TODO file — update them to point to the new doc
 - **Broken links:** Check that all `[text](path)` links in the new doc resolve to existing files
 - **Cross-doc consistency:** If other docs reference the same component, verify they don't contradict the new doc
-- **Spec references:** Verify `docs/specs/` links are correct (not old `specs/` paths)
+- **Spec references:** Verify `specs/` links are correct (specs are at project root, not under `docs/`)
 
 ```bash
 # Quick check for stale references to old TODO paths
