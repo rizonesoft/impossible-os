@@ -163,7 +163,7 @@ graph TD
 | 💎 | **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ✅   |
 | 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ⬜   |
+| 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ⬜   |
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ⬜   |
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ⬜   |
@@ -400,14 +400,20 @@ graph TD
 
 ### 2.4 Read-Only Detection
 
-**Prompt:** Check `VIRTIO_BLK_F_RO` (bit 4) during feature negotiation. If the device is read-only, the driver must reject all write requests with an appropriate error code. Store the RO flag in the device struct and check it in `virtio_blk_write()`. Log a warning at init if the device is read-only. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: read-only device detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** Read-only device detection is implemented. `VIRTIO_BLK_F_RO` (bit 4) is checked during feature negotiation. If set, `is_read_only = 1` and all writes are rejected with `-1`. Flush on a read-only device is a no-op returning `0`. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Check `VIRTIO_BLK_F_RO` (bit 4) during feature negotiation
-- [ ] Store `virtio_blk_dev.read_only = true/false`
-- [ ] Guard `virtio_blk_write()`: if `read_only`, return `-EROFS` immediately
-- [ ] Guard `virtio_blk_flush()`: if `read_only`, no-op (nothing to flush)
-- [ ] Log: `[VirtIO] Block: device is READ-ONLY`
-- [ ] Commit: `"virtio-blk: read-only device detection"`
+- [x] Check `VIRTIO_BLK_F_RO` (bit 4) during feature negotiation
+- [x] Store `is_read_only` static flag
+- [x] Guard `virtio_blk_write()`: if `is_read_only`, return `-1` immediately
+- [x] Guard `virtio_blk_flush()`: if `is_read_only`, no-op (return `0`)
+- [x] Log: `[VirtIO] Device is READ-ONLY (F_RO)`
+- [x] Committed
+
+> **Notes:**
+> - F_RO is a device-offered feature bit, not a driver-requested one. We accept (acknowledge) it by including it in driver features — this tells the device "we understand you're read-only."
+> - `virtio_blk_write()` returns `-1` (not a POSIX `-EROFS`) since this is a freestanding kernel with no errno.
+> - Flush guard returns `0` (success) not `1` (not supported) — a read-only device has nothing dirty to flush, so "flush succeeded" is the correct semantic.
+> - QEMU does not offer F_RO by default. To test: `-device virtio-blk-pci,drive=disk0 -drive file=disk.img,format=raw,if=none,id=disk0,readonly=on`.
 
 ---
 

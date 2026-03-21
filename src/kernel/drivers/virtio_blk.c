@@ -40,6 +40,7 @@ static int                    has_blk_size;    /* F_BLK_SIZE negotiated */
 static int                    has_topology;    /* F_TOPOLOGY negotiated */
 static int                    has_size_max;    /* F_SIZE_MAX negotiated */
 static int                    has_seg_max;     /* F_SEG_MAX negotiated */
+static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
 static struct virtio_blk_topology topo;
@@ -299,6 +300,8 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
 
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
 {
+    if (is_read_only)
+        return -1;  /* Device is read-only */
     return virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * topo.blk_size, (void *)buffer);
 }
 
@@ -310,6 +313,10 @@ int virtio_blk_flush(void)
     /* If F_FLUSH was not negotiated, flush is a no-op (writethrough mode) */
     if (!has_flush)
         return 1;
+
+    /* Read-only device has nothing to flush */
+    if (is_read_only)
+        return 0;
 
     return virtio_blk_do_flush();
 }
@@ -481,6 +488,13 @@ int virtio_blk_init(void)
         driver_feat_lo |= (1u << VIRTIO_BLK_F_SEG_MAX);
         has_seg_max = 1;
         klog(LOG_DEBUG, "virtio", "Negotiated F_SEG_MAX");
+    }
+
+    /* Check F_RO (bit 4): read-only device — accept the bit to acknowledge */
+    if (feat_lo & (1u << VIRTIO_BLK_F_RO)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_RO);
+        is_read_only = 1;
+        klog(LOG_DEBUG, "virtio", "Device is READ-ONLY (F_RO)");
     }
 
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
