@@ -44,6 +44,7 @@
 | 040.19 | [Joliet / UDF](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-Joliet-UDF.md)             |                |
 | 040.20 | [USB Mass Storage Class](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.20-USB-MSC.md)       |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
+| 050.01 | [Registry Engine](010-Kernel-Foundations/TODO-050-Registry/TODO-050.01-Registry-Engine.md)         |                |
 ---
 
 ## Layer 2: Hardware & Drivers  `060-Hardware-Drivers/`
