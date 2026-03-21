@@ -56,33 +56,33 @@ Validation of the Superblock begins by verifying the magic signature, which is p
 
 ### Fundamental Superblock Fields
 
-| Offset (Hex) | Offset (Dec) | Size | Field Name | Description |
-|-------------|-------------|------|------------|-------------|
-| `0x00` | 0 | 4 | `s_inodes_count` | Total number of inodes on the volume |
-| `0x04` | 4 | 4 | `s_blocks_count_lo` | Total block count (lower 32 bits) |
-| `0x08` | 8 | 4 | `s_r_blocks_count_lo` | Reserved blocks for superuser (lower 32 bits) |
-| `0x0C` | 12 | 4 | `s_free_blocks_count_lo` | Total unallocated blocks (lower 32 bits) |
-| `0x10` | 16 | 4 | `s_free_inodes_count` | Total unallocated inodes |
-| `0x14` | 20 | 4 | `s_first_data_block` | Block number containing the Superblock (0 for 4K blocks, 1 for 1K blocks) |
-| `0x18` | 24 | 4 | `s_log_block_size` | Block size = `1024 << s_log_block_size` |
-| `0x1C` | 28 | 4 | `s_log_cluster_size` | Cluster size = `1024 << s_log_cluster_size` (bigalloc) |
-| `0x20` | 32 | 4 | `s_blocks_per_group` | Number of blocks per Block Group |
-| `0x24` | 36 | 4 | `s_clusters_per_group` | Clusters per group (bigalloc) or same as blocks_per_group |
-| `0x28` | 40 | 4 | `s_inodes_per_group` | Number of inodes per Block Group |
-| `0x2C` | 44 | 4 | `s_mtime` | Last mount time (POSIX timestamp) |
-| `0x30` | 48 | 4 | `s_wtime` | Last write time (POSIX timestamp) |
-| `0x34` | 52 | 2 | `s_mnt_count` | Mount count since last full `fsck` |
-| `0x36` | 54 | 2 | `s_max_mnt_count` | Maximum mount count before forced `fsck` |
-| `0x38` | 56 | 2 | `s_magic` | Magic signature: **`0xEF53`** |
-| `0x3A` | 58 | 2 | `s_state` | Filesystem state (1 = clean, 2 = errors, 4 = orphans being recovered) |
-| `0x3C` | 60 | 2 | `s_errors` | Behavior on error (1 = continue, 2 = remount RO, 3 = panic) |
-| `0x3E` | 62 | 2 | `s_minor_rev_level` | Minor revision level |
-| `0x40` | 64 | 4 | `s_lastcheck` | Time of last `fsck` (POSIX timestamp) |
-| `0x44` | 68 | 4 | `s_checkinterval` | Maximum time between `fsck` runs |
-| `0x48` | 72 | 4 | `s_creator_os` | Creator OS (0 = Linux, 3 = FreeBSD) |
-| `0x4C` | 76 | 4 | `s_rev_level` | Revision level (0 = original, 1 = dynamic inode sizes) |
-| `0x50` | 80 | 2 | `s_def_resuid` | Default UID for reserved blocks |
-| `0x52` | 82 | 2 | `s_def_resgid` | Default GID for reserved blocks |
+| Offset (Hex) | Offset (Dec) | Size | Field Name               | Description                                                              |
+| ------------ | ------------ | ---- | ------------------------ | ------------------------------------------------------------------------ |
+| `0x00`       | 0            | 4    | `s_inodes_count`         | Total number of inodes on the volume                                     |
+| `0x04`       | 4            | 4    | `s_blocks_count_lo`      | Total block count (lower 32 bits)                                        |
+| `0x08`       | 8            | 4    | `s_r_blocks_count_lo`    | Reserved blocks for superuser (lower 32 bits)                            |
+| `0x0C`       | 12           | 4    | `s_free_blocks_count_lo` | Total unallocated blocks (lower 32 bits)                                 |
+| `0x10`       | 16           | 4    | `s_free_inodes_count`    | Total unallocated inodes                                                 |
+| `0x14`       | 20           | 4    | `s_first_data_block`     | Block number containing the Superblock (0 for 4K blocks, 1 for 1K)      |
+| `0x18`       | 24           | 4    | `s_log_block_size`       | Block size = `1024 << s_log_block_size`                                  |
+| `0x1C`       | 28           | 4    | `s_log_cluster_size`     | Cluster size = `1024 << s_log_cluster_size` (bigalloc)                   |
+| `0x20`       | 32           | 4    | `s_blocks_per_group`     | Number of blocks per Block Group                                         |
+| `0x24`       | 36           | 4    | `s_clusters_per_group`   | Clusters per group (bigalloc) or same as blocks_per_group                |
+| `0x28`       | 40           | 4    | `s_inodes_per_group`     | Number of inodes per Block Group                                         |
+| `0x2C`       | 44           | 4    | `s_mtime`                | Last mount time (POSIX timestamp)                                        |
+| `0x30`       | 48           | 4    | `s_wtime`                | Last write time (POSIX timestamp)                                        |
+| `0x34`       | 52           | 2    | `s_mnt_count`            | Mount count since last full `fsck`                                       |
+| `0x36`       | 54           | 2    | `s_max_mnt_count`        | Maximum mount count before forced `fsck`                                 |
+| `0x38`       | 56           | 2    | `s_magic`                | Magic signature: **`0xEF53`**                                            |
+| `0x3A`       | 58           | 2    | `s_state`                | Filesystem state (1 = clean, 2 = errors, 4 = orphans)                    |
+| `0x3C`       | 60           | 2    | `s_errors`               | Behavior on error (1 = continue, 2 = remount RO, 3 = panic)             |
+| `0x3E`       | 62           | 2    | `s_minor_rev_level`      | Minor revision level                                                     |
+| `0x40`       | 64           | 4    | `s_lastcheck`            | Time of last `fsck` (POSIX timestamp)                                    |
+| `0x44`       | 68           | 4    | `s_checkinterval`        | Maximum time between `fsck` runs                                         |
+| `0x48`       | 72           | 4    | `s_creator_os`           | Creator OS (0 = Linux, 3 = FreeBSD)                                      |
+| `0x4C`       | 76           | 4    | `s_rev_level`            | Revision level (0 = original, 1 = dynamic inode sizes)                   |
+| `0x50`       | 80           | 2    | `s_def_resuid`           | Default UID for reserved blocks                                          |
+| `0x52`       | 82           | 2    | `s_def_resgid`           | Default GID for reserved blocks                                          |
 
 ### Extended Superblock Fields (Revision 1+)
 
