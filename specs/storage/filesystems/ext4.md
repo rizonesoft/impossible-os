@@ -37,7 +37,6 @@ The total capacity of a single Block Group is explicitly defined by the Superblo
 Because the Superblock and the Group Descriptor Table (GDT) are overwhelmingly critical to filesystem integrity, the ext4 architecture dictates the maintenance of redundant backups. Under the modern `sparse_super` configuration (enabled by default), backup copies are exclusively written to:
 
 - Block Group 0
-- Block Group 1
 - Any Block Group whose index is a mathematical power of **3**, **5**, or **7** (e.g., groups 3, 5, 7, 9, 25, 27, 49, 81, 125, 243, 343)
 
 This sparse distribution ensures high survivability against localized physical platter damage while preserving storage space that would otherwise be consumed by thousands of redundant metadata copies on multi-terabyte drives.
@@ -108,9 +107,9 @@ Validation of the Superblock begins by verifying the magic signature, which is p
 | `0x160` | 352 | 4 | `s_flags` | Miscellaneous flags |
 | `0x174` | 372 | 1 | `s_log_groups_per_flex` | Flex group size = `2 ^ s_log_groups_per_flex` |
 | `0x175` | 373 | 1 | `s_checksum_type` | Metadata checksum algorithm (1 = CRC32C) |
-| `0x178` | 376 | 4 | `s_kbytes_written` | KB written (lifetime, lower 32 bits) |
-| `0x190` | 400 | 4 | `s_checksum_seed` | CRC32C checksum seed (if `CSUM_SEED` feature set) |
-| `0xFC`  | 252 | 4 | `s_checksum` | CRC32C checksum of the entire Superblock |
+| `0x178` | 376 | 8 | `s_kbytes_written` | KB written (lifetime) |
+| `0x270` | 624 | 4 | `s_checksum_seed` | CRC32C checksum seed (if `CSUM_SEED` feature set) |
+| `0x3FC` | 1020 | 4 | `s_checksum` | CRC32C checksum of the entire Superblock |
 
 ### Block Size Calculation
 
@@ -130,7 +129,7 @@ block_size = 1024 << s_log_block_size;
 
 ### Timestamp Extensions
 
-To support timestamps beyond the year 2038 limitation of 32-bit integers, ext4 introduced 64-bit timestamp extensions. The high 8 bits of the last written time, last mount time, filesystem creation time, and last consistency check time are stored sequentially between bytes 628 and 631 in the Superblock.
+To support timestamps beyond the year 2038 limitation of 32-bit integers, ext4 introduced 64-bit timestamp extensions. The high 8 bits of the write time, mount time, mkfs time, and last check time are stored sequentially at offsets `0x274`–`0x277` (bytes 628–631) in the Superblock.
 
 ---
 
@@ -176,7 +175,7 @@ If unrecognized flags are present in `s_feature_ro_compat`, the OS may mount the
 | `RO_COMPAT_BTREE_DIR` | `0x0004` | (Unused) |
 | `RO_COMPAT_HUGE_FILE` | `0x0008` | File sizes in units of filesystem blocks (not 512-byte sectors) |
 | `RO_COMPAT_GDT_CSUM` | `0x0010` | Group descriptor checksums (ext3-style, not CRC32C) |
-| `RO_COMPAT_DIR_NLINK` | `0x0020` | Directories with > 65000 subdirectories |
+| `RO_COMPAT_DIR_NLINK` | `0x0020` | Directories with > 64,999 subdirectories |
 | `RO_COMPAT_EXTRA_ISIZE` | `0x0040` | Inodes have extended fields (`i_extra_isize`) |
 | `RO_COMPAT_HAS_SNAPSHOT` | `0x0080` | Snapshot support |
 | `RO_COMPAT_QUOTA` | `0x0100` | Quota support |
@@ -586,6 +585,7 @@ Located at block 0 of the journal file. Key fields:
 | `0x14` | 4 | `s_first` | First usable block in journal |
 | `0x18` | 4 | `s_sequence` | Sequence number of first expected transaction |
 | `0x1C` | 4 | `s_start` | Block number of first transaction's log start |
+| `0x20` | 4 | `s_errno` | Error number, as set by `jbd2_journal_abort()` |
 | `0x24` | 4 | `s_feature_compat` | Compatible features |
 | `0x28` | 4 | `s_feature_incompat` | Incompatible features (notably `JBD2_FEATURE_INCOMPAT_64BIT`) |
 | `0x2C` | 4 | `s_feature_ro_compat` | Read-only features |
@@ -663,7 +663,7 @@ uint32_t seed = s_checksum_seed;  /* or CRC32C(~0, s_uuid, 16) if CSUM_SEED not 
 
 | Structure | Checksum Location | Fields Covered |
 |-----------|------------------|----------------|
-| Superblock | `s_checksum` at offset `0xFC` | Entire Superblock (field zeroed during calculation) |
+| Superblock | `s_checksum` at offset `0x3FC` | Entire Superblock (field zeroed during calculation) |
 | Group Descriptor | `bg_checksum` | UUID + group number + descriptor data |
 | Inode | `i_checksum_lo` + `i_checksum_hi` | UUID + inode number + generation + inode data |
 | Directory block | `dx_tail` (last 8 bytes) | All directory entries in the block |
