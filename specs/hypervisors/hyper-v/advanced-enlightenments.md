@@ -32,12 +32,12 @@ Most hobby operating systems treat Hyper-V as an afterthought. By implementing e
 Impossible OS will be the **fastest non-Windows guest on Hyper-V** — measurably faster boot,
 lower interrupt latency, better TLB performance. This is a unique selling point.
 
-| Enlightenment            | Benefit                                              | Measured Improvement        |
-| ------------------------ | ---------------------------------------------------- | --------------------------- |
-| TSC Reference Page       | Clock reads without VM-exit                          | 78% reduction in read latency |
-| HyperClear               | Paravirtual TLB flushes eliminate IPI storms         | Linear SMP scalability      |
-| Virtual PCI (VPCI/DDA)   | Direct GPU/NVMe passthrough via VMBus                | Near-native I/O throughput  |
-| Spinlock Enlightenment   | Resolve Lock Contender Preemption pathology           | Linear scalability to 64 vCPUs |
+| Enlightenment          | Benefit                                          | Measured Improvement          |
+| ---------------------- | ------------------------------------------------ | ----------------------------- |
+| TSC Reference Page     | Clock reads without VM-exit                      | 78% reduction in read latency |
+| HyperClear             | Paravirtual TLB flushes eliminate IPI storms     | Linear SMP scalability        |
+| Virtual PCI (VPCI/DDA) | Direct GPU/NVMe passthrough via VMBus            | Near-native I/O throughput    |
+| Spinlock Enlightenment | Resolve Lock Contender Preemption pathology      | Linear scalability to 64 vCPUs |
 
 > **Impossible OS context:** Hypervisor discovery occurs in
 > [`cpuid_platform.c`](file:///src/kernel/cpuid_platform.c). The hypercall page is
@@ -67,15 +67,15 @@ CPUID leaves, which are structurally mapped starting at the base address `0x4000
 
 #### Hypervisor CPUID Leaf Map
 
-| Leaf           | Register | Content                                                        |
-| -------------- | -------- | -------------------------------------------------------------- |
-| `0x40000000`   | EAX      | Maximum supported hypervisor CPUID leaf (≥ `0x40000005`)       |
-| `0x40000000`   | EBX:ECX:EDX | Vendor ID: `"Microsoft Hv"` (`0x7263694D`, `0x666F736F`, `0x76482074`) |
-| `0x40000001`   | EAX      | Interface signature: `"Hv#1"` (`0x31237648`)                   |
-| `0x40000003`   | EAX:EBX  | `HV_PARTITION_PRIVILEGE_MASK` — authorized privileges          |
-| `0x40000003`   | EDX      | Extended features (XMM fast hypercall, etc.)                   |
-| `0x40000004`   | EAX      | Implementation recommendations (TLB flush, relaxed timing)     |
-| `0x40000004`   | EBX      | Spinlock retry threshold                                       |
+| Leaf         | Register    | Content                                                                    |
+| ------------ | ----------- | -------------------------------------------------------------------------- |
+| `0x40000000` | EAX         | Maximum supported hypervisor CPUID leaf (≥ `0x40000005`)                   |
+| `0x40000000` | EBX:ECX:EDX | Vendor ID: `"Microsoft Hv"` (`0x7263694D`, `0x666F736F`, `0x76482074`)     |
+| `0x40000001` | EAX         | Interface signature: `"Hv#1"` (`0x31237648`)                               |
+| `0x40000003` | EAX:EBX     | `HV_PARTITION_PRIVILEGE_MASK` — authorized privileges                      |
+| `0x40000003` | EDX         | Extended features (XMM fast hypercall, etc.)                               |
+| `0x40000004` | EAX         | Implementation recommendations (TLB flush, relaxed timing)                 |
+| `0x40000004` | EBX         | Spinlock retry threshold                                                   |
 
 The interface signature must be mathematically verified by querying leaf `0x40000001`. If
 this leaf returns the signature `"Hv#1"` (`EAX=0x31237648`), the hypervisor strictly conforms
@@ -90,25 +90,25 @@ are fully isolated and granted specific, granular permissions.
 
 #### Privilege Mask (CPUID 0x40000003)
 
-| Register | Bits    | Privilege                                                          |
-| -------- | ------- | ------------------------------------------------------------------ |
-| EAX      | 0       | `AccessVpRunTimeReg` — VP runtime MSR access                      |
-| EAX      | 1       | `AccessPartitionReferenceCounter` — reference counter MSR          |
-| EAX      | 2       | `AccessSynicRegs` — SynIC MSR access                              |
-| EAX      | 3       | `AccessSyntheticTimerRegs` — synthetic timer MSR access            |
-| EAX      | 9       | `AccessPartitionReferenceTsc` — TSC reference page authorization   |
-| EDX      | 4       | XMM Fast Hypercall Input support                                   |
-| EDX      | 15      | XMM Fast Hypercall Output support                                  |
+| Register | Bits | Privilege                                                        |
+| -------- | ---- | ---------------------------------------------------------------- |
+| EAX      | 0    | `AccessVpRunTimeReg` — VP runtime MSR access                     |
+| EAX      | 1    | `AccessPartitionReferenceCounter` — reference counter MSR        |
+| EAX      | 2    | `AccessSynicRegs` — SynIC MSR access                             |
+| EAX      | 3    | `AccessSyntheticTimerRegs` — synthetic timer MSR access          |
+| EAX      | 9    | `AccessPartitionReferenceTsc` — TSC reference page authorization |
+| EDX      | 4    | XMM Fast Hypercall Input support                                 |
+| EDX      | 15   | XMM Fast Hypercall Output support                                |
 
 #### Implementation Recommendations (CPUID 0x40000004)
 
-| Register | Bit  | Recommendation                                                      |
-| -------- | ---- | ------------------------------------------------------------------- |
-| EAX      | 1    | `HV_X64_LOCAL_TLB_FLUSH_RECOMMENDED` — use paravirt local TLB flush |
+| Register | Bit  | Recommendation                                                       |
+| -------- | ---- | -------------------------------------------------------------------- |
+| EAX      | 1    | `HV_X64_LOCAL_TLB_FLUSH_RECOMMENDED` — use paravirt local TLB flush  |
 | EAX      | 2    | `HV_X64_REMOTE_TLB_FLUSH_RECOMMENDED` — use paravirt remote TLB flush |
-| EAX      | 5    | Relaxed Timing — disable aggressive DPC/clock watchdogs             |
-| EAX      | 11   | `HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED` — extended >64 vCPU masks  |
-| EBX      | 31:0 | Spinlock retry threshold (see §6)                                   |
+| EAX      | 5    | Relaxed Timing — disable aggressive DPC/clock watchdogs              |
+| EAX      | 11   | `HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED` — extended >64 vCPU masks   |
+| EBX      | 31:0 | Spinlock retry threshold (see §6)                                    |
 
 > [!IMPORTANT]
 > If EAX bit 5 (Relaxed Timing) is set, the guest should **actively disable** aggressive
@@ -142,12 +142,12 @@ sequenceDiagram
 
 #### Hypercall MSR (0x40000001) Bit Layout
 
-| Bits   | Field      | Description                                                     |
-| ------ | ---------- | --------------------------------------------------------------- |
-| 0      | Enable     | Set to 1 to activate the hypercall page                         |
-| 1      | Locked     | Permanently prevents relocation until hard reset                 |
-| 2–11   | Reserved   | Must be zero                                                     |
-| 12–63  | GPFN       | Guest Physical Page Number of the allocated 4KB page             |
+| Bits  | Field    | Description                                              |
+| ----- | -------- | -------------------------------------------------------- |
+| 0     | Enable   | Set to 1 to activate the hypercall page                  |
+| 1     | Locked   | Permanently prevents relocation until hard reset         |
+| 2–11  | Reserved | Must be preserved on write, ignored on read              |
+| 12–63 | GPFN     | Guest Physical Page Number of the allocated 4KB page     |
 
 > [!CAUTION]
 > Attempting to enable the hypercall page **without** first writing a valid Guest OS ID to
@@ -182,11 +182,11 @@ authorized to proceed.
 
 #### Reference TSC MSR (0x40000021) Bit Layout
 
-| Bits   | Field    | Description                                                       |
-| ------ | -------- | ----------------------------------------------------------------- |
-| 0      | Enable   | Set to 1 to activate the TSC reference page                       |
-| 1–11   | Reserved | Must be zero                                                       |
-| 12–63  | GPFN     | Guest Physical Page Number of the allocated, zeroed 4KB page       |
+| Bits  | Field    | Description                                                  |
+| ----- | -------- | ------------------------------------------------------------ |
+| 0     | Enable   | Set to 1 to activate the TSC reference page                  |
+| 1–11  | Reserved | Must be zero                                                 |
+| 12–63 | GPFN     | Guest Physical Page Number of the allocated, zeroed 4KB page |
 
 The kernel must allocate a 4KB physical page, **zero its contents** to prevent state
 confusion, and register it via `WRMSR` to address `0x40000021`. Setting bit 0 causes the
@@ -263,11 +263,11 @@ A `TscSequence` value of exactly **0x0** serves as a deliberate signal from the 
 that the Reference TSC mechanism is temporarily invalid. This state occurs during complex
 live migration, before the target hypervisor node has established an invariant clock rate.
 
-| TscSequence Value | Interpretation                              | Kernel Behavior                    |
-| ----------------- | ------------------------------------------- | ---------------------------------- |
-| `0x00000000`      | TSC reference temporarily invalid           | Fall back to `HV_X64_MSR_TIME_REF_COUNT` (0x40000020) |
-| Odd integer       | Hypervisor update actively in progress      | Spin-retry the seqlock loop        |
-| Even non-zero     | Stable, valid scale/offset pair             | Compute ReferenceTime normally     |
+| TscSequence Value | Interpretation                         | Kernel Behavior                                        |
+| ----------------- | -------------------------------------- | ------------------------------------------------------ |
+| `0x00000000`      | TSC reference temporarily invalid      | Fall back to `HV_X64_MSR_TIME_REF_COUNT` (`0x40000020`) |
+| Odd integer       | Hypervisor update actively in progress | Spin-retry the seqlock loop                            |
+| Even non-zero     | Stable, valid scale/offset pair        | Compute ReferenceTime normally                         |
 
 ### 3.6 Clocksource Integration
 
@@ -275,12 +275,12 @@ The TSC Reference Page is integrated as the **highest-priority clocksource** in 
 OS UTS timer hierarchy with a rating of **400**, strictly overriding native LAPIC and HPET
 hardware timers.
 
-| Clocksource        | Rating | VM-Exit? | Latency        |
-| ------------------- | ------ | -------- | -------------- |
-| **HV TSC Ref Page** | **400** | **No**  | **~15 ns**     |
-| LAPIC Timer         | 200    | Yes      | ~120 ns        |
-| HPET                | 100    | Yes      | ~250 ns        |
-| Raw RDTSC           | 50     | Trapped  | ~800 ns (trap) |
+| Clocksource         | Rating  | VM-Exit? | Latency        |
+| ------------------- | ------- | -------- | -------------- |
+| **HV TSC Ref Page** | **400** | **No**   | **~15 ns**     |
+| LAPIC Timer         | 200     | Yes      | ~120 ns        |
+| HPET                | 100     | Yes      | ~250 ns        |
+| Raw RDTSC           | 50      | Trapped  | ~800 ns (trap) |
 
 > **Impossible OS context:** Automated benchmarking demonstrates a **78% reduction** in
 > clock-read latency compared to the traditional trap-and-emulate RDTSC execution pathway.
@@ -315,19 +315,19 @@ specified address space.
 
 #### Input Parameters
 
-| Field           | Size    | Description                                                       |
-| --------------- | ------- | ----------------------------------------------------------------- |
-| `AddressSpace`  | 8 bytes | Physical base address of the page directory (CR3 value)            |
-| `Flags`         | 8 bytes | Bitmask dictating flush behavior                                   |
-| `ProcessorMask` | 8 bytes | 64-bit bitmap — each bit corresponds to a vCPU index               |
+| Field           | Size    | Description                                              |
+| --------------- | ------- | -------------------------------------------------------- |
+| `AddressSpace`  | 8 bytes | Physical base address of the page directory (CR3 value)  |
+| `Flags`         | 8 bytes | Bitmask dictating flush behavior                         |
+| `ProcessorMask` | 8 bytes | 64-bit bitmap — each bit corresponds to a vCPU index     |
 
 #### Flags Bitmask
 
-| Flag                                | Bit | Effect                                                        |
-| ----------------------------------- | --- | ------------------------------------------------------------- |
-| `HV_FLUSH_ALL_PROCESSORS`          | 0   | Ignore ProcessorMask, flush all vCPUs in the partition         |
-| `HV_FLUSH_ALL_VIRTUAL_ADDRESS_SPACES` | 1 | Ignore AddressSpace, clear mappings globally                |
-| `HV_FLUSH_NON_GLOBAL_MAPPINGS_ONLY` | 2  | Preserve mappings marked with the global "G" bit in PTEs      |
+| Flag                                  | Bit | Effect                                                   |
+| ------------------------------------- | --- | -------------------------------------------------------- |
+| `HV_FLUSH_ALL_PROCESSORS`            | 0   | Ignore ProcessorMask, flush all vCPUs in the partition   |
+| `HV_FLUSH_ALL_VIRTUAL_ADDRESS_SPACES` | 1   | Ignore AddressSpace, clear mappings globally             |
+| `HV_FLUSH_NON_GLOBAL_MAPPINGS_ONLY`  | 2   | Preserve mappings marked with the global "G" bit in PTEs |
 
 > [!TIP]
 > The `HV_FLUSH_NON_GLOBAL_MAPPINGS_ONLY` flag is critical for performance. Because kernel
@@ -356,22 +356,24 @@ the length of a contiguous memory range:
 
 #### Rep Hypercall RCX Format
 
-| Bits   | Field          | Description                                            |
-| ------ | -------------- | ------------------------------------------------------ |
-| 15:0   | Call Code      | `0x0003`                                               |
-| 26:16  | Reserved       | Must be zero                                           |
-| 43:32  | RepCount       | Total number of HV_GVA entries in the list              |
-| 47:44  | Reserved       | Must be zero                                           |
-| 59:48  | RepStartIndex  | Starting index for resumable rep processing             |
-| 63:60  | Reserved       | Must be zero                                           |
+| Bits  | Field               | Description                                          |
+| ----- | ------------------- | ---------------------------------------------------- |
+| 15:0  | Call Code           | `0x0003`                                             |
+| 16    | Fast                | 1 = register-based, 0 = memory-based calling         |
+| 25:17 | Variable Header Sz  | Size of variable header in QWORD units               |
+| 31:26 | RsvdZ               | Must be zero                                         |
+| 43:32 | RepCount            | Total number of HV_GVA entries in the list            |
+| 47:44 | RsvdZ               | Must be zero                                         |
+| 59:48 | RepStartIndex       | Starting index for resumable rep processing           |
+| 63:60 | RsvdZ               | Must be zero                                         |
 
 ### 4.3 Gating and Feature Detection
 
-| Feature Bit                        | CPUID Leaf    | Register | Bit | Required For            |
-| ---------------------------------- | ------------- | -------- | --- | ----------------------- |
-| `HvFlushVirtualAddressSpace`       | `0x40000004`  | EAX      | 1   | Call Code 0x0002        |
-| `HvFlushVirtualAddressList`        | `0x40000004`  | EAX      | 2   | Call Code 0x0003        |
-| `HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED` | `0x40000004` | EAX | 11  | Extended >64 vCPU calls |
+| Feature Bit                               | CPUID Leaf   | Register | Bit | Required For            |
+| ----------------------------------------- | ------------ | -------- | --- | ----------------------- |
+| `HvFlushVirtualAddressSpace`              | `0x40000004` | EAX      | 1   | Call Code `0x0002`      |
+| `HvFlushVirtualAddressList`               | `0x40000004` | EAX      | 2   | Call Code `0x0003`      |
+| `HV_X64_EX_PROCESSOR_MASKS_RECOMMENDED`  | `0x40000004` | EAX      | 11  | Extended >64 vCPU calls |
 
 ### 4.4 Kernel Integration
 
@@ -397,8 +399,8 @@ void flush_tlb_range(uintptr_t cr3, uintptr_t start, size_t pages) {
 The standard `ProcessorMask` is a single 64-bit integer, capping operations at 64 vCPUs.
 For larger configurations, the OS must use extended hypercalls:
 
-| Standard Call          | Code     | Extended Call               | Code     |
-| ---------------------- | -------- | --------------------------- | -------- |
+| Standard Call                | Code     | Extended Call                  | Code     |
+| ---------------------------- | -------- | ------------------------------ | -------- |
 | `HvFlushVirtualAddressSpace` | `0x0002` | `HvFlushVirtualAddressSpaceEx` | `0x0013` |
 | `HvFlushVirtualAddressList`  | `0x0003` | `HvFlushVirtualAddressListEx`  | `0x0014` |
 
@@ -447,13 +449,13 @@ sequenceDiagram
 
 #### vPCI Message Types
 
-| Message                    | Type Offset (from `PCI_MESSAGE_BASE`) | Purpose                       |
-| -------------------------- | ------------------------------------- | ----------------------------- |
-| `PCI_MESSAGE_BASE`         | `0x42490000`                          | Base constant                 |
-| `PCI_QUERY_BUS_RELATIONS`  | `+1`                                  | Enumerate attached functions  |
-| `PCI_READ_BLOCK`           | `+9`                                  | Configuration space read      |
-| `PCI_WRITE_BLOCK`          | `+0xA`                                | Configuration space write     |
-| `PCI_CREATE_INTERRUPT`     | `+0x14`                               | MSI/MSI-X vector registration |
+| Message                   | Type Offset (from `PCI_MESSAGE_BASE`) | Purpose                       |
+| ------------------------- | ------------------------------------- | ----------------------------- |
+| `PCI_MESSAGE_BASE`        | `0x42490000`                          | Base constant                 |
+| `PCI_QUERY_BUS_RELATIONS` | `+1`                                  | Enumerate attached functions  |
+| `PCI_READ_BLOCK`          | `+9`                                  | Configuration space read      |
+| `PCI_WRITE_BLOCK`         | `+0xA`                                | Configuration space write     |
+| `PCI_CREATE_INTERRUPT`    | `+0x14`                               | MSI/MSI-X vector registration |
 
 ### 5.2 Bus Relations and Dual-Identity Enumeration
 
@@ -462,10 +464,11 @@ VSP. The hypervisor responds with a detailed inventory, mapping the abstract VMB
 to a concrete **win_slot_encoding** using the PCI Express Alternative Routing-ID
 Interpretation (ARI) format:
 
-| Field       | Bits | Description                           |
-| ----------- | ---- | ------------------------------------- |
-| Device ID   | 4:0  | 5-bit PCI device identifier           |
-| Function ID | 7:5  | 3-bit PCI function identifier         |
+| Field       | Bits  | Description                   |
+| ----------- | ----- | ----------------------------- |
+| Device ID   | 4:0   | 5-bit PCI device identifier   |
+| Function ID | 7:5   | 3-bit PCI function identifier |
+| Reserved    | 31:8  | Must be zero                  |
 
 Through this exchange, the vPCI object attains a **"dual identity"**:
 
@@ -482,12 +485,12 @@ For vPCI devices, configuration reads and writes are brokered over VMBus rather 
 via VT-d. The hypervisor allocates a specific MMIO window acting as a **shadow configuration
 space**:
 
-| Access Type            | Mechanism                                                  |
-| ---------------------- | ---------------------------------------------------------- |
-| Config Read            | `PCI_READ_BLOCK` VMBus message                             |
-| Config Write           | `PCI_WRITE_BLOCK` VMBus message                            |
-| BAR Mapping            | MMIO windows allocated by hypervisor for DDA/SR-IOV        |
-| MSI/MSI-X Registration | `PCI_CREATE_INTERRUPT` VMBus message                       |
+| Access Type            | Mechanism                                           |
+| ---------------------- | --------------------------------------------------- |
+| Config Read            | `PCI_READ_BLOCK` VMBus message                      |
+| Config Write           | `PCI_WRITE_BLOCK` VMBus message                     |
+| BAR Mapping            | MMIO windows allocated by hypervisor for DDA/SR-IOV |
+| MSI/MSI-X Registration | `PCI_CREATE_INTERRUPT` VMBus message                |
 
 ### 5.4 Interrupt Targeting and Rebalancing
 
@@ -495,11 +498,11 @@ Physical MSI/MSI-X interrupts generated by DDA hardware must be injected into th
 guest vCPU. The `pci_create_interrupt` payload embeds a **tran_int_desc** (Translating
 Interrupt Descriptor):
 
-| Field          | Size    | Description                                              |
-| -------------- | ------- | -------------------------------------------------------- |
-| `vector`       | 8 bits  | Target interrupt vector in guest IDT                     |
-| `delivery_mode`| 3 bits  | Fixed, lowest priority, etc.                             |
-| `cpu_mask`     | 64 bits | Target vCPU bitmap for interrupt delivery                |
+| Field           | Size    | Description                                  |
+| --------------- | ------- | -------------------------------------------- |
+| `vector`        | 8 bits  | Target interrupt vector in guest IDT         |
+| `delivery_mode` | 3 bits  | Fixed, lowest priority, etc.                 |
+| `cpu_mask`      | 64 bits | Target vCPU bitmap for interrupt delivery    |
 
 The hypervisor maps the guest's virtual vector to the physical **IOMMU interrupt remapping
 tables**, ensuring hardware MSI writes are trapped and routed as synthetic virtual interrupts.
@@ -536,11 +539,11 @@ pathology:
 
 During boot, the guest interrogates CPUID leaf `0x40000004` EBX:
 
-| EBX Value      | Interpretation                                           | Kernel Behavior                         |
-| -------------- | -------------------------------------------------------- | --------------------------------------- |
-| `0x00000000`   | Spinlock enlightenment unsupported or disabled by host   | Rely solely on hardware `PAUSE`         |
-| `0xFFFFFFFF`   | Hypervisor requests no notifications (not overcommitted) | Infinite spin loop; never issue hypercall |
-| Any other `N`  | Hypervisor-recommended retry threshold                   | Spin N times, then issue `HvCallNotifyLongSpinWait` |
+| EBX Value    | Interpretation                                         | Kernel Behavior                                     |
+| ------------ | ------------------------------------------------------ | --------------------------------------------------- |
+| `0x00000000` | Spinlock enlightenment unsupported or disabled by host | Rely solely on hardware `PAUSE`                     |
+| `0xFFFFFFFF` | Hypervisor requests no notifications (not overcommitted) | Infinite spin loop; never issue hypercall          |
+| Any other `N` | Hypervisor-recommended retry threshold                | Spin N times, then issue `HvCallNotifyLongSpinWait` |
 
 ### 6.3 Executing the Notification Hypercall
 
@@ -548,10 +551,10 @@ During boot, the guest interrogates CPUID leaf `0x40000004` EBX:
 
 #### Input Structure (8 bytes, via RDX — Fast Hypercall)
 
-| Offset | Field       | Size    | Description                               |
-| ------ | ----------- | ------- | ----------------------------------------- |
-| 0      | `SpinCount` | 32 bits | Accumulated spin iterations               |
-| 4      | `RsvdZ`     | 32 bits | Reserved, must be zero                    |
+| Offset | Field       | Size    | Description                     |
+| ------ | ----------- | ------- | ------------------------------- |
+| 0      | `SpinCount` | 32 bits | Accumulated spin iterations     |
+| 4      | `RsvdZ`     | 32 bits | Reserved, must be zero          |
 
 #### Hypervisor Response
 
@@ -594,13 +597,13 @@ unified commit message `"hyperv: performance enlightenments"`.
 
 ### 7.1 Subsystem Summary
 
-| Subsystem            | CPUID Gate           | MSR/Hypercall                | Status |
-| -------------------- | -------------------- | ---------------------------- | ------ |
-| TSC Reference Page   | `0x40000003` EAX.9   | MSR `0x40000021`             | ✅ Done |
-| HyperClear (Global)  | `0x40000004` EAX.1   | Call Code `0x0002`           | ✅ Done |
-| HyperClear (List)    | `0x40000004` EAX.2   | Call Code `0x0003`           | ✅ Done |
-| Virtual PCI (VPCI)   | VMBus Class GUID     | `PCI_MESSAGE_BASE` protocol  | ✅ Done |
-| Spinlock Enlighten.  | `0x40000004` EBX     | Call Code `0x0008`           | ✅ Done |
+| Subsystem           | CPUID Gate         | MSR/Hypercall               | Status  |
+| ------------------- | ------------------ | --------------------------- | ------- |
+| TSC Reference Page  | `0x40000003` EAX.9 | MSR `0x40000021`            | ✅ Done |
+| HyperClear (Global) | `0x40000004` EAX.1 | Call Code `0x0002`          | ✅ Done |
+| HyperClear (List)   | `0x40000004` EAX.2 | Call Code `0x0003`          | ✅ Done |
+| Virtual PCI (VPCI)  | VMBus Class GUID   | `PCI_MESSAGE_BASE` protocol | ✅ Done |
+| Spinlock Enlighten. | `0x40000004` EBX   | Call Code `0x0008`          | ✅ Done |
 
 ### 7.2 Build Validation
 
@@ -608,19 +611,19 @@ All subsystems pass `bash scripts/build.sh clean` with **zero compiler warnings*
 
 ### 7.3 Benchmark Results
 
-| Metric                          | Before Enlightenments | After Enlightenments | Improvement |
-| ------------------------------- | --------------------- | -------------------- | ----------- |
-| Clock-read latency              | ~800 ns (trapped)     | ~15 ns (no VM-exit)  | **78% ↓**   |
-| TLB flush (4-vCPU, 100 pages)   | ~12 µs (IPI storm)    | ~1.8 µs (hypercall)  | **85% ↓**   |
-| Spinlock contention (64 vCPU)   | Non-linear thrashing  | Linear scalability   | **∞**       |
+| Metric                        | Before Enlightenments | After Enlightenments | Improvement |
+| ----------------------------- | --------------------- | -------------------- | ----------- |
+| Clock-read latency            | ~800 ns (trapped)     | ~15 ns (no VM-exit)  | **78% ↓**   |
+| TLB flush (4-vCPU, 100 pages) | ~12 µs (IPI storm)    | ~1.8 µs (hypercall)  | **85% ↓**   |
+| Spinlock contention (64 vCPU) | Non-linear thrashing  | Linear scalability   | **∞**       |
 
 ---
 
 ## 8. References
 
-| Document                                      | Version   | Relevance                           |
-| --------------------------------------------- | --------- | ----------------------------------- |
-| Microsoft TLFS (Top Level Functional Spec)     | 6.0b      | Canonical hypercall and MSR reference |
-| Hyper-V Enlightenments (CPUID 0x40000000–05)   | Rev. 2024 | CPUID leaf definitions              |
-| Linux `arch/x86/hyperv/` source               | 6.8       | Reference implementation            |
-| Impossible OS VMBus Core Protocol Spec         | 1.0       | VMBus foundations (companion doc)   |
+| Document                                     | Version   | Relevance                             |
+| -------------------------------------------- | --------- | ------------------------------------- |
+| Microsoft TLFS (Top Level Functional Spec)   | 6.0b      | Canonical hypercall and MSR reference |
+| Hyper-V Enlightenments (CPUID 0x40000000–05) | Rev. 2024 | CPUID leaf definitions                |
+| Linux `arch/x86/hyperv/` source              | 6.8       | Reference implementation              |
+| Impossible OS VMBus Core Protocol Spec       | 1.0       | VMBus foundations (companion doc)     |
