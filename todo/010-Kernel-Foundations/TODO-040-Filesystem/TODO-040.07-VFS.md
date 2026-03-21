@@ -73,6 +73,16 @@ graph TD
     A --> NTFS
     F --> NTFS
     B --> N
+
+    O["§6.7 VFS\nTracepoints"]
+    P["§6.8 Parallel\nDirectory Ops"]
+    Q["§6.9 UID/GID\nRemapped Mounts"]
+    R["§6.10 Filesystem\nTransactions"]
+
+    A --> O
+    A --> P
+    FAPI --> Q
+    A --> R
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -918,6 +928,8 @@ remaining work in the entire filesystem TODO.
 | `src/kernel/fs/async_io.c`         | [NEW] Overlapped I/O request queue + worker thread               |
 | `src/kernel/fs/iocp.c`             | [NEW] I/O Completion Ports — unified async completion            |
 | `src/kernel/fs/filter.c`           | [NEW] Filesystem filter driver framework                         |
+| `src/kernel/fs/vfs_trace.c`        | [NEW] VFS tracepoints + I/O profiling ring buffer                |
+| `src/kernel/fs/txn.c`              | [NEW] Filesystem transaction support (begin/commit/rollback)     |
 | `src/kernel/mm/mmap.c`             | [NEW] Memory-mapped file I/O + page fault integration            |
 | `src/kernel/test/test_vfs.c`       | VFS unit tests — roundtrip, nonexistent open, mkdir/rmdir        |
 | `src/kernel/fs/fat32/fat32_ops.c`  | FAT32 VFS ops (16 callbacks, case-insensitive `finddir`)         |
