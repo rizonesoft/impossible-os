@@ -23,6 +23,7 @@
 > | `TODO-050-Registry.md`             | Master file — sections, priorities, OS comparison                         |
 > | `TODO-050.01-Registry-Engine.md`   | Core engine: `reg_key_t`, `reg_value_t`, `HKEY`, pools, value types, root keys |
 > | `TODO-050.02-Win32-Reg-API.md`     | Win32 API: key/value operations, enumeration, convenience helpers         |
+> | `TODO-050.03-Hive.md`             | Hive persistence: format, disk layout, crash-safe journaling              |
 
 ### Dependency Graph
 
@@ -91,72 +92,12 @@ graph TD
 > **Phase 5** contains stretch performance goals: hash map optimization, mmap, B-tree.
 
 ---
+## 3. Disk Persistence (Hive Files)
 
-## 1. Core Registry Engine
-
-> **→ See [TODO-050.01-Registry-Engine.md](TODO-050-Registry/TODO-050.01-Registry-Engine.md)** ✅
+> **→ See [TODO-050.03-Hive.md](TODO-050-Registry/TODO-050.03-Hive.md)** ✅
 >
-> Covers: §1.1 Data Structures, §1.2 Value Types, §1.3 Predefined Root Keys.
+> Covers: §4.1 Hive File Format, §4.2 Disk Layout, §4.3 Crash-Safe Journaling.
 > All sections complete.
-
----
-
-## 2. Win32-Compatible API
-
-> **→ See [TODO-050.02-Win32-Reg-API.md](TODO-050-Registry/TODO-050.02-Win32-Reg-API.md)** ✅
->
-> Covers: §2.1 Key Operations, §2.2 Value Operations, §2.3 Enumeration, §2.4 Convenience Helpers.
-> All sections complete.
-
----
-## 4. Disk Persistence (Hive Files)
-
-### 4.1 Hive File Format *(done)* ✅
-
-**Prompt:** Verify the hive file format implementation. In `registry.h`, confirm `hive_header_t` is defined as a packed struct with `magic` (HIVE_MAGIC = 0x48474552), `version` (1), `checksum` (CRC32), `timestamp`, `root_name[64]`, `total_keys`, `total_values`, `data_offset`, `data_size`, and `padding` to 4096 bytes. Confirm `hive_save` and `hive_load` are declared. In `registry.c`, confirm `hive_crc32` implements table-less CRC32 with polynomial 0xEDB88320. Confirm `hive_serialize_key` writes depth-first key records as `[name_len:u16][name:N][value_count:u16][child_count:u16]` and value records as `[name_len:u16][name:N][type:u32][data_size:u32][data:N]`. Confirm `hive_save` uses PMM for the buffer, fills the header, computes CRC32, and writes via VFS. Confirm `hive_load` validates magic, version, and CRC32, and returns -1 with a klog warning on corrupt files. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Define hive file header struct (4096 bytes):
-  - [x] Magic: `"REGH"` (4 bytes)
-  - [x] Version: `1` (uint32)
-  - [x] Checksum: CRC32 of header (uint32)
-  - [x] Timestamp: PIT ticks at save time (uint64)
-  - [x] Root key name (64 bytes)
-  - [x] Total key count (uint32)
-  - [x] Total value count (uint32)
-  - [x] Reserved padding to 4096 bytes
-- [x] Implement `hive_save(root_key, filepath)` — serialize tree to file
-- [x] Implement `hive_load(filepath, &root_key)` — deserialize file into tree
-- [x] Add CRC32 checksum validation on load
-- [x] Handle corrupt hive: log warning, skip file, use defaults
-- [x] Commit: `"registry: hive file format"`
-
-### 4.2 Hive File Layout on Disk *(done)* ✅
-
-**Prompt:** Verify the hive file disk layout. In `registry.h`, confirm `REG_HIVE_DIR` is `"C:\Impossible\System\Config\Registry"` and `REG_HIVE_COUNT` is 4. Confirm `registry_flush()`, `registry_save_all()`, and `registry_load_hives()` are declared. In `registry.c`, confirm `hive_table` maps 4 descriptors: SYSTEM.hive→HKLM\SYSTEM, SOFTWARE.hive→HKLM\SOFTWARE, HARDWARE.hive→HKLM\HARDWARE, DEFAULT.hive→HKU\Default. Confirm `registry_mark_dirty()` walks up the parent chain to mark the correct hive dirty. Confirm it's called from `RegSetValueEx` and `RegDeleteValue`. Confirm `registry_flush()` only writes dirty hives. Confirm `hive_ensure_dir()` creates the directory chain. In `main.c`, confirm `registry_flush()` is enabled (not commented out). Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Define hive file paths:
-  - [x] `C:\Impossible\System\Config\Registry\SYSTEM.hive` → HKLM\SYSTEM
-  - [x] `C:\Impossible\System\Config\Registry\SOFTWARE.hive` → HKLM\SOFTWARE
-  - [x] `C:\Impossible\System\Config\Registry\HARDWARE.hive` → HKLM\HARDWARE
-  - [x] `C:\Impossible\System\Config\Registry\DEFAULT.hive` → HKU\Default
-- [x] Create Registry directory at first boot if missing
-- [x] Implement dirty-flag tracking per hive
-- [x] Implement `registry_flush()` — write only dirty hives
-- [x] Implement `registry_save_all()` — for clean shutdown
-- [x] Hook dirty tracking into `RegSetValueEx` and `RegDeleteValue`
-- [x] Enable `registry_flush()` in `main.c` compositor loop
-- [x] Commit: `"registry: hive file disk layout"`
-
-### 4.3 Crash-Safe Journaling *(done)* ✅
-
-**Prompt:** Verify crash-safe journaling. In `registry.c`, confirm `hive_save` follows the 4-step sequence: (1) write `.hive.log`, (2) copy `.hive` → `.hive.bak`, (3) overwrite `.hive`, (4) invalidate `.hive.log` by zeroing magic. Confirm `hive_validate_file` checks magic, version, and CRC32. Confirm `hive_best_source` checks `.hive.log` → `.hive` → `.hive.bak` in priority order and copies the best source to `.hive`. Confirm `registry_load_hives` calls `hive_best_source` for each hive before loading. Confirm `hive_copy_file` does a byte-by-byte copy via VFS. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Before saving: write new data to `.hive.log` first (journal)
-- [x] After log + main hive written: invalidate `.hive.log` by zeroing magic
-- [x] On boot: if `.hive.log` has valid header, replay it (crash recovery via `hive_best_source`)
-- [x] On boot: if `.hive` is corrupt (bad CRC), fall back to `.hive.bak`
-- [x] Keep one backup: copy old `.hive` → `.hive.bak` before overwriting
-- [x] Commit: `"registry: crash-safe journaling"`
 
 ---
 ## 5. Change Notifications

@@ -77,7 +77,7 @@ graph TD
 | 💎  | **5**  | §2.8 Advanced Key Operations      | `RegCopyTree`, `RegRenameKey` — tree-level manipulations                 | Phase 1 (§2.1)  |   ⬜   |
 | 💎  | **5**  | §2.9 Hive Import/Export           | `RegSaveKey`, `RegRestoreKey` — import/export sub-trees                  | Phase 1 (§2.1)  |   ⬜   |
 | 💎  | **5**  | §2.11 REG_OPTION_VOLATILE         | RAM-only keys that don't persist across reboot                           | Phase 1 (§2.1)  |   ⬜   |
-| ⭐  | **6**  | §2.10 Delayed Close Cache         | LRU cache for KCB reuse on rapid open/close cycles 🚀                   | Phase 1 (§2.1)  |   ⬜   |
+| ⭐  | **6**  | §2.10 Delayed Close Cache         | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1)  |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–3 are complete.** The core engine, Win32 API (CRUD + enumeration + helpers),
