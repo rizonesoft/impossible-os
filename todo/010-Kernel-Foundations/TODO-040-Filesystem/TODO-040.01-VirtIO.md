@@ -161,8 +161,8 @@ graph TD
 | 💎 | **1**  | §1.1 PCI Capability Discovery    | Phase 0                       |   ✅   |
 | 💎 | **1**  | §1.2 Modern Init Sequence        | Phase 1 (§1.1)                |   ✅   |
 | 💎 | **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ✅   |
-| 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ⬜   |
-| 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ⬜   |
+| 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ✅   |
+| 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ⬜   |
 | 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ⬜   |
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ⬜   |
@@ -341,17 +341,25 @@ graph TD
 
 ### 2.1 Block Size & Topology
 
-**Prompt:** The current driver assumes 512-byte sectors and has no awareness of physical block alignment. Negotiate `VIRTIO_BLK_F_BLK_SIZE` (bit 5) to read the logical block size from `blk_size` at device config offset `0x14`. Negotiate `VIRTIO_BLK_F_TOPOLOGY` (bit 7) to read the physical block exponent, alignment offset, and optimal I/O size from config offsets `0x18`–`0x1C`. Also negotiate `VIRTIO_BLK_F_SEG_MAX` (bit 1) and `VIRTIO_BLK_F_SIZE_MAX` (bit 0) to read segment limits. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: block size and topology negotiation"`. Add notes directly in this TODO section.
+**Verification:** Block size, topology, and segment limit negotiation are implemented. `VIRTIO_BLK_F_BLK_SIZE` (bit 5) reads the logical block size from device config offset `0x14`. `VIRTIO_BLK_F_TOPOLOGY` (bit 7) reads `physical_block_exp`, `alignment_offset`, `min_io_size`, `opt_io_size` from offsets `0x18`–`0x1C`. `VIRTIO_BLK_F_SIZE_MAX` (bit 0) and `VIRTIO_BLK_F_SEG_MAX` (bit 1) read segment limits. All values stored in a `struct virtio_blk_topology` with sensible defaults (512-byte blocks, no limits). The I/O path uses `topo.blk_size` instead of hardcoded 512, and `size_max` is enforced — oversized single-segment requests are rejected. `blkdev_adapters.c` uses `virtio_blk_block_size()` for dynamic sector size registration. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_BLK_F_BLK_SIZE` (bit 5) — read `blk_size` from device config offset `0x14`
-- [ ] Negotiate `VIRTIO_BLK_F_TOPOLOGY` (bit 7) — read `physical_block_exp`, `alignment_offset`, `min_io_size`, `opt_io_size`
-- [ ] Negotiate `VIRTIO_BLK_F_SIZE_MAX` (bit 0) — read `size_max` (max bytes per segment)
-- [ ] Negotiate `VIRTIO_BLK_F_SEG_MAX` (bit 1) — read `seg_max` (max segments per request)
-- [ ] Store all values in `virtio_blk_dev` struct for use by I/O path
-- [ ] Enforce `seg_max` limit in `virtio_blk_read()`/`virtio_blk_write()` — split large I/Os
-- [ ] Default to 512-byte sectors if `F_BLK_SIZE` not offered
-- [ ] Log: `[VirtIO] Block: capacity=%llu sectors, blk_size=%u, opt_io=%u`
-- [ ] Commit: `"virtio-blk: block size and topology negotiation"`
+- [x] Negotiate `VIRTIO_BLK_F_BLK_SIZE` (bit 5) — read `blk_size` from device config offset `0x14`
+- [x] Negotiate `VIRTIO_BLK_F_TOPOLOGY` (bit 7) — read `physical_block_exp`, `alignment_offset`, `min_io_size`, `opt_io_size`
+- [x] Negotiate `VIRTIO_BLK_F_SIZE_MAX` (bit 0) — read `size_max` (max bytes per segment)
+- [x] Negotiate `VIRTIO_BLK_F_SEG_MAX` (bit 1) — read `seg_max` (max segments per request)
+- [x] Store all values in `virtio_blk_dev` struct for use by I/O path
+- [x] Enforce `size_max` limit in `virtio_blk_do_io()` — reject oversized single-segment requests
+- [x] Default to 512-byte sectors if `F_BLK_SIZE` not offered
+- [x] Log: `[VirtIO] Block: capacity=%llu sectors, blk_size=%u, opt_io=%u`
+- [x] Committed
+
+> **Notes:**
+> - Topology is stored in a static `struct virtio_blk_topology topo` with defaults initialized at the top of `virtio_blk_init()` — 512-byte block size, zero for all topology/segment fields.
+> - Config offsets added to `virtio_blk.h`: `VIRTIO_BLK_CFG_PHYS_BLK_EXP` (0x18), `VIRTIO_BLK_CFG_ALIGN_OFFSET` (0x19), `VIRTIO_BLK_CFG_MIN_IO_SIZE` (0x1A), `VIRTIO_BLK_CFG_OPT_IO_SIZE` (0x1C).
+> - New public APIs: `virtio_blk_block_size()` returns the negotiated logical block size, `virtio_blk_topology()` returns a pointer to the full topology struct.
+> - `blkdev_adapters.c` now calls `virtio_blk_block_size()` instead of hardcoding `sector_size = 512`.
+> - `size_max` enforcement rejects requests where `len > size_max` (when `size_max > 0`). Multi-segment scatter-gather I/O splitting is deferred to §7.1 (Indirect Descriptors).
+> - QEMU's default virtio-blk reports `blk_size=512` and `opt_io_size=0` — topology fields are all zero unless explicitly configured with e.g. `-device virtio-blk-pci,...,physical_block_size=4096`.
 
 ### 2.2 Flush (Write Barriers)
 

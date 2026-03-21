@@ -36,6 +36,13 @@ static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
 /* Feature negotiation results */
 static int                    has_flush;       /* F_FLUSH negotiated */
 static int                    has_config_wce;  /* F_CONFIG_WCE negotiated */
+static int                    has_blk_size;    /* F_BLK_SIZE negotiated */
+static int                    has_topology;    /* F_TOPOLOGY negotiated */
+static int                    has_size_max;    /* F_SIZE_MAX negotiated */
+static int                    has_seg_max;     /* F_SEG_MAX negotiated */
+
+/* Block size and topology info */
+static struct virtio_blk_topology topo;
 
 /* ---- MSI-X IRQ handlers ---- */
 
@@ -86,6 +93,13 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
     if (!initialized)
         return -1;
+
+    /* Enforce size_max: reject single-segment I/O exceeding device limit */
+    if (topo.size_max > 0 && len > topo.size_max) {
+        klog(LOG_DEBUG, "virtio", "I/O size %u exceeds size_max %u",
+               (uint64_t)len, (uint64_t)topo.size_max);
+        return -1;
+    }
 
     /* Build request header */
     req.type     = type;
@@ -280,12 +294,12 @@ static int virtio_blk_do_flush(void)
 
 int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
 {
-    return virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * 512, buffer);
+    return virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * topo.blk_size, buffer);
 }
 
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
 {
-    return virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * 512, (void *)buffer);
+    return virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * topo.blk_size, (void *)buffer);
 }
 
 int virtio_blk_flush(void)
@@ -329,6 +343,16 @@ int virtio_blk_present(void)
     return initialized;
 }
 
+uint32_t virtio_blk_block_size(void)
+{
+    return topo.blk_size;
+}
+
+const struct virtio_blk_topology *virtio_blk_topology(void)
+{
+    return &topo;
+}
+
 /* ---- Initialization ---- */
 
 int virtio_blk_init(void)
@@ -339,6 +363,15 @@ int virtio_blk_init(void)
     uint32_t feat_lo;
     uint32_t driver_feat_lo;
     uint8_t status;
+
+    /* Default topology — 512-byte sectors, no limits */
+    topo.blk_size = 512;
+    topo.physical_block_exp = 0;
+    topo.alignment_offset = 0;
+    topo.min_io_size = 0;
+    topo.opt_io_size = 0;
+    topo.size_max = 0;
+    topo.seg_max = 0;
 
     /* Scan PCI for virtio-blk: modern ID 0x1042 or transitional ID 0x1001 */
     for (bus = 0; bus < 8 && !found; bus++) {
@@ -422,6 +455,34 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_CONFIG_WCE (write cache control)");
     }
 
+    /* Negotiate F_BLK_SIZE (bit 5): logical block size */
+    if (feat_lo & (1u << VIRTIO_BLK_F_BLK_SIZE)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_BLK_SIZE);
+        has_blk_size = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_BLK_SIZE");
+    }
+
+    /* Negotiate F_TOPOLOGY (bit 7): physical block topology */
+    if (feat_lo & (1u << VIRTIO_BLK_F_TOPOLOGY)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_TOPOLOGY);
+        has_topology = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_TOPOLOGY");
+    }
+
+    /* Negotiate F_SIZE_MAX (bit 0): max segment size */
+    if (feat_lo & (1u << VIRTIO_BLK_F_SIZE_MAX)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_SIZE_MAX);
+        has_size_max = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_SIZE_MAX");
+    }
+
+    /* Negotiate F_SEG_MAX (bit 1): max segments per request */
+    if (feat_lo & (1u << VIRTIO_BLK_F_SEG_MAX)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_SEG_MAX);
+        has_seg_max = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_SEG_MAX");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
     {
         uint32_t feat_hi = read_device_features(1);
@@ -483,6 +544,48 @@ int virtio_blk_init(void)
                wb_val ? "writeback" : "writethrough");
     }
 
+    /* Read block size if F_BLK_SIZE negotiated */
+    if (has_blk_size && blk_dev.device_cfg) {
+        volatile uint32_t *bs = (volatile uint32_t *)
+            (blk_dev.device_cfg + VIRTIO_BLK_CFG_BLK_SIZE);
+        topo.blk_size = mmio_read32(bs);
+        if (topo.blk_size == 0)
+            topo.blk_size = 512;  /* Sanity: never allow zero */
+        klog(LOG_DEBUG, "virtio", "Block size: %u bytes",
+               (uint64_t)topo.blk_size);
+    }
+
+    /* Read topology if F_TOPOLOGY negotiated */
+    if (has_topology && blk_dev.device_cfg) {
+        topo.physical_block_exp = mmio_read8(
+            (volatile uint8_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_PHYS_BLK_EXP));
+        topo.alignment_offset = mmio_read8(
+            (volatile uint8_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_ALIGN_OFFSET));
+        topo.min_io_size = mmio_read16(
+            (volatile uint16_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MIN_IO_SIZE));
+        topo.opt_io_size = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_OPT_IO_SIZE));
+        klog(LOG_DEBUG, "virtio", "Topology: phys_exp=%u align=%u min_io=%u opt_io=%u",
+               (uint64_t)topo.physical_block_exp,
+               (uint64_t)topo.alignment_offset,
+               (uint64_t)topo.min_io_size,
+               (uint64_t)topo.opt_io_size);
+    }
+
+    /* Read segment limits if F_SIZE_MAX / F_SEG_MAX negotiated */
+    if (has_size_max && blk_dev.device_cfg) {
+        topo.size_max = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_SIZE_MAX));
+        klog(LOG_DEBUG, "virtio", "Max segment size: %u bytes",
+               (uint64_t)topo.size_max);
+    }
+    if (has_seg_max && blk_dev.device_cfg) {
+        topo.seg_max = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_SEG_MAX));
+        klog(LOG_DEBUG, "virtio", "Max segments/request: %u",
+               (uint64_t)topo.seg_max);
+    }
+
     /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */
     {
         uint8_t cur = virtio_get_status(&blk_dev);
@@ -506,9 +609,11 @@ int virtio_blk_init(void)
         irq_register(msix_vec_config, virtio_blk_config_irq, NULL, "virtio-blk-cfg");
     }
 
-    klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors)%s%s",
+    klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors), blk_size=%u, opt_io=%u%s%s",
            (uint64_t)(disk_capacity / 2048),
            (uint64_t)disk_capacity,
+           (uint64_t)topo.blk_size,
+           (uint64_t)topo.opt_io_size,
            has_flush ? ", flush" : "",
            has_config_wce ? ", wce" : "");
 

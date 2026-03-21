@@ -45,11 +45,15 @@
 
 /* VirtIO block device config offsets (within device_cfg MMIO region)
  * See VirtIO 1.2 §5.2.4 — offsets within DEVICE_CFG capability */
-#define VIRTIO_BLK_CFG_CAPACITY   0x00  /* uint64_t: total 512-byte sectors */
-#define VIRTIO_BLK_CFG_SIZE_MAX   0x08  /* uint32_t: max bytes per segment */
-#define VIRTIO_BLK_CFG_SEG_MAX    0x0C  /* uint32_t: max segments per request */
-#define VIRTIO_BLK_CFG_BLK_SIZE   0x14  /* uint32_t: logical block size */
-#define VIRTIO_BLK_CFG_WRITEBACK  0x20  /* uint8_t:  0=writethrough, 1=writeback */
+#define VIRTIO_BLK_CFG_CAPACITY        0x00  /* uint64_t: total 512-byte sectors */
+#define VIRTIO_BLK_CFG_SIZE_MAX        0x08  /* uint32_t: max bytes per segment */
+#define VIRTIO_BLK_CFG_SEG_MAX         0x0C  /* uint32_t: max segments per request */
+#define VIRTIO_BLK_CFG_BLK_SIZE        0x14  /* uint32_t: logical block size */
+#define VIRTIO_BLK_CFG_PHYS_BLK_EXP    0x18  /* uint8_t:  log2(phys/logical) */
+#define VIRTIO_BLK_CFG_ALIGN_OFFSET    0x19  /* uint8_t:  offset of first aligned logical block */
+#define VIRTIO_BLK_CFG_MIN_IO_SIZE     0x1A  /* uint16_t: suggested minimum I/O size (blocks) */
+#define VIRTIO_BLK_CFG_OPT_IO_SIZE     0x1C  /* uint32_t: optimal (suggested max) I/O size (blocks) */
+#define VIRTIO_BLK_CFG_WRITEBACK       0x20  /* uint8_t:  0=writethrough, 1=writeback */
 
 /* VirtIO block request header */
 struct virtio_blk_req {
@@ -57,6 +61,17 @@ struct virtio_blk_req {
     uint32_t reserved;
     uint64_t sector;   /* starting sector (LBA) */
 } __attribute__((packed));
+
+/* Topology and segment limit information (populated during init) */
+struct virtio_blk_topology {
+    uint32_t blk_size;           /* Logical block size in bytes (default 512) */
+    uint8_t  physical_block_exp; /* log2(phys_size / blk_size) */
+    uint8_t  alignment_offset;   /* Offset of first aligned logical block */
+    uint16_t min_io_size;        /* Minimum I/O size in logical blocks */
+    uint32_t opt_io_size;        /* Optimal I/O size in logical blocks */
+    uint32_t size_max;           /* Max bytes per segment (0 = no limit) */
+    uint32_t seg_max;            /* Max segments per request (0 = no limit) */
+};
 
 /* --- API --- */
 
@@ -84,6 +99,13 @@ int virtio_blk_set_write_cache(int enable);
 
 /* Get total disk capacity in 512-byte sectors. */
 uint64_t virtio_blk_capacity(void);
+
+/* Get the negotiated logical block size in bytes (default 512). */
+uint32_t virtio_blk_block_size(void);
+
+/* Get topology and segment limit information. Returns pointer to
+ * internal struct (valid while driver is initialized). */
+const struct virtio_blk_topology *virtio_blk_topology(void);
 
 /* Check if a virtio-blk device was detected and initialized. */
 int virtio_blk_present(void);

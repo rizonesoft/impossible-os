@@ -220,7 +220,7 @@ void blkdev_register_all(void)
         bd.name[0]='v'; bd.name[1]='i'; bd.name[2]='r';
         bd.name[3]='t'; bd.name[4]='i'; bd.name[5]='o';
         bd.name[6]='0'; bd.name[7]='\0';
-        bd.sector_size  = 512;
+        bd.sector_size  = virtio_blk_block_size();
         bd.sector_count = virtio_blk_capacity();
         bd.read  = blkdev_virtio_read;
         bd.write = blkdev_virtio_write;
