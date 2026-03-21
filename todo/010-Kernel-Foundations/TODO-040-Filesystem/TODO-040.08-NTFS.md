@@ -1179,52 +1179,49 @@ graph TD
 > migrating between NTFS and their native filesystem. Users must use third-party
 > cloning tools (Clonezilla, Macrium) or manual copy. Impossible OS does it natively.
 
-- [ ] Implement `ntfs_migrate_to_ixfs(vol, target_drive)`:
-  - [ ] Walk entire NTFS directory tree (recursive MFT + B+ tree traversal)
-  - [ ] For each directory: `vfs_create()` on target IXFS volume
-  - [ ] For each file: read via NTFS `$DATA` → write to IXFS file
-  - [ ] Preserve timestamps: map FILETIME → IXFS timestamps
-  - [ ] Preserve file attributes: map DOS flags → IXFS attributes
-  - [ ] Skip system metafiles ($MFT, $Volume, etc.) — IXFS has its own
-  - [ ] Handle symlinks/junctions: create equivalent IXFS links if supported
-- [ ] Progress UI: file count, bytes copied, ETA, current file path
-- [ ] Resume on failure: checkpoint last-copied inode, skip completed files
-- [ ] Verification pass: compare file sizes and checksums after migration
-- [ ] Wire to Disk Manager: "Migrate to IXFS" button on NTFS volumes
-- [ ] Commit: `"ntfs: NTFS-to-IXFS migration engine"`
+- [ ] Implement `ntfs_migrate_to_ixfs(| ⭐  | Priority   | Section                        | Description                                                      |
+| --- | ---------- | ------------------------------ | ---------------------------------------------------------------- |
+| 💎  | 🔴 P0      | 1.1 BPB Parsing                | Foundation — locate MFT on disk ✅                                |
+| 💎  | 🔴 P0      | 2.1 MFT Record Reader          | Foundation — read any file's metadata ✅                          |
+| 💎  | 🔴 P0      | 2.2 Fixup Verification         | Integrity — must be done before ANY attribute parsing ✅          |
+| 💎  | 🔴 P0      | 3.1 Attribute Iterator         | Foundation — walk attributes in MFT records ✅                    |
+| 💎  | 🔴 P0      | 3.3 `$FILE_NAME` Decoder       | Foundation — extract filenames ✅                                 |
+| 💎  | 🔴 P0      | 4.1 Run-List Decoder           | Foundation — translate VCN → LCN for file reads ✅                |
+| 💎  | 🟠 P1      | 3.2 `$STANDARD_INFORMATION`    | Metadata — timestamps and permissions ✅                          |
+| 💎  | 🟠 P1      | 4.2 File Data Reader           | Core feature — actually read file contents ✅                     |
+| 💎  | 🟠 P1      | 5.1 `$INDEX_ROOT` Parser       | Directory — root of B+ tree ✅                                    |
+| 💎  | 🟠 P1      | 5.2 INDX Buffer Reader         | Directory — child nodes of B+ tree ✅                             |
+| 💎  | 🟠 P1      | 5.3 Directory Lookup           | Directory — path resolution (`C:\path\to\file`)                  |
+| 💎  | 🟠 P1      | 6.1 VFS Registration           | Integration — make NTFS mountable                                |
+| 💎  | 🟡 P2      | 3.4 `$ATTRIBUTE_LIST`          | Robustness — handle fragmented/overflowing MFT records           |
+| 💎  | 🟡 P2      | 3.5 `$SECURITY_DESCRIPTOR`     | Interop — read NTFS ACLs for `GetFileSecurity()`                 |
+| 💎  | 🟡 P2      | 3.6 `$REPARSE_POINT`           | Feature — follow symlinks and junctions                          |
+| 💎  | 🟡 P2      | 5.4 Directory Enumeration      | Feature — `FindFirstFile`/`FindNextFile` support                 |
+| 💎  | 🟡 P2      | 7.1 System Metafiles           | Feature — volume name, dirty flag, free space, `$UpCase`         |
+| 💎  | 🟡 P2      | 9.1 LZNT1 Decompression        | Interop — read compressed Windows system files                   |
+| 💎  | 🟡 P2      | 10.1 MFT Record Cache          | Performance — avoid redundant disk reads                         |
+| 💎  | 🟢 P3      | 8.1 Test Suite                 | Quality — automated validation with test images                  |
+| ⭐  | 🟢 P3      | 11.1 Health Dashboard          | **At-a-glance NTFS health** — no OS does this                    |
+| ⭐  | 🟢 P3      | 11.2 Deleted File Recovery     | **Built-in forensic recovery** — Windows needs 3rd-party         |
+| ⭐  | 🟢 P3      | 17.1 ADS Explorer              | **GUI ADS viewer** — hidden data transparency                    |
+| 💎  | 🟣 P4      | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness             |
+| 💎  | 🟣 P4      | 12.2 USA Regeneration          | Write — fixup generation for MFT/INDX writes                     |
+| 💎  | 🟣 P4      | 12.3 MFT Record Allocator      | Write — allocate/free MFT inodes, extend `$MFT`                  |
+| 💎  | 🟣 P4      | 12.4 Attribute Writer          | Write — add/update/remove attributes, encode data runs           |
+| 💎  | 🟣 P4      | 12.5 File Create/Delete/Rename | Write — full file lifecycle on NTFS                              |
+| 💎  | 🟣 P4      | 13.1 Journal Engine            | Crash safety — `$LogFile` redo/undo transaction logging          |
+| 💎  | 🟣 P4      | 13.2 Recovery Replay           | Crash safety — dirty mount redo/undo replay                      |
+| 💎  | 🟣 P4      | 14.1 B+ Tree Insert/Delete     | Write — directory mutation with node split/merge                 |
+| 💎  | 🟣 P4      | 16.1 File Write Engine         | Write — resident/non-resident data writes + truncation           |
+| ⭐  | 🟣 P4      | 15.1 Boot-Time Init            | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
+| ⭐  | 🟣 P4      | 15.2 System File Layout        | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS       |
+| ⭐  | 🟣 P4      | 15.3 NTFS Volume Formatter     | **NTFS as `C:\`** — format tool for boot volume creation         |
+| ⭐  | 🔵 Future   | 18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively        |
 
-## Priority Order
-
-| ⭐ | Priority | Section                        | Description                                                      |
-| -- | -------- | ------------------------------ | ---------------------------------------------------------------- |
-| 💎 | 🔴 P0    | 1.1 BPB Parsing                | Foundation — locate MFT on disk                                  |
-| 💎 | 🔴 P0    | 2.1 MFT Record Reader          | Foundation — read any file's metadata                            |
-| 💎 | 🔴 P0    | 2.2 Fixup Verification         | Integrity — must be done before ANY attribute parsing            |
-| 💎 | 🔴 P0    | 3.1 Attribute Iterator         | Foundation — walk attributes in MFT records                      |
-| 💎 | 🔴 P0    | 3.3 `$FILE_NAME` Decoder       | Foundation — extract filenames                                   |
-| 💎 | 🔴 P0    | 4.1 Run-List Decoder           | Foundation — translate VCN → LCN for file reads                  |
-| 💎 | 🟠 P1    | 3.2 `$STANDARD_INFORMATION`    | Metadata — timestamps and permissions                            |
-| 💎 | 🟠 P1    | 4.2 File Data Reader           | Core feature — actually read file contents                       |
-| 💎 | 🟠 P1    | 5.1 `$INDEX_ROOT` Parser       | Directory — root of B+ tree                                      |
-| 💎 | 🟠 P1    | 5.2 INDX Buffer Reader         | Directory — child nodes of B+ tree                               |
-| 💎 | 🟠 P1    | 5.3 Directory Lookup           | Directory — path resolution (`C:\path\to\file`)                  |
-| 💎 | 🟠 P1    | 6.1 VFS Registration           | Integration — make NTFS mountable                                |
-| 💎 | 🟡 P2    | 3.4 `$ATTRIBUTE_LIST`          | Robustness — handle fragmented/overflowing MFT records           |
-| 💎 | 🟡 P2    | 3.5 `$SECURITY_DESCRIPTOR`     | Interop — read NTFS ACLs for `GetFileSecurity()`                 |
-| 💎 | 🟡 P2    | 3.6 `$REPARSE_POINT`           | Feature — follow symlinks and junctions                          |
-| 💎 | 🟡 P2    | 5.4 Directory Enumeration      | Feature — `FindFirstFile`/`FindNextFile` support                 |
-| 💎 | 🟡 P2    | 7.1 System Metafiles           | Feature — volume name, dirty flag, free space, `$UpCase`         |
-| 💎 | 🟡 P2    | 9.1 LZNT1 Decompression        | Interop — read compressed Windows system files                   |
-| 💎 | 🟡 P2    | 10.1 MFT Record Cache          | Performance — avoid redundant disk reads                         |
-| 💎 | 🟢 P3    | 8.1 Test Suite                 | Quality — automated validation with test images                  |
-| ⭐ | 🟢 P3    | 11.1 Health Dashboard          | **At-a-glance NTFS health** — no OS does this                    |
-| ⭐ | 🟢 P3    | 11.2 Deleted File Recovery     | **Built-in forensic recovery** — Windows needs 3rd-party         |
-| ⭐ | 🟢 P3    | 17.1 ADS Explorer              | **GUI ADS viewer** — hidden data transparency                    |
-| 💎 | 🟣 P4    | 12.1 Cluster Allocator         | Write — `$Bitmap` alloc/free with MFT Zone awareness             |
-| 💎 | 🟣 P4    | 12.2 USA Regeneration          | Write — fixup generation for MFT/INDX writes                     |
-| 💎 | 🟣 P4    | 12.3 MFT Record Allocator      | Write — allocate/free MFT inodes, extend `$MFT`                  |
-| 💎 | 🟣 P4    | 12.4 Attribute Writer          | Write — add/update/remove attributes, encode data runs           |
-| 💎 | 🟣 P4    | 12.5 File Create/Delete/Rename | Write — full file lifecycle on NTFS                              |
+> [!NOTE]
+> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
+> 🟣 P4 = Required for NTFS as primary `C:\` boot volume (replaces IXFS).
+> ✅ = Already implemented and verified in `ntfs_core.c`.   |
 | 💎 | 🟣 P4    | 13.1 Journal Engine            | Crash safety — `$LogFile` redo/undo transaction logging          |
 | 💎 | 🟣 P4    | 13.2 Recovery Replay           | Crash safety — dirty mount redo/undo replay                      |
 | 💎 | 🟣 P4    | 14.1 B+ Tree Insert/Delete     | Write — directory mutation with node split/merge                 |

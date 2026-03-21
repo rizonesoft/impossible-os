@@ -213,6 +213,7 @@ graph TD
 > **Phase 5** delivers advanced storage features (⭐): compression, dedup, reflinks, defrag, sparse, TRIM.
 > **Phases 6–7** add management and automation: online grow, self-healing, auto-snapshots, encryption, USN, quotas.
 > **Phase 8** caps everything with the health dashboard and comprehensive test suite.
+> **Phase 9** delivers enterprise & stretch features: object IDs, extended attributes, and storage tiering.
 
 > [!TIP]
 > **Quick wins after Phase 1:**
@@ -1106,45 +1107,50 @@ Boot splash → Desktop
 | `src/kernel/fs/ixfs/ixfs_reflink.c`       | [NEW] Reflink (instant zero-copy clone)         |
 | `src/kernel/fs/ixfs/ixfs_usn.c`           | [NEW] USN change journal                        |
 | `src/kernel/fs/ixfs/ixfs_unicode.c`       | [NEW] Case-insensitive comparison, Unicode      |
+| `src/kernel/fs/ixfs/ixfs_objid.c`         | [NEW] Object IDs (Win32 compat)                 |
+| `src/kernel/fs/ixfs/ixfs_ea.c`            | [NEW] Extended Attributes (Win32 EA)            |
+| `src/kernel/fs/ixfs/ixfs_tier.c`          | [NEW] Storage tiering (hot/cold placement)      |
 | `src/kernel/fs/partition.c`               | IXFS detection (magic `0x49584653`)             |
 
 ---
 
 ## OS Comparison
 
-| Feature                            | 🪟 NTFS                             | 🐧 ext4                          | 🌊 Btrfs/ZFS                      | 🚀 Impossible OS (IXFS)                            |
-| ---------------------------------- | ----------------------------------- | -------------------------------- | ---------------------------------- | --------------------------------------------------- |
-| Max volume size                    | ✅ 16 EB                            | ✅ 1 EB                          | ✅ 256 ZB (ZFS)                    | ✅ 64 TiB (64-bit blocks × 4 KiB)                   |
-| Block size                         | ✅ 512 B–64 KiB clusters            | ✅ 1 KiB–64 KiB                  | ✅ 4 KiB–128 KiB                   | ✅ 4 KiB (page-aligned)                              |
-| Extent-based allocation            | ✅ Non-resident $DATA               | ✅ Extent tree                    | ✅ B-tree extents                   | ✅ §4 Done — 4 inline + overflow tree                |
-| Journaling                         | ✅ $LogFile (redo + undo)           | ✅ JBD2 (ordered)                 | ✅ CoW (journal-free)               | ✅ §5 Done — WAL + CoW                               |
-| Copy-on-Write                      | ❌                                  | ❌                                | ✅ Native                           | ✅ §6 Done — native CoW + refcounts                  |
-| **Snapshots**                      | ⚠️ VSS (separate service)          | ❌ (LVM only)                     | ✅ Native                           | ✅ §6 Done — filesystem-level, instant               |
-| **Auto snapshots**                 | ❌ VSS scheduled task               | ❌                                | ⚠️ Manual scripts                  | ⬜ §6.2 P3 — **configurable retention policy**       |
-| Per-block checksums                | ❌                                  | ⚠️ Metadata only (CRC32C)        | ✅ All data + metadata              | ✅ §7 Done — CRC32C all blocks                       |
-| **Self-healing metadata**          | ❌ Requires chkdsk                  | ❌ Requires fsck                  | ✅ ZFS with mirrors                 | ⬜ §7.2 P2 — **backup superblock + bitmap**          |
-| Alternate Data Streams             | ✅ Native                           | ❌                                | ❌                                  | ⬜ §9 P1 — native via stream inodes                  |
-| Security descriptors (ACLs)        | ✅ Full DACL/SACL                   | ✅ POSIX ACLs (different model)   | ✅ POSIX ACLs                       | ⬜ §10 P1 — Win32-native DACLs                       |
-| Hard links                         | ✅                                  | ✅                                | ✅                                  | ⬜ §11.1 P1 — existing `i_links` field               |
-| Symbolic links                     | ✅ Reparse points                   | ✅ `symlink()`                    | ✅                                  | ⬜ §11.2 P1 — reparse-compatible                     |
-| **Transparent compression**        | ⚠️ LZ77 (1993 algo, slow)          | ❌                                | ✅ Zstd/LZO                         | ⬜ §12 P2 — **LZ4 (fastest) + Zstd (best ratio)**   |
-| **Per-file encryption**            | ⚠️ EFS (certificate nightmare)     | ✅ fscrypt (CLI setup)            | ✅ ZFS native encryption            | ⬜ §13 P3 — **simple master key model**              |
-| **Inline deduplication**           | ❌                                  | ❌                                | ✅ ZFS (needs huge RAM)             | ⬜ §14 P2 — **lightweight, uses CoW refs**           |
-| **Reflinks (instant copy)**        | ⚠️ Server 2016+ only               | ❌                                | ✅ Native (Btrfs/XFS)               | ⬜ §15 P2 — **transparent via CopyFile**             |
-| **Online defrag**                  | ✅ Windows Defragmenter             | ✅ `e4defrag` (limited)           | ✅ `btrfs defrag`                   | ⬜ §16 P2 — extent consolidation                     |
-| **Online resize**                  | ✅ Grow only                        | ✅ Grow only (`resize2fs`)        | ✅ Grow + shrink                    | ⬜ §1.2 P2 — grow (shrink future)                    |
-| Inline small files                 | ✅ Resident $DATA                   | ✅ Inline data                    | ❌                                  | ✅ §4 Done — ≤48 bytes in `i_extents`                |
-| Directory hash index               | ✅ B+ tree                          | ✅ HTree (Half MD4)               | ✅ B-tree                           | ✅ §3 Done — FNV-1a hash index                       |
-| **Case-insensitive paths**         | ✅ Default                          | ⚠️ Opt-in (5.2+, casefolding)    | ❌                                  | ⬜ §20 P1 — **default + per-mount override**         |
-| **Sparse file support**            | ✅ `FSCTL_SET_SPARSE`               | ✅ `fallocate` hole punch         | ✅ CoW-native                       | ⬜ §21 P2 — **sparse + CoW integration**             |
-| **Change journal (USN)**           | ✅ `$UsnJrnl`                       | ❌ (inotify = in-memory only)     | ⚠️ Send/receive (different model)  | ⬜ §22 P3 — **persistent circular buffer**           |
-| **Volume quotas**                  | ✅                                  | ✅                                | ✅ (ZFS/Btrfs)                      | ⬜ §23 P3 — per-user limits                          |
-| **TRIM / discard**                 | ✅ Scheduled only                   | ✅ `discard` mount option          | ✅ Native                           | ⬜ §24 P2 — **journal-batched TRIM**                 |
-| **Volume health dashboard**        | ❌ Requires chkdsk                  | ❌ CLI `tune2fs` only             | ⚠️ ZFS `zpool status`              | ⬜ §18 P3 — **GUI health panel**                     |
-| **Feature count**                  | 14/26                               | 10/26                             | 17/26                              | **26/26** — all features combined                    |
+| Feature                          | 🪟 Windows 11 (NTFS)              | 🐧 Linux (ext4 / Btrfs / ZFS)      | 🚀 Impossible OS (IXFS)                               |
+| -------------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------------------- |
+| Max volume size                  | ✅ 16 EB                           | ✅ 1 EB (ext4) / 256 ZB (ZFS)       | ✅ 64 TiB (64-bit blocks × 4 KiB)                      |
+| Block size                       | ✅ 512 B–64 KiB clusters           | ✅ 1 KiB–128 KiB                    | ✅ 4 KiB (page-aligned)                                 |
+| Extent-based allocation          | ✅ Non-resident $DATA              | ✅ Extent tree / B-tree              | ✅ §4 Done — 4 inline + overflow tree                   |
+| Journaling                       | ✅ $LogFile (redo + undo)          | ✅ JBD2 / CoW (Btrfs)               | ✅ §5 Done — WAL + CoW                                  |
+| Copy-on-Write                    | ⬜ Not supported                   | ✅ Btrfs / ZFS native                | ✅ §6 Done — native CoW + refcounts                     |
+| Snapshots                        | ⚠️ VSS (separate service)          | ✅ Btrfs / ZFS native                | ✅ §6 Done — filesystem-level, instant                  |
+| **Auto snapshots**               | ⬜ VSS scheduled task              | ⚠️ Manual scripts                   | ⬜ §6.2 P3 — **configurable retention policy** 🚀       |
+| Per-block checksums              | ⬜ Not supported                   | ✅ Btrfs / ZFS (ext4 metadata only)  | ✅ §7 Done — CRC32C all blocks                          |
+| **Self-healing metadata**        | ⬜ Requires chkdsk                 | ✅ ZFS with mirrors only             | ⬜ §7.2 P2 — **backup superblock + bitmap** 🚀          |
+| Alternate Data Streams           | ✅ Native                          | ⬜ Not supported                     | ⬜ §9.1 P1 — native via stream inodes                   |
+| Security descriptors (ACLs)      | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different model)      | ⬜ §10.1 P1 — Win32-native DACLs                        |
+| Hard links                       | ✅ Native                          | ✅ Native                            | ⬜ §11.1 P1 — existing `i_links` field                  |
+| Symbolic links                   | ✅ Reparse points                  | ✅ `symlink()`                       | ⬜ §11.2 P1 — reparse-compatible                        |
+| **Transparent compression**      | ⚠️ LZ77 (1993 algo, slow)          | ✅ Btrfs Zstd (no ext4)             | ⬜ §12.1 P2 — **LZ4 (fastest) + Zstd (best ratio)** 🚀 |
+| **Per-file encryption**          | ⚠️ EFS (certificate nightmare)     | ✅ fscrypt / ZFS encryption          | ⬜ §13.1 P3 — **simple master key model** 🚀            |
+| **Inline deduplication**         | ⬜ Offline only (Server)           | ✅ ZFS (needs huge RAM)              | ⬜ §14.1 P2 — **lightweight, uses CoW refs** 🚀         |
+| **Reflinks (instant copy)**      | ⚠️ Server 2016+ only              | ✅ Btrfs / XFS native                | ⬜ §15.1 P2 — **transparent via CopyFile** 🚀           |
+| **Online defrag**                | ✅ Windows Defragmenter            | ✅ `e4defrag` / `btrfs defrag`       | ⬜ §16.1 P2 — extent consolidation                      |
+| **Online resize**                | ✅ Grow only                       | ✅ Grow only (ext4/Btrfs can shrink) | ⬜ §1.2 P2 — grow (shrink future)                       |
+| Inline small files               | ✅ Resident $DATA                  | ✅ ext4 inline data                  | ✅ §4 Done — ≤48 bytes in `i_extents`                   |
+| Directory hash index             | ✅ B+ tree                         | ✅ HTree / B-tree                    | ✅ §3 Done — FNV-1a hash index                          |
+| **Case-insensitive paths**       | ✅ Default                         | ⚠️ Opt-in (ext4 5.2+ casefolding)   | ⬜ §20.1 P1 — **default + per-mount override** 🚀       |
+| **Sparse file support**          | ✅ `FSCTL_SET_SPARSE`              | ✅ `fallocate` / Btrfs CoW-native    | ⬜ §21.1 P2 — **sparse + CoW integration** 🚀           |
+| **Change journal (USN)**         | ✅ `$UsnJrnl`                      | ⬜ inotify = in-memory only          | ⬜ §22.1 P3 — **persistent circular buffer** 🚀         |
+| **Volume quotas**                | ✅ Native                          | ✅ ext4 / ZFS / Btrfs                | ⬜ §23.1 P3 — per-user limits                           |
+| **TRIM / discard**               | ✅ Scheduled only                  | ✅ `discard` mount option             | ⬜ §24.1 P2 — **journal-batched TRIM** 🚀               |
+| **Object IDs**                   | ✅ `$OBJECT_ID` attribute          | ⬜ No persistent file IDs            | ⬜ §25.1 P4 — **Win32-compatible UUID per file** 🚀     |
+| **Extended Attributes (EA)**     | ✅ `$EA` attribute                 | ✅ xattrs (different API)            | ⬜ §26.1 P4 — **Win32 EA + WSL interop** 🚀             |
+| **Storage tiering**              | ⬜ Storage Spaces (not FS-native)  | ⬜ No filesystem-level tiering       | ⬜ §27.1 P4 — **filesystem-native hot/cold** 🚀         |
+| **Volume health dashboard**      | ⬜ Requires chkdsk                 | ⚠️ CLI `tune2fs` / `zpool status`    | ⬜ §18.1 P3 — **GUI health panel** 🚀                   |
+| **Feature count**                | 16/29                              | 15/29                                | **29/29** — all features combined                       |
 
-> **After all phases:** Impossible OS is the **only OS** to offer every feature in a single native filesystem.
-> NTFS has 14/26 (missing CoW, dedup, reflinks, auto-snap, checksums, self-healing, health dashboard, and extras).
-> ext4 has 10/26 (missing CoW, snapshots, ADS, compression, dedup, reflinks, USN, and more).
-> Btrfs/ZFS get close at 17/26 but lack Win32 semantics (ADS, DACLs, case-insensitive), health GUI, and USN journal.
+> **After P0+P1 items:** Impossible OS matches Windows and Linux feature-for-feature on core filesystem semantics (journaling, CoW, snapshots, checksums, Win32 compatibility, case-insensitive paths).
+> **After P2–P3 exclusive features:** Exceeds both — transparent LZ4/Zstd compression, inline dedup, reflinks via CopyFile, journal-batched TRIM, sparse+CoW integration, auto-snapshots with retention, per-file encryption with simple master key, USN change journal, health dashboard.
+> **After P4 items:** Full enterprise parity — object IDs, extended attributes, filesystem-native storage tiering.
 

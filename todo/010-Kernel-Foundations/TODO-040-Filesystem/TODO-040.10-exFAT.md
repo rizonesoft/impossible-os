@@ -68,6 +68,9 @@ graph TD
     T["§12.3 Smart Hot-Swap"]
     U["§12.4 Frag Visualizer"]
     V["§12.5 USB/SD Benchmark"]
+    W["§12.6 Write Coalescing"]
+    X["§12.7 I/O Bandwidth Monitor"]
+    Y["§12.8 Corruption Auto-Heal"]
 
     SPEC --> A
     BLK --> A
@@ -101,6 +104,10 @@ graph TD
     G --> U
     C --> U
     O --> V
+    O --> W
+    O --> X
+    G --> Y
+    C --> Y
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -132,6 +139,9 @@ graph TD
 | ⭐ | **7**  | `TODO-040.10-exFAT.md`               | §12.3 Smart Hot-Swap Detection   | Auto-mount on insert, safe-eject on remove — **beats Windows/Linux UX**   | Phase 5 (§9.1)               |   ⬜   |
 | ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.4 Fragmentation Visualizer   | Cluster-level map in Disk Manager — **no OS does this for exFAT**         | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
 | ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.5 USB/SD Speed Benchmark     | One-click removable media speed test — **no OS has this built-in**        | Phase 5 (§9.1)               |   ⬜   |
+| ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.8 Corruption Auto-Heal       | Silent bitmap/FAT repair on mount — **no OS auto-heals exFAT**            | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
+| ⭐ | **9**  | `TODO-040.10-exFAT.md`               | §12.6 Write Coalescing           | Flash-aware write batching — **reduces wear 10–50×**                      | Phase 5 (§9.1)               |   ⬜   |
+| ⭐ | **9**  | `TODO-040.10-exFAT.md`               | §12.7 I/O Bandwidth Monitor      | Per-app per-volume I/O tracking — **no OS does this**                     | Phase 5 (§9.1)               |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is a prerequisite — block I/O and partition detection must be working.
@@ -145,8 +155,10 @@ graph TD
 > **Phase 6** adds TexFAT (embedded/automotive compat) and the test suite.
 > **Phase 7** delivers the competitive features (⭐): removable media health dashboard,
 > deleted file recovery, and smart hot-swap detection.
-> **Phase 8** adds the polish features (⭐): cluster fragmentation visualizer and
-> built-in USB/SD speed benchmark — unprecedented for any desktop OS.
+> **Phase 8** adds the polish features (⭐): cluster fragmentation visualizer,
+> built-in USB/SD speed benchmark, and silent corruption auto-heal — unprecedented for any desktop OS.
+> **Phase 9** delivers the final exclusive features (⭐): flash-aware write coalescing
+> and per-app I/O bandwidth monitor — no OS tracks per-volume per-app I/O.
 
 > [!TIP]
 > **Quick wins after Phase 2:**

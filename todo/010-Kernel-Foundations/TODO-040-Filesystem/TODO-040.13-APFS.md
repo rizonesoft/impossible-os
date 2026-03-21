@@ -621,6 +621,66 @@ graph TD
 - [ ] Wire to File Properties panel for APFS volumes
 - [ ] Commit: `"apfs: nanosecond timestamp inspector"`
 
+### 10.5 Volume Group Analyzer (🚀 Impossible OS Exclusive)
+
+**Prompt:** APFS volume groups bind System and Data volumes together (introduced in macOS 10.15 Catalina for the read-only sealed system volume). Parse `apfs_incompatible_features` for `APFS_INCOMPAT_SEALED_VOLUME` and `APFS_INCOMPAT_DATALESS_SNAPS`. Read the volume role from `apfs_role` to classify volumes as System, Data, Recovery, Preboot, VM, or Installer. Display volume group membership and role classification in Disk Manager. No OS surfaces volume group relationships in a consumer-facing GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"apfs: volume group analyzer"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** macOS `diskutil apfs listVolumeGroups` is CLI-only and
+> requires admin access. Windows and Linux have no volume group awareness. Impossible
+> OS showing volume group membership, sealed status, and role classification in a
+> graphical panel is a forensic and diagnostic capability no other OS has.
+
+- [ ] Parse `apfs_role` field from volume superblock:
+  - [ ] `APFS_VOL_ROLE_NONE` (0x0000) — standard volume
+  - [ ] `APFS_VOL_ROLE_SYSTEM` (0x0001) — macOS System volume
+  - [ ] `APFS_VOL_ROLE_DATA` (0x0004) — macOS Data volume
+  - [ ] `APFS_VOL_ROLE_RECOVERY` (0x0008), `APFS_VOL_ROLE_PREBOOT` (0x0010)
+  - [ ] `APFS_VOL_ROLE_VM` (0x0002) — swap/paging
+  - [ ] `APFS_VOL_ROLE_INSTALLER` (0x0020)
+- [ ] Detect sealed volumes: `APFS_INCOMPAT_SEALED_VOLUME` flag
+- [ ] Group volumes by container — identify System + Data pairs
+- [ ] Display role badges and group membership in Disk Manager
+- [ ] Commit: `"apfs: volume group analyzer"`
+
+### 10.6 Encryption Status Reporter (🚀 Impossible OS Exclusive)
+
+**Prompt:** Report per-volume encryption status from APFS volume flags without attempting decryption. Read `APFS_FS_UNENCRYPTED`, `APFS_FS_ONEKEY`, and `APFS_FS_EFFACEABLE` flags. For encrypted volumes, identify the encryption type (software vs hardware) and protection class from `default_protection_class`. Show in Disk Manager which volumes are encrypted, the algorithm indicators, and whether FileVault-style encryption is active. No OS shows APFS encryption status for non-macOS hosts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"apfs: encryption status reporter"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows shows "Unknown Filesystem" for encrypted APFS.
+> Linux `apfs-fuse` fails silently on encrypted volumes. Impossible OS reporting
+> encryption status, algorithm type, and protection class is unique diagnostic
+> value — useful for forensics and IT inventory without needing decryption keys.
+
+- [ ] Read volume encryption flags:
+  - [ ] `APFS_FS_UNENCRYPTED` (0x01) — no encryption
+  - [ ] `APFS_FS_ONEKEY` (0x08) — single volume encryption key
+  - [ ] `APFS_FS_EFFACEABLE` (0x10) — effaceable storage
+- [ ] Parse `default_protection_class`:
+  - [ ] Class A (Complete Protection), B (Protected Unless Open), C (Protected Until Auth), D (No Protection)
+- [ ] Detect FileVault indicator: encrypted + non-effaceable + System role
+- [ ] Display encryption status badge per volume in Disk Manager
+- [ ] Log: `[apfs] Volume '%s': %s (protection class %c)`
+- [ ] Commit: `"apfs: encryption status reporter"`
+
+### 10.7 Fusion Drive Detector (🚀 Impossible OS Exclusive)
+
+**Prompt:** APFS Fusion Drives span a single container across an SSD and HDD (two physical stores in the Space Manager). Detect Fusion containers by checking if the Space Manager has multiple physical stores (`sd_devs` > 1). Report which physical devices back the container and their individual capacities. No non-macOS OS detects or reports Fusion Drive configurations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"apfs: fusion drive detector"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Paragon APFS for Windows explicitly states "Fusion Drives
+> not supported." `linux-apfs-rw` has no Fusion awareness. `apfs-fuse` has partial
+> read-only Fusion support. Impossible OS detecting and reporting Fusion containers
+> with per-device capacity breakdown is a unique capability.
+
+- [ ] Parse Space Manager for device count (`sd_devs`)
+- [ ] If `sd_devs > 1`: flag as Fusion Drive container
+- [ ] Report per-device capacity and block ranges
+- [ ] Display Fusion badge on container in Disk Manager
+- [ ] Log: `[apfs] Fusion container detected: %u devices`
+- [ ] Commit: `"apfs: fusion drive detector"`
+
 ---
 
 ## 11. Transparent Decompression

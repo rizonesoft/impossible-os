@@ -821,6 +821,81 @@ remaining work in the entire filesystem TODO.
 - [ ] Test: `CopyFile("C:\\file.txt", "D:\\copy.txt", TRUE)` → both files exist
 - [ ] Commit: `"vfs: cross-drive move and copy"`
 
+### 6.7 VFS Tracepoints & I/O Profiling (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Linux recently added VFS tracepoints (LSFMMBPF 2025) for debugging and monitoring, but they're developer-only BPF hooks with no user-facing exposure. Windows has ETW traces for filter drivers but requires complex tooling. Impossible OS can provide **ns-resolution I/O tracepoints** with a simple ring buffer that any process can subscribe to — enabling real-time I/O profiling from the Task Manager or a `iotrace` CLI tool. Instrument `vfs_open`, `vfs_read`, `vfs_write`, `vfs_close`, `vfs_create`, `vfs_unlink`, `vfs_rename`, and `vfs_stat` with timestamped trace entries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: I/O tracepoints and profiling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux exposes VFS-level I/O traces to
+> non-developer users. Impossible OS can be the first to show per-file I/O latency
+> histograms, IOPS counters, and hotspot identification directly in the GUI.
+
+- [ ] Define `struct vfs_trace_entry`: `{ timestamp_ns, op_type, path_hash, file_id, latency_ns, bytes, result }`
+- [ ] Implement lock-free ring buffer for trace entries (fixed 64 KiB, oldest evicted)
+- [ ] Instrument `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()` with trace macros
+- [ ] Instrument `vfs_create()`, `vfs_unlink()`, `vfs_rename()`, `vfs_stat()` with trace macros
+- [ ] Implement `VfsTraceEnable(filter_flags)` / `VfsTraceDisable()` Win32 API
+- [ ] Implement `VfsTraceRead(buffer, count)` — read N trace entries from ring buffer
+- [ ] Configurable via registry: `HKLM\SYSTEM\Config\VFS\TraceEnabled`, `TraceBufferSize`
+- [ ] Test: enable tracing, create/read/delete file → trace entries appear with correct timestamps
+- [ ] Commit: `"vfs: I/O tracepoints and profiling"`
+
+### 6.8 Parallel Directory Operations (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Linux is actively working on parallel directory operations (LSFMMBPF 2025) — allowing multiple file creates/deletes within the same directory to proceed concurrently. Current VFS implementations serialize all operations within a directory via `i_mutex`. Windows NTFS uses fine-grained B-tree locking but it's not exposed as an API. Impossible OS can implement per-directory concurrent operations from day one by using per-directory reader-writer locks instead of a global VFS lock. This enables significantly better performance for build systems, package managers, and any tool that creates/deletes many files in the same directory. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: parallel directory operations"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Linux currently serializes all operations within a directory.
+> Impossible OS can be the first consumer OS with truly parallel directory operations,
+> delivering measurable speedups for `npm install`, `make -jN`, and large unzip operations.
+
+- [ ] Replace the single global `vfs_lock` (§6.1) with per-directory `rwlock_t` in `vfs_node`
+- [ ] Read operations (`finddir`, `readdir`, `stat`) take reader lock on parent directory
+- [ ] Write operations (`create`, `unlink`, `rename`) take writer lock on parent directory
+- [ ] Cross-directory operations (rename across dirs) take writer locks on both directories (ordered by path to prevent deadlock)
+- [ ] Benchmark: parallel `vfs_create()` in same directory vs serial baseline
+- [ ] Test: 4 kernel threads creating files simultaneously in same directory → no corruption
+- [ ] Commit: `"vfs: parallel directory operations"`
+
+### 6.9 UID/GID Remapped Mounts (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Linux 5.12 introduced idmapped mounts and continues to expand support (FUSE in 6.12, `statmount` in 6.15). Windows has no equivalent — all file ownership is either per-volume ACLs or nothing. Impossible OS can implement per-mount UID/GID remapping that allows mounting a volume with a different user identity — critical for container isolation, portable home directories, and multi-user desktop sessions. When a user mounts a USB drive, files owned by UID 1000 on the drive appear as owned by the local user's UID. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: UID/GID remapped mounts"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows has no UID/GID concept at all. Linux idmapped mounts
+> require complex namespace setup. Impossible OS can make this a one-flag operation:
+> `vfs_mount('E', driver, root, VFS_MOUNT_REMAP_UID, local_uid)`.
+
+- [ ] Add `uid_map` and `gid_map` fields to `drive_mount` struct
+- [ ] Define `VFS_MOUNT_REMAP_UID` flag for `vfs_mount()`
+- [ ] On file `stat()`: remap `uid`/`gid` through mount's mapping table before returning
+- [ ] On file `create()`: reverse-map local UID to on-disk UID before writing
+- [ ] Support simple 1:1 mapping (single UID → UID) and range mapping (base + count)
+- [ ] Configurable via registry: `HKLM\SYSTEM\Config\VFS\Mounts\E\UIDMap`
+- [ ] Test: mount volume with UID remap, `stat()` returns remapped UID
+- [ ] Commit: `"vfs: UID/GID remapped mounts"`
+
+### 6.10 Filesystem Transactions (🚀 Impossible OS Feature) *(agent)*
+
+**Prompt:** Windows deprecated TxF (Transactional NTFS) in Windows 8 because the implementation was too complex and buggy. Linux has no filesystem transaction API at all — applications must implement their own rename-based atomic update patterns. Impossible OS can implement a **lightweight filesystem transaction API** that groups multiple file operations into an atomic unit — either all succeed or all are rolled back. This is invaluable for package managers, installers, and config file updates. Keep it simple: transaction log in memory, flush on commit, replay on rollback. No journal recovery needed initially. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: filesystem transactions"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows deprecated TxF. Linux never had it. Impossible OS
+> can be the **only OS** shipping a simple, working filesystem transaction API.
+> Package managers can use `BeginFsTransaction()` / `CommitFsTransaction()` to ensure
+> atomic installs — no more half-installed packages after a crash.
+
+- [ ] Define `HANDLE BeginFsTransaction()` — create transaction object
+- [ ] Track all file operations within transaction: `{ op_type, path, backup_data }`
+- [ ] `CreateFile` / `DeleteFile` / `MoveFile` accept optional `HANDLE hTransaction` parameter
+- [ ] Implement `CommitFsTransaction(hTransaction)` — flush all pending operations
+- [ ] Implement `RollbackFsTransaction(hTransaction)` — undo all operations in reverse order
+- [ ] Backup strategy: copy-before-write for modified files, save old directory entries for creates/deletes
+- [ ] Memory limit: transaction log capped at 16 MiB (configurable via registry)
+- [ ] Test: begin transaction, create 3 files, rollback → no files exist
+- [ ] Test: begin transaction, create 3 files, commit → all 3 files exist
+- [ ] Commit: `"vfs: filesystem transactions"`
+
 ---
 
 ## Key Files
