@@ -49,6 +49,7 @@
 | #   | TODO                                                                              | Status |
 |-----|-----------------------------------------------------------------------------------|--------|
 | 060 | [PCI/PCIe Bus Enumeration](060-Hardware-Drivers/TODO-060-PCI.md)                  |        |
+| 060.02 | [PCIe Extended Bus Infrastructure](060-Hardware-Drivers/TODO-060-PCI/TODO-060.02-PCIe.md) |        |
 | 061 | [Keyboard](060-Hardware-Drivers/TODO-061-Keyboard.md)                             |        |
 | 062 | [Mouse](060-Hardware-Drivers/TODO-062-Mouse.md)                                   |        |
 | 063 | [Drivers](060-Hardware-Drivers/TODO-063-Drivers.md)                               |        |
