@@ -85,21 +85,27 @@ At offset 106 (size 2), the VolumeFlags field serves as the paramount state-trac
 
 ### Extended Boot Sectors, Checksums, and OEM Flash Parameters
 
-Following the Main Boot Sector, Sectors 1 through 8 are allocated for the ExtendedBootCode. This provides significant space for complex bootloader instructions, surpassing the limited 390 bytes available in Sector 0. Each extended sector is authenticated by an ExtendedBootSignature (`0xAA550000`) located perfectly at the end of the sector (2^BytesPerSectorShift − 4).
+Following the Main Boot Sector, Sectors 1 through 8 are allocated for the ExtendedBootCode. This provides significant space for complex bootloader instructions, surpassing the limited 390 bytes available in Sector 0. Each extended sector is authenticated by an `ExtendedBootSignature` (`0xAA550000`) located at offset `2^BytesPerSectorShift − 4` (the last 4 bytes of the sector).
 
 ### Flash Translation Layer Optimization via OEM Parameters
 
 Sector 9 introduces a highly specialized construct designed explicitly for solid-state storage: OEM Parameters. These 48-byte parameter groups enable the underlying storage medium to communicate its physical constraints and performance characteristics directly to the filesystem driver.
 
-By parsing the FlashParameters GUID (`0A0C7E46-3399-4021-90C8-FA6D389C4BA2`), an intelligent OS driver can retrieve vital metrics regarding the NAND flash architecture.
+By parsing the FlashParameters GUID (`{0A0C7E46-3399-4021-90C8-FA6D389C4BA2}`), an intelligent OS driver can retrieve vital metrics regarding the NAND flash architecture.
 
-| OEM Flash Parameter | Offset | Size | Operational Utility for OS Drivers                                                                         |
-| ------------------- | ------ | ---- | ---------------------------------------------------------------------------------------------------------- |
-| EraseBlockSize      | 0x14   | 4    | The exact size of the flash media's erase block in bytes. The OS uses this to align large file writes.      |
-| SparingSectors      | 0x18   | 4    | The number of free sectors the flash media reserves for internal wear-leveling and bad-block sparing operations. |
-| RandomAccessTime    | 0x1C   | 4    | The average latency (in nanoseconds) required for random memory access.                                     |
-| ProgrammingTime     | 0x20   | 4    | The average latency (in nanoseconds) required for a programming (write) operation.                          |
-| ReadCycle           | 0x24   | 4    | The average read cycle time in nanoseconds.                                                                  |
+> [!NOTE]
+> The Flash Parameters structure is optional per the official Microsoft exFAT specification.
+> All field values of `0` indicate the field is meaningless and shall be ignored.
+
+| OEM Flash Parameter | Offset | Size | Operational Utility for OS Drivers                                                                                         |
+| ------------------- | ------ | ---- | -------------------------------------------------------------------------------------------------------------------------- |
+| EraseBlockSize      | 0x14   | 4    | The size of the flash media's erase block in bytes. The OS uses this to align large file writes.                           |
+| PageSize            | 0x18   | 4    | The size of the flash media's page in bytes. Used for sub-erase-block alignment of writes.                                 |
+| SpareSectors        | 0x1C   | 4    | The number of sectors the flash media has available for its internal sparing operations.                                    |
+| RandomAccessTime    | 0x20   | 4    | The flash media's average random access time in nanoseconds.                                                               |
+| ProgrammingTime     | 0x24   | 4    | The flash media's average programming (write) time in nanoseconds.                                                         |
+| ReadCycle           | 0x28   | 4    | The flash media's average read cycle time in nanoseconds.                                                                  |
+| WriteCycle          | 0x2C   | 4    | The flash media's average write cycle time in nanoseconds.                                                                 |
 
 A sophisticated OS driver leverages these parameters to align cluster allocations precisely with the physical erase blocks of the NAND flash, drastically reducing write amplification. By understanding the ProgrammingTime and EraseBlockSize, the filesystem's I/O scheduler can batch writes to optimize the Flash Translation Layer (FTL) garbage collection routines, extending the overall lifespan of the solid-state drive.
 
@@ -124,12 +130,12 @@ If the computed checksum does not match the repeating pattern stored in Sector 1
 
 ## File Allocation Table Mechanics and The "NoFatChain" Paradigm
 
-Despite its nomenclature, exFAT dramatically reduces the filesystem's operational reliance on the File Allocation Table compared to its predecessors. The FAT Region contains a linear, flat array of 32-bit entries, starting with a Media Descriptor (`0xF8FFFFFF`) permanently anchored at index 0, and a strictly reserved `0xFFFFFFFF` at index 1. The usable user clusters map sequentially to indices starting at 2.
+Despite its nomenclature, exFAT dramatically reduces the filesystem's operational reliance on the File Allocation Table compared to its predecessors. The FAT Region contains a linear, flat array of 32-bit entries. `FatEntry[0]` contains the media type in its first (lowest-order) byte—which should be `0xF8`—and `0xFF` in the remaining three bytes, yielding the 32-bit value `0xFFFFFFF8`. `FatEntry[1]` is strictly reserved and must contain `0xFFFFFFFF`. The usable user clusters map sequentially to indices starting at `FatEntry[2]`.
 
 The standard cluster state values recognized by the exFAT parser are rigidly defined:
 
 - `0x00000000`: Denotes an absolutely free, unallocated cluster available for new data.
-- `0x00000002` to `ClusterCount - 1`: A direct forward pointer to the next logical cluster in a fragmented file chain.
+- `0x00000002` to `ClusterCount + 1`: A direct forward pointer to the next logical cluster in a fragmented file chain; a given entry shall not point to any entry which precedes it in the chain.
 - `0xFFFFFFF7`: Identifies a physically bad cluster containing defective flash cells, preventing any future allocation.
 - `0xFFFFFFFF`: The definitive End-of-Chain (EOC) marker indicating the final cluster of a file.
 
@@ -186,13 +192,17 @@ exFAT entirely revamps how file and directory metadata is stored, moving away fr
 
 Directory entries are structurally classified using the 8-bit EntryType field located at Offset 0 of every entry. This byte is subdivided into distinct operational flags:
 
-- **Bit 7 (In Use):** If set to 1, the entry is currently valid and active. If 0, the entry is considered deleted. Deleting a massive file in exFAT simply requires the OS to flip this single bit from 1 to 0 on the associated entries, entirely bypassing the need to overwrite the data clusters or zero out complex inode structures.
+- **Bits 0–4 (TypeCode):** The specific 5-bit identifier determining the structure of the remaining 31 bytes of the entry. Combined with TypeImportance and TypeCategory, it uniquely identifies the directory entry type.
 
-- **Bit 6 (Category):** If 0, it is a Primary entry (acting as the parent node, like a File or Volume Label). If 1, it is a Secondary entry (acting as a child node carrying extended data, like a Stream Extension or File Name string).
+- **Bit 5 (TypeImportance):** If 0, the entry is Critical. If an OS parser encounters a Critical entry with a TypeCode it does not understand, it must reject the entire directory structure to prevent corruption. If 1, the entry is Benign, allowing future vendor-specific extensions to be safely ignored by older drivers without faulting.
 
-- **Bit 5 (Importance):** If 0, the entry is Critical. If an OS parser encounters a Critical entry with a TypeCode it does not understand, it must reject the entire directory structure to prevent corruption. If 1, the entry is Benign, allowing future vendor-specific extensions to be safely ignored by older drivers without faulting.
+- **Bit 6 (TypeCategory):** If 0, it is a Primary entry (acting as the parent node, like a File or Volume Label). If 1, it is a Secondary entry (acting as a child node carrying extended data, like a Stream Extension or File Name string).
 
-- **Bits 0–4 (TypeCode):** The specific identifier determining the structure of the remaining 31 bytes of the entry.
+- **Bit 7 (InUse):** If set to 1, the entry is currently valid and active. If 0, the entry is considered deleted or unused. Deleting a massive file in exFAT simply requires the OS to flip this single bit from 1 to 0 on the associated entries, entirely bypassing the need to overwrite the data clusters or zero out complex inode structures.
+
+> [!NOTE]
+> The value `0x80` is invalid as an EntryType because clearing the InUse bit would produce
+> `0x00`, an end-of-directory marker, which could corrupt the directory structure.
 
 ### The File Directory Entry Set
 
@@ -204,7 +214,7 @@ Acting as the primary parent node for the file's metadata, this Critical Primary
 
 | Field Name     | Offset | Size | Developer Implementation Notes                                                                                                                                                          |
 | -------------- | ------ | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| SecondaryCount | 1      | 1    | Declares exactly how many Secondary entries immediately follow this parent node. This count ranges from 2 to 18.                                                                         |
+| SecondaryCount | 1      | 1    | Declares exactly how many Secondary entries immediately follow this parent node. Valid range is 2 (1 Stream Extension + 1 File Name) to 18 (1 Stream Extension + 17 File Name entries).   |
 | SetChecksum    | 2      | 2    | The crucial verification mechanism tying the set together.                                                                                                                               |
 | FileAttributes | 4      | 2    | A bitmask identical in logic to legacy FAT. Bit 0: Read-Only. Bit 1: Hidden. Bit 2: System. Bit 4: Directory. Bit 5: Archive. Bits 6–15 are strictly reserved.                         |
 | Timestamps     | 8      | 24   | Contains discrete 32-bit fields for Creation, LastModified, and LastAccessed times, paired with 8-bit UTC offsets.                                                                       |
@@ -237,17 +247,22 @@ The **NameHash** algorithm is a critical performance optimization aimed at direc
 The hash is calculated using a 16-bit circular right rotation algorithm:
 
 ```c
-uint16_t NameHash(const uint16_t *UpCasedName, uint8_t NameLength) {
-    uint16_t Hash = 0;
-    for (uint8_t i = 0; i < NameLength; i++) {
-        Hash = ((Hash & 1) ? 0x8000 : 0) | (Hash >> 1);
-        Hash += (uint16_t)(UpCasedName[i] & 0xFF);
-        Hash = ((Hash & 1) ? 0x8000 : 0) | (Hash >> 1);
-        Hash += (uint16_t)(UpCasedName[i] >> 8);
+uint16_t NameHash(uint16_t *UpCasedName, uint8_t NameLength) {
+    uint8_t  *Buffer       = (uint8_t *)UpCasedName;
+    uint16_t  NumberOfBytes = (uint16_t)NameLength * 2;
+    uint16_t  Hash          = 0;
+    for (uint16_t i = 0; i < NumberOfBytes; i++) {
+        Hash = ((Hash & 1) ? 0x8000 : 0) + (Hash >> 1) + (uint16_t)Buffer[i];
     }
     return Hash;
 }
 ```
+
+> [!NOTE]
+> The official Microsoft spec processes the up-cased filename as a raw byte array (casting
+> `uint16_t*` to `uint8_t*`), iterating over `NameLength * 2` bytes with a single rotation
+> and addition per byte. This naturally processes the low byte before the high byte of each
+> UTF-16LE character.
 
 The **EntrySetChecksum** is a vital safety parameter located at Offset 2 of the `0x85` File Directory Entry. Because a single file's metadata is spread across multiple 32-byte blocks, a partial sector write failure could corrupt the Set, leading the OS to interpret garbage data as valid file pointers. The SetChecksum is calculated by treating the entire contiguous block of entries (from the very beginning of the `0x85` entry through the final byte of the final `0xC1` entry) as a simple byte array.
 
@@ -255,7 +270,7 @@ The checksum algorithm executes a byte-by-byte right rotation (identical to the 
 
 ## Volume Labels and Extensibility
 
-The Volume Label directory entry (EntryType `0x83`) operates as a standalone Critical Primary entry within the root directory. The size of this entry is fixed at 32 bytes. Offset 1 dictates the CharacterCount (allowing a maximum of 11 characters, a limitation likely inherited to maintain compatibility with legacy interface bounds), while Offset 2 contains the 22-byte Unicode string payload. If an OS attempts to format a drive without a label, the entry structure remains, but the InUse bit of the EntryType is flipped to 0 (resulting in an effective EntryType of `0x03`).
+The Volume Label directory entry (EntryType `0x83`) operates as a standalone Critical Primary entry within the root directory. The size of this entry is fixed at 32 bytes. Offset 1 dictates the CharacterCount (allowing a maximum of 11 characters), while Offset 2 contains the 22-byte Unicode string payload (11 UTF-16LE characters × 2 bytes). The valid number of Volume Label directory entries in the root directory ranges from 0 to 1. If an OS attempts to format a drive without a label, the entry need not exist at all; if previously present, the InUse bit of the EntryType is flipped to 0 (resulting in an effective EntryType of `0x03`).
 
 Furthermore, exFAT embraces forward-compatibility through **Vendor Extension Directory Entries** (EntryType `0xE0` / TypeCode 0). These Benign Secondary entries allow hardware vendors to append custom metadata—such as digital rights management (DRM) keys, access control lists (ACLs for Windows CE), or specialized indexing flags for automotive media players—directly to the file sets. Because the "Importance" bit is set to Benign (1), standard OS drivers or third-party implementations simply ignore these unknown `0xE0` entries rather than faulting the directory read, ensuring cross-platform stability.
 
@@ -285,20 +300,28 @@ In the native kernel implementation, structural definitions are strictly bounded
 
 ## Resilient Write Sequencing and Atomicity
 
-To prevent catastrophic metadata corruption on removable media—which is frequently subjected to unceremonious physical removal—OS developers must implement a highly specific, defensible write-ordering sequence. When creating a new file or modifying an existing directory entry set, the sequence must proceed as follows:
+To prevent catastrophic metadata corruption on removable media—which is frequently subjected to unceremonious physical removal—OS developers must implement a defensible write-ordering sequence. The official Microsoft exFAT specification defines two distinct sequences.
 
-1. **Assert Volume Dirty:** Ensure the VolumeFlags at Sector 0, Offset 106 has Bit 1 set to 1. This guarantees that if the device is pulled, the next system will know to run fsck.
+**When creating new directory entries or modifying cluster allocations:**
 
-2. **Allocate Data:** Update the Allocation Bitmap bits to 1 for the required clusters to reserve the space globally.
+1. **Set VolumeDirty** to 1 — guarantees that if the device is pulled, the next system will know to run fsck.
+2. **Update the active FAT** — write the corresponding cluster chain pointers into the FAT Region, if necessary.
+3. **Update the active Allocation Bitmap** — set bits to 1 for the required clusters to reserve space.
+4. **Create or update the directory entry** — write the `0xC1` File Name entries, the `0xC0` Stream Extension, and the `0x85` File Directory entry with its SetChecksum.
+5. **Clear VolumeDirty** to 0 — only if its value prior to step 1 was 0.
 
-3. **Update FAT:** If the data must be fragmented, write the corresponding cluster chain pointers into the FAT Region.
+**When deleting directory entries or freeing cluster allocations:**
 
-4. **Write Payload:** Commit the actual user data to the reserved clusters in the Cluster Heap.
+1. **Set VolumeDirty** to 1.
+2. **Delete or update the directory entry** — clear the InUse bit on the `0x85`/`0xC0`/`0xC1` entries.
+3. **Update the active FAT** — free the cluster chain pointers, if necessary.
+4. **Update the active Allocation Bitmap** — clear bits to 0 for the freed clusters.
+5. **Clear VolumeDirty** to 0 — only if its value prior to step 1 was 0.
 
-5. **Commit Secondary Metadata:** Write the `0xC1` File Name entries, followed by the `0xC0` Stream Extension entry containing the timestamps and hashes.
-
-6. **Atomic Linking:** Finally, write the `0x85` File Directory entry (populated with the successfully calculated SetChecksum). Because the file is completely invisible to the VFS parser until the `0x85` entry is rendered valid and its checksum verified, this provides a pseudo-atomic operation.
-
-7. **Clear Volume Dirty:** Upon a successful, synchronized umount command, reset Bit 1 to 0, indicating the volume is stable.
+> [!IMPORTANT]
+> The order is intentionally different between creation and deletion. During creation, the FAT
+> is updated before the bitmap, and the directory entry is written last (making it invisible
+> until committed). During deletion, the directory entry is invalidated first, then the FAT,
+> then the bitmap—ensuring stale references are removed before freeing underlying storage.
 
 By strictly adhering to these operational sequencing paradigms, mathematical block alignments, and rigorous structural schemas, operating system developers can effectively harness the exFAT specification to deliver highly robust, terabyte-scale, flash-optimized storage solutions within any modern computing infrastructure.
