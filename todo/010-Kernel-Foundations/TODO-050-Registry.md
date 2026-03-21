@@ -26,6 +26,7 @@
 > | `TODO-050.03-Hive.md`             | Hive persistence: format, disk layout, crash-safe journaling              |
 > | `TODO-050.04-Notification.md`     | Change notifications: watchers, dispatch, coalescing, telemetry           |
 > | `TODO-050.05-Syscalls.md`         | Syscalls, user-mode library, Win32 advapi32.dll compat                    |
+> | `TODO-050.06-Win32-Compatibility.md` | Win32 compat: advapi32.dll, UTF-16, HKCR, virtualization, .reg         |
 
 ### Dependency Graph
 
@@ -121,11 +122,14 @@ graph TD
 > §6.6 Rate Limiting 🚀, §6.7 Audit Log 🚀.
 > Not yet started.
 
-### 7.2 File Associations (HKCR)
+## 6. Win32 Compatibility Layer
 
-> **See [TODO-240-Resources.md](../230-Core-Services/TODO-240-Resources.md) §1** — File type icon mapping, extension-to-app mapping, default associations.
-
----
+> **→ See [TODO-050.06-Win32-Compatibility.md](TODO-050-Registry/TODO-050.06-Win32-Compatibility.md)** ⬜
+>
+> Covers: §7.1 advapi32.dll Stubs, §7.2 UTF-16 Handling, §7.3 HKCR Merged View,
+> §7.4 Registry Virtualization, §7.5 .reg Import/Export, §7.6 Error Mapping,
+> §7.7 API Call Tracing 🚀, §7.8 App Compat Shims 🚀.
+> Not yet started.
 
 ## 8. Tools & Debugging
 
