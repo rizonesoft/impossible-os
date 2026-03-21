@@ -593,6 +593,11 @@ int virtio_blk_present(void)
     return initialized;
 }
 
+uint16_t virtio_blk_num_queues(void)
+{
+    return num_queues;
+}
+
 uint32_t virtio_blk_block_size(void)
 {
     return topo.blk_size;
@@ -608,7 +613,6 @@ int virtio_blk_get_id(char *buf, uint32_t len)
     char tmp[VIRTIO_BLK_ID_BYTES];
     uint32_t i;
     int ret;
-    uint16_t qi = get_queue_idx();
 
     if (!initialized || !buf || len == 0)
         return -1;
@@ -1236,6 +1240,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_WRITE_ZEROES");
     }
 
+    /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
+    if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
+        has_mq = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_MQ (multi-queue)");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1)
      * and negotiate VIRTIO_F_RING_RESET (bit 8 of page 1) */
     {
@@ -1267,11 +1278,32 @@ int virtio_blk_init(void)
         }
     }
 
-    /* Step 6: Set up virtqueue 0 (request queue) */
-    if (virtq_init(&blk_vqs[qi], &blk_dev, 0) != 0) {
-        klog(LOG_DEBUG, "virtio", "Failed to init request queue");
-        virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
-        return -1;
+    /* Step 6: Read num_queues and set up virtqueue(s) */
+    num_queues = 1;  /* Default: single queue */
+    if (has_mq && blk_dev.device_cfg) {
+        uint16_t nq = mmio_read16(
+            (volatile uint16_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_NUM_QUEUES));
+        if (nq > 1) {
+            if (nq > VIRTIO_BLK_MAX_QUEUES)
+                nq = VIRTIO_BLK_MAX_QUEUES;
+            num_queues = nq;
+            klog(LOG_DEBUG, "virtio", "Multi-queue: %u request queues",
+                   (uint64_t)num_queues);
+        }
+    }
+    topo.num_queues = num_queues;
+
+    /* Initialize all request queues */
+    {
+        int qi;
+        for (qi = 0; qi < (int)num_queues; qi++) {
+            if (virtq_init(&blk_vqs[qi], &blk_dev, (uint16_t)qi) != 0) {
+                klog(LOG_DEBUG, "virtio",
+                       "Failed to init request queue %u", (uint64_t)qi);
+                virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
+                return -1;
+            }
+        }
     }
 
     /* Step 7: DRIVER_OK — device is live */
@@ -1387,23 +1419,72 @@ int virtio_blk_init(void)
 
     initialized = 1;
 
-    /* Initialize I/O completion event (AUTO_RESET: each event_set wakes
-     * one waiter, then auto-clears — perfect for single-threaded I/O) */
-    event_init(&io_completion, "virtio-blk-io", EVENT_AUTO_RESET, 0);
+    /* Initialize per-queue I/O completion events */
+    {
+        int qi;
+        for (qi = 0; qi < (int)num_queues; qi++) {
+            event_init(&io_completions[qi], "virtio-blk-io",
+                       EVENT_AUTO_RESET, 0);
+        }
+    }
 
-    /* Set up MSI-X interrupts (replaces legacy PIC — rules.md APIC-only) */
-    if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
-                              &msix_vec_queue, &msix_vec_config) != 0) {
-        klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
-        /* Polling-only mode still works via the timeout loop in do_io */
+    /* Set up MSI-X interrupts */
+    if (num_queues > 1) {
+        /* Multi-queue: one MSI-X vector per queue + config */
+        if (virtio_pci_setup_msix_multi(&blk_dev, dev.bus, dev.dev, dev.func,
+                                        num_queues, msix_vec_queues,
+                                        &msix_vec_config) != 0) {
+            klog(LOG_DEBUG, "virtio",
+                   "MSI-X multi setup failed — falling back to single queue");
+            /* Fall back to single queue + single MSI-X */
+            num_queues = 1;
+            topo.num_queues = 1;
+            if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
+                                      &msix_vec_queues[0],
+                                      &msix_vec_config) != 0) {
+                klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
+            } else {
+                irq_register(msix_vec_queues[0], virtio_blk_queue_irq,
+                             (void *)(uintptr_t)0, "virtio-blk-q0");
+                irq_register(msix_vec_config, virtio_blk_config_irq,
+                             NULL, "virtio-blk-cfg");
+                use_events = 1;
+            }
+        } else {
+            /* Register per-queue ISR handlers */
+            int qi;
+            for (qi = 0; qi < (int)num_queues; qi++) {
+                char name[20];
+                name[0]='v'; name[1]='i'; name[2]='r'; name[3]='t';
+                name[4]='i'; name[5]='o'; name[6]='-'; name[7]='b';
+                name[8]='l'; name[9]='k'; name[10]='-'; name[11]='q';
+                name[12] = (char)('0' + qi);
+                name[13] = '\0';
+                irq_register(msix_vec_queues[qi], virtio_blk_queue_irq,
+                             (void *)(uintptr_t)qi, name);
+            }
+            irq_register(msix_vec_config, virtio_blk_config_irq,
+                         NULL, "virtio-blk-cfg");
+            use_events = 1;
+            klog(LOG_DEBUG, "virtio",
+                   "Multi-queue MSI-X: %u queues with per-queue interrupts",
+                   (uint64_t)num_queues);
+        }
     } else {
-        /* Register IRQ handlers for both MSI-X vectors */
-        irq_register(msix_vec_queue, virtio_blk_queue_irq, NULL, "virtio-blk-q0");
-        irq_register(msix_vec_config, virtio_blk_config_irq, NULL, "virtio-blk-cfg");
-
-        /* Enable event-driven completion — ISR will now wake waiters */
-        use_events = 1;
-        klog(LOG_DEBUG, "virtio", "Async I/O: interrupt-driven completion enabled");
+        /* Single queue: use original MSI-X setup */
+        if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
+                                  &msix_vec_queues[0],
+                                  &msix_vec_config) != 0) {
+            klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
+        } else {
+            irq_register(msix_vec_queues[0], virtio_blk_queue_irq,
+                         (void *)(uintptr_t)0, "virtio-blk-q0");
+            irq_register(msix_vec_config, virtio_blk_config_irq,
+                         NULL, "virtio-blk-cfg");
+            use_events = 1;
+            klog(LOG_DEBUG, "virtio",
+                   "Async I/O: interrupt-driven completion enabled");
+        }
     }
 
     klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors), blk_size=%u, opt_io=%u%s%s",
@@ -1441,8 +1522,6 @@ int virtio_blk_is_surprise_removed(void)
 
 void virtio_blk_shutdown(void)
 {
-    uint64_t desc_sz, avail_sz, used_sz, total, old_pages;
-    uintptr_t old_desc;
     int surprise;
     int i;
 
@@ -1483,27 +1562,37 @@ void virtio_blk_shutdown(void)
                "Surprise removal — skipping device I/O during teardown");
     }
 
-    /* 3. Free virtqueue ring memory */
-    if (blk_vqs[qi].desc) {
-        old_desc = (uintptr_t)blk_vqs[qi].desc;
-        desc_sz  = ((uint64_t)blk_vqs[qi].size * 16 + 15) & ~(uint64_t)15;
-        avail_sz = (6 + (uint64_t)blk_vqs[qi].size * 2 + 1) & ~(uint64_t)1;
-        used_sz  = (6 + (uint64_t)blk_vqs[qi].size * 8 + 3) & ~(uint64_t)3;
-        total    = desc_sz + avail_sz + used_sz;
-        old_pages = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+    /* 3. Free all virtqueue ring memory */
+    {
+        int q;
+        for (q = 0; q < (int)num_queues; q++) {
+            if (blk_vqs[q].desc) {
+                uintptr_t old_desc = (uintptr_t)blk_vqs[q].desc;
+                uint64_t desc_sz  = ((uint64_t)blk_vqs[q].size * 16 + 15) & ~(uint64_t)15;
+                uint64_t avail_sz = (6 + (uint64_t)blk_vqs[q].size * 2 + 1) & ~(uint64_t)1;
+                uint64_t used_sz  = (6 + (uint64_t)blk_vqs[q].size * 8 + 3) & ~(uint64_t)3;
+                uint64_t total    = desc_sz + avail_sz + used_sz;
+                uint64_t old_pages = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
 
-        for (i = 0; i < (int)old_pages; i++)
-            pmm_free_frame(old_desc + (uint64_t)i * PMM_FRAME_SIZE);
+                for (i = 0; i < (int)old_pages; i++)
+                    pmm_free_frame(old_desc + (uint64_t)i * PMM_FRAME_SIZE);
 
-        blk_vqs[qi].desc  = (struct virtq_desc *)0;
-        blk_vqs[qi].avail = (struct virtq_avail *)0;
-        blk_vqs[qi].used  = (struct virtq_used *)0;
+                blk_vqs[q].desc  = (struct virtq_desc *)0;
+                blk_vqs[q].avail = (struct virtq_avail *)0;
+                blk_vqs[q].used  = (struct virtq_used *)0;
+            }
+        }
     }
 
-    /* 4. Free MSI-X vectors */
-    if (msix_vec_queue) {
-        irq_free_vector(msix_vec_queue);
-        msix_vec_queue = 0;
+    /* 4. Free MSI-X vectors (all queues + config) */
+    {
+        int q;
+        for (q = 0; q < (int)num_queues; q++) {
+            if (msix_vec_queues[q]) {
+                irq_free_vector(msix_vec_queues[q]);
+                msix_vec_queues[q] = 0;
+            }
+        }
     }
     if (msix_vec_config) {
         irq_free_vector(msix_vec_config);
@@ -1523,8 +1612,10 @@ void virtio_blk_shutdown(void)
     has_discard      = 0;
     has_write_zeroes = 0;
     has_ring_reset   = 0;
+    has_mq           = 0;
     is_read_only     = 0;
     disk_capacity    = 0;
+    num_queues       = 1;
 
     klog(LOG_DEBUG, "virtio", "Block: device %s",
            surprise ? "surprise removal cleanup complete"

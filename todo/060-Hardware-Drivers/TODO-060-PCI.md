@@ -297,10 +297,10 @@
 | MSI-X (2048 vectors)                 | ✅ Full                              | ✅ `pci_enable_msix_range()`           | ⬜ §3.2 P1                               |
 | PCIe ECAM (4K config)                | ✅ via MCFG                          | ✅ `pci_mmcfg_init()`                  | ⬜ §4.1 P2                               |
 | PCIe extended capabilities           | ✅ AER, LTR, SR-IOV                  | ✅ `pci_find_ext_capability()`         | ⬜ §4.1 P2                               |
-| Command register control             | ✅                                   | ✅ `pci_set_master()`                  | ⚠️ Bus master only — §5.1 P1            |
+| Command register control             | ✅                                   | ✅ `pci_set_master()`                  | ⚠️ Bus master only — §5.1 P1             |
 | Error reporting (PERR/SERR)          | ✅ WER integration                   | ✅ AER driver                          | ⬜ §5.2 P2                               |
 | PCI-to-PCI bridge support            | ✅ Full hierarchy                    | ✅ `pci_scan_bridge()`                 | ⬜ §6.1 P2                               |
 | PCI power management (D-states)      | ✅ ACPI + PCI PM                     | ✅ `pci_set_power_state()`             | ⬜ §7.1 P3                               |
 | BAR resource allocation              | ✅ PnP Manager + arbiter             | ✅ `pci_assign_resource()`             | ⬜ §8.1 P2                               |
-| **INTx# legacy pin interrupts**     | ✅ (fallback)                        | ✅ (fallback)                          | ✅ **Current mechanism (Interrupt Line)** |
+| **INTx# legacy pin interrupts**      | ✅ (fallback)                        | ✅ (fallback)                          | ✅ **Current mechanism (Interrupt Line)** |
 | **Hot-plug support**                 | ✅ Full                              | ✅ `pciehp` driver                     | ⬜ Not planned yet                        |

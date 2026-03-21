@@ -172,7 +172,7 @@ graph TD
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
 | 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.2 Event Index (Coalescing)    | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.3 In-Order Completion         | Phase 3 (§3.2)                |   ⬜   |
@@ -559,21 +559,23 @@ graph TD
 
 ## 6. Multi-Queue Support
 
-### 6.1 Per-CPU Request Queues
+### 6.1 Per-CPU Request Queues *(done)* ✅
 
-**Prompt:** Negotiate `VIRTIO_BLK_F_MQ` (bit 22). Read `num_queues` from device config offset `0x22`. Allocate and initialize `num_queues` independent virtqueues — one per CPU core. Each CPU submits I/O to its local queue (no spinlock required). Assign a unique MSI-X vector per queue. The device processes all queues in parallel. This eliminates virtqueue lock contention and matches modern NVMe's multi-queue model. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: multi-queue support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `VIRTIO_BLK_F_MQ` (bit 22) negotiated in init. `num_queues` read from device config offset `0x22`, clamped to `VIRTIO_BLK_MAX_QUEUES` (8). All N queues initialized via `virtq_init()` loop. Per-queue MSI-X vectors allocated via `virtio_pci_setup_msix_multi()` in `virtio.c`. ISR dispatches per-queue events via `ctx = queue_index`. I/O routed by `get_queue_idx() = smp_cpu_id() % num_queues`. Each queue has its own `io_completions[qi]` event and `virtio_irq_flags[qi]`. Fallback to single queue if F_MQ not offered or MSI-X multi fails. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_BLK_F_MQ` (bit 22)
-- [ ] Read `num_queues` from device config offset `0x22`
-- [ ] Allocate `num_queues` virtqueue structures (descriptor table + avail + used per queue)
-- [ ] Initialize each queue via common_cfg: `queue_select`, `queue_size`, `queue_desc`, etc.
-- [ ] Assign unique MSI-X vector per queue: `queue_msix_vector = queue_idx`
-- [ ] Register per-queue ISR handlers
-- [ ] Route I/O by CPU: `queue = queues[smp_cpu_id() % num_queues]`
-- [ ] Each queue has its own `last_seen_used` and completion event
-- [ ] Fallback: if `F_MQ` not offered, use single queue 0 (current behavior)
-- [ ] QEMU test: `-device virtio-blk-pci,drive=disk0,num-queues=4`
-- [ ] Commit: `"virtio-blk: multi-queue support"`
+> **Notes:** The sed-based global replacement of `blk_vq` → `blk_vqs[qi]` was highly effective for 150+ refs. `virtio_blk_get_id()` doesn't need its own `qi` since it delegates to `do_io()`. `has_mq` flag + `num_queues` counter added to driver state; both cleared in shutdown for clean re-init on hot-plug. `virtio_pci_setup_msix_multi()` programs N+1 MSI-X table entries and assigns per-queue vectors via `queue_msix_vector = queue_idx` in common_cfg. Shutdown loops over all N queues to free ring memory and MSI-X vectors.
+
+- [x] Negotiate `VIRTIO_BLK_F_MQ` (bit 22)
+- [x] Read `num_queues` from device config offset `0x22`
+- [x] Allocate `num_queues` virtqueue structures (descriptor table + avail + used per queue)
+- [x] Initialize each queue via common_cfg: `queue_select`, `queue_size`, `queue_desc`, etc.
+- [x] Assign unique MSI-X vector per queue: `queue_msix_vector = queue_idx`
+- [x] Register per-queue ISR handlers
+- [x] Route I/O by CPU: `queue = queues[smp_cpu_id() % num_queues]`
+- [x] Each queue has its own `last_seen_used` and completion event
+- [x] Fallback: if `F_MQ` not offered, use single queue 0 (current behavior)
+- [x] QEMU test: `-device virtio-blk-pci,drive=disk0,num-queues=4`
+- [x] Commit: `"virtio-blk: multi-queue support"`
 
 ---
 
@@ -1001,7 +1003,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟡 P2     | 4.2 Write-Zeroes ✅                | Performance — efficient large zeroing                           |
 | 🟡 P2     | 5.2 Individual Queue Reset ✅      | Less disruptive recovery than full device reset                 |
 | 🟡 P2     | 15.1 Hot-Plug/Unplug ✅             | Robustness — graceful device arrival/removal                    |
-| 🟢 P3     | 6.1 Per-CPU Request Queues        | Scalability — eliminates virtqueue lock contention              |
+| 🟢 P3     | 6.1 Per-CPU Request Queues ✅       | Scalability — eliminates virtqueue lock contention              |
 | 🟢 P3     | 7.1 Indirect Descriptors          | Scalability — large scatter-gather lists                        |
 | 🟢 P3     | 7.2 Event Index (Coalescing)      | Performance — reduce interrupt storms                           |
 | 🟢 P3     | 7.3 In-Order Completion           | Performance — optimized sequential descriptor recycling         |
@@ -1038,7 +1040,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Write-zeroes                    | ✅                                 | ✅ `REQ_OP_WRITE_ZEROES`              | ✅ §4.2 P2                                      |
 | Error recovery / device reset   | ✅ Automatic retry + reset         | ✅ `virtio_break_device()` + reset    | ⬜ §5.1 P1 — no recovery                        |
 | Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ✅ §5.2 P2                                      |
-| Multi-queue (`F_MQ`)            | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ⬜ §6.1 P3                                      |
+| Multi-queue (`F_MQ`)            | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ✅ §6.1 P3 — per-CPU queues with per-queue MSI-X   |
 | Indirect descriptors            | ✅                                 | ✅                                    | ⬜ §7.1 P3                                      |
 | Event index (coalescing)        | ✅                                 | ✅                                    | ⬜ §7.2 P3                                      |
 | In-order completion             | ✅                                 | ✅ `VIRTIO_F_IN_ORDER`                | ⬜ §7.3 P3                                      |
