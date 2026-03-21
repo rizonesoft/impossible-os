@@ -25,6 +25,7 @@
 > | `TODO-050.02-Win32-Reg-API.md`     | Win32 API: key/value operations, enumeration, convenience helpers         |
 > | `TODO-050.03-Hive.md`             | Hive persistence: format, disk layout, crash-safe journaling              |
 > | `TODO-050.04-Notification.md`     | Change notifications: watchers, dispatch, coalescing, telemetry           |
+> | `TODO-050.05-Syscalls.md`         | Syscalls, user-mode library, Win32 advapi32.dll compat                    |
 
 ### Dependency Graph
 
@@ -111,51 +112,14 @@ graph TD
 
 ---
 
-## 6. Syscalls & User-Mode Access
+## 5. Syscalls & Win32 Compatibility
 
-### 6.1 Registry Syscalls
-
-**Prompt:** Expose the registry to user-mode applications via syscalls. User apps need to store settings (window positions, preferences, recent files). Add syscalls that wrap the kernel Registry API: `SYS_REG_OPEN`, `SYS_REG_CREATE`, `SYS_REG_CLOSE`, `SYS_REG_QUERY`, `SYS_REG_SET`, `SYS_REG_DELETE_KEY`, `SYS_REG_DELETE_VALUE`, `SYS_REG_ENUM_KEY`, `SYS_REG_ENUM_VALUE`. Each syscall validates user pointers before accessing them. User-mode apps can only write to `HKCU` and `HKLM\SOFTWARE` — writes to `HKLM\SYSTEM` and `HKLM\HARDWARE` require kernel privilege. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: user-mode syscalls"`. Add notes, gotchas, and design decisions directly in this TODO section covering the registry syscall numbers, pointer validation, and access control policy.
-
-- [ ] Add syscalls:
-  - [ ] `SYS_REG_OPEN(root, path, access, &handle)`
-  - [ ] `SYS_REG_CREATE(root, path, access, &handle, &disposition)`
-  - [ ] `SYS_REG_CLOSE(handle)`
-  - [ ] `SYS_REG_QUERY(handle, valueName, &type, data, &size)`
-  - [ ] `SYS_REG_SET(handle, valueName, type, data, size)`
-  - [ ] `SYS_REG_DELETE_KEY(handle, subKey)`
-  - [ ] `SYS_REG_DELETE_VALUE(handle, valueName)`
-  - [ ] `SYS_REG_ENUM_KEY(handle, index, name, &nameSize)`
-  - [ ] `SYS_REG_ENUM_VALUE(handle, index, name, &nameSize, &type, data, &dataSize)`
-- [ ] Validate user pointers in all syscalls
-- [ ] Access control: user apps can write HKCU + HKLM\SOFTWARE only
-- [ ] Add user-mode wrapper functions in `user/lib/registry.c`
-- [ ] Commit: `"registry: user-mode syscalls"`
-
----
-
-## 7. Win32 Compatibility Layer
-> *Merged from Phase 03 §1.5 (Win32 Registry Mapping)*
-
-### 7.1 advapi32.dll Registry Stubs
-
-**Prompt:** Windows apps access the registry via `RegOpenKeyExA/W` / `RegQueryValueExA/W` / `RegSetValueExA/W` — these must be wrapped as A/W (ANSI/Wide) variants and registered in the `advapi32.dll` builtin stub table in the Win32 compatibility layer (Phase 10). The hive paths (`HKEY_LOCAL_MACHINE`, `HKEY_CURRENT_USER`, etc.) map directly to the native Registry root keys. Each Win32 registry type maps 1:1 to our `REG_*` types. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"win32: registry API stubs"`. Add notes, gotchas, and design decisions directly in this TODO section covering the Win32-to-native registry mapping.
-
-- [ ] Map Windows hives to Registry paths:
-  - [ ] `HKEY_LOCAL_MACHINE\SOFTWARE` → `HKLM\SOFTWARE`
-  - [ ] `HKEY_LOCAL_MACHINE\HARDWARE` → `HKLM\HARDWARE`
-  - [ ] `HKEY_CURRENT_USER` → `HKCU` (redirects to `HKU\{user}`)
-  - [ ] `HKEY_CURRENT_USER\Software\{App}` → `HKCU\Software\{App}`
-  - [ ] `HKEY_CLASSES_ROOT` → `HKCR` (merged view)
-- [ ] Implement `RegOpenKeyExA/W` → `RegOpenKeyEx(mapped_root, mapped_path, ...)`
-- [ ] Implement `RegCreateKeyExA/W` → `RegCreateKeyEx(mapped_root, mapped_path, ...)`
-- [ ] Implement `RegQueryValueExA/W` → `RegQueryValueEx()` with type mapping
-- [ ] Implement `RegSetValueExA/W` → `RegSetValueEx()`
-- [ ] Implement `RegDeleteKeyA/W`, `RegDeleteValueA/W`
-- [ ] Implement `RegEnumKeyExA/W`, `RegEnumValueA/W`
-- [ ] `RegCloseKey` → `RegCloseKey()`
-- [ ] Add to `advapi32.dll` builtin stub table
-- [ ] Commit: `"win32: registry API stubs"`
+> **→ See [TODO-050.05-Syscalls.md](TODO-050-Registry/TODO-050.05-Syscalls.md)** ⬜
+>
+> Covers: §6.1 Syscall Numbers, §6.2 Pointer Validation, §6.3 Access Control,
+> §6.4 User-Mode Library, §7.1 advapi32.dll Stubs, §6.5 Per-Process Sandbox 🚀,
+> §6.6 Rate Limiting 🚀, §6.7 Audit Log 🚀.
+> Not yet started.
 
 ### 7.2 File Associations (HKCR)
 
@@ -212,7 +176,6 @@ graph TD
 | ✅ Done  | `050.02` §2.2 Value Operations              | Core API: get, set, delete values                  |
 | ✅ Done  | `050.02` §2.3 Enumeration                   | Needed for regedit + iteration                     |
 | ✅ Done  | `050.02` §2.4 Convenience Helpers           | Simplify common access patterns                    |
-
 | ✅ Done  | §4.1 Hive File Format                       | Binary disk persistence                            |
 | ✅ Done  | §4.2 Disk Layout                            | File paths + auto-flush                            |
 | ✅ Done  | §4.3 Crash-Safe Journaling                  | Power-loss protection                              |

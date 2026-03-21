@@ -48,6 +48,7 @@
 | 050.02 | [Win32 Registry API](010-Kernel-Foundations/TODO-050-Registry/TODO-050.02-Win32-Reg-API.md)        |                |
 | 050.03 | [Hive Persistence](010-Kernel-Foundations/TODO-050-Registry/TODO-050.03-Hive.md)                   |                |
 | 050.04 | [Change Notifications](010-Kernel-Foundations/TODO-050-Registry/TODO-050.04-Notification.md)       |                |
+| 050.05 | [Syscalls & Win32 Compat](010-Kernel-Foundations/TODO-050-Registry/TODO-050.05-Syscalls.md)        |                |
 ---
 
 ## Layer 2: Hardware & Drivers  `060-Hardware-Drivers/`
