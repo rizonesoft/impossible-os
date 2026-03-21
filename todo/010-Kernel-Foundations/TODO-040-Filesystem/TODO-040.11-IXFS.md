@@ -122,6 +122,9 @@ graph TD
     AA["§22.1 Change Journal (USN)"]
     AB["§23.1 Volume Quotas"]
     AC["§24.1 TRIM / Discard"]
+    AD["§25.1 Object IDs"]
+    AE["§26.1 Extended Attributes"]
+    AF["§27.1 Storage Tiering"]
 
     H --> Y
     I --> Z
@@ -131,6 +134,14 @@ graph TD
     B --> AB
     C --> AB
     B --> AC
+
+    %% Object IDs depend on v3 inode
+    I --> AD
+    %% EAs depend on v3 inode
+    I --> AE
+    %% Tiering depends on block allocator + extents
+    B --> AF
+    D --> AF
 
     %% Dashboard aggregates everything
     A --> W
@@ -148,6 +159,8 @@ graph TD
     Q --> X
     Y --> X
     Z --> X
+    AD --> X
+    AE --> X
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -186,6 +199,9 @@ graph TD
 | ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §23.1 Volume Quotas              | Per-user disk limits — enterprise environments                            | Phase 1 (§2.1, §3.1)                |   ⬜   |
 | ⭐ | **8**  | `TODO-040.11-IXFS.md`                 | §18.1 Volume Health Dashboard    | Unified health panel: superblock, journal, checksums, dedup, snapshots    | Phase 1 (§1.1, §5.1, §6.1, §7.1)   |   ⬜   |
 | 💎 | **8**  | `TODO-040.11-IXFS.md`                 | §19.1 Comprehensive Test Suite   | Full CRUD, large files, hard/symlinks, ADS, snapshots, CoW, compression   | Phase 4 (§17.1) + Phase 3 + Phase 5 |   ⬜   |
+| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §25.1 Object IDs                 | Win32 `FSCTL_CREATE_OR_GET_OBJECT_ID` — persistent file identity          | Phase 2 (§3.2)                       |   ⬜   |
+| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §26.1 Extended Attributes        | Win32 EA support — installer metadata, WSL interop                        | Phase 2 (§3.2)                       |   ⬜   |
+| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §27.1 Storage Tiering            | Automatic hot/cold data placement across SSD + HDD tiers                  | Phase 1 (§2.1, §4.1)                |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already done — block devices, partition detection, and VFS core are in place.
@@ -886,6 +902,86 @@ graph TD
 - [ ] Mount option: `IXFS_MOUNT_DISCARD` (default: on for SSDs, off for HDDs)
   - [ ] Detect SSD via ATA IDENTIFY word 217 (nominal media rotation rate = 1 → SSD)
 - [ ] Commit: `"ixfs: TRIM/discard support"`
+
+---
+
+## 25. Object IDs *(Win32 Feature)*
+
+### 25.1 NTFS-Compatible Object IDs *(agent)*
+
+**Prompt:** Implement NTFS-compatible object IDs — every file and directory can have a globally unique 16-byte identifier. Win32 applications use `GetFileInformationByHandleEx` with `FileIdInfo` and the `FSCTL_CREATE_OR_GET_OBJECT_ID` control code. Object IDs persist across renames and moves (within the same volume). Store the 16-byte object ID in the extended inode's `i_file_id` (already planned in §3.2) or in a dedicated object-ID table. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: object IDs"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** NTFS stores object IDs in the `$OBJECT_ID` attribute. ext4 has no
+> object ID concept (inodes can be reused after deletion). Btrfs has no Win32-compatible
+> object IDs. IXFS object IDs enable `BY_HANDLE_FILE_INFORMATION` — critical for
+> application compat (Visual Studio, database engines, backup tools).
+
+- [ ] Define object ID storage: 16-byte UUID per file
+  - [ ] Option A: store in v3 inode `i_file_id` field (8B → expand to 16B)
+  - [ ] Option B: dedicated `$ObjectId` ADS (NTFS-compatible approach)
+- [ ] `FSCTL_CREATE_OR_GET_OBJECT_ID` — create or retrieve object ID
+- [ ] `FSCTL_DELETE_OBJECT_ID` — remove object ID from file
+- [ ] `FSCTL_SET_OBJECT_ID` — explicitly set object ID (for restore)
+- [ ] Object ID index: hash table mapping object ID → inode number (for `OpenFileById`)
+- [ ] Object IDs persist across rename/move on same volume
+- [ ] Commit: `"ixfs: object IDs"`
+
+---
+
+## 26. Extended Attributes (EA) *(Win32 Feature)*
+
+### 26.1 Named Extended Attributes *(agent)*
+
+**Prompt:** Implement Win32 Extended Attributes (EAs) — arbitrary name/value pairs attached to files. Windows installers (`msiexec`), backup tools, and POSIX subsystems use EAs. Store EAs as a linked list of name/value pairs in a separate EA data block, referenced by a new `i_ea_block` field in the v3 inode. Unlike ADS (§9.1), EAs are small metadata blobs (max 64 KB total), not streams. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: extended attributes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** NTFS stores EAs in the `$EA` attribute (used by WSL, CIFS, installers).
+> ext4 stores xattrs (similar concept, different API). FAT32/exFAT have no EAs.
+> IXFS EA support enables Windows installer compat and POSIX subsystem interop.
+
+- [ ] Define EA on-disk format:
+  - [ ] EA entry: `{ uint8_t name_len, uint16_t value_len, uint8_t flags, char name[N], uint8_t value[M] }`
+  - [ ] EA block: linked list of EA entries in a data block
+  - [ ] `i_ea_block` field in v3 inode → block number of EA list (0 = none)
+- [ ] `NtQueryEaFile` / `NtSetEaFile` — query/set extended attributes
+- [ ] `FILE_NEED_EA` flag — file cannot be opened without reading EAs first
+- [ ] Max EA size: 64 KB total per file (NTFS limit)
+- [ ] Well-known EAs: `LXATTRB` (WSL), `LXUID`/`LXGID` (WSL POSIX mapping)
+- [ ] Commit: `"ixfs: extended attributes"`
+
+---
+
+## 27. Storage Tiering *(🚀 Impossible OS Feature)*
+
+### 27.1 Automatic Hot/Cold Data Placement *(agent)*
+
+**Prompt:** Implement automatic storage tiering — the filesystem tracks per-file access frequency and migrates hot data to fast storage (SSD) and cold data to capacity storage (HDD). This requires a multi-device IXFS volume spanning at least two block devices. Track access counts per inode. A background tiering thread periodically evaluates files: files with high read counts get promoted to the fast tier, files untouched for N days get demoted. This is inspired by Windows ReFS real-time tier optimization and ZFS L2ARC, but at the filesystem level. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: storage tiering"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** NTFS has no native tiering — Windows Storage Spaces has tiering but
+> it's a separate volume-manager layer, not filesystem-aware. ext4 has no tiering at all.
+> ReFS in Server 2025 has real-time tier optimization but only for Hyper-V workloads.
+> Btrfs has no tiering. IXFS tiering is **filesystem-native** and works for all workloads —
+> the filesystem itself knows which files are hot and moves them transparently.
+
+- [ ] Multi-device volume support:
+  - [ ] Superblock field: `s_tier_count`, `s_tier_devices[]` — array of block device IDs
+  - [ ] Tier descriptor: `{ blkdev_id, tier_type (SSD/HDD), start_block, block_count }`
+  - [ ] Default: single-tier (backward compatible with existing single-device volumes)
+- [ ] Per-inode access tracking:
+  - [ ] `i_access_count` (2B) in v3 inode — incremented on read, decayed periodically
+  - [ ] `i_tier_id` (1B) — which tier this file's data currently resides on
+- [ ] Tiering policy:
+  - [ ] Promote: `access_count > threshold` → migrate data blocks to fast tier
+  - [ ] Demote: `access_count == 0 for N days` → migrate to capacity tier
+  - [ ] Configurable via Registry: `HKLM\SYSTEM\Storage\IXFS\TierPromoteThreshold`
+- [ ] Background migration thread:
+  - [ ] Runs during idle time (low I/O load)
+  - [ ] Moves data via CoW (old blocks freed after new blocks written)
+  - [ ] Journal-protected for crash safety
+- [ ] Wire to Disk Manager: tier configuration panel, migration progress bar
+- [ ] Commit: `"ixfs: storage tiering"`
 
 ---
 

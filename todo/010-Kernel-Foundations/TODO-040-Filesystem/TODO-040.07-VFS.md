@@ -113,10 +113,11 @@ graph TD
 
 
 > [!NOTE]
-> **Phases 0–1** are the critical path. Phase 0 (the Win32 File API from the parent
-> TODO) is the **single biggest prerequisite** — nothing in this file can be built
-> without `CreateFile`/`ReadFile`/`WriteFile`/`CloseHandle`. Phase 1 delivers the
-> three deal-breakers: case-insensitive lookup, share mode locking, and error codes.
+> **Phases 0–1** are the critical path. Phase 0 (the Win32 File API from
+> `TODO-040.17-Win32-FS-API.md`) is the **single biggest prerequisite** —
+> nothing in this file can be built without `CreateFile`/`ReadFile`/
+> `WriteFile`/`CloseHandle`. Phase 1 delivers the three deal-breakers:
+> case-insensitive lookup, share mode locking, and error codes.
 >
 > **Phases 2–3** add the compatibility shims that prevent app crashes: deletion semantics,
 > file IDs, attributes, volume info queries, ADS handling, and ACL stubs.
@@ -170,24 +171,28 @@ graph TD
 
 ### What's Missing — In Dependency Order
 
-#### 1. §3.6 Win32-Compatible File API (🔴 P0 — do this NEXT)
+#### 1. Win32-Compatible File API (🔴 P0 — do this NEXT)
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.17-Win32-FS-API.md` — Win32 File API (moved from §3.6)
 
 This is the **single most important VFS enhancement**. It replaces the old
 `vfs_open()`/`vfs_read()` public wrappers with a proper Win32 handle system:
 
-| Step | Section | What It Does |
-|------|---------|-------------|
-| 1st | §3.6.1 Handle Table | `HANDLE`, handle-to-vfs_node mapping, type definitions |
-| 2nd | §3.6.2 CreateFile/CloseHandle | The native file open — drives everything |
-| 3rd | §3.6.3 ReadFile/WriteFile/SetFilePointer | Data I/O with file position tracking |
-| 4th | §3.6.4 FindFirstFile/CreateDirectory | Directory enumeration + creation |
-| 5th | §3.6.5 DeleteFile/MoveFile/CopyFile | File management |
-| 6th | §3.6.6 Shell & Kernel Migration | Remove old `vfs_*()` wrappers |
+| Step | Section  | What It Does                                               |
+| ---- | -------- | ---------------------------------------------------------- |
+| 1st  | Handle   | `HANDLE`, handle-to-vfs_node mapping, type definitions     |
+| 2nd  | Open     | `CreateFile`/`CloseHandle` — the native file open            |
+| 3rd  | I/O      | `ReadFile`/`WriteFile`/`SetFilePointer` — data I/O           |
+| 4th  | Dir      | `FindFirstFile`/`CreateDirectory` — directory enum + create  |
+| 5th  | Manage   | `DeleteFile`/`MoveFile`/`CopyFile` — file management         |
+| 6th  | Migrate  | Shell & kernel migration — remove old `vfs_*()` wrappers    |
 
 > [!IMPORTANT]
 > **Why is this P0?** Everything downstream depends on it — native Win32 apps,
 > the shell, the registry, font loading, image loading, cursor loading, log
-> flushing, crash dumps. It's the **foundation of the entire userspace API**.
+> flushing, crash dumps. It’s the **foundation of the entire userspace API**.
+> See `TODO-040.17-Win32-FS-API.md` for the full implementation breakdown.
 
 #### 2. §6.1 Auto-Mount System (🟠 P1 — do after §3.6)
 
@@ -226,15 +231,15 @@ is done and the API is finalized.
 ### TL;DR — The Critical Path
 
 ```
-Now:  §3.6 Win32 File API (P0) ← this IS the VFS enhancement
+Now:  Win32 File API (P0) ← this IS the VFS enhancement (TODO-040.17)
 Next: §6.1 Auto-Mount (P1)
 Then: §4.1 NTFS Read (P1)
 Then: §5.9.5-9 IXFS advanced features (P2-P3)
 ```
 
 The VFS layer itself is solid — what's missing is the **user-facing API** built
-on top of it. §3.6 is the single biggest piece of remaining work in the entire
-filesystem TODO.
+on top of it. `TODO-040.17-Win32-FS-API.md` is the single biggest piece of
+remaining work in the entire filesystem TODO.
 
 ---
 
@@ -262,10 +267,10 @@ filesystem TODO.
 
 > [!IMPORTANT]
 > **Dependencies:**
-> - `TODO-040-Filesystem.md §3.6` — Win32 File API (`CreateFile`, `ReadFile`, etc.)
+> - `TODO-040.17-Win32-FS-API.md` — Win32 File API (`CreateFile`, `ReadFile`, etc.)
 > - `TODO-040-Filesystem.md §3.5` — VFS driver interface (`vfs_ops`)
 > - `TODO-028-Process-Model.md` — Per-process handle tables
-> - `TODO-040-Filesystem.md §3.6.1` — Handle table and type definitions
+> - `TODO-040.17-Win32-FS-API.md §1` — Handle table and type definitions
 
 ---
 
@@ -378,7 +383,7 @@ filesystem TODO.
 > [!IMPORTANT]
 > → XREF: `TODO-023-Virtual-Memory.md` — VMM page fault handler
 > → XREF: `TODO-028-Process-Model.md` — PE loader
-> → XREF: `TODO-040-Filesystem.md §3.6.3` — ReadFile (used as fallback)
+> → XREF: `TODO-040.17-Win32-FS-API.md` — ReadFile (used as fallback)
 
 - [ ] Implement `CreateFileMapping(hFile, ..., dwProtection, ...)` → create file mapping object
 - [ ] Implement `MapViewOfFile(hMapping, dwDesiredAccess, offset, size)`:

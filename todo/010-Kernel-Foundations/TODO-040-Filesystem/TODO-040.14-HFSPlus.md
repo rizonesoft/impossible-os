@@ -59,6 +59,10 @@ graph TD
     V["§12.2 Resource Fork Inspector"]
     W["§12.3 Time Machine Browser"]
     X["§12.4 Cross-Platform Metadata Viewer"]
+    Y["§12.5 Transparent Compression Detector"]
+    Z["§12.6 Fusion Drive Detector"]
+    AA["§12.7 Encryption Status Detector"]
+    AB["§12.8 Sparse File Support"]
 
     SPEC --> A
     BLK --> B
@@ -94,24 +98,29 @@ graph TD
     K --> V
     H --> W
     F --> X
+    P --> Y
+    P --> Z
+    C --> AA
+    K --> AB
 ```
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                           | Depends On              | Status |
-| -- | :----: | -------------------------------------------------- | ----------------------- | :----: |
-| 💎 | **0**  | Prerequisites (spec, block device, partitions)     | —                       |   ✅   |
-| 💎 | **1**  | §1.1 Byte-Swap, §1.2 Volume Header, §1.3 Attrs    | Phase 0                 |   ⬜   |
-| 💎 | **2**  | §2.1 B-Tree Node Reader, §2.2 B-Tree Search        | Phase 1                 |   ⬜   |
-| 💎 | **3**  | §3.1 Catalog Records, §3.2 Thread/CNID, §4.1 Forks | Phase 2                |   ⬜   |
-| 💎 | **4**  | §3.3 Path Resolution, §4.2 Extents Overflow        | Phase 3                 |   ⬜   |
-| 💎 | **4**  | §6.1 Unicode NFD, §6.2 Case-Insensitive Compare    | Phase 1                 |   ⬜   |
-| 💎 | **5**  | §4.3 File Data Reader, §7.1 Journal Replay          | Phase 4                 |   ⬜   |
-| 💎 | **6**  | §8.1 VFS Registration                               | Phase 5 + VFS (040.07)  |   ⬜   |
-| 💎 | **7**  | §5.1 Allocation Bitmap, §10.1 Node Cache            | Phase 2                 |   ⬜   |
-| 💎 | **7**  | §11.1 Attributes B-Tree, §11.2 Hard Links           | Phase 3                 |   ⬜   |
-| 💎 | **8**  | §9.1 Test Suite                                      | Phase 6                 |   ⬜   |
-| ⭐ | **8**  | §12.1 Health, §12.2 Resource Fork, §12.3 Time Machine, §12.4 Metadata | Phase 3 |   ⬜   |
+| ⭐ | Phase   | Sections                                                                   | Depends On             | Status |
+| -- | :-----: | -------------------------------------------------------------------------- | ---------------------- | :----: |
+| 💎 | **0**   | Prerequisites (spec, block device, partitions)                             | —                      |   ✅   |
+| 💎 | **1**   | §1.1 Byte-Swap, §1.2 Volume Header, §1.3 Attrs                           | Phase 0                |   ⬜   |
+| 💎 | **2**   | §2.1 B-Tree Node Reader, §2.2 B-Tree Search                              | Phase 1                |   ⬜   |
+| 💎 | **3**   | §3.1 Catalog Records, §3.2 Thread/CNID, §4.1 Forks                       | Phase 2                |   ⬜   |
+| 💎 | **4a**  | §3.3 Path Resolution, §4.2 Extents Overflow                              | Phase 3                |   ⬜   |
+| 💎 | **4b**  | §6.1 Unicode NFD, §6.2 Case-Insensitive Compare                          | Phase 1                |   ⬜   |
+| 💎 | **5**   | §4.3 File Data Reader, §7.1 Journal Replay                               | Phase 4a + 4b          |   ⬜   |
+| 💎 | **6**   | §8.1 VFS Registration                                                     | Phase 5 + VFS (040.07) |   ⬜   |
+| 💎 | **7a**  | §5.1 Allocation Bitmap, §10.1 Node Cache                                 | Phase 2                |   ⬜   |
+| 💎 | **7b**  | §11.1 Attributes B-Tree, §11.2 Hard Links                                | Phase 3                |   ⬜   |
+| 💎 | **8**   | §9.1 Test Suite                                                           | Phase 6                |   ⬜   |
+| ⭐ | **8**   | §12.1–12.4 Health, Resource Fork, Time Machine, Metadata                  | Phase 3                |   ⬜   |
+| ⭐ | **8**   | §12.5–12.8 Compression, Fusion Drive, Encryption, Sparse Files            | Phase 6                |   ⬜   |
 
 > [!NOTE]
 > **Phase 1** establishes the foundation — byte-swap helpers and volume header parsing.
@@ -756,36 +765,138 @@ After implementation, save gotchas to MCP memory.
 - [ ] Wire to File Properties panel for HFS+ volumes
 - [ ] Commit: `"hfsplus: cross-platform metadata viewer"`
 
+### 12.5 Transparent Compression Detector (🚀 Impossible OS Feature)
+
+**Prompt:** macOS 10.6+ introduced transparent HFS+ compression using the
+`com.apple.decmpfs` extended attribute. Compressed files have the
+`UF_COMPRESSED` flag set in `HFSPlusBSDInfo.ownerFlags`. The compression
+resource fork or xattr stores the actual data. Neither Windows nor Linux
+surfaces compression info for HFS+ files. Detect compressed files and
+display compression ratio, algorithm type, and original vs. compressed size.
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"hfsplus: transparent compression detector"`. After implementation, save
+gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** macOS applies transparent compression silently.
+> Linux's `hfsplus` module ignores `UF_COMPRESSED` — compressed files read
+> as zero bytes. Impossible OS can detect and report compression, and
+> optionally decompress for correct file reading.
+
+- [ ] Detect `UF_COMPRESSED` flag (bit 5) in `HFSPlusBSDInfo.ownerFlags`
+- [ ] Read `com.apple.decmpfs` extended attribute via Attributes B-Tree (§11.1)
+- [ ] Parse compression header: magic `0x636D7066` ("cmpf"), type, uncompressed size
+- [ ] Support Type 3 (zlib in xattr) and Type 4 (zlib in resource fork)
+- [ ] Display in File Properties: compressed size, original size, ratio, algorithm
+- [ ] Log: `[hfsplus] Compressed file CNID=%u: %u → %u bytes (%.1f%%)`
+- [ ] Commit: `"hfsplus: transparent compression detector"`
+
+### 12.6 Fusion Drive Detector (🚀 Impossible OS Feature)
+
+**Prompt:** Apple Fusion Drives combine an SSD and HDD into a single Core
+Storage logical volume. A Fusion Drive HFS+ volume has a Core Storage
+Physical Volume Header at sector 0 of the partition (magic `0x4353`). The
+volume is identified by `lastMountedVersion` containing `CS` and the presence
+of Core Storage metadata. Detect Fusion Drive volumes and display the
+tier layout (SSD + HDD) and volume UUID in Disk Manager. After completing
+all items, mark every item as `[x]`, update this prompt to a verification
+prompt, run `bash scripts/build.sh clean`, and commit as
+`"hfsplus: Fusion Drive detector"`. After implementation, save gotchas to
+MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows cannot read Fusion Drives at all. Linux
+> mounts the HFS+ layer but has no awareness of the Core Storage tier
+> structure. Impossible OS can identify and report Fusion Drive layouts.
+
+- [ ] Check `lastMountedVersion` for Core Storage signatures
+- [ ] Detect Core Storage PV header magic `0x4353` at partition start
+- [ ] Read Core Storage volume group UUID if present
+- [ ] Display in Disk Manager: "Fusion Drive (SSD + HDD)", volume UUID
+- [ ] Log: `[hfsplus] Fusion Drive detected: group=%s`
+- [ ] Commit: `"hfsplus: Fusion Drive detector"`
+
+### 12.7 Encryption Status Detector (🚀 Impossible OS Feature)
+
+**Prompt:** macOS 10.7+ FileVault 2 uses Core Storage encryption on HFS+
+volumes. Encrypted volumes have `kHFSVolumeJournaledBit` set and the Core
+Storage layer presents a locked logical volume. Detect encryption markers
+and display status (encrypted/decrypted/locked) in Disk Manager. Do NOT
+attempt decryption — just report status. After completing all items, mark
+every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as
+`"hfsplus: encryption status detector"`. After implementation, save gotchas
+to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows shows encrypted HFS+ volumes as "unknown".
+> Linux's `hfsplus` module fails silently on encrypted volumes. Impossible OS
+> can identify FileVault-encrypted drives and display their encryption status.
+
+- [ ] Detect Core Storage encryption markers in volume metadata
+- [ ] Check for `com.apple.corestorage.lv.encrypted` xattr
+- [ ] Report encryption type: FileVault 2 (AES-XTS 128/256)
+- [ ] Display in Disk Manager: lock icon, "Encrypted (FileVault 2)"
+- [ ] Log: `[hfsplus] Encrypted volume detected: FileVault 2, status=%s`
+- [ ] Commit: `"hfsplus: encryption status detector"`
+
+### 12.8 Sparse File Reporting (🚀 Impossible OS Feature)
+
+**Prompt:** HFS+ supports sparse files via extent descriptors — gaps in the
+extent list represent zero-filled regions. Detect sparse files by checking
+if the total extent block count is less than `logicalSize / blockSize`.
+Report sparse file status and the actual disk space consumed vs. logical size.
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"hfsplus: sparse file reporting"`. After implementation, save gotchas to
+MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Linux's `hfsplus` module reads sparse files but
+> doesn't report sparseness. `du` vs `ls -l` discrepancies confuse users.
+> Impossible OS can show actual vs. logical size in File Properties.
+
+- [ ] Detect sparse files: sum of extent `blockCount` < `logicalSize / blockSize`
+- [ ] Calculate actual disk usage vs. logical file size
+- [ ] Display in File Properties: "Sparse file: 2.1 GB logical, 800 MB on disk"
+- [ ] Report sparseness percentage in directory listings
+- [ ] Commit: `"hfsplus: sparse file reporting"`
+
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section                          | Description                                                          |
-| -- | -------- | -------------------------------- | -------------------------------------------------------------------- |
-| 💎 | 🔴 P0   | 1.1 Byte-Swap Helpers            | Foundation — every field read depends on this                        |
-| 💎 | 🔴 P0   | 1.2 Volume Header Parsing        | Foundation — locate all special files                                |
-| 💎 | 🔴 P0   | 1.3 Volume Attribute Flags       | Safety — detect dirty/locked/journaled state                         |
-| 💎 | 🔴 P0   | 2.1 B-Tree Node Reader           | Foundation — generic engine for all B-trees                          |
-| 💎 | 🔴 P0   | 2.2 B-Tree Search                | Foundation — navigate catalog and extents trees                      |
-| 💎 | 🔴 P0   | 3.1 Catalog Key & Records        | Foundation — parse file/folder entries                                |
-| 💎 | 🟠 P1   | 3.2 Thread Records & CNID        | Metadata — reverse lookups, root folder validation                   |
-| 💎 | 🟠 P1   | 3.3 Path Resolution              | Core — resolve full file paths                                       |
-| 💎 | 🟠 P1   | 4.1 Fork Data & Extent Reader    | Core — read file data from extents                                   |
-| 💎 | 🟠 P1   | 4.2 Extents Overflow B-Tree      | Core — support fragmented files (> 8 extents)                        |
-| 💎 | 🟠 P1   | 4.3 File Data Reader             | Core — unified file read API                                         |
-| 💎 | 🟠 P1   | 6.1 Unicode NFD Decomposition    | Correctness — required for catalog key matching                      |
-| 💎 | 🟠 P1   | 6.2 Case-Insensitive Comparison  | Correctness — default HFS+ name matching                             |
-| 💎 | 🟠 P1   | 7.1 Journal Replay               | Data integrity — dirty volume recovery                               |
-| 💎 | 🟠 P1   | 8.1 VFS Registration             | Integration — make HFS+ mountable                                    |
-| 💎 | 🟡 P2   | 5.1 Allocation Bitmap            | Read-only audit — verify free block counts                           |
-| 💎 | 🟡 P2   | 10.1 B-Tree Node Cache           | Performance — avoid redundant disk reads                             |
-| 💎 | 🟡 P2   | 11.1 Attributes B-Tree           | Interop — extended attributes and named forks                        |
-| 💎 | 🟡 P2   | 11.2 Hard Link Resolution        | Correctness — transparent hard link following                        |
-| 💎 | 🟢 P3   | 9.1 Test Suite                   | Quality — automated validation                                       |
-| ⭐ | 🟢 P3   | 12.1 Volume Health Dashboard     | **GUI health panel** — first non-macOS to show HFS+ health          |
-| ⭐ | 🟢 P3   | 12.2 Resource Fork Inspector     | **Visual resource fork browser** — unique to Impossible OS           |
-| ⭐ | 🔵 P4   | 12.3 Time Machine Browser        | **Timeline backup browser** — no other OS provides this              |
-| ⭐ | 🔵 P4   | 12.4 Metadata Viewer             | **Full Apple metadata display** — type/creator, Finder info          |
+| ⭐ | Priority | Section                             | Description                                                            |
+| -- | -------- | ----------------------------------- | ---------------------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1.1 Byte-Swap Helpers               | Foundation — every field read depends on this                          |
+| 💎 | 🔴 P0   | 1.2 Volume Header Parsing           | Foundation — locate all special files                                  |
+| 💎 | 🔴 P0   | 1.3 Volume Attribute Flags          | Safety — detect dirty/locked/journaled state                           |
+| 💎 | 🔴 P0   | 2.1 B-Tree Node Reader              | Foundation — generic engine for all B-trees                            |
+| 💎 | 🔴 P0   | 2.2 B-Tree Search                   | Foundation — navigate catalog and extents trees                        |
+| 💎 | 🔴 P0   | 3.1 Catalog Key & Records           | Foundation — parse file/folder entries                                  |
+| 💎 | 🟠 P1   | 3.2 Thread Records & CNID           | Metadata — reverse lookups, root folder validation                     |
+| 💎 | 🟠 P1   | 3.3 Path Resolution                 | Core — resolve full file paths                                         |
+| 💎 | 🟠 P1   | 4.1 Fork Data & Extent Reader       | Core — read file data from extents                                     |
+| 💎 | 🟠 P1   | 4.2 Extents Overflow B-Tree         | Core — support fragmented files (> 8 extents)                          |
+| 💎 | 🟠 P1   | 4.3 File Data Reader                | Core — unified file read API                                           |
+| 💎 | 🟠 P1   | 6.1 Unicode NFD Decomposition       | Correctness — required for catalog key matching                        |
+| 💎 | 🟠 P1   | 6.2 Case-Insensitive Comparison     | Correctness — default HFS+ name matching                               |
+| 💎 | 🟠 P1   | 7.1 Journal Replay                  | Data integrity — dirty volume recovery                                 |
+| 💎 | 🟠 P1   | 8.1 VFS Registration                | Integration — make HFS+ mountable                                      |
+| 💎 | 🟡 P2   | 5.1 Allocation Bitmap               | Read-only audit — verify free block counts                             |
+| 💎 | 🟡 P2   | 10.1 B-Tree Node Cache              | Performance — avoid redundant disk reads                               |
+| 💎 | 🟡 P2   | 11.1 Attributes B-Tree              | Interop — extended attributes and named forks                          |
+| 💎 | 🟡 P2   | 11.2 Hard Link Resolution           | Correctness — transparent hard link following                          |
+| 💎 | 🟢 P3   | 9.1 Test Suite                      | Quality — automated validation                                         |
+| ⭐ | 🟢 P3   | 12.1 Volume Health Dashboard        | **GUI health panel** — first non-macOS to show HFS+ health            |
+| ⭐ | 🟢 P3   | 12.2 Resource Fork Inspector        | **Visual resource fork browser** — unique to Impossible OS             |
+| ⭐ | 🟢 P3   | 12.5 Compression Detector           | **Transparent compression reporting** — Linux reads zero bytes         |
+| ⭐ | 🔵 P4   | 12.3 Time Machine Browser           | **Timeline backup browser** — no other OS provides this                |
+| ⭐ | 🔵 P4   | 12.4 Metadata Viewer                | **Full Apple metadata display** — type/creator, Finder info            |
+| ⭐ | 🔵 P4   | 12.6 Fusion Drive Detector          | **Core Storage tier detection** — no other non-macOS OS shows this     |
+| ⭐ | 🔵 P4   | 12.7 Encryption Status Detector     | **FileVault 2 detection** — Windows/Linux show "unknown"               |
+| ⭐ | 🔵 P4   | 12.8 Sparse File Reporting          | **Sparse file awareness** — actual vs. logical size display            |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -794,43 +905,47 @@ After implementation, save gotchas to MCP memory.
 
 ## OS Comparison
 
-| Feature                             | 🪟 Windows 11                      | 🐧 Linux (`hfsplus` module)        | 🚀 Impossible OS                          |
-| ----------------------------------- | ---------------------------------- | ----------------------------------- | ----------------------------------------- |
-| Volume header parsing               | ❌ No HFS+ support                 | ✅ Full                             | ⬜ §1.2 P0                               |
-| Big-endian byte swapping            | ❌                                  | ✅ Built into module                | ⬜ §1.1 P0                               |
-| B-tree node reading                 | ❌                                  | ✅ Full                             | ⬜ §2.1 P0                               |
-| Catalog B-tree traversal            | ❌                                  | ✅ Full                             | ⬜ §3.1 P0                               |
-| File data reading (forks)           | ❌                                  | ✅ Full                             | ⬜ §4.1 P1                               |
-| Extents overflow                    | ❌                                  | ✅ Full                             | ⬜ §4.2 P1                               |
-| Unicode NFD decomposition           | ❌                                  | ✅ Frozen Unicode 3.2               | ⬜ §6.1 P1                               |
-| Case-insensitive comparison         | ❌                                  | ✅ Apple case-fold tables           | ⬜ §6.2 P1                               |
-| Journal replay                      | ❌                                  | ⚠️ Read-only on journaled volumes   | ⬜ §7.1 P1                               |
-| Write support                       | ❌                                  | ⚠️ Only non-journaled, risky        | ⬜ Future P3                              |
-| Allocation bitmap                   | ❌                                  | ✅ Full                             | ⬜ §5.1 P2                               |
-| Extended attributes                 | ❌                                  | ✅ Full                             | ⬜ §11.1 P2                              |
-| Hard link resolution                | ❌                                  | ✅ Files + directories              | ⬜ §11.2 P2                              |
-| HFSX case-sensitive variant         | ❌                                  | ✅ Binary comparison mode           | ⬜ §6.2 (handled in comparison)          |
-| Apple Partition Map support         | ❌                                  | ✅ Full                             | ⬜ Future (GPT/MBR only for now)         |
-| **Volume health dashboard**         | ❌ No HFS+ support                 | ❌ No GUI, CLI `fsck.hfsplus` only  | ⬜ §12.1 P3 — **GUI health panel** 🚀    |
-| **Resource fork inspector**         | ❌ No HFS+ support                 | ❌ No GUI, CLI only via `xattr`     | ⬜ §12.2 P3 — **visual browser** 🚀      |
-| **Time Machine backup browser**     | ❌ No HFS+ support                 | ❌ Manual directory navigation      | ⬜ §12.3 P4 — **timeline browser** 🚀    |
-| **Cross-platform metadata viewer**  | ❌ No HFS+ support                 | ⚠️ `stat` CLI, no Finder info       | ⬜ §12.4 P4 — **full metadata panel** 🚀 |
+| Feature                                 | 🪟 Windows 11                     | 🐧 Linux (`hfsplus` module)         | 🚀 Impossible OS                                   |
+| --------------------------------------- | --------------------------------- | ------------------------------------ | -------------------------------------------------- |
+| Volume header parsing                   | ❌ No HFS+ support                | ✅ Full                              | ⬜ §1.2 P0                                         |
+| Big-endian byte swapping                | ❌                                 | ✅ Built into module                 | ⬜ §1.1 P0                                         |
+| B-tree node reading                     | ❌                                 | ✅ Full                              | ⬜ §2.1 P0                                         |
+| Catalog B-tree traversal                | ❌                                 | ✅ Full                              | ⬜ §3.1 P0                                         |
+| File data reading (forks)               | ❌                                 | ✅ Full                              | ⬜ §4.1 P1                                         |
+| Extents overflow                        | ❌                                 | ✅ Full                              | ⬜ §4.2 P1                                         |
+| Unicode NFD decomposition               | ❌                                 | ✅ Frozen Unicode 3.2                | ⬜ §6.1 P1                                         |
+| Case-insensitive comparison             | ❌                                 | ✅ Apple case-fold tables            | ⬜ §6.2 P1                                         |
+| Journal replay                          | ❌                                 | ⚠️ Read-only on journaled volumes    | ⬜ §7.1 P1                                         |
+| Write support                           | ❌                                 | ⚠️ Only non-journaled, risky         | ⬜ Future                                           |
+| Allocation bitmap                       | ❌                                 | ✅ Full                              | ⬜ §5.1 P2                                         |
+| Extended attributes                     | ❌                                 | ✅ Full                              | ⬜ §11.1 P2                                        |
+| Hard link resolution                    | ❌                                 | ✅ Files + directories               | ⬜ §11.2 P2                                        |
+| HFSX case-sensitive variant             | ❌                                 | ✅ Binary comparison mode            | ⬜ §6.2 (handled in comparison)                    |
+| Apple Partition Map support             | ❌                                 | ✅ Full                              | ⬜ Future (GPT/MBR only for now)                   |
+| **Volume health dashboard**             | ❌ No HFS+ support                | ❌ No GUI, CLI `fsck.hfsplus` only   | ⬜ §12.1 P3 — **GUI health panel** 🚀              |
+| **Resource fork inspector**             | ❌ No HFS+ support                | ❌ No GUI, CLI only via `xattr`      | ⬜ §12.2 P3 — **visual browser** 🚀                |
+| **Transparent compression detection**   | ❌ No HFS+ support                | ❌ Reads zero bytes for compressed   | ⬜ §12.5 P3 — **compression reporter** 🚀          |
+| **Time Machine backup browser**         | ❌ No HFS+ support                | ❌ Manual directory navigation       | ⬜ §12.3 P4 — **timeline browser** 🚀              |
+| **Cross-platform metadata viewer**      | ❌ No HFS+ support                | ⚠️ `stat` CLI, no Finder info        | ⬜ §12.4 P4 — **full metadata panel** 🚀           |
+| **Fusion Drive detection**              | ❌ No HFS+ support                | ❌ No Core Storage awareness         | ⬜ §12.6 P4 — **tier layout display** 🚀           |
+| **Encryption status detection**         | ❌ Shows as "unknown"              | ❌ Fails silently                    | ⬜ §12.7 P4 — **FileVault 2 reporting** 🚀         |
+| **Sparse file reporting**               | ❌ No HFS+ support                | ⚠️ No sparseness reporting           | ⬜ §12.8 P4 — **actual vs. logical size** 🚀       |
 
 > **After P0+P1 items:** Impossible OS can read any HFS+ volume, matching Linux's native driver and exceeding all third-party Windows tools (Paragon HFS+ for Windows doesn't show metadata).
-> **After P2–P3 exclusive features:** Exceeds both — GUI health, resource fork browsing, and volume auditing are unique to Impossible OS.
-> **After P4 items:** Full Apple ecosystem interop including Time Machine backup browsing — a feature no non-macOS system provides.
+> **After P2–P3 exclusive features:** Exceeds both — GUI health, resource fork browsing, compression detection, and volume auditing are unique to Impossible OS.
+> **After P4 items:** Full Apple ecosystem interop including Time Machine browsing, Fusion Drive detection, FileVault reporting, and sparse file awareness — features no non-macOS system provides.
 
 ---
 
 ## Key Files
 
-| File                                   | Purpose                                                                  |
-| -------------------------------------- | ------------------------------------------------------------------------ |
-| `src/kernel/fs/hfsplus.c`             | [NEW] HFS+ driver implementation                                         |
-| `include/kernel/fs/hfsplus.h`         | [NEW] HFS+ structures, constants, byte-swap helpers                      |
-| `src/kernel/fs/hfsplus_unicode.c`     | [NEW] Frozen Unicode 3.2 NFD tables + case-folding tables                |
-| `include/kernel/fs/hfsplus_unicode.h` | [NEW] Unicode comparison API                                             |
-| `src/kernel/fs/hfsplus_journal.c`     | [NEW] Journal replay implementation                                       |
-| `src/kernel/fs/partition.c`           | Add MBR type `0xAF` detection                                            |
-| `src/kernel/fs/gpt.c`                 | **Already has** `48465300-0000-11AA-AA11-00306543ECAC` GUID               |
-| `specs/storage/filesystems/hfsplus.md`| Full on-disk specification reference (1017 lines)                         |
+| File                                    | Purpose                                                           |
+| --------------------------------------- | ----------------------------------------------------------------- |
+| `src/kernel/fs/hfsplus.c`              | [NEW] HFS+ driver implementation                                  |
+| `include/kernel/fs/hfsplus.h`          | [NEW] HFS+ structures, constants, byte-swap helpers               |
+| `src/kernel/fs/hfsplus_unicode.c`      | [NEW] Frozen Unicode 3.2 NFD tables + case-folding tables         |
+| `include/kernel/fs/hfsplus_unicode.h`  | [NEW] Unicode comparison API                                      |
+| `src/kernel/fs/hfsplus_journal.c`      | [NEW] Journal replay implementation                                |
+| `src/kernel/fs/partition.c`            | Add MBR type `0xAF` detection                                     |
+| `src/kernel/fs/gpt.c`                  | **Already has** `48465300-0000-11AA-AA11-00306543ECAC` GUID        |
+| `specs/storage/filesystems/hfsplus.md` | Full on-disk specification reference (1017 lines)                  |

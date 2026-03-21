@@ -69,6 +69,9 @@ graph TD
     V["§9.3 Latency Telemetry"]
     W["§9.4 Predictive I/O Scheduling"]
     X["§9.5 SMART Dashboard"]
+    BB["§9.6 Simple Copy Offload"]
+    CC["§9.7 Zoned Namespace Awareness"]
+    DD["§9.8 Command Lockdown"]
     Y["§10.1 Namespace Management"]
     Z["§10.2 Firmware Update"]
     AA["§10.3 NVMe Reservations"]
@@ -116,6 +119,9 @@ graph TD
     I --> V
     I --> W
     O --> X
+    I --> BB
+    C --> CC
+    I --> DD
 
     %% Phase 8: Enterprise
     C --> Y
@@ -192,7 +198,8 @@ graph TD
 > polling mode for high-IOPS workloads.
 >
 > **Phase 8** delivers exclusive features (⭐): adaptive hybrid polling, I/O priority queues,
-> latency telemetry, predictive I/O scheduling, and SMART dashboard GUI integration.
+> latency telemetry, predictive I/O scheduling, SMART dashboard GUI integration, simple copy
+> offload, zoned namespace awareness, and command lockdown.
 >
 > **Phase 9** is stretch: dynamic namespace management, firmware update, reservations.
 
@@ -473,7 +480,7 @@ a verification prompt, run `bash scripts/build.sh clean`, and commit as
   - [ ] `write_fn`: `nvme_blkdev_write()` adapter
   - [ ] `flush_fn`: `nvme_blkdev_flush()` adapter
 - [ ] Call `blkdev_register()` for each namespace
-- [ ] Trigger `partition_scan()` to detect GPT/MBR and auto-mount filesystems
+- [ ] Trigger `partition_scan_all()` to detect GPT/MBR and auto-mount filesystems
 - [ ] Log: `[NVMe] Registered blkdev "%s": %llu MiB, %u-byte sectors`
 - [ ] Commit: `"nvme: block device registration"`
 
@@ -553,6 +560,7 @@ After implementation, save gotchas to MCP memory.
   - [ ] Each entry: `{ uint32_t cattr, uint32_t nlb, uint64_t slba }` (16 bytes)
 - [ ] PRP1 = range descriptor buffer physical address
 - [ ] Submit to I/O SQ, wait for completion
+- [ ] Add `discard_fn` callback to `blkdev` struct (does not exist yet — extend the API)
 - [ ] Wire to `blkdev_discard()` callback
 - [ ] Commit: `"nvme: dataset management TRIM"`
 

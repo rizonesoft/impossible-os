@@ -723,34 +723,105 @@ graph TD
 - [ ] Read-only benchmark mode available immediately (write test deferred to write support)
 - [ ] Commit: `"exfat: USB/SD speed benchmark"`
 
+### 12.6 Write Coalescing for Flash Media (🚀 Impossible OS Feature)
+
+**Prompt:** Flash-based media (USB sticks, SD cards) suffer from write amplification — small writes trigger full erase-block rewrites (typically 128–512 KB). Implement a write coalescing layer that batches small writes into cluster-aligned chunks before flushing to the device. Track pending writes per cluster and merge adjacent dirty clusters into single DMA transfers. This reduces flash wear by 10–50× for workloads with many small files. No OS provides driver-level write coalescing for exFAT — Windows and Linux both pass writes through to the block layer without flash-aware batching. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: write coalescing for flash media"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows and Linux both rely on the block layer's generic I/O scheduler
+> for write ordering. Neither has FS-level knowledge of flash erase blocks. Impossible OS
+> batches exFAT writes at the filesystem level, aligning flushes to cluster boundaries —
+> dramatically reducing write amplification on cheap USB sticks and SD cards.
+
+- [ ] Implement per-cluster dirty tracking: bitmap of modified clusters
+- [ ] Batch small writes: accumulate until cluster-aligned or flush timer expires
+- [ ] Merge adjacent dirty clusters into single `blkdev_write()` calls
+- [ ] Configurable flush interval via registry: `HKLM\SYSTEM\Drivers\exFAT\FlushIntervalMs` (default: 2000)
+- [ ] Flush on `close()`, `fsync()`, and safe-eject
+- [ ] Telemetry: log coalescing ratio: `[exFAT] Write coalescing: %u small writes → %u flushes (%.1fx reduction)`
+- [ ] Commit: `"exfat: write coalescing for flash media"`
+
+### 12.7 Per-App I/O Bandwidth Monitor (🚀 Impossible OS Feature)
+
+**Prompt:** Show which applications are consuming USB/SD drive bandwidth in real time. Track read/write bytes and IOPS per process for each mounted exFAT volume. Display in a Disk Manager panel: process name, read MB/s, write MB/s, total bytes transferred. Sort by bandwidth to identify I/O hogs that slow down removable media. No OS provides per-app I/O breakdowns for removable media — Windows Task Manager shows total disk I/O but not per-volume, and Linux requires `iotop` (separate install, no per-volume breakdown). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: per-app I/O bandwidth monitor"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows Task Manager shows total disk activity but cannot filter by
+> volume or filesystem. Linux `iotop` requires root and a separate install, and shows per-process
+> I/O without per-volume breakdown. Impossible OS shows exactly which app is reading/writing
+> which USB drive, in real time, in the Disk Manager GUI.
+
+- [ ] Hook VFS `read()`/`write()` calls: record `{pid, volume, bytes, timestamp}`
+- [ ] Maintain per-process I/O stats: rolling 1-second window for MB/s calculation
+- [ ] Track cumulative bytes per session (since mount)
+- [ ] Sort by bandwidth: highest consumer at top
+- [ ] Display in Disk Manager: `"I/O Activity"` tab on exFAT volume properties
+  - [ ] Columns: Process Name | PID | Read MB/s | Write MB/s | Total MB
+- [ ] Highlight I/O hogs: process using > 80% of device bandwidth gets ⚠️ icon
+- [ ] Commit: `"exfat: per-app I/O bandwidth monitor"`
+
+### 12.8 exFAT Corruption Auto-Heal (🚀 Impossible OS Feature)
+
+**Prompt:** Detect and automatically repair simple exFAT corruption on mount. Cross-reference the Allocation Bitmap against the FAT to find mismatches: clusters marked free in the bitmap but referenced in a FAT chain (leak), or clusters marked allocated in the bitmap but with no FAT chain referencing them (orphan). For leaks, mark the cluster as allocated in the bitmap. For orphans, either free them or link them into a `FOUND.000` directory. Clear the dirty flag after successful repair. No OS auto-repairs exFAT on mount — Windows prompts "Scan and fix?" and Linux requires manual `fsck.exfat`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: corruption auto-heal"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows asks "Scan and fix?" on every dirty exFAT insertion — a modal
+> dialog that blocks access to the drive until the user clicks through. Linux requires the user
+> to run `fsck.exfat` from the command line. Impossible OS silently heals simple corruption
+> (bitmap/FAT mismatches) on mount and logs what was fixed — no user intervention required.
+
+> [!WARNING]
+> **Safety:** Only auto-heal bitmap/FAT mismatches (low risk). Never auto-repair directory
+> entry corruption — that requires user confirmation via the Health Dashboard (§12.1).
+> Always create a repair log at `C:\Impossible\System\Logs\exfat-repair.log`.
+
+- [ ] On mount, if dirty flag set: run auto-heal scan
+- [ ] Scan 1 — Bitmap vs FAT leaks:
+  - [ ] Walk all FAT chains, collect referenced clusters
+  - [ ] Compare against Allocation Bitmap
+  - [ ] If cluster in FAT chain but bitmap says free → fix bitmap (mark allocated)
+  - [ ] Log: `[exFAT] Auto-heal: cluster %u leaked — fixed bitmap`
+- [ ] Scan 2 — Orphan clusters:
+  - [ ] Find clusters marked allocated in bitmap but not in any FAT chain
+  - [ ] If orphan count ≤ 16 → free them (likely partial write)
+  - [ ] If orphan count > 16 → link into `FOUND.000\FILE0001.CHK` etc.
+  - [ ] Log: `[exFAT] Auto-heal: %u orphan clusters recovered`
+- [ ] Clear dirty flag after successful repair
+- [ ] Write repair log: timestamp, volume serial, fixes applied
+- [ ] Registry toggle: `HKLM\SYSTEM\Drivers\exFAT\AutoHeal` (default: enabled)
+- [ ] Commit: `"exfat: corruption auto-heal"`
+
 ---
 
 ## Priority Order
 
-| ⭐ | Priority | Section                 | Description                                                       |
-| -- | -------- | ----------------------- | ----------------------------------------------------------------- |
-| 💎 | 🔴 P0    | 1.1 Boot Sector         | Foundation — locate FAT, Data Region, root directory              |
-| 💎 | 🔴 P0    | 2.1 FAT Reader          | Foundation — traverse fragmented file cluster chains              |
-| 💎 | 🔴 P0    | 5.1 Dir Entry Walker    | Foundation — parse all entry types                                |
-| 💎 | �� P0    | 5.2 File Entry Set      | Foundation — extract file metadata and data pointers              |
-| 💎 | 🟠 P1    | 3.1 Allocation Bitmap   | Metadata — free space queries                                     |
-| 💎 | 🟠 P1    | 4.1 Up-case Table       | Correctness — case-insensitive lookups                            |
-| 💎 | 🟠 P1    | 5.3 Timestamp Decoder   | Metadata — file times for VFS                                     |
-| 💎 | 🟠 P1    | 6.1 NoFatChain Reader   | Performance — fast contiguous file reads                          |
-| 💎 | 🟠 P1    | 6.2 Chained File Reader | Core feature — read fragmented file data                          |
-| 💎 | 🟠 P1    | 7.1 NameHash Lookup     | Performance — fast directory searches                             |
-| 💎 | 🟠 P1    | 7.2 Path Resolution     | Core feature — resolve full file paths                            |
-| 💎 | 🟠 P1    | 9.1 VFS Registration    | Integration — make exFAT mountable                                |
-| 💎 | 🟡 P2    | 1.2 Boot Checksum       | Integrity — validate boot region                                  |
-| 💎 | 🟡 P2    | 6.3 Cluster Chain Cache | Performance — O(1) mid-file reads                                 |
-| 💎 | 🟡 P2    | 8.1 Volume Label        | Feature — volume name display                                     |
-| 💎 | 🟡 P2    | 11.1 TexFAT             | Compat — embedded/automotive SD cards                             |
-| 💎 | 🟢 P3    | 10.1 Test Suite         | Quality — automated validation                                    |
-| ⭐ | 🟢 P3    | 12.1 Health Dashboard   | **Removable media health** — no OS does this                      |
-| ⭐ | 🟢 P3    | 12.2 Deleted Recovery   | **Built-in recovery** — Windows/Linux have nothing                |
-| ⭐ | 🟢 P3    | 12.3 Hot-Swap Detection | **Smart insertion/removal events** — beats Windows eject UX       |
-| ⭐ | �� P4    | 12.4 Frag Visualizer    | **Cluster-level fragmentation map** — no OS exposes this          |
-| ⭐ | 🔵 P4    | 12.5 USB/SD Benchmark   | **Built-in removable media speed test** — no OS has this built-in |
+| ⭐ | Priority | Section                   | Description                                                          |
+| -- | -------- | ------------------------- | -------------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 Boot Sector           | Foundation — locate FAT, Data Region, root directory                 |
+| 💎 | 🔴 P0    | 2.1 FAT Reader            | Foundation — traverse fragmented file cluster chains                 |
+| 💎 | 🔴 P0    | 5.1 Dir Entry Walker      | Foundation — parse all entry types                                   |
+| 💎 | 🔴 P0    | 5.2 File Entry Set        | Foundation — extract file metadata and data pointers                 |
+| 💎 | 🟠 P1    | 3.1 Allocation Bitmap     | Metadata — free space queries                                        |
+| 💎 | 🟠 P1    | 4.1 Up-case Table         | Correctness — case-insensitive lookups                               |
+| 💎 | 🟠 P1    | 5.3 Timestamp Decoder     | Metadata — file times for VFS                                        |
+| 💎 | 🟠 P1    | 6.1 NoFatChain Reader     | Performance — fast contiguous file reads                             |
+| 💎 | 🟠 P1    | 6.2 Chained File Reader   | Core feature — read fragmented file data                             |
+| 💎 | 🟠 P1    | 7.1 NameHash Lookup       | Performance — fast directory searches                                |
+| 💎 | 🟠 P1    | 7.2 Path Resolution       | Core feature — resolve full file paths                               |
+| 💎 | 🟠 P1    | 9.1 VFS Registration      | Integration — make exFAT mountable                                   |
+| 💎 | 🟡 P2    | 1.2 Boot Checksum         | Integrity — validate boot region                                     |
+| 💎 | 🟡 P2    | 6.3 Cluster Chain Cache   | Performance — O(1) mid-file reads                                    |
+| 💎 | 🟡 P2    | 8.1 Volume Label          | Feature — volume name display                                        |
+| 💎 | 🟡 P2    | 11.1 TexFAT              | Compat — embedded/automotive SD cards                                |
+| 💎 | 🟢 P3    | 10.1 Test Suite           | Quality — automated validation                                       |
+| ⭐ | 🟢 P3    | 12.1 Health Dashboard     | **Removable media health** — no OS does this                         |
+| ⭐ | 🟢 P3    | 12.2 Deleted Recovery     | **Built-in recovery** — Windows/Linux have nothing                   |
+| ⭐ | 🟢 P3    | 12.3 Hot-Swap Detection   | **Smart insert/remove events** — beats Windows eject UX              |
+| ⭐ | 🟢 P3    | 12.8 Corruption Auto-Heal | **Silent repair on mount** — no OS auto-heals exFAT                 |
+| ⭐ | 🔵 P4    | 12.4 Frag Visualizer      | **Cluster-level frag map** — no OS exposes this                      |
+| ⭐ | 🔵 P4    | 12.5 USB/SD Benchmark     | **Built-in speed test** — no OS has this built-in                    |
+| ⭐ | 🔵 P4    | 12.6 Write Coalescing     | **Flash-aware write batching** — reduces wear 10–50×                 |
+| ⭐ | 🔵 P4    | 12.7 I/O Bandwidth Monitor| **Per-app removable media I/O** — no OS tracks per-volume per-app    |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -759,53 +830,56 @@ graph TD
 
 ## OS Comparison
 
-| ⭐ | Feature                          | 🪟 Windows 11 (`exfat.sys`)       | 🐧 Linux (`fs/exfat`)             | 🚀 Impossible OS                                    |
-| -- | -------------------------------- | --------------------------------- | ---------------------------------- | ---------------------------------------------------- |
-| 💎 | Boot sector parsing              | ✅ Native                          | ✅ Full                             | ⬜ §1.1 P0                                           |
-| 💎 | Boot checksum validation         | ✅ Full                            | ✅ Full                             | ⬜ §1.2 P2                                           |
-| 💎 | Backup Boot Region failover      | ✅ Full                            | ✅ Full                             | ⬜ §1.2 (backup path)                                |
-| 💎 | FAT traversal                    | ✅ Full                            | ✅ Full                             | ⬜ §2.1 P0                                           |
-| 💎 | NoFatChain contiguous files      | ✅ Native                          | ✅ Full                             | ⬜ §6.1 P1                                           |
-| 💎 | Allocation Bitmap                | ✅ Full R/W                        | ✅ Full R/W                         | ⬜ §3.1 P1 (read-only)                               |
-| 💎 | Up-case Table (compressed)       | ✅ Native                          | ✅ Full                             | ⬜ §4.1 P1                                           |
-| 💎 | Directory Entry Set parsing      | ✅ Full                            | ✅ Full                             | ⬜ §5.1–5.3 P0                                       |
-| 💎 | NameHash fast lookup             | ✅ Native                          | ✅ Full                             | ⬜ §7.1 P1                                           |
-| 💎 | Path resolution                  | ✅ Full                            | ✅ Full                             | ⬜ §7.2 P1                                           |
-| 💎 | SetChecksum validation           | ✅ Full                            | ✅ Full                             | ⬜ §5.2 (checksum field)                             |
-| 💎 | Timestamps (timezone-aware)      | ✅ Full (UTC offsets)              | ✅ Full                             | ⬜ §5.3 P1                                           |
-| 💎 | Volume Label                     | ✅ Full                            | ✅ Full                             | ⬜ §8.1 P2                                           |
-| 💎 | Long filenames (255 chars)       | ✅ Native                          | ✅ Full                             | ⬜ §5.2 (multi-`0xC1`)                               |
-| 💎 | Files > 4 GB                     | ✅ Native                          | ✅ Full                             | ⬜ §6.1/6.2 (64-bit `DataLength`)                    |
-| 💎 | Cluster chain caching            | ✅ Windows cache manager           | ✅ Page cache                       | ⬜ §6.3 P2                                           |
-| 💎 | VFS integration                  | ✅ Native (`exfat.sys`)            | ✅ Native (`fs/exfat`)              | ⬜ §9.1 P1                                           |
-| 💎 | Vendor Extensions (`0xE0`)       | ✅ Supported                       | ✅ Ignored (benign)                 | ⬜ Ignored (benign)                                  |
-| 💎 | TexFAT (dual FAT/bitmap)         | ✅ Full (Windows CE)               | ❌ Not supported                    | ⬜ §11.1 P2 — **beats Linux**                        |
-| 💎 | OEM Flash Parameters             | ✅ Full                            | ❌ Ignored                          | ⬜ Future (flash-aligned I/O)                        |
-| 💎 | Write support                    | ✅ Full R/W                        | ✅ Full R/W                         | ⬜ Future P3                                         |
-| 💎 | Read-only driver (minimum)       | ✅                                 | ✅                                  | ⬜ Requires §1–§7, §9                                |
-| ⭐ | **Removable media health**       | ❌ "Scan and fix" only             | ❌ CLI `fsck.exfat` only            | ⬜ §12.1 P3 — **GUI health + safe eject**            |
-| ⭐ | **Deleted file recovery**        | ❌ No built-in recovery            | ❌ No recovery tool exists          | ⬜ §12.2 P3 — **built-in GUI recovery**              |
-| ⭐ | **Smart hot-swap detection**     | ⚠️ Generic "safely remove" toast  | ❌ Manual `umount` required         | ⬜ §12.3 P3 — **auto-detect insert/remove + status** |
-| ⭐ | **Fragmentation visualizer**     | ❌ No exFAT defrag/visualizer      | ❌ No tooling                       | ⬜ §12.4 P4 — **cluster-level map in Disk Manager**  |
-| ⭐ | **USB/SD speed benchmark**       | ❌ No built-in benchmark           | ❌ CLI `fio` (separate install)     | ⬜ §12.5 P4 — **one-click speed test in GUI**        |
-| ⭐ | **Anti-aliased TTF in dir list** | ✅ Explorer uses system font       | ⚠️ Terminal only                   | ⬜ File Manager uses TTF — **beats Linux**            |
+| ⭐ | Feature                              | 🪟 Windows 11 (`exfat.sys`)          | 🐧 Linux (`fs/exfat`)                | 🚀 Impossible OS                                       |
+| -- | ------------------------------------ | ------------------------------------- | ------------------------------------- | ------------------------------------------------------ |
+| 💎 | Boot sector parsing                  | ✅ Native                              | ✅ Full                                | ⬜ §1.1 P0                                              |
+| 💎 | Boot checksum validation             | ✅ Full                                | ✅ Full                                | ⬜ §1.2 P2                                              |
+| 💎 | Backup Boot Region failover          | ✅ Full                                | ✅ Full                                | ⬜ §1.2 (backup path)                                   |
+| 💎 | FAT traversal                        | ✅ Full                                | ✅ Full                                | ⬜ §2.1 P0                                              |
+| 💎 | NoFatChain contiguous files          | ✅ Native                              | ✅ Full                                | ⬜ §6.1 P1                                              |
+| 💎 | Allocation Bitmap                    | ✅ Full R/W                            | ✅ Full R/W                            | ⬜ §3.1 P1 (read-only)                                  |
+| 💎 | Up-case Table (compressed)           | ✅ Native                              | ✅ Full                                | ⬜ §4.1 P1                                              |
+| 💎 | Directory Entry Set parsing          | ✅ Full                                | ✅ Full                                | ⬜ §5.1–5.3 P0                                          |
+| 💎 | NameHash fast lookup                 | ✅ Native                              | ✅ Full                                | ⬜ §7.1 P1                                              |
+| 💎 | Path resolution                      | ✅ Full                                | ✅ Full                                | ⬜ §7.2 P1                                              |
+| 💎 | SetChecksum validation               | ✅ Full                                | ✅ Full                                | ⬜ §5.2 (checksum field)                                |
+| 💎 | Timestamps (timezone-aware)          | ✅ Full (UTC offsets)                  | ✅ Full                                | ⬜ §5.3 P1                                              |
+| 💎 | Volume Label                         | ✅ Full                                | ✅ Full                                | ⬜ §8.1 P2                                              |
+| 💎 | Long filenames (255 chars)           | ✅ Native                              | ✅ Full                                | ⬜ §5.2 (multi-`0xC1`)                                  |
+| 💎 | Files > 4 GB                         | ✅ Native                              | ✅ Full                                | ⬜ §6.1/6.2 (64-bit `DataLength`)                       |
+| 💎 | Cluster chain caching                | ✅ Windows cache manager               | ✅ Page cache                          | ⬜ §6.3 P2                                              |
+| 💎 | VFS integration                      | ✅ Native (`exfat.sys`)                | ✅ Native (`fs/exfat`)                 | ⬜ §9.1 P1                                              |
+| 💎 | Vendor Extensions (`0xE0`)           | ✅ Supported                           | ✅ Ignored (benign)                    | ⬜ Ignored (benign)                                     |
+| 💎 | TexFAT (dual FAT/bitmap)            | ✅ Full (Windows CE)                   | ❌ Not supported                       | ⬜ §11.1 P2 — **beats Linux**                           |
+| 💎 | OEM Flash Parameters                 | ✅ Full                                | ❌ Ignored                             | ⬜ Future (flash-aligned I/O)                           |
+| 💎 | Write support                        | ✅ Full R/W                            | ✅ Full R/W                            | ⬜ Future P3                                            |
+| 💎 | Read-only driver (minimum)           | ✅                                     | ✅                                     | ⬜ Requires §1–§7, §9                                   |
+| ⭐ | **Removable media health**           | ❌ "Scan and fix" only                 | ❌ CLI `fsck.exfat` only               | ⬜ §12.1 P3 — **GUI health + safe eject**               |
+| ⭐ | **Deleted file recovery**            | ❌ No built-in recovery                | ❌ No recovery tool exists             | ⬜ §12.2 P3 — **built-in GUI recovery**                 |
+| ⭐ | **Smart hot-swap detection**         | ⚠️ Generic "safely remove" toast      | ❌ Manual `umount` required            | ⬜ §12.3 P3 — **auto-detect + status popup**            |
+| ⭐ | **Corruption auto-heal**             | ⚠️ "Scan and fix?" modal dialog       | ❌ Manual `fsck.exfat` required        | ⬜ §12.8 P3 — **silent repair on mount** 🚀             |
+| ⭐ | **Fragmentation visualizer**         | ❌ No exFAT defrag/visualizer          | ❌ No tooling                          | ⬜ §12.4 P4 — **cluster-level map** 🚀                  |
+| ⭐ | **USB/SD speed benchmark**           | ❌ No built-in benchmark               | ❌ CLI `fio` (separate install)        | ⬜ §12.5 P4 — **one-click speed test** 🚀               |
+| ⭐ | **Write coalescing for flash**       | ❌ No FS-level flash awareness         | ❌ Generic block I/O scheduler         | ⬜ §12.6 P4 — **flash wear reduction** 🚀               |
+| ⭐ | **Per-app I/O bandwidth**            | ⚠️ Task Manager (total disk only)     | ❌ CLI `iotop` (no per-volume)         | ⬜ §12.7 P4 — **per-app per-volume I/O** 🚀             |
+| ⭐ | **Anti-aliased TTF in dir list**     | ✅ Explorer uses system font           | ⚠️ Terminal only                      | ⬜ File Manager uses TTF — **beats Linux**               |
 
 > **After P0+P1 items:** Impossible OS has a fully functional read-only exFAT driver for USB/SD media.
-> **After P2+P3 items:** TexFAT support (beats Linux), removable media health dashboard, and deleted file recovery — **no desktop OS offers all three**.
-> **After P4 items:** Fragmentation visualizer plus built-in USB/SD benchmark — unprecedented for removable media.
+> **After P2+P3 items:** TexFAT support (beats Linux), removable media health dashboard, deleted file recovery, and silent corruption auto-heal — **no desktop OS offers all four**.
+> **After P4 items:** Fragmentation visualizer, built-in USB/SD benchmark, flash-aware write coalescing, and per-app I/O monitor — **unprecedented for removable media**.
 
 ---
 
 ## Key Files
 
-| File                             | Purpose                                                                  |
-| -------------------------------- | ------------------------------------------------------------------------ |
-| `src/kernel/fs/exfat.c`         | [NEW] exFAT driver implementation                                        |
-| `include/kernel/fs/exfat.h`     | [NEW] exFAT structures, constants, entry types                           |
-| `src/kernel/fs/partition.c`     | Add `probe_exfat()` + `PART_FS_EXFAT` + exFAT mount in mount sequence   |
-| `include/kernel/fs/partition.h` | Add `PART_FS_EXFAT` constant (currently missing — only FAT32/IXFS/ext2)  |
-| `include/kernel/fs/vfs.h`       | VFS ops interface — exFAT stubs all 16 callbacks (write ops → `-EROFS`)  |
-| `specs/storage/filesystems/exfat-1.0.md` | Full on-disk specification reference                                 |
+| File                                     | Purpose                                                                 |
+| ---------------------------------------- | ----------------------------------------------------------------------- |
+| `src/kernel/fs/exfat.c`                 | [NEW] exFAT driver implementation                                       |
+| `include/kernel/fs/exfat.h`             | [NEW] exFAT structures, constants, entry types                          |
+| `src/kernel/fs/partition.c`             | Add `probe_exfat()` + `PART_FS_EXFAT` + exFAT mount in mount sequence  |
+| `include/kernel/fs/partition.h`         | Add `PART_FS_EXFAT` constant (currently missing — only FAT32/IXFS/ext2) |
+| `include/kernel/fs/vfs.h`              | VFS ops interface — exFAT stubs all 16 callbacks (write ops → `-EROFS`) |
+| `specs/storage/filesystems/exfat-1.0.md` | Full on-disk specification reference                                    |
 
 ---
 
@@ -814,12 +888,12 @@ graph TD
 > [!IMPORTANT]
 > **Current codebase gaps** that must be addressed before the exFAT driver can work:
 
-| Gap                                                | Current State                                                  | Required Change                                                         |
-| -------------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| No `PART_FS_EXFAT` constant                        | `partition.h` only defines FAT32 (1), IXFS (2), ext2 (3)      | Add `#define PART_FS_EXFAT 4`                                           |
-| No `probe_exfat()` in partition scanner             | `partition.c` probes FAT32, IXFS, ext2 — not exFAT            | Add probe: check `"EXFAT   "` at offset `0x03` + 53-byte MustBeZero    |
-| `partition_mount_filesystems()` skips exFAT         | Only mounts FAT32 and IXFS volumes (line 366)                  | Add `else if (pi->fs_type == PART_FS_EXFAT)` branch                    |
-| `partition_fs_name()` missing exFAT                 | Returns "Unknown" for exFAT type                               | Add `case PART_FS_EXFAT: return "exFAT";`                              |
-| VFS `read()` uses `uint32_t offset`                 | Max 4 GB offset — exFAT supports files > 4 GB                 | Note: VFS offset width is a known limitation (see `TODO-040.07-VFS.md`) |
-| Probe order matters (NTFS vs exFAT)                 | Both share MBR type `0x07` and GPT Basic Data GUID             | Probe NTFS first (check `"NTFS    "`), then exFAT                       |
-| `partition.c` header comment lists only FAT32/IXFS  | Line 9–12: "FAT32, IXFS, ext2" — no mention of exFAT          | Update comment to include exFAT                                          |
+| Gap                                               | Current State                                             | Required Change                                                        |
+| -------------------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| No `PART_FS_EXFAT` constant                        | `partition.h` defines FAT32 (1), IXFS (2), ext2 (3)      | Add `#define PART_FS_EXFAT 4`                                          |
+| No `probe_exfat()` in partition scanner            | `partition.c` probes FAT32, IXFS, ext2 — not exFAT       | Add probe: check `"EXFAT   "` at `0x03` + 53-byte MustBeZero          |
+| `partition_mount_filesystems()` skips exFAT        | Only mounts FAT32 and IXFS volumes (line 366)             | Add `else if (pi->fs_type == PART_FS_EXFAT)` branch                   |
+| `partition_fs_name()` missing exFAT                | Returns "Unknown" for exFAT type                          | Add `case PART_FS_EXFAT: return "exFAT";`                             |
+| VFS `read()` uses `uint32_t offset`                | Max 4 GB offset — exFAT supports files > 4 GB            | Note: VFS offset width is a known limitation (`TODO-040.07-VFS.md`)    |
+| Probe order matters (NTFS vs exFAT)                | Both share MBR type `0x07` and GPT Basic Data GUID        | Probe NTFS first (check `"NTFS    "`), then exFAT                      |
+| `partition.c` header comment lists only FAT32/IXFS | Line 9–12: "FAT32, IXFS, ext2" — no mention of exFAT     | Update comment to include exFAT                                        |

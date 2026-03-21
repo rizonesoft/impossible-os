@@ -94,7 +94,12 @@ graph TD
     C --> S
     H --> T
     L --> U
-    F --> ### Phase-by-Phase Implementation Order
+    F --> V
+    F --> W
+    A --> X
+```
+
+### Phase-by-Phase Implementation Order
 
 | ⭐ | Phase | Sections                             | Depends On           | Status |
 | -- | :---: | ------------------------------------ | -------------------- | :----: |
@@ -141,10 +146,7 @@ graph TD
 >
 > **Phase 8** delivers exclusive features (⭐): health dashboard, clone detective,
 > snapshot explorer, nanosecond timestamps, volume group analysis, encryption status,
-> and Fusion Drive detection.g, decompression, free space reporting, and testing.
->
-> **Phase 8** delivers exclusive features (⭐): health dashboard, clone detective,
-> snapshot explorer, and nanosecond timestamp inspector.
+> and Fusion Drive detection.
 
 > [!TIP]
 > **Critical gotcha — block 0 superblock is stale:** The block 0 CSB is only a

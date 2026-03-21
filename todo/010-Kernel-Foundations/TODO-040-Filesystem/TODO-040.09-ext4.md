@@ -64,6 +64,10 @@ graph TD
     R["§11.2 Deleted Inode Recovery"]
     S["§11.3 Fragmentation Analyzer"]
     T["§11.4 Cross-OS Timestamp Inspector"]
+    U["§11.5 Orphan Inode Detector"]
+    V["§11.6 Bigalloc-Aware Inspector"]
+    W["§11.7 Multidevice Safety Gate"]
+    X["§11.8 Quota & Project Reporter"]
 
     SPEC --> A
     BLK --> A
@@ -96,6 +100,11 @@ graph TD
     G --> S
     E --> T
     SB --> Q
+    A --> U
+    A --> V
+    B --> W
+    A --> X
+    U --> Q
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -126,6 +135,10 @@ graph TD
 | ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces unmaintained `extundelete`      | Phase 2 (§3.2)                      |   ⬜   |
 | ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.3 Fragmentation Analyzer | **Visual block map** — shows extent fragmentation no OS displays          | Phase 2 (§4.1)                      |   ⬜   |
 | ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.4 Timestamp Inspector   | **Cross-OS timestamp viewer** — nanosecond + creation time display         | Phase 2 (§3.2)                      |   ⬜   |
+| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.5 Orphan Inode Detector  | **Orphan inode forensics** — flag unresolved deletions in Health panel     | Phase 1 (§1.1)                      |   ⬜   |
+| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.6 Bigalloc Inspector     | **Cluster-aware space reporting** — bigalloc transparency in Disk Manager | Phase 1 (§1.1)                      |   ⬜   |
+| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.7 Multidevice Safety     | **MMP & journal device detection** — prevent dual-mount corruption        | Phase 1 (§1.2)                      |   ⬜   |
+| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.8 Quota Reporter         | **Visual quota dashboard** — per-user/group/project usage charts          | Phase 1 (§1.1)                      |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–1** are prerequisites — block I/O, partition tables, superblock, and GDT reading.
@@ -135,8 +148,10 @@ graph TD
 > this gives you a mountable, browsable ext4 volume.
 > **Phase 5** adds robustness and performance (ext2/ext3 compat, HTree, CRC32C, xattrs, caching,
 > superblock backup reading).
-> **Phase 6** delivers the competitive features (⭐): Health Dashboard, Deleted Inode Recovery,
+> **Phase 6** delivers the core competitive features (⭐): Health Dashboard, Deleted Inode Recovery,
 > Fragmentation Analyzer, and Cross-OS Timestamp Inspector.
+> **Phase 7** delivers enterprise-grade exclusive features (⭐): Orphan Inode Detector, Bigalloc
+> Inspector, Multidevice Safety Gate, and Quota & Project Reporter.
 
 > [!TIP]
 > **Quick wins after Phase 2:**
@@ -870,6 +885,10 @@ graph TD
 | ⭐ | 🟢 P3   | 11.2 Deleted Inode Recovery   | **Built-in forensic recovery** — replaces `extundelete`             |
 | ⭐ | 🟢 P3   | 11.3 Fragmentation Analyzer   | **Visual block map** — extent fragmentation nobody shows            |
 | ⭐ | 🟢 P3   | 11.4 Timestamp Inspector      | **Cross-OS timestamp viewer** — nanosecond + creation time display  |
+| ⭐ | 🔵 P4   | 11.5 Orphan Inode Detector    | **Orphan inode forensics** — flag unresolved deletions in GUI       |
+| ⭐ | 🔵 P4   | 11.6 Bigalloc Inspector       | **Cluster-aware space reporting** — bigalloc transparency           |
+| ⭐ | 🔵 P4   | 11.7 Multidevice Safety       | **MMP & journal device detection** — prevent dual-mount corruption  |
+| ⭐ | 🔵 P4   | 11.8 Quota Reporter           | **Visual quota dashboard** — per-user/group/project usage charts    |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -904,12 +923,18 @@ graph TD
 | **Deleted inode recovery**          | ❌ No ext4 support                  | ⚠️ `extundelete` CLI (unmaintained) | ⬜ §11.2 P3 — **built-in GUI recovery**  |
 | **Fragmentation analyzer**          | ❌ No ext4 support                  | ❌ `filefrag` per-file CLI only     | ⬜ §11.3 P3 — **visual block heat map**  |
 | **Cross-OS timestamp inspector**    | ❌ No ext4 support                  | ⚠️ `stat` CLI (no GUI, no crtime)   | ⬜ §11.4 P3 — **GUI ns + crtime viewer** |
+| **Orphan inode detector**           | ❌ No ext4 support                  | ❌ Silent during journal replay     | ⬜ §11.5 P4 — **GUI orphan inspector** 🚀 |
+| **Bigalloc-aware inspector**        | ❌ No ext4 support                  | ❌ `df` hides cluster mode          | ⬜ §11.6 P4 — **cluster-aware GUI** 🚀   |
+| **Multidevice safety gate**         | ❌ No ext4 support                  | ⚠️ Terse kernel log only            | ⬜ §11.7 P4 — **GUI MMP + journal** 🚀   |
+| **Quota & project reporter**        | ⚠️ NTFS quotas (buried in MMC)      | ⚠️ `repquota` CLI only              | ⬜ §11.8 P4 — **visual quota charts** 🚀  |
 | **Read-only driver (minimum)**      | ❌ None                             | ✅                                  | ⬜ Requires §1–§4, §6, §8               |
 
-> **After Phase 4:** Impossible OS can read any ext4/ext3/ext2 volume — matches what third-party
+> **After P0+P1 items:** Impossible OS can read any ext4/ext3/ext2 volume — matches what third-party
 > Windows tools (Ext2Fsd, DiskInternals) attempt, but built-in and more reliable.
-> **After §11 features:** Exceeds both Windows and Linux — GUI health, recovery, fragmentation,
-> and timestamp analysis are unique to Impossible OS.
+> **After P2–P3 exclusive features:** Exceeds both Windows and Linux — GUI health, recovery,
+> fragmentation, and timestamp analysis are unique to Impossible OS.
+> **After P4 items:** Full competitive advantage with orphan detection, bigalloc transparency,
+> MMP safety, and visual quota management — enterprise-grade ext4 insights no OS provides.
 
 ---
 
