@@ -340,7 +340,7 @@ Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
 - **Don't create duplicate TODOs** — always check the index first
 - **Don't renumber existing TODOs** — gaps are intentional (allows inserting)
 - **Don't remove completed items** — keep them checked off for history
-- **Convert completed TODOs to docs** — when all items are `[x]`, use the `/convert-todo` workflow to generate documentation in `docs/architecture/` and leave a stub
+- **Convert completed TODOs to docs** — when all items are `[x]`, use the `/docs-convert-todo` workflow to generate documentation in `docs/architecture/` and leave a stub
 
 ---
 
