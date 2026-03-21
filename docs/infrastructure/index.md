@@ -11,5 +11,5 @@ Build system, CI/CD pipelines, tooling, and development environment.
 
 ## See Also
 
-- [Getting Started](../getting-started/Index.md) — QEMU and VirtualBox setup guides
-- [Architecture](../architecture/Index.md) — OS internal documentation
+- [Getting Started](../getting-started/index.md) — QEMU and VirtualBox setup guides
+- [Architecture](../architecture/index.md) — OS internal documentation

@@ -60,32 +60,32 @@ Check that docs follow the expected organization:
 
 ```
 docs/
-├── Index.md                ← Top-level landing page (links to all categories)
+├── index.md                ← Top-level landing page (links to all categories)
 ├── kernel/                 ← Boot chain, memory, scheduler, IPC
-│   └── Index.md
+│   └── index.md
 ├── storage/                ← Controllers, partitioning, filesystems
-│   └── Index.md
+│   └── index.md
 ├── networking/             ← Network drivers and protocols
-│   └── Index.md
+│   └── index.md
 ├── graphics/               ← 2D rendering, compositing, desktop shell
-│   └── Index.md
+│   └── index.md
 ├── hypervisors/            ← Hyper-V, VirtualBox integration
-│   └── Index.md
+│   └── index.md
 ├── hardware/               ← CPU, bus, firmware, interrupts
-│   └── Index.md
+│   └── index.md
 ├── infrastructure/         ← Build system, CI/CD, tooling
-│   └── Index.md
+│   └── index.md
 ├── getting-started/        ← Setup guides, emulator configuration
-│   └── Index.md
+│   └── index.md
 └── specs/                  ← External reference specs (mirrors domain structure)
-    └── Index.md
+    └── index.md
 ```
 
 Violations to check:
-- Files directly in `docs/` root (except `Index.md` — should be in a subdirectory)
+- Files directly in `docs/` root (except `index.md` — should be in a subdirectory)
 - Misplaced files (e.g., a driver doc in `infrastructure/`, a CI doc in `architecture/`)
 - Empty directories (clean up after moves)
-- Missing `Index.md` in any category folder
+- Missing `index.md` in any category folder
 
 For each violation:
 - Move the file to the correct directory
@@ -100,17 +100,17 @@ For each doc, verify:
 
 ### 4b. Check for topic duplication
 
-For each category `Index.md`, verify:
+For each category `index.md`, verify:
 - **No overlapping owned topics** between docs in the same category
 - **No topic explained in two places** — search for similar headings across docs
 - If duplication is found:
-  - Keep the explanation in the **canonical** doc (the one that owns the topic per Index.md)
+  - Keep the explanation in the **canonical** doc (the one that owns the topic per index.md)
   - Replace the duplicate with a link: `See [Topic](canonical-doc.md#section)`
 
 ```bash
 # Quick overlap check: find H2/H3 headings that appear in multiple docs within a directory
 for dir in docs/*/; do
-  [ -f "$dir/Index.md" ] || continue
+  [ -f "$dir/index.md" ] || continue
   grep -h '^## \|^### ' "$dir"*.md 2>/dev/null | sort | uniq -d | while read -r heading; do
     echo "DUPLICATE HEADING in $dir: $heading"
     grep -l "$heading" "$dir"*.md
@@ -133,21 +133,21 @@ for f in todo/*/TODO-*.md; do
 done
 ```
 
-### 5b. Validate Index.md files
+### 5b. Validate index.md files
 
-For each `Index.md` in `docs/`:
-- Every `.md` file in the directory should be listed in the Index.md (except Index.md itself)
-- Every entry in the Index.md should point to an existing file
+For each `index.md` in `docs/`:
+- Every `.md` file in the directory should be listed in the index.md (except index.md itself)
+- Every entry in the index.md should point to an existing file
 - Every entry should have an "Owned Topics" column — no blank entries
 
 ```bash
-# Find docs not registered in their category Index.md
+# Find docs not registered in their category index.md
 for dir in docs/*/; do
-  [ -f "$dir/Index.md" ] || { echo "MISSING INDEX: $dir"; continue; }
+  [ -f "$dir/index.md" ] || { echo "MISSING INDEX: $dir"; continue; }
   for f in "$dir"*.md; do
     base=$(basename "$f")
-    [ "$base" = "Index.md" ] && continue
-    grep -q "$base" "$dir/Index.md" || echo "UNREGISTERED: $f"
+    [ "$base" = "index.md" ] && continue
+    grep -q "$base" "$dir/index.md" || echo "UNREGISTERED: $f"
   done
 done
 ```
