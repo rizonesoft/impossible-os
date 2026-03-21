@@ -10,8 +10,8 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (hive file buffers, large binary values). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas.
 
 > [!IMPORTANT]
-> **Migration:** The current Codex system (`codex.c`, `codex.h`) has been fully replaced.
-> All call sites now use the new Registry API. The disk format uses `.hive` binary files
+> **Migration complete:** The old Codex system (`codex.c`, `codex.h`) has been deleted.
+> All call sites now use the Registry API. The disk format uses `.hive` binary files
 > with crash-safe journaling (WAJ).
 
 ---
@@ -36,35 +36,29 @@ graph TD
         API["050.02 Win32 Reg API ✅<br/>RegOpenKeyEx, RegSetValueEx, etc."]
     end
 
-    subgraph "Layer 2: Migration"
-        MIGRATE["§3 Codex Migration ✅<br/>call sites + defaults + cleanup"]
-    end
-
-    subgraph "Layer 3: Persistence"
+    subgraph "Layer 2: Persistence"
         HIVE["§4 Hive Files ✅<br/>format + disk layout + journaling"]
     end
 
-    subgraph "Layer 4: Advanced Features"
+    subgraph "Layer 3: Advanced Features"
         NOTIFY["§5 Change Notifications ⬜"]
         SYSCALL["§6 User-Mode Syscalls ⬜"]
         WIN32["§7 Win32 Compat Layer ⬜"]
         REGEDIT["§8 Regedit Command ⬜"]
     end
 
-    subgraph "Layer 5: Performance"
+    subgraph "Layer 4: Performance"
         HASHMAP["§9.1 Hash Map ⬜"]
         MMAP["§9.2 Memory-Mapped ⬜"]
         BTREE["§9.3 B-Tree Format ⬜"]
     end
 
     ENGINE --> API
-    API --> MIGRATE
     API --> HIVE
     API --> NOTIFY
     API --> SYSCALL
     API --> WIN32
     HIVE --> REGEDIT
-    MIGRATE --> HIVE
     API --> HASHMAP
     HIVE --> MMAP
     HIVE --> BTREE
@@ -76,26 +70,25 @@ graph TD
 | --- | :----: | -------------------------------- | ----------------------------------------------------------------------- | ------------------------------- | :----: |
 | 💎  | **0**  | `050.01-Registry-Engine.md`      | `reg_key_t`, `reg_value_t`, static pools, FNV-1a, root keys, all types  | —                               |   ✅   |
 | 💎  | **1**  | `050.02-Win32-Reg-API.md`        | `RegOpenKeyEx`, `RegSetValueEx`, enumeration, convenience helpers       | Phase 0 (engine)                |   ✅   |
-| 💎  | **2**  | `050-Registry.md` §3             | Codex → Registry migration (call sites, defaults, cleanup)              | Phase 1 (API)                   |   ✅   |
-| 💎  | **3**  | `050-Registry.md` §4             | Hive file format, disk layout, crash-safe journaling                    | Phase 2 (migration)             |   ✅   |
-| 💎  | **4**  | `050-Registry.md` §5.1           | Change notifications (`RegNotifyChangeKeyValue`)                        | Phase 1 (API)                   |   ⬜   |
-| 💎  | **4**  | `050-Registry.md` §6.1           | User-mode registry syscalls                                             | Phase 1 (API)                   |   ⬜   |
-| 💎  | **4**  | `050-Registry.md` §8.1           | `regedit` shell command                                                 | Phase 3 (persistence)           |   ⬜   |
-| 💎  | **5**  | `050-Registry.md` §7.1           | advapi32.dll registry stubs (Win32 compat)                              | Phase 4 (§6.1 syscalls)         |   ⬜   |
-| 🔵  | **6**  | `050-Registry.md` §9.1           | Hash map child lookup (O(1))                                            | Phase 1 (API)                   |   ⬜   |
-| 🔵  | **6**  | `050-Registry.md` §9.2           | Memory-mapped hive files                                                | Phase 3 (hive)                  |   ⬜   |
-| 🔵  | **6**  | `050-Registry.md` §9.3           | B-tree cell format (NT hive compat)                                     | Phase 3 (hive)                  |   ⬜   |
+| 💎  | **2**  | `050-Registry.md` §4             | Hive file format, disk layout, crash-safe journaling                    | Phase 1 (API)                   |   ✅   |
+| 💎  | **3**  | `050-Registry.md` §5.1           | Change notifications (`RegNotifyChangeKeyValue`)                        | Phase 1 (API)                   |   ⬜   |
+| 💎  | **3**  | `050-Registry.md` §6.1           | User-mode registry syscalls                                             | Phase 1 (API)                   |   ⬜   |
+| 💎  | **3**  | `050-Registry.md` §8.1           | `regedit` shell command                                                 | Phase 2 (persistence)           |   ⬜   |
+| 💎  | **4**  | `050-Registry.md` §7.1           | advapi32.dll registry stubs (Win32 compat)                              | Phase 3 (§6.1 syscalls)         |   ⬜   |
+| 🔵  | **5**  | `050-Registry.md` §9.1           | Hash map child lookup (O(1))                                            | Phase 1 (API)                   |   ⬜   |
+| 🔵  | **5**  | `050-Registry.md` §9.2           | Memory-mapped hive files                                                | Phase 2 (hive)                  |   ⬜   |
+| 🔵  | **5**  | `050-Registry.md` §9.3           | B-tree cell format (NT hive compat)                                     | Phase 2 (hive)                  |   ⬜   |
 
 > [!NOTE]
-> **Phases 0–3 are complete.** The core engine, Win32 API, Codex migration, and disk
-> persistence (including crash-safe journaling) are all implemented and verified.
+> **Phases 0–2 are complete.** The core engine, Win32 API, and disk persistence
+> (including crash-safe journaling) are all implemented and verified.
 >
-> **Phase 4** delivers advanced features: change notifications, user-mode syscalls, and
+> **Phase 3** delivers advanced features: change notifications, user-mode syscalls, and
 > the `regedit` shell command. These are independent and can be done in any order.
 >
-> **Phase 5** adds Win32 compatibility layer stubs — depends on syscalls from Phase 4.
+> **Phase 4** adds Win32 compatibility layer stubs — depends on syscalls from Phase 3.
 >
-> **Phase 6** contains stretch performance goals: hash map optimization, mmap, B-tree.
+> **Phase 5** contains stretch performance goals: hash map optimization, mmap, B-tree.
 
 ---
 
@@ -114,66 +107,6 @@ graph TD
 >
 > Covers: §2.1 Key Operations, §2.2 Value Operations, §2.3 Enumeration, §2.4 Convenience Helpers.
 > All sections complete.
-
----
-## 3. Codex → Registry Migration
-
-> **Note:** The Registry implementation (`registry.h`, `registry.c`) was built as new files
-> alongside the existing Codex system (§1–2). This section covers migrating all Codex
-> call sites to the new Registry API, re-mapping default values to Win32 paths, and
-> deleting the old Codex code.
-
-### 3.1 Replace Codex API Calls with Registry API *(done)* ✅
-
-**Prompt:** Verify the Codex → Registry migration. Confirm `main.c` includes `registry.h` and calls `registry_init()` (no `codex_init/load/populate_defaults/save`). Confirm `codex_flush()` is commented out pending §4. In `panic.c`, verify HKLM\SYSTEM\Recovery is accessed via `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `swap.c`, verify HKLM\SYSTEM\Memory\SwapSlots uses `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `desktop.c`, verify HKLM\SYSTEM\Theme uses `RegOpenKeyEx`/`RegGetString`/`RegCloseKey`. Confirm no remaining `#include "codex.h"` in any `.c` file except `codex.c` itself. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Create migration mapping:
-  - [x] `codex_init()` → `registry_init()`
-  - [x] `codex_open(path)` → `RegOpenKeyEx(root, path, ...)`
-  - [x] `codex_create(path)` → `RegCreateKeyEx(root, path, ...)`
-  - [x] `codex_get_string()` → `RegGetString()`
-  - [x] `codex_get_int32()` → `RegGetDword()`
-  - [x] `codex_get_bool()` → `RegGetDword()` (0/1)
-  - [x] `codex_set_string()` → `RegSetString()`
-  - [x] `codex_set_int32()` → `RegSetDword()`
-  - [x] `codex_set_bool()` → `RegSetDword()` (0/1)
-  - [x] `codex_save()` → `registry_flush()` (pending §4)
-  - [x] `codex_load()` → `registry_load()` (pending §4)
-- [x] Update `src/kernel/main.c` — init, populate defaults, flush
-- [x] Update `src/kernel/panic.c` — AutoRestart setting
-- [x] Update `src/kernel/mm/swap.c` — SwapSlots setting
-- [x] Update `src/desktop/desktop.c` — theme, display, wallpaper
-- [x] Update `include/icon_store.h` — no codex refs found (N/A)
-- [x] Update all `#include "codex.h"` → `#include "registry.h"`
-- [x] Commit: `"registry: migrate all codex call sites"`
-
-### 3.2 Migrate Default Values to Registry Paths *(done)* ✅
-
-**Prompt:** Verify the default value migration. In `registry.c`, confirm `registry_populate_defaults()` creates keys under `HKLM\SYSTEM` (Display, Theme, Shell, Network, DateTime, Recovery, Memory), `HKLM\HARDWARE` (CPU, Memory), and `HKU\Default` (root, Shell, Desktop). Confirm all `codex_set_*` calls are replaced with `RegSetDword/RegSetString/RegSetQword`. Verify CPU detection uses `reg_cpuid()` for vendor and brand strings. Verify memory stats use `pmm_get_total_frames()/pmm_get_free_frames()`. In `main.c`, confirm boot splash says "Loading registry..." and `registry_populate_defaults()` is called after `registry_init()`. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Map Codex paths to Registry paths:
-  - [x] `System\Display\*` → `HKLM\SYSTEM\Display\*`
-  - [x] `System\Theme\*` → `HKLM\SYSTEM\Theme\*`
-  - [x] `System\Recovery\*` → `HKLM\SYSTEM\Recovery\*`
-  - [x] `System\Memory\*` → `HKLM\SYSTEM\Memory\*`
-  - [x] `System\Network\*` → `HKLM\SYSTEM\Network\*`
-  - [x] `Hardware\CPU\*` → `HKLM\HARDWARE\CPU\*`
-  - [x] `Hardware\Memory\*` → `HKLM\HARDWARE\Memory\*`
-  - [x] `User\Default\*` → `HKU\Default\*`
-  - [x] `Apps\*` → `HKLM\SOFTWARE\*` (no current values, path reserved)
-- [x] Update `codex_populate_defaults()` → `registry_populate_defaults()`
-- [x] Update boot splash: "Loading registry..."
-- [x] Commit: `"registry: migrate default values to Win32 paths"`
-
-### 3.3 Delete Old Codex Code *(done)* ✅
-
-**Prompt:** Verify the Codex cleanup. Confirm `include/codex.h` and `src/kernel/codex.c` no longer exist. Grep for `codex_` in all `.c` and `.h` files — only architectural comments in `registry.h` should remain. Confirm stale "Codex" comments in `panic.h`, `icon_store.h`, and `desktop.c` have been updated to say "Registry". Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Delete `include/codex.h`
-- [x] Delete `src/kernel/codex.c`
-- [x] Grep codebase for any remaining `codex_` references
-- [x] Clean stale Codex comments in `panic.h`, `icon_store.h`, `desktop.c`
-- [x] Commit: `"registry: remove legacy codex code"`
 
 ---
 ## 4. Disk Persistence (Hive Files)
@@ -345,9 +278,7 @@ graph TD
 | ✅ Done  | `050.02` §2.2 Value Operations              | Core API: get, set, delete values                  |
 | ✅ Done  | `050.02` §2.3 Enumeration                   | Needed for regedit + iteration                     |
 | ✅ Done  | `050.02` §2.4 Convenience Helpers           | Simplify common access patterns                    |
-| ✅ Done  | §3.1 Replace Codex API                      | Migrate all Codex call sites                       |
-| ✅ Done  | §3.2 Migrate Defaults                       | Re-map Codex defaults to Win32 paths               |
-| ✅ Done  | §3.3 Delete Codex Code                      | Remove legacy codex.c / codex.h                    |
+
 | ✅ Done  | §4.1 Hive File Format                       | Binary disk persistence                            |
 | ✅ Done  | §4.2 Disk Layout                            | File paths + auto-flush                            |
 | ✅ Done  | §4.3 Crash-Safe Journaling                  | Power-loss protection                              |
@@ -381,7 +312,7 @@ graph TD
 | **In-kernel typed value store**     | ✅                            | ❌                                      | ✅ **§1-2 — native, no daemon needed**    |
 | **Static pool allocation**          | ❌ Dynamic allocation          | ❌ Dynamic allocation                    | ✅ **§1.1 — zero heap pressure** 🚀       |
 
-> **After P0–P1 items (✅):** Impossible OS matches Windows feature-for-feature on core registry,
+> **After P0–P2 items (✅):** Impossible OS matches Windows feature-for-feature on core registry,
 > API, persistence, and crash safety. Exceeds Linux by having a native in-kernel typed store.
-> **After P2 items:** Full parity with Windows (change notifications, user-mode access, regedit).
-> **After P4 items:** Performance-optimized with mmap and B-tree (Windows NT hive compat).
+> **After P3 items:** Full parity with Windows (change notifications, user-mode access, regedit).
+> **After P5 items:** Performance-optimized with mmap and B-tree (Windows NT hive compat).
