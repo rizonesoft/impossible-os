@@ -12,7 +12,7 @@
 ## TODO Completion Roadmap (Cross-File)
 
 > [!IMPORTANT]
-> **Seventeen TODO files** contribute to the storage and filesystem subsystem. They have
+> **Eighteen TODO files** contribute to the storage and filesystem subsystem. They have
 > deep cross-dependencies that dictate implementation order. This roadmap shows
 > the correct sequence — completing items out of order will cause rework.
 >
@@ -35,6 +35,7 @@
 > | `TODO-040.14-HFSPlus.md`       | HFS+ (Mac OS Extended) read-only driver           |
 > | `TODO-040.15-NVMe-2.0.md`      | NVMe 2.0 PCIe SSD controller driver               |
 > | `TODO-040.16-NVMe-2.1.md`      | NVMe 2.1 PCIe storage driver                      |
+> | `TODO-040.17-Win32-FS-API.md`   | Win32 I/O subsystem (IRP, MDL, handles, FltMgr)   |
 
 ### Dependency Graph
 
