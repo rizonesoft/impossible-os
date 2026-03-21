@@ -32,16 +32,16 @@ It is structurally divided into three primary functional zones that operate in t
 
 ### 2.1 Overall Sector Layout
 
-| Offset (Hex) | Offset (Dec) | Length | Component |
-|--------------|-------------|--------|-----------|
-| `0x000` | 0 | 440 bytes | Executable Bootstrap Code |
-| `0x1B8` | 440 | 4 bytes | 32-bit Unique Disk Signature |
-| `0x1BC` | 444 | 2 bytes | Reserved (Copy Protection / AAP) |
-| `0x1BE` | 446 | 16 bytes | Partition Entry 1 |
-| `0x1CE` | 462 | 16 bytes | Partition Entry 2 |
-| `0x1DE` | 478 | 16 bytes | Partition Entry 3 |
-| `0x1EE` | 494 | 16 bytes | Partition Entry 4 |
-| `0x1FE` | 510 | 2 bytes | Boot Record Signature (`0xAA55`) |
+| Offset (Hex) | Offset (Dec) | Length    | Component                              |
+| ------------ | ------------ | --------- | -------------------------------------- |
+| `0x000`      | 0            | 440 bytes | Executable Bootstrap Code              |
+| `0x1B8`      | 440          | 4 bytes   | 32-bit Unique Disk Signature           |
+| `0x1BC`      | 444          | 2 bytes   | Reserved (Copy Protection / AAP)       |
+| `0x1BE`      | 446          | 16 bytes  | Partition Entry 1                      |
+| `0x1CE`      | 462          | 16 bytes  | Partition Entry 2                      |
+| `0x1DE`      | 478          | 16 bytes  | Partition Entry 3                      |
+| `0x1EE`      | 494          | 16 bytes  | Partition Entry 4                      |
+| `0x1FE`      | 510          | 2 bytes   | Boot Record Signature (`0xAA55`)       |
 
 ### 2.2 BIOS Boot Sequence
 
@@ -58,7 +58,7 @@ From that point forward, the code embedded within the MBR dictates the fate of t
 
 ## 3. The Executable Bootstrap Code Area (Offsets `0x000` to `0x1B7`)
 
-The first **440 bytes** of the MBR (offsets `0x0000` to `0x01B7`) represent the Master Bootstrap Loader code area. Because the entire 512-byte sector is loaded at address `0x7C00`, the instruction pointer begins execution here.
+The first **440 bytes** of the MBR (offsets `0x000` to `0x1B7`) represent the Master Bootstrap Loader code area. Because the entire 512-byte sector is loaded at address `0x7C00`, the instruction pointer begins execution here.
 
 ### 3.1 Bootstrap Execution Flow
 
@@ -79,7 +79,7 @@ A standard MBR bootstrap program performs the following operations:
 
 ## 4. The 32-bit Unique Disk Signature (Offsets `0x1B8` to `0x1BB`)
 
-Historically, the bootstrap code extended uninterrupted to offset 445 (a full 446 bytes of executable space). However, this changed significantly with the introduction of **Windows NT 4.0**, which co-opted the 4 bytes at offsets `0x01B8` through `0x01BB` (440 to 443) to store a **32-bit Unique Disk Signature**.
+Historically, the bootstrap code extended uninterrupted to offset 445 (a full 446 bytes of executable space). However, this changed significantly with the introduction of **Windows NT**, which co-opted the 4 bytes at offsets `0x1B8` through `0x1BB` (440 to 443) to store a **32-bit Unique Disk Signature**.
 
 This 32-bit identifier acts as a persistent serial number or pseudo-UUID for the physical storage medium, allowing the operating system kernel to uniquely identify individual disks regardless of which physical SATA or SCSI port they are plugged into.
 
@@ -94,13 +94,13 @@ Since Windows Vista, non-Windows environments (including the Linux kernel and th
 
 ## 5. The Copy Protection and AAP Marker (Offsets `0x1BC` to `0x1BD`)
 
-The two bytes at offsets `0x01BC` to `0x01BD` (444 to 445) function as an intermediary buffer zone before the partition table begins.
+The two bytes at offsets `0x1BC` to `0x1BD` (444 to 445) function as an intermediary buffer zone before the partition table begins.
 
-| Value | Meaning |
-|-------|---------|
-| `0x0000` | Standard — unused (the vast majority of MBR implementations) |
-| `0x5A5A` | Obsolete commercial copy-protection mechanism active |
-| Other | Advanced Active Partition (AAP) MBR layout (PTS-DOS 7, DR-DOS 7.07) |
+| Value    | Meaning                                                                      |
+| -------- | ---------------------------------------------------------------------------- |
+| `0x0000` | Standard — unused (the vast majority of MBR implementations)                 |
+| `0x5A5A` | Obsolete commercial copy-protection mechanism active                         |
+| Other    | Advanced Active Partition (AAP) MBR layout (PTS-DOS 7, DR-DOS 7.07)         |
 
 > [!NOTE]
 > The AAP layout directly conflicts with the modern 32-bit Disk Signature, making the two architectures mutually exclusive. For modern custom OS development, treat these two bytes as reserved and enforce `0x0000` when formatting a new disk.
@@ -109,18 +109,18 @@ The two bytes at offsets `0x01BC` to `0x01BD` (444 to 445) function as an interm
 
 ## 6. The Master Partition Table (Offsets `0x1BE` to `0x1FD`)
 
-Beginning precisely at offset **446 (`0x01BE`)**, the Master Boot Record allocates a strictly contiguous **64-byte** region for the Master Partition Table. This table is symmetrically subdivided into exactly **four distinct 16-byte** data structures. Each defines the geometric location, total size, status, and file system type of a single primary partition or extended partition container.
+Beginning precisely at offset **446 (`0x1BE`)**, the Master Boot Record allocates a strictly contiguous **64-byte** region for the Master Partition Table. This table is symmetrically subdivided into exactly **four distinct 16-byte** data structures. Each defines the geometric location, total size, status, and file system type of a single primary partition or extended partition container.
 
 The hardcoded limitation of exactly four entries is the fundamental reason that standard MBR-formatted disks can natively support a **maximum of only four primary partitions**.
 
 ### 6.1 Partition Entry Offsets
 
-| Entry | Offset (Hex) | Offset (Dec) |
-|-------|-------------|-------------|
-| Partition Entry 1 | `0x1BE` | 446 |
-| Partition Entry 2 | `0x1CE` | 462 |
-| Partition Entry 3 | `0x1DE` | 478 |
-| Partition Entry 4 | `0x1EE` | 494 |
+| Entry             | Offset (Hex) | Offset (Dec) |
+| ----------------- | ------------ | ------------ |
+| Partition Entry 1 | `0x1BE`      | 446          |
+| Partition Entry 2 | `0x1CE`      | 462          |
+| Partition Entry 3 | `0x1DE`      | 478          |
+| Partition Entry 4 | `0x1EE`      | 494          |
 
 > [!NOTE]
 > The sequential naming (Partition 1 through 4) is purely semantic. The firmware does **not** require partitions to be ordered geometrically. Partition Entry 4 could define a volume at the beginning of the disk while Entry 1 defines one at the end. A robust OS parser must sort partitions by Starting LBA if sequential physical ordering is required for display.
@@ -129,14 +129,14 @@ The hardcoded limitation of exactly four entries is the fundamental reason that 
 
 ## 7. The Boot Record Signature (Offsets `0x1FE` to `0x1FF`)
 
-The final two bytes at offsets **510 (`0x01FE`)** and **511 (`0x01FF`)** constitute the Boot Record Signature (the "magic number"). This signature must strictly evaluate to **`0xAA55`**.
+The final two bytes at offsets **510 (`0x1FE`)** and **511 (`0x1FF`)** constitute the Boot Record Signature (the "magic number"). This signature must strictly evaluate to **`0xAA55`**.
 
 Because x86 architecture is **little-endian**, this 16-bit word is stored on disk as:
 
-| Offset | Byte Value |
-|--------|-----------|
-| `0x1FE` | `0x55` |
-| `0x1FF` | `0xAA` |
+| Offset  | Byte Value |
+| ------- | ---------- |
+| `0x1FE` | `0x55`     |
+| `0x1FF` | `0xAA`     |
 
 During initialization, the BIOS explicitly checks for this sequence. If absent, corrupted by a single bit, or malformed, the BIOS aborts the boot process for that device and proceeds to the next device in the CMOS boot sequence.
 
@@ -151,14 +151,14 @@ The core metadata defining a logical volume is encapsulated within a compact **1
 
 ### 8.1 Partition Entry Layout
 
-| Offset (Hex) | Offset (Dec) | Length | Field | Allowed Values |
-|--------------|-------------|--------|-------|----------------|
-| `0x00` | 0 | 1 byte | Boot Indicator Flag | `0x80` = Active/Bootable. `0x00` = Inactive. All others invalid |
-| `0x01` | 1 | 3 bytes | Starting CHS Address | Encoded physical CHS of partition start (legacy BIOS only) |
-| `0x04` | 4 | 1 byte | Partition Type (System ID) | Hex code indicating filesystem format or partition role |
-| `0x05` | 5 | 3 bytes | Ending CHS Address | Encoded physical CHS of partition end |
-| `0x08` | 8 | 4 bytes | Starting LBA | Absolute linear sector distance from disk start to partition start |
-| `0x0C` | 12 | 4 bytes | Total Sectors | Total partition size in sectors (32-bit unsigned) |
+| Offset (Hex) | Offset (Dec) | Length  | Field                      | Allowed Values                                                              |
+| ------------ | ------------ | ------- | -------------------------- | --------------------------------------------------------------------------- |
+| `0x00`       | 0            | 1 byte  | Boot Indicator Flag        | `0x80` = Active/Bootable. `0x00` = Inactive. All others invalid             |
+| `0x01`       | 1            | 3 bytes | Starting CHS Address       | Encoded physical CHS of partition start (legacy BIOS only)                  |
+| `0x04`       | 4            | 1 byte  | Partition Type (System ID) | Hex code indicating filesystem format or partition role                     |
+| `0x05`       | 5            | 3 bytes | Ending CHS Address         | Encoded physical CHS of partition end                                       |
+| `0x08`       | 8            | 4 bytes | Starting LBA               | Absolute linear sector distance from disk start to partition start          |
+| `0x0C`       | 12           | 4 bytes | Total Sectors              | Total partition size in sectors (32-bit unsigned)                           |
 
 ### 8.2 The Boot Indicator Flag (Offset `0x00`)
 
@@ -177,7 +177,7 @@ Modern operating systems rely **exclusively** on these two 32-bit LBA fields. Th
 
 **Starting LBA** (offset `0x08`): The sector index where the partition begins. Constrained to a 32-bit unsigned integer:
 
-```
+```text
 Max LBA = 2^32 - 1 = 4,294,967,295 sectors
 Max Capacity = 4,294,967,295 × 512 bytes = 2,199,023,255,040 bytes ≈ 2 TiB
 ```
@@ -205,11 +205,11 @@ The CHS system is a three-dimensional coordinate model mapping to physical drive
 
 The 24-bit CHS tuple is compressed into 3 bytes in a **highly irregular, fractured** format:
 
-| Byte | Content | Bits |
-|------|---------|------|
-| **Byte 1** | Head value | Full 8 bits (0–255) |
-| **Byte 2** | Sector (bits 0–5) + Cylinder high (bits 6–7) | 6-bit sector + 2 MSBs of cylinder |
-| **Byte 3** | Cylinder low | Lower 8 bits of cylinder |
+| Byte       | Content                                            | Bits                                     |
+| ---------- | -------------------------------------------------- | ---------------------------------------- |
+| **Byte 1** | Head value                                         | Full 8 bits (0–255)                      |
+| **Byte 2** | Sector (bits 0–5) + Cylinder high (bits 6–7)       | 6-bit sector + 2 MSBs of cylinder        |
+| **Byte 3** | Cylinder low                                       | Lower 8 bits of cylinder                 |
 
 ### 9.3 Extraction Algorithm
 
@@ -243,13 +243,13 @@ Raw CHS bytes: `FE 7F 04`
 
 ### 9.6 CHS-to-LBA Conversion Formula
 
-```
+```text
 LBA = (Cylinder × HeadsPerCylinder + Head) × SectorsPerTrack + (Sector - 1)
 ```
 
 ### 9.7 LBA-to-CHS Conversion Formula
 
-```
+```text
 Cylinder = LBA / (HeadsPerCylinder × SectorsPerTrack)
 Head     = (LBA / SectorsPerTrack) % HeadsPerCylinder
 Sector   = (LBA % SectorsPerTrack) + 1
@@ -261,7 +261,7 @@ Sector   = (LBA % SectorsPerTrack) + 1
 
 The rigid CHS fields max out at exactly **1024 cylinders × 256 heads × 63 sectors**:
 
-```
+```text
 1024 × 256 × 63 × 512 = 8,422,686,720 bytes ≈ 8.4 GB
 ```
 
@@ -269,13 +269,16 @@ The rigid CHS fields max out at exactly **1024 cylinders × 256 heads × 63 sect
 
 When a partition begins or ends beyond the 8.4 GB boundary, the actual disk geometry cannot be represented within 24 bits. The universally accepted solution is to write the **dummy CHS tuple**: **`FE FF FF`**.
 
-| Byte | Value | Decoded |
-|------|-------|---------|
-| `0xFE` | Head | 254 |
-| `0xFF` (lower 6 bits) | Sector | 63 |
-| `0xFF` combined with upper 2 bits | Cylinder | 1023 |
+| Byte                                   | Value  | Decoded |
+| -------------------------------------- | ------ | ------- |
+| `0xFE`                                 | Head   | 254     |
+| `0xFF` (lower 6 bits)                  | Sector | 63      |
+| `0xFF` combined with upper 2 bits      | Cylinder | 1023  |
 
-When a bootloader or partition utility encounters `FE FF FF` or `FF FF FF` in CHS fields, it must **strictly ignore CHS geometry** and rely exclusively on the 32-bit LBA fields.
+This encodes the maximum representable CHS address: **(Cylinder 1023, Head 254, Sector 63)**.
+
+> [!NOTE]
+> Head value 254 (`0xFE`) is used instead of 255 (`0xFF`) because the INT 13h BIOS interface historically restricted heads to 0–254 (255 heads total). Some legacy BIOSes treated Head 255 as invalid. The standard dummy tuple is strictly `FE FF FF`; a compliant parser encountering this value must **ignore CHS geometry** and rely exclusively on the 32-bit LBA fields.
 
 ---
 
@@ -285,12 +288,12 @@ When a bootloader or partition utility encounters `FE FF FF` or `FF FF FF` in CH
 
 In legacy DOS and early Windows environments, partitions were aligned to physical drive geometry boundaries. Standard drives featured 63 sectors per track, so the first primary partition was offset by exactly 63 sectors:
 
-```
+```text
 Starting LBA = 63
 Partition data begins at byte offset: 63 × 512 = 32,256
 ```
 
-Hex dump: `3F 00 00 00` at offset `0x01C6` (little-endian).
+Hex dump: `3F 00 00 00` at offset `0x1C6` (little-endian).
 
 ### 11.2 Modern 1-MiB Boundary Alignment
 
@@ -301,7 +304,7 @@ With Advanced Format drives (4096-byte internal sectors) and SSDs (128–512 KiB
 
 Modern alignment rule: **Start at LBA 2048**:
 
-```
+```text
 1,048,576 bytes (1 MiB) / 512 bytes = 2048 sectors
 ```
 
@@ -318,10 +321,10 @@ The most severe architectural constraint of the MBR is the 64-byte partition tab
 
 An Extended Partition is created by designating one of the four primary MBR entries with a specific Partition Type code:
 
-| Type Code | Description |
-|-----------|-------------|
-| `0x05` | Extended Partition (CHS addressing) |
-| `0x0F` | Extended Partition (LBA addressing) |
+| Type Code | Description                          |
+| --------- | ------------------------------------ |
+| `0x05`    | Extended Partition (CHS addressing)  |
+| `0x0F`    | Extended Partition (LBA addressing)  |
 
 This entry acts as an architectural envelope — it does **not** hold a standard filesystem. The space it defines is subdivided into **Logical Partitions** using Extended Boot Records (EBRs).
 
@@ -333,16 +336,16 @@ Each EBR is exactly **512 bytes** with the same layout as the MBR, but:
 - **Only the first two partition entries are used**: entries 3 and 4 must be zeroed
 - **Must terminate with `0xAA55`** signature at offset 510
 
-| Entry | Offset | Purpose |
-|-------|--------|---------|
-| **Entry 1** | `0x1BE` | Describes the logical partition associated with this EBR |
-| **Entry 2** | `0x1CE` | Pointer to the **next** EBR in the chain (linked list) |
-| **Entry 3** | `0x1DE` | Unused — must be zeroed |
-| **Entry 4** | `0x1EE` | Unused — must be zeroed |
+| Entry       | Offset  | Purpose                                                         |
+| ----------- | ------- | --------------------------------------------------------------- |
+| **Entry 1** | `0x1BE` | Describes the logical partition associated with this EBR        |
+| **Entry 2** | `0x1CE` | Pointer to the **next** EBR in the chain (linked list)          |
+| **Entry 3** | `0x1DE` | Unused — must be zeroed                                         |
+| **Entry 4** | `0x1EE` | Unused — must be zeroed                                         |
 
 ### 12.3 Linked List Traversal Example
 
-```
+```text
 MBR → Entry 4 = Extended Partition (LBA Start)
   └─→ EBR 1 (at Extended Start):
        Entry 1 → Logical Drive 5
@@ -364,7 +367,7 @@ MBR → Entry 4 = Extended Partition (LBA Start)
 
 The Starting LBA in Entry 1 is **relative to the current EBR sector**:
 
-```
+```text
 Absolute_Volume_LBA = Absolute_LBA_of_Current_EBR + Entry1.Starting_LBA
 ```
 
@@ -374,7 +377,7 @@ This offset is typically 63 (legacy) or 2048 (modern), creating the gap between 
 
 The Starting LBA in Entry 2 is **relative to the FIRST EBR** in the entire extended partition — never relative to the current EBR, never an absolute address:
 
-```
+```text
 Absolute_LBA_of_Next_EBR = Absolute_LBA_of_FIRST_EBR + Entry2.Starting_LBA
 ```
 
@@ -391,33 +394,33 @@ The single byte at offset `0x04` of every partition entry is the **Partition Typ
 
 ### 13.1 DOS and Windows FAT Family
 
-| Hex Code | Description | Notes |
-|----------|-------------|-------|
-| `0x00` | Empty / Unallocated | All subsequent fields must be zero |
-| `0x01` | FAT12 (Primary) | Legacy 12-bit FAT, restricted to first 32 MB |
-| `0x04` | FAT16 (up to 32 MB) | Legacy 16-bit FAT, MS-DOS 3.0 |
-| `0x06` | FAT16B (over 32 MB) | Large File System, MS-DOS 3.31+ |
-| `0x0B` | FAT32 (CHS) | Windows 95 OSR2, limited by CHS bounds |
-| `0x0C` | FAT32 (LBA) | FAT32 with INT 13h LBA extensions, bypasses 8.4 GB barrier |
-| `0x0E` | FAT16 (LBA) | FAT16 with LBA extensions |
+| Hex Code | Description              | Notes                                                           |
+| -------- | ------------------------ | --------------------------------------------------------------- |
+| `0x00`   | Empty / Unallocated      | All subsequent fields must be zero                              |
+| `0x01`   | FAT12 (Primary)          | Legacy 12-bit FAT, restricted to first 32 MB                   |
+| `0x04`   | FAT16 (up to 32 MB)      | Legacy 16-bit FAT, MS-DOS 3.0                                  |
+| `0x06`   | FAT16B (over 32 MB)      | Large File System, MS-DOS 3.31+                                 |
+| `0x0B`   | FAT32 (CHS)              | Windows 95 OSR2, limited by CHS bounds                         |
+| `0x0C`   | FAT32 (LBA)              | FAT32 with INT 13h LBA extensions, bypasses 8.4 GB barrier     |
+| `0x0E`   | FAT16 (LBA)              | FAT16 with LBA extensions                                      |
 
 ### 13.2 Advanced File Systems and Extended Containers
 
-| Hex Code | Description | Notes |
-|----------|-------------|-------|
-| `0x05` | Extended Partition (CHS) | Envelope for EBR logical drives, legacy CHS addressing |
-| `0x0F` | Extended Partition (LBA) | Envelope for EBR logical drives, LBA addressing. Replaces `0x05` on drives > 8.4 GB |
-| `0x07` | NTFS / HPFS / exFAT | Windows NT File System, OS/2 HPFS, or exFAT |
-| `0x27` | Windows Recovery Environment | Hidden utility/diagnostic partition — OS should not auto-mount |
+| Hex Code | Description                        | Notes                                                                          |
+| -------- | ---------------------------------- | ------------------------------------------------------------------------------ |
+| `0x05`   | Extended Partition (CHS)           | Envelope for EBR logical drives, legacy CHS addressing                         |
+| `0x0F`   | Extended Partition (LBA)           | Envelope for EBR logical drives, LBA addressing. Replaces `0x05` beyond 8.4 GB |
+| `0x07`   | NTFS / HPFS / exFAT                | Windows NT File System, OS/2 HPFS, or exFAT                                   |
+| `0x27`   | Windows Recovery Environment       | Hidden utility/diagnostic partition — OS should not auto-mount                 |
 
 ### 13.3 Unix, Linux, and Alternative Operating Systems
 
-| Hex Code | Description | Notes |
-|----------|-------------|-------|
-| `0x82` | Linux Swap / Solaris x86 | Virtual memory swap space or Solaris system volumes |
-| `0x83` | Linux Native | Standard identifier for ext2, ext3, ext4, JFS, ReiserFS, XFS |
-| `0xEB` | BeOS File System | Dedicated for BeOS BFS |
-| `0xFB` | VMware VMFS | VMware raw disk virtualization layer |
+| Hex Code | Description            | Notes                                                                 |
+| -------- | ---------------------- | --------------------------------------------------------------------- |
+| `0x82`   | Linux Swap / Solaris   | Virtual memory swap space or Solaris system volumes                   |
+| `0x83`   | Linux Native           | Standard identifier for ext2, ext3, ext4, JFS, ReiserFS, XFS         |
+| `0xEB`   | BeOS File System       | Dedicated for BeOS BFS                                               |
+| `0xFB`   | VMware VMFS            | VMware raw disk virtualization layer                                  |
 
 ### 13.4 The GPT Protective MBR (Type `0xEE`)
 
@@ -469,20 +472,20 @@ Hard-limit the stage-one assembly bootloader to exactly **440 bytes**. Expanding
 
 ## 15. Summary of Critical Constants
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| MBR sector location | LBA 0 | Always the first sector on disk |
-| MBR sector size | 512 bytes | Fixed, non-negotiable |
-| Bootstrap code limit | 440 bytes | Must not exceed to preserve Disk Signature |
-| Partition table offset | 446 (`0x1BE`) | Start of the 64-byte partition table |
-| Partition entry size | 16 bytes | Each of 4 entries |
-| Boot signature | `0xAA55` | Little-endian: `0x55` at 510, `0xAA` at 511 |
-| Active boot flag | `0x80` | Marks partition as bootable |
-| Max MBR addressable | 2 TiB | 2³² sectors × 512 bytes |
-| CHS max capacity | ~8.4 GB | 1024 × 256 × 63 × 512 bytes |
-| CHS overflow tuple | `FE FF FF` | Signals "ignore CHS, use LBA" |
-| Modern start alignment | LBA 2048 | 1 MiB boundary for 4K/SSD optimization |
-| Extended CHS type | `0x05` | Extended partition, legacy CHS |
-| Extended LBA type | `0x0F` | Extended partition, modern LBA |
-| GPT Protective type | `0xEE` | Signals GPT — abort MBR parsing |
-| EBR used entries | 2 of 4 | Entry 1 = logical volume, Entry 2 = next EBR pointer |
+| Constant                | Value         | Description                                        |
+| ----------------------- | ------------- | -------------------------------------------------- |
+| MBR sector location     | LBA 0         | Always the first sector on disk                    |
+| MBR sector size         | 512 bytes     | Fixed, non-negotiable                              |
+| Bootstrap code limit    | 440 bytes     | Must not exceed to preserve Disk Signature         |
+| Partition table offset  | 446 (`0x1BE`) | Start of the 64-byte partition table               |
+| Partition entry size    | 16 bytes      | Each of 4 entries                                  |
+| Boot signature          | `0xAA55`      | Little-endian: `0x55` at 510, `0xAA` at 511       |
+| Active boot flag        | `0x80`        | Marks partition as bootable                        |
+| Max MBR addressable     | 2 TiB         | 2³² sectors × 512 bytes                           |
+| CHS max capacity        | ~8.4 GB       | 1024 × 256 × 63 × 512 bytes                       |
+| CHS overflow tuple      | `FE FF FF`    | Signals "ignore CHS, use LBA"                     |
+| Modern start alignment  | LBA 2048      | 1 MiB boundary for 4K/SSD optimization            |
+| Extended CHS type       | `0x05`        | Extended partition, legacy CHS                     |
+| Extended LBA type       | `0x0F`        | Extended partition, modern LBA                     |
+| GPT Protective type     | `0xEE`        | Signals GPT — abort MBR parsing                   |
+| EBR used entries        | 2 of 4        | Entry 1 = logical volume, Entry 2 = next EBR ptr  |

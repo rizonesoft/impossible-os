@@ -16,14 +16,14 @@ The UEFI Forum, in maintaining the specifications for these structures, follows 
 
 A GPT-formatted disk is structured as a continuous, linear array of logical blocks. The absolute size of these blocks dictates the exact byte-level offsets the operating system must calculate to correctly parse the partition metadata. The global layout follows a strict mathematical sequence that all compliant operating systems must understand to avoid destructive read-write errors.
 
-| LBA Range | Structure |
-|-----------|-----------|
-| **LBA 0** | The Protective Master Boot Record (PMBR), maintained for legacy compatibility. |
-| **LBA 1** | The Primary GPT Header, containing the master pointers and checksums. |
-| **LBA 2 through LBA 33** (Standard) | The Primary Partition Entry Array, holding the metadata for up to 128 partitions. |
-| **LBA 34 through Last LBA − 34** | The Usable Storage Area, allocated to the actual file systems and partition data. |
-| **Last LBA − 33 through Last LBA − 1** | The Backup Partition Entry Array, a bit-for-bit mirror of the primary array. |
-| **Last LBA (LBA −1)** | The Backup GPT Header, providing a failover mechanism if LBA 1 is compromised. |
+| LBA Range                                | Structure                                                                         |
+| ---------------------------------------- | --------------------------------------------------------------------------------- |
+| **LBA 0**                                | The Protective Master Boot Record (PMBR), maintained for legacy compatibility.    |
+| **LBA 1**                                | The Primary GPT Header, containing the master pointers and checksums.             |
+| **LBA 2 through LBA 33** (Standard)      | The Primary Partition Entry Array, holding the metadata for up to 128 partitions. |
+| **LBA 34 through Last LBA − 34**         | The Usable Storage Area, allocated to the actual file systems and partition data.  |
+| **Last LBA − 33 through Last LBA − 1**   | The Backup Partition Entry Array, a bit-for-bit mirror of the primary array.      |
+| **Last LBA (LBA −1)**                    | The Backup GPT Header, providing a failover mechanism if LBA 1 is compromised.   |
 
 ### 2.1 Logical Sector Sizes: The 512e vs 4Kn Paradigm Shift
 
@@ -36,9 +36,9 @@ The UEFI specification is meticulously designed to handle this variance. It defi
 Similarly, the standard GPT Partition Entry Array reserves exactly **16,384 bytes (16 KB)** to accommodate 128 partition entries of 128 bytes each. The array's footprint in terms of logical blocks changes depending on the sector size:
 
 | Sector Size | Array Blocks | Array LBA Range | First Usable LBA |
-|-------------|-------------|-----------------|------------------|
-| 512 bytes | 32 blocks | LBA 2 – LBA 33 | LBA 34 |
-| 4096 bytes | 4 blocks | LBA 2 – LBA 5 | LBA 6 |
+| ----------- | ------------ | --------------- | ---------------- |
+| 512 bytes   | 32 blocks    | LBA 2 – LBA 33  | LBA 34           |
+| 4096 bytes  | 4 blocks     | LBA 2 – LBA 5   | LBA 6            |
 
 Kernel drivers must be explicitly engineered to calculate these structural boundaries algorithmically using the dynamically queried logical sector size. **Relying on hardcoded LBA constants will inevitably result in catastrophic unmountable volumes on modern hardware.**
 
@@ -64,14 +64,14 @@ The PMBR takes the exact structural form and physical size of a legacy MBR. The 
 
 The GPT specification requires that the first of the four partition entries within the PMBR is explicitly and rigidly configured to define a single partition encompassing the entire disk, thereby "protecting" it. The structural requirements for this first entry are as follows:
 
-| Offset | Length (Bytes) | Field Name | Required GPT Value | Description |
-|--------|---------------|------------|-------------------|-------------|
-| `0x00` | 1 | Boot Indicator | `0x00` | Defines the partition as non-bootable. |
-| `0x01` | 3 | Starting CHS | `0x00 0x02 0x00` | A dummy CHS address that loosely maps to LBA 1. |
-| `0x04` | 1 | OS Type | `0xEE` | The universally recognized type code for an EFI Protective Partition. |
-| `0x05` | 3 | Ending CHS | `0xFF 0xFF 0xFF` | The maximum representable dummy CHS address. |
-| `0x08` | 4 | Starting LBA | `0x00000001` | The logical block address marking the beginning of the GPT space. |
-| `0x0C` | 4 | Size in LBA | Disk Size − 1 | The total number of sectors minus one. If the disk exceeds 2.2 TB, this field caps at `0xFFFFFFFF`. |
+| Offset | Length (Bytes) | Field Name     | Required GPT Value | Description                                                                                        |
+| ------ | -------------- | -------------- | ------------------ | -------------------------------------------------------------------------------------------------- |
+| `0x00` | 1              | Boot Indicator | `0x00`             | Defines the partition as non-bootable.                                                             |
+| `0x01` | 3              | Starting CHS   | `0x00 0x02 0x00`   | A dummy CHS address that loosely maps to LBA 1.                                                   |
+| `0x04` | 1              | OS Type        | `0xEE`             | The universally recognized type code for an EFI Protective Partition.                              |
+| `0x05` | 3              | Ending CHS     | `0xFF 0xFF 0xFF`   | The maximum representable dummy CHS address.                                                       |
+| `0x08` | 4              | Starting LBA   | `0x00000001`       | The logical block address marking the beginning of the GPT space.                                  |
+| `0x0C` | 4              | Size in LBA    | Disk Size − 1      | Total sectors minus one. If the disk exceeds 2.2 TB, this field caps at `0xFFFFFFFF`.              |
 
 To maintain compliance, the remaining three 16-byte partition entries within the PMBR must be strictly zeroed out and remain unused.
 
@@ -91,22 +91,22 @@ The GPT Header is the master architectural control block. It dictates the spatia
 
 The GPT Header structure is generally exactly **92 bytes** in size. Depending on the logical sector size (e.g., 512 bytes or 4096 bytes), the remainder of the logical block beyond the first 92 bytes is strictly reserved by the UEFI specification and must be padded exclusively with zeroes. When an OS developer allocates a struct in C or Rust to parse this sector, it must align to the following byte offsets:
 
-| Offset | Length (Bytes) | Data Type | Field Name | Description |
-|--------|---------------|-----------|------------|-------------|
-| `0x00` | 8 | `char[8]` | Signature | Magic identification bytes: `"EFI PART"` (`0x5452415020494645` in little-endian format). |
-| `0x08` | 4 | `uint32_t` | Revision | The version of the specification. Currently `0x00010000` (Version 1.0). |
-| `0x0C` | 4 | `uint32_t` | Header Size | The size of the GPT Header structure in bytes. Typically 92 (`0x5C`). |
-| `0x10` | 4 | `uint32_t` | Header CRC32 | The CCITT32 checksum of the header. **Crucially, this is calculated with this specific field temporarily zeroed out.** |
-| `0x14` | 4 | `uint32_t` | Reserved | Must be set to zero. |
-| `0x18` | 8 | `uint64_t` | My LBA | The specific LBA containing this exact header. This will be `1` for the primary header, and the Last LBA value for the backup header. |
-| `0x20` | 8 | `uint64_t` | Alternate LBA | The LBA of the counterpart header. This will point to the Last LBA for the primary header, and `1` for the backup header. |
-| `0x28` | 8 | `uint64_t` | First Usable LBA | The very first logical block that may be safely allocated to a data partition. |
-| `0x30` | 8 | `uint64_t` | Last Usable LBA | The final logical block that may be safely allocated to a data partition. |
-| `0x38` | 16 | `GUID` | Disk GUID | A mixed-endian UUID uniquely identifying the physical disk hardware. |
-| `0x48` | 8 | `uint64_t` | Partition Entry LBA | The starting LBA block address of the Partition Entry Array. |
-| `0x50` | 4 | `uint32_t` | Number of Entries | The maximum number of entries the array can hold. |
-| `0x54` | 4 | `uint32_t` | Size of Entry | The byte size of each individual partition entry. Almost universally set to 128. |
-| `0x58` | 4 | `uint32_t` | Array CRC32 | The independent CCITT32 checksum calculated over the entire Partition Entry Array. |
+| Offset | Length (Bytes) | Data Type  | Field Name          | Description                                                                                              |
+| ------ | -------------- | ---------- | ------------------- | -------------------------------------------------------------------------------------------------------- |
+| `0x00` | 8              | `char[8]`  | Signature           | Magic bytes: `"EFI PART"` (`0x5452415020494645` in little-endian format).                                |
+| `0x08` | 4              | `uint32_t` | Revision            | The version of the specification. Currently `0x00010000` (Version 1.0).                                  |
+| `0x0C` | 4              | `uint32_t` | Header Size         | The size of the GPT Header structure in bytes. Typically 92 (`0x5C`).                                    |
+| `0x10` | 4              | `uint32_t` | Header CRC32        | CRC32 checksum of the header. **Calculated with this field temporarily zeroed out.**                     |
+| `0x14` | 4              | `uint32_t` | Reserved            | Must be set to zero.                                                                                     |
+| `0x18` | 8              | `uint64_t` | My LBA              | LBA of this header. `1` for primary, Last LBA for backup.                                                |
+| `0x20` | 8              | `uint64_t` | Alternate LBA       | LBA of the counterpart header. Last LBA for primary, `1` for backup.                                     |
+| `0x28` | 8              | `uint64_t` | First Usable LBA    | The very first logical block that may be safely allocated to a data partition.                            |
+| `0x30` | 8              | `uint64_t` | Last Usable LBA     | The final logical block that may be safely allocated to a data partition.                                 |
+| `0x38` | 16             | `GUID`     | Disk GUID           | A mixed-endian UUID uniquely identifying the physical disk hardware.                                     |
+| `0x48` | 8              | `uint64_t` | Partition Entry LBA | The starting LBA block address of the Partition Entry Array.                                              |
+| `0x50` | 4              | `uint32_t` | Number of Entries   | The maximum number of entries the array can hold.                                                        |
+| `0x54` | 4              | `uint32_t` | Size of Entry       | The byte size of each individual partition entry. Almost universally set to 128.                          |
+| `0x58` | 4              | `uint32_t` | Array CRC32         | CRC32 checksum calculated over the entire Partition Entry Array.                                          |
 
 ### 4.1 Structural Redundancy and Recovery Algorithms
 
@@ -124,14 +124,14 @@ The UEFI specification establishes a rigid mathematical framework for this array
 
 Each 128-byte entry within the array contains the following structural mapping, which an OS developer must map directly to memory structures:
 
-| Offset | Length (Bytes) | Data Type | Field Name | Description |
-|--------|---------------|-----------|------------|-------------|
-| `0x00` | 16 | `GUID` | Partition Type GUID | Defines the core purpose and filesystem category of the partition. |
-| `0x10` | 16 | `GUID` | Unique Partition GUID | Uniquely identifies this exact instance of the partition globally, generated upon partition creation. |
-| `0x20` | 8 | `uint64_t` | Starting LBA | The absolute 64-bit LBA where the partition's data space begins. |
-| `0x28` | 8 | `uint64_t` | Ending LBA | The absolute 64-bit LBA where the partition concludes (inclusive boundary). |
-| `0x30` | 8 | `uint64_t` | Attributes | A 64-bit bitmask governing OS and firmware interaction protocols. |
-| `0x38` | 72 | `char[72]` | Partition Name | A 36-character human-readable string encoded strictly in **UTF-16LE** (Unicode 16-bit Little Endian). |
+| Offset | Length (Bytes) | Data Type  | Field Name            | Description                                                                                         |
+| ------ | -------------- | ---------- | --------------------- | --------------------------------------------------------------------------------------------------- |
+| `0x00` | 16             | `GUID`     | Partition Type GUID   | Defines the core purpose and filesystem category of the partition.                                  |
+| `0x10` | 16             | `GUID`     | Unique Partition GUID | Uniquely identifies this exact instance of the partition globally, generated upon creation.          |
+| `0x20` | 8              | `uint64_t` | Starting LBA          | The absolute 64-bit LBA where the partition's data space begins.                                    |
+| `0x28` | 8              | `uint64_t` | Ending LBA            | The absolute 64-bit LBA where the partition concludes (inclusive boundary).                          |
+| `0x30` | 8              | `uint64_t` | Attributes            | A 64-bit bitmask governing OS and firmware interaction protocols.                                   |
+| `0x38` | 72             | `char[72]` | Partition Name        | A 36-character human-readable string encoded strictly in **UTF-16LE** (Unicode 16-bit Little Endian). |
 
 If a specific slot within the entry array is currently unused (unallocated), the 16-byte Partition Type GUID must be filled entirely with zeroes (`00000000-0000-0000-0000-000000000000`). When a kernel is iteratively parsing the array to discover mountable volumes, it must **never** assume that encountering the first zeroed entry signifies the end of valid partitions. Deletion of volumes can cause unused entries to be interspersed randomly between valid, active partitions. The kernel must parse **all entries** up to the `NumberOfPartitionEntries` limit.
 
@@ -154,31 +154,31 @@ The 64-bit Attributes field at offset `0x30` within each partition entry provide
 
 ### UEFI Global Attributes (Bits 0–47)
 
-| Bit | Mask | Name | Description |
-|-----|------|------|-------------|
-| 0 | `0x0000000000000001` | **Required Partition** | The system cannot function properly without this partition (e.g., a critical OEM recovery partition). The OS is strictly prohibited from allowing the user to delete, format, or modify the volume. |
-| 1 | `0x0000000000000002` | **No Block IO Protocol** | The UEFI firmware must not produce an `EFI_BLOCK_IO_PROTOCOL` for this volume, effectively hiding the partition during the pre-boot environment. |
-| 2 | `0x0000000000000004` | **Legacy BIOS Bootable** | The GPT equivalent to the legacy "Active" flag in MBR entries. Traditional PC-AT BIOS firmware uses this bit to identify a GPT partition containing a legacy bootloader. Frequently used for GRUB's BIOS Boot Partition. |
-| 3–47 | — | Reserved | Undefined and strictly reserved by UEFI. Must be set to zero. |
+| Bit  | Mask                 | Name                     | Description                                                                                 |
+| ---- | -------------------- | ------------------------ | ------------------------------------------------------------------------------------------- |
+| 0    | `0x0000000000000001` | **Required Partition**   | The system cannot function without this partition (e.g., OEM recovery). OS must not delete.  |
+| 1    | `0x0000000000000002` | **No Block IO Protocol** | UEFI firmware must not produce `EFI_BLOCK_IO_PROTOCOL`, hiding the partition at pre-boot.    |
+| 2    | `0x0000000000000004` | **Legacy BIOS Bootable** | GPT equivalent to MBR "Active" flag. Used by BIOS firmware for GRUB's BIOS Boot Partition.  |
+| 3–47 | —                    | Reserved                 | Undefined and strictly reserved by UEFI. Must be set to zero.                               |
 
 ### Type-Specific Attributes (Bits 48–63)
 
 The behavior of the upper 16 bits changes entirely based on the specific Partition Type GUID assigned to the entry. Only the original owner or definer of the Partition Type GUID is permitted to assign meaning to these bits. The most prominent and widely encountered implementation is by Microsoft for the **Basic Data Partition** GUID (`EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`):
 
-| Bit | Mask | Name | Description |
-|-----|------|------|-------------|
-| 60 | `0x1000000000000000` | **Read-Only** | The OS must mount the volume with strict write restrictions. |
-| 61 | `0x2000000000000000` | **Shadow Copy** | Indicates the partition is a Volume Shadow Copy Service (VSS) clone. |
-| 62 | `0x4000000000000000` | **Hidden** | Instructs the OS mount manager to completely hide the volume from the GUI. |
-| 63 | `0x8000000000000000` | **No Automount** | Explicitly prevents the OS from automatically assigning a drive letter or mount point. |
+| Bit | Mask                 | Name            | Description                                                                         |
+| --- | -------------------- | --------------- | ----------------------------------------------------------------------------------- |
+| 60  | `0x1000000000000000` | **Read-Only**   | The OS must mount the volume with strict write restrictions.                         |
+| 61  | `0x2000000000000000` | **Shadow Copy** | Indicates the partition is a Volume Shadow Copy Service (VSS) clone.                 |
+| 62  | `0x4000000000000000` | **Hidden**      | Instructs the OS mount manager to completely hide the volume from the GUI.           |
+| 63  | `0x8000000000000000` | **No Automount**| Explicitly prevents the OS from automatically assigning a drive letter or mount point.|
 
 Other hardware and operating system ecosystems leverage these bits in highly divergent ways. For example, Google's **ChromeOS** utilizes the type-specific bits to orchestrate complex boot fallback routines:
 
-| Bits | Purpose |
-|------|---------|
-| 48–51 | Boot priority of the kernel (15 = highest, 0 = non-bootable) |
-| 52–55 | Counter of remaining boot attempts for a specific kernel |
-| 56 | Flag indicating a successful boot sequence |
+| Bits  | Purpose                                                       |
+| ----- | ------------------------------------------------------------- |
+| 48–51 | Boot priority of the kernel (15 = highest, 0 = non-bootable)  |
+| 52–55 | Counter of remaining boot attempts for a specific kernel      |
+| 56    | Flag indicating a successful boot sequence                    |
 
 > [!WARNING]
 > Kernel developers must ensure that their disk utilities do not universally apply Microsoft's attribute mapping logic to non-Microsoft GUID types, as doing so can corrupt priority sequences for other operating systems.
@@ -187,7 +187,7 @@ Other hardware and operating system ecosystems leverage these bits in highly div
 
 ## 7. Cryptographic Integrity: CRC32 Implementation Mathematics
 
-The structural integrity of a GPT-formatted disk relies heavily on the cyclic redundancy checks embedded natively in both the master headers and the partition arrays. It is a critical, system-breaking error for OS developers to utilize arbitrary or accelerated hashing functions blindly; the UEFI specification strictly mandates the **32-bit CCITT/ANSI CRC algorithm** (frequently referred to as CRC-32). This is the identical polynomial hashing logic utilized in IEEE 802.3 Ethernet frame checks and standard GZIP compression.
+The structural integrity of a GPT-formatted disk relies heavily on the cyclic redundancy checks embedded natively in both the master headers and the partition arrays. It is a critical, system-breaking error for OS developers to utilize arbitrary or accelerated hashing functions blindly; the UEFI specification strictly mandates the **CRC-32 algorithm** (IEEE 802.3). This is the identical polynomial hashing logic utilized in Ethernet frame checks and standard GZIP compression.
 
 ### 7.1 The CRC32 Polynomial and State Variables
 
@@ -197,10 +197,10 @@ The mathematics of the CRC-32 validation dictate the strict use of a specific ge
 
 In hexadecimal representation, this specific algebraic string corresponds to the constant **`0x04C11DB7`**.
 
-The state machine for the hash generation must be initialized with a starting seed value of **`0xFFFFFFFF`**. Initializing with a non-zero state helps to yield an output value other than zero when calculating the hash of an input string consisting entirely of null bytes, preventing trivial collision attacks. The CCITT algorithm dictates that the byte data must be processed with **bit reflection** (meaning the bits of each individual byte are effectively reversed before processing). Alternatively, OS developers can build a more performant implementation by using a logical right-shifting algorithm paired directly with the **bit-reflected counterpart** of the polynomial, which evaluates to **`0xEDB88320`**. Once all bytes of the target data structure are processed through the shifting loop, the accumulated hash value must undergo a final **bitwise XOR against `0xFFFFFFFF`** (which is mathematically identical to applying a binary NOT operation on the final CRC value).
+The state machine for the hash generation must be initialized with a starting seed value of **`0xFFFFFFFF`**. Initializing with a non-zero state helps to yield an output value other than zero when calculating the hash of an input string consisting entirely of null bytes, preventing trivial collision attacks. The CRC-32 algorithm dictates that the byte data must be processed with **bit reflection** (meaning the bits of each individual byte are effectively reversed before processing). Alternatively, OS developers can build a more performant implementation by using a logical right-shifting algorithm paired directly with the **bit-reflected counterpart** of the polynomial, which evaluates to **`0xEDB88320`**. Once all bytes of the target data structure are processed through the shifting loop, the accumulated hash value must undergo a final **bitwise XOR against `0xFFFFFFFF`** (which is mathematically identical to applying a binary NOT operation on the final CRC value).
 
 > [!CAUTION]
-> **Hardware CRC32 Trap:** A major pitfall for kernel developers is attempting to utilize hardware-accelerated instructions available on modern CPUs (such as the x86 `CRC32` intrinsic or certain ARM offloads). These hardware instructions frequently implement the **Castagnoli polynomial (`0x1EDC6F41`)**, which is fundamentally incompatible with the GPT standard and will instantly result in checksum failures. Furthermore, when configuring specific hardware calculation units like the STM32 or ESP32 CRC engines for embedded OS development, parameters such as `reverse_input` and `reverse_output` must explicitly be set to `true`, and the final XOR value must be asserted to `0xFFFFFFFF` to mimic the software CCITT logic correctly. Therefore, a **software-based lookup table** or explicitly configured CCITT hardware offloading parameters must be utilized.
+> **Hardware CRC32 Trap:** A major pitfall for kernel developers is attempting to utilize hardware-accelerated instructions available on modern CPUs (such as the x86 `CRC32` intrinsic or certain ARM offloads). These hardware instructions frequently implement the **Castagnoli polynomial (`0x1EDC6F41`)**, which is fundamentally incompatible with the GPT standard and will instantly result in checksum failures. Furthermore, when configuring specific hardware calculation units like the STM32 or ESP32 CRC engines for embedded OS development, parameters such as `reverse_input` and `reverse_output` must explicitly be set to `true`, and the final XOR value must be asserted to `0xFFFFFFFF` to mimic the software CRC-32 logic correctly. Therefore, a **software-based lookup table** or explicitly configured CCITT hardware offloading parameters must be utilized.
 
 ### 7.2 Checksum Implementation Traps
 
@@ -268,44 +268,44 @@ To ensure robust interoperability and prevent destructive formatting collisions,
 
 ### Core Type GUIDs
 
-| Partition Designation | Textual GUID Representation | Target Platform / Usage |
-|-----------------------|----------------------------|------------------------|
-| **EFI System Partition (ESP)** | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` | Universal. Formatted strictly as FAT32. Houses critical bootloader binaries (e.g., `BOOTX64.EFI`, GRUB, Limine) and is universally required by UEFI hardware to bootstrap the OS. |
-| **Unused / Empty Entry** | `00000000-0000-0000-0000-000000000000` | Identifies an empty, unallocated slot within the GPT partition entry array. Can appear anywhere within the array bounds. |
-| **Legacy MBR Partition** | `024DEE41-33E7-11D3-9D69-0008C781F39F` | An encapsulating partition explicitly containing a legacy MBR volume mapping. |
-| **BIOS Boot Partition** | `21686148-6449-6E6F-744E-656564454649` | Utilized extensively by GRUB2. Provides raw, unformatted space to embed massive second-stage bootloader code on legacy BIOS systems utilizing a GPT layout. |
+| Partition Designation          | Textual GUID Representation                    | Target Platform / Usage                                             |
+| ------------------------------ | ---------------------------------------------- | ------------------------------------------------------------------- |
+| **EFI System Partition (ESP)** | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`         | Universal FAT32. Houses bootloaders (`BOOTX64.EFI`, GRUB, Limine).  |
+| **Unused / Empty Entry**       | `00000000-0000-0000-0000-000000000000`          | Empty, unallocated slot in the partition entry array.               |
+| **Legacy MBR Partition**       | `024DEE41-33E7-11D3-9D69-0008C781F39F`         | Encapsulating partition containing a legacy MBR volume mapping.     |
+| **BIOS Boot Partition**        | `21686148-6449-6E6F-744E-656564454649`         | Used by GRUB2 for raw second-stage bootloader code on BIOS+GPT.    |
 
 ### Microsoft GUIDs
 
-| Partition Designation | Textual GUID Representation | Usage |
-|-----------------------|----------------------------|-------|
-| **Microsoft Reserved (MSR)** | `E3C9E316-0B5C-4DB8-817D-F92DF00215AE` | A 16 MB unformatted, locked partition aiding advanced Windows disk management and conversion utilities. |
-| **Microsoft Basic Data** | `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` | Encapsulates standard Windows data partitions utilizing NTFS, exFAT, or FAT32 file systems. |
-| **MS LDM Metadata** | `5808C8AA-7E8F-42E0-85D2-E1E90434CFB3` | Identifies Logical Disk Manager metadata on Windows dynamic disks. |
-| **MS LDM Data** | `AF9B60A0-1431-4F62-BC68-3311714A69AD` | Identifies Logical Disk Manager actual data payload on Windows dynamic disks. |
-| **Microsoft Recovery** | `DE94BBA4-06D1-4D40-A16A-BFD50179D6AC` | Defines a partition containing Windows RE (Recovery Environment) tools. |
+| Partition Designation        | Textual GUID Representation                    | Usage                                                                       |
+| ---------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------- |
+| **Microsoft Reserved (MSR)** | `E3C9E316-0B5C-4DB8-817D-F92DF00215AE`         | 16 MB unformatted, locked partition for Windows disk management utilities.  |
+| **Microsoft Basic Data**     | `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`         | Standard Windows data partitions using NTFS, exFAT, or FAT32.              |
+| **MS LDM Metadata**         | `5808C8AA-7E8F-42E0-85D2-E1E90434CFB3`         | Logical Disk Manager metadata on Windows dynamic disks.                     |
+| **MS LDM Data**             | `AF9B60A0-1431-4F62-BC68-3311714A69AD`         | Logical Disk Manager data payload on Windows dynamic disks.                 |
+| **Microsoft Recovery**      | `DE94BBA4-06D1-4D40-A16A-BFD50179D6AC`         | Partition containing Windows RE (Recovery Environment) tools.               |
 
 ### Linux GUIDs
 
-| Partition Designation | Textual GUID Representation | Usage |
-|-----------------------|----------------------------|-------|
-| **Linux Filesystem Data** | `0FC63DAF-8483-4772-8E79-3D69D8477DE4` | Replaced the MS Basic Data GUID for Ext4/Btrfs partitions. Jointly created by GNU Parted developers to resolve catastrophic Windows dual-boot mounting collisions. |
-| **Linux Swap** | `0657FD6D-A4AB-43C4-84E5-0933C84B4F4F` | Identifies dedicated virtual memory paging space for Linux kernels. |
-| **Linux Root (x86-64)** | `4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709` | Architecture-specific root discovery GUID, mapped by the Discoverable Partitions Spec. |
+| Partition Designation     | Textual GUID Representation                    | Usage                                                                         |
+| ------------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| **Linux Filesystem Data** | `0FC63DAF-8483-4772-8E79-3D69D8477DE4`         | Replaced MS Basic Data GUID for Ext4/Btrfs to avoid Windows mounting issues.  |
+| **Linux Swap**            | `0657FD6D-A4AB-43C4-84E5-0933C84B4F4F`         | Dedicated virtual memory paging space for Linux kernels.                      |
+| **Linux Root (x86-64)**   | `4F68BCE3-E8CD-4DB1-96E7-FBCAF984B709`         | Architecture-specific root discovery GUID (Discoverable Partitions Spec).     |
 
 ### Apple GUIDs
 
-| Partition Designation | Textual GUID Representation | Usage |
-|-----------------------|----------------------------|-------|
-| **Apple HFS/HFS+** | `48465300-0000-11AA-AA11-00306543ECAC` | Denotes the macOS standard hierarchical file system. |
-| **Apple APFS** | `7C3457EF-0000-11AA-AA11-00306543ECAC` | Apple File System volume (derived from standard tables). |
+| Partition Designation | Textual GUID Representation                    | Usage                                                    |
+| --------------------- | ---------------------------------------------- | -------------------------------------------------------- |
+| **Apple HFS/HFS+**   | `48465300-0000-11AA-AA11-00306543ECAC`          | Denotes the macOS standard hierarchical file system.     |
+| **Apple APFS**        | `7C3457EF-0000-11AA-AA11-00306543ECAC`          | Apple File System volume (derived from standard tables). |
 
 ### Other Platform GUIDs
 
-| Partition Designation | Textual GUID Representation | Usage |
-|-----------------------|----------------------------|-------|
-| **FreeBSD ZFS** | `516E7CB5-6ECF-11D6-8FF8-00022D09712B` | Standard robust ZFS storage pool mapping utilized by FreeBSD and TrueNAS environments. |
-| **ChromeOS Kernel** | `FE3A2A5D-4F32-41A7-B725-ACCC3285A309` | Points to a bootable ChromeOS image utilizing specialized bits 48–63 for boot priority. |
+| Partition Designation | Textual GUID Representation                    | Usage                                                                      |
+| --------------------- | ---------------------------------------------- | -------------------------------------------------------------------------- |
+| **FreeBSD ZFS**       | `516E7CB5-6ECF-11D6-8FF8-00022D09712B`         | ZFS storage pool mapping used by FreeBSD and TrueNAS environments.         |
+| **ChromeOS Kernel**   | `FE3A2A5D-4F32-41A7-B725-ACCC3285A309`         | Bootable ChromeOS image using specialized bits 48–63 for boot priority.    |
 
 When configuring partitioning tools such as `gdisk` or `cgdisk`, these complex GUIDs are frequently aliased to simple two-byte hexadecimal codes (e.g., `8300` for Linux Filesystem, `0700` for Microsoft Basic Data, `8200` for Linux Swap) for ease of manual data entry, but the raw 16-byte GUID is what is physically written to the `0x00` offset of the partition entry.
 
@@ -333,7 +333,7 @@ When architecting the storage drivers for a custom operating system, the initial
 
 3. **Primary Header Validation:** The kernel proceeds to issue a discrete read for LBA 1. Upon buffering LBA 1 into kernel memory, the system executes a strict byte-wise signature match against the 8-byte `"EFI PART"` magic string.
 
-4. **Header Integrity Check:** If the signature matches, the kernel clones the 92-byte header into a temporary buffer, actively zeroes out the 4-byte Header CRC32 field, and computes the CCITT-32 checksum using the `0x04C11DB7` polynomial. A mismatch here dictates an immediate halt to primary parsing, forcing the kernel to calculate the Last LBA address and retrieve the Backup Header to attempt recovery.
+4. **Header Integrity Check:** If the signature matches, the kernel clones the 92-byte header into a temporary buffer, actively zeroes out the 4-byte Header CRC32 field, and computes the CRC-32 checksum using the `0x04C11DB7` polynomial. A mismatch here dictates an immediate halt to primary parsing, forcing the kernel to calculate the Last LBA address and retrieve the Backup Header to attempt recovery.
 
 5. **Array Ingestion:** Assuming a mathematically valid header, the kernel references the Partition Entry LBA offset, the `NumberOfPartitionEntries`, and the `SizeOfPartitionEntry`. The kernel then calculates the total byte length of the array and buffers the entirety of the Partition Array from the disk.
 
@@ -354,21 +354,21 @@ By adhering rigidly to these complex mathematical, cryptographic, and architectu
 
 ## Summary Constants Table
 
-| Constant | Value | Description |
-|----------|-------|-------------|
-| PMBR OS Type | `0xEE` | EFI Protective Partition identifier |
-| GPT Header Signature | `"EFI PART"` | Magic bytes at offset `0x00` of LBA 1 |
-| GPT Header Size | 92 bytes (`0x5C`) | Standard header structure size |
-| GPT Revision | `0x00010000` | Version 1.0 |
-| Boot Signature | `0x55 0xAA` | MBR/PMBR sector validation |
-| Entry Size | 128 bytes | Standard partition entry size |
-| Max Entries | 128 | Standard entry count (16,384 bytes total) |
-| CRC32 Polynomial | `0x04C11DB7` (reflected: `0xEDB88320`) | CCITT-32 / IEEE 802.3 |
-| CRC32 Init | `0xFFFFFFFF` | Seed value |
-| CRC32 Final XOR | `0xFFFFFFFF` | Post-calculation inversion |
-| First Usable LBA (512b) | LBA 34 | After PMBR + header + 32 array blocks |
-| First Usable LBA (4Kn) | LBA 6 | After PMBR + header + 4 array blocks |
-| 1-MiB Alignment | 2048 sectors (512b) / 256 sectors (4Kn) | Modern partition alignment |
-| ESP GUID | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B` | EFI System Partition type |
-| Basic Data GUID | `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` | Microsoft Basic Data partition type |
-| IXFS GUID | (to be assigned) | Impossible OS native filesystem |
+| Constant                | Value                                          | Description                                  |
+| ----------------------- | ---------------------------------------------- | -------------------------------------------- |
+| PMBR OS Type            | `0xEE`                                         | EFI Protective Partition identifier          |
+| GPT Header Signature    | `"EFI PART"`                                   | Magic bytes at offset `0x00` of LBA 1        |
+| GPT Header Size         | 92 bytes (`0x5C`)                              | Standard header structure size               |
+| GPT Revision            | `0x00010000`                                   | Version 1.0                                  |
+| Boot Signature          | `0x55 0xAA`                                    | MBR/PMBR sector validation                   |
+| Entry Size              | 128 bytes                                      | Standard partition entry size                |
+| Max Entries             | 128                                            | Standard entry count (16,384 bytes total)    |
+| CRC32 Polynomial        | `0x04C11DB7` (reflected: `0xEDB88320`)         | CRC-32 / IEEE 802.3                          |
+| CRC32 Init              | `0xFFFFFFFF`                                   | Seed value                                   |
+| CRC32 Final XOR         | `0xFFFFFFFF`                                   | Post-calculation inversion                   |
+| First Usable LBA (512b) | LBA 34                                         | After PMBR + header + 32 array blocks        |
+| First Usable LBA (4Kn)  | LBA 6                                          | After PMBR + header + 4 array blocks         |
+| 1-MiB Alignment         | 2048 sectors (512b) / 256 sectors (4Kn)        | Modern partition alignment                   |
+| ESP GUID                | `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`         | EFI System Partition type                    |
+| Basic Data GUID         | `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`         | Microsoft Basic Data partition type          |
+| IXFS GUID               | (to be assigned)                               | Impossible OS native filesystem              |

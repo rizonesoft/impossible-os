@@ -26,14 +26,14 @@ A modern VirtIO 1.0+ driver negotiates `VIRTIO_F_VERSION_1` (feature bit 32) to 
 
 VirtIO PCI devices are identified by their Vendor ID and Device ID in the PCI configuration space:
 
-| Field | Value | Notes |
-|-------|-------|-------|
-| Vendor ID | `0x1AF4` | Red Hat / VirtIO |
-| Device ID (Transitional) | `0x1000`–`0x103F` | Legacy + modern support. Block = `0x1001` |
-| Device ID (Modern) | `0x1040` + device_type | Modern-only. Block = `0x1042` (0x1040 + 2) |
-| Subsystem Vendor ID | `0x1AF4` | |
-| Subsystem Device ID | device_type | Block = `0x0002` |
-| Revision ID | `0x01` | VirtIO 1.0+ compliant |
+| Field                | Value                      | Notes                                              |
+| -------------------- | -------------------------- | -------------------------------------------------- |
+| Vendor ID            | `0x1AF4`                   | Red Hat / VirtIO                                   |
+| Device ID (Transitional) | `0x1000`–`0x103F`      | Legacy + modern support. Block = `0x1001`          |
+| Device ID (Modern)   | `0x1040` + device_type     | Modern-only. Block = `0x1042` (0x1040 + 2)         |
+| Subsystem Vendor ID  | `0x1AF4`                   |                                                    |
+| Subsystem Device ID  | device_type                | Block = `0x0002`                                   |
+| Revision ID          | `0x01`                     | VirtIO 1.0+ compliant                             |
 
 **Detection algorithm:**
 1. Scan PCI for vendor `0x1AF4`
@@ -61,13 +61,13 @@ struct virtio_pci_cap {
 
 The driver walks the PCI capability list starting from PCI config offset `0x34`, following `cap_next` links. For each capability with `cap_vndr == 0x09`, inspect `cfg_type`:
 
-| `cfg_type` | Name | Purpose |
-|------------|------|---------|
-| 1 | `VIRTIO_PCI_CAP_COMMON_CFG` | Common VirtIO configuration (status, features, queue setup) |
-| 2 | `VIRTIO_PCI_CAP_NOTIFY_CFG` | Virtqueue notification (doorbell) registers |
-| 3 | `VIRTIO_PCI_CAP_ISR_CFG` | Interrupt Status Register (legacy INTx acknowledgment) |
-| 4 | `VIRTIO_PCI_CAP_DEVICE_CFG` | Device-specific configuration (block device config) |
-| 5 | `VIRTIO_PCI_CAP_PCI_CFG` | PCI configuration access (alternative to BAR mapping) |
+| `cfg_type` | Name                          | Purpose                                                           |
+| ---------- | ----------------------------- | ----------------------------------------------------------------- |
+| 1          | `VIRTIO_PCI_CAP_COMMON_CFG`   | Common VirtIO configuration (status, features, queue setup)       |
+| 2          | `VIRTIO_PCI_CAP_NOTIFY_CFG`   | Virtqueue notification (doorbell) registers                       |
+| 3          | `VIRTIO_PCI_CAP_ISR_CFG`      | Interrupt Status Register (legacy INTx acknowledgment)            |
+| 4          | `VIRTIO_PCI_CAP_DEVICE_CFG`   | Device-specific configuration (block device config)               |
+| 5          | `VIRTIO_PCI_CAP_PCI_CFG`      | PCI configuration access (alternative to BAR mapping)             |
 
 For each capability, the driver maps the PCI BAR specified by `bar` into kernel virtual memory, then accesses the structure at `BAR_base + offset`.
 
@@ -379,7 +379,7 @@ The device-specific configuration is accessed via the `VIRTIO_PCI_CAP_DEVICE_CFG
 | `0x44` | 4 | `secure_erase_sector_alignment` | `F_SECURE_ERASE` | Alignment for secure erase (VirtIO 1.2+) |
 
 > [!IMPORTANT]
-> The `capacity` field reports size in **512-byte sectors** even when `blk_size` is not 512. The driver must accout for this: `disk_bytes = capacity * 512`. Data I/O requests also use 512-byte sector addressing in the request header.
+> The `capacity` field reports size in **512-byte sectors** even when `blk_size` is not 512. The driver must account for this: `disk_bytes = capacity * 512`. Data I/O requests also use 512-byte sector addressing in the request header.
 
 ### Configuration Atomicity
 

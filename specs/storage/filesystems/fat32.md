@@ -23,10 +23,10 @@ A fully initialized FAT32 logical volume is divided sequentially into distinct, 
 A critical architectural mandate is that the specific file system sub-type—whether FAT12, FAT16, or FAT32—is determined **exclusively** by the total count of addressable clusters in the Data Region. An operating system driver must never trust descriptive strings (such as `"FAT32   "` or `"FAT16   "`) found in the Boot Sector to determine the FAT type. The string fields are purely cosmetic and unreliable. The dynamic calculation of the cluster count isolates the true file system type based on the following rigid mathematical boundaries:
 
 - **FAT12 Definition:** A volume with a total data cluster count less than or equal to 4,085 is strictly categorized as FAT12.
-- **FAT16 Definition:** A volume containing between 4,086 and 65,524 clusters inclusive is strictly categorized as FAT16.
-- **FAT32 Definition:** A volume containing 65,525 or more clusters is strictly categorized as FAT32.
+- **FAT16 Definition:** A volume containing between 4,086 and 65,525 clusters inclusive is strictly categorized as FAT16.
+- **FAT32 Definition:** A volume containing 65,526 or more clusters is strictly categorized as FAT32.
 
-For a volume to legitimately qualify as FAT32, the data region must contain at least 65,525 clusters. Practically, Microsoft Windows format utilities enforce a minimum volume size of 512 Megabytes (MB) for FAT32 formatting. Formatting a smaller drive as FAT32 results in inefficient cluster allocation that severely wastes disk space. Therefore, while users can forcefully format drives smaller than 512 MB as FAT32 using third-party tools, standard operating system drivers optimize smaller capacities by utilizing FAT16. To ensure maximum compatibility across varying driver implementations, formatting utilities are advised to maintain cluster counts at least 16 clusters away from these strict sub-type boundaries.
+For a volume to legitimately qualify as FAT32, the data region must contain at least 65,526 clusters. Practically, Microsoft Windows format utilities enforce a minimum volume size of 512 Megabytes (MB) for FAT32 formatting. Formatting a smaller drive as FAT32 results in inefficient cluster allocation that severely wastes disk space. Therefore, while users can forcefully format drives smaller than 512 MB as FAT32 using third-party tools, standard operating system drivers optimize smaller capacities by utilizing FAT16. To ensure maximum compatibility across varying driver implementations, formatting utilities are advised to maintain cluster counts at least 16 clusters away from these strict sub-type boundaries.
 
 ## Endianness and Hardware Portability
 
@@ -50,7 +50,7 @@ The base parameters common to all FAT architectures are positioned at the very b
 
 | Offset (Hex) | Offset (Dec) | Length (Bytes) | Field Name       | Description and FAT32 Specifics                                                                                                                                                                                                     |
 | ------------ | ------------ | -------------- | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0x00`       | 0            | 3              | BS_jmpBoot       | Executable jump instruction directing the CPU to the bootstrap code. Typically observed as `0xEB 0x3E 0x90` or a variant of `0xE9` followed by a 16-bit offset.                                                                     |
+| `0x00`       | 0            | 3              | BS_jmpBoot       | Executable jump instruction directing the CPU to the bootstrap code. Typically observed as `0xEB 0x58 0x90` (FAT32) or a variant of `0xE9` followed by a 16-bit offset.                                                             |
 | `0x03`       | 3            | 8              | BS_OEMName       | OEM Identifier string. Often padded with spaces, such as `"MSWIN4.1"` or `"MSDOS5.0"`. Purely cosmetic, not required for parsing logic.                                                                                             |
 | `0x0B`       | 11           | 2              | BPB_BytsPerSec   | The count of bytes per logical sector. Valid values are rigidly restricted to 512, 1024, 2048, or 4096 bytes. Standard implementations predominantly use 512 bytes.                                                                  |
 | `0x0D`       | 13           | 1              | BPB_SecPerClus   | Sectors per cluster. The value must be an exact power of 2 (1, 2, 4, 8, 16, 32, 64, 128). The resultant cluster size should not exceed 32,768 bytes (32 KB).                                                                       |
@@ -138,7 +138,7 @@ DataSectors = BPB_TotSec32 - DataStartSector
 CountOfClusters = ⌊DataSectors / BPB_SecPerClus⌋
 ```
 
-If `CountOfClusters < 65,526`, the driver should reject the volume as invalid FAT32.
+If `CountOfClusters < 65,526`, the driver must reject the volume as invalid FAT32.
 
 ## File Allocation Table Mechanics and Cluster Chains
 
@@ -167,6 +167,7 @@ The masked 28-bit value classifies the cluster:
 - `0x00000000`: Free cluster, available for allocation.
 - `0x00000001`: Internally reserved, not available for file data.
 - `0x00000002` to `0x0FFFFFEF`: Allocated cluster. The value is the index of the next cluster in the chain.
+- `0x0FFFFFF0` to `0x0FFFFFF6`: Reserved values. Must not be used as cluster pointers.
 - `0x0FFFFFF7`: Bad cluster. Permanently quarantined — physically damaged sectors.
 - `0x0FFFFFF8` to `0x0FFFFFFF`: End of File (EOF) marker. Final cluster of the file's data chain.
 
@@ -175,7 +176,7 @@ The masked 28-bit value classifies the cluster:
 The zeroth and first entries do not map to physical data clusters (valid data clusters begin at index 2):
 
 - **FAT[0]:** Duplicate of the media descriptor. The lowest 8 bits match `BPB_Media` (e.g., `0xF8`). Typical full value: `0x0FFFFFF8`.
-- **FAT[1]:** Stores dirty flags. Bit 31 = volume dirty flag (improper dismount). Bit 30 = hardware read/write error flag.
+- **FAT[1]:** Stores dirty flags. Bit 27 (`ClnShutBitMask`, `0x08000000`) = clean shutdown flag (1 = clean, 0 = dirty/improper dismount). Bit 26 (`HrdErrBitMask`, `0x04000000`) = hardware I/O error flag (1 = no errors, 0 = errors detected).
 
 ### Cluster-to-LBA Mathematical Resolution
 
