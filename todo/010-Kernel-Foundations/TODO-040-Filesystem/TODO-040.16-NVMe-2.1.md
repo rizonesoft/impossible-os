@@ -167,6 +167,12 @@ graph TD
 | 💎 | **7**  | §17.1 Namespace Management                | Phase 3 (§4.2)                 |   ⬜   |
 | 💎 | **7**  | §18.1 TCG Opal 2.0 SED                    | Phase 3 (§4.2)                 |   ⬜   |
 | 💎 | **7**  | §19.1 Zoned Namespaces                    | Phase 3 (§4.2)                 |   ⬜   |
+| 💎 | **7**  | §20.1 Asynchronous Event Requests         | Phase 3 (§4.2)                 |   ⬜   |
+| 💎 | **7**  | §20.2 SGL Support                         | Phase 3 (§3.2)                 |   ⬜   |
+| 💎 | **7**  | §21.1 APST Power Management              | Phase 3 (§4.2)                 |   ⬜   |
+| ⭐ | **7**  | §22.1 SMART Dashboard                     | Phase 5 (§8.1)                 |   ⬜   |
+| 💎 | **8**  | §23.1 Firmware Update                     | Phase 3 (§4.2)                 |   ⬜   |
+| ⭐ | **8**  | §24.1 FDP Write Hints                     | Phase 3 (§4.2)                 |   ⬜   |
 | 💎 | —      | Downstream: FAT32 flush + TRIM            | Phase 4 + Phase 5              |   ⬜   |
 | 💎 | —      | Downstream: IXFS flush + TRIM             | Phase 4 + Phase 5              |   ⬜   |
 | 💎 | —      | Parallel: AHCI SATA transport             | Independent                    |   ⬜   |
@@ -195,7 +201,10 @@ graph TD
 > **Phase 6** delivers competitive advantage (⭐): adaptive polling, I/O priority, latency
 > telemetry, predictive prefetch, request merging, and sanitize.
 >
-> **Phase 7** is stretch: namespace management, TCG Opal encryption, ZNS.
+> **Phase 7** adds spec features + stretch: namespace management, TCG Opal, ZNS, AER, SGL,
+> APST power management, and the SMART Dashboard (⭐).
+>
+> **Phase 8** is enterprise stretch: firmware update and FDP write hints (⭐).
 
 > [!TIP]
 > **QEMU testing flags:**

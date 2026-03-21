@@ -683,27 +683,32 @@ graph TD
 ## Priority Order
 
 | Star | Priority | Section                       | Description                                                          |
-| ---- | -------- | ----------------------------- | -------------------------------------------------------------------- |
-| 💎    | 🔴 P0   | 1.1 Superblock Parsing        | Foundation: locate tree roots and feature flags                      |
-| 💎    | 🔴 P0   | 2.1 Chunk Tree Bootstrap      | **Critical unlock:** logical-to-physical address translation         |
-| 💎    | 🔴 P0   | 3.1 Node Header Validation    | Safety: checksum + generation + bytenr verification                  |
-| 💎    | 🔴 P0   | 2.2 Address Translation       | Full chunk map from Chunk Tree                                       |
-| 💎    | 🔴 P0   | 3.2 Internal Node Traversal   | B-tree descent via binary search                                     |
-| 💎    | 🔴 P0   | 3.3 Leaf Node Item Parser     | Dual-growth item/payload extraction                                  |
-| 💎    | 🟠 P1   | 4.1 Root Tree Navigation      | Locate subvolume tree roots                                          |
-| 💎    | 🟠 P1   | 4.2 FS Tree Inode Reader      | Read file/directory metadata                                         |
-| 💎    | 🟠 P1   | 5.1 Extent Data Reader        | Parse extent references for file data                                |
-| 💎    | 🟠 P1   | 5.2 File Data Reader          | Actually read file contents end-to-end                               |
-| 💎    | 🟠 P1   | 6.1 Directory Entry Parser    | Enumerate directory contents                                         |
-| 💎    | 🟠 P1   | 6.2 Path Resolution           | Full path traversal from root                                        |
-| 💎    | 🟠 P1   | 8.1 VFS Registration          | Make Btrfs volumes mountable                                         |
-| 💎    | 🟡 P2   | 7.1 CRC32C Checksumming       | Data integrity verification                                          |
-| 💎    | 🟡 P2   | 1.2 Superblock Mirror Reader  | Resilience: fallback to mirror copies                                |
-| 💎    | 🟢 P3   | 9.1 Test Suite                | Quality: automated validation with test images                       |
-| ⭐    | 🟢 P3   | 10.1 Health Dashboard         | **GUI volume health**: first to show Btrfs health in a panel         |
-| ⭐    | 🟢 P3   | 10.2 Subvolume Browser        | **GUI subvolume tree**: first to browse subvolumes/snapshots in GUI   |
-| ⭐    | 🟢 P3   | 10.3 Scrub Verifier           | **Non-destructive scrub**: safe integrity verification               |
-| ⭐    | 🟢 P3   | 10.4 Space Analyzer           | **ENOSPC diagnosis**: data/metadata imbalance detection              |
+| Star | Priority | Section                          | Description                                                              |
+| ---- | -------- | -------------------------------- | ------------------------------------------------------------------------ |
+| 💎   | 🔴 P0    | 1.1 Superblock Parsing           | Foundation: locate tree roots and feature flags                          |
+| 💎   | 🔴 P0    | 2.1 Chunk Tree Bootstrap         | **Critical unlock:** logical-to-physical address translation             |
+| 💎   | 🔴 P0    | 3.1 Node Header Validation       | Safety: checksum + generation + bytenr verification                      |
+| 💎   | 🔴 P0    | 2.2 Address Translation          | Full chunk map from Chunk Tree                                           |
+| 💎   | 🔴 P0    | 3.2 Internal Node Traversal      | B-tree descent via binary search                                         |
+| 💎   | 🔴 P0    | 3.3 Leaf Node Item Parser        | Dual-growth item/payload extraction                                      |
+| 💎   | 🟠 P1    | 4.1 Root Tree Navigation         | Locate subvolume tree roots                                              |
+| 💎   | 🟠 P1    | 4.2 FS Tree Inode Reader         | Read file/directory metadata                                             |
+| 💎   | 🟠 P1    | 5.1 Extent Data Reader           | Parse extent references for file data                                    |
+| 💎   | 🟠 P1    | 5.2 File Data Reader             | Actually read file contents end-to-end                                   |
+| 💎   | 🟠 P1    | 6.1 Directory Entry Parser       | Enumerate directory contents                                             |
+| 💎   | 🟠 P1    | 6.2 Path Resolution              | Full path traversal from root                                            |
+| 💎   | 🟠 P1    | 8.1 VFS Registration             | Make Btrfs volumes mountable                                             |
+| 💎   | 🟡 P2    | 7.1 CRC32C Checksumming          | Data integrity verification                                              |
+| 💎   | 🟡 P2    | 1.2 Superblock Mirror Reader     | Resilience: fallback to mirror copies                                    |
+| 💎   | 🟢 P3    | 9.1 Test Suite                   | Quality: automated validation with test images                           |
+| ⭐   | 🟢 P3    | 10.1 Health Dashboard            | **GUI volume health**: first to show Btrfs health in a panel             |
+| ⭐   | 🟢 P3    | 10.2 Subvolume Browser           | **GUI subvolume tree**: first to browse subvolumes/snapshots in GUI      |
+| ⭐   | 🟢 P3    | 10.3 Scrub Verifier              | **Non-destructive scrub**: safe integrity verification                   |
+| ⭐   | 🟢 P3    | 10.4 Space Analyzer              | **ENOSPC diagnosis**: data/metadata imbalance detection                  |
+| ⭐   | 🔵 P4    | 10.5 Device Stats Dashboard      | **GUI device errors**: per-device I/O error counters                     |
+| ⭐   | 🔵 P4    | 10.6 Quota Group Reader          | **GUI quota view**: subvolume usage vs limits                            |
+| ⭐   | 🔵 P4    | 10.7 Send/Receive Stream Parser  | **Stream inspector**: visual Btrfs send stream analysis                  |
+| ⭐   | 🔵 P4    | 10.8 Generation Timeline         | **Visual history**: transaction + snapshot timeline                      |
 
 > [!NOTE]
 > Star = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -712,13 +717,15 @@ graph TD
 
 ## Key Files
 
-| File                               | Purpose                                              |
-| ---------------------------------- | ---------------------------------------------------- |
-| `include/kernel/fs/btrfs.h`        | [NEW] Public API, on-disk structures, constants      |
-| `src/kernel/fs/btrfs.c`           | [NEW] Btrfs driver: superblock, trees, VFS callbacks |
-| `src/kernel/fs/btrfs_chunk.c`     | [NEW] Chunk Tree, address translation                |
-| `src/kernel/fs/btrfs_tree.c`      | [NEW] B-tree engine: node read, traversal, search    |
-| `src/kernel/fs/partition.c`        | Btrfs detection (magic at 64 KiB)                    |
+| File                                | Purpose                                               |
+| ----------------------------------- | ----------------------------------------------------- |
+| `include/kernel/fs/btrfs.h`         | [NEW] Public API, on-disk structures, constants       |
+| `src/kernel/fs/btrfs.c`             | [NEW] Btrfs driver: superblock, trees, VFS callbacks  |
+| `src/kernel/fs/btrfs_chunk.c`       | [NEW] Chunk Tree, address translation                 |
+| `src/kernel/fs/btrfs_tree.c`        | [NEW] B-tree engine: node read, traversal, search     |
+| `src/kernel/crc32c.c`               | [NEW] Shared CRC32C (factored from IXFS)              |
+| `include/kernel/crc32c.h`           | [NEW] Shared CRC32C header                            |
+| `src/kernel/fs/partition.c`         | Btrfs detection (magic at 64 KiB)                     |
 
 ---
 

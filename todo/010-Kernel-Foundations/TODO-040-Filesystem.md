@@ -12,7 +12,7 @@
 ## TODO Completion Roadmap (Cross-File)
 
 > [!IMPORTANT]
-> **Nineteen TODO files** contribute to the storage and filesystem subsystem. They have
+> **Twenty TODO files** contribute to the storage and filesystem subsystem. They have
 > deep cross-dependencies that dictate implementation order. This roadmap shows
 > the correct sequence — completing items out of order will cause rework.
 >
@@ -37,6 +37,7 @@
 > | `TODO-040.16-NVMe-2.1.md`       | NVMe 2.1 PCIe storage driver                      |
 > | `TODO-040.17-Win32-FS-API.md`   | Win32 I/O subsystem (IRP, MDL, handles, FltMgr)   |
 > | `TODO-040.18-ISO9660.md`        | ISO 9660 / ECMA-119 read-only driver              |
+> | `TODO-040.19-USB-MSC.md`        | USB Mass Storage Class (xHCI + BOT + SCSI)        |
 
 ### Dependency Graph
 
@@ -806,6 +807,7 @@ graph TD
 > | `040.15-NVMe-2.0.md`        | 🔵 P4             | NVMe 2.0 SSD controller — all pending              |
 > | `040.16-NVMe-2.1.md`        | 🔵 P4             | NVMe 2.1 SSD controller — all pending              |
 > | `040.17-Win32-FS-API.md`    | 🔴 P0             | Win32 I/O subsystem — §13 API + §1–12 I/O Manager  |
+> | `040.19-USB-MSC.md`         | 🔵 P4             | USB Mass Storage Class — xHCI + BOT + SCSI          |
 > | `040.18-ISO9660.md`         | 🟢 P3             | ISO 9660 read-only — all pending                    |
 
 ---

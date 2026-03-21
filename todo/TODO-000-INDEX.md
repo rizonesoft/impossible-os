@@ -41,6 +41,7 @@
 | 030 | [Memory Advanced](010-Kernel-Foundations/TODO-030-Memory-Advanced.md)                                   |                |
 | 040 | [Filesystem](010-Kernel-Foundations/TODO-040-Filesystem.md)                                             |                |
 | 040.18 | [ISO 9660 / ECMA-119](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.18-ISO9660.md)          |                |
+| 040.19 | [USB Mass Storage Class](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-USB-MSC.md)       |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
 ---
 

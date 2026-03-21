@@ -86,22 +86,26 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                           | Depends On                     | Status |
-| -- | :----: | ---------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | §13.1–13.5 Win32 File API          | VFS + NTFS drivers             |   ⬜   |
-| 💎 | **1**  | §1 I/O Manager + IRP Architecture  | Phase 0 (§13)                  |   ⬜   |
-| 💎 | **1**  | §6 NTSTATUS → Win32 Translation    | Phase 0 (§13)                  |   ⬜   |
-| 💎 | **2**  | §2 Device Stack Model              | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **2**  | §3 Memory Transfer Modalities      | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **2**  | §7 File Information Classes        | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **3**  | §4 Multi-Level Handle Tables       | Process Model TODO             |   ⬜   |
-| 💎 | **3**  | §9 IRP Completion + APC            | Phase 2 (§3)                   |   ⬜   |
-| 💎 | **4**  | §5 Object Manager Namespace        | Phase 3 (§4)                   |   ⬜   |
-| 💎 | **4**  | §8 Security Descriptor Enforcement | Phase 3 (§4) + NTFS $Secure    |   ⬜   |
-| 💎 | **5**  | §10 Filter Manager (Minifilters)   | Phase 2 (§2) + Phase 3 (§9)   |   ⬜   |
-| 💎 | **5**  | §11 Reparse Points                 | Phase 4 (§8)                   |   ⬜   |
-| ⭐ | **6**  | §12 Shell Integration              | Phase 5 (§10)                  |   ⬜   |
-| 💎 | **7**  | §13.6 Shell & Kernel Migration     | Phase 0 (§13.1–13.5) + all FS |   ⬜   |
+| ⭐ | Phase  | Sections                             | Depends On                     | Status |
+| -- | :----: | ------------------------------------ | ------------------------------ | :----: |
+| 💎 | **0**  | §13.1–13.5 Win32 File API            | VFS + NTFS drivers             |   ⬜   |
+| 💎 | **1**  | §1 I/O Manager + IRP Architecture    | Phase 0 (§13)                  |   ⬜   |
+| 💎 | **1**  | §6 NTSTATUS → Win32 Translation      | Phase 0 (§13)                  |   ⬜   |
+| 💎 | **2**  | §2 Device Stack Model                | Phase 1 (§1)                   |   ⬜   |
+| 💎 | **2**  | §3 Memory Transfer Modalities        | Phase 1 (§1)                   |   ⬜   |
+| 💎 | **2**  | §7 File Information Classes          | Phase 1 (§1)                   |   ⬜   |
+| 💎 | **2**  | §14 FSCTL / DeviceIoControl          | Phase 1 (§1)                   |   ⬜   |
+| 💎 | **3**  | §4 Multi-Level Handle Tables         | Process Model TODO             |   ⬜   |
+| 💎 | **3**  | §9 IRP Completion + APC              | Phase 2 (§3)                   |   ⬜   |
+| ⭐ | **3**  | §15 Fast I/O                         | Phase 2 (§2, §3)               |   ⬜   |
+| 💎 | **4**  | §5 Object Manager Namespace          | Phase 3 (§4)                   |   ⬜   |
+| 💎 | **4**  | §8 Security Descriptor Enforcement   | Phase 3 (§4) + NTFS $Secure    |   ⬜   |
+| 💎 | **5**  | §10 Filter Manager (Minifilters)     | Phase 2 (§2) + Phase 3 (§9)   |   ⬜   |
+| 💎 | **5**  | §11 Reparse Points                   | Phase 4 (§8)                   |   ⬜   |
+| ⭐ | **5**  | §16 I/O Priority & QoS              | Phase 1 (§1) + storage drivers |   ⬜   |
+| ⭐ | **6**  | §12 Shell Integration                | Phase 5 (§10)                  |   ⬜   |
+| ⭐ | **6**  | §17 I/O Tracing & Profiling         | Phase 1 (§1)                   |   ⬜   |
+| 💎 | **7**  | §13.6 Shell & Kernel Migration       | Phase 0 (§13.1–13.5) + all FS |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** implements the basic Win32 function bodies (§13.1–13.5): types,
