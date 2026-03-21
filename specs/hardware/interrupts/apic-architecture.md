@@ -8,7 +8,7 @@
 
 The evolution of multiprocessing architectures necessitated a fundamental paradigm shift in how hardware interrupts are distributed, managed, and acknowledged within an operating system. Early x86-based personal computers relied exclusively on the Intel 8259A Programmable Interrupt Controller (PIC), a system typically implemented via two cascaded chips that provided support for a maximum of fifteen hardware interrupt vectors. The legacy 8259A architecture utilized a Master and Slave configuration, wherein the Slave controller's interrupt output was physically routed into the Master controller's IRQ 2 input pin. The Master controller occupied hardware I/O ports `0x20` and `0x21`, while the Slave controller utilized ports `0xA0` and `0xA1`.
 
-Initializing the legacy PIC required a complex sequence of Initialization Command Words (ICW1 through ICW4) to establish cascading, define edge or level triggering, and configure the base interrupt vector offsets. During operation, the CPU interacted with the PIC using Operation Command Words (OCW1 through OCW3) to mask specific interrupts or signal the End of Interrupt (EOI). While this architecture was sufficient for uniprocessor environments, it suffered from severe physical and logical limitations: it could not dynamically route interrupts to different processors based on priority or load, it generated excessive memory bus traffic for interrupt acknowledgment, and it entirely lacked the scalability required for modern symmetric multiprocessing (SMP) systems. Furthermore, the legacy PIC natively supported only edge-triggered interrupts, creating complexities for Peripheral Component Interconnect (PCI) devices that strictly relied on level-triggered, shared interrupt lines.
+Initializing the legacy PIC required a complex sequence of Initialization Command Words (ICW1 through ICW4) to establish cascading, define edge or level triggering, and configure the base interrupt vector offsets. During operation, the CPU interacted with the PIC using Operation Command Words (OCW1 through OCW3) to mask specific interrupts or signal the End of Interrupt (EOI). While this architecture was sufficient for uniprocessor environments, it suffered from severe physical and logical limitations: it could not dynamically route interrupts to different processors based on priority or load, it generated excessive memory bus traffic for interrupt acknowledgment, and it entirely lacked the scalability required for modern symmetric multiprocessing (SMP) systems. Furthermore, although the 8259A hardware could be configured for level-triggered mode via the LTIM bit in ICW1, the ISA bus convention defaulted to edge-triggered signaling, creating complexities for Peripheral Component Interconnect (PCI) devices that strictly relied on level-triggered, shared interrupt lines.
 
 To resolve these architectural bottlenecks, Intel introduced the **Advanced Programmable Interrupt Controller (APIC)** architecture, heavily documented across the ten volumes of the *Intel 64 and IA-32 Architectures Software Developer Manuals* (SDM). The APIC subsystem constitutes a distributed hardware architecture composed of two primary, cooperating elements: the **Local APIC (LAPIC)**, which is integrated directly into the silicon of each logical processor core, and one or more **I/O APICs (IOAPIC)**, which historically resided on the system chipset or Southbridge. The IOAPIC, such as the Intel 82093AA chip packaged in a 64-pin PQFP, acts as a centralized dispatcher. It receives external interrupt signals from hardware peripherals and routes them across the dedicated APIC bus or system bus to the appropriate Local APIC.
 
@@ -36,12 +36,12 @@ Immediately following the standard header, at byte offset `0x24`, the MADT provi
 
 Starting at byte offset `0x2C`, the MADT contains a continuous sequence of variable-length interrupt device records. Each record is prefixed by a two-byte structural header: a 1-byte **Entry Type** identifier located at offset 0, and a 1-byte **Record Length** located at offset 1. The kernel must sequentially iterate through these records, processing the payload based on the Entry Type, and then advancing its internal memory pointer by the exact integer specified in the Record Length field until the total MADT length is exhausted.
 
-| Entry Type | Record Name | Primary Purpose in OS Initialization |
-|:---:|---|---|
-| 0 | Processor Local APIC | Enumerates logical processors, provides the APIC ID, and indicates if the CPU is enabled or online-capable. |
-| 1 | I/O APIC | Enumerates I/O APIC chips, provides their MMIO physical addresses, and states the Global System Interrupt (GSI) base they handle. |
-| 2 | Interrupt Source Override | Details how legacy ISA bus interrupts are remapped to Global System Interrupts, including polarity and trigger mode overrides. |
-| 4 | Local APIC NMI | Configures Non-Maskable Interrupts targeted directly at the Local APIC. |
+| Entry Type | Record Name                | Primary Purpose in OS Initialization                                                                                                      |
+| :--------: | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| 0          | Processor Local APIC       | Enumerates logical processors, provides the APIC ID, and indicates if the CPU is enabled or online-capable.                               |
+| 1          | I/O APIC                   | Enumerates I/O APIC chips, provides their MMIO physical addresses, and states the Global System Interrupt (GSI) base they handle.         |
+| 2          | Interrupt Source Override   | Details how legacy ISA bus interrupts are remapped to Global System Interrupts, including polarity and trigger mode overrides.             |
+| 4          | Local APIC NMI             | Configures Non-Maskable Interrupts targeted directly at the Local APIC.                                                                   |
 
 When the parser encounters an **Entry Type 0** (Processor Local APIC), the OS reads the **ACPI Processor ID** at offset 2 and the **APIC ID** at offset 3. The APIC ID acts as the physical routing address of that specific CPU core on the system bus. Offset 4 contains a 4-byte **Flags** bitmask. Within this bitmask, if Bit 0 is set to `1`, the processor is considered enabled and ready for operation. If Bit 0 is clear but Bit 1 (Online Capable) is set, the CPU might be enabled later via hot-plugging; if both bits are clear, the processor entry must be completely ignored by the scheduler. The kernel typically maintains an internal software array mapping CPU indices to their respective physical APIC IDs based on these records. For example, the Linux kernel manages this via arrays such as `x86_cpu_to_apicid` and bitmaps like `phys_cpu_present_map`.
 
@@ -69,7 +69,7 @@ Modern Intel and AMD processors support two distinct operational modes for the L
 
 To accommodate high-core-count enterprise servers, compute clusters, and massively parallel workloads, Intel introduced the **x2APIC mode**. Transitioning an operating system to x2APIC mode fundamentally alters how the kernel interacts with the APIC by completely eliminating the reliance on MMIO. Instead, the architecture maps all APIC configuration registers directly into the CPU's Model-Specific Register (MSR) address space. This dramatically reduces the latency of accessing APIC registers by removing the overhead of navigating the memory bus and page tables.
 
-In x2APIC mode, the archaic 8-bit limit is removed. The Local APIC ID register is replaced with a **32-bit, read-only hardware identifier**, which can be retrieved via the `CPUID` instruction (Leaf `0x0B`) or by reading MSR `0x802`. The MSR address for any given APIC register in x2APIC mode is calculated using a deterministic formula: the legacy MMIO offset is shifted right by 4 bits, and a base offset of `0x800` is added. For example, the Spurious Interrupt Vector Register, located at legacy MMIO offset `0xF0`, becomes MSR `0x80F` (`0xF0 >> 4 = 0x0F`; `0x800 + 0x0F = 0x80F`). System software transitions the APIC into x2APIC mode by setting both the **EN** (Enable) and **EXTD** (Extended) bits within the `IA32_APIC_BASE` MSR. Once the APIC is transitioned into x2APIC mode, the state of extended fields in legacy APIC registers is not architecturally defined, and the OS must explicitly reinitialize programmable registers. Additionally, in x2APIC mode, attempts to write non-zero values to reserved bits within the MSRs will raise a **general protection fault exception**.
+In x2APIC mode, the archaic 8-bit limit is removed. The Local APIC ID register is replaced with a **32-bit, read-only hardware identifier**, which can be retrieved via the `CPUID` instruction (Leaf `0x0B`) or by reading MSR `0x802`. The MSR address for any given APIC register in x2APIC mode is calculated using a deterministic formula: the legacy MMIO offset is shifted right by 4 bits, and a base offset of `0x800` is added. For example, the Spurious Interrupt Vector Register, located at legacy MMIO offset `0xF0`, becomes MSR `0x80F` (`0xF0 >> 4 = 0x0F`; `0x800 + 0x0F = 0x80F`). System software transitions the APIC into x2APIC mode by setting both **Bit 11 (EN — APIC Global Enable)** and **Bit 10 (EXTD — Extended Mode Enable)** within the `IA32_APIC_BASE` MSR. Once the APIC is transitioned into x2APIC mode, it cannot revert to xAPIC mode without first fully disabling the APIC (clearing both EN and EXTD); attempting to clear only EXTD while EN remains set will cause a general protection fault. The state of extended fields in legacy APIC registers is not architecturally defined after transition, and the OS must explicitly reinitialize programmable registers. Additionally, in x2APIC mode, attempts to write non-zero values to reserved bits within the MSRs will raise a **general protection fault exception**.
 
 ---
 
@@ -89,21 +89,21 @@ Advanced processors may also implement a feature known as **Directed EOI**, whic
 
 The Local Vector Table (LVT) dictates precisely how the Local APIC responds to interrupt sources that originate from the processor core itself or specific local pins, rather than from external IOAPIC routing matrixes. The LVT comprises several independent 32-bit registers mapped directly within the LAPIC's address space.
 
-| LVT Register Name | MMIO Offset | Description |
-|---|:---:|---|
-| CMCI | `0x2F0` | Corrected Machine Check Interrupt. Raised on hardware-corrected memory or cache errors. |
-| Timer | `0x320` | Configures the high-precision core-local timer used for OS scheduling. |
-| Thermal Sensor | `0x330` | Generates an interrupt upon CPU thermal threshold events, critical for preventing silicon damage. |
-| Performance Counters | `0x340` | Raised when a hardware performance monitoring counter (PMC) overflows. |
-| LINT0 | `0x350` | Local Interrupt 0; traditionally wired to the legacy PIC or designated as ExtINT during early boot. |
-| LINT1 | `0x360` | Local Interrupt 1; traditionally designated for catching catastrophic Non-Maskable Interrupts (NMI). |
-| Error | `0x370` | Reports internal APIC transmission or checksum errors. |
+| LVT Register Name    | MMIO Offset | Description                                                                                        |
+| -------------------- | :---------: | -------------------------------------------------------------------------------------------------- |
+| CMCI                 | `0x2F0`     | Corrected Machine Check Interrupt. Raised on hardware-corrected memory or cache errors.            |
+| Timer                | `0x320`     | Configures the high-precision core-local timer used for OS scheduling.                             |
+| Thermal Sensor       | `0x330`     | Generates an interrupt upon CPU thermal threshold events, critical for preventing silicon damage.   |
+| Performance Counters | `0x340`     | Raised when a hardware performance monitoring counter (PMC) overflows.                             |
+| LINT0                | `0x350`     | Local Interrupt 0; traditionally wired to the legacy PIC or designated as ExtINT during early boot.|
+| LINT1                | `0x360`     | Local Interrupt 1; traditionally designated for catching catastrophic Non-Maskable Interrupts (NMI).|
+| Error                | `0x370`     | Reports internal APIC transmission or checksum errors.                                             |
 
 Each LVT register, with the exception of the Timer, follows a strict, standardized bitmask layout to configure the behavior of the respective interrupt source:
 
-- **Bits 0–7**: Define the **Interrupt Vector** that will be pushed to the CPU execution pipeline. This vector corresponds directly to an entry within the Interrupt Descriptor Table (IDT), which contains the memory pointer to the kernel's execution handler. Vectors used by the APIC must fall strictly between `0x10` and `0xFE`, as vectors 0–31 are architecturally reserved by Intel for CPU exceptions (such as vector 0 for Divide Error).
+- **Bits 0–7**: Define the **Interrupt Vector** that will be pushed to the CPU execution pipeline. This vector corresponds directly to an entry within the Interrupt Descriptor Table (IDT), which contains the memory pointer to the kernel's execution handler. The APIC hardware rejects vectors below `0x10` (reporting an Illegal Vector error in the ESR), and vectors `0x10`–`0x1F` are architecturally reserved for CPU exceptions. Therefore, operating systems should assign LVT vectors in the range `0x20`–`0xFE` to avoid conflicts with the 32 Intel-reserved exception vectors.
 
-- **Bits 8–10**: Designate the **Delivery Mode**, which defines how the CPU treats the incoming signal. Allowed delivery modes include `000b` for Fixed (standard interrupts sent directly to the core), `001b` for Lowest Priority (where the hardware arbitrates delivery based on the Task Priority Register), `010b` for System Management Interrupt (SMI), `100b` for Non-Maskable Interrupt (NMI), `101b` for INIT (used during MP bootstrapping), and `111b` for ExtINT (used to route legacy PIC interrupts through the APIC subsystem).
+- **Bits 8–10**: Designate the **Delivery Mode**, which defines how the CPU treats the incoming signal. Allowed LVT delivery modes include `000b` for Fixed (standard interrupts sent directly to the core), `010b` for System Management Interrupt (SMI), `100b` for Non-Maskable Interrupt (NMI), `101b` for INIT (used during MP bootstrapping), and `111b` for ExtINT (used to route legacy PIC interrupts through the APIC subsystem). Note that Lowest Priority (`001b`) is **not** valid for LVT entries — it is only supported by the ICR and I/O APIC redirection table.
 
 - **Bit 12**: Represents the **Delivery Status**; it is a read-only bit that returns `1` if the interrupt has been dispatched by the controller but has not yet been accepted by the CPU core due to masking or higher-priority tasks.
 
@@ -127,11 +127,11 @@ The timer operates by utilizing a **Current Count Register** (offset `0x390`) an
 
 The Timer LVT register features a unique layout compared to standard LVT entries. **Bits 17 and 18** are repurposed to control the timer mode:
 
-| Value | Mode | Behavior |
-|:---:|---|---|
-| `0` | One-Shot | The timer counts down, fires once, and halts. |
-| `1` | Periodic | The APIC automatically reloads the Initial Count value into the Current Count when reaching zero, running infinitely. |
-| `2` | TSC-Deadline | The timer interrupt is triggered based on absolute Time Stamp Counter (TSC) comparisons rather than relative countdowns. |
+| Value | Mode         | Behavior                                                                                                                 |
+| :---: | ------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `0`   | One-Shot     | The timer counts down, fires once, and halts.                                                                            |
+| `1`   | Periodic     | The APIC automatically reloads the Initial Count value into the Current Count when reaching zero, running infinitely.     |
+| `2`   | TSC-Deadline | The timer interrupt is triggered based on absolute Time Stamp Counter (TSC) comparisons rather than relative countdowns.  |
 
 ### 6.2 Calibration Procedure
 
@@ -161,7 +161,7 @@ Beyond handling external hardware, the Local APIC is the primary mechanism by wh
 
 ### 7.1 ICR Layout and Write Ordering
 
-In legacy xAPIC mode, the ICR is a 64-bit structure divided across two 32-bit registers: the **lower half** is located at MMIO offset `0x300` and the **upper half** at `0x310`. The lower half defines the core attributes: the interrupt vector, the delivery mode, and the destination mode, perfectly mirroring the standard LVT layout. The upper half, specifically bits 56 through 63, dictates the destination processor's APIC ID.
+In legacy xAPIC mode, the ICR is a 64-bit structure divided across two 32-bit registers: the **lower half** is located at MMIO offset `0x300` and the **upper half** at `0x310`. The lower half defines the core attributes: the interrupt vector, the delivery mode, and the destination mode, mirroring the standard LVT layout. The upper half contains the **Destination Field** in bits 24–31 of the `0x310` register (corresponding to bits 56–63 of the full 64-bit ICR), which holds the 8-bit target APIC ID in physical destination mode or the logical destination mask in logical mode.
 
 > [!CAUTION]
 > A critical architectural quirk of the xAPIC mode is the write sequence execution order: writing to the upper half (`0x310`) merely stages the destination data in a buffer, but writing to the lower half (`0x300`) actually commands the hardware to trigger the transmission of the IPI. Therefore, the OS kernel must strictly enforce that the **upper register is always written before the lower register**.
@@ -193,10 +193,10 @@ While the Local APIC handles CPU-internal messaging, IPIs, and localized timers,
 
 Unlike the Local APIC, which maps dozens of discrete registers directly into MMIO space, the IOAPIC is architecturally designed to minimize its memory footprint by utilizing an **indirect index-data register paradigm**. Regardless of the number of interrupt pins it physically supports, the IOAPIC occupies only two 32-bit MMIO registers in system memory:
 
-| Register | Offset from Base | Purpose |
-|---|:---:|---|
-| **IOREGSEL** | `+0x00` | I/O Register Select — write the index of the target internal register here. |
-| **IOREGWIN** | `+0x10` | I/O Window Register — read or write the data payload of the selected register. |
+| Register     | Offset from Base | Purpose                                                                       |
+| ------------ | :--------------: | ----------------------------------------------------------------------------- |
+| **IOREGSEL** | `+0x00`          | I/O Register Select — write the index of the target internal register here.   |
+| **IOREGWIN** | `+0x10`          | I/O Window Register — read or write the data payload of the selected register.|
 
 By default, the first IOAPIC in a system is mapped to `0xFEC00000`.
 
@@ -204,11 +204,11 @@ To interact with any of the internal configuration registers of the IOAPIC, the 
 
 The primary general-purpose internal registers accessed via this indirect method include:
 
-| Index | Register Name | Description and Usage |
-|:---:|---|---|
-| `0x00` | **IOAPICID** | Contains the 4-bit APIC ID in bits 24–27. This serves as the physical arbitration name of the IOAPIC on the system bus. It is critical for bus arbitration during message transmission. |
-| `0x01` | **IOAPICVER** | A read-only register that provides the hardware version in bits 0–7, and crucially, the "Maximum Redirection Entry" in bits 16–23. The total number of interrupt pins supported is this maximum entry value plus one. |
-| `0x02` | **IOAPICARB** | Contains the bus arbitration priority in bits 24–27. |
+| Index  | Register Name  | Description and Usage                                                                                                                                                                        |
+| :----: | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x00` | **IOAPICID**   | Contains the 4-bit APIC ID in bits 24–27. This serves as the physical arbitration name of the IOAPIC on the system bus. It is critical for bus arbitration during message transmission.       |
+| `0x01` | **IOAPICVER**  | A read-only register that provides the hardware version in bits 0–7, and crucially, the "Maximum Redirection Entry" in bits 16–23. The total number of interrupt pins supported is this maximum entry value plus one. |
+| `0x02` | **IOAPICARB**  | Contains the bus arbitration priority in bits 24–27.                                                                                                                                         |
 
 ### 8.2 The Redirection Table (IOREDTBL) Specification
 
@@ -218,18 +218,18 @@ The IOREDTBL begins at internal index `0x10`. The register index for the lower 3
 
 The 64-bit Redirection Entry layout intentionally mirrors the structure of the Local APIC's LVT registers, ensuring protocol consistency and reducing decoding overhead across the system bus. The **lower 32 bits** contain the vital routing parameters:
 
-| Bits | Field | Description |
-|:---:|---|---|
-| 0–7 | **Interrupt Vector** | The vector to be raised on the target CPU, corresponding to the IDT entry. |
-| 8–10 | **Delivery Mode** | `000b` Fixed, `001b` Lowest Priority, `010b` SMI, `100b` NMI, `101b` INIT, `111b` ExtINT. |
-| 11 | **Destination Mode** | `0` for Physical mapping, `1` for Logical mapping. |
-| 12 | **Delivery Status** | `0` = idle/relaxed, `1` = dispatched but waiting for core delivery. |
-| 13 | **Pin Polarity** | `0` for active high, `1` for active low. |
-| 14 | **Remote IRR** | Read-only. For level-triggered: `1` = LAPIC accepted but no EOI yet. |
-| 15 | **Trigger Mode** | `0` for edge-triggered, `1` for level-triggered. |
-| 16 | **Interrupt Mask** | `1` disables the IRQ pin; `0` re-enables the flow. |
+| Bits  | Field                | Description                                                                                  |
+| :---: | -------------------- | -------------------------------------------------------------------------------------------- |
+| 0–7   | **Interrupt Vector** | The vector to be raised on the target CPU, corresponding to the IDT entry.                   |
+| 8–10  | **Delivery Mode**    | `000b` Fixed, `001b` Lowest Priority, `010b` SMI, `100b` NMI, `101b` INIT, `111b` ExtINT.   |
+| 11    | **Destination Mode** | `0` for Physical mapping, `1` for Logical mapping.                                          |
+| 12    | **Delivery Status**  | `0` = idle/relaxed, `1` = dispatched but waiting for core delivery.                          |
+| 13    | **Pin Polarity**     | `0` for active high, `1` for active low.                                                    |
+| 14    | **Remote IRR**       | Read-only. For level-triggered: `1` = LAPIC accepted but no EOI yet.                        |
+| 15    | **Trigger Mode**     | `0` for edge-triggered, `1` for level-triggered.                                            |
+| 16    | **Interrupt Mask**   | `1` disables the IRQ pin; `0` re-enables the flow.                                          |
 
-The **upper 32 bits** are predominantly reserved to zeroes, except for **Bits 56–63**, which form the vital **Destination Field**. When the OS configures the entry using Physical Destination Mode (Bit 11 = `0`), it places the explicit APIC ID of the target processor into bits 56–59 (respecting legacy xAPIC addressing limits), instructing the IOAPIC to route the electrical signal exclusively to that specific core.
+The **upper 32 bits** are predominantly reserved to zeroes, except for **Bits 56–63** (bits 24–31 of the upper 32-bit register), which form the vital **Destination Field**. When the OS configures the entry using Physical Destination Mode (Bit 11 = `0`), it places the 8-bit APIC ID of the target processor into this field, instructing the IOAPIC to route the electrical signal exclusively to that specific core. On the original 82093AA, only bits 56–59 (4-bit ID) were implemented; modern xAPIC-compatible I/O APICs use the full 8-bit field.
 
 ---
 
@@ -247,19 +247,19 @@ ISO entries contain a critical 2-byte **Flags** field that dictates the electric
 
 **Polarity (Bits 0–1):**
 
-| Value | Meaning |
-|:---:|---|
-| `00b` | Default bus settings (Active High for ISA). |
-| `01b` | Active High override. |
-| `11b` | Active Low override. |
+| Value  | Meaning                                      |
+| :----: | -------------------------------------------- |
+| `00b`  | Default bus settings (Active High for ISA).  |
+| `01b`  | Active High override.                        |
+| `11b`  | Active Low override.                         |
 
 **Trigger Mode (Bits 2–3):**
 
-| Value | Meaning |
-|:---:|---|
-| `00b` | Default (Edge-triggered). |
-| `01b` | Edge-triggered override. |
-| `11b` | Level-triggered override. |
+| Value  | Meaning                       |
+| :----: | ----------------------------- |
+| `00b`  | Default (Edge-triggered).     |
+| `01b`  | Edge-triggered override.      |
+| `11b`  | Level-triggered override.     |
 
 When the kernel programs the IOREDTBL for the overridden pin, it must carefully extract these Flags and insert the corresponding values into the Polarity (Bit 13) and Trigger Mode (Bit 15) fields of the 64-bit redirection entry. Failure to respect these hardware-defined polarities will result in severe system instability, causing an infinite interrupt storm or rendering an attached peripheral entirely unresponsive.
 
@@ -319,9 +319,9 @@ Mastering the APIC architecture represents the foundational, defining step in tr
 
 ## References
 
-| Source | Description |
-|---|---|
-| Intel 64 and IA-32 Architectures SDM, Vol. 3A, Chapter 10 | APIC programming model, LVT, ICR, timer, SVR |
-| ACPI Specification, Version 6.5, Section 5.2.12 | MADT structure and entry type definitions |
-| Intel 82093AA I/O APIC Datasheet | IOAPIC register programming, redirection table |
-| Intel MultiProcessor Specification, Version 1.4 | Legacy MP table format (superseded by ACPI MADT) |
+| Source                                                      | Description                                       |
+| ----------------------------------------------------------- | ------------------------------------------------- |
+| Intel 64 and IA-32 Architectures SDM, Vol. 3A, Chapter 10  | APIC programming model, LVT, ICR, timer, SVR     |
+| ACPI Specification, Version 6.5, Section 5.2.12            | MADT structure and entry type definitions          |
+| Intel 82093AA I/O APIC Datasheet                            | IOAPIC register programming, redirection table    |
+| Intel MultiProcessor Specification, Version 1.4            | Legacy MP table format (superseded by ACPI MADT)  |
