@@ -65,6 +65,21 @@ Choose the most appropriate location under `docs/` based on the content — not 
 
 > Use your judgement. If the doc is about how the OS works internally → `architecture/`. If it's about how to use/build/deploy → `guides/` or `infrastructure/`.
 
+### 3b. Check for topic duplication (MANDATORY)
+
+Before creating the doc, check if the topic is already covered:
+
+1. **Read the `Index.md`** in the target category folder (e.g., `docs/infrastructure/Index.md`)
+2. **Scan the "Owned Topics" column** — does any existing doc already own topics you're about to write about?
+3. **If overlap found:**
+   - If the overlap is small (a few paragraphs), **link** to the existing doc's section instead of re-explaining
+   - If the overlap is large (entire sections), **merge** into the existing doc and update its Index.md entry
+   - If the topics are genuinely distinct but live in the same area, ensure clear **topic boundaries** between the docs
+4. **Register the new doc** in the category's `Index.md` with its owned topics
+5. **Update `docs/Index.md`** if a new category was created
+
+> The rule is simple: each concept is explained in exactly one place. Everything else links to it.
+
 ### 4. Write the documentation file
 
 Transform the TODO content into **rich, well-formatted technical documentation**.

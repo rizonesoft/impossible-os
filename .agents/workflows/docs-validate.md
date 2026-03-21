@@ -60,16 +60,22 @@ Check that docs follow the expected organization:
 
 ```
 docs/
-├── architecture/      ← OS internals (kernel, drivers, filesystem, networking, boot, desktop)
-├── guides/            ← How-to guides, tutorials, getting-started
-├── infrastructure/    ← Build system, CI/CD, tooling, development environment
-└── specs/             ← External reference specs (AHCI, FAT32, UEFI, etc.)
+├── Index.md               ← Top-level manifest (links to category indexes)
+├── architecture/          ← OS internals (kernel, drivers, filesystem, networking, boot, desktop)
+│   └── Index.md
+├── getting-started/       ← Setup guides, emulator configuration
+│   └── Index.md
+├── infrastructure/        ← Build system, CI/CD, tooling, development environment
+│   └── Index.md
+└── specs/                 ← External reference specs (AHCI, FAT32, UEFI, etc.)
+    └── Index.md
 ```
 
 Violations to check:
-- Files directly in `docs/` root (should be in a subdirectory)
+- Files directly in `docs/` root (except `Index.md` — should be in a subdirectory)
 - Misplaced files (e.g., a driver doc in `infrastructure/`, a CI doc in `architecture/`)
 - Empty directories (clean up after moves)
+- Missing `Index.md` in any category folder
 
 For each violation:
 - Move the file to the correct directory
@@ -81,7 +87,26 @@ For each doc, verify:
 - **Title matches filename:** `# AHCI Driver` should be in a file like `ahci.md` or `ahci-driver.md`
 - **Internal links use relative paths:** no absolute filesystem paths (except in code blocks)
 - **Spec references point to `docs/specs/`:** not old `specs/` root path
-- **No duplicate content:** two docs shouldn't cover the same component (merge if found)
+
+### 4b. Check for topic duplication
+
+For each category `Index.md`, verify:
+- **No overlapping owned topics** between docs in the same category
+- **No topic explained in two places** — search for similar headings across docs
+- If duplication is found:
+  - Keep the explanation in the **canonical** doc (the one that owns the topic per Index.md)
+  - Replace the duplicate with a link: `See [Topic](canonical-doc.md#section)`
+
+```bash
+# Quick overlap check: find H2/H3 headings that appear in multiple docs within a directory
+for dir in docs/*/; do
+  [ -f "$dir/Index.md" ] || continue
+  grep -h '^## \|^### ' "$dir"*.md 2>/dev/null | sort | uniq -d | while read -r heading; do
+    echo "DUPLICATE HEADING in $dir: $heading"
+    grep -l "$heading" "$dir"*.md
+  done
+done
+```
 
 ### 5. Validate TODO index consistency
 
@@ -98,10 +123,29 @@ for f in todo/*/TODO-*.md; do
 done
 ```
 
+### 5b. Validate Index.md files
+
+For each `Index.md` in `docs/`:
+- Every `.md` file in the directory should be listed in the Index.md (except Index.md itself)
+- Every entry in the Index.md should point to an existing file
+- Every entry should have an "Owned Topics" column — no blank entries
+
+```bash
+# Find docs not registered in their category Index.md
+for dir in docs/*/; do
+  [ -f "$dir/Index.md" ] || { echo "MISSING INDEX: $dir"; continue; }
+  for f in "$dir"*.md; do
+    base=$(basename "$f")
+    [ "$base" = "Index.md" ] && continue
+    grep -q "$base" "$dir/Index.md" || echo "UNREGISTERED: $f"
+  done
+done
+```
+
 ### 6. Fix all violations
 
 For each violation found:
-- Fix the issue (move file, update link, add index entry)
+- Fix the issue (move file, update link, add index entry, remove duplicate)
 - Log what was fixed
 
 ### 7. Commit fixes
