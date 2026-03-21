@@ -48,6 +48,7 @@ static int                    has_topology;    /* F_TOPOLOGY negotiated */
 static int                    has_size_max;    /* F_SIZE_MAX negotiated */
 static int                    has_seg_max;     /* F_SEG_MAX negotiated */
 static int                    has_discard;     /* F_DISCARD negotiated */
+static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -859,6 +860,184 @@ int virtio_blk_discard(uint64_t sector, uint32_t num_sectors)
     return 0;
 }
 
+/* ---- Write-Zeroes ---- */
+
+/* Submit a single write-zeroes request for one segment.
+ * Uses 3-descriptor chain: header (T_WRITE_ZEROES) + segment (device-readable) + status. */
+static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
+                                      uint32_t flags)
+{
+    struct virtio_blk_req req;
+    struct virtio_blk_discard_write_zeroes seg;
+    uint8_t status_byte = 0xFF;
+    int d0, d1, d2;
+    uint32_t timeout;
+    uint64_t rflags;
+
+    if (!initialized)
+        return -1;
+
+    /* Build request header — sector field is ignored for write-zeroes */
+    req.type     = VIRTIO_BLK_T_WRITE_ZEROES;
+    req.reserved = 0;
+    req.sector   = 0;
+
+    /* Build write-zeroes segment descriptor */
+    seg.sector      = sector;
+    seg.num_sectors = num_sectors;
+    seg.flags       = flags;
+
+    /* Allocate 3 descriptors */
+    if (blk_vq.num_free < 3) {
+        klog(LOG_DEBUG, "virtio", "No free descriptors for write-zeroes");
+        return -1;
+    }
+
+    /* Descriptor 0: request header (device-readable) */
+    d0 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d0].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+
+    /* Descriptor 1: write-zeroes segment data (device-readable — NOT F_WRITE!) */
+    d1 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d1].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].next = (uint16_t)d1;
+
+    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
+    blk_vq.desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+    blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
+
+    /* Descriptor 2: status byte (device-writable) */
+    d2 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d2].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d1].next = (uint16_t)d2;
+
+    blk_vq.desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vq.desc[d2].len   = 1;
+    blk_vq.desc[d2].flags = VIRTQ_DESC_F_WRITE;
+    blk_vq.desc[d2].next  = 0;
+
+    /* Add to available ring */
+    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
+    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+
+    wmb();
+    blk_vq.avail->idx++;
+    mb();
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+    virtio_irq_fired = 0;
+    __asm__ volatile ("sti");
+
+    virtq_kick(&blk_vq);
+
+    /* Wait for completion */
+    if (use_events) {
+        if (!event_wait_timeout(&io_completion, 5000)) {
+            klog(LOG_DEBUG, "virtio", "Write-zeroes timeout");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return VIRTIO_IO_TIMEOUT;
+        }
+    } else {
+        timeout = 5000000;
+        while (timeout-- > 0) {
+            mb();
+            if (blk_vq.used->idx != blk_vq.last_used)
+                break;
+            __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+        }
+        if (timeout == 0) {
+            klog(LOG_DEBUG, "virtio", "Write-zeroes timeout (poll)");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return VIRTIO_IO_TIMEOUT;
+        }
+    }
+
+    if (!(rflags & (1 << 9)))
+        __asm__ volatile ("cli");
+
+    rmb();
+    blk_vq.last_used++;
+
+    virtq_free_desc(&blk_vq, (uint16_t)d0);
+    virtq_free_desc(&blk_vq, (uint16_t)d1);
+    virtq_free_desc(&blk_vq, (uint16_t)d2);
+
+    if (status_byte == VIRTIO_BLK_S_OK)
+        return VIRTIO_IO_OK;
+    if (status_byte == VIRTIO_BLK_S_UNSUPP) {
+        error_stats.unsupp_errors++;
+        return VIRTIO_IO_UNSUPP;
+    }
+    error_stats.io_errors++;
+    return VIRTIO_IO_IOERR;
+}
+
+/* Public write-zeroes API — splits large requests to fit max_wz_sectors */
+int virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, int unmap)
+{
+    int ret;
+    uint32_t max_per_cmd;
+    uint32_t chunk;
+    uint32_t flags;
+
+    if (!initialized)
+        return -1;
+    if (!has_write_zeroes)
+        return 1;  /* Not supported */
+    if (is_read_only)
+        return 0;  /* RO device — write-zeroes is a no-op */
+
+    /* Only set unmap flag if device allows it */
+    flags = (unmap && topo.wz_may_unmap) ? 1u : 0u;
+
+    /* Determine max sectors per write-zeroes command */
+    max_per_cmd = topo.max_wz_sectors;
+    if (max_per_cmd == 0)
+        max_per_cmd = num_sectors;  /* No limit — send all at once */
+
+    /* Split large requests into max_per_cmd-sized chunks */
+    while (num_sectors > 0) {
+        chunk = num_sectors;
+        if (chunk > max_per_cmd)
+            chunk = max_per_cmd;
+
+        ret = virtio_blk_do_write_zeroes(sector, chunk, flags);
+        if (ret == VIRTIO_IO_TIMEOUT) {
+            error_stats.timeouts++;
+            klog(LOG_DEBUG, "virtio", "Write-zeroes: timeout, triggering reset");
+            virtio_blk_reset();
+            return -1;
+        }
+        if (ret != VIRTIO_IO_OK) {
+            klog(LOG_DEBUG, "virtio", "Write-zeroes: failed at sector %u (%u sectors)",
+                   sector, (uint64_t)chunk);
+            return -1;
+        }
+
+        sector += chunk;
+        num_sectors -= chunk;
+    }
+
+    return 0;
+}
+
 int virtio_blk_init(void)
 {
     struct pci_device dev;
@@ -879,6 +1058,9 @@ int virtio_blk_init(void)
     topo.max_discard_sectors = 0;
     topo.max_discard_seg = 0;
     topo.discard_sector_alignment = 0;
+    topo.max_wz_sectors = 0;
+    topo.max_wz_seg = 0;
+    topo.wz_may_unmap = 0;
 
     /* Scan PCI for virtio-blk: modern ID 0x1042 or transitional ID 0x1001 */
     for (bus = 0; bus < 8 && !found; bus++) {
@@ -1004,6 +1186,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_DISCARD (TRIM)");
     }
 
+    /* Negotiate F_WRITE_ZEROES (bit 12): write-zeroes command */
+    if (feat_lo & (1u << VIRTIO_BLK_F_WRITE_ZEROES)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_WRITE_ZEROES);
+        has_write_zeroes = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_WRITE_ZEROES");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
     {
         uint32_t feat_hi = read_device_features(1);
@@ -1119,6 +1308,20 @@ int virtio_blk_init(void)
                (uint64_t)topo.max_discard_sectors,
                (uint64_t)topo.max_discard_seg,
                (uint64_t)topo.discard_sector_alignment);
+    }
+
+    /* Read write-zeroes limits if F_WRITE_ZEROES negotiated */
+    if (has_write_zeroes && blk_dev.device_cfg) {
+        topo.max_wz_sectors = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MAX_WZ_SECTORS));
+        topo.max_wz_seg = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MAX_WZ_SEG));
+        topo.wz_may_unmap = mmio_read8(
+            (volatile uint8_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_WZ_MAY_UNMAP));
+        klog(LOG_DEBUG, "virtio", "Write-zeroes: max_sectors=%u max_seg=%u may_unmap=%u",
+               (uint64_t)topo.max_wz_sectors,
+               (uint64_t)topo.max_wz_seg,
+               (uint64_t)topo.wz_may_unmap);
     }
 
     /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */

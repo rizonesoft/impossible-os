@@ -169,7 +169,7 @@ graph TD
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ⬜   |
 | 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ⬜   |
@@ -493,18 +493,20 @@ graph TD
 - [x] QEMU test: `-drive ...,discard=unmap -device virtio-blk-pci,...,discard=on`
 - [x] Commit: `"virtio-blk: discard (TRIM) support"`
 
-### 4.2 Write-Zeroes
+### 4.2 Write-Zeroes *(done)* ✅
 
-**Prompt:** Negotiate `VIRTIO_BLK_F_WRITE_ZEROES` (bit 12). Read `max_write_zeroes_sectors`, `max_write_zeroes_seg`, and `write_zeroes_may_unmap` from device config. Implement `virtio_blk_write_zeroes()` using `VIRTIO_BLK_T_WRITE_ZEROES` (type 0x0D). If `write_zeroes_may_unmap` is set and the unmap flag in the segment struct is set, the device may deallocate the zeroed region (thin provisioning). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: write-zeroes support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `VIRTIO_BLK_F_WRITE_ZEROES` (bit 12) is negotiated during init. Config values `max_write_zeroes_sectors`, `max_write_zeroes_seg`, and `write_zeroes_may_unmap` are read from offsets 0x30/0x34/0x38. `virtio_blk_write_zeroes()` builds a 3-descriptor chain (header type `T_WRITE_ZEROES` + segment struct + status) and splits requests exceeding `max_wz_sectors`. The unmap flag is only set when both the caller requests it AND `wz_may_unmap` is set. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_BLK_F_WRITE_ZEROES` (bit 12)
-- [ ] Read config: `max_write_zeroes_sectors` (offset `0x30`), `max_write_zeroes_seg` (offset `0x34`), `write_zeroes_may_unmap` (offset `0x38`)
-- [ ] Implement `virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, bool unmap)`:
-  - [ ] Build segment struct: `{ sector, num_sectors, flags = unmap ? 1 : 0 }`
-  - [ ] Build 3-descriptor chain: header (type = `0x0D`) + segment data + status
-  - [ ] Split requests exceeding `max_write_zeroes_sectors`
-- [ ] Wire to filesystem formatting and secure-delete paths
-- [ ] Commit: `"virtio-blk: write-zeroes support"`
+> **Notes:** Reuses the same `virtio_blk_discard_write_zeroes` segment struct as discard. The unmap flag (seg.flags bit 0) enables thin provisioning — device may deallocate the zeroed region if `write_zeroes_may_unmap` was set in config. If caller requests unmap but device doesn't support it, the flag is silently cleared (zeroes are still written, just not deallocated). VirtIO spec §5.2.6.1: `T_WRITE_ZEROES` type is 13 (0x0D), not 0x0B like discard.
+
+- [x] Negotiate `VIRTIO_BLK_F_WRITE_ZEROES` (bit 12)
+- [x] Read config: `max_write_zeroes_sectors` (offset `0x30`), `max_write_zeroes_seg` (offset `0x34`), `write_zeroes_may_unmap` (offset `0x38`)
+- [x] Implement `virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, bool unmap)`:
+  - [x] Build segment struct: `{ sector, num_sectors, flags = unmap ? 1 : 0 }`
+  - [x] Build 3-descriptor chain: header (type = `0x0D`) + segment data + status
+  - [x] Split requests exceeding `max_write_zeroes_sectors`
+- [x] Wire to filesystem formatting and secure-delete paths
+- [x] Commit: `"virtio-blk: write-zeroes support"`
 
 ---
 
@@ -992,7 +994,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟠 P1     | 14.1 Live Config Change ✅        | Correctness — handle hot-resize and config changes              |
 | 🟡 P2     | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                      |
 | 🟡 P2     | 4.1 Discard (TRIM) ✅              | SSD optimization — reclaim unused blocks                        |
-| 🟡 P2     | 4.2 Write-Zeroes                  | Performance — efficient large zeroing                           |
+| 🟡 P2     | 4.2 Write-Zeroes ✅                | Performance — efficient large zeroing                           |
 | 🟡 P2     | 5.2 Individual Queue Reset        | Less disruptive recovery than full device reset                 |
 | 🟡 P2     | 15.1 Hot-Plug/Unplug              | Robustness — graceful device arrival/removal                    |
 | 🟢 P3     | 6.1 Per-CPU Request Queues        | Scalability — eliminates virtqueue lock contention              |
@@ -1029,7 +1031,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Async I/O (interrupt-driven)    | ✅ Overlapped I/O                  | ✅ `blk_mq_complete_request()`        | ⬜ §3.2 P2 — polling                            |
 | Memory barriers (VQ correctness)| ✅ Implicit in WDF                 | ✅ `virtio_wmb()` / `virt_rmb()`      | ⚠️ `mfence` in I/O path, none in init — §3.2 P2 |
 | Discard (TRIM)                  | ✅ Optimize Drives                 | ✅ `blk_queue_discard()`              | ✅ §4.1 P2                                      |
-| Write-zeroes                    | ✅                                 | ✅ `REQ_OP_WRITE_ZEROES`              | ⬜ §4.2 P2                                      |
+| Write-zeroes                    | ✅                                 | ✅ `REQ_OP_WRITE_ZEROES`              | ✅ §4.2 P2                                      |
 | Error recovery / device reset   | ✅ Automatic retry + reset         | ✅ `virtio_break_device()` + reset    | ⬜ §5.1 P1 — no recovery                        |
 | Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ⬜ §5.2 P2                                      |
 | Multi-queue (`F_MQ`)            | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ⬜ §6.1 P3                                      |

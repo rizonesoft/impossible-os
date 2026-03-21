@@ -26,6 +26,7 @@
 #define VIRTIO_BLK_T_FLUSH    4     /* flush volatile cache to persistent storage */
 #define VIRTIO_BLK_T_GET_ID   8     /* retrieve device serial number (20 bytes) */
 #define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
+#define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
 
 /* Device serial number length (VirtIO 1.2 §5.2.6.1) */
 #define VIRTIO_BLK_ID_BYTES 20
@@ -47,6 +48,7 @@
 #define VIRTIO_BLK_F_TOPOLOGY    7   /* Topology info in config */
 #define VIRTIO_BLK_F_CONFIG_WCE  9   /* Writeback cache enable is negotiable */
 #define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
+#define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
 #define VIRTIO_F_VERSION_1      32   /* VirtIO 1.0 modern */
 
 /* VirtIO block device config offsets (within device_cfg MMIO region)
@@ -65,6 +67,11 @@
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SECTORS 0x24  /* uint32_t: max sectors per discard */
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SEG     0x28  /* uint32_t: max discard segments */
 #define VIRTIO_BLK_CFG_DISCARD_ALIGN       0x2C  /* uint32_t: sector alignment */
+
+/* Write-zeroes config offsets (VirtIO 1.2 §5.2.4, present when F_WRITE_ZEROES) */
+#define VIRTIO_BLK_CFG_MAX_WZ_SECTORS      0x30  /* uint32_t: max sectors per write-zeroes */
+#define VIRTIO_BLK_CFG_MAX_WZ_SEG          0x34  /* uint32_t: max write-zeroes segments */
+#define VIRTIO_BLK_CFG_WZ_MAY_UNMAP        0x38  /* uint8_t:  1 = unmap flag allowed */
 
 /* VirtIO block request header */
 struct virtio_blk_req {
@@ -92,6 +99,9 @@ struct virtio_blk_topology {
     uint32_t max_discard_sectors; /* Max sectors per discard cmd (0 = no limit) */
     uint32_t max_discard_seg;    /* Max discard segments per cmd (0 = no limit) */
     uint32_t discard_sector_alignment; /* Discard sector alignment (0 = none) */
+    uint32_t max_wz_sectors;     /* Max sectors per write-zeroes (0 = no limit) */
+    uint32_t max_wz_seg;         /* Max write-zeroes segments (0 = no limit) */
+    uint8_t  wz_may_unmap;       /* 1 = unmap flag allowed in write-zeroes */
 };
 
 /* --- API --- */
@@ -117,6 +127,12 @@ int virtio_blk_flush(void);
  * Only available when VIRTIO_BLK_F_DISCARD was negotiated.
  * Returns 0 on success, -1 on error, 1 if discard not supported. */
 int virtio_blk_discard(uint64_t sector, uint32_t num_sectors);
+
+/* Write-zeroes: zero out sectors starting at 'sector' for 'num_sectors'.
+ * If unmap=1 and device supports it (F_WRITE_ZEROES + write_zeroes_may_unmap),
+ * the device may deallocate the zeroed region (thin provisioning).
+ * Returns 0 on success, -1 on error, 1 if write-zeroes not supported. */
+int virtio_blk_write_zeroes(uint64_t sector, uint32_t num_sectors, int unmap);
 
 /* Enable/disable writeback cache mode.
  * Only available when VIRTIO_BLK_F_CONFIG_WCE was negotiated.
