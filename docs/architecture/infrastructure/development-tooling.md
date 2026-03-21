@@ -569,7 +569,7 @@ scripts/
 | One-command dev setup          | ❌ Manual VS + WDK install   | ⚠️ `make defconfig && make`   | ✅ `bash scripts/setup.sh` — **beats both**     |
 | Automated smoke test           | ✅ HCK/HLK test framework    | ✅ kselftest + CI bots         | ✅ `scripts/test-smoke.sh` (headless QEMU)      |
 | Unit test framework (kernel)   | ✅ WDK test framework        | ✅ KUnit                       | ✅ `test.h` + `test_runner.c` (12 suites)       |
-| CI/CD build on push            | ✅ Azure DevOps              | ✅ GitHub Actions + kernel.org | ⬜ TODO-001 §4.1 P3                             |
+| CI/CD build on push            | ✅ Azure DevOps              | ✅ GitHub Actions + kernel.org | ✅ [GitHub Actions](github-setup.md#build--smoke-test-buildyml) |
 | Symbol map + debug symbols     | ✅ PDB files                 | ✅ vmlinux + kallsyms          | ✅ `kernel.sym` + `symtab_resolve()` (O(log n)) |
 | Code size tracking             | ⚠️ Manual / third-party     | ✅ `bloat-o-meter`             | ✅ `scripts/size-report.sh` + CSV history       |
 | Pre-commit linting             | ⚠️ Optional VS extensions   | ✅ checkpatch.pl               | ✅ `.githooks/pre-commit` (opt-in, staged only) |
