@@ -498,21 +498,21 @@ verification prompt, run `bash scripts/build.sh clean`, and commit as
 
 ## OS Comparison
 
-| Feature                                   | 🪟 Windows 11                                   | 🐧 Linux                                        | 🚀 Impossible OS                                            |
-| ----------------------------------------- | ----------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------- |
-| Registry change notification API          | ✅ `RegNotifyChangeKeyValue` (event-based)       | ⚠️ inotify on config files (not registry)         | ⬜ §5.2 P2 — callback-based (simpler than events) 🚀        |
-| Filter flags (name, value, attr, sec)     | ✅ `REG_NOTIFY_CHANGE_*` (4 flags)               | ❌ No concept                                     | ⬜ §5.1 P2 — same 4 flags as Win32                          |
-| Subtree watching (recursive)              | ✅ `bWatchSubtree` parameter                     | ⚠️ inotify recursive requires per-dir watch       | ⬜ §5.4 P2 — ancestor-walk from modified key                |
-| Watcher cleanup on key deletion           | ✅ Automatic (CM handles)                        | ❌ No concept                                     | ⬜ §5.5 P2 — auto-cleanup prevents dangling pointers        |
-| Notification dispatch from all mutators   | ✅ CM notifies on all changes                    | ❌ No unified dispatch                            | ⬜ §5.3 P2 — hooks in Set, Delete, Create, DeleteTree       |
-| **Callback-based (no event objects)**     | ❌ Requires event object + wait                  | ❌ inotify fd + read()                            | ⬜ §5.2 P2 — **direct callback, zero overhead** 🚀          |
-| **Persistent registration (not 1-shot)**  | ❌ Single-shot — must re-register after each     | ⚠️ Persistent until `inotify_rm_watch`            | ⬜ §5.2 P2 — **persistent until unregister** 🚀             |
-| **Batch coalescing**                      | ❌ Fires once per change (no dedup)              | ❌ Queue overflow drops events entirely            | ⬜ §5.6 P3 — **timer-based dedup window** 🚀                |
-| **Watcher telemetry in Registry**         | ❌ Requires kernel debugger                      | ❌ No visibility into inotify watches              | ⬜ §5.7 P3 — **fire counts + coalesce stats** 🚀            |
-| **Static watcher pool (no heap)**         | ❌ Dynamic kernel allocation                     | ❌ Dynamic allocation (1080 bytes/watch)           | ⬜ §5.1 P2 — **static pool, zero heap pressure** 🚀         |
-| **Configurable pool + coalesce interval** | ❌ Hardcoded in CM                               | ❌ Hardcoded limits (max_user_watches)             | ⬜ §5.6 P3 — **tunable via Registry** 🚀                    |
-| **Change-detail payloads**                | ❌ Only signals "changed" — must re-read key     | ❌ inotify: file name only, no content diff        | ⬜ §5.8 P3 — **old/new value in callback** 🚀               |
-| **Priority-based dispatch**               | ❌ All watchers equal priority                   | ❌ All watchers equal priority                     | ⬜ §5.9 P3 — **system watchers fire first** 🚀              |
+| ⭐ | Feature                                | 🪟 Windows 11                              | 🐧 Linux                                   | 🚀 Impossible OS                                         |
+| -- | -------------------------------------- | ------------------------------------------ | ------------------------------------------- | -------------------------------------------------------- |
+| 💎 | Registry change notification API       | ✅ `RegNotifyChangeKeyValue` (event-based)  | ⚠️ inotify on config files (not registry)    | ⬜ §5.2 P2 — callback-based (simpler than events) 🚀     |
+| 💎 | Filter flags (name, value, attr, sec)  | ✅ `REG_NOTIFY_CHANGE_*` (4 flags)          | ❌ No concept                                | ⬜ §5.1 P2 — same 4 flags as Win32                       |
+| 💎 | Subtree watching (recursive)           | ✅ `bWatchSubtree` parameter                | ⚠️ inotify recursive requires per-dir watch  | ⬜ §5.4 P2 — ancestor-walk from modified key             |
+| 💎 | Watcher cleanup on key deletion        | ✅ Automatic (CM handles)                   | ❌ No concept                                | ⬜ §5.5 P2 — auto-cleanup prevents dangling pointers     |
+| 💎 | Notification dispatch from all mutators| ✅ CM notifies on all changes               | ❌ No unified dispatch                       | ⬜ §5.3 P2 — hooks in Set, Delete, Create, DeleteTree    |
+| ⭐ | **Callback-based (no event objects)**  | ❌ Requires event object + wait             | ❌ inotify fd + read()                       | ⬜ §5.2 P2 — **direct callback, zero overhead** 🚀       |
+| ⭐ | **Persistent registration (not 1-shot)** | ❌ Single-shot — must re-register        | ⚠️ Persistent until `inotify_rm_watch`       | ⬜ §5.2 P2 — **persistent until unregister** 🚀          |
+| ⭐ | **Batch coalescing**                   | ❌ Fires once per change (no dedup)         | ❌ Queue overflow drops events entirely       | ⬜ §5.6 P3 — **timer-based dedup window** 🚀             |
+| ⭐ | **Watcher telemetry in Registry**      | ❌ Requires kernel debugger                 | ❌ No visibility into inotify watches         | ⬜ §5.7 P3 — **fire counts + coalesce stats** 🚀         |
+| ⭐ | **Static watcher pool (no heap)**      | ❌ Dynamic kernel allocation                | ❌ Dynamic allocation (1080 bytes/watch)      | ⬜ §5.1 P2 — **static pool, zero heap pressure** 🚀      |
+| ⭐ | **Configurable pool + coalesce**       | ❌ Hardcoded in CM                          | ❌ Hardcoded limits (max_user_watches)        | ⬜ §5.6 P3 — **tunable via Registry** 🚀                 |
+| ⭐ | **Change-detail payloads**             | ❌ Only signals "changed" — must re-read    | ❌ inotify: file name only, no content diff   | ⬜ §5.8 P3 — **old/new value in callback** 🚀            |
+| ⭐ | **Priority-based dispatch**            | ❌ All watchers equal priority              | ❌ All watchers equal priority                | ⬜ §5.9 P3 — **system watchers fire first** 🚀           |
 
 > **After P2 items:** Impossible OS matches Windows on change notifications — same filter
 > flags, subtree watching, auto-cleanup — but with simpler callback-based API (no event

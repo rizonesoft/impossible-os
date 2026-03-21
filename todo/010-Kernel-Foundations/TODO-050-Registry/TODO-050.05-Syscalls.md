@@ -760,28 +760,28 @@ MCP memory.
 
 ## OS Comparison
 
-| Feature                                    | 🪟 Windows 11                          | 🐧 Linux                               | 🚀 Impossible OS                                         |
-| ------------------------------------------ | -------------------------------------- | --------------------------------------- | -------------------------------------------------------- |
-| User-mode registry access via syscalls     | ✅ NtOpenKey, NtSetValueKey (ntdll)     | ❌ No registry (dconf via D-Bus IPC)     | ⬜ §6.1 P2 — `SYS_REG_*` syscalls                        |
-| User pointer validation                    | ✅ ProbeForRead/ProbeForWrite           | ✅ copy_from_user/copy_to_user           | ⬜ §6.2 P2 — `user_ptr_valid` checks                     |
-| Access control (user vs kernel keys)       | ✅ ACL-based per key (SAM, SECURITY)    | ❌ No concept                            | ⬜ §6.3 P2 — policy-based (HKCU+SOFTWARE writable)        |
-| User-mode wrapper library                  | ✅ advapi32.dll (RegOpenKeyEx, etc.)    | ⚠️ GLib dconf API (user-space only)     | ⬜ §6.4 P2 — `user/lib/registry.c`                       |
-| advapi32.dll registry API                  | ✅ Native (built-in DLL)                | ⚠️ Wine reimplements                    | ⬜ §7.1 P2 — A-variant stubs in builtin table             |
-| A/W (ANSI/Wide) string variants            | ✅ Full A/W with codepage support       | ⚠️ Wine implements (partial)            | ⬜ §7.2 P2 — UTF-16LE ↔ UTF-8 conversion                 |
-| HKCR merged view                           | ✅ HKCU\Classes overlays HKLM\Classes   | ❌ No concept                            | ⬜ §7.3 P2 — two-level lookup with HKCU priority          |
-| Win32 error code mapping                   | ✅ Native (no mapping needed)           | ⚠️ Wine maps internally                 | ⬜ §7.6 P2 — explicit translation table                   |
-| Registry virtualization (Vista+)           | ✅ VirtualStore under HKCU              | ❌ No concept                            | ⬜ §7.4 P3 — redirect non-admin HKLM writes               |
-| .reg file import/export                    | ✅ Registry Editor built-in             | ⚠️ Wine `regedit` tool                  | ⬜ §7.5 P3 — full v5.00 format parser/generator           |
-| **Per-process registry sandbox**           | ❌ HKCU shared among all processes      | ❌ No concept                            | ⬜ §6.5 P3 — **per-PID HKCU isolation** 🚀               |
-| **Syscall rate limiting**                  | ❌ No rate limit (unlimited writes)     | ❌ No rate limit                         | ⬜ §6.6 P3 — **configurable throttle per process** 🚀    |
-| **Built-in API call tracing**              | ❌ Requires Process Monitor / ETW       | ❌ Requires strace (no registry)         | ⬜ §7.7 P3 — **on/off toggle, ring buffer** 🚀           |
-| **Access audit log**                       | ⚠️ ETW-based (complex, heavy overhead)  | ❌ No registry audit                     | ⬜ §6.7 P4 — **simple on/off toggle, ring buffer** 🚀    |
-| **Registry-based app compat shims**        | ⚠️ ACT + SDB files (binary, undoc)      | ❌ No concept                            | ⬜ §7.8 P4 — **transparent, editable via Registry** 🚀   |
-| **Per-process registry quota**             | ❌ Global limit only (no per-process)   | ❌ No size limits (dconf)                | ⬜ §6.8 P4 — **per-PID quota, configurable** 🚀          |
-| **Registry snapshot & diff**               | ❌ Requires RegShot (third-party)       | ❌ No concept                            | ⬜ §7.9 P4 — **built-in snapshot + diff** 🚀             |
-| **Atomic registry transactions**           | ❌ KTM deprecated (Win 8+), removed     | ⚠️ dconf change sets (not atomic)        | ⬜ §7.10 P4 — **lightweight atomic batches** 🚀          |
-| **Native UTF-8 internally**               | ❌ UTF-16LE internally                  | ✅ UTF-8                                 | ✅ §7.2 — **zero conversion for A variants** 🚀           |
-| **Static-pool syscall dispatch**           | ❌ Dynamic kernel pool                  | ❌ Dynamic allocation                    | ⬜ §6.1 P2 — **zero heap pressure in dispatch** 🚀       |
+| ⭐ | Feature                             | 🪟 Windows 11                       | 🐧 Linux                            | 🚀 Impossible OS                                      |
+| -- | ----------------------------------- | ----------------------------------- | ------------------------------------ | ----------------------------------------------------- |
+| 💎 | User-mode registry syscalls         | ✅ NtOpenKey, NtSetValueKey (ntdll)  | ❌ No registry (dconf via D-Bus IPC)  | ⬜ §6.1 P2 — `SYS_REG_*` syscalls                     |
+| 💎 | User pointer validation             | ✅ ProbeForRead/ProbeForWrite        | ✅ copy_from_user/copy_to_user        | ⬜ §6.2 P2 — `user_ptr_valid` checks                  |
+| 💎 | Access control (user vs kernel)     | ✅ ACL-based per key (SAM, SECURITY) | ❌ No concept                         | ⬜ §6.3 P2 — policy-based (HKCU+SOFTWARE writable)     |
+| 💎 | User-mode wrapper library           | ✅ advapi32.dll (RegOpenKeyEx, etc.) | ⚠️ GLib dconf API (user-space only)  | ⬜ §6.4 P2 — `user/lib/registry.c`                    |
+| 💎 | advapi32.dll registry API           | ✅ Native (built-in DLL)             | ⚠️ Wine reimplements                 | ⬜ §7.1 P2 — A-variant stubs in builtin table          |
+| 💎 | A/W (ANSI/Wide) string variants     | ✅ Full A/W with codepage support    | ⚠️ Wine implements (partial)         | ⬜ §7.2 P2 — UTF-16LE ↔ UTF-8 conversion              |
+| 💎 | HKCR merged view                    | ✅ HKCU\Classes overlays HKLM        | ❌ No concept                         | ⬜ §7.3 P2 — two-level lookup with HKCU priority       |
+| 💎 | Win32 error code mapping            | ✅ Native (no mapping needed)        | ⚠️ Wine maps internally              | ⬜ §7.6 P2 — explicit translation table                |
+| 💎 | Registry virtualization (Vista+)    | ✅ VirtualStore under HKCU           | ❌ No concept                         | ⬜ §7.4 P3 — redirect non-admin HKLM writes            |
+| 💎 | .reg file import/export             | ✅ Registry Editor built-in          | ⚠️ Wine `regedit` tool               | ⬜ §7.5 P3 — full v5.00 format parser/generator        |
+| ⭐ | **Per-process registry sandbox**    | ❌ HKCU shared among all processes   | ❌ No concept                         | ⬜ §6.5 P3 — **per-PID HKCU isolation** 🚀            |
+| ⭐ | **Syscall rate limiting**           | ❌ No rate limit (unlimited writes)  | ❌ No rate limit                      | ⬜ §6.6 P3 — **configurable throttle** 🚀             |
+| ⭐ | **Built-in API call tracing**       | ❌ Requires Process Monitor / ETW    | ❌ Requires strace (no registry)      | ⬜ §7.7 P3 — **on/off toggle, ring buffer** 🚀        |
+| ⭐ | **Access audit log**                | ⚠️ ETW-based (complex, heavy)        | ❌ No registry audit                  | ⬜ §6.7 P4 — **simple on/off toggle** 🚀              |
+| ⭐ | **Registry app compat shims**       | ⚠️ ACT + SDB files (binary, undoc)   | ❌ No concept                         | ⬜ §7.8 P4 — **transparent, editable via Registry** 🚀|
+| ⭐ | **Per-process registry quota**      | ❌ Global limit only (no per-process)| ❌ No size limits (dconf)             | ⬜ §6.8 P4 — **per-PID quota, configurable** 🚀       |
+| ⭐ | **Registry snapshot & diff**        | ❌ Requires RegShot (third-party)    | ❌ No concept                         | ⬜ §7.9 P4 — **built-in snapshot + diff** 🚀          |
+| ⭐ | **Atomic registry transactions**    | ❌ KTM deprecated (Win 8+), removed  | ⚠️ dconf change sets (not atomic)     | ⬜ §7.10 P4 — **lightweight atomic batches** 🚀       |
+| ⭐ | **Native UTF-8 internally**         | ❌ UTF-16LE internally               | ✅ UTF-8                              | ✅ §7.2 — **zero conversion for A variants** 🚀        |
+| ⭐ | **Static-pool syscall dispatch**    | ❌ Dynamic kernel pool               | ❌ Dynamic allocation                 | ⬜ §6.1 P2 — **zero heap pressure in dispatch** 🚀    |
 
 > **After P2 items:** Impossible OS provides secure user-mode registry access with pointer
 > validation and access control, plus full Win32 A/W compatibility via advapi32.dll stubs,

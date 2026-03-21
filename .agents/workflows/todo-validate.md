@@ -183,22 +183,33 @@ Rules:
 
 ### 8. Fix the OS Comparison table format
 
-The OS Comparison table **must** match the canonical format from `TODO-010-Bootloader.md`:
+The OS Comparison table **must** include a `⭐` icon column as the **first column** to
+distinguish spec-defined features (💎) from Impossible OS exclusives (⭐):
 
 ```markdown
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11                     | 🐧 Linux                            | 🚀 Impossible OS                                |
-| -------------------------------- | --------------------------------- | ------------------------------------ | ----------------------------------------------- |
-| Basic feature                    | ✅ How Windows does it             | ✅ How Linux does it                  | ✅ Done — brief description                      |
-| Partially done feature           | ✅ Windows approach                | ✅ Linux approach                     | ⚠️ §N.M PN — what's missing                     |
-| Not yet started feature          | ✅ Windows approach                | ✅ Linux approach                     | ⬜ §N.M PN — brief plan                         |
-| Neither has this feature         | ⬜ Not implemented                 | ⬜ Not implemented                    | ⬜ §N.M PN — **first to implement** 🚀          |
-| **Exclusive feature name**       | ⬜ Short gap description           | ⬜ Short gap description              | ⬜ §N.M PN — **competitive advantage** 🚀       |
+| ⭐ | Feature                          | 🪟 Windows 11                     | 🐧 Linux                            | 🚀 Impossible OS                                |
+| -- | -------------------------------- | --------------------------------- | ------------------------------------ | ----------------------------------------------- |
+| 💎 | Basic feature                    | ✅ How Windows does it             | ✅ How Linux does it                  | ✅ Done — brief description                      |
+| 💎 | Partially done feature           | ✅ Windows approach                | ✅ Linux approach                     | ⚠️ §N.M PN — what's missing                     |
+| 💎 | Not yet started feature          | ✅ Windows approach                | ✅ Linux approach                     | ⬜ §N.M PN — brief plan                         |
+| ⭐ | **Exclusive feature name**       | ❌ Short gap description           | ❌ Short gap description              | ⬜ §N.M PN — **competitive advantage** 🚀       |
 ```
 
+**Icon meanings:**
+- 💎 = Spec-defined / standard feature (Win32 parity, industry standard)
+- ⭐ = Impossible OS exclusive (competitive advantage, neither Windows nor Linux has it)
+
+**If the icon column is missing**, add it:
+1. Insert `| ⭐ |` before the Feature column header
+2. Insert `| -- |` in the separator row
+3. For each row: insert `| 💎 |` for standard features, `| ⭐ |` for exclusive features
+4. Exclusive features are identified by: bold text in Feature column, `🚀` suffix, or
+   rows where both Windows and Linux show `❌`
+
 **Required format rules:**
-- Column headers: `🪟 Windows 11` | `🐧 Linux` | `🚀 Impossible OS`
+- Column headers: `⭐` | `Feature` | `🪟 Windows 11` | `🐧 Linux` | `🚀 Impossible OS`
 - Status emojis: ✅ = done, ⬜ = not started, ⚠️ = partial
 - Impossible OS column references section + priority: `§N.M PN`
 - Exclusive features bolded with 🚀 suffix

@@ -76,26 +76,26 @@ graph TD
 | ⭐ | Phase | TODO File               | Section(s)             | What It Delivers                                       | Depends On        | Status |
 | -- | :---: | ----------------------- | ---------------------- | ------------------------------------------------------ | ----------------- | :----: |
 | 💎 | **0** | `050.01-Engine.md`      | §1.1–1.3               | `reg_key_t`, `reg_value_t`, pools, FNV-1a, root keys   | —                 |   ✅   |
-| 💎 | **1** | `050.02-Win32-API.md`   | §2.1–2.4               | `RegOpenKeyEx`, `RegSetValueEx`, enum, helpers          | Phase 0 (050.01)  |   ✅   |
-| 💎 | **2** | `050.03-Hive.md`        | §4.1–4.3               | Hive format, disk layout, crash-safe journaling         | Phase 1 (050.02)  |   ✅   |
-| 💎 | **3** | `050.04-Notification`   | §5.1–5.5               | Watchers, dispatch, subtree, lifecycle                  | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **3** | `050.05-Syscalls.md`    | §6.1–6.3               | Syscalls, pointer validation, access control            | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **3** | `050-Registry.md`       | §8.1                   | `regedit` shell command                                 | Phase 2 (050.03)  |   ⬜   |
-| 💎 | **4** | `050.02-Win32-API.md`   | §2.5–2.7               | Access rights, API limits, RegFlushKey                  | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **4** | `050.05-Syscalls.md`    | §6.4, §7.1, §7.6       | User-mode lib, advapi32.dll stubs, error map            | Phase 3 (§6.1–3)  |   ⬜   |
-| 💎 | **5** | `050.02-Win32-API.md`   | §2.8–2.9, §2.11        | Advanced ops, hive import/export, volatile keys         | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **5** | `050.05-Syscalls.md`    | §7.2–7.3               | UTF-16 A/W handling, HKCR merged view                   | Phase 4 (§7.1)    |   ⬜   |
-| 💎 | **5** | `050.05-Syscalls.md`    | §7.4–7.5               | Registry virtualization, .reg import/export             | Phase 4 (§7.1)    |   ⬜   |
-| ⭐ | **6** | `050.02-Win32-API.md`   | §2.10, §2.12            | Delayed Close Cache 🚀, Transactions 🚀                | Phase 4 (050.02)  |   ⬜   |
-| ⭐ | **6** | `050.03-Hive.md`        | §4.4–4.5               | Dual-log WAJ 🚀, incremental delta flush 🚀            | Phase 2 (050.03)  |   ⬜   |
-| ⭐ | **6** | `050.04-Notification`   | §5.6–5.7               | Batch coalescing 🚀, telemetry 🚀                      | Phase 3 (§5.3)    |   ⬜   |
-| ⭐ | **6** | `050.05-Syscalls.md`    | §6.5–6.7               | Sandbox 🚀, rate limit 🚀, audit 🚀                    | Phase 3 (§6.3)    |   ⬜   |
-| ⭐ | **6** | `050.05-Syscalls.md`    | §7.7–7.8               | API tracing 🚀, app shims 🚀                           | Phase 4 (§7.1)    |   ⬜   |
-| ⭐ | **7** | `050.02-Win32-API.md`   | §2.13–2.15             | Search API 🚀, diff/compare 🚀, orphan GC 🚀          | Phase 1 (050.02)  |   ⬜   |
-| ⭐ | **7** | `050.03-Hive.md`        | §4.6–4.8               | Integrity reporter 🚀, versioning 🚀, compaction 🚀    | Phase 2 (050.03)  |   ⬜   |
-| ⭐ | **7** | `050.04-Notification`   | §5.8–5.9               | Change-detail payloads 🚀, priority dispatch 🚀        | Phase 3 (§5.3)    |   ⬜   |
-| ⭐ | **7** | `050.05-Syscalls.md`    | §6.8, §7.9–7.10         | Per-PID quota 🚀, snapshot/diff 🚀, transactions 🚀    | Phase 3 (§6.1)    |   ⬜   |
-| 🔵 | **8** | `050-Registry.md`       | §9.1–9.3               | Hash map, mmap, B-tree (perf stretch goals)             | Phase 2 (050.03)  |   ⬜   |
+| 💎 | **1** | `050.02-Win32-API.md`   | §2.1–2.4               | `RegOpenKeyEx`, `RegSetValueEx`, enum, helpers         | Phase 0 (050.01)  |   ✅   |
+| 💎 | **2** | `050.03-Hive.md`        | §4.1–4.3               | Hive format, disk layout, crash-safe journaling        | Phase 1 (050.02)  |   ✅   |
+| 💎 | **3** | `050.04-Notification`   | §5.1–5.5               | Watchers, dispatch, subtree, lifecycle                 | Phase 1 (050.02)  |   ⬜   |
+| 💎 | **3** | `050.05-Syscalls.md`    | §6.1–6.3               | Syscalls, pointer validation, access control           | Phase 1 (050.02)  |   ⬜   |
+| 💎 | **3** | `050-Registry.md`       | §8.1                   | `regedit` shell command                                | Phase 2 (050.03)  |   ⬜   |
+| 💎 | **4** | `050.02-Win32-API.md`   | §2.5–2.7               | Access rights, API limits, RegFlushKey                 | Phase 1 (050.02)  |   ⬜   |
+| 💎 | **4** | `050.05-Syscalls.md`    | §6.4, §7.1, §7.6       | User-mode lib, advapi32.dll stubs, error map           | Phase 3 (§6.1–3)  |   ⬜   |
+| 💎 | **5** | `050.02-Win32-API.md`   | §2.8–2.9, §2.11        | Advanced ops, hive import/export, volatile keys        | Phase 1 (050.02)  |   ⬜   |
+| 💎 | **5** | `050.05-Syscalls.md`    | §7.2–7.3               | UTF-16 A/W handling, HKCR merged view                  | Phase 4 (§7.1)    |   ⬜   |
+| 💎 | **5** | `050.05-Syscalls.md`    | §7.4–7.5               | Registry virtualization, .reg import/export            | Phase 4 (§7.1)    |   ⬜   |
+| ⭐ | **6** | `050.02-Win32-API.md`   | §2.10, §2.12           | Delayed Close Cache, Transactions                      | Phase 4 (050.02)  |   ⬜   |
+| ⭐ | **6** | `050.03-Hive.md`        | §4.4–4.5               | Dual-log WAJ, incremental delta flush                  | Phase 2 (050.03)  |   ⬜   |
+| ⭐ | **6** | `050.04-Notification`   | §5.6–5.7               | Batch coalescing, telemetry                            | Phase 3 (§5.3)    |   ⬜   |
+| ⭐ | **6** | `050.05-Syscalls.md`    | §6.5–6.7               | Sandbox, rate limit, audit                             | Phase 3 (§6.3)    |   ⬜   |
+| ⭐ | **6** | `050.05-Syscalls.md`    | §7.7–7.8               | API tracing, app shims                                 | Phase 4 (§7.1)    |   ⬜   |
+| ⭐ | **7** | `050.02-Win32-API.md`   | §2.13–2.15             | Search API, diff/compare, orphan GC                    | Phase 1 (050.02)  |   ⬜   |
+| ⭐ | **7** | `050.03-Hive.md`        | §4.6–4.8               | Integrity reporter, versioning, compaction             | Phase 2 (050.03)  |   ⬜   |
+| ⭐ | **7** | `050.04-Notification`   | §5.8–5.9               | Change-detail payloads, priority dispatch              | Phase 3 (§5.3)    |   ⬜   |
+| ⭐ | **7** | `050.05-Syscalls.md`    | §6.8, §7.9–7.10        | Per-PID quota, snapshot/diff, transactions             | Phase 3 (§6.1)    |   ⬜   |
+| 🔵 | **8** | `050-Registry.md`       | §9.1–9.3               | Hash map, mmap, B-tree (perf stretch goals)            | Phase 2 (050.03)  |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–2 are complete.** The core engine (050.01), Win32 API (050.02), and disk
@@ -204,44 +204,44 @@ graph TD
 | ✅ Done  | `050.01` §1.1–1.3 Registry Engine            | Core data structures, value types, root keys               |
 | ✅ Done  | `050.02` §2.1–2.4 Win32 API                  | Key/value ops, enum, helpers                               |
 | ✅ Done  | `050.03` §4.1–4.3 Hive Persistence           | Format, disk layout, crash-safe journaling                 |
-| 🟠 P1   | `050.02` §2.5–2.6 Access Rights + Limits     | Correctness: KEY_* bits, name/depth limits                 |
-| 🟡 P2   | `050.02` §2.7 RegFlushKey                    | Persistence guarantee for critical writes                  |
-| 🟡 P2   | `050.04` §5.1–5.5 Notifications              | Real-time settings updates                                 |
-| 🟡 P2   | `050.05` §6.1–6.3 Syscalls + Access          | User-mode app access                                       |
-| 🟡 P2   | `050-Registry` §8.1 Regedit                  | Debugging + inspection                                     |
-| 🟡 P2   | `050.05` §6.4, §7.1, §7.6 Lib + Stubs       | advapi32.dll A-variant + error mapping                     |
-| 🟡 P2   | `050.05` §7.2–7.3 UTF-16 + HKCR             | Full Unicode, HKCR merged view                             |
-| 🟡 P2   | `050.02` §2.8–2.9, §2.11 Advanced Ops       | Copy, rename, save/restore, volatile keys                  |
-| 🟢 P3   | `050.05` §7.4–7.5 Virtualization + .reg      | Vista-style redirect, .reg import/export                   |
-| 🟢 P3   | `050.02` §2.10, §2.12 Cache + Transactions   | 🚀 LRU close cache, atomic batch updates                  |
-| 🟢 P3   | `050.03` §4.4–4.5 Dual-Log + Delta Flush     | 🚀 Alternating WAJ, dirty-page partial writes              |
-| 🟢 P3   | `050.04` §5.6–5.7 Coalescing + Telemetry     | 🚀 Batch dedup, watcher stats                              |
-| 🟢 P3   | `050.04` §5.8–5.9 Detail + Priority          | 🚀 Old/new value payloads, priority dispatch               |
-| 🟢 P3   | `050.05` §6.5–6.7 Sandbox + Rate + Audit     | 🚀 Per-PID HKCU, throttle, audit log                      |
-| 🟢 P3   | `050.05` §7.7–7.8 Tracing + Shims           | 🚀 API call tracing, app compat                            |
-| 🔵 P4   | `050.02` §2.13–2.15 Search + Diff + GC       | 🚀 Pattern search, snapshot diff, orphan GC                |
-| 🔵 P4   | `050.03` §4.6–4.8 Integrity + Ver + Compact  | 🚀 chkregistry, format versioning, idle compaction         |
-| 🔵 P4   | `050.05` §6.8, §7.9–7.10 Quota + Snap + Txn  | 🚀 Per-PID quota, snapshot/diff, transaction API           |
-| 🔵 P4   | `050-Registry` §9.1–9.3 Performance          | Hash map, mmap, B-tree (stretch goals)                     |
+| 🟠 P1    | `050.02` §2.5–2.6 Access Rights + Limits     | Correctness: KEY_* bits, name/depth limits                 |
+| 🟡 P2    | `050.02` §2.7 RegFlushKey                    | Persistence guarantee for critical writes                  |
+| 🟡 P2    | `050.04` §5.1–5.5 Notifications              | Real-time settings updates                                 |
+| 🟡 P2    | `050.05` §6.1–6.3 Syscalls + Access          | User-mode app access                                       |
+| 🟡 P2    | `050-Registry` §8.1 Regedit                  | Debugging + inspection                                     |
+| 🟡 P2    | `050.05` §6.4, §7.1, §7.6 Lib + Stubs        | advapi32.dll A-variant + error mapping                     |
+| 🟡 P2    | `050.05` §7.2–7.3 UTF-16 + HKCR              | Full Unicode, HKCR merged view                             |
+| 🟡 P2    | `050.02` §2.8–2.9, §2.11 Advanced Ops        | Copy, rename, save/restore, volatile keys                  |
+| 🟢 P3    | `050.05` §7.4–7.5 Virtualization + .reg      | Vista-style redirect, .reg import/export                   |
+| 🟢 P3    | `050.02` §2.10, §2.12 Cache + Transactions   | LRU close cache, atomic batch updates                      |
+| 🟢 P3    | `050.03` §4.4–4.5 Dual-Log + Delta Flush     | Alternating WAJ, dirty-page partial writes                 |
+| 🟢 P3    | `050.04` §5.6–5.7 Coalescing + Telemetry     | Batch dedup, watcher stats                                 |
+| 🟢 P3    | `050.04` §5.8–5.9 Detail + Priority          | Old/new value payloads, priority dispatch                  |
+| 🟢 P3    | `050.05` §6.5–6.7 Sandbox + Rate + Audit     | Per-PID HKCU, throttle, audit log                          |
+| 🟢 P3    | `050.05` §7.7–7.8 Tracing + Shims            | API call tracing, app compat                               |
+| 🔵 P4    | `050.02` §2.13–2.15 Search + Diff + GC       | Pattern search, snapshot diff, orphan GC                   |
+| 🔵 P4    | `050.03` §4.6–4.8 Integrity + Ver + Compact  | chkregistry, format versioning, idle compaction            |
+| 🔵 P4    | `050.05` §6.8, §7.9–7.10 Quota + Snap + Txn  | Per-PID quota, snapshot/diff, transaction API              |
+| 🔵 P4    | `050-Registry` §9.1–9.3 Performance          | Hash map, mmap, B-tree (stretch goals)                     |
 
 ---
 
 ## OS Comparison
 
-| ⭐ | Feature                            | 🪟 Windows 11                   | 🐧 Linux                        | 🚀 Impossible OS                                |
-| -- | ---------------------------------- | ------------------------------- | -------------------------------- | ----------------------------------------------- |
+| ⭐ | Feature                            | 🪟 Windows 11                    | 🐧 Linux                         | 🚀 Impossible OS                                 |
+| -- | ---------------------------------- | --------------------------------- | -------------------------------- | ------------------------------------------------- |
 | 💎 | Hierarchical key/value store       | ✅ Full tree                     | ✅ dconf (GNOME), ini files       | ✅ `050.01` — HKLM/HKCU/HKCR tree               |
-| 💎 | Typed values (DWORD, SZ, BINARY…)  | ✅ Full Win32 types              | ⚠️ Strings only (dconf: GVariant) | ✅ `050.01` — All REG_* types                    |
-| 💎 | Win32 API (`RegOpenKeyEx`…)        | ✅ Native                        | ❌                                | ✅ `050.02` — Complete native API                |
+| 💎 | Typed values (DWORD, SZ, BINARY…)  | ✅ Full Win32 types              | ⚠️ Strings only (dconf: GVariant) | ✅ `050.01` — All REG_* types                   |
+| 💎 | Win32 API (`RegOpenKeyEx`…)        | ✅ Native                        | ❌                                | ✅ `050.02` — Complete native API               |
 | 💎 | Persistent binary hive files       | ✅ `.hive` format                | ✅ dconf binary db                | ✅ `050.03` — 4 KiB header, CRC32               |
-| 💎 | Crash-safe journaling              | ✅ Transaction log               | ⚠️ No fsync on dconf             | ✅ `050.03` — `.hive.log` WAJ                   |
-| 💎 | Change notifications               | ✅ `RegNotifyChangeKeyValue`     | ⚠️ inotify on ini files          | ⬜ `050.04` P2 — callback-based                 |
-| 💎 | User-mode registry syscalls        | ✅ NtOpenKey, NtSetValueKey      | ❌ No registry (dconf via D-Bus)  | ⬜ `050.05` §6.1 P2 — `SYS_REG_*`              |
-| 💎 | advapi32.dll compatibility         | ✅ Native DLL                    | ⚠️ Wine reimplements             | ⬜ `050.05` §7.1 P2 — A/W stubs                |
-| 💎 | HKCR merged view                   | ✅ HKCU + HKLM\Classes merged   | ❌ No concept                     | ⬜ `050.05` §7.3 P2 — two-level lookup          |
+| 💎 | Crash-safe journaling              | ✅ Transaction log               | ⚠️ No fsync on dconf              | ✅ `050.03` — `.hive.log` WAJ                   |
+| 💎 | Change notifications               | ✅ `RegNotifyChangeKeyValue`     | ⚠️ inotify on ini files           | ⬜ `050.04` P2 — callback-based                 |
+| 💎 | User-mode registry syscalls        | ✅ NtOpenKey, NtSetValueKey      | ❌ No registry (dconf via D-Bus)  | ⬜ `050.05` §6.1 P2 — `SYS_REG_*`               |
+| 💎 | advapi32.dll compatibility         | ✅ Native DLL                    | ⚠️ Wine reimplements              | ⬜ `050.05` §7.1 P2 — A/W stubs                 |
+| 💎 | HKCR merged view                   | ✅ HKCU + HKLM\Classes merged    | ❌ No concept                     | ⬜ `050.05` §7.3 P2 — two-level lookup          |
 | 💎 | `regedit` shell inspection         | ✅ GUI regedit.exe               | ✅ `dconf-editor` (GNOME)         | ⬜ §8.1 P2 — CLI + subcommands                  |
-| 💎 | Registry virtualization (Vista+)   | ✅ VirtualStore under HKCU       | ❌ No concept                     | ⬜ `050.05` §7.4 P3 — HKLM → HKCU redirect     |
-| 💎 | .reg file import/export            | ✅ Registry Editor built-in      | ⚠️ Wine `regedit` tool           | ⬜ `050.05` §7.5 P3 — full v5.00 format         |
+| 💎 | Registry virtualization (Vista+)   | ✅ VirtualStore under HKCU       | ❌ No concept                     | ⬜ `050.05` §7.4 P3 — HKLM → HKCU redirect      |
+| 💎 | .reg file import/export            | ✅ Registry Editor built-in      | ⚠️ Wine `regedit` tool            | ⬜ `050.05` §7.5 P3 — full v5.00 format         |
 | 💎 | Dual-log WAJ failover              | ✅ `.log1`/`.log2` alternating   | ❌ No concept                     | ⬜ `050.03` §4.4 P3 — alternating WAJ           |
 | ⭐ | **Incremental delta flush**        | ❌ Full hive rewrite             | ❌ Full db rewrite                | ⬜ `050.03` §4.5 P3 — **dirty-page bitmap**     |
 | ⭐ | **Batch notification coalescing**  | ❌ Fires once per change         | ❌ No coalescing                  | ⬜ `050.04` §5.6 P3 — **timer-based dedup**     |
@@ -250,19 +250,19 @@ graph TD
 | ⭐ | **Per-process registry sandbox**   | ❌ HKCU shared among all procs   | ❌ No concept                     | ⬜ `050.05` §6.5 P3 — **per-PID HKCU**          |
 | ⭐ | **Syscall rate limiting**          | ❌ No rate limit                 | ❌ No rate limit                  | ⬜ `050.05` §6.6 P3 — **throttle**              |
 | ⭐ | **Built-in API call tracing**      | ❌ Requires ProcMon / ETW        | ❌ No registry concept            | ⬜ `050.05` §7.7 P3 — **on/off toggle**         |
-| ⭐ | **Atomic registry transactions**   | ⚠️ KTM (deprecated)             | ⚠️ dconf change_set (no rollback) | ⬜ `050.02` §2.12 P3 — **lightweight**           |
-| ⭐ | **Registry app compat shims**      | ⚠️ ACT + SDB (binary)           | ❌ No concept                     | ⬜ `050.05` §7.8 P3 — **via Registry**          |
+| ⭐ | **Atomic registry transactions**   | ⚠️ KTM (deprecated)              | ⚠️ dconf change_set (no rollback) | ⬜ `050.02` §2.12 P3 — **lightweight**          |
+| ⭐ | **Registry app compat shims**      | ⚠️ ACT + SDB (binary)            | ❌ No concept                     | ⬜ `050.05` §7.8 P3 — **via Registry**          |
 | ⭐ | **Native registry search API**     | ❌ Manual enumerate+match        | ❌ No search                      | ⬜ `050.02` §2.13 P4 — **glob pattern**         |
 | ⭐ | **Registry diff/compare**          | ❌ Requires third-party RegShot  | ❌ No equivalent                  | ⬜ `050.02` §2.14 P4 — **snapshot diff**        |
 | ⭐ | **Pool garbage collection**        | ❌ Dynamic alloc (no pool)       | ❌ Dynamic alloc                  | ⬜ `050.02` §2.15 P4 — **self-healing GC**      |
 | ⭐ | **Hive integrity reporter**        | ❌ No built-in health check      | ❌ No concept                     | ⬜ `050.03` §4.6 P4 — **chkregistry**           |
-| ⭐ | **Hive format versioning**         | ⚠️ regf v1.3/1.5 (no migrate)   | ❌ No versioning                  | ⬜ `050.03` §4.7 P4 — **auto-upgrade**          |
+| ⭐ | **Hive format versioning**         | ⚠️ regf v1.3/1.5 (no migrate)    | ❌ No versioning                  | ⬜ `050.03` §4.7 P4 — **auto-upgrade**          |
 | ⭐ | **Idle-time hive compaction**      | ❌ No defragmentation            | ❌ No concept                     | ⬜ `050.03` §4.8 P4 — **auto-compact**          |
 | ⭐ | **Per-process registry quota**     | ❌ Global limit only             | ❌ No size limits                 | ⬜ `050.05` §6.8 P4 — **per-PID quota**         |
 | ⭐ | **Registry snapshot & diff**       | ❌ Requires third-party RegShot  | ❌ No concept                     | ⬜ `050.05` §7.9 P4 — **built-in snap+diff**    |
-| ⭐ | **Atomic user-mode transactions**  | ❌ KTM deprecated/removed        | ⚠️ dconf change_set (no rollback) | ⬜ `050.05` §7.10 P4 — **lightweight txn**       |
-| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation             | ✅ `050.01` — **zero heap pressure**             |
-| ⭐ | **In-kernel WAJ**                  | ✅ Kernel-level                  | ❌ dconf in user-space            | ✅ `050.03` — **kernel WAJ, zero daemon**        |
+| ⭐ | **Atomic user-mode transactions**  | ❌ KTM deprecated/removed        | ⚠️ dconf change_set (no rollback) | ⬜ `050.05` §7.10 P4 — **lightweight txn**      |
+| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation             | ✅ `050.01` — **zero heap pressure**            |
+| ⭐ | **In-kernel WAJ**                  | ✅ Kernel-level                  | ❌ dconf in user-space            | ✅ `050.03` — **kernel WAJ, zero daemon**       |
 
 > **After Phases 0–2 (✅):** Impossible OS matches Windows feature-for-feature on core
 > registry, API, persistence, and crash safety. Exceeds Linux with native in-kernel typed store.

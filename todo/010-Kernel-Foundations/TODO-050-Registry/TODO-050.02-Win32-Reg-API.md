@@ -552,30 +552,30 @@ graph TD
 
 ## OS Comparison
 
-| Feature                                   | 🪟 Windows 11                                | 🐧 Linux                                   | 🚀 Impossible OS                                       |
-| ----------------------------------------- | -------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ |
-| `RegOpenKeyEx` / `RegCreateKeyEx`         | ✅ Native advapi32.dll                        | ❌ No concept                                | ✅ §2.1 — handle pool + path walk + REG_LINK            |
-| `RegSetValueEx` / `RegQueryValueEx`       | ✅ Native advapi32.dll                        | ❌ dconf API (different)                      | ✅ §2.2 — full Win32 semantics + RRF flags              |
-| `RegGetValue` (combined open+query)       | ✅ Added in Vista                             | ❌ No equivalent                              | ✅ §2.2 — auto-expand EXPAND_SZ, type filter            |
-| `RegDeleteKey` / `RegDeleteTree`          | ✅ Native                                     | ❌ `rm -rf` on config files                   | ✅ §2.1 — recursive + access-denied for non-empty       |
-| `RegEnumKeyEx` / `RegEnumValue`           | ✅ Native                                     | ❌ `readdir` on config dirs                   | ✅ §2.3 — index-based, correct error codes              |
-| `RegQueryInfoKey`                         | ✅ Native                                     | ❌ No equivalent                              | ✅ §2.3 — child/value counts, max lengths               |
-| Access rights enforcement (`KEY_*`)       | ✅ Full DACL + ACL evaluation                 | ⚠️ Unix permissions only                     | ⬜ §2.5 P1 — `KEY_*` bitmask validation                |
-| API limits (255 key, 512 depth)           | ✅ Enforced in CM                             | ❌ No concept                                | ⬜ §2.6 P1 — constants defined, enforcement pending     |
-| `RegFlushKey` (forced sync)               | ✅ Bypasses lazy writer                       | ❌ No equivalent                              | ⬜ §2.7 P2 — per-hive flush                            |
-| `REG_OPTION_VOLATILE` (RAM-only keys)     | ✅ Volatile storage class                     | ❌ No concept                                | ⬜ §2.11 P2 — flag defined, enforcement pending         |
-| `RegCopyTree` / `RegRenameKey`            | ✅ Vista+ / NtRenameKey                       | ❌ No equivalent                              | ⬜ §2.8 P3 — recursive copy + in-place rename           |
-| `RegSaveKey` / `RegRestoreKey`            | ✅ Hive export/import                         | ❌ No equivalent                              | ⬜ §2.9 P3 — wraps `hive_save`/`hive_load`              |
-| Delayed Close Table (LRU cache)           | ✅ Hardcoded in CM                            | ❌ No implementation                          | ⬜ §2.10 P3 — **configurable cache size** 🚀            |
-| Typed helpers (GetDword, SetString)       | ⚠️ Only via raw RegQueryValueEx               | ❌ No concept                                | ✅ §2.4 — `RegGetDword`, `RegSetString` wrappers 🚀     |
-| One-shot read (`RegReadKeyValue`)         | ❌ Must open+query+close manually             | ❌ Different API                              | ✅ §2.4 — **single-call pattern** 🚀                    |
-| **Atomic registry transactions**          | ⚠️ KTM (deprecated, heavy-weight)             | ⚠️ dconf change_set (no rollback)             | ⬜ §2.12 P3 — **lightweight atomic batch** 🚀           |
-| **Native registry search API**            | ❌ Manual enumerate+match only                | ❌ No search                                  | ⬜ §2.13 P4 — **glob pattern search** 🚀                |
-| **Registry diff/compare**                 | ❌ Requires third-party RegShot               | ❌ No equivalent                              | ⬜ §2.14 P4 — **built-in snapshot diff** 🚀             |
-| **Pool garbage collection**               | ❌ Dynamic alloc (no pool)                    | ❌ Dynamic alloc (no pool)                    | ⬜ §2.15 P4 — **self-healing pool GC** 🚀               |
-| Error codes matching Win32                | ✅ Native                                     | ❌ errno-based                                | ✅ §2.1 — identical values (0, 2, 5, 6, 87, 234, 259)  |
-| Handle pool (no dynamic alloc)            | ❌ Dynamic kernel object allocation            | ❌ Dynamic allocation                         | ✅ §2.1 — **static pool, zero heap pressure** 🚀        |
-| Case-insensitive path walking             | ✅ NTFS-style                                 | ❌ Case-sensitive                             | ✅ §2.1 — FNV-1a with 0x20 fold (via Engine §1.1)      |
+| ⭐ | Feature                                | 🪟 Windows 11                         | 🐧 Linux                              | 🚀 Impossible OS                                    |
+| -- | -------------------------------------- | ------------------------------------- | -------------------------------------- | --------------------------------------------------- |
+| 💎 | `RegOpenKeyEx` / `RegCreateKeyEx`      | ✅ Native advapi32.dll                 | ❌ No concept                           | ✅ §2.1 — handle pool + path walk + REG_LINK         |
+| 💎 | `RegSetValueEx` / `RegQueryValueEx`    | ✅ Native advapi32.dll                 | ❌ dconf API (different)                 | ✅ §2.2 — full Win32 semantics + RRF flags           |
+| 💎 | `RegGetValue` (combined open+query)    | ✅ Added in Vista                      | ❌ No equivalent                         | ✅ §2.2 — auto-expand EXPAND_SZ, type filter         |
+| 💎 | `RegDeleteKey` / `RegDeleteTree`       | ✅ Native                              | ❌ `rm -rf` on config files              | ✅ §2.1 — recursive + access-denied for non-empty    |
+| 💎 | `RegEnumKeyEx` / `RegEnumValue`        | ✅ Native                              | ❌ `readdir` on config dirs              | ✅ §2.3 — index-based, correct error codes           |
+| 💎 | `RegQueryInfoKey`                      | ✅ Native                              | ❌ No equivalent                         | ✅ §2.3 — child/value counts, max lengths            |
+| 💎 | Access rights enforcement (`KEY_*`)    | ✅ Full DACL + ACL evaluation          | ⚠️ Unix permissions only                | ⬜ §2.5 P1 — `KEY_*` bitmask validation             |
+| 💎 | API limits (255 key, 512 depth)        | ✅ Enforced in CM                      | ❌ No concept                           | ⬜ §2.6 P1 — constants defined, enforcement pending  |
+| 💎 | `RegFlushKey` (forced sync)            | ✅ Bypasses lazy writer                | ❌ No equivalent                         | ⬜ §2.7 P2 — per-hive flush                         |
+| 💎 | `REG_OPTION_VOLATILE` (RAM-only keys)  | ✅ Volatile storage class              | ❌ No concept                           | ⬜ §2.11 P2 — flag defined, enforcement pending      |
+| 💎 | `RegCopyTree` / `RegRenameKey`         | ✅ Vista+ / NtRenameKey                | ❌ No equivalent                         | ⬜ §2.8 P3 — recursive copy + in-place rename        |
+| 💎 | `RegSaveKey` / `RegRestoreKey`         | ✅ Hive export/import                  | ❌ No equivalent                         | ⬜ §2.9 P3 — wraps `hive_save`/`hive_load`           |
+| ⭐ | **Delayed Close Table (LRU cache)**    | ✅ Hardcoded in CM                     | ❌ No implementation                     | ⬜ §2.10 P3 — **configurable cache size** 🚀         |
+| ⭐ | **Typed helpers (GetDword, SetString)**| ⚠️ Only via raw RegQueryValueEx        | ❌ No concept                           | ✅ §2.4 — `RegGetDword`, `RegSetString` wrappers 🚀  |
+| ⭐ | **One-shot read (`RegReadKeyValue`)**  | ❌ Must open+query+close manually      | ❌ Different API                         | ✅ §2.4 — **single-call pattern** 🚀                 |
+| ⭐ | **Atomic registry transactions**       | ⚠️ KTM (deprecated, heavy-weight)      | ⚠️ dconf change_set (no rollback)        | ⬜ §2.12 P3 — **lightweight atomic batch** 🚀        |
+| ⭐ | **Native registry search API**         | ❌ Manual enumerate+match only         | ❌ No search                             | ⬜ §2.13 P4 — **glob pattern search** 🚀             |
+| ⭐ | **Registry diff/compare**              | ❌ Requires third-party RegShot        | ❌ No equivalent                         | ⬜ §2.14 P4 — **built-in snapshot diff** 🚀          |
+| ⭐ | **Pool garbage collection**            | ❌ Dynamic alloc (no pool)             | ❌ Dynamic alloc (no pool)               | ⬜ §2.15 P4 — **self-healing pool GC** 🚀            |
+| 💎 | Error codes matching Win32             | ✅ Native                              | ❌ errno-based                           | ✅ §2.1 — identical values (0, 2, 5, 6, 87, 234, 259)|
+| ⭐ | **Handle pool (no dynamic alloc)**     | ❌ Dynamic kernel object allocation     | ❌ Dynamic allocation                    | ✅ §2.1 — **static pool, zero heap pressure** 🚀     |
+| 💎 | Case-insensitive path walking          | ✅ NTFS-style                          | ❌ Case-sensitive                        | ✅ §2.1 — FNV-1a with 0x20 fold (via Engine §1.1)   |
 
 > **After P0+P1 items:** Impossible OS matches Windows on core API surface + access rights +
 > limits enforcement. Exceeds Linux by having a native in-kernel typed registry store.

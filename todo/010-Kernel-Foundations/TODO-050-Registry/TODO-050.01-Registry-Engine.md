@@ -42,8 +42,8 @@ graph TD
 | ⭐ | Phase | Section                       | Description                                                             | Depends On     | Status |
 | -- | :---: | ----------------------------- | ----------------------------------------------------------------------- | -------------- | :----: |
 | 💎 | **1** | §1.1 Registry Data Structures | `reg_key_t`, `reg_value_t`, `HKEY`, static pools, FNV-1a hash           | —              |   ✅   |
-| 💎 | **2** | §1.2 Value Types              | `REG_SZ`..`REG_QWORD`, `EXPAND_SZ`, `MULTI_SZ`, `REG_LINK` redirection | Phase 1 (§1.1) |   ✅   |
-| 💎 | **3** | §1.3 Predefined Root Keys     | HKLM, HKCU, HKU, HKCR, HKCC + default sub-keys + redirection          | Phase 2 (§1.2) |   ✅   |
+| 💎 | **2** | §1.2 Value Types              | `REG_SZ`..`REG_QWORD`, `EXPAND_SZ`, `MULTI_SZ`, `REG_LINK` redirection  | Phase 1 (§1.1) |   ✅   |
+| 💎 | **3** | §1.3 Predefined Root Keys     | HKLM, HKCU, HKU, HKCR, HKCC + default sub-keys + redirection            | Phase 2 (§1.2) |   ✅   |
 
 > [!NOTE]
 > **All phases complete.** The core registry engine is fully implemented and verified.
@@ -165,11 +165,11 @@ graph TD
 
 ## Priority Order
 
-| Priority | Section                   | Description                                             |
-| -------- | ------------------------- | ------------------------------------------------------- |
-| ✅ Done  | §1.1 Data Structures      | Foundation: `reg_key_t`, `reg_value_t`, pools, hash     |
-| ✅ Done  | §1.2 Value Types          | All `REG_*` types + helpers (EXPAND_SZ, MULTI_SZ, LINK) |
-| ✅ Done  | §1.3 Predefined Root Keys | HKLM, HKCU, HKU, HKCR, HKCC hierarchy + redirection    |
+| Priority | Section                   | Description                                              |
+| -------- | ------------------------- | -------------------------------------------------------- |
+| ✅ Done  | §1.1 Data Structures      | Foundation: `reg_key_t`, `reg_value_t`, pools, hash      |
+| ✅ Done  | §1.2 Value Types          | All `REG_*` types + helpers (EXPAND_SZ, MULTI_SZ, LINK)  |
+| ✅ Done  | §1.3 Predefined Root Keys | HKLM, HKCU, HKU, HKCR, HKCC hierarchy + redirection      |
 
 > All items are ✅ complete.
 
@@ -177,18 +177,18 @@ graph TD
 
 ## OS Comparison
 
-| Feature                            | 🪟 Windows 11                   | 🐧 Linux                          | 🚀 Impossible OS                                  |
-| ---------------------------------- | ------------------------------- | ---------------------------------- | ------------------------------------------------- |
-| Hierarchical key/value store       | ✅ Full tree (NT hive format)    | ✅ dconf (GNOME), sysctl flat files | ✅ §1.1 — FNV-1a hash tree, static pools           |
-| Typed values (DWORD, SZ, BINARY)   | ✅ Full Win32 types              | ⚠️ Strings only (dconf: GVariant)  | ✅ §1.2 — All `REG_*` types                        |
-| Predefined root keys (HKLM, HKCU) | ✅ Sentinel handles              | ❌ No concept                       | ✅ §1.3 — Same sentinel addresses                  |
-| Per-user hive redirection (HKCU)   | ✅ HKCU → NTUser.dat             | ✅ Per-user home dir (XDG)          | ✅ §1.3 — HKCU → `HKU\{user}` auto-create         |
-| Merged class root (HKCR)           | ✅ Machine + user classes merged | ❌ No concept                       | ✅ §1.3 — `HKLM\SOFTWARE\Classes` merge            |
-| `REG_EXPAND_SZ` resolution         | ✅ `ExpandEnvironmentStrings()`  | ❌ Shell $VAR only                  | ✅ §1.2 — `%VAR%` from `HKLM\System\Environment`  |
-| `REG_MULTI_SZ` pack/unpack         | ✅ Double-null terminated        | ❌ No equivalent                    | ✅ §1.2 — count/get/pack helpers                   |
-| `REG_LINK` symbolic keys           | ✅ Transparent redirection       | ❌ No concept                       | ✅ §1.2 — flag-based + unnamed value lookup        |
-| Case-insensitive key lookup        | ✅ NTFS-style folding            | ❌ Case-sensitive paths             | ✅ §1.1 — FNV-1a with 0x20 case fold              |
-| **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation               | ✅ **§1.1 — Zero heap pressure** 🚀                |
+| ⭐ | Feature                            | 🪟 Windows 11                    | 🐧 Linux                            | 🚀 Impossible OS                                 |
+| -- | ---------------------------------- | --------------------------------- | ----------------------------------- | ------------------------------------------------- |
+| 💎 | Hierarchical key/value store       | ✅ Full tree (NT hive format)    | ✅ dconf (GNOME), sysctl flat files | ✅ §1.1 — FNV-1a hash tree, static pools         |
+| 💎 | Typed values (DWORD, SZ, BINARY)   | ✅ Full Win32 types              | ⚠️ Strings only (dconf: GVariant)   | ✅ §1.2 — All `REG_*` types                      |
+| 💎 | Predefined root keys (HKLM, HKCU)  | ✅ Sentinel handles              | ❌ No concept                       | ✅ §1.3 — Same sentinel addresses                |
+| 💎 | Per-user hive redirection (HKCU)   | ✅ HKCU → NTUser.dat             | ✅ Per-user home dir (XDG)          | ✅ §1.3 — HKCU → `HKU\{user}` auto-create        |
+| 💎 | Merged class root (HKCR)           | ✅ Machine + user classes merged | ❌ No concept                       | ✅ §1.3 — `HKLM\SOFTWARE\Classes` merge          |
+| 💎 | `REG_EXPAND_SZ` resolution         | ✅ `ExpandEnvironmentStrings()`  | ❌ Shell $VAR only                  | ✅ §1.2 — `%VAR%` from `HKLM\System\Environment` |
+| 💎 | `REG_MULTI_SZ` pack/unpack         | ✅ Double-null terminated        | ❌ No equivalent                    | ✅ §1.2 — count/get/pack helpers                 |
+| 💎 | `REG_LINK` symbolic keys           | ✅ Transparent redirection       | ❌ No concept                       | ✅ §1.2 — flag-based + unnamed value lookup      |
+| 💎 | Case-insensitive key lookup        | ✅ NTFS-style folding            | ❌ Case-sensitive paths             | ✅ §1.1 — FNV-1a with 0x20 case fold             |
+| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation               | ✅ **§1.1 — Zero heap pressure** 🚀              |
 
 > **Current state:** Impossible OS matches Windows feature-for-feature on core registry engine
 > capabilities. The static pool allocation model provides a competitive advantage over both

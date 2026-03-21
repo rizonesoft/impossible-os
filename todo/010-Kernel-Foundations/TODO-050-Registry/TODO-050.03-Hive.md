@@ -318,24 +318,24 @@ graph TD
 
 ## OS Comparison
 
-| Feature                                    | 🪟 Windows 11                                 | 🐧 Linux                                   | 🚀 Impossible OS                                            |
-| ------------------------------------------ | --------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------- |
-| Persistent hive file format                | ✅ REGF binary format (4 KiB base block)       | ❌ No hive concept (dconf binary db)         | ✅ §4.1 — `hive_header_t` (4 KiB, CRC32, page-aligned)      |
-| Multiple hive files per root key           | ✅ SYSTEM, SOFTWARE, SAM, SECURITY, DEFAULT    | ❌ No concept                                | ✅ §4.2 — 4 hive files under `Config\Registry\`              |
-| Dirty-flag lazy write (only changed)       | ✅ Configuration Manager lazy writer            | ⚠️ dconf background flush (user-space)      | ✅ §4.2 — `registry_mark_dirty` + compositor flush           |
-| CRC32 checksum validation                  | ✅ XOR-32 on Base Block                         | ❌ No checksum on dconf                      | ✅ §4.1 — CRC32 on header (0xEDB88320 polynomial)            |
-| Crash-safe transaction log                 | ✅ `.log1` / `.log2` dual-log strategy          | ❌ No crash-safe guarantee on dconf          | ✅ §4.3 — WAJ: `.hive.log` + `.hive.bak`                     |
-| Automatic crash recovery at boot           | ✅ Sequence number mismatch → replay logs       | ❌ No boot-time recovery                     | ✅ §4.3 — `hive_best_source` auto-recovery                   |
-| Backup hive (`*.bak`)                      | ⚠️ `RegBack` folder (deprecated Win10+)        | ❌ No backup                                 | ✅ §4.3 — `.hive.bak` on every save                          |
-| **Dual-log failover**                      | ✅ `.log1`/`.log2` alternating                  | ❌ No concept                                | ⬜ §4.4 P2 — **alternating dual-log WAJ** 🚀                 |
-| **Incremental delta flush**                | ❌ Full hive rewrite on flush                   | ❌ Full db rewrite                           | ⬜ §4.5 P2 — **dirty-page bitmap, partial writes** 🚀        |
-| **Hive integrity reporter**                | ❌ No built-in hive health check                | ❌ No concept                                | ⬜ §4.6 P3 — **`chkregistry` + health dashboard** 🚀         |
-| **Format versioning + auto-migration**     | ⚠️ regf v1.3/1.5 (no auto-migrate)             | ❌ No versioning                             | ⬜ §4.7 P3 — **version negotiation + auto-upgrade** 🚀       |
-| **Idle-time hive compaction**              | ❌ No defragmentation                           | ❌ No concept                                | ⬜ §4.8 P3 — **auto-compact on idle** 🚀                     |
-| **Kernel-space WAJ (not user-space)**      | ✅ Kernel Configuration Manager                 | ❌ dconf runs in user-space                  | ✅ §4.3 — **in-kernel WAJ, zero daemon overhead** 🚀         |
-| **PMM-based I/O buffer (no heap)**         | ❌ Dynamic paged pool allocation                | ❌ malloc-based                              | ✅ §4.1 — **pmm_alloc_contiguous, zero heap pressure** 🚀    |
-| **Table-less CRC32 (no lookup table)**     | ❌ Uses 1 KiB lookup table                      | ❌ Uses lookup table                         | ✅ §4.1 — **saves 1 KiB static data** 🚀                     |
-| **Auto-create config directory**           | ✅ Created by setup                              | ❌ Created by package manager                | ✅ §4.2 — **`hive_ensure_dir` on first boot** 🚀             |
+| ⭐ | Feature                                 | 🪟 Windows 11                            | 🐧 Linux                              | 🚀 Impossible OS                                         |
+| -- | --------------------------------------- | ---------------------------------------- | -------------------------------------- | -------------------------------------------------------- |
+| 💎 | Persistent hive file format             | ✅ REGF binary format (4 KiB base block)  | ❌ No hive concept (dconf binary db)    | ✅ §4.1 — `hive_header_t` (4 KiB, CRC32, page-aligned)   |
+| 💎 | Multiple hive files per root key        | ✅ SYSTEM, SOFTWARE, SAM, SECURITY        | ❌ No concept                           | ✅ §4.2 — 4 hive files under `Config\Registry\`           |
+| 💎 | Dirty-flag lazy write (only changed)    | ✅ Configuration Manager lazy writer       | ⚠️ dconf background flush (user-space) | ✅ §4.2 — `registry_mark_dirty` + compositor flush        |
+| 💎 | CRC32 checksum validation               | ✅ XOR-32 on Base Block                    | ❌ No checksum on dconf                 | ✅ §4.1 — CRC32 on header (0xEDB88320 polynomial)         |
+| 💎 | Crash-safe transaction log              | ✅ `.log1` / `.log2` dual-log strategy     | ❌ No crash-safe guarantee on dconf     | ✅ §4.3 — WAJ: `.hive.log` + `.hive.bak`                  |
+| 💎 | Automatic crash recovery at boot        | ✅ Sequence number mismatch → replay logs  | ❌ No boot-time recovery                | ✅ §4.3 — `hive_best_source` auto-recovery                |
+| 💎 | Backup hive (`*.bak`)                   | ⚠️ `RegBack` folder (deprecated Win10+)   | ❌ No backup                            | ✅ §4.3 — `.hive.bak` on every save                       |
+| 💎 | Dual-log failover                       | ✅ `.log1`/`.log2` alternating             | ❌ No concept                           | ⬜ §4.4 P2 — alternating dual-log WAJ                    |
+| ⭐ | **Incremental delta flush**             | ❌ Full hive rewrite on flush              | ❌ Full db rewrite                      | ⬜ §4.5 P2 — **dirty-page bitmap, partial writes** 🚀     |
+| ⭐ | **Hive integrity reporter**             | ❌ No built-in hive health check           | ❌ No concept                           | ⬜ §4.6 P3 — **`chkregistry` + health dashboard** 🚀      |
+| ⭐ | **Format versioning + auto-migration**  | ⚠️ regf v1.3/1.5 (no auto-migrate)        | ❌ No versioning                        | ⬜ §4.7 P3 — **version negotiation + auto-upgrade** 🚀    |
+| ⭐ | **Idle-time hive compaction**           | ❌ No defragmentation                      | ❌ No concept                           | ⬜ §4.8 P3 — **auto-compact on idle** 🚀                  |
+| ⭐ | **Kernel-space WAJ (not user-space)**   | ✅ Kernel Configuration Manager            | ❌ dconf runs in user-space             | ✅ §4.3 — **in-kernel WAJ, zero daemon overhead** 🚀      |
+| ⭐ | **PMM-based I/O buffer (no heap)**      | ❌ Dynamic paged pool allocation           | ❌ malloc-based                         | ✅ §4.1 — **pmm_alloc_contiguous, zero heap pressure** 🚀 |
+| ⭐ | **Table-less CRC32 (no lookup table)**  | ❌ Uses 1 KiB lookup table                 | ❌ Uses lookup table                    | ✅ §4.1 — **saves 1 KiB static data** 🚀                  |
+| ⭐ | **Auto-create config directory**        | ✅ Created by setup                         | ❌ Created by package manager           | ✅ §4.2 — **`hive_ensure_dir` on first boot** 🚀          |
 
 > **After §4.1–4.3 (✅):** Impossible OS provides full hive persistence with crash-safe
 > journaling. The in-kernel WAJ protocol, PMM-based I/O buffers, and auto-directory creation
