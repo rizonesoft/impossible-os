@@ -2,13 +2,13 @@
 
 ## Architecture and Implementation Specification for Confidential VM MMIO in Custom Operating Systems
 
-| Field          | Value                                    |
-|----------------|------------------------------------------|
-| **Status**     | Draft                                    |
-| **Version**    | 1.0                                      |
-| **Date**       | 2026-03-20                               |
-| **Target**     | Impossible OS — x86-64 Long Mode         |
-| **References** | Hyper-V TLFS v6.0b, Intel TDX Module 1.5, AMD SEV-SNP ABI |
+| Field          | Value                                                        |
+| -------------- | ------------------------------------------------------------ |
+| **Status**     | Draft                                                        |
+| **Version**    | 1.0                                                          |
+| **Date**       | 2026-03-20                                                   |
+| **Target**     | Impossible OS — x86-64 Long Mode                             |
+| **References** | Hyper-V TLFS v6.0b, Intel TDX Module 1.5, AMD SEV-SNP ABI   |
 
 ---
 
@@ -115,12 +115,12 @@ within an isolated environment:
 
 #### AMD SEV-SNP: The #VC Exception
 
-| Property            | Detail                                              |
-|---------------------|-----------------------------------------------------|
-| **Exception Type**  | `#VC` (VMM Communication Exception, vector 29)      |
-| **Trigger**         | Instructions accessing unmapped or protected MMIO    |
-| **Guest Decode**    | Guest has crypto keys — can read its own instruction stream |
-| **Communication**   | Guest Hypervisor Communication Block (GHCB)          |
+| Property           | Detail                                                       |
+| ------------------ | ------------------------------------------------------------ |
+| **Exception Type** | `#VC` (VMM Communication Exception, vector 29)               |
+| **Trigger**        | Instructions accessing unmapped or protected MMIO            |
+| **Guest Decode**   | Guest has crypto keys — can read its own instruction stream  |
+| **Communication**  | Guest Hypervisor Communication Block (GHCB)                  |
 
 The `#VC` handler must implement logic to:
 1. Read from the source operand
@@ -134,16 +134,17 @@ The `#VC` handler must implement logic to:
 
 #### Intel TDX: The #VE Exception
 
-| Property            | Detail                                              |
-|---------------------|-----------------------------------------------------|
-| **Exception Type**  | `#VE` (Virtualization Exception, vector 20)          |
-| **Trigger**         | Accessing unmapped MMIO region                       |
-| **MMIO Mechanism**  | `TDCALL` formatted as `TDG.VP.VMCALL <#VE.RequestMMIO>` |
-| **Shared Bit**      | Guest must toggle the **S-bit** in the GPA           |
+| Property           | Detail                                                       |
+| ------------------ | ------------------------------------------------------------ |
+| **Exception Type** | `#VE` (Virtualization Exception, vector 20)                  |
+| **Trigger**        | Accessing unmapped MMIO region via EPT violation              |
+| **MMIO Mechanism** | `TDG.VP.VMCALL` with MMIO sub-function via `TDCALL`          |
+| **Shared Bit**     | Guest must set the **Shared bit** (highest GPA bit) to 1     |
 
 Under Intel TDX, MMIO is treated strictly as shared memory and **cannot** be accessed via
-direct memory read/write instructions. If the GPA Width (GPAW) is 48 bits, the Shared bit
-must be toggled accordingly to permit hypervisor interaction.
+direct memory read/write instructions. The guest must set the Shared bit (the highest-order
+bit of the GPA, bit 47 for GPAW=48 or bit 51 for GPAW=52) to mark the address as shared,
+permitting hypervisor interaction.
 
 > [!WARNING]
 > Hyper-V does **not** support guest VMs utilizing older AMD Secure Memory Encryption (SME)
@@ -152,11 +153,11 @@ must be toggled accordingly to permit hypervisor interaction.
 
 #### ARM64 pKVM: Exception Level Isolation
 
-| Property            | Detail                                              |
-|---------------------|-----------------------------------------------------|
-| **Isolation Level** | Exception Level 2 (EL2) isolated memory protections  |
-| **Guard**           | MMIO Guard mediates access between EL1 guest and host|
-| **Specification**   | Firmware Framework for Arm (FF-A) for page sharing   |
+| Property           | Detail                                                       |
+| ------------------ | ------------------------------------------------------------ |
+| **Isolation Level** | Exception Level 2 (EL2) isolated memory protections         |
+| **Guard**          | MMIO Guard mediates access between EL1 guest and host        |
+| **Specification**  | Firmware Framework for Arm (FF-A) for page sharing           |
 
 ### 2.4 The Hyper-V Abstraction Layer
 
@@ -197,12 +198,12 @@ capability enumeration:
 
 #### CPUID Detection Sequence
 
-| Step | CPUID Leaf     | Register | Check                                    |
-|------|----------------|----------|------------------------------------------|
-| 1    | `0x00000001`   | ECX[31]  | Hypervisor present bit set               |
-| 2    | `0x40000000`   | EAX      | Maximum supported CPUID leaf             |
-|      |                | EBX:ECX:EDX | Vendor signature (`"Microsoft Hv"`)   |
-| 3    | `0x40000003`   | Various  | Extended capabilities and feature flags  |
+| Step | CPUID Leaf   | Register    | Check                                    |
+| ---- | ------------ | ----------- | ---------------------------------------- |
+| 1    | `0x00000001` | ECX[31]     | Hypervisor present bit set               |
+| 2    | `0x40000000` | EAX         | Maximum supported CPUID leaf             |
+|      |              | EBX:ECX:EDX | Vendor signature (`"Microsoft Hv"`)      |
+| 3    | `0x40000003` | Various     | Extended capabilities and feature flags  |
 
 ```c
 /* Hypervisor detection pseudocode */
@@ -275,19 +276,19 @@ Hyper-V enforces a strict ABI for executing hypercalls:
 
 #### Register Conventions by Architecture
 
-| Architecture    | Call Code | Input Param 1         | Input Param 2         | Output            | Volatile Registers     |
-|-----------------|-----------|-----------------------|-----------------------|-------------------|------------------------|
-| x64 (Standard)  | RCX       | RDX (GPA of input)    | R8 (GPA of output)    | RCX (result)      | Output struct modified |
-| x64 (Fast)      | RCX       | RDX                   | R8                    | RAX               | RDI, RSI for inputs 3/4|
-| ARM64 (SMCCC)   | X0        | X1                    | X2                    | X0 (result)       | X1-X17 unmodified      |
+| Architecture   | Call Code | Input Param 1      | Input Param 2      | Output       | Volatile Registers      |
+| -------------- | --------- | ------------------ | ------------------ | ------------ | ----------------------- |
+| x64 (Standard) | RCX      | RDX (GPA of input) | R8 (GPA of output) | RCX (result) | Output struct modified  |
+| x64 (Fast)     | RCX      | RDX                | R8                 | RAX          | RDI, RSI for inputs 3/4 |
+| ARM64 (SMCCC)  | X0       | X1                 | X2                 | X0 (result)  | X1-X17 unmodified       |
 
 #### Hypercall Types
 
-| Type       | Description                                          | Optimization       |
-|------------|------------------------------------------------------|---------------------|
-| **Simple** | Single task with fixed-size inputs                   | General purpose     |
-| **Rep**    | Repeated task over a list of elements                | High throughput     |
-| **Fast**   | Parameters passed via registers (no memory buffers)  | Low latency         |
+| Type       | Description                                         | Optimization    |
+| ---------- | --------------------------------------------------- | --------------- |
+| **Simple** | Single task with fixed-size inputs                  | General purpose |
+| **Rep**    | Repeated task over a list of elements               | High throughput |
+| **Fast**   | Parameters passed via registers (no memory buffers) | Low latency     |
 
 The input value loaded into RCX is the hypercall ID **encoded alongside control flags**:
 
@@ -296,14 +297,15 @@ The input value loaded into RCX is the hypercall ID **encoded alongside control 
 typedef union {
     uint64_t as_u64;
     struct {
-        uint64_t call_code   : 16;  /* Hypercall ID */
-        uint64_t fast        : 1;   /* Use fast (register) calling */
-        uint64_t var_hdr_sz  : 9;   /* Variable header size / 8 */
-        uint64_t reserved    : 6;
-        uint64_t rep_count   : 12;  /* Rep call element count */
-        uint64_t reserved2   : 4;
-        uint64_t rep_start   : 12;  /* Rep call start index */
-        uint64_t reserved3   : 4;
+        uint64_t call_code   : 16;  /* Bits 15:0  — Hypercall ID */
+        uint64_t fast        : 1;   /* Bit  16    — Use fast (register) calling */
+        uint64_t var_hdr_sz  : 9;   /* Bits 26:17 — Variable header size / 8 */
+        uint64_t reserved    : 4;   /* Bits 30:27 — Must be zero */
+        uint64_t is_nested   : 1;   /* Bit  31    — Process at L0 in nested virt */
+        uint64_t rep_count   : 12;  /* Bits 43:32 — Rep call element count */
+        uint64_t reserved2   : 4;   /* Bits 47:44 — Must be zero */
+        uint64_t rep_start   : 12;  /* Bits 59:48 — Rep call start index */
+        uint64_t reserved3   : 4;   /* Bits 63:60 — Must be zero */
     };
 } hv_hypercall_input_t;
 ```
@@ -433,17 +435,17 @@ custom OS must implement explicit MMIO routing structures.
 
 #### Input Structure: `hv_mmio_read_input`
 
-| Field        | Type   | Description                                          |
-|--------------|--------|------------------------------------------------------|
-| `gpa`        | `u64`  | Guest Physical Address of the MMIO register to read  |
-| `size`       | `u32`  | Size of the read operation (1, 2, 4, or 8 bytes)     |
-| `reserved`   | `u32`  | Padding for 64-bit alignment                         |
+| Field      | Type  | Description                                         |
+| ---------- | ----- | --------------------------------------------------- |
+| `gpa`      | `u64` | Guest Physical Address of the MMIO register to read |
+| `size`     | `u32` | Size of the read operation (1, 2, 4, or 8 bytes)    |
+| `reserved` | `u32` | Padding for 64-bit alignment                        |
 
 #### Output Structure: `hv_mmio_read_output`
 
-| Field    | Type       | Description                                           |
-|----------|------------|-------------------------------------------------------|
-| `data`   | `u8[32]`   | Array holding the read value (up to `HV_HYPERCALL_MMIO_MAX_DATA_LENGTH`) |
+| Field  | Type     | Description                                                              |
+| ------ | -------- | ------------------------------------------------------------------------ |
+| `data` | `u8[32]` | Array holding the read value (up to `HV_HYPERCALL_MMIO_MAX_DATA_LENGTH`) |
 
 #### Implementation
 
@@ -499,12 +501,12 @@ static uint64_t hv_mmio_read(uint64_t gpa, uint32_t size) {
 
 #### Input Structure: `hv_mmio_write_input`
 
-| Field        | Type       | Description                                        |
-|--------------|------------|----------------------------------------------------|
-| `gpa`        | `u64`      | Guest Physical Address of the MMIO register        |
-| `size`       | `u32`      | Size of the write payload (1, 2, 4, or 8 bytes)    |
-| `reserved`   | `u32`      | Padding for memory alignment                       |
-| `data`       | `u8[32]`   | Raw data payload to be written to the device       |
+| Field      | Type     | Description                                     |
+| ---------- | -------- | ----------------------------------------------- |
+| `gpa`      | `u64`    | Guest Physical Address of the MMIO register     |
+| `size`     | `u32`    | Size of the write payload (1, 2, 4, or 8 bytes) |
+| `reserved` | `u32`    | Padding for memory alignment                    |
+| `data`     | `u8[32]` | Raw data payload to be written to the device    |
 
 #### Implementation
 
@@ -559,12 +561,12 @@ encounter **indecipherable encrypted ciphertext** unless explicitly decrypted.
 
 #### Required Memory Transitions for VMBus
 
-| VMBus Resource                    | Action Required                              |
-|-----------------------------------|----------------------------------------------|
-| Monitor pages                     | Transition to host-visible via PRESENT shield |
-| Primary ring buffer mappings      | Mark as decrypted in guest page tables        |
-| Secondary memory mappings         | Propagate "decrypted" attribute               |
-| SynIC message/event flag pages    | Share with hypervisor (unless paravisor handles) |
+| VMBus Resource                 | Action Required                                  |
+| ------------------------------ | ------------------------------------------------ |
+| Monitor pages                  | Transition to host-visible via PRESENT shield    |
+| Primary ring buffer mappings   | Mark as decrypted in guest page tables           |
+| Secondary memory mappings      | Propagate "decrypted" attribute                  |
+| SynIC message/event flag pages | Share with hypervisor (unless paravisor handles) |
 
 > [!WARNING]
 > Failure to manage encryption states breaks fundamental Hyper-V Integration Services.
@@ -573,11 +575,11 @@ encounter **indecipherable encrypted ciphertext** unless explicitly decrypted.
 
 #### Affected Data Structures
 
-| Structure       | Description                              | VMBus Channel           |
-|-----------------|------------------------------------------|-------------------------|
-| `hv_kvp_msg`    | Key-Value Pair exchange messages         | KVP Exchange IC         |
-| `hv_vss_msg`    | Volume Shadow Copy Service messages      | VSS IC                  |
-| Ring buffers    | Bidirectional data transfer              | All VMBus channels      |
+| Structure      | Description                         | VMBus Channel      |
+| -------------- | ----------------------------------- | ------------------ |
+| `hv_kvp_msg`   | Key-Value Pair exchange messages    | KVP Exchange IC    |
+| `hv_vss_msg`   | Volume Shadow Copy Service messages | VSS IC             |
+| Ring buffers   | Bidirectional data transfer         | All VMBus channels |
 
 ### 6.2 Virtual PCI Configuration Space
 
@@ -620,12 +622,12 @@ attack vector: **malicious peripheral injection and unauthorized DMA**.
 
 ### 7.1 Principles of the MMIO Guard
 
-| Principle                   | Description                                        |
-|-----------------------------|----------------------------------------------------|
-| **Strict Enrollment**       | Guest explicitly enrolls pages into MMIO guard     |
-| **Default Private**         | All pages are private unless explicitly authorized  |
-| **Stage-2 Enforcement**     | Hardware MMU/IOMMU blocks unauthorized transactions |
-| **Per-Page Granularity**    | Authorization is granted at individual page level   |
+| Principle                | Description                                         |
+| ------------------------ | --------------------------------------------------- |
+| **Strict Enrollment**    | Guest explicitly enrolls pages into MMIO guard      |
+| **Default Private**      | All pages are private unless explicitly authorized  |
+| **Stage-2 Enforcement**  | Hardware MMU/IOMMU blocks unauthorized transactions |
+| **Per-Page Granularity** | Authorization is granted at individual page level   |
 
 ```
 ┌─────────────────────────────────────────────┐
@@ -682,18 +684,18 @@ itself using Virtualization-Based Security (VBS).
 
 ### 8.1 Virtual Trust Levels
 
-| VTL   | Name               | Purpose                              |
-|-------|--------------------|--------------------------------------|
-| VTL0  | Normal OS          | Standard operating system execution  |
-| VTL1  | Secure Kernel      | Credential Guard, HVCI, secure enclave |
+| VTL  | Name          | Purpose                                 |
+| ---- | ------------- | ---------------------------------------- |
+| VTL0 | Normal OS     | Standard operating system execution      |
+| VTL1 | Secure Kernel | Credential Guard, HVCI, secure enclave   |
 
 ### 8.2 Cross-VTL Hypercalls
 
-| Hypercall                      | ID       | Description                              |
-|--------------------------------|----------|------------------------------------------|
-| `HvVtlCall`                   | `0x0011` | Switch execution context VTL0 → VTL1     |
-| `HvVtlReturn`                 | `0x0012` | Return execution context VTL1 → VTL0     |
-| `HvCallModifyVtlProtectionMask` | —      | Prevent lower VTLs from tampering MMIO   |
+| Hypercall                        | ID       | Description                            |
+| -------------------------------- | -------- | -------------------------------------- |
+| `HvVtlCall`                      | `0x0011` | Switch execution context VTL0 → VTL1   |
+| `HvVtlReturn`                    | `0x0012` | Return execution context VTL1 → VTL0   |
+| `HvCallModifyVtlProtectionMask`  | —        | Prevent lower VTLs from tampering MMIO |
 
 > [!WARNING]
 > A custom OS implementing VBS must **strictly validate all MMIO payload sizes and memory
@@ -706,12 +708,12 @@ itself using Virtualization-Based Security (VBS).
 
 ### 9.1 Uninitialized Memory Leaks — CVE-2018-0888
 
-| Property     | Detail                                                          |
-|--------------|-----------------------------------------------------------------|
-| **Component**| `BatteryEmulator::MmioRead()` in VMWP                          |
-| **Root Cause**| Output buffer allocated but **not fully initialized**          |
-| **Impact**   | Guest could read residual heap data from root partition          |
-| **Data Leaked**| ASLR offsets, cryptographic key fragments                     |
+| Property       | Detail                                                 |
+| -------------- | ------------------------------------------------------ |
+| **Component**  | `BatteryEmulator::MmioRead()` in VMWP                  |
+| **Root Cause** | Output buffer allocated but **not fully initialized**  |
+| **Impact**     | Guest could read residual heap data from root partition |
+| **Data Leaked**| ASLR offsets, cryptographic key fragments               |
 
 **Mitigation for custom OS:** Rigorously validate `hv_mmio_read_input.size` and
 `hv_mmio_write_input.size` before dispatch. Zero all output buffers before use.
@@ -723,14 +725,17 @@ The VMWP assigns PCI devices via `VpciBus` using ioctls like
 channel security and MMIO Guards, an attacker could forge malicious ioctl messages to achieve
 **complete virtual machine escape**.
 
-### 9.3 Mobile Architecture MMIO Bypass — CVE-2024-32897
+### 9.3 Mobile Architecture Memory Safety — CVE-2024-32897
 
-Demonstrates that MMIO guard bypass is not limited to server hypervisors:
+Demonstrates that memory safety vulnerabilities extend beyond server hypervisors into
+mobile baseband firmware:
 
-| Scenario                           | Effect                                       |
-|------------------------------------|----------------------------------------------|
-| MMIO guard pages omitted           | Modem AT command injection bypasses SELinux   |
-| "Force GPU Rendering" enabled      | Memory protection degraded by ~5×             |
+| Property       | Detail                                                         |
+| -------------- | -------------------------------------------------------------- |
+| **Component**  | `ProtocolCdmaCallWaitingIndAdapter::GetCwInfo()` in baseband   |
+| **Root Cause** | Out-of-bounds read in modem protocol adapter                   |
+| **Impact**     | Remote information disclosure (requires baseband compromise)   |
+| **Relevance**  | Illustrates MMIO-adjacent attack surface in embedded firmware  |
 
 > [!CAUTION]
 > A custom OS must **hardcode** its MMIO Safety configurations. User-space configurations
@@ -780,16 +785,16 @@ trusted as an omnipotent, transparent emulator.
 
 ### Summary of Requirements
 
-| Requirement                        | Implementation                                  |
-|------------------------------------|--------------------------------------------------|
-| Explicit MMIO routing              | `HVCALL_MMIO_READ` (0x0106) / `HVCALL_MMIO_WRITE` (0x0107) |
-| Page table transitions             | PRESENT bit clearing during visibility changes    |
-| VMBus shared memory                | Explicit decryption marking for ring buffers      |
-| vPCI configuration                 | Frontend driver routing through hypercalls        |
-| MMIO Guard                         | Per-page enrollment, stage-2 enforcement          |
-| Bounce buffers                     | Isolated shared regions for virtio communication  |
-| Double-fetch prevention            | Single-copy to private memory before use          |
-| VBS/VTL isolation                  | Strict payload validation across VTL boundaries   |
+| Requirement             | Implementation                                              |
+| ----------------------- | ----------------------------------------------------------- |
+| Explicit MMIO routing   | `HVCALL_MMIO_READ` (0x0106) / `HVCALL_MMIO_WRITE` (0x0107) |
+| Page table transitions  | PRESENT bit clearing during visibility changes              |
+| VMBus shared memory     | Explicit decryption marking for ring buffers                |
+| vPCI configuration      | Frontend driver routing through hypercalls                  |
+| MMIO Guard              | Per-page enrollment, stage-2 enforcement                    |
+| Bounce buffers          | Isolated shared regions for virtio communication            |
+| Double-fetch prevention | Single-copy to private memory before use                    |
+| VBS/VTL isolation       | Strict payload validation across VTL boundaries             |
 
 ### Design Principles
 
