@@ -1228,45 +1228,49 @@ graph TD
 
 ## OS Comparison
 
-| Feature                              | 🪟 Windows 11 (ntfs.sys)           | 🐧 Linux (ntfs3 / ntfs-3g)         | 🚀 Impossible OS                                  |
-| ------------------------------------ | ---------------------------------- | ----------------------------------- | ------------------------------------------------- |
-| BPB parsing                          | ✅ Native                           | ✅ Full                              | ⬜ §1.1 P0                                         |
-| MFT record reading                   | ✅ Native                           | ✅ Full                              | ⬜ §2.1 P0                                         |
-| Update Sequence Array (fixup)        | ✅ Full                             | ✅ Full                              | ⬜ §2.2 P0                                         |
-| Attribute parsing (all types)        | ✅ All 14 types                     | ✅ All types                         | ⬜ §3.1–3.6 (core + security + reparse)            |
-| `$STANDARD_INFORMATION`              | ✅ Full                             | ✅ Full                              | ⬜ §3.2 P1                                         |
-| `$FILE_NAME` (multi-namespace)       | ✅ Win32 + DOS + POSIX              | ✅ Full                              | ⬜ §3.3 P0                                         |
-| `$ATTRIBUTE_LIST` (extensions)       | ✅ Full                             | ✅ Full                              | ⬜ §3.4 P2                                         |
-| `$SECURITY_DESCRIPTOR` / ACLs        | ✅ Full DACL/SACL                   | ✅ ntfs3 full / ntfs-3g limited      | ⬜ §3.5 P2                                         |
-| `$REPARSE_POINT` (symlinks)          | ✅ Full (symlinks, junctions)       | ✅ ntfs3 full                        | ⬜ §3.6 P2                                         |
-| Data run decoding                    | ✅ Full                             | ✅ Full                              | ⬜ §4.1 P0                                         |
-| Sparse file support                  | ✅ Native                           | ✅ Full                              | ⬜ §4.1 (sparse runs)                              |
-| File reading (resident + non-res)    | ✅ Full                             | ✅ Full                              | ⬜ §4.2 P1                                         |
-| B+ tree directory indexing           | ✅ Full                             | ✅ Full                              | ⬜ §5.1–5.3 P1                                     |
-| Directory enumeration (readdir)      | ✅ Full                             | ✅ Full                              | ⬜ §5.4 P2                                         |
-| Path resolution                      | ✅ Full                             | ✅ Full                              | ⬜ §5.3 P1                                         |
-| VFS / kernel integration             | ✅ Native (ntfs.sys)                | ✅ FUSE (ntfs-3g) / Native (ntfs3)   | ⬜ §6.1 P1                                         |
-| Volume label / dirty flag            | ✅ Full                             | ✅ Full                              | ⬜ §7.1 P2                                         |
-| Free space queries                   | ✅ Full                             | ✅ Full                              | ⬜ §7.1 P2                                         |
-| `$UpCase` case folding               | ✅ Full Unicode                     | ✅ Full Unicode                      | ⬜ §7.1 P2 (ASCII fallback)                        |
-| LZNT1 compressed file reading        | ✅ Native                           | ✅ ntfs-3g read-only / ntfs3 full    | ⬜ §9.1 P2                                         |
-| MFT record caching                   | ✅ Windows cache manager            | ✅ Page cache                        | ⬜ §10.1 P2                                        |
-| Write support                        | ✅ Full R/W                         | ✅ Full R/W (ntfs3 / ntfs-3g FUSE)   | ⬜ §12 P4 — full R/W                               |
-| Journaling recovery (`$LogFile`)     | ✅ Full                             | ✅ ntfs-3g replays log               | ⬜ §13 P4 — txn engine + dirty replay              |
-| Alternate Data Streams               | ✅ Native                           | ✅ ntfs-3g / ntfs3                   | ⬜ Future (routed via VFS §2.1)                    |
-| Full read-only driver                | ✅                                  | ✅                                   | ⬜ Requires §1–§6 at minimum                       |
-| Full read-write driver               | ✅                                  | ✅ ntfs-3g (FUSE) / ntfs3 (native)   | ⬜ Requires §1–§14 + §16                           |
-| **Volume health dashboard**          | ❌ Spread across multiple tools     | ❌ CLI `ntfsinfo` only               | ⬜ **§11.1 P3 — one-panel health** ⭐               |
-| **Deleted file recovery**            | ❌ Requires third-party (Recuva)    | ⚠️ CLI `ntfsundelete` only           | ⬜ **§11.2 P3 — built-in GUI recovery** ⭐          |
-| **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output     | ❌ Not available                     | ⬜ **§11.1 — visual MFT density map** ⭐            |
-| **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)  | ❌ `find` / `locate` (CLI only)      | ⬜ **Direct MFT walk + metadata filter** ⭐         |
-| **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)              | ❌ `getfattr` (CLI only)             | ⬜ **§17.1 P3 — hidden data transparency** ⭐       |
-| **NTFS-to-IXFS migration**           | ❌ Not available                    | ❌ Not available                     | ⬜ **§18.1 Future — one-click migration** ⭐        |
-| **NTFS as `C:\` boot volume**        | ✅ Native (default)                 | ❌ Not supported                     | ⬜ **§15 P4 — boot-time init + layout** ⭐          |
-| **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                | ❌ CLI only                          | ✅ **Done — Selawik Semibold, atlas pre-baked** ⭐   |
+| Feature                              | 🪟 Windows 11 (ntfs.sys)            | 🐧 Linux (ntfs3 / ntfs-3g)          | 🚀 Impossible OS                                     |
+| ------------------------------------ | ----------------------------------- | ------------------------------------ | ----------------------------------------------------- |
+| BPB parsing                          | ✅ Native                            | ✅ Full                               | ✅ Done — `ntfs_init()` in `ntfs_core.c`               |
+| MFT record reading                   | ✅ Native                            | ✅ Full                               | ✅ Done — `ntfs_read_mft_record()`                     |
+| Update Sequence Array (fixup)        | ✅ Full                              | ✅ Full                               | ✅ Done — `ntfs_apply_fixup()` (FILE + INDX)           |
+| Attribute parsing (all types)        | ✅ All 14 types                      | ✅ All types                          | ⚠️ §3.1–3.3 ✅ / §3.4–3.6 ⬜ P2                        |
+| `$STANDARD_INFORMATION`              | ✅ Full                              | ✅ Full                               | ✅ Done — `ntfs_decode_std_info()`, FILETIME→Unix      |
+| `$FILE_NAME` (multi-namespace)       | ✅ Win32 + DOS + POSIX               | ✅ Full                               | ✅ Done — `ntfs_decode_file_name()`, namespace prio    |
+| `$ATTRIBUTE_LIST` (extensions)       | ✅ Full                              | ✅ Full                               | ⬜ §3.4 P2                                             |
+| `$SECURITY_DESCRIPTOR` / ACLs        | ✅ Full DACL/SACL                    | ✅ ntfs3 full / ntfs-3g limited       | ⬜ §3.5 P2                                             |
+| `$REPARSE_POINT` (symlinks)          | ✅ Full (symlinks, junctions)        | ✅ ntfs3 full                         | ⬜ §3.6 P2                                             |
+| Data run decoding                    | ✅ Full                              | ✅ Full                               | ✅ Done — `ntfs_decode_data_runs()`, sparse support    |
+| Sparse file support                  | ✅ Native                            | ✅ Full                               | ✅ Done — `NTFS_LCN_SPARSE` zero-fill in reader       |
+| File reading (resident + non-res)    | ✅ Full                              | ✅ Full                               | ✅ Done — `ntfs_read_file_data()` auto-dispatch        |
+| B+ tree directory indexing           | ✅ Full                              | ✅ Full                               | ⚠️ §5.1–5.2 ✅ / §5.3 ⬜ P1                            |
+| Directory enumeration (readdir)      | ✅ Full                              | ✅ Full                               | ⬜ §5.4 P2                                             |
+| Path resolution                      | ✅ Full                              | ✅ Full                               | ⬜ §5.3 P1                                             |
+| VFS / kernel integration             | ✅ Native (ntfs.sys)                 | ✅ FUSE (ntfs-3g) / Native (ntfs3)    | ⬜ §6.1 P1                                             |
+| Volume label / dirty flag            | ✅ Full                              | ✅ Full                               | ⬜ §7.1 P2                                             |
+| Free space queries                   | ✅ Full                              | ✅ Full                               | ⬜ §7.1 P2                                             |
+| `$UpCase` case folding               | ✅ Full Unicode                      | ✅ Full Unicode                       | ⬜ §7.1 P2 (ASCII fallback)                            |
+| LZNT1 compressed file reading        | ✅ Native                            | ✅ ntfs-3g read-only / ntfs3 full     | ⬜ §9.1 P2                                             |
+| MFT record caching                   | ✅ Windows cache manager             | ✅ Page cache                         | ⬜ §10.1 P2                                            |
+| Write support                        | ✅ Full R/W                          | ✅ Full R/W (ntfs3 / ntfs-3g FUSE)    | ⬜ §12 P4 — full R/W                                   |
+| Journaling recovery (`$LogFile`)     | ✅ Full                              | ✅ ntfs-3g replays log                | ⬜ §13 P4 — txn engine + dirty replay                  |
+| Alternate Data Streams               | ✅ Native                            | ✅ ntfs-3g / ntfs3                    | ⬜ §17.1 P3 — GUI ADS explorer                        |
+| Full read-only driver                | ✅                                   | ✅                                    | ⚠️ Requires §5.3 + §6.1 to complete                   |
+| Full read-write driver               | ✅                                   | ✅ ntfs-3g (FUSE) / ntfs3 (native)    | ⬜ Requires §1–§14 + §16                               |
+| Disk quotas                          | ✅ Per-user quotas via `$Quota`      | ⬜ Not exposed by ntfs3               | ⬜ §7.1 P2 — read `$Quota` for GUI display             |
+| Hibernation detection                | ⚠️ Silent — mounts normally          | ✅ ntfs3 blocks R/W on hibernated     | ⬜ **§7.1 — detect + warn, block writes** ⭐            |
+| EFS encrypted file detection         | ✅ Native decrypt                    | ❌ Cannot access EFS content          | ⬜ **§3.1 — detect + flag, no decrypt** ⭐              |
+| TRIM / discard passthrough           | ✅ Native SSD TRIM                   | ✅ ntfs3 TRIM support                 | ⬜ **§12.1 — TRIM on cluster free** ⭐                  |
+| **Volume health dashboard**          | ❌ Spread across multiple tools      | ❌ CLI `ntfsinfo` only                | ⬜ **§11.1 P3 — one-panel health** ⭐                   |
+| **Deleted file recovery**            | ❌ Requires third-party (Recuva)     | ⚠️ CLI `ntfsundelete` only            | ⬜ **§11.2 P3 — built-in GUI recovery** ⭐              |
+| **MFT fragmentation heatmap**        | ❌ Hidden in `defrag /a` output      | ❌ Not available                      | ⬜ **§11.1 — visual MFT density map** ⭐                |
+| **Smart file search (MFT scan)**     | ⚠️ Windows Search (requires index)   | ❌ `find` / `locate` (CLI only)       | ⬜ **Direct MFT walk + metadata filter** ⭐             |
+| **ADS explorer (GUI)**               | ❌ CLI only (`dir /r`)               | ❌ `getfattr` (CLI only)              | ⬜ **§17.1 P3 — hidden data transparency** ⭐           |
+| **NTFS-to-IXFS migration**           | ❌ Not available                     | ❌ Not available                      | ⬜ **§18.1 Future — one-click migration** ⭐            |
+| **NTFS as `C:\` boot volume**        | ✅ Native (default)                  | ❌ Not supported                      | ⬜ **§15 P4 — boot-time init + layout** ⭐              |
+| **Anti-aliased TTF in Disk Manager** | ⚠️ Basic system font                 | ❌ CLI only                           | ✅ **Done — Selawik Semibold, atlas pre-baked** ⭐       |
 
-> **After P0+P1 items:** Impossible OS has a mountable, browsable, read-only NTFS driver.
-> **After P2+P3 items:** Full interoperability with Windows volumes + unique health/recovery features.
+> **After P0+P1 items:** Impossible OS has a mountable, browsable, read-only NTFS driver — §1.1–§5.2 already done, §5.3 + §6.1 remain.
+> **After P2+P3 items:** Full interoperability with Windows volumes + unique health/recovery/ADS features.
 > **After P4 items:** Full R/W NTFS with journaling — enables NTFS as the boot volume.
 
 ---

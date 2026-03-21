@@ -405,3 +405,261 @@ graph TD
 - [ ] If Rock Ridge detected, prefer `NM` names over ISO 9660 8.3 names
 - [ ] Map `PX` mode to Impossible OS file attributes (uid/gid → SID mapping)
 - [ ] Commit: `"fs: Rock Ridge SUSP parser"`
+
+---
+
+## 6. El Torito Boot Support
+
+### 6.1 El Torito Boot Catalog Parser
+
+**Prompt:** The El Torito specification enables bootable optical media. The Boot Record Volume Descriptor (type 0) contains the Boot Catalog LBA at bytes 71–74 (uint32_le). The Boot Catalog is an array of 32-byte entries: a Validation Entry (platform ID, checksum, signature `0xAA55`), followed by an Initial/Default Entry (boot image emulation mode, load segment, sector count, boot image LBA), and optional Section Header + Section Entries for multi-platform boot. Parse the catalog to enumerate boot images. Per spec §El Torito Boot Specification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fs: El Torito boot catalog parser"`. After implementation, save any gotchas to MCP memory.
+
+- [ ] Read Boot Catalog at LBA from Boot Record (bytes 71–74, uint32_le)
+- [ ] Parse Validation Entry (first 32 bytes):
+  - [ ] Header ID = `0x01` at byte 0
+  - [ ] Platform ID at byte 1: `0x00` = x86, `0x01` = PowerPC, `0x02` = Mac, `0xEF` = EFI
+  - [ ] Checksum at bytes 28–29 (all 16-bit words in entry must sum to 0)
+  - [ ] Key bytes 30–31 = `0x55 0xAA`
+- [ ] Parse Initial/Default Entry (next 32 bytes):
+  - [ ] Boot Indicator at byte 0: `0x88` = bootable, `0x00` = not bootable
+  - [ ] Boot Media Type at byte 1:
+    - [ ] `0x00` = No Emulation (raw code/data, UEFI typical)
+    - [ ] `0x01` = 1.2 MB floppy, `0x02` = 1.44 MB floppy, `0x03` = 2.88 MB floppy
+    - [ ] `0x04` = Hard Disk emulation (first sector = MBR)
+  - [ ] Load Segment at bytes 2–3 (default `0x07C0` if 0)
+  - [ ] Sector Count at bytes 6–7 — number of 512-byte virtual sectors to load
+  - [ ] Load LBA at bytes 8–11 — absolute LBA of boot image on media
+- [ ] Parse Section Headers and Section Entries (optional, for multi-platform):
+  - [ ] Header ID `0x90` (more sections follow) or `0x91` (final section)
+  - [ ] Platform ID, section count
+  - [ ] Section entries: same format as Initial/Default Entry
+- [ ] Store boot catalog entries in `struct iso9660_volume` for inspection
+- [ ] Log: `[iso9660] El Torito: %u boot images, default=%s platform=%s`
+- [ ] Commit: `"fs: El Torito boot catalog parser"`
+
+---
+
+## 7. VFS Integration
+
+### 7.1 VFS Driver Registration
+
+**Prompt:** Register ISO 9660 as a VFS filesystem driver. Implement `vfs_ops` callbacks: `open` (locate directory record, return file handle with extent LBA + size), `close` (free cached data), `read` (extent-based block read), `readdir` (iterate directory records, skip `.`/`..`), `finddir` (search directory for filename match), `stat` (extract size, flags, timestamps from directory record). All write callbacks return `-EROFS`. Detect ISO 9660 during partition scanning or device probing by reading LBA 16 and checking for `"CD001"`. Support both ATAPI optical drives and `.iso` block devices. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fs: ISO 9660 VFS driver registration"`. After implementation, save any gotchas to MCP memory.
+
+- [ ] Implement `iso9660_mount(blkdev)`:
+  - [ ] Scan volume descriptors (§1.1)
+  - [ ] Parse PVD (§1.2)
+  - [ ] Optionally parse Joliet SVD (§5.1)
+  - [ ] Load path table into memory (§3.1)
+  - [ ] Cache root directory extent (§2.1)
+  - [ ] Return `struct iso9660_volume`
+- [ ] Register with partition scanner / auto-detect:
+  - [ ] For ATAPI devices: probe `CD001` at LBA 16 after INQUIRY confirms CD-ROM
+  - [ ] For block devices: probe `CD001` at LBA 16 (e.g., QEMU `-cdrom`)
+  - [ ] No GPT/MBR partition type — ISO 9660 is whole-device
+- [ ] Implement `vfs_ops` callbacks:
+  - [ ] `iso9660_open(path)`:
+    - [ ] Use path table lookup (§3.2) or directory traversal
+    - [ ] If Joliet present, search Joliet tree first, fall back to PVD
+    - [ ] If Rock Ridge present, use `NM` names for matching
+    - [ ] Return file handle with extent LBA, data length, flags
+  - [ ] `iso9660_close(handle)` — free cached directory data
+  - [ ] `iso9660_read(handle, offset, length, buffer)`:
+    - [ ] Single-extent: direct LBA read (§4.1)
+    - [ ] Multi-extent: map offset to extent list (§4.2)
+  - [ ] `iso9660_readdir(handle)` — enumerate directory records, skip `.`/`..`
+  - [ ] `iso9660_finddir(handle, name)` — search directory for name match
+  - [ ] `iso9660_stat(handle)` — populate `vfs_stat` from directory record
+  - [ ] Write ops (`write`, `create`, `delete`, `rename`, `truncate`) → `-EROFS`
+- [ ] Directory extent cache: LRU cache of recently-read directory extents (default 8 entries)
+  - [ ] Allocate via `pmm_alloc_contiguous()`
+  - [ ] Key: extent LBA, evict LRU on miss
+- [ ] Assign drive letter on mount (typically `D:\` or next available)
+- [ ] Log: `[iso9660] Mounted "%s" on drive %c: (%u blocks, %s)`
+  - [ ] Include Joliet/Rock Ridge status in log
+- [ ] Commit: `"fs: ISO 9660 VFS driver registration"`
+
+---
+
+## 8. Testing & Validation
+
+### 8.1 ISO 9660 Test Suite
+
+**Prompt:** Create ISO 9660 test disk images using host tools (`mkisofs`/`genisoimage`). Test: PVD parsing, directory record walking, path table lookup, file reading (small + large), multi-extent files, Joliet filenames, Rock Ridge long names and permissions, El Torito boot catalog parsing, sector-boundary padding, and edge cases (empty directories, deeply nested paths, hidden files). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: ISO 9660 filesystem test suite"`. After implementation, save any gotchas to MCP memory.
+
+- [ ] Test image: basic ISO with files in root directory
+  - [ ] Verify: PVD parsing, volume identifier, root directory
+  - [ ] `mkisofs -o basic.iso -V "TEST_VOL" iso_root/`
+- [ ] Test image: nested directories (3 levels deep)
+  - [ ] Verify: recursive directory traversal and path table lookup
+- [ ] Test image: file with known content (read and compare byte-exact)
+- [ ] Test image: large file (> 100 MB, contiguous extent)
+  - [ ] Verify: partial reads, seek, read-ahead
+- [ ] Test image: Joliet filenames (long mixed-case Unicode names)
+  - [ ] `mkisofs -o joliet.iso -J -joliet-long iso_root/`
+  - [ ] Verify: UCS-2 to UTF-8 conversion, filename matching
+- [ ] Test image: Rock Ridge extensions (long names, permissions, symlinks)
+  - [ ] `mkisofs -o rockridge.iso -R iso_root/`
+  - [ ] Verify: `NM` name override, `PX` permissions, `SL` symlink targets
+- [ ] Test image: El Torito bootable ISO
+  - [ ] `mkisofs -o boot.iso -b boot.img -no-emul-boot iso_root/`
+  - [ ] Verify: Boot Record detection, catalog parsing, boot image LBA
+- [ ] Test image: hidden files (verify flag parsing)
+- [ ] Test image: empty directories
+- [ ] Test: directory record at sector boundary (padding handling)
+- [ ] Test: case-insensitive filename matching
+- [ ] QEMU: `-cdrom test.iso` or `-drive file=test.iso,media=cdrom`
+- [ ] Commit: `"test: ISO 9660 filesystem test suite"`
+
+---
+
+## 9. ISO 9660 Disc Intelligence (Impossible OS Exclusive)
+
+### 9.1 ISO Browser GUI
+
+**Prompt:** Integrate ISO 9660 volume contents into the File Manager with enhanced metadata display. When browsing an ISO-mounted drive, show: volume identifier, creation date, publisher, application ID, data preparer, and total volume size in the status bar or properties panel. Extended info columns: extent LBA, contiguous size, Rock Ridge permissions (if present), Joliet original name (if different from ISO name). This is GUI enrichment that neither Windows Explorer nor Linux file managers provide for ISO mounts. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: ISO browser GUI enhancements"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows Explorer and Nautilus/Dolphin mount ISOs as generic
+> read-only drives with no ISO-specific metadata. Impossible OS can show PVD metadata,
+> extent LBAs, and Rock Ridge attributes in the File Manager's detail view.
+
+- [ ] Volume properties panel showing PVD metadata:
+  - [ ] Volume Identifier, Publisher, Data Preparer, Application
+  - [ ] Creation/Modification/Expiration dates
+  - [ ] Volume size, block count, interchange level
+  - [ ] Extensions detected: Joliet (Level 1/2/3), Rock Ridge, El Torito
+- [ ] Extended columns in File Manager detail view:
+  - [ ] Extent LBA — physical location on media
+  - [ ] Contiguous size — single extent length
+  - [ ] Rock Ridge permissions (rwxrwxrwx) if detected
+  - [ ] Multi-extent indicator for Level 3 files
+- [ ] Right-click → Properties shows full directory record details
+- [ ] Commit: `"desktop: ISO browser GUI enhancements"`
+
+### 9.2 El Torito Boot Inspector
+
+**Prompt:** Provide a GUI panel in Disk Manager or File Manager that displays the complete El Torito boot catalog for any mounted ISO: Validation Entry (platform, checksum status), all boot images with emulation mode, load segment, sector count, and LBA. Show whether the ISO is BIOS-bootable, EFI-bootable, or both (multi-platform). This information is opaque to users on both Windows and Linux. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: El Torito boot inspector"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux shows El Torito boot catalog contents
+> in any GUI. Users must use specialized CLI tools (`isoinfo -d`, `xorriso`). A visual
+> boot catalog inspector is unique to Impossible OS.
+
+- [ ] Boot Inspector panel (Disk Manager or File Manager properties):
+  - [ ] Validation Entry: platform name, checksum valid/invalid
+  - [ ] Default boot image: emulation type, LBA, sector count, load segment
+  - [ ] Additional boot images (Section Entries): platform, emulation, LBA
+  - [ ] Summary: "BIOS-bootable", "EFI-bootable", "Multi-platform (BIOS + EFI)"
+- [ ] Color-coded: green = valid boot entry, red = invalid checksum, gray = not bootable
+- [ ] Commit: `"desktop: El Torito boot inspector"`
+
+### 9.3 Disc Health Analyzer
+
+**Prompt:** Implement a read-only disc health check that verifies ISO 9660 structural integrity. Validate: PVD fields (block size, volume space size), path table consistency (all directories reachable), directory record integrity (no truncated records, valid LBAs, valid data lengths, no extents beyond volume boundary), and optionally a surface scan (read every sector and report read errors). Report results as a summary: sectors checked, errors found, problematic files. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"tools: ISO disc health analyzer"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows has no built-in ISO integrity checker. Linux has
+> `isoinfo` and `checkisomd5` CLI tools. Impossible OS provides a GUI-based health
+> check with visual sector map and structural validation.
+
+- [ ] Structural checks:
+  - [ ] PVD field validation (block size, space size, file structure version)
+  - [ ] Path table consistency: every path table entry has a valid directory extent
+  - [ ] Directory record sanity: all LBAs within volume bounds, no overlapping extents
+  - [ ] Root directory reachable from PVD root record
+- [ ] Optional surface scan:
+  - [ ] Read every sector sequentially, log read errors with LBA
+  - [ ] Build error map: sectors that returned I/O errors
+  - [ ] Report files affected by bad sectors (cross-reference with extent LBAs)
+- [ ] Progress bar with sector count
+- [ ] Results panel: total sectors, verified, errors, affected files
+- [ ] Commit: `"tools: ISO disc health analyzer"`
+
+### 9.4 Auto-Mount & Eject
+
+**Prompt:** When an optical drive with ISO 9660 media is detected (ATAPI device with media present), automatically mount it to the next available drive letter and show a desktop notification toast: "Disc inserted: [Volume Name] (ISO 9660)". Provide a safe eject function: unmount the VFS mount point, send ATAPI START STOP UNIT command with eject bit, and show "Safe to remove" notification. Support re-insert detection. This mirrors Windows auto-play but with ISO-specific metadata. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: optical disc auto-mount and eject"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Linux requires manual `mount` for non-desktop distros. Windows
+> auto-plays but shows generic disc info. Impossible OS shows rich ISO metadata
+> (volume name, publisher, extensions detected) in the notification toast.
+
+- [ ] ATAPI media change detection:
+  - [ ] Poll ATAPI TEST UNIT READY or use interrupt notification
+  - [ ] On media present → probe for `CD001` at LBA 16
+  - [ ] On media absent → unmount if mounted
+- [ ] Auto-mount workflow:
+  - [ ] Detect → scan PVD → mount to next drive letter
+  - [ ] Show toast: "Disc inserted: [Volume ID] ([Extensions]) on D:\"
+- [ ] Safe eject:
+  - [ ] Flush any cached data
+  - [ ] Unmount VFS mount point
+  - [ ] Send ATAPI START STOP UNIT (opcode `0x1B`, LoEj=1, Start=0)
+  - [ ] Show toast: "Safe to remove disc"
+- [ ] Taskbar tray icon for optical drives (eject button)
+- [ ] Commit: `"desktop: optical disc auto-mount and eject"`
+
+---
+
+## Priority Order
+
+| Star | Priority | Section                              | Description                                                                |
+| ---- | -------- | ------------------------------------ | -------------------------------------------------------------------------- |
+| 💎    | 🔴 P0   | 1.1 Volume Descriptor Scanner        | Foundation: detect ISO 9660 media, locate PVD/SVD/Boot Record              |
+| 💎    | 🔴 P0   | 1.2 PVD Parser                       | Foundation: root directory, path table, volume size                        |
+| 💎    | 🔴 P0   | 2.1 Directory Record Parser          | Core: navigate the directory hierarchy                                     |
+| 💎    | 🔴 P0   | 2.2 File Flags & Special Entries     | Core: `.`/`..`, hidden files, directory detection                          |
+| 💎    | 🟠 P1   | 3.1 Path Table Loader                | Performance: fast directory lookup via flat index                          |
+| 💎    | 🟠 P1   | 3.2 Path Table Lookup                | Performance: O(n) path resolution without disk I/O                         |
+| 💎    | 🟠 P1   | 4.1 File Extent Reader               | Core: read file data by LBA + length                                      |
+| 💎    | 🟠 P1   | 7.1 VFS Registration                 | Integration: mount ISO volumes, drive letter assignment                    |
+| 💎    | 🟡 P2   | 4.2 Multi-Extent Files (Level 3)     | Completeness: files > 4 GiB                                               |
+| 💎    | 🟡 P2   | 5.1 Joliet SVD Parser                | Usability: Unicode filenames on Windows-authored ISOs                      |
+| 💎    | 🟡 P2   | 5.2 Rock Ridge SUSP Parser           | Interop: POSIX metadata on Linux-authored ISOs                             |
+| 💎    | 🟡 P2   | 6.1 El Torito Boot Catalog           | Boot: parse bootable ISO image catalog                                     |
+| 💎    | 🟢 P3   | 8.1 Test Suite                       | Quality: automated validation with test images                             |
+| ⭐    | 🟢 P3   | 9.1 ISO Browser GUI                  | 🚀 **GUI ISO metadata**: PVD info, extent LBAs in File Manager            |
+| ⭐    | 🟢 P3   | 9.2 El Torito Inspector              | 🚀 **GUI boot catalog viewer**: first to show boot images in a panel       |
+| ⭐    | 🟢 P3   | 9.3 Disc Health Analyzer             | 🚀 **GUI integrity check**: structural + surface scan with error map       |
+| ⭐    | 🟢 P3   | 9.4 Auto-Mount & Eject               | 🚀 **Rich auto-mount**: ISO metadata in notification toasts                |
+
+---
+
+## Key Files
+
+| File                                | Purpose                                                   |
+| ----------------------------------- | --------------------------------------------------------- |
+| `include/kernel/fs/iso9660.h`       | [NEW] Public API, on-disk structures, constants           |
+| `src/kernel/fs/iso9660.c`          | [NEW] ISO 9660 driver: PVD, directory records, VFS        |
+| `src/kernel/fs/iso9660_ext.c`      | [NEW] Extensions: Joliet, Rock Ridge, El Torito           |
+| `src/kernel/fs/partition.c`         | ISO 9660 detection (CD001 at LBA 16)                      |
+
+---
+
+## OS Comparison
+
+| Feature                              | 🪟 Windows 11                          | 🐧 Linux                                 | 🚀 Impossible OS                                  |
+| ------------------------------------ | -------------------------------------- | ----------------------------------------- | ------------------------------------------------- |
+| PVD parsing                          | ✅ Native CDFS driver                   | ✅ Native isofs driver                     | ⬜ §1.1-1.2 P0                                    |
+| Directory record navigation          | ✅ Full                                 | ✅ Full                                    | ⬜ §2.1-2.2 P0                                    |
+| Path table lookup                    | ✅ Internal optimization                | ✅ Internal optimization                   | ⬜ §3.1-3.2 P1                                    |
+| File reading (Level 1/2)             | ✅ Full                                 | ✅ Full                                    | ⬜ §4.1 P1                                        |
+| Multi-extent (Level 3)               | ✅ Full                                 | ✅ Full                                    | ⬜ §4.2 P2                                        |
+| Joliet (Unicode filenames)           | ✅ Full (Microsoft spec)                | ✅ Full                                    | ⬜ §5.1 P2                                        |
+| Rock Ridge (POSIX metadata)          | ⬜ Not supported                        | ✅ Full native support                     | ⬜ §5.2 P2                                        |
+| El Torito (boot catalog)             | ✅ BIOS/UEFI boot from ISO              | ✅ Full                                    | ⬜ §6.1 P2                                        |
+| VFS / mountable volumes              | ✅ Native mount + virtual drive          | ✅ Native mount                            | ⬜ §7.1 P1                                        |
+| ISO image mounting                   | ✅ Double-click `.iso` → virtual drive   | ✅ `mount -o loop`                         | ⬜ §7.1 P1                                        |
+| Write / packet writing               | ✅ UDF live filesystem                   | ✅ UDF + packet writing                    | N/A (read-only, by design)                        |
+| **ISO metadata in File Manager**     | ⬜ No PVD info shown                    | ⬜ No PVD info shown                       | ⬜ §9.1 P3: **GUI PVD metadata display** 🚀       |
+| **El Torito boot inspector**         | ⬜ No GUI                               | ⬜ CLI only (`isoinfo -d`)                 | ⬜ §9.2 P3: **GUI boot catalog viewer** 🚀        |
+| **Disc integrity checker**           | ⬜ No built-in checker                   | ⬜ CLI only (`checkisomd5`)                | ⬜ §9.3 P3: **GUI health + sector map** 🚀        |
+| **Rich auto-mount notifications**    | ⬜ Generic "Disc inserted"               | ⬜ Generic or manual mount                 | ⬜ §9.4 P3: **ISO metadata in toasts** ��         |
+
+> **After P0+P1 items:** Impossible OS can mount and read any ISO 9660 volume (including `.iso` files via QEMU).
+> **After P2 items:** Full extension support — Joliet Unicode names, Rock Ridge POSIX metadata,
+> El Torito boot catalog, and Level 3 multi-extent files exceeding 4 GiB.
+> **After P3 exclusive features:** Exceeds both Windows (no Rock Ridge, no ISO metadata display)
+> and Linux (CLI-only tools for boot catalog and integrity checking) with GUI-based ISO browsing,
+> boot inspector, health analyzer, and rich auto-mount notifications — features no OS currently
+> provides in a graphical interface.

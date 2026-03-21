@@ -11,13 +11,13 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL B-tree node reads, OMAP
 > cache buffers, extent data blocks, and directory data blocks. `kmalloc` is ONLY
-> for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
+> for small kernel structs (≤ 4 KB). See `coding.md` Known Gotchas.
 
 > [!WARNING]
 > **Read-Only First.** APFS write support requires implementing the full CoW
 > checkpoint commit cycle — writing without it causes irrecoverable container
 > corruption. This TODO covers **read-only** access only. Write support is a
-> future P3 extension.
+> future P4 extension.
 
 > [!IMPORTANT]
 > **Byte Order:** All APFS on-disk structures are **little-endian**, EXCEPT the
@@ -65,6 +65,9 @@ graph TD
     S["§10.3 Snapshot Explorer"]
     T["§10.4 Nanosecond Timestamp Inspector"]
     U["§11.1 LZVN/LZFSE Decompression"]
+    V["§10.5 Volume Group Analyzer"]
+    W["§10.6 Encryption Status Reporter"]
+    X["§10.7 Fusion Drive Detector"]
 
     SPEC --> A
     BLK --> A
@@ -91,6 +94,9 @@ graph TD
     C --> S
     H --> T
     L --> U
+    F --> V
+    F --> W
+    A --> X
 ```
 
 ### Phase-by-Phase Implementation Order

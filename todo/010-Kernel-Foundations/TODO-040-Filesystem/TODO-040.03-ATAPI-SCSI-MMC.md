@@ -18,19 +18,27 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, CDB formats, and sense codes reference the
-> [ATAPI & SCSI MMC Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/atapi-scsi-mmc.md)
-> in the repo at `docs/specs/storage/atapi-scsi-mmc.md`.
+> [ATAPI & SCSI MMC Specification](file:///home/derickpayne/impossible-os/specs/storage/controllers/atapi-scsi-mmc.md)
+> in the repo at `specs/storage/controllers/atapi-scsi-mmc.md`.
 
 > [!NOTE]
 > **Existing Implementation:** The AHCI driver (`src/kernel/drivers/ahci.c`, 828 lines)
 > already implements basic ATAPI support: `AHCI_SIG_ATAPI` signature detection,
 > `IDENTIFY PACKET DEVICE` (`atapi_do_identify()`), `READ CAPACITY` (`atapi_read_capacity()`),
 > `READ(10)` (`atapi_do_read()`), and AHCI packet command delivery (`atapi_packet_cmd()`).
-> ATAPI devices are registered as block devices (`cdrom0`, `cdrom1`, ...) via `blkdev_adapters.c`.
+> ATAPI devices are registered as block devices (`cdrom0`, `cdrom1`, ...) via
+> [blkdev_adapters.c](file:///home/derickpayne/impossible-os/src/kernel/main/blkdev_adapters.c) (line 257).
 > **This TODO extends and refactors that foundation** — it does NOT start from scratch.
 > See: [ahci.h](file:///home/derickpayne/impossible-os/include/kernel/drivers/ahci.h),
 > [ahci.c](file:///home/derickpayne/impossible-os/src/kernel/drivers/ahci.c),
 > [blkdev_adapters.c](file:///home/derickpayne/impossible-os/src/kernel/main/blkdev_adapters.c).
+
+> [!CAUTION]
+> **Existing `kmalloc` DMA bug:** `atapi_do_identify()` (line 431) and `atapi_read_capacity()`
+> (line 497) currently use `kmalloc()` for DMA response buffers (512 and 8 bytes respectively).
+> These MUST be migrated to `pmm_alloc_contiguous()` — `kmalloc` heap memory is not guaranteed
+> to be physically contiguous or aligned for AHCI PRDT DMA transfers. This is a latent correctness
+> bug that works by luck on some hardware.
 
 ---
 
@@ -71,11 +79,12 @@ graph TD
     U["040.03 §12.1<br/>Rock Ridge Extensions"]
     V["040.03 §12.2<br/>El Torito Boot Detection"]
     W["040.02-AHCI §1.1<br/>Interrupt-Driven I/O"]
-    X["040-Filesystem §3.6<br/>Win32 File API"]
+    X["040.17-Win32-FS-API §13<br/>Win32 File API"]
     Y["040.02-AHCI §9.2<br/>Enhanced ATAPI/CD-ROM"]
     Z["040.03 §13.1<br/>SCSI Passthrough API"]
     AA["040.03 §13.2<br/>Disc Imaging & Burning"]
     AB["040.03 §13.3<br/>Optical Media Health"]
+    AC["040.03 §14.1<br/>DVD Region Management"]
 
     A --> B
     B --> C
@@ -112,6 +121,7 @@ graph TD
     K --> Z
     R --> AA
     M --> AB
+    G --> AC
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -128,7 +138,7 @@ graph TD
 | 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.1 Bus Master DMA             | Async DMA transfer — stop wasting CPU on PIO                      | Phase 2 (§2.1)                           |   ⬜   |
 | 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.2 AHCI ATAPI Delivery        | AHCI hardware-automated ATAPI handshake                           | Phase 2 (§2.1) + AHCI §1.1              |   ⬜   |
 | 💎 | **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §4.1 Transport Abstraction      | Unified SCSI transport interface (PIO/DMA/AHCI)                   | Phase 4 (§3.1 + §3.2)                   |   ⬜   |
-| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §7.1 VFS Block Device           | Expose optical drive as block device with drive letter             | Phase 3 (§5.2) + Phase 4 + FS §3.6      |   ⬜   |
+| 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §7.1 VFS Block Device           | Expose optical drive as block device with drive letter             | Phase 3 (§5.2) + Phase 4 + 040.17 §13   |   ⬜   |
 | 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.3 Media Control Commands     | Eject, load tray, lock, READ TOC, disc structure                  | Phase 3 (§5.1) + Phase 5 (§7.1)         |   ⬜   |
 | 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.5 MODE SENSE & Caps          | Drive speeds, buffer size, mechanism type, audio caps              | Phase 3 (§5.4)                           |   ⬜   |
 | 💎 | **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §6.2 Media Change Detection     | Detect disc swaps, invalidate caches, auto-remount                 | Phase 2 (§6.1) + Phase 5 (§5.3)         |   ⬜   |
@@ -143,9 +153,10 @@ graph TD
 | ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.1 SCSI Passthrough API      | **Direct SCSI access** — no third-party tools needed               | Phase 5 (§7.1)                           |   ⬜   |
 | ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.2 Disc Imaging & Burning    | **Built-in ISO creation and CD/DVD burning**                       | Phase 6 (§9.1)                           |   ⬜   |
 | ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.3 Optical Media Health      | **Disc quality scanner** — surface error mapping                   | Phase 5 (§5.5)                           |   ⬜   |
+| ⭐ | **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §14.1 DVD Region Management     | **Region-free playback** — no 5-change firmware limit              | Phase 3 (§5.4)                           |   ⬜   |
 | 💎 | —      | `TODO-040.02-AHCI.md`                 | §1.1 Interrupt-Driven I/O       | AHCI interrupts — enables §3.2 AHCI transport + §10.1 async       | —                                        |   ⬜   |
 | 💎 | —      | `TODO-040.02-AHCI.md`                 | §9.2 Enhanced ATAPI/CD-ROM      | AHCI-side SCSI commands — supplements §3.2                         | AHCI §1.1                               |   ⬜   |
-| 💎 | —      | `TODO-040-Filesystem.md`              | §3.6 Win32 File API             | Handle system (CreateFile, etc.) — enables §7.1 block device       | —                                        |   ⬜   |
+| 💎 | —      | `TODO-040.17-Win32-FS-API.md`         | §13 Win32 File API              | Handle system (CreateFile, etc.) — enables §7.1 block device       | —                                        |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path. They deliver a working read-only optical
@@ -173,9 +184,9 @@ graph TD
 
 > [!NOTE]
 > **Existing code to refactor:** The current `atapi_packet_cmd()` in `ahci.c`
-> (line 373) is tightly coupled to the AHCI transport. Phase 4 (§4.1) must
+> (line 372) is tightly coupled to the AHCI transport. Phase 4 (§4.1) must
 > extract this into a generic `scsi_transport_ops_t` implementation. Similarly,
-> `ahci_atapi_read()` (line 638) should route through the transport abstraction.
+> `ahci_atapi_read()` (line 636) should route through the transport abstraction.
 > The SCSI command defines (`SCSI_TEST_UNIT_READY`, `SCSI_INQUIRY`, etc.) in
 > `ahci.h` (lines 98–102) should move to a dedicated `scsi.h` header.
 
@@ -188,7 +199,7 @@ graph TD
 **Prompt:** After a hardware reset, software reset (SRST), or EXECUTE DEVICE DIAGNOSTIC, ATA/ATAPI devices place a signature into the task file registers. The kernel must read LBA Mid and LBA High to detect the ATAPI signature (`0x14`, `0xEB`). This is the only standardized method to differentiate optical/tape drives from magnetic hard drives. Never use the Status register alone — it fails on modern hardware. Under AHCI, read the port's Signature register (`PxSIG`). If the ATAPI signature is detected, do not send native ATA commands (READ SECTORS `0x20`, etc.) — they will fail. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: device signature detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Existing code:** `ahci.c` line 168 already reads `PxSIG` and checks for
+> **Existing code:** `ahci.c` line 168 reads `PxSIG` and checks for
 > `AHCI_SIG_ATAPI` (`0xEB140101`) at line 171. The `ahci_port.is_atapi` field
 > is set at line 172. This section formalizes and extends that detection to
 > include legacy IDE task file register checking and edge cases.
@@ -211,7 +222,7 @@ graph TD
 **Prompt:** Once the ATAPI signature is confirmed, issue IDENTIFY PACKET DEVICE (`0xA1`) — **never** IDENTIFY DEVICE (`0xEC`), which will abort on ATAPI hardware. This returns a 512-byte (256-word) data structure via PIO. Parse: Word 0 for protocol type (bits 15–14 = `10b`), SCSI device type (bits 12–8: `0x05` = CD/DVD), DRQ timing (bits 6–5), and command packet size (bits 1–0: `00b` = 12 bytes, `01b` = 16 bytes). Extract serial number (words 10–19, byte-swapped), model name (words 27–46, byte-swapped), and DMA capabilities (words 63, 88). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: IDENTIFY PACKET DEVICE parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Existing code:** `atapi_do_identify()` in `ahci.c` (line 422) already issues
+> **Existing code:** `atapi_do_identify()` in `ahci.c` (line 421) already issues
 > `ATA_CMD_IDENTIFY_PACKET` (`0xA1`), parses model (words 27–46) and serial
 > (words 10–19) with byte-swapping. However, it does NOT parse Word 0 (general
 > config), DMA modes (words 63, 88), or firmware revision (words 23–26).
@@ -293,7 +304,7 @@ graph TD
 **Prompt:** Under AHCI, the HBA automates the entire ATAPI handshake in silicon. The driver builds memory structures and rings a doorbell — no PIO polling required. Configure the Command Header: set CFL=5 (H2D FIS length in DWORDs), set the `a` bit (bit 5) to signal ATAPI mode, set `w` for write direction, set PRDTL for scatter-gather entries. In the Command Table: build FIS_REG_H2D (`0x27`) in the CFIS field with command=`0xA0`, place the raw SCSI CDB in the 16-byte ACMD field. Populate PRDT entries, write PxCI to issue. Completion arrives via MSI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: AHCI command delivery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Existing code:** `atapi_packet_cmd()` in `ahci.c` (line 373) already
+> **Existing code:** `atapi_packet_cmd()` in `ahci.c` (line 372) already
 > implements this: builds H2D FIS with `ATA_CMD_PACKET`, sets features=1 (DMA),
 > copies 12-byte CDB to `acmd[]`, sets bit 5 (ATAPI) in command header flags.
 > This section formalizes the existing implementation and extends it with
@@ -327,7 +338,7 @@ graph TD
 **Prompt:** The ATAPI SCSI logic must be completely decoupled from the physical transport. Create a `scsi_transport_t` interface with a single `send_command()` callback. Legacy IDE PIO, Legacy IDE DMA, and AHCI each implement this interface. The ATAPI device object calls `transport->send_command(cdb, data, len, direction)` without knowing or caring which hardware path is active. This guarantees the same SCSI READ(10) code works on a vintage 40-pin PATA cable and a modern SATA-III port. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: transport abstraction layer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Refactoring required:** The SCSI command defines (`SCSI_TEST_UNIT_READY`,
+> **Refactoring required:** The SCSI command opcodes (`SCSI_TEST_UNIT_READY`,
 > `SCSI_INQUIRY`, `SCSI_READ_CAPACITY`, `SCSI_READ_10`) in `ahci.h` (lines
 > 98–102) must move to a new `include/kernel/drivers/scsi.h` header. The
 > `atapi_packet_cmd()` function becomes the `ahci_transport` implementation.
@@ -359,7 +370,7 @@ graph TD
 
 > [!NOTE]
 > **Existing defines:** `SCSI_TEST_UNIT_READY` (`0x00`) and `SCSI_INQUIRY`
-> (`0x12`) are already defined in `ahci.h` (lines 99–100) but have no
+> (`0x12`) are defined in `ahci.h` (lines 99–100) but have no
 > implementation functions. This section adds the actual command functions.
 
 - [ ] Implement `atapi_test_unit_ready(dev)`:
@@ -385,8 +396,8 @@ graph TD
 **Prompt:** READ CAPACITY (`0x25`) returns the last LBA and block size (typically 2048 for data CDs). Both fields are 32-bit Big-Endian — they MUST be byte-swapped on x86. Total capacity = `(Last_LBA + 1) × Block_Size`. READ (10) (`0x28`) reads data blocks. The transfer length field is block count, not byte count. For a 2048-byte-sector CD, reading 512 blocks reads 1 MB. LBA and transfer length are Big-Endian in the CDB. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: READ CAPACITY and READ(10)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Existing code:** `atapi_read_capacity()` in `ahci.c` (line 490) and
-> `atapi_do_read()` (line 523) already implement these commands with correct
+> **Existing code:** `atapi_read_capacity()` in `ahci.c` (line 489) and
+> `atapi_do_read()` (line 522) already implement these commands with correct
 > Big-Endian byte-swapping. This section formalizes and adds READ(12) for
 > large media (>2 TB optical) and proper error handling on capacity queries.
 
@@ -562,7 +573,7 @@ graph TD
 **Prompt:** Register the ATAPI device as a read-only block device with the VFS layer. The block size is the media's native sector size (2048 for data CDs/DVDs). Expose standard block device operations: read, ioctl (eject, lock, read TOC). Write operations should return `-EROFS` for read-only media (most optical drives). For CD-RW/DVD-RW, detect write capability from the device type and feature profiles. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: VFS block device registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
-> **Existing code:** `blkdev_adapters.c` (line 242) already registers ATAPI
+> **Existing code:** `blkdev_adapters.c` (line 257) already registers ATAPI
 > devices as `cdrom0`, `cdrom1`, etc. with `blkdev_register()`. The read
 > callback wraps `ahci_atapi_read()`, write is set to `NULL`. This section
 > adds ioctl support (eject, lock, TOC) and proper write capability detection.
@@ -728,10 +739,10 @@ graph TD
 
 > [!NOTE]
 > **Current state:** The AHCI driver in `ahci.c` uses polling (`port_issue_cmd()`
-> at line 238 polls `PxCI` with a 5M iteration timeout). Global interrupts are
-> explicitly disabled (line 762: `GHC.IE = 0`; line 229: `PxIE = 0x00`).
-> This section depends on `TODO-040.02-AHCI.md §1.1` (Interrupt-Driven I/O)
-> completing first. The ATAPI async path builds on top of the AHCI interrupt
+> polls `PxCI` with a 5M iteration timeout). Global interrupts are explicitly
+> disabled. This section depends on `TODO-040.02-AHCI.md §1.1`
+> (Interrupt-Driven I/O) completing first. The ATAPI async path builds on
+> top of the AHCI interrupt
 > infrastructure.
 
 - [ ] Add `event_t command_complete` to `atapi_device_t`
@@ -906,6 +917,41 @@ graph TD
 
 ---
 
+## 14. DVD Region Management (🚀 Impossible OS Feature)
+
+### 14.1 Region-Free DVD Playback
+
+**Prompt:** DVD drives enforce CSS region codes via firmware RPC (Region Playback Control). Most drives allow only 5 region changes before permanently locking. Windows exposes this through Device Manager's "DVD Region" tab with no workaround — users permanently lose region flexibility. Linux requires the `regionset` CLI tool plus `libdvdcss` for descrambling. Implement a transparent region management system: query the drive's current region and remaining changes via REPORT KEY (`0xA4`) / SEND KEY (`0xA3`), display a user-friendly region selector in Drive Properties, and warn users before each permanent firmware change. Optionally implement software-side RPC bypass for user-owned drives (set region per-disc in software rather than burning firmware changes). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: DVD region management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows permanently locks the drive after 5 region changes
+> with no undo. Linux requires CLI tools (`regionset`, `libdvdcss`). Impossible OS
+> can offer a GUI-integrated region selector with clear warnings, remaining-change
+> counter, and optional software-side region bypass — no third-party tools needed.
+
+- [ ] Implement `atapi_report_key(dev, key_class, agid, key_format, buf)`:
+  - [ ] CDB: `{ 0xA4, 0, 0, 0, 0, 0, 0, Len[1], Len[0], key_format, 0, 0 }`
+  - [ ] Key Format `0x08`: RPC State — current region, remaining changes, type
+  - [ ] Parse RPC state: Type (0=no drive region, 1=set, 2=last chance, 3=locked)
+  - [ ] Parse region mask: bitmask of allowed regions (1–8)
+  - [ ] Parse vendor resets remaining, user changes remaining
+- [ ] Implement `atapi_send_key(dev, key_class, agid, key_format, buf)`:
+  - [ ] CDB: `{ 0xA3, 0, 0, 0, 0, 0, 0, Len[1], Len[0], key_format, 0, 0 }`
+  - [ ] Key Format `0x06`: Set Region — change drive's region code
+- [ ] Display in Drive Properties: "DVD Region" tab
+  - [ ] Current region code (1–8) with world map visualization
+  - [ ] Remaining firmware changes (with color: green ≥3, yellow 2, red 1, grey 0)
+  - [ ] Region change button with confirmation dialog and stern warning
+- [ ] Software-side region handling:
+  - [ ] Store per-disc region preference in Registry: `HKLM\SYSTEM\Drivers\ATAPI\DVDRegions`
+  - [ ] On disc insert: detect disc region from CSS data, apply stored preference
+  - [ ] Fall back to firmware region change only if software bypass unavailable
+- [ ] Expose via Registry: `HKLM\SYSTEM\Drivers\ATAPI\RegionBypassEnabled`
+- [ ] Log: `[ATAPI] DVD Region: current=%d, changes_remaining=%d, type=%s`
+- [ ] Commit: `"atapi: DVD region management"`
+
+---
+
 ## Priority Order
 
 | ⭐ | Priority | Section                                | Description                                                         |
@@ -935,6 +981,7 @@ graph TD
 | ⭐ | 🔵 P4    | 13.1 SCSI Passthrough API             | **Direct SCSI access** — cleaner than Win/Linux APIs                |
 | ⭐ | 🔵 P4    | 13.2 Disc Imaging & Burning           | **Built-in burning** — no OS ships a full burner natively           |
 | ⭐ | 🔵 P4    | 13.3 Optical Media Health             | **Disc quality scanner** — unique among all consumer OSes           |
+| ⭐ | 🔵 P4    | 14.1 DVD Region Management            | **Region-free playback** — no 5-change firmware lock                |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -977,13 +1024,14 @@ graph TD
 | ⭐ | **SCSI passthrough API**               | ⚠️ Admin + CDB whitelist only             | ⚠️ `sg` group required                     | ⬜ §13.1 P4 — capability-based, cleaner API             |
 | ⭐ | **Built-in disc burning**              | ⚠️ Basic "Burn disc image" only           | ❌ `wodim`/`cdrecord` (CLI, separate pkg)  | ⬜ §13.2 P4 — full GUI burner, no third-party           |
 | ⭐ | **Disc quality scanner**               | ❌ Third-party only (Nero DiscSpeed)      | ❌ No equivalent                           | ⬜ §13.3 P4 — native heat map in Disk Manager           |
+| ⭐ | **DVD region management GUI**           | ⚠️ 5-change limit, locks permanently      | ❌ `regionset` CLI + `libdvdcss`           | ⬜ §14.1 P4 — GUI region selector, software bypass      |
 | 💎 | Async I/O                              | ✅ Overlapped I/O                         | ✅ Block MQ                                | ⬜ §10.1 P2                                              |
 | 💎 | **Full optical drive stack**           | ✅                                        | ✅                                         | ⬜ Requires §1–§8 at minimum                            |
 
 > **After P0+P1 items:** Impossible OS has a functional read-only optical drive with error handling.
 > **After P2+P3:** Full filesystem support (ISO 9660, UDF, Rock Ridge) with media management.
-> **After P4:** Impossible OS surpasses both Windows and Linux with 6 exclusive features (⭐):
+> **After P4:** Impossible OS surpasses both Windows and Linux with 7 exclusive features (⭐):
 > bit-perfect ripping, drive noise GUI, SCSI passthrough, disc burning, disc quality scanning,
-> and Rock Ridge support (which Windows lacks entirely).
+> DVD region management, and Rock Ridge support (which Windows lacks entirely).
 
 ---

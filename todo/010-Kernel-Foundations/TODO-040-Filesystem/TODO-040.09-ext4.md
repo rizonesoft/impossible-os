@@ -10,7 +10,7 @@
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for inode table reads, block group
 > descriptor tables, extent tree blocks, and directory data blocks. `kmalloc` is
-> ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
+> ONLY for small kernel structs (≤ 4 KB). See `.agents/rules/coding.md` Known Gotchas.
 
 > [!WARNING]
 > **Read-Only First.** ext4 write support requires a fully functional JBD2
@@ -22,8 +22,8 @@
 > JBD2 journal which is **big-endian**. The driver must handle this dichotomy.
 >
 > **Spec Reference:** All offsets, field layouts, and algorithms reference the
-> [ext4 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/ext4.md)
-> in the repo at `docs/specs/filesystem/ext4.md`.
+> [ext4 Specification](file:///home/derickpayne/impossible-os/specs/storage/filesystems/ext4.md)
+> in the repo at `specs/storage/filesystems/ext4.md`.
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/filesystem/ext4.md<br/>ext4 On-Disk Specification"]
+    SPEC["specs/storage/filesystems/ext4.md<br/>ext4 On-Disk Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x83)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
@@ -102,7 +102,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec              | Sections                    | What It Delivers                                                           | Depends On                          | Status |
 | -- | :----: | ----------------------------- | --------------------------- | -------------------------------------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/filesystem/ext4.md`    | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
+| 💎 | **0**  | `specs/storage/filesystems/ext4.md`     | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer          | `blkdev_read()` via VirtIO or AHCI                                         | —                                   |   ✅   |
 | 💎 | **0**  | `TODO-040.04` / `TODO-040.05` | Partition detection         | MBR type `0x83` / GPT `0FC63DAF-...` → Linux partition found               | Phase 0 (block)                     |   ✅   |
 | 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.1 Superblock Parsing     | Parse superblock at byte 1024, locate block groups and inodes              | Phase 0 (partitions)                |   ⬜   |
@@ -711,6 +711,105 @@ graph TD
 - [ ] Wire to File Properties panel in Disk Manager for ext4 volumes
 - [ ] Commit: `"ext4: cross-OS timestamp inspector"`
 
+### 11.5 Orphan Inode Detector (🚀 Impossible OS Feature)
+
+**Prompt:** ext4 maintains an orphan inode list — inodes whose link count reached zero while still open. On clean unmount, Linux's VFS cleans these up by truncating and freeing the inodes. If the system crashes before cleanup, `INCOMPAT_RECOVER` is set and journal replay handles it. But on read-only mounts from another OS, orphan inodes can indicate data loss risk. Implement a scanner that reads the orphan list head from `s_last_orphan` in the superblock, follows the `i_dtime` chain through each orphan inode, and reports: inode number, original size, deletion time, and whether the inode's blocks are still allocated. Display in the Health Dashboard as a warning if orphan inodes exist. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: orphan inode detector"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Linux handles orphan inodes silently during journal replay — users
+> never see them. Windows can't read ext4 at all. Impossible OS can surface orphan inode
+> state in the Health Dashboard — a forensics-grade insight that flags volumes with
+> unresolved data loss, valuable for dual-boot data recovery scenarios.
+
+- [ ] Read `s_last_orphan` from superblock at `0xA0` (4B) — head of orphan inode list
+- [ ] Walk orphan chain: each orphan inode's `i_dtime` field links to the next orphan inode number
+  - [ ] Read inode for `s_last_orphan`, then follow `i_dtime` as next inode number
+  - [ ] Terminate when `i_dtime == 0` or inode number is invalid
+- [ ] For each orphan inode, report:
+  - [ ] Inode number, `i_size`, `i_mode` (file type), `i_dtime` (timestamp)
+  - [ ] Check extent tree validity — are data blocks still allocated?
+  - [ ] Confidence: blocks allocated → high recovery chance, blocks freed → data lost
+- [ ] Health Dashboard integration:
+  - [ ] 0 orphans → `✅ No orphan inodes`
+  - [ ] 1+ orphans → `⚠️ %u orphan inodes — volume may have unresolved deletions`
+- [ ] Wire to ext4 volume properties panel with orphan inode table
+- [ ] Commit: `"ext4: orphan inode detector"`
+
+### 11.6 Bigalloc-Aware Space Inspector (🚀 Impossible OS Feature)
+
+**Prompt:** When `RO_COMPAT_BIGALLOC` is set, the block bitmap tracks clusters (groups of contiguous blocks) rather than individual blocks. The cluster size is `2^s_log_cluster_size` blocks. This dramatically changes free space calculations — the superblock's `s_free_blocks_count` reports in blocks, but the bitmap reports in clusters. Implement a space inspector that detects bigalloc mode, correctly reports free space in both clusters and blocks, shows the cluster size, and computes actual vs. reported free space (to detect accounting drift). Display in Disk Manager properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: bigalloc-aware space inspector"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Bigalloc is an ext4 feature that improves allocation performance on
+> large volumes, but `df` and `stat` on Linux silently report space in blocks — they don't
+> indicate that bigalloc is active or show the cluster size. Windows has no ext4 support.
+> Impossible OS can display bigalloc metadata transparently in Disk Manager.
+
+- [ ] Detect `RO_COMPAT_BIGALLOC` (`0x0200`) in `s_feature_ro_compat`
+- [ ] Read `s_log_cluster_size` at superblock offset `0x168` (4B) — cluster = `2^value` blocks
+- [ ] Calculate: `cluster_size_bytes = block_size × 2^s_log_cluster_size`
+- [ ] Walk block group bitmaps: count free clusters (not blocks) per group
+- [ ] Compare bitmap free count vs superblock `s_free_blocks_count`:
+  - [ ] Match → `✅ Free space accounting consistent`
+  - [ ] Mismatch → `⚠️ Accounting drift: bitmap=%llu clusters, superblock=%llu blocks`
+- [ ] Display in Disk Manager:
+  - [ ] Label: "Bigalloc: Yes (cluster = %u blocks = %u KiB)" or "Bigalloc: No"
+  - [ ] Free space: show both cluster count and equivalent byte count
+- [ ] Commit: `"ext4: bigalloc-aware space inspector"`
+
+### 11.7 Multidevice Safety Gate (🚀 Impossible OS Feature)
+
+**Prompt:** ext4 supports external journal devices via `INCOMPAT_JOURNAL_DEV` and the superblock field `s_journal_dev` at offset `0x98`. Additionally, the Multi-Mount Protection (MMP) feature (`INCOMPAT_MMP`) uses a dedicated MMP block to prevent concurrent mounts from multiple hosts. When scanning partitions, detect these configurations and display clear warnings: external journal volumes should not be mounted as data, and MMP-locked volumes should not be force-mounted. This prevents data corruption from dual-mount accidents (common in SAN/NFS environments). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: multidevice safety gate"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Linux silently refuses to mount MMP-locked volumes with a terse
+> kernel log message. Windows has no ext4 support. Impossible OS can show MMP status,
+> external journal dependency, and `s_journal_dev` device identification in the GUI —
+> preventing data corruption before it happens, with actionable user guidance.
+
+- [ ] Detect `INCOMPAT_JOURNAL_DEV` (`0x0008`) — this partition IS the external journal
+  - [ ] Log: `[ext4] Partition is an external journal device — not a data volume`
+  - [ ] In Disk Manager: label volume as "ext4 Journal Device" instead of mountable volume
+- [ ] Detect `INCOMPAT_MMP` (`0x0100`) — Multi-Mount Protection active
+  - [ ] Read MMP block at `s_mmp_block` (superblock offset `0x17C`, 8B)
+  - [ ] Parse MMP sequence: if `EXT4_MMP_SEQ_CLEAN` (`0x236F6D70`) → safe to mount
+  - [ ] If sequence is not clean → `⚠️ MMP lock held — another host may be using this volume`
+  - [ ] Display last MMP update time and hostname (stored in MMP block)
+- [ ] Detect `s_journal_dev` at offset `0x98` (4B) — external journal device number
+  - [ ] If non-zero: `[ext4] Volume uses external journal on device %u — journal replay unavailable`
+- [ ] Wire to Disk Manager: show MMP status badge on ext4 volumes
+- [ ] Commit: `"ext4: multidevice safety gate"`
+
+### 11.8 Quota & Project Usage Reporter (🚀 Impossible OS Feature)
+
+**Prompt:** When `RO_COMPAT_QUOTA` (`0x0100`) is set, ext4 stores user and group quota information in dedicated inodes: `s_usr_quota_inum` at superblock offset `0x108` (4B) and `s_grp_quota_inum` at `0x10C` (4B). When `RO_COMPAT_PROJECT` (`0x2000`) is set, project quotas are tracked via `s_prj_quota_inum` at `0x110` (4B). Implement a reporter that reads the quota inode data (V2 quota file format), extracts per-user/group/project usage and limits, and displays them in Disk Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: quota and project usage reporter"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Linux has `repquota` and `quota` CLI tools — functional but
+> CLI-only with no graphical overview. Windows has NTFS disk quotas but they're buried
+> in Computer Management. Impossible OS can show per-user ext4 disk usage as a visual
+> bar chart in Disk Manager — making quota management intuitive and accessible.
+
+- [ ] Detect `RO_COMPAT_QUOTA` in `s_feature_ro_compat`
+- [ ] Read quota inodes:
+  - [ ] `s_usr_quota_inum` at `0x108` → user quotas
+  - [ ] `s_grp_quota_inum` at `0x10C` → group quotas
+  - [ ] `s_prj_quota_inum` at `0x110` → project quotas (if `RO_COMPAT_PROJECT`)
+- [ ] Parse V2 quota file format:
+  - [ ] Header: magic `0xD9C01F11`, version 1, block size
+  - [ ] Tree structure: index blocks pointing to data blocks
+  - [ ] Data blocks: per-ID entries with `dqb_bhardlimit`, `dqb_bsoftlimit`, `dqb_curspace`
+- [ ] For each quota entry, extract:
+  - [ ] User/group/project ID
+  - [ ] Current usage (blocks + inodes)
+  - [ ] Soft limit, hard limit, grace period
+  - [ ] Over-limit status: within limits ✅, soft exceeded ⚠️, hard exceeded ❌
+- [ ] Display in Disk Manager:
+  - [ ] Per-user usage bar chart (used / soft limit / hard limit)
+  - [ ] Top consumers sorted by usage
+  - [ ] Over-quota warnings highlighted in red
+- [ ] Commit: `"ext4: quota and project usage reporter"`
+
 ---
 
 ## 12. Superblock Resilience
@@ -825,7 +924,7 @@ graph TD
 | `src/kernel/fs/ixfs/ixfs_core.c`       | `ixfs_crc32c()` — **factor out** to shared `kernel/crc32c.c` for reuse   |
 | `src/kernel/fs/gpt.c`                  | Has `GPT_GUID_LINUX_FS` (`0FC63DAF-...`) — ext4 partitions use this GUID |
 | `include/kernel/fs/gpt.h`              | `gpt_crc32()` — CRC32 (IEEE), different polynomial from CRC32C          |
-| `docs/specs/filesystem/ext4.md`             | Full on-disk specification reference (753 lines)                         |
+| `specs/storage/filesystems/ext4.md`         | Full on-disk specification reference                                     |
 
 > [!WARNING]
 > **Codebase gaps to close before ext4 driver:**

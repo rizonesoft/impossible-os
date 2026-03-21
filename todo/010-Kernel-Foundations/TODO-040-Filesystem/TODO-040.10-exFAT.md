@@ -13,7 +13,7 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for Allocation Bitmap (can be
 > several MB on large volumes), Up-case Table (~128 KB uncompressed), and file
 > data buffers. `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See
-> `rules.md` Known Gotchas.
+> [`.agents/rules/coding.md`](.agents/rules/coding.md) Known Gotchas.
 
 > [!WARNING]
 > **Read-Only First.** exFAT write support requires careful write-ordering
@@ -25,8 +25,8 @@
 > **Byte Order:** All exFAT on-disk structures are **little-endian**.
 >
 > **Spec Reference:** All offsets, field layouts, and algorithms reference the
-> [exFAT 1.00 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/exfat-1.0.md)
-> in the repo at `docs/specs/filesystem/exfat-1.0.md`.
+> [exFAT 1.00 Specification](file:///home/derickpayne/impossible-os/specs/storage/filesystems/exfat-1.0.md)
+> in the repo at `specs/storage/filesystems/exfat-1.0.md`.
 
 ---
 
@@ -41,7 +41,7 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/filesystem/exfat-1.0.md<br/>exFAT 1.00 Specification"]
+    SPEC["specs/storage/filesystems/exfat-1.0.md<br/>exFAT 1.00 Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x07 / Basic Data GUID)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
@@ -107,7 +107,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
 | -- | :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/filesystem/exfat-1.0.md`       | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ⬜   |
+| 💎 | **0**  | `specs/storage/filesystems/exfat-1.0.md`   | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ⬜   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
 | 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → exFAT partition found             | Phase 0 (block)              |   ✅   |
 | 💎 | **1**  | `TODO-040.10-exFAT.md`               | §1.1 Boot Sector Parsing         | Locate FAT, Data Region, root directory — all geometry fields             | Phase 0 (partitions)         |   ⬜   |
@@ -805,7 +805,7 @@ graph TD
 | `src/kernel/fs/partition.c`     | Add `probe_exfat()` + `PART_FS_EXFAT` + exFAT mount in mount sequence   |
 | `include/kernel/fs/partition.h` | Add `PART_FS_EXFAT` constant (currently missing — only FAT32/IXFS/ext2)  |
 | `include/kernel/fs/vfs.h`       | VFS ops interface — exFAT stubs all 16 callbacks (write ops → `-EROFS`)  |
-| `docs/specs/filesystem/exfat-1.0.md` | Full on-disk specification reference                                     |
+| `specs/storage/filesystems/exfat-1.0.md` | Full on-disk specification reference                                 |
 
 ---
 

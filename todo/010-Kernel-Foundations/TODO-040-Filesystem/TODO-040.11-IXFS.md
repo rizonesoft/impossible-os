@@ -891,40 +891,44 @@ graph TD
 
 ## Priority Order
 
-| ⭐ | Priority | Section                    | Description                                       |
-| -- | -------- | -------------------------- | ------------------------------------------------- |
-| 💎 | 🔴 P0   | 1.1 Superblock             | Verify — foundation of entire filesystem          |
-| 💎 | 🔴 P0   | 2.1 Block Allocator        | Verify — all writes depend on this                |
-| 💎 | 🔴 P0   | 3.1 Inode Table            | Verify — all file access depends on this          |
-| 💎 | 🔴 P0   | 4.1 Extent Engine          | Verify — file data mapping                        |
-| 💎 | 🔴 P0   | 5.1 Journal                | Verify — crash safety                             |
-| 💎 | 🔴 P0   | 6.1 CoW & Snapshots        | Verify — data integrity                           |
-| 💎 | 🔴 P0   | 7.1 Checksums              | Verify — corruption detection                     |
-| 💎 | 🔴 P0   | 8.1 VFS Callbacks          | Verify — usability                                |
-| 💎 | 🟠 P1   | 3.2 Extended Inode         | Enable — v3 format with new metadata fields       |
-| 💎 | 🟠 P1   | 9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams     |
-| 💎 | 🟠 P1   | 10.1 Security Descriptors  | Win32 compat — ACLs for enterprise apps           |
-| 💎 | 🟠 P1   | 11.1 Hard Links            | Win32 compat — WinSxS, VC++ redist               |
-| 💎 | 🟠 P1   | 11.2 Symbolic Links        | Win32 compat — developer tools, junctions         |
-| 💎 | 🟠 P1   | 17.1 Format Tool v3        | Enable — can't use v3 features without formatter  |
-| 💎 | 🟠 P1   | 20.1 Case-Insensitive      | Win32 compat — case-insensitive is mandatory       |
-| ⭐ | 🟡 P2   | 12.1 Compression           | Performance — save space + reduce I/O             |
-| ⭐ | 🟡 P2   | 14.1 Deduplication         | Storage — similar files share blocks              |
-| ⭐ | 🟡 P2   | 15.1 Reflinks              | UX — instant file copy                            |
-| ⭐ | 🟡 P2   | 16.1 Defragmentation       | Performance — consolidate extents                 |
-| ⭐ | 🟡 P2   | 1.2 Online Volume Grow     | Management — dynamic disk expansion               |
-| ⭐ | 🟡 P2   | 7.2 Self-Healing           | Reliability — auto-repair corruption              |
-| ⭐ | 🟡 P2   | 21.1 Sparse Files          | Win32 compat — zero-region optimization           |
-| ⭐ | 🟡 P2   | 24.1 TRIM / Discard        | Performance — SSD longevity + write speed         |
-| ⭐ | 🟢 P3   | 6.2 Auto Snapshots         | UX — "Previous Versions" without VSS              |
-| ⭐ | 🟢 P3   | 13.1 Encryption            | Security — per-file AES-256                       |
-| ⭐ | 🟢 P3   | 22.1 Change Journal (USN)  | Indexing — Search, antivirus, backup              |
-| ⭐ | 🟢 P3   | 23.1 Volume Quotas         | Enterprise — per-user disk limits                 |
-| ⭐ | 🟢 P3   | 18.1 Health Dashboard      | Monitoring — unified volume health                |
-| 💎 | 🟢 P3   | 19.1 Test Suite            | Quality — automated validation                    |
+| ⭐ | Priority | Section                     | Description                                        |
+| -- | -------- | --------------------------- | -------------------------------------------------- |
+| 💎 | 🔴 P0   | §1.1 Superblock             | Verify — foundation of entire filesystem           |
+| 💎 | 🔴 P0   | §2.1 Block Allocator        | Verify — all writes depend on this                 |
+| 💎 | 🔴 P0   | §3.1 Inode Table            | Verify — all file access depends on this           |
+| 💎 | 🔴 P0   | §4.1 Extent Engine          | Verify — file data mapping                         |
+| 💎 | 🔴 P0   | §5.1 Journal                | Verify — crash safety                              |
+| 💎 | 🔴 P0   | §6.1 CoW & Snapshots        | Verify — data integrity                            |
+| 💎 | 🔴 P0   | §7.1 Checksums              | Verify — corruption detection                      |
+| 💎 | 🔴 P0   | §8.1 VFS Callbacks          | Verify — usability                                 |
+| 💎 | 🟠 P1   | §3.2 Extended Inode         | Enable — v3 format with new metadata fields        |
+| 💎 | 🟠 P1   | §9.1 Alternate Data Streams | Win32 compat — browser downloads, app streams      |
+| 💎 | 🟠 P1   | §10.1 Security Descriptors  | Win32 compat — ACLs for enterprise apps            |
+| 💎 | 🟠 P1   | §11.1 Hard Links            | Win32 compat — WinSxS, VC++ redist                |
+| 💎 | 🟠 P1   | §11.2 Symbolic Links        | Win32 compat — developer tools, junctions          |
+| 💎 | 🟠 P1   | §17.1 Format Tool v3        | Enable — can't use v3 features without formatter   |
+| 💎 | 🟠 P1   | §20.1 Case-Insensitive      | Win32 compat — case-insensitive is mandatory       |
+| ⭐ | 🟡 P2   | §12.1 Compression           | Performance — save space + reduce I/O              |
+| ⭐ | 🟡 P2   | §14.1 Deduplication         | Storage — similar files share blocks               |
+| ⭐ | 🟡 P2   | §15.1 Reflinks              | UX — instant file copy                             |
+| ⭐ | 🟡 P2   | §16.1 Defragmentation       | Performance — consolidate extents                  |
+| ⭐ | 🟡 P2   | §1.2 Online Volume Grow     | Management — dynamic disk expansion                |
+| ⭐ | 🟡 P2   | §7.2 Self-Healing           | Reliability — auto-repair corruption               |
+| ⭐ | 🟡 P2   | §21.1 Sparse Files          | Win32 compat — zero-region optimization            |
+| ⭐ | 🟡 P2   | §24.1 TRIM / Discard        | Performance — SSD longevity + write speed          |
+| ⭐ | 🟢 P3   | §6.2 Auto Snapshots         | UX — "Previous Versions" without VSS               |
+| ⭐ | 🟢 P3   | §13.1 Encryption            | Security — per-file AES-256                        |
+| ⭐ | 🟢 P3   | §22.1 Change Journal (USN)  | Indexing — Search, antivirus, backup               |
+| ⭐ | 🟢 P3   | §23.1 Volume Quotas         | Enterprise — per-user disk limits                  |
+| ⭐ | 🟢 P3   | §18.1 Health Dashboard      | Monitoring — unified volume health                 |
+| 💎 | 🟢 P3   | §19.1 Test Suite            | Quality — automated validation                     |
+| ⭐ | 🔵 P4   | §25.1 Object IDs            | Win32 compat — `GetFileInformationByHandle`        |
+| ⭐ | 🔵 P4   | §26.1 Extended Attributes   | Win32 compat — EA for installer metadata           |
+| ⭐ | 🔵 P4   | §27.1 Storage Tiering       | Performance — hot/cold data placement on SSD + HDD |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
+> 💎 = Spec-defined feature (standard compliance).
 
 ---
 

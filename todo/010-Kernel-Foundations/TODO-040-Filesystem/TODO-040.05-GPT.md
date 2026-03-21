@@ -63,6 +63,9 @@ graph TD
     U["§13.1 CRC Scrubbing 🚀"]
     V["§14.1 GUID Collision 🚀"]
     W["§15.1 GPT Backup & Restore 🚀"]
+    Z16["§16.1 Hot-Swap Detection 🚀"]
+    Z17["§17.1 Partition Health Dashboard 🚀"]
+    Y["§18.1 Forensic Event Log 🚀"]
 
     SPEC --> A
     BLK --> A
@@ -105,6 +108,13 @@ graph TD
     N --> X
     O --> X
     P --> X
+    O --> Y
+    P --> Y
+    Q --> Y
+    B --> Z16
+    T --> Z16
+    U --> Z17
+    V --> Z17
 ```
 
 ### Phase-by-Phase Implementation Order
@@ -139,6 +149,7 @@ graph TD
 | ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §15.1 GPT Backup & Restore 🚀     | Auto-backup partition table before every write + one-click restore          | Phase 4 (§9.1, §9.2)            |   ⬜   |
 | ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §16.1 Hot-Swap Detection 🚀        | Runtime disk insertion/removal → auto re-scan GPT on hot-plug events        | Phase 1 (§2.1) + VFS (040.07)   |   ⬜   |
 | ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §17.1 Partition Health Dashboard 🚀 | GUI surface GPT integrity + SMART + fragmentation in Disk Manager           | Phase 5 (§13.1, §14.1)          |   ⬜   |
+| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §18.1 Forensic Event Log 🚀        | Tamper-evident audit trail for all GPT modifications                         | Phase 4 (§9.2, §9.3, §9.4)      |   ⬜   |
 | 💎 | **—**  | `TODO-040.04-MBR.md`                  | §7.1–7.2 Protective + Hybrid MBR   | MBR `0xEE` redirect to GPT parser + Hybrid MBR sync                        | Phase 0 (§1)                     |   ⬜   |
 | 💎 | **—**  | `TODO-040.04-MBR.md`                  | §11.1–11.2 MBR↔GPT Conversion      | Non-destructive MBR→GPT and GPT→MBR disk conversion                        | Phase 4 (§9.1)                   |   ⬜   |
 | 💎 | **—**  | `TODO-040.07-VFS.md`                  | Drive letter assignment             | VFS volume mount + GUID→drive letter Registry lookup                        | Phase 4 (§11.1)                  |   ⬜   |
@@ -274,6 +285,13 @@ graph TD
 ### 3.1 Dynamic Sector Size Calculation
 
 **Prompt:** The current parser hardcodes 512-byte sector I/O (e.g., `hdr_sect[512]`, `entry_buf[512]`, `entries_per_sector = 512 / entry_size`). GPT offsets are defined relative to the logical block size — on a 4Kn drive (4096-byte sectors), LBA 1 is at byte offset 4096, and the 16 KB entry array spans only 4 LBAs instead of 32. Refactor the parser to use `dev->sector_size` for all buffer allocations and LBA calculations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: dynamic sector size support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!IMPORTANT]
+> **Codebase note:** `gpt.c` lines 333–334 allocate stack buffers as `hdr_sect[512]` and
+> `entry_buf[512]`. Line 304 validates `header_size > 512` (hardcoded). Line 418 calculates
+> `entries_per_sector = 512 / hdr.part_entry_size`. All three must be refactored to use
+> `dev->sector_size`. For 4Kn sectors, buffers must be allocated via `pmm_alloc_contiguous()`
+> since 4096-byte stack allocations risk kernel stack overflow.
 
 - [ ] Read `dev->sector_size` instead of assuming 512
 - [ ] Allocate sector buffers dynamically: `pmm_alloc_contiguous()` for buffers > 512 bytes
@@ -735,6 +753,7 @@ graph TD
 | ⭐ | 🟢 P3     | 15.1 GPT Backup & Restore           | **Auto-backup partition table** — Windows has nothing          |
 | ⭐ | 🟢 P3     | 16.1 Hot-Swap Detection             | **Runtime disk plug/unplug** — auto re-scan GPT on hot-plug   |
 | ⭐ | 🟢 P3     | 17.1 Partition Health Dashboard      | **GUI GPT integrity + SMART** — unified disk health surface   |
+| ⭐ | 🟢 P3     | 18.1 Forensic Event Log              | **Tamper-evident audit trail** — no OS logs GPT changes       |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -774,10 +793,11 @@ graph TD
 | 128-entry interop                  | ✅ (enforces 128)                | ✅ (flexible)                    | ✅ Uses `NumberOfEntries` from header                |
 | CRC32 polynomial correctness       | ✅ CCITT `0xEDB88320`            | ✅ CCITT `0xEDB88320`            | ✅ Correct polynomial implemented                    |
 | **Anti-aliased TTF in diskpart**   | ❌ Console bitmap font           | ❌ Terminal fonts only           | ⬜ **Planned — Selawik in shell**                    |
+| **GPT forensic event log**         | ❌ No audit trail                | ❌ No audit trail                | ⬜ §18.1 P3 — **tamper-evident modification log** 🚀 |
 
-> **After P1 items:** Impossible OS matches Windows and Linux GPT feature-for-feature on read path.
+> **After P0+P1 items:** Impossible OS matches Windows and Linux GPT feature-for-feature on read path.
 > **After P2 items:** Full write support + competitive features (CRC scrubbing, collision detection).
-> **After P3 items:** Exceeds both — drag-resize, auto-backup, hot-swap, and health dashboard.
+> **After P3 items:** Exceeds both — drag-resize, auto-backup, hot-swap, health dashboard, and forensic logging.
 
 ---
 
@@ -831,4 +851,40 @@ graph TD
 - [ ] Export: "Save Health Report" → text file with all metrics for support tickets
 - [ ] Log: `[GPT] Health check: disk %s, overall=%s, GPT=%s, SMART=%s`
 - [ ] Commit: `"gpt: partition health dashboard"`
+
+---
+
+## 18. GPT Forensic Event Log (🚀 Impossible OS Feature)
+
+### 18.1 Tamper-Evident Modification Log
+
+**Prompt:** Log every GPT modification (partition create, delete, resize, attribute change, GUID regeneration) to a persistent event log with timestamps, operation details, and before/after snapshots. No OS maintains an audit trail for partition table changes — when something goes wrong, there is zero forensic evidence. Store the log in the Registry at `HKLM\SYSTEM\Storage\GPT\EventLog\{disk_guid}`. Each entry: timestamp, operation type, entry index, before/after LBA range, before/after GUID. Expose via `diskpart log <disk>` and Disk Manager's "History" tab. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: forensic event log"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Neither Windows nor Linux logs partition table changes. When a
+> user accidentally deletes a partition, there is no record of what was there before.
+> Impossible OS can provide a full audit trail with one-click undo capability —
+> "Restore partition 3 from event log entry #47".
+
+- [ ] Define `gpt_event_t` struct:
+  - [ ] `timestamp` — kernel tick count at time of operation
+  - [ ] `operation` — enum: `GPT_OP_CREATE`, `GPT_OP_DELETE`, `GPT_OP_RESIZE`, `GPT_OP_ATTR`, `GPT_OP_GUID_REGEN`
+  - [ ] `entry_index` — which partition entry was affected
+  - [ ] `before_start_lba`, `before_end_lba` — previous LBA range (0 for create)
+  - [ ] `after_start_lba`, `after_end_lba` — new LBA range (0 for delete)
+  - [ ] `type_guid` — partition type at time of operation
+  - [ ] `unique_guid_before`, `unique_guid_after` — for GUID regeneration tracking
+- [ ] Implement `gpt_log_event(dev, event)` — append to persistent event log
+  - [ ] Registry key: `HKLM\SYSTEM\Storage\GPT\EventLog\{disk_guid}`
+  - [ ] Circular buffer: keep last 256 events per disk
+- [ ] Hook into all GPT write operations:
+  - [ ] `gpt_create_partition()` → log `GPT_OP_CREATE`
+  - [ ] `gpt_delete_partition()` → log `GPT_OP_DELETE`
+  - [ ] `gpt_resize_partition()` → log `GPT_OP_RESIZE`
+  - [ ] `gpt_set_attribute()` → log `GPT_OP_ATTR`
+  - [ ] `gpt_regenerate_guids()` → log `GPT_OP_GUID_REGEN`
+- [ ] `diskpart log <disk>` — display event history with timestamps
+- [ ] Disk Manager: "History" tab showing timeline of partition changes
+- [ ] Export: "Save Event Log" for forensic analysis
+- [ ] Commit: `"gpt: forensic event log"`
 

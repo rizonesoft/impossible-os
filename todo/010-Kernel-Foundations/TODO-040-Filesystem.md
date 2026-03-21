@@ -12,7 +12,7 @@
 ## TODO Completion Roadmap (Cross-File)
 
 > [!IMPORTANT]
-> **Eighteen TODO files** contribute to the storage and filesystem subsystem. They have
+> **Nineteen TODO files** contribute to the storage and filesystem subsystem. They have
 > deep cross-dependencies that dictate implementation order. This roadmap shows
 > the correct sequence — completing items out of order will cause rework.
 >
@@ -36,6 +36,7 @@
 > | `TODO-040.15-NVMe-2.0.md`       | NVMe 2.0 PCIe SSD controller driver               |
 > | `TODO-040.16-NVMe-2.1.md`       | NVMe 2.1 PCIe storage driver                      |
 > | `TODO-040.17-Win32-FS-API.md`   | Win32 I/O subsystem (IRP, MDL, handles, FltMgr)   |
+> | `TODO-040.18-ISO9660.md`        | ISO 9660 / ECMA-119 read-only driver              |
 
 ### Dependency Graph
 
@@ -68,7 +69,7 @@ graph TD
         BTRFS["040.12 Btrfs<br/>read-only — all pending"]
         APFS["040.13 APFS<br/>read-only — all pending"]
         HFSPLUS["040.14 HFS+<br/>read-only — all pending"]
-        ISO["§2.1 ISO 9660<br/>§2.2 Joliet/UDF"]
+        ISO["040.18 ISO 9660<br/>read-only — all pending"]
     end
 
     subgraph "Layer 3: VFS + Win32 API"
@@ -323,40 +324,11 @@ graph TD
 
 
 
-### 2.1 ISO 9660 Read Support
-
-**Prompt:** ISO 9660 is the standard CD/DVD filesystem. It uses 2048-byte sectors. The Primary Volume Descriptor (PVD) is at sector 16, identified by signature "CD001". The root directory record in the PVD gives the LBA and size of the root directory. Directory records are variable-length with a length byte, extent LBA, data length, flags (bit 1 = directory), and 8.3 filename. Files are stored as contiguous extents (no fragmentation). Rock Ridge extensions add POSIX metadata (long names, permissions, symlinks) via System Use Entries appended to each directory record. This is a read-only filesystem. Requires ATAPI driver (§1.4) for real optical media, or can read `.iso` files attached as raw block devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: ISO 9660 read support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-> ISO 9660 is the standard filesystem for CD/DVD media. Read-only by design.
-> Requires the ATAPI driver (§1.4) for real optical media, or raw block
-> access for `.iso` files attached via QEMU `-cdrom`.
-
-- [ ] Create `src/kernel/fs/iso9660.c` and `include/kernel/fs/iso9660.h`
-- [ ] Parse Primary Volume Descriptor at sector 16 (2048-byte sectors)
-- [ ] Define `struct iso9660_dir_record` (length, extent LBA, data length, flags, name)
-- [ ] Implement `iso9660_read_dir(extent_lba, size)` — parse directory records
-- [ ] Implement `iso9660_find(path)` — traverse directory tree from root
-- [ ] Implement `iso9660_read_file(extent_lba, size, buf)` — read contiguous extent
-- [ ] Handle both 8.3 names and Rock Ridge (POSIX extensions) if present
-- [ ] VFS integration: register iso9660 driver (read-only), mount to drive letter
-  - [ ] Implement VFS callbacks: open, close, read, readdir, finddir, stat (no write/create/delete/rename/truncate — read-only FS)
-- [ ] Add ISO 9660 probe to partition scanner (check PVD signature `"CD001"`)
-- [ ] Test: `bash scripts/build.sh run` with ISO 9660 test disk
-- [ ] Commit: `"fs: ISO 9660 read support"`
-
-### 2.2 Joliet / UDF Read Support
-
-**Prompt:** Joliet extends ISO 9660 with Unicode filenames via a Supplementary Volume Descriptor (detected by escape sequences in the SVD). Filenames are UTF-16BE encoded. UDF (Universal Disk Format) is used on DVDs and Blu-ray discs. UDF parsing starts from the Anchor Volume Descriptor Pointer at sector 256, which points to the Main Volume Descriptor Sequence. Files are located via File Identifier Descriptors and allocation descriptors (short/long/extended). Both Joliet and UDF build on the ISO 9660 infrastructure and the ATAPI driver. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: Joliet + UDF read support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-> Joliet extends ISO 9660 with long Unicode filenames. UDF is the standard
-> for DVD and Blu-ray media. Both build on top of ISO 9660 infrastructure.
-
-- [ ] Joliet: parse Supplementary Volume Descriptor, decode UTF-16BE filenames
-- [ ] UDF: parse Anchor Volume Descriptor Pointer (sector 256)
-- [ ] UDF: parse Partition Descriptor, Logical Volume Descriptor
-- [ ] UDF: implement `udf_read_dir()` — parse File Identifier Descriptors
-- [ ] UDF: implement `udf_read_file()` — follow allocation descriptors
-- [ ] VFS integration: register UDF driver (read-only), implement open, close, read, readdir, finddir, stat
-- [ ] Test: `bash scripts/build.sh run` with Joliet/UDF test disk
-- [ ] Commit: `"fs: Joliet + UDF read support"`
+> [!NOTE]
+> **§2.1 ISO 9660 Read Support** and **§2.2 Joliet / UDF Read Support** have been moved to
+> [`TODO-040.18-ISO9660.md`](file:///home/derickpayne/impossible-os/todo/010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.18-ISO9660.md)
+> (sections §1–§9: Volume Descriptors, Directory Records, Path Table, File Reading,
+> Joliet, Rock Ridge, El Torito, VFS Integration, and 4 exclusive features).
 
 ---
 
@@ -801,8 +773,7 @@ graph TD
 | 🟡 P2     | §5.2 CheckDisk (CLI + GUI)                    | Filesystem integrity after crashes                               |
 | 🟡 P2     | §5.3 Partition Manager (CLI + GUI)            | Disk partitioning                                                |
 | 🟡 P2     | §5.6 System File Checker (CLI + GUI)          | OS integrity validation                                          |
-| 🟢 P3     | §2.1 ISO 9660 Read                            | CD/DVD filesystem                                                |
-| 🟢 P3     | §2.2 Joliet/UDF Read                          | DVD/Blu-ray extensions                                           |
+| 🟢 P3     | 040.18 ISO 9660 Read                          | CD/DVD filesystem (17 sections, 4 exclusives)                    |
 | 🟢 P3     | §5.4 Defrag/TRIM (CLI + GUI)                  | Performance optimization                                         |
 | 🟢 P3     | §5.5 File/Data Recovery (CLI + GUI)           | Accidental deletion safety net                                   |
 | 🟢 P3     | §5.7 Disk Benchmark (CLI + GUI)               | Performance testing                                              |
@@ -835,6 +806,7 @@ graph TD
 > | `040.15-NVMe-2.0.md`        | 🔵 P4             | NVMe 2.0 SSD controller — all pending              |
 > | `040.16-NVMe-2.1.md`        | 🔵 P4             | NVMe 2.1 SSD controller — all pending              |
 > | `040.17-Win32-FS-API.md`    | 🔴 P0             | Win32 I/O subsystem — §13 API + §1–12 I/O Manager  |
+> | `040.18-ISO9660.md`         | 🟢 P3             | ISO 9660 read-only — all pending                    |
 
 ---
 
@@ -850,7 +822,7 @@ graph TD
 | Btrfs read-only                  | ❌ (third-party only)               | ✅ Native (default on Fedora)    | ⬜ 040.12 P3 — read-only                               |
 | APFS read-only                   | ❌                                  | ⚠️ apfs-fuse (third-party)       | ⬜ 040.13 P3 — read-only                               |
 | HFS+ read-only                   | ❌                                  | ✅ hfsplus (kernel)              | ⬜ 040.14 P3 — read-only                               |
-| ISO 9660 / Joliet / UDF         | ✅ Read-only                        | ✅ Read-only                     | ⬜ §2.1–2.2 P3                                         |
+| ISO 9660 / Joliet / UDF         | ✅ Read-only                        | ✅ Read-only                     | ⬜ 040.18 P3 — 17 sections, 4 exclusives               |
 | NVMe SSD support                 | ✅ Native (stornvme)                | ✅ Native (nvme-core)            | ⬜ 040.15/040.16 P4                                    |
 | Copy-on-Write filesystem         | ❌ (ReFS only — not bootable)       | ⚠️ btrfs only (not default)      | ✅ **IXFS CoW Done**                                   |
 | Volume snapshots                 | ✅ VSS (Volume Shadow Copy)         | ✅ btrfs snapshots               | ✅ IXFS CoW snapshots Done                             |

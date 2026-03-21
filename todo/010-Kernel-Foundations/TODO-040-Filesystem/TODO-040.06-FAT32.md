@@ -71,10 +71,10 @@ graph TD
     Z["040.06 §13.1<br/>Deleted File Recovery"]
 
     %% ── Cross-File Dependencies ──
-    VFS["040.07 §3.6<br/>Win32 File API (CreateFile)"]
+    VFS["040.17 §13.2<br/>Win32 File API (CreateFile)"]
     VFS_CI["040.07 §1.1<br/>Case-Insensitive Lookup"]
     VFS_VOL["040.07 §2.3<br/>GetVolumeInformation"]
-    VFS_LOCK["040.07 §3.7<br/>Win32 LockFile API"]
+    VFS_LOCK["040.07 §1.7<br/>Byte-Range File Locking"]
     PART["040.04 MBR / 040.05 GPT<br/>Partition Detection"]
     STOR["040.01 VirtIO / 040.02 AHCI<br/>Block Device I/O"]
     NTFS["040.08 §1.1–1.3<br/>NTFS Read-Only Driver"]
@@ -127,7 +127,7 @@ graph TD
 | 💎 | **2**  | `TODO-040.06-FAT32.md`   | §1.2 Sub-Type by Cluster Count | Confirm FAT32 via data cluster count — never trust `BS_FilSysType`         | Phase 1 (§1.1)           |   ⬜   |
 | 💎 | **2**  | `TODO-040.06-FAT32.md`   | §2.1 FSInfo Validation         | Range-check free count + next-free against total clusters, backup write    | Phase 1 (§1.1)           |   ⬜   |
 | 💎 | **2**  | `TODO-040.06-FAT32.md`   | §3.1 Dual-FAT Mirroring       | Add `BPB_ExtFlags` awareness — current code writes all FATs unconditionally | Phase 1 (§1.1)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §9.1 Large File Handling       | Enforce 4 GiB – 1 byte file size limit on write and truncate              | VFS §3.6 (CreateFile)    |   ⬜   |
+| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §9.1 Large File Handling       | Enforce 4 GiB – 1 byte file size limit on write and truncate              | 040.17 §13.2 (CreateFile)|   ⬜   |
 | 💎 | **3**  | `TODO-040.06-FAT32.md`   | §4.1 LFN Write Support         | Create files with names > 8.3: LFN entries, checksum, numeric tail        | Phase 2 (§3.1)           |   ⬜   |
 | 💎 | **3**  | `TODO-040.06-FAT32.md`   | §2.2 Full FAT Scan Fallback    | Compute true free cluster count when FSInfo is unknown or invalid          | Phase 2 (§2.1)           |   ⬜   |
 | 💎 | **4**  | `TODO-040.06-FAT32.md`   | §4.2 LFN Deletion & Orphan    | Mark all LFN entries `0xE5` on delete, detect/clean orphans               | Phase 3 (§4.1)           |   ⬜   |
@@ -142,12 +142,12 @@ graph TD
 | 💎 | **6**  | `TODO-040.06-FAT32.md`   | §6.1 Sector Cache Tuning       | Registry-configurable cache size, hit/miss telemetry, batch flush          | —                        |   ⬜   |
 | 💎 | **6**  | `TODO-040.06-FAT32.md`   | §5.2 Year 2107 Boundary        | Clamp year to 127, validate all timestamp fields on read                   | Phase 4 (§5.1)           |   ⬜   |
 | 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.2 Volume Label Operations   | Get/set volume label in root directory + boot sector sync                  | —                        |   ⬜   |
-| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.3 Byte-Range File Locking   | Win32 `LockFile`/`UnlockFile` backed by in-memory range tree               | VFS §3.7 (LockFile)      |   ⬜   |
+| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.3 Byte-Range File Locking   | Win32 `LockFile`/`UnlockFile` backed by in-memory range tree               | VFS §1.7 (LockFile)      |   ⬜   |
 | 💎 | **7**  | `TODO-040.06-FAT32.md`   | §7.1 Basic fsck                | Cluster bitmap cross-link detection, orphan recovery, chain validation     | Phase 1 (§1.3) + Ph 3    |   ⬜   |
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.1 Fragmentation Analyzer   | Per-file extent count, volume fragmentation %, visual cluster heat map     | —                        |   ⬜   |
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.2 Online Defragmentation   | Relocate file clusters to contiguous runs — GUI progress in Disk Manager   | Phase 7 (§7.1, §11.1)   |   ⬜   |
 | ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §13.1 Deleted File Recovery    | Scan `0xE5` entries, reconstruct cluster chains — built-in undelete        | Phase 7 (§7.1)           |   ⬜   |
-| 💎 | **8**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1     |   ⬜   |
+| 💎 | **8**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1    |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–2** are the critical path — mount hardening, data integrity, and spec compliance.
@@ -178,12 +178,12 @@ graph TD
 >    detected and readable before FAT32 mount can happen (already working).
 > 2. **Partition detection** (`TODO-040.04 MBR` / `TODO-040.05 GPT`) ← partitions
 >    with FAT32 type are identified and handed to the FAT32 driver (already working).
-> 3. **VFS Win32 API** (`TODO-040.07 §3.6`) ← `CreateFile`, `ReadFile`, `WriteFile`
+> 3. **Win32 File API** (`TODO-040.17 §13.2`) ← `CreateFile`, `ReadFile`, `WriteFile`
 >    wrappers expose FAT32 to user-space. §9.1 (4 GiB limit enforcement) and §10.1
 >    (interop) depend on this.
 > 4. **NTFS read-only** (`TODO-040.08 §1.1`) ← needed for cross-platform round-trip
 >    testing in §10.1 (reading NTFS volumes formatted by Windows).
-> 5. **VFS LockFile API** (`TODO-040.07 §3.7`) ← needed for §9.3 byte-range locking.
+> 5. **VFS Byte-Range Locking** (`TODO-040.07 §1.7`) ← needed for §9.3 byte-range locking.
 >    **exFAT read-only** (`TODO-040.10 §1.1`) ← needed for §10.1 interop testing
 >    with exFAT-formatted removable media.
 
@@ -547,6 +547,9 @@ graph TD
 
 **Prompt:** FAT32 caps file size at `0xFFFFFFFF` bytes (4 GiB – 1 byte). The driver must enforce this limit on writes and truncate operations. When a write would exceed the limit, return an error (`-EFBIG`). On file open, validate that `DIR_FileSize` does not exceed `0xFFFFFFFF` — corrupt entries exceeding this value should be clamped. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: 4 GiB file size enforcement"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
+> [!IMPORTANT]
+> → XREF: `TODO-040.17 §13.2` (CreateFile/CloseHandle) — file API must propagate `-EFBIG`
+
 - [ ] In `fat32_file_write_vfs()`: check `offset + size > 0xFFFFFFFF` → return `-EFBIG`
 - [ ] In `fat32_vfs_truncate()`: reject `new_size > 0xFFFFFFFF`
 - [ ] On directory read: clamp `DIR_FileSize` exceeding `0xFFFFFFFF` to `0xFFFFFFFF`
@@ -571,6 +574,9 @@ graph TD
 ### 9.3 Byte-Range File Locking
 
 **Prompt:** Win32 programs expect `LockFile()`/`UnlockFile()` to work on any filesystem, including FAT32. FAT32 has no on-disk lock structure, so locking must be purely in-memory (advisory locks valid only within the current OS session). Implement an interval tree (or sorted list) of locked byte ranges per open file handle on a FAT32 volume. Support `LOCKFILE_EXCLUSIVE_LOCK` (exclusive) and shared (read) locks. Check for overlapping ranges before granting. Locks are released on `CloseHandle()` or explicit `UnlockFile()`. This feature is missing from both Windows (FAT32 LockFile returns `ERROR_INVALID_FUNCTION` on some configurations) and Linux (`flock()` on vfat is advisory-only with no enforcement). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: byte-range file locking"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!IMPORTANT]
+> → XREF: `TODO-040.07 §1.7` (VFS Byte-Range File Locking) — VFS layer must route lock ops to FAT32 driver
 
 - [ ] Define `struct fat32_lock_range { uint64_t offset; uint64_t length; uint32_t flags; pid_t owner; }`
 - [ ] Add per-volume lock list or interval tree to `struct fat32_volume`
@@ -713,6 +719,51 @@ graph TD
   - [ ] Return list of recoverable files with confidence level (100% = all clusters free, partial = some overwritten)
 - [ ] Expose via Win32 API: `RecoverDeletedFile(path, original_name)` or via File Explorer integration
 - [ ] Commit: `"fat32: deleted file recovery (undelete)"`
+
+---
+
+## 14. Volume Health & Performance Telemetry (🚀 Impossible OS Feature)
+
+### 14.1 FAT32 Health Dashboard
+
+**Prompt:** Implement a real-time FAT32 volume health dashboard exposing key metrics: free cluster count and percentage, FAT chain integrity status (last fsck result), dirty flag state, average cluster chain length (fragmentation indicator), sector cache hit/miss ratio, I/O latency histogram (ns resolution), and IOPS counters. Expose all metrics via Registry keys under `HKLM\HARDWARE\FAT32\Volume0\` and wire to a Disk Manager GUI panel. Neither Windows nor Linux exposes per-volume FAT32 health metrics — this is a unique Impossible OS differentiator. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: volume health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows has no per-volume FAT32 telemetry. Linux has no built-in FAT32
+> health reporting beyond `df` and `dosfsck`. Impossible OS can show real-time disk health
+> in a GUI dashboard — a world-first for FAT32 volumes.
+
+- [ ] Define `struct fat32_health_report` with all metrics:
+  - [ ] `free_clusters`, `total_clusters`, `fragmentation_pct`
+  - [ ] `dirty_flag`, `io_error_flag`, `last_fsck_status`
+  - [ ] `cache_hits`, `cache_misses`, `cache_hit_rate_pct`
+  - [ ] `read_iops`, `write_iops`, `avg_latency_ns`
+- [ ] Implement `fat32_get_health(vol, *report)` — populate report from runtime counters
+- [ ] Add I/O latency tracking: timestamp before/after every `blkdev_read`/`blkdev_write`
+- [ ] Expose via Registry: `HKLM\HARDWARE\FAT32\Volume0\Health\*`
+- [ ] Wire to Disk Manager: "Health" tab with real-time updating gauges
+- [ ] Commit: `"fat32: volume health dashboard"`
+
+### 14.2 Readahead & Prefetch Optimization
+
+**Prompt:** Implement sequential read detection and cluster-level readahead for FAT32. When the driver detects sequential access pattern (consecutive cluster reads), prefetch the next N clusters into the sector cache before the application requests them. This reduces perceived latency for file copies, media playback, and sequential scans. Linux has a basic readahead patch for vfat (2020) but it operates at the VFS level, not the driver level. Windows has `FILE_FLAG_SEQUENTIAL_SCAN` but the FAT32 minifilter does not implement dedicated prefetch. Impossible OS can do driver-level readahead with configurable depth. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"fat32: readahead and prefetch optimization"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Linux vfat readahead operates at VFS page cache level — not FAT32-aware.
+> Windows FAT32 minifilter has no dedicated prefetch. Impossible OS can do driver-level
+> cluster-chain prefetch, reading ahead in the FAT to pre-resolve the entire chain.
+
+- [ ] Implement sequential access detection per open file:
+  - [ ] Track `last_read_cluster` and `sequential_count` in file handle struct
+  - [ ] If `current_cluster == last_read_cluster + 1`: increment `sequential_count`
+  - [ ] Else: reset `sequential_count = 0`
+- [ ] When `sequential_count >= 4` (threshold): trigger readahead
+  - [ ] Pre-resolve next 8–32 FAT entries (cluster chain walk-ahead)
+  - [ ] Issue DMA prefetch for next N contiguous clusters
+- [ ] Make readahead depth configurable: `HKLM\SYSTEM\Drivers\FAT32\ReadaheadClusters` (default 16)
+- [ ] Disable readahead for random access patterns automatically
+- [ ] Track metric: `readahead_hits` vs `readahead_misses` for telemetry
+- [ ] Commit: `"fat32: readahead and prefetch optimization"`
 
 ---
 
