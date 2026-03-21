@@ -298,14 +298,13 @@ that a signature generated while a specific certificate was valid remains
 trusted by the system even after that certificate naturally reaches its
 expiration date, provided it has not been actively revoked in the dbx.
 
-| Key / Database              | Function in Trust Chain                             | Management Characteristics                         |
-| --------------------------- | --------------------------------------------------- | -------------------------------------------------- |
-| **Platform Key (PK)**       | Ultimate root of trust between platform owner       | Enrolling a new PK transitions Setup → User Mode.  |
-|                             | and firmware.                                       | Clearing the PK reverts to Setup Mode.             |
-| **Key Exchange Key (KEK)**  | Trust relationship between OS vendor and firmware.   | Required to authorize updates to db and dbx.       |
-| **Authorized Database (db)**| Public keys and hashes of authorized EFI binaries.  | Binaries must match here to execute (if not in     |
-|                             |                                                     | dbx).                                              |
-| **Forbidden Database (dbx)**| Revocation list of malicious/revoked binaries.      | A match here overrides db — immediate exec fail.   |
+| Key / Database       | Function in Trust Chain              | Management                          |
+| -------------------- | ------------------------------------ | ----------------------------------- |
+| **Platform Key (PK)**| Root of trust: platform owner ↔      | New PK: Setup → User Mode.          |
+|                      | firmware relationship.               | Clear PK: reverts to Setup Mode.    |
+| **KEK**              | OS vendor ↔ firmware trust.          | Required for db/dbx updates.        |
+| **db (Authorized)**  | Hashes/keys of authorized binaries.  | Must match here to execute.         |
+| **dbx (Forbidden)**  | Revocation list of revoked binaries. | Match overrides db — exec denied.   |
 
 UEFI 2.10 also introduces support for the Device Authentication Signature
 Database, further expanding the variables and protocols required to
@@ -742,16 +741,16 @@ an event, UEFI Runtime Services only execute when explicitly and
 intentionally invoked by the operating system, operating at the exact
 same privilege level as the caller and avoiding execution hiccups.
 
-| Service Category             | Key Functions                          | Implementation Notes & Constraints             |
-| ---------------------------- | -------------------------------------- | ---------------------------------------------- |
-| **Variable Services**        | `GetVariable()`, `SetVariable()`       | Essential for Crypto Agility framework;        |
-|                              |                                        | restricted by Secure Boot auth descriptors.    |
-| **Time Services**            | `GetTime()`, `SetTime()`,              | Often stubbed in IoT Conformance Profiles;     |
-|                              | `GetWakeupTime()`                      | relies on `EFI_RT_PROPERTIES_TABLE` bitmasks.  |
-| **Virtual Memory Services**  | `SetVirtualAddressMap()`,              | Interacts with `EFI_MEMORY_ATTRIBUTES_TABLE`   |
-|                              | `ConvertPointer()`                     | to maintain W^X protections post-boot.         |
-| **Firmware Update**          | `UpdateCapsule()`,                     | Critical for deploying 2026 Secure Boot key    |
-|                              | `QueryCapsuleCapabilities()`           | updates; relies on Firmware Mgmt Protocol.     |
+| Service Category            | Key Functions                       | Notes & Constraints                          |
+| --------------------------- | ----------------------------------- | -------------------------------------------- |
+| **Variable Services**       | `GetVariable()`, `SetVariable()`    | Essential for Crypto Agility; restricted by  |
+|                             |                                     | Secure Boot auth descriptors.                |
+| **Time Services**           | `GetTime()`, `SetTime()`,           | Often stubbed in IoT Profiles; relies on     |
+|                             | `GetWakeupTime()`                   | `EFI_RT_PROPERTIES_TABLE` bitmasks.          |
+| **Virtual Memory Services** | `SetVirtualAddressMap()`,           | Interacts with `EFI_MEMORY_ATTRIBUTES_TABLE` |
+|                             | `ConvertPointer()`                  | to maintain W^X protections post-boot.       |
+| **Firmware Update**         | `UpdateCapsule()`,                  | Critical for 2026 Secure Boot key updates;   |
+|                             | `QueryCapsuleCapabilities()`        | relies on Firmware Mgmt Protocol.            |
 
 ## Conclusion
 
