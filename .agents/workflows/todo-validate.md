@@ -229,17 +229,16 @@ Verify the phase table uses the canonical format:
 ```markdown
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                         | Depends On                    | Status |
-| -- | :----: | -------------------------------- | ----------------------------- | :----: |
-| 💎 | **0**  | Prerequisites (spec, code, etc.) | —                             |   ✅   |
-| 💎 | **1**  | §1.1 Foundation Section          | Phase 0                       |   ⬜   |
-| ⭐ | **3**  | §5.1 Exclusive Feature           | Phase 2 (§2.1)                |   ⬜   |
+| Phase  | Sections                         | Depends On                    | Status |
+| :----: | -------------------------------- | ----------------------------- | :----: |
+| **0**  | Prerequisites (spec, code, etc.) | —                             |   ✅   |
+| **1**  | §1.1 Foundation Section          | Phase 0                       |   ⬜   |
+| **3**  | §5.1 Exclusive Feature           | Phase 2 (§2.1)                |   ⬜   |
 ```
 
-**Icon meanings:**
-- 💎 = Spec-defined feature (standard compliance)
-- ⭐ = Impossible OS exclusive feature (competitive advantage)
-- Status: ✅ done, ⬜ not started, ⚠️ partially done
+> [!IMPORTANT]
+> The Phase table does **not** have a `⭐/💎` icon column. That column is only for
+> the OS Comparison table. If you find an icon column in a Phase table, remove it.
 
 Verify:
 - All sections appear in the phase table

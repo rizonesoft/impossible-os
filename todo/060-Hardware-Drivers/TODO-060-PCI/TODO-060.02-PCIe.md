@@ -88,17 +88,17 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                     | Depends On             | Status |
-| -- | :----: | -------------------------------------------- | ---------------------- | :----: |
-| 💎 | **0**  | Prerequisites (PCI base, ACPI MCFG)         | TODO-060-PCI, ACPI     |   ⬜   |
-| 💎 | **1**  | §1.1 ECAM Discovery, §1.2 ECAM Access       | Phase 0                |   ⬜   |
-| 💎 | **2**  | §2.1 Extended Caps, §3.1 PCIe Cap           | Phase 1                |   ⬜   |
-| 💎 | **3**  | §3.2 MPS/MRRS, §4.1 AER                     | Phase 2                |   ⬜   |
-| 💎 | **4**  | §5.1 ASPM, §5.2 L1 PM Substates             | Phase 2                |   ⬜   |
-| 💎 | **5**  | §6.1–§6.2 Hotplug                            | Phase 2                |   ⬜   |
-| 💎 | **6**  | §7.1–§7.3 IOMMU + ACS                       | Phase 1                |   ⬜   |
-| 💎 | **7**  | §8.1–§8.3 Kernel API                         | Phase 1                |   ⬜   |
-| ⭐ | **8**  | §9.1–§9.2 Exclusive Features                | Phase 3, 7             |   ⬜   |
+| Phase  | Sections                                     | Depends On             | Status |
+| :----: | -------------------------------------------- | ---------------------- | :----: |
+| **0**  | Prerequisites (PCI base, ACPI MCFG)         | TODO-060-PCI, ACPI     |   ⬜   |
+| **1**  | §1.1 ECAM Discovery, §1.2 ECAM Access       | Phase 0                |   ⬜   |
+| **2**  | §2.1 Extended Caps, §3.1 PCIe Cap           | Phase 1                |   ⬜   |
+| **3**  | §3.2 MPS/MRRS, §4.1 AER                     | Phase 2                |   ⬜   |
+| **4**  | §5.1 ASPM, §5.2 L1 PM Substates             | Phase 2                |   ⬜   |
+| **5**  | §6.1–§6.2 Hotplug                            | Phase 2                |   ⬜   |
+| **6**  | §7.1–§7.3 IOMMU + ACS                       | Phase 1                |   ⬜   |
+| **7**  | §8.1–§8.3 Kernel API                         | Phase 1                |   ⬜   |
+| **8**  | §9.1–§9.2 Exclusive Features                | Phase 3, 7             |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** requires base PCI enumeration and ACPI MCFG parsing to be complete.

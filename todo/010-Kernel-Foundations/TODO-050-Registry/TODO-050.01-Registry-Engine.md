@@ -39,11 +39,11 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                       | Description                                                             | Depends On     | Status |
-| -- | :---: | ----------------------------- | ----------------------------------------------------------------------- | -------------- | :----: |
-| 💎 | **1** | §1.1 Registry Data Structures | `reg_key_t`, `reg_value_t`, `HKEY`, static pools, FNV-1a hash           | —              |   ✅   |
-| 💎 | **2** | §1.2 Value Types              | `REG_SZ`..`REG_QWORD`, `EXPAND_SZ`, `MULTI_SZ`, `REG_LINK` redirection  | Phase 1 (§1.1) |   ✅   |
-| 💎 | **3** | §1.3 Predefined Root Keys     | HKLM, HKCU, HKU, HKCR, HKCC + default sub-keys + redirection            | Phase 2 (§1.2) |   ✅   |
+| Phase | Section                       | Description                                                             | Depends On     | Status |
+| :---: | ----------------------------- | ----------------------------------------------------------------------- | -------------- | :----: |
+| **1** | §1.1 Registry Data Structures | `reg_key_t`, `reg_value_t`, `HKEY`, static pools, FNV-1a hash           | —              |   ✅   |
+| **2** | §1.2 Value Types              | `REG_SZ`..`REG_QWORD`, `EXPAND_SZ`, `MULTI_SZ`, `REG_LINK` redirection  | Phase 1 (§1.1) |   ✅   |
+| **3** | §1.3 Predefined Root Keys     | HKLM, HKCU, HKU, HKCR, HKCC + default sub-keys + redirection            | Phase 2 (§1.2) |   ✅   |
 
 > [!NOTE]
 > **All phases complete.** The core registry engine is fully implemented and verified.

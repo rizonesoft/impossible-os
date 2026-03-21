@@ -83,21 +83,21 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                                  | What It Delivers                                                        | Depends On                   | Status |
-| -- | :----: | ---------------------------------------- | ----------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/hyper-v/synthetic-video-driver.md` | Protocol wire formats, VRAM constraints, security — **read before coding** | —                           |   ✅   |
-| 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol       | VMBus channel open, ring buffers, GPADL — foundation for all synthvid    | —                            |   ✅   |
-| 💎 | **1**  | §1.1 VMBus Channel + Version Negotiation | Connect to Video VSP, agree on protocol version                          | Phase 0 (VMBus)              |   ⬜   |
-| 💎 | **1**  | §1.2 VRAM Allocation + GPA Registration  | PMM-backed VRAM, host knows where framebuffer lives                      | Phase 1 (§1.1)               |   ⬜   |
-| 💎 | **2**  | §2.1 Situation Update (Resolution)       | Tell host current resolution and pixel format                            | Phase 1 (§1.2)               |   ⬜   |
-| 💎 | **2**  | §2.2 Dirty Rectangle Notifications       | Only repaint changed regions — no full-screen scan                       | Phase 2 (§2.1)               |   ⬜   |
-| 💎 | **3**  | §3.1 Hardware Cursor Position            | Eliminate double-cursor effect — host composites cursor                   | Phase 1 (§1.2)               |   ⬜   |
-| 💎 | **3**  | §3.2 Custom Cursor Shape                 | Send custom cursor images to host for compositing                        | Phase 3 (§3.1)               |   ⬜   |
-| 💎 | **4**  | §4.1 Runtime Resolution Change           | Handle `vmconnect.exe` window resize / Enhanced Session Mode             | Phase 2 (§2.1)               |   ⬜   |
-| 💎 | **4**  | §4.2 Feature Change Handling             | Respond to host dynamic capability updates                               | Phase 4 (§4.1)               |   ⬜   |
-| 💎 | **5**  | §5.1 Compositor Integration              | Replace GOP fallback with synthvid-backed framebuffer                    | Phase 1–3 (§1.2, §2.2, §3.1) |   ⬜   |
-| 💎 | **6**  | §6.1 Security Hardening                  | TOCTOU-safe message parsing, bounds checking                             | Phase 1 (§1.2)               |   ⬜   |
-| 💎 | **7**  | §7.1 Test Suite                          | Verify on Hyper-V Gen 2 — resolution, cursor, dirty rects               | Phase 5 (§5.1)               |   ⬜   |
+| Phase  | Section                                  | What It Delivers                                                        | Depends On                   | Status |
+| :----: | ---------------------------------------- | ----------------------------------------------------------------------- | ---------------------------- | :----: |
+| **0**  | `docs/specs/hyper-v/synthetic-video-driver.md` | Protocol wire formats, VRAM constraints, security — **read before coding** | —                           |   ✅   |
+| **0**  | `TODO-008 §3` VMBus Core Protocol       | VMBus channel open, ring buffers, GPADL — foundation for all synthvid    | —                            |   ✅   |
+| **1**  | §1.1 VMBus Channel + Version Negotiation | Connect to Video VSP, agree on protocol version                          | Phase 0 (VMBus)              |   ⬜   |
+| **1**  | §1.2 VRAM Allocation + GPA Registration  | PMM-backed VRAM, host knows where framebuffer lives                      | Phase 1 (§1.1)               |   ⬜   |
+| **2**  | §2.1 Situation Update (Resolution)       | Tell host current resolution and pixel format                            | Phase 1 (§1.2)               |   ⬜   |
+| **2**  | §2.2 Dirty Rectangle Notifications       | Only repaint changed regions — no full-screen scan                       | Phase 2 (§2.1)               |   ⬜   |
+| **3**  | §3.1 Hardware Cursor Position            | Eliminate double-cursor effect — host composites cursor                   | Phase 1 (§1.2)               |   ⬜   |
+| **3**  | §3.2 Custom Cursor Shape                 | Send custom cursor images to host for compositing                        | Phase 3 (§3.1)               |   ⬜   |
+| **4**  | §4.1 Runtime Resolution Change           | Handle `vmconnect.exe` window resize / Enhanced Session Mode             | Phase 2 (§2.1)               |   ⬜   |
+| **4**  | §4.2 Feature Change Handling             | Respond to host dynamic capability updates                               | Phase 4 (§4.1)               |   ⬜   |
+| **5**  | §5.1 Compositor Integration              | Replace GOP fallback with synthvid-backed framebuffer                    | Phase 1–3 (§1.2, §2.2, §3.1) |   ⬜   |
+| **6**  | §6.1 Security Hardening                  | TOCTOU-safe message parsing, bounds checking                             | Phase 1 (§1.2)               |   ⬜   |
+| **7**  | §7.1 Test Suite                          | Verify on Hyper-V Gen 2 — resolution, cursor, dirty rects               | Phase 5 (§5.1)               |   ⬜   |
 
 > [!NOTE]
 > **Phase 1** is the critical path: VMBus channel open + VRAM registration gives

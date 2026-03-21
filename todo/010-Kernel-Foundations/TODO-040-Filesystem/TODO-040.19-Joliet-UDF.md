@@ -97,27 +97,27 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                    | Depends On               | Status |
-| -- | :----: | ------------------------------------------- | ------------------------ | :----: |
-| 💎 | **0**  | Prerequisites (spec, ATAPI, ISO 9660)       | —                        |   ⬜   |
-| 💎 | **1**  | §1.1 Joliet SVD Detection                   | Phase 0 (ISO 9660)       |   ⬜   |
-| 💎 | **1**  | §1.2 Joliet Directory Hierarchy             | Phase 1 (§1.1)           |   ⬜   |
-| 💎 | **1**  | §2.1 UCS-2 to UTF-8 Converter              | Phase 1 (§1.2)           |   ⬜   |
-| 💎 | **1**  | §2.2 Joliet Path Resolution                 | Phase 1 (§2.1)           |   ⬜   |
-| 💎 | **2**  | §3.1 UDF Volume Recognition Sequence        | Phase 0 (ATAPI)          |   ⬜   |
-| 💎 | **2**  | §3.2 Anchor Volume Descriptor Pointer       | Phase 2 (§3.1)           |   ⬜   |
-| 💎 | **3**  | §4.1 UDF Volume Descriptor Sequence         | Phase 2 (§3.2)           |   ⬜   |
-| 💎 | **3**  | §4.2 Partition & Logical Volume Mapping     | Phase 3 (§4.1)           |   ⬜   |
-| 💎 | **4**  | §5.1 UDF Descriptor Tag Validation          | Phase 3 (§4.2)           |   ⬜   |
-| 💎 | **4**  | §5.2 File Identifier Descriptors            | Phase 4 (§5.1)           |   ⬜   |
-| 💎 | **4**  | §5.3 File Entry & Allocation Descriptors    | Phase 4 (§5.1)           |   ⬜   |
-| 💎 | **5**  | §5.4 UDF File Data Reader                   | Phase 4 (§5.3)           |   ⬜   |
-| 💎 | **5**  | §6.1 Joliet VFS Registration               | Phase 1 + VFS            |   ⬜   |
-| 💎 | **5**  | §6.2 UDF VFS Registration                  | Phase 5 (§5.4) + VFS     |   ⬜   |
-| 💎 | **6**  | §7.1 Test Suite                             | Phase 5                  |   ⬜   |
-| ⭐ | **7**  | §8.1 Optical Media Inspector                | Phase 4 (§5.2)           |   ⬜   |
-| ⭐ | **7**  | §8.2 UDF Revision Dashboard                 | Phase 3 (§4.1)           |   ⬜   |
-| ⭐ | **7**  | §8.3 Unicode Filename Analyzer              | Phase 1 (§2.1)           |   ⬜   |
+| Phase  | Sections                                    | Depends On               | Status |
+| :----: | ------------------------------------------- | ------------------------ | :----: |
+| **0**  | Prerequisites (spec, ATAPI, ISO 9660)       | —                        |   ⬜   |
+| **1**  | §1.1 Joliet SVD Detection                   | Phase 0 (ISO 9660)       |   ⬜   |
+| **1**  | §1.2 Joliet Directory Hierarchy             | Phase 1 (§1.1)           |   ⬜   |
+| **1**  | §2.1 UCS-2 to UTF-8 Converter              | Phase 1 (§1.2)           |   ⬜   |
+| **1**  | §2.2 Joliet Path Resolution                 | Phase 1 (§2.1)           |   ⬜   |
+| **2**  | §3.1 UDF Volume Recognition Sequence        | Phase 0 (ATAPI)          |   ⬜   |
+| **2**  | §3.2 Anchor Volume Descriptor Pointer       | Phase 2 (§3.1)           |   ⬜   |
+| **3**  | §4.1 UDF Volume Descriptor Sequence         | Phase 2 (§3.2)           |   ⬜   |
+| **3**  | §4.2 Partition & Logical Volume Mapping     | Phase 3 (§4.1)           |   ⬜   |
+| **4**  | §5.1 UDF Descriptor Tag Validation          | Phase 3 (§4.2)           |   ⬜   |
+| **4**  | §5.2 File Identifier Descriptors            | Phase 4 (§5.1)           |   ⬜   |
+| **4**  | §5.3 File Entry & Allocation Descriptors    | Phase 4 (§5.1)           |   ⬜   |
+| **5**  | §5.4 UDF File Data Reader                   | Phase 4 (§5.3)           |   ⬜   |
+| **5**  | §6.1 Joliet VFS Registration               | Phase 1 + VFS            |   ⬜   |
+| **5**  | §6.2 UDF VFS Registration                  | Phase 5 (§5.4) + VFS     |   ⬜   |
+| **6**  | §7.1 Test Suite                             | Phase 5                  |   ⬜   |
+| **7**  | §8.1 Optical Media Inspector                | Phase 4 (§5.2)           |   ⬜   |
+| **7**  | §8.2 UDF Revision Dashboard                 | Phase 3 (§4.1)           |   ⬜   |
+| **7**  | §8.3 Unicode Filename Analyzer              | Phase 1 (§2.1)           |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** requires ISO 9660 base (§2.1) and ATAPI driver (040.03).

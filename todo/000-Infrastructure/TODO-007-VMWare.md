@@ -112,21 +112,21 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                              | Depends On                     | Status |
-| -- | :----: | ------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | Prerequisites (AHCI, PCI, PS/2, VGA) | —                              |   ✅   |
-| 💎 | **1**  | §1 Test Runner Script                 | —                              |   ⬜   |
-| 💎 | **1**  | §2 VMware Platform Detection          | `cpuid_platform.c`             |   ⬜   |
-| 💎 | **2**  | §3 SVGA II Display Driver             | Phase 1 (§2) + PCI             |   ⬜   |
-| 💎 | **2**  | §6 VMware Backdoor (RPCI)             | Phase 1 (§2)                   |   ⬜   |
-| 💎 | **3**  | §4 PVSCSI Storage Driver              | Phase 1 (§2) + PCI             |   ⬜   |
-| 💎 | **3**  | §7 Absolute Mouse (Backdoor)          | Phase 2 (§6)                   |   ⬜   |
-| 💎 | **4**  | §5 VMXNET3 Network Driver             | Phase 1 (§2) + PCI             |   ⬜   |
-| 💎 | **4**  | §8 VMware Tools Integration           | Phase 2 (§6)                   |   ⬜   |
-| 💎 | **5**  | §9 Time Synchronization               | Phase 2 (§6)                   |   ⬜   |
-| 💎 | **5**  | §10 Resolution Auto-Fit               | Phase 2 (§3 + §6)              |   ⬜   |
-| ⭐ | **6**  | §11 Shared Folders (HGFS)             | Phase 4 (§8)                   |   ⬜   |
-| ⭐ | **7**  | §12 Performance Telemetry             | Phase 3–4 (§4 + §5)            |   ⬜   |
+| Phase  | Sections                              | Depends On                     | Status |
+| :----: | ------------------------------------- | ------------------------------ | :----: |
+| **0**  | Prerequisites (AHCI, PCI, PS/2, VGA) | —                              |   ✅   |
+| **1**  | §1 Test Runner Script                 | —                              |   ⬜   |
+| **1**  | §2 VMware Platform Detection          | `cpuid_platform.c`             |   ⬜   |
+| **2**  | §3 SVGA II Display Driver             | Phase 1 (§2) + PCI             |   ⬜   |
+| **2**  | §6 VMware Backdoor (RPCI)             | Phase 1 (§2)                   |   ⬜   |
+| **3**  | §4 PVSCSI Storage Driver              | Phase 1 (§2) + PCI             |   ⬜   |
+| **3**  | §7 Absolute Mouse (Backdoor)          | Phase 2 (§6)                   |   ⬜   |
+| **4**  | §5 VMXNET3 Network Driver             | Phase 1 (§2) + PCI             |   ⬜   |
+| **4**  | §8 VMware Tools Integration           | Phase 2 (§6)                   |   ⬜   |
+| **5**  | §9 Time Synchronization               | Phase 2 (§6)                   |   ⬜   |
+| **5**  | §10 Resolution Auto-Fit               | Phase 2 (§3 + §6)              |   ⬜   |
+| **6**  | §11 Shared Folders (HGFS)             | Phase 4 (§8)                   |   ⬜   |
+| **7**  | §12 Performance Telemetry             | Phase 3–4 (§4 + §5)            |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — Impossible OS boots on VMware using legacy AHCI,

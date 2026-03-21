@@ -122,38 +122,38 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File                 | Sections                        | What It Delivers                                                           | Depends On               | Status |
-| -- | :----: | ------------------------- | ------------------------------- | -------------------------------------------------------------------------- | ------------------------ | :----: |
-| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.1 Strict BPB Validation     | Reject malformed volumes early — all BPB invariants checked                | Block Device I/O         |   ⬜   |
-| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.3 Dirty Volume Detection    | Detect improper unmount via FAT[1] flags — trigger fsck or warn            | —                        |   ⬜   |
-| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §1.4 Read-Only Mount Mode      | Mount damaged/dirty volumes safely without risk of further corruption      | Phase 1 (§1.3)           |   ⬜   |
-| 💎 | **1**  | `TODO-040.06-FAT32.md`   | §7.2 Safe Unmount Sequence     | Flush caches, update FSInfo, set clean flag, issue blkdev flush            | Phase 1 (§1.3)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §1.2 Sub-Type by Cluster Count | Confirm FAT32 via data cluster count — never trust `BS_FilSysType`         | Phase 1 (§1.1)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §2.1 FSInfo Validation         | Range-check free count + next-free against total clusters, backup write    | Phase 1 (§1.1)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §3.1 Dual-FAT Mirroring       | Add `BPB_ExtFlags` awareness — current code writes all FATs unconditionally | Phase 1 (§1.1)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.06-FAT32.md`   | §9.1 Large File Handling       | Enforce 4 GiB – 1 byte file size limit on write and truncate              | 040.17 §13.2 (CreateFile)|   ⬜   |
-| 💎 | **3**  | `TODO-040.06-FAT32.md`   | §4.1 LFN Write Support         | Create files with names > 8.3: LFN entries, checksum, numeric tail        | Phase 2 (§3.1)           |   ⬜   |
-| 💎 | **3**  | `TODO-040.06-FAT32.md`   | §2.2 Full FAT Scan Fallback    | Compute true free cluster count when FSInfo is unknown or invalid          | Phase 2 (§2.1)           |   ⬜   |
-| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §4.2 LFN Deletion & Orphan    | Mark all LFN entries `0xE5` on delete, detect/clean orphans               | Phase 3 (§4.1)           |   ⬜   |
-| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §4.3 Full UCS-2 Unicode        | UCS-2LE ↔ UTF-8 conversion for international filenames                    | Phase 3 (§4.1)           |   ⬜   |
-| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §5.1 High-Res Creation Time    | `DIR_CrtTimeTenth` (10ms) + `DIR_NTRes` casing + fix `vfs_stat` timestamps | —                        |   ⬜   |
-| 💎 | **4**  | `TODO-040.06-FAT32.md`   | §3.2 Backup Boot Sector        | Add mount fallback + repair (format already writes backup at sector 6)     | Phase 2 (§3.1)           |   ⬜   |
-| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §6.2 Contiguous Coalescing     | Single multi-sector DMA for contiguous cluster runs                        | —                        |   ⬜   |
-| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §6.3 FAT Sector Caching        | Dedicated FAT region cache — >95% hit rate on sequential reads             | Phase 2 (§3.1)           |   ⬜   |
-| 💎 | **5**  | `TODO-040.06-FAT32.md`   | §8.1 Robust Formatting         | Spec-compliant `mkfs`: MS FATSz32 algorithm, backup FSInfo, cluster check  | Phase 2 (§2.1)           |   ⬜   |
-| ⭐ | **5**  | `TODO-040.06-FAT32.md`   | §6.4 Cluster Pre-Allocation    | Contiguous pre-alloc for new files — reduces fragmentation to near-zero    | Phase 5 (§6.2)           |   ⬜   |
-| ⭐ | **6**  | `TODO-040.06-FAT32.md`   | §12.1 Transaction-Safe WAL     | Write-ahead log in reserved sectors — FAT32 crash protection (world-first) | Phase 1 (§7.2) + Ph 2    |   ⬜   |
-| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §6.1 Sector Cache Tuning       | Registry-configurable cache size, hit/miss telemetry, batch flush          | —                        |   ⬜   |
-| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §5.2 Year 2107 Boundary        | Clamp year to 127, validate all timestamp fields on read                   | Phase 4 (§5.1)           |   ⬜   |
-| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.2 Volume Label Operations   | Get/set volume label in root directory + boot sector sync                  | —                        |   ⬜   |
-| 💎 | **6**  | `TODO-040.06-FAT32.md`   | §9.3 Byte-Range File Locking   | Win32 `LockFile`/`UnlockFile` backed by in-memory range tree               | VFS §1.7 (LockFile)      |   ⬜   |
-| 💎 | **7**  | `TODO-040.06-FAT32.md`   | §7.1 Basic fsck                | Cluster bitmap cross-link detection, orphan recovery, chain validation     | Phase 1 (§1.3) + Ph 3    |   ⬜   |
-| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.1 Fragmentation Analyzer   | Per-file extent count, volume fragmentation %, visual cluster heat map     | —                        |   ⬜   |
-| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §11.2 Online Defragmentation   | Relocate file clusters to contiguous runs — GUI progress in Disk Manager   | Phase 7 (§7.1, §11.1)   |   ⬜   |
-| ⭐ | **7**  | `TODO-040.06-FAT32.md`   | §13.1 Deleted File Recovery    | Scan `0xE5` entries, reconstruct cluster chains — built-in undelete        | Phase 7 (§7.1)           |   ⬜   |
-| ⭐ | **8**  | `TODO-040.06-FAT32.md`   | §14.1 FAT32 Health Dashboard   | Real-time volume health metrics in Disk Manager GUI — world-first          | Phase 5 (§6.1)           |   ⬜   |
-| ⭐ | **8**  | `TODO-040.06-FAT32.md`   | §14.2 Readahead & Prefetch     | Driver-level sequential readahead with configurable depth                  | Phase 5 (§6.3)           |   ⬜   |
-| 💎 | **9**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1    |   ⬜   |
+| Phase  | TODO File                 | Sections                        | What It Delivers                                                           | Depends On               | Status |
+| :----: | ------------------------- | ------------------------------- | -------------------------------------------------------------------------- | ------------------------ | :----: |
+| **1**  | `TODO-040.06-FAT32.md`   | §1.1 Strict BPB Validation     | Reject malformed volumes early — all BPB invariants checked                | Block Device I/O         |   ⬜   |
+| **1**  | `TODO-040.06-FAT32.md`   | §1.3 Dirty Volume Detection    | Detect improper unmount via FAT[1] flags — trigger fsck or warn            | —                        |   ⬜   |
+| **1**  | `TODO-040.06-FAT32.md`   | §1.4 Read-Only Mount Mode      | Mount damaged/dirty volumes safely without risk of further corruption      | Phase 1 (§1.3)           |   ⬜   |
+| **1**  | `TODO-040.06-FAT32.md`   | §7.2 Safe Unmount Sequence     | Flush caches, update FSInfo, set clean flag, issue blkdev flush            | Phase 1 (§1.3)           |   ⬜   |
+| **2**  | `TODO-040.06-FAT32.md`   | §1.2 Sub-Type by Cluster Count | Confirm FAT32 via data cluster count — never trust `BS_FilSysType`         | Phase 1 (§1.1)           |   ⬜   |
+| **2**  | `TODO-040.06-FAT32.md`   | §2.1 FSInfo Validation         | Range-check free count + next-free against total clusters, backup write    | Phase 1 (§1.1)           |   ⬜   |
+| **2**  | `TODO-040.06-FAT32.md`   | §3.1 Dual-FAT Mirroring       | Add `BPB_ExtFlags` awareness — current code writes all FATs unconditionally | Phase 1 (§1.1)           |   ⬜   |
+| **2**  | `TODO-040.06-FAT32.md`   | §9.1 Large File Handling       | Enforce 4 GiB – 1 byte file size limit on write and truncate              | 040.17 §13.2 (CreateFile)|   ⬜   |
+| **3**  | `TODO-040.06-FAT32.md`   | §4.1 LFN Write Support         | Create files with names > 8.3: LFN entries, checksum, numeric tail        | Phase 2 (§3.1)           |   ⬜   |
+| **3**  | `TODO-040.06-FAT32.md`   | §2.2 Full FAT Scan Fallback    | Compute true free cluster count when FSInfo is unknown or invalid          | Phase 2 (§2.1)           |   ⬜   |
+| **4**  | `TODO-040.06-FAT32.md`   | §4.2 LFN Deletion & Orphan    | Mark all LFN entries `0xE5` on delete, detect/clean orphans               | Phase 3 (§4.1)           |   ⬜   |
+| **4**  | `TODO-040.06-FAT32.md`   | §4.3 Full UCS-2 Unicode        | UCS-2LE ↔ UTF-8 conversion for international filenames                    | Phase 3 (§4.1)           |   ⬜   |
+| **4**  | `TODO-040.06-FAT32.md`   | §5.1 High-Res Creation Time    | `DIR_CrtTimeTenth` (10ms) + `DIR_NTRes` casing + fix `vfs_stat` timestamps | —                        |   ⬜   |
+| **4**  | `TODO-040.06-FAT32.md`   | §3.2 Backup Boot Sector        | Add mount fallback + repair (format already writes backup at sector 6)     | Phase 2 (§3.1)           |   ⬜   |
+| **5**  | `TODO-040.06-FAT32.md`   | §6.2 Contiguous Coalescing     | Single multi-sector DMA for contiguous cluster runs                        | —                        |   ⬜   |
+| **5**  | `TODO-040.06-FAT32.md`   | §6.3 FAT Sector Caching        | Dedicated FAT region cache — >95% hit rate on sequential reads             | Phase 2 (§3.1)           |   ⬜   |
+| **5**  | `TODO-040.06-FAT32.md`   | §8.1 Robust Formatting         | Spec-compliant `mkfs`: MS FATSz32 algorithm, backup FSInfo, cluster check  | Phase 2 (§2.1)           |   ⬜   |
+| **5**  | `TODO-040.06-FAT32.md`   | §6.4 Cluster Pre-Allocation    | Contiguous pre-alloc for new files — reduces fragmentation to near-zero    | Phase 5 (§6.2)           |   ⬜   |
+| **6**  | `TODO-040.06-FAT32.md`   | §12.1 Transaction-Safe WAL     | Write-ahead log in reserved sectors — FAT32 crash protection (world-first) | Phase 1 (§7.2) + Ph 2    |   ⬜   |
+| **6**  | `TODO-040.06-FAT32.md`   | §6.1 Sector Cache Tuning       | Registry-configurable cache size, hit/miss telemetry, batch flush          | —                        |   ⬜   |
+| **6**  | `TODO-040.06-FAT32.md`   | §5.2 Year 2107 Boundary        | Clamp year to 127, validate all timestamp fields on read                   | Phase 4 (§5.1)           |   ⬜   |
+| **6**  | `TODO-040.06-FAT32.md`   | §9.2 Volume Label Operations   | Get/set volume label in root directory + boot sector sync                  | —                        |   ⬜   |
+| **6**  | `TODO-040.06-FAT32.md`   | §9.3 Byte-Range File Locking   | Win32 `LockFile`/`UnlockFile` backed by in-memory range tree               | VFS §1.7 (LockFile)      |   ⬜   |
+| **7**  | `TODO-040.06-FAT32.md`   | §7.1 Basic fsck                | Cluster bitmap cross-link detection, orphan recovery, chain validation     | Phase 1 (§1.3) + Ph 3    |   ⬜   |
+| **7**  | `TODO-040.06-FAT32.md`   | §11.1 Fragmentation Analyzer   | Per-file extent count, volume fragmentation %, visual cluster heat map     | —                        |   ⬜   |
+| **7**  | `TODO-040.06-FAT32.md`   | §11.2 Online Defragmentation   | Relocate file clusters to contiguous runs — GUI progress in Disk Manager   | Phase 7 (§7.1, §11.1)   |   ⬜   |
+| **7**  | `TODO-040.06-FAT32.md`   | §13.1 Deleted File Recovery    | Scan `0xE5` entries, reconstruct cluster chains — built-in undelete        | Phase 7 (§7.1)           |   ⬜   |
+| **8**  | `TODO-040.06-FAT32.md`   | §14.1 FAT32 Health Dashboard   | Real-time volume health metrics in Disk Manager GUI — world-first          | Phase 5 (§6.1)           |   ⬜   |
+| **8**  | `TODO-040.06-FAT32.md`   | §14.2 Readahead & Prefetch     | Driver-level sequential readahead with configurable depth                  | Phase 5 (§6.3)           |   ⬜   |
+| **9**  | `TODO-040.06-FAT32.md`   | §10.1 Cross-Platform Compat    | Round-trip testing: format/read/write across Windows, Linux, Impossible OS | VFS §1.1 + NTFS §1.1    |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–2** are the critical path — mount hardening, data integrity, and spec compliance.

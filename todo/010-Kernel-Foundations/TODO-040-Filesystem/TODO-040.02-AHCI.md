@@ -143,46 +143,46 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | TODO File / Spec                | Sections                    | What It Delivers                                                        | Depends On                       | Status |
-| -- | :---: | ------------------------------- | --------------------------- | ----------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0** | `src/kernel/drivers/ahci.c`     | Existing driver             | PCI detect, ABAR mapping, port init, DMA R/W, IDENTIFY, ATAPI (polling) | —                               |   ✅   |
-| 💎 | **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                   | —                               |   ✅   |
-| 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports               | —                               |   ✅   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ✅   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ✅   |
-| 💎 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ✅   |
-| 💎 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
-| 💎 | **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ⬜   |
-| ⭐ | **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ⬜   |
-| 💎 | **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **3** | `TODO-040.02-AHCI.md`           | §6.1 Link Power Management  | Partial/Slumber states — save laptop battery during SATA idle           | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **3** | `TODO-040.02-AHCI.md`           | §10.1 SMART Monitoring      | Drive health → temperature, reallocated sectors, power-on hours         | Phase 1 (§1.1)                  |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.3 NCQ Priority           | PRIO bit for latency-sensitive I/O — **neither Win nor Linux uses**     | Phase 2 (§2.1)                  |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.4 NCQ Autosense          | Sense Data Reporting — surgical error recovery without queue drain      | Phase 2 (§2.1)                  |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §2.5 NCQ Auto-Depth         | Workload-adaptive queue depth — **neither Win nor Linux tunes this**    | Phase 2 (§2.1)                  |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §10.2 Predictive Failure    | SMART trend analysis → predict failure days ahead                       | Phase 3 (§10.1)                 |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §12.1 I/O Statistics        | Per-port IOPS, throughput, per-NCQ-tag latency histograms               | Phase 1 (§1.1) + Phase 2 (§2.1) |   ⬜   |
-| ⭐ | **3** | `TODO-040.02-AHCI.md`           | §16.1 NCQ TRIM              | Queued TRIM via FPDMA — **no stop-the-world pauses**                    | Phase 2 (§2.1 + §5.1)           |   ⬜   |
-| 💎 | **4** | `TODO-040.02-AHCI.md`           | §2.2 Interrupt Coalescing   | Command Completion Coalescing — prevent interrupt storms under load     | Phase 2 (§2.1) + Phase 3 (§1.2) |   ⬜   |
-| 💎 | **4** | `TODO-040.02-AHCI.md`           | §6.2 DevSleep               | Ultra-low-power PHY shutdown (\<5 mW) — AHCI 1.3.1 deep sleep           | Phase 3 (§6.1)                  |   ⬜   |
-| 💎 | **4** | `TODO-040.02-AHCI.md`           | §4.2 Staggered Spin-Up      | Sequential port spin-up — prevent inrush current in multi-drive systems | Phase 3 (§4.1)                  |   ⬜   |
-| 💎 | **4** | `TODO-040.02-AHCI.md`           | §9.2 Enhanced ATAPI         | Full SCSI command set over AHCI — eject, sense, TOC, config profiles    | Phase 1 (§1.1)                  |   ⬜   |
-| ⭐ | **4** | `TODO-040.02-AHCI.md`           | §15.1 Write Cache Mgmt      | GUI write cache toggle — **Win hides, Linux needs hdparm**              | Phase 0 (driver)                |   ⬜   |
-| ⭐ | **4** | `TODO-040.02-AHCI.md`           | §17.1 Error Injection       | Simulated drive errors for kernel testing — **no OS has built-in**      | Phase 2 (§3.2) + Phase 1 (§1.1) |   ⬜   |
-| ⭐ | **4** | `TODO-040.02-AHCI.md`           | §18.1 Disk Health Dashboard | Unified SMART + stats + predictive failure GUI — **single pane**        | Phase 3 (§10.1 + §12.1)         |   ⬜   |
-| ⭐ | **5** | `TODO-040.02-AHCI.md`           | §11.1 ATA Security Erase    | GUI secure erase — **Windows blocks this since Win 8**                  | Phase 2 (§3.2)                  |   ⬜   |
-| ⭐ | **5** | `TODO-040.02-AHCI.md`           | §11.2 SANITIZE              | BLOCK ERASE / CRYPTO SCRAMBLE / OVERWRITE — enterprise wipe             | Phase 2 (§3.2)                  |   ⬜   |
-| 💎 | **5** | `TODO-040.02-AHCI.md`           | §8.1 Enclosure LEDs         | Activity/Fault/Locate LEDs for server/NAS drive bays                    | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **5** | `TODO-040.02-AHCI.md`           | §9.1 Port Multiplier        | Fan-out single port to 15 devices via PM                                | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **5** | `TODO-040.02-AHCI.md`           | §13.1 ZPODD                 | Zero-power optical drive — 0W draw when tray empty                      | Phase 4 (§6.2)                  |   ⬜   |
-| 💎 | —     | `TODO-040.06-FAT32.md`          | Downstream: TRIM + FUA      | `fat32_unlink()` → `blkdev_discard()`, metadata writes → FUA            | Phase 2 (§5.1, §5.2)            |   ⬜   |
-| 💎 | —     | `TODO-040.11-IXFS.md`           | Downstream: TRIM + FUA      | `ixfs_delete()` → `blkdev_discard()`, journal commits → FUA             | Phase 2 (§5.1, §5.2)            |   ⬜   |
-| 💎 | —     | `TODO-040.08-NTFS.md`           | Downstream: block I/O       | NTFS read-only driver relies on `blkdev_read()` backed by AHCI          | Phase 0 (existing driver)       |   ⬜   |
-| 💎 | —     | `TODO-040.03-ATAPI-SCSI-MMC.md` | Downstream: AHCI transport  | ATAPI AHCI command delivery routes through AHCI port infrastructure     | Phase 4 (§9.2)                  |   ⬜   |
-| 💎 | —     | `TODO-040.01-VirtIO.md`         | Parallel transport          | VirtIO block driver — shares `blkdev` API but separate hardware path    | Independent (VirtIO ≠ AHCI)     |   ⬜   |
+| Phase | TODO File / Spec                | Sections                    | What It Delivers                                                        | Depends On                       | Status |
+| :---: | ------------------------------- | --------------------------- | ----------------------------------------------------------------------- | -------------------------------- | :----: |
+| **0** | `src/kernel/drivers/ahci.c`     | Existing driver             | PCI detect, ABAR mapping, port init, DMA R/W, IDENTIFY, ATAPI (polling) | —                               |   ✅   |
+| **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                   | —                               |   ✅   |
+| **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports               | —                               |   ✅   |
+| **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ✅   |
+| **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
+| **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ✅   |
+| **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ✅   |
+| **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §6.1 Link Power Management  | Partial/Slumber states — save laptop battery during SATA idle           | Phase 1 (§1.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §10.1 SMART Monitoring      | Drive health → temperature, reallocated sectors, power-on hours         | Phase 1 (§1.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §2.3 NCQ Priority           | PRIO bit for latency-sensitive I/O — **neither Win nor Linux uses**     | Phase 2 (§2.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §2.4 NCQ Autosense          | Sense Data Reporting — surgical error recovery without queue drain      | Phase 2 (§2.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §2.5 NCQ Auto-Depth         | Workload-adaptive queue depth — **neither Win nor Linux tunes this**    | Phase 2 (§2.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §10.2 Predictive Failure    | SMART trend analysis → predict failure days ahead                       | Phase 3 (§10.1)                 |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §12.1 I/O Statistics        | Per-port IOPS, throughput, per-NCQ-tag latency histograms               | Phase 1 (§1.1) + Phase 2 (§2.1) |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §16.1 NCQ TRIM              | Queued TRIM via FPDMA — **no stop-the-world pauses**                    | Phase 2 (§2.1 + §5.1)           |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §2.2 Interrupt Coalescing   | Command Completion Coalescing — prevent interrupt storms under load     | Phase 2 (§2.1) + Phase 3 (§1.2) |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §6.2 DevSleep               | Ultra-low-power PHY shutdown (\<5 mW) — AHCI 1.3.1 deep sleep           | Phase 3 (§6.1)                  |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §4.2 Staggered Spin-Up      | Sequential port spin-up — prevent inrush current in multi-drive systems | Phase 3 (§4.1)                  |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §9.2 Enhanced ATAPI         | Full SCSI command set over AHCI — eject, sense, TOC, config profiles    | Phase 1 (§1.1)                  |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §15.1 Write Cache Mgmt      | GUI write cache toggle — **Win hides, Linux needs hdparm**              | Phase 0 (driver)                |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §17.1 Error Injection       | Simulated drive errors for kernel testing — **no OS has built-in**      | Phase 2 (§3.2) + Phase 1 (§1.1) |   ⬜   |
+| **4** | `TODO-040.02-AHCI.md`           | §18.1 Disk Health Dashboard | Unified SMART + stats + predictive failure GUI — **single pane**        | Phase 3 (§10.1 + §12.1)         |   ⬜   |
+| **5** | `TODO-040.02-AHCI.md`           | §11.1 ATA Security Erase    | GUI secure erase — **Windows blocks this since Win 8**                  | Phase 2 (§3.2)                  |   ⬜   |
+| **5** | `TODO-040.02-AHCI.md`           | §11.2 SANITIZE              | BLOCK ERASE / CRYPTO SCRAMBLE / OVERWRITE — enterprise wipe             | Phase 2 (§3.2)                  |   ⬜   |
+| **5** | `TODO-040.02-AHCI.md`           | §8.1 Enclosure LEDs         | Activity/Fault/Locate LEDs for server/NAS drive bays                    | Phase 1 (§1.1)                  |   ⬜   |
+| **5** | `TODO-040.02-AHCI.md`           | §9.1 Port Multiplier        | Fan-out single port to 15 devices via PM                                | Phase 1 (§1.1)                  |   ⬜   |
+| **5** | `TODO-040.02-AHCI.md`           | §13.1 ZPODD                 | Zero-power optical drive — 0W draw when tray empty                      | Phase 4 (§6.2)                  |   ⬜   |
+| —     | `TODO-040.06-FAT32.md`          | Downstream: TRIM + FUA      | `fat32_unlink()` → `blkdev_discard()`, metadata writes → FUA            | Phase 2 (§5.1, §5.2)            |   ⬜   |
+| —     | `TODO-040.11-IXFS.md`           | Downstream: TRIM + FUA      | `ixfs_delete()` → `blkdev_discard()`, journal commits → FUA             | Phase 2 (§5.1, §5.2)            |   ⬜   |
+| —     | `TODO-040.08-NTFS.md`           | Downstream: block I/O       | NTFS read-only driver relies on `blkdev_read()` backed by AHCI          | Phase 0 (existing driver)       |   ⬜   |
+| —     | `TODO-040.03-ATAPI-SCSI-MMC.md` | Downstream: AHCI transport  | ATAPI AHCI command delivery routes through AHCI port infrastructure     | Phase 4 (§9.2)                  |   ⬜   |
+| —     | `TODO-040.01-VirtIO.md`         | Parallel transport          | VirtIO block driver — shares `blkdev` API but separate hardware path    | Independent (VirtIO ≠ AHCI)     |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — the existing driver handles PCI discovery, ABAR mapping,

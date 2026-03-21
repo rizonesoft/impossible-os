@@ -65,18 +65,18 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                            | Description                                                           | Depends On     | Status |
-| -- | :---: | ---------------------------------- | --------------------------------------------------------------------- | -------------- | :----: |
-| 💎 | **0** | TODO-050.01 + 050.02               | Core engine + Win32 API (mutation paths exist)                        | —              |   ✅   |
-| 💎 | **1** | §5.1 Watcher Data Structures       | `reg_watcher_t` pool, filter flag constants, watcher ID allocator     | Phase 0        |   ⬜   |
-| 💎 | **2** | §5.2 RegNotifyChangeKeyValue       | Register a watcher on a key with filter + callback                    | Phase 1 (§5.1) |   ⬜   |
-| 💎 | **2** | §5.3 Notification Dispatch         | Fire matching watchers from `RegSetValueEx`, `RegCreateKeyEx`, etc.   | Phase 1 (§5.1) |   ⬜   |
-| 💎 | **3** | §5.4 Subtree Watching              | `watchSubtree=TRUE` — watch all descendants                           | Phase 2 (§5.3) |   ⬜   |
-| 💎 | **3** | §5.5 Watcher Lifecycle             | `RegUnregisterNotify`, auto-cleanup on key deletion                   | Phase 2 (§5.2) |   ⬜   |
-| ⭐ | **4** | §5.6 Batch Coalescing              | Deduplicate rapid-fire notifications (timer-based window) 🚀         | Phase 2 (§5.3) |   ⬜   |
-| ⭐ | **4** | §5.7 Watcher Telemetry             | Hit counters exposed in `HKLM\SYSTEM\Registry\WatcherStats` 🚀      | Phase 2 (§5.3) |   ⬜   |
-| ⭐ | **5** | §5.8 Change-Detail Payloads        | Old/new value included in notification callback 🚀                   | Phase 2 (§5.3) |   ⬜   |
-| ⭐ | **5** | §5.9 Priority-Based Dispatch       | High-priority watchers dispatched before low-priority ones 🚀        | Phase 2 (§5.3) |   ⬜   |
+| Phase | Section                            | Description                                                           | Depends On     | Status |
+| :---: | ---------------------------------- | --------------------------------------------------------------------- | -------------- | :----: |
+| **0** | TODO-050.01 + 050.02               | Core engine + Win32 API (mutation paths exist)                        | —              |   ✅   |
+| **1** | §5.1 Watcher Data Structures       | `reg_watcher_t` pool, filter flag constants, watcher ID allocator     | Phase 0        |   ⬜   |
+| **2** | §5.2 RegNotifyChangeKeyValue       | Register a watcher on a key with filter + callback                    | Phase 1 (§5.1) |   ⬜   |
+| **2** | §5.3 Notification Dispatch         | Fire matching watchers from `RegSetValueEx`, `RegCreateKeyEx`, etc.   | Phase 1 (§5.1) |   ⬜   |
+| **3** | §5.4 Subtree Watching              | `watchSubtree=TRUE` — watch all descendants                           | Phase 2 (§5.3) |   ⬜   |
+| **3** | §5.5 Watcher Lifecycle             | `RegUnregisterNotify`, auto-cleanup on key deletion                   | Phase 2 (§5.2) |   ⬜   |
+| **4** | §5.6 Batch Coalescing              | Deduplicate rapid-fire notifications (timer-based window) 🚀         | Phase 2 (§5.3) |   ⬜   |
+| **4** | §5.7 Watcher Telemetry             | Hit counters exposed in `HKLM\SYSTEM\Registry\WatcherStats` 🚀      | Phase 2 (§5.3) |   ⬜   |
+| **5** | §5.8 Change-Detail Payloads        | Old/new value included in notification callback 🚀                   | Phase 2 (§5.3) |   ⬜   |
+| **5** | §5.9 Priority-Based Dispatch       | High-priority watchers dispatched before low-priority ones 🚀        | Phase 2 (§5.3) |   ⬜   |
 
 > [!NOTE]
 > **Phase 0 is complete.** The core engine and Win32 API already provide the mutation

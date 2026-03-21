@@ -72,16 +72,16 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                              | What It Delivers                                                     | Depends On                     | Status |
-| -- | :----: | ------------------------------------ | -------------------------------------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | `docs/specs/hyper-v/advanced-enlightenments.md` | Wire formats, CPUID leaves, MSR layouts — **read before coding** | —                              |   ✅   |
-| 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol   | Hypercall page, SynIC, version negotiation                           | —                              |   ✅   |
-| 💎 | **1**  | §1 Privilege & Feature Detection     | CPUID gating for all enlightenments, feature flags struct            | Phase 0 (VMBus)                |   ⬜   |
-| 💎 | **2**  | §2 TSC Reference Page               | Zero-VM-exit nanosecond clock reads — **78% latency reduction**      | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **2**  | §4 Spinlock Enlightenment            | Resolve LCP pathology — linear SMP scalability to 64 vCPUs           | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **3**  | §3 HyperClear TLB Flush             | Paravirt TLB invalidation — **85% TLB flush latency reduction**      | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **3**  | §6 XMM Fast Hypercalls              | SSE register packing — accelerates HyperClear pipeline               | Phase 1 (§1)                   |   ⬜   |
-| 💎 | **4**  | §5 Virtual PCI (VPCI/DDA)           | Direct GPU/NVMe passthrough via VMBus — near-native I/O              | Phase 0 (VMBus) + Phase 1 (§1) |   ⬜   |
+| Phase  | Section                              | What It Delivers                                                     | Depends On                     | Status |
+| :----: | ------------------------------------ | -------------------------------------------------------------------- | ------------------------------ | :----: |
+| **0**  | `docs/specs/hyper-v/advanced-enlightenments.md` | Wire formats, CPUID leaves, MSR layouts — **read before coding** | —                              |   ✅   |
+| **0**  | `TODO-008 §3` VMBus Core Protocol   | Hypercall page, SynIC, version negotiation                           | —                              |   ✅   |
+| **1**  | §1 Privilege & Feature Detection     | CPUID gating for all enlightenments, feature flags struct            | Phase 0 (VMBus)                |   ⬜   |
+| **2**  | §2 TSC Reference Page               | Zero-VM-exit nanosecond clock reads — **78% latency reduction**      | Phase 1 (§1)                   |   ⬜   |
+| **2**  | §4 Spinlock Enlightenment            | Resolve LCP pathology — linear SMP scalability to 64 vCPUs           | Phase 1 (§1)                   |   ⬜   |
+| **3**  | §3 HyperClear TLB Flush             | Paravirt TLB invalidation — **85% TLB flush latency reduction**      | Phase 1 (§1)                   |   ⬜   |
+| **3**  | §6 XMM Fast Hypercalls              | SSE register packing — accelerates HyperClear pipeline               | Phase 1 (§1)                   |   ⬜   |
+| **4**  | §5 Virtual PCI (VPCI/DDA)           | Direct GPU/NVMe passthrough via VMBus — near-native I/O              | Phase 0 (VMBus) + Phase 1 (§1) |   ⬜   |
 
 > [!NOTE]
 > **Phase 1** is the foundation — CPUID privilege detection gates everything else.

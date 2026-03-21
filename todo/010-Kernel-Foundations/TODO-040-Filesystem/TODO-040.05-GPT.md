@@ -119,40 +119,40 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec                      | Sections                           | What It Delivers                                                            | Depends On                       | Status |
-| -- | :----: | ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/partitioning/gpt.md`        | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                 | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                                |   ✅   |
-| 💎 | **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse             | Signature, CRC32, entry array, PMBR detection — **foundation complete**     | Phase 0 (block + spec)           |   ✅   |
-| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback        | Don't fail on single-sector corruption — read backup at last LBA            | Phase 0 (§1)                     |   ✅   |
-| 💎 | **1**  | `TODO-040.05-GPT.md`                  | §5.1 Type GUID Registry            | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.    | Phase 0 (§1)                     |   ✅   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §2.2 Primary Auto-Recovery         | Restore primary header from valid backup — full structural redundancy       | Phase 1 (§2.1)                   |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §3.1 Dynamic Sector Size           | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | Phase 0 (§1)                     |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §4.1 GUID Encode + String          | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | Phase 0 (§1 read path)           |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §6.1 UEFI Global Attributes        | Required, BIOSBoot, hidden partition handling                               | Phase 0 (§1)                     |   ⬜   |
-| 💎 | **2**  | `TODO-040.05-GPT.md`                  | §7.1 Hybrid MBR Detection          | Warn and always prefer GPT over conflicting legacy MBR entries              | Phase 0 (§1) + MBR (040.04 §7)  |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §2.3 Backup Sync on Write          | Mirror every primary write to backup — prerequisite for all write ops       | Phase 2 (§2.2)                   |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §6.2 Microsoft Attributes          | Read-only, hidden, no-automount on Basic Data partitions                    | Phase 2 (§6.1)                   |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.1 PMBR Writer                   | Create Protective MBR at LBA 0 — entry point for GPT disk init             | Phase 2 (§4.1) + MBR (040.04)   |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.2 GPT Header Writer             | Serialize and write primary/backup headers with CRC32                       | Phase 2 (§4.1 + §3.1)           |   ⬜   |
-| 💎 | **3**  | `TODO-040.05-GPT.md`                  | §8.3 Partition Entry Writer         | Serialize entries + compute array CRC32 — write path for entry array        | Phase 2 (§4.1)                   |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.1 Initialize GPT Disk           | Fresh GPT layout: PMBR + headers + empty entry array                        | Phase 3 (§8.1–8.3)              |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.2 Create Partition               | Add partition with 1-MiB alignment, overlap validation, GUID generation     | Phase 3 (§2.3) + Phase 4 (§9.1) |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.3 Delete Partition               | Zero entry slot, respect Required flag, unmount first                        | Phase 4 (§9.2)                   |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §9.4 Modify Attributes             | Set/clear bootable, read-only, hidden, no-automount bits                    | Phase 4 (§9.2) + Phase 2–3 (§6) |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §11.1 Volume Identification        | GUID-based persistent drive letters via Registry                            | Phase 0 (§1) + VFS (040.07)     |   ⬜   |
-| 💎 | **4**  | `TODO-040.05-GPT.md`                  | §12.1 GPT Test Suite               | QEMU-based test images validating all parser + writer paths                 | Phase 4 (§9.1–9.3)              |   ⬜   |
-| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §13.1 CRC Scrubbing 🚀             | Proactive periodic GPT integrity validation + auto-repair                   | Phase 1 (§2.1) + Phase 2 (§2.2) |   ⬜   |
-| ⭐ | **5**  | `TODO-040.05-GPT.md`                  | §14.1 GUID Collision 🚀            | Clone-disk safety: detect duplicate GUIDs, offer regeneration               | Phase 4 (§11.1)                  |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §9.5 Partition Resize 🚀           | GUI drag-to-resize — grow/shrink in-place, Windows severely limited         | Phase 4 (§9.2)                   |   ⬜   |
-| 💎 | **6**  | `TODO-040.05-GPT.md`                  | §10.1 Diskpart GPT Commands        | CLI: `diskpart list/create/delete/gptinit/info`                             | Phase 4 (§9.2, §9.3)            |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §15.1 GPT Backup & Restore 🚀     | Auto-backup partition table before every write + one-click restore          | Phase 4 (§9.1, §9.2)            |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §16.1 Hot-Swap Detection 🚀        | Runtime disk insertion/removal → auto re-scan GPT on hot-plug events        | Phase 1 (§2.1) + VFS (040.07)   |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §17.1 Partition Health Dashboard 🚀 | GUI surface GPT integrity + SMART + fragmentation in Disk Manager           | Phase 5 (§13.1, §14.1)          |   ⬜   |
-| ⭐ | **6**  | `TODO-040.05-GPT.md`                  | §18.1 Forensic Event Log 🚀        | Tamper-evident audit trail for all GPT modifications                         | Phase 4 (§9.2, §9.3, §9.4)      |   ⬜   |
-| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §7.1–7.2 Protective + Hybrid MBR   | MBR `0xEE` redirect to GPT parser + Hybrid MBR sync                        | Phase 0 (§1)                     |   ⬜   |
-| 💎 | **—**  | `TODO-040.04-MBR.md`                  | §11.1–11.2 MBR↔GPT Conversion      | Non-destructive MBR→GPT and GPT→MBR disk conversion                        | Phase 4 (§9.1)                   |   ⬜   |
-| 💎 | **—**  | `TODO-040.07-VFS.md`                  | Drive letter assignment             | VFS volume mount + GUID→drive letter Registry lookup                        | Phase 4 (§11.1)                  |   ⬜   |
+| Phase  | TODO File / Spec                      | Sections                           | What It Delivers                                                            | Depends On                       | Status |
+| :----: | ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | :----: |
+| **0**  | `specs/storage/partitioning/gpt.md`        | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
+| **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                 | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                                |   ✅   |
+| **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse             | Signature, CRC32, entry array, PMBR detection — **foundation complete**     | Phase 0 (block + spec)           |   ✅   |
+| **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback        | Don't fail on single-sector corruption — read backup at last LBA            | Phase 0 (§1)                     |   ✅   |
+| **1**  | `TODO-040.05-GPT.md`                  | §5.1 Type GUID Registry            | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.    | Phase 0 (§1)                     |   ✅   |
+| **2**  | `TODO-040.05-GPT.md`                  | §2.2 Primary Auto-Recovery         | Restore primary header from valid backup — full structural redundancy       | Phase 1 (§2.1)                   |   ⬜   |
+| **2**  | `TODO-040.05-GPT.md`                  | §3.1 Dynamic Sector Size           | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | Phase 0 (§1)                     |   ⬜   |
+| **2**  | `TODO-040.05-GPT.md`                  | §4.1 GUID Encode + String          | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | Phase 0 (§1 read path)           |   ⬜   |
+| **2**  | `TODO-040.05-GPT.md`                  | §6.1 UEFI Global Attributes        | Required, BIOSBoot, hidden partition handling                               | Phase 0 (§1)                     |   ⬜   |
+| **2**  | `TODO-040.05-GPT.md`                  | §7.1 Hybrid MBR Detection          | Warn and always prefer GPT over conflicting legacy MBR entries              | Phase 0 (§1) + MBR (040.04 §7)  |   ⬜   |
+| **3**  | `TODO-040.05-GPT.md`                  | §2.3 Backup Sync on Write          | Mirror every primary write to backup — prerequisite for all write ops       | Phase 2 (§2.2)                   |   ⬜   |
+| **3**  | `TODO-040.05-GPT.md`                  | §6.2 Microsoft Attributes          | Read-only, hidden, no-automount on Basic Data partitions                    | Phase 2 (§6.1)                   |   ⬜   |
+| **3**  | `TODO-040.05-GPT.md`                  | §8.1 PMBR Writer                   | Create Protective MBR at LBA 0 — entry point for GPT disk init             | Phase 2 (§4.1) + MBR (040.04)   |   ⬜   |
+| **3**  | `TODO-040.05-GPT.md`                  | §8.2 GPT Header Writer             | Serialize and write primary/backup headers with CRC32                       | Phase 2 (§4.1 + §3.1)           |   ⬜   |
+| **3**  | `TODO-040.05-GPT.md`                  | §8.3 Partition Entry Writer         | Serialize entries + compute array CRC32 — write path for entry array        | Phase 2 (§4.1)                   |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §9.1 Initialize GPT Disk           | Fresh GPT layout: PMBR + headers + empty entry array                        | Phase 3 (§8.1–8.3)              |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §9.2 Create Partition               | Add partition with 1-MiB alignment, overlap validation, GUID generation     | Phase 3 (§2.3) + Phase 4 (§9.1) |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §9.3 Delete Partition               | Zero entry slot, respect Required flag, unmount first                        | Phase 4 (§9.2)                   |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §9.4 Modify Attributes             | Set/clear bootable, read-only, hidden, no-automount bits                    | Phase 4 (§9.2) + Phase 2–3 (§6) |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §11.1 Volume Identification        | GUID-based persistent drive letters via Registry                            | Phase 0 (§1) + VFS (040.07)     |   ⬜   |
+| **4**  | `TODO-040.05-GPT.md`                  | §12.1 GPT Test Suite               | QEMU-based test images validating all parser + writer paths                 | Phase 4 (§9.1–9.3)              |   ⬜   |
+| **5**  | `TODO-040.05-GPT.md`                  | §13.1 CRC Scrubbing 🚀             | Proactive periodic GPT integrity validation + auto-repair                   | Phase 1 (§2.1) + Phase 2 (§2.2) |   ⬜   |
+| **5**  | `TODO-040.05-GPT.md`                  | §14.1 GUID Collision 🚀            | Clone-disk safety: detect duplicate GUIDs, offer regeneration               | Phase 4 (§11.1)                  |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §9.5 Partition Resize 🚀           | GUI drag-to-resize — grow/shrink in-place, Windows severely limited         | Phase 4 (§9.2)                   |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §10.1 Diskpart GPT Commands        | CLI: `diskpart list/create/delete/gptinit/info`                             | Phase 4 (§9.2, §9.3)            |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §15.1 GPT Backup & Restore 🚀     | Auto-backup partition table before every write + one-click restore          | Phase 4 (§9.1, §9.2)            |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §16.1 Hot-Swap Detection 🚀        | Runtime disk insertion/removal → auto re-scan GPT on hot-plug events        | Phase 1 (§2.1) + VFS (040.07)   |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §17.1 Partition Health Dashboard 🚀 | GUI surface GPT integrity + SMART + fragmentation in Disk Manager           | Phase 5 (§13.1, §14.1)          |   ⬜   |
+| **6**  | `TODO-040.05-GPT.md`                  | §18.1 Forensic Event Log 🚀        | Tamper-evident audit trail for all GPT modifications                         | Phase 4 (§9.2, §9.3, §9.4)      |   ⬜   |
+| **—**  | `TODO-040.04-MBR.md`                  | §7.1–7.2 Protective + Hybrid MBR   | MBR `0xEE` redirect to GPT parser + Hybrid MBR sync                        | Phase 0 (§1)                     |   ⬜   |
+| **—**  | `TODO-040.04-MBR.md`                  | §11.1–11.2 MBR↔GPT Conversion      | Non-destructive MBR→GPT and GPT→MBR disk conversion                        | Phase 4 (§9.1)                   |   ⬜   |
+| **—**  | `TODO-040.07-VFS.md`                  | Drive letter assignment             | VFS volume mount + GUID→drive letter Registry lookup                        | Phase 4 (§11.1)                  |   ⬜   |
 
 > [!NOTE]
 > **Phase 0–1** are already complete — primary + backup GPT parsing and full Type GUID

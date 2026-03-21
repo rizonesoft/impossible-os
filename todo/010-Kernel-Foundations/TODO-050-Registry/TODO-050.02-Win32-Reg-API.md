@@ -78,24 +78,24 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                              | Description                                                              | Depends On     | Status |
-| -- | :----: | ------------------------------------ | ------------------------------------------------------------------------ | -------------- | :----: |
-| 💎 | **0**  | TODO-050.01 Registry Engine          | `reg_key_t`, `reg_value_t`, `HKEY`, pools, root keys                     | —              |   ✅   |
-| 💎 | **1**  | §2.1 Key Operations                  | `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey/Tree`     | Phase 0        |   ✅   |
-| 💎 | **2**  | §2.2 Value Operations                | `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue`      | Phase 1 (§2.1) |   ✅   |
-| 💎 | **3**  | §2.3 Enumeration                     | `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey`                        | Phase 2 (§2.2) |   ✅   |
-| 💎 | **3**  | §2.4 Convenience Helpers             | `RegGetDword`, `RegSetString`, `RegReadKeyValue` (one-shot wrappers)     | Phase 2 (§2.2) |   ✅   |
-| 💎 | **4**  | §2.5 Access Rights Enforcement       | `KEY_*` bitmask validation per Win32 spec §6.1                           | Phase 1 (§2.1) |   ⬜   |
-| 💎 | **4**  | §2.6 API Limits Enforcement          | 255-char key name, 16383-char value name, 512-level depth                | Phase 1 (§2.1) |   ⬜   |
-| 💎 | **4**  | §2.7 RegFlushKey                     | Force immediate hive flush (bypass lazy writer)                          | Phase 1 (§2.1) |   ⬜   |
-| 💎 | **5**  | §2.8 Advanced Key Operations         | `RegCopyTree`, `RegRenameKey` — tree-level manipulations                 | Phase 1 (§2.1) |   ⬜   |
-| 💎 | **5**  | §2.9 Hive Import/Export              | `RegSaveKey`, `RegRestoreKey` — import/export sub-trees                  | Phase 1 (§2.1) |   ⬜   |
-| 💎 | **5**  | §2.11 REG_OPTION_VOLATILE            | RAM-only keys that don't persist across reboot                           | Phase 1 (§2.1) |   ⬜   |
-| ⭐ | **6**  | §2.10 Delayed Close Cache            | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1) |   ⬜   |
-| ⭐ | **6**  | §2.12 Registry Transactions          | Atomic multi-key batch updates with rollback                             | Phase 4 (§2.7) |   ⬜   |
-| ⭐ | **7**  | §2.13 Key Search API                 | Find keys/values by name pattern or value content                        | Phase 3 (§2.3) |   ⬜   |
-| ⭐ | **7**  | §2.14 Registry Diff/Compare          | Snapshot-based tree comparison for change tracking                        | Phase 3 (§2.3) |   ⬜   |
-| ⭐ | **7**  | §2.15 Orphan Key Garbage Collector   | Detect and prune unreachable pool entries                                 | Phase 1 (§2.1) |   ⬜   |
+| Phase  | Section                              | Description                                                              | Depends On     | Status |
+| :----: | ------------------------------------ | ------------------------------------------------------------------------ | -------------- | :----: |
+| **0**  | TODO-050.01 Registry Engine          | `reg_key_t`, `reg_value_t`, `HKEY`, pools, root keys                     | —              |   ✅   |
+| **1**  | §2.1 Key Operations                  | `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey/Tree`     | Phase 0        |   ✅   |
+| **2**  | §2.2 Value Operations                | `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue`      | Phase 1 (§2.1) |   ✅   |
+| **3**  | §2.3 Enumeration                     | `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey`                        | Phase 2 (§2.2) |   ✅   |
+| **3**  | §2.4 Convenience Helpers             | `RegGetDword`, `RegSetString`, `RegReadKeyValue` (one-shot wrappers)     | Phase 2 (§2.2) |   ✅   |
+| **4**  | §2.5 Access Rights Enforcement       | `KEY_*` bitmask validation per Win32 spec §6.1                           | Phase 1 (§2.1) |   ⬜   |
+| **4**  | §2.6 API Limits Enforcement          | 255-char key name, 16383-char value name, 512-level depth                | Phase 1 (§2.1) |   ⬜   |
+| **4**  | §2.7 RegFlushKey                     | Force immediate hive flush (bypass lazy writer)                          | Phase 1 (§2.1) |   ⬜   |
+| **5**  | §2.8 Advanced Key Operations         | `RegCopyTree`, `RegRenameKey` — tree-level manipulations                 | Phase 1 (§2.1) |   ⬜   |
+| **5**  | §2.9 Hive Import/Export              | `RegSaveKey`, `RegRestoreKey` — import/export sub-trees                  | Phase 1 (§2.1) |   ⬜   |
+| **5**  | §2.11 REG_OPTION_VOLATILE            | RAM-only keys that don't persist across reboot                           | Phase 1 (§2.1) |   ⬜   |
+| **6**  | §2.10 Delayed Close Cache            | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1) |   ⬜   |
+| **6**  | §2.12 Registry Transactions          | Atomic multi-key batch updates with rollback                             | Phase 4 (§2.7) |   ⬜   |
+| **7**  | §2.13 Key Search API                 | Find keys/values by name pattern or value content                        | Phase 3 (§2.3) |   ⬜   |
+| **7**  | §2.14 Registry Diff/Compare          | Snapshot-based tree comparison for change tracking                        | Phase 3 (§2.3) |   ⬜   |
+| **7**  | §2.15 Orphan Key Garbage Collector   | Detect and prune unreachable pool entries                                 | Phase 1 (§2.1) |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–3 are complete.** The core engine, Win32 API (CRUD + enumeration + helpers),

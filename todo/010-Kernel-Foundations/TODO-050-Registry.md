@@ -73,29 +73,29 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | TODO File               | Section(s)             | What It Delivers                                       | Depends On        | Status |
-| -- | :---: | ----------------------- | ---------------------- | ------------------------------------------------------ | ----------------- | :----: |
-| 💎 | **0** | `050.01-Engine.md`      | §1.1–1.3               | `reg_key_t`, `reg_value_t`, pools, FNV-1a, root keys   | —                 |   ✅   |
-| 💎 | **1** | `050.02-Win32-API.md`   | §2.1–2.4               | `RegOpenKeyEx`, `RegSetValueEx`, enum, helpers         | Phase 0 (050.01)  |   ✅   |
-| 💎 | **2** | `050.03-Hive.md`        | §4.1–4.3               | Hive format, disk layout, crash-safe journaling        | Phase 1 (050.02)  |   ✅   |
-| 💎 | **3** | `050.04-Notification`   | §5.1–5.5               | Watchers, dispatch, subtree, lifecycle                 | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **3** | `050.05-Syscalls.md`    | §6.1–6.3               | Syscalls, pointer validation, access control           | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **3** | `050-Registry.md`       | §8.1                   | `regedit` shell command                                | Phase 2 (050.03)  |   ⬜   |
-| 💎 | **4** | `050.02-Win32-API.md`   | §2.5–2.7               | Access rights, API limits, RegFlushKey                 | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **4** | `050.05-Syscalls.md`    | §6.4, §7.1, §7.6       | User-mode lib, advapi32.dll stubs, error map           | Phase 3 (§6.1–3)  |   ⬜   |
-| 💎 | **5** | `050.02-Win32-API.md`   | §2.8–2.9, §2.11        | Advanced ops, hive import/export, volatile keys        | Phase 1 (050.02)  |   ⬜   |
-| 💎 | **5** | `050.05-Syscalls.md`    | §7.2–7.3               | UTF-16 A/W handling, HKCR merged view                  | Phase 4 (§7.1)    |   ⬜   |
-| 💎 | **5** | `050.05-Syscalls.md`    | §7.4–7.5               | Registry virtualization, .reg import/export            | Phase 4 (§7.1)    |   ⬜   |
-| ⭐ | **6** | `050.02-Win32-API.md`   | §2.10, §2.12           | Delayed Close Cache, Transactions                      | Phase 4 (050.02)  |   ⬜   |
-| ⭐ | **6** | `050.03-Hive.md`        | §4.4–4.5               | Dual-log WAJ, incremental delta flush                  | Phase 2 (050.03)  |   ⬜   |
-| ⭐ | **6** | `050.04-Notification`   | §5.6–5.7               | Batch coalescing, telemetry                            | Phase 3 (§5.3)    |   ⬜   |
-| ⭐ | **6** | `050.05-Syscalls.md`    | §6.5–6.7               | Sandbox, rate limit, audit                             | Phase 3 (§6.3)    |   ⬜   |
-| ⭐ | **6** | `050.05-Syscalls.md`    | §7.7–7.8               | API tracing, app shims                                 | Phase 4 (§7.1)    |   ⬜   |
-| ⭐ | **7** | `050.02-Win32-API.md`   | §2.13–2.15             | Search API, diff/compare, orphan GC                    | Phase 1 (050.02)  |   ⬜   |
-| ⭐ | **7** | `050.03-Hive.md`        | §4.6–4.8               | Integrity reporter, versioning, compaction             | Phase 2 (050.03)  |   ⬜   |
-| ⭐ | **7** | `050.04-Notification`   | §5.8–5.9               | Change-detail payloads, priority dispatch              | Phase 3 (§5.3)    |   ⬜   |
-| ⭐ | **7** | `050.05-Syscalls.md`    | §6.8, §7.9–7.10        | Per-PID quota, snapshot/diff, transactions             | Phase 3 (§6.1)    |   ⬜   |
-| 🔵 | **8** | `050-Registry.md`       | §9.1–9.3               | Hash map, mmap, B-tree (perf stretch goals)            | Phase 2 (050.03)  |   ⬜   |
+| Phase | TODO File               | Section(s)             | What It Delivers                                       | Depends On        | Status |
+| :---: | ----------------------- | ---------------------- | ------------------------------------------------------ | ----------------- | :----: |
+| **0** | `050.01-Engine.md`      | §1.1–1.3               | `reg_key_t`, `reg_value_t`, pools, FNV-1a, root keys   | —                 |   ✅   |
+| **1** | `050.02-Win32-API.md`   | §2.1–2.4               | `RegOpenKeyEx`, `RegSetValueEx`, enum, helpers         | Phase 0 (050.01)  |   ✅   |
+| **2** | `050.03-Hive.md`        | §4.1–4.3               | Hive format, disk layout, crash-safe journaling        | Phase 1 (050.02)  |   ✅   |
+| **3** | `050.04-Notification`   | §5.1–5.5               | Watchers, dispatch, subtree, lifecycle                 | Phase 1 (050.02)  |   ⬜   |
+| **3** | `050.05-Syscalls.md`    | §6.1–6.3               | Syscalls, pointer validation, access control           | Phase 1 (050.02)  |   ⬜   |
+| **3** | `050-Registry.md`       | §8.1                   | `regedit` shell command                                | Phase 2 (050.03)  |   ⬜   |
+| **4** | `050.02-Win32-API.md`   | §2.5–2.7               | Access rights, API limits, RegFlushKey                 | Phase 1 (050.02)  |   ⬜   |
+| **4** | `050.05-Syscalls.md`    | §6.4, §7.1, §7.6       | User-mode lib, advapi32.dll stubs, error map           | Phase 3 (§6.1–3)  |   ⬜   |
+| **5** | `050.02-Win32-API.md`   | §2.8–2.9, §2.11        | Advanced ops, hive import/export, volatile keys        | Phase 1 (050.02)  |   ⬜   |
+| **5** | `050.05-Syscalls.md`    | §7.2–7.3               | UTF-16 A/W handling, HKCR merged view                  | Phase 4 (§7.1)    |   ⬜   |
+| **5** | `050.05-Syscalls.md`    | §7.4–7.5               | Registry virtualization, .reg import/export            | Phase 4 (§7.1)    |   ⬜   |
+| **6** | `050.02-Win32-API.md`   | §2.10, §2.12           | Delayed Close Cache, Transactions                      | Phase 4 (050.02)  |   ⬜   |
+| **6** | `050.03-Hive.md`        | §4.4–4.5               | Dual-log WAJ, incremental delta flush                  | Phase 2 (050.03)  |   ⬜   |
+| **6** | `050.04-Notification`   | §5.6–5.7               | Batch coalescing, telemetry                            | Phase 3 (§5.3)    |   ⬜   |
+| **6** | `050.05-Syscalls.md`    | §6.5–6.7               | Sandbox, rate limit, audit                             | Phase 3 (§6.3)    |   ⬜   |
+| **6** | `050.05-Syscalls.md`    | §7.7–7.8               | API tracing, app shims                                 | Phase 4 (§7.1)    |   ⬜   |
+| **7** | `050.02-Win32-API.md`   | §2.13–2.15             | Search API, diff/compare, orphan GC                    | Phase 1 (050.02)  |   ⬜   |
+| **7** | `050.03-Hive.md`        | §4.6–4.8               | Integrity reporter, versioning, compaction             | Phase 2 (050.03)  |   ⬜   |
+| **7** | `050.04-Notification`   | §5.8–5.9               | Change-detail payloads, priority dispatch              | Phase 3 (§5.3)    |   ⬜   |
+| **7** | `050.05-Syscalls.md`    | §6.8, §7.9–7.10        | Per-PID quota, snapshot/diff, transactions             | Phase 3 (§6.1)    |   ⬜   |
+| **8** | `050-Registry.md`       | §9.1–9.3               | Hash map, mmap, B-tree (perf stretch goals)            | Phase 2 (050.03)  |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–2 are complete.** The core engine (050.01), Win32 API (050.02), and disk

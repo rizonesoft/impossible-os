@@ -106,21 +106,21 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase   | Sections                                                                   | Depends On             | Status |
-| -- | :-----: | -------------------------------------------------------------------------- | ---------------------- | :----: |
-| 💎 | **0**   | Prerequisites (spec, block device, partitions)                             | —                      |   ✅   |
-| 💎 | **1**   | §1.1 Byte-Swap, §1.2 Volume Header, §1.3 Attrs                           | Phase 0                |   ⬜   |
-| 💎 | **2**   | §2.1 B-Tree Node Reader, §2.2 B-Tree Search                              | Phase 1                |   ⬜   |
-| 💎 | **3**   | §3.1 Catalog Records, §3.2 Thread/CNID, §4.1 Forks                       | Phase 2                |   ⬜   |
-| 💎 | **4a**  | §3.3 Path Resolution, §4.2 Extents Overflow                              | Phase 3                |   ⬜   |
-| 💎 | **4b**  | §6.1 Unicode NFD, §6.2 Case-Insensitive Compare                          | Phase 1                |   ⬜   |
-| 💎 | **5**   | §4.3 File Data Reader, §7.1 Journal Replay                               | Phase 4a + 4b          |   ⬜   |
-| 💎 | **6**   | §8.1 VFS Registration                                                     | Phase 5 + VFS (040.07) |   ⬜   |
-| 💎 | **7a**  | §5.1 Allocation Bitmap, §10.1 Node Cache                                 | Phase 2                |   ⬜   |
-| 💎 | **7b**  | §11.1 Attributes B-Tree, §11.2 Hard Links                                | Phase 3                |   ⬜   |
-| 💎 | **8**   | §9.1 Test Suite                                                           | Phase 6                |   ⬜   |
-| ⭐ | **8**   | §12.1–12.4 Health, Resource Fork, Time Machine, Metadata                  | Phase 3                |   ⬜   |
-| ⭐ | **8**   | §12.5–12.8 Compression, Fusion Drive, Encryption, Sparse Files            | Phase 6                |   ⬜   |
+| Phase   | Sections                                                                   | Depends On             | Status |
+| :-----: | -------------------------------------------------------------------------- | ---------------------- | :----: |
+| **0**   | Prerequisites (spec, block device, partitions)                             | —                      |   ✅   |
+| **1**   | §1.1 Byte-Swap, §1.2 Volume Header, §1.3 Attrs                           | Phase 0                |   ⬜   |
+| **2**   | §2.1 B-Tree Node Reader, §2.2 B-Tree Search                              | Phase 1                |   ⬜   |
+| **3**   | §3.1 Catalog Records, §3.2 Thread/CNID, §4.1 Forks                       | Phase 2                |   ⬜   |
+| **4a**  | §3.3 Path Resolution, §4.2 Extents Overflow                              | Phase 3                |   ⬜   |
+| **4b**  | §6.1 Unicode NFD, §6.2 Case-Insensitive Compare                          | Phase 1                |   ⬜   |
+| **5**   | §4.3 File Data Reader, §7.1 Journal Replay                               | Phase 4a + 4b          |   ⬜   |
+| **6**   | §8.1 VFS Registration                                                     | Phase 5 + VFS (040.07) |   ⬜   |
+| **7a**  | §5.1 Allocation Bitmap, §10.1 Node Cache                                 | Phase 2                |   ⬜   |
+| **7b**  | §11.1 Attributes B-Tree, §11.2 Hard Links                                | Phase 3                |   ⬜   |
+| **8**   | §9.1 Test Suite                                                           | Phase 6                |   ⬜   |
+| **8**   | §12.1–12.4 Health, Resource Fork, Time Machine, Metadata                  | Phase 3                |   ⬜   |
+| **8**   | §12.5–12.8 Compression, Fusion Drive, Encryption, Sparse Files            | Phase 6                |   ⬜   |
 
 > [!NOTE]
 > **Phase 1** establishes the foundation — byte-swap helpers and volume header parsing.

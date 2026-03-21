@@ -113,33 +113,33 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                             | What It Delivers                                             | Depends On                     | Status |
-| -- | :----: | ------------------------------------ | ------------------------------------------------------------ | ------------------------------ | :----: |
-| 💎 | **0**  | Block device + partitions + spec     | `blkdev_read()`, partition detection, spec knowledge         | —                              |   ✅   |
-| 💎 | **1**  | §1.1 Superblock Parsing              | Magic validation, tree roots, feature flags                  | Phase 0                        |   ⬜   |
-| 💎 | **1**  | §2.1 Chunk Tree Bootstrap            | Inline chunk map → logical-to-physical translation           | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **1**  | §3.1 Node Header Validation          | Checksum + generation + bytenr verification                  | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **2**  | §2.2 Address Translation             | Full chunk map from Chunk Tree                               | Phase 1 (§2.1)                 |   ⬜   |
-| 💎 | **2**  | §3.2 Internal Node Traversal         | Binary search key-pointer pairs, tree descent                | Phase 1 (§3.1) + §2.2         |   ⬜   |
-| 💎 | **2**  | §3.3 Leaf Node Item Parser           | Dual-growth item/payload extraction                          | Phase 1 (§3.1) + §2.2         |   ⬜   |
-| 💎 | **2**  | §7.1 CRC32C Checksumming             | Validate node + data checksums from Checksum Tree            | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **3**  | §4.1 Root Tree Navigation            | Locate any tree root by Object ID                            | Phase 2 (§3.2, §3.3)          |   ⬜   |
-| 💎 | **3**  | §4.2 FS Tree Inode Reader            | Parse `btrfs_inode_item` (160 bytes)                         | Phase 3 (§4.1)                 |   ⬜   |
-| 💎 | **4**  | §5.1 Extent Data Reader              | Parse `EXTENT_DATA` keys, inline + regular extents           | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **4**  | §6.1 Directory Entry Parser          | Parse `DIR_ITEM`/`DIR_INDEX` keys                            | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §5.2 File Data Reader                | Read file contents via extent → chunk → physical             | Phase 4 (§5.1)                 |   ⬜   |
-| 💎 | **5**  | §6.2 Path Resolution                 | Full path traversal from root subvolume                      | Phase 4 (§5.1, §6.1)          |   ⬜   |
-| 💎 | **6**  | §8.1 VFS Registration                | Mount Btrfs volumes, `vfs_ops` callbacks                     | Phase 5 + VFS (040.07)         |   ⬜   |
-| 💎 | **6**  | §1.2 Superblock Mirror Reader        | Fallback to mirrors at 64 MiB / 256 GiB                     | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **7**  | §9.1 Test Suite                      | Automated validation with Btrfs test images                  | Phase 6 (§8.1)                 |   ⬜   |
-| ⭐ | **7**  | §10.1 Health Dashboard               | Volume health, generation, device info in GUI                | Phase 3 (§4.2) + §1.2         |   ⬜   |
-| ⭐ | **7**  | §10.2 Subvolume Browser              | List/browse all subvolumes and snapshots                     | Phase 3 (§4.1, §4.2)          |   ⬜   |
-| ⭐ | **7**  | §10.3 Scrub Verifier                 | Verify data checksums for entire volume                      | Phase 5 (§7.1) + §2.2         |   ⬜   |
-| ⭐ | **7**  | §10.4 Space Analyzer                 | Block group usage, data/metadata/system breakdown            | Phase 1 (§2.1) + §4.1         |   ⬜   |
-| ⭐ | **8**  | §10.5 Device Stats Dashboard         | Per-device error counters, I/O stats in GUI                  | Phase 3 (§4.1) + §1.1         |   ⬜   |
-| ⭐ | **8**  | §10.6 Quota Group Reader             | Display qgroup limits and usage per subvolume                | Phase 3 (§4.1, §4.2)          |   ⬜   |
-| ⭐ | **8**  | §10.7 Send/Receive Stream Parser     | Parse and inspect Btrfs send streams for migration           | Phase 5 (§5.2, §6.2)          |   ⬜   |
-| ⭐ | **8**  | §10.8 Generation Timeline            | Visual timeline of filesystem transactions + snapshots       | Phase 3 (§4.1) + §1.1         |   ⬜   |
+| Phase  | Sections                             | What It Delivers                                             | Depends On                     | Status |
+| :----: | ------------------------------------ | ------------------------------------------------------------ | ------------------------------ | :----: |
+| **0**  | Block device + partitions + spec     | `blkdev_read()`, partition detection, spec knowledge         | —                              |   ✅   |
+| **1**  | §1.1 Superblock Parsing              | Magic validation, tree roots, feature flags                  | Phase 0                        |   ⬜   |
+| **1**  | §2.1 Chunk Tree Bootstrap            | Inline chunk map → logical-to-physical translation           | Phase 1 (§1.1)                 |   ⬜   |
+| **1**  | §3.1 Node Header Validation          | Checksum + generation + bytenr verification                  | Phase 1 (§1.1)                 |   ⬜   |
+| **2**  | §2.2 Address Translation             | Full chunk map from Chunk Tree                               | Phase 1 (§2.1)                 |   ⬜   |
+| **2**  | §3.2 Internal Node Traversal         | Binary search key-pointer pairs, tree descent                | Phase 1 (§3.1) + §2.2         |   ⬜   |
+| **2**  | §3.3 Leaf Node Item Parser           | Dual-growth item/payload extraction                          | Phase 1 (§3.1) + §2.2         |   ⬜   |
+| **2**  | §7.1 CRC32C Checksumming             | Validate node + data checksums from Checksum Tree            | Phase 1 (§1.1)                 |   ⬜   |
+| **3**  | §4.1 Root Tree Navigation            | Locate any tree root by Object ID                            | Phase 2 (§3.2, §3.3)          |   ⬜   |
+| **3**  | §4.2 FS Tree Inode Reader            | Parse `btrfs_inode_item` (160 bytes)                         | Phase 3 (§4.1)                 |   ⬜   |
+| **4**  | §5.1 Extent Data Reader              | Parse `EXTENT_DATA` keys, inline + regular extents           | Phase 3 (§4.2)                 |   ⬜   |
+| **4**  | §6.1 Directory Entry Parser          | Parse `DIR_ITEM`/`DIR_INDEX` keys                            | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §5.2 File Data Reader                | Read file contents via extent → chunk → physical             | Phase 4 (§5.1)                 |   ⬜   |
+| **5**  | §6.2 Path Resolution                 | Full path traversal from root subvolume                      | Phase 4 (§5.1, §6.1)          |   ⬜   |
+| **6**  | §8.1 VFS Registration                | Mount Btrfs volumes, `vfs_ops` callbacks                     | Phase 5 + VFS (040.07)         |   ⬜   |
+| **6**  | §1.2 Superblock Mirror Reader        | Fallback to mirrors at 64 MiB / 256 GiB                     | Phase 1 (§1.1)                 |   ⬜   |
+| **7**  | §9.1 Test Suite                      | Automated validation with Btrfs test images                  | Phase 6 (§8.1)                 |   ⬜   |
+| **7**  | §10.1 Health Dashboard               | Volume health, generation, device info in GUI                | Phase 3 (§4.2) + §1.2         |   ⬜   |
+| **7**  | §10.2 Subvolume Browser              | List/browse all subvolumes and snapshots                     | Phase 3 (§4.1, §4.2)          |   ⬜   |
+| **7**  | §10.3 Scrub Verifier                 | Verify data checksums for entire volume                      | Phase 5 (§7.1) + §2.2         |   ⬜   |
+| **7**  | §10.4 Space Analyzer                 | Block group usage, data/metadata/system breakdown            | Phase 1 (§2.1) + §4.1         |   ⬜   |
+| **8**  | §10.5 Device Stats Dashboard         | Per-device error counters, I/O stats in GUI                  | Phase 3 (§4.1) + §1.1         |   ⬜   |
+| **8**  | §10.6 Quota Group Reader             | Display qgroup limits and usage per subvolume                | Phase 3 (§4.1, §4.2)          |   ⬜   |
+| **8**  | §10.7 Send/Receive Stream Parser     | Parse and inspect Btrfs send streams for migration           | Phase 5 (§5.2, §6.2)          |   ⬜   |
+| **8**  | §10.8 Generation Timeline            | Visual timeline of filesystem transactions + snapshots       | Phase 3 (§4.1) + §1.1         |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already done — block devices, partitions, and VFS core are in place.

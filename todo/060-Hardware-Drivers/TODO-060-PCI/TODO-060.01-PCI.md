@@ -116,28 +116,28 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                | Depends On                     | Status |
-| -- | :----: | --------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | PCI 3.0 spec + existing `pci.c`/`pci.h` | —                              |   ✅   |
-| 💎 | **1**  | §1.1 Device Enumeration                 | Phase 0                        |   ⚠️   |
-| 💎 | **1**  | §1.2 Device Lookup API                  | Phase 1 (§1.1)                 |   ⚠️   |
-| 💎 | **1**  | §2.1 BAR Probing & Decoding             | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **1**  | §5.1 Command Register Control           | Phase 1 (§1.1)                 |   ⚠️   |
-| 💎 | **2**  | §3.1 Capabilities Walker                | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **2**  | §4.1 MSI Support                        | Phase 2 (§3.1)                 |   ⬜   |
-| 💎 | **2**  | §4.2 MSI-X Support                      | Phase 2 (§3.1)                 |   ⬜   |
-| 💎 | **2**  | §2.2 BAR Assignment & MMIO Mapping      | Phase 1 (§2.1)                 |   ⬜   |
-| 💎 | **3**  | §5.2 Status Register Errors             | Phase 1 (§5.1)                 |   ⬜   |
-| 💎 | **3**  | §6.1 Bridge Bus Numbers                 | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **3**  | §6.2 Bridge Memory & I/O Windows        | Phase 3 (§6.1)                 |   ⬜   |
-| 💎 | **3**  | §7.1 PCIe ECAM Access                   | ACPI MCFG                      |   ⬜   |
-| 💎 | **3**  | §7.2 Extended Capabilities              | Phase 3 (§7.1)                 |   ⬜   |
-| 💎 | **4**  | §8.1 Power Management D-States          | Phase 2 (§3.1)                 |   ⬜   |
-| 💎 | **4**  | §9.1 INTx Legacy Interrupt Routing      | Phase 1 (§1.1)                 |   ⬜   |
-| ⭐ | **5**  | §10.1 Device Health Telemetry           | Phase 2 (§3.1)                 |   ⬜   |
-| ⭐ | **5**  | §10.2 Hot-Plug Detection                | Phase 1 (§1.1)                 |   ⬜   |
-| ⭐ | **5**  | §10.3 Adaptive Interrupt Coalescing     | Phase 2 (§4.2)                 |   ⬜   |
-| ⭐ | **5**  | §10.4 Device Manager GUI Integration    | Phase 1 (§1.2)                 |   ⬜   |
+| Phase  | Sections                                | Depends On                     | Status |
+| :----: | --------------------------------------- | ------------------------------ | :----: |
+| **0**  | PCI 3.0 spec + existing `pci.c`/`pci.h` | —                              |   ✅   |
+| **1**  | §1.1 Device Enumeration                 | Phase 0                        |   ⚠️   |
+| **1**  | §1.2 Device Lookup API                  | Phase 1 (§1.1)                 |   ⚠️   |
+| **1**  | §2.1 BAR Probing & Decoding             | Phase 1 (§1.1)                 |   ⬜   |
+| **1**  | §5.1 Command Register Control           | Phase 1 (§1.1)                 |   ⚠️   |
+| **2**  | §3.1 Capabilities Walker                | Phase 1 (§1.1)                 |   ⬜   |
+| **2**  | §4.1 MSI Support                        | Phase 2 (§3.1)                 |   ⬜   |
+| **2**  | §4.2 MSI-X Support                      | Phase 2 (§3.1)                 |   ⬜   |
+| **2**  | §2.2 BAR Assignment & MMIO Mapping      | Phase 1 (§2.1)                 |   ⬜   |
+| **3**  | §5.2 Status Register Errors             | Phase 1 (§5.1)                 |   ⬜   |
+| **3**  | §6.1 Bridge Bus Numbers                 | Phase 1 (§1.1)                 |   ⬜   |
+| **3**  | §6.2 Bridge Memory & I/O Windows        | Phase 3 (§6.1)                 |   ⬜   |
+| **3**  | §7.1 PCIe ECAM Access                   | ACPI MCFG                      |   ⬜   |
+| **3**  | §7.2 Extended Capabilities              | Phase 3 (§7.1)                 |   ⬜   |
+| **4**  | §8.1 Power Management D-States          | Phase 2 (§3.1)                 |   ⬜   |
+| **4**  | §9.1 INTx Legacy Interrupt Routing      | Phase 1 (§1.1)                 |   ⬜   |
+| **5**  | §10.1 Device Health Telemetry           | Phase 2 (§3.1)                 |   ⬜   |
+| **5**  | §10.2 Hot-Plug Detection                | Phase 1 (§1.1)                 |   ⬜   |
+| **5**  | §10.3 Adaptive Interrupt Coalescing     | Phase 2 (§4.2)                 |   ⬜   |
+| **5**  | §10.4 Device Manager GUI Integration    | Phase 1 (§1.2)                 |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — the existing driver handles I/O port config access

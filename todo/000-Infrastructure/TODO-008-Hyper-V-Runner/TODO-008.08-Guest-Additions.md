@@ -87,18 +87,18 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                                | What It Delivers                                                     | Depends On                  | Status |
-| -- | :----: | -------------------------------------- | -------------------------------------------------------------------- | --------------------------- | :----: |
-| 💎 | **1**  | §1 Existing Infrastructure Audit       | Confirm VMBus, SynIC, hypercall page are operational                 | 008 §3–§5                   |   ⬜   |
-| 💎 | **2**  | §2 Auto-Detect Framework               | `hyperv_guest_additions_init()` — single entry point for all ICs     | Phase 1 (§1)                |   ⬜   |
-| 💎 | **3**  | §3 IC Protocol Negotiation Engine      | Generic `icmsg_negotiate()` — reusable by all ICs                    | Phase 2 (§2)                |   ⬜   |
-| 💎 | **4**  | §4 Heartbeat Service                   | Host reports "OK" status — mandatory for Hyper-V management          | Phase 3 (§3)                |   ⬜   |
-| 💎 | **4**  | §5 Time Synchronization Service        | Clock drift correction after boot/resume — critical for accuracy     | Phase 3 (§3)                |   ⬜   |
-| 💎 | **4**  | §6 Guest Shutdown Service              | Graceful shutdown from Hyper-V Manager — prevents data loss          | Phase 3 (§3)                |   ⬜   |
-| 💎 | **5**  | §7 KVP Data Exchange                   | Host→guest metadata transport (IP config, provisioning)              | Phase 3 (§3)                |   ⬜   |
-| 💎 | **5**  | §8 VSS Backup Service                  | Application-consistent VM backups via filesystem freeze               | Phase 3 (§3)                |   ⬜   |
-| ⭐ | **6**  | §9 Advanced VMBus Channel Operations   | Multi-page buffers, scatter-gather, polling suppression              | Phase 2 (§2)                |   ⬜   |
-| 💎 | **7**  | §10 Integration Test                   | End-to-end: boot → all ICs active → Hyper-V Manager shows "OK"      | Phases 4–6                  |   ⬜   |
+| Phase  | Section                                | What It Delivers                                                     | Depends On                  | Status |
+| :----: | -------------------------------------- | -------------------------------------------------------------------- | --------------------------- | :----: |
+| **1**  | §1 Existing Infrastructure Audit       | Confirm VMBus, SynIC, hypercall page are operational                 | 008 §3–§5                   |   ⬜   |
+| **2**  | §2 Auto-Detect Framework               | `hyperv_guest_additions_init()` — single entry point for all ICs     | Phase 1 (§1)                |   ⬜   |
+| **3**  | §3 IC Protocol Negotiation Engine      | Generic `icmsg_negotiate()` — reusable by all ICs                    | Phase 2 (§2)                |   ⬜   |
+| **4**  | §4 Heartbeat Service                   | Host reports "OK" status — mandatory for Hyper-V management          | Phase 3 (§3)                |   ⬜   |
+| **4**  | §5 Time Synchronization Service        | Clock drift correction after boot/resume — critical for accuracy     | Phase 3 (§3)                |   ⬜   |
+| **4**  | §6 Guest Shutdown Service              | Graceful shutdown from Hyper-V Manager — prevents data loss          | Phase 3 (§3)                |   ⬜   |
+| **5**  | §7 KVP Data Exchange                   | Host→guest metadata transport (IP config, provisioning)              | Phase 3 (§3)                |   ⬜   |
+| **5**  | §8 VSS Backup Service                  | Application-consistent VM backups via filesystem freeze               | Phase 3 (§3)                |   ⬜   |
+| **6**  | §9 Advanced VMBus Channel Operations   | Multi-page buffers, scatter-gather, polling suppression              | Phase 2 (§2)                |   ⬜   |
+| **7**  | §10 Integration Test                   | End-to-end: boot → all ICs active → Hyper-V Manager shows "OK"      | Phases 4–6                  |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** build the framework and negotiation engine. **Phase 4** delivers

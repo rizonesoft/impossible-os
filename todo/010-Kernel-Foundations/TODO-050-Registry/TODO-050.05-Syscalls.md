@@ -98,27 +98,27 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐  | Phase  | Section                              | Description                                                                    | Depends On       | Status |
-| --- | :----: | ------------------------------------ | ------------------------------------------------------------------------------ | ---------------- | :----: |
-| 💎  | **0**  | TODO-050.02 + syscall.h              | Win32 API + existing syscall infrastructure                                    | —                |   ✅   |
-| 💎  | **1**  | §6.1 Syscall Numbers & Dispatch      | Add 9 `SYS_REG_*` entries, dispatch in `syscall_handler`                       | Phase 0          |   ⬜   |
-| 💎  | **1**  | §6.2 Pointer Validation              | `user_ptr_valid` checks on all buffer arguments                                | Phase 0          |   ⬜   |
-| 💎  | **2**  | §6.3 Access Control Policy           | Enforce read-only for `HKLM\SYSTEM`, `HKLM\HARDWARE`                          | Phase 1          |   ⬜   |
-| 💎  | **3**  | §6.4 User-Mode Wrapper Library       | `user/lib/registry.c` — clean C API for user apps                              | Phase 2 (§6.3)   |   ⬜   |
-| 💎  | **3**  | §7.1 advapi32.dll Registry Stubs     | A-variant passthrough in `advapi32.dll` export table                           | Phase 2 (§6.3)   |   ⬜   |
-| 💎  | **3**  | §7.6 Error Code Mapping              | Win32 `ERROR_*` ↔ native error translation                                    | Phase 3 (§7.1)   |   ⬜   |
-| 💎  | **4**  | §7.2 ANSI/Wide String Handling       | UTF-16LE ↔ UTF-8 for `W` variants                                             | Phase 3 (§7.1)   |   ⬜   |
-| 💎  | **4**  | §7.3 HKCR Merged View               | Overlay `HKCU\Software\Classes` over `HKLM\SOFTWARE\Classes`                  | Phase 3 (§7.1)   |   ⬜   |
-| 💎  | **5**  | §7.4 Registry Virtualization         | Vista-style: redirect HKLM writes to per-user HKCU copy                       | Phase 4 (§7.3)   |   ⬜   |
-| 💎  | **5**  | §7.5 .reg File Import/Export         | Parse and generate Windows `.reg` v5.00 format                                 | Phase 3 (§7.1)   |   ⬜   |
-| ⭐  | **6**  | §6.5 Per-Process Registry Sandbox    | Process-specific `HKCU` mapping (`HKU\{pid}`) 🚀                              | Phase 2 (§6.3)   |   ⬜   |
-| ⭐  | **6**  | §6.6 Syscall Rate Limiting           | Throttle excessive registry calls per process 🚀                               | Phase 1 (§6.1)   |   ⬜   |
-| ⭐  | **6**  | §6.7 Access Audit Log                | Log all registry access with PID, key, operation 🚀                            | Phase 2 (§6.3)   |   ⬜   |
-| ⭐  | **6**  | §7.7 API Call Tracing                | Debug logging for Win32 registry calls 🚀                                     | Phase 3 (§7.1)   |   ⬜   |
-| ⭐  | **7**  | §7.8 App Compat Shims               | Automatic fixes for known Win32 app quirks 🚀                                 | Phase 4 (§7.2)   |   ⬜   |
-| ⭐  | **7**  | §6.8 Per-Process Registry Quota      | Per-PID storage quota — prevent pool exhaustion 🚀                            | Phase 1 (§6.1)   |   ⬜   |
-| ⭐  | **7**  | §7.9 Registry Snapshot & Diff        | Point-in-time snapshot + diff for debugging 🚀                                | Phase 1 (§6.1)   |   ⬜   |
-| ⭐  | **7**  | §7.10 Registry Transaction API       | Atomic multi-write batches — no partial updates 🚀                            | Phase 1 (§6.1)   |   ⬜   |
+| Phase  | Section                              | Description                                                                    | Depends On       | Status |
+| :----: | ------------------------------------ | ------------------------------------------------------------------------------ | ---------------- | :----: |
+| **0**  | TODO-050.02 + syscall.h              | Win32 API + existing syscall infrastructure                                    | —                |   ✅   |
+| **1**  | §6.1 Syscall Numbers & Dispatch      | Add 9 `SYS_REG_*` entries, dispatch in `syscall_handler`                       | Phase 0          |   ⬜   |
+| **1**  | §6.2 Pointer Validation              | `user_ptr_valid` checks on all buffer arguments                                | Phase 0          |   ⬜   |
+| **2**  | §6.3 Access Control Policy           | Enforce read-only for `HKLM\SYSTEM`, `HKLM\HARDWARE`                          | Phase 1          |   ⬜   |
+| **3**  | §6.4 User-Mode Wrapper Library       | `user/lib/registry.c` — clean C API for user apps                              | Phase 2 (§6.3)   |   ⬜   |
+| **3**  | §7.1 advapi32.dll Registry Stubs     | A-variant passthrough in `advapi32.dll` export table                           | Phase 2 (§6.3)   |   ⬜   |
+| **3**  | §7.6 Error Code Mapping              | Win32 `ERROR_*` ↔ native error translation                                    | Phase 3 (§7.1)   |   ⬜   |
+| **4**  | §7.2 ANSI/Wide String Handling       | UTF-16LE ↔ UTF-8 for `W` variants                                             | Phase 3 (§7.1)   |   ⬜   |
+| **4**  | §7.3 HKCR Merged View               | Overlay `HKCU\Software\Classes` over `HKLM\SOFTWARE\Classes`                  | Phase 3 (§7.1)   |   ⬜   |
+| **5**  | §7.4 Registry Virtualization         | Vista-style: redirect HKLM writes to per-user HKCU copy                       | Phase 4 (§7.3)   |   ⬜   |
+| **5**  | §7.5 .reg File Import/Export         | Parse and generate Windows `.reg` v5.00 format                                 | Phase 3 (§7.1)   |   ⬜   |
+| **6**  | §6.5 Per-Process Registry Sandbox    | Process-specific `HKCU` mapping (`HKU\{pid}`) 🚀                              | Phase 2 (§6.3)   |   ⬜   |
+| **6**  | §6.6 Syscall Rate Limiting           | Throttle excessive registry calls per process 🚀                               | Phase 1 (§6.1)   |   ⬜   |
+| **6**  | §6.7 Access Audit Log                | Log all registry access with PID, key, operation 🚀                            | Phase 2 (§6.3)   |   ⬜   |
+| **6**  | §7.7 API Call Tracing                | Debug logging for Win32 registry calls 🚀                                     | Phase 3 (§7.1)   |   ⬜   |
+| **7**  | §7.8 App Compat Shims               | Automatic fixes for known Win32 app quirks 🚀                                 | Phase 4 (§7.2)   |   ⬜   |
+| **7**  | §6.8 Per-Process Registry Quota      | Per-PID storage quota — prevent pool exhaustion 🚀                            | Phase 1 (§6.1)   |   ⬜   |
+| **7**  | §7.9 Registry Snapshot & Diff        | Point-in-time snapshot + diff for debugging 🚀                                | Phase 1 (§6.1)   |   ⬜   |
+| **7**  | §7.10 Registry Transaction API       | Atomic multi-write batches — no partial updates 🚀                            | Phase 1 (§6.1)   |   ⬜   |
 
 > [!NOTE]
 > **Phase 0 is complete.** The kernel registry API and syscall dispatch infrastructure

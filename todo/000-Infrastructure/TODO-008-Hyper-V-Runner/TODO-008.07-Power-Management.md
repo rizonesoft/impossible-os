@@ -80,17 +80,17 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                              | What It Delivers                                                          | Depends On                   | Status |
-| -- | :----: | ------------------------------------ | ------------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **1**  | §1 CPUID Privilege Verification      | Detect `AccessGuestIdleMsr` privilege — gates all idle optimizations      | VMBus core (§3 ✅)            |   ⬜   |
-| 💎 | **1**  | §2 Enlightened VP Idle               | Replace `HLT` with `RDMSR 0x400000F0` — zero-overhead CPU yielding       | Phase 1 (§1)                 |   ⬜   |
-| 💎 | **2**  | §3 IC Message Parser                 | Parse `vmbuspipe_hdr` + `icmsg_hdr` from VMBus ring buffer                | VMBus core (§3 ✅)            |   ⬜   |
-| 💎 | **2**  | §4 Version Negotiation               | Respond to `ICMSGTYPE_NEGOTIATE` — required before any IC service works   | Phase 2 (§3)                 |   ⬜   |
-| 💎 | **3**  | §5 Guest Shutdown Service            | Handle host-initiated shutdown/reboot/hibernate via VMBus                 | Phase 2 (§4)                 |   ⬜   |
-| 💎 | **3**  | §6 Time Synchronization Service      | Hard sync + gradual slew for clock correction after VM resume             | Phase 2 (§4)                 |   ⬜   |
-| 💎 | **3**  | §7 Heartbeat Service                 | Prove kernel vitality to host — prevents false "unresponsive" status      | Phase 2 (§4)                 |   ⬜   |
-| ⭐ | **4**  | §8 Autonomous Time Drift Detection   | Self-healing clock via `HV_X64_MSR_TIME_REF_COUNT` — no VMBus needed      | Phase 3 (§6)                 |   ⬜   |
-| 💎 | **4**  | §9 ACPI S4/S5 Integration            | Wire shutdown flags to ACPI `_PTS`/`_WAK` for S4 hibernation / S5 off     | Phase 3 (§5) + ACPI (065 ✅)  |   ⬜   |
+| Phase  | Section                              | What It Delivers                                                          | Depends On                   | Status |
+| :----: | ------------------------------------ | ------------------------------------------------------------------------- | ---------------------------- | :----: |
+| **1**  | §1 CPUID Privilege Verification      | Detect `AccessGuestIdleMsr` privilege — gates all idle optimizations      | VMBus core (§3 ✅)            |   ⬜   |
+| **1**  | §2 Enlightened VP Idle               | Replace `HLT` with `RDMSR 0x400000F0` — zero-overhead CPU yielding       | Phase 1 (§1)                 |   ⬜   |
+| **2**  | §3 IC Message Parser                 | Parse `vmbuspipe_hdr` + `icmsg_hdr` from VMBus ring buffer                | VMBus core (§3 ✅)            |   ⬜   |
+| **2**  | §4 Version Negotiation               | Respond to `ICMSGTYPE_NEGOTIATE` — required before any IC service works   | Phase 2 (§3)                 |   ⬜   |
+| **3**  | §5 Guest Shutdown Service            | Handle host-initiated shutdown/reboot/hibernate via VMBus                 | Phase 2 (§4)                 |   ⬜   |
+| **3**  | §6 Time Synchronization Service      | Hard sync + gradual slew for clock correction after VM resume             | Phase 2 (§4)                 |   ⬜   |
+| **3**  | §7 Heartbeat Service                 | Prove kernel vitality to host — prevents false "unresponsive" status      | Phase 2 (§4)                 |   ⬜   |
+| **4**  | §8 Autonomous Time Drift Detection   | Self-healing clock via `HV_X64_MSR_TIME_REF_COUNT` — no VMBus needed      | Phase 3 (§6)                 |   ⬜   |
+| **4**  | §9 ACPI S4/S5 Integration            | Wire shutdown flags to ACPI `_PTS`/`_WAK` for S4 hibernation / S5 off     | Phase 3 (§5) + ACPI (065 ✅)  |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–2** establish the infrastructure: CPUID checks, enlightened idle,

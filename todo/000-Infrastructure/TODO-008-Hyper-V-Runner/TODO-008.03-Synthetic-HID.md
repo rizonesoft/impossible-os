@@ -83,21 +83,21 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Section                                | What It Delivers                                                         | Depends On                    | Status |
-| -- | :----: | -------------------------------------- | ------------------------------------------------------------------------ | ----------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/hyper-v/hid-synthetic-input.md` | Full spec — architecture, protocols, GUIDs, security analysis            | —                             |   ✅   |
-| 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol     | Hypercall page, SynIC, ring buffers, channel enumeration                 | —                             |   ✅   |
-| 💎 | **0**  | `TODO-008 §5` Synthetic HID (basic)   | Keyboard + mouse over VMBus — `hv_input.c`                              | Phase 0 (VMBus)               |   ✅   |
-| 💎 | **1**  | §1 HID Descriptor Validation          | Secure parsing of host-provided HID Report Descriptors                   | Phase 0 (basic HID)           |   ⬜   |
-| 💎 | **1**  | §9 Security Hardening                 | TOCTOU mitigation, bounds checking, fuzzing defense                      | Phase 1 (§1)                  |   ⬜   |
-| 💎 | **2**  | §2 Enhanced Keyboard Features         | Modifier state sync, LED indicators, SysRq, localized keymaps           | Phase 0 (basic HID)           |   ⬜   |
-| 💎 | **2**  | §3 Enhanced Mouse Features            | Scroll wheel, 5-button support, resolution-independent coordinates       | Phase 0 (basic HID)           |   ⬜   |
-| 💎 | **3**  | §6 HID Report Descriptor Parser       | Generic HID usage/collection parser for touch and stylus                 | Phase 1 (§1)                  |   ⬜   |
-| 💎 | **4**  | §4 Multi-Touch Digitizer              | 10-point touch, pinch-to-zoom, contact tracking                         | Phase 1 (§1) + Phase 3 (§6)  |   ⬜   |
-| 💎 | **4**  | §5 Stylus / Pen Input                 | Pressure sensitivity, hover, barrel button, palm rejection               | Phase 1 (§1) + Phase 3 (§6)  |   ⬜   |
-| 💎 | **5**  | §7 Enhanced Session Mode              | RDP-over-VMBus, relative mouse, USB passthrough                         | Phase 2 (§3) + Phase 4 (§4)  |   ⬜   |
-| 💎 | **5**  | §8 UEFI Pre-Boot Input                | Mouse/keyboard in UEFI menus before kernel loads                         | Bootloader integration        |   ⬜   |
-| 💎 | **6**  | §10 Diagnostics & Telemetry           | Input event counters, latency tracking, error logging                    | Phase 2 (§2, §3)             |   ⬜   |
+| Phase  | Section                                | What It Delivers                                                         | Depends On                    | Status |
+| :----: | -------------------------------------- | ------------------------------------------------------------------------ | ----------------------------- | :----: |
+| **0**  | `docs/specs/hyper-v/hid-synthetic-input.md` | Full spec — architecture, protocols, GUIDs, security analysis            | —                             |   ✅   |
+| **0**  | `TODO-008 §3` VMBus Core Protocol     | Hypercall page, SynIC, ring buffers, channel enumeration                 | —                             |   ✅   |
+| **0**  | `TODO-008 §5` Synthetic HID (basic)   | Keyboard + mouse over VMBus — `hv_input.c`                              | Phase 0 (VMBus)               |   ✅   |
+| **1**  | §1 HID Descriptor Validation          | Secure parsing of host-provided HID Report Descriptors                   | Phase 0 (basic HID)           |   ⬜   |
+| **1**  | §9 Security Hardening                 | TOCTOU mitigation, bounds checking, fuzzing defense                      | Phase 1 (§1)                  |   ⬜   |
+| **2**  | §2 Enhanced Keyboard Features         | Modifier state sync, LED indicators, SysRq, localized keymaps           | Phase 0 (basic HID)           |   ⬜   |
+| **2**  | §3 Enhanced Mouse Features            | Scroll wheel, 5-button support, resolution-independent coordinates       | Phase 0 (basic HID)           |   ⬜   |
+| **3**  | §6 HID Report Descriptor Parser       | Generic HID usage/collection parser for touch and stylus                 | Phase 1 (§1)                  |   ⬜   |
+| **4**  | §4 Multi-Touch Digitizer              | 10-point touch, pinch-to-zoom, contact tracking                         | Phase 1 (§1) + Phase 3 (§6)  |   ⬜   |
+| **4**  | §5 Stylus / Pen Input                 | Pressure sensitivity, hover, barrel button, palm rejection               | Phase 1 (§1) + Phase 3 (§6)  |   ⬜   |
+| **5**  | §7 Enhanced Session Mode              | RDP-over-VMBus, relative mouse, USB passthrough                         | Phase 2 (§3) + Phase 4 (§4)  |   ⬜   |
+| **5**  | §8 UEFI Pre-Boot Input                | Mouse/keyboard in UEFI menus before kernel loads                         | Bootloader integration        |   ⬜   |
+| **6**  | §10 Diagnostics & Telemetry           | Input event counters, latency tracking, error logging                    | Phase 2 (§2, §3)             |   ⬜   |
 
 > [!NOTE]
 > **Phase 0 is complete** — basic keyboard and mouse over VMBus work via

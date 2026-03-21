@@ -159,47 +159,47 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                         | Depends On                    | Status |
-| -- | :----: | -------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | Full spec (`virtio-1.2.md`)      | —                             |   ✅   |
-| 💎 | **0**  | Existing driver (`virtio_blk.c`) | —                             |   ✅   |
-| 💎 | **0**  | Partition detection (040.04/05)  | —                             |   ✅   |
-| 💎 | **0**  | VFS core (040.07)                | —                             |   ✅   |
-| 💎 | **1**  | §1.1 PCI Capability Discovery    | Phase 0                       |   ✅   |
-| 💎 | **1**  | §1.2 Modern Init Sequence        | Phase 1 (§1.1)                |   ✅   |
-| 💎 | **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ✅   |
-| 💎 | **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
-| 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
-| 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §7.2 Event Index (Coalescing)    | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §7.3 In-Order Completion         | Phase 3 (§3.2)                |   ⬜   |
-| 💎 | **5**  | §7.4 Notification Data           | Phase 3 (§3.2)                |   ⬜   |
-| 💎 | **5**  | §10.1 Lifetime Metrics           | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §12.1 Adaptive Hybrid Polling    | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §13.1 I/O Priority Queues        | Phase 5 (§6.1)                |   ⬜   |
-| ⭐ | **5**  | §16.1 I/O Latency Telemetry      | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §17.1 Predictive Prefetch        | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §18.1 I/O Request Merging        | Phase 5 (§7.1)                |   ⬜   |
-| ⭐ | **5**  | §19.1 Multi-Device Striping      | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §20.1 Force Unit Access Writes   | Phase 2 (§2.2) + P3 (§3.2)    |   ⬜   |
-| ⭐ | **5**  | §21.1 Inline Encryption          | Phase 3 (§3.2)                |   ⬜   |
-| 💎 | **6**  | §8.1 Packed Virtqueue            | Phase 3 (§3.2)                |   ⬜   |
-| 💎 | **6**  | §9.1 Secure Erase                | Phase 3 (§5.1)                |   ⬜   |
-| 💎 | **6**  | §11.1 Zoned Block Device         | Phase 3 (§3.2)                |   ⬜   |
-| 💎 | —      | Downstream: FAT32 flush + TRIM   | P2 (§2.2) + P4 (§4.1)         |   ⬜   |
-| 💎 | —      | Downstream: IXFS flush + TRIM    | P2 (§2.2) + P4 (§4.1)         |   ⬜   |
-| 💎 | —      | Downstream: NTFS block I/O       | Phase 0                       |   ⬜   |
-| 💎 | —      | Parallel: AHCI SATA transport    | Independent                   |   ⬜   |
+| Phase  | Sections                         | Depends On                    | Status |
+| :----: | -------------------------------- | ------------------------------ | :----: |
+| **0**  | Full spec (`virtio-1.2.md`)      | —                             |   ✅   |
+| **0**  | Existing driver (`virtio_blk.c`) | —                             |   ✅   |
+| **0**  | Partition detection (040.04/05)  | —                             |   ✅   |
+| **0**  | VFS core (040.07)                | —                             |   ✅   |
+| **1**  | §1.1 PCI Capability Discovery    | Phase 0                       |   ✅   |
+| **1**  | §1.2 Modern Init Sequence        | Phase 1 (§1.1)                |   ✅   |
+| **2**  | §3.1 MSI-X Interrupts            | Phase 1 (§1.1)                |   ✅   |
+| **2**  | §2.2 Flush (Write Barriers)      | Phase 1 (§1.2)                |   ✅   |
+| **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
+| **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
+| **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
+| **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
+| **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
+| **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
+| **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
+| **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
+| **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
+| **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ✅   |
+| **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ✅   |
+| **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ✅   |
+| **5**  | §7.2 Event Index (Coalescing)    | Phase 3 (§3.2)                |   ✅   |
+| **5**  | §7.3 In-Order Completion         | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §7.4 Notification Data           | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §10.1 Lifetime Metrics           | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §12.1 Adaptive Hybrid Polling    | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §13.1 I/O Priority Queues        | Phase 5 (§6.1)                |   ⬜   |
+| **5**  | §16.1 I/O Latency Telemetry      | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §17.1 Predictive Prefetch        | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §18.1 I/O Request Merging        | Phase 5 (§7.1)                |   ⬜   |
+| **5**  | §19.1 Multi-Device Striping      | Phase 3 (§3.2)                |   ⬜   |
+| **5**  | §20.1 Force Unit Access Writes   | Phase 2 (§2.2) + P3 (§3.2)    |   ⬜   |
+| **5**  | §21.1 Inline Encryption          | Phase 3 (§3.2)                |   ⬜   |
+| **6**  | §8.1 Packed Virtqueue            | Phase 3 (§3.2)                |   ⬜   |
+| **6**  | §9.1 Secure Erase                | Phase 3 (§5.1)                |   ⬜   |
+| **6**  | §11.1 Zoned Block Device         | Phase 3 (§3.2)                |   ⬜   |
+| —      | Downstream: FAT32 flush + TRIM   | P2 (§2.2) + P4 (§4.1)         |   ⬜   |
+| —      | Downstream: IXFS flush + TRIM    | P2 (§2.2) + P4 (§4.1)         |   ⬜   |
+| —      | Downstream: NTFS block I/O       | Phase 0                       |   ⬜   |
+| —      | Parallel: AHCI SATA transport    | Independent                   |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — the existing driver handles MMIO register access,

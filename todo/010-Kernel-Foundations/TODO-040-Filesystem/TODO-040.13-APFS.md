@@ -101,33 +101,33 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Sections                             | Depends On           | Status |
-| -- | :---: | ------------------------------------ | -------------------- | :----: |
-| 💎 | **0** | Prerequisites (spec, block, GPT)     | —                    |   ✅   |
-| 💎 | **1** | §1.1 Container Superblock            | Phase 0              |   ⬜   |
-| 💎 | **1** | §1.2 Fletcher-64 Checksum            | Phase 1 (§1.1)       |   ⬜   |
-| 💎 | **1** | §1.3 Checkpoint Discovery            | Phase 1 (§1.2)       |   ⬜   |
-| 💎 | **2** | §2.1 Object Map (OMAP)               | Phase 1 (§1.3)       |   ⬜   |
-| 💎 | **2** | §2.2 B-Tree Engine                   | Phase 2 (§2.1)       |   ⬜   |
-| 💎 | **3** | §3.1 Volume Superblock               | Phase 2 (§2.2)       |   ⬜   |
-| 💎 | **3** | §3.2 Volume OMAP + Catalog           | Phase 3 (§3.1)       |   ⬜   |
-| 💎 | **4** | §4.1 Inode Reader                    | Phase 3 (§3.2)       |   ⬜   |
-| 💎 | **4** | §4.2 Directory Records               | Phase 3 (§3.2)       |   ⬜   |
-| 💎 | **4** | §4.3 Path Resolution                 | Phase 4 (§4.1,§4.2)  |   ⬜   |
-| 💎 | **5** | §5.1 File Extent Reader              | Phase 4 (§4.1)       |   ⬜   |
-| 💎 | **5** | §5.2 File Data Reader                | Phase 5 (§5.1)       |   ⬜   |
-| 💎 | **6** | §6.1 VFS Registration                | Phase 5 + VFS        |   ⬜   |
-| 💎 | **7** | §7.1 Test Suite                      | Phase 6              |   ⬜   |
-| 💎 | **7** | §8.1 Space Manager (read-only)       | Phase 1 (§1.3)       |   ⬜   |
-| 💎 | **7** | §9.1 OMAP + Dentry Cache             | Phase 2 (§2.1)       |   ⬜   |
-| 💎 | **7** | §11.1 LZVN/LZFSE Decompression       | Phase 5 (§5.2)       |   ⬜   |
-| ⭐ | **8** | §10.1 Container Health Dashboard     | Phase 4 (§4.1)       |   ⬜   |
-| ⭐ | **8** | §10.2 Clone Detective                | Phase 4 (§4.1)       |   ⬜   |
-| ⭐ | **8** | §10.3 Snapshot Explorer              | Phase 1 (§1.3)       |   ⬜   |
-| ⭐ | **8** | §10.4 Nanosecond Timestamp Inspector | Phase 4 (§4.1)       |   ⬜   |
-| ⭐ | **8** | §10.5 Volume Group Analyzer          | Phase 3 (§3.1)       |   ⬜   |
-| ⭐ | **8** | §10.6 Encryption Status Reporter     | Phase 3 (§3.1)       |   ⬜   |
-| ⭐ | **8** | §10.7 Fusion Drive Detector          | Phase 1 (§1.1)       |   ⬜   |
+| Phase | Sections                             | Depends On           | Status |
+| :---: | ------------------------------------ | -------------------- | :----: |
+| **0** | Prerequisites (spec, block, GPT)     | —                    |   ✅   |
+| **1** | §1.1 Container Superblock            | Phase 0              |   ⬜   |
+| **1** | §1.2 Fletcher-64 Checksum            | Phase 1 (§1.1)       |   ⬜   |
+| **1** | §1.3 Checkpoint Discovery            | Phase 1 (§1.2)       |   ⬜   |
+| **2** | §2.1 Object Map (OMAP)               | Phase 1 (§1.3)       |   ⬜   |
+| **2** | §2.2 B-Tree Engine                   | Phase 2 (§2.1)       |   ⬜   |
+| **3** | §3.1 Volume Superblock               | Phase 2 (§2.2)       |   ⬜   |
+| **3** | §3.2 Volume OMAP + Catalog           | Phase 3 (§3.1)       |   ⬜   |
+| **4** | §4.1 Inode Reader                    | Phase 3 (§3.2)       |   ⬜   |
+| **4** | §4.2 Directory Records               | Phase 3 (§3.2)       |   ⬜   |
+| **4** | §4.3 Path Resolution                 | Phase 4 (§4.1,§4.2)  |   ⬜   |
+| **5** | §5.1 File Extent Reader              | Phase 4 (§4.1)       |   ⬜   |
+| **5** | §5.2 File Data Reader                | Phase 5 (§5.1)       |   ⬜   |
+| **6** | §6.1 VFS Registration                | Phase 5 + VFS        |   ⬜   |
+| **7** | §7.1 Test Suite                      | Phase 6              |   ⬜   |
+| **7** | §8.1 Space Manager (read-only)       | Phase 1 (§1.3)       |   ⬜   |
+| **7** | §9.1 OMAP + Dentry Cache             | Phase 2 (§2.1)       |   ⬜   |
+| **7** | §11.1 LZVN/LZFSE Decompression       | Phase 5 (§5.2)       |   ⬜   |
+| **8** | §10.1 Container Health Dashboard     | Phase 4 (§4.1)       |   ⬜   |
+| **8** | §10.2 Clone Detective                | Phase 4 (§4.1)       |   ⬜   |
+| **8** | §10.3 Snapshot Explorer              | Phase 1 (§1.3)       |   ⬜   |
+| **8** | §10.4 Nanosecond Timestamp Inspector | Phase 4 (§4.1)       |   ⬜   |
+| **8** | §10.5 Volume Group Analyzer          | Phase 3 (§3.1)       |   ⬜   |
+| **8** | §10.6 Encryption Status Reporter     | Phase 3 (§3.1)       |   ⬜   |
+| **8** | §10.7 Fusion Drive Detector          | Phase 1 (§1.1)       |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — block I/O and GPT partition tables work.

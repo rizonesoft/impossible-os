@@ -165,43 +165,43 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Dependency                | Sections                          | What It Delivers                                                          | Depends On                           | Status |
-| -- | :----: | ------------------------------------- | --------------------------------- | ------------------------------------------------------------------------- | ------------------------------------ | :----: |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                    | —                                    |   ✅   |
-| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection               | IXFS magic `0x49584653` → partition found                                 | Phase 0 (block)                      |   ✅   |
-| 💎 | **0**  | `TODO-040.07-VFS.md`                  | VFS core layer                    | `vfs_ops` struct, mount framework, basic file operations                  | —                                    |   ✅   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §1.1 Superblock Verify            | Confirm: magic, version, block size, layout fields, CRC32C               | Phase 0 (partitions)                 |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §2.1 Block Allocator Verify       | Confirm: bitmap ops, block groups, locality-aware alloc                   | Phase 1 (§1.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §3.1 Inode Table Verify           | Confirm: 128-byte inodes, mode flags, extents, hash index                | Phase 1 (§2.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §4.1 Extent Engine Verify         | Confirm: block mapping, overflow extents, inline data                     | Phase 1 (§3.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §5.1 Journal Verify               | Confirm: WAL header, txn API, recovery replay, checksum                   | Phase 1 (§4.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §6.1 CoW & Snapshot Verify        | Confirm: refcount table, CoW on write, snapshot create/restore/delete     | Phase 1 (§5.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §7.1 Checksum Verify              | Confirm: CRC32C per-block, scrub, checksum table persistence              | Phase 1 (§6.1)                       |   ⬜   |
-| 💎 | **1**  | `TODO-040.11-IXFS.md`                 | §8.1 VFS Callbacks Verify         | Confirm: all VFS ops (14+), dir entries, mount sequence                   | Phase 1 (§7.1) + VFS (040.07)       |   ⬜   |
-| 💎 | **2**  | `TODO-040.11-IXFS.md`                 | §3.2 Extended Inode (v3)          | 256-byte inodes: Win32 attrs, crtime, ADS chain, security, compression    | Phase 1 (§3.1, §8.1)                |   ⬜   |
-| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §9.1 Alternate Data Streams       | `filename:stream` syntax, stream inodes, Zone.Identifier                  | Phase 2 (§3.2)                       |   ⬜   |
-| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §10.1 Security Descriptors        | Win32 DACL/SACL, hash-deduped security table, inheritance                 | Phase 2 (§3.2)                       |   ⬜   |
-| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §11.1 Hard Links                  | `CreateHardLink`, `i_links` management, cascade-delete                    | Phase 2 (§3.2)                       |   ⬜   |
-| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §11.2 Symbolic Links              | Reparse points, `CreateSymbolicLink`, loop detection (8 max)              | Phase 2 (§3.2)                       |   ⬜   |
-| 💎 | **3**  | `TODO-040.11-IXFS.md`                 | §20.1 Case-Insensitive Paths      | `ixfs_name_cmp()` replaces `ixfs_strcmp()` — Win32 mandatory              | Phase 1 (§8.1)                       |   ⬜   |
-| 💎 | **4**  | `TODO-040.11-IXFS.md`                 | §17.1 Format Tool v3              | `ixfs_format()` upgrade: v3 superblock, 256B inodes, all reserved tables  | Phase 3 (§9–§11, §20)               |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §12.1 Compression (LZ4/Zstd)     | Transparent per-file compression — LZ4 for speed, Zstd for ratio          | Phase 2 (§3.2)                       |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §14.1 Inline Deduplication       | xxHash64 block dedup reusing CoW refcounts — lightweight storage savings  | Phase 1 (§6.1)                       |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §15.1 Reflink Copy               | Instant zero-copy file cloning via `CopyFile` — uses CoW refcounts       | Phase 1 (§6.1)                       |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §16.1 Online Defragmentation     | Extent consolidation with CoW safety — background + on-demand             | Phase 1 (§4.1)                       |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §21.1 Sparse Files               | Hole extents, `FSCTL_SET_ZERO_DATA` — sparse + CoW integration           | Phase 2 (§3.2) + Phase 1 (§4.1)     |   ⬜   |
-| ⭐ | **5**  | `TODO-040.11-IXFS.md`                 | §24.1 TRIM / Discard             | Journal-batched TRIM on block free — SSD performance + longevity          | Phase 1 (§2.1)                       |   ⬜   |
-| ⭐ | **6**  | `TODO-040.11-IXFS.md`                 | §1.2 Online Volume Grow          | Extend volume while mounted — bitmap + superblock + block group update    | Phase 1 (§2.1)                       |   ⬜   |
-| ⭐ | **6**  | `TODO-040.11-IXFS.md`                 | §7.2 Self-Healing Metadata       | Backup superblock + bitmap — auto-fallback on corruption                  | Phase 1 (§1.1, §7.1)                |   ⬜   |
-| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §6.2 Automatic Snapshots         | Scheduled hourly/daily snapshots with retention policy                    | Phase 1 (§6.1)                       |   ⬜   |
-| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §13.1 Per-File Encryption        | AES-256-XTS, per-file keys, master key derivation (PBKDF2)               | Phase 2 (§3.2)                       |   ⬜   |
-| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §22.1 Change Journal (USN)       | Persistent circular buffer — Search, antivirus, backup integration       | Phase 1 (§8.1, §5.1)                |   ⬜   |
-| ⭐ | **7**  | `TODO-040.11-IXFS.md`                 | §23.1 Volume Quotas              | Per-user disk limits — enterprise environments                            | Phase 1 (§2.1, §3.1)                |   ⬜   |
-| ⭐ | **8**  | `TODO-040.11-IXFS.md`                 | §18.1 Volume Health Dashboard    | Unified health panel: superblock, journal, checksums, dedup, snapshots    | Phase 1 (§1.1, §5.1, §6.1, §7.1)   |   ⬜   |
-| 💎 | **8**  | `TODO-040.11-IXFS.md`                 | §19.1 Comprehensive Test Suite   | Full CRUD, large files, hard/symlinks, ADS, snapshots, CoW, compression   | Phase 4 (§17.1) + Phase 3 + Phase 5 |   ⬜   |
-| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §25.1 Object IDs                 | Win32 `FSCTL_CREATE_OR_GET_OBJECT_ID` — persistent file identity          | Phase 2 (§3.2)                       |   ⬜   |
-| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §26.1 Extended Attributes        | Win32 EA support — installer metadata, WSL interop                        | Phase 2 (§3.2)                       |   ⬜   |
-| ⭐ | **9**  | `TODO-040.11-IXFS.md`                 | §27.1 Storage Tiering            | Automatic hot/cold data placement across SSD + HDD tiers                  | Phase 1 (§2.1, §4.1)                |   ⬜   |
+| Phase  | TODO File / Dependency                | Sections                          | What It Delivers                                                          | Depends On                           | Status |
+| :----: | ------------------------------------- | --------------------------------- | ------------------------------------------------------------------------- | ------------------------------------ | :----: |
+| **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                    | —                                    |   ✅   |
+| **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection               | IXFS magic `0x49584653` → partition found                                 | Phase 0 (block)                      |   ✅   |
+| **0**  | `TODO-040.07-VFS.md`                  | VFS core layer                    | `vfs_ops` struct, mount framework, basic file operations                  | —                                    |   ✅   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §1.1 Superblock Verify            | Confirm: magic, version, block size, layout fields, CRC32C               | Phase 0 (partitions)                 |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §2.1 Block Allocator Verify       | Confirm: bitmap ops, block groups, locality-aware alloc                   | Phase 1 (§1.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §3.1 Inode Table Verify           | Confirm: 128-byte inodes, mode flags, extents, hash index                | Phase 1 (§2.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §4.1 Extent Engine Verify         | Confirm: block mapping, overflow extents, inline data                     | Phase 1 (§3.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §5.1 Journal Verify               | Confirm: WAL header, txn API, recovery replay, checksum                   | Phase 1 (§4.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §6.1 CoW & Snapshot Verify        | Confirm: refcount table, CoW on write, snapshot create/restore/delete     | Phase 1 (§5.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §7.1 Checksum Verify              | Confirm: CRC32C per-block, scrub, checksum table persistence              | Phase 1 (§6.1)                       |   ⬜   |
+| **1**  | `TODO-040.11-IXFS.md`                 | §8.1 VFS Callbacks Verify         | Confirm: all VFS ops (14+), dir entries, mount sequence                   | Phase 1 (§7.1) + VFS (040.07)       |   ⬜   |
+| **2**  | `TODO-040.11-IXFS.md`                 | §3.2 Extended Inode (v3)          | 256-byte inodes: Win32 attrs, crtime, ADS chain, security, compression    | Phase 1 (§3.1, §8.1)                |   ⬜   |
+| **3**  | `TODO-040.11-IXFS.md`                 | §9.1 Alternate Data Streams       | `filename:stream` syntax, stream inodes, Zone.Identifier                  | Phase 2 (§3.2)                       |   ⬜   |
+| **3**  | `TODO-040.11-IXFS.md`                 | §10.1 Security Descriptors        | Win32 DACL/SACL, hash-deduped security table, inheritance                 | Phase 2 (§3.2)                       |   ⬜   |
+| **3**  | `TODO-040.11-IXFS.md`                 | §11.1 Hard Links                  | `CreateHardLink`, `i_links` management, cascade-delete                    | Phase 2 (§3.2)                       |   ⬜   |
+| **3**  | `TODO-040.11-IXFS.md`                 | §11.2 Symbolic Links              | Reparse points, `CreateSymbolicLink`, loop detection (8 max)              | Phase 2 (§3.2)                       |   ⬜   |
+| **3**  | `TODO-040.11-IXFS.md`                 | §20.1 Case-Insensitive Paths      | `ixfs_name_cmp()` replaces `ixfs_strcmp()` — Win32 mandatory              | Phase 1 (§8.1)                       |   ⬜   |
+| **4**  | `TODO-040.11-IXFS.md`                 | §17.1 Format Tool v3              | `ixfs_format()` upgrade: v3 superblock, 256B inodes, all reserved tables  | Phase 3 (§9–§11, §20)               |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §12.1 Compression (LZ4/Zstd)     | Transparent per-file compression — LZ4 for speed, Zstd for ratio          | Phase 2 (§3.2)                       |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §14.1 Inline Deduplication       | xxHash64 block dedup reusing CoW refcounts — lightweight storage savings  | Phase 1 (§6.1)                       |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §15.1 Reflink Copy               | Instant zero-copy file cloning via `CopyFile` — uses CoW refcounts       | Phase 1 (§6.1)                       |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §16.1 Online Defragmentation     | Extent consolidation with CoW safety — background + on-demand             | Phase 1 (§4.1)                       |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §21.1 Sparse Files               | Hole extents, `FSCTL_SET_ZERO_DATA` — sparse + CoW integration           | Phase 2 (§3.2) + Phase 1 (§4.1)     |   ⬜   |
+| **5**  | `TODO-040.11-IXFS.md`                 | §24.1 TRIM / Discard             | Journal-batched TRIM on block free — SSD performance + longevity          | Phase 1 (§2.1)                       |   ⬜   |
+| **6**  | `TODO-040.11-IXFS.md`                 | §1.2 Online Volume Grow          | Extend volume while mounted — bitmap + superblock + block group update    | Phase 1 (§2.1)                       |   ⬜   |
+| **6**  | `TODO-040.11-IXFS.md`                 | §7.2 Self-Healing Metadata       | Backup superblock + bitmap — auto-fallback on corruption                  | Phase 1 (§1.1, §7.1)                |   ⬜   |
+| **7**  | `TODO-040.11-IXFS.md`                 | §6.2 Automatic Snapshots         | Scheduled hourly/daily snapshots with retention policy                    | Phase 1 (§6.1)                       |   ⬜   |
+| **7**  | `TODO-040.11-IXFS.md`                 | §13.1 Per-File Encryption        | AES-256-XTS, per-file keys, master key derivation (PBKDF2)               | Phase 2 (§3.2)                       |   ⬜   |
+| **7**  | `TODO-040.11-IXFS.md`                 | §22.1 Change Journal (USN)       | Persistent circular buffer — Search, antivirus, backup integration       | Phase 1 (§8.1, §5.1)                |   ⬜   |
+| **7**  | `TODO-040.11-IXFS.md`                 | §23.1 Volume Quotas              | Per-user disk limits — enterprise environments                            | Phase 1 (§2.1, §3.1)                |   ⬜   |
+| **8**  | `TODO-040.11-IXFS.md`                 | §18.1 Volume Health Dashboard    | Unified health panel: superblock, journal, checksums, dedup, snapshots    | Phase 1 (§1.1, §5.1, §6.1, §7.1)   |   ⬜   |
+| **8**  | `TODO-040.11-IXFS.md`                 | §19.1 Comprehensive Test Suite   | Full CRUD, large files, hard/symlinks, ADS, snapshots, CoW, compression   | Phase 4 (§17.1) + Phase 3 + Phase 5 |   ⬜   |
+| **9**  | `TODO-040.11-IXFS.md`                 | §25.1 Object IDs                 | Win32 `FSCTL_CREATE_OR_GET_OBJECT_ID` — persistent file identity          | Phase 2 (§3.2)                       |   ⬜   |
+| **9**  | `TODO-040.11-IXFS.md`                 | §26.1 Extended Attributes        | Win32 EA support — installer metadata, WSL interop                        | Phase 2 (§3.2)                       |   ⬜   |
+| **9**  | `TODO-040.11-IXFS.md`                 | §27.1 Storage Tiering            | Automatic hot/cold data placement across SSD + HDD tiers                  | Phase 1 (§2.1, §4.1)                |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already done — block devices, partition detection, and VFS core are in place.

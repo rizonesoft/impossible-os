@@ -29,14 +29,14 @@
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                                   | What It Delivers                                          | Depends On    | Status |
-| -- | :----: | ----------------------------------------- | --------------------------------------------------------- | ------------- | :----: |
-| 💎 | **1** | §1 AHCI Interrupt Storm Fix               | Disable unhandled AHCI PCI interrupts                     | —             |   ✅   |
-| 💎 | **1** | §2 AHCI Polling Loop PAUSE Removal        | Remove PAUSE instructions that trigger Hyper-V PLE        | —             |   ✅   |
-| 💎 | **2** | §3 LAPIC Init Timeout / Single-CPU Guard  | Prevent hang during Init Level De-Assert IPI              | —             |   ✅   |
-| 💎 | **2** | §4 AHCI port_start_cmd Timeout            | Add timeout to CR bit busy-wait loop                      | —             |   ✅   |
-| 💎 | **3** | §5 QEMU Launch Script (PowerShell)        | WHPX-first acceleration, proper CPU model                 | —             |   ✅   |
-| 💎 | **3** | §6 Hyper-V StorVSC Boot Order Fix         | Re-scan partitions after StorVSC registers block device   | §1            |   ✅   |
+| Phase | Section                                   | What It Delivers                                          | Depends On    | Status |
+| :----: | ----------------------------------------- | --------------------------------------------------------- | ------------- | :----: |
+| **1** | §1 AHCI Interrupt Storm Fix               | Disable unhandled AHCI PCI interrupts                     | —             |   ✅   |
+| **1** | §2 AHCI Polling Loop PAUSE Removal        | Remove PAUSE instructions that trigger Hyper-V PLE        | —             |   ✅   |
+| **2** | §3 LAPIC Init Timeout / Single-CPU Guard  | Prevent hang during Init Level De-Assert IPI              | —             |   ✅   |
+| **2** | §4 AHCI port_start_cmd Timeout            | Add timeout to CR bit busy-wait loop                      | —             |   ✅   |
+| **3** | §5 QEMU Launch Script (PowerShell)        | WHPX-first acceleration, proper CPU model                 | —             |   ✅   |
+| **3** | §6 Hyper-V StorVSC Boot Order Fix         | Re-scan partitions after StorVSC registers block device   | §1            |   ✅   |
 
 ---
 

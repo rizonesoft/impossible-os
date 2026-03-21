@@ -137,46 +137,46 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                  | Depends On                     | Status |
-| -- | :----: | ----------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | Prerequisites (specs, PCI driver)         | —                              |   ✅   |
-| 💎 | **1**  | §1.1 PCIe Discovery + BAR Mapping         | Phase 0                        |   ⬜   |
-| 💎 | **1**  | §1.2 Controller Init Sequence             | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **1**  | §1.3 Admin Queue Setup                    | Phase 1 (§1.2)                 |   ⬜   |
-| 💎 | **2**  | §2.1 Identify Controller                  | Phase 1 (§1.3)                 |   ⬜   |
-| 💎 | **2**  | §2.2 Identify Namespace                   | Phase 2 (§2.1)                 |   ⬜   |
-| 💎 | **3**  | §4.1 MSI-X Interrupts                     | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **3**  | §4.2 Interrupt-Driven Completion          | Phase 3 (§4.1)                 |   ⬜   |
-| 💎 | **3**  | §3.1 I/O Queue Creation                   | Phase 2 (§2.2)                 |   ⬜   |
-| 💎 | **3**  | §3.2 Single-Queue Read/Write              | Phase 3 (§3.1, §4.2)          |   ⬜   |
-| 💎 | **4**  | §5.1 blkdev Integration                   | Phase 3 (§3.2)                 |   ⬜   |
-| 💎 | **4**  | §7.2 Flush Command                        | Phase 3 (§3.2)                 |   ⬜   |
-| 💎 | **4**  | §10.1 4Kn Sector Support                  | Phase 3 (§3.2)                 |   ⬜   |
-| 💎 | **5**  | §6.1 Multi-Queue Per-Core                 | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §7.1 TRIM / Deallocate                    | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §7.3 Write Zeroes                         | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §8.1 SMART Health Monitoring              | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §9.1 Error Recovery + Reset               | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **5**  | §9.2 Graceful Shutdown                    | Phase 5 (§9.1)                 |   ⬜   |
-| 💎 | **6**  | §11.1 Sanitize Command                    | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **6**  | §12.1 Adaptive Completion Polling         | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **6**  | §13.1 I/O Priority Queues                 | Phase 5 (§6.1)                 |   ⬜   |
-| ⭐ | **6**  | §14.1 Latency Telemetry                   | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **6**  | §15.1 Predictive Prefetch                 | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **6**  | §16.1 Request Merging                     | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **7**  | §17.1 Namespace Management                | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **7**  | §18.1 TCG Opal 2.0 SED                    | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **7**  | §19.1 Zoned Namespaces                    | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **7**  | §20.1 Asynchronous Event Requests         | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | **7**  | §20.2 SGL Support                         | Phase 3 (§3.2)                 |   ⬜   |
-| 💎 | **7**  | §21.1 APST Power Management              | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **7**  | §22.1 SMART Dashboard                     | Phase 5 (§8.1)                 |   ⬜   |
-| 💎 | **8**  | §23.1 Firmware Update                     | Phase 3 (§4.2)                 |   ⬜   |
-| ⭐ | **8**  | §24.1 FDP Write Hints                     | Phase 3 (§4.2)                 |   ⬜   |
-| 💎 | —      | Downstream: FAT32 flush + TRIM            | Phase 4 + Phase 5              |   ⬜   |
-| 💎 | —      | Downstream: IXFS flush + TRIM             | Phase 4 + Phase 5              |   ⬜   |
-| 💎 | —      | Parallel: AHCI SATA transport             | Independent                    |   ⬜   |
-| 💎 | —      | Parallel: VirtIO Block transport          | Independent                    |   ⬜   |
+| Phase  | Sections                                  | Depends On                     | Status |
+| :----: | ----------------------------------------- | ------------------------------ | :----: |
+| **0**  | Prerequisites (specs, PCI driver)         | —                              |   ✅   |
+| **1**  | §1.1 PCIe Discovery + BAR Mapping         | Phase 0                        |   ⬜   |
+| **1**  | §1.2 Controller Init Sequence             | Phase 1 (§1.1)                 |   ⬜   |
+| **1**  | §1.3 Admin Queue Setup                    | Phase 1 (§1.2)                 |   ⬜   |
+| **2**  | §2.1 Identify Controller                  | Phase 1 (§1.3)                 |   ⬜   |
+| **2**  | §2.2 Identify Namespace                   | Phase 2 (§2.1)                 |   ⬜   |
+| **3**  | §4.1 MSI-X Interrupts                     | Phase 1 (§1.1)                 |   ⬜   |
+| **3**  | §4.2 Interrupt-Driven Completion          | Phase 3 (§4.1)                 |   ⬜   |
+| **3**  | §3.1 I/O Queue Creation                   | Phase 2 (§2.2)                 |   ⬜   |
+| **3**  | §3.2 Single-Queue Read/Write              | Phase 3 (§3.1, §4.2)          |   ⬜   |
+| **4**  | §5.1 blkdev Integration                   | Phase 3 (§3.2)                 |   ⬜   |
+| **4**  | §7.2 Flush Command                        | Phase 3 (§3.2)                 |   ⬜   |
+| **4**  | §10.1 4Kn Sector Support                  | Phase 3 (§3.2)                 |   ⬜   |
+| **5**  | §6.1 Multi-Queue Per-Core                 | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §7.1 TRIM / Deallocate                    | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §7.3 Write Zeroes                         | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §8.1 SMART Health Monitoring              | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §9.1 Error Recovery + Reset               | Phase 3 (§4.2)                 |   ⬜   |
+| **5**  | §9.2 Graceful Shutdown                    | Phase 5 (§9.1)                 |   ⬜   |
+| **6**  | §11.1 Sanitize Command                    | Phase 3 (§4.2)                 |   ⬜   |
+| **6**  | §12.1 Adaptive Completion Polling         | Phase 3 (§4.2)                 |   ⬜   |
+| **6**  | §13.1 I/O Priority Queues                 | Phase 5 (§6.1)                 |   ⬜   |
+| **6**  | §14.1 Latency Telemetry                   | Phase 3 (§4.2)                 |   ⬜   |
+| **6**  | §15.1 Predictive Prefetch                 | Phase 3 (§4.2)                 |   ⬜   |
+| **6**  | §16.1 Request Merging                     | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §17.1 Namespace Management                | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §18.1 TCG Opal 2.0 SED                    | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §19.1 Zoned Namespaces                    | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §20.1 Asynchronous Event Requests         | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §20.2 SGL Support                         | Phase 3 (§3.2)                 |   ⬜   |
+| **7**  | §21.1 APST Power Management              | Phase 3 (§4.2)                 |   ⬜   |
+| **7**  | §22.1 SMART Dashboard                     | Phase 5 (§8.1)                 |   ⬜   |
+| **8**  | §23.1 Firmware Update                     | Phase 3 (§4.2)                 |   ⬜   |
+| **8**  | §24.1 FDP Write Hints                     | Phase 3 (§4.2)                 |   ⬜   |
+| —      | Downstream: FAT32 flush + TRIM            | Phase 4 + Phase 5              |   ⬜   |
+| —      | Downstream: IXFS flush + TRIM             | Phase 4 + Phase 5              |   ⬜   |
+| —      | Parallel: AHCI SATA transport             | Independent                    |   ⬜   |
+| —      | Parallel: VirtIO Block transport          | Independent                    |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is complete — the NVMe 2.1 and 2.0 spec documents exist, and the PCI enumerator

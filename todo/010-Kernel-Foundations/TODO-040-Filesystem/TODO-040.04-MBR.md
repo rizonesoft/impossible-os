@@ -128,35 +128,35 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec              | Sections                        | What It Delivers                                                      | Depends On                       | Status |
-| -- | :----: | ----------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/partitioning/mbr.md`| Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer              | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                 | —                                |   ✅   |
-| 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.1 Full MBR Layout Parser    | Decode complete 512-byte MBR sector, disk signature, boot magic       | Phase 0 (block + spec)           |   ⬜   |
-| 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.2 Partition Type Recognition | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)           | Phase 1 (§1.1)                   |   ⬜   |
-| 💎 | **2**  | `TODO-040.04-MBR.md`          | §2.1 EBR Chain Walker          | Traverse extended partition linked list, read logical partitions ≥5   | Phase 1 (§1.2)                   |   ⬜   |
-| 💎 | **2**  | `TODO-040.04-MBR.md`          | §3.1 CHS Extraction & Encoding | Bidirectional CHS↔LBA translation, overflow detection (`FE FF FF`)    | Phase 1 (§1.1)                   |   ⬜   |
-| 💎 | **2**  | `TODO-040.04-MBR.md`          | §4.1 1-MiB Alignment           | Enforce LBA 2048 alignment for new partitions, warn on legacy 63      | Phase 1 (§1.1)                   |   ⬜   |
-| ⭐ | **2**  | `TODO-040.04-MBR.md`          | §4.2 4Kn Sector Awareness      | Detect 4096-byte native sector drives, adjust alignment accordingly   | Phase 2 (§4.1) + block device    |   ⬜   |
-| 💎 | **2**  | `TODO-040.04-MBR.md`          | §7.1 Protective MBR Detection  | Detect `0xEE` → redirect to GPT parser, write Protective MBR for GPT | Phase 1 (§1.2)                   |   ⬜   |
-| 💎 | **3**  | `TODO-040.04-MBR.md`          | §5.1 Partition Table Writer    | Read-modify-write MBR sector with correct entry encoding              | Phase 2 (§3.1, §4.1)            |   ⬜   |
-| 💎 | **3**  | `TODO-040.04-MBR.md`          | §5.2 EBR Writer                | Write EBR linked list for logical partitions                          | Phase 3 (§5.1)                   |   ⬜   |
-| 💎 | **3**  | `TODO-040.04-MBR.md`          | §8.1 Disk Signature Management | Generate, store, and track 32-bit disk signatures for volume mapping  | Phase 1 (§1.1) + Phase 3 (§5.1) |   ⬜   |
-| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.1 Create Primary Partition  | Find free space, align, validate overlap, write MBR                   | Phase 3 (§5.1) + Phase 2 (§4.1) |   ⬜   |
-| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.2 Extended & Logical        | Create extended container + logical partitions via EBR chain          | Phase 4 (§6.1) + Phase 3 (§5.2) |   ⬜   |
-| 💎 | **4**  | `TODO-040.04-MBR.md`          | §6.3 Delete Partition          | Zero MBR entries, unlink EBR nodes, unmount filesystems               | Phase 4 (§6.1, §6.2)            |   ⬜   |
-| ⭐ | **4**  | `TODO-040.04-MBR.md`          | §13.1 Health Validation        | Overlap, bounds, CHS/LBA mismatch, EBR chain checks + auto-repair    | Phase 1 (§1.2) + Phase 2 (§2.1) |   ⬜   |
-| 💎 | **5**  | `TODO-040.04-MBR.md`          | §9.1 Diskpart MBR Commands    | `diskpart list/create/delete/active/info` CLI commands                 | Phase 4 (§6.1, §6.3) + VFS      |   ⬜   |
-| 💎 | **5**  | `TODO-040.04-MBR.md`          | §10.1 MBR Test Suite          | Test images: 4 primary, extended+logical, protective, hybrid, corrupt | Phase 1–5 + FAT32                |   ⬜   |
-| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §7.2 Hybrid MBR               | GPT disk + real MBR entries for dual BIOS/UEFI boot USB creation      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
-| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §11.1 MBR→GPT Conversion     | Non-destructive partition table migration with type GUID mapping      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
-| 💎 | **6**  | `TODO-040.04-MBR.md`          | §11.2 GPT→MBR Conversion     | Downgrade GPT to MBR for legacy BIOS compatibility                    | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
-| ⭐ | **6**  | `TODO-040.04-MBR.md`          | §12.1 Backup & Restore       | MBR + EBR chain snapshot to file, auto-backup on every partition change | Phase 3 (§5.1) + Phase 2 (§2.1) |   ⬜   |
-| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §6.4 Secure Partition Wipe    | Crypto-erase or zero-fill deleted partition space                     | Phase 4 (§6.3) + Phase 3 (§5.1) |   ⬜   |
-| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §6.5 Partition Resize         | Non-destructive shrink/grow MBR partitions in-place                   | Phase 4 (§6.1) + Phase 3 (§5.1) |   ⬜   |
-| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.1 Disk Cloning           | Clone entire MBR + partition data to another disk                     | Phase 3 (§5.1) + Phase 2 (§2.1) + Phase 6 (§12.1) |   ⬜   |
-| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.2 Live Partition Map     | Real-time graphical partition layout in Disk Manager with I/O heatmap | Phase 1 (§1.1) + VFS            |   ⬜   |
-| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §15.1 Forensic Recovery      | Scan disk for lost/deleted partitions and recover them non-destructively | Phase 1 (§1.1) + Phase 4 (§13.1) + Phase 6 (§12.1) |   ⬜   |
+| Phase  | TODO File / Spec              | Sections                        | What It Delivers                                                      | Depends On                       | Status |
+| :----: | ----------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------- | :----: |
+| **0**  | `specs/storage/partitioning/mbr.md`| Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
+| **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer              | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                 | —                                |   ✅   |
+| **1**  | `TODO-040.04-MBR.md`          | §1.1 Full MBR Layout Parser    | Decode complete 512-byte MBR sector, disk signature, boot magic       | Phase 0 (block + spec)           |   ⬜   |
+| **1**  | `TODO-040.04-MBR.md`          | §1.2 Partition Type Recognition | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)           | Phase 1 (§1.1)                   |   ⬜   |
+| **2**  | `TODO-040.04-MBR.md`          | §2.1 EBR Chain Walker          | Traverse extended partition linked list, read logical partitions ≥5   | Phase 1 (§1.2)                   |   ⬜   |
+| **2**  | `TODO-040.04-MBR.md`          | §3.1 CHS Extraction & Encoding | Bidirectional CHS↔LBA translation, overflow detection (`FE FF FF`)    | Phase 1 (§1.1)                   |   ⬜   |
+| **2**  | `TODO-040.04-MBR.md`          | §4.1 1-MiB Alignment           | Enforce LBA 2048 alignment for new partitions, warn on legacy 63      | Phase 1 (§1.1)                   |   ⬜   |
+| **2**  | `TODO-040.04-MBR.md`          | §4.2 4Kn Sector Awareness      | Detect 4096-byte native sector drives, adjust alignment accordingly   | Phase 2 (§4.1) + block device    |   ⬜   |
+| **2**  | `TODO-040.04-MBR.md`          | §7.1 Protective MBR Detection  | Detect `0xEE` → redirect to GPT parser, write Protective MBR for GPT | Phase 1 (§1.2)                   |   ⬜   |
+| **3**  | `TODO-040.04-MBR.md`          | §5.1 Partition Table Writer    | Read-modify-write MBR sector with correct entry encoding              | Phase 2 (§3.1, §4.1)            |   ⬜   |
+| **3**  | `TODO-040.04-MBR.md`          | §5.2 EBR Writer                | Write EBR linked list for logical partitions                          | Phase 3 (§5.1)                   |   ⬜   |
+| **3**  | `TODO-040.04-MBR.md`          | §8.1 Disk Signature Management | Generate, store, and track 32-bit disk signatures for volume mapping  | Phase 1 (§1.1) + Phase 3 (§5.1) |   ⬜   |
+| **4**  | `TODO-040.04-MBR.md`          | §6.1 Create Primary Partition  | Find free space, align, validate overlap, write MBR                   | Phase 3 (§5.1) + Phase 2 (§4.1) |   ⬜   |
+| **4**  | `TODO-040.04-MBR.md`          | §6.2 Extended & Logical        | Create extended container + logical partitions via EBR chain          | Phase 4 (§6.1) + Phase 3 (§5.2) |   ⬜   |
+| **4**  | `TODO-040.04-MBR.md`          | §6.3 Delete Partition          | Zero MBR entries, unlink EBR nodes, unmount filesystems               | Phase 4 (§6.1, §6.2)            |   ⬜   |
+| **4**  | `TODO-040.04-MBR.md`          | §13.1 Health Validation        | Overlap, bounds, CHS/LBA mismatch, EBR chain checks + auto-repair    | Phase 1 (§1.2) + Phase 2 (§2.1) |   ⬜   |
+| **5**  | `TODO-040.04-MBR.md`          | §9.1 Diskpart MBR Commands    | `diskpart list/create/delete/active/info` CLI commands                 | Phase 4 (§6.1, §6.3) + VFS      |   ⬜   |
+| **5**  | `TODO-040.04-MBR.md`          | §10.1 MBR Test Suite          | Test images: 4 primary, extended+logical, protective, hybrid, corrupt | Phase 1–5 + FAT32                |   ⬜   |
+| **6**  | `TODO-040.04-MBR.md`          | §7.2 Hybrid MBR               | GPT disk + real MBR entries for dual BIOS/UEFI boot USB creation      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| **6**  | `TODO-040.04-MBR.md`          | §11.1 MBR→GPT Conversion     | Non-destructive partition table migration with type GUID mapping      | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| **6**  | `TODO-040.04-MBR.md`          | §11.2 GPT→MBR Conversion     | Downgrade GPT to MBR for legacy BIOS compatibility                    | Phase 3 (§5.1) + GPT (040.05)   |   ⬜   |
+| **6**  | `TODO-040.04-MBR.md`          | §12.1 Backup & Restore       | MBR + EBR chain snapshot to file, auto-backup on every partition change | Phase 3 (§5.1) + Phase 2 (§2.1) |   ⬜   |
+| **7**  | `TODO-040.04-MBR.md`          | §6.4 Secure Partition Wipe    | Crypto-erase or zero-fill deleted partition space                     | Phase 4 (§6.3) + Phase 3 (§5.1) |   ⬜   |
+| **7**  | `TODO-040.04-MBR.md`          | §6.5 Partition Resize         | Non-destructive shrink/grow MBR partitions in-place                   | Phase 4 (§6.1) + Phase 3 (§5.1) |   ⬜   |
+| **7**  | `TODO-040.04-MBR.md`          | §14.1 Disk Cloning           | Clone entire MBR + partition data to another disk                     | Phase 3 (§5.1) + Phase 2 (§2.1) + Phase 6 (§12.1) |   ⬜   |
+| **7**  | `TODO-040.04-MBR.md`          | §14.2 Live Partition Map     | Real-time graphical partition layout in Disk Manager with I/O heatmap | Phase 1 (§1.1) + VFS            |   ⬜   |
+| **7**  | `TODO-040.04-MBR.md`          | §15.1 Forensic Recovery      | Scan disk for lost/deleted partitions and recover them non-destructively | Phase 1 (§1.1) + Phase 4 (§13.1) + Phase 6 (§12.1) |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–2** are the critical path. They deliver full read-only MBR parsing:

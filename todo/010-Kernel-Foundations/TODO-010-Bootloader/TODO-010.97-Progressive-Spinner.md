@@ -81,20 +81,20 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Section                         | What It Delivers                                         | Depends On                       | Status |
-| -- | :----: | ------------------------------- | -------------------------------------------------------- | ------------------------------- | :----: |
-| 💎 | **1** | §1.1 Sine/Cosine LUT            | 256-entry fixed-point table — math foundation            | —                                |   ✅   |
-| 💎 | **1** | §2.1 Easing LUT                 | 64-entry ease-in-out curve — animation smoothness        | —                                |   ✅   |
-| 💎 | **2** | §1.2 Arc Drawing Function       | Anti-aliased arc ring renderer — the core primitive      | Phase 1 (§1.1)                   |   ✅   |
-| 💎 | **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ✅   |
-| 💎 | **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ✅   |
-| 💎 | **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash                      |   ✅   |
-| 💎 | **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ✅   |
-| 💎 | **4** | §2.3 Accent Color Theming       | System accent color from Registry                        | Phase 3 (§2.2)                   |   ⬜   |
-| 💎 | **5** | §3.3 Update Sizing Reference    | Documentation: update parent TODO sizing table           | Phase 4 (§3.2)                   |   ✅   |
-| 💎 | **5** | §4.1 Multi-Instance API         | Reusable spinner for dialogs, shell, settings            | Phase 3 (§2.2)                   |   ⬜   |
-| 💎 | **5** | §4.2 Predefined Size Variants   | Fluent 2 standard sizes (tiny → xlarge)                  | Phase 5 (§4.1)                   |   ⬜   |
-| 💎 | **6** | §4.3 Compositor Integration     | Post-boot spinner routing through window manager         | Phase 5 (§4.1)                   |   ⬜   |
+| Phase | Section                         | What It Delivers                                         | Depends On                       | Status |
+| :----: | ------------------------------- | -------------------------------------------------------- | ------------------------------- | :----: |
+| **1** | §1.1 Sine/Cosine LUT            | 256-entry fixed-point table — math foundation            | —                                |   ✅   |
+| **1** | §2.1 Easing LUT                 | 64-entry ease-in-out curve — animation smoothness        | —                                |   ✅   |
+| **2** | §1.2 Arc Drawing Function       | Anti-aliased arc ring renderer — the core primitive      | Phase 1 (§1.1)                   |   ✅   |
+| **2** | §1.3 HiDPI Scaling              | Per-resolution ring sizing                               | Phase 2 (§1.2)                   |   ✅   |
+| **3** | §2.2 Animation State Machine    | Dual-motion rotation + sweep — the breathing effect      | Phase 1 (§2.1) + Phase 2 (§1.2)  |   ✅   |
+| **3** | §3.1 Remove Dot Animation       | Delete all dot code from `boot_splash.c`                 | Boot Splash                      |   ✅   |
+| **4** | §3.2 Wire Up Spinner            | Replace dots with arc spinner on boot splash             | Phase 3 (§2.2 + §3.1 + §1.3)     |   ✅   |
+| **4** | §2.3 Accent Color Theming       | System accent color from Registry                        | Phase 3 (§2.2)                   |   ⬜   |
+| **5** | §3.3 Update Sizing Reference    | Documentation: update parent TODO sizing table           | Phase 4 (§3.2)                   |   ✅   |
+| **5** | §4.1 Multi-Instance API         | Reusable spinner for dialogs, shell, settings            | Phase 3 (§2.2)                   |   ⬜   |
+| **5** | §4.2 Predefined Size Variants   | Fluent 2 standard sizes (tiny → xlarge)                  | Phase 5 (§4.1)                   |   ⬜   |
+| **6** | §4.3 Compositor Integration     | Post-boot spinner routing through window manager         | Phase 5 (§4.1)                   |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–4** deliver the boot splash visual upgrade (dot → arc ring).

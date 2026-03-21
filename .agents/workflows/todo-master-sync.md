@@ -127,13 +127,16 @@ This table assigns every section to an implementation phase and tracks status.
   - `⚠️` — section is partially complete (mix of `[x]` and `[ ]`)
 - Dependencies must be consistent with the mermaid graph
 - Phase numbers must be logical (lower phases = prerequisites)
-- Icon column: `💎` for spec-defined features, `⭐` for Impossible OS exclusives, `🔵` for stretch goals
+
+> [!IMPORTANT]
+> The Phase table does **not** have a `⭐/💎` icon column. That column is only for
+> the OS Comparison table. If you find one in a Phase table, remove it.
 
 **Format:**
 ```markdown
-| ⭐ | Phase  | TODO File           | Section(s)                         | What It Delivers                                              | Depends On               | Status |
-| -- | :----: | -------------------- | ---------------------------------- | ------------------------------------------------------------- | ------------------------ | :----: |
-| 💎 | **1**  | `040.01-VirtIO.md`  | §1 PCI Transport                   | Modern PCI capability discovery                               | —                        |   ⬜   |
+| Phase  | TODO File           | Section(s)                         | What It Delivers                                              | Depends On               | Status |
+| :----: | -------------------- | ---------------------------------- | ------------------------------------------------------------- | ------------------------ | :----: |
+| **1**  | `040.01-VirtIO.md`  | §1 PCI Transport                   | Modern PCI capability discovery                               | —                        |   ⬜   |
 ```
 
 ### 7. Fix the Priority Order table

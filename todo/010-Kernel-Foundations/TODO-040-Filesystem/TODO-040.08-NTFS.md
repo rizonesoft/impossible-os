@@ -98,46 +98,46 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐  | Phase  | TODO File / Spec      | Sections                       | What It Delivers                                                 | Depends On                              | Status |
-| --- | :----: | ---------------------- | ------------------------------ | ---------------------------------------------------------------- | --------------------------------------- | :----: |
-| 💎  | **0**  | `TODO-040.01/02`      | Block device layer             | `blkdev_read()` via VirtIO or AHCI                               | —                                       |   ✅   |
-| 💎  | **0**  | `TODO-040.04/05`      | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found        | Phase 0 (block)                         |   ✅   |
-| 💎  | **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                    |   ✅   |
-| 💎  | **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                          |   ✅   |
-| 💎  | **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                          |   ✅   |
-| 💎  | **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                          |   ✅   |
-| 💎  | **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                          |   ✅   |
-| 💎  | **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                          |   ✅   |
-| 💎  | **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                          |   ✅   |
-| 💎  | **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                          |   ✅   |
-| 💎  | **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                    |   ✅   |
-| 💎  | **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                          |   ✅   |
-| 💎  | **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                          |   ⬜   |
-| 💎  | **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07)    |   ⬜   |
-| 💎  | **5**  | `TODO-040.08-NTFS.md` | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | Phase 4 (§5.1, §5.2)                    |   ⬜   |
-| 💎  | **5**  | `TODO-040.08-NTFS.md` | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | Phase 2 (§3.1)                          |   ⬜   |
-| 💎  | **6**  | `TODO-040.08-NTFS.md` | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | Phase 2 (§3.1) + VFS §2.2               |   ⬜   |
-| 💎  | **6**  | `TODO-040.08-NTFS.md` | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | Phase 4 (§5.3)                          |   ⬜   |
-| 💎  | **6**  | `TODO-040.08-NTFS.md` | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | Phase 1 (§2.2)                          |   ⬜   |
-| 💎  | **6**  | `TODO-040.08-NTFS.md` | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | Phase 3 (§4.2)                          |   ⬜   |
-| 💎  | **6**  | `TODO-040.08-NTFS.md` | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | Phase 1 (§2.1)                          |   ⬜   |
-| 💎  | **7**  | `TODO-040.08-NTFS.md` | §8.1 Test Suite                | Automated validation with NTFS test images                       | Phase 5 (§6.1)                          |   ⬜   |
-| ⭐  | **7**  | `TODO-040.08-NTFS.md` | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | Phase 6 (§7.1)                          |   ⬜   |
-| ⭐  | **7**  | `TODO-040.08-NTFS.md` | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | Phase 6 (§7.1)                          |   ⬜   |
-| ⭐  | **7**  | `TODO-040.08-NTFS.md` | §17.1 ADS Explorer            | GUI Alternate Data Streams viewer — **hidden data transparency** | Phase 5 (§3.4)                          |   ⬜   |
-| 💎  | **8**  | `TODO-040.08-NTFS.md` | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | Phase 6 (§7.1)                          |   ⬜   |
-| 💎  | **8**  | `TODO-040.08-NTFS.md` | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | Phase 1 (§2.2)                          |   ⬜   |
-| 💎  | **8**  | `TODO-040.08-NTFS.md` | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | Phase 8 (§12.1)                         |   ⬜   |
-| 💎  | **8**  | `TODO-040.08-NTFS.md` | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | Phase 8 (§12.2, §12.3)                  |   ⬜   |
-| 💎  | **8**  | `TODO-040.08-NTFS.md` | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | Phase 8 (§12.4) + Phase 9 (§14.1)       |   ⬜   |
-| 💎  | **9**  | `TODO-040.08-NTFS.md` | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | Phase 8 (§12.1)                         |   ⬜   |
-| 💎  | **9**  | `TODO-040.08-NTFS.md` | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | Phase 9 (§13.1)                         |   ⬜   |
-| 💎  | **9**  | `TODO-040.08-NTFS.md` | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | Phase 8 (§12.4)                         |   ⬜   |
-| 💎  | **9**  | `TODO-040.08-NTFS.md` | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | Phase 8 (§12.4) + Phase 9 (§13.1)       |   ⬜   |
-| ⭐  | **10** | `TODO-040.08-NTFS.md` | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | Phase 9 (all write support)             |   ⬜   |
-| ⭐  | **10** | `TODO-040.08-NTFS.md` | §15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry                | Phase 10 (§15.1)                        |   ⬜   |
-| ⭐  | **10** | `TODO-040.08-NTFS.md` | §15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation          | Phase 9 (all write support)             |   ⬜   |
-| ⭐  | **11** | `TODO-040.08-NTFS.md` | §18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively         | Phase 5 (§6.1) + IXFS write             |   ⬜   |
+| Phase  | TODO File / Spec      | Sections                       | What It Delivers                                                 | Depends On                              | Status |
+| :----: | ---------------------- | ------------------------------ | ---------------------------------------------------------------- | --------------------------------------- | :----: |
+| **0**  | `TODO-040.01/02`      | Block device layer             | `blkdev_read()` via VirtIO or AHCI                               | —                                       |   ✅   |
+| **0**  | `TODO-040.04/05`      | Partition detection            | MBR type `0x07` / GPT `EBD0A0A2-…` → NTFS partition found        | Phase 0 (block)                         |   ✅   |
+| **1**  | `TODO-040.08-NTFS.md` | §1.1 BPB Parsing               | Locate MFT on disk, extract cluster size, FRS size               | Phase 0 (partitions)                    |   ✅   |
+| **1**  | `TODO-040.08-NTFS.md` | §2.1 MFT Record Reader         | Read any file's raw MFT record by inode number                   | Phase 1 (§1.1)                          |   ✅   |
+| **1**  | `TODO-040.08-NTFS.md` | §2.2 Fixup (USA) Verification  | Sector-tear integrity check — **before ANY attribute parsing**   | Phase 1 (§2.1)                          |   ✅   |
+| **2**  | `TODO-040.08-NTFS.md` | §3.1 Attribute Iterator        | Walk attributes in MFT records — unlocks ALL attribute decoders  | Phase 1 (§2.2)                          |   ✅   |
+| **2**  | `TODO-040.08-NTFS.md` | §3.3 `$FILE_NAME` Decoder      | Extract filenames, parent references, namespaces                 | Phase 2 (§3.1)                          |   ✅   |
+| **2**  | `TODO-040.08-NTFS.md` | §4.1 Run-List Decoder          | VCN → LCN translation — enables reading ANY non-resident data    | Phase 2 (§3.1)                          |   ✅   |
+| **3**  | `TODO-040.08-NTFS.md` | §3.2 `$STANDARD_INFORMATION`   | Timestamps (FILETIME → Unix), DOS permissions                    | Phase 2 (§3.1)                          |   ✅   |
+| **3**  | `TODO-040.08-NTFS.md` | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | Phase 2 (§4.1)                          |   ✅   |
+| **4**  | `TODO-040.08-NTFS.md` | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | Phase 2 (§3.1, §3.3)                    |   ✅   |
+| **4**  | `TODO-040.08-NTFS.md` | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | Phase 4 (§5.1)                          |   ✅   |
+| **4**  | `TODO-040.08-NTFS.md` | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | Phase 4 (§5.2)                          |   ⬜   |
+| **5**  | `TODO-040.08-NTFS.md` | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07)    |   ⬜   |
+| **5**  | `TODO-040.08-NTFS.md` | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | Phase 4 (§5.1, §5.2)                    |   ⬜   |
+| **5**  | `TODO-040.08-NTFS.md` | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | Phase 2 (§3.1)                          |   ⬜   |
+| **6**  | `TODO-040.08-NTFS.md` | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | Phase 2 (§3.1) + VFS §2.2               |   ⬜   |
+| **6**  | `TODO-040.08-NTFS.md` | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | Phase 4 (§5.3)                          |   ⬜   |
+| **6**  | `TODO-040.08-NTFS.md` | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | Phase 1 (§2.2)                          |   ⬜   |
+| **6**  | `TODO-040.08-NTFS.md` | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | Phase 3 (§4.2)                          |   ⬜   |
+| **6**  | `TODO-040.08-NTFS.md` | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | Phase 1 (§2.1)                          |   ⬜   |
+| **7**  | `TODO-040.08-NTFS.md` | §8.1 Test Suite                | Automated validation with NTFS test images                       | Phase 5 (§6.1)                          |   ⬜   |
+| **7**  | `TODO-040.08-NTFS.md` | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | Phase 6 (§7.1)                          |   ⬜   |
+| **7**  | `TODO-040.08-NTFS.md` | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | Phase 6 (§7.1)                          |   ⬜   |
+| **7**  | `TODO-040.08-NTFS.md` | §17.1 ADS Explorer            | GUI Alternate Data Streams viewer — **hidden data transparency** | Phase 5 (§3.4)                          |   ⬜   |
+| **8**  | `TODO-040.08-NTFS.md` | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | Phase 6 (§7.1)                          |   ⬜   |
+| **8**  | `TODO-040.08-NTFS.md` | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | Phase 1 (§2.2)                          |   ⬜   |
+| **8**  | `TODO-040.08-NTFS.md` | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | Phase 8 (§12.1)                         |   ⬜   |
+| **8**  | `TODO-040.08-NTFS.md` | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | Phase 8 (§12.2, §12.3)                  |   ⬜   |
+| **8**  | `TODO-040.08-NTFS.md` | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | Phase 8 (§12.4) + Phase 9 (§14.1)       |   ⬜   |
+| **9**  | `TODO-040.08-NTFS.md` | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | Phase 8 (§12.1)                         |   ⬜   |
+| **9**  | `TODO-040.08-NTFS.md` | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | Phase 9 (§13.1)                         |   ⬜   |
+| **9**  | `TODO-040.08-NTFS.md` | §14.1 B+ Tree Insert/Delete    | Directory mutation with node split/merge                         | Phase 8 (§12.4)                         |   ⬜   |
+| **9**  | `TODO-040.08-NTFS.md` | §16.1 File Write Engine        | Resident/non-resident data writes + truncation                   | Phase 8 (§12.4) + Phase 9 (§13.1)       |   ⬜   |
+| **10** | `TODO-040.08-NTFS.md` | §15.1 Boot-Time Init           | **NTFS as `C:\`** — boot from NTFS instead of IXFS               | Phase 9 (all write support)             |   ⬜   |
+| **10** | `TODO-040.08-NTFS.md` | §15.2 System File Layout       | **NTFS as `C:\`** — directory hierarchy + Registry                | Phase 10 (§15.1)                        |   ⬜   |
+| **10** | `TODO-040.08-NTFS.md` | §15.3 NTFS Volume Formatter    | **NTFS as `C:\`** — format tool for boot volume creation          | Phase 9 (all write support)             |   ⬜   |
+| **11** | `TODO-040.08-NTFS.md` | §18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively         | Phase 5 (§6.1) + IXFS write             |   ⬜   |
 
 > [!IMPORTANT]
 > **NTFS is the root filesystem (C: drive).** NTFS replaces IXFS as the primary

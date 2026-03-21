@@ -207,18 +207,17 @@ Group sections into numbered phases. Use this exact table format:
 ```markdown
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                         | Depends On                    | Status |
-| -- | :----: | -------------------------------- | ----------------------------- | :----: |
-| 💎 | **0**  | Prerequisites (spec, code, etc.) | —                             |   ✅   |
-| 💎 | **1**  | §1.1 Foundation Section          | Phase 0                       |   ⬜   |
-| 💎 | **2**  | §2.1 Core Feature                | Phase 1 (§1.1)                |   ⬜   |
-| ⭐ | **3**  | §5.1 Exclusive Feature           | Phase 2 (§2.1)                |   ⬜   |
+| Phase  | Sections                         | Depends On                    | Status |
+| :----: | -------------------------------- | ----------------------------- | :----: |
+| **0**  | Prerequisites (spec, code, etc.) | —                             |   ✅   |
+| **1**  | §1.1 Foundation Section          | Phase 0                       |   ⬜   |
+| **2**  | §2.1 Core Feature                | Phase 1 (§1.1)                |   ⬜   |
+| **3**  | §5.1 Exclusive Feature           | Phase 2 (§2.1)                |   ⬜   |
 ```
 
-**Icon meanings:**
-- 💎 = Spec-defined feature (standard compliance)
-- ⭐ = Impossible OS exclusive feature (competitive advantage)
-- Status: ✅ done, ⬜ not started, ⚠️ partially done
+> [!IMPORTANT]
+> The Phase table does **not** have a `⭐/💎` icon column. That column is only for
+> the OS Comparison table.
 
 #### 5c. Phase notes (NOTE/TIP blocks)
 
@@ -343,14 +342,14 @@ Linux do for this component, then identify gaps where Impossible OS can do bette
 ```markdown
 ## OS Comparison
 
-| Feature                          | 🪟 Windows 11                     | 🐧 Linux                            | 🚀 Impossible OS                                |
-| -------------------------------- | --------------------------------- | ------------------------------------ | ----------------------------------------------- |
-| Basic feature                    | ✅ How Windows does it             | ✅ How Linux does it                  | ✅ Done — brief description                      |
-| Partially done feature           | ✅ Windows approach                | ✅ Linux approach                     | ⚠️ §N.M PN — what's missing                     |
-| Not yet started feature          | ✅ Windows approach                | ✅ Linux approach                     | ⬜ §N.M PN — brief plan                         |
-| Neither has this feature         | ⬜ Not implemented                 | ⬜ Not implemented                    | ⬜ §N.M PN — **first to implement** 🚀          |
-| Only Linux has it                | ⬜ Not supported                   | ✅ Linux approach                     | ⬜ §N.M PN                                      |
-| **Exclusive feature name**       | ⬜ Short gap description           | ⬜ Short gap description              | ⬜ §N.M PN — **competitive advantage** 🚀       |
+| ⭐ | Feature                          | 🪟 Windows 11                     | 🐧 Linux                            | 🚀 Impossible OS                                |
+| -- | -------------------------------- | --------------------------------- | ------------------------------------ | ----------------------------------------------- |
+| 💎 | Basic feature                    | ✅ How Windows does it             | ✅ How Linux does it                  | ✅ Done — brief description                      |
+| 💎 | Partially done feature           | ✅ Windows approach                | ✅ Linux approach                     | ⚠️ §N.M PN — what's missing                     |
+| 💎 | Not yet started feature          | ✅ Windows approach                | ✅ Linux approach                     | ⬜ §N.M PN — brief plan                         |
+| ⭐ | **Neither has this feature**     | ❌ Not implemented                 | ❌ Not implemented                    | ⬜ §N.M PN — **first to implement** 🚀          |
+| 💎 | Only Linux has it                | ⬜ Not supported                   | ✅ Linux approach                     | ⬜ §N.M PN                                      |
+| ⭐ | **Exclusive feature name**       | ❌ Short gap description           | ❌ Short gap description              | ⬜ §N.M PN — **competitive advantage** 🚀       |
 ```
 
 **Status emojis in Impossible OS column:**

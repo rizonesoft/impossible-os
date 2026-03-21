@@ -141,40 +141,40 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase | Sections                              | Depends On              | Status |
-| -- | :---: | ------------------------------------- | ----------------------- | :----: |
-| 💎 | **0** | NVMe 2.0 spec (`nvme-2.0.md`)         | —                       |   ✅   |
-| 💎 | **0** | PCI driver (`pci.c`)                  | —                       |   ✅   |
-| 💎 | **1** | §1.1 PCIe Detection & BAR Mapping     | Phase 0                 |   ⬜   |
-| 💎 | **1** | §1.2 Controller Init & Admin Queue    | Phase 1 (§1.1)          |   ⬜   |
-| 💎 | **1** | §1.3 Identify Controller & Namespace  | Phase 1 (§1.2)          |   ⬜   |
-| 💎 | **2** | §2.1 I/O Queue Creation (Per-Core)    | Phase 1 (§1.3)          |   ⬜   |
-| 💎 | **2** | §2.2 MSI-X Interrupt Handling         | Phase 1 (§1.3)          |   ⬜   |
-| 💎 | **3** | §3.1 Read Command (PRP)               | Phase 2 (§2.1, §2.2)   |   ⬜   |
-| 💎 | **3** | §3.2 Write Command (PRP)              | Phase 2 (§2.1, §2.2)   |   ⬜   |
-| 💎 | **3** | §3.3 Flush Command                    | Phase 3 (§3.1)          |   ⬜   |
-| 💎 | **3** | §3.4 Block Device Registration        | Phase 3 (§3.3)          |   ⬜   |
-| 💎 | **4** | §4.1 Graceful Shutdown                | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **4** | §4.2 Error Recovery & Reset           | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **5** | §5.1 Dataset Management (TRIM)        | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **5** | §5.2 Write Zeroes                     | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **5** | §5.3 Multiple Namespace Support       | Phase 1 (§1.3)          |   ⬜   |
-| 💎 | **6** | §6.1 SMART Health Monitoring          | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **6** | §6.2 Asynchronous Event Requests      | Phase 6 (§6.1)          |   ⬜   |
-| 💎 | **7** | §7.1 PRP List (Multi-Page I/O)        | Phase 3 (§3.4)          |   ⬜   |
-| 💎 | **7** | §7.2 SGL Support                      | Phase 7 (§7.1)          |   ⬜   |
-| 💎 | **7** | §8.1 Polling Mode                     | Phase 3 (§3.4)          |   ⬜   |
-| ⭐ | **8** | §9.1 Adaptive Hybrid Polling          | Phase 7 (§8.1)          |   ⬜   |
-| ⭐ | **8** | §9.2 I/O Priority Queues              | Phase 2 (§2.1)          |   ⬜   |
-| ⭐ | **8** | §9.3 Latency Telemetry                | Phase 3 (§3.4)          |   ⬜   |
-| ⭐ | **8** | §9.4 Predictive I/O Scheduling        | Phase 3 (§3.4)          |   ⬜   |
-| ⭐ | **8** | §9.5 SMART Dashboard                  | Phase 6 (§6.1)          |   ⬜   |
-| ⭐ | **8** | §9.6 Simple Copy Offload              | Phase 3 (§3.4)          |   ⬜   |
-| ⭐ | **8** | §9.7 Zoned Namespace Awareness        | Phase 1 (§1.3)          |   ⬜   |
-| ⭐ | **8** | §9.8 Command Lockdown                 | Phase 3 (§3.4)          |   ⬜   |
-| 🔵 | **9** | §10.1 Namespace Management            | Phase 1 (§1.3)          |   ⬜   |
-| 🔵 | **9** | §10.2 Firmware Update                 | Phase 3 (§3.4)          |   ⬜   |
-| 🔵 | **9** | §10.3 NVMe Reservations               | Phase 3 (§3.4)          |   ⬜   |
+| Phase | Sections                              | Depends On              | Status |
+| :---: | ------------------------------------- | ----------------------- | :----: |
+| **0** | NVMe 2.0 spec (`nvme-2.0.md`)         | —                       |   ✅   |
+| **0** | PCI driver (`pci.c`)                  | —                       |   ✅   |
+| **1** | §1.1 PCIe Detection & BAR Mapping     | Phase 0                 |   ⬜   |
+| **1** | §1.2 Controller Init & Admin Queue    | Phase 1 (§1.1)          |   ⬜   |
+| **1** | §1.3 Identify Controller & Namespace  | Phase 1 (§1.2)          |   ⬜   |
+| **2** | §2.1 I/O Queue Creation (Per-Core)    | Phase 1 (§1.3)          |   ⬜   |
+| **2** | §2.2 MSI-X Interrupt Handling         | Phase 1 (§1.3)          |   ⬜   |
+| **3** | §3.1 Read Command (PRP)               | Phase 2 (§2.1, §2.2)   |   ⬜   |
+| **3** | §3.2 Write Command (PRP)              | Phase 2 (§2.1, §2.2)   |   ⬜   |
+| **3** | §3.3 Flush Command                    | Phase 3 (§3.1)          |   ⬜   |
+| **3** | §3.4 Block Device Registration        | Phase 3 (§3.3)          |   ⬜   |
+| **4** | §4.1 Graceful Shutdown                | Phase 3 (§3.4)          |   ⬜   |
+| **4** | §4.2 Error Recovery & Reset           | Phase 3 (§3.4)          |   ⬜   |
+| **5** | §5.1 Dataset Management (TRIM)        | Phase 3 (§3.4)          |   ⬜   |
+| **5** | §5.2 Write Zeroes                     | Phase 3 (§3.4)          |   ⬜   |
+| **5** | §5.3 Multiple Namespace Support       | Phase 1 (§1.3)          |   ⬜   |
+| **6** | §6.1 SMART Health Monitoring          | Phase 3 (§3.4)          |   ⬜   |
+| **6** | §6.2 Asynchronous Event Requests      | Phase 6 (§6.1)          |   ⬜   |
+| **7** | §7.1 PRP List (Multi-Page I/O)        | Phase 3 (§3.4)          |   ⬜   |
+| **7** | §7.2 SGL Support                      | Phase 7 (§7.1)          |   ⬜   |
+| **7** | §8.1 Polling Mode                     | Phase 3 (§3.4)          |   ⬜   |
+| **8** | §9.1 Adaptive Hybrid Polling          | Phase 7 (§8.1)          |   ⬜   |
+| **8** | §9.2 I/O Priority Queues              | Phase 2 (§2.1)          |   ⬜   |
+| **8** | §9.3 Latency Telemetry                | Phase 3 (§3.4)          |   ⬜   |
+| **8** | §9.4 Predictive I/O Scheduling        | Phase 3 (§3.4)          |   ⬜   |
+| **8** | §9.5 SMART Dashboard                  | Phase 6 (§6.1)          |   ⬜   |
+| **8** | §9.6 Simple Copy Offload              | Phase 3 (§3.4)          |   ⬜   |
+| **8** | §9.7 Zoned Namespace Awareness        | Phase 1 (§1.3)          |   ⬜   |
+| **8** | §9.8 Command Lockdown                 | Phase 3 (§3.4)          |   ⬜   |
+| **9** | §10.1 Namespace Management            | Phase 1 (§1.3)          |   ⬜   |
+| **9** | §10.2 Firmware Update                 | Phase 3 (§3.4)          |   ⬜   |
+| **9** | §10.3 NVMe Reservations               | Phase 3 (§3.4)          |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — the PCI driver can enumerate devices and the NVMe 2.0 spec

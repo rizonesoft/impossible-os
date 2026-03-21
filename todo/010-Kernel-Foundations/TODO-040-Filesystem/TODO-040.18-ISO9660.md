@@ -102,29 +102,29 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                          | What It Delivers                                              | Depends On                      | Status |
-| -- | :----: | ------------------------------------------------- | ------------------------------------------------------------- | ------------------------------- | :----: |
-| 💎 | **0**  | Block device + ATAPI + spec                       | `blkdev_read()`, ATAPI SCSI, spec knowledge                   | —                               |   ✅   |
-| 💎 | **1**  | §1.1 Volume Descriptor Scanner                    | `CD001` detection, PVD/SVD/Boot Record location                | Phase 0                         |   ⬜   |
-| 💎 | **1**  | §1.2 PVD Parser                                   | Root directory record, path table, volume size                 | Phase 1 (§1.1)                  |   ⬜   |
-| 💎 | **2**  | §2.1 Directory Record Parser                      | Variable-length record parsing, sector-boundary handling       | Phase 1 (§1.2)                  |   ⬜   |
-| 💎 | **2**  | §2.2 File Flags & Special Entries                  | Hidden files, `.`/`..` entries, directory vs file detection    | Phase 2 (§2.1)                  |   ⬜   |
-| 💎 | **2**  | §3.1 Path Table Loader                             | Cached path table in kernel memory                             | Phase 1 (§1.2)                  |   ⬜   |
-| 💎 | **3**  | §3.2 Path Table Lookup                             | O(n) fast directory lookup without disk I/O                    | Phase 2 (§3.1)                  |   ⬜   |
-| 💎 | **3**  | §4.1 File Extent Reader                            | Read contiguous file data by LBA + length                      | Phase 2 (§2.1)                  |   ⬜   |
-| 💎 | **3**  | §4.2 Multi-Extent Files (Level 3)                  | Files > 4 GiB via concatenated extents                         | Phase 3 (§4.1)                  |   ⬜   |
-| 💎 | **4**  | §5.1 Joliet SVD Parser                             | Unicode filenames up to 64 chars via UCS-2 decoding            | Phase 1 (§1.2)                  |   ⬜   |
-| 💎 | **4**  | §5.2 Rock Ridge SUSP Parser                        | Long filenames, POSIX permissions, symlinks                    | Phase 2 (§2.1)                  |   ⬜   |
-| 💎 | **4**  | §6.1 El Torito Boot Catalog                        | Boot image enumeration for installation media                  | Phase 1 (§1.2)                  |   ⬜   |
-| 💎 | **5**  | §7.1 VFS Registration                              | Mount ISO volumes, `vfs_ops` callbacks, drive letter           | Phase 3 + Phase 4 + VFS        |   ⬜   |
-| 💎 | **6**  | §8.1 Test Suite                                    | Automated validation with ISO test images                      | Phase 5 (§7.1)                  |   ⬜   |
-| ⭐ | **6**  | §9.1 ISO Browser GUI                               | Visual ISO contents explorer in File Manager                   | Phase 5 (§7.1)                  |   ⬜   |
-| ⭐ | **6**  | §9.2 El Torito Inspector                           | Boot catalog viewer with platform/emulation details            | Phase 4 (§6.1)                  |   ⬜   |
-| ⭐ | **6**  | §9.3 Disc Health Analyzer                          | Media integrity verification with read-error mapping           | Phase 5 (§7.1)                  |   ⬜   |
-| ⭐ | **6**  | §9.4 Auto-Mount & Eject                            | Hot-insert notification, auto-mount, safe eject                | Phase 5 (§7.1) + ATAPI         |   ⬜   |
-| ⭐ | **7**  | §9.5 ISO Image File Mounting                       | Double-click `.iso` → virtual optical drive                    | Phase 5 (§7.1)                  |   ⬜   |
-| ⭐ | **7**  | §9.6 Read-Ahead I/O Scheduler                     | Adaptive prefetch with ns-latency histograms                   | Phase 3 (§4.1) + ATAPI         |   ⬜   |
-| ⭐ | **7**  | §9.7 Multi-Session Awareness                       | Detect and navigate multi-session discs (CD-R/RW)              | Phase 1 (§1.1) + ATAPI         |   ⬜   |
+| Phase  | Sections                                          | What It Delivers                                              | Depends On                      | Status |
+| :----: | ------------------------------------------------- | ------------------------------------------------------------- | ------------------------------- | :----: |
+| **0**  | Block device + ATAPI + spec                       | `blkdev_read()`, ATAPI SCSI, spec knowledge                   | —                               |   ✅   |
+| **1**  | §1.1 Volume Descriptor Scanner                    | `CD001` detection, PVD/SVD/Boot Record location                | Phase 0                         |   ⬜   |
+| **1**  | §1.2 PVD Parser                                   | Root directory record, path table, volume size                 | Phase 1 (§1.1)                  |   ⬜   |
+| **2**  | §2.1 Directory Record Parser                      | Variable-length record parsing, sector-boundary handling       | Phase 1 (§1.2)                  |   ⬜   |
+| **2**  | §2.2 File Flags & Special Entries                  | Hidden files, `.`/`..` entries, directory vs file detection    | Phase 2 (§2.1)                  |   ⬜   |
+| **2**  | §3.1 Path Table Loader                             | Cached path table in kernel memory                             | Phase 1 (§1.2)                  |   ⬜   |
+| **3**  | §3.2 Path Table Lookup                             | O(n) fast directory lookup without disk I/O                    | Phase 2 (§3.1)                  |   ⬜   |
+| **3**  | §4.1 File Extent Reader                            | Read contiguous file data by LBA + length                      | Phase 2 (§2.1)                  |   ⬜   |
+| **3**  | §4.2 Multi-Extent Files (Level 3)                  | Files > 4 GiB via concatenated extents                         | Phase 3 (§4.1)                  |   ⬜   |
+| **4**  | §5.1 Joliet SVD Parser                             | Unicode filenames up to 64 chars via UCS-2 decoding            | Phase 1 (§1.2)                  |   ⬜   |
+| **4**  | §5.2 Rock Ridge SUSP Parser                        | Long filenames, POSIX permissions, symlinks                    | Phase 2 (§2.1)                  |   ⬜   |
+| **4**  | §6.1 El Torito Boot Catalog                        | Boot image enumeration for installation media                  | Phase 1 (§1.2)                  |   ⬜   |
+| **5**  | §7.1 VFS Registration                              | Mount ISO volumes, `vfs_ops` callbacks, drive letter           | Phase 3 + Phase 4 + VFS        |   ⬜   |
+| **6**  | §8.1 Test Suite                                    | Automated validation with ISO test images                      | Phase 5 (§7.1)                  |   ⬜   |
+| **6**  | §9.1 ISO Browser GUI                               | Visual ISO contents explorer in File Manager                   | Phase 5 (§7.1)                  |   ⬜   |
+| **6**  | §9.2 El Torito Inspector                           | Boot catalog viewer with platform/emulation details            | Phase 4 (§6.1)                  |   ⬜   |
+| **6**  | §9.3 Disc Health Analyzer                          | Media integrity verification with read-error mapping           | Phase 5 (§7.1)                  |   ⬜   |
+| **6**  | §9.4 Auto-Mount & Eject                            | Hot-insert notification, auto-mount, safe eject                | Phase 5 (§7.1) + ATAPI         |   ⬜   |
+| **7**  | §9.5 ISO Image File Mounting                       | Double-click `.iso` → virtual optical drive                    | Phase 5 (§7.1)                  |   ⬜   |
+| **7**  | §9.6 Read-Ahead I/O Scheduler                     | Adaptive prefetch with ns-latency histograms                   | Phase 3 (§4.1) + ATAPI         |   ⬜   |
+| **7**  | §9.7 Multi-Session Awareness                       | Detect and navigate multi-session discs (CD-R/RW)              | Phase 1 (§1.1) + ATAPI         |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already done — block devices, ATAPI/SCSI, and VFS core are in place.

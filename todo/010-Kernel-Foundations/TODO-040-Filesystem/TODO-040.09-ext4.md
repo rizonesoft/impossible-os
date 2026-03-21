@@ -109,36 +109,36 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec              | Sections                    | What It Delivers                                                           | Depends On                          | Status |
-| -- | :----: | ----------------------------- | --------------------------- | -------------------------------------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/filesystems/ext4.md`     | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer          | `blkdev_read()` via VirtIO or AHCI                                         | —                                   |   ✅   |
-| 💎 | **0**  | `TODO-040.04` / `TODO-040.05` | Partition detection         | MBR type `0x83` / GPT `0FC63DAF-...` → Linux partition found               | Phase 0 (block)                     |   ✅   |
-| 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.1 Superblock Parsing     | Parse superblock at byte 1024, locate block groups and inodes              | Phase 0 (partitions)                |   ⬜   |
-| 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.2 Feature Flag Gating    | Three-tier safety: incompat → reject, ro_compat → read-only, compat → ok  | Phase 1 (§1.1)                      |   ⬜   |
-| 💎 | **1**  | `TODO-040.09-ext4.md`         | §2.1 Group Descriptor Table | Read GDT — locate bitmaps and inode tables per block group                 | Phase 1 (§1.1)                      |   ⬜   |
-| 💎 | **2**  | `TODO-040.09-ext4.md`         | §3.1 Inode Table Reader     | Read any inode by number — metadata for every file on the volume           | Phase 1 (§2.1)                      |   ⬜   |
-| 💎 | **2**  | `TODO-040.09-ext4.md`         | §3.2 Special Inode Handling | Root directory (inode 2), journal detection, first user inode              | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **2**  | `TODO-040.09-ext4.md`         | §4.1 Extent Tree Reader     | Logical → physical block mapping via extent header/entries                 | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.09-ext4.md`         | §4.2 File Data Reader       | Actually read file contents — extent + inline data + hole handling         | Phase 2 (§4.1)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.09-ext4.md`         | §6.1 Linear Dir Parser      | Walk `ext4_dir_entry_2` records in directory data blocks                   | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.09-ext4.md`         | §6.3 Path Resolution        | Full path traversal from root inode 2 — symlinks, case-fold               | Phase 3 (§4.2, §6.1)               |   ⬜   |
-| 💎 | **4**  | `TODO-040.09-ext4.md`         | §8.1 VFS Registration       | Mount ext4/ext3/ext2 volumes, wire `vfs_ops` callbacks                     | Phase 3 (§4.2, §6.3) + VFS (040.07) |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §5.1 Indirect Block Reader  | ext2/ext3 backward compat — triple indirect block chains                   | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §6.2 HTree Directory Index  | Fast lookup in large directories via Half MD4/TEA hashing                  | Phase 3 (§6.1)                      |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §7.1 CRC32C Checksumming    | Validate metadata integrity — superblock, GDT, inodes, extents            | Phase 1 (§1.1)                      |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §3.3 Extended Attributes    | Read xattrs, POSIX ACLs, SELinux labels — inline + external block         | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §10.1 Inode & GDT Cache     | LRU inode cache + pinned GDT — avoid redundant disk reads                 | Phase 2 (§3.1)                      |   ⬜   |
-| 💎 | **5**  | `TODO-040.09-ext4.md`         | §12.1 Superblock Backup     | Read sparse backups — survive primary corruption                           | Phase 1 (§1.1)                      |   ⬜   |
-| 💎 | **6**  | `TODO-040.09-ext4.md`         | §9.1 Test Suite             | Automated validation: ext4/ext3/ext2 images, HTree, symlinks, checksums   | Phase 4 (§8.1)                      |   ⬜   |
-| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.1 Health Dashboard      | **At-a-glance ext4 health** — surfaces Linux error telemetry nobody shows  | Phase 2 (§3.2) + §12.1             |   ⬜   |
-| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces unmaintained `extundelete`      | Phase 2 (§3.2)                      |   ⬜   |
-| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.3 Fragmentation Analyzer | **Visual block map** — shows extent fragmentation no OS displays          | Phase 2 (§4.1)                      |   ⬜   |
-| ⭐ | **6**  | `TODO-040.09-ext4.md`         | §11.4 Timestamp Inspector   | **Cross-OS timestamp viewer** — nanosecond + creation time display         | Phase 2 (§3.2)                      |   ⬜   |
-| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.5 Orphan Inode Detector  | **Orphan inode forensics** — flag unresolved deletions in Health panel     | Phase 1 (§1.1)                      |   ⬜   |
-| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.6 Bigalloc Inspector     | **Cluster-aware space reporting** — bigalloc transparency in Disk Manager | Phase 1 (§1.1)                      |   ⬜   |
-| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.7 Multidevice Safety     | **MMP & journal device detection** — prevent dual-mount corruption        | Phase 1 (§1.2)                      |   ⬜   |
-| ⭐ | **7**  | `TODO-040.09-ext4.md`         | §11.8 Quota Reporter         | **Visual quota dashboard** — per-user/group/project usage charts          | Phase 1 (§1.1)                      |   ⬜   |
+| Phase  | TODO File / Spec              | Sections                    | What It Delivers                                                           | Depends On                          | Status |
+| :----: | ----------------------------- | --------------------------- | -------------------------------------------------------------------------- | ----------------------------------- | :----: |
+| **0**  | `specs/storage/filesystems/ext4.md`     | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
+| **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer          | `blkdev_read()` via VirtIO or AHCI                                         | —                                   |   ✅   |
+| **0**  | `TODO-040.04` / `TODO-040.05` | Partition detection         | MBR type `0x83` / GPT `0FC63DAF-...` → Linux partition found               | Phase 0 (block)                     |   ✅   |
+| **1**  | `TODO-040.09-ext4.md`         | §1.1 Superblock Parsing     | Parse superblock at byte 1024, locate block groups and inodes              | Phase 0 (partitions)                |   ⬜   |
+| **1**  | `TODO-040.09-ext4.md`         | §1.2 Feature Flag Gating    | Three-tier safety: incompat → reject, ro_compat → read-only, compat → ok  | Phase 1 (§1.1)                      |   ⬜   |
+| **1**  | `TODO-040.09-ext4.md`         | §2.1 Group Descriptor Table | Read GDT — locate bitmaps and inode tables per block group                 | Phase 1 (§1.1)                      |   ⬜   |
+| **2**  | `TODO-040.09-ext4.md`         | §3.1 Inode Table Reader     | Read any inode by number — metadata for every file on the volume           | Phase 1 (§2.1)                      |   ⬜   |
+| **2**  | `TODO-040.09-ext4.md`         | §3.2 Special Inode Handling | Root directory (inode 2), journal detection, first user inode              | Phase 2 (§3.1)                      |   ⬜   |
+| **2**  | `TODO-040.09-ext4.md`         | §4.1 Extent Tree Reader     | Logical → physical block mapping via extent header/entries                 | Phase 2 (§3.1)                      |   ⬜   |
+| **3**  | `TODO-040.09-ext4.md`         | §4.2 File Data Reader       | Actually read file contents — extent + inline data + hole handling         | Phase 2 (§4.1)                      |   ⬜   |
+| **3**  | `TODO-040.09-ext4.md`         | §6.1 Linear Dir Parser      | Walk `ext4_dir_entry_2` records in directory data blocks                   | Phase 2 (§3.1)                      |   ⬜   |
+| **3**  | `TODO-040.09-ext4.md`         | §6.3 Path Resolution        | Full path traversal from root inode 2 — symlinks, case-fold               | Phase 3 (§4.2, §6.1)               |   ⬜   |
+| **4**  | `TODO-040.09-ext4.md`         | §8.1 VFS Registration       | Mount ext4/ext3/ext2 volumes, wire `vfs_ops` callbacks                     | Phase 3 (§4.2, §6.3) + VFS (040.07) |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §5.1 Indirect Block Reader  | ext2/ext3 backward compat — triple indirect block chains                   | Phase 2 (§3.1)                      |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §6.2 HTree Directory Index  | Fast lookup in large directories via Half MD4/TEA hashing                  | Phase 3 (§6.1)                      |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §7.1 CRC32C Checksumming    | Validate metadata integrity — superblock, GDT, inodes, extents            | Phase 1 (§1.1)                      |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §3.3 Extended Attributes    | Read xattrs, POSIX ACLs, SELinux labels — inline + external block         | Phase 2 (§3.1)                      |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §10.1 Inode & GDT Cache     | LRU inode cache + pinned GDT — avoid redundant disk reads                 | Phase 2 (§3.1)                      |   ⬜   |
+| **5**  | `TODO-040.09-ext4.md`         | §12.1 Superblock Backup     | Read sparse backups — survive primary corruption                           | Phase 1 (§1.1)                      |   ⬜   |
+| **6**  | `TODO-040.09-ext4.md`         | §9.1 Test Suite             | Automated validation: ext4/ext3/ext2 images, HTree, symlinks, checksums   | Phase 4 (§8.1)                      |   ⬜   |
+| **6**  | `TODO-040.09-ext4.md`         | §11.1 Health Dashboard      | **At-a-glance ext4 health** — surfaces Linux error telemetry nobody shows  | Phase 2 (§3.2) + §12.1             |   ⬜   |
+| **6**  | `TODO-040.09-ext4.md`         | §11.2 Deleted Inode Recovery | **Built-in forensic recovery** — replaces unmaintained `extundelete`      | Phase 2 (§3.2)                      |   ⬜   |
+| **6**  | `TODO-040.09-ext4.md`         | §11.3 Fragmentation Analyzer | **Visual block map** — shows extent fragmentation no OS displays          | Phase 2 (§4.1)                      |   ⬜   |
+| **6**  | `TODO-040.09-ext4.md`         | §11.4 Timestamp Inspector   | **Cross-OS timestamp viewer** — nanosecond + creation time display         | Phase 2 (§3.2)                      |   ⬜   |
+| **7**  | `TODO-040.09-ext4.md`         | §11.5 Orphan Inode Detector  | **Orphan inode forensics** — flag unresolved deletions in Health panel     | Phase 1 (§1.1)                      |   ⬜   |
+| **7**  | `TODO-040.09-ext4.md`         | §11.6 Bigalloc Inspector     | **Cluster-aware space reporting** — bigalloc transparency in Disk Manager | Phase 1 (§1.1)                      |   ⬜   |
+| **7**  | `TODO-040.09-ext4.md`         | §11.7 Multidevice Safety     | **MMP & journal device detection** — prevent dual-mount corruption        | Phase 1 (§1.2)                      |   ⬜   |
+| **7**  | `TODO-040.09-ext4.md`         | §11.8 Quota Reporter         | **Visual quota dashboard** — per-user/group/project usage charts          | Phase 1 (§1.1)                      |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–1** are prerequisites — block I/O, partition tables, superblock, and GDT reading.

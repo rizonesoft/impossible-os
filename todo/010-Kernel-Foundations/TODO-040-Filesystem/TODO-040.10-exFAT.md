@@ -112,36 +112,36 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
-| -- | :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/filesystems/exfat-1.0.md`   | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ⬜   |
-| 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
-| 💎 | **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → exFAT partition found             | Phase 0 (block)              |   ✅   |
-| 💎 | **1**  | `TODO-040.10-exFAT.md`               | §1.1 Boot Sector Parsing         | Locate FAT, Data Region, root directory — all geometry fields             | Phase 0 (partitions)         |   ⬜   |
-| 💎 | **1**  | `TODO-040.10-exFAT.md`               | §2.1 FAT Reader                  | Read FAT from disk, chain walking for fragmented files                    | Phase 1 (§1.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.10-exFAT.md`               | §5.1 Directory Entry Walker      | Walk 32-byte entries, classify all entry types (0x81–0xE0)                | Phase 1 (§1.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.10-exFAT.md`               | §5.2 File Entry Set Parser       | File metadata: attributes, timestamps, FirstCluster, DataLength           | Phase 2 (§5.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.10-exFAT.md`               | §3.1 Allocation Bitmap Reader    | Free-space queries, cluster allocation validation                         | Phase 2 (§5.1)               |   ⬜   |
-| 💎 | **2**  | `TODO-040.10-exFAT.md`               | §4.1 Up-case Table Loader        | Case-insensitive filename comparisons via decompressed 128 KB table       | Phase 2 (§5.1)               |   ⬜   |
-| 💎 | **3**  | `TODO-040.10-exFAT.md`               | §5.3 Timestamp Decoder           | Convert exFAT compact timestamps + timezone offsets to POSIX time         | Phase 2 (§5.2)               |   ⬜   |
-| 💎 | **3**  | `TODO-040.10-exFAT.md`               | §6.1 NoFatChain Contiguous Reader| Fast O(1) reads for contiguous files — no FAT lookup needed               | Phase 2 (§5.2)               |   ⬜   |
-| 💎 | **3**  | `TODO-040.10-exFAT.md`               | §6.2 FAT-Chained File Reader     | Read fragmented file data by following FAT cluster chains                 | Phase 1 (§2.1) + Phase 2 (§5.2) |   ⬜   |
-| 💎 | **4**  | `TODO-040.10-exFAT.md`               | §7.1 NameHash Lookup             | Fast directory search — hash-first eliminates ~99% of string compares     | Phase 2 (§5.2, §4.1)        |   ⬜   |
-| 💎 | **4**  | `TODO-040.10-exFAT.md`               | §7.2 Path Resolution             | Full hierarchical `\path\to\file` resolution from root directory          | Phase 4 (§7.1)               |   ⬜   |
-| 💎 | **4**  | `TODO-040.10-exFAT.md`               | §8.1 Volume Label Reader         | Extract and display volume name from `0x83` entry                         | Phase 2 (§5.1)               |   ⬜   |
-| 💎 | **5**  | `TODO-040.10-exFAT.md`               | §9.1 VFS Registration            | Mount exFAT volumes, wire `vfs_ops` callbacks, drive letter assignment    | Phase 3 (§6.1, §6.2) + Phase 4 (§7.2) + VFS (040.07) |   ⬜   |
-| 💎 | **5**  | `TODO-040.10-exFAT.md`               | §6.3 Cluster Chain Cache         | Per-file O(1) indexed cluster access — critical for large media files     | Phase 3 (§6.2)               |   ⬜   |
-| 💎 | **5**  | `TODO-040.10-exFAT.md`               | §1.2 Boot Checksum Validation    | Boot region integrity + backup boot region failover                       | Phase 1 (§1.1)               |   ⬜   |
-| 💎 | **6**  | `TODO-040.10-exFAT.md`               | §11.1 TexFAT Dual FAT/Bitmap    | Transaction-safe exFAT support for embedded/automotive SD cards           | Phase 1 (§1.1) + Phase 2 (§3.1) |   ⬜   |
-| 💎 | **6**  | `TODO-040.10-exFAT.md`               | §10.1 Test Suite                 | Automated validation with exFAT test images (contiguous, fragmented, LFN) | Phase 5 (§9.1)               |   ⬜   |
-| ⭐ | **7**  | `TODO-040.10-exFAT.md`               | §12.1 Health Dashboard           | At-a-glance removable media health — **no OS does this**                  | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
-| ⭐ | **7**  | `TODO-040.10-exFAT.md`               | §12.2 Deleted File Recovery      | Built-in GUI recovery for exFAT USB/SD — **Windows/Linux have nothing**   | Phase 2 (§3.1, §5.1)        |   ⬜   |
-| ⭐ | **7**  | `TODO-040.10-exFAT.md`               | §12.3 Smart Hot-Swap Detection   | Auto-mount on insert, safe-eject on remove — **beats Windows/Linux UX**   | Phase 5 (§9.1)               |   ⬜   |
-| ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.4 Fragmentation Visualizer   | Cluster-level map in Disk Manager — **no OS does this for exFAT**         | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
-| ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.5 USB/SD Speed Benchmark     | One-click removable media speed test — **no OS has this built-in**        | Phase 5 (§9.1)               |   ⬜   |
-| ⭐ | **8**  | `TODO-040.10-exFAT.md`               | §12.8 Corruption Auto-Heal       | Silent bitmap/FAT repair on mount — **no OS auto-heals exFAT**            | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
-| ⭐ | **9**  | `TODO-040.10-exFAT.md`               | §12.6 Write Coalescing           | Flash-aware write batching — **reduces wear 10–50×**                      | Phase 5 (§9.1)               |   ⬜   |
-| ⭐ | **9**  | `TODO-040.10-exFAT.md`               | §12.7 I/O Bandwidth Monitor      | Per-app per-volume I/O tracking — **no OS does this**                     | Phase 5 (§9.1)               |   ⬜   |
+| Phase  | TODO File / Spec                      | Sections                         | What It Delivers                                                          | Depends On                   | Status |
+| :----: | ------------------------------------- | -------------------------------- | ------------------------------------------------------------------------- | ---------------------------- | :----: |
+| **0**  | `specs/storage/filesystems/exfat-1.0.md`   | Full spec                        | Wire formats, offset tables, algorithms — **read before coding**          | —                            |   ⬜   |
+| **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer               | `blkdev_read()` via VirtIO or AHCI                                       | —                            |   ✅   |
+| **0**  | `TODO-040.04` / `TODO-040.05`         | Partition detection              | MBR type `0x07` / GPT `EBD0A0A2-...` → exFAT partition found             | Phase 0 (block)              |   ✅   |
+| **1**  | `TODO-040.10-exFAT.md`               | §1.1 Boot Sector Parsing         | Locate FAT, Data Region, root directory — all geometry fields             | Phase 0 (partitions)         |   ⬜   |
+| **1**  | `TODO-040.10-exFAT.md`               | §2.1 FAT Reader                  | Read FAT from disk, chain walking for fragmented files                    | Phase 1 (§1.1)               |   ⬜   |
+| **2**  | `TODO-040.10-exFAT.md`               | §5.1 Directory Entry Walker      | Walk 32-byte entries, classify all entry types (0x81–0xE0)                | Phase 1 (§1.1)               |   ⬜   |
+| **2**  | `TODO-040.10-exFAT.md`               | §5.2 File Entry Set Parser       | File metadata: attributes, timestamps, FirstCluster, DataLength           | Phase 2 (§5.1)               |   ⬜   |
+| **2**  | `TODO-040.10-exFAT.md`               | §3.1 Allocation Bitmap Reader    | Free-space queries, cluster allocation validation                         | Phase 2 (§5.1)               |   ⬜   |
+| **2**  | `TODO-040.10-exFAT.md`               | §4.1 Up-case Table Loader        | Case-insensitive filename comparisons via decompressed 128 KB table       | Phase 2 (§5.1)               |   ⬜   |
+| **3**  | `TODO-040.10-exFAT.md`               | §5.3 Timestamp Decoder           | Convert exFAT compact timestamps + timezone offsets to POSIX time         | Phase 2 (§5.2)               |   ⬜   |
+| **3**  | `TODO-040.10-exFAT.md`               | §6.1 NoFatChain Contiguous Reader| Fast O(1) reads for contiguous files — no FAT lookup needed               | Phase 2 (§5.2)               |   ⬜   |
+| **3**  | `TODO-040.10-exFAT.md`               | §6.2 FAT-Chained File Reader     | Read fragmented file data by following FAT cluster chains                 | Phase 1 (§2.1) + Phase 2 (§5.2) |   ⬜   |
+| **4**  | `TODO-040.10-exFAT.md`               | §7.1 NameHash Lookup             | Fast directory search — hash-first eliminates ~99% of string compares     | Phase 2 (§5.2, §4.1)        |   ⬜   |
+| **4**  | `TODO-040.10-exFAT.md`               | §7.2 Path Resolution             | Full hierarchical `\path\to\file` resolution from root directory          | Phase 4 (§7.1)               |   ⬜   |
+| **4**  | `TODO-040.10-exFAT.md`               | §8.1 Volume Label Reader         | Extract and display volume name from `0x83` entry                         | Phase 2 (§5.1)               |   ⬜   |
+| **5**  | `TODO-040.10-exFAT.md`               | §9.1 VFS Registration            | Mount exFAT volumes, wire `vfs_ops` callbacks, drive letter assignment    | Phase 3 (§6.1, §6.2) + Phase 4 (§7.2) + VFS (040.07) |   ⬜   |
+| **5**  | `TODO-040.10-exFAT.md`               | §6.3 Cluster Chain Cache         | Per-file O(1) indexed cluster access — critical for large media files     | Phase 3 (§6.2)               |   ⬜   |
+| **5**  | `TODO-040.10-exFAT.md`               | §1.2 Boot Checksum Validation    | Boot region integrity + backup boot region failover                       | Phase 1 (§1.1)               |   ⬜   |
+| **6**  | `TODO-040.10-exFAT.md`               | §11.1 TexFAT Dual FAT/Bitmap    | Transaction-safe exFAT support for embedded/automotive SD cards           | Phase 1 (§1.1) + Phase 2 (§3.1) |   ⬜   |
+| **6**  | `TODO-040.10-exFAT.md`               | §10.1 Test Suite                 | Automated validation with exFAT test images (contiguous, fragmented, LFN) | Phase 5 (§9.1)               |   ⬜   |
+| **7**  | `TODO-040.10-exFAT.md`               | §12.1 Health Dashboard           | At-a-glance removable media health — **no OS does this**                  | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
+| **7**  | `TODO-040.10-exFAT.md`               | §12.2 Deleted File Recovery      | Built-in GUI recovery for exFAT USB/SD — **Windows/Linux have nothing**   | Phase 2 (§3.1, §5.1)        |   ⬜   |
+| **7**  | `TODO-040.10-exFAT.md`               | §12.3 Smart Hot-Swap Detection   | Auto-mount on insert, safe-eject on remove — **beats Windows/Linux UX**   | Phase 5 (§9.1)               |   ⬜   |
+| **8**  | `TODO-040.10-exFAT.md`               | §12.4 Fragmentation Visualizer   | Cluster-level map in Disk Manager — **no OS does this for exFAT**         | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
+| **8**  | `TODO-040.10-exFAT.md`               | §12.5 USB/SD Speed Benchmark     | One-click removable media speed test — **no OS has this built-in**        | Phase 5 (§9.1)               |   ⬜   |
+| **8**  | `TODO-040.10-exFAT.md`               | §12.8 Corruption Auto-Heal       | Silent bitmap/FAT repair on mount — **no OS auto-heals exFAT**            | Phase 2 (§3.1) + Phase 1 (§2.1) |   ⬜   |
+| **9**  | `TODO-040.10-exFAT.md`               | §12.6 Write Coalescing           | Flash-aware write batching — **reduces wear 10–50×**                      | Phase 5 (§9.1)               |   ⬜   |
+| **9**  | `TODO-040.10-exFAT.md`               | §12.7 I/O Bandwidth Monitor      | Per-app per-volume I/O tracking — **no OS does this**                     | Phase 5 (§9.1)               |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is a prerequisite — block I/O and partition detection must be working.

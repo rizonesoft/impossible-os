@@ -146,37 +146,37 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                 | Depends On                    | Status |
-| -- | :----: | ---------------------------------------- | ----------------------------- | :----: |
-| 💎 | **0**  | USB MSC spec (`usb-msc.md`)             | —                             |   ✅   |
-| 💎 | **0**  | PCI driver (`pci.c`)                     | —                             |   ✅   |
-| 💎 | **1**  | §1.1 xHCI PCI Discovery & BAR Mapping  | Phase 0                       |   ⬜   |
-| 💎 | **1**  | §1.2 xHCI Controller Initialization    | Phase 1 (§1.1)                |   ⬜   |
-| 💎 | **1**  | §1.3 TRB Ring Architecture             | Phase 1 (§1.2)                |   ⬜   |
-| 💎 | **2**  | §2.1 USB Device Enumeration            | Phase 1 (§1.3)                |   ⬜   |
-| 💎 | **2**  | §2.2 MSC Identification & Endpoint Cfg | Phase 2 (§2.1)                |   ⬜   |
-| 💎 | **2**  | §2.3 MSI/MSI-X Interrupt Handling      | Phase 1 (§1.3)                |   ⬜   |
-| 💎 | **3**  | §3.1 BOT: CBW/CSW Transport            | Phase 2 (§2.2)                |   ⬜   |
-| 💎 | **3**  | §3.2 SCSI: INQUIRY + TEST UNIT READY   | Phase 3 (§3.1)                |   ⬜   |
-| 💎 | **3**  | §3.3 SCSI: READ CAPACITY + READ(10)    | Phase 3 (§3.2)                |   ⬜   |
-| 🟠 | **3**  | §3.4 SCSI: WRITE(10)                   | Phase 3 (§3.3)                |   ⬜   |
-| 💎 | **3**  | §3.5 Block Device Registration         | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **4**  | §4.1 REQUEST SENSE Error Decoding      | Phase 3 (§3.1)                |   ⬜   |
-| 💎 | **4**  | §4.2 Reset Recovery (3-Step)           | Phase 3 (§3.1)                |   ⬜   |
-| 💎 | **4**  | §4.3 Retry Policy & Timeout Handling   | Phase 4 (§4.1, §4.2)         |   ⬜   |
-| 🟡 | **5**  | §5.1 Hot-Plug Detection               | Phase 2 (§2.1), Phase 3      |   ⬜   |
-| 🟡 | **5**  | §5.2 Surprise Removal & Safe Eject     | Phase 3 (§3.5)                |   ⬜   |
-| 🟡 | **6**  | §6.1 Multi-LUN Support                | Phase 2 (§2.2)                |   ⬜   |
-| 🟡 | **6**  | §6.2 Scatter-Gather (64 KiB TRB Split)| Phase 3 (§3.5)                |   ⬜   |
-| 🟢 | **6**  | §6.3 Defensive Descriptor Validation  | Phase 2 (§2.1)                |   ⬜   |
-| 🟢 | **7**  | §7.1 Safe Eject (START STOP UNIT)      | Phase 5 (§5.2)                |   ⬜   |
-| 🟢 | **7**  | §7.2 USB Hub Traversal                | Phase 2 (§2.1)                |   ⬜   |
-| ⭐ | **8**  | §8.1 Adaptive I/O Coalescing          | Phase 3 (§3.5)                |   ⬜   |
-| ⭐ | **8**  | §8.2 USB Telemetry Dashboard           | Phase 3 (§3.5)                |   ⬜   |
-| ⭐ | **8**  | §8.3 Predictive Prefetch              | Phase 3 (§3.5)                |   ⬜   |
-| ⭐ | **8**  | §8.4 Safe Eject UX                    | Phase 5 (§5.2)                |   ⬜   |
-| 🔵 | **9**  | §9.1 IOMMU DMA Isolation              | Phase 1 (§1.1)                |   ⬜   |
-| 🔵 | **9**  | §9.2 UASP (USB Attached SCSI)         | Phase 3 (§3.5)                |   ⬜   |
+| Phase  | Sections                                 | Depends On                    | Status |
+| :----: | ---------------------------------------- | ----------------------------- | :----: |
+| **0**  | USB MSC spec (`usb-msc.md`)             | —                             |   ✅   |
+| **0**  | PCI driver (`pci.c`)                     | —                             |   ✅   |
+| **1**  | §1.1 xHCI PCI Discovery & BAR Mapping  | Phase 0                       |   ⬜   |
+| **1**  | §1.2 xHCI Controller Initialization    | Phase 1 (§1.1)                |   ⬜   |
+| **1**  | §1.3 TRB Ring Architecture             | Phase 1 (§1.2)                |   ⬜   |
+| **2**  | §2.1 USB Device Enumeration            | Phase 1 (§1.3)                |   ⬜   |
+| **2**  | §2.2 MSC Identification & Endpoint Cfg | Phase 2 (§2.1)                |   ⬜   |
+| **2**  | §2.3 MSI/MSI-X Interrupt Handling      | Phase 1 (§1.3)                |   ⬜   |
+| **3**  | §3.1 BOT: CBW/CSW Transport            | Phase 2 (§2.2)                |   ⬜   |
+| **3**  | §3.2 SCSI: INQUIRY + TEST UNIT READY   | Phase 3 (§3.1)                |   ⬜   |
+| **3**  | §3.3 SCSI: READ CAPACITY + READ(10)    | Phase 3 (§3.2)                |   ⬜   |
+| **3**  | §3.4 SCSI: WRITE(10)                   | Phase 3 (§3.3)                |   ⬜   |
+| **3**  | §3.5 Block Device Registration         | Phase 3 (§3.4)                |   ⬜   |
+| **4**  | §4.1 REQUEST SENSE Error Decoding      | Phase 3 (§3.1)                |   ⬜   |
+| **4**  | §4.2 Reset Recovery (3-Step)           | Phase 3 (§3.1)                |   ⬜   |
+| **4**  | §4.3 Retry Policy & Timeout Handling   | Phase 4 (§4.1, §4.2)         |   ⬜   |
+| **5**  | §5.1 Hot-Plug Detection               | Phase 2 (§2.1), Phase 3      |   ⬜   |
+| **5**  | §5.2 Surprise Removal & Safe Eject     | Phase 3 (§3.5)                |   ⬜   |
+| **6**  | §6.1 Multi-LUN Support                | Phase 2 (§2.2)                |   ⬜   |
+| **6**  | §6.2 Scatter-Gather (64 KiB TRB Split)| Phase 3 (§3.5)                |   ⬜   |
+| **6**  | §6.3 Defensive Descriptor Validation  | Phase 2 (§2.1)                |   ⬜   |
+| **7**  | §7.1 Safe Eject (START STOP UNIT)      | Phase 5 (§5.2)                |   ⬜   |
+| **7**  | §7.2 USB Hub Traversal                | Phase 2 (§2.1)                |   ⬜   |
+| **8**  | §8.1 Adaptive I/O Coalescing          | Phase 3 (§3.5)                |   ⬜   |
+| **8**  | §8.2 USB Telemetry Dashboard           | Phase 3 (§3.5)                |   ⬜   |
+| **8**  | §8.3 Predictive Prefetch              | Phase 3 (§3.5)                |   ⬜   |
+| **8**  | §8.4 Safe Eject UX                    | Phase 5 (§5.2)                |   ⬜   |
+| **9**  | §9.1 IOMMU DMA Isolation              | Phase 1 (§1.1)                |   ⬜   |
+| **9**  | §9.2 UASP (USB Attached SCSI)         | Phase 3 (§3.5)                |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already complete — PCI driver can enumerate devices and the USB MSC spec
