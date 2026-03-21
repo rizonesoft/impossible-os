@@ -47,11 +47,11 @@ The root partition hosts several critical components that orchestrate this envir
 These calls, known as **hypercalls**, serve as a standard, trap-based software interface
 enabling guests to execute privileged virtualization commands. Key hypercalls include:
 
-| Hypercall                       | Purpose                                                       |
-| ------------------------------- | ------------------------------------------------------------- |
-| `HvExtCallGetBootZeroedMemory`  | Query which GPA pages were pre-zeroed — eliminates redundancy |
-| `HvPostMessage`                 | Asynchronously send a message to a specified connection ID     |
-| `HvCallSignalEvent`             | Set an event flag bit for the target SINT (channel signaling)  |
+| Hypercall                      | Purpose                                                       |
+| ------------------------------ | ------------------------------------------------------------- |
+| `HvExtCallGetBootZeroedMemory` | Query which GPA pages were pre-zeroed — eliminates redundancy |
+| `HvPostMessage`                | Asynchronously send a message to a specified connection ID     |
+| `HvCallSignalEvent`            | Set an event flag bit for the target SINT (channel signaling)  |
 
 While hypercalls are effective for basic state management and partition control, they are
 computationally expensive for high-throughput data transfer due to the heavy processor
@@ -72,10 +72,10 @@ communication exponentially more efficient.
 The VMBus operates strictly on a **distributed client-server architecture model** that bridges
 the isolation boundary between partitions. This architecture relies on two corresponding entities:
 
-| Entity                                | Location          | Role                                                                |
-| ------------------------------------- | ----------------- | ------------------------------------------------------------------- |
-| **Virtualization Service Provider (VSP)** | Root partition | Backend handlers interfacing with host physical drivers             |
-| **Virtualization Service Consumer (VSC)** | Child partition | Enlightened frontend drivers redirecting I/O across VMBus to VSP    |
+| Entity                                    | Location         | Role                                                             |
+| ----------------------------------------- | ---------------- | ---------------------------------------------------------------- |
+| **Virtualization Service Provider (VSP)** | Root partition   | Backend handlers interfacing with host physical drivers          |
+| **Virtualization Service Consumer (VSC)** | Child partition  | Enlightened frontend drivers redirecting I/O across VMBus to VSP |
 
 To function correctly, the guest operating system must be **"enlightened"** — meaning it must
 possess the appropriate Hyper-V Integration Services containing the VMBus core driver and the
@@ -96,13 +96,13 @@ each specific instance of a device is assigned a unique **instance GUID**.
 
 #### Key Synthetic Device GUIDs (Impossible OS)
 
-| Device                    | Class GUID                               | VSC Source                          |
-| ------------------------- | ---------------------------------------- | ----------------------------------- |
-| Synthetic SCSI (storvsc)  | `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`  | `storvsc.c`                         |
-| Synthetic Keyboard (HID)  | `F912AD6D-2B17-48EA-BD65-F927A61C7684`  | `hv_input.c`                        |
-| Synthetic Video (hvfb)    | `DA0A7802-E377-4AAC-8E77-0558EB1073F8`  | `hvfb.c` *(planned)*               |
-| Synthetic NIC (netvsc)    | `F8615163-DF3E-46C5-913F-F2D2F965ED0E`  | `netvsc.c` *(planned)*             |
-| Shutdown VSP              | `0E0B6031-5213-4934-818B-38D90CED39DB`  | *(planned §10)*                     |
+| Device                   | Class GUID                              | VSC Source            |
+| ------------------------ | --------------------------------------- | --------------------- |
+| Synthetic SCSI (storvsc) | `BA6163D9-04A1-4D29-B605-72E2FFB1DC7F` | `storvsc.c`           |
+| Synthetic Keyboard (HID) | `F912AD6D-2B17-48EA-BD65-F927A61C7684` | `hv_input.c`          |
+| Synthetic Video (hvfb)   | `DA0A7802-E377-4AAC-8E77-0558EB1073F8` | `hvfb.c` *(planned)*  |
+| Synthetic NIC (netvsc)   | `F8615163-DF3E-46C5-913F-F2D2F965ED0E` | `netvsc.c` *(planned)* |
+| Shutdown VSP             | `0E0B6031-5213-4934-818B-38D90CED39DB` | *(planned §10)*       |
 
 ---
 
@@ -122,10 +122,10 @@ The data transfer mechanism within every VMBus channel relies entirely on **asyn
 shared-memory ring buffers**. Each bi-directional VMBus channel mathematically provisions
 exactly two distinct ring buffers:
 
-| Ring       | Direction                          | Purpose                               |
-| ---------- | ---------------------------------- | ------------------------------------- |
-| **"in"**   | Host → Guest (downstream/receive)  | Receiving messages from Hyper-V host  |
-| **"out"**  | Guest → Host (upstream/send)       | Transmitting messages to Hyper-V host |
+| Ring      | Direction                         | Purpose                               |
+| --------- | --------------------------------- | ------------------------------------- |
+| **"in"**  | Host → Guest (downstream/receive) | Receiving messages from Hyper-V host  |
+| **"out"** | Guest → Host (upstream/send)      | Transmitting messages to Hyper-V host |
 
 The VMBus ring buffer implementation follows classical circular data structure principles:
 
@@ -172,14 +172,14 @@ copy needed.
 The 4 KiB header page is governed by the `hv_ring_buffer` structure, shared directly between
 root and child partitions:
 
-| Field              | Size    | Description                                                   |
-| ------------------ | ------- | ------------------------------------------------------------- |
-| `write_index`      | 32-bit  | Byte offset from start of ring data — next write position     |
-| `read_index`       | 32-bit  | Byte offset from start of ring data — next read position      |
-| `interrupt_mask`   | 32-bit  | Flag to suppress signaling during bulk processing             |
-| `pending_send_sz`  | 32-bit  | Interrupt-driven flow control: required bytes for pending send |
-| `feature_bits`     | 32-bit  | Capability flags (e.g., `feat_pending_send_sz`)               |
-| `reserved/buffer`  | Variable | Padding to ensure data begins on next 4K page boundary       |
+| Field             | Size     | Description                                                    |
+| ----------------- | -------- | -------------------------------------------------------------- |
+| `write_index`     | 32-bit   | Byte offset from start of ring data — next write position      |
+| `read_index`      | 32-bit   | Byte offset from start of ring data — next read position       |
+| `interrupt_mask`  | 32-bit   | Flag to suppress signaling during bulk processing              |
+| `pending_send_sz` | 32-bit   | Interrupt-driven flow control: required bytes for pending send  |
+| `feature_bits`    | 32-bit   | Capability flags (e.g., `feat_pending_send_sz`)                |
+| `reserved/buffer` | Variable | Padding to ensure data begins on next 4K page boundary         |
 
 **Interrupt-driven flow management** (introduced in Windows Server 2012 / Windows 8):
 
@@ -220,12 +220,13 @@ struct vmpacket_descriptor {
 
 #### Packet Types
 
-| Enum Value | Constant                              | Description                                          |
-| :--------: | ------------------------------------- | ---------------------------------------------------- |
-|    0x06    | `VM_PKT_DATA_INBAND`                  | Payload immediately follows descriptor in ring       |
-|    0x07    | `VM_PKT_DATA_USING_XFER_PAGES`        | Payload in GPADL transfer buffer, not in ring        |
-|    0x08    | `VM_PKT_DATA_USING_GPADL`             | Payload in separate GPADL memory window              |
-|    0x0b    | `VM_PKT_COMP`                         | Completion acknowledgment for a previous trans_id    |
+| Enum Value | Constant                       | Description                                       |
+| :--------: | ------------------------------ | ------------------------------------------------- |
+|    0x06    | `VM_PKT_DATA_INBAND`           | Payload immediately follows descriptor in ring    |
+|    0x07    | `VM_PKT_DATA_USING_XFER_PAGES` | Payload in GPADL transfer buffer, not in ring     |
+|    0x08    | `VM_PKT_DATA_USING_GPADL`      | Payload in separate GPADL memory window           |
+|    0x09    | `VM_PKT_DATA_USING_GPA_DIRECT` | Payload via GPA-direct with GPA ranges            |
+|    0x0b    | `VM_PKT_COMP`                  | Completion acknowledgment for a previous trans_id |
 
 #### Wire Format in Ring Buffer
 
@@ -298,11 +299,11 @@ sequenceDiagram
     HV->>Guest: CHANNELMSG_GPADL_CREATED (creation_status=0)
 ```
 
-| Step                     | Message                       | Content                                                |
-| ------------------------ | ----------------------------- | ------------------------------------------------------ |
-| 1. Header transmission   | `CHANNELMSG_GPADL_HEADER`     | `child_relid`, `gpadl` ID, `rangecount`, PFN array     |
-| 2. Body (if fragmented)  | `CHANNELMSG_GPADL_BODY`       | `MessageNumber`, matching `gpadl` ID, continuation PFNs |
-| 3. Confirmation          | `CHANNELMSG_GPADL_CREATED`    | `creation_status` (0 = success)                         |
+| Step                    | Message                    | Content                                                  |
+| ----------------------- | -------------------------- | -------------------------------------------------------- |
+| 1. Header transmission  | `CHANNELMSG_GPADL_HEADER`  | `child_relid`, `gpadl` ID, `rangecount`, PFN array       |
+| 2. Body (if fragmented) | `CHANNELMSG_GPADL_BODY`    | `MessageNumber`, matching `gpadl` ID, continuation PFNs  |
+| 3. Confirmation         | `CHANNELMSG_GPADL_CREATED` | `creation_status` (0 = success)                          |
 
 > **Impossible OS context:** `vmbus_create_gpadl()` in `vmbus.c` handles steps 1 and 3.
 > For StorVSC, a separate GPADL is created for the 64 KiB transfer buffer via
@@ -329,23 +330,25 @@ While standard x64 OSes operate on 4 KiB `PAGE_SIZE`, the hypervisor defines its
 
 ## 6. Control Message Protocol and Channel Lifecycle Management
 
-The VMBus implements exactly **17 distinct control message types**:
+The VMBus implements **18 distinct control message types** (value 0 is invalid, value 13
+was added in later protocol revisions):
 
-| Value | Message                           | Direction     | Purpose                                           |
-| :---: | --------------------------------- | ------------- | ------------------------------------------------- |
-|   1   | `CHANNELMSG_OFFERCHANNEL`         | Host → Guest  | Offer a new synthetic device                      |
-|   2   | `CHANNELMSG_RESCIND_CHANNELOFFER` | Host → Guest  | Hot-remove a device                               |
-|   3   | `CHANNELMSG_REQUESTOFFERS`        | Guest → Host  | Request all available device offers                |
-|   4   | `CHANNELMSG_ALLOFFERS_DELIVERED`  | Host → Guest  | Signal end of initial enumeration batch            |
-|   5   | `CHANNELMSG_OPENCHANNEL`          | Guest → Host  | Mount a channel (ring buffer + GPADL IDs)          |
-|   6   | `CHANNELMSG_OPENCHANNEL_RESULT`   | Host → Guest  | Open success/failure status code                   |
-|   7   | `CHANNELMSG_CLOSECHANNEL`         | Guest → Host  | Orderly channel teardown                           |
-|  8/9  | `CHANNELMSG_GPADL_HEADER/BODY`    | Guest → Host  | Establish guest-to-host memory bridges             |
-|  10   | `CHANNELMSG_GPADL_CREATED`        | Host → Guest  | Confirm memory bridge is established               |
-| 11/12 | `CHANNELMSG_GPADL_TEARDOWN/TORNDOWN` | Bidirectional | Destroy memory bridge                          |
-|  14   | `CHANNELMSG_INITIATE_CONTACT`     | Guest → Host  | Protocol version negotiation handshake             |
-|  15   | `CHANNELMSG_VERSION_RESPONSE`     | Host → Guest  | Version acceptance or rejection                    |
-| 16/17 | `CHANNELMSG_UNLOAD/RESPONSE`      | Bidirectional | Total VMBus stack teardown                         |
+| Value | Message                              | Direction      | Purpose                                     |
+| :---: | ------------------------------------ | -------------- | ------------------------------------------- |
+|   1   | `CHANNELMSG_OFFERCHANNEL`            | Host → Guest   | Offer a new synthetic device                |
+|   2   | `CHANNELMSG_RESCIND_CHANNELOFFER`    | Host → Guest   | Hot-remove a device                         |
+|   3   | `CHANNELMSG_REQUESTOFFERS`           | Guest → Host   | Request all available device offers         |
+|   4   | `CHANNELMSG_ALLOFFERS_DELIVERED`     | Host → Guest   | Signal end of initial enumeration batch     |
+|   5   | `CHANNELMSG_OPENCHANNEL`             | Guest → Host   | Mount a channel (ring buffer + GPADL IDs)   |
+|   6   | `CHANNELMSG_OPENCHANNEL_RESULT`      | Host → Guest   | Open success/failure status code            |
+|   7   | `CHANNELMSG_CLOSECHANNEL`            | Guest → Host   | Orderly channel teardown                    |
+|  8/9  | `CHANNELMSG_GPADL_HEADER/BODY`       | Guest → Host   | Establish guest-to-host memory bridges      |
+|  10   | `CHANNELMSG_GPADL_CREATED`           | Host → Guest   | Confirm memory bridge is established        |
+| 11/12 | `CHANNELMSG_GPADL_TEARDOWN/TORNDOWN` | Bidirectional  | Destroy memory bridge                       |
+|  13   | `CHANNELMSG_RELID_RELEASED`          | Host → Guest   | Channel RELID has been released             |
+|  14   | `CHANNELMSG_INITIATE_CONTACT`        | Guest → Host   | Protocol version negotiation handshake      |
+|  15   | `CHANNELMSG_VERSION_RESPONSE`        | Host → Guest   | Version acceptance or rejection             |
+| 16/17 | `CHANNELMSG_UNLOAD/RESPONSE`         | Bidirectional  | Total VMBus stack teardown                  |
 
 ### 6.1 The Channel Initialization State Machine
 
@@ -407,13 +410,18 @@ The `hv_monitor_page` is a 4 KiB shared memory structure enabling passive, hardw
 interrupt aggregation. Rather than executing an active hypercall every time, the guest
 modifies specific state bits within the monitor page:
 
-| Offset    | Field                | Size     | Purpose                                      |
-| --------- | -------------------- | -------- | -------------------------------------------- |
-| `0x00`    | `TriggerState`       | 4 bytes  | Aggregated trigger status                    |
-| `0x08`    | `TriggerGroup[0-3]`  | Array    | Per-group pending bits for channel signaling  |
-| `0x28`    | `NextCheckTime[]`    | Array    | Timing for coalesced interrupt delivery       |
-| `0xF0`    | `Latency[][]`        | 2D Array | Multi-dimensional latency tracking            |
-| `0x1B8`   | `Parameter[]`        | Array    | Connection ID mapping                         |
+| Offset | Field               | Size         | Purpose                                      |
+| ------ | ------------------- | ------------ | -------------------------------------------- |
+| `0x00` | `trigger_state`     | 4 bytes      | Aggregated trigger status (`GroupEnable` etc) |
+| `0x08` | `trigger_group[4]`  | 16 bytes     | Per-group pending bits for channel signaling  |
+| `0x30` | `next_checktime[]`  | 512 bytes    | Timing for coalesced interrupt delivery       |
+| `0x230`| `latency[4][32]`    | 256 bytes    | Latency hints (100 ns units) per trigger      |
+| `0x430`| `parameter[4][32]`  | 1024 bytes   | Connection ID + flag number per trigger       |
+
+> [!NOTE]
+> Offsets computed from the Linux kernel `hv_monitor_page` struct
+> (`include/linux/hyperv.h`). Reserved fields between members account for the
+> gaps (e.g., `rsvdz1` at `0x04`, `rsvdz2[3]` at `0x18`).
 
 The guest uses `sync_set_bit()` (atomic bitwise OR) to set the pending bit for a channel's
 `monitorid` in the `trigger_group`. The hypervisor hardware passively monitors this page and
@@ -426,13 +434,13 @@ fires a **single, coalesced synthetic interrupt** — massively reducing overhea
 
 The **Synthetic Interrupt Controller (SynIC)** extends the LAPIC with:
 
-| MSR                    | Address      | Purpose                                            |
-| ---------------------- | ------------ | -------------------------------------------------- |
-| `HV_X64_MSR_SCONTROL` | `0x40000080` | SynIC global enable                                |
-| `HV_X64_MSR_SIMP`     | `0x40000083` | SIM Page GPA (Synthetic Interrupt Message Page)     |
-| `HV_X64_MSR_SIEFP`    | `0x40000082` | SIEF Page GPA (Synthetic Interrupt Event Flags)     |
-| `HV_X64_MSR_SINT0-15` | `0x40000090+` | Per-SINT vector, mask, auto-EOI configuration      |
-| `HV_X64_MSR_EOM`      | `0x40000084` | End of Message — drain pending message queue        |
+| MSR                    | Address       | Purpose                                        |
+| ---------------------- | ------------- | ---------------------------------------------- |
+| `HV_X64_MSR_SCONTROL` | `0x40000080`  | SynIC global enable                            |
+| `HV_X64_MSR_SIEFP`    | `0x40000082`  | SIEF Page GPA (Synthetic Interrupt Event Flags) |
+| `HV_X64_MSR_SIMP`     | `0x40000083`  | SIM Page GPA (Synthetic Interrupt Message Page) |
+| `HV_X64_MSR_EOM`      | `0x40000084`  | End of Message — drain pending message queue    |
+| `HV_X64_MSR_SINT0-15` | `0x40000090+` | Per-SINT vector, mask, auto-EOI configuration  |
 
 VMBus conventionally uses **SINT2** (vector `0xF0` in our implementation).
 
@@ -446,18 +454,19 @@ with `CHANNELMSG_VERSION_RESPONSE`. On rejection, the guest downgrades and retri
 
 ### Version History
 
-| Macro                    | Bitwise         | Windows Release                     |
-| ------------------------ | --------------- | ----------------------------------- |
-| `VERSION_WS2008`         | `(0 << 16) | 13` | Windows Server 2008               |
-| `VERSION_WIN7`           | `(1 << 16) | 1`  | Windows 7                         |
-| `VERSION_WIN8`           | `(2 << 16) | 4`  | Windows 8 / Server 2012           |
-| `VERSION_WIN8_1`         | `(3 << 16) | 0`  | Windows 8.1 / Server 2012 R2      |
-| `VERSION_WIN10`          | `(4 << 16) | 0`  | Windows 10 RTM                    |
-| `VERSION_WIN10_V4_1`     | `(4 << 16) | 1`  | Windows 10 RS3                    |
-| `VERSION_WIN10_V5`       | `(5 << 16) | 0`  | Newer Windows 10                  |
-| `VERSION_WIN10_V5_1`     | `(5 << 16) | 1`  | Windows 10 RS4                    |
-| `VERSION_WIN10_V5_2`     | `(5 << 16) | 2`  | Windows Server 2019 (RS5)         |
-| `VERSION_WIN10_V5_3`     | `(5 << 16) | 3`  | Windows Server 2022                |
+| Macro                | Bitwise          | Windows Release              |
+| -------------------- | ---------------- | ---------------------------- |
+| `VERSION_WS2008`     | `(0 << 16) | 13` | Windows Server 2008          |
+| `VERSION_WIN7`       | `(1 << 16) | 1`  | Windows 7 / WS2008 R2        |
+| `VERSION_WIN8`       | `(2 << 16) | 4`  | Windows 8 / Server 2012      |
+| `VERSION_WIN8_1`     | `(3 << 16) | 0`  | Windows 8.1 / Server 2012 R2 |
+| `VERSION_WIN10`      | `(4 << 16) | 0`  | Windows 10 RTM               |
+| `VERSION_WIN10_V4_1` | `(4 << 16) | 1`  | Windows 10 RS3               |
+| `VERSION_WIN10_V5`   | `(5 << 16) | 0`  | Newer Windows 10             |
+| `VERSION_WIN10_V5_1` | `(5 << 16) | 1`  | Windows 10 RS4               |
+| `VERSION_WIN10_V5_2` | `(5 << 16) | 2`  | Windows Server 2019 (RS5)    |
+| `VERSION_WIN10_V5_3` | `(5 << 16) | 3`  | Windows Server 2022          |
+| `VERSION_WIN10_V6`   | `(6 << 16) | 0`  | Newer (defined in kernel)    |
 
 > **Impossible OS context:** `vmbus_connect()` tries `VERSION_WIN10_V5_2` first, falls back
 > to `VERSION_WIN10`, then `VERSION_WIN8_1`. Each synthetic device (StorVSC, NetVSC)
@@ -508,12 +517,12 @@ via AMD SEV-SNP and Intel TDX. In CoCo environments:
 
 ### 10.1 High-Performance Storage and Networking Profiles
 
-| Driver      | Device Type          | VMBus Feature                                                |
-| ----------- | -------------------- | ------------------------------------------------------------ |
-| `storvsc`   | Synthetic SCSI       | Transfer-page packets, up to 64 devices per controller       |
-| `netvsc`    | Synthetic NIC        | RSS, NDIS protocols, sub-channels for multi-vCPU             |
-| `hvfb`      | Synthetic Video      | Framebuffer updates, resolution negotiation                  |
-| `hv_input`  | Synthetic HID        | Keyboard + mouse events over VMBus                           |
+| Driver     | Device Type     | VMBus Feature                                          |
+| ---------- | --------------- | ------------------------------------------------------ |
+| `storvsc`  | Synthetic SCSI  | Transfer-page packets, up to 64 devices per controller |
+| `netvsc`   | Synthetic NIC   | RSS, NDIS protocols, sub-channels for multi-vCPU       |
+| `hvfb`     | Synthetic Video | Framebuffer updates, resolution negotiation            |
+| `hv_input` | Synthetic HID   | Keyboard + mouse events over VMBus                     |
 
 StorVSC uses `VM_PKT_DATA_USING_XFER_PAGES` for SCSI READ/WRITE to achieve near-zero-copy
 data routing. The transfer buffer is shared via a dedicated GPADL, and the ring buffer
@@ -521,13 +530,13 @@ carries only the `VSTOR_PACKET` metadata.
 
 ### 10.2 Hyper-V Utility Services
 
-| Service                | GUID Prefix | VMBus Operation                                         |
-| ---------------------- | ----------- | ------------------------------------------------------- |
-| Heartbeat              | `vmicheartbeat` | Periodic life-sign transmission                     |
-| Time Synchronization   | `vmictimesync`  | Clock alignment with host hardware                  |
-| VSS (Volume Shadow)    | `hv_vss_daemon` | `VSS_OP_FREEZE`/`VSS_OP_THAW` for live backups     |
-| KVP Exchange           | `hv_kvp_msg`    | Key-value metadata injection/retrieval              |
-| Shutdown               | Shutdown VSP    | Graceful shutdown requests from hypervisor           |
+| Service              | GUID Prefix      | VMBus Operation                                     |
+| -------------------- | ---------------- | --------------------------------------------------- |
+| Heartbeat            | `vmicheartbeat`  | Periodic life-sign transmission                     |
+| Time Synchronization | `vmictimesync`   | Clock alignment with host hardware                  |
+| VSS (Volume Shadow)  | `hv_vss_daemon`  | `VSS_OP_FREEZE`/`VSS_OP_THAW` for live backups     |
+| KVP Exchange         | `hv_kvp_msg`     | Key-value metadata injection/retrieval              |
+| Shutdown             | Shutdown VSP     | Graceful shutdown requests from hypervisor           |
 
 ---
 
