@@ -764,7 +764,7 @@ Service** (`vmicheartbeat`).
 ### 10.1 Heartbeat Protocol
 
 The Heartbeat service acts as a vitality monitor. The host sends periodic polling messages
-across the VMBus with the `icmsgtype` set to **`ICMSGTYPE_HEARTBEAT` (value `1`)**.
+across the VMBus with the `icmsgtype` set to **`ICMSGTYPE_HEARTBEAT` (value `6`)**.
 
 ```c
 struct heartbeat_msg_data {
