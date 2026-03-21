@@ -9,7 +9,7 @@ When **all items** in a TODO file are `[x]` completed, convert it to a proper do
 ## Prerequisites
 
 - Every item in the TODO file must be `[x]` (fully complete)
-- The feature must be verified working (`/verify-todo` passed)
+- The feature must be verified working (`/docs-verify-todo` passed)
 - If any items are `[ ]` or `[/]`, do NOT convert — finish the TODO first
 
 ## Steps
