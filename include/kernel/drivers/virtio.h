@@ -197,3 +197,11 @@ uint8_t virtio_read_isr(struct virtio_pci_dev *dev);
 int virtio_pci_setup_msix(struct virtio_pci_dev *dev,
                           uint8_t bus, uint8_t pci_dev, uint8_t func,
                           uint8_t *queue_vector, uint8_t *config_vector);
+
+/* Set up MSI-X for multi-queue: allocates num_queues IDT vectors for
+ * queues + 1 for config changes. Fills queue_vectors[0..nq-1] and
+ * config_vector. Returns 0 on success, -1 on failure. */
+int virtio_pci_setup_msix_multi(struct virtio_pci_dev *dev,
+                                uint8_t bus, uint8_t pci_dev, uint8_t func,
+                                uint16_t num_queues,
+                                uint8_t *queue_vectors, uint8_t *config_vector);

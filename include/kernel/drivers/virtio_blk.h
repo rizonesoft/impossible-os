@@ -49,7 +49,11 @@
 #define VIRTIO_BLK_F_CONFIG_WCE  9   /* Writeback cache enable is negotiable */
 #define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
 #define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
+#define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_VERSION_1      32   /* VirtIO 1.0 modern */
+
+/* Maximum number of virtqueues the driver supports */
+#define VIRTIO_BLK_MAX_QUEUES   8
 
 /* VirtIO block device config offsets (within device_cfg MMIO region)
  * See VirtIO 1.2 §5.2.4 — offsets within DEVICE_CFG capability */
@@ -62,7 +66,7 @@
 #define VIRTIO_BLK_CFG_MIN_IO_SIZE     0x1A  /* uint16_t: suggested minimum I/O size (blocks) */
 #define VIRTIO_BLK_CFG_OPT_IO_SIZE     0x1C  /* uint32_t: optimal (suggested max) I/O size (blocks) */
 #define VIRTIO_BLK_CFG_WRITEBACK       0x20  /* uint8_t:  0=writethrough, 1=writeback */
-
+#define VIRTIO_BLK_CFG_NUM_QUEUES      0x22  /* uint16_t: num_queues (F_MQ) */
 /* Discard config offsets (VirtIO 1.2 §5.2.4, present when F_DISCARD) */
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SECTORS 0x24  /* uint32_t: max sectors per discard */
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SEG     0x28  /* uint32_t: max discard segments */
@@ -102,6 +106,7 @@ struct virtio_blk_topology {
     uint32_t max_wz_sectors;     /* Max sectors per write-zeroes (0 = no limit) */
     uint32_t max_wz_seg;         /* Max write-zeroes segments (0 = no limit) */
     uint8_t  wz_may_unmap;       /* 1 = unmap flag allowed in write-zeroes */
+    uint16_t num_queues;         /* Number of request queues (F_MQ, default 1) */
 };
 
 /* --- API --- */
@@ -152,6 +157,9 @@ const struct virtio_blk_topology *virtio_blk_topology(void);
 
 /* Check if a virtio-blk device was detected and initialized. */
 int virtio_blk_present(void);
+
+/* Get the number of active virtqueues (1 without F_MQ, up to 8 with F_MQ). */
+uint16_t virtio_blk_num_queues(void);
 
 /* Reset the device and re-run the full initialization sequence.
  * Called automatically on I/O timeout or DEVICE_NEEDS_RESET.

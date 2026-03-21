@@ -28,6 +28,7 @@ External reference specifications for hardware, firmware, storage, and hyperviso
 | [exFAT 1.0](storage/filesystems/exfat-1.0.md)            | exFAT BPB, allocation bitmap, directory entries    |
 | [ext4](storage/filesystems/ext4.md)                       | ext4 superblock, extents, journal, groups          |
 | [FAT32](storage/filesystems/fat32.md)                     | FAT32 BPB, cluster chains, LFN, FSInfo            |
+| [HFS+](storage/filesystems/hfsplus.md)                    | HFS+ volume header, B-trees, catalog, journal      |
 | [NTFS 3.1](storage/filesystems/ntfs-3.1.md)              | NTFS MFT, attributes, $INDEX, journal             |
 
 ## Hardware

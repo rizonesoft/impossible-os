@@ -687,3 +687,182 @@ int virtio_pci_setup_msix(struct virtio_pci_dev *dev,
 
     return 0;
 }
+
+int virtio_pci_setup_msix_multi(struct virtio_pci_dev *dev,
+                                uint8_t bus, uint8_t pci_dev, uint8_t func,
+                                uint16_t nqueues,
+                                uint8_t *queue_vectors, uint8_t *config_vector)
+{
+    uint16_t status;
+    uint8_t cap_off;
+    uint8_t msix_cap_off = 0;
+    uint16_t msix_ctrl;
+    uint16_t table_size;
+    uint8_t  table_bir;
+    uint32_t table_offset;
+    uint64_t bar_addr;
+    volatile struct msix_table_entry *msix_table;
+    uint8_t vec_config;
+    uint16_t readback;
+    int i;
+    int allocated = 0;
+
+    /* Walk PCI capability list for MSI-X (cap ID 0x11) */
+    status = pci_read16(bus, pci_dev, func, 0x06);
+    if (!(status & (1 << 4))) {
+        klog(LOG_DEBUG, "virtio", "MSI-X multi: no PCI capabilities list");
+        return -1;
+    }
+
+    cap_off = pci_read8(bus, pci_dev, func, 0x34) & 0xFC;
+    while (cap_off != 0) {
+        uint8_t cap_id = pci_read8(bus, pci_dev, func, cap_off);
+        if (cap_id == PCI_CAP_ID_MSIX) {
+            msix_cap_off = cap_off;
+            break;
+        }
+        cap_off = pci_read8(bus, pci_dev, func, cap_off + 1) & 0xFC;
+    }
+
+    if (!msix_cap_off) {
+        klog(LOG_DEBUG, "virtio", "MSI-X multi: capability not found");
+        return -1;
+    }
+
+    /* Read MSI-X Message Control */
+    msix_ctrl = pci_read16(bus, pci_dev, func, msix_cap_off + 2);
+    table_size = (msix_ctrl & 0x07FF) + 1;
+
+    /* Need nqueues + 1 entries (queues + config) */
+    if (table_size < (uint16_t)(nqueues + 1)) {
+        klog(LOG_DEBUG, "virtio",
+               "MSI-X multi: table too small (%u entries, need %u)",
+               (uint64_t)table_size, (uint64_t)(nqueues + 1));
+        return -1;
+    }
+
+    /* Read Table BIR and offset */
+    {
+        uint32_t table_reg = pci_read32(bus, pci_dev, func, msix_cap_off + 4);
+        table_bir    = (uint8_t)(table_reg & 0x07);
+        table_offset = table_reg & 0xFFFFFFF8;
+    }
+
+    /* Read BAR for MSI-X table */
+    {
+        uint32_t bar_val = pci_read32(bus, pci_dev, func,
+                                       PCI_BAR0 + table_bir * 4);
+        if (bar_val & 0x01) {
+            klog(LOG_DEBUG, "virtio", "MSI-X multi: BAR%u is I/O space",
+                   (uint64_t)table_bir);
+            return -1;
+        }
+
+        uint8_t bar_type = (bar_val >> 1) & 0x03;
+        bar_addr = (uint64_t)(bar_val & 0xFFFFFFF0);
+
+        if (bar_type == 0x02) {
+            uint32_t bar_hi = pci_read32(bus, pci_dev, func,
+                                          PCI_BAR0 + (table_bir + 1) * 4);
+            bar_addr |= ((uint64_t)bar_hi << 32);
+        }
+    }
+
+    ensure_bar_mapped(bar_addr, table_bir, bus, pci_dev, func);
+    msix_table = (volatile struct msix_table_entry *)(bar_addr + table_offset);
+
+    /* Allocate IDT vectors: one per queue + one for config */
+    for (i = 0; i < (int)nqueues; i++) {
+        queue_vectors[i] = irq_alloc_vector();
+        if (!queue_vectors[i]) {
+            klog(LOG_DEBUG, "virtio",
+                   "MSI-X multi: no free IDT vector for queue %u",
+                   (uint64_t)i);
+            goto fail_free;
+        }
+        allocated++;
+    }
+
+    vec_config = irq_alloc_vector();
+    if (!vec_config) {
+        klog(LOG_DEBUG, "virtio",
+               "MSI-X multi: no free IDT vector for config");
+        goto fail_free;
+    }
+
+    /* Program MSI-X table entries for queues */
+    for (i = 0; i < (int)nqueues; i++) {
+        msix_table[i].msg_addr_lo = 0xFEE00000;  /* LAPIC base, CPU 0 */
+        msix_table[i].msg_addr_hi = 0;
+        msix_table[i].msg_data    = queue_vectors[i];
+        msix_table[i].vector_ctrl = 0;  /* Unmasked */
+    }
+
+    /* Program MSI-X table entry for config (entry N) */
+    msix_table[nqueues].msg_addr_lo = 0xFEE00000;
+    msix_table[nqueues].msg_addr_hi = 0;
+    msix_table[nqueues].msg_data    = vec_config;
+    msix_table[nqueues].vector_ctrl = 0;
+
+    /* Assign MSI-X vectors in VirtIO common config */
+    {
+        volatile uint8_t *cfg = dev->common_cfg;
+
+        for (i = 0; i < (int)nqueues; i++) {
+            mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_SELECT),
+                          (uint16_t)i);
+            mmio_write16(
+                (volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_MSIX_VECTOR),
+                (uint16_t)i);
+
+            readback = mmio_read16(
+                (volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_MSIX_VECTOR));
+            if (readback == 0xFFFF) {
+                klog(LOG_DEBUG, "virtio",
+                       "MSI-X multi: queue %u vector assignment rejected",
+                       (uint64_t)i);
+                irq_free_vector(vec_config);
+                goto fail_free;
+            }
+        }
+
+        /* Assign config change vector (MSI-X table entry N) */
+        mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_MSIX_CONFIG),
+                      nqueues);
+
+        readback = mmio_read16(
+            (volatile uint16_t *)(cfg + VIRTIO_COMMON_MSIX_CONFIG));
+        if (readback == 0xFFFF) {
+            klog(LOG_DEBUG, "virtio",
+                   "MSI-X multi: config vector assignment rejected");
+            irq_free_vector(vec_config);
+            goto fail_free;
+        }
+    }
+
+    /* Enable MSI-X */
+    msix_ctrl = pci_read16(bus, pci_dev, func, msix_cap_off + 2);
+    msix_ctrl |= (1 << 15);
+    msix_ctrl &= ~(1 << 14);
+    pci_write16(bus, pci_dev, func, msix_cap_off + 2, msix_ctrl);
+
+    /* Disable legacy INTx */
+    {
+        uint16_t cmd = pci_read16(bus, pci_dev, func, PCI_COMMAND);
+        cmd |= PCI_CMD_INT_DISABLE;
+        pci_write16(bus, pci_dev, func, PCI_COMMAND, cmd);
+    }
+
+    *config_vector = vec_config;
+
+    klog(LOG_DEBUG, "virtio",
+           "MSI-X multi: %u queue vectors + config, table_size=%u",
+           (uint64_t)nqueues, (uint64_t)table_size);
+
+    return 0;
+
+fail_free:
+    for (i = 0; i < allocated; i++)
+        irq_free_vector(queue_vectors[i]);
+    return -1;
+}

@@ -27,24 +27,26 @@
 #include "kernel/drivers/blkdev.h"
 #include "kernel/sched/event.h"
 #include "kernel/mm/pmm.h"
+#include "kernel/smp.h"
 
 /* ---- Driver state ---- */
 static struct virtio_pci_dev  blk_dev;         /* Modern PCI transport */
-static struct virtqueue       blk_vq;          /* Request queue (queue 0) */
+static struct virtqueue       blk_vqs[VIRTIO_BLK_MAX_QUEUES]; /* Request queues */
 static uint64_t               disk_capacity;   /* Total 512-byte sectors */
 static int                    initialized;     /* 1 if init succeeded */
-static volatile int           virtio_irq_fired; /* Queue completion flag */
+static volatile int           virtio_irq_flags[VIRTIO_BLK_MAX_QUEUES];
 
 /* PCI coordinates (saved for surprise removal detection and hot-unplug) */
 static uint8_t                saved_pci_bus;
 static uint8_t                saved_pci_dev;
 static uint8_t                saved_pci_func;
-static uint8_t                msix_vec_queue;  /* MSI-X IDT vector: queue */
+static uint8_t                msix_vec_queues[VIRTIO_BLK_MAX_QUEUES];
 static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
 static int                    use_events;      /* 1 after event_t is live */
+static uint16_t               num_queues = 1;  /* Active queue count */
 
-/* Interrupt-driven I/O completion event (AUTO_RESET: each set wakes one waiter) */
-static event_t                io_completion;
+/* Interrupt-driven I/O completion events (one per queue) */
+static event_t                io_completions[VIRTIO_BLK_MAX_QUEUES];
 
 /* Feature negotiation results */
 static int                    has_flush;       /* F_FLUSH negotiated */
@@ -56,6 +58,7 @@ static int                    has_seg_max;     /* F_SEG_MAX negotiated */
 static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
+static int                    has_mq;          /* F_MQ negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -82,17 +85,27 @@ static struct {
 /* Max retries for transient I/O errors */
 #define VIRTIO_BLK_MAX_RETRIES  3
 
+/* ---- Helper: get per-CPU queue index ---- */
+static inline uint16_t get_queue_idx(void)
+{
+    if (num_queues <= 1)
+        return 0;
+    return (uint16_t)(smp_cpu_id() % num_queues);
+}
+
 /* ---- MSI-X IRQ handlers ---- */
 
 /* Queue completion interrupt — device placed buffers in the used ring.
- * Sets both the legacy polling flag AND the event for thread wakeup. */
+ * The ctx pointer carries the queue index. */
 static void virtio_blk_queue_irq(uint8_t vector, void *ctx)
 {
+    int qi = (int)(uintptr_t)ctx;
     (void)vector;
-    (void)ctx;
-    virtio_irq_fired = 1;
-    if (use_events)
-        event_set(&io_completion);
+    if (qi >= 0 && qi < (int)num_queues) {
+        virtio_irq_flags[qi] = 1;
+        if (use_events)
+            event_set(&io_completions[qi]);
+    }
 }
 
 /* Config change interrupt — device resized, topology changed, etc.
@@ -227,6 +240,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     int d0, d1, d2;
     uint32_t timeout;
     uint64_t rflags;
+    uint16_t qi = get_queue_idx();
 
     if (!initialized)
         return -1;
@@ -244,54 +258,54 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     req.sector   = sector;
 
     /* Allocate 3 descriptors from the virtqueue free list */
-    if (blk_vq.num_free < 3) {
+    if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors");
         return -1;
     }
 
     /* Descriptor 0: request header (device-readable) */
-    d0 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d0].next;
-    blk_vq.num_free--;
+    d0 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
-    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
-    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+    blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
     /* Descriptor 1: data buffer */
-    d1 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d1].next;
-    blk_vq.num_free--;
+    d1 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].next = (uint16_t)d1;
+    blk_vqs[qi].desc[d0].next = (uint16_t)d1;
 
-    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)buffer;
-    blk_vq.desc[d1].len   = len;
-    blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;
+    blk_vqs[qi].desc[d1].addr  = (uint64_t)(uintptr_t)buffer;
+    blk_vqs[qi].desc[d1].len   = len;
+    blk_vqs[qi].desc[d1].flags = VIRTQ_DESC_F_NEXT;
     if (type != VIRTIO_BLK_T_OUT)
-        blk_vq.desc[d1].flags |= VIRTQ_DESC_F_WRITE;  /* device writes to buf */
+        blk_vqs[qi].desc[d1].flags |= VIRTQ_DESC_F_WRITE;  /* device writes to buf */
 
     /* Descriptor 2: status byte (device-writable) */
-    d2 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d2].next;
-    blk_vq.num_free--;
+    d2 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d2].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d1].next = (uint16_t)d2;
+    blk_vqs[qi].desc[d1].next = (uint16_t)d2;
 
-    blk_vq.desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
-    blk_vq.desc[d2].len   = 1;
-    blk_vq.desc[d2].flags = VIRTQ_DESC_F_WRITE;
-    blk_vq.desc[d2].next  = 0;
+    blk_vqs[qi].desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vqs[qi].desc[d2].len   = 1;
+    blk_vqs[qi].desc[d2].flags = VIRTQ_DESC_F_WRITE;
+    blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add chain head to available ring */
-    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
-    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
 
     /* VirtIO §2.7.13.1: driver MUST perform a suitable device-specific
      * memory barrier before the avail->idx update to ensure the device
      * sees the descriptor chain written above. */
     wmb();
-    blk_vq.avail->idx++;
+    blk_vqs[qi].avail->idx++;
 
     /* Barrier before notification: device must see the new avail->idx
      * before we write the notification register. */
@@ -299,24 +313,24 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
     /* Clear completion flag and enable interrupts */
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
-    virtio_irq_fired = 0;
+    virtio_irq_flags[qi] = 0;
     __asm__ volatile ("sti");
 
     /* Notify device (modern MMIO notification) */
-    virtq_kick(&blk_vq);
+    virtq_kick(&blk_vqs[qi]);
 
     /* Wait for completion — event-driven or polling fallback */
     if (use_events) {
         /* Interrupt-driven path: ISR calls event_set(), we block here.
          * 5-second timeout prevents infinite hang on device failure. */
-        if (!event_wait_timeout(&io_completion, 5000)) {
+        if (!event_wait_timeout(&io_completions[qi], 5000)) {
             klog(LOG_DEBUG, "virtio", "I/O timeout (event, avail=%u, used=%u)",
-                   (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx);
+                   (uint64_t)blk_vqs[qi].avail->idx, (uint64_t)blk_vqs[qi].used->idx);
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return -1;
         }
     } else {
@@ -324,18 +338,18 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         timeout = 5000000;
         while (timeout-- > 0) {
             mb();
-            if (blk_vq.used->idx != blk_vq.last_used)
+            if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
                 break;
             __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
         }
         if (timeout == 0) {
             klog(LOG_DEBUG, "virtio", "I/O timeout (poll, avail=%u, used=%u)",
-                   (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx);
+                   (uint64_t)blk_vqs[qi].avail->idx, (uint64_t)blk_vqs[qi].used->idx);
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return -1;
         }
     }
@@ -349,12 +363,12 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     rmb();
 
     /* Consume the used ring entry */
-    blk_vq.last_used++;
+    blk_vqs[qi].last_used++;
 
     /* Free all three descriptors */
-    virtq_free_desc(&blk_vq, (uint16_t)d0);
-    virtq_free_desc(&blk_vq, (uint16_t)d1);
-    virtq_free_desc(&blk_vq, (uint16_t)d2);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
 
     /* Differentiate status codes */
     if (status_byte == VIRTIO_BLK_S_OK)
@@ -376,6 +390,7 @@ static int virtio_blk_do_flush(void)
     int d0, d1;
     uint32_t timeout;
     uint64_t rflags;
+    uint16_t qi = get_queue_idx();
 
     if (!initialized)
         return -1;
@@ -386,64 +401,64 @@ static int virtio_blk_do_flush(void)
     req.sector   = 0;
 
     /* Allocate 2 descriptors from the virtqueue free list */
-    if (blk_vq.num_free < 2) {
+    if (blk_vqs[qi].num_free < 2) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for flush");
         return -1;
     }
 
     /* Descriptor 0: request header (device-readable) */
-    d0 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d0].next;
-    blk_vq.num_free--;
+    d0 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
-    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
-    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+    blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
     /* Descriptor 1: status byte (device-writable) — no data descriptor */
-    d1 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d1].next;
-    blk_vq.num_free--;
+    d1 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].next = (uint16_t)d1;
+    blk_vqs[qi].desc[d0].next = (uint16_t)d1;
 
-    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&status_byte;
-    blk_vq.desc[d1].len   = 1;
-    blk_vq.desc[d1].flags = VIRTQ_DESC_F_WRITE;
-    blk_vq.desc[d1].next  = 0;
+    blk_vqs[qi].desc[d1].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vqs[qi].desc[d1].len   = 1;
+    blk_vqs[qi].desc[d1].flags = VIRTQ_DESC_F_WRITE;
+    blk_vqs[qi].desc[d1].next  = 0;
 
     /* Add chain head to available ring */
-    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
-    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
 
     wmb();   /* Ensure descriptors visible before avail->idx update */
-    blk_vq.avail->idx++;
+    blk_vqs[qi].avail->idx++;
     mb();    /* Ensure avail->idx visible before notification */
 
     /* Enable interrupts for IRQ delivery */
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
-    virtio_irq_fired = 0;
+    virtio_irq_flags[qi] = 0;
     __asm__ volatile ("sti");
 
     /* Notify device */
-    virtq_kick(&blk_vq);
+    virtq_kick(&blk_vqs[qi]);
 
     /* Wait for completion — event-driven or polling fallback */
     if (use_events) {
         /* Flush may take longer — 10s timeout */
-        if (!event_wait_timeout(&io_completion, 10000)) {
+        if (!event_wait_timeout(&io_completions[qi], 10000)) {
             klog(LOG_DEBUG, "virtio", "Flush timeout (event)");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
             return -1;
         }
     } else {
         timeout = 10000000;
         while (timeout-- > 0) {
             mb();
-            if (blk_vq.used->idx != blk_vq.last_used)
+            if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
                 break;
             __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
         }
@@ -451,8 +466,8 @@ static int virtio_blk_do_flush(void)
             klog(LOG_DEBUG, "virtio", "Flush timeout (poll)");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
             return -1;
         }
     }
@@ -464,11 +479,11 @@ static int virtio_blk_do_flush(void)
     rmb();   /* Barrier before reading used ring entries */
 
     /* Consume the used ring entry */
-    blk_vq.last_used++;
+    blk_vqs[qi].last_used++;
 
     /* Free both descriptors */
-    virtq_free_desc(&blk_vq, (uint16_t)d0);
-    virtq_free_desc(&blk_vq, (uint16_t)d1);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
 
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
@@ -593,6 +608,7 @@ int virtio_blk_get_id(char *buf, uint32_t len)
     char tmp[VIRTIO_BLK_ID_BYTES];
     uint32_t i;
     int ret;
+    uint16_t qi = get_queue_idx();
 
     if (!initialized || !buf || len == 0)
         return -1;
@@ -631,6 +647,7 @@ int virtio_blk_init(void);
 int virtio_blk_reset(void)
 {
     uint32_t wait;
+    uint16_t qi = 0;  /* Reset always targets queue 0 */
 
     if (!initialized)
         return -1;
@@ -638,7 +655,7 @@ int virtio_blk_reset(void)
     /* Try per-queue reset first (less disruptive than full device reset) */
     if (has_ring_reset) {
         klog(LOG_DEBUG, "virtio", "Attempting per-queue reset (F_RING_RESET)");
-        if (virtio_queue_reset(&blk_vq) == 0) {
+        if (virtio_queue_reset(&blk_vqs[qi]) == 0) {
             klog(LOG_DEBUG, "virtio", "Per-queue reset succeeded");
             error_stats.resets++;
             return 0;
@@ -718,6 +735,7 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     int d0, d1, d2;
     uint32_t timeout;
     uint64_t rflags;
+    uint16_t qi = get_queue_idx();
 
     if (!initialized)
         return -1;
@@ -733,73 +751,73 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     seg.flags       = 0;  /* 0 = discard (not unmap) */
 
     /* Allocate 3 descriptors */
-    if (blk_vq.num_free < 3) {
+    if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for discard");
         return -1;
     }
 
     /* Descriptor 0: request header (device-readable) */
-    d0 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d0].next;
-    blk_vq.num_free--;
+    d0 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
-    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
-    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+    blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
     /* Descriptor 1: discard segment data (device-readable — NOT F_WRITE!) */
-    d1 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d1].next;
-    blk_vq.num_free--;
+    d1 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].next = (uint16_t)d1;
+    blk_vqs[qi].desc[d0].next = (uint16_t)d1;
 
-    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
-    blk_vq.desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
-    blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
+    blk_vqs[qi].desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
+    blk_vqs[qi].desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+    blk_vqs[qi].desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
 
     /* Descriptor 2: status byte (device-writable) */
-    d2 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d2].next;
-    blk_vq.num_free--;
+    d2 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d2].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d1].next = (uint16_t)d2;
+    blk_vqs[qi].desc[d1].next = (uint16_t)d2;
 
-    blk_vq.desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
-    blk_vq.desc[d2].len   = 1;
-    blk_vq.desc[d2].flags = VIRTQ_DESC_F_WRITE;
-    blk_vq.desc[d2].next  = 0;
+    blk_vqs[qi].desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vqs[qi].desc[d2].len   = 1;
+    blk_vqs[qi].desc[d2].flags = VIRTQ_DESC_F_WRITE;
+    blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add to available ring */
-    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
-    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
 
     wmb();
-    blk_vq.avail->idx++;
+    blk_vqs[qi].avail->idx++;
     mb();
 
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
-    virtio_irq_fired = 0;
+    virtio_irq_flags[qi] = 0;
     __asm__ volatile ("sti");
 
-    virtq_kick(&blk_vq);
+    virtq_kick(&blk_vqs[qi]);
 
     /* Wait for completion */
     if (use_events) {
-        if (!event_wait_timeout(&io_completion, 5000)) {
+        if (!event_wait_timeout(&io_completions[qi], 5000)) {
             klog(LOG_DEBUG, "virtio", "Discard timeout");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return VIRTIO_IO_TIMEOUT;
         }
     } else {
         timeout = 5000000;
         while (timeout-- > 0) {
             mb();
-            if (blk_vq.used->idx != blk_vq.last_used)
+            if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
                 break;
             __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
         }
@@ -807,9 +825,9 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
             klog(LOG_DEBUG, "virtio", "Discard timeout (poll)");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return VIRTIO_IO_TIMEOUT;
         }
     }
@@ -818,11 +836,11 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
         __asm__ volatile ("cli");
 
     rmb();
-    blk_vq.last_used++;
+    blk_vqs[qi].last_used++;
 
-    virtq_free_desc(&blk_vq, (uint16_t)d0);
-    virtq_free_desc(&blk_vq, (uint16_t)d1);
-    virtq_free_desc(&blk_vq, (uint16_t)d2);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
 
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
@@ -892,6 +910,7 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     int d0, d1, d2;
     uint32_t timeout;
     uint64_t rflags;
+    uint16_t qi = get_queue_idx();
 
     if (!initialized)
         return -1;
@@ -907,73 +926,73 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     seg.flags       = flags;
 
     /* Allocate 3 descriptors */
-    if (blk_vq.num_free < 3) {
+    if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for write-zeroes");
         return -1;
     }
 
     /* Descriptor 0: request header (device-readable) */
-    d0 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d0].next;
-    blk_vq.num_free--;
+    d0 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
-    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
-    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+    blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vqs[qi].desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_NEXT;
 
     /* Descriptor 1: write-zeroes segment data (device-readable — NOT F_WRITE!) */
-    d1 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d1].next;
-    blk_vq.num_free--;
+    d1 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d1].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d0].next = (uint16_t)d1;
+    blk_vqs[qi].desc[d0].next = (uint16_t)d1;
 
-    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
-    blk_vq.desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
-    blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
+    blk_vqs[qi].desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
+    blk_vqs[qi].desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+    blk_vqs[qi].desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
 
     /* Descriptor 2: status byte (device-writable) */
-    d2 = blk_vq.free_head;
-    blk_vq.free_head = blk_vq.desc[d2].next;
-    blk_vq.num_free--;
+    d2 = blk_vqs[qi].free_head;
+    blk_vqs[qi].free_head = blk_vqs[qi].desc[d2].next;
+    blk_vqs[qi].num_free--;
 
-    blk_vq.desc[d1].next = (uint16_t)d2;
+    blk_vqs[qi].desc[d1].next = (uint16_t)d2;
 
-    blk_vq.desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
-    blk_vq.desc[d2].len   = 1;
-    blk_vq.desc[d2].flags = VIRTQ_DESC_F_WRITE;
-    blk_vq.desc[d2].next  = 0;
+    blk_vqs[qi].desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vqs[qi].desc[d2].len   = 1;
+    blk_vqs[qi].desc[d2].flags = VIRTQ_DESC_F_WRITE;
+    blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add to available ring */
-    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
-    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
 
     wmb();
-    blk_vq.avail->idx++;
+    blk_vqs[qi].avail->idx++;
     mb();
 
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
-    virtio_irq_fired = 0;
+    virtio_irq_flags[qi] = 0;
     __asm__ volatile ("sti");
 
-    virtq_kick(&blk_vq);
+    virtq_kick(&blk_vqs[qi]);
 
     /* Wait for completion */
     if (use_events) {
-        if (!event_wait_timeout(&io_completion, 5000)) {
+        if (!event_wait_timeout(&io_completions[qi], 5000)) {
             klog(LOG_DEBUG, "virtio", "Write-zeroes timeout");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return VIRTIO_IO_TIMEOUT;
         }
     } else {
         timeout = 5000000;
         while (timeout-- > 0) {
             mb();
-            if (blk_vq.used->idx != blk_vq.last_used)
+            if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
                 break;
             __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
         }
@@ -981,9 +1000,9 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
             klog(LOG_DEBUG, "virtio", "Write-zeroes timeout (poll)");
             if (!(rflags & (1 << 9)))
                 __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vq, (uint16_t)d0);
-            virtq_free_desc(&blk_vq, (uint16_t)d1);
-            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
             return VIRTIO_IO_TIMEOUT;
         }
     }
@@ -992,11 +1011,11 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
         __asm__ volatile ("cli");
 
     rmb();
-    blk_vq.last_used++;
+    blk_vqs[qi].last_used++;
 
-    virtq_free_desc(&blk_vq, (uint16_t)d0);
-    virtq_free_desc(&blk_vq, (uint16_t)d1);
-    virtq_free_desc(&blk_vq, (uint16_t)d2);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+    virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
 
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
@@ -1249,7 +1268,7 @@ int virtio_blk_init(void)
     }
 
     /* Step 6: Set up virtqueue 0 (request queue) */
-    if (virtq_init(&blk_vq, &blk_dev, 0) != 0) {
+    if (virtq_init(&blk_vqs[qi], &blk_dev, 0) != 0) {
         klog(LOG_DEBUG, "virtio", "Failed to init request queue");
         virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
         return -1;
@@ -1465,20 +1484,20 @@ void virtio_blk_shutdown(void)
     }
 
     /* 3. Free virtqueue ring memory */
-    if (blk_vq.desc) {
-        old_desc = (uintptr_t)blk_vq.desc;
-        desc_sz  = ((uint64_t)blk_vq.size * 16 + 15) & ~(uint64_t)15;
-        avail_sz = (6 + (uint64_t)blk_vq.size * 2 + 1) & ~(uint64_t)1;
-        used_sz  = (6 + (uint64_t)blk_vq.size * 8 + 3) & ~(uint64_t)3;
+    if (blk_vqs[qi].desc) {
+        old_desc = (uintptr_t)blk_vqs[qi].desc;
+        desc_sz  = ((uint64_t)blk_vqs[qi].size * 16 + 15) & ~(uint64_t)15;
+        avail_sz = (6 + (uint64_t)blk_vqs[qi].size * 2 + 1) & ~(uint64_t)1;
+        used_sz  = (6 + (uint64_t)blk_vqs[qi].size * 8 + 3) & ~(uint64_t)3;
         total    = desc_sz + avail_sz + used_sz;
         old_pages = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
 
         for (i = 0; i < (int)old_pages; i++)
             pmm_free_frame(old_desc + (uint64_t)i * PMM_FRAME_SIZE);
 
-        blk_vq.desc  = (struct virtq_desc *)0;
-        blk_vq.avail = (struct virtq_avail *)0;
-        blk_vq.used  = (struct virtq_used *)0;
+        blk_vqs[qi].desc  = (struct virtq_desc *)0;
+        blk_vqs[qi].avail = (struct virtq_avail *)0;
+        blk_vqs[qi].used  = (struct virtq_used *)0;
     }
 
     /* 4. Free MSI-X vectors */
