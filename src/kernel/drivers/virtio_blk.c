@@ -60,6 +60,7 @@ static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
 static int                    has_mq;          /* F_MQ negotiated */
 static int                    has_indirect;    /* F_RING_INDIRECT_DESC negotiated */
+static int                    has_event_idx;   /* F_RING_EVENT_IDX negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -353,6 +354,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
         rmb();
         blk_vqs[qi].last_used++;
+        if (has_event_idx)
+            virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -467,6 +470,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
     /* Consume the used ring entry */
     blk_vqs[qi].last_used++;
+    if (has_event_idx)
+        virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
 
     /* Free all three descriptors */
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
@@ -578,6 +583,8 @@ static int virtio_blk_do_flush(void)
 
         rmb();
         blk_vqs[qi].last_used++;
+        if (has_event_idx)
+            virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -665,6 +672,8 @@ static int virtio_blk_do_flush(void)
 
     /* Consume the used ring entry */
     blk_vqs[qi].last_used++;
+    if (has_event_idx)
+        virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
 
     /* Free both descriptors */
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
@@ -1019,6 +1028,8 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
 
         rmb();
         blk_vqs[qi].last_used++;
+        if (has_event_idx)
+            virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -1113,6 +1124,8 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
 
     rmb();
     blk_vqs[qi].last_used++;
+    if (has_event_idx)
+        virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
 
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
@@ -1281,6 +1294,8 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
 
         rmb();
         blk_vqs[qi].last_used++;
+        if (has_event_idx)
+            virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -1375,6 +1390,8 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
 
     rmb();
     blk_vqs[qi].last_used++;
+    if (has_event_idx)
+        virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
 
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
@@ -1613,6 +1630,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_RING_INDIRECT_DESC");
     }
 
+    /* Negotiate F_RING_EVENT_IDX (bit 29): interrupt coalescing */
+    if (feat_lo & (1u << VIRTIO_F_RING_EVENT_IDX)) {
+        driver_feat_lo |= (1u << VIRTIO_F_RING_EVENT_IDX);
+        has_event_idx = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_RING_EVENT_IDX");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1)
      * and negotiate VIRTIO_F_RING_RESET (bit 8 of page 1) */
     {
@@ -1668,6 +1692,14 @@ int virtio_blk_init(void)
                        "Failed to init request queue %u", (uint64_t)qi);
                 virtio_set_status(&blk_dev, VIRTIO_STATUS_FAILED);
                 return -1;
+            }
+            /* Set event_idx flag on each queue */
+            blk_vqs[qi].event_idx = has_event_idx ? 1 : 0;
+            if (has_event_idx) {
+                /* Clear NO_INTERRUPT flag — event_idx supersedes it */
+                blk_vqs[qi].avail->flags = 0;
+                /* Set initial used_event to current last_used */
+                virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
             }
         }
     }
@@ -1980,6 +2012,7 @@ void virtio_blk_shutdown(void)
     has_ring_reset   = 0;
     has_mq           = 0;
     has_indirect     = 0;
+    has_event_idx    = 0;
     is_read_only     = 0;
     disk_capacity    = 0;
     num_queues       = 1;

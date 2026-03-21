@@ -93,6 +93,16 @@ struct msix_table_entry {
 #define VIRTQ_DESC_F_WRITE     0x02  /* Device writes (vs reads) */
 #define VIRTQ_DESC_F_INDIRECT  0x04  /* Buffer contains indirect desc table */
 
+/* ---- Virtqueue ring flags ---- */
+#define VIRTQ_AVAIL_F_NO_INTERRUPT 0x01  /* Driver: don't interrupt me */
+#define VIRTQ_USED_F_NO_NOTIFY     0x01  /* Device: don't notify me */
+
+/* ---- Event index access macros ---- */
+/* used_event: avail->ring[queue_size] (driver tells device: interrupt at this used_idx) */
+#define virtq_used_event(vq)  ((vq)->avail->ring[(vq)->size])
+/* avail_event: *(uint16_t*)&used->ring[queue_size] (device tells driver: notify at this avail_idx) */
+#define virtq_avail_event(vq) (*(volatile uint16_t *)&(vq)->used->ring[(vq)->size])
+
 /* ---- Virtqueue structures (split virtqueue layout) ---- */
 
 /* Single descriptor in the descriptor table */
@@ -145,6 +155,7 @@ struct virtqueue {
     uint16_t            notify_off; /* Queue notify offset from device */
     struct virtio_pci_dev *dev;     /* Parent device (for notifications) */
     uint16_t            queue_idx;  /* Queue index (0, 1, ...) */
+    uint8_t             event_idx;  /* EVENT_IDX negotiated (suppress notifications) */
 };
 
 /* ---- API ---- */

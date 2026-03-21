@@ -365,15 +365,35 @@ int virtq_add_buf(struct virtqueue *vq, void *buf, uint32_t len,
 
 void virtq_kick(struct virtqueue *vq)
 {
-    /* Memory barrier before notify */
+    /* Memory barrier before notify — ensure avail->idx is visible */
     __asm__ volatile("mfence" ::: "memory");
 
-    /* Modern transport: write queue index to
-     * notify_base + notify_off * notify_off_multiplier */
-    uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
-                           (uint64_t)vq->notify_off *
-                           (uint64_t)vq->dev->notify_off_multiplier;
-    mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+    if (vq->event_idx) {
+        /* EVENT_IDX path (VirtIO §2.7.7.2):
+         * Notify only if avail->idx crosses the avail_event threshold.
+         * Uses wrapping 16-bit arithmetic:
+         *   notify if (new_idx - event - 1) < (new_idx - old_idx)
+         * Since we increment avail->idx by 1 per submission,
+         * (new_idx - old_idx) == 1, so notify if new_idx == event + 1 */
+        uint16_t new_idx = vq->avail->idx;
+        uint16_t event   = virtq_avail_event(vq);
+
+        __asm__ volatile("mfence" ::: "memory");
+
+        /* Wrapping subtract: notify if we just crossed the threshold */
+        if ((uint16_t)(new_idx - event - 1) < 1) {
+            uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
+                                   (uint64_t)vq->notify_off *
+                                   (uint64_t)vq->dev->notify_off_multiplier;
+            mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+        }
+    } else {
+        /* Legacy path: always notify (no suppression) */
+        uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
+                               (uint64_t)vq->notify_off *
+                               (uint64_t)vq->dev->notify_off_multiplier;
+        mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+    }
 }
 
 int virtq_get_buf(struct virtqueue *vq, uint32_t *len)
