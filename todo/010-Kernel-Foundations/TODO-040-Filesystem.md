@@ -30,6 +30,7 @@
 > | `TODO-040.09-ext4.md`           | ext4 read-only driver                             |
 > | `TODO-040.10-exFAT.md`          | exFAT driver                                      |
 > | `TODO-040.11-IXFS.md`           | IXFS native filesystem hardening                  |
+> | `TODO-040.12-BTRS.md`           | Btrfs read-only driver                            |
 > | `TODO-040.13-APFS.md`           | APFS read-only driver                             |
 > | `TODO-040.14-HFSPlus.md`       | HFS+ (Mac OS Extended) read-only driver           |
 > | `TODO-040.15-NVMe-2.0.md`      | NVMe 2.0 PCIe SSD controller driver               |
