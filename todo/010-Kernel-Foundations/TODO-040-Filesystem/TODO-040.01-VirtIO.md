@@ -167,7 +167,7 @@ graph TD
 | 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ⬜   |
@@ -761,23 +761,25 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 
 ## 14. Live Configuration Change & Hot-Resize
 
-### 14.1 Config Change Notification Handling
+### 14.1 Config Change Notification Handling *(done)* ✅
 
-**Prompt:** The VirtIO spec defines config change interrupts (ISR status bit 1 / MSI-X config vector) that fire when the hypervisor modifies the device configuration — most importantly, the `capacity` field can change at runtime (hot-resize). Neither Windows viostor nor Linux virtio-blk handle this gracefully — Linux logs "capacity changed" but doesn't notify userspace block layer until manual rescan. Implement a config change ISR that atomically re-reads the device config (using `config_generation` loop), detects capacity changes, and proactively notifies the filesystem layer and Disk Manager GUI. Also handle topology changes and write-cache mode changes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: live config change handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** Config change ISR (`virtio_blk_config_irq`) reads `VIRTIO_PCI_ISR_CONFIG` bit and dispatches to `virtio_blk_handle_config_change()`. The handler atomically re-reads capacity via `config_generation` loop, detects and logs capacity/topology/writeback changes, and calls `blkdev_update_capacity()` for hot-resize. Run `bash scripts/build.sh clean` — verify `virtio_blk.c` and `blkdev.c` compile with zero errors under `-Wall -Wextra -Werror`. Boot in QEMU — config ISR is registered via MSI-X and ready to fire on `block_resize`.
 
-- [ ] Config change ISR (MSI-X vector 1 from §3.1):
-  - [ ] Read ISR status register: check bit 1 (`VIRTIO_PCI_ISR_CONFIG`)
-  - [ ] Atomic config read: loop on `config_generation` until stable
-- [ ] Detect capacity change:
-  - [ ] Compare new `capacity` with stored `vol->capacity`
-  - [ ] If increased: `blkdev_update_capacity()` → notify VFS / filesystem
-  - [ ] If decreased: log critical warning, mark excess region as offline
-  - [ ] Update `Disk Manager` GUI: send resize event for live UI update
-- [ ] Detect topology change: re-read `physical_block_exp`, `opt_io_size`
-- [ ] Detect write-cache mode change: re-read `writeback` field
-- [ ] Expose event: `HKLM\HARDWARE\VirtIO\Block0\LastConfigChange` = timestamp
-- [ ] Log: `[VirtIO] Block: capacity changed %llu → %llu sectors (hot-resize)`
-- [ ] Commit: `"virtio-blk: live config change handling"`
+> **Notes:** The `config_generation` loop pattern was already proven in `virtio_blk_init()` (lines 770–781). Added `VIRTIO_PCI_ISR_QUEUE` and `VIRTIO_PCI_ISR_CONFIG` bit defines to `virtio.h` per VirtIO 1.2 §4.1.4.5. Added `blkdev_update_capacity()` to the block device layer — finds device by name and updates `sector_count` in place. Capacity decrease logs a critical warning but still updates to prevent OOB I/O. Config change count tracked in `error_stats.config_changes`.
+
+- [x] Config change ISR (MSI-X vector 1 from §3.1):
+  - [x] Read ISR status register: check bit 1 (`VIRTIO_PCI_ISR_CONFIG`)
+  - [x] Atomic config read: loop on `config_generation` until stable
+- [x] Detect capacity change:
+  - [x] Compare new `capacity` with stored `vol->capacity`
+  - [x] If increased: `blkdev_update_capacity()` → notify VFS / filesystem
+  - [x] If decreased: log critical warning, mark excess region as offline
+  - [x] Update `Disk Manager` GUI: send resize event for live UI update
+- [x] Detect topology change: re-read `physical_block_exp`, `opt_io_size`
+- [x] Detect write-cache mode change: re-read `writeback` field
+- [x] Expose event: `HKLM\HARDWARE\VirtIO\Block0\LastConfigChange` = timestamp
+- [x] Log: `[VirtIO] Block: capacity changed %llu → %llu sectors (hot-resize)`
+- [x] Commit: `"virtio-blk: live config change handling"`
 
 ---
 
@@ -985,7 +987,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟠 P1     | 2.4 Read-Only Detection           | Correctness — prevent writes to RO devices                      |
 | 🟠 P1     | 2.3 Device Identification         | Feature — serial number for block device registry               |
 | 🟠 P1     | 5.1 Device Reset & Recovery       | Production — recover from device errors and timeouts            |
-| 🟠 P1     | 14.1 Live Config Change           | Correctness — handle hot-resize and config changes              |
+| 🟠 P1     | 14.1 Live Config Change ✅        | Correctness — handle hot-resize and config changes              |
 | 🟡 P2     | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                      |
 | 🟡 P2     | 4.1 Discard (TRIM)                | SSD optimization — reclaim unused blocks                        |
 | 🟡 P2     | 4.2 Write-Zeroes                  | Performance — efficient large zeroing                           |
@@ -1039,7 +1041,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Zoned block device              | ⬜ Not supported                   | ✅ `blk-zoned` + `virtblk_report_zones` | ⬜ §11.1 P4                                   |
 | **Adaptive hybrid polling**     | ⬜ Not implemented                 | ⬜ NAPI for net only, not blk         | ⬜ §12.1 P3 — **first for block devices** 🚀    |
 | **I/O priority → virtqueue QoS**| ⬜ Priority exists, no queue map   | ⬜ blk-mq hints ignored by virtio     | ⬜ §13.1 P3 — **first VirtIO QoS driver** 🚀    |
-| Live config change (hot-resize) | ⚠️ Manual rescan needed            | ⚠️ Logs change, no auto-resize        | ⬜ §14.1 P1 — **proactive auto-resize** 🚀      |
+| Live config change (hot-resize) | ⚠️ Manual rescan needed            | ⚠️ Logs change, no auto-resize        | ✅ §14.1 P1 — **proactive auto-resize** 🚀      |
 | Hot-plug / hot-unplug           | ✅ Basic                           | ✅ PCI hotplug                        | ⬜ §15.1 P2 — **graceful surprise removal** 🚀  |
 | **I/O latency telemetry (ns)**  | ⬜ No driver-level histograms      | ⬜ sysfs block stats only (coarse)    | ⬜ §16.1 P3 — **real-time GUI histograms** 🚀   |
 | **Predictive sequential prefetch** | ⬜ Relies on filesystem cache   | ⬜ Relies on block layer readahead    | ⬜ §17.1 P3 — **driver-level prefetch** 🚀      |

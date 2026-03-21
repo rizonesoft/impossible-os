@@ -63,5 +63,10 @@ int blkdev_sync(const struct blkdev *dev);
 /* Get total number of registered block devices. */
 int blkdev_count(void);
 
+/* Update the sector count of a registered block device (hot-resize).
+ * Finds the device by name and updates its sector_count in place.
+ * Returns 0 on success, -1 if device not found. */
+int blkdev_update_capacity(const char *name, uint64_t new_sector_count);
+
 /* Print all registered block devices to serial/console. */
 void blkdev_list(void);

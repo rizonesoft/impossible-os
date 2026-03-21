@@ -24,6 +24,7 @@
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 #include "kernel/barrier.h"
+#include "kernel/drivers/blkdev.h"
 #include "kernel/sched/event.h"
 
 /* ---- Driver state ---- */
@@ -60,6 +61,7 @@ static struct {
     uint32_t unsupp_errors;  /* S_UNSUPP responses received */
     uint32_t timeouts;       /* I/O completions that timed out */
     uint32_t resets;         /* Full device resets performed */
+    uint32_t config_changes; /* Config change interrupts handled */
 } error_stats;
 
 /* Internal return codes for do_io / do_flush */
@@ -84,23 +86,112 @@ static void virtio_blk_queue_irq(uint8_t vector, void *ctx)
         event_set(&io_completion);
 }
 
-/* Config change interrupt — device resized, topology changed, etc. */
+/* Config change interrupt — device resized, topology changed, etc.
+ * VirtIO 1.2 §4.1.4.5: ISR bit 1 indicates device config has changed. */
 static void virtio_blk_config_irq(uint8_t vector, void *ctx)
 {
     (void)vector;
     (void)ctx;
-    /* Read ISR to acknowledge; config change handling is TODO §14.1 */
+
+    /* Read ISR to acknowledge interrupt (read clears pending bits) */
+    uint8_t isr = 0;
     if (blk_dev.isr_cfg) {
-        (void)virtio_read_isr(&blk_dev);
+        isr = virtio_read_isr(&blk_dev);
     }
 
-    /* Check DEVICE_NEEDS_RESET (bit 6) */
+    /* Check DEVICE_NEEDS_RESET (status bit 6) — fatal condition */
     uint8_t st = virtio_get_status(&blk_dev);
     if (st & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
-        klog(LOG_DEBUG, "virtio", "Config ISR: device needs reset");
+        klog(LOG_DEBUG, "virtio", "Config ISR: DEVICE_NEEDS_RESET — reset required");
+        return;
     }
 
-    klog(LOG_DEBUG, "virtio", "Config change interrupt received");
+    /* Bit 1 = configuration change (capacity, topology, writeback) */
+    if (isr & VIRTIO_PCI_ISR_CONFIG) {
+        virtio_blk_handle_config_change();
+    }
+}
+
+/* ---- Live config change handling (§14.1) ---- */
+
+/* Atomically re-read device configuration using config_generation loop.
+ * Detects changes to capacity, topology, and writeback mode.
+ * Called from config change ISR — keep fast and non-blocking. */
+void virtio_blk_handle_config_change(void)
+{
+    if (!initialized || !blk_dev.device_cfg)
+        return;
+
+    /* ---- Atomically read new capacity via config_generation ---- */
+    uint64_t new_capacity;
+    {
+        uint8_t gen1, gen2;
+        do {
+            gen1 = virtio_read_config_generation(&blk_dev);
+            volatile uint32_t *cap_lo = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY);
+            volatile uint32_t *cap_hi = (volatile uint32_t *)
+                (blk_dev.device_cfg + VIRTIO_BLK_CFG_CAPACITY + 4);
+            new_capacity = ((uint64_t)mmio_read32(cap_hi) << 32) |
+                            (uint64_t)mmio_read32(cap_lo);
+            gen2 = virtio_read_config_generation(&blk_dev);
+        } while (gen1 != gen2);
+    }
+
+    /* ---- Detect capacity change (hot-resize) ---- */
+    if (new_capacity != disk_capacity) {
+        uint64_t old_capacity = disk_capacity;
+        disk_capacity = new_capacity;
+
+        if (new_capacity > old_capacity) {
+            /* Disk grew — safe, notify block device layer */
+            klog(LOG_DEBUG, "virtio",
+                   "Config change: capacity increased %u -> %u sectors (hot-resize)",
+                   old_capacity, new_capacity);
+            blkdev_update_capacity("virtio0", new_capacity);
+        } else {
+            /* Disk shrunk — dangerous! Data beyond new boundary is lost.
+             * Log critical warning but still update to prevent OOB I/O. */
+            klog(LOG_DEBUG, "virtio",
+                   "Config change: WARNING capacity decreased %u -> %u sectors",
+                   old_capacity, new_capacity);
+            blkdev_update_capacity("virtio0", new_capacity);
+        }
+
+        error_stats.config_changes++;
+    }
+
+    /* ---- Detect topology change ---- */
+    if (has_topology && blk_dev.device_cfg) {
+        uint8_t new_phys_exp = mmio_read8(
+            (volatile uint8_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_PHYS_BLK_EXP));
+        uint32_t new_opt_io = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_OPT_IO_SIZE));
+
+        if (new_phys_exp != topo.physical_block_exp ||
+            new_opt_io != topo.opt_io_size) {
+            klog(LOG_DEBUG, "virtio",
+                   "Config change: topology phys_exp %u->%u opt_io %u->%u",
+                   (uint64_t)topo.physical_block_exp, (uint64_t)new_phys_exp,
+                   (uint64_t)topo.opt_io_size, (uint64_t)new_opt_io);
+            topo.physical_block_exp = new_phys_exp;
+            topo.alignment_offset = mmio_read8(
+                (volatile uint8_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_ALIGN_OFFSET));
+            topo.min_io_size = mmio_read16(
+                (volatile uint16_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MIN_IO_SIZE));
+            topo.opt_io_size = new_opt_io;
+            error_stats.config_changes++;
+        }
+    }
+
+    /* ---- Detect writeback mode change ---- */
+    if (has_config_wce && blk_dev.device_cfg) {
+        volatile uint8_t *wb = (volatile uint8_t *)
+            (blk_dev.device_cfg + VIRTIO_BLK_CFG_WRITEBACK);
+        uint8_t new_wb = mmio_read8(wb);
+        /* We don't cache writeback state currently — just log the change */
+        klog(LOG_DEBUG, "virtio", "Config change: writeback=%u", (uint64_t)new_wb);
+    }
 }
 
 /* ---- Feature negotiation ---- */

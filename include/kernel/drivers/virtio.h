@@ -80,6 +80,10 @@ struct msix_table_entry {
 #define VIRTIO_STATUS_DEVICE_NEEDS_RESET 0x40
 #define VIRTIO_STATUS_FAILED            0x80
 
+/* ---- VirtIO ISR status register bits (§4.1.4.5) ---- */
+#define VIRTIO_PCI_ISR_QUEUE   0x01  /* Queue interrupt pending */
+#define VIRTIO_PCI_ISR_CONFIG  0x02  /* Device configuration changed */
+
 /* ---- Virtqueue descriptor flags ---- */
 #define VIRTQ_DESC_F_NEXT      0x01  /* Descriptor continues via 'next' */
 #define VIRTQ_DESC_F_WRITE     0x02  /* Device writes (vs reads) */

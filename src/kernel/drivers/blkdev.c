@@ -109,6 +109,21 @@ int blkdev_count(void)
     return num_devices;
 }
 
+int blkdev_update_capacity(const char *name, uint64_t new_sector_count)
+{
+    int i;
+    for (i = 0; i < num_devices; i++) {
+        if (devices[i].active && blk_strcmp(devices[i].name, name) == 0) {
+            uint64_t old = devices[i].sector_count;
+            devices[i].sector_count = new_sector_count;
+            klog(LOG_DEBUG, "blk", "%s: capacity updated %u -> %u sectors",
+                   devices[i].name, old, new_sector_count);
+            return 0;
+        }
+    }
+    return -1;
+}
+
 void blkdev_list(void)
 {
     int i;

@@ -127,3 +127,9 @@ int virtio_blk_get_id(char *buf, uint32_t len);
 /* Get the cached serial string (null-terminated, max 20 chars).
  * Returns empty string if GET_ID was not performed. */
 const char *virtio_blk_serial(void);
+
+/* Handle a device configuration change event (hot-resize, topology, writeback).
+ * Called from the MSI-X config change ISR. Atomically re-reads device config
+ * using config_generation loop, detects changes, and updates driver state.
+ * Also callable from a deferred work context if ISR deferral is needed. */
+void virtio_blk_handle_config_change(void);
