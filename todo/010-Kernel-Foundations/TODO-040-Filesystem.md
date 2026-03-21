@@ -32,6 +32,7 @@
 > | `TODO-040.11-IXFS.md`           | IXFS native filesystem hardening                  |
 > | `TODO-040.13-APFS.md`           | APFS read-only driver                             |
 > | `TODO-040.14-HFSPlus.md`       | HFS+ (Mac OS Extended) read-only driver           |
+> | `TODO-040.15-NVMe-2.0.md`      | NVMe 2.0 PCIe SSD controller driver               |
 > | `TODO-040.16-NVMe-2.1.md`      | NVMe 2.1 PCIe storage driver                      |
 
 ### Dependency Graph
@@ -217,6 +218,7 @@ graph TD
 | ⭐ | **10** | `040-Filesystem.md` | §8.8 Disk Wipe                     | Secure erase CLI + GUI                                        | Phase 6 (Mount)          |   ⬜   |
 | ⭐ | **10** | `040-Filesystem.md` | §8.9 Disk Usage                    | CLI `diskuse` + treemap GUI                                   | Phase 6 (Mount)          |   ⬜   |
 | ⭐ | **10** | `040-Filesystem.md` | §8.10 Snapshots                    | CLI `snapshot` + Snapshot Manager GUI                         | IXFS §6 CoW              |   ⬜   |
+| 🔵 | —      | `040.15-NVMe-2.0.md`| §1–10 NVMe 2.0 PCIe Driver         | Full NVMe driver (28 sections, 5 exclusives)                  | PCI                      |   ⬜   |
 | 🔵 | —      | `040.16-NVMe-2.1.md`| §1–19 NVMe 2.1 PCIe Driver         | Full NVMe driver (19 sections, 5 exclusives)                  | PCI                      |   ⬜   |
 | 🔵 | —      | `040-Filesystem.md` | §8.12 USB Mass Storage             | USB storage + hot-plug (stretch)                              | USB host controller      |   ⬜   |
 
@@ -276,52 +278,6 @@ graph TD
 
 ---
 
-## 1. Disk Drivers
-
-> Moved to dedicated sub-files. See:
-> - [TODO-040.01-VirtIO.md](TODO-040-Filesystem/TODO-040.01-VirtIO.md) — §1.1 VirtIO Block Device Driver ✅
-> - [TODO-040.02-AHCI.md](TODO-040-Filesystem/TODO-040.02-AHCI.md) — §1.2 AHCI (SATA) Driver ✅
-> - [TODO-040.03-ATAPI-SCSI-MMC.md](TODO-040-Filesystem/TODO-040.03-ATAPI-SCSI-MMC.md) — §1.4 ATAPI Optical Driver ✅
-> - §1.3 Block Device Abstraction Layer ✅ (covered in driver sub-files)
-
----
-## 2. Partition Table Support
-
-> Moved to dedicated sub-files. See:
-> - [TODO-040.04-MBR.md](TODO-040-Filesystem/TODO-040.04-MBR.md) — §2.1 MBR Partition Table ✅
-> - [TODO-040.05-GPT.md](TODO-040-Filesystem/TODO-040.05-GPT.md) — §2.2 GPT Partition Table ✅
-> - §2.3 Partition Scanner ✅ (covered in partition sub-files)
-
----
-## 3. FAT32 Filesystem
-
-> Moved to dedicated sub-file. See:
-> - [TODO-040.06-FAT32.md](TODO-040-Filesystem/TODO-040.06-FAT32.md) — FAT32 driver hardening (BPB validation, FSInfo, dual-FAT, LFN write, timestamps, performance, consistency)
->
-> **Sections covered:** §3.1 Read ✅, §3.2 Write ✅, §3.3 VFS ✅, §3.4.1 Offset-Aware Write ✅, §3.4.2 FSInfo ✅, §3.4.3 Sector Cache ✅, §3.4.4 Multi-Volume ✅, §3.4.5 Concurrent Access ✅, §3.4.6 LFN Write ⬜, §3.4.7 Timestamps ⬜
-
----
-
-### 3.5–3.6 VFS Driver Interface & Win32-Compatible File API
-
-> Moved to dedicated sub-file. See:
-> - [TODO-040.07-VFS.md](TODO-040-Filesystem/TODO-040.07-VFS.md) — VFS enhancements + Win32 compat layer
->
-> **Sections covered:** §3.5.1 Rename ✅, §3.5.2 Delete ✅, §3.5.3 Stat ✅, §3.5.4 Truncate ✅, §3.5.5 Dir/Meta/Flush ✅, §3.6.1 Handle Table ⬜, §3.6.2 CreateFile ⬜, §3.6.3 ReadFile ⬜, §3.6.4 Directories ⬜, §3.6.5 File Mgmt ⬜, §3.6.6 Migration ⬜
-
-
----
-
-## 4. External Filesystem Drivers
-> *Read/write drivers for NTFS, ext2/ext3/ext4, exFAT, ISO 9660, and UDF*
-
-> §4.1–4.3 NTFS, §4.4–4.5 ext4, §4.6–4.7 exFAT moved to dedicated sub-files. See:
-> - [TODO-040.08-NTFS.md](TODO-040-Filesystem/TODO-040.08-NTFS.md) — NTFS 3.1 driver (C: drive)
-> - [TODO-040.09-ext4.md](TODO-040-Filesystem/TODO-040.09-ext4.md) — ext4 read-only driver
-> - [TODO-040.10-exFAT.md](TODO-040-Filesystem/TODO-040.10-exFAT.md) — exFAT driver
-> - [TODO-040.13-APFS.md](TODO-040-Filesystem/TODO-040.13-APFS.md) — APFS read-only driver
-> - [TODO-040.14-HFSPlus.md](TODO-040-Filesystem/TODO-040.14-HFSPlus.md) — HFS+ (Mac OS Extended) read-only driver
-
 ### 4.8 ISO 9660 Read Support
 
 **Prompt:** ISO 9660 is the standard CD/DVD filesystem. It uses 2048-byte sectors. The Primary Volume Descriptor (PVD) is at sector 16, identified by signature "CD001". The root directory record in the PVD gives the LBA and size of the root directory. Directory records are variable-length with a length byte, extent LBA, data length, flags (bit 1 = directory), and 8.3 filename. Files are stored as contiguous extents (no fragmentation). Rock Ridge extensions add POSIX metadata (long names, permissions, symlinks) via System Use Entries appended to each directory record. This is a read-only filesystem. Requires ATAPI driver (§1.4) for real optical media, or can read `.iso` files attached as raw block devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: ISO 9660 read support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
@@ -359,14 +315,6 @@ graph TD
 
 ---
 
-## 5. Persistent IXFS (IXFS-on-Disk)
-
-> Moved to dedicated sub-file. See:
-> - [TODO-040.11-IXFS.md](TODO-040-Filesystem/TODO-040.11-IXFS.md) — IXFS native filesystem hardening
->
-> **Sections covered:** §5.1 On-Disk Format ✅, §5.2 Disk Ops ✅, §5.3 File Ops ✅, §5.4 VFS ✅, §5.5 Perf ✅, §5.6 Extents ✅, §5.7 Journal ✅, §5.8 CoW ✅, §5.9.1–5.9.4 ✅, §5.9.5 ADS ⬜, §5.9.6 ACLs ⬜, §5.9.7 Links ⬜, §5.9.8 xattrs ⬜, §5.9.9 Compression ⬜, §5.9.10 Encryption ⬜, §5.9.11 Dedup ⬜, §5.10 USPs, §5.11 mkfs-ixfs ✅
-
----
 
 ## 6. Drive Letter Mounting
 
@@ -674,14 +622,6 @@ graph TD
 - [ ] Auto-snapshot: schedule daily/weekly system snapshots
 - [ ] Commit: `"apps: Snapshot Manager GUI"`
 
-### 8.11 NVMe Driver (Future)
-
-**Prompt:** NVMe is the modern SSD interface. Detect via PCI class 0x01, subclass 0x08. Map BAR0 for the NVMe registers. Initialize admin submission and completion queues, then create I/O queue pairs. Use the Identify command to discover namespaces and capacity. Read/Write commands use Physical Region Pages (PRP) for scatter-gather DMA. This is a stretch goal — prioritize AHCI first since it covers all current testing scenarios. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: NVMe SSD driver"`.
-- [ ] *(Stretch)* Create `src/kernel/drivers/nvme.c`
-- [ ] *(Stretch)* Detect NVMe controller via PCI (class `0x01`, subclass `0x08`)
-- [ ] *(Stretch)* Map BAR0, initialize admin + I/O submission/completion queues
-- [ ] *(Stretch)* Implement read/write via NVMe commands (Identify, Read, Write)
-- [ ] *(Stretch)* QEMU flag: `-drive file=disk.img,format=raw,if=none,id=d0 -device nvme,drive=d0,serial=1234`
 
 ### 8.12 USB Mass Storage (Future)
 
