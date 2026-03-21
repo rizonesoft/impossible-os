@@ -170,12 +170,12 @@ graph TD
 
 | ⭐ | Phase  | TODO File                | Section(s)                        | What It Delivers                                             | Depends On              | Status |
 | - | :----: | ------------------------ | --------------------------------- | ------------------------------------------------------------ | ----------------------- | :----: |
-| 💎 | **1**  | `040.01-VirtIO.md`       | §1 PCI Transport                  | Modern PCI capability discovery, BAR mapping                 | —                       | ⬜      |
-| 💎 | **1**  | `040.01-VirtIO.md`       | §2 Initialization                 | Full feature negotiation + status machine                    | Phase 1 (§1)            | ⬜      |
+| 💎 | **1**  | `040.01-VirtIO.md`       | §1 PCI Transport                  | Modern PCI capability discovery, BAR mapping                 | —                       | ✅      |
+| 💎 | **1**  | `040.01-VirtIO.md`       | §2 Initialization                 | Full feature negotiation + status machine                    | Phase 1 (§1)            | ✅      |
 | 💎 | **1**  | `040.02-AHCI.md`         | §1 PCI + ABAR                     | PCI capability parsing, ABAR remapping                       | —                       | ⬜      |
 | 💎 | **1**  | `040.02-AHCI.md`         | §2 HBA Init                       | Port enumeration, command lists, FIS buffers                 | Phase 1 (§1)            | ⬜      |
-| 💎 | **2**  | `040.01-VirtIO.md`       | §3 Virtqueue                      | Descriptor rings, avail/used rings, kick                     | Phase 1                 | ⬜      |
-| 💎 | **2**  | `040.01-VirtIO.md`       | §4 MSI-X Interrupts               | Interrupt-driven I/O (no polling)                            | Phase 2 (§3)            | ⬜      |
+| 💎 | **2**  | `040.01-VirtIO.md`       | §3 Virtqueue                      | Descriptor rings, avail/used rings, kick                     | Phase 1                 | ✅      |
+| 💎 | **2**  | `040.01-VirtIO.md`       | §4 MSI-X Interrupts               | Interrupt-driven I/O (no polling)                            | Phase 2 (§3)            | ✅      |
 | 💎 | **2**  | `040.02-AHCI.md`         | §3 DMA R/W                        | READ/WRITE DMA EXT with PRDT                                 | Phase 1 (§2)            | ⬜      |
 | 💎 | **2**  | `040.02-AHCI.md`         | §4 Interrupt-Driven I/O           | IRQ-based completion, per-port ISR                           | Phase 1 (§2)            | ⬜      |
 | 💎 | **2**  | `040.03-ATAPI.md`        | §1–3 SCSI + READ                  | ATAPI packet command, SCSI READ(10/12)                       | AHCI Phase 1            | ⬜      |
@@ -233,7 +233,7 @@ graph TD
 | 💎 | **6**  | `040.14-HFSPlus.md`      | §1–8 HFS+ Read-Only               | Read macOS HFS+ volumes                                      | blkdev + partition      | ⬜      |
 | 💎 | **7**  | `040.06-FAT32.md`        | §3 Performance                    | Sector cache tuning, contiguous reads                        | FAT32 Phase 3           | ⬜      |
 | 💎 | **7**  | `040.06-FAT32.md`        | §4–5 Consistency                  | FAT chain validation, fsck checks                            | FAT32 Phase 3           | ⬜      |
-| 💎 | **7**  | `040.01-VirtIO.md`       | §5–7 Error + Flush                | Error recovery + flush/write-back                            | VirtIO Phase 2          | ⬜      |
+| 💎 | **7**  | `040.01-VirtIO.md`       | §5–7 Error + Flush                | Error recovery + flush/write-back                            | VirtIO Phase 2          | ⚠️      |
 | 💎 | **7**  | `040.02-AHCI.md`         | §5–7 NCQ + Error                  | Native Command Queuing, error recovery                       | AHCI Phase 2            | ⬜      |
 | 💎 | **7**  | `040.04-MBR.md`          | §3–6 CHS + Write + Create         | CHS encoding, MBR write, partition CRUD                      | MBR Phase 2             | ⬜      |
 | 💎 | **7**  | `040.05-GPT.md`          | §4–7 GUID + Attrs + Hybrid        | Type GUID expansion, attribute decode                        | GPT Phase 2             | ⬜      |

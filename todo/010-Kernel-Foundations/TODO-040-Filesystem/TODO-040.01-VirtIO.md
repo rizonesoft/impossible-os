@@ -191,7 +191,7 @@ graph TD
 | ⭐ | **5**  | §17.1 Predictive Prefetch        | Phase 3 (§3.2)                |   ⬜   |
 | ⭐ | **5**  | §18.1 I/O Request Merging        | Phase 5 (§7.1)                |   ⬜   |
 | ⭐ | **5**  | §19.1 Multi-Device Striping      | Phase 3 (§3.2)                |   ⬜   |
-| ⭐ | **5**  | §20.1 Force Unit Access Writes   | Phase 2 (§2.2) + Phase 3 (§3.2) |   ⬜   |
+| ⭐ | **5**  | §20.1 Force Unit Access Writes   | Phase 2 (§2.2) + P3 (§3.2)    |   ⬜   |
 | ⭐ | **5**  | §21.1 Inline Encryption          | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **6**  | §8.1 Packed Virtqueue            | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **6**  | §9.1 Secure Erase                | Phase 3 (§5.1)                |   ⬜   |
