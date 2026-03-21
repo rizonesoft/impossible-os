@@ -36,6 +36,14 @@ static inline void wrmsr(uint32_t msr, uint64_t val)
     __asm__ volatile("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
 }
 
+/* CPUID leaf 0x40000003 EAX: partition privileges (TLFS §2.4.4) */
+#define HV_FEATURE_PRIV_ACCESS_VP_RUNTIME   (1u << 0)
+#define HV_FEATURE_PRIV_ACCESS_HYPERCALL    (1u << 1)  /* Can use hypercall page */
+#define HV_FEATURE_PRIV_ACCESS_SYNIC        (1u << 2)  /* Can access SynIC MSRs */
+#define HV_FEATURE_PRIV_ACCESS_SYNTH_TIMER  (1u << 3)
+#define HV_FEATURE_PRIV_POST_MESSAGES       (1u << 4)  /* Can post SynIC messages */
+#define HV_FEATURE_PRIV_SIGNAL_EVENTS       (1u << 5)  /* Can signal SynIC events */
+
 /* ---- CPUID helper ---- */
 
 static inline void cpuid(uint32_t leaf,
@@ -97,6 +105,8 @@ static uint32_t next_gpadl_handle = 0x100;
 int hv_detect(void)
 {
     uint32_t eax, ebx, ecx, edx;
+    uint32_t privs;
+    uint32_t required_privs;
 
     if (hv_detected >= 0)
         return hv_detected;
@@ -123,8 +133,32 @@ int hv_detect(void)
         return 0;
     }
 
+    /* Check CPUID leaf 0x40000003: partition privileges (TLFS §2.4.4).
+     * VMBus needs: AccessHypercallMsrs, AccessSynicRegs, PostMessages.
+     * Running in QEMU on WSL2, the outer Hyper-V CPUID signature leaks
+     * through but VMBus functionality is unavailable. This check filters
+     * out environments that advertise Hv#1 but lack the required privileges
+     * for VMBus operation (hypercall page, SynIC MSRs, message posting). */
+    cpuid(HV_CPUID_FEATURES, &eax, &ebx, &ecx, &edx);
+    privs = eax;
+
+    required_privs = HV_FEATURE_PRIV_ACCESS_HYPERCALL |
+                     HV_FEATURE_PRIV_ACCESS_SYNIC |
+                     HV_FEATURE_PRIV_POST_MESSAGES;
+
+    if ((privs & required_privs) != required_privs) {
+        klog(LOG_INFO, "hyperv",
+             "Hyper-V signature found but missing privileges "
+             "(have=0x%x, need=0x%x) — not a full Hyper-V host",
+             (uint64_t)privs, (uint64_t)required_privs);
+        hv_detected = 0;
+        return 0;
+    }
+
     hv_detected = 1;
-    klog(LOG_INFO, "hyperv", "Hyper-V detected (interface Hv#1)");
+    klog(LOG_INFO, "hyperv",
+         "Hyper-V detected (interface Hv#1, privs=0x%x)",
+         (uint64_t)privs);
     return 1;
 }
 
