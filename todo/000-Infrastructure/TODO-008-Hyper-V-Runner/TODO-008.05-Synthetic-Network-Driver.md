@@ -22,7 +22,7 @@
 
 ## 1. VMBus Channel Setup & RNDIS Protocol Negotiation
 
-**Prompt:** The netvsc driver requires opening a VMBus channel to the Network VSP (GUID `F8615163-DF3E-46C5-913F-F2D2F965ED0E`) in the host partition. Once the channel is open, the driver must negotiate the RNDIS protocol: send `RNDIS_INITIALIZE_MSG` (type `0x00000002`) with RNDIS version 1.0 (major=1, minor=0), max transfer size, and max packets per message. The host responds with `RNDIS_INITIALIZE_CMPLT` confirming negotiation. The driver must allocate PMM-backed send and receive buffers, establish GPADL (Guest Physical Address Descriptor List) handles for shared memory with the host, and send `NVSP_MSG1_TYPE_SEND_SEND_BUF` / `NVSP_MSG1_TYPE_SEND_RECV_BUF` messages to register them. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc VMBus channel and RNDIS init"`. Add notes directly in this TODO section.
+**Prompt:** The netvsc driver requires opening a VMBus channel to the Network VSP (GUID `F8615163-DF3E-46C5-913F-F2D2F965ED0E`) in the host partition. Once the channel is open, the driver must negotiate the RNDIS protocol: send `RNDIS_INITIALIZE_MSG` (type `0x00000002`) with RNDIS version 1.0 (major=1, minor=0), max transfer size, and max packets per message. The host responds with `RNDIS_INITIALIZE_CMPLT` confirming negotiation. The driver must allocate PMM-backed send and receive buffers, establish GPADL (Guest Physical Address Descriptor List) handles for shared memory with the host, and send `NVSP_MSG1_TYPE_SEND_SEND_BUF` / `NVSP_MSG1_TYPE_SEND_RECV_BUF` messages to register them. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc VMBus channel and RNDIS init"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/drivers/hyperv/netvsc.c` and `include/kernel/drivers/hyperv/netvsc.h`
 - [ ] Open VMBus channel for Network VSP GUID `F8615163-DF3E-46C5-913F-F2D2F965ED0E`
@@ -43,7 +43,7 @@
 
 ## 2. MAC Address & Device Configuration
 
-**Prompt:** After RNDIS initialization, query the device for its hardware (permanent) MAC address and the current MAC address using RNDIS OID queries. The netvsc driver sends `RNDIS_QUERY_MSG` (type `0x00000004`) with OID `OID_802_3_PERMANENT_ADDRESS` (`0x01010101`) and `OID_802_3_CURRENT_ADDRESS` (`0x01010102`). The host responds with `RNDIS_QUERY_CMPLT` containing the 6-byte Ethernet address. Also query `OID_GEN_MAXIMUM_FRAME_SIZE` for MTU and `OID_GEN_LINK_SPEED` for link speed. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc MAC address and device config"`. Add notes directly in this TODO section.
+**Prompt:** After RNDIS initialization, query the device for its hardware (permanent) MAC address and the current MAC address using RNDIS OID queries. The netvsc driver sends `RNDIS_QUERY_MSG` (type `0x00000004`) with OID `OID_802_3_PERMANENT_ADDRESS` (`0x01010101`) and `OID_802_3_CURRENT_ADDRESS` (`0x01010102`). The host responds with `RNDIS_QUERY_CMPLT` containing the 6-byte Ethernet address. Also query `OID_GEN_MAXIMUM_FRAME_SIZE` for MTU and `OID_GEN_LINK_SPEED` for link speed. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc MAC address and device config"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `netvsc_rndis_query(oid, buf, len)` — generic RNDIS OID query helper
   - [ ] Build `RNDIS_QUERY_MSG` (type `0x00000004`) with OID, info buffer offset/length
@@ -61,7 +61,7 @@
 
 ## 3. RNDIS Packet Filter & Link Up
 
-**Prompt:** Before the NIC can receive traffic, the driver must set the RNDIS packet filter to accept directed (unicast), broadcast, and optionally multicast frames. Send `RNDIS_SET_MSG` (type `0x00000009`) with OID `OID_GEN_CURRENT_PACKET_FILTER` (`0x0001010E`) and the desired filter bitmask (`NDIS_PACKET_TYPE_DIRECTED | NDIS_PACKET_TYPE_BROADCAST`). The host responds with `RNDIS_SET_CMPLT` (type `0x0000000A`). After setting the filter, the NIC is live and can send/receive Ethernet frames. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc packet filter and link up"`. Add notes directly in this TODO section.
+**Prompt:** Before the NIC can receive traffic, the driver must set the RNDIS packet filter to accept directed (unicast), broadcast, and optionally multicast frames. Send `RNDIS_SET_MSG` (type `0x00000009`) with OID `OID_GEN_CURRENT_PACKET_FILTER` (`0x0001010E`) and the desired filter bitmask (`NDIS_PACKET_TYPE_DIRECTED | NDIS_PACKET_TYPE_BROADCAST`). The host responds with `RNDIS_SET_CMPLT` (type `0x0000000A`). After setting the filter, the NIC is live and can send/receive Ethernet frames. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc packet filter and link up"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `netvsc_rndis_set(oid, value, len)` — generic RNDIS OID set helper
   - [ ] Build `RNDIS_SET_MSG` (type `0x00000009`) with OID, info buffer
@@ -79,7 +79,7 @@
 
 ## 4. Transmit Path (netvsc_send)
 
-**Prompt:** Implement the transmit path. When the networking stack calls `netvsc_send(packet, len)`, the driver must encapsulate the Ethernet frame in an RNDIS data message (`RNDIS_PACKET_MSG`, type `0x00000001`). The RNDIS header includes the data offset, data length, and optional out-of-band (OOB) data for offloads. The encapsulated message is then copied into the pre-registered send buffer and transmitted via `vmbus_sendpacket()`. For small packets, use memory copy into the send buffer. For LSO-tagged packets or when the send buffer is exhausted, fall back to passing memory pointers (zero-copy). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc transmit path"`. Add notes directly in this TODO section.
+**Prompt:** Implement the transmit path. When the networking stack calls `netvsc_send(packet, len)`, the driver must encapsulate the Ethernet frame in an RNDIS data message (`RNDIS_PACKET_MSG`, type `0x00000001`). The RNDIS header includes the data offset, data length, and optional out-of-band (OOB) data for offloads. The encapsulated message is then copied into the pre-registered send buffer and transmitted via `vmbus_sendpacket()`. For small packets, use memory copy into the send buffer. For LSO-tagged packets or when the send buffer is exhausted, fall back to passing memory pointers (zero-copy). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc transmit path"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `netvsc_send(const void *packet, size_t len)`:
   - [ ] Build `RNDIS_PACKET_MSG` header (type `0x00000001`):
@@ -103,7 +103,7 @@
 
 ## 5. Receive Path (netvsc → ethernet_receive)
 
-**Prompt:** Implement the receive path. The host places incoming packets into the pre-registered receive buffer and sends a VMBus completion message containing the receive buffer section index and length. The driver reads the RNDIS data message from the receive buffer, strips the `RNDIS_PACKET_MSG` header, extracts the raw Ethernet frame, and passes it up to `ethernet_receive()`. A single VMBus completion may reference multiple RNDIS packets (batched receive). After processing, the driver must signal the host to reclaim the receive buffer section. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc receive path"`. Add notes directly in this TODO section.
+**Prompt:** Implement the receive path. The host places incoming packets into the pre-registered receive buffer and sends a VMBus completion message containing the receive buffer section index and length. The driver reads the RNDIS data message from the receive buffer, strips the `RNDIS_PACKET_MSG` header, extracts the raw Ethernet frame, and passes it up to `ethernet_receive()`. A single VMBus completion may reference multiple RNDIS packets (batched receive). After processing, the driver must signal the host to reclaim the receive buffer section. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc receive path"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement receive callback (triggered by VMBus channel interrupt):
   - [ ] Read VMBus transfer page packet from receive ring buffer
@@ -124,7 +124,7 @@
 
 ## 6. NIC Registration & Ethernet Layer Integration
 
-**Prompt:** Register the netvsc adapter with the kernel's Ethernet layer so it appears as a standard NIC alongside RTL8139 / virtio-net. The netvsc driver must register a `nic_ops` struct with `send`, `get_mac`, and `get_mtu` callbacks. The driver init should be called from `boot_storage.c` after `vmbus_init()` succeeds, gated on Hyper-V detection. On non-Hyper-V platforms, the init is silently skipped. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc NIC registration"`. Add notes directly in this TODO section.
+**Prompt:** Register the netvsc adapter with the kernel's Ethernet layer so it appears as a standard NIC alongside RTL8139 / virtio-net. The netvsc driver must register a `nic_ops` struct with `send`, `get_mac`, and `get_mtu` callbacks. The driver init should be called from `boot_storage.c` after `vmbus_init()` succeeds, gated on Hyper-V detection. On non-Hyper-V platforms, the init is silently skipped. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc NIC registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `netvsc_nic_ops` with callbacks:
   - [ ] `.send = netvsc_send`
@@ -142,7 +142,7 @@
 
 ## 7. DHCP & Basic Connectivity Test
 
-**Prompt:** Validate end-to-end networking by performing a DHCP handshake and ping test over the netvsc adapter on a Hyper-V Gen 2 VM. This requires the existing DHCP client and ICMP echo responder to work over the new netvsc NIC. Verify that the VM obtains an IP address from the Hyper-V Default Switch and can respond to ICMP echo requests from the host. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc end-to-end connectivity"`. Add notes directly in this TODO section.
+**Prompt:** Validate end-to-end networking by performing a DHCP handshake and ping test over the netvsc adapter on a Hyper-V Gen 2 VM. This requires the existing DHCP client and ICMP echo responder to work over the new netvsc NIC. Verify that the VM obtains an IP address from the Hyper-V Default Switch and can respond to ICMP echo requests from the host. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc end-to-end connectivity"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Boot Impossible OS on Hyper-V Gen 2 with virtual switch attached
 - [ ] Verify netvsc init log messages appear (channel open, RNDIS negotiation, MAC address)
@@ -157,7 +157,7 @@
 
 ## 8. Receive Side Scaling (RSS)
 
-**Prompt:** Implement Receive Side Scaling to distribute incoming packet processing across multiple virtual CPUs within the guest. The netvsc driver advertises RSS capability during RNDIS initialization. Configure RSS parameters via `OID_GEN_RECEIVE_SCALE_PARAMETERS` — set the hash type (IPv4/IPv6 + TCP), hash function (Toeplitz), indirection table mapping queue indices to vCPUs, and the hash secret key. Without RSS, all incoming traffic interrupts are bound to vCPU 0, creating a bottleneck on high-throughput workloads. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc RSS support"`. Add notes directly in this TODO section.
+**Prompt:** Implement Receive Side Scaling to distribute incoming packet processing across multiple virtual CPUs within the guest. The netvsc driver advertises RSS capability during RNDIS initialization. Configure RSS parameters via `OID_GEN_RECEIVE_SCALE_PARAMETERS` — set the hash type (IPv4/IPv6 + TCP), hash function (Toeplitz), indirection table mapping queue indices to vCPUs, and the hash secret key. Without RSS, all incoming traffic interrupts are bound to vCPU 0, creating a bottleneck on high-throughput workloads. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc RSS support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Negotiate RSS capability during RNDIS init (advertise in `RNDIS_INITIALIZE_MSG`)
 - [ ] Configure RSS via `OID_GEN_RECEIVE_SCALE_PARAMETERS`:
@@ -177,7 +177,7 @@
 
 ## 9. Checksum & Segmentation Offloads
 
-**Prompt:** Enable hardware offloads to reduce CPU overhead during packet processing. The netvsc driver supports checksum offload (TX and RX) and Large Send Offload (LSO/LSOv2) for both IPv4 and IPv6. Set offload capabilities via `OID_TCP_OFFLOAD_PARAMETERS`. For transmit, set the appropriate flags in the RNDIS OOB data of `RNDIS_PACKET_MSG` to indicate that the host should compute TCP/UDP/IP checksums. For receive, parse the OOB data to determine whether checksums were verified by the host. LSO allows sending segments up to 64 KB that the host segments into MTU-sized packets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc checksum and LSO offloads"`. Add notes directly in this TODO section.
+**Prompt:** Enable hardware offloads to reduce CPU overhead during packet processing. The netvsc driver supports checksum offload (TX and RX) and Large Send Offload (LSO/LSOv2) for both IPv4 and IPv6. Set offload capabilities via `OID_TCP_OFFLOAD_PARAMETERS`. For transmit, set the appropriate flags in the RNDIS OOB data of `RNDIS_PACKET_MSG` to indicate that the host should compute TCP/UDP/IP checksums. For receive, parse the OOB data to determine whether checksums were verified by the host. LSO allows sending segments up to 64 KB that the host segments into MTU-sized packets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc checksum and LSO offloads"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Query offload capabilities: `OID_TCP_OFFLOAD_HARDWARE_CAPABILITIES`
 - [ ] Set offload parameters: `OID_TCP_OFFLOAD_PARAMETERS`
@@ -199,7 +199,7 @@
 
 ## 10. SR-IOV / VF Failover Awareness (Advanced)
 
-**Prompt:** When the Hyper-V host has SR-IOV enabled and a physical NIC supports Virtual Functions (VFs), the host may assign a hardware VF directly to the guest for near-bare-metal throughput. The netvsc driver must detect when a VF is assigned (via PCI bus hot-plug event), bind its protocol edge to the VF driver, and transparently route data traffic through the hardware path while keeping the synthetic interface as the control/management path. On VF removal (Live Migration, host resource exhaustion), the netvsc must seamlessly fail back to the VMBus synthetic data path without dropping TCP connections. This maintains both peak performance and infrastructure mobility. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc SR-IOV VF failover"`. Add notes directly in this TODO section.
+**Prompt:** When the Hyper-V host has SR-IOV enabled and a physical NIC supports Virtual Functions (VFs), the host may assign a hardware VF directly to the guest for near-bare-metal throughput. The netvsc driver must detect when a VF is assigned (via PCI bus hot-plug event), bind its protocol edge to the VF driver, and transparently route data traffic through the hardware path while keeping the synthetic interface as the control/management path. On VF removal (Live Migration, host resource exhaustion), the netvsc must seamlessly fail back to the VMBus synthetic data path without dropping TCP connections. This maintains both peak performance and infrastructure mobility. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc SR-IOV VF failover"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect VF assignment: listen for `NVSP_MSG4_TYPE_SEND_VF_ASSOCIATION` from host
   - [ ] Message contains VF serial number and allocation status (assigned/revoked)
@@ -225,7 +225,7 @@
 
 ## 11. VLAN Tagging Support
 
-**Prompt:** Implement IEEE 802.1Q VLAN tagging support for the netvsc adapter. The Hyper-V virtual switch can assign VLAN IDs to VM network adapters. The netvsc driver must handle VLAN tag insertion on transmit and VLAN tag stripping on receive, passing the VLAN ID and priority through the RNDIS OOB data. This is necessary for enterprise network segmentation on Hyper-V. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc VLAN tagging"`. Add notes directly in this TODO section.
+**Prompt:** Implement IEEE 802.1Q VLAN tagging support for the netvsc adapter. The Hyper-V virtual switch can assign VLAN IDs to VM network adapters. The netvsc driver must handle VLAN tag insertion on transmit and VLAN tag stripping on receive, passing the VLAN ID and priority through the RNDIS OOB data. This is necessary for enterprise network segmentation on Hyper-V. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc VLAN tagging"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Query VLAN capability: `OID_GEN_VLAN_ID`
 - [ ] TX path: insert VLAN tag in RNDIS OOB data:
@@ -241,7 +241,7 @@
 
 ## 12. Link State Change & Status Monitoring
 
-**Prompt:** Implement robust link state change handling and NIC status monitoring. The host can send `RNDIS_INDICATE_STATUS_MSG` at any time to signal media connect/disconnect, network speed changes, or other status updates. The driver must handle these asynchronously and update the NIC state. Expose NIC statistics (packets sent/received, errors, bytes transferred) via Registry for the Network Manager GUI. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc link state and statistics"`. Add notes directly in this TODO section.
+**Prompt:** Implement robust link state change handling and NIC status monitoring. The host can send `RNDIS_INDICATE_STATUS_MSG` at any time to signal media connect/disconnect, network speed changes, or other status updates. The driver must handle these asynchronously and update the NIC state. Expose NIC statistics (packets sent/received, errors, bytes transferred) via Registry for the Network Manager GUI. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: netvsc link state and statistics"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Handle `RNDIS_INDICATE_STATUS_MSG` (type `0x00000007`) asynchronously:
   - [ ] `RNDIS_STATUS_MEDIA_CONNECT` (`0x4001000B`) — update link state to UP

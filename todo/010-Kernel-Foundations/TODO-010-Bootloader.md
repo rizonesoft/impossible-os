@@ -181,7 +181,7 @@ graph TD
 > VM-Exit. On real hardware, this silently corrupts PCI BAR windows. The UEFI memory map
 > contains `EfiMemoryMappedIO` descriptors that **must** be mapped as Uncacheable (UC).
 
-**Prompt:** Enhance `setup_page_tables()` in `bootx64.c` to respect UEFI memory descriptor types. After the initial 4 GiB identity map, walk the UEFI memory map and re-flag 2 MiB pages that overlap MMIO regions with `PCD=1, PWT=1` (Uncacheable). Skip mapping `EfiReservedMemoryType` entirely. Preserve `EfiRuntimeServicesData/Code` with correct attributes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: UC page mapping for MMIO regions"`. Add notes directly in this TODO section.
+**Prompt:** Enhance `setup_page_tables()` in `bootx64.c` to respect UEFI memory descriptor types. After the initial 4 GiB identity map, walk the UEFI memory map and re-flag 2 MiB pages that overlap MMIO regions with `PCD=1, PWT=1` (Uncacheable). Skip mapping `EfiReservedMemoryType` entirely. Preserve `EfiRuntimeServicesData/Code` with correct attributes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: UC page mapping for MMIO regions"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 | UEFI Memory Type | Required Caching | PTE Flags |
 |---|---|---|
@@ -851,7 +851,7 @@ timeout=5                 # boot menu timeout in seconds
 
 ### 7.2 Multi-OS Detection & Boot Menu
 
-**Prompt:** Windows Boot Manager auto-detects other OSes on the disk (Linux EFI entries, other Windows installs). GRUB has `os-prober`. Impossible OS currently shows no other OSes. Scan EFI partition for known bootloaders at boot, and if others are found, offer a timed boot menu. Detection: search for `\EFI\Microsoft\Boot\bootmgfw.efi` (Windows), `\EFI\ubuntu\grubx64.efi`, `\EFI\fedora\grubx64.efi`, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: multi-OS detection and boot menu"`. Add notes directly in this TODO section.
+**Prompt:** Windows Boot Manager auto-detects other OSes on the disk (Linux EFI entries, other Windows installs). GRUB has `os-prober`. Impossible OS currently shows no other OSes. Scan EFI partition for known bootloaders at boot, and if others are found, offer a timed boot menu. Detection: search for `\EFI\Microsoft\Boot\bootmgfw.efi` (Windows), `\EFI\ubuntu\grubx64.efi`, `\EFI\fedora\grubx64.efi`, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: multi-OS detection and boot menu"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 - [ ] Scan root EFI partition `\EFI\` subdirectories for `*.efi` files
 - [ ] Identify known bootloaders by path (Windows, Ubuntu, Fedora, etc.)
 - [ ] If other OSes found AND hold-key not pressed: show timed boot menu (5s default)
@@ -865,7 +865,7 @@ timeout=5                 # boot menu timeout in seconds
 
 ### 7.3 A/B (Dual-Slot) Boot
 
-**Prompt:** Android, ChromeOS, and modern embedded Linux systems use A/B dual-slot boot — two complete OS copies, updated alternately so a failed update never bricks the device. Boot slot A normally; on consecutive boot failures, auto-switch to slot B (last known good). This is a **major differentiator** — Windows and desktop Linux do NOT have native A/B boot. Store the active slot and failure counter in UEFI NVRAM. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: A/B dual-slot boot"`. Add notes directly in this TODO section.
+**Prompt:** Android, ChromeOS, and modern embedded Linux systems use A/B dual-slot boot — two complete OS copies, updated alternately so a failed update never bricks the device. Boot slot A normally; on consecutive boot failures, auto-switch to slot B (last known good). This is a **major differentiator** — Windows and desktop Linux do NOT have native A/B boot. Store the active slot and failure counter in UEFI NVRAM. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: A/B dual-slot boot"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Windows 11 (no A/B), desktop Linux (no A/B natively — only Atomic/immutable distros)
 - [ ] Define NVRAM variable `ImpossibleOS_BootSlot` (A or B) and `ImpossibleOS_BootFailCount`
@@ -880,7 +880,7 @@ timeout=5                 # boot menu timeout in seconds
 
 ### 7.4 Firmware Compatibility Check
 
-**Prompt:** At boot, validate that the firmware meets minimum requirements before loading the kernel. Check: UEFI version ≥ 2.5 (required for EFI_GRAPHICS_OUTPUT_PROTOCOL v2), available RAM ≥ 256 MiB, x86-64 CPU (already guaranteed by EFI mode), and GPU framebuffer accessible (FrameBufferBase ≠ 0 after GOP SetMode). On failure, print a human-readable UEFI console error and halt rather than showing a confusing crash later. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: firmware compatibility check"`. Add notes directly in this TODO section.
+**Prompt:** At boot, validate that the firmware meets minimum requirements before loading the kernel. Check: UEFI version ≥ 2.5 (required for EFI_GRAPHICS_OUTPUT_PROTOCOL v2), available RAM ≥ 256 MiB, x86-64 CPU (already guaranteed by EFI mode), and GPU framebuffer accessible (FrameBufferBase ≠ 0 after GOP SetMode). On failure, print a human-readable UEFI console error and halt rather than showing a confusing crash later. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: firmware compatibility check"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 - [ ] Check UEFI revision: `gST->Hdr.Revision >= EFI_2_50_SYSTEM_TABLE_REVISION`
 - [ ] Check available RAM ≥ 256 MiB from memory map (sum `EfiConventionalMemory` entries)
 - [ ] Check GOP framebuffer: `FrameBufferBase != 0` after `SetMode()`
@@ -892,7 +892,7 @@ timeout=5                 # boot menu timeout in seconds
 
 ### 7.5 Auto-Recovery After Crash Dump
 
-**Prompt:** When the kernel writes a crash dump (see §5.3 / `panic.c`), the next boot should detect it and offer to: send the dump, view it, or clear it and boot normally. Windows does this automatically (Windows Error Reporting). Linux has `kdump` + `makedumpfile`. Impossible OS already writes `C:\Impossible\System\crashdump.log` — we just need the bootloader to detect it and adjust boot behaviour. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: crash dump detection and recovery menu"`. Add notes directly in this TODO section.
+**Prompt:** When the kernel writes a crash dump (see §5.3 / `panic.c`), the next boot should detect it and offer to: send the dump, view it, or clear it and boot normally. Windows does this automatically (Windows Error Reporting). Linux has `kdump` + `makedumpfile`. Impossible OS already writes `C:\Impossible\System\crashdump.log` — we just need the bootloader to detect it and adjust boot behaviour. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: crash dump detection and recovery menu"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Note:** The bootloader cannot read the FAT32 system disk — check is done in early kernel before the desktop, after VFS mounts.
 - [ ] In `main.c` early boot (after VFS mount, before desktop): check for `C:\Impossible\System\crashdump.log`

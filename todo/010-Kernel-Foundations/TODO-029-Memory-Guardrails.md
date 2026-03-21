@@ -24,7 +24,7 @@
 
 ## 2. Update Guardrails Documentation
 
-**Prompt:** Update inline comments, `rules.md`, and the `/add-asset` workflow to reflect the current correct practices. The goal is to make the rules obvious to any agent or developer working in this codebase in the future. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"docs: update kmalloc/PMM guardrails"`. Add notes directly in this TODO section.
+**Prompt:** Update inline comments, `rules.md`, and the `/add-asset` workflow to reflect the current correct practices. The goal is to make the rules obvious to any agent or developer working in this codebase in the future. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"docs: update kmalloc/PMM guardrails"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 - [ ] Update `gfx_text.c` header comment: remove any `TODO: Migrate` lines (migration is done)
 - [ ] Update `rules.md` Known Gotchas: add the font PMM migration as a resolved example
 - [ ] Update `.agents/workflows/add-asset.md`: add font system as a "good example" of correct PMM usage
@@ -66,7 +66,7 @@
 
 ## 5. PMM Allocator Statistics & Shell Command
 
-**Prompt:** The physical memory manager (`pmm_alloc_contiguous`) has no visibility — you can't see how much physical memory is free, how many allocations succeeded, or how much is wasted on fragmentation. Add a `pmm_stats()` function that returns: total physical pages, free pages, largest contiguous free block (for diagnosing fragmentation), and allocation count. Expose via a `meminfo` shell command and `SYS_PMMSTATS` syscall for the Task Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: PMM statistics and meminfo command"`. Add notes directly in this TODO section.
+**Prompt:** The physical memory manager (`pmm_alloc_contiguous`) has no visibility — you can't see how much physical memory is free, how many allocations succeeded, or how much is wasted on fragmentation. Add a `pmm_stats()` function that returns: total physical pages, free pages, largest contiguous free block (for diagnosing fragmentation), and allocation count. Expose via a `meminfo` shell command and `SYS_PMMSTATS` syscall for the Task Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: PMM statistics and meminfo command"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux `/proc/meminfo` is well known. Windows Task Manager shows similar info. Impossible OS shell `meminfo` matches both, with PMM-level breakdown that neither exposes directly.
 - [ ] Implement `pmm_stats(pmm_stats_t *out)` — total/free pages, largest free block, alloc count
@@ -85,7 +85,7 @@
 
 ## 6. Heap Overflow Detection (Stack Canaries)
 
-**Prompt:** Heap and stack overflows are silent in the current kernel — a buffer overrun corrupts adjacent memory without detection. Add stack canaries to kernel functions: a random value placed below the return address at function entry, checked at exit (GCC `-fstack-protector-strong`). For the kernel heap, add a canary word at the end of each `kmalloc` allocation; `kfree` verifies it before freeing. Double-free detection: mark freed blocks with a magic pattern and check on free. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: heap canaries and stack protector"`. Add notes directly in this TODO section.
+**Prompt:** Heap and stack overflows are silent in the current kernel — a buffer overrun corrupts adjacent memory without detection. Add stack canaries to kernel functions: a random value placed below the return address at function entry, checked at exit (GCC `-fstack-protector-strong`). For the kernel heap, add a canary word at the end of each `kmalloc` allocation; `kfree` verifies it before freeing. Double-free detection: mark freed blocks with a magic pattern and check on free. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mm: heap canaries and stack protector"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Neither Windows nor Linux enable heap canaries in their kernel by default. Impossible OS makes them the default in debug builds — safer development.
 - [ ] Enable `-fstack-protector-strong` in kernel Makefile (check if `x86_64-elf-gcc` supports it)

@@ -130,7 +130,7 @@
 > from scratch (full-file overwrite). After §3.4.1 is done, live flush becomes a simple append
 > of ~100 bytes instead of a rewrite of the entire buffer. This is the #1 performance bottleneck.
 
-**Prompt:** When debug mode is active, every `klog()` entry must be flushed to disk immediately so that even a boot hang leaves the last log line on disk. The current implementation in `klog_live.c` rewrites the entire file on every entry (FAT32 full-file overwrite limitation). Optimise this: use a PMM-backed growing buffer, and only flush every N entries or at explicit flush points. Since FAT32 can't append, each flush must rewrite the entire file — but batching reduces I/O cost. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: optimized live flush with batching"`. Add notes directly in this TODO section.
+**Prompt:** When debug mode is active, every `klog()` entry must be flushed to disk immediately so that even a boot hang leaves the last log line on disk. The current implementation in `klog_live.c` rewrites the entire file on every entry (FAT32 full-file overwrite limitation). Optimise this: use a PMM-backed growing buffer, and only flush every N entries or at explicit flush points. Since FAT32 can't append, each flush must rewrite the entire file — but batching reduces I/O cost. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: optimized live flush with batching"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Live mode: flush every 5 entries (configurable) or at explicit `klog_disk_flush()` calls
 - [ ] `boot_progress()` calls trigger immediate flush (critical checkpoints)
@@ -141,7 +141,7 @@
 
 ### 1.4 Black Box Disk Space Management *(agent)*
 
-**Prompt:** The Black Box partition is 32 MiB. Without management, it will fill up and logging will silently fail. Implement automatic cleanup and a boot warning when space is low. On every `klog_disk_init()`, check free space. If below 4 MiB, delete the oldest boot logs (by filename date) until 8 MiB is free. If below 2 MiB, show a warning during boot: `[WARN] Black Box nearly full — oldest logs deleted`. The warning should appear both on serial and in the boot splash status text. Never delete `Hardware_Report.txt`, `boot.conf`, or `ACPI_Tables\` — only `Boot_*.log` and `Crash_*.bmp` files. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"blackbox: automatic disk space management"`. Add notes directly in this TODO section.
+**Prompt:** The Black Box partition is 32 MiB. Without management, it will fill up and logging will silently fail. Implement automatic cleanup and a boot warning when space is low. On every `klog_disk_init()`, check free space. If below 4 MiB, delete the oldest boot logs (by filename date) until 8 MiB is free. If below 2 MiB, show a warning during boot: `[WARN] Black Box nearly full — oldest logs deleted`. The warning should appear both on serial and in the boot splash status text. Never delete `Hardware_Report.txt`, `boot.conf`, or `ACPI_Tables\` — only `Boot_*.log` and `Crash_*.bmp` files. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"blackbox: automatic disk space management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] On `klog_disk_init()`: call `vfs_statfs("B:")` → check free bytes
 - [ ] If free < 4 MiB: enter cleanup mode
@@ -164,7 +164,7 @@
 
 ### 1.5 Black Box Partition Hiding *(agent)*
 
-**Prompt:** In production, the Black Box partition should be hidden from the Impossible OS file manager and desktop — just like Windows hides the EFI System Partition from Explorer. The partition is still accessible programmatically via `B:\` and from the command line, but it doesn't appear in the sidebar, drive list, or desktop icons. A "Show hidden partitions" toggle in Control Panel → System → Storage reveals it. Advanced users and developers can always access it. On external machines (Windows, Linux), it appears as a normal FAT32 volume with label `BLACKBOX`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"blackbox: hide partition from file manager"`. Add notes directly in this TODO section.
+**Prompt:** In production, the Black Box partition should be hidden from the Impossible OS file manager and desktop — just like Windows hides the EFI System Partition from Explorer. The partition is still accessible programmatically via `B:\` and from the command line, but it doesn't appear in the sidebar, drive list, or desktop icons. A "Show hidden partitions" toggle in Control Panel → System → Storage reveals it. Advanced users and developers can always access it. On external machines (Windows, Linux), it appears as a normal FAT32 volume with label `BLACKBOX`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"blackbox: hide partition from file manager"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Add `GPT_ATTR_HIDDEN` flag to the Black Box partition's GPT entry
   - [ ] Bit 62 (OS-specific) in GPT attributes — custom "hidden from UI" flag
@@ -183,7 +183,7 @@
 
 ### 2.1 Boot Configuration File (`boot.conf`)
 
-**Prompt:** The current debug mode requires a `DEBUG` file on the B: partition, which can only be detected _after_ the kernel mounts B: — too late for early boot debugging. Move debug mode activation to the UEFI bootloader via a `boot.conf` file on the EFI partition. The bootloader reads `boot.conf` before `ExitBootServices()` and passes a `debug=1` flag in the boot params struct. The kernel reads this flag immediately in `kernel_main()` — before any filesystem is mounted. This enables debug logging from the very first instruction. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: debug mode via boot.conf"`. Add notes directly in this TODO section.
+**Prompt:** The current debug mode requires a `DEBUG` file on the B: partition, which can only be detected _after_ the kernel mounts B: — too late for early boot debugging. Move debug mode activation to the UEFI bootloader via a `boot.conf` file on the EFI partition. The bootloader reads `boot.conf` before `ExitBootServices()` and passes a `debug=1` flag in the boot params struct. The kernel reads this flag immediately in `kernel_main()` — before any filesystem is mounted. This enables debug logging from the very first instruction. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: debug mode via boot.conf"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md §7.1 Boot Configuration File` — this section depends on
@@ -207,7 +207,7 @@
 > → XREF: `TODO-010-Bootloader.md §7.1 Boot Configuration File` — the `verbose=1`
 > option below requires `boot.conf` parsing in the bootloader. Complete §2.1 first.
 
-**Prompt:** Currently, debug mode disables the boot splash and shows raw printk output. This is not needed if the logging system is complete and robust — the splash should always show, and debug output goes to the log files. If the user wants to see live output on screen, that should be a separate `verbose=1` option in `boot.conf`, not tied to debug logging. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: decouple splash abort from debug mode"`. Add notes directly in this TODO section.
+**Prompt:** Currently, debug mode disables the boot splash and shows raw printk output. This is not needed if the logging system is complete and robust — the splash should always show, and debug output goes to the log files. If the user wants to see live output on screen, that should be a separate `verbose=1` option in `boot.conf`, not tied to debug logging. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: decouple splash abort from debug mode"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Remove `boot_splash_abort()` call from debug mode activation
 - [ ] Add `verbose=0|1` key to `boot.conf` — controls whether printk appears on screen
@@ -218,7 +218,7 @@
 
 ### 2.3 Cleanup: Remove `grub.cfg`
 
-**Prompt:** The file `src/boot/grub.cfg` is a leftover from when the OS used GRUB as its bootloader. The OS now uses a custom UEFI bootloader (`src/boot/uefi/bootx64.c`). `grub.cfg` is unused and confusing. Remove it and clean up any Makefile references. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: remove leftover grub.cfg"`. Add notes directly in this TODO section.
+**Prompt:** The file `src/boot/grub.cfg` is a leftover from when the OS used GRUB as its bootloader. The OS now uses a custom UEFI bootloader (`src/boot/uefi/bootx64.c`). `grub.cfg` is unused and confusing. Remove it and clean up any Makefile references. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: remove leftover grub.cfg"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > → XREF: `TODO-010-Bootloader.md §1` — confirm the custom UEFI bootloader is fully
@@ -243,7 +243,7 @@
 
 ### 3.1 Structured Hardware Dump (`hw_dump.c`)
 
-**Prompt:** The current hardware dump in `klog_live.c` is embedded in the live logging code and writes unstructured plain text. Extract it into a standalone `hw_dump.c` that produces a structured, machine-parseable hardware report. This report is critical for driver development — it should contain everything needed to write a driver for any detected device. The report is written to `B:\Hardware_Report.txt` on every boot (overwritten each time — it's always current). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: structured hardware dump in hw_dump.c"`. Add notes directly in this TODO section.
+**Prompt:** The current hardware dump in `klog_live.c` is embedded in the live logging code and writes unstructured plain text. Extract it into a standalone `hw_dump.c` that produces a structured, machine-parseable hardware report. This report is critical for driver development — it should contain everything needed to write a driver for any detected device. The report is written to `B:\Hardware_Report.txt` on every boot (overwritten each time — it's always current). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: structured hardware dump in hw_dump.c"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/hw_dump.c` and `include/kernel/hw_dump.h`
 - [ ] Move hardware dump logic from `klog_live.c` to `hw_dump.c`
@@ -262,7 +262,7 @@
 
 ### 3.2 Device Fingerprint
 
-**Prompt:** Generate a 32-bit hash that uniquely identifies the hardware configuration. This fingerprint stays the same across reboots on the same machine but differs between machines. It's used to track reports from the same hardware. Hash inputs: CPU vendor+family+model+stepping, PCI device list (vendor:device pairs sorted), memory size, SMBIOS board product. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: device fingerprint hash"`. Add notes directly in this TODO section.
+**Prompt:** Generate a 32-bit hash that uniquely identifies the hardware configuration. This fingerprint stays the same across reboots on the same machine but differs between machines. It's used to track reports from the same hardware. Hash inputs: CPU vendor+family+model+stepping, PCI device list (vendor:device pairs sorted), memory size, SMBIOS board product. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: device fingerprint hash"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Collect hash inputs: CPU signature, sorted PCI IDs, RAM size, SMBIOS board
 - [ ] CRC32 or FNV-1a hash → 8-char hex string (e.g., `a3f7c2d1`)
@@ -272,7 +272,7 @@
 
 ### 3.3 CPU Information (CPUID)
 
-**Prompt:** Dump complete CPU identification for driver development: vendor string, brand string, family/model/stepping, all feature flags (SSE, AVX, AES, etc.), cache topology, and core/thread count from CPUID. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: CPU CPUID dump"`. Add notes directly in this TODO section.
+**Prompt:** Dump complete CPU identification for driver development: vendor string, brand string, family/model/stepping, all feature flags (SSE, AVX, AES, etc.), cache topology, and core/thread count from CPUID. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: CPU CPUID dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] CPUID leaf 0: vendor string (GenuineIntel / AuthenticAMD)
 - [ ] CPUID leaf 0x80000002-0x80000004: brand string (e.g., "Intel Core i5-4210U")
@@ -285,7 +285,7 @@
 
 ### 3.4 PCI Device Enumeration
 
-**Prompt:** Dump every PCI device with full identification data needed for driver development. The current PCI scan in `pci.c` only logs vendor:device and class name. The hardware dump should include: all 6 BARs (with memory vs I/O type), subsystem vendor/device IDs, revision ID, interrupt pin/line, capabilities pointer, and MSI/MSI-X capability if present. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: full PCI device dump"`. Add notes directly in this TODO section.
+**Prompt:** Dump every PCI device with full identification data needed for driver development. The current PCI scan in `pci.c` only logs vendor:device and class name. The hardware dump should include: all 6 BARs (with memory vs I/O type), subsystem vendor/device IDs, revision ID, interrupt pin/line, capabilities pointer, and MSI/MSI-X capability if present. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: full PCI device dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Bus:Dev.Func, Vendor:Device, Subsystem Vendor:Device
 - [ ] Class:Subclass:ProgIF, Revision ID
@@ -309,7 +309,7 @@
 > The hardware dump must log this flag so developers can instantly see whether PIC init
 > should be skipped. This is critical for debugging boot failures on legacy-free platforms.
 
-**Prompt:** Dump ACPI table signatures and addresses for driver development: RSDP version, RSDT/XSDT address, MADT (LAPIC entries, IOAPIC entries, **PCAT_COMPAT flag**), FADT (PM timer, SCI interrupt), MCFG (PCIe ECAM base), HPET, DSDT/SSDT pointers. Additionally, save raw ACPI binary tables to `B:\ACPI_Tables\` so they can be decompiled with `iasl` on another machine — this is essential for writing ACPI-dependent drivers (power management, thermal, battery, embedded controllers). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: ACPI table dump + binary export"`. Add notes directly in this TODO section.
+**Prompt:** Dump ACPI table signatures and addresses for driver development: RSDP version, RSDT/XSDT address, MADT (LAPIC entries, IOAPIC entries, **PCAT_COMPAT flag**), FADT (PM timer, SCI interrupt), MCFG (PCIe ECAM base), HPET, DSDT/SSDT pointers. Additionally, save raw ACPI binary tables to `B:\ACPI_Tables\` so they can be decompiled with `iasl` on another machine — this is essential for writing ACPI-dependent drivers (power management, thermal, battery, embedded controllers). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: ACPI table dump + binary export"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] RSDP: version, RSDT/XSDT physical address
 - [ ] Walk RSDT/XSDT: list all table signatures with physical addresses
@@ -326,7 +326,7 @@
 
 ### 3.6 SMBIOS / DMI Tables *(agent)*
 
-**Prompt:** Dump SMBIOS (System Management BIOS) tables for machine identification. This is the data Windows shows in System Information: motherboard manufacturer, model, BIOS version, serial numbers, memory module details. The SMBIOS entry point is found either via UEFI configuration table (SMBIOS3_TABLE_GUID) or by scanning 0xF0000-0xFFFFF. Parse Type 0 (BIOS Info), Type 1 (System Info), Type 2 (Board Info), Type 4 (Processor), Type 16/17 (Memory Array/Device). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: SMBIOS/DMI table dump"`. Add notes directly in this TODO section.
+**Prompt:** Dump SMBIOS (System Management BIOS) tables for machine identification. This is the data Windows shows in System Information: motherboard manufacturer, model, BIOS version, serial numbers, memory module details. The SMBIOS entry point is found either via UEFI configuration table (SMBIOS3_TABLE_GUID) or by scanning 0xF0000-0xFFFFF. Parse Type 0 (BIOS Info), Type 1 (System Info), Type 2 (Board Info), Type 4 (Processor), Type 16/17 (Memory Array/Device). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: SMBIOS/DMI table dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find SMBIOS entry point via UEFI config table (`SMBIOS3_TABLE_GUID`)
   - [ ] Pass SMBIOS base address in `boot_info` from bootloader
@@ -356,7 +356,7 @@
 
 ### 3.7 Storage, Display, Network
 
-**Prompt:** Dump storage controller details (AHCI ports, drive model strings, capacity, sector size), framebuffer configuration (resolution, BPP, physical address, pitch), and network interface details (NIC type, MAC address, link status). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: storage + display + network dump"`. Add notes directly in this TODO section.
+**Prompt:** Dump storage controller details (AHCI ports, drive model strings, capacity, sector size), framebuffer configuration (resolution, BPP, physical address, pitch), and network interface details (NIC type, MAC address, link status). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"debug: storage + display + network dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] AHCI: controller PCI address, ABAR, version, implemented ports, per-port: model string, serial, capacity, sector size, interface speed
 - [ ] NVMe: controller PCI address, model, serial, capacity, namespace count (for future NVMe support)
@@ -368,7 +368,7 @@
 
 ### 3.8 USB Descriptor Dump *(agent)*
 
-**Prompt:** For USB driver development, dump the complete USB topology: root hubs, connected devices, and their descriptors. Each device needs: vendor/product ID, device class, speed, configuration descriptors, interface descriptors, and endpoint descriptors. This is the equivalent of `lsusb -v` on Linux. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: USB descriptor dump"`. Add notes directly in this TODO section.
+**Prompt:** For USB driver development, dump the complete USB topology: root hubs, connected devices, and their descriptors. Each device needs: vendor/product ID, device class, speed, configuration descriptors, interface descriptors, and endpoint descriptors. This is the equivalent of `lsusb -v` on Linux. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: USB descriptor dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > → XREF: This requires XHCI/EHCI host controller driver support. May need to
@@ -388,7 +388,7 @@
 
 ### 3.9 Hypervisor Detection *(agent)*
 
-**Prompt:** Detect and report the hypervisor environment. Many users will run Impossible OS in VMs — Hyper-V, VirtualBox, VMware, QEMU/KVM. The hardware report should identify the hypervisor (if any) and list available paravirtual features. This helps diagnose VM-specific bugs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: hypervisor detection dump"`. Add notes directly in this TODO section.
+**Prompt:** Detect and report the hypervisor environment. Many users will run Impossible OS in VMs — Hyper-V, VirtualBox, VMware, QEMU/KVM. The hardware report should identify the hypervisor (if any) and list available paravirtual features. This helps diagnose VM-specific bugs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: hypervisor detection dump"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] CPUID leaf 0x40000000: hypervisor vendor string
   - [ ] `"Microsoft Hv"` → Hyper-V (list generation, enlightenments)
@@ -407,7 +407,7 @@
 
 ### 4.1 Crash Screenshot *(agent)*
 
-**Prompt:** When the kernel panics, capture the framebuffer contents as a BMP image and save it to the Black Box partition. This preserves the exact screen state — the BSOD with error info, registers, and any boot progress bars (from §TODO-010.98 Kernel Heartbeat). The user doesn't need to photograph the screen with their phone. File format: uncompressed 24-bit BMP (simplest to implement — no compression needed, BMP header is 54 bytes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"panic: crash screenshot to Black Box"`. Add notes directly in this TODO section.
+**Prompt:** When the kernel panics, capture the framebuffer contents as a BMP image and save it to the Black Box partition. This preserves the exact screen state — the BSOD with error info, registers, and any boot progress bars (from §TODO-010.98 Kernel Heartbeat). The user doesn't need to photograph the screen with their phone. File format: uncompressed 24-bit BMP (simplest to implement — no compression needed, BMP header is 54 bytes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"panic: crash screenshot to Black Box"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **No other consumer OS does this.** Windows and Linux write minidumps (binary,
@@ -428,7 +428,7 @@
 
 ### 4.2 Event Timeline Ring Buffer *(agent)*
 
-**Prompt:** Maintain a kernel-level ring buffer of the last 256 significant events: IRQs received, page faults, exceptions, timer ticks, scheduler context switches. On panic, flush this buffer to `B:\Timeline.bin`. This gives millisecond-level insight into what the kernel was doing right before the crash — far more detail than the boot progress history (which only tracks init function calls). Think of it as a kernel-level "dashcam." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: event timeline ring buffer"`. Add notes directly in this TODO section.
+**Prompt:** Maintain a kernel-level ring buffer of the last 256 significant events: IRQs received, page faults, exceptions, timer ticks, scheduler context switches. On panic, flush this buffer to `B:\Timeline.bin`. This gives millisecond-level insight into what the kernel was doing right before the crash — far more detail than the boot progress history (which only tracks init function calls). Think of it as a kernel-level "dashcam." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: event timeline ring buffer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define event entry (16 bytes each, 256 entries = 4 KiB buffer):
   ```c
@@ -447,7 +447,7 @@
 
 ### 4.3 Boot Regression Detection *(agent)*
 
-**Prompt:** Compare boot times across sessions to detect regressions. On each boot, record total boot time and per-phase times. On the next boot, compare with the previous session's times. If any phase is >3× slower, log a warning: `[WARN] AHCI init took 340ms (was 45ms) — possible regression`. This catches performance problems early, before they accumulate. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: boot regression detection"`. Add notes directly in this TODO section.
+**Prompt:** Compare boot times across sessions to detect regressions. On each boot, record total boot time and per-phase times. On the next boot, compare with the previous session's times. If any phase is >3× slower, log a warning: `[WARN] AHCI init took 340ms (was 45ms) — possible regression`. This catches performance problems early, before they accumulate. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"debug: boot regression detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > → XREF: `TODO-010.98-Kernel-Heartbeat.md §1` — boot_progress() records per-stage timestamps
@@ -466,7 +466,7 @@
 
 ### 5.1 QEMU Serial Console
 
-**Prompt:** QEMU's `-serial stdio` flag pipes COM1 output to the host terminal. This already works via `serial.c`. Ensure all QEMU launch scripts (`scripts/build.sh run`) include `-serial stdio`. Also ensure the B: partition is populated with boot logs after each QEMU session. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean run`, and commit as `"debug: verify QEMU serial + B: log output"`. Add notes directly in this TODO section.
+**Prompt:** QEMU's `-serial stdio` flag pipes COM1 output to the host terminal. This already works via `serial.c`. Ensure all QEMU launch scripts (`scripts/build.sh run`) include `-serial stdio`. Also ensure the B: partition is populated with boot logs after each QEMU session. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean run`, and commit as `"debug: verify QEMU serial + B: log output"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Verify `scripts/build.sh run` includes `-serial stdio` flag
 - [ ] Verify QEMU boot produces `Boot_YYYY-MM-DD_HH-MM_NNN.log` on B:
@@ -476,7 +476,7 @@
 
 ### 5.2 VirtualBox Serial Port
 
-**Prompt:** VirtualBox can redirect COM1 to a host file via the serial port settings. The `run-vbox.ps1` script should configure this automatically. Ensure the B: partition is also populated with boot logs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run the VBox script, and commit as `"debug: VBox serial port + B: log output"`. Add notes directly in this TODO section.
+**Prompt:** VirtualBox can redirect COM1 to a host file via the serial port settings. The `run-vbox.ps1` script should configure this automatically. Ensure the B: partition is also populated with boot logs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run the VBox script, and commit as `"debug: VBox serial port + B: log output"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Verify `run-vbox.ps1` configures VBox serial port → host file (e.g., `serial.log`)
 - [ ] Verify VBox boot produces `Boot_YYYY-MM-DD_HH-MM_NNN.log` on B:
@@ -490,7 +490,7 @@
 > Without it, live flush rewrites the entire log on every entry, which on slow USB
 > hardware can cause visible stalls during boot.
 
-**Prompt:** On real hardware booted from USB, there is no serial port output. The Black Box `B:\` partition is the only way to capture boot logs. The live flush mode (§1.3) is critical here — without it, a boot hang produces no logs. Ensure the USB write scripts create the boot.conf with debug settings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, test on real hardware, and commit as `"debug: real hardware USB boot logging"`. Add notes directly in this TODO section.
+**Prompt:** On real hardware booted from USB, there is no serial port output. The Black Box `B:\` partition is the only way to capture boot logs. The live flush mode (§1.3) is critical here — without it, a boot hang produces no logs. Ensure the USB write scripts create the boot.conf with debug settings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, test on real hardware, and commit as `"debug: real hardware USB boot logging"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Reading B: from Windows:** The Black Box partition shows up as a normal FAT32
@@ -512,7 +512,7 @@
 
 ### 6.1 Improve Log Content
 
-**Prompt:** The current log output contains a lot of noise (test results, self-test pass/fail for every subsystem) and is missing critical information (exact timestamps in seconds.milliseconds, memory state, interrupt state). Audit every `klog()` call in the kernel and improve: remove redundant test output from production logs, add timing deltas for boot profiling, add memory watermark after each major allocation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: improve log content quality"`. Add notes directly in this TODO section.
+**Prompt:** The current log output contains a lot of noise (test results, self-test pass/fail for every subsystem) and is missing critical information (exact timestamps in seconds.milliseconds, memory state, interrupt state). Audit every `klog()` call in the kernel and improve: remove redundant test output from production logs, add timing deltas for boot profiling, add memory watermark after each major allocation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: improve log content quality"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Convert timestamp format from PIT ticks to `[SSS.mmm]` (seconds.milliseconds)
 - [ ] Add memory watermark after each major allocation: `[heap: 45% used, 912KB free]`
@@ -528,7 +528,7 @@
 > Registry under `HKLM\SYSTEM\Debug\LogLevels\{subsystem}`. Not a hard dependency, but
 > enables runtime reconfiguration without editing `boot.conf`.
 
-**Prompt:** Add per-subsystem log level filtering so that verbose subsystems (like PCI scan, IXFS operations) can be silenced in production while remaining available in debug mode. This requires a subsystem registry in klog that maps subsystem names to minimum levels. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: per-subsystem log level control"`. Add notes directly in this TODO section.
+**Prompt:** Add per-subsystem log level filtering so that verbose subsystems (like PCI scan, IXFS operations) can be silenced in production while remaining available in debug mode. This requires a subsystem registry in klog that maps subsystem names to minimum levels. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"klog: per-subsystem log level control"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Add `klog_set_subsystem_level(const char *subsystem, log_level_t min_level)`
 - [ ] Default: all subsystems at `LOG_DEBUG`
@@ -547,7 +547,7 @@
 
 ### 7.2 Remove `DEBUG` File Mechanism
 
-**Prompt:** After `boot.conf` (§2.1) is implemented, the `B:\DEBUG` file mechanism is obsolete. Remove all code that checks for this file. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: remove DEBUG file mechanism"`. Add notes directly in this TODO section.
+**Prompt:** After `boot.conf` (§2.1) is implemented, the `B:\DEBUG` file mechanism is obsolete. Remove all code that checks for this file. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"boot: remove DEBUG file mechanism"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Remove `DEBUG` finddir check from `main.c`
 - [ ] Remove `DEBUG` file creation from `write-usb.ps1`
@@ -573,7 +573,7 @@
 
 ## 8. Boot Time Profiler
 
-**Prompt:** Track how long each boot stage takes using PIT ticks (or TSC if calibrated). At the start and end of each major init function, record the elapsed time. Print a summary to serial at boot completion: "PMM: 12ms, ACPI: 45ms, Drivers: 230ms, FS: 85ms, Desktop: 150ms — Total: 522ms". Store the boot time in Registry `HKLM\SYSTEM\Boot\LastBootTime` for display in the Settings → System applet. This is essential for identifying and fixing boot regressions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: boot time profiler"`. Add notes directly in this TODO section.
+**Prompt:** Track how long each boot stage takes using PIT ticks (or TSC if calibrated). At the start and end of each major init function, record the elapsed time. Print a summary to serial at boot completion: "PMM: 12ms, ACPI: 45ms, Drivers: 230ms, FS: 85ms, Desktop: 150ms — Total: 522ms". Store the boot time in Registry `HKLM\SYSTEM\Boot\LastBootTime` for display in the Settings → System applet. This is essential for identifying and fixing boot regressions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: boot time profiler"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Production requirement:** Windows has Boot Event Collector and Event Viewer boot
 > timing. Linux has `systemd-analyze blame`. Impossible OS needs boot stage timing

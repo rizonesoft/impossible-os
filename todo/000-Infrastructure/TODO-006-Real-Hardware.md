@@ -54,7 +54,7 @@
 
 ### 1.1 USB Disk Layout & Partitioning
 
-**Prompt:** Define and document the canonical USB disk layout for booting Impossible OS on real hardware. The USB disk must have a GPT partition table with two partitions: (1) EFI System Partition (ESP, FAT32, 64 MiB) containing `EFI\BOOT\BOOTX64.EFI`, `boot.conf`, and space for numbered boot logs (`BOOT_NNN.LOG`, `HARDWARE.TXT`); (2) Data Partition (IXFS or FAT32, remainder) containing the OS filesystem image (`C:\Impossible\*`). The UEFI firmware reads BOOTX64.EFI from the ESP, which loads the kernel ELF from the same partition (embedded in an initrd or separate file). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"infra: USB disk layout specification"`. Add notes directly in this TODO section.
+**Prompt:** Define and document the canonical USB disk layout for booting Impossible OS on real hardware. The USB disk must have a GPT partition table with two partitions: (1) EFI System Partition (ESP, FAT32, 64 MiB) containing `EFI\BOOT\BOOTX64.EFI`, `boot.conf`, and space for numbered boot logs (`BOOT_NNN.LOG`, `HARDWARE.TXT`); (2) Data Partition (IXFS or FAT32, remainder) containing the OS filesystem image (`C:\Impossible\*`). The UEFI firmware reads BOOTX64.EFI from the ESP, which loads the kernel ELF from the same partition (embedded in an initrd or separate file). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"infra: USB disk layout specification"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md §1` — the UEFI bootloader must locate and load the
@@ -86,7 +86,7 @@
 
 ### 1.2 USB Write Script (Windows Host)
 
-**Prompt:** Create `scripts/deploy/write-usb.ps1` for writing the OS to a USB disk from a Windows host. The script must: (1) list available removable USB disks, (2) prompt for target selection, (3) create GPT partition table with ESP + data partitions, (4) format ESP as FAT32, (5) copy BOOTX64.EFI, kernel.elf, initrd, and boot.conf, (6) optionally format data partition. The script must handle: disk already has partitions (re-partition), disk is mounted (unmount first), and write verification (compare checksums). After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Windows)"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/deploy/write-usb.ps1` for writing the OS to a USB disk from a Windows host. The script must: (1) list available removable USB disks, (2) prompt for target selection, (3) create GPT partition table with ESP + data partitions, (4) format ESP as FAT32, (5) copy BOOTX64.EFI, kernel.elf, initrd, and boot.conf, (6) optionally format data partition. The script must handle: disk already has partitions (re-partition), disk is mounted (unmount first), and write verification (compare checksums). After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Windows)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `scripts/deploy/write-usb.ps1`
 - [ ] List removable USB disks with `Get-Disk | Where-Object {$_.BusType -eq 'USB'}`
@@ -100,7 +100,7 @@
 
 ### 1.3 USB Write Script (Linux/WSL Host)
 
-**Prompt:** Create `scripts/deploy/write-usb.sh` for writing the OS to a USB disk from Linux or WSL. Uses `fdisk`/`gdisk` for partitioning, `mkfs.fat` for formatting, and `mount`/`cp` for file copying. Must detect the correct block device, refuse to write to non-removable devices, and handle mounted partitions. After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Linux)"`. Add notes directly in this TODO section.
+**Prompt:** Create `scripts/deploy/write-usb.sh` for writing the OS to a USB disk from Linux or WSL. Uses `fdisk`/`gdisk` for partitioning, `mkfs.fat` for formatting, and `mount`/`cp` for file copying. Must detect the correct block device, refuse to write to non-removable devices, and handle mounted partitions. After completing all items, mark every item as `[x]`, and commit as `"infra: USB write script (Linux)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `scripts/deploy/write-usb.sh`
 - [ ] List USB block devices: `lsblk --scsi | grep usb`
@@ -117,7 +117,7 @@
 
 ### 2.1 GOP Mode Negotiation
 
-**Prompt:** The current bootloader requests a specific GOP mode (1280×720×32bpp). On real hardware, this mode may not be available — the GOP protocol may offer different resolutions depending on the GPU and display. Implement robust mode negotiation: enumerate all available GOP modes, prefer 1280×720, fall back to the closest 16:9 mode ≥ 1024×768, and finally accept any mode ≥ 800×600. Log the selected mode to the boot params so the kernel knows the exact framebuffer dimensions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: robust GOP mode negotiation"`. Add notes directly in this TODO section.
+**Prompt:** The current bootloader requests a specific GOP mode (1280×720×32bpp). On real hardware, this mode may not be available — the GOP protocol may offer different resolutions depending on the GPU and display. Implement robust mode negotiation: enumerate all available GOP modes, prefer 1280×720, fall back to the closest 16:9 mode ≥ 1024×768, and finally accept any mode ≥ 800×600. Log the selected mode to the boot params so the kernel knows the exact framebuffer dimensions. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: robust GOP mode negotiation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md §1.2` — GOP framebuffer initialization. This section
@@ -135,7 +135,7 @@
 
 ### 2.2 UEFI Memory Map Edge Cases
 
-**Prompt:** The UEFI memory map varies dramatically between firmware implementations. Some BIOSes report overlapping regions, memory holes in unexpected places, or unusual EfiMemoryType values. The PMM initialization must handle: (1) overlapping regions (merge them), (2) memory holes within the first 16 MiB (avoid for DMA buffers), (3) EfiPersistentMemory type (treat as available), (4) firmware-reserved regions above 4 GiB that appear usable but aren't. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: handle UEFI memory map edge cases"`. Add notes directly in this TODO section.
+**Prompt:** The UEFI memory map varies dramatically between firmware implementations. Some BIOSes report overlapping regions, memory holes in unexpected places, or unusual EfiMemoryType values. The PMM initialization must handle: (1) overlapping regions (merge them), (2) memory holes within the first 16 MiB (avoid for DMA buffers), (3) EfiPersistentMemory type (treat as available), (4) firmware-reserved regions above 4 GiB that appear usable but aren't. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: handle UEFI memory map edge cases"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md §1.3` — memory map discovery and identity paging.
@@ -151,7 +151,7 @@
 
 ### 2.3 Secure Boot Compatibility
 
-**Prompt:** Real hardware with Secure Boot enabled will refuse to load unsigned BOOTX64.EFI. While full Authenticode signing is a long-term goal, the OS must gracefully handle this: detect Secure Boot state, display a clear error message via GOP if Secure Boot prevents loading, and document the manual BIOS settings required to disable Secure Boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: Secure Boot detection and guidance"`. Add notes directly in this TODO section.
+**Prompt:** Real hardware with Secure Boot enabled will refuse to load unsigned BOOTX64.EFI. While full Authenticode signing is a long-term goal, the OS must gracefully handle this: detect Secure Boot state, display a clear error message via GOP if Secure Boot prevents loading, and document the manual BIOS settings required to disable Secure Boot. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: Secure Boot detection and guidance"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-008-Hyper-V-Runner.md §1` — Hyper-V Gen 2 also requires Secure Boot OFF.
@@ -169,7 +169,7 @@
 
 ### 3.1 PIC Mask Before APIC Init
 
-**Prompt:** On real hardware, the 8259 PIC may fire spurious IRQ7 (or IRQ15) during the transition from PIC to APIC mode. The current code masks the PIC, but some BIOSes partially unmask it during ACPI table parsing. Ensure the PIC mask sequence is: (1) save current PIC masks, (2) mask all PIC interrupts (OCW1: 0xFF to both PICs), (3) remap PIC to vectors 0x20-0x2F (even though masked — prevents vector collision), (4) initialize LAPIC + IOAPIC, (5) verify PIC stays masked. The MADT `PCAT_COMPAT` flag (bit 0) indicates whether the PIC is present at all — on pure APIC systems (Hyper-V Gen 2), skip PIC init entirely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: robust PIC→APIC transition for real hardware"`. Add notes directly in this TODO section.
+**Prompt:** On real hardware, the 8259 PIC may fire spurious IRQ7 (or IRQ15) during the transition from PIC to APIC mode. The current code masks the PIC, but some BIOSes partially unmask it during ACPI table parsing. Ensure the PIC mask sequence is: (1) save current PIC masks, (2) mask all PIC interrupts (OCW1: 0xFF to both PICs), (3) remap PIC to vectors 0x20-0x2F (even though masked — prevents vector collision), (4) initialize LAPIC + IOAPIC, (5) verify PIC stays masked. The MADT `PCAT_COMPAT` flag (bit 0) indicates whether the PIC is present at all — on pure APIC systems (Hyper-V Gen 2), skip PIC init entirely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: robust PIC→APIC transition for real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-063-Drivers.md §2.2` — MADT PCAT_COMPAT flag and APIC-only mode.
@@ -188,7 +188,7 @@
 
 ### 3.2 PIT Timer Calibration Fix
 
-**Prompt:** The PIT timer calibration hangs on some real hardware (Acer laptops, older Dell desktops). The current calibration loop is too tight: it programs PIT Channel 2 and busy-waits for the counter to expire, but some BIOSes initialize PIT Channel 2 in a non-standard state. Fix: (1) explicitly program PIT Channel 2 to mode 0 (one-shot) before calibration, (2) add a timeout (max 100ms wall-clock via TSC or simple loop counter) to prevent infinite hangs, (3) fall back to a safe default frequency (100 Hz) if calibration fails. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: fix PIT calibration hang on real hardware"`. Add notes directly in this TODO section.
+**Prompt:** The PIT timer calibration hangs on some real hardware (Acer laptops, older Dell desktops). The current calibration loop is too tight: it programs PIT Channel 2 and busy-waits for the counter to expire, but some BIOSes initialize PIT Channel 2 in a non-standard state. Fix: (1) explicitly program PIT Channel 2 to mode 0 (one-shot) before calibration, (2) add a timeout (max 100ms wall-clock via TSC or simple loop counter) to prevent infinite hangs, (3) fall back to a safe default frequency (100 Hz) if calibration fails. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: fix PIT calibration hang on real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-010-Bootloader.md §1.5` — the LAPIC timer uses PIT calibration results.
@@ -205,7 +205,7 @@
 
 ### 3.3 LAPIC Timer Validation
 
-**Prompt:** After bringing up the LAPIC timer via PIT calibration, validate that the timer is actually firing at the expected rate. On some systems, the LAPIC timer frequency varies between cores or drifts due to CPU frequency scaling. Add a sanity check: after 1 second (measured by PIT), verify the LAPIC timer has fired within ±10% of expected ticks. If outside tolerance, re-calibrate or warn. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: LAPIC timer validation"`. Add notes directly in this TODO section.
+**Prompt:** After bringing up the LAPIC timer via PIT calibration, validate that the timer is actually firing at the expected rate. On some systems, the LAPIC timer frequency varies between cores or drifts due to CPU frequency scaling. Add a sanity check: after 1 second (measured by PIT), verify the LAPIC timer has fired within ±10% of expected ticks. If outside tolerance, re-calibrate or warn. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: LAPIC timer validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] After LAPIC timer start: count ticks for 1 PIT-measured second
 - [ ] Expected: ~1000 ticks (if configured for 1kHz)
@@ -220,7 +220,7 @@
 
 ### 4.1 AHCI Controller Discovery via PCI
 
-**Prompt:** The current AHCI driver assumes a specific PCI location or relies on QEMU's VirtIO. On real hardware, the AHCI controller can be on any PCI bus/device/function. Implement proper discovery: scan all PCI devices for class 01h (Mass Storage), subclass 06h (SATA), progIF 01h (AHCI 1.0). Map the ABAR (AHCI Base Address Register — BAR 5) and verify the HBA capability registers. Some systems have multiple AHCI controllers (e.g., chipset + add-in card). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: PCI-based controller discovery"`. Add notes directly in this TODO section.
+**Prompt:** The current AHCI driver assumes a specific PCI location or relies on QEMU's VirtIO. On real hardware, the AHCI controller can be on any PCI bus/device/function. Implement proper discovery: scan all PCI devices for class 01h (Mass Storage), subclass 06h (SATA), progIF 01h (AHCI 1.0). Map the ABAR (AHCI Base Address Register — BAR 5) and verify the HBA capability registers. Some systems have multiple AHCI controllers (e.g., chipset + add-in card). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: PCI-based controller discovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-063-Drivers.md §3` — AHCI driver architecture. This section hardens
@@ -238,7 +238,7 @@
 
 ### 4.2 AHCI Port Initialization & IDENTIFY
 
-**Prompt:** For each attached AHCI device, perform proper port initialization: stop the port engine (CLB/FB must be stopped before modification), allocate Command List and FIS Receive structures in DMA-accessible memory (below 4 GiB if the controller doesn't support 64-bit addressing), start the port engine, then issue an ATA IDENTIFY DEVICE (0xEC) command to read the drive model string, serial number, capacity, and sector size. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: port init + IDENTIFY DEVICE"`. Add notes directly in this TODO section.
+**Prompt:** For each attached AHCI device, perform proper port initialization: stop the port engine (CLB/FB must be stopped before modification), allocate Command List and FIS Receive structures in DMA-accessible memory (below 4 GiB if the controller doesn't support 64-bit addressing), start the port engine, then issue an ATA IDENTIFY DEVICE (0xEC) command to read the drive model string, serial number, capacity, and sector size. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: port init + IDENTIFY DEVICE"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!CAUTION]
 > **Memory Rule:** Command List (1 KiB) and FIS Receive (256 bytes) must use
@@ -258,7 +258,7 @@
 
 ### 4.3 DMA Read/Write Operations
 
-**Prompt:** Implement DMA-based sector read/write using AHCI commands. Build a Command FIS (Host-to-Device FIS, type 0x27) with the LBA address and sector count, attach a PRDT (Physical Region Descriptor Table) pointing to the target memory buffer, issue the command by setting the command slot bit in `PxCI`, and wait for completion via polling `PxCI` (or interrupt). Handle errors: check `PxIS` for task file errors, `PxTFD` for ATA error register. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: DMA read/write operations"`. Add notes directly in this TODO section.
+**Prompt:** Implement DMA-based sector read/write using AHCI commands. Build a Command FIS (Host-to-Device FIS, type 0x27) with the LBA address and sector count, attach a PRDT (Physical Region Descriptor Table) pointing to the target memory buffer, issue the command by setting the command slot bit in `PxCI`, and wait for completion via polling `PxCI` (or interrupt). Handle errors: check `PxIS` for task file errors, `PxTFD` for ATA error register. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ahci: DMA read/write operations"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] `ahci_read(port, lba, count, buffer)` — DMA read sectors
 - [ ] `ahci_write(port, lba, count, buffer)` — DMA write sectors
@@ -272,7 +272,7 @@
 
 ### 4.4 USB Mass Storage Fallback
 
-**Prompt:** When booting from USB, the OS filesystem may be on the USB disk itself (partition 2). The USB mass storage class uses SCSI commands over USB bulk transfers — significantly more complex than AHCI. For initial real hardware support, the UEFI bootloader should load the entire initrd (IXFS image) into memory before `ExitBootServices()`, so the kernel doesn't need a USB driver to access the OS filesystem. The UEFI Block I/O protocol handles USB transparently. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: load initrd via UEFI Block I/O"`. Add notes directly in this TODO section.
+**Prompt:** When booting from USB, the OS filesystem may be on the USB disk itself (partition 2). The USB mass storage class uses SCSI commands over USB bulk transfers — significantly more complex than AHCI. For initial real hardware support, the UEFI bootloader should load the entire initrd (IXFS image) into memory before `ExitBootServices()`, so the kernel doesn't need a USB driver to access the OS filesystem. The UEFI Block I/O protocol handles USB transparently. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: load initrd via UEFI Block I/O"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > A native USB mass storage driver (XHCI + BOT/UAS) is a long-term goal tracked in
@@ -291,7 +291,7 @@
 
 ### 5.1 AP Boot Trampoline
 
-**Prompt:** The INIT/SIPI sequence requires a trampoline page in the first 1 MiB of physical memory (below 0x100000). The trampoline must contain 16-bit real mode code that transitions the AP through protected mode to long mode, then jumps to the kernel's AP entry point. On real hardware, the trampoline page must be reserved before PMM initialization to prevent it from being allocated. Copy the trampoline code to 0x8000 (conventional memory, safe on all x86 systems). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"smp: AP boot trampoline for real hardware"`. Add notes directly in this TODO section.
+**Prompt:** The INIT/SIPI sequence requires a trampoline page in the first 1 MiB of physical memory (below 0x100000). The trampoline must contain 16-bit real mode code that transitions the AP through protected mode to long mode, then jumps to the kernel's AP entry point. On real hardware, the trampoline page must be reserved before PMM initialization to prevent it from being allocated. Copy the trampoline code to 0x8000 (conventional memory, safe on all x86 systems). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"smp: AP boot trampoline for real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-020-Threading-Synchronization.md` — SMP initialization and scheduling.
@@ -309,7 +309,7 @@
 
 ### 5.2 Per-CPU Data Structures
 
-**Prompt:** Each CPU core needs private data: its LAPIC ID, kernel stack pointer, current task pointer, and local scheduling queue. Use the GS segment base (via MSR `IA32_GS_BASE`) to point to a per-CPU data area. The BSP sets this up during early init; each AP sets its own GS base during the SIPI bring-up. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"smp: per-CPU data via GS segment"`. Add notes directly in this TODO section.
+**Prompt:** Each CPU core needs private data: its LAPIC ID, kernel stack pointer, current task pointer, and local scheduling queue. Use the GS segment base (via MSR `IA32_GS_BASE`) to point to a per-CPU data area. The BSP sets this up during early init; each AP sets its own GS base during the SIPI bring-up. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"smp: per-CPU data via GS segment"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `struct per_cpu` (lapic_id, stack_top, current_task, idle_ticks, nested_cli_count)
 - [ ] Allocate one `struct per_cpu` per logical CPU (PMM or static array)
@@ -322,7 +322,7 @@
 
 ### 5.3 RCU Synchronization for SMP Scalability
 
-**Prompt:** Read-Copy-Update (RCU) enables lock-free reads of shared kernel data structures (VFS mount table, process list, Registry cache). Writers create a copy, modify the copy, atomically swap the pointer, then free the old version after all readers have finished (a "grace period"). For Impossible OS: implement a simple quiescent-state–based RCU where each CPU reports a quiescent state during context switches. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: RCU synchronization"`. Add notes directly in this TODO section.
+**Prompt:** Read-Copy-Update (RCU) enables lock-free reads of shared kernel data structures (VFS mount table, process list, Registry cache). Writers create a copy, modify the copy, atomically swap the pointer, then free the old version after all readers have finished (a "grace period"). For Impossible OS: implement a simple quiescent-state–based RCU where each CPU reports a quiescent state during context switches. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: RCU synchronization"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-020-Threading-Synchronization.md §6` — seqlocks are already implemented.
@@ -342,7 +342,7 @@
 
 ### 6.1 Pixel Format Detection
 
-**Prompt:** UEFI GOP reports pixel format via `EFI_GRAPHICS_PIXEL_FORMAT` enum: `PixelRedGreenBlueReserved8BitPerColor` (RGB), `PixelBlueGreenRedReserved8BitPerColor` (BGR), or `PixelBitMask` (custom). The compositor currently assumes BGRA (0xAARRGGBB). On some hardware (Intel integrated GPUs), the format may be RGBA. Detect the format in the bootloader and pass it to the kernel, then adapt the compositor's pixel packing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: pixel format detection from GOP"`. Add notes directly in this TODO section.
+**Prompt:** UEFI GOP reports pixel format via `EFI_GRAPHICS_PIXEL_FORMAT` enum: `PixelRedGreenBlueReserved8BitPerColor` (RGB), `PixelBlueGreenRedReserved8BitPerColor` (BGR), or `PixelBitMask` (custom). The compositor currently assumes BGRA (0xAARRGGBB). On some hardware (Intel integrated GPUs), the format may be RGBA. Detect the format in the bootloader and pass it to the kernel, then adapt the compositor's pixel packing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: pixel format detection from GOP"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-110-UI-Framework.md §1` — all GFX rendering functions must respect
@@ -358,7 +358,7 @@
 
 ### 6.2 VRAM Write Performance
 
-**Prompt:** Writing to Video RAM (VRAM) over PCI-Express is significantly slower than writing to system RAM — VRAM is uncacheable (Write-Combining at best). The double-buffer compositor mitigates this by compositing in system RAM and doing a single blit to VRAM per frame. Validate that the blit performance is acceptable on real hardware: measure the time for a full 1280×720×4 = 3.6 MiB memcpy to VRAM. If >16ms (below 60fps), consider SSE2-optimized `movntdq` (non-temporal stores) which bypass cache and use the CPU's write-combine buffers efficiently. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: optimize VRAM blit for real hardware"`. Add notes directly in this TODO section.
+**Prompt:** Writing to Video RAM (VRAM) over PCI-Express is significantly slower than writing to system RAM — VRAM is uncacheable (Write-Combining at best). The double-buffer compositor mitigates this by compositing in system RAM and doing a single blit to VRAM per frame. Validate that the blit performance is acceptable on real hardware: measure the time for a full 1280×720×4 = 3.6 MiB memcpy to VRAM. If >16ms (below 60fps), consider SSE2-optimized `movntdq` (non-temporal stores) which bypass cache and use the CPU's write-combine buffers efficiently. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"gfx: optimize VRAM blit for real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Measure VRAM blit time: TSC before/after `fb_swap()`, log in milliseconds
 - [ ] If blit time > 8ms: implement SSE2 non-temporal blit (`movntdq` + `sfence`)
@@ -374,7 +374,7 @@
 
 ### 7.1 PS/2 Keyboard on Real Hardware
 
-**Prompt:** PS/2 keyboard works in QEMU but real hardware may have initialization timing differences. Some BIOSes disable the PS/2 controller during UEFI boot and rely on USB HID. Ensure the PS/2 controller is explicitly re-enabled during kernel init: send 0xAE (Enable Keyboard) to port 0x64, flush the output buffer, then install IRQ1 handler. Some keyboards need a reset (0xFF) command with ACK (0xFA) response. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"keyboard: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section.
+**Prompt:** PS/2 keyboard works in QEMU but real hardware may have initialization timing differences. Some BIOSes disable the PS/2 controller during UEFI boot and rely on USB HID. Ensure the PS/2 controller is explicitly re-enabled during kernel init: send 0xAE (Enable Keyboard) to port 0x64, flush the output buffer, then install IRQ1 handler. Some keyboards need a reset (0xFF) command with ACK (0xFA) response. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"keyboard: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-061-Keyboard.md` — PS/2 keyboard driver implementation.
@@ -390,7 +390,7 @@
 
 ### 7.2 PS/2 Mouse on Real Hardware
 
-**Prompt:** Similar to keyboard, the PS/2 mouse (IRQ12) may need explicit re-initialization on real hardware. Touchpads on laptops typically expose PS/2 emulation but may need Synaptics or ALPS-specific initialization sequences for multi-touch or scrolling. For initial support, use standard PS/2 mouse protocol only. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mouse: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section.
+**Prompt:** Similar to keyboard, the PS/2 mouse (IRQ12) may need explicit re-initialization on real hardware. Touchpads on laptops typically expose PS/2 emulation but may need Synaptics or ALPS-specific initialization sequences for multi-touch or scrolling. For initial support, use standard PS/2 mouse protocol only. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mouse: PS/2 init hardening for real hardware"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-062-Mouse.md` — PS/2 mouse driver implementation.
@@ -405,7 +405,7 @@
 
 ### 7.3 USB HID Input *(Stretch)*
 
-**Prompt:** Most modern keyboards and mice use USB, not PS/2. On systems without PS/2 emulation, no input is available. The minimal USB stack needed: XHCI host controller driver (PCI class 0Ch/03h/30h), USB device enumeration, HID class driver for keyboard and mouse. This is a significant effort tracked as a stretch goal. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: USB HID keyboard and mouse"`. Add notes directly in this TODO section.
+**Prompt:** Most modern keyboards and mice use USB, not PS/2. On systems without PS/2 emulation, no input is available. The minimal USB stack needed: XHCI host controller driver (PCI class 0Ch/03h/30h), USB device enumeration, HID class driver for keyboard and mouse. This is a significant effort tracked as a stretch goal. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: USB HID keyboard and mouse"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > → XREF: `TODO-063-Drivers.md` — USB host controller is tracked there as a long-term driver.

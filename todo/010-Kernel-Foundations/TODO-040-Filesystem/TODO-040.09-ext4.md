@@ -169,7 +169,7 @@ graph TD
 
 ### 1.1 Superblock Reader
 
-**Prompt:** Read the Superblock from absolute byte offset 1024 of the partition (NOT block 0 — the first 1024 bytes are reserved boot padding). Validate the magic number `0xEF53` at offset `0x38`. Extract all critical fields: inode count, block count, block size (`1024 << s_log_block_size`), blocks per group, inodes per group, inode size, feature flags, UUID, and volume name. Handle 64-bit block counts by combining `s_blocks_count_lo` + `s_blocks_count_hi`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: superblock parsing and validation"`. Add notes directly in this TODO section.
+**Prompt:** Read the Superblock from absolute byte offset 1024 of the partition (NOT block 0 — the first 1024 bytes are reserved boot padding). Validate the magic number `0xEF53` at offset `0x38`. Extract all critical fields: inode count, block count, block size (`1024 << s_log_block_size`), blocks per group, inodes per group, inode size, feature flags, UUID, and volume name. Handle 64-bit block counts by combining `s_blocks_count_lo` + `s_blocks_count_hi`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: superblock parsing and validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read 1024 bytes from partition byte offset 1024 (skip boot padding)
 - [ ] Validate magic number at `0x38`: must be `0xEF53` (LE stored as `0x53 0xEF`)
@@ -203,7 +203,7 @@ graph TD
 
 ### 1.2 Feature Flag Gating
 
-**Prompt:** Implement the three-tier feature flag system. If ANY bit in `s_feature_incompat` is set that the driver does not support, the mount MUST be rejected — proceeding causes data corruption. If unrecognized `s_feature_ro_compat` bits are set, mount as read-only (which is our default anyway). Compatible features can be safely ignored. Log all detected features. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: feature flag gating"`. Add notes directly in this TODO section.
+**Prompt:** Implement the three-tier feature flag system. If ANY bit in `s_feature_incompat` is set that the driver does not support, the mount MUST be rejected — proceeding causes data corruption. If unrecognized `s_feature_ro_compat` bits are set, mount as read-only (which is our default anyway). Compatible features can be safely ignored. Log all detected features. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: feature flag gating"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse `s_feature_incompat` — must support these to mount:
   - [ ] `INCOMPAT_FILETYPE` (`0x0002`) — dir entries have file type byte
@@ -251,7 +251,7 @@ graph TD
 
 ### 2.1 Group Descriptor Table Reader
 
-**Prompt:** Read the Group Descriptor Table (GDT) from the block(s) immediately following the Superblock. Each descriptor is 32 bytes (ext2/ext3) or 64 bytes (ext4 with `INCOMPAT_64BIT`, size in `s_desc_size`). The GDT contains one entry per block group, providing the locations of the block bitmap, inode bitmap, and inode table for each group. Handle 64-bit mode by combining `_lo` and `_hi` fields. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: block group descriptor table"`. Add notes directly in this TODO section.
+**Prompt:** Read the Group Descriptor Table (GDT) from the block(s) immediately following the Superblock. Each descriptor is 32 bytes (ext2/ext3) or 64 bytes (ext4 with `INCOMPAT_64BIT`, size in `s_desc_size`). The GDT contains one entry per block group, providing the locations of the block bitmap, inode bitmap, and inode table for each group. Handle 64-bit mode by combining `_lo` and `_hi` fields. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: block group descriptor table"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Calculate GDT location: block after Superblock
   - [ ] 1K block size: GDT starts at block 2
@@ -278,7 +278,7 @@ graph TD
 
 ### 3.1 Inode Table Reader
 
-**Prompt:** Implement reading a single inode by its inode number. ext4 inodes are numbered starting at 1 (not 0). Calculate the block group: `(inode - 1) / s_inodes_per_group`. Calculate the local index: `(inode - 1) % s_inodes_per_group`. Read the inode from the inode table at byte offset `local_index × s_inode_size` from the `bg_inode_table` block. Parse the core 128-byte inode fields and the extended 256-byte fields if the inode size supports them. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: inode table reader"`. Add notes directly in this TODO section.
+**Prompt:** Implement reading a single inode by its inode number. ext4 inodes are numbered starting at 1 (not 0). Calculate the block group: `(inode - 1) / s_inodes_per_group`. Calculate the local index: `(inode - 1) % s_inodes_per_group`. Read the inode from the inode table at byte offset `local_index × s_inode_size` from the `bg_inode_table` block. Parse the core 128-byte inode fields and the extended 256-byte fields if the inode size supports them. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: inode table reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ext4_read_inode(vol, inode_number, inode_out)`:
   - [ ] Calculate `block_group = (inode_number - 1) / vol->inodes_per_group`
@@ -311,7 +311,7 @@ graph TD
 
 ### 3.2 Special Inode Handling
 
-**Prompt:** Define and handle the reserved inodes. Inode 2 is the root directory — all path resolution starts here. Inode 8 is the JBD2 journal file (read its inode but don't replay — we're read-only). Inodes 1–10 are reserved system inodes. The first user inode is `s_first_ino` (typically 11, traditionally `lost+found`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: special inode handling"`. Add notes directly in this TODO section.
+**Prompt:** Define and handle the reserved inodes. Inode 2 is the root directory — all path resolution starts here. Inode 8 is the JBD2 journal file (read its inode but don't replay — we're read-only). Inodes 1–10 are reserved system inodes. The first user inode is `s_first_ino` (typically 11, traditionally `lost+found`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: special inode handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define reserved inode constants:
   - [ ] `EXT4_ROOT_INO = 2` — root directory
@@ -325,7 +325,7 @@ graph TD
 
 ### 3.3 Extended Attributes (xattr) Reader
 
-**Prompt:** ext4 stores extended attributes in two places: inline within the inode's extra space (after the core 128 bytes, before `i_extra_isize` ends), and in an external xattr block pointed to by `i_file_acl_lo`. Linux uses xattrs extensively: `security.selinux` for SELinux labels, `system.posix_acl_access` for POSIX ACLs, `user.*` for arbitrary metadata. Parse the xattr header (magic `0xEA020000`), walk entries (name_index + name + value offset), and return values for queried names. This is needed for reading POSIX ACLs and for the VFS compat layer's `GetFileSecurity()`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: extended attributes reader"`. Add notes directly in this TODO section.
+**Prompt:** ext4 stores extended attributes in two places: inline within the inode's extra space (after the core 128 bytes, before `i_extra_isize` ends), and in an external xattr block pointed to by `i_file_acl_lo`. Linux uses xattrs extensively: `security.selinux` for SELinux labels, `system.posix_acl_access` for POSIX ACLs, `user.*` for arbitrary metadata. Parse the xattr header (magic `0xEA020000`), walk entries (name_index + name + value offset), and return values for queried names. This is needed for reading POSIX ACLs and for the VFS compat layer's `GetFileSecurity()`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: extended attributes reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse inline xattrs (within inode body):
   - [ ] Start at `inode_base + EXT4_GOOD_OLD_INODE_SIZE + i_extra_isize`
@@ -352,7 +352,7 @@ graph TD
 
 ### 4.1 Extent Tree Reader
 
-**Prompt:** Implement the extent tree decoder for data block mapping. The extent tree root lives in the inode's `i_block[0..14]` (60 bytes). It starts with a 12-byte header: magic `0xF30A`, entry count, max entries, depth. At depth 0 (leaf): entries are `ext4_extent` structs mapping logical blocks to physical blocks. At depth > 0 (internal): entries are `ext4_extent_idx` structs pointing to child tree blocks. Handle uninitialized extents (bit 15 of `ee_len` set — preallocated, reads return zeros). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: extent tree reader"`. Add notes directly in this TODO section.
+**Prompt:** Implement the extent tree decoder for data block mapping. The extent tree root lives in the inode's `i_block[0..14]` (60 bytes). It starts with a 12-byte header: magic `0xF30A`, entry count, max entries, depth. At depth 0 (leaf): entries are `ext4_extent` structs mapping logical blocks to physical blocks. At depth > 0 (internal): entries are `ext4_extent_idx` structs pointing to child tree blocks. Handle uninitialized extents (bit 15 of `ee_len` set — preallocated, reads return zeros). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: extent tree reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse extent header from inode's `i_block[0..11]`:
   - [ ] `eh_magic` (2B) — must be `0xF30A`
@@ -380,7 +380,7 @@ graph TD
 
 ### 4.2 File Data Reader
 
-**Prompt:** Using the extent tree, implement reading file data by logical block range. Given a file offset and read length, convert to logical blocks, look up extents, translate to physical blocks, read from disk. Handle reads spanning multiple extents. Handle uninitialized extents by returning zero-filled buffers. Cap reads at `i_size` (actual file length). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: file data reader"`. Add notes directly in this TODO section.
+**Prompt:** Using the extent tree, implement reading file data by logical block range. Given a file offset and read length, convert to logical blocks, look up extents, translate to physical blocks, read from disk. Handle reads spanning multiple extents. Handle uninitialized extents by returning zero-filled buffers. Cap reads at `i_size` (actual file length). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: file data reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ext4_read_data(vol, inode, offset, length, buffer)`:
   - [ ] Calculate starting logical block: `offset / block_size`
@@ -402,7 +402,7 @@ graph TD
 
 ### 5.1 Indirect Block Reader
 
-**Prompt:** For ext2/ext3 volumes (or ext4 inodes without `EXT4_EXTENTS_FL`), the `i_block[15]` array uses the classic indirect block scheme: indices 0–11 are direct block pointers, index 12 is a single indirect, index 13 is double indirect, index 14 is triple indirect. Each indirect block is a full filesystem block containing `block_size / 4` 32-bit block pointers. Implement this for backward compatibility so the driver can mount ext2 and ext3 volumes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: legacy indirect block reader"`. Add notes directly in this TODO section.
+**Prompt:** For ext2/ext3 volumes (or ext4 inodes without `EXT4_EXTENTS_FL`), the `i_block[15]` array uses the classic indirect block scheme: indices 0–11 are direct block pointers, index 12 is a single indirect, index 13 is double indirect, index 14 is triple indirect. Each indirect block is a full filesystem block containing `block_size / 4` 32-bit block pointers. Implement this for backward compatibility so the driver can mount ext2 and ext3 volumes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: legacy indirect block reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect: if `EXT4_EXTENTS_FL` NOT set in `i_flags` → use indirect blocks
 - [ ] Direct blocks: `i_block[0]` through `i_block[11]` → physical block numbers
@@ -422,7 +422,7 @@ graph TD
 
 ### 6.1 Linear Directory Entry Parser
 
-**Prompt:** ext4 directories store entries as `ext4_dir_entry_2` records in their data blocks. Each entry: inode number (4B), record length (2B), name length (1B), file type (1B), name (variable, NOT null-terminated). Entries are 4-byte aligned. The final entry's `rec_len` extends to the end of the block. Deleted entries have `inode == 0`. Walk entries by advancing `rec_len` bytes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: linear directory entry parser"`. Add notes directly in this TODO section.
+**Prompt:** ext4 directories store entries as `ext4_dir_entry_2` records in their data blocks. Each entry: inode number (4B), record length (2B), name length (1B), file type (1B), name (variable, NOT null-terminated). Entries are 4-byte aligned. The final entry's `rec_len` extends to the end of the block. Deleted entries have `inode == 0`. Walk entries by advancing `rec_len` bytes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: linear directory entry parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ext4_readdir_block(vol, block_data, block_size, callback)`:
   - [ ] Start at offset 0
@@ -440,7 +440,7 @@ graph TD
 
 ### 6.2 HTree Directory Index
 
-**Prompt:** For large directories with `EXT4_INDEX_FL` set, ext4 uses HTree (Hash Tree) indexing. The first data block contains a fake `dx_root` header (for ext2 backward compat), followed by the hash version, tree depth, and an array of `dx_entry` pairs (hash, block). To look up a filename: hash the name using the specified algorithm (typically Half MD4), binary search the `dx_entry` array, read the referenced leaf block, then linear-scan `ext4_dir_entry_2` entries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: HTree directory index"`. Add notes directly in this TODO section.
+**Prompt:** For large directories with `EXT4_INDEX_FL` set, ext4 uses HTree (Hash Tree) indexing. The first data block contains a fake `dx_root` header (for ext2 backward compat), followed by the hash version, tree depth, and an array of `dx_entry` pairs (hash, block). To look up a filename: hash the name using the specified algorithm (typically Half MD4), binary search the `dx_entry` array, read the referenced leaf block, then linear-scan `ext4_dir_entry_2` entries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: HTree directory index"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect HTree: check `EXT4_INDEX_FL` (`0x1000`) in directory inode's `i_flags`
 - [ ] Parse `dx_root` from first data block:
@@ -462,7 +462,7 @@ graph TD
 
 ### 6.3 Path Resolution
 
-**Prompt:** Implement full path resolution by splitting the path on `/`, starting at inode 2 (root directory), and recursively looking up each component. For each component, search the directory's data blocks (HTree or linear). Handle symlinks: read `i_block` directly for short symlinks (target fits in 60 bytes), or read data blocks for long symlinks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: path resolution"`. Add notes directly in this TODO section.
+**Prompt:** Implement full path resolution by splitting the path on `/`, starting at inode 2 (root directory), and recursively looking up each component. For each component, search the directory's data blocks (HTree or linear). Handle symlinks: read `i_block` directly for short symlinks (target fits in 60 bytes), or read data blocks for long symlinks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: path resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ext4_resolve_path(vol, path)`:
   - [ ] Start at inode 2 (root directory)
@@ -487,7 +487,7 @@ graph TD
 
 ### 7.1 CRC32C Validation
 
-**Prompt:** When `RO_COMPAT_METADATA_CSUM` is enabled, all metadata structures carry CRC32C checksums. The seed is derived from the filesystem UUID (or `s_checksum_seed` if `INCOMPAT_CSUM_SEED` is set). Validate checksums on: Superblock, group descriptors, inodes, directory blocks (dx_tail), extent blocks (extent_tail). On checksum failure, log error and flag the structure as corrupt — do not silently proceed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: CRC32C metadata checksumming"`. Add notes directly in this TODO section.
+**Prompt:** When `RO_COMPAT_METADATA_CSUM` is enabled, all metadata structures carry CRC32C checksums. The seed is derived from the filesystem UUID (or `s_checksum_seed` if `INCOMPAT_CSUM_SEED` is set). Validate checksums on: Superblock, group descriptors, inodes, directory blocks (dx_tail), extent blocks (extent_tail). On checksum failure, log error and flag the structure as corrupt — do not silently proceed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: CRC32C metadata checksumming"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ext4_crc32c(seed, data, length)` — CRC32C (Castagnoli polynomial `0x1EDC6F41`)
   - [ ] Use reflected table approach (similar to `gpt_crc32` but different polynomial)
@@ -511,7 +511,7 @@ graph TD
 
 ### 8.1 ext4 VFS Driver Registration
 
-**Prompt:** Register ext4 as a VFS filesystem driver. Implement the `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. Write callbacks return `-EROFS`. Detect ext4/ext3/ext2 volumes during partition scanning by checking the magic `0xEF53` in the boot sector at byte offset 1080 from partition start. Support mounting ext2 and ext3 volumes (they use the same magic) — handle based on feature flags. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: VFS driver registration"`. Add notes directly in this TODO section.
+**Prompt:** Register ext4 as a VFS filesystem driver. Implement the `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. Write callbacks return `-EROFS`. Detect ext4/ext3/ext2 volumes during partition scanning by checking the magic `0xEF53` in the boot sector at byte offset 1080 from partition start. Support mounting ext2 and ext3 volumes (they use the same magic) — handle based on feature flags. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: VFS driver registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/fs/ext4.c` and `include/kernel/fs/ext4.h`
 - [ ] Define `struct ext4_volume` — superblock data, GDT, config
@@ -551,7 +551,7 @@ graph TD
 
 ### 9.1 ext4 Test Suite
 
-**Prompt:** Create ext4 test disk images using host tools (`mkfs.ext4`, `mkfs.ext3`, `mkfs.ext2`). Test: basic file read, large file spanning multiple extents, deep directories, inline data (small file), HTree-indexed directory (>500 files), symlinks, and ext2 backward compatibility. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: ext4 filesystem test suite"`. Add notes directly in this TODO section.
+**Prompt:** Create ext4 test disk images using host tools (`mkfs.ext4`, `mkfs.ext3`, `mkfs.ext2`). Test: basic file read, large file spanning multiple extents, deep directories, inline data (small file), HTree-indexed directory (>500 files), symlinks, and ext2 backward compatibility. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: ext4 filesystem test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Test image: ext4 volume with files in root directory
   - [ ] Verify: superblock parsing, root inode read, directory listing
@@ -581,7 +581,7 @@ graph TD
 
 ### 10.1 Inode & Block Group Cache
 
-**Prompt:** Every file access reads the inode from the inode table on disk. Every inode lookup requires knowing the block group descriptor to find the inode table block. Implement an LRU cache for recently-accessed inodes (key: inode number, value: parsed inode struct). Cache the entire block group descriptor table in memory at mount time (typically < 64 KB for a 256 GB volume). Pin the root directory inode (inode 2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: inode and block group cache"`. Add notes directly in this TODO section.
+**Prompt:** Every file access reads the inode from the inode table on disk. Every inode lookup requires knowing the block group descriptor to find the inode table block. Implement an LRU cache for recently-accessed inodes (key: inode number, value: parsed inode struct). Cache the entire block group descriptor table in memory at mount time (typically < 64 KB for a 256 GB volume). Pin the root directory inode (inode 2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: inode and block group cache"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Cache entire GDT at mount time:
   - [ ] Allocate `num_block_groups × desc_size` via `pmm_alloc_contiguous()`
@@ -604,7 +604,7 @@ graph TD
 
 ### 11.1 Volume Health Dashboard
 
-**Prompt:** Aggregate ext4 volume health metrics into a single dashboard view in Disk Manager. Read: `s_state` (clean/errors/orphan), `s_errors_count` (error counter), `s_last_error_*` fields (time, inode, block, function, line of last error), journal status (clean or needs replay), free space from superblock, and checksum validation results. Display a health score with per-metric status (✅/⚠️/❌). ext4 records incredibly detailed error telemetry in the superblock — more than NTFS does — but no OS surfaces it in a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: volume health dashboard"`. Add notes directly in this TODO section.
+**Prompt:** Aggregate ext4 volume health metrics into a single dashboard view in Disk Manager. Read: `s_state` (clean/errors/orphan), `s_errors_count` (error counter), `s_last_error_*` fields (time, inode, block, function, line of last error), journal status (clean or needs replay), free space from superblock, and checksum validation results. Display a health score with per-metric status (✅/⚠️/❌). ext4 records incredibly detailed error telemetry in the superblock — more than NTFS does — but no OS surfaces it in a GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: volume health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux stores extensive error info in the ext4 superblock (`s_first_error_*`,
@@ -633,7 +633,7 @@ graph TD
 
 ### 11.2 Deleted Inode Recovery (Forensics Mode)
 
-**Prompt:** ext4 marks deleted files by clearing the inode's `i_links_count` to 0 and returning the inode to the free list, but the inode's data (extent tree, timestamps, size) often remains intact until the inode is reused. Additionally, ext4 records the deletion timestamp in `i_dtime`. Implement a recovery scanner that walks the inode table for inodes with `i_links_count == 0` and `i_dtime != 0` that still have valid extent trees. Cross-reference extent blocks against the block bitmap to determine recovery confidence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: deleted inode recovery"`. Add notes directly in this TODO section.
+**Prompt:** ext4 marks deleted files by clearing the inode's `i_links_count` to 0 and returning the inode to the free list, but the inode's data (extent tree, timestamps, size) often remains intact until the inode is reused. Additionally, ext4 records the deletion timestamp in `i_dtime`. Implement a recovery scanner that walks the inode table for inodes with `i_links_count == 0` and `i_dtime != 0` that still have valid extent trees. Cross-reference extent blocks against the block bitmap to determine recovery confidence. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: deleted inode recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux has `extundelete` but it's an unmaintained third-party CLI tool.
@@ -663,7 +663,7 @@ graph TD
 
 ### 11.3 Fragmentation Analyzer (🚀 Impossible OS Feature)
 
-**Prompt:** ext4 with extents should be less fragmented than ext2/ext3, but files can still become fragmented over time (especially if the volume was nearly full during writes). Implement a fragmentation analyzer that reads the extent tree for any file and computes: total extent count, ideal extent count (1 for contiguous), fragmentation ratio, and a visual block map. For directories, show extent fragmentation of the `$INDEX_ROOT`. Aggregate per-volume: scan all inodes, bucket files by fragmentation level, display a heat map in Disk Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: fragmentation analyzer"`. Add notes directly in this TODO section.
+**Prompt:** ext4 with extents should be less fragmented than ext2/ext3, but files can still become fragmented over time (especially if the volume was nearly full during writes). Implement a fragmentation analyzer that reads the extent tree for any file and computes: total extent count, ideal extent count (1 for contiguous), fragmentation ratio, and a visual block map. For directories, show extent fragmentation of the `$INDEX_ROOT`. Aggregate per-volume: scan all inodes, bucket files by fragmentation level, display a heat map in Disk Manager. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: fragmentation analyzer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux has `filefrag` and `e4defrag` — both CLI-only, per-file, no
@@ -689,7 +689,7 @@ graph TD
 
 ### 11.4 Cross-OS Timestamp Inspector (🚀 Impossible OS Feature)
 
-**Prompt:** ext4 records up to 4 timestamps per inode, each with nanosecond precision (if `EXTRA_ISIZE` ≥ 32): `i_atime` (access), `i_ctime` (inode change), `i_mtime` (modification), and `i_crtime` (creation — stored in the extended inode area at offset 144). The creation time is unique to ext4 — NTFS has it, but ext2/ext3 do not. Linux `stat` shows atime/mtime/ctime but omits crtime in most distributions. Windows can't read ext4 at all. Display all 4 timestamps with nanosecond precision in file properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: cross-OS timestamp inspector"`. Add notes directly in this TODO section.
+**Prompt:** ext4 records up to 4 timestamps per inode, each with nanosecond precision (if `EXTRA_ISIZE` ≥ 32): `i_atime` (access), `i_ctime` (inode change), `i_mtime` (modification), and `i_crtime` (creation — stored in the extended inode area at offset 144). The creation time is unique to ext4 — NTFS has it, but ext2/ext3 do not. Linux `stat` shows atime/mtime/ctime but omits crtime in most distributions. Windows can't read ext4 at all. Display all 4 timestamps with nanosecond precision in file properties. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: cross-OS timestamp inspector"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux `stat` shows 3 timestamps but hides creation time (`crtime`).
@@ -717,7 +717,7 @@ graph TD
 
 ### 12.1 Superblock Backup Reader
 
-**Prompt:** ext4 stores superblock backups at predefined block group boundaries. With `SPARSE_SUPER` (the common case), backups exist only in block groups 0, 1, and powers of 3, 5, and 7 (i.e., groups 0, 1, 3, 5, 7, 9, 25, 27, 49, 125, ...). Implement reading backup superblocks for two purposes: (1) resilience — if the primary superblock at byte 1024 is corrupt or unreadable, try backups; (2) health — compare primary vs backup to detect silent corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: superblock backup reader"`. Add notes directly in this TODO section.
+**Prompt:** ext4 stores superblock backups at predefined block group boundaries. With `SPARSE_SUPER` (the common case), backups exist only in block groups 0, 1, and powers of 3, 5, and 7 (i.e., groups 0, 1, 3, 5, 7, 9, 25, 27, 49, 125, ...). Implement reading backup superblocks for two purposes: (1) resilience — if the primary superblock at byte 1024 is corrupt or unreadable, try backups; (2) health — compare primary vs backup to detect silent corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: superblock backup reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux `e2fsck -b` can use backup superblocks for repair, but it's a

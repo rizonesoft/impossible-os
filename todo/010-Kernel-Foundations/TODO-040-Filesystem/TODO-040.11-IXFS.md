@@ -232,7 +232,7 @@ graph TD
 
 ### 1.1 Superblock Verification *(verify)*
 
-**Prompt:** Verify the existing superblock implementation in `ixfs_format.c` and `ixfs_core.c`. Confirm: magic `0x49584653` at offset 0, version 2, 4 KiB block size, 64-bit `s_total_blocks`/`s_free_blocks`, correct bitmap/inode/data region offsets, volume name, journal region, refcount table, snapshot table, checksum table. Verify CRC32C integrity check of the superblock. Verify the superblock fits in 512 bytes. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify superblock"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing superblock implementation in `ixfs_format.c` and `ixfs_core.c`. Confirm: magic `0x49584653` at offset 0, version 2, 4 KiB block size, 64-bit `s_total_blocks`/`s_free_blocks`, correct bitmap/inode/data region offsets, volume name, journal region, refcount table, snapshot table, checksum table. Verify CRC32C integrity check of the superblock. Verify the superblock fits in 512 bytes. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify superblock"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Code bug: stale header comment.** `ixfs.h` line 14 says `"Inodes hold 12 direct + 1
@@ -256,7 +256,7 @@ graph TD
 
 ### 1.2 Volume Resize (Online) *(agent)*
 
-**Prompt:** Implement online volume resizing — grow an IXFS volume while it is mounted. This is important for dynamic disk management (e.g., expanding a VM's disk). To grow: extend the block bitmap to cover new blocks, update `s_total_blocks` and `s_free_blocks` in the superblock, update block group descriptors. Shrinking is harder (requires relocating data from the tail) — defer to future. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: online volume grow"`. Add notes directly in this TODO section.
+**Prompt:** Implement online volume resizing — grow an IXFS volume while it is mounted. This is important for dynamic disk management (e.g., expanding a VM's disk). To grow: extend the block bitmap to cover new blocks, update `s_total_blocks` and `s_free_blocks` in the superblock, update block group descriptors. Shrinking is harder (requires relocating data from the tail) — defer to future. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: online volume grow"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS can grow online (but only via Windows Disk Management).
@@ -280,7 +280,7 @@ graph TD
 
 ### 2.1 Block Group Allocator Verification *(verify)*
 
-**Prompt:** Verify the existing block group allocator in `ixfs_alloc.c`. Confirm: bitmap set/clear/test operations, block group initialization (`ixfs_init_groups`), locality-aware allocation (`ixfs_alloc_block_near`), bitmap flush to disk. Verify block groups cover `IXFS_BLOCKS_PER_GROUP = 32768` blocks (128 MiB each) up to `IXFS_MAX_BLOCK_GROUPS = 256` (32 GiB max). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify block allocator"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing block group allocator in `ixfs_alloc.c`. Confirm: bitmap set/clear/test operations, block group initialization (`ixfs_init_groups`), locality-aware allocation (`ixfs_alloc_block_near`), bitmap flush to disk. Verify block groups cover `IXFS_BLOCKS_PER_GROUP = 32768` blocks (128 MiB each) up to `IXFS_MAX_BLOCK_GROUPS = 256` (32 GiB max). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify block allocator"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `bitmap_set`, `bitmap_clear`, `bitmap_test` — bit manipulation
 - [x] `ixfs_init_groups` — calculate block group boundaries
@@ -297,7 +297,7 @@ graph TD
 
 ### 3.1 Inode Table Verification *(verify)*
 
-**Prompt:** Verify the existing inode system in `ixfs_inode.c`. Confirm: 128-byte inodes (32 per block), mode/type flags, uid/gid, 64-bit size, ctime/mtime/atime, 4 inline extents, overflow extent block pointer, hard link count. Verify vnode allocation/lookup, directory hash index (`ixfs_fnv1a` hash). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify inode table"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing inode system in `ixfs_inode.c`. Confirm: 128-byte inodes (32 per block), mode/type flags, uid/gid, 64-bit size, ctime/mtime/atime, 4 inline extents, overflow extent block pointer, hard link count. Verify vnode allocation/lookup, directory hash index (`ixfs_fnv1a` hash). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify inode table"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Timestamp naming ambiguity.** `ixfs.h:151` comments `i_ctime` as `"creation time"` but
@@ -321,7 +321,7 @@ graph TD
 
 ### 3.2 Extended Inode Attributes *(agent)*
 
-**Prompt:** Extend the 128-byte inode to support additional metadata needed for Win32 compatibility and advanced features. Add: Win32 file attributes (`FILE_ATTRIBUTE_HIDDEN`, `SYSTEM`, `ARCHIVE`, etc.), nanosecond timestamp extensions, file creation time (`i_crtime` — distinct from `i_ctime` which is inode change time), a security descriptor reference (inode of the ACL), an ADS chain pointer (first ADS inode), a compression type field, and an encryption key ID. Use the existing `i_extent_pad` and reserved bytes, or increase inode size to 256 bytes (64 per block → 16 per block). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: extended inode attributes"`. Add notes directly in this TODO section.
+**Prompt:** Extend the 128-byte inode to support additional metadata needed for Win32 compatibility and advanced features. Add: Win32 file attributes (`FILE_ATTRIBUTE_HIDDEN`, `SYSTEM`, `ARCHIVE`, etc.), nanosecond timestamp extensions, file creation time (`i_crtime` — distinct from `i_ctime` which is inode change time), a security descriptor reference (inode of the ACL), an ADS chain pointer (first ADS inode), a compression type field, and an encryption key ID. Use the existing `i_extent_pad` and reserved bytes, or increase inode size to 256 bytes (64 per block → 16 per block). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: extended inode attributes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > Increasing inode size from 128 → 256 bytes is a **format change** (`IXFS_VERSION → 3`).
@@ -349,7 +349,7 @@ graph TD
 
 ### 4.1 Extent Engine Verification *(verify)*
 
-**Prompt:** Verify the existing extent engine in `ixfs_extent.c`. Confirm: `ixfs_get_block` maps file block index → disk block, `ixfs_add_block_to_extent` extends/creates extents, `ixfs_free_all_extents` deallocates. Verify inline data support (`IXFS_INLINE` flag, ≤48 bytes stored in `i_extents` array). Verify overflow extent blocks for files with >4 extents. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify extent engine"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing extent engine in `ixfs_extent.c`. Confirm: `ixfs_get_block` maps file block index → disk block, `ixfs_add_block_to_extent` extends/creates extents, `ixfs_free_all_extents` deallocates. Verify inline data support (`IXFS_INLINE` flag, ≤48 bytes stored in `i_extents` array). Verify overflow extent blocks for files with >4 extents. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify extent engine"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `ixfs_get_block` — binary search inline extents, then overflow
 - [x] `ixfs_add_block_to_extent` — extend last extent or allocate new
@@ -365,7 +365,7 @@ graph TD
 
 ### 5.1 Journal Verification *(verify)*
 
-**Prompt:** Verify the existing WAL journal in `ixfs_journal.c`. Confirm: journal header at journal block 0, data entries store full block snapshots, commit entries mark transaction completion, recovery replays uncommitted transactions. Verify transaction API: `ixfs_txn_begin`, `ixfs_txn_write` (up to 8 blocks), `ixfs_txn_commit`. Verify checksum on journal entries. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify WAL journal"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing WAL journal in `ixfs_journal.c`. Confirm: journal header at journal block 0, data entries store full block snapshots, commit entries mark transaction completion, recovery replays uncommitted transactions. Verify transaction API: `ixfs_txn_begin`, `ixfs_txn_write` (up to 8 blocks), `ixfs_txn_commit`. Verify checksum on journal entries. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify WAL journal"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `struct ixfs_journal_header` — magic, head, tail, seq
 - [x] `struct ixfs_journal_entry` — txn_id, type, target block, checksum, data
@@ -383,7 +383,7 @@ graph TD
 
 ### 6.1 CoW & Snapshot Verification *(verify)*
 
-**Prompt:** Verify the existing CoW and snapshot system in `ixfs_cow.c`. Confirm: per-block refcount table, CoW on write (`ixfs_cow_block` allocates new block when refcount > 1), snapshot creation (copies inode table, increments refcounts), snapshot restore, snapshot deletion (decrements refcounts, frees blocks at refcount 0). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify CoW and snapshots"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing CoW and snapshot system in `ixfs_cow.c`. Confirm: per-block refcount table, CoW on write (`ixfs_cow_block` allocates new block when refcount > 1), snapshot creation (copies inode table, increments refcounts), snapshot restore, snapshot deletion (decrements refcounts, frees blocks at refcount 0). Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify CoW and snapshots"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `ixfs_refcount_init/load/flush` — per-block reference counting
 - [x] `ixfs_cow_block` — allocate new block if refcount > 1
@@ -398,7 +398,7 @@ graph TD
 
 ### 6.2 Scheduled Automatic Snapshots *(agent)*
 
-**Prompt:** Implement automatic scheduled snapshots — the filesystem takes snapshots at configurable intervals (hourly, daily). Old snapshots are automatically pruned based on a retention policy: keep the last N hourly, daily, weekly snapshots. This enables Windows "Previous Versions" (Shadow Copy) functionality. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: automatic scheduled snapshots"`. Add notes directly in this TODO section.
+**Prompt:** Implement automatic scheduled snapshots — the filesystem takes snapshots at configurable intervals (hourly, daily). Old snapshots are automatically pruned based on a retention policy: keep the last N hourly, daily, weekly snapshots. This enables Windows "Previous Versions" (Shadow Copy) functionality. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: automatic scheduled snapshots"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Volume Shadow Copy (VSS) is a separate service, not part of
@@ -423,7 +423,7 @@ graph TD
 
 ### 7.1 Checksum Verification *(verify)*
 
-**Prompt:** Verify the existing per-block checksum system in `ixfs_core.c`. Confirm: `ixfs_crc32c` computes CRC32C, `ixfs_checksum_update` stores checksum on write, `ixfs_checksum_verify` validates on read, `ixfs_checksum_load/flush` persists the checksum table. Verify `ixfs_scrub` walks all blocks and reports corrupted ones. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify checksums"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing per-block checksum system in `ixfs_core.c`. Confirm: `ixfs_crc32c` computes CRC32C, `ixfs_checksum_update` stores checksum on write, `ixfs_checksum_verify` validates on read, `ixfs_checksum_load/flush` persists the checksum table. Verify `ixfs_scrub` walks all blocks and reports corrupted ones. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify checksums"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `ixfs_crc32c` — CRC32C computation
 - [x] `ixfs_checksum_update` — store checksum on block write
@@ -436,7 +436,7 @@ graph TD
 
 ### 7.2 Self-Healing with Redundant Metadata *(agent)*
 
-**Prompt:** Implement self-healing for critical metadata: superblock, bitmap, and inode table. Store a backup copy of the superblock at the last block of the volume. Store a backup of the first bitmap block at a reserved location. On checksum failure of these critical structures, automatically fall back to the backup copy and log a warning. This is similar to ZFS self-healing but targeted at critical metadata only. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: self-healing metadata"`. Add notes directly in this TODO section.
+**Prompt:** Implement self-healing for critical metadata: superblock, bitmap, and inode table. Store a backup copy of the superblock at the last block of the volume. Store a backup of the first bitmap block at a reserved location. On checksum failure of these critical structures, automatically fall back to the backup copy and log a warning. This is similar to ZFS self-healing but targeted at critical metadata only. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: self-healing metadata"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS has no self-healing (relies on chkdsk). ext4 has journal
@@ -457,7 +457,7 @@ graph TD
 
 ### 8.1 VFS Callbacks Verification *(verify)*
 
-**Prompt:** Verify the existing VFS integration in `ixfs_ops.c`. Confirm all `vfs_ops` callbacks work: `open`, `close`, `read`, `write`, `readdir`, `finddir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`, `truncate`, `flush`. Verify directory entries (`struct ixfs_dir_entry` — 256 bytes, 16 per block). Verify the mount sequence in `ixfs_init`. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify VFS callbacks"`. Add notes directly in this TODO section.
+**Prompt:** Verify the existing VFS integration in `ixfs_ops.c`. Confirm all `vfs_ops` callbacks work: `open`, `close`, `read`, `write`, `readdir`, `finddir`, `create`, `unlink`, `rename`, `mkdir`, `rmdir`, `stat`, `truncate`, `flush`. Verify directory entries (`struct ixfs_dir_entry` — 256 bytes, 16 per block). Verify the mount sequence in `ixfs_init`. Run `bash scripts/build.sh clean`, and commit as `"ixfs: verify VFS callbacks"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Code bug: directory entry comment.** `ixfs.h:163` says `"64 bytes each (64 entries per
@@ -484,7 +484,7 @@ graph TD
 
 ### 9.1 Named Data Streams *(agent)*
 
-**Prompt:** Implement Alternate Data Streams (ADS) — the ability to store multiple named data streams on a single file, accessible via the `filename:streamname` syntax. NTFS ADS is used by: web browsers (`:Zone.Identifier`), Outlook (`:OLE...` streams), and the Windows Attachment Manager. IXFS implements ADS by creating hidden "stream inodes" chained from the parent file's `i_ads_first` field. Each stream inode is a regular file-type inode with a special stream-name directory entry in a per-file ADS directory. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: alternate data streams"`. Add notes directly in this TODO section.
+**Prompt:** Implement Alternate Data Streams (ADS) — the ability to store multiple named data streams on a single file, accessible via the `filename:streamname` syntax. NTFS ADS is used by: web browsers (`:Zone.Identifier`), Outlook (`:OLE...` streams), and the Windows Attachment Manager. IXFS implements ADS by creating hidden "stream inodes" chained from the parent file's `i_ads_first` field. Each stream inode is a regular file-type inode with a special stream-name directory entry in a per-file ADS directory. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: alternate data streams"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Only NTFS supports ADS natively. ext4, FAT32, exFAT do not.
@@ -516,7 +516,7 @@ graph TD
 
 ### 10.1 DACL/SACL Security Descriptors *(agent)*
 
-**Prompt:** Implement Win32-compatible security descriptors on IXFS files. Each file can have an associated security descriptor containing: Owner SID, Group SID, DACL (who can access), and SACL (audit trail). Store them as separate "security inodes" — deduplicated, since many files share the same descriptor. The `i_security_id` field in the inode references a security descriptor object by its hash. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: security descriptors"`. Add notes directly in this TODO section.
+**Prompt:** Implement Win32-compatible security descriptors on IXFS files. Each file can have an associated security descriptor containing: Owner SID, Group SID, DACL (who can access), and SACL (audit trail). Store them as separate "security inodes" — deduplicated, since many files share the same descriptor. The `i_security_id` field in the inode references a security descriptor object by its hash. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: security descriptors"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS stores security descriptors in `$Secure` with dedup.
@@ -543,7 +543,7 @@ graph TD
 
 ### 11.1 Hard Links *(agent)*
 
-**Prompt:** Implement Win32 `CreateHardLink` — multiple directory entries pointing to the same inode. The `i_links` field already tracks hard link count. When a hard link is created, add a new directory entry in the target directory pointing to the same inode and increment `i_links`. When any link is deleted, decrement `i_links`. When `i_links` reaches 0, delete the inode and free its data blocks. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: hard links"`. Add notes directly in this TODO section.
+**Prompt:** Implement Win32 `CreateHardLink` — multiple directory entries pointing to the same inode. The `i_links` field already tracks hard link count. When a hard link is created, add a new directory entry in the target directory pointing to the same inode and increment `i_links`. When any link is deleted, decrement `i_links`. When `i_links` reaches 0, delete the inode and free its data blocks. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: hard links"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `CreateHardLink(lpFileName, lpExistingFileName)`:
   - [ ] Resolve existing file to inode
@@ -558,7 +558,7 @@ graph TD
 
 ### 11.2 Symbolic Links & Reparse Points *(agent)*
 
-**Prompt:** Implement symbolic links via reparse points. A symlink inode has type `IXFS_S_SYMLINK` (new type) and stores the target path in its data (inline for short paths ≤48 bytes, extent-based for long paths). Support both relative and absolute symlinks. Implement `CreateSymbolicLink` API. Follow symlinks during path resolution (with loop detection — max 8 follows). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: symbolic links"`. Add notes directly in this TODO section.
+**Prompt:** Implement symbolic links via reparse points. A symlink inode has type `IXFS_S_SYMLINK` (new type) and stores the target path in its data (inline for short paths ≤48 bytes, extent-based for long paths). Support both relative and absolute symlinks. Implement `CreateSymbolicLink` API. Follow symlinks during path resolution (with loop detection — max 8 follows). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: symbolic links"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `IXFS_S_SYMLINK = 0xA000` — new inode type
 - [ ] Symlink data = target path (UTF-16LE or UTF-8)
@@ -578,7 +578,7 @@ graph TD
 
 ### 12.1 Per-File LZ4/Zstd Compression *(agent)*
 
-**Prompt:** Implement transparent, per-file compression. When a file is marked for compression (via `DeviceIoControl` with `FSCTL_SET_COMPRESSION`), IXFS compresses data blocks before writing and decompresses on read. Use LZ4 for fast compression (real-time, low CPU) and Zstd for high-ratio compression. Compression unit = 1 block (4 KiB). The inode's `i_compress_type` field selects the algorithm. Compressed blocks smaller than the original are stored in-place with a header indicating compressed size. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: transparent compression"`. Add notes directly in this TODO section.
+**Prompt:** Implement transparent, per-file compression. When a file is marked for compression (via `DeviceIoControl` with `FSCTL_SET_COMPRESSION`), IXFS compresses data blocks before writing and decompresses on read. Use LZ4 for fast compression (real-time, low CPU) and Zstd for high-ratio compression. Compression unit = 1 block (4 KiB). The inode's `i_compress_type` field selects the algorithm. Compressed blocks smaller than the original are stored in-place with a header indicating compressed size. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: transparent compression"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS uses LZ77 compression (slow, old algorithm from 1993).
@@ -604,7 +604,7 @@ graph TD
 
 ### 13.1 AES-256 Transparent Encryption *(agent)*
 
-**Prompt:** Implement transparent, per-file AES-256-XTS encryption. When a file or directory is marked for encryption, all data blocks are encrypted with a per-file key. The per-file key is stored encrypted by a master key (derived from user password via PBKDF2). The `i_encrypt_key_id` field references a key slot in the volume's key table. Encrypted files are readable only after the volume is unlocked with the correct master key. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: per-file encryption"`. Add notes directly in this TODO section.
+**Prompt:** Implement transparent, per-file AES-256-XTS encryption. When a file or directory is marked for encryption, all data blocks are encrypted with a per-file key. The per-file key is stored encrypted by a master key (derived from user password via PBKDF2). The `i_encrypt_key_id` field references a key slot in the volume's key table. Encrypted files are readable only after the volume is unlocked with the correct master key. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: per-file encryption"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS EFS (Encrypting File System) requires certificates and is
@@ -632,7 +632,7 @@ graph TD
 
 ### 14.1 Inline Deduplication *(agent)*
 
-**Prompt:** Implement block-level inline deduplication. When writing a block, compute its hash (xxHash64). Check a dedup hash table — if a block with the same hash already exists, reuse the existing block via CoW refcounting instead of allocating a new one. This is especially effective for VM images, build artifacts, and copied files. Uses the existing refcount infrastructure from CoW snapshots. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: inline block deduplication"`. Add notes directly in this TODO section.
+**Prompt:** Implement block-level inline deduplication. When writing a block, compute its hash (xxHash64). Check a dedup hash table — if a block with the same hash already exists, reuse the existing block via CoW refcounting instead of allocating a new one. This is especially effective for VM images, build artifacts, and copied files. Uses the existing refcount infrastructure from CoW snapshots. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: inline block deduplication"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS and ext4 have no deduplication at all. ZFS has dedup but it
@@ -657,7 +657,7 @@ graph TD
 
 ### 15.1 Reflink Copy *(agent)*
 
-**Prompt:** Implement reflinks — instant, zero-copy file cloning via `CopyFileEx` with `COPY_FILE_COPY_SYMLINK`. When reflink-copying a file, create a new inode pointing to the SAME data blocks, incrementing their refcounts. Writes to either file trigger CoW. This makes `Copy-Paste` of large files instant. Uses existing CoW refcount infrastructure. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: reflink copy"`. Add notes directly in this TODO section.
+**Prompt:** Implement reflinks — instant, zero-copy file cloning via `CopyFileEx` with `COPY_FILE_COPY_SYMLINK`. When reflink-copying a file, create a new inode pointing to the SAME data blocks, incrementing their refcounts. Writes to either file trigger CoW. This makes `Copy-Paste` of large files instant. Uses existing CoW refcount infrastructure. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: reflink copy"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS has "block cloning" since Server 2016 (limited). ext4 has no
@@ -682,7 +682,7 @@ graph TD
 
 ### 16.1 Extent Consolidation *(agent)*
 
-**Prompt:** Implement online defragmentation — consolidate fragmented extents while the volume is mounted. Walk files with high extent counts, allocate a new contiguous block range, copy data, update the inode's extent list. Use CoW so the old blocks remain valid until the new extent is committed. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: online defragmentation"`. Add notes directly in this TODO section.
+**Prompt:** Implement online defragmentation — consolidate fragmented extents while the volume is mounted. Walk files with high extent counts, allocate a new contiguous block range, copy data, update the inode's extent list. Use CoW so the old blocks remain valid until the new extent is committed. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: online defragmentation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ixfs_defrag_file(vol, ino)`:
   - [ ] Count extents — if ≤ 2 → already well-allocated, skip
@@ -705,7 +705,7 @@ graph TD
 
 ### 17.1 IXFS Format Wizard *(agent)*
 
-**Prompt:** Verify and extend `ixfs_format()` to support all new features. The format tool must create: superblock (v3), block bitmap, inode table (256-byte inodes), root directory, journal region, refcount table, snapshot table, checksum table, security descriptor table, key table (encryption), and backup superblock. Wire to Disk Manager as "Format → IXFS" option. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: format tool v3"`. Add notes directly in this TODO section.
+**Prompt:** Verify and extend `ixfs_format()` to support all new features. The format tool must create: superblock (v3), block bitmap, inode table (256-byte inodes), root directory, journal region, refcount table, snapshot table, checksum table, security descriptor table, key table (encryption), and backup superblock. Wire to Disk Manager as "Format → IXFS" option. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: format tool v3"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Extend `ixfs_format()` for v3:
   - [ ] Calculate sizes for all reserved regions
@@ -728,7 +728,7 @@ graph TD
 
 ### 18.1 Unified Health Panel *(agent)*
 
-**Prompt:** Aggregate IXFS volume health into a Disk Manager panel. Show: superblock consistency (primary vs backup), journal state (clean/dirty), snapshot count and age, block checksum failures from last scrub, dedup ratio, free space, fragmentation level. Provide one-click "Scrub" button and "Repair" for fixable issues. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: volume health dashboard"`. Add notes directly in this TODO section.
+**Prompt:** Aggregate IXFS volume health into a Disk Manager panel. Show: superblock consistency (primary vs backup), journal state (clean/dirty), snapshot count and age, block checksum failures from last scrub, dedup ratio, free space, fragmentation level. Provide one-click "Scrub" button and "Repair" for fixable issues. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: volume health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Health metrics:
   - [ ] Superblock: primary vs backup consistency ✅/❌
@@ -749,7 +749,7 @@ graph TD
 
 ### 19.1 IXFS Comprehensive Test Suite *(agent)*
 
-**Prompt:** Create a comprehensive test suite for all IXFS features. Test via `ixfs_test_performance()` and QEMU boot tests. Cover: basic file CRUD, large files (>4 GiB), deep directory trees, hard links, symlinks, ADS, security descriptors, snapshots (create/restore/delete), CoW behavior, compression, dedup, reflinks, journal recovery, checksum scrubbing, and online defragmentation. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"test: IXFS comprehensive test suite"`. Add notes directly in this TODO section.
+**Prompt:** Create a comprehensive test suite for all IXFS features. Test via `ixfs_test_performance()` and QEMU boot tests. Cover: basic file CRUD, large files (>4 GiB), deep directory trees, hard links, symlinks, ADS, security descriptors, snapshots (create/restore/delete), CoW behavior, compression, dedup, reflinks, journal recovery, checksum scrubbing, and online defragmentation. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"test: IXFS comprehensive test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Basic CRUD: create, read, write, delete, rename files and directories
 - [ ] Large file: write > 4 GiB, verify 64-bit size handling
@@ -778,7 +778,7 @@ graph TD
 
 ### 20.1 Case-Insensitive Path Resolution *(agent)*
 
-**Prompt:** Implement case-insensitive filename comparison as the default for IXFS — Win32 applications expect `"README.TXT"` and `"readme.txt"` to resolve to the same file. Use a simple ASCII case-fold table for Phase 1 (code points 0x41–0x5A → 0x61–0x7A). Store filenames in their original case (case-preserving). The comparison function `ixfs_name_cmp()` replaces `ixfs_strcmp()` for all directory lookups. A mount flag `IXFS_MOUNT_CASE_SENSITIVE` overrides for Linux compat layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: case-insensitive path resolution"`. Add notes directly in this TODO section.
+**Prompt:** Implement case-insensitive filename comparison as the default for IXFS — Win32 applications expect `"README.TXT"` and `"readme.txt"` to resolve to the same file. Use a simple ASCII case-fold table for Phase 1 (code points 0x41–0x5A → 0x61–0x7A). Store filenames in their original case (case-preserving). The comparison function `ixfs_name_cmp()` replaces `ixfs_strcmp()` for all directory lookups. A mount flag `IXFS_MOUNT_CASE_SENSITIVE` overrides for Linux compat layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: case-insensitive path resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS is case-insensitive by default (Win32 requirement). ext4 added
@@ -803,7 +803,7 @@ graph TD
 
 ### 21.1 Sparse Regions *(agent)*
 
-**Prompt:** Implement sparse file support — files with large zero regions that don't consume disk blocks. A sparse file has `FILE_ATTRIBUTE_SPARSE_FILE` set. When `FSCTL_SET_ZERO_DATA` is called, free the data blocks in the specified range and mark the extents as holes. On read, return zeroes for hole regions without disk I/O. `ixfs_stat()` already returns `logical_size` and `actual_blocks` — sparse files will have `actual_blocks < logical_size / block_size`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: sparse file support"`. Add notes directly in this TODO section.
+**Prompt:** Implement sparse file support — files with large zero regions that don't consume disk blocks. A sparse file has `FILE_ATTRIBUTE_SPARSE_FILE` set. When `FSCTL_SET_ZERO_DATA` is called, free the data blocks in the specified range and mark the extents as holes. On read, return zeroes for hole regions without disk I/O. `ixfs_stat()` already returns `logical_size` and `actual_blocks` — sparse files will have `actual_blocks < logical_size / block_size`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: sparse file support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS supports sparse files natively. ext4 supports sparse via
@@ -825,7 +825,7 @@ graph TD
 
 ### 22.1 USN Change Journal *(agent)*
 
-**Prompt:** Implement a change journal that records all file modifications — Windows Search, antivirus, and backup software depend on this to efficiently detect what changed since the last scan. NTFS calls this the USN (Update Sequence Number) journal. IXFS stores change records in a circular buffer on disk. Each record contains: USN, timestamp, inode number, filename, reason code (create/delete/modify/rename). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: USN change journal"`. Add notes directly in this TODO section.
+**Prompt:** Implement a change journal that records all file modifications — Windows Search, antivirus, and backup software depend on this to efficiently detect what changed since the last scan. NTFS calls this the USN (Update Sequence Number) journal. IXFS stores change records in a circular buffer on disk. Each record contains: USN, timestamp, inode number, filename, reason code (create/delete/modify/rename). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: USN change journal"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS has the USN journal ($UsnJrnl). ext4 has no change journal — Linux
@@ -851,7 +851,7 @@ graph TD
 
 ### 23.1 Per-User Disk Quotas *(agent)*
 
-**Prompt:** Implement volume quotas — limit disk space usage per user or group. Enterprise environments need this to prevent a single user from filling an entire volume. Store quota information in a reserved quota table on disk. Each entry maps a UID to a usage limit and current usage. On block allocation, check if the owner's quota would be exceeded. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: volume quotas"`. Add notes directly in this TODO section.
+**Prompt:** Implement volume quotas — limit disk space usage per user or group. Enterprise environments need this to prevent a single user from filling an entire volume. Store quota information in a reserved quota table on disk. Each entry maps a UID to a usage limit and current usage. On block allocation, check if the owner's quota would be exceeded. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: volume quotas"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define quota table: reserved blocks after encryption key table
   - [ ] Quota entry (16B): `uid` (2B), `gid` (2B), `limit_blocks` (4B), `used_blocks` (4B), `flags` (4B)
@@ -869,7 +869,7 @@ graph TD
 
 ### 24.1 SSD TRIM on Block Free *(agent)*
 
-**Prompt:** Implement TRIM/discard support — when blocks are freed, notify the underlying storage device so SSDs can erase the corresponding flash cells. This improves SSD write performance and longevity. Issue TRIM via the block device layer's `blkdev_discard()` (ATA TRIM for AHCI, UNMAP for VirtIO-SCSI). Batch discard requests to amortize overhead. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: TRIM/discard support"`. Add notes directly in this TODO section.
+**Prompt:** Implement TRIM/discard support — when blocks are freed, notify the underlying storage device so SSDs can erase the corresponding flash cells. This improves SSD write performance and longevity. Issue TRIM via the block device layer's `blkdev_discard()` (ATA TRIM for AHCI, UNMAP for VirtIO-SCSI). Batch discard requests to amortize overhead. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ixfs: TRIM/discard support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** NTFS issues TRIM since Windows 7 (2009) but only via the Optimize

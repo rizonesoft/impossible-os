@@ -57,7 +57,7 @@
 
 ## 4. Memory Pressure Notifications
 
-**Prompt:** When PMM free frames drop below a configurable threshold (e.g., 16 MB), the kernel should broadcast a memory pressure event to all registered consumers. Consumers respond by freeing caches or reducing buffer sizes. Register with `mm_pressure_register(callback)`. The glyph cache, disk buffer cache, and SLAB caches should all register. This prevents OOM crashes by giving subsystems a chance to release non-critical memory before the system runs out. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: memory pressure notifications"`. Add notes directly in this TODO section.
+**Prompt:** When PMM free frames drop below a configurable threshold (e.g., 16 MB), the kernel should broadcast a memory pressure event to all registered consumers. Consumers respond by freeing caches or reducing buffer sizes. Register with `mm_pressure_register(callback)`. The glyph cache, disk buffer cache, and SLAB caches should all register. This prevents OOM crashes by giving subsystems a chance to release non-critical memory before the system runs out. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: memory pressure notifications"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux uses shrinker callbacks (complex infrastructure). Windows uses memory notification events. Impossible OS: simple callback list — simpler than Linux shrinkers, just as functional.
 
@@ -75,7 +75,7 @@
 
 ## 5. NUMA-Awareneses (Future)
 
-**Prompt:** On NUMA (Non-Uniform Memory Access) systems, memory accesses to local nodes are faster than remote nodes. The NUMA topology is described in the ACPI SRAT (System Resource Affinity Table). Read SRAT at boot to identify NUMA nodes and their associated physical memory ranges. When allocating frames for a CPU, prefer frames local to that CPU's NUMA node. This is a stretch goal — single-node systems (all current QEMU/VBox configs) are not affected. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: NUMA-aware PMM allocation"`. Add notes directly in this TODO section.
+**Prompt:** On NUMA (Non-Uniform Memory Access) systems, memory accesses to local nodes are faster than remote nodes. The NUMA topology is described in the ACPI SRAT (System Resource Affinity Table). Read SRAT at boot to identify NUMA nodes and their associated physical memory ranges. When allocating frames for a CPU, prefer frames local to that CPU's NUMA node. This is a stretch goal — single-node systems (all current QEMU/VBox configs) are not affected. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"mm: NUMA-aware PMM allocation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Competitive target:** Matches Linux NUMA subsystem for multi-socket server support.
 > Windows uses NUMA node affinity in the NT kernel. Even basic NUMA awareness positions
@@ -93,7 +93,7 @@
 
 > *Incorporated from parking-lot P10*
 
-**Prompt:** Create comprehensive memory architecture documentation consolidating the entire memory subsystem design. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"docs: memory architecture documentation"`. Add notes directly in this TODO section.
+**Prompt:** Create comprehensive memory architecture documentation consolidating the entire memory subsystem design. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"docs: memory architecture documentation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Document the two-tier allocation model (kmalloc vs PMM) with diagram
 - [ ] Document identity-mapped physical memory layout

@@ -29,7 +29,7 @@
 
 ### 1.1 Proper Device Enumeration ✅ (Partial)
 
-**Prompt:** The current `pci_scan()` does a flat brute-force scan of bus 0 only, printing devices to the console. Replace this with a proper recursive bus enumeration that: discovers all buses (following PCI-to-PCI bridges), builds a device tree, correctly handles multi-function devices (Header Type bit 7), and stores all discovered devices in a global device list. Each device entry should store: bus/device/function, vendor/device IDs, class/subclass/progif, header type, interrupt pin/line, and all 6 BARs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: proper device enumeration"`. Add notes directly in this TODO section.
+**Prompt:** The current `pci_scan()` does a flat brute-force scan of bus 0 only, printing devices to the console. Replace this with a proper recursive bus enumeration that: discovers all buses (following PCI-to-PCI bridges), builds a device tree, correctly handles multi-function devices (Header Type bit 7), and stores all discovered devices in a global device list. Each device entry should store: bus/device/function, vendor/device IDs, class/subclass/progif, header type, interrupt pin/line, and all 6 BARs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: proper device enumeration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Read config space header: Vendor ID (0x00), Device ID (0x02), Class/Subclass (0x0A/0x0B)
 - [x] Scan bus 0: iterate devices 0–31, check vendor != 0xFFFF
@@ -62,7 +62,7 @@
 
 ### 1.2 PCI Device Lookup API
 
-**Prompt:** Provide multiple ways to find PCI devices: by class/subclass (e.g., all storage controllers), by vendor/device ID (e.g., Intel 8086:2922 AHCI), and by BDF address. The current `pci_find_device(vendor, device)` only searches by ID on bus 0. This needs to work across all enumerated buses and return a proper `struct pci_device*`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: device lookup API"`. Add notes directly in this TODO section.
+**Prompt:** Provide multiple ways to find PCI devices: by class/subclass (e.g., all storage controllers), by vendor/device ID (e.g., Intel 8086:2922 AHCI), and by BDF address. The current `pci_find_device(vendor, device)` only searches by ID on bus 0. This needs to work across all enumerated buses and return a proper `struct pci_device*`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: device lookup API"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] `pci_find_device(vendor_id, device_id)` — return first match (update existing)
 - [ ] `pci_find_class(class, subclass)` — return first device matching class code
@@ -78,7 +78,7 @@
 
 ### 2.1 Capabilities Walker
 
-**Prompt:** PCI devices advertise extended features via a linked list of Capability structures starting at the Capabilities Pointer (offset 0x34). Each entry has: Capability ID (1 byte), Next pointer (1 byte), and capability-specific registers. The walker reads Status register bit 4 (Capabilities List Present), then follows the linked list. Cache discovered capabilities in the device struct for fast lookup. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: capabilities list parser"`. Add notes directly in this TODO section.
+**Prompt:** PCI devices advertise extended features via a linked list of Capability structures starting at the Capabilities Pointer (offset 0x34). Each entry has: Capability ID (1 byte), Next pointer (1 byte), and capability-specific registers. The walker reads Status register bit 4 (Capabilities List Present), then follows the linked list. Cache discovered capabilities in the device struct for fast lookup. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: capabilities list parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Check PCI Status register (0x06) bit 4: Capabilities List present
 - [ ] Read Capabilities Pointer at offset 0x34 (bottom 2 bits reserved, must mask)
@@ -102,7 +102,7 @@
 
 ### 3.1 MSI Support (Basic)
 
-**Prompt:** MSI (Message Signaled Interrupts, Capability ID 0x05) replaces legacy INTx# pin-based interrupts with in-band memory write transactions to the LAPIC. The device writes a message (containing the interrupt vector) to a message address (LAPIC address). MSI supports up to 32 vectors per device. The OS must: find the MSI capability, program the Message Address (LAPIC base + destination), Message Data (vector number), and enable MSI by setting the MSI Enable bit. After enabling MSI, legacy INTx# is automatically disabled. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: MSI interrupt support"`. Add notes directly in this TODO section.
+**Prompt:** MSI (Message Signaled Interrupts, Capability ID 0x05) replaces legacy INTx# pin-based interrupts with in-band memory write transactions to the LAPIC. The device writes a message (containing the interrupt vector) to a message address (LAPIC address). MSI supports up to 32 vectors per device. The OS must: find the MSI capability, program the Message Address (LAPIC base + destination), Message Data (vector number), and enable MSI by setting the MSI Enable bit. After enabling MSI, legacy INTx# is automatically disabled. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: MSI interrupt support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find MSI capability via `pci_find_capability(dev, 0x05)`
 - [ ] Parse MSI capability structure:
@@ -121,7 +121,7 @@
 
 ### 3.2 MSI-X Support (Extended)
 
-**Prompt:** MSI-X (Capability ID 0x11) extends MSI to support up to 2,048 independent interrupt vectors per device. Unlike MSI (which stores message address/data in config space), MSI-X uses a memory-mapped table in the device's BAR space. Each table entry has: Message Address (8 bytes), Message Data (4 bytes), and Vector Control (4 bytes, includes per-vector mask bit). A separate Pending Bit Array (PBA) tracks pending interrupts. MSI-X is critical for multi-queue devices (NVMe, high-speed NICs). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: MSI-X interrupt support"`. Add notes directly in this TODO section.
+**Prompt:** MSI-X (Capability ID 0x11) extends MSI to support up to 2,048 independent interrupt vectors per device. Unlike MSI (which stores message address/data in config space), MSI-X uses a memory-mapped table in the device's BAR space. Each table entry has: Message Address (8 bytes), Message Data (4 bytes), and Vector Control (4 bytes, includes per-vector mask bit). A separate Pending Bit Array (PBA) tracks pending interrupts. MSI-X is critical for multi-queue devices (NVMe, high-speed NICs). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: MSI-X interrupt support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find MSI-X capability via `pci_find_capability(dev, 0x11)`
 - [ ] Parse MSI-X capability:
@@ -148,7 +148,7 @@
 
 ### 4.1 PCIe ECAM Access
 
-**Prompt:** Legacy PCI config access via I/O ports (0xCF8/0xCFC) only supports 256 bytes of config space per device. PCIe extends this to 4096 bytes per function via Memory-Mapped Configuration (ECAM). The ECAM base address comes from the ACPI MCFG table (see TODO-042 §1.3). Each function gets a 4K page at offset `(bus << 20) | (dev << 15) | (func << 12)` from the ECAM base. This enables access to PCIe extended capabilities (AER, SR-IOV, LTR, etc.) at offsets 0x100–0xFFF. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: PCIe ECAM config access"`. Add notes directly in this TODO section.
+**Prompt:** Legacy PCI config access via I/O ports (0xCF8/0xCFC) only supports 256 bytes of config space per device. PCIe extends this to 4096 bytes per function via Memory-Mapped Configuration (ECAM). The ECAM base address comes from the ACPI MCFG table (see TODO-042 §1.3). Each function gets a 4K page at offset `(bus << 20) | (dev << 15) | (func << 12)` from the ECAM base. This enables access to PCIe extended capabilities (AER, SR-IOV, LTR, etc.) at offsets 0x100–0xFFF. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: PCIe ECAM config access"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Get ECAM base from MCFG table (see TODO-012-ACPI §1.3)
 - [ ] Calculate per-function address: `ecam_base + (bus << 20) | (dev << 15) | (func << 12)`
@@ -170,7 +170,7 @@
 
 ### 5.1 Device Command Control
 
-**Prompt:** The PCI Command register (offset 0x04) controls device behavior: memory space enable, I/O space enable, bus master enable, interrupt disable, SERR# enable, parity error response. The current `pci_enable_bus_mastering()` only sets the bus master bit. Provide a proper API for enabling/disabling each bit, and ensure BAR regions are enabled before driver access. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: command register management"`. Add notes directly in this TODO section.
+**Prompt:** The PCI Command register (offset 0x04) controls device behavior: memory space enable, I/O space enable, bus master enable, interrupt disable, SERR# enable, parity error response. The current `pci_enable_bus_mastering()` only sets the bus master bit. Provide a proper API for enabling/disabling each bit, and ensure BAR regions are enabled before driver access. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: command register management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Bus Master Enable (bit 2) — `pci_enable_bus_mastering()` *(done)*
 - [ ] Memory Space Enable (bit 1) — required before accessing memory BARs
@@ -184,7 +184,7 @@
 
 ### 5.2 Status Register & Error Checking
 
-**Prompt:** The PCI Status register (offset 0x06) reports error conditions: Detected Parity Error (bit 15), Signaled System Error (bit 14), Received Master Abort (bit 13), Received Target Abort (bit 12), and Data Parity Error Detected (bit 8). Status bits are "write-1-to-clear" (W1C). The kernel should check status after failed transactions and provide a `pci_check_errors(dev)` function. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: status register error checking"`. Add notes directly in this TODO section.
+**Prompt:** The PCI Status register (offset 0x06) reports error conditions: Detected Parity Error (bit 15), Signaled System Error (bit 14), Received Master Abort (bit 13), Received Target Abort (bit 12), and Data Parity Error Detected (bit 8). Status bits are "write-1-to-clear" (W1C). The kernel should check status after failed transactions and provide a `pci_check_errors(dev)` function. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: status register error checking"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read PCI Status register (offset 0x06)
 - [ ] Check error bits:
@@ -204,7 +204,7 @@
 
 ### 6.1 Bridge Bus Number Programming
 
-**Prompt:** PCI-to-PCI bridges (Header Type 1) connect bus segments. Each bridge has: Primary Bus Number (0x18), Secondary Bus Number (0x19), and Subordinate Bus Number (0x1A). The firmware (UEFI) typically programs these, but if the OS rescans or hotplugs a bridge, it must know how to configure them. Also needed: bridge memory windows (Memory Base/Limit at 0x20–0x22), I/O windows (I/O Base/Limit at 0x1C–0x1D), and prefetchable memory windows (0x24–0x2B). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: bridge configuration"`. Add notes directly in this TODO section.
+**Prompt:** PCI-to-PCI bridges (Header Type 1) connect bus segments. Each bridge has: Primary Bus Number (0x18), Secondary Bus Number (0x19), and Subordinate Bus Number (0x1A). The firmware (UEFI) typically programs these, but if the OS rescans or hotplugs a bridge, it must know how to configure them. Also needed: bridge memory windows (Memory Base/Limit at 0x20–0x22), I/O windows (I/O Base/Limit at 0x1C–0x1D), and prefetchable memory windows (0x24–0x2B). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: bridge configuration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] For Header Type 1 devices, parse bridge-specific registers:
   - [ ] Primary Bus Number (0x18), Secondary Bus Number (0x19), Subordinate Bus Number (0x1A)
@@ -223,7 +223,7 @@
 
 ### 7.1 PCI PM Capability (D-States)
 
-**Prompt:** PCI devices support power states D0 (fully on) through D3hot (software off, registers lost) via the Power Management Capability (ID 0x01). The PMCSR (Power Management Control/Status Register) allows the OS to transition devices between power states. D3cold (hardware power removed) requires platform support (ACPI `_PS3` or power rail control). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: power management D-states"`. Add notes directly in this TODO section.
+**Prompt:** PCI devices support power states D0 (fully on) through D3hot (software off, registers lost) via the Power Management Capability (ID 0x01). The PMCSR (Power Management Control/Status Register) allows the OS to transition devices between power states. D3cold (hardware power removed) requires platform support (ACPI `_PS3` or power rail control). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: power management D-states"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find PM capability via `pci_find_capability(dev, 0x01)`
 - [ ] Parse PM Capabilities register:
@@ -247,7 +247,7 @@
 
 ### 8.1 BAR Assignment & MMIO Mapping
 
-**Prompt:** After enumeration, some BARs may need (re-)programming if the firmware left them unassigned or if we need to remap them. The OS should manage a physical address allocator for PCI MMIO regions, assigning non-overlapping ranges to each device's BARs. For most QEMU/UEFI setups, firmware pre-assigns BARs — just read and use them. But on real hardware, BARs may be unassigned. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: BAR assignment and MMIO mapping"`. Add notes directly in this TODO section.
+**Prompt:** After enumeration, some BARs may need (re-)programming if the firmware left them unassigned or if we need to remap them. The OS should manage a physical address allocator for PCI MMIO regions, assigning non-overlapping ranges to each device's BARs. For most QEMU/UEFI setups, firmware pre-assigns BARs — just read and use them. But on real hardware, BARs may be unassigned. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"pci: BAR assignment and MMIO mapping"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] During enumeration, read all BARs and store decoded info:
   - [ ] Base address (physical)

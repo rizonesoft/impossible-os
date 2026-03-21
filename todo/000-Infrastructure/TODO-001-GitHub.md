@@ -28,7 +28,7 @@
 
 ### 2.1 Create Professional README *(agent + manual)*
 
-**Prompt:** Create a world-class `README.md` that immediately communicates what Impossible OS is, why it exists, and how to build it. The README is the first thing visitors see — it must be visually stunning with hero badges, a feature table, screenshots, and quick-start instructions. Model after the best OS repos (SerenityOS, Redox, Haiku). After completing all items, mark every item as `[x]`, and commit as `"docs: professional README"`. Add notes directly in this TODO section.
+**Prompt:** Create a world-class `README.md` that immediately communicates what Impossible OS is, why it exists, and how to build it. The README is the first thing visitors see — it must be visually stunning with hero badges, a feature table, screenshots, and quick-start instructions. Model after the best OS repos (SerenityOS, Redox, Haiku). After completing all items, mark every item as `[x]`, and commit as `"docs: professional README"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-002-Development.md §1.4` — Build version metadata feeds the
@@ -107,7 +107,7 @@
 
 ### 2.4 Create CONTRIBUTING.md *(agent)*
 
-**Prompt:** Create `CONTRIBUTING.md` with guidelines for external contributors. Cover: how to set up the dev environment, coding standards (snake_case, UPPER_CASE macros, 120-char lines), commit message convention (`"scope: description"`), PR process, and the TODO system for finding work items. After completing all items, mark every item as `[x]`, and commit as `"docs: contributing guidelines"`. Add notes directly in this TODO section.
+**Prompt:** Create `CONTRIBUTING.md` with guidelines for external contributors. Cover: how to set up the dev environment, coding standards (snake_case, UPPER_CASE macros, 120-char lines), commit message convention (`"scope: description"`), PR process, and the TODO system for finding work items. After completing all items, mark every item as `[x]`, and commit as `"docs: contributing guidelines"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Create `CONTRIBUTING.md` — ✅ 160+ lines
 - [x] Development environment setup (link to `scripts/setup.sh`) — ✅ Quick Start section with setup.sh + git hooks
@@ -167,7 +167,7 @@
 
 ### 3.2 Changelog Generation *(agent)*
 
-**Prompt:** Create an auto-generated `CHANGELOG.md` from git history using conventional commit messages. Group commits by type: `feat:`, `fix:`, `build:`, `drivers:`, `desktop:`, `kernel:`, etc. Generate the changelog as part of the release process. After completing all items, mark every item as `[x]`, and commit as `"tools: auto-generated changelog"`. Add notes directly in this TODO section.
+**Prompt:** Create an auto-generated `CHANGELOG.md` from git history using conventional commit messages. Group commits by type: `feat:`, `fix:`, `build:`, `drivers:`, `desktop:`, `kernel:`, etc. Generate the changelog as part of the release process. After completing all items, mark every item as `[x]`, and commit as `"tools: auto-generated changelog"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Create `scripts/generate-changelog.sh`: — ✅ 175 lines, 20+ category mappings
   - [x] Parse git log between last two tags — ✅ Handles tagged releases + unreleased commits

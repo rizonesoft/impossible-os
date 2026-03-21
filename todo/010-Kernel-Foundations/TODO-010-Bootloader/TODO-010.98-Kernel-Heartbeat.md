@@ -48,7 +48,7 @@
 
 ## 1. Boot Progress API (`boot_progress()`) *(agent)*
 
-**Prompt:** Create a unified `boot_progress()` API that every kernel init function calls to report its progress. The API automatically routes to the correct output based on the current boot mode: splash status text in normal mode, labeled color bars in debug mode, and a hex POST code always. This replaces both the ad-hoc `boot_splash_status()` calls and the manual `HV_BAR` debug macros. Every boot stage gets a unique 8-bit code (like a hardware POST code), a human-readable name, and a category for color-coding. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: boot_progress() unified API"`. Add notes directly in this TODO section.
+**Prompt:** Create a unified `boot_progress()` API that every kernel init function calls to report its progress. The API automatically routes to the correct output based on the current boot mode: splash status text in normal mode, labeled color bars in debug mode, and a hex POST code always. This replaces both the ad-hoc `boot_splash_status()` calls and the manual `HV_BAR` debug macros. Every boot stage gets a unique 8-bit code (like a hardware POST code), a human-readable name, and a category for color-coding. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: boot_progress() unified API"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Design principle:** `boot_progress()` is a **zero-cost abstraction** in release
@@ -155,7 +155,7 @@
 
 ## 2. POST-Style Hex Code Display *(agent)*
 
-**Prompt:** Real server motherboards have a 2-digit hex LED display that shows POST codes during boot. If the system hangs, the frozen code tells the technician exactly which subsystem failed. Implement the same concept: render a tiny 2-digit hex code in a fixed corner of the screen, updated on every `boot_progress()` call. The code persists on-screen even after boot splash finishes — it shows `00` when boot is complete. On hang, the frozen hex code is the first thing a developer sees. The hex font is a minimal hardcoded 5×7 bitmap — no TTF dependency. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: POST hex code display"`. Add notes directly in this TODO section.
+**Prompt:** Real server motherboards have a 2-digit hex LED display that shows POST codes during boot. If the system hangs, the frozen code tells the technician exactly which subsystem failed. Implement the same concept: render a tiny 2-digit hex code in a fixed corner of the screen, updated on every `boot_progress()` call. The code persists on-screen even after boot splash finishes — it shows `00` when boot is complete. On hang, the frozen hex code is the first thing a developer sees. The hex font is a minimal hardcoded 5×7 bitmap — no TTF dependency. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: POST hex code display"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** No consumer desktop OS shows POST codes. Windows hides
@@ -207,7 +207,7 @@
 
 ## 3. Debug Color Bar Waterfall *(agent)*
 
-**Prompt:** Enhance the raw colored pixel bars from the Hyper-V debugging session into a proper debug visualization. In debug/verbose mode (activated via `boot.conf verbose=1` or holding Shift at boot), the boot splash is replaced by a full-screen **color bar waterfall**: each `boot_progress()` call draws a horizontal bar spanning the screen width, colored by category, with a text label showing the hex code and subsystem name. Bars stack vertically from top to bottom — like a visual boot log. On hang, the last bar is where boot stalled. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: debug color bar waterfall mode"`. Add notes directly in this TODO section.
+**Prompt:** Enhance the raw colored pixel bars from the Hyper-V debugging session into a proper debug visualization. In debug/verbose mode (activated via `boot.conf verbose=1` or holding Shift at boot), the boot splash is replaced by a full-screen **color bar waterfall**: each `boot_progress()` call draws a horizontal bar spanning the screen width, colored by category, with a text label showing the hex code and subsystem name. Bars stack vertically from top to bottom — like a visual boot log. On hang, the last bar is where boot stalled. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: debug color bar waterfall mode"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Design:** The waterfall is NOT the boot splash — it completely replaces it.
@@ -254,7 +254,7 @@
 
 ## 4. Panic Forensic Evidence *(agent)*
 
-**Prompt:** When the kernel panics, the color bar history serves as **visual forensic evidence** — a stack trace you can read without serial output. Every `boot_progress()` call is stored in a circular history buffer. On panic, the panic screen renders the last N progress bars below the error information, showing the exact execution path that led to the crash. Each bar that was "entered but never exited" (no subsequent progress) is highlighted in red — this is the active function at crash time. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: panic forensic progress bars"`. Add notes directly in this TODO section.
+**Prompt:** When the kernel panics, the color bar history serves as **visual forensic evidence** — a stack trace you can read without serial output. Every `boot_progress()` call is stored in a circular history buffer. On panic, the panic screen renders the last N progress bars below the error information, showing the exact execution path that led to the crash. Each bar that was "entered but never exited" (no subsequent progress) is highlighted in red — this is the active function at crash time. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: panic forensic progress bars"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!CAUTION]
 > **Real-world scenario:** On real hardware with no serial port, the ONLY
@@ -298,7 +298,7 @@
 
 ### 4.3 Panic QR Code (🚀 Impossible OS Feature)
 
-**Prompt:** When the kernel panics, encode the crash information (stop code, RIP, last 8 boot progress codes, error code) into a QR code displayed on the BSOD. The user can scan it with their phone to instantly open a crash report page. This is something no other OS does — Windows shows a text-only stop code, and Linux dumps a text oops. A scannable QR code is the fastest path from "crash on screen" to "bug report filed." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: panic QR code"`. Add notes directly in this TODO section.
+**Prompt:** When the kernel panics, encode the crash information (stop code, RIP, last 8 boot progress codes, error code) into a QR code displayed on the BSOD. The user can scan it with their phone to instantly open a crash report page. This is something no other OS does — Windows shows a text-only stop code, and Linux dumps a text oops. A scannable QR code is the fastest path from "crash on screen" to "bug report filed." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: panic QR code"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows 10/11 added a QR code to BSODs, but it
@@ -330,7 +330,7 @@
 
 ## 5. Runtime Vital Signs Strip (🚀 Impossible OS Feature) *(agent)*
 
-**Prompt:** After boot, the color bars are no longer needed — but the kernel is still alive and running. Implement an optional 1-pixel-high strip at the very bottom of the screen that shows real-time kernel vital signs. This strip is invisible at first glance (it's 1 pixel!) but encodes information via color: interrupt activity (flashes), scheduler state, memory pressure, and disk I/O. Enabled via Control Panel → System → Developer Options → Show Kernel Vital Signs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: runtime vital signs strip"`. Add notes directly in this TODO section.
+**Prompt:** After boot, the color bars are no longer needed — but the kernel is still alive and running. Implement an optional 1-pixel-high strip at the very bottom of the screen that shows real-time kernel vital signs. This strip is invisible at first glance (it's 1 pixel!) but encodes information via color: interrupt activity (flashes), scheduler state, memory pressure, and disk I/O. Enabled via Control Panel → System → Developer Options → Show Kernel Vital Signs. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: runtime vital signs strip"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** No consumer OS has anything like this. Windows has Task
@@ -379,7 +379,7 @@
 
 ### 5.3 Expanded Vital Signs (Developer Overlay) *(agent)*
 
-**Prompt:** When the user presses a hotkey (e.g., Ctrl+Shift+F12), the 1px strip expands into a 24px overlay at the bottom of the screen showing richer information: per-core load bars, memory graph, IRQ/s counter, and network throughput. Think of it as a transparent HUD — like game FPS overlays (Steam, MSI Afterburner) but for the OS kernel. This is a power-user feature hidden behind a key combo. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: developer overlay HUD"`. Add notes directly in this TODO section.
+**Prompt:** When the user presses a hotkey (e.g., Ctrl+Shift+F12), the 1px strip expands into a 24px overlay at the bottom of the screen showing richer information: per-core load bars, memory graph, IRQ/s counter, and network throughput. Think of it as a transparent HUD — like game FPS overlays (Steam, MSI Afterburner) but for the OS kernel. This is a power-user feature hidden behind a key combo. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: developer overlay HUD"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Gaming overlays (Steam FPS, MSI Afterburner) are
@@ -404,7 +404,7 @@
 
 ## 6. Alive Blink (Hang Detection) *(agent)*
 
-**Prompt:** The simplest possible "is the kernel alive?" indicator: a single pixel in the bottom-right corner that toggles between two colors on every timer tick. If the pixel stops alternating, the kernel is hung. This works even when the rest of the screen is frozen, because the timer ISR writes directly to the framebuffer — no compositor, no locks, no allocations. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: alive blink pixel"`. Add notes directly in this TODO section.
+**Prompt:** The simplest possible "is the kernel alive?" indicator: a single pixel in the bottom-right corner that toggles between two colors on every timer tick. If the pixel stops alternating, the kernel is hung. This works even when the rest of the screen is frozen, because the timer ISR writes directly to the framebuffer — no compositor, no locks, no allocations. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: alive blink pixel"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Why not visible by default?** A blinking pixel in the corner would be
@@ -427,7 +427,7 @@
 
 ## 7. Pre-Kernel POST Codes (UEFI Phase) *(agent)*
 
-**Prompt:** The `boot_progress()` API only works after the kernel is running. But boot can hang **inside the UEFI bootloader** — before the kernel even starts. Implement POST code output in `bootx64.c` using the same hex font and corner position. The UEFI bootloader writes hex codes directly to the GOP framebuffer during its own initialization: EFI table setup, GOP init, kernel loading, ExitBootServices. These codes use the `0x0_` prefix (reserved for UEFI phase). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: UEFI bootloader POST codes"`. Add notes directly in this TODO section.
+**Prompt:** The `boot_progress()` API only works after the kernel is running. But boot can hang **inside the UEFI bootloader** — before the kernel even starts. Implement POST code output in `bootx64.c` using the same hex font and corner position. The UEFI bootloader writes hex codes directly to the GOP framebuffer during its own initialization: EFI table setup, GOP init, kernel loading, ExitBootServices. These codes use the `0x0_` prefix (reserved for UEFI phase). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: UEFI bootloader POST codes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Why this matters:** The existing `DRAW_BAR` macro in `bootx64.c` solved the

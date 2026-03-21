@@ -373,7 +373,7 @@ In a freestanding kernel, we replicate this with:
 
 ## 4. System-Wide Spinner Component *(agent)*
 
-**Prompt:** Make the spinner available as a reusable UI component beyond the boot splash. Any kernel subsystem or shell element that needs a loading indicator can instantiate a spinner with position, size, and color. The component supports multiple simultaneous spinners (each with independent animation state). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ui: system-wide spinner component"`. Add notes directly in this TODO section.
+**Prompt:** Make the spinner available as a reusable UI component beyond the boot splash. Any kernel subsystem or shell element that needs a loading indicator can instantiate a spinner with position, size, and color. The component supports multiple simultaneous spinners (each with independent animation state). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"ui: system-wide spinner component"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Use cases beyond boot:**

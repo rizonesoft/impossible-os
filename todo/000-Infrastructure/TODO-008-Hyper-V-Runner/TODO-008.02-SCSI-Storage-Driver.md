@@ -30,7 +30,7 @@
 
 ### 1.1 SCSI Target/LUN Discovery ⏳
 
-**Prompt:** The current driver only probes target 0, LUN 0 — a single disk. Hyper-V supports up to 4 SCSI controllers with 64 devices per controller (256 total). Implement full target/LUN enumeration: iterate `target_id` 0–`max_targets` and `lun` 0–`max_luns` (values returned by `QUERY_PROPERTIES` during initialization). For each (target, lun) pair, issue SCSI INQUIRY. If the response has `peripheral_qualifier == 0` (device present), issue READ_CAPACITY(16) and register a separate block device (`hyperv0`, `hyperv1`, ...). Skip LUNs with `peripheral_qualifier == 3` (not reachable). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-LUN enumeration"`. Add notes directly in this TODO section.
+**Prompt:** The current driver only probes target 0, LUN 0 — a single disk. Hyper-V supports up to 4 SCSI controllers with 64 devices per controller (256 total). Implement full target/LUN enumeration: iterate `target_id` 0–`max_targets` and `lun` 0–`max_luns` (values returned by `QUERY_PROPERTIES` during initialization). For each (target, lun) pair, issue SCSI INQUIRY. If the response has `peripheral_qualifier == 0` (device present), issue READ_CAPACITY(16) and register a separate block device (`hyperv0`, `hyperv1`, ...). Skip LUNs with `peripheral_qualifier == 3` (not reachable). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-LUN enumeration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-008-Hyper-V-Runner.md §4` — Existing StorVSC basic implementation (done)
@@ -48,7 +48,7 @@
 
 ### 1.2 Multi-Controller Support ⏳
 
-**Prompt:** Hyper-V can present up to 4 synthetic SCSI controllers per VM. Each controller appears as a separate VMBus channel offer with the same class GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`) but different instance GUIDs. The current code only handles the first matching channel. Extend `storvsc_init()` to iterate ALL offered channels matching the SCSI GUID, opening each as an independent controller with its own ring buffer pair and transfer buffer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-controller support"`. Add notes directly in this TODO section.
+**Prompt:** Hyper-V can present up to 4 synthetic SCSI controllers per VM. Each controller appears as a separate VMBus channel offer with the same class GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`) but different instance GUIDs. The current code only handles the first matching channel. Extend `storvsc_init()` to iterate ALL offered channels matching the SCSI GUID, opening each as an independent controller with its own ring buffer pair and transfer buffer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-controller support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Extend `vmbus_find_channel_by_guid()` to return ALL matching channels (not just the first)
 - [ ] For each SCSI controller channel: allocate independent ring buffers + transfer buffer (PMM)
@@ -66,7 +66,7 @@
 
 ### 2.1 Multi-Command Queuing ⏳
 
-**Prompt:** The current driver issues one SCSI command at a time and busy-waits for completion — this serializes all disk I/O. The StorVSP supports up to 255 concurrent outstanding requests per LUN (Storport queue depth limit). Implement a multi-command queue: assign unique `trans_id` values to each request, submit multiple requests before waiting for completions, and match completions to outstanding requests via `trans_id`. Use a per-controller pending request table indexed by `trans_id`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-command queuing"`. Add notes directly in this TODO section.
+**Prompt:** The current driver issues one SCSI command at a time and busy-waits for completion — this serializes all disk I/O. The StorVSP supports up to 255 concurrent outstanding requests per LUN (Storport queue depth limit). Implement a multi-command queue: assign unique `trans_id` values to each request, submit multiple requests before waiting for completions, and match completions to outstanding requests via `trans_id`. Use a per-controller pending request table indexed by `trans_id`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: multi-command queuing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-008-Hyper-V-Runner.md §3` — VMBus ring buffer architecture
@@ -84,7 +84,7 @@
 
 ### 2.2 Interrupt-Driven Completion ⏳
 
-**Prompt:** Replace polling-based completion with SynIC interrupt-driven completion. The VMBus recv ring triggers a SINT2 interrupt when the host enqueues a completion packet. The ISR should drain the recv ring, match `trans_id` to pending requests, and wake blocked threads. This eliminates CPU-wasting polling and enables true asynchronous I/O. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: interrupt-driven I/O completion"`. Add notes directly in this TODO section.
+**Prompt:** Replace polling-based completion with SynIC interrupt-driven completion. The VMBus recv ring triggers a SINT2 interrupt when the host enqueues a completion packet. The ISR should drain the recv ring, match `trans_id` to pending requests, and wake blocked threads. This eliminates CPU-wasting polling and enables true asynchronous I/O. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: interrupt-driven I/O completion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-008-Hyper-V-Runner.md §3` — VMBus SynIC interrupt handler (SINT2)
@@ -99,7 +99,7 @@
 
 ### 2.3 VMBus Sub-Channel Parallelism ⏳
 
-**Prompt:** For high-throughput workloads, StorVSP supports VMBus **sub-channels** — additional ring buffer pairs bound to different vCPUs for parallel I/O processing. The host offers sub-channels when the VM has multiple vCPUs (typically 1 sub-channel per 4 vCPUs, up to `max_sub_channels` from `QUERY_PROPERTIES`). The guest opens each sub-channel with its own ring buffer GPADL. I/O requests are distributed across channels using a CPU affinity heuristic: the sending vCPU's ID selects the corresponding channel. This is the VMBus Multi-Queue (VMMQ) model. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: VMBus sub-channel parallelism"`. Add notes directly in this TODO section.
+**Prompt:** For high-throughput workloads, StorVSP supports VMBus **sub-channels** — additional ring buffer pairs bound to different vCPUs for parallel I/O processing. The host offers sub-channels when the VM has multiple vCPUs (typically 1 sub-channel per 4 vCPUs, up to `max_sub_channels` from `QUERY_PROPERTIES`). The guest opens each sub-channel with its own ring buffer GPADL. I/O requests are distributed across channels using a CPU affinity heuristic: the sending vCPU's ID selects the corresponding channel. This is the VMBus Multi-Queue (VMMQ) model. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: VMBus sub-channel parallelism"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux's `storvsc_drv.c` uses `storvsc_vcpus_per_sub_channel` (default 4)
@@ -122,7 +122,7 @@
 
 ### 3.1 SCSI UNMAP (TRIM Passthrough) ⏳
 
-**Prompt:** When the guest filesystem deletes files, it should notify the host that the underlying blocks are no longer in use. On Hyper-V Gen 2 with VHDX backing, this shrinks the VHDX file and frees physical storage on the SAN. StorVSC passes SCSI UNMAP (opcode `0x42`) commands through VMBus to the host StorVSP, which applies them to the VHDX layer. Requires VSTOR protocol version ≥ WIN8 (5.1). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI UNMAP / TRIM passthrough"`. Add notes directly in this TODO section.
+**Prompt:** When the guest filesystem deletes files, it should notify the host that the underlying blocks are no longer in use. On Hyper-V Gen 2 with VHDX backing, this shrinks the VHDX file and frees physical storage on the SAN. StorVSC passes SCSI UNMAP (opcode `0x42`) commands through VMBus to the host StorVSP, which applies them to the VHDX layer. Requires VSTOR protocol version ≥ WIN8 (5.1). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI UNMAP / TRIM passthrough"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-040.02-AHCI.md §5.1` — AHCI TRIM/discard (same block layer API)
@@ -139,7 +139,7 @@
 
 ### 3.2 4K Sector Alignment ⏳
 
-**Prompt:** VHDX uses 4 KiB logical and physical sectors. Misaligned I/O (512-byte boundaries on 4K-native disks) causes severe read-modify-write penalties on the physical array (2–4× IOPS inflation). Detect the logical and physical sector sizes via SCSI READ_CAPACITY(16) response (which includes logical block length) and SCSI VPD page `0xB0` (Block Limits — optimal transfer granularity). Ensure all I/O requests are aligned to the physical sector size. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: 4K sector alignment"`. Add notes directly in this TODO section.
+**Prompt:** VHDX uses 4 KiB logical and physical sectors. Misaligned I/O (512-byte boundaries on 4K-native disks) causes severe read-modify-write penalties on the physical array (2–4× IOPS inflation). Detect the logical and physical sector sizes via SCSI READ_CAPACITY(16) response (which includes logical block length) and SCSI VPD page `0xB0` (Block Limits — optimal transfer granularity). Ensure all I/O requests are aligned to the physical sector size. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: 4K sector alignment"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse READ_CAPACITY(16) response: extract `logical_block_length` (bytes 8–11)
 - [ ] Issue VPD page `0xB1` (Block Device Characteristics) — detect rotation rate (SSD vs HDD)
@@ -157,7 +157,7 @@
 
 ### 4.1 SCSI Sense Data Parsing ⏳
 
-**Prompt:** When a SCSI command fails, the host populates `sense_data[]` (20 bytes) in the `vstor_srb` response. Parse the sense data to extract Sense Key, Additional Sense Code (ASC), and Additional Sense Code Qualifier (ASCQ). Map common error codes to human-readable strings for kernel logging and diagnostic output. This enables surgical error recovery instead of blanket retries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI sense data parsing"`. Add notes directly in this TODO section.
+**Prompt:** When a SCSI command fails, the host populates `sense_data[]` (20 bytes) in the `vstor_srb` response. Parse the sense data to extract Sense Key, Additional Sense Code (ASC), and Additional Sense Code Qualifier (ASCQ). Map common error codes to human-readable strings for kernel logging and diagnostic output. This enables surgical error recovery instead of blanket retries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI sense data parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse sense data format: byte 0 (response code), byte 2 (sense key), byte 12 (ASC), byte 13 (ASCQ)
 - [ ] Handle fixed format (response code `0x70`/`0x71`) and descriptor format (`0x72`/`0x73`)
@@ -174,7 +174,7 @@
 
 ### 4.2 LUN Reset ⏳
 
-**Prompt:** When a specific LUN becomes unresponsive (stuck command, timeout), issue a targeted LUN reset via `VSTOR_OPERATION_RESET_LUN`. This aborts all outstanding commands for that LUN only, without affecting other LUNs on the same controller. After reset, re-probe the LUN with TEST UNIT READY before resubmitting queued commands. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: LUN reset recovery"`. Add notes directly in this TODO section.
+**Prompt:** When a specific LUN becomes unresponsive (stuck command, timeout), issue a targeted LUN reset via `VSTOR_OPERATION_RESET_LUN`. This aborts all outstanding commands for that LUN only, without affecting other LUNs on the same controller. After reset, re-probe the LUN with TEST UNIT READY before resubmitting queued commands. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: LUN reset recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect stuck LUN: command pending > timeout threshold (20 seconds, configurable)
 - [ ] Send `VSTOR_OPERATION_RESET_LUN` with `target_id` and `lun` specified
@@ -188,7 +188,7 @@
 
 ### 4.3 Adapter and Bus Reset ⏳
 
-**Prompt:** When a LUN reset fails or the entire synthetic SCSI controller becomes unresponsive, escalate to adapter-level or bus-level reset. `VSTOR_OPERATION_RESET_ADAPTER` resets the entire synthetic SCSI controller, aborting ALL outstanding commands across all LUNs. `VSTOR_OPERATION_RESET_BUS` resets the SCSI bus. These are last-resort recovery operations. After reset, re-enumerate all LUNs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: adapter and bus reset recovery"`. Add notes directly in this TODO section.
+**Prompt:** When a LUN reset fails or the entire synthetic SCSI controller becomes unresponsive, escalate to adapter-level or bus-level reset. `VSTOR_OPERATION_RESET_ADAPTER` resets the entire synthetic SCSI controller, aborting ALL outstanding commands across all LUNs. `VSTOR_OPERATION_RESET_BUS` resets the SCSI bus. These are last-resort recovery operations. After reset, re-enumerate all LUNs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: adapter and bus reset recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!CAUTION]
 > Adapter reset aborts ALL outstanding I/O for ALL LUNs on the controller.
@@ -208,7 +208,7 @@
 
 ### 4.4 Command Retry Logic ⏳
 
-**Prompt:** Not all SCSI errors require reset — many are recoverable via retry. Implement a retry policy: commands that fail with Unit Attention (sense key `0x06`, e.g., media changed) or transient errors (Aborted Command, sense key `0x0B`) should be retried up to 3 times with exponential backoff. Medium Errors (sense key `0x03`) should NOT be retried (the media is bad). Illegal Request (sense key `0x05`) should NEVER be retried (the command is wrong). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: command retry logic"`. Add notes directly in this TODO section.
+**Prompt:** Not all SCSI errors require reset — many are recoverable via retry. Implement a retry policy: commands that fail with Unit Attention (sense key `0x06`, e.g., media changed) or transient errors (Aborted Command, sense key `0x0B`) should be retried up to 3 times with exponential backoff. Medium Errors (sense key `0x03`) should NOT be retried (the media is bad). Illegal Request (sense key `0x05`) should NEVER be retried (the command is wrong). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: command retry logic"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Add `retry_count` field to pending request struct (default max = 3)
 - [ ] On completion with error: check sense key from sense data (§4.1)
@@ -229,7 +229,7 @@
 
 ### 5.1 Hot-Add Device Detection ⏳
 
-**Prompt:** Hyper-V supports hot-adding virtual disks to a running VM. The host sends a SynIC interrupt signaling a topology change. The guest should detect the new device by re-running SCSI INQUIRY across all target/LUN combinations. Alternatively, the host may send a `VSTOR_OPERATION_REMOVE_DEVICE` with a flag indicating addition (counterintuitive naming). Register the new device as a block device and probe for partitions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: hot-add virtual disk"`. Add notes directly in this TODO section.
+**Prompt:** Hyper-V supports hot-adding virtual disks to a running VM. The host sends a SynIC interrupt signaling a topology change. The guest should detect the new device by re-running SCSI INQUIRY across all target/LUN combinations. Alternatively, the host may send a `VSTOR_OPERATION_REMOVE_DEVICE` with a flag indicating addition (counterintuitive naming). Register the new device as a block device and probe for partitions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: hot-add virtual disk"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Handle Unit Attention (sense key `0x06`, ASC `0x3F`, ASCQ `0x0E` — "reported LUNs data changed")
 - [ ] On Unit Attention: re-run LUN enumeration (§1.1) to discover new devices
@@ -241,7 +241,7 @@
 
 ### 5.2 Hot-Remove Device Handling ⏳
 
-**Prompt:** The host can hot-remove virtual disks from a running VM. The host sends `VSTOR_OPERATION_REMOVE_DEVICE` over the VMBus channel. The guest must flush dirty buffers, unmount filesystems on the removed device, abort outstanding I/O, and unregister the block device. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: hot-remove virtual disk"`. Add notes directly in this TODO section.
+**Prompt:** The host can hot-remove virtual disks from a running VM. The host sends `VSTOR_OPERATION_REMOVE_DEVICE` over the VMBus channel. The guest must flush dirty buffers, unmount filesystems on the removed device, abort outstanding I/O, and unregister the block device. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: hot-remove virtual disk"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > If filesystems are mounted on the removed disk and have dirty data, data loss
@@ -263,7 +263,7 @@
 
 ### 6.1 Large Transfer Buffer ⏳
 
-**Prompt:** The current transfer buffer is 64 KiB (16 pages). Linux's `storvsc_drv.c` uses 128 KiB by default (`storvsc_ringbuffer_size`). Larger transfer buffers enable larger I/O requests without splitting, improving sequential throughput. Make the transfer buffer size configurable and increase the default. Each I/O request uses a transfer page range within the buffer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: configurable transfer buffer size"`. Add notes directly in this TODO section.
+**Prompt:** The current transfer buffer is 64 KiB (16 pages). Linux's `storvsc_drv.c` uses 128 KiB by default (`storvsc_ringbuffer_size`). Larger transfer buffers enable larger I/O requests without splitting, improving sequential throughput. Make the transfer buffer size configurable and increase the default. Each I/O request uses a transfer page range within the buffer. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: configurable transfer buffer size"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Increase default transfer buffer from 64 KiB to 128 KiB (32 pages)
 - [ ] Make transfer buffer size configurable: `STORVSC_XFER_BUF_PAGES` compile-time constant
@@ -276,7 +276,7 @@
 
 ### 6.2 Per-Request Bounce Buffer Elimination ⏳
 
-**Prompt:** Currently, data is copied into/from the transfer buffer for every I/O request. For read operations, the host writes directly into the GPADL-shared transfer buffer, which the guest then copies into the caller's buffer. This double-copy can be eliminated by using per-request GPADL handles that share the caller's buffer directly with the host. This is the true zero-copy model that production drivers use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: zero-copy I/O via per-request GPADL"`. Add notes directly in this TODO section.
+**Prompt:** Currently, data is copied into/from the transfer buffer for every I/O request. For read operations, the host writes directly into the GPADL-shared transfer buffer, which the guest then copies into the caller's buffer. This double-copy can be eliminated by using per-request GPADL handles that share the caller's buffer directly with the host. This is the true zero-copy model that production drivers use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: zero-copy I/O via per-request GPADL"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** True zero-copy I/O eliminates the `memcpy()` between transfer buffer
@@ -298,7 +298,7 @@
 
 ### 7.1 Per-Device I/O Counters ⏳
 
-**Prompt:** Implement comprehensive per-device I/O statistics for performance monitoring. Track: read/write IOPS, throughput (bytes/sec), average latency, queue depth, and error counts. Expose via Registry. The System Monitor app (Task Manager equivalent) can display real-time disk activity graphs for Hyper-V virtual disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: I/O statistics and telemetry"`. Add notes directly in this TODO section.
+**Prompt:** Implement comprehensive per-device I/O statistics for performance monitoring. Track: read/write IOPS, throughput (bytes/sec), average latency, queue depth, and error counts. Expose via Registry. The System Monitor app (Task Manager equivalent) can display real-time disk activity graphs for Hyper-V virtual disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: I/O statistics and telemetry"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-040.02-AHCI.md §12.1` — AHCI I/O statistics (same API surface)
@@ -325,7 +325,7 @@
 
 ### 8.1 SCSI-3 PR Command Passthrough ⏳
 
-**Prompt:** For guest clustering (Windows Failover Cluster in child VMs), Hyper-V supports Shared VHDX mapped to multiple VMs simultaneously. Shared VHDX requires SCSI-3 Persistent Reservations (PR) to prevent split-brain corruption. StorVSC must pass through PR commands transparently: PERSISTENT RESERVE IN (`0x5E`), PERSISTENT RESERVE OUT (`0x5F`). These establish quorum and exclusive/shared access policies across VMs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI-3 persistent reservations"`. Add notes directly in this TODO section.
+**Prompt:** For guest clustering (Windows Failover Cluster in child VMs), Hyper-V supports Shared VHDX mapped to multiple VMs simultaneously. Shared VHDX requires SCSI-3 Persistent Reservations (PR) to prevent split-brain corruption. StorVSC must pass through PR commands transparently: PERSISTENT RESERVE IN (`0x5E`), PERSISTENT RESERVE OUT (`0x5F`). These establish quorum and exclusive/shared access policies across VMs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"storvsc: SCSI-3 persistent reservations"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement SCSI PERSISTENT RESERVE IN (opcode `0x5E`) — read current reservations
 - [ ] Implement SCSI PERSISTENT RESERVE OUT (opcode `0x5F`) — register/reserve/release

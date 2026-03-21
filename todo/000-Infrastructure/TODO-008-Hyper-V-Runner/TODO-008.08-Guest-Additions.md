@@ -137,7 +137,7 @@ graph TD
 
 > **XREF:** [TODO-008-Hyper-V-Runner.md §11](../TODO-008-Hyper-V-Runner.md) — Guest Additions Integration
 
-**Prompt:** Create a unified guest additions entry point that auto-detects Hyper-V and initializes all Integration Services. The function `hyperv_guest_additions_init()` should: (1) check `platform_get() == PLATFORM_HYPERV`, (2) verify VMBus is connected, (3) enumerate offered channels and match against known IC GUIDs, (4) initialize each IC in dependency order. Wire this into `boot_storage.c` as a single call after `vmbus_init()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions auto-detect framework"`. Add notes directly in this TODO section.
+**Prompt:** Create a unified guest additions entry point that auto-detects Hyper-V and initializes all Integration Services. The function `hyperv_guest_additions_init()` should: (1) check `platform_get() == PLATFORM_HYPERV`, (2) verify VMBus is connected, (3) enumerate offered channels and match against known IC GUIDs, (4) initialize each IC in dependency order. Wire this into `boot_storage.c` as a single call after `vmbus_init()`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions auto-detect framework"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Existing Detection:** `cpuid_platform.c` already detects Hyper-V via CPUID
@@ -169,7 +169,7 @@ graph TD
 
 ## 3. IC Protocol Negotiation Engine
 
-**Prompt:** Implement the generic Integration Services protocol negotiation shared by all ICs. Each IC channel uses a standardized `icmsg_hdr` and `icmsg_negotiate` exchange to agree on framework and message versions before operational payloads. Create a reusable `icmsg_negotiate()` function that: (1) parses the host's proposed versions from the ring buffer, (2) selects the highest mutually supported version, (3) writes the acceptance response back to the ring buffer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: IC protocol negotiation engine"`. Add notes directly in this TODO section.
+**Prompt:** Implement the generic Integration Services protocol negotiation shared by all ICs. Each IC channel uses a standardized `icmsg_hdr` and `icmsg_negotiate` exchange to agree on framework and message versions before operational payloads. Create a reusable `icmsg_negotiate()` function that: (1) parses the host's proposed versions from the ring buffer, (2) selects the highest mutually supported version, (3) writes the acceptance response back to the ring buffer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: IC protocol negotiation engine"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 ### 3.1 IC Message Header (`struct icmsg_hdr`)
 
@@ -224,7 +224,7 @@ graph TD
 
 ## 4. Heartbeat Service (`HV_HEARTBEAT_GUID`)
 
-**Prompt:** Implement the Hyper-V Heartbeat Integration Service. The host sends periodic heartbeat messages with an incrementing `seq_num`. The guest must increment `seq_num` by one, set `status = HV_S_OK`, and write the response back to the ring buffer. Without heartbeat responses, Hyper-V Manager reports "No Contact" or "Lost Communication." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: heartbeat integration service"`. Add notes directly in this TODO section.
+**Prompt:** Implement the Hyper-V Heartbeat Integration Service. The host sends periodic heartbeat messages with an incrementing `seq_num`. The guest must increment `seq_num` by one, set `status = HV_S_OK`, and write the response back to the ring buffer. Without heartbeat responses, Hyper-V Manager reports "No Contact" or "Lost Communication." After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: heartbeat integration service"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > **This is the most critical IC.** Without heartbeat, Hyper-V assumes the guest
@@ -261,7 +261,7 @@ graph TD
 
 ## 5. Time Synchronization Service (`HV_TIME_SYNC_GUID`)
 
-**Prompt:** Implement the Hyper-V Time Synchronization Integration Service. The host periodically sends authoritative timestamps to correct VM clock drift caused by virtual processor preemption. The service must handle three flag types: PROBE (latency test only), SYNC (force hard update), and SAMPLE (gradual slew). Convert from Windows NT epoch (100ns intervals since 1601-01-01) to Unix epoch. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: time synchronization integration service"`. Add notes directly in this TODO section.
+**Prompt:** Implement the Hyper-V Time Synchronization Integration Service. The host periodically sends authoritative timestamps to correct VM clock drift caused by virtual processor preemption. The service must handle three flag types: PROBE (latency test only), SYNC (force hard update), and SAMPLE (gradual slew). Convert from Windows NT epoch (100ns intervals since 1601-01-01) to Unix epoch. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: time synchronization integration service"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Critical after boot/resume.** VM clock can drift by seconds or minutes after
@@ -312,7 +312,7 @@ graph TD
 
 ## 6. Guest Shutdown Service (`HV_SHUTDOWN_GUID`)
 
-**Prompt:** Implement the Hyper-V Guest Shutdown Integration Service. This enables graceful shutdown/restart from Hyper-V Manager — without it, a stop command forces a hard power-off that risks filesystem corruption. The guest must handle the shutdown request, trigger its native soft-shutdown sequence (unmount filesystems, ACPI S5), and respond to the host. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest shutdown integration service"`. Add notes directly in this TODO section.
+**Prompt:** Implement the Hyper-V Guest Shutdown Integration Service. This enables graceful shutdown/restart from Hyper-V Manager — without it, a stop command forces a hard power-off that risks filesystem corruption. The guest must handle the shutdown request, trigger its native soft-shutdown sequence (unmount filesystems, ACPI S5), and respond to the host. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest shutdown integration service"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Without this service, Hyper-V Manager can only hard-kill the VM.** All pending
@@ -353,7 +353,7 @@ graph TD
 
 ## 7. Key-Value Pair (KVP) Data Exchange (`HV_KVP_GUID`)
 
-**Prompt:** Implement the Hyper-V KVP Data Exchange Integration Service. This provides out-of-band metadata transport between host and guest over VMBus — no network required. Used in cloud/enterprise environments to inject provisioning configs (IP, hostname) and report guest status to the management console. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: KVP data exchange integration service"`. Add notes directly in this TODO section.
+**Prompt:** Implement the Hyper-V KVP Data Exchange Integration Service. This provides out-of-band metadata transport between host and guest over VMBus — no network required. Used in cloud/enterprise environments to inject provisioning configs (IP, hostname) and report guest status to the management console. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: KVP data exchange integration service"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **KVP is the metadata backbone.** Azure, SCVMM, and Hyper-V PowerShell cmdlets
@@ -407,7 +407,7 @@ graph TD
 
 ## 8. Volume Shadow Copy (VSS) Backup Service (`HV_VSS_GUID`)
 
-**Prompt:** Implement the Hyper-V VSS Backup Integration Service. This enables application-consistent live VM backups by freezing guest filesystems before the hypervisor takes a checkpoint. Without this, snapshots are crash-consistent only — databases and transactional filesystems may be corrupted on restore. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: VSS backup integration service"`. Add notes directly in this TODO section.
+**Prompt:** Implement the Hyper-V VSS Backup Integration Service. This enables application-consistent live VM backups by freezing guest filesystems before the hypervisor takes a checkpoint. Without this, snapshots are crash-consistent only — databases and transactional filesystems may be corrupted on restore. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: VSS backup integration service"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!CAUTION]
 > **The VSS freeze message can reach 6,260 bytes.** Ring buffer handlers must
@@ -461,7 +461,7 @@ graph TD
 
 > **XREF:** Spec §7 — Advanced VMBus Channel Operations and Memory Optimizations
 
-**Prompt:** Implement advanced VMBus channel operations required for high-performance synthetic drivers. This includes multi-page buffer packets for scatter-gather I/O, asynchronous event signaling with monitor pages, and polling suppression for zero-overhead notification. These are the building blocks for production-grade StorVSC and NetVSC performance. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: advanced VMBus channel operations"`. Add notes directly in this TODO section.
+**Prompt:** Implement advanced VMBus channel operations required for high-performance synthetic drivers. This includes multi-page buffer packets for scatter-gather I/O, asynchronous event signaling with monitor pages, and polling suppression for zero-overhead notification. These are the building blocks for production-grade StorVSC and NetVSC performance. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: advanced VMBus channel operations"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 ### 9.1 Multi-Page Buffer Packets (Scatter-Gather I/O)
 
@@ -509,7 +509,7 @@ graph TD
 
 ## 10. End-to-End Integration Test
 
-**Prompt:** Validate the complete guest additions stack on a real Hyper-V Gen 2 VM. All ICs should be active, Hyper-V Manager should show healthy status, and all management operations should work. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions integration validated"`. Add notes directly in this TODO section.
+**Prompt:** Validate the complete guest additions stack on a real Hyper-V Gen 2 VM. All ICs should be active, Hyper-V Manager should show healthy status, and all management operations should work. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: guest additions integration validated"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Boot Impossible OS on Hyper-V Gen 2 via `run-hyperv.ps1`
 - [ ] Verify boot log shows all ICs initialized:

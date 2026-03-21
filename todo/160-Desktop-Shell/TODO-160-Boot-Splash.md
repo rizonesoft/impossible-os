@@ -66,7 +66,7 @@
 
 ## 4. F8 Boot Menu & Recovery
 
-**Prompt:** Press F8 during boot (within the first 2 seconds) to show a text-mode boot menu. Options: (1) Normal boot, (2) Safe Mode (disable non-essential drivers), (3) Recovery Mode (skip registry + filesystem, boot to recovery shell), (4) Boot Last Known Good Configuration. In safe mode: skip network init, skip desktop shell, boot to terminal only. Menu uses PSF bitmap font (no TrueType dependency). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: F8 boot menu"`. Add notes directly in this TODO section.
+**Prompt:** Press F8 during boot (within the first 2 seconds) to show a text-mode boot menu. Options: (1) Normal boot, (2) Safe Mode (disable non-essential drivers), (3) Recovery Mode (skip registry + filesystem, boot to recovery shell), (4) Boot Last Known Good Configuration. In safe mode: skip network init, skip desktop shell, boot to terminal only. Menu uses PSF bitmap font (no TrueType dependency). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: F8 boot menu"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Production requirement:** Every operating system needs a recovery path when the normal
 > boot sequence fails. Windows has F8/WinRE, Linux has GRUB recovery. Without this,

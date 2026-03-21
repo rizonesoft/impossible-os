@@ -26,7 +26,7 @@
 
 ## 2. Taskbar Button Context Menu
 
-**Prompt:** Right-clicking a taskbar button shows Close, Maximize/Restore, Minimize, and optionally "Move to Desktop ►" submenu for virtual desktops. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar button context menu"`. Add notes directly in this TODO section.
+**Prompt:** Right-clicking a taskbar button shows Close, Maximize/Restore, Minimize, and optionally "Move to Desktop ►" submenu for virtual desktops. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar button context menu"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Right-click button → context menu: Close, Maximize/Restore, Minimize
 - [ ] *(Stretch)* "Move to Desktop ►" submenu (requires virtual desktops from TODO-170 §7)
@@ -37,7 +37,7 @@
 
 ## 3. Window Peek (Aero Peek)
 
-**Prompt:** Hovering a taskbar button for 500ms makes all other windows transparent (10% opacity), revealing the desktop behind them. The hovered window stays at 100% opacity. Mouse leaves → restore all to 100%. "Show Desktop" button at the far-right taskbar corner: hover = peek all, click = toggle minimize all. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: window peek (Aero Peek)"`. Add notes directly in this TODO section.
+**Prompt:** Hovering a taskbar button for 500ms makes all other windows transparent (10% opacity), revealing the desktop behind them. The hovered window stays at 100% opacity. Mouse leaves → restore all to 100%. "Show Desktop" button at the far-right taskbar corner: hover = peek all, click = toggle minimize all. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: window peek (Aero Peek)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Hover button 500ms → set all other windows opacity to 10%
 - [ ] Mouse leaves → restore all to 100% opacity
@@ -49,7 +49,7 @@
 
 ## 4. Taskbar Progress Badges
 
-**Prompt:** Apps can display a progress overlay on their taskbar button — a thin filled bar at the bottom of the button icon, shown in green (normal), yellow (paused), or red (error). Used by: file copy operations, downloads, disk format. The API: `taskbar_set_progress(win, pct, state)`. Apps call this via a syscall or through the WM message queue. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar progress badge"`. Add notes directly in this TODO section.
+**Prompt:** Apps can display a progress overlay on their taskbar button — a thin filled bar at the bottom of the button icon, shown in green (normal), yellow (paused), or red (error). Used by: file copy operations, downloads, disk format. The API: `taskbar_set_progress(win, pct, state)`. Apps call this via a syscall or through the WM message queue. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar progress badge"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux taskbars (GNOME Shell) support progress via `com.canonical.Unity.LaunchItem` D-Bus interface — complex. Windows has `ITaskbarList3`. Impossible OS: in-kernel, zero D-Bus, zero COM.
 
@@ -63,7 +63,7 @@
 
 ## 5. Pinned Apps
 
-**Prompt:** Apps can be pinned to the taskbar for quick launch. Pinned apps show even when not running. Click pinned app icon → launch if not running, focus if running. Right-click → Unpin from taskbar. Pinned apps stored in Registry `HKCU\Software\Impossible\Shell\TaskbarPins` as comma-separated app paths. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar pinned apps"`. Add notes directly in this TODO section.
+**Prompt:** Apps can be pinned to the taskbar for quick launch. Pinned apps show even when not running. Click pinned app icon → launch if not running, focus if running. Right-click → Unpin from taskbar. Pinned apps stored in Registry `HKCU\Software\Impossible\Shell\TaskbarPins` as comma-separated app paths. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: taskbar pinned apps"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Load pinned apps from Registry `HKCU\Software\Impossible\Shell\TaskbarPins`
 - [ ] Render pinned app icons at left side of taskbar (before window list)

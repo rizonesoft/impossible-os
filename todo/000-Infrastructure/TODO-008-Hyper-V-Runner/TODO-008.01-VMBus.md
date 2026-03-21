@@ -386,7 +386,7 @@ written if more messages are pending. Run `bash scripts/build.sh clean` and conf
 to private, unshared kernel memory before validation. Verify no code path validates fields
 while they remain in shared ring buffer memory. Add `READ_ONCE()` macro for atomic index
 reads. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus TOC-TOU security audit"`. Add notes directly in this TODO section.
+and commit as `"hyperv: VMBus TOC-TOU security audit"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Attack vector:** A compromised host could modify ring buffer packet fields (e.g., `len8`)
@@ -414,7 +414,7 @@ hypercall. Instead of executing a hypercall per signal, the guest modifies speci
 in the 4 KiB monitor page via `sync_set_bit()`. The hypervisor hardware passively monitors
 this page and fires coalesced synthetic interrupts. This eliminates per-signal VM-exit
 overhead. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus monitor page signaling"`. Add notes directly in this TODO section.
+and commit as `"hyperv: VMBus monitor page signaling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Allocate guest-to-host monitor page via `pmm_alloc_contiguous(1)`
 - [ ] Pass monitor page GPA in `CHANNELMSG_INITIATE_CONTACT`
@@ -436,7 +436,7 @@ feature bit. When the guest cannot send because the ring is full, it writes the 
 byte count to `pending_send_sz` in the ring header. When the host consumes data and frees
 enough space, the guest fires a targeted interrupt to wake the host. This eliminates polling
 entirely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus ring buffer flow control"`. Add notes directly in this TODO section.
+and commit as `"hyperv: VMBus ring buffer flow control"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Set `feat_pending_send_sz` bit in guest-to-host ring header `feature_bits`
 - [ ] On send failure (ring full): write required bytes to `pending_send_sz`
@@ -457,7 +457,7 @@ Map ring data pages three times in contiguous virtual space: (1) header page,
 (2) data payload, (3) duplicate mapping of same physical data. This eliminates split-copy
 overhead when `memcpy()` crosses the ring boundary. After completing all items, mark every
 item as `[x]`, run `bash scripts/build.sh clean`, and commit as
-`"hyperv: VMBus ring buffer triple-mapping"`. Add notes directly in this TODO section.
+`"hyperv: VMBus ring buffer triple-mapping"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Requires virtual memory management.** Triple-mapping requires the ability to map
@@ -509,7 +509,7 @@ TODO section.
 for hot-removing synthetic devices at runtime. When a rescind message arrives, the driver
 must quiesce the affected VSC, close the channel, tear down GPADLs, and notify the device
 layer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`,
-and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in this TODO section.
+and commit as `"hyperv: VMBus channel rescind handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Handle `CHANNELMSG_RESCIND_CHANNELOFFER` in message dispatch
 - [ ] Look up channel by `child_relid` from rescind message

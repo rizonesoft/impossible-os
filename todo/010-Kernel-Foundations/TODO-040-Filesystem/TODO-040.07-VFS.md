@@ -257,7 +257,7 @@ filesystem TODO.
 
 ### 1.1 Case-Insensitive Path Resolution *(agent)*
 
-**Prompt:** Win32 applications are notoriously sloppy with filename capitalization. An installer might write `SystemData.bin` but later call `CreateFileA("systemdata.BIN")`. Add a case-insensitive lookup mode to the VFS path resolution layer. The filesystem stores names as-written (case-preserving), but `vfs_finddir()` performs case-folded comparison. Implement `towupper_ascii()` for A–Z/a–z folding (no ICU needed — Win32 apps use ASCII names). Add a `VFS_LOOKUP_CASE_INSENSITIVE` flag that `CreateFile` always sets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: case-insensitive path resolution"`. Add notes directly in this TODO section.
+**Prompt:** Win32 applications are notoriously sloppy with filename capitalization. An installer might write `SystemData.bin` but later call `CreateFileA("systemdata.BIN")`. Add a case-insensitive lookup mode to the VFS path resolution layer. The filesystem stores names as-written (case-preserving), but `vfs_finddir()` performs case-folded comparison. Implement `towupper_ascii()` for A–Z/a–z folding (no ICU needed — Win32 apps use ASCII names). Add a `VFS_LOOKUP_CASE_INSENSITIVE` flag that `CreateFile` always sets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: case-insensitive path resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `vfs_name_compare_ci(a, b)` — case-insensitive ASCII comparison
 - [ ] Modify `vfs_finddir()` to accept a `flags` parameter
@@ -280,7 +280,7 @@ filesystem TODO.
 
 ### 1.2 Mandatory File Locking (Share Modes) *(agent)*
 
-**Prompt:** Windows uses **mandatory** file locking via `CreateFile`'s `dwShareMode` parameter. When a process opens a file with `FILE_SHARE_READ` but NOT `FILE_SHARE_WRITE`, any other process attempting to open the same file for writing must receive `ERROR_SHARING_VIOLATION (32)`. This is NOT advisory — the kernel must enforce it. Many applications (SQLite, Office, installers) rely on sharing violations for concurrency control. Add a per-file lock table that tracks open handles and their share modes. On each `CreateFile` call, check compatibility with existing opens. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: mandatory file locking (share modes)"`. Add notes directly in this TODO section.
+**Prompt:** Windows uses **mandatory** file locking via `CreateFile`'s `dwShareMode` parameter. When a process opens a file with `FILE_SHARE_READ` but NOT `FILE_SHARE_WRITE`, any other process attempting to open the same file for writing must receive `ERROR_SHARING_VIOLATION (32)`. This is NOT advisory — the kernel must enforce it. Many applications (SQLite, Office, installers) rely on sharing violations for concurrency control. Add a per-file lock table that tracks open handles and their share modes. On each `CreateFile` call, check compatibility with existing opens. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: mandatory file locking (share modes)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > Without mandatory locking, SQLite databases running on Impossible OS will
@@ -311,7 +311,7 @@ filesystem TODO.
 
 ### 1.3 Windows Deletion Semantics *(agent)*
 
-**Prompt:** In traditional Windows, you **cannot delete a file that is currently open.** Even when opened with `FILE_SHARE_DELETE`, the file is only marked as "pending deletion" and is actually removed from the directory when the last handle closes. If your VFS behaves like Unix (immediate unlink of open files), installers that try to overwrite/delete files in use will break. Add a `pending_delete` flag to `vfs_node`, check open handle count before unlinking, and defer the actual directory entry removal to `CloseHandle`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: Windows deletion semantics"`. Add notes directly in this TODO section.
+**Prompt:** In traditional Windows, you **cannot delete a file that is currently open.** Even when opened with `FILE_SHARE_DELETE`, the file is only marked as "pending deletion" and is actually removed from the directory when the last handle closes. If your VFS behaves like Unix (immediate unlink of open files), installers that try to overwrite/delete files in use will break. Add a `pending_delete` flag to `vfs_node`, check open handle count before unlinking, and defer the actual directory entry removal to `CloseHandle`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: Windows deletion semantics"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Add `pending_delete` flag to `vfs_node` (or handle entry)
 - [ ] `DeleteFile()` behavior:
@@ -331,7 +331,7 @@ filesystem TODO.
 
 ### 1.4 Unique File Identifiers *(agent)*
 
-**Prompt:** Win32 applications use `GetFileInformationByHandle()` to retrieve `nFileIndexHigh` and `nFileIndexLow` — a 64-bit unique file ID (analogous to a Unix inode number). Programs use this to check if two different file handles (possibly opened via different paths, symlinks, or hard links) point to the same physical file. Your VFS nodes must generate consistent, unique IDs. For IXFS this maps directly to the inode number. For FAT32, synthesize an ID from the directory cluster + entry index (since FAT32 has no inodes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: unique file identifiers"`. Add notes directly in this TODO section.
+**Prompt:** Win32 applications use `GetFileInformationByHandle()` to retrieve `nFileIndexHigh` and `nFileIndexLow` — a 64-bit unique file ID (analogous to a Unix inode number). Programs use this to check if two different file handles (possibly opened via different paths, symlinks, or hard links) point to the same physical file. Your VFS nodes must generate consistent, unique IDs. For IXFS this maps directly to the inode number. For FAT32, synthesize an ID from the directory cluster + entry index (since FAT32 has no inodes). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: unique file identifiers"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Add `uint64_t file_id` field to `vfs_node`
 
@@ -353,7 +353,7 @@ filesystem TODO.
 
 ### 1.5 Memory-Mapped Executable Loading *(agent)*
 
-**Prompt:** The Windows PE Loader does NOT simply `ReadFile()` an `.exe` into memory. It memory-maps the executable and its DLLs using `CreateFileMapping()` and `MapViewOfFile()`. Page faults trigger demand-paging from disk — only the pages actually executed or accessed are read. Your VFS must integrate tightly with the VMM to handle file-backed page faults, streaming 4 KB pages from disk on demand. This is critical for large executables — without it, loading a 50 MB application requires 50 MB of upfront I/O. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: memory-mapped file I/O"`. Add notes directly in this TODO section.
+**Prompt:** The Windows PE Loader does NOT simply `ReadFile()` an `.exe` into memory. It memory-maps the executable and its DLLs using `CreateFileMapping()` and `MapViewOfFile()`. Page faults trigger demand-paging from disk — only the pages actually executed or accessed are read. Your VFS must integrate tightly with the VMM to handle file-backed page faults, streaming 4 KB pages from disk on demand. This is critical for large executables — without it, loading a 50 MB application requires 50 MB of upfront I/O. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: memory-mapped file I/O"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > → XREF: `TODO-023-Virtual-Memory.md` — VMM page fault handler
@@ -377,7 +377,7 @@ filesystem TODO.
 
 ### 1.6 File Attributes & Timestamps API *(agent)*
 
-**Prompt:** Win32 applications use `GetFileAttributes()` as the fastest file-existence check — it's faster than `CreateFile` because it doesn't open a handle. Many apps call it thousands of times during startup (checking DLL existence, config files, etc.). Implement the full attribute get/set API and the companion timestamp manipulation API. The attribute flags map directly to FAT32/NTFS directory entry attributes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file attributes and timestamps API"`. Add notes directly in this TODO section.
+**Prompt:** Win32 applications use `GetFileAttributes()` as the fastest file-existence check — it's faster than `CreateFile` because it doesn't open a handle. Many apps call it thousands of times during startup (checking DLL existence, config files, etc.). Implement the full attribute get/set API and the companion timestamp manipulation API. The attribute flags map directly to FAT32/NTFS directory entry attributes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file attributes and timestamps API"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `GetFileAttributes(lpFileName)` → `DWORD` attribute bitmask:
   - [ ] Resolve path via `vfs_finddir()` (no handle needed)
@@ -407,7 +407,7 @@ filesystem TODO.
 
 ### 1.7 Byte-Range File Locking *(agent)*
 
-**Prompt:** Beyond share-mode locking (§1.2), Windows supports byte-range locks via `LockFile()` / `UnlockFile()`. Databases (SQLite, Access, Jet) use these to lock specific byte ranges within a file for record-level concurrency. A process can lock bytes 1024–2048 of a file while another process locks bytes 4096–8192 — both succeed. Overlapping lock requests from different handles are denied. Implement a per-file range-lock list. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: byte-range file locking"`. Add notes directly in this TODO section.
+**Prompt:** Beyond share-mode locking (§1.2), Windows supports byte-range locks via `LockFile()` / `UnlockFile()`. Databases (SQLite, Access, Jet) use these to lock specific byte ranges within a file for record-level concurrency. A process can lock bytes 1024–2048 of a file while another process locks bytes 4096–8192 — both succeed. Overlapping lock requests from different handles are denied. Implement a per-file range-lock list. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: byte-range file locking"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Neither Windows nor Linux detects deadlocks in byte-range locks.
@@ -443,7 +443,7 @@ filesystem TODO.
 
 ### 2.1 Alternate Data Streams (ADS) Handling *(agent)*
 
-**Prompt:** Web browsers use NTFS Alternate Data Streams to append the "Mark of the Web" (`:Zone.Identifier`) to downloaded files. If an app tries to create `file.exe:Zone.Identifier` and the filesystem violently rejects the `:` character, browser downloads will fail. Implement a two-tier strategy: (1) For filesystems without stream support (FAT32, exFAT), silently discard stream data and return success — matching Windows-on-FAT32 behavior. (2) For IXFS, route to native ADS support (TODO-040 §5.9.5) once implemented. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ADS graceful fallback"`. Add notes directly in this TODO section.
+**Prompt:** Web browsers use NTFS Alternate Data Streams to append the "Mark of the Web" (`:Zone.Identifier`) to downloaded files. If an app tries to create `file.exe:Zone.Identifier` and the filesystem violently rejects the `:` character, browser downloads will fail. Implement a two-tier strategy: (1) For filesystems without stream support (FAT32, exFAT), silently discard stream data and return success — matching Windows-on-FAT32 behavior. (2) For IXFS, route to native ADS support (TODO-040 §5.9.5) once implemented. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ADS graceful fallback"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Long-term:** IXFS will support native ADS (TODO-040 §5.9.5). This section
@@ -469,7 +469,7 @@ filesystem TODO.
 
 ### 2.2 Security Descriptor Routing (ACL Stubs + Native) *(agent)*
 
-**Prompt:** Installers (especially MSI packages) call `SetFileSecurity()` to lock down directories with Access Control Lists. Implement a two-tier strategy: (1) For IXFS, route to native security descriptors (TODO-040 §5.9.6) once implemented — IXFS will persist real ACLs. (2) For FAT32/exFAT (no ACL support), silently return `ERROR_SUCCESS` with a dummy permissive descriptor — matching how Windows handles FAT32 volumes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ACL routing (native + stub fallback)"`. Add notes directly in this TODO section.
+**Prompt:** Installers (especially MSI packages) call `SetFileSecurity()` to lock down directories with Access Control Lists. Implement a two-tier strategy: (1) For IXFS, route to native security descriptors (TODO-040 §5.9.6) once implemented — IXFS will persist real ACLs. (2) For FAT32/exFAT (no ACL support), silently return `ERROR_SUCCESS` with a dummy permissive descriptor — matching how Windows handles FAT32 volumes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: ACL routing (native + stub fallback)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Long-term:** IXFS will support native ACLs (TODO-040 §5.9.6). This section
@@ -492,7 +492,7 @@ filesystem TODO.
 
 ### 2.3 Volume Information Spoofing *(agent)*
 
-**Prompt:** Some DRM wrappers, anti-cheat engines, and enterprise apps call `GetVolumeInformation()` and check `lpFileSystemNameBuffer`. If they see an unknown filesystem name instead of "NTFS" or "FAT32", they may refuse to run. Report accurate filesystem names for known types (IXFS, FAT32, NTFS, exFAT), but set capability flags honestly — leave out `FILE_PERSISTENT_ACLS` if the filesystem doesn't support them, so well-behaved apps can adapt. Also implement `GetDiskFreeSpace()` and `GetDiskFreeSpaceEx()` for capacity queries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: GetVolumeInformation + disk space queries"`. Add notes directly in this TODO section.
+**Prompt:** Some DRM wrappers, anti-cheat engines, and enterprise apps call `GetVolumeInformation()` and check `lpFileSystemNameBuffer`. If they see an unknown filesystem name instead of "NTFS" or "FAT32", they may refuse to run. Report accurate filesystem names for known types (IXFS, FAT32, NTFS, exFAT), but set capability flags honestly — leave out `FILE_PERSISTENT_ACLS` if the filesystem doesn't support them, so well-behaved apps can adapt. Also implement `GetDiskFreeSpace()` and `GetDiskFreeSpaceEx()` for capacity queries. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: GetVolumeInformation + disk space queries"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `GetVolumeInformation(lpRootPathName, lpVolumeNameBuffer, nVolumeNameSize, lpVolumeSerialNumber, lpMaxComponentLength, lpFileSystemFlags, lpFileSystemNameBuffer, nFileSystemNameSize)`:
   - [ ] Set `lpFileSystemNameBuffer`:
@@ -515,7 +515,7 @@ filesystem TODO.
 
 ### 2.4 Hard Links & Reparse Point Routing *(agent)*
 
-**Prompt:** Windows heavily relies on hard links for the WinSxS (Side-by-Side) assembly cache, used to load correct MSVC C++ runtimes. Implement a two-tier strategy: (1) For IXFS, route to native hard link and symlink support (TODO-040 §5.9.7). (2) For FAT32 (no hard link support), return `ERROR_INVALID_FUNCTION` so well-written apps fall back to a file copy. Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT, ...)` routing — native on IXFS (reparse points as symlinks), stub on FAT32. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: hard links + reparse point routing"`. Add notes directly in this TODO section.
+**Prompt:** Windows heavily relies on hard links for the WinSxS (Side-by-Side) assembly cache, used to load correct MSVC C++ runtimes. Implement a two-tier strategy: (1) For IXFS, route to native hard link and symlink support (TODO-040 §5.9.7). (2) For FAT32 (no hard link support), return `ERROR_INVALID_FUNCTION` so well-written apps fall back to a file copy. Implement `DeviceIoControl(FSCTL_SET_REPARSE_POINT, ...)` routing — native on IXFS (reparse points as symlinks), stub on FAT32. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: hard links + reparse point routing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Long-term:** IXFS supports native hard links and symlinks (TODO-040 §5.9.7).
@@ -551,7 +551,7 @@ filesystem TODO.
 
 ### 3.1 Error Code Mapping Table *(agent)*
 
-**Prompt:** Create a comprehensive mapping from internal VFS/filesystem error codes to exact Win32 error codes. Applications check specific error values to decide behavior — returning `ERROR_ACCESS_DENIED (5)` when `ERROR_SHARING_VIOLATION (32)` is the correct error will cause apps to fail in unexpected ways. Define all mappings in a central `win32_errors.h` and ensure every `SetLastError()` call in the file API uses the correct code. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: precise Win32 error code mapping"`. Add notes directly in this TODO section.
+**Prompt:** Create a comprehensive mapping from internal VFS/filesystem error codes to exact Win32 error codes. Applications check specific error values to decide behavior — returning `ERROR_ACCESS_DENIED (5)` when `ERROR_SHARING_VIOLATION (32)` is the correct error will cause apps to fail in unexpected ways. Define all mappings in a central `win32_errors.h` and ensure every `SetLastError()` call in the file API uses the correct code. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: precise Win32 error code mapping"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `include/kernel/fs/win32_errors.h` with all error code constants:
   ```c
@@ -596,7 +596,7 @@ filesystem TODO.
 
 ### 4.1 Directory Change Notifications *(agent)*
 
-**Prompt:** File managers, IDEs, build systems, and desktop search all need to know when files change. Windows provides `FindFirstChangeNotification()` for simple signaling and `ReadDirectoryChangesW()` for detailed event streams. Implement both: a VFS-level notification system that fires events (create, delete, rename, modify, attribute change) when any file operation mutates a directory tree. The VFS layer itself generates events — individual filesystem drivers don't need to do anything special. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file change notifications"`. Add notes directly in this TODO section.
+**Prompt:** File managers, IDEs, build systems, and desktop search all need to know when files change. Windows provides `FindFirstChangeNotification()` for simple signaling and `ReadDirectoryChangesW()` for detailed event streams. Implement both: a VFS-level notification system that fires events (create, delete, rename, modify, attribute change) when any file operation mutates a directory tree. The VFS layer itself generates events — individual filesystem drivers don't need to do anything special. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: file change notifications"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define notification event types:
   - [ ] `FILE_NOTIFY_CHANGE_FILE_NAME (0x01)` — file created/deleted/renamed
@@ -630,7 +630,7 @@ filesystem TODO.
 
 ### 5.1 Overlapped I/O Support *(agent)*
 
-**Prompt:** High-performance Windows applications use overlapped (asynchronous) I/O to avoid blocking threads during disk reads/writes. `ReadFile()` and `WriteFile()` accept an `OVERLAPPED` struct containing a file offset and an event handle. When called with `OVERLAPPED`, the call returns immediately and signals the event when the I/O completes. This is critical for database engines, web servers, and any app doing concurrent I/O. Implement an I/O request queue that dispatches reads/writes to the VFS on a kernel worker thread and signals completion. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: overlapped async file I/O"`. Add notes directly in this TODO section.
+**Prompt:** High-performance Windows applications use overlapped (asynchronous) I/O to avoid blocking threads during disk reads/writes. `ReadFile()` and `WriteFile()` accept an `OVERLAPPED` struct containing a file offset and an event handle. When called with `OVERLAPPED`, the call returns immediately and signals the event when the I/O completes. This is critical for database engines, web servers, and any app doing concurrent I/O. Implement an I/O request queue that dispatches reads/writes to the VFS on a kernel worker thread and signals completion. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: overlapped async file I/O"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `OVERLAPPED` struct:
   ```c
@@ -691,7 +691,7 @@ filesystem TODO.
 
 ### 6.1 VFS Concurrency Control *(agent)*
 
-**Prompt:** The VFS layer currently has **zero concurrency control** — `walk_path()`, `vfs_open()`, `vfs_close()`, and `vfs_create()` have no locking. While individual FS drivers (FAT32, IXFS) have per-volume spinlocks, the VFS mount table and path resolution are unprotected. When the process model enables preemptive multitasking, concurrent file operations will corrupt the mount table, race on `ref_count`, and produce double-free bugs. Add a reader-writer lock to the VFS: readers for path resolution and stat, writers for mount/unmount/create/unlink/rename. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: reader-writer concurrency control"`. Add notes directly in this TODO section.
+**Prompt:** The VFS layer currently has **zero concurrency control** — `walk_path()`, `vfs_open()`, `vfs_close()`, and `vfs_create()` have no locking. While individual FS drivers (FAT32, IXFS) have per-volume spinlocks, the VFS mount table and path resolution are unprotected. When the process model enables preemptive multitasking, concurrent file operations will corrupt the mount table, race on `ref_count`, and produce double-free bugs. Add a reader-writer lock to the VFS: readers for path resolution and stat, writers for mount/unmount/create/unlink/rename. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: reader-writer concurrency control"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!CAUTION]
 > **Codebase discovery:** `vfs.c` has no `#include` of any lock header. The `mounts[]`
@@ -711,7 +711,7 @@ filesystem TODO.
 
 ### 6.2 I/O Completion Ports (🚀 Impossible OS Feature) *(agent)*
 
-**Prompt:** Windows I/O Completion Ports (IOCP) are the most scalable async I/O mechanism on any OS — they enable a fixed pool of threads to service thousands of concurrent file and socket operations. Linux has `epoll` and `io_uring`, but neither unifies file I/O, socket I/O, and pipe I/O into a single completion queue. Implement `CreateIoCompletionPort()`, `GetQueuedCompletionStatus()`, and `PostQueuedCompletionStatus()`. This builds on §5.1 (OVERLAPPED) and is the foundation for high-performance Win32 servers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: I/O completion ports"`. Add notes directly in this TODO section.
+**Prompt:** Windows I/O Completion Ports (IOCP) are the most scalable async I/O mechanism on any OS — they enable a fixed pool of threads to service thousands of concurrent file and socket operations. Linux has `epoll` and `io_uring`, but neither unifies file I/O, socket I/O, and pipe I/O into a single completion queue. Implement `CreateIoCompletionPort()`, `GetQueuedCompletionStatus()`, and `PostQueuedCompletionStatus()`. This builds on §5.1 (OVERLAPPED) and is the foundation for high-performance Win32 servers. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: I/O completion ports"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Linux `epoll` cannot watch regular files — only sockets and pipes.
@@ -729,7 +729,7 @@ filesystem TODO.
 
 ### 6.3 Filesystem Filter Drivers (🚀 Impossible OS Feature) *(agent)*
 
-**Prompt:** Windows has a mature minifilter framework that allows kernel drivers to intercept and modify file I/O transparently — used by antivirus, encryption (BitLocker), backup, and auditing software. Linux has FUSE and LSM hooks but no unified filter stack. Implement a lightweight filter driver API that sits between the Win32 file API and the VFS `vfs_ops` dispatch. Filters register pre/post callbacks for each operation (create, read, write, close, delete). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: filesystem filter driver framework"`. Add notes directly in this TODO section.
+**Prompt:** Windows has a mature minifilter framework that allows kernel drivers to intercept and modify file I/O transparently — used by antivirus, encryption (BitLocker), backup, and auditing software. Linux has FUSE and LSM hooks but no unified filter stack. Implement a lightweight filter driver API that sits between the Win32 file API and the VFS `vfs_ops` dispatch. Filters register pre/post callbacks for each operation (create, read, write, close, delete). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: filesystem filter driver framework"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows minifilters require WDK and complex altitude management.
@@ -747,7 +747,7 @@ filesystem TODO.
 
 ### 6.4 Disk Quota Management *(agent)*
 
-**Prompt:** Enterprise deployments need per-user storage quotas. Windows NTFS has native quota support via `IDiskQuotaControl`. Linux has `quota(1)` utilities for ext4/XFS. Implement disk quota tracking in the VFS layer with configurable soft/hard limits per user. Quotas are enforced at the VFS level (not per-FS) so they work uniformly across IXFS, FAT32, and NTFS. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: disk quota management"`. Add notes directly in this TODO section.
+**Prompt:** Enterprise deployments need per-user storage quotas. Windows NTFS has native quota support via `IDiskQuotaControl`. Linux has `quota(1)` utilities for ext4/XFS. Implement disk quota tracking in the VFS layer with configurable soft/hard limits per user. Quotas are enforced at the VFS level (not per-FS) so they work uniformly across IXFS, FAT32, and NTFS. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: disk quota management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `struct vfs_quota`: `{ uid, bytes_used, bytes_soft_limit, bytes_hard_limit, grace_period }`
 - [ ] Store quota table per drive letter in VFS mount table
@@ -760,7 +760,7 @@ filesystem TODO.
 
 ### 6.5 Symbolic Link Loop Detection (🚀 Impossible OS Feature) *(agent)*
 
-**Prompt:** Neither Windows nor Linux provides clear error reporting when symbolic links form cycles. Windows returns `ERROR_CANT_RESOLVE_FILENAME` after an undocumented internal limit. Linux returns `ELOOP` after 40 hops but gives no diagnostic about which link caused the loop. Implement configurable max symlink traversal depth in `walk_path()` with detailed error reporting that identifies the exact link that triggered the cycle. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: symlink loop detection"`. Add notes directly in this TODO section.
+**Prompt:** Neither Windows nor Linux provides clear error reporting when symbolic links form cycles. Windows returns `ERROR_CANT_RESOLVE_FILENAME` after an undocumented internal limit. Linux returns `ELOOP` after 40 hops but gives no diagnostic about which link caused the loop. Implement configurable max symlink traversal depth in `walk_path()` with detailed error reporting that identifies the exact link that triggered the cycle. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: symlink loop detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Impossible OS can be the first OS to report **which symlink
@@ -776,7 +776,7 @@ filesystem TODO.
 
 ### 6.6 Cross-Drive File Operations *(agent)*
 
-**Prompt:** The current `vfs_rename()` rejects cross-drive moves (`old_idx != new_idx → return -1`). Windows `MoveFileEx()` transparently handles cross-volume moves by falling back to copy + delete. Implement cross-drive support for `MoveFile` and `CopyFile` at the VFS level. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: cross-drive move and copy"`. Add notes directly in this TODO section.
+**Prompt:** The current `vfs_rename()` rejects cross-drive moves (`old_idx != new_idx → return -1`). Windows `MoveFileEx()` transparently handles cross-volume moves by falling back to copy + delete. Implement cross-drive support for `MoveFile` and `CopyFile` at the VFS level. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"vfs: cross-drive move and copy"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **Codebase discovery:** `vfs_rename()` in `vfs.c` lines 373–426 explicitly rejects

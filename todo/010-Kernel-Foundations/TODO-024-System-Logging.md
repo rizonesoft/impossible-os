@@ -26,7 +26,7 @@
 
 ## 2. Per-Subsystem Log Splitting
 
-**Prompt:** Extend `klog_flush.c` to route log entries by subsystem tag to separate log files. Each entry's subsystem tag (e.g., `"net"`, `"fs"`, `"mm"`, `"boot"`) is matched against a dispatch table mapping tags to file paths. Entries with no matching tag go to `kernel.log`. Files are opened once at boot and kept open (VFS handles are cached). Add `klog_set_level(subsystem, level)` so per-subsystem verbosity can be controlled (e.g., silence `"mm"` DEBUG in release). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: per-subsystem log files"`. Add notes directly in this TODO section.
+**Prompt:** Extend `klog_flush.c` to route log entries by subsystem tag to separate log files. Each entry's subsystem tag (e.g., `"net"`, `"fs"`, `"mm"`, `"boot"`) is matched against a dispatch table mapping tags to file paths. Entries with no matching tag go to `kernel.log`. Files are opened once at boot and kept open (VFS handles are cached). Add `klog_set_level(subsystem, level)` so per-subsystem verbosity can be controlled (e.g., silence `"mm"` DEBUG in release). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: per-subsystem log files"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 - [ ] Define dispatch table: `"net"` → `network.log`, `"boot"` → `boot.log`, `"fs"` → `fs.log`, `"mm"` → `mm.log`
 - [ ] Route entries by subsystem tag in `klog_flush.c`
 - [ ] Cache open VFS handles (don't re-open on each flush)
@@ -37,7 +37,7 @@
 
 ## 3. Log Rotation
 
-**Prompt:** Prevent log files from growing unbounded. When `kernel.log` exceeds a configurable size threshold (default: 4 MB, stored in Registry `HKLM\SYSTEM\Logs\MaxSize`), rename it to `kernel.log.1` and start a new `kernel.log`. Keep at most N rotated files (default: 3). Log rotation should happen at flush time (checked before each write). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: log rotation"`. Add notes directly in this TODO section.
+**Prompt:** Prevent log files from growing unbounded. When `kernel.log` exceeds a configurable size threshold (default: 4 MB, stored in Registry `HKLM\SYSTEM\Logs\MaxSize`), rename it to `kernel.log.1` and start a new `kernel.log`. Keep at most N rotated files (default: 3). Log rotation should happen at flush time (checked before each write). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: log rotation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 - [ ] Check file size before each `klog_flush()` call
 - [ ] If size > threshold: rotate — rename `kernel.log` → `kernel.log.1`, create new `kernel.log`
 - [ ] Delete oldest rotated file to keep max N backups (default: 3)
@@ -49,7 +49,7 @@
 
 ## 4. Structured Logging (JSON Events)
 
-**Prompt:** Plain-text logs are hard to parse programmatically. Windows Event Log stores structured XML; Linux `journald` stores binary structured records. Impossible OS can emit structured JSON log events alongside the plain-text log — each entry is a JSON object `{"ts": 1234, "lvl": "WARN", "sub": "net", "msg": "DHCP timeout"}`. Written to `C:\Impossible\System\Logs\events.jsonl` (JSON Lines format — one JSON object per line). The Task Manager's log viewer reads this for color-coded filtering by level and subsystem. Requires cJSON from TODO-027 §4. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: structured JSON log events"`. Add notes directly in this TODO section.
+**Prompt:** Plain-text logs are hard to parse programmatically. Windows Event Log stores structured XML; Linux `journald` stores binary structured records. Impossible OS can emit structured JSON log events alongside the plain-text log — each entry is a JSON object `{"ts": 1234, "lvl": "WARN", "sub": "net", "msg": "DHCP timeout"}`. Written to `C:\Impossible\System\Logs\events.jsonl` (JSON Lines format — one JSON object per line). The Task Manager's log viewer reads this for color-coded filtering by level and subsystem. Requires cJSON from TODO-027 §4. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: structured JSON log events"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Prerequisite:** cJSON (TODO-027 §4) and per-subsystem splitting (§2) must exist first.
 
@@ -65,7 +65,7 @@
 
 ## 5. Remote Log Forwarding (Syslog UDP)
 
-**Prompt:** For enterprise use and remote debugging, forward kernel log entries to a remote syslog server (RFC 5424 / UDP port 514). The syslog server address is read from Registry `HKLM\SYSTEM\Logs\SyslogServer` at boot. If not set, forwarding is disabled (zero overhead). Severity levels map: `LOG_DEBUG→7`, `LOG_INFO→6`, `LOG_WARN→4`, `LOG_ERROR→3`, `LOG_FATAL→2`. Facility: `LOG_KERN(0)`. This is standard on Linux servers; Windows uses Windows Event Forwarding (WEF). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: syslog UDP forwarding"`. Add notes directly in this TODO section.
+**Prompt:** For enterprise use and remote debugging, forward kernel log entries to a remote syslog server (RFC 5424 / UDP port 514). The syslog server address is read from Registry `HKLM\SYSTEM\Logs\SyslogServer` at boot. If not set, forwarding is disabled (zero overhead). Severity levels map: `LOG_DEBUG→7`, `LOG_INFO→6`, `LOG_WARN→4`, `LOG_ERROR→3`, `LOG_FATAL→2`. Facility: `LOG_KERN(0)`. This is standard on Linux servers; Windows uses Windows Event Forwarding (WEF). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: syslog UDP forwarding"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Prerequisite:** Network stack (UDP send) must be working — see TODO-070 Networking.
 - [ ] Read syslog server IP from Registry `HKLM\SYSTEM\Logs\SyslogServer` at boot

@@ -24,7 +24,7 @@
 
 ## 2. Built-in Layouts
 
-**Prompt:** Define layout tables: US QWERTY (default), UK English (£ vs $), German QWERTZ (Z/Y swap, umlauts on AltGr), French AZERTY (A/Q, Z/W swap), Spanish (ñ, accents), Dvorak (alt layout). Store as static arrays in `resources/layouts/`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: built-in keyboard layouts"`. Add notes directly in this TODO section.
+**Prompt:** Define layout tables: US QWERTY (default), UK English (£ vs $), German QWERTZ (Z/Y swap, umlauts on AltGr), French AZERTY (A/Q, Z/W swap), Spanish (ñ, accents), Dvorak (alt layout). Store as static arrays in `resources/layouts/`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: built-in keyboard layouts"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `resources/layouts/` directory with layout data
 - [ ] **US English (QWERTY)** — `en-US` (default)
@@ -39,7 +39,7 @@
 
 ## 3. Layout Switching
 
-**Prompt:** Win+Space cycles installed layouts. System tray shows 2-letter indicator ("EN", "FR", "DE"). Click indicator → layout picker popup. Settings applet for layout management. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard layout switching"`. Add notes directly in this TODO section.
+**Prompt:** Win+Space cycles installed layouts. System tray shows 2-letter indicator ("EN", "FR", "DE"). Click indicator → layout picker popup. Settings applet for layout management. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"desktop: keyboard layout switching"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Win+Space → cycle through installed layouts
 - [ ] System tray indicator: show current layout code (`EN`, `FR`, `DE`)
@@ -51,7 +51,7 @@
 
 ## 4. Unicode / UTF-8 Support
 
-**Prompt:** Store all text as UTF-8. Implement `utf8_encode(codepoint, buf)` and `utf8_decode(buf, codepoint_out)`. Keyboard outputs UTF-8 codepoints. stb_truetype already supports Unicode codepoints. Stretch: Noto Sans fallback font for CJK. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: UTF-8 Unicode support"`. Add notes directly in this TODO section.
+**Prompt:** Store all text as UTF-8. Implement `utf8_encode(codepoint, buf)` and `utf8_decode(buf, codepoint_out)`. Keyboard outputs UTF-8 codepoints. stb_truetype already supports Unicode codepoints. Stretch: Noto Sans fallback font for CJK. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: UTF-8 Unicode support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Store all text strings internally as UTF-8
 - [ ] UTF-8 encode/decode helpers: `utf8_encode(codepoint, buf)`, `utf8_decode(buf, codepoint_out)`
@@ -64,7 +64,7 @@
 
 ## 5. Dead Keys & Compose Sequences
 
-**Prompt:** Many European layouts use dead keys — e.g., pressing `^` then `e` produces `ê`. Dead keys work by buffering the accent character and combining it with the next keypress. Define a dead-key table in `struct kbd_layout`: `deadkeys[32]` entries, each a `(dead_char, base_char, composed_codepoint)` triple. When a key mapped to a dead accent is pressed, set a `pending_dead` flag in the keyboard state; on the next keypress, look up the combination. If no match found, emit the dead char followed by the new char. This is P1 because French (AZERTY) and German (QWERTZ) both use dead keys. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: dead key compose sequences"`. Add notes directly in this TODO section.
+**Prompt:** Many European layouts use dead keys — e.g., pressing `^` then `e` produces `ê`. Dead keys work by buffering the accent character and combining it with the next keypress. Define a dead-key table in `struct kbd_layout`: `deadkeys[32]` entries, each a `(dead_char, base_char, composed_codepoint)` triple. When a key mapped to a dead accent is pressed, set a `pending_dead` flag in the keyboard state; on the next keypress, look up the combination. If no match found, emit the dead char followed by the new char. This is P1 because French (AZERTY) and German (QWERTZ) both use dead keys. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: dead key compose sequences"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux implements dead keys in xkb (user-space). Windows handles in Win32 keyboard stack. Impossible OS handles in the kernel layout table — simpler, no xkb complexity.
 
@@ -81,7 +81,7 @@
 
 ## 6. Sticky Keys & Accessibility
 
-**Prompt:** Sticky Keys makes modifier key usage one-handed: pressing Shift, Ctrl, or Alt latches it active for the next keypress, then releases automatically. Five taps of Shift in rapid succession enables Sticky Keys (matches Windows behavior). Once enabled, a visual indicator appears in the system tray (e.g., a lock icon with the modifier name). This is an accessibility feature that matches Windows Sticky Keys precisely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: sticky keys accessibility"`. Add notes directly in this TODO section.
+**Prompt:** Sticky Keys makes modifier key usage one-handed: pressing Shift, Ctrl, or Alt latches it active for the next keypress, then releases automatically. Five taps of Shift in rapid succession enables Sticky Keys (matches Windows behavior). Once enabled, a visual indicator appears in the system tray (e.g., a lock icon with the modifier name). This is an accessibility feature that matches Windows Sticky Keys precisely. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: sticky keys accessibility"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux requires X11/libXt for sticky keys (not in kernel). Windows has sticky keys in the kernel-level keyboard filter. Impossible OS: in-kernel, no X11 needed.
 
@@ -96,7 +96,7 @@
 
 ## 7. Key Repeat & Typematic Rate
 
-**Prompt:** When a key is held down, the keyboard controller sends repeat scancodes. The first repeat occurs after a delay (typematic delay), then at a repeating rate (typematic rate). Both are configurable via PS/2 commands (command 0xF3). Default: 500ms delay, 30 chars/sec rate. Store in Registry `HKLM\SYSTEM\Input\TypematicDelay` and `TypematicRate`. The keyboard settings applet lets the user adjust both. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: keyboard typematic rate"`. Add notes directly in this TODO section.
+**Prompt:** When a key is held down, the keyboard controller sends repeat scancodes. The first repeat occurs after a delay (typematic delay), then at a repeating rate (typematic rate). Both are configurable via PS/2 commands (command 0xF3). Default: 500ms delay, 30 chars/sec rate. Store in Registry `HKLM\SYSTEM\Input\TypematicDelay` and `TypematicRate`. The keyboard settings applet lets the user adjust both. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: keyboard typematic rate"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Send PS/2 command 0xF3 with encoded typematic rate/delay at init
 - [ ] Read default values from Registry: `HKLM\SYSTEM\Input\TypematicDelay` (default: 500ms), `TypematicRate` (default: 30 cps)
@@ -107,7 +107,7 @@
 
 ## 8. Localization Framework *(Stretch)*
 
-**Prompt:** Stretch: per-locale .ini files at `C:\Impossible\System\Locale\{code}.ini`. `locale_get(key)` returns localized string. All UI uses locale_get() instead of hardcoded English. Start with en-US, add fr-FR/de-DE/es-ES. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: localization framework"`. Add notes directly in this TODO section.
+**Prompt:** Stretch: per-locale .ini files at `C:\Impossible\System\Locale\{code}.ini`. `locale_get(key)` returns localized string. All UI uses locale_get() instead of hardcoded English. Start with en-US, add fr-FR/de-DE/es-ES. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: localization framework"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Stretch)* UI string files: `C:\Impossible\System\Locale\{code}.ini`
 - [ ] *(Stretch)* `locale_get(key)` — return localized string for current locale

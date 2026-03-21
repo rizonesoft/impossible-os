@@ -187,7 +187,7 @@ graph TD
 
 ### 1.1 Full 512-Byte MBR Layout Parser
 
-**Prompt:** The existing `mbr.c` parses the 4 partition entries but doesn't extract the 32-bit Unique Disk Signature (offsets `0x1B8`–`0x1BB`) or validate the Boot Record Signature (`0xAA55`). Enhance the parser to decode the complete MBR anatomy: bootstrap code region (440 bytes, not interpreted), disk signature (4 bytes LE), reserved bytes (2 bytes), all 4 partition entries (16 bytes each), and the `0xAA55` magic. Reject MBR sectors where the magic is absent. Store the disk signature in `mbr_table.disk_signature` (add field to struct). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: full 512-byte layout parser"`. Add notes directly in this TODO section.
+**Prompt:** The existing `mbr.c` parses the 4 partition entries but doesn't extract the 32-bit Unique Disk Signature (offsets `0x1B8`–`0x1BB`) or validate the Boot Record Signature (`0xAA55`). Enhance the parser to decode the complete MBR anatomy: bootstrap code region (440 bytes, not interpreted), disk signature (4 bytes LE), reserved bytes (2 bytes), all 4 partition entries (16 bytes each), and the `0xAA55` magic. Reject MBR sectors where the magic is absent. Store the disk signature in `mbr_table.disk_signature` (add field to struct). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: full 512-byte layout parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > **Current codebase state (`src/kernel/fs/mbr.c`, `include/kernel/fs/mbr.h`):**
@@ -219,7 +219,7 @@ graph TD
 
 ### 1.2 Partition Type Recognition
 
-**Prompt:** The Partition Type byte (offset 4 in each 16-byte entry) identifies the filesystem format. Expand recognition beyond the current `0x0C` (FAT32), `0x83` (Linux), `0xDA` (IXFS) to cover the full range needed for robust interoperability. Critically, detect `0xEE` (GPT Protective MBR) — when found, abort MBR parsing and redirect to the GPT parser. Detect `0x05`/`0x0F` (Extended Partition) to trigger EBR chain traversal (§2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: expanded partition type recognition"`. Add notes directly in this TODO section.
+**Prompt:** The Partition Type byte (offset 4 in each 16-byte entry) identifies the filesystem format. Expand recognition beyond the current `0x0C` (FAT32), `0x83` (Linux), `0xDA` (IXFS) to cover the full range needed for robust interoperability. Critically, detect `0xEE` (GPT Protective MBR) — when found, abort MBR parsing and redirect to the GPT parser. Detect `0x05`/`0x0F` (Extended Partition) to trigger EBR chain traversal (§2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: expanded partition type recognition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `enum mbr_partition_type` with all recognized codes:
   - [ ] `0x00` — Empty / Unallocated
@@ -268,7 +268,7 @@ graph TD
 
 ### 2.1 EBR Chain Walker
 
-**Prompt:** When an MBR entry has type `0x05` (CHS Extended) or `0x0F` (LBA Extended), it defines a container region subdivided into logical partitions via a linked list of Extended Boot Records. Each EBR is a 512-byte sector with the same layout as the MBR, but only entries 1 and 2 are used. Entry 1 defines the local logical volume (LBA relative to the current EBR). Entry 2 points to the next EBR (LBA relative to the FIRST EBR in the chain). Entry 2 all-zeros terminates the chain. The parser must cache the absolute LBA of the first EBR permanently and apply two distinct relative addressing rules. Cap traversal at 128 logical partitions to prevent infinite loops on corrupted disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: EBR linked list traversal"`. Add notes directly in this TODO section.
+**Prompt:** When an MBR entry has type `0x05` (CHS Extended) or `0x0F` (LBA Extended), it defines a container region subdivided into logical partitions via a linked list of Extended Boot Records. Each EBR is a 512-byte sector with the same layout as the MBR, but only entries 1 and 2 are used. Entry 1 defines the local logical volume (LBA relative to the current EBR). Entry 2 points to the next EBR (LBA relative to the FIRST EBR in the chain). Entry 2 all-zeros terminates the chain. The parser must cache the absolute LBA of the first EBR permanently and apply two distinct relative addressing rules. Cap traversal at 128 logical partitions to prevent infinite loops on corrupted disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: EBR linked list traversal"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect Extended Partition entry in MBR (type `0x05` or `0x0F`)
 - [ ] Read first EBR sector at `extended_entry.start_lba`
@@ -295,7 +295,7 @@ graph TD
 
 ### 3.1 CHS Extraction & Encoding
 
-**Prompt:** Implement bidirectional CHS↔LBA translation. The 3-byte CHS tuple uses a fractured bit-packed format: Byte 1 = Head (8 bits), Byte 2 low 6 bits = Sector, Byte 2 high 2 bits = Cylinder bits 8–9, Byte 3 = Cylinder bits 0–7. Extraction requires bitwise AND, shift, and OR operations. The special tuple `FE FF FF` (Head=254, Sector=63, Cylinder=1023) indicates CHS overflow — the field is meaningless and LBA must be used exclusively. For partitions within the 8.4 GB CHS limit (1024×256×63×512 bytes), compute valid CHS from LBA using the standard formulas. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: CHS extraction and encoding"`. Add notes directly in this TODO section.
+**Prompt:** Implement bidirectional CHS↔LBA translation. The 3-byte CHS tuple uses a fractured bit-packed format: Byte 1 = Head (8 bits), Byte 2 low 6 bits = Sector, Byte 2 high 2 bits = Cylinder bits 8–9, Byte 3 = Cylinder bits 0–7. Extraction requires bitwise AND, shift, and OR operations. The special tuple `FE FF FF` (Head=254, Sector=63, Cylinder=1023) indicates CHS overflow — the field is meaningless and LBA must be used exclusively. For partitions within the 8.4 GB CHS limit (1024×256×63×512 bytes), compute valid CHS from LBA using the standard formulas. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: CHS extraction and encoding"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `chs_extract(bytes[3], *cylinder, *head, *sector)`:
   - [ ] `head = bytes[0]`
@@ -323,7 +323,7 @@ graph TD
 
 ### 4.1 Modern 1-MiB Alignment Enforcement
 
-**Prompt:** Legacy partitioning tools start the first partition at LBA 63 (one track offset). Modern partitioning must enforce 1-MiB alignment (LBA 2048) for optimal performance on Advanced Format 4K-sector drives and SSDs. When creating new partitions, always align the starting LBA to 2048 (or the nearest 2048-sector boundary for subsequent partitions). When reading existing partitions, detect legacy 63-sector alignment and log a performance warning without modifying the table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: 1-MiB partition alignment"`. Add notes directly in this TODO section.
+**Prompt:** Legacy partitioning tools start the first partition at LBA 63 (one track offset). Modern partitioning must enforce 1-MiB alignment (LBA 2048) for optimal performance on Advanced Format 4K-sector drives and SSDs. When creating new partitions, always align the starting LBA to 2048 (or the nearest 2048-sector boundary for subsequent partitions). When reading existing partitions, detect legacy 63-sector alignment and log a performance warning without modifying the table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: 1-MiB partition alignment"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `MBR_ALIGNMENT_SECTORS = 2048` (1 MiB / 512 bytes)
 - [ ] On partition creation: round starting LBA up to next 2048-sector boundary
@@ -338,7 +338,7 @@ graph TD
 
 ### 4.2 4Kn Native Sector Size Awareness (🚀 Impossible OS Feature)
 
-**Prompt:** Modern NVMe and enterprise SATA/SAS drives use 4096-byte native sectors (4Kn) instead of 512-byte sectors. When `blkdev->sector_size` is 4096, the standard 2048-sector alignment resolves to 8 MiB instead of 1 MiB. Detect the underlying physical sector size and adjust alignment calculations accordingly. Report mismatched logical/physical sector sizes (512e drives that emulate 512-byte sectors over 4096-byte physical) as a performance warning. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: 4Kn sector size awareness"`. Add notes directly in this TODO section.
+**Prompt:** Modern NVMe and enterprise SATA/SAS drives use 4096-byte native sectors (4Kn) instead of 512-byte sectors. When `blkdev->sector_size` is 4096, the standard 2048-sector alignment resolves to 8 MiB instead of 1 MiB. Detect the underlying physical sector size and adjust alignment calculations accordingly. Report mismatched logical/physical sector sizes (512e drives that emulate 512-byte sectors over 4096-byte physical) as a performance warning. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: 4Kn sector size awareness"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows `diskpart` does not warn about 4Kn sector
@@ -361,7 +361,7 @@ graph TD
 
 ### 5.1 Partition Table Writer
 
-**Prompt:** Implement MBR write support for creating and managing partitions. Build a complete 512-byte MBR sector in memory: zero the bootstrap code area (440 bytes), write the disk signature, set reserved bytes to `0x0000`, encode the 4 partition entries with correct LBA fields, CHS fields (using §3.1 encoding, with overflow dummy for large offsets), and write `0x55`/`0xAA` to offsets 510/511. Write the sector to LBA 0 via `blkdev_write()`. Preserve the existing bootstrap code if updating an existing MBR (read-modify-write: read sector, update partition table only, write back). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition table writer"`. Add notes directly in this TODO section.
+**Prompt:** Implement MBR write support for creating and managing partitions. Build a complete 512-byte MBR sector in memory: zero the bootstrap code area (440 bytes), write the disk signature, set reserved bytes to `0x0000`, encode the 4 partition entries with correct LBA fields, CHS fields (using §3.1 encoding, with overflow dummy for large offsets), and write `0x55`/`0xAA` to offsets 510/511. Write the sector to LBA 0 via `blkdev_write()`. Preserve the existing bootstrap code if updating an existing MBR (read-modify-write: read sector, update partition table only, write back). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition table writer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `mbr_write(blkdev, partitions[4], disk_signature)`:
   - [ ] Allocate 512-byte sector buffer via `pmm_alloc_contiguous()`
@@ -388,7 +388,7 @@ graph TD
 
 ### 5.2 EBR Writer for Logical Partitions
 
-**Prompt:** When creating logical partitions inside an extended container, write EBR sectors to define the linked list. Each EBR is placed immediately before its logical volume (at the alignment boundary). Entry 1 describes the logical volume (LBA relative to current EBR). Entry 2 points to the next EBR (LBA relative to first EBR). The last EBR in the chain has entry 2 all-zeros. Entries 3 and 4 must be zeroed. Always write `0xAA55` signature. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: EBR writer for logical partitions"`. Add notes directly in this TODO section.
+**Prompt:** When creating logical partitions inside an extended container, write EBR sectors to define the linked list. Each EBR is placed immediately before its logical volume (at the alignment boundary). Entry 1 describes the logical volume (LBA relative to current EBR). Entry 2 points to the next EBR (LBA relative to first EBR). The last EBR in the chain has entry 2 all-zeros. Entries 3 and 4 must be zeroed. Always write `0xAA55` signature. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: EBR writer for logical partitions"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ebr_write(blkdev, ebr_lba, local_vol, next_ebr)`:
   - [ ] Allocate 512-byte sector, zero it
@@ -411,7 +411,7 @@ graph TD
 
 ### 6.1 Create Primary Partition
 
-**Prompt:** Implement creating a new primary partition: find an empty slot in the 4-entry table, compute aligned start LBA (§4.1), set type and size, write MBR. Enforce the 4-primary-partition limit. If the request would exceed 2 TiB (2^32 sectors), reject with an error. Validate that the new partition doesn't overlap any existing partition. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: create primary partition"`. Add notes directly in this TODO section.
+**Prompt:** Implement creating a new primary partition: find an empty slot in the 4-entry table, compute aligned start LBA (§4.1), set type and size, write MBR. Enforce the 4-primary-partition limit. If the request would exceed 2 TiB (2^32 sectors), reject with an error. Validate that the new partition doesn't overlap any existing partition. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: create primary partition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `mbr_create_partition(blkdev, size_sectors, type, bootable)`:
   - [ ] Find first empty slot (type == `0x00`) in the 4-entry table
@@ -432,7 +432,7 @@ graph TD
 
 ### 6.2 Create Extended & Logical Partitions
 
-**Prompt:** To exceed the 4-partition limit, create an Extended Partition container (type `0x0F` for LBA) consuming a primary slot, then create logical partitions inside it via EBR linked list. The extended container always uses type `0x0F` (LBA Extended) for modern addressing. Only one extended partition is allowed per disk. Logical partitions begin numbering at 5. Each logical partition gets its own EBR in the chain. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: extended and logical partitions"`. Add notes directly in this TODO section.
+**Prompt:** To exceed the 4-partition limit, create an Extended Partition container (type `0x0F` for LBA) consuming a primary slot, then create logical partitions inside it via EBR linked list. The extended container always uses type `0x0F` (LBA Extended) for modern addressing. Only one extended partition is allowed per disk. Logical partitions begin numbering at 5. Each logical partition gets its own EBR in the chain. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: extended and logical partitions"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `mbr_create_extended(blkdev, start_lba, size_sectors)`:
   - [ ] Verify no extended partition already exists (only one allowed)
@@ -450,7 +450,7 @@ graph TD
 
 ### 6.3 Delete Partition
 
-**Prompt:** Delete a partition by zeroing its 16-byte entry in the MBR (for primary) or unlinking its EBR from the chain (for logical). Deleting an extended partition removes ALL logical partitions within it. Prompt with a safety confirmation (when called from CLI). Flush the updated MBR/EBR to disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: delete partition"`. Add notes directly in this TODO section.
+**Prompt:** Delete a partition by zeroing its 16-byte entry in the MBR (for primary) or unlinking its EBR from the chain (for logical). Deleting an extended partition removes ALL logical partitions within it. Prompt with a safety confirmation (when called from CLI). Flush the updated MBR/EBR to disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: delete partition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `mbr_delete_partition(blkdev, partition_number)`:
   - [ ] If primary (1–4): zero the 16-byte entry, write MBR
@@ -467,7 +467,7 @@ graph TD
 
 ### 6.4 Secure Partition Wipe (🚀 Impossible OS Feature)
 
-**Prompt:** After deleting a partition, its data remains on disk and can be recovered with forensic tools. Implement a secure wipe option that zero-fills or crypto-erases the deleted partition's sectors. Offer three wipe levels: quick (zero first/last MiB), standard (single-pass zero), and DoD (3-pass overwrite). For NVMe/SATA SSDs, issue ATA SECURITY ERASE or NVMe Format command instead of sector-by-sector overwrite. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: secure partition wipe"`. Add notes directly in this TODO section.
+**Prompt:** After deleting a partition, its data remains on disk and can be recovered with forensic tools. Implement a secure wipe option that zero-fills or crypto-erases the deleted partition's sectors. Offer three wipe levels: quick (zero first/last MiB), standard (single-pass zero), and DoD (3-pass overwrite). For NVMe/SATA SSDs, issue ATA SECURITY ERASE or NVMe Format command instead of sector-by-sector overwrite. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: secure partition wipe"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has NO built-in secure partition wipe — users need
@@ -487,7 +487,7 @@ graph TD
 
 ### 6.5 Non-Destructive Partition Resize (🚀 Impossible OS Feature)
 
-**Prompt:** Resize an existing MBR partition without data loss. Shrinking reduces the sector count and updates the MBR entry (the filesystem must be shrunk first). Growing extends the sector count into adjacent free space. Validate that no overlap occurs after resize. For extended partitions, grow/shrink the container and re-link EBR chain if needed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive partition resize"`. Add notes directly in this TODO section.
+**Prompt:** Resize an existing MBR partition without data loss. Shrinking reduces the sector count and updates the MBR entry (the filesystem must be shrunk first). Growing extends the sector count into adjacent free space. Validate that no overlap occurs after resize. For extended partitions, grow/shrink the container and re-link EBR chain if needed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive partition resize"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Disk Management can shrink/grow NTFS volumes but
@@ -517,7 +517,7 @@ graph TD
 
 ### 7.1 Protective MBR Detection & Generation
 
-**Prompt:** When the first partition entry has type `0xEE`, the disk uses GPT. The parser must detect this immediately and hand off to the GPT parser (`gpt.c`). For GPT disk creation, write a Protective MBR: a single partition entry spanning the entire disk (capped at 2^32 - 1 sectors for the LBA field), type `0xEE`, boot indicator `0x00`, CHS `00 02 00` for start and `FF FF FF` for end. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: GPT Protective MBR"`. Add notes directly in this TODO section.
+**Prompt:** When the first partition entry has type `0xEE`, the disk uses GPT. The parser must detect this immediately and hand off to the GPT parser (`gpt.c`). For GPT disk creation, write a Protective MBR: a single partition entry spanning the entire disk (capped at 2^32 - 1 sectors for the LBA field), type `0xEE`, boot indicator `0x00`, CHS `00 02 00` for start and `FF FF FF` for end. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: GPT Protective MBR"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `mbr_is_protective(partitions[4])`:
   - [ ] Return `true` if entry 0 has type `0xEE`
@@ -535,7 +535,7 @@ graph TD
 
 ### 7.2 Hybrid MBR (GPT + Legacy BIOS Boot)
 
-**Prompt:** A Hybrid MBR is a GPT disk where the MBR contains real partition entries (up to 3) alongside the `0xEE` Protective entry. This allows legacy BIOS systems to see and boot from specific GPT partitions. The `0xEE` entry is shrunk to cover only the GPT metadata (LBAs 1..33), and up to 3 GPT partitions are mirrored as real MBR entries with appropriate type codes (`0xEF` for ESP, `0x07` for NTFS, etc.). This is critical for creating bootable USB drives and installation media that work on both UEFI and legacy BIOS machines. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: hybrid MBR for dual BIOS/UEFI boot"`. Add notes directly in this TODO section.
+**Prompt:** A Hybrid MBR is a GPT disk where the MBR contains real partition entries (up to 3) alongside the `0xEE` Protective entry. This allows legacy BIOS systems to see and boot from specific GPT partitions. The `0xEE` entry is shrunk to cover only the GPT metadata (LBAs 1..33), and up to 3 GPT partitions are mirrored as real MBR entries with appropriate type codes (`0xEF` for ESP, `0x07` for NTFS, etc.). This is critical for creating bootable USB drives and installation media that work on both UEFI and legacy BIOS machines. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: hybrid MBR for dual BIOS/UEFI boot"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > Hybrid MBRs are a hack that can cause data loss if both MBR and GPT tools modify the same partitions.
@@ -564,7 +564,7 @@ graph TD
 
 ### 8.1 Persistent Volume Identification
 
-**Prompt:** The 32-bit Disk Signature at MBR offsets 440–443 uniquely identifies each physical disk, allowing the OS to maintain stable volume-to-drive-letter mappings across reboots even if disk ordering changes. Generate a new random signature when formatting a fresh disk (`mbr_create_fresh()`). Store signatures in the Registry (`HKLM\SYSTEM\Storage\Disks\{signature}\`) with volume mount points. Check for signature collisions on multi-disk systems. **Note:** `struct blkdev` currently has no `disk_id` field — either add `uint32_t disk_id` to `blkdev.h` or store the signature in `partition_info`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk signature management"`. Add notes directly in this TODO section.
+**Prompt:** The 32-bit Disk Signature at MBR offsets 440–443 uniquely identifies each physical disk, allowing the OS to maintain stable volume-to-drive-letter mappings across reboots even if disk ordering changes. Generate a new random signature when formatting a fresh disk (`mbr_create_fresh()`). Store signatures in the Registry (`HKLM\SYSTEM\Storage\Disks\{signature}\`) with volume mount points. Check for signature collisions on multi-disk systems. **Note:** `struct blkdev` currently has no `disk_id` field — either add `uint32_t disk_id` to `blkdev.h` or store the signature in `partition_info`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk signature management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] On MBR parse: extract disk signature from `mbr_table.disk_signature` (added in §1.1)
 - [ ] Add `uint32_t disk_id` to `struct blkdev` in `include/kernel/drivers/blkdev.h`
@@ -584,7 +584,7 @@ graph TD
 
 ### 9.1 Diskpart MBR Commands
 
-**Prompt:** Wire MBR operations into the `diskpart` shell command for interactive disk management. `diskpart list disks` shows each disk with its MBR/GPT status, signature, and partition count. `diskpart list parts <disk>` shows all partitions (primary + logical) with type, size, LBA, and boot flag. `diskpart create <disk> <size_mb> <type>` creates a primary partition. `diskpart delete <disk> <part>` removes a partition. `diskpart active <disk> <part>` sets the bootable flag. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: diskpart MBR commands"`. Add notes directly in this TODO section.
+**Prompt:** Wire MBR operations into the `diskpart` shell command for interactive disk management. `diskpart list disks` shows each disk with its MBR/GPT status, signature, and partition count. `diskpart list parts <disk>` shows all partitions (primary + logical) with type, size, LBA, and boot flag. `diskpart create <disk> <size_mb> <type>` creates a primary partition. `diskpart delete <disk> <part>` removes a partition. `diskpart active <disk> <part>` sets the bootable flag. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: diskpart MBR commands"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] `diskpart list disks` — show all disks:
   - [ ] Table: Disk#, Size, Table Type (MBR/GPT), Signature, Partitions
@@ -614,7 +614,7 @@ graph TD
 
 ### 10.1 MBR Test Suite
 
-**Prompt:** Create test disk images to validate MBR parsing and writing. Use the host build system to create test images: an MBR disk with 4 primary partitions, an MBR disk with 1 primary + 1 extended (3 logicals), a GPT disk with Protective MBR, a disk with legacy 63-sector alignment, and a corrupted disk (bad signature). Attach via QEMU and verify the parser handles each correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: MBR partition test suite"`. Add notes directly in this TODO section.
+**Prompt:** Create test disk images to validate MBR parsing and writing. Use the host build system to create test images: an MBR disk with 4 primary partitions, an MBR disk with 1 primary + 1 extended (3 logicals), a GPT disk with Protective MBR, a disk with legacy 63-sector alignment, and a corrupted disk (bad signature). Attach via QEMU and verify the parser handles each correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: MBR partition test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Test image: 4 primary partitions (FAT32, NTFS, Linux, IXFS)
   - [ ] Verify all 4 detected with correct types, LBAs, and sizes
@@ -643,7 +643,7 @@ graph TD
 
 ### 11.1 Non-Destructive MBR → GPT Conversion
 
-**Prompt:** Convert an MBR disk to GPT without data loss by translating the partition entries. Read existing MBR partition table (primary + EBR logical), create corresponding GPT entries preserving LBAs and sizes, assign appropriate Type GUIDs, generate new Partition GUIDs, write GPT headers (primary at LBA 1 + backup at last LBA), write partition entry arrays, then overwrite the MBR with a Protective MBR. This is equivalent to Windows `mbr2gpt.exe` but integrated into the Disk Manager GUI. Validate first: reject if Extended/Logical partitions exist (GPT has no EBR concept — they must be converted to primary GPT entries). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive MBR to GPT conversion"`. Add notes directly in this TODO section.
+**Prompt:** Convert an MBR disk to GPT without data loss by translating the partition entries. Read existing MBR partition table (primary + EBR logical), create corresponding GPT entries preserving LBAs and sizes, assign appropriate Type GUIDs, generate new Partition GUIDs, write GPT headers (primary at LBA 1 + backup at last LBA), write partition entry arrays, then overwrite the MBR with a Protective MBR. This is equivalent to Windows `mbr2gpt.exe` but integrated into the Disk Manager GUI. Validate first: reject if Extended/Logical partitions exist (GPT has no EBR concept — they must be converted to primary GPT entries). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: non-destructive MBR to GPT conversion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows `mbr2gpt.exe` is command-line only and restricted to ≤3 primary
@@ -677,7 +677,7 @@ graph TD
 
 ### 11.2 Non-Destructive GPT → MBR Conversion
 
-**Prompt:** Convert a GPT disk back to MBR for legacy BIOS compatibility. Read GPT partition entries, map Type GUIDs back to MBR type codes, verify all partitions fit within the 2 TiB MBR limit, and write a new MBR. Maximum 4 primary GPT partitions can be converted (MBR limit). Reject if any partition exceeds LBA 2^32. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: GPT to MBR conversion"`. Add notes directly in this TODO section.
+**Prompt:** Convert a GPT disk back to MBR for legacy BIOS compatibility. Read GPT partition entries, map Type GUIDs back to MBR type codes, verify all partitions fit within the 2 TiB MBR limit, and write a new MBR. Maximum 4 primary GPT partitions can be converted (MBR limit). Reject if any partition exceeds LBA 2^32. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: GPT to MBR conversion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_to_mbr_validate(blkdev)` — pre-check:
   - [ ] Reject if more than 4 GPT partitions
@@ -697,7 +697,7 @@ graph TD
 
 ### 12.1 MBR Backup & Restore
 
-**Prompt:** The entire MBR partition table fits in a single 512-byte sector. Backup the MBR (and all EBR sectors for logical partitions) to a file for disaster recovery. Restore from backup to recover a corrupted partition table without affecting data. This is equivalent to `dd if=/dev/sda of=backup.mbr bs=512 count=1` on Linux but integrated into the GUI Disk Manager as a one-click operation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition table backup and restore"`. Add notes directly in this TODO section.
+**Prompt:** The entire MBR partition table fits in a single 512-byte sector. Backup the MBR (and all EBR sectors for logical partitions) to a file for disaster recovery. Restore from backup to recover a corrupted partition table without affecting data. This is equivalent to `dd if=/dev/sda of=backup.mbr bs=512 count=1` on Linux but integrated into the GUI Disk Manager as a one-click operation. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition table backup and restore"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has NO built-in partition table backup. Linux requires
@@ -726,7 +726,7 @@ graph TD
 
 ### 13.1 Partition Table Integrity Checker
 
-**Prompt:** Implement a partition table health checker that detects common corruption: overlapping partitions, gaps between partitions, partitions extending beyond disk size, invalid CHS values, duplicate disk signatures, broken EBR chains. Run automatically at boot and on-demand from Disk Manager. Report issues with severity levels (info/warning/error) and offer automatic repair for safe cases. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition health validation"`. Add notes directly in this TODO section.
+**Prompt:** Implement a partition table health checker that detects common corruption: overlapping partitions, gaps between partitions, partitions extending beyond disk size, invalid CHS values, duplicate disk signatures, broken EBR chains. Run automatically at boot and on-demand from Disk Manager. Report issues with severity levels (info/warning/error) and offer automatic repair for safe cases. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: partition health validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows `chkdsk` validates filesystems, not partition tables.
@@ -760,7 +760,7 @@ graph TD
 
 ### 14.1 Disk Cloning (🚀 Impossible OS Feature)
 
-**Prompt:** Clone an entire MBR disk to another disk: copy the MBR sector, all partition data, and all EBR sectors. Support same-size and larger-target cloning (expand the last partition to fill the target). This is equivalent to `dd if=/dev/sda of=/dev/sdb` but with partition-awareness, progress reporting, and error recovery. Offer both sector-level (raw) and filesystem-aware (used blocks only) clone modes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk cloning"`. Add notes directly in this TODO section.
+**Prompt:** Clone an entire MBR disk to another disk: copy the MBR sector, all partition data, and all EBR sectors. Support same-size and larger-target cloning (expand the last partition to fill the target). This is equivalent to `dd if=/dev/sda of=/dev/sdb` but with partition-awareness, progress reporting, and error recovery. Offer both sector-level (raw) and filesystem-aware (used blocks only) clone modes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: disk cloning"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has NO built-in disk clone — users need
@@ -783,7 +783,7 @@ graph TD
 
 ### 14.2 Live Partition Map Visualization (🚀 Impossible OS Feature)
 
-**Prompt:** Render a real-time graphical partition map in the Disk Manager showing each partition as a colored bar proportional to its size. Color-code by filesystem type (FAT32=yellow, NTFS=blue, IXFS=purple, ext4=green, free=gray). Show partition labels, sizes, LBA ranges, and filesystem fill percentage. Overlay I/O activity as a heat bar (green=idle, yellow=moderate, red=heavy) using block device I/O counters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ui: live partition map visualization"`. Add notes directly in this TODO section.
+**Prompt:** Render a real-time graphical partition map in the Disk Manager showing each partition as a colored bar proportional to its size. Color-code by filesystem type (FAT32=yellow, NTFS=blue, IXFS=purple, ext4=green, free=gray). Show partition labels, sizes, LBA ranges, and filesystem fill percentage. Overlay I/O activity as a heat bar (green=idle, yellow=moderate, red=heavy) using block device I/O counters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ui: live partition map visualization"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Disk Management has a static partition bar.

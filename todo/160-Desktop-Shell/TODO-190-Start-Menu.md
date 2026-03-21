@@ -62,7 +62,7 @@
 
 ### 7.4 Power Panel *(from TODO-120 §2 cross-reference)*
 
-**Prompt:** The Power button (⏻) at the bottom of the Start Menu opens a fly-out popup. Options: Shut Down, Restart, Sleep (grayed until TODO-100 §7 implemented), Lock. Each calls the corresponding function from TODO-100. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu power fly-out"`. Add notes directly in this TODO section.
+**Prompt:** The Power button (⏻) at the bottom of the Start Menu opens a fly-out popup. Options: Shut Down, Restart, Sleep (grayed until TODO-100 §7 implemented), Lock. Each calls the corresponding function from TODO-100. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: start menu power fly-out"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Power button (⏻) → fly-out with: Shut Down, Restart, Sleep (grayed), Lock
 - [ ] Shut Down → `system_shutdown()` (TODO-100 §2)

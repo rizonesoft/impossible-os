@@ -181,7 +181,7 @@ graph TD
 
 ### 1.1 Boot Sector Reader
 
-**Prompt:** Read Sector 0 of the exFAT partition. Validate the FileSystemName at offset `0x03` as `"EXFAT   "` (8 bytes, space-padded). Verify the MustBeZero region at `0x0B` (53 bytes, all `0x00`) — this prevents legacy FAT drivers from misidentifying the volume. Extract the shift-based geometry: `BytesPerSectorShift` and `SectorsPerClusterShift`. Calculate `BytesPerSector = 1 << BytesPerSectorShift` and `BytesPerCluster = 1 << (BytesPerSectorShift + SectorsPerClusterShift)`. Extract all strategic volume fields: `FatOffset`, `FatLength`, `ClusterHeapOffset`, `ClusterCount`, `FirstClusterOfRootDir`, `VolumeSerialNumber`, and `FileSystemRevision`. Validate revision is `0x0100` (version 1.00). Parse `VolumeFlags` for dirty/failure status. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: boot sector parsing"`. Add notes directly in this TODO section.
+**Prompt:** Read Sector 0 of the exFAT partition. Validate the FileSystemName at offset `0x03` as `"EXFAT   "` (8 bytes, space-padded). Verify the MustBeZero region at `0x0B` (53 bytes, all `0x00`) — this prevents legacy FAT drivers from misidentifying the volume. Extract the shift-based geometry: `BytesPerSectorShift` and `SectorsPerClusterShift`. Calculate `BytesPerSector = 1 << BytesPerSectorShift` and `BytesPerCluster = 1 << (BytesPerSectorShift + SectorsPerClusterShift)`. Extract all strategic volume fields: `FatOffset`, `FatLength`, `ClusterHeapOffset`, `ClusterCount`, `FirstClusterOfRootDir`, `VolumeSerialNumber`, and `FileSystemRevision`. Validate revision is `0x0100` (version 1.00). Parse `VolumeFlags` for dirty/failure status. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: boot sector parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read first sector of partition
 - [ ] Validate JumpBoot at `0x00`: must be `0xEB, 0x76, 0x90`
@@ -220,7 +220,7 @@ graph TD
 
 ### 1.2 Boot Checksum Validation
 
-**Prompt:** Validate the boot region integrity by computing the 32-bit checksum over Sectors 0–10 (11 sectors). The checksum uses a circular right rotation + addition algorithm. Critical: skip bytes 106, 107 (VolumeFlags) and 112 (PercentInUse) during calculation — these fields change during normal operation. Compare against the repeating checksum pattern in Sector 11. If mismatch, fall back to the Backup Boot Region at Sectors 12–23. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: boot checksum validation"`. Add notes directly in this TODO section.
+**Prompt:** Validate the boot region integrity by computing the 32-bit checksum over Sectors 0–10 (11 sectors). The checksum uses a circular right rotation + addition algorithm. Critical: skip bytes 106, 107 (VolumeFlags) and 112 (PercentInUse) during calculation — these fields change during normal operation. Compare against the repeating checksum pattern in Sector 11. If mismatch, fall back to the Backup Boot Region at Sectors 12–23. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: boot checksum validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_boot_checksum(sectors, total_bytes)`:
   - [ ] Initialize `checksum = 0` (32-bit)
@@ -246,7 +246,7 @@ graph TD
 
 ### 2.1 FAT Reader
 
-**Prompt:** Read the FAT from the FAT Region at sector `FatOffset`. The FAT is a flat array of 32-bit entries. Index 0 = Media Descriptor (`0xF8FFFFFF`), index 1 = reserved (`0xFFFFFFFF`). User clusters start at index 2. Values: `0x00000000` = free, `0xFFFFFFF7` = bad cluster, `0xFFFFFFFF` = end-of-chain, `0x00000002`–`ClusterCount+1` = next cluster pointer. Implement cluster chain walking for fragmented files. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: FAT reader"`. Add notes directly in this TODO section.
+**Prompt:** Read the FAT from the FAT Region at sector `FatOffset`. The FAT is a flat array of 32-bit entries. Index 0 = Media Descriptor (`0xF8FFFFFF`), index 1 = reserved (`0xFFFFFFFF`). User clusters start at index 2. Values: `0x00000000` = free, `0xFFFFFFF7` = bad cluster, `0xFFFFFFFF` = end-of-chain, `0x00000002`–`ClusterCount+1` = next cluster pointer. Implement cluster chain walking for fragmented files. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: FAT reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read FAT from disk: `FatLength` sectors starting at sector `FatOffset`
 - [ ] Allocate FAT buffer via `pmm_alloc_contiguous()` (can be several MB)
@@ -273,7 +273,7 @@ graph TD
 
 ### 3.1 Allocation Bitmap Reader
 
-**Prompt:** The Allocation Bitmap is a system file in the Cluster Heap, located via a directory entry of type `0x81` in the root directory. Each bit represents one cluster: 1=allocated, 0=free. Bit 0 of byte 0 = Cluster 2 (first usable cluster). Read the bitmap, cache it in memory, and implement free-space queries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: allocation bitmap reader"`. Add notes directly in this TODO section.
+**Prompt:** The Allocation Bitmap is a system file in the Cluster Heap, located via a directory entry of type `0x81` in the root directory. Each bit represents one cluster: 1=allocated, 0=free. Bit 0 of byte 0 = Cluster 2 (first usable cluster). Read the bitmap, cache it in memory, and implement free-space queries. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: allocation bitmap reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find Allocation Bitmap entry (type `0x81`) in root directory
 - [ ] Parse bitmap entry fields:
@@ -296,7 +296,7 @@ graph TD
 
 ### 4.1 Up-case Table Loader
 
-**Prompt:** The Up-case Table is a system file in the Cluster Heap, located via a directory entry of type `0x82` in the root directory. It maps every UTF-16 code point (`0x0000`–`0xFFFF`) to its uppercase equivalent for deterministic case-insensitive comparisons. The table may be compressed using `0xFFFF` run-length encoding: `0xFFFF` followed by a 16-bit count means that many consecutive characters are identity-mapped (map to themselves). Decompress into a 128 KB (65536 × 2 bytes) lookup table. Validate via the `TableChecksum` field. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: Up-case table loader"`. Add notes directly in this TODO section.
+**Prompt:** The Up-case Table is a system file in the Cluster Heap, located via a directory entry of type `0x82` in the root directory. It maps every UTF-16 code point (`0x0000`–`0xFFFF`) to its uppercase equivalent for deterministic case-insensitive comparisons. The table may be compressed using `0xFFFF` run-length encoding: `0xFFFF` followed by a 16-bit count means that many consecutive characters are identity-mapped (map to themselves). Decompress into a 128 KB (65536 × 2 bytes) lookup table. Validate via the `TableChecksum` field. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: Up-case table loader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find Up-case Table entry (type `0x82`) in root directory
 - [ ] Parse entry fields:
@@ -321,7 +321,7 @@ graph TD
 
 ### 5.1 Directory Entry Walker
 
-**Prompt:** exFAT directories are arrays of 32-byte entries in cluster chains. Each entry has a 1-byte EntryType at offset 0: bit 7=InUse, bit 6=Category (0=primary, 1=secondary), bit 5=Importance (0=critical, 1=benign), bits 0–4=TypeCode. Walk entries by reading cluster data, advancing 32 bytes per entry. Stop when EntryType == `0x00` (end of directory). Skip deleted entries (bit 7 clear). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: directory entry walker"`. Add notes directly in this TODO section.
+**Prompt:** exFAT directories are arrays of 32-byte entries in cluster chains. Each entry has a 1-byte EntryType at offset 0: bit 7=InUse, bit 6=Category (0=primary, 1=secondary), bit 5=Importance (0=critical, 1=benign), bits 0–4=TypeCode. Walk entries by reading cluster data, advancing 32 bytes per entry. Stop when EntryType == `0x00` (end of directory). Skip deleted entries (bit 7 clear). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: directory entry walker"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_readdir(vol, dir_cluster, callback)`:
   - [ ] Read directory's cluster chain (via FAT or contiguous if NoFatChain)
@@ -344,7 +344,7 @@ graph TD
 
 ### 5.2 File Entry Set Parser
 
-**Prompt:** A valid file is described by a Directory Entry Set: one `0x85` (File), one `0xC0` (Stream Extension), and one or more `0xC1` (File Name) entries — in strict order, no interleaving. Parse the File entry (`0x85`) for attributes and timestamps. Parse Stream Extension (`0xC0`) for FirstCluster, DataLength, ValidDataLength, NoFatChain flag, NameLength, and NameHash. Parse File Name entries (`0xC1`) — each carries 15 UTF-16LE characters. Concatenate name across entries using NameLength from `0xC0`. Validate SetChecksum. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: file entry set parser"`. Add notes directly in this TODO section.
+**Prompt:** A valid file is described by a Directory Entry Set: one `0x85` (File), one `0xC0` (Stream Extension), and one or more `0xC1` (File Name) entries — in strict order, no interleaving. Parse the File entry (`0x85`) for attributes and timestamps. Parse Stream Extension (`0xC0`) for FirstCluster, DataLength, ValidDataLength, NoFatChain flag, NameLength, and NameHash. Parse File Name entries (`0xC1`) — each carries 15 UTF-16LE characters. Concatenate name across entries using NameLength from `0xC0`. Validate SetChecksum. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: file entry set parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse File Directory Entry (`0x85`):
   - [ ] `SecondaryCount` at offset 1 (1B) — number of following secondary entries (2–18)
@@ -377,7 +377,7 @@ graph TD
 
 ### 5.3 Timestamp Decoder
 
-**Prompt:** exFAT timestamps use a compact 32-bit format: 7 bits year (offset from 1980), 4 bits month, 5 bits day, 5 bits hour, 6 bits minute, 5 bits DoubleSeconds (0–29 = 0–58 seconds). The 10ms increment byte adds 0–199 (0–1990 ms) granularity. The UTC offset byte provides timezone info (signed, 15-minute intervals). Convert to POSIX timestamps for VFS compatibility. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: timestamp decoder"`. Add notes directly in this TODO section.
+**Prompt:** exFAT timestamps use a compact 32-bit format: 7 bits year (offset from 1980), 4 bits month, 5 bits day, 5 bits hour, 6 bits minute, 5 bits DoubleSeconds (0–29 = 0–58 seconds). The 10ms increment byte adds 0–199 (0–1990 ms) granularity. The UTC offset byte provides timezone info (signed, 15-minute intervals). Convert to POSIX timestamps for VFS compatibility. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: timestamp decoder"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_decode_timestamp(raw, increment_10ms, utc_offset)`:
   - [ ] Extract year: `((raw >> 25) & 0x7F) + 1980`
@@ -398,7 +398,7 @@ graph TD
 
 ### 6.1 NoFatChain Contiguous Reader
 
-**Prompt:** The NoFatChain flag (bit 1 of `GeneralSecondaryFlags` in `0xC0`) indicates the file is stored as contiguous clusters — the FAT is NOT consulted. Calculate the physical data location directly: `sector = ClusterHeapOffset + (FirstCluster - 2) × SectorsPerCluster`, length = `DataLength`. Read data sequentially without any FAT lookups. Cap reads at `ValidDataLength`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: NoFatChain contiguous reader"`. Add notes directly in this TODO section.
+**Prompt:** The NoFatChain flag (bit 1 of `GeneralSecondaryFlags` in `0xC0`) indicates the file is stored as contiguous clusters — the FAT is NOT consulted. Calculate the physical data location directly: `sector = ClusterHeapOffset + (FirstCluster - 2) × SectorsPerCluster`, length = `DataLength`. Read data sequentially without any FAT lookups. Cap reads at `ValidDataLength`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: NoFatChain contiguous reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect NoFatChain: check bit 1 of `GeneralSecondaryFlags`
 - [ ] If NoFatChain:
@@ -415,7 +415,7 @@ graph TD
 
 ### 6.2 FAT-Chained File Reader
 
-**Prompt:** For fragmented files (NoFatChain = 0), walk the FAT cluster chain to read data. Start at `FirstCluster`, follow FAT pointers, read each cluster's data in sequence. Handle partial reads at start and end of the request. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: FAT-chained file reader"`. Add notes directly in this TODO section.
+**Prompt:** For fragmented files (NoFatChain = 0), walk the FAT cluster chain to read data. Start at `FirstCluster`, follow FAT pointers, read each cluster's data in sequence. Handle partial reads at start and end of the request. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: FAT-chained file reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_read_chained(vol, first_cluster, offset, length, buffer)`:
   - [ ] Calculate which cluster in the chain contains `offset`:
@@ -430,7 +430,7 @@ graph TD
 
 ### 6.3 Cluster Chain Cache
 
-**Prompt:** For FAT-chained files, every read that starts mid-file must walk the FAT chain from `FirstCluster`. A file at offset 100 MB on a 32 KB cluster volume requires traversing ~3,200 FAT entries. Implement a per-file cluster chain cache: on `open()`, walk the entire chain once and store it as a flat array of cluster numbers. Subsequent reads use O(1) indexed access: `clusters[offset / bytes_per_cluster]`. This is especially critical for media files on SD cards where seek performance matters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: cluster chain cache"`. Add notes directly in this TODO section.
+**Prompt:** For FAT-chained files, every read that starts mid-file must walk the FAT chain from `FirstCluster`. A file at offset 100 MB on a 32 KB cluster volume requires traversing ~3,200 FAT entries. Implement a per-file cluster chain cache: on `open()`, walk the entire chain once and store it as a flat array of cluster numbers. Subsequent reads use O(1) indexed access: `clusters[offset / bytes_per_cluster]`. This is especially critical for media files on SD cards where seek performance matters. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: cluster chain cache"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] On `exfat_open()` for FAT-chained files (NoFatChain = 0):
   - [ ] Walk entire chain: `FirstCluster` → FAT[n] → FAT[n+1] → ... → `0xFFFFFFFF`
@@ -448,7 +448,7 @@ graph TD
 
 ### 7.1 NameHash-Accelerated Lookup
 
-**Prompt:** Implement fast file lookup using the NameHash optimization. When searching for a filename, first up-case it via the Up-case Table, then compute the 16-bit NameHash. Scan `0xC0` entries comparing only the 2-byte hash. Only if the hash matches, extract and compare the full filename from `0xC1` entries. This eliminates ~99% of string comparisons. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: NameHash directory lookup"`. Add notes directly in this TODO section.
+**Prompt:** Implement fast file lookup using the NameHash optimization. When searching for a filename, first up-case it via the Up-case Table, then compute the 16-bit NameHash. Scan `0xC0` entries comparing only the 2-byte hash. Only if the hash matches, extract and compare the full filename from `0xC1` entries. This eliminates ~99% of string comparisons. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: NameHash directory lookup"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_name_hash(upcased_name, name_length)`:
   - [ ] Initialize `hash = 0` (16-bit)
@@ -472,7 +472,7 @@ graph TD
 
 ### 7.2 Path Resolution
 
-**Prompt:** Implement full hierarchical path resolution. Start at `FirstClusterOfRootDir`, split the path by `\` or `/`, and resolve each component using `exfat_finddir`. For each component, verify it's a directory (FileAttributes bit 4) before continuing. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: path resolution"`. Add notes directly in this TODO section.
+**Prompt:** Implement full hierarchical path resolution. Start at `FirstClusterOfRootDir`, split the path by `\` or `/`, and resolve each component using `exfat_finddir`. For each component, verify it's a directory (FileAttributes bit 4) before continuing. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: path resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `exfat_resolve_path(vol, path)`:
   - [ ] Start at root directory: cluster = `vol->root_dir_cluster`
@@ -492,7 +492,7 @@ graph TD
 
 ### 8.1 Volume Label Reader
 
-**Prompt:** The Volume Label is a standalone entry of type `0x83` in the root directory. Field at offset 1 is CharacterCount (max 11), and offset 2 holds the 22-byte UTF-16LE label. A label with EntryType `0x03` (InUse bit clear) means no label set. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: volume label reader"`. Add notes directly in this TODO section.
+**Prompt:** The Volume Label is a standalone entry of type `0x83` in the root directory. Field at offset 1 is CharacterCount (max 11), and offset 2 holds the 22-byte UTF-16LE label. A label with EntryType `0x03` (InUse bit clear) means no label set. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: volume label reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find Volume Label entry (type `0x83`) in root directory
 - [ ] Parse:
@@ -509,7 +509,7 @@ graph TD
 
 ### 9.1 exFAT VFS Driver Registration
 
-**Prompt:** Register exFAT as a VFS filesystem driver. Implement `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. Write ops return `-EROFS`. Detect exFAT volumes during partition scanning by checking `"EXFAT   "` signature at offset `0x03` and the MustBeZero region. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: VFS driver registration"`. Add notes directly in this TODO section.
+**Prompt:** Register exFAT as a VFS filesystem driver. Implement `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. Write ops return `-EROFS`. Detect exFAT volumes during partition scanning by checking `"EXFAT   "` signature at offset `0x03` and the MustBeZero region. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: VFS driver registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/fs/exfat.c` and `include/kernel/fs/exfat.h`
 - [ ] Define `struct exfat_volume` — boot sector data, FAT, bitmap, upcase table
@@ -554,7 +554,7 @@ graph TD
 
 ### 10.1 exFAT Test Suite
 
-**Prompt:** Create exFAT test disk images using host tools (`mkfs.exfat` from exfatprogs). Test: basic file read, large contiguous file (NoFatChain), fragmented file (FAT chain), directory with many files, long filenames (200+ chars), case-insensitive lookup, volume label, and dirty volume flag. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: exFAT filesystem test suite"`. Add notes directly in this TODO section.
+**Prompt:** Create exFAT test disk images using host tools (`mkfs.exfat` from exfatprogs). Test: basic file read, large contiguous file (NoFatChain), fragmented file (FAT chain), directory with many files, long filenames (200+ chars), case-insensitive lookup, volume label, and dirty volume flag. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: exFAT filesystem test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Test image: small exFAT volume with files in root directory
   - [ ] Verify: boot sector parsing, root directory listing
@@ -583,7 +583,7 @@ graph TD
 
 ### 11.1 TexFAT Reader
 
-**Prompt:** TexFAT (Transaction-safe exFAT) uses dual FATs and dual Allocation Bitmaps for crash resilience. `NumberOfFats` in the boot sector is 2 (instead of 1), and the `ActiveFat` bit in `VolumeFlags` indicates which FAT/bitmap pair is current. The secondary FAT starts at `FatOffset + FatLength`, and the secondary bitmap is found via a second `0x81` entry with `BitmapFlags` bit 0 set. On mount, use the active pair. If the volume is dirty, compare both pairs to detect corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: TexFAT dual FAT/bitmap support"`. Add notes directly in this TODO section.
+**Prompt:** TexFAT (Transaction-safe exFAT) uses dual FATs and dual Allocation Bitmaps for crash resilience. `NumberOfFats` in the boot sector is 2 (instead of 1), and the `ActiveFat` bit in `VolumeFlags` indicates which FAT/bitmap pair is current. The secondary FAT starts at `FatOffset + FatLength`, and the secondary bitmap is found via a second `0x81` entry with `BitmapFlags` bit 0 set. On mount, use the active pair. If the volume is dirty, compare both pairs to detect corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: TexFAT dual FAT/bitmap support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!NOTE]
 > TexFAT is primarily used in Windows CE/Embedded devices and automotive systems.
@@ -606,7 +606,7 @@ graph TD
 
 ### 12.1 Removable Media Health Dashboard
 
-**Prompt:** exFAT is the primary filesystem for SDXC cards and large USB drives — media that users frequently unplug without safely ejecting. Aggregate exFAT volume health into a Disk Manager panel: dirty flag status, bad cluster count from the Allocation Bitmap, FAT consistency (any chains pointing to free clusters?), and free space percentage. For flash media, estimate wear by tracking the ratio of allocated-to-total clusters over time. Display a health score with clear status icons. No OS provides at-a-glance health for removable exFAT media. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: removable media health dashboard"`. Add notes directly in this TODO section.
+**Prompt:** exFAT is the primary filesystem for SDXC cards and large USB drives — media that users frequently unplug without safely ejecting. Aggregate exFAT volume health into a Disk Manager panel: dirty flag status, bad cluster count from the Allocation Bitmap, FAT consistency (any chains pointing to free clusters?), and free space percentage. For flash media, estimate wear by tracking the ratio of allocated-to-total clusters over time. Display a health score with clear status icons. No OS provides at-a-glance health for removable exFAT media. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: removable media health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows shows a "Scan and fix" dialog when a dirty exFAT drive is
@@ -632,7 +632,7 @@ graph TD
 
 ### 12.2 Deleted File Recovery (Forensics Mode)
 
-**Prompt:** exFAT marks deleted files by clearing the InUse bit (bit 7) of the File Directory Entry (`0x85` → `0x05`). The Stream Extension and File Name entries also have InUse cleared (`0xC0` → `0x40`, `0xC1` → `0x41`). However, the entry set data — filename, timestamps, FirstCluster, DataLength — remains intact until the directory entries are reused. Implement a recovery scanner that walks directory clusters looking for deleted entry sets (`0x05` + `0x40` + `0x41`), cross-references data clusters against the Allocation Bitmap, and allows recovery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: deleted file recovery"`. Add notes directly in this TODO section.
+**Prompt:** exFAT marks deleted files by clearing the InUse bit (bit 7) of the File Directory Entry (`0x85` → `0x05`). The Stream Extension and File Name entries also have InUse cleared (`0xC0` → `0x40`, `0xC1` → `0x41`). However, the entry set data — filename, timestamps, FirstCluster, DataLength — remains intact until the directory entries are reused. Implement a recovery scanner that walks directory clusters looking for deleted entry sets (`0x05` + `0x40` + `0x41`), cross-references data clusters against the Allocation Bitmap, and allows recovery. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: deleted file recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has no built-in recovery for exFAT. Linux has no exFAT
@@ -665,7 +665,7 @@ graph TD
 
 ### 12.3 Smart Hot-Swap Detection (🚀 Impossible OS Feature)
 
-**Prompt:** exFAT media (USB sticks, SD cards) are frequently inserted and removed without software eject. Implement device-change notifications that detect insertion and removal events, display a taskbar notification with the volume label and capacity, auto-mount on insert, and prompt for safe eject on removal. Track pending writes and warn if the user removes media with dirty buffers. No OS provides insertion-aware status for exFAT media — Windows shows a generic "safely remove" notification with no volume context, and Linux requires manual `umount`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: smart hot-swap detection"`. Add notes directly in this TODO section.
+**Prompt:** exFAT media (USB sticks, SD cards) are frequently inserted and removed without software eject. Implement device-change notifications that detect insertion and removal events, display a taskbar notification with the volume label and capacity, auto-mount on insert, and prompt for safe eject on removal. Track pending writes and warn if the user removes media with dirty buffers. No OS provides insertion-aware status for exFAT media — Windows shows a generic "safely remove" notification with no volume context, and Linux requires manual `umount`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: smart hot-swap detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows shows a generic system-tray "Safely Remove Hardware" icon with
@@ -684,7 +684,7 @@ graph TD
 
 ### 12.4 Cluster Fragmentation Visualizer (🚀 Impossible OS Feature)
 
-**Prompt:** Visualize exFAT volume fragmentation by scanning the Allocation Bitmap and FAT. Display a block map in Disk Manager showing allocated (blue), free (white), bad (red), and system (yellow) clusters. Overlay file extents for a selected file to show its fragmentation pattern. No OS provides a visual fragmentation map for exFAT volumes — Windows only shows defrag for NTFS, and Linux has no exFAT fragmentation tooling at all. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: cluster fragmentation visualizer"`. Add notes directly in this TODO section.
+**Prompt:** Visualize exFAT volume fragmentation by scanning the Allocation Bitmap and FAT. Display a block map in Disk Manager showing allocated (blue), free (white), bad (red), and system (yellow) clusters. Overlay file extents for a selected file to show its fragmentation pattern. No OS provides a visual fragmentation map for exFAT volumes — Windows only shows defrag for NTFS, and Linux has no exFAT fragmentation tooling at all. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: cluster fragmentation visualizer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows 11's "Optimize Drives" tool explicitly excludes exFAT and
@@ -703,7 +703,7 @@ graph TD
 
 ### 12.5 USB/SD Speed Benchmark (🚀 Impossible OS Feature)
 
-**Prompt:** Built-in one-click speed test for exFAT removable media. Measure sequential read, sequential write (when write support is available), and random 4K read throughput. Display results in MB/s with a speed class rating (UHS-I, UHS-II, etc. equivalents). Store results per device serial number for historical comparison. No OS has a built-in removable media benchmark — Windows users must download CrystalDiskMark, Linux users must install `fio`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: USB/SD speed benchmark"`. Add notes directly in this TODO section.
+**Prompt:** Built-in one-click speed test for exFAT removable media. Measure sequential read, sequential write (when write support is available), and random 4K read throughput. Display results in MB/s with a speed class rating (UHS-I, UHS-II, etc. equivalents). Store results per device serial number for historical comparison. No OS has a built-in removable media benchmark — Windows users must download CrystalDiskMark, Linux users must install `fio`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: USB/SD speed benchmark"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Neither Windows nor Linux has a built-in disk benchmark.

@@ -81,7 +81,7 @@
 
 ## 4. DPI Scaling
 
-**Prompt:** Modern monitors support high DPI (2×, 1.25×, 1.5×). All UI sizes (fonts, icons, controls, window chrome) must scale by the active DPI factor. The DPI scale factor is stored in Registry `HKCU\Software\Impossible\Display\ScaleFactor` as an integer percentage (100, 125, 150, 200). All drawing code uses `DPI_SCALE(x)` macro (`x * dpi_pct / 100`). TrueType font pixel sizes scale automatically. Icons request the nearest-available size from the IRES store. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: DPI scaling"`. Add notes directly in this TODO section.
+**Prompt:** Modern monitors support high DPI (2×, 1.25×, 1.5×). All UI sizes (fonts, icons, controls, window chrome) must scale by the active DPI factor. The DPI scale factor is stored in Registry `HKCU\Software\Impossible\Display\ScaleFactor` as an integer percentage (100, 125, 150, 200). All drawing code uses `DPI_SCALE(x)` macro (`x * dpi_pct / 100`). TrueType font pixel sizes scale automatically. Icons request the nearest-available size from the IRES store. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: DPI scaling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux DPI scaling is fractional and inconsistent across toolkits (GTK vs Qt vs X11). Windows DPI scaling is per-monitor, per-process. Impossible OS: simple global DPI factor — consistent across all UI elements.
 
@@ -116,7 +116,7 @@
 
 ## 6. Screenshot System
 
-**Prompt:** Win+PrintScreen saves a full-screen screenshot as `C:\Users\Default\Pictures\Screenshot_%Y%m%d_%H%M%S.png`. PrintScreen alone copies to clipboard. Alt+PrintScreen captures the active window only. The screenshot captures the compositor back buffer (post-flip), so it includes all composited effects. Use `image_save_png()` from §3.4 of TODO-110. Show a notification toast on save: "Screenshot saved to Pictures". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: screenshot feature"`. Add notes directly in this TODO section.
+**Prompt:** Win+PrintScreen saves a full-screen screenshot as `C:\Users\Default\Pictures\Screenshot_%Y%m%d_%H%M%S.png`. PrintScreen alone copies to clipboard. Alt+PrintScreen captures the active window only. The screenshot captures the compositor back buffer (post-flip), so it includes all composited effects. Use `image_save_png()` from §3.4 of TODO-110. Show a notification toast on save: "Screenshot saved to Pictures". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: screenshot feature"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Linux screenshot on Wayland requires compositor protocol extensions. Windows screenshot is built into Win32. Impossible OS: in-compositor capture of back buffer — simpler than Wayland approach.
 
@@ -150,7 +150,7 @@
 
 ## 8. Context Menus
 
-**Prompt:** Right-click anywhere on the desktop opens a context menu: View (icon size: small/medium/large), Sort By (name/size/type/date), New Folder, New File, Display Settings, Personalize. Right-click on a window title bar: Restore, Move, Size, Minimize, Maximize, Close. Right-click on a desktop icon: Open, Rename, Delete, Properties. Context menus are positioned near the click point, constrained to screen bounds, and close on outside click or Escape. Style: Acrylic background, rounded corners, separator lines. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: context menus"`. Add notes directly in this TODO section.
+**Prompt:** Right-click anywhere on the desktop opens a context menu: View (icon size: small/medium/large), Sort By (name/size/type/date), New Folder, New File, Display Settings, Personalize. Right-click on a window title bar: Restore, Move, Size, Minimize, Maximize, Close. Right-click on a desktop icon: Open, Rename, Delete, Properties. Context menus are positioned near the click point, constrained to screen bounds, and close on outside click or Escape. Style: Acrylic background, rounded corners, separator lines. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: context menus"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/desktop/ctxmenu.c` and `include/desktop/ctxmenu.h`
 - [ ] `ctxmenu_show(items[], count, x, y)` — show menu at position, constrained to screen
@@ -166,7 +166,7 @@
 
 ## 9. Taskbar System Tray
 
-**Prompt:** The system tray (notification area) on the right side of the taskbar shows: clock (HH:MM), battery icon (if battery found — uses TODO-080 §9.3), Wi-Fi/network icon, speaker/volume icon, keyboard layout indicator (if non-US layout active). Each icon can show a tooltip on hover and a flyout on click (e.g., volume slider on speaker click, clock detail on clock click). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: system tray"`. Add notes directly in this TODO section.
+**Prompt:** The system tray (notification area) on the right side of the taskbar shows: clock (HH:MM), battery icon (if battery found — uses TODO-080 §9.3), Wi-Fi/network icon, speaker/volume icon, keyboard layout indicator (if non-US layout active). Each icon can show a tooltip on hover and a flyout on click (e.g., volume slider on speaker click, clock detail on clock click). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: system tray"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `tray_icon_t` struct: icon_id, tooltip string, click callback, flyout callback
 - [ ] `tray_register(icon)` / `tray_unregister(icon)` — dynamic registration
@@ -182,7 +182,7 @@
 
 ## 10. Tooltips
 
-**Prompt:** Tooltips appear when the mouse hovers over a control for 500ms. They display a short description string near the mouse cursor, constrained to screen bounds. Style: solid dark background, white text, rounded corners, 1px border. Tooltips auto-hide after 5 seconds or when the mouse moves away. Register a tooltip on any control: `tooltip_set(widget, text)`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: tooltips"`. Add notes directly in this TODO section.
+**Prompt:** Tooltips appear when the mouse hovers over a control for 500ms. They display a short description string near the mouse cursor, constrained to screen bounds. Style: solid dark background, white text, rounded corners, 1px border. Tooltips auto-hide after 5 seconds or when the mouse moves away. Register a tooltip on any control: `tooltip_set(widget, text)`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"desktop: tooltips"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] `tooltip_set(widget_id, text)` — register tooltip for widget
 - [ ] Start 500ms hover timer in WM on mouse-enter

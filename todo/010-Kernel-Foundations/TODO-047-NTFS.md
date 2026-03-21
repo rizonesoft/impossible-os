@@ -29,7 +29,7 @@
 
 ### 1.1 Boot Sector / BPB Parsing
 
-**Prompt:** The NTFS Volume Boot Record (VBR) at Sector 0 contains the BIOS Parameter Block (BPB) with all constants needed to locate the MFT. Parse the boot sector to extract sector size, cluster size, total sectors, MFT location, and MFT record size. Validate the OEM ID (`"NTFS    "`), media descriptor (`0xF8`), and boot signature (`0x55AA`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: boot sector BPB parsing"`. Add notes directly in this TODO section.
+**Prompt:** The NTFS Volume Boot Record (VBR) at Sector 0 contains the BIOS Parameter Block (BPB) with all constants needed to locate the MFT. Parse the boot sector to extract sector size, cluster size, total sectors, MFT location, and MFT record size. Validate the OEM ID (`"NTFS    "`), media descriptor (`0xF8`), and boot signature (`0x55AA`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: boot sector BPB parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read Sector 0 of NTFS partition into buffer
 - [ ] Validate OEM ID at offset `0x03`: must be `"NTFS    "` (8 bytes, space-padded)
@@ -54,7 +54,7 @@
 
 ### 1.2 $MFTMirr Validation
 
-**Prompt:** The MFT Mirror (`$MFTMirr`) at the LCN specified in the BPB contains backup copies of the first 4 MFT records (`$MFT`, `$MFTMirr`, `$LogFile`, `$Volume`). On mount, compare the mirror against the primary MFT to detect corruption. If the primary MFT is damaged, fall back to the mirror. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT mirror validation"`. Add notes directly in this TODO section.
+**Prompt:** The MFT Mirror (`$MFTMirr`) at the LCN specified in the BPB contains backup copies of the first 4 MFT records (`$MFT`, `$MFTMirr`, `$LogFile`, `$Volume`). On mount, compare the mirror against the primary MFT to detect corruption. If the primary MFT is damaged, fall back to the mirror. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT mirror validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read first 4 records from `$MFTMirr` location
 - [ ] Compare byte-for-byte against first 4 records of `$MFT`
@@ -69,7 +69,7 @@
 
 ### 2.1 Record Header & Update Sequence Array (Fixup)
 
-**Prompt:** Every MFT File Record Segment (FRS) is 1024 bytes, starting with a `"FILE"` magic number. Before trusting *any* data in the record, the Update Sequence Array (USA / fixup) must be verified and applied. This prevents sector-tearing corruption where only half the record was written to disk. The same fixup logic applies to INDX buffers (`"INDX"` magic). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record header and fixup"`. Add notes directly in this TODO section.
+**Prompt:** Every MFT File Record Segment (FRS) is 1024 bytes, starting with a `"FILE"` magic number. Before trusting *any* data in the record, the Update Sequence Array (USA / fixup) must be verified and applied. This prevents sector-tearing corruption where only half the record was written to disk. The same fixup logic applies to INDX buffers (`"INDX"` magic). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record header and fixup"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read 1024-byte MFT record into buffer
 - [ ] Validate magic number at offset 0x00:
@@ -99,7 +99,7 @@
 
 ### 2.2 Attribute Walking
 
-**Prompt:** After fixup, the MFT record contains a sequence of variable-length attributes starting at the first attribute offset. Walk the attribute chain until the `0xFFFFFFFF` end marker. For each attribute, parse the common header (type, length, resident flag, name) and dispatch to type-specific parsers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: attribute walker"`. Add notes directly in this TODO section.
+**Prompt:** After fixup, the MFT record contains a sequence of variable-length attributes starting at the first attribute offset. Walk the attribute chain until the `0xFFFFFFFF` end marker. For each attribute, parse the common header (type, length, resident flag, name) and dispatch to type-specific parsers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: attribute walker"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Start at first attribute offset from record header (typically 0x38)
 - [ ] For each attribute, parse common header (16 bytes):
@@ -121,7 +121,7 @@
 
 ### 3.1 Run-List Decoder
 
-**Prompt:** Non-resident attributes store a compact run-list that maps Virtual Cluster Numbers (VCNs) to physical Logical Cluster Numbers (LCNs). Each run is encoded as: a header byte (low nibble = length field size, high nibble = offset field size), followed by the length (unsigned) and offset (signed, relative to previous LCN). A header of `0x00` terminates the list. This decoder is the most critical piece of the NTFS driver — every file read depends on it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: data run decoder"`. Add notes directly in this TODO section.
+**Prompt:** Non-resident attributes store a compact run-list that maps Virtual Cluster Numbers (VCNs) to physical Logical Cluster Numbers (LCNs). Each run is encoded as: a header byte (low nibble = length field size, high nibble = offset field size), followed by the length (unsigned) and offset (signed, relative to previous LCN). A header of `0x00` terminates the list. This decoder is the most critical piece of the NTFS driver — every file read depends on it. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: data run decoder"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `ntfs_decode_runlist(data, &runs, &num_runs)`:
   - [ ] Initialize `current_lcn = 0` (first offset is absolute from volume start)
@@ -149,7 +149,7 @@
 
 ### 4.1 $STANDARD_INFORMATION (0x10)
 
-**Prompt:** Always resident. Contains NTFS timestamps (100-nanosecond intervals since Jan 1, 1601), DOS file permission flags, and ownership info. Parse the 4 MAC timestamps and permission flags. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $STANDARD_INFORMATION parser"`. Add notes directly in this TODO section.
+**Prompt:** Always resident. Contains NTFS timestamps (100-nanosecond intervals since Jan 1, 1601), DOS file permission flags, and ownership info. Parse the 4 MAC timestamps and permission flags. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $STANDARD_INFORMATION parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse always-resident attribute:
   - [ ] Creation time (0x00, 8 bytes) — NTFS timestamp (100ns since 1601-01-01)
@@ -169,7 +169,7 @@
 
 ### 4.2 $FILE_NAME (0x30)
 
-**Prompt:** Always resident. Contains the UTF-16 filename, parent directory MFT reference, duplicated timestamps, file sizes, and namespace flag. A single file may have multiple `$FILE_NAME` attributes (Win32 + DOS 8.3 short name, or hard links). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $FILE_NAME parser"`. Add notes directly in this TODO section.
+**Prompt:** Always resident. Contains the UTF-16 filename, parent directory MFT reference, duplicated timestamps, file sizes, and namespace flag. A single file may have multiple `$FILE_NAME` attributes (Win32 + DOS 8.3 short name, or hard links). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $FILE_NAME parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse always-resident attribute:
   - [ ] Parent directory MFT reference (0x00, 8 bytes):
@@ -192,7 +192,7 @@
 
 ### 4.3 $DATA (0x80) — File Reading
 
-**Prompt:** The `$DATA` attribute holds the actual file contents. If resident, the data is inline in the MFT record (tiny files < ~700 bytes). If non-resident, decode the run-list (§3.1) to read physical clusters. Files can have multiple named `$DATA` attributes (Alternate Data Streams). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $DATA file reading"`. Add notes directly in this TODO section.
+**Prompt:** The `$DATA` attribute holds the actual file contents. If resident, the data is inline in the MFT record (tiny files < ~700 bytes). If non-resident, decode the run-list (§3.1) to read physical clusters. Files can have multiple named `$DATA` attributes (Alternate Data Streams). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $DATA file reading"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] If resident (Non-Resident Flag == 0):
   - [ ] Read inline data from content offset, content length bytes
@@ -212,7 +212,7 @@
 
 ### 4.4 $ATTRIBUTE_LIST (0x20) — Extension Records
 
-**Prompt:** When a file's attributes overflow a single 1024-byte MFT record, NTFS creates extension records and links them via a `$ATTRIBUTE_LIST`. This list maps attribute types to MFT references of the extension records holding them. Required for highly fragmented files or files with many named streams. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $ATTRIBUTE_LIST parser"`. Add notes directly in this TODO section.
+**Prompt:** When a file's attributes overflow a single 1024-byte MFT record, NTFS creates extension records and links them via a `$ATTRIBUTE_LIST`. This list maps attribute types to MFT references of the extension records holding them. Required for highly fragmented files or files with many named streams. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $ATTRIBUTE_LIST parser"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Detect presence of $ATTRIBUTE_LIST (type 0x20) in base record
 - [ ] Parse list entries (variable length):
@@ -232,7 +232,7 @@
 
 ### 5.1 $INDEX_ROOT (0x90) — Small Directories
 
-**Prompt:** Directories in NTFS use B+ tree indexing for O(log n) file lookup. The `$INDEX_ROOT` attribute (always resident, named `$I30`) contains the root node with sorted index entries. Each index entry embeds a copy of the file's `$FILE_NAME` attribute and the target MFT reference. For small directories (few files), all entries fit in $INDEX_ROOT. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree INDEX_ROOT"`. Add notes directly in this TODO section.
+**Prompt:** Directories in NTFS use B+ tree indexing for O(log n) file lookup. The `$INDEX_ROOT` attribute (always resident, named `$I30`) contains the root node with sorted index entries. Each index entry embeds a copy of the file's `$FILE_NAME` attribute and the target MFT reference. For small directories (few files), all entries fit in $INDEX_ROOT. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree INDEX_ROOT"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse $INDEX_ROOT (type 0x90, name `$I30`):
   - [ ] Attribute type of indexed content (always 0x30 = $FILE_NAME for directories)
@@ -256,7 +256,7 @@
 
 ### 5.2 $INDEX_ALLOCATION (0xA0) — Large Directories
 
-**Prompt:** When directories grow beyond what fits in $INDEX_ROOT, child B+ tree nodes are stored in INDX buffers (4 KB blocks) pointed to by the non-resident `$INDEX_ALLOCATION` attribute. Each INDX buffer has its own `"INDX"` magic, USA fixup, and sorted index entries. The `$BITMAP` (0xB0) tracks which INDX records are in use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree INDEX_ALLOCATION"`. Add notes directly in this TODO section.
+**Prompt:** When directories grow beyond what fits in $INDEX_ROOT, child B+ tree nodes are stored in INDX buffers (4 KB blocks) pointed to by the non-resident `$INDEX_ALLOCATION` attribute. Each INDX buffer has its own `"INDX"` magic, USA fixup, and sorted index entries. The `$BITMAP` (0xB0) tracks which INDX records are in use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: B+ tree INDEX_ALLOCATION"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse $INDEX_ALLOCATION (type 0xA0, non-resident):
   - [ ] Decode run-list to locate INDX buffers on disk
@@ -279,7 +279,7 @@
 
 ### 5.3 Path Resolution
 
-**Prompt:** Resolve a full path like `C:\Windows\System32\kernel32.dll` by walking the directory tree from the root directory (inode 5) through each path component. This is the entry point for VFS `open()` / `lookup()` operations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: path resolution"`. Add notes directly in this TODO section.
+**Prompt:** Resolve a full path like `C:\Windows\System32\kernel32.dll` by walking the directory tree from the root directory (inode 5) through each path component. This is the entry point for VFS `open()` / `lookup()` operations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: path resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Start at root directory (MFT inode 5)
 - [ ] Split path into components: `["Windows", "System32", "kernel32.dll"]`
@@ -299,7 +299,7 @@
 
 ### 6.1 $Volume (Inode 3) — Volume Metadata
 
-**Prompt:** Parse the `$Volume` system file to read volume name, NTFS version, and dirty flag. The dirty flag indicates whether the volume was cleanly unmounted — if dirty, the driver should mount read-only until `chkdsk` runs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $Volume metadata"`. Add notes directly in this TODO section.
+**Prompt:** Parse the `$Volume` system file to read volume name, NTFS version, and dirty flag. The dirty flag indicates whether the volume was cleanly unmounted — if dirty, the driver should mount read-only until `chkdsk` runs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $Volume metadata"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read MFT record for inode 3 ($Volume)
 - [ ] Parse $VOLUME_NAME attribute (0x60) — UTF-16 volume label
@@ -313,7 +313,7 @@
 
 ### 6.2 $Bitmap (Inode 6) — Cluster Allocation Map
 
-**Prompt:** The master volume bitmap (`$Bitmap`, inode 6) tracks cluster allocation — each bit represents one cluster (1 = allocated, 0 = free). Required for write operations and free-space reporting. Cache the bitmap in memory for fast allocation lookups. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: cluster allocation bitmap"`. Add notes directly in this TODO section.
+**Prompt:** The master volume bitmap (`$Bitmap`, inode 6) tracks cluster allocation — each bit represents one cluster (1 = allocated, 0 = free). Required for write operations and free-space reporting. Cache the bitmap in memory for fast allocation lookups. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: cluster allocation bitmap"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read $Bitmap (inode 6) $DATA attribute — non-resident, may be large
 - [ ] Cache bitmap in memory (use `pmm_alloc_contiguous()` — can be several MB)
@@ -327,7 +327,7 @@
 
 ### 6.3 $UpCase (Inode 10) — Case Folding Table
 
-**Prompt:** The `$UpCase` table (inode 10) is a 128 KB mapping of all UTF-16 code points to their uppercase equivalents. Required for case-insensitive filename comparisons in B+ tree traversal. Load on mount and keep in memory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $UpCase table"`. Add notes directly in this TODO section.
+**Prompt:** The `$UpCase` table (inode 10) is a 128 KB mapping of all UTF-16 code points to their uppercase equivalents. Required for case-insensitive filename comparisons in B+ tree traversal. Load on mount and keep in memory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $UpCase table"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read $UpCase (inode 10) $DATA attribute — 128 KB (65536 × 2 bytes)
 - [ ] Allocate 128 KB via `pmm_alloc_contiguous()`
@@ -346,7 +346,7 @@
 
 ### 7.1 NTFS VFS Operations
 
-**Prompt:** Register NTFS as a filesystem type with the VFS layer. Implement the standard VFS operations: mount, unmount, open, read, readdir, stat, close. Map NTFS concepts to VFS abstractions: MFT inodes → VFS inodes, $FILE_NAME → VFS dentry, $DATA → VFS file data. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: VFS integration"`. Add notes directly in this TODO section.
+**Prompt:** Register NTFS as a filesystem type with the VFS layer. Implement the standard VFS operations: mount, unmount, open, read, readdir, stat, close. Map NTFS concepts to VFS abstractions: MFT inodes → VFS inodes, $FILE_NAME → VFS dentry, $DATA → VFS file data. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: VFS integration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Register `ntfs_fs_type` with VFS
 - [ ] Implement `ntfs_mount(device)`:
@@ -378,7 +378,7 @@
 
 ### 8.1 File Write Operations *(Stretch)*
 
-**Prompt:** Implement NTFS write support: modifying existing file data, extending files (appending data runs), truncating files, and creating new files (allocating MFT records + clusters). Updates must maintain both $STANDARD_INFORMATION and $FILE_NAME timestamps, and update the $Bitmap. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file write operations"`. Add notes directly in this TODO section.
+**Prompt:** Implement NTFS write support: modifying existing file data, extending files (appending data runs), truncating files, and creating new files (allocating MFT records + clusters). Updates must maintain both $STANDARD_INFORMATION and $FILE_NAME timestamps, and update the $Bitmap. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: file write operations"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Stretch)* Implement `ntfs_write(file, offset, size, data)`:
   - [ ] Overwrite existing clusters (in-place for non-fragmented writes)
@@ -405,7 +405,7 @@
 
 ### 8.2 $LogFile Journaling *(Future)*
 
-**Prompt:** NTFS uses `$LogFile` (inode 2) for transaction journaling — recording metadata operations before committing them, enabling recovery after crashes. The log contains redo/undo records for each transaction. On mount, if the volume is dirty, replay the log to restore consistency. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $LogFile journaling"`. Add notes directly in this TODO section.
+**Prompt:** NTFS uses `$LogFile` (inode 2) for transaction journaling — recording metadata operations before committing them, enabling recovery after crashes. The log contains redo/undo records for each transaction. On mount, if the volume is dirty, replay the log to restore consistency. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: $LogFile journaling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Future)* Parse $LogFile structure:
   - [ ] Restart pages (contain latest checkpoint LSN)
@@ -427,7 +427,7 @@
 
 ### 9.1 $Secure & ACL Support *(Future)*
 
-**Prompt:** The `$Secure` system file (inode 9) stores all unique security descriptors centrally. Each file references its security descriptor via a Security ID in $STANDARD_INFORMATION. Parse ACLs (Access Control Lists) and SIDs (Security Identifiers) for Win32 permission checking. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: security descriptors"`. Add notes directly in this TODO section.
+**Prompt:** The `$Secure` system file (inode 9) stores all unique security descriptors centrally. Each file references its security descriptor via a Security ID in $STANDARD_INFORMATION. Parse ACLs (Access Control Lists) and SIDs (Security Identifiers) for Win32 permission checking. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: security descriptors"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Future)* Parse $Secure file indexes ($SII and $SDH)
 - [ ] *(Future)* Look up security descriptor by Security ID from $STANDARD_INFORMATION
@@ -440,7 +440,7 @@
 
 ### 9.2 Reparse Points & Symlinks *(Future)*
 
-**Prompt:** The `$REPARSE_POINT` attribute (0xC0) implements symbolic links, directory junctions, and volume mount points. Each reparse point has a tag identifying its type and a data buffer containing the target path. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: reparse points"`. Add notes directly in this TODO section.
+**Prompt:** The `$REPARSE_POINT` attribute (0xC0) implements symbolic links, directory junctions, and volume mount points. Each reparse point has a tag identifying its type and a data buffer containing the target path. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: reparse points"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Future)* Parse $REPARSE_POINT attribute (type 0xC0):
   - [ ] Reparse tag: `IO_REPARSE_TAG_SYMLINK`, `IO_REPARSE_TAG_MOUNT_POINT`
@@ -452,7 +452,7 @@
 
 ### 9.3 Compression & Encryption *(Future)*
 
-**Prompt:** NTFS supports transparent LZ77 compression (16-cluster units) and EFS encryption. Compressed files have special data run patterns (N clusters + sparse padding to 16). Encrypted files use $LOGGED_UTILITY_STREAM (0x100) for key management. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: compression and encryption"`. Add notes directly in this TODO section.
+**Prompt:** NTFS supports transparent LZ77 compression (16-cluster units) and EFS encryption. Compressed files have special data run patterns (N clusters + sparse padding to 16). Encrypted files use $LOGGED_UTILITY_STREAM (0x100) for key management. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: compression and encryption"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] *(Future)* Detect compressed flag in attribute flags (0x0001)
 - [ ] *(Future)* Identify 16-cluster compression units in run-list

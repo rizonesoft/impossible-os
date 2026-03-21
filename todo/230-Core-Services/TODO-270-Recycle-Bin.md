@@ -27,7 +27,7 @@
 
 ## 2. Metadata Files
 
-**Prompt:** Each trashed item has a corresponding `.meta` INI file in `C:\Recycle\_meta\`. The metadata stores: `OriginalPath`, `DeletedAt` (Unix timestamp), `Size` (bytes), `OriginalName` (display name). This metadata is read by the Recycle Bin app window to display the list of deleted items. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: recycle bin metadata"`. Add notes directly in this TODO section.
+**Prompt:** Each trashed item has a corresponding `.meta` INI file in `C:\Recycle\_meta\`. The metadata stores: `OriginalPath`, `DeletedAt` (Unix timestamp), `Size` (bytes), `OriginalName` (display name). This metadata is read by the Recycle Bin app window to display the list of deleted items. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: recycle bin metadata"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `C:\Recycle\_meta\` directory on first boot
 - [ ] Each deleted item: `C:\Recycle\_meta\{trash_name}.meta` (INI format)

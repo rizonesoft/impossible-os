@@ -461,7 +461,7 @@ boot_storage_init()
 
 ## 6. Unified Timer Subsystem — UTS (🚀 Impossible OS Feature)
 
-**Prompt:** The legacy dual-timer architecture is fundamentally broken: `sleep_ms()` in `pit.c` depends on PIT `tick_count`, which never increments on Hyper-V Gen 2 (no PIT hardware). Meanwhile `lapic_timer_calibrate()` runs in `boot_storage_init()` — far too late to save the boot splash. The fix is a **Unified Timer Subsystem**: detect the platform via CPUID, select exactly one timer backend, calibrate it immediately (before splash), and route ALL timekeeping through a single HAL pointer `g_system_timer`. This section has four ordered sub-phases. Complete them in order. After all four are done, run `bash scripts/build.sh clean` and commit as `"kernel: unified timer subsystem (UTS)"`. Add notes directly in this TODO section.
+**Prompt:** The legacy dual-timer architecture is fundamentally broken: `sleep_ms()` in `pit.c` depends on PIT `tick_count`, which never increments on Hyper-V Gen 2 (no PIT hardware). Meanwhile `lapic_timer_calibrate()` runs in `boot_storage_init()` — far too late to save the boot splash. The fix is a **Unified Timer Subsystem**: detect the platform via CPUID, select exactly one timer backend, calibrate it immediately (before splash), and route ALL timekeeping through a single HAL pointer `g_system_timer`. This section has four ordered sub-phases. Complete them in order. After all four are done, run `bash scripts/build.sh clean` and commit as `"kernel: unified timer subsystem (UTS)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has an internal timer hierarchy but it's completely
@@ -847,7 +847,7 @@ boot_storage_init()
 
 ## 7. Boot Time Visualization (🚀 Impossible OS Feature)
 
-**Prompt:** Instrument the boot sequence to record timestamps for every major initialization phase, then expose this data in a visual boot time breakdown accessible from System Information. Windows has "Boot Trace" in WPA (requires Event Tracing for Windows setup, developer tools, CLI collection). Linux has `systemd-analyze blame` (text-only CLI output). Impossible OS can show a **graphical Gantt chart** of the boot sequence in System Information — the first OS to make boot timing a native visual feature. The data collection hooks are naturally placed during the APIC-first boot refactor since every init function is being touched. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: visual boot time profiling"`. Add notes directly in this TODO section.
+**Prompt:** Instrument the boot sequence to record timestamps for every major initialization phase, then expose this data in a visual boot time breakdown accessible from System Information. Windows has "Boot Trace" in WPA (requires Event Tracing for Windows setup, developer tools, CLI collection). Linux has `systemd-analyze blame` (text-only CLI output). Impossible OS can show a **graphical Gantt chart** of the boot sequence in System Information — the first OS to make boot timing a native visual feature. The data collection hooks are naturally placed during the APIC-first boot refactor since every init function is being touched. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: visual boot time profiling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows requires ETW + WPA developer tools to analyze
@@ -879,7 +879,7 @@ boot_storage_init()
 
 ## 8. Remove Hyper-V Debug Workarounds
 
-**Prompt:** After APIC-first boot is complete and tested, remove the temporary workarounds added for the Hyper-V Gen 2 black-screen debugging effort. These include: framebuffer debug bars in `bootx64.c`, `main.c`, `boot_hw.c`, `boot_interrupts.c`; the `sleep_ms()` stall detection in `pit.c`; and the early serial output in `bootx64.c` (keep as opt-in debug feature, not removed entirely). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: remove Hyper-V debug workarounds"`. Add notes directly in this TODO section.
+**Prompt:** After APIC-first boot is complete and tested, remove the temporary workarounds added for the Hyper-V Gen 2 black-screen debugging effort. These include: framebuffer debug bars in `bootx64.c`, `main.c`, `boot_hw.c`, `boot_interrupts.c`; the `sleep_ms()` stall detection in `pit.c`; and the early serial output in `bootx64.c` (keep as opt-in debug feature, not removed entirely). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"boot: remove Hyper-V debug workarounds"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Remove `HV_BAR` debug macros and framebuffer bar writes from:
   - [ ] `src/boot/uefi/bootx64.c` (DRAW_BAR macro and all calls)

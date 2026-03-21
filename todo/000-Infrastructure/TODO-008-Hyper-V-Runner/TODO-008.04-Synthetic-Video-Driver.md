@@ -118,7 +118,7 @@ graph TD
 
 ### 1.1 VMBus Channel Open + Version Negotiation
 
-**Prompt:** Open the VMBus channel for the Video VSP using GUID `{DA0A7802-E377-4AAC-8E77-0558EB1073F8}`. Allocate send/receive ring buffers via PMM. Negotiate the synthvid protocol version using a 3-level fallback: try `SYNTHVID_VERSION_WIN10` (3.5) first, then `SYNTHVID_VERSION_WIN8` (3.2), then `SYNTHVID_VERSION_WIN7` (3.0). The version determines available features — v3.5 enables hardware cursor and dynamic resolution. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb VMBus channel and version negotiation"`. Add notes directly in this TODO section.
+**Prompt:** Open the VMBus channel for the Video VSP using GUID `{DA0A7802-E377-4AAC-8E77-0558EB1073F8}`. Allocate send/receive ring buffers via PMM. Negotiate the synthvid protocol version using a 3-level fallback: try `SYNTHVID_VERSION_WIN10` (3.5) first, then `SYNTHVID_VERSION_WIN8` (3.2), then `SYNTHVID_VERSION_WIN7` (3.0). The version determines available features — v3.5 enables hardware cursor and dynamic resolution. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb VMBus channel and version negotiation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/drivers/hyperv/hvfb.c` and `include/kernel/drivers/hyperv/hvfb.h`
 - [ ] Find Video VSP channel via `vmbus_find_channel_by_guid()`:
@@ -140,7 +140,7 @@ graph TD
 
 ### 1.2 VRAM Allocation & GPA Registration
 
-**Prompt:** Allocate contiguous physical memory for the synthetic VRAM region and register it with the host via `SYNTHVID_VRAM_LOCATION`. The VRAM must be PMM-allocated (up to 8 MiB for 1920×1080×32bpp), identity-mapped, and pinned (never ballooned). Send the Guest Physical Address to the host and wait for `SYNTHVID_VRAM_LOCATION_ACK`. Only after acknowledgment may the guest begin writing pixel data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb VRAM allocation and GPA registration"`. Add notes directly in this TODO section.
+**Prompt:** Allocate contiguous physical memory for the synthetic VRAM region and register it with the host via `SYNTHVID_VRAM_LOCATION`. The VRAM must be PMM-allocated (up to 8 MiB for 1920×1080×32bpp), identity-mapped, and pinned (never ballooned). Send the Guest Physical Address to the host and wait for `SYNTHVID_VRAM_LOCATION_ACK`. Only after acknowledgment may the guest begin writing pixel data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb VRAM allocation and GPA registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Calculate VRAM size: `width × height × (bpp / 8)`
   - [ ] Default: 1920 × 1080 × 4 = 8,294,400 bytes ≈ 8 MiB
@@ -173,7 +173,7 @@ graph TD
 
 ### 2.1 Situation Update (Resolution Reporting)
 
-**Prompt:** After VRAM registration, inform the host of the current display resolution and pixel format via `SYNTHVID_SITUATION_UPDATE`. This tells the host VSP how to interpret the VRAM contents — width, height, stride, and pixel format. Wait for `SYNTHVID_SITUATION_UPDATE_ACK` before proceeding. If the resolution changes later (§4.1), send a new situation update. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb situation update (resolution reporting)"`. Add notes directly in this TODO section.
+**Prompt:** After VRAM registration, inform the host of the current display resolution and pixel format via `SYNTHVID_SITUATION_UPDATE`. This tells the host VSP how to interpret the VRAM contents — width, height, stride, and pixel format. Wait for `SYNTHVID_SITUATION_UPDATE_ACK` before proceeding. If the resolution changes later (§4.1), send a new situation update. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb situation update (resolution reporting)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Build `SYNTHVID_SITUATION_UPDATE` message:
   - [ ] `user_ctx` — tracking ID
@@ -193,7 +193,7 @@ graph TD
 
 ### 2.2 Dirty Rectangle Notifications
 
-**Prompt:** Instead of having the host scan the entire 8 MiB VRAM every refresh cycle, send `SYNTHVID_DIRT` messages to notify the host which rectangular regions of the framebuffer have changed. This significantly reduces host-side overhead. Track dirty regions from the compositor's `fb_swap()` and consolidate into dirty rectangle messages. The message contains a count and an array of `{x, y, width, height}` rectangles. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb dirty rectangle notifications"`. Add notes directly in this TODO section.
+**Prompt:** Instead of having the host scan the entire 8 MiB VRAM every refresh cycle, send `SYNTHVID_DIRT` messages to notify the host which rectangular regions of the framebuffer have changed. This significantly reduces host-side overhead. Track dirty regions from the compositor's `fb_swap()` and consolidate into dirty rectangle messages. The message contains a count and an array of `{x, y, width, height}` rectangles. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb dirty rectangle notifications"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define dirty rectangle structure: `{ int32_t x, y, w, h }`
 - [ ] Build `SYNTHVID_DIRT` message:
@@ -222,7 +222,7 @@ graph TD
 
 ### 3.1 Hardware Cursor Position
 
-**Prompt:** The synthetic video driver's hardware cursor eliminates the "double cursor" effect of emulated VGA. Instead of rendering the cursor into the framebuffer (causing latency and desync), send cursor coordinates to the host via `SYNTHVID_POINTER_POSITION`. The host composites the cursor over the VM window at native refresh rate. This requires synthvid protocol version ≥ 3.5 (Win10). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb hardware cursor position"`. Add notes directly in this TODO section.
+**Prompt:** The synthetic video driver's hardware cursor eliminates the "double cursor" effect of emulated VGA. Instead of rendering the cursor into the framebuffer (causing latency and desync), send cursor coordinates to the host via `SYNTHVID_POINTER_POSITION`. The host composites the cursor over the VM window at native refresh rate. This requires synthvid protocol version ≥ 3.5 (Win10). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb hardware cursor position"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Gate on protocol version ≥ 3.5 (Win10) — fallback to software cursor otherwise
 - [ ] Build `SYNTHVID_POINTER_POSITION` message:
@@ -240,7 +240,7 @@ graph TD
 
 ### 3.2 Custom Cursor Shape
 
-**Prompt:** For custom cursor images (resize arrows, hand pointers, text beams), send the cursor bitmap to the host via `SYNTHVID_POINTER_SHAPE`. The host renders the custom cursor over the VM window. This avoids the guest drawing the cursor into the framebuffer entirely. The message includes cursor dimensions, hotspot coordinates, and pixel data (ARGB32). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb custom cursor shape"`. Add notes directly in this TODO section.
+**Prompt:** For custom cursor images (resize arrows, hand pointers, text beams), send the cursor bitmap to the host via `SYNTHVID_POINTER_SHAPE`. The host renders the custom cursor over the VM window. This avoids the guest drawing the cursor into the framebuffer entirely. The message includes cursor dimensions, hotspot coordinates, and pixel data (ARGB32). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb custom cursor shape"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Gate on protocol version ≥ 3.5 (Win10)
 - [ ] Build `SYNTHVID_POINTER_SHAPE` message:
@@ -264,7 +264,7 @@ graph TD
 
 ### 4.1 Runtime Resolution Change
 
-**Prompt:** Handle runtime resolution changes initiated by the host (e.g., vmconnect.exe window resize, Enhanced Session Mode). The host sends `SYNTHVID_RESOLUTION_REQUEST` (protocol v3.5+) with the desired new resolution. The guest must: validate the resolution fits within the 8 MiB VRAM ceiling, reallocate or reuse the VRAM buffer, send `SYNTHVID_RESOLUTION_RESPONSE` accepting or rejecting the change, then send a new `SYNTHVID_SITUATION_UPDATE` with the updated resolution. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb runtime resolution change"`. Add notes directly in this TODO section.
+**Prompt:** Handle runtime resolution changes initiated by the host (e.g., vmconnect.exe window resize, Enhanced Session Mode). The host sends `SYNTHVID_RESOLUTION_REQUEST` (protocol v3.5+) with the desired new resolution. The guest must: validate the resolution fits within the 8 MiB VRAM ceiling, reallocate or reuse the VRAM buffer, send `SYNTHVID_RESOLUTION_RESPONSE` accepting or rejecting the change, then send a new `SYNTHVID_SITUATION_UPDATE` with the updated resolution. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb runtime resolution change"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Register handler for `SYNTHVID_RESOLUTION_REQUEST` messages
 - [ ] On resolution request from host:
@@ -291,7 +291,7 @@ graph TD
 
 ### 4.2 Feature Change Handling
 
-**Prompt:** Handle `SYNTHVID_FEATURE_CHANGE` messages from the host. These indicate dynamic capability updates — features being enabled or disabled at runtime (e.g., hardware cursor support toggled during Enhanced Session transitions). Update the driver's feature flags accordingly and adjust behavior. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb feature change handling"`. Add notes directly in this TODO section.
+**Prompt:** Handle `SYNTHVID_FEATURE_CHANGE` messages from the host. These indicate dynamic capability updates — features being enabled or disabled at runtime (e.g., hardware cursor support toggled during Enhanced Session transitions). Update the driver's feature flags accordingly and adjust behavior. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb feature change handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Register handler for `SYNTHVID_FEATURE_CHANGE` messages
 - [ ] Parse feature change payload:
@@ -310,7 +310,7 @@ graph TD
 
 ### 5.1 Framebuffer Subsystem Integration
 
-**Prompt:** Integrate the synthetic video driver with the existing framebuffer subsystem (`fb_init()` / `fb_swap()` / `compositor.c`). When running on Hyper-V with a successful synthvid negotiation, the compositor should use the synthvid VRAM as the primary framebuffer instead of the UEFI GOP address. The back buffer remains PMM-allocated (existing pattern). On `fb_swap()`, copy back buffer → synthvid VRAM, then send dirty rectangles. If synthvid init fails, fall back transparently to the existing GOP framebuffer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb compositor integration"`. Add notes directly in this TODO section.
+**Prompt:** Integrate the synthetic video driver with the existing framebuffer subsystem (`fb_init()` / `fb_swap()` / `compositor.c`). When running on Hyper-V with a successful synthvid negotiation, the compositor should use the synthvid VRAM as the primary framebuffer instead of the UEFI GOP address. The back buffer remains PMM-allocated (existing pattern). On `fb_swap()`, copy back buffer → synthvid VRAM, then send dirty rectangles. If synthvid init fails, fall back transparently to the existing GOP framebuffer. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb compositor integration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `hvfb_init()` — called from `boot_storage.c` after VMBus init:
   - [ ] Open channel (§1.1), negotiate version, allocate VRAM (§1.2)
@@ -346,7 +346,7 @@ graph TD
 
 ### 6.1 TOCTOU-Safe Message Parsing
 
-**Prompt:** VMBus ring buffer memory is directly accessible to the host. Messages received over the ring buffer must be copied into private, unshared kernel memory BEFORE validation and processing. This prevents Time-of-Check-to-Time-of-Use (TOCTOU) attacks where the host modifies message contents between validation and use. Validate all message sizes, types, and field ranges against the protocol spec. This is especially critical for `SYNTHVID_RESOLUTION_REQUEST` (attacker-controlled dimensions) and `SYNTHVID_FEATURE_CHANGE`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb security hardening"`. Add notes directly in this TODO section.
+**Prompt:** VMBus ring buffer memory is directly accessible to the host. Messages received over the ring buffer must be copied into private, unshared kernel memory BEFORE validation and processing. This prevents Time-of-Check-to-Time-of-Use (TOCTOU) attacks where the host modifies message contents between validation and use. Validate all message sizes, types, and field ranges against the protocol spec. This is especially critical for `SYNTHVID_RESOLUTION_REQUEST` (attacker-controlled dimensions) and `SYNTHVID_FEATURE_CHANGE`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: hvfb security hardening"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!WARNING]
 > **CVE-2025-21977 context:** The Linux `hyperv_fb` driver had a critical
@@ -379,7 +379,7 @@ graph TD
 
 ### 7.1 Test Suite
 
-**Prompt:** Validate the synthetic video driver on a real Hyper-V Gen 2 VM. Verify: VMBus channel opens, protocol version negotiates, VRAM registers with host ACK, display renders correctly, hardware cursor works (no double cursor), dirty rectangles reduce host CPU, and runtime resolution change responds to vmconnect window resize. Test fallback: verify GOP framebuffer still works when synthvid init fails (e.g., on QEMU). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"test: hvfb synthetic video validation"`. Add notes directly in this TODO section.
+**Prompt:** Validate the synthetic video driver on a real Hyper-V Gen 2 VM. Verify: VMBus channel opens, protocol version negotiates, VRAM registers with host ACK, display renders correctly, hardware cursor works (no double cursor), dirty rectangles reduce host CPU, and runtime resolution change responds to vmconnect window resize. Test fallback: verify GOP framebuffer still works when synthvid init fails (e.g., on QEMU). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"test: hvfb synthetic video validation"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Test on Hyper-V Gen 2 VM (via `scripts/vm/run-hyperv.ps1`):
   - [ ] Verify VMBus channel opens for Video VSP GUID

@@ -249,7 +249,7 @@
 
 ### 4.1 Plan Mode vs Fast Mode Guidelines ✅ *(manual)*
 
-**Prompt:** Document when agents should use Plan Mode (generate a plan artifact for review before coding) versus Fast Mode (code directly). Kernel architecture, driver development, and memory management changes require Plan Mode. UI iteration, bug fixes, and documentation updates can use Fast Mode. Add this as a section in the rules or as a standalone skill. After completing all items, mark every item as `[x]`, and commit as `"agent: document Plan vs Fast mode guidelines"`. Add notes directly in this TODO section.
+**Prompt:** Document when agents should use Plan Mode (generate a plan artifact for review before coding) versus Fast Mode (code directly). Kernel architecture, driver development, and memory management changes require Plan Mode. UI iteration, bug fixes, and documentation updates can use Fast Mode. Add this as a section in the rules or as a standalone skill. After completing all items, mark every item as `[x]`, and commit as `"agent: document Plan vs Fast mode guidelines"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Add guidelines to `.agents/rules/rules.md` → `## Agent Execution Mode`:
   ```markdown
@@ -270,7 +270,7 @@
 
 ### 4.2 Multi-Agent Task Allocation Patterns ✅ *(manual)*
 
-**Prompt:** Document recommended patterns for using multiple agents in parallel on Impossible OS. Agents working on different layers can operate simultaneously (e.g., kernel driver + desktop UI). Agents on the same layer must coordinate via shared TODO items. Define the roles and boundaries to prevent merge conflicts. After completing all items, mark every item as `[x]`, and commit as `"agent: document multi-agent patterns"`. Add notes directly in this TODO section.
+**Prompt:** Document recommended patterns for using multiple agents in parallel on Impossible OS. Agents working on different layers can operate simultaneously (e.g., kernel driver + desktop UI). Agents on the same layer must coordinate via shared TODO items. Define the roles and boundaries to prevent merge conflicts. After completing all items, mark every item as `[x]`, and commit as `"agent: document multi-agent patterns"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Add to `.agents/rules/rules.md` → `## Multi-Agent Coordination`:
   ```markdown
@@ -319,7 +319,7 @@
 
 ### 5.2 Srclight MCP Server *(AST-aware code intelligence for agents)*
 
-**Prompt:** Set up Srclight as an MCP server in Antigravity so AI agents get AST-aware code intelligence — 25 specialized tools including `get_callers`, `codebase_map`, and FTS5 hybrid search — without burning tool calls on grep. Srclight runs entirely locally, building a Tree-sitter AST + SQLite knowledge graph of the codebase. After completing all items, mark every item as `[x]`, and commit as `"agent: Srclight MCP server"`. Add notes directly in this TODO section.
+**Prompt:** Set up Srclight as an MCP server in Antigravity so AI agents get AST-aware code intelligence — 25 specialized tools including `get_callers`, `codebase_map`, and FTS5 hybrid search — without burning tool calls on grep. Srclight runs entirely locally, building a Tree-sitter AST + SQLite knowledge graph of the codebase. After completing all items, mark every item as `[x]`, and commit as `"agent: Srclight MCP server"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > Srclight replaces the original "clangd MCP" plan from this section. clangd is an
@@ -399,7 +399,7 @@
 
 ### 6.1 Audit All Skills for Accuracy
 
-**Prompt:** Perform a full audit of all 5 existing skills against the current codebase. For each skill, verify: (1) all referenced files exist, (2) all paths match current naming, (3) all code examples compile, (4) no deprecated tools or APIs are referenced. Fix any discrepancies. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all skills for accuracy"`. Add notes directly in this TODO section.
+**Prompt:** Perform a full audit of all 5 existing skills against the current codebase. For each skill, verify: (1) all referenced files exist, (2) all paths match current naming, (3) all code examples compile, (4) no deprecated tools or APIs are referenced. Fix any discrepancies. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all skills for accuracy"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Audit `.agent/skills/impossible-os/SKILL.md`: ✅ **Accurate.** All paths match post-naming-audit. VFS examples use correct backslash convention. Architecture summary already references UEFI (not GRUB). No changes needed.
   - [x] Verify all system paths match post-naming-audit conventions — ✅ correct
@@ -420,7 +420,7 @@
 
 ### 6.2 Audit All Workflows for Accuracy
 
-**Prompt:** Perform a full audit of all 4 existing workflows. Verify each step works with the current build system and tools. Fix any outdated commands or references. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all workflows for accuracy"`. Add notes directly in this TODO section.
+**Prompt:** Perform a full audit of all 4 existing workflows. Verify each step works with the current build system and tools. Fix any outdated commands or references. After completing all items, mark every item as `[x]`, and commit as `"agent: audit all workflows for accuracy"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Audit `.agents/workflows/build.md` — ✅ **Fixed.** Troubleshooting referenced VGA `0xB8000` text mode — replaced with UEFI GOP framebuffer. All build commands (`bash scripts/build.sh`, `tail -1 build/build.log`) verified correct.
 - [x] Audit `.agents/workflows/add-asset.md` — ✅ **Fixed.** Code example called `pmm_free_contiguous(phys, pages)` which does not exist — replaced with `pmm_free_frame()` loop (actual API). Decision tree and common mistakes table verified correct.

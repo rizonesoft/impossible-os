@@ -28,7 +28,7 @@
 
 ## 2. Search Query API
 
-**Prompt:** `search_query(query, results, max)` performs a case-insensitive substring match on the index, returning sorted results (apps first, then folders, then files). Results are ranked: exact name match ranks highest, prefix match second, substring match third. The query also scans app names from `C:\Impossible\Bin\` and `C:\Programs\` for freshly installed apps not yet indexed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: search query API"`. Add notes directly in this TODO section.
+**Prompt:** `search_query(query, results, max)` performs a case-insensitive substring match on the index, returning sorted results (apps first, then folders, then files). Results are ranked: exact name match ranks highest, prefix match second, substring match third. The query also scans app names from `C:\Impossible\Bin\` and `C:\Programs\` for freshly installed apps not yet indexed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"kernel: search query API"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Beats:** Windows Search requires indexing service. Linux `locate` is case-sensitive by default. Impossible OS: case-insensitive by default, ranked results, live app scan.
 

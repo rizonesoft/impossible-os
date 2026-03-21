@@ -244,7 +244,7 @@ graph TD
 
 ### 2.2 Primary Header Auto-Recovery
 
-**Prompt:** When the backup header is valid but the primary is corrupt, automatically reconstruct the primary header at LBA 1 from the backup. This requires: copying the backup header, swapping `my_lba` and `alt_lba`, recalculating the Header CRC32, and writing the reconstructed header to LBA 1. Also copy the backup partition entry array to the primary location (LBA 2+). This restores full redundancy after corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: auto-recover primary from backup"`. Add notes directly in this TODO section.
+**Prompt:** When the backup header is valid but the primary is corrupt, automatically reconstruct the primary header at LBA 1 from the backup. This requires: copying the backup header, swapping `my_lba` and `alt_lba`, recalculating the Header CRC32, and writing the reconstructed header to LBA 1. Also copy the backup partition entry array to the primary location (LBA 2+). This restores full redundancy after corruption. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: auto-recover primary from backup"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Copy backup header into reconstruction buffer
 - [ ] Swap `my_lba` ↔ `alt_lba` (backup's values are inverted)
@@ -257,7 +257,7 @@ graph TD
 
 ### 2.3 Backup Header Sync on Write
 
-**Prompt:** Whenever the primary GPT header or partition entry array is modified (partition create/delete/resize), the backup copies at the end of the disk must be synchronously updated. Write the backup partition entry array first (before the backup header LBA), then recalculate and write the backup header with swapped `my_lba`/`alt_lba` and freshly computed CRC32 values. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: sync backup on write"`. Add notes directly in this TODO section.
+**Prompt:** Whenever the primary GPT header or partition entry array is modified (partition create/delete/resize), the backup copies at the end of the disk must be synchronously updated. Write the backup partition entry array first (before the backup header LBA), then recalculate and write the backup header with swapped `my_lba`/`alt_lba` and freshly computed CRC32 values. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: sync backup on write"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] After any primary GPT modification: mirror partition entry array to backup location
 - [ ] Recalculate backup header: swap `my_lba`/`alt_lba`, recompute Header CRC32
@@ -272,7 +272,7 @@ graph TD
 
 ### 3.1 Dynamic Sector Size Calculation
 
-**Prompt:** The current parser hardcodes 512-byte sector I/O (e.g., `hdr_sect[512]`, `entry_buf[512]`, `entries_per_sector = 512 / entry_size`). GPT offsets are defined relative to the logical block size — on a 4Kn drive (4096-byte sectors), LBA 1 is at byte offset 4096, and the 16 KB entry array spans only 4 LBAs instead of 32. Refactor the parser to use `dev->sector_size` for all buffer allocations and LBA calculations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: dynamic sector size support"`. Add notes directly in this TODO section.
+**Prompt:** The current parser hardcodes 512-byte sector I/O (e.g., `hdr_sect[512]`, `entry_buf[512]`, `entries_per_sector = 512 / entry_size`). GPT offsets are defined relative to the logical block size — on a 4Kn drive (4096-byte sectors), LBA 1 is at byte offset 4096, and the 16 KB entry array spans only 4 LBAs instead of 32. Refactor the parser to use `dev->sector_size` for all buffer allocations and LBA calculations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: dynamic sector size support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read `dev->sector_size` instead of assuming 512
 - [ ] Allocate sector buffers dynamically: `pmm_alloc_contiguous()` for buffers > 512 bytes
@@ -290,7 +290,7 @@ graph TD
 
 ### 4.1 GUID Encoding (Write Path) ✅ (Read Path)
 
-**Prompt:** The read path (`read_guid()`) correctly handles mixed-endian parsing. Implement the write path: `write_guid(guid, buffer)` that serializes a `gpt_guid` struct back to the 16-byte on-disk mixed-endian format. `TimeLow` → 4 bytes LE, `TimeMid` → 2 bytes LE, `TimeHiAndVersion` → 2 bytes LE, trailing 8 bytes → direct copy. Also implement `guid_to_string(guid, buf)` for human-readable output (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and `guid_from_string(str, guid)` for parsing user input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID encode + string conversion"`. Add notes directly in this TODO section.
+**Prompt:** The read path (`read_guid()`) correctly handles mixed-endian parsing. Implement the write path: `write_guid(guid, buffer)` that serializes a `gpt_guid` struct back to the 16-byte on-disk mixed-endian format. `TimeLow` → 4 bytes LE, `TimeMid` → 2 bytes LE, `TimeHiAndVersion` → 2 bytes LE, trailing 8 bytes → direct copy. Also implement `guid_to_string(guid, buf)` for human-readable output (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and `guid_from_string(str, guid)` for parsing user input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID encode + string conversion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] `read_guid(bytes, guid)` — mixed-endian parse (existing, working)
 - [x] `gpt_guid_equal(a, b)` — field-by-field comparison (existing, working)
@@ -349,7 +349,7 @@ graph TD
 
 ### 6.1 UEFI Global Attributes
 
-**Prompt:** Parse the 64-bit Attributes bitmask from each partition entry. Bits 0–2 are UEFI-defined: bit 0 = Required Partition (OS must not delete), bit 1 = No Block IO Protocol (hidden from UEFI), bit 2 = Legacy BIOS Bootable (GPT "Active" flag). When a partition has bit 0 set, prevent deletion in `diskpart` and partition manager. When bit 2 is set, log it as "BIOS Bootable". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition attribute decoding"`. Add notes directly in this TODO section.
+**Prompt:** Parse the 64-bit Attributes bitmask from each partition entry. Bits 0–2 are UEFI-defined: bit 0 = Required Partition (OS must not delete), bit 1 = No Block IO Protocol (hidden from UEFI), bit 2 = Legacy BIOS Bootable (GPT "Active" flag). When a partition has bit 0 set, prevent deletion in `diskpart` and partition manager. When bit 2 is set, log it as "BIOS Bootable". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition attribute decoding"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `GPT_ATTR_REQUIRED (1 << 0)` — system partition, prevent deletion
 - [ ] Define `GPT_ATTR_NO_BLOCKIO (1 << 1)` — hide from firmware
@@ -361,7 +361,7 @@ graph TD
 
 ### 6.2 Microsoft Type-Specific Attributes
 
-**Prompt:** For partitions with type GUID `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` (MS Basic Data), decode bits 60–63: bit 60 = Read-Only, bit 61 = Shadow Copy, bit 62 = Hidden, bit 63 = No Automount. When read-only is set, mount the filesystem as write-protected. When hidden or no-automount is set, skip auto-mount drive letter assignment. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Microsoft-specific attributes"`. Add notes directly in this TODO section.
+**Prompt:** For partitions with type GUID `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7` (MS Basic Data), decode bits 60–63: bit 60 = Read-Only, bit 61 = Shadow Copy, bit 62 = Hidden, bit 63 = No Automount. When read-only is set, mount the filesystem as write-protected. When hidden or no-automount is set, skip auto-mount drive letter assignment. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Microsoft-specific attributes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Define `GPT_MS_ATTR_READONLY (1ULL << 60)`
 - [ ] Define `GPT_MS_ATTR_SHADOW (1ULL << 61)`
@@ -379,7 +379,7 @@ graph TD
 
 ### 7.1 Hybrid MBR Warning
 
-**Prompt:** Detect the Hybrid MBR anomaly: when LBA 0 contains a `0xEE` partition entry whose size does NOT span the entire disk AND other non-zero partition entries exist in slots 2–4. This indicates a legacy dual-boot layout (typically Apple BootCamp). Log a critical warning and always prefer the GPT structures over the MBR mappings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Hybrid MBR detection"`. Add notes directly in this TODO section.
+**Prompt:** Detect the Hybrid MBR anomaly: when LBA 0 contains a `0xEE` partition entry whose size does NOT span the entire disk AND other non-zero partition entries exist in slots 2–4. This indicates a legacy dual-boot layout (typically Apple BootCamp). Log a critical warning and always prefer the GPT structures over the MBR mappings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Hybrid MBR detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] After detecting `0xEE` at LBA 0: check if its `Size in LBA` covers the full disk
   - [ ] Full disk: `size_lba >= disk_sectors - 1` → standard PMBR ✅
@@ -396,7 +396,7 @@ graph TD
 
 ### 8.1 Protective MBR Writer
 
-**Prompt:** Implement writing a standard Protective MBR to LBA 0 for GPT disk initialization. Entry 1: boot=`0x00`, CHS start=`0x00 0x02 0x00`, type=`0xEE`, CHS end=`0xFF 0xFF 0xFF`, LBA start=1, size=`min(disk_sectors - 1, 0xFFFFFFFF)`. Entries 2–4 all zeros. Signature `0x55 0xAA` at bytes 510–511. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Protective MBR writer"`. Add notes directly in this TODO section.
+**Prompt:** Implement writing a standard Protective MBR to LBA 0 for GPT disk initialization. Entry 1: boot=`0x00`, CHS start=`0x00 0x02 0x00`, type=`0xEE`, CHS end=`0xFF 0xFF 0xFF`, LBA start=1, size=`min(disk_sectors - 1, 0xFFFFFFFF)`. Entries 2–4 all zeros. Signature `0x55 0xAA` at bytes 510–511. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Protective MBR writer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_write_pmbr(dev)`:
   - [ ] Allocate 512-byte buffer, zero it
@@ -411,7 +411,7 @@ graph TD
 
 ### 8.2 GPT Header Writer
 
-**Prompt:** Implement writing a GPT header to a specified LBA (1 for primary, last LBA for backup). Build the 92-byte structure: signature, revision `0x00010000`, header size 92, reserved=0, my_lba, alt_lba, first/last usable LBA, disk GUID, partition entry LBA, entry count (128), entry size (128), array CRC32. Compute Header CRC32 last (zero field, hash, fill). Pad remainder of sector with zeros. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: header writer"`. Add notes directly in this TODO section.
+**Prompt:** Implement writing a GPT header to a specified LBA (1 for primary, last LBA for backup). Build the 92-byte structure: signature, revision `0x00010000`, header size 92, reserved=0, my_lba, alt_lba, first/last usable LBA, disk GUID, partition entry LBA, entry count (128), entry size (128), array CRC32. Compute Header CRC32 last (zero field, hash, fill). Pad remainder of sector with zeros. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: header writer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_write_header(dev, header, lba)`:
   - [ ] Allocate sector buffer, zero it
@@ -429,7 +429,7 @@ graph TD
 
 ### 8.3 Partition Entry Writer
 
-**Prompt:** Implement writing partition entries to the entry array. Serialize each `gpt_entry` to its 128-byte on-disk format: type GUID (mixed-endian via `write_guid()`), unique GUID, start/end LBA (LE64), attributes (LE64), name (UTF-16LE). Compute the array CRC32 over the full `128 × 128 = 16,384` byte range (including empty entries). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition entry writer"`. Add notes directly in this TODO section.
+**Prompt:** Implement writing partition entries to the entry array. Serialize each `gpt_entry` to its 128-byte on-disk format: type GUID (mixed-endian via `write_guid()`), unique GUID, start/end LBA (LE64), attributes (LE64), name (UTF-16LE). Compute the array CRC32 over the full `128 × 128 = 16,384` byte range (including empty entries). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition entry writer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_write_entries(dev, entries[], count, entry_lba)`:
   - [ ] Allocate 16,384-byte buffer for 128 entries via `pmm_alloc_contiguous()`
@@ -448,7 +448,7 @@ graph TD
 
 ### 9.1 Initialize GPT Disk
 
-**Prompt:** Create a fresh GPT layout on a raw disk. Write Protective MBR (§8.1), generate a random Disk GUID, compute first/last usable LBA based on sector size, write an empty partition entry array (all-zeros, 128 entries), write primary header at LBA 1 and backup header at last LBA. This is the equivalent of `gdisk` creating a new partition table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: initialize fresh GPT disk"`. Add notes directly in this TODO section.
+**Prompt:** Create a fresh GPT layout on a raw disk. Write Protective MBR (§8.1), generate a random Disk GUID, compute first/last usable LBA based on sector size, write an empty partition entry array (all-zeros, 128 entries), write primary header at LBA 1 and backup header at last LBA. This is the equivalent of `gdisk` creating a new partition table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: initialize fresh GPT disk"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_init_disk(dev)`:
   - [ ] Generate random Disk GUID via `guid_generate()`
@@ -466,7 +466,7 @@ graph TD
 
 ### 9.2 Create Partition
 
-**Prompt:** Add a partition to the GPT: find the first empty entry slot (type GUID all-zeros), fill in the type GUID, generate a unique partition GUID, set start/end LBA (with 1-MiB alignment), set attributes and name. Recompute array CRC32, recompute header CRC32, write both primary and backup. Enforce: start/end must be within the usable LBA range, no overlap with existing partitions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: create partition"`. Add notes directly in this TODO section.
+**Prompt:** Add a partition to the GPT: find the first empty entry slot (type GUID all-zeros), fill in the type GUID, generate a unique partition GUID, set start/end LBA (with 1-MiB alignment), set attributes and name. Recompute array CRC32, recompute header CRC32, write both primary and backup. Enforce: start/end must be within the usable LBA range, no overlap with existing partitions. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: create partition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_create_partition(dev, type_guid, size_sectors, name)`:
   - [ ] Read current partition entry array from disk
@@ -484,7 +484,7 @@ graph TD
 
 ### 9.3 Delete Partition
 
-**Prompt:** Delete a partition by zeroing its 128-byte entry in the array. Zero only the target slot — do not shift remaining entries. Recompute array CRC32, update both primary and backup headers. Unmount any filesystem on the partition first. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: delete partition"`. Add notes directly in this TODO section.
+**Prompt:** Delete a partition by zeroing its 128-byte entry in the array. Zero only the target slot — do not shift remaining entries. Recompute array CRC32, update both primary and backup headers. Unmount any filesystem on the partition first. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: delete partition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_delete_partition(dev, entry_index)`:
   - [ ] Validate entry_index is within `0..num_entries-1`
@@ -500,7 +500,7 @@ graph TD
 
 ### 9.4 Modify Partition Attributes
 
-**Prompt:** Allow setting/clearing individual attribute bits on a partition: set bootable (bit 2), set read-only (bit 60), set hidden (bit 62), set no-automount (bit 63). Recompute CRC32 values after modification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: modify partition attributes"`. Add notes directly in this TODO section.
+**Prompt:** Allow setting/clearing individual attribute bits on a partition: set bootable (bit 2), set read-only (bit 60), set hidden (bit 62), set no-automount (bit 63). Recompute CRC32 values after modification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: modify partition attributes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `gpt_set_attribute(dev, entry_index, bit, value)`:
   - [ ] Read entry, set or clear the specified bit
@@ -514,7 +514,7 @@ graph TD
 
 ### 9.5 Partition Resize (Non-Destructive)
 
-**Prompt:** Implement growing and shrinking GPT partitions in-place by modifying the End LBA in the partition entry. Growing: extend End LBA into adjacent free space (verify no collision with next partition). Shrinking: reduce End LBA (the filesystem on top must be shrunk FIRST or data loss occurs). Never move Start LBA — that would destroy data. After entry modification, recompute array CRC32, update both headers. When growing, also relocate the backup GPT if the partition was the last one (backup GPT lives at disk end). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: non-destructive partition resize"`. Add notes directly in this TODO section.
+**Prompt:** Implement growing and shrinking GPT partitions in-place by modifying the End LBA in the partition entry. Growing: extend End LBA into adjacent free space (verify no collision with next partition). Shrinking: reduce End LBA (the filesystem on top must be shrunk FIRST or data loss occurs). Never move Start LBA — that would destroy data. After entry modification, recompute array CRC32, update both headers. When growing, also relocate the backup GPT if the partition was the last one (backup GPT lives at disk end). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: non-destructive partition resize"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Disk Management can only extend the LAST partition or
@@ -545,7 +545,7 @@ graph TD
 
 ### 10.1 Diskpart GPT Commands
 
-**Prompt:** Wire GPT operations into the `diskpart` shell command. `diskpart list disks` shows GPT/MBR status and Disk GUID. `diskpart list parts <disk>` shows all GPT entries with type name, GUID, LBA range, size, name, and attributes. `diskpart create <disk> <size_mb> <type>` creates a partition. `diskpart delete <disk> <entry>` removes a partition. `diskpart info <disk>` shows the full GPT header details. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: diskpart GPT commands"`. Add notes directly in this TODO section.
+**Prompt:** Wire GPT operations into the `diskpart` shell command. `diskpart list disks` shows GPT/MBR status and Disk GUID. `diskpart list parts <disk>` shows all GPT entries with type name, GUID, LBA range, size, name, and attributes. `diskpart create <disk> <size_mb> <type>` creates a partition. `diskpart delete <disk> <entry>` removes a partition. `diskpart info <disk>` shows the full GPT header details. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"shell: diskpart GPT commands"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] `diskpart list disks` — show GPT/MBR status per disk:
   - [ ] For GPT disks: show Disk GUID, revision, usable LBA range
@@ -574,7 +574,7 @@ graph TD
 
 ### 11.1 Persistent Volume Identification
 
-**Prompt:** Use the Disk GUID (from GPT header) and Unique Partition GUIDs (from entries) for persistent volume identification across reboots. Store GUID-to-drive-letter mappings in the Registry so that drive letters are stable even if disk ordering changes. The Disk GUID replaces the MBR 32-bit Disk Signature for GPT disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: persistent volume identification"`. Add notes directly in this TODO section.
+**Prompt:** Use the Disk GUID (from GPT header) and Unique Partition GUIDs (from entries) for persistent volume identification across reboots. Store GUID-to-drive-letter mappings in the Registry so that drive letters are stable even if disk ordering changes. The Disk GUID replaces the MBR 32-bit Disk Signature for GPT disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: persistent volume identification"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Store Disk GUID in `blkdev->disk_guid` on GPT parse
 - [ ] Store Unique Partition GUID in `sub_blkdev->partition_guid` on partition mount
@@ -590,7 +590,7 @@ graph TD
 
 ### 13.1 Periodic Integrity Validation
 
-**Prompt:** GPT has built-in CRC32 redundancy but no OS proactively validates it after boot. Implement periodic CRC scrubbing: on a configurable interval (default: once per boot + every 24 hours), re-read the primary and backup GPT headers and entry arrays, recompute both CRC32 values, and verify they match. If either header has a CRC mismatch, automatically repair it from the other (same as §2.2 but triggered proactively, not on failure). Log all scrub results. This is equivalent to ZFS scrubbing for partition tables — no OS does this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: periodic CRC scrubbing and self-healing"`. Add notes directly in this TODO section.
+**Prompt:** GPT has built-in CRC32 redundancy but no OS proactively validates it after boot. Implement periodic CRC scrubbing: on a configurable interval (default: once per boot + every 24 hours), re-read the primary and backup GPT headers and entry arrays, recompute both CRC32 values, and verify they match. If either header has a CRC mismatch, automatically repair it from the other (same as §2.2 but triggered proactively, not on failure). Log all scrub results. This is equivalent to ZFS scrubbing for partition tables — no OS does this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: periodic CRC scrubbing and self-healing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** No OS proactively validates GPT integrity after boot. Windows and Linux
@@ -619,7 +619,7 @@ graph TD
 
 ### 14.1 Disk & Partition GUID Duplicate Detection
 
-**Prompt:** When a disk is cloned (e.g., `dd`, Clonezilla), the clone has identical Disk GUID and Partition GUIDs. If both the original and clone are connected simultaneously, the duplicate GUIDs cause volume tracking confusion — the wrong partition can get the wrong drive letter or mount point. Windows silently regenerates GUIDs in some cases; Linux does nothing. Implement explicit detection: on disk enumeration, compare every Disk GUID and Partition GUID against all other known disks. On collision: log a warning, display in Disk Manager, and offer to regenerate GUIDs for the duplicate disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID collision detection and resolution"`. Add notes directly in this TODO section.
+**Prompt:** When a disk is cloned (e.g., `dd`, Clonezilla), the clone has identical Disk GUID and Partition GUIDs. If both the original and clone are connected simultaneously, the duplicate GUIDs cause volume tracking confusion — the wrong partition can get the wrong drive letter or mount point. Windows silently regenerates GUIDs in some cases; Linux does nothing. Implement explicit detection: on disk enumeration, compare every Disk GUID and Partition GUID against all other known disks. On collision: log a warning, display in Disk Manager, and offer to regenerate GUIDs for the duplicate disk. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID collision detection and resolution"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows handles collision silently (and sometimes incorrectly).
@@ -647,7 +647,7 @@ graph TD
 
 ### 15.1 Partition Table Backup & Restore
 
-**Prompt:** Back up the entire GPT structure (PMBR + primary header + entry array + backup header + backup array) to a file for disaster recovery. Unlike MBR (512 bytes), GPT backup requires capturing ~33 KB of data (PMBR + header + 32 entry sectors). Restore from backup to recover a completely wiped partition table without affecting data. Auto-backup before every partition table modification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition table backup and restore"`. Add notes directly in this TODO section.
+**Prompt:** Back up the entire GPT structure (PMBR + primary header + entry array + backup header + backup array) to a file for disaster recovery. Unlike MBR (512 bytes), GPT backup requires capturing ~33 KB of data (PMBR + header + 32 entry sectors). Restore from backup to recover a completely wiped partition table without affecting data. Auto-backup before every partition table modification. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition table backup and restore"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows has NO built-in GPT backup. Linux requires manual
@@ -757,7 +757,7 @@ graph TD
 
 ### 12.1 QEMU-Based Test Images
 
-**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system to create test images: a standard GPT disk with 128 entries, a GPT disk with backup header only (corrupt primary), a GPT disk with 4Kn sectors, a Hybrid MBR GPT disk, a disk with maximum 128 partitions, and a disk with non-standard entry count (9 entries like OpenZFS). Attach each via QEMU and verify the parser handles all correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section.
+**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system to create test images: a standard GPT disk with 128 entries, a GPT disk with backup header only (corrupt primary), a GPT disk with 4Kn sectors, a Hybrid MBR GPT disk, a disk with maximum 128 partitions, and a disk with non-standard entry count (9 entries like OpenZFS). Attach each via QEMU and verify the parser handles all correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Test image: Standard GPT disk with 4 partitions (EFI, IXFS, Basic Data, Linux)
   - [ ] Verify all 4 entries parsed correctly with correct types and LBAs
@@ -784,7 +784,7 @@ graph TD
 
 ### 16.1 Runtime Disk Plug/Unplug Detection
 
-**Prompt:** When an AHCI or USB disk is hot-plugged at runtime, automatically re-scan GPT structures on the new device and register any partitions with VFS for drive letter assignment. On hot-unplug, gracefully unmount all partitions from the removed disk, flush caches, and notify the user via Disk Manager. Windows does this via the PnP Manager; Linux uses udev + kernel hotplug. Impossible OS must handle this at the kernel level with immediate GPT re-scan. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: hot-swap disk detection"`. Add notes directly in this TODO section.
+**Prompt:** When an AHCI or USB disk is hot-plugged at runtime, automatically re-scan GPT structures on the new device and register any partitions with VFS for drive letter assignment. On hot-unplug, gracefully unmount all partitions from the removed disk, flush caches, and notify the user via Disk Manager. Windows does this via the PnP Manager; Linux uses udev + kernel hotplug. Impossible OS must handle this at the kernel level with immediate GPT re-scan. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: hot-swap disk detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** While Windows and Linux both support hot-swap, neither proactively
@@ -808,7 +808,7 @@ graph TD
 
 ### 17.1 Unified Disk Health Surface
 
-**Prompt:** Create a unified "Disk Health" tab in Disk Manager that combines GPT structural integrity (from §13.1 CRC scrubbing), GUID collision status (from §14.1), SMART data from the underlying block device, and per-partition fragmentation analysis. No OS provides a single unified view — Windows scatters this across Disk Management, Event Viewer, and `chkdsk`; Linux requires separate CLI tools (`smartctl`, `gdisk`, `filefrag`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition health dashboard"`. Add notes directly in this TODO section.
+**Prompt:** Create a unified "Disk Health" tab in Disk Manager that combines GPT structural integrity (from §13.1 CRC scrubbing), GUID collision status (from §14.1), SMART data from the underlying block device, and per-partition fragmentation analysis. No OS provides a single unified view — Windows scatters this across Disk Management, Event Viewer, and `chkdsk`; Linux requires separate CLI tools (`smartctl`, `gdisk`, `filefrag`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition health dashboard"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Disk Management shows zero health data. Linux requires

@@ -26,7 +26,7 @@
 
 ### 1.1 Complete Table Discovery & Validation ✅ (Partial)
 
-**Prompt:** The current `acpi.c` locates the RSDP via UEFI and parses basic XSDT/MADT entries. Extend this to validate all table checksums, parse every XSDT entry by signature, and store a table registry for lookup by signature. Map each table's physical memory via identity-mapping. Implement `acpi_find_table(signature)` to return a pointer to any table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: complete table discovery"`. Add notes directly in this TODO section.
+**Prompt:** The current `acpi.c` locates the RSDP via UEFI and parses basic XSDT/MADT entries. Extend this to validate all table checksums, parse every XSDT entry by signature, and store a table registry for lookup by signature. Map each table's physical memory via identity-mapping. Implement `acpi_find_table(signature)` to return a pointer to any table. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: complete table discovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Locate RSDP via UEFI System Table (EFI_ACPI_TABLE_GUID) *(done in boot_info)*
 - [x] Validate RSDP checksum (first 20 bytes for v1, full 36 bytes for v2+)
@@ -47,7 +47,7 @@
 
 ### 1.2 FADT Parsing (Fixed ACPI Description Table)
 
-**Prompt:** The FADT (signature `"FACP"`) is the central repository for fixed ACPI hardware parameters. Parse all critical fields: PM1a/b event and control block addresses (64-bit `X_PM1a_EVT_BLK`, `X_PM1a_CNT_BLK`), PM timer block, GPE block addresses, FACS pointer, DSDT pointer, SCI interrupt number, `SMI_CMD` port, `ACPI_ENABLE`/`ACPI_DISABLE` commands, Fixed Feature Flags (`WBINVD`, `HW_REDUCED_ACPI`, `PERSISTENT_CPU_CACHES`), `Preferred_PM_Profile`, `RESET_REG` with `RESET_VALUE`, and IA-PC Boot Architecture Flags. Store in a `struct acpi_fadt_info` for kernel-wide use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: FADT parsing"`. Add notes directly in this TODO section.
+**Prompt:** The FADT (signature `"FACP"`) is the central repository for fixed ACPI hardware parameters. Parse all critical fields: PM1a/b event and control block addresses (64-bit `X_PM1a_EVT_BLK`, `X_PM1a_CNT_BLK`), PM timer block, GPE block addresses, FACS pointer, DSDT pointer, SCI interrupt number, `SMI_CMD` port, `ACPI_ENABLE`/`ACPI_DISABLE` commands, Fixed Feature Flags (`WBINVD`, `HW_REDUCED_ACPI`, `PERSISTENT_CPU_CACHES`), `Preferred_PM_Profile`, `RESET_REG` with `RESET_VALUE`, and IA-PC Boot Architecture Flags. Store in a `struct acpi_fadt_info` for kernel-wide use. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: FADT parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse FADT from table registry (`acpi_find_table("FACP")`)
 - [ ] Extract PM register addresses (prefer 64-bit `X_*` fields over 32-bit legacy):
@@ -74,7 +74,7 @@
 
 ### 1.3 MCFG Parsing (PCIe ECAM)
 
-**Prompt:** The MCFG table (PCI Express Memory-mapped Configuration space) provides the base address for PCIe Extended Configuration Access Mechanism (ECAM). Each entry maps a segment group + bus range to a physical base address. This enables accessing PCI configuration space beyond the legacy 256-byte limit (up to 4096 bytes per function) via MMIO. The current PCI code uses legacy I/O ports (`0xCF8`/`0xCFC`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: MCFG and PCIe ECAM support"`. Add notes directly in this TODO section.
+**Prompt:** The MCFG table (PCI Express Memory-mapped Configuration space) provides the base address for PCIe Extended Configuration Access Mechanism (ECAM). Each entry maps a segment group + bus range to a physical base address. This enables accessing PCI configuration space beyond the legacy 256-byte limit (up to 4096 bytes per function) via MMIO. The current PCI code uses legacy I/O ports (`0xCF8`/`0xCFC`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: MCFG and PCIe ECAM support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse MCFG table: extract base address, segment group, start/end bus numbers
 - [ ] Map ECAM region via identity-mapping (typically 256 MB per segment for buses 0–255)
@@ -90,7 +90,7 @@
 
 ### 2.1 Enable ACPI Mode (SCI_EN)
 
-**Prompt:** After parsing the FADT, the OS must transition from legacy mode (SMI-based) to ACPI mode (SCI-based). Check `PM1a_CNT.SCI_EN` — if already set, the platform is in ACPI mode (common for UEFI platforms). If not, write `ACPI_ENABLE` to the `SMI_CMD` port, then poll `SCI_EN` until it sets (up to 3 seconds). Once in ACPI mode the OS owns all power management hardware. Register the SCI as an interrupt handler. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: enable ACPI mode"`. Add notes directly in this TODO section.
+**Prompt:** After parsing the FADT, the OS must transition from legacy mode (SMI-based) to ACPI mode (SCI-based). Check `PM1a_CNT.SCI_EN` — if already set, the platform is in ACPI mode (common for UEFI platforms). If not, write `ACPI_ENABLE` to the `SMI_CMD` port, then poll `SCI_EN` until it sets (up to 3 seconds). Once in ACPI mode the OS owns all power management hardware. Register the SCI as an interrupt handler. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: enable ACPI mode"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read `PM1a_CNT_BLK` → check `SCI_EN` bit (bit 0)
 - [ ] If `SCI_EN == 0` (legacy mode):
@@ -110,7 +110,7 @@
 
 ### 3.1 ACPICA Integration
 
-**Prompt:** Implementing a full AML interpreter from scratch is impractical (~200K lines). The industry-standard solution is ACPICA (ACPI Component Architecture) — an OS-independent reference implementation maintained by Intel and released under a dual GPL-2.0/BSD-3 license. The BSD-3 license allows use in Impossible OS without GPL contamination. ACPICA provides: AML bytecode interpreter, namespace construction from DSDT/SSDT, control method evaluation (`_STA`, `_ON`, `_OFF`, `_PSx`, `_BST`, `_PRT`, `_CRS`, etc.), and event handling. Integrate ACPICA by implementing the OS Services Layer (OSL) — a ~40-function shim that provides memory allocation, I/O port access, PCI config access, spinlocks, semaphores, scheduling primitives, and interrupt handling. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: ACPICA integration"`. Add notes directly in this TODO section.
+**Prompt:** Implementing a full AML interpreter from scratch is impractical (~200K lines). The industry-standard solution is ACPICA (ACPI Component Architecture) — an OS-independent reference implementation maintained by Intel and released under a dual GPL-2.0/BSD-3 license. The BSD-3 license allows use in Impossible OS without GPL contamination. ACPICA provides: AML bytecode interpreter, namespace construction from DSDT/SSDT, control method evaluation (`_STA`, `_ON`, `_OFF`, `_PSx`, `_BST`, `_PRT`, `_CRS`, etc.), and event handling. Integrate ACPICA by implementing the OS Services Layer (OSL) — a ~40-function shim that provides memory allocation, I/O port access, PCI config access, spinlocks, semaphores, scheduling primitives, and interrupt handling. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: ACPICA integration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Download ACPICA source (BSD-3 components only): `source/components/` + `source/include/`
 - [ ] Place in `src/kernel/acpica/` with original license headers
@@ -136,7 +136,7 @@
 
 ### 3.2 ACPI Namespace Browser
 
-**Prompt:** After ACPICA initialization, the ACPI namespace is a tree of objects representing the platform's hardware. Implement a debug shell command `acpidump` that walks the namespace and prints device nodes, their `_HID` (Hardware ID), `_STA` (Status), and `_ADR` (Address). This is invaluable for debugging: it shows exactly what hardware ACPI exposes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: namespace browser debug tool"`. Add notes directly in this TODO section.
+**Prompt:** After ACPICA initialization, the ACPI namespace is a tree of objects representing the platform's hardware. Implement a debug shell command `acpidump` that walks the namespace and prints device nodes, their `_HID` (Hardware ID), `_STA` (Status), and `_ADR` (Address). This is invaluable for debugging: it shows exactly what hardware ACPI exposes. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: namespace browser debug tool"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `acpi_walk_namespace()` callback that prints each node
 - [ ] For each `ACPI_TYPE_DEVICE`:
@@ -155,7 +155,7 @@
 
 ### 4.1 Sleep State Discovery (\_S0–\_S5)
 
-**Prompt:** The ACPI DSDT defines which sleep states the platform supports via `\_S0` through `\_S5` named objects. Each contains the `SLP_TYP` value to write to `PM1_CNT` when entering that state. Evaluate these objects via ACPICA to determine: which states are available, and the `SLP_TYP` values for each. Store the results for use by the shutdown (S5), sleep (S3), and hibernate (S4) code paths. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: sleep state discovery"`. Add notes directly in this TODO section.
+**Prompt:** The ACPI DSDT defines which sleep states the platform supports via `\_S0` through `\_S5` named objects. Each contains the `SLP_TYP` value to write to `PM1_CNT` when entering that state. Evaluate these objects via ACPICA to determine: which states are available, and the `SLP_TYP` values for each. Store the results for use by the shutdown (S5), sleep (S3), and hibernate (S4) code paths. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: sleep state discovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Evaluate `\_S0` through `\_S5` in DSDT namespace
 - [ ] For each existing sleep state object, extract `SLP_TYPa` and `SLP_TYPb` values
@@ -167,7 +167,7 @@
 
 ### 4.2 Device Power Management (\_PSx / \_PRx)
 
-**Prompt:** ACPI defines device power states D0 (fully on) through D3 (off). The OS transitions devices via `_PS0` (enter D0), `_PS1`, `_PS2`, `_PS3` control methods. Power resources (`_PR0`, `_PR1`, etc.) define which shared power rails a device needs in each state. Implement a `acpi_set_device_power(handle, state)` function that evaluates the appropriate `_PSx` method and manages power resource reference counts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: device power management"`. Add notes directly in this TODO section.
+**Prompt:** ACPI defines device power states D0 (fully on) through D3 (off). The OS transitions devices via `_PS0` (enter D0), `_PS1`, `_PS2`, `_PS3` control methods. Power resources (`_PR0`, `_PR1`, etc.) define which shared power rails a device needs in each state. Implement a `acpi_set_device_power(handle, state)` function that evaluates the appropriate `_PSx` method and manages power resource reference counts. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: device power management"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Implement `acpi_set_device_power(ACPI_HANDLE dev, int state)`:
   - [ ] Evaluate `_PSx` method for the target state (x = 0, 1, 2, 3)
@@ -186,7 +186,7 @@
 
 ### 5.1 General Purpose Events
 
-**Prompt:** GPEs are the ACPI mechanism for generic hardware events (thermal alerts, hot-plug notifications, battery status changes, lid open/close). The GPE registers (`GPE0_STS`/`GPE0_EN`, `GPE1_STS`/`GPE1_EN`) are located via the FADT. When a GPE fires, the SCI handler reads the GPE status registers, identifies the active bit, and dispatches to the corresponding AML method (`_Exx` for edge-triggered, `_Lxx` for level-triggered). ACPICA handles GPE dispatch internally; the OS just needs to wire the SCI and enable the desired GPEs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: GPE event framework"`. Add notes directly in this TODO section.
+**Prompt:** GPEs are the ACPI mechanism for generic hardware events (thermal alerts, hot-plug notifications, battery status changes, lid open/close). The GPE registers (`GPE0_STS`/`GPE0_EN`, `GPE1_STS`/`GPE1_EN`) are located via the FADT. When a GPE fires, the SCI handler reads the GPE status registers, identifies the active bit, and dispatches to the corresponding AML method (`_Exx` for edge-triggered, `_Lxx` for level-triggered). ACPICA handles GPE dispatch internally; the OS just needs to wire the SCI and enable the desired GPEs. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: GPE event framework"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Install GPE block handlers via `AcpiInstallGpeBlock()`
 - [ ] Enable wake-capable GPEs: `AcpiSetupGpeForWake()` for power button, lid, etc.
@@ -200,7 +200,7 @@
 
 ### 5.2 Fixed Event Handling
 
-**Prompt:** ACPI defines Fixed Events for standardized hardware events: Power Button, Sleep Button, and RTC Alarm. These use dedicated bits in the PM1 status/enable registers (not GPEs). Register handlers for each: power button triggers shutdown prompt, sleep button triggers suspend, RTC alarm triggers scheduled wake. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: fixed event handlers"`. Add notes directly in this TODO section.
+**Prompt:** ACPI defines Fixed Events for standardized hardware events: Power Button, Sleep Button, and RTC Alarm. These use dedicated bits in the PM1 status/enable registers (not GPEs). Register handlers for each: power button triggers shutdown prompt, sleep button triggers suspend, RTC alarm triggers scheduled wake. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: fixed event handlers"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Register Power Button handler: `AcpiInstallFixedEventHandler(ACPI_EVENT_POWER_BUTTON, ...)`
   - [ ] Short press → show shutdown dialog (or sleep if configured)
@@ -217,7 +217,7 @@
 
 ### 6.1 Thermal Zone Monitoring
 
-**Prompt:** ACPI thermal zones define temperature thresholds and cooling policies. Each thermal zone (e.g., `\_TZ.THRM`) has: `_TMP` (current temperature, in tenths of Kelvin), `_PSV` (passive cooling threshold — throttle CPU), `_AC0`–`_AC9` (active cooling thresholds — engage fans), `_CRT` (critical threshold — emergency shutdown), and `_HOT` (hot threshold — enter S4). Implement periodic polling of `_TMP` and take action when thresholds are crossed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: thermal zone monitoring"`. Add notes directly in this TODO section.
+**Prompt:** ACPI thermal zones define temperature thresholds and cooling policies. Each thermal zone (e.g., `\_TZ.THRM`) has: `_TMP` (current temperature, in tenths of Kelvin), `_PSV` (passive cooling threshold — throttle CPU), `_AC0`–`_AC9` (active cooling thresholds — engage fans), `_CRT` (critical threshold — emergency shutdown), and `_HOT` (hot threshold — enter S4). Implement periodic polling of `_TMP` and take action when thresholds are crossed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: thermal zone monitoring"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Walk namespace for all `ACPI_TYPE_THERMAL` objects
 - [ ] For each thermal zone, evaluate:
@@ -244,7 +244,7 @@
 
 ### 7.1 Processor C-States (Idle Power)
 
-**Prompt:** Processor C-states control idle power consumption. C0 = executing, C1 = halt (mandatory, `HLT` instruction), C2 and C3 = deeper idle (lower power, longer wake latency). The ACPI namespace defines available C-states via `_CST` (C-State Table) objects under each processor device. Each entry specifies: type (C1/C2/C3), latency (µs), power (mW), and the register to read to enter the state. The OS idle loop selects the appropriate C-state based on predicted idle duration. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: processor C-states"`. Add notes directly in this TODO section.
+**Prompt:** Processor C-states control idle power consumption. C0 = executing, C1 = halt (mandatory, `HLT` instruction), C2 and C3 = deeper idle (lower power, longer wake latency). The ACPI namespace defines available C-states via `_CST` (C-State Table) objects under each processor device. Each entry specifies: type (C1/C2/C3), latency (µs), power (mW), and the register to read to enter the state. The OS idle loop selects the appropriate C-state based on predicted idle duration. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: processor C-states"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Enumerate processor devices: `_HID ACPI0007` in namespace
 - [ ] Evaluate `_CST` for each processor → list of available C-states
@@ -260,7 +260,7 @@
 
 ### 7.2 Processor P-States (DVFS)
 
-**Prompt:** P-states (Performance States) control CPU frequency and voltage while actively executing (C0). `_PSS` (Performance Supported States) returns an array of { frequency, power, latency, control, status } tuples. `_PCT` (Performance Control) defines the register to write the desired P-state. `_PPC` (Performance Present Capabilities) limits the maximum P-state. On modern Intel/AMD CPUs, prefer Hardware P-states (HWP / CPPC) via `CPPC2` ACPI objects, where the hardware autonomously selects the frequency within OS-defined bounds. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: processor P-states (DVFS)"`. Add notes directly in this TODO section.
+**Prompt:** P-states (Performance States) control CPU frequency and voltage while actively executing (C0). `_PSS` (Performance Supported States) returns an array of { frequency, power, latency, control, status } tuples. `_PCT` (Performance Control) defines the register to write the desired P-state. `_PPC` (Performance Present Capabilities) limits the maximum P-state. On modern Intel/AMD CPUs, prefer Hardware P-states (HWP / CPPC) via `CPPC2` ACPI objects, where the hardware autonomously selects the frequency within OS-defined bounds. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: processor P-states (DVFS)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Evaluate `_PSS` per processor → table of available P-states
 - [ ] Evaluate `_PCT` → control/status register addresses
@@ -284,7 +284,7 @@
 
 ### 8.1 `_PRT` (PCI Routing Table)
 
-**Prompt:** ACPI defines how PCI interrupt pins (INTA#–INTD#) map to system interrupts via the `_PRT` (PCI Routing Table) method on PCI bridge devices. Each entry specifies: device address, pin (A/B/C/D), and either a fixed GSI (Global System Interrupt) or a link device that can be programmed. Without `_PRT`, PCI devices can't route interrupts correctly on real hardware. Evaluate `_PRT` under `\_SB.PCI0` and configure the IOAPIC routing table accordingly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: PCI interrupt routing via _PRT"`. Add notes directly in this TODO section.
+**Prompt:** ACPI defines how PCI interrupt pins (INTA#–INTD#) map to system interrupts via the `_PRT` (PCI Routing Table) method on PCI bridge devices. Each entry specifies: device address, pin (A/B/C/D), and either a fixed GSI (Global System Interrupt) or a link device that can be programmed. Without `_PRT`, PCI devices can't route interrupts correctly on real hardware. Evaluate `_PRT` under `\_SB.PCI0` and configure the IOAPIC routing table accordingly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: PCI interrupt routing via _PRT"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Evaluate `\_SB.PCI0._PRT` → array of { address, pin, source, source_index }
 - [ ] For each entry with direct GSI (source = 0): route pin to `source_index` via IOAPIC
@@ -302,7 +302,7 @@
 
 ### 9.1 EC Driver (Laptop Support)
 
-**Prompt:** Most laptops use an Embedded Controller (EC, `_HID PNP0C09`) for keyboard backlight, fan speed, battery charging, lid switch, and special function keys. The EC communicates via two I/O ports (typically `0x62` command and `0x66` data). The OS sends commands and reads data, but must respect the EC's Input Buffer Full (IBF) and Output Buffer Full (OBF) status bits. EC events fire via SCI → GPE → `_Qxx` methods. Without EC support, laptop-specific features are invisible. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: embedded controller driver"`. Add notes directly in this TODO section.
+**Prompt:** Most laptops use an Embedded Controller (EC, `_HID PNP0C09`) for keyboard backlight, fan speed, battery charging, lid switch, and special function keys. The EC communicates via two I/O ports (typically `0x62` command and `0x66` data). The OS sends commands and reads data, but must respect the EC's Input Buffer Full (IBF) and Output Buffer Full (OBF) status bits. EC events fire via SCI → GPE → `_Qxx` methods. Without EC support, laptop-specific features are invisible. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: embedded controller driver"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Find EC device: namespace device with `_HID PNP0C09`
 - [ ] Parse `_CRS` for command and data I/O port addresses
@@ -320,7 +320,7 @@
 
 ### 10.1 Hardware-Reduced ACPI
 
-**Prompt:** Hardware-Reduced ACPI platforms (indicated by FADT `HW_REDUCED_ACPI` flag set to 1) have **no fixed hardware registers** — no PM1, no PM2, no GPE blocks. All power management is done via GPIO-signaled events and AML control methods. This is the model for all ARM/ARM64 platforms and some modern x86 SoCs. When this flag is set, skip all PM register initialization and use GPIO-based event sources instead. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: hardware-reduced mode support"`. Add notes directly in this TODO section.
+**Prompt:** Hardware-Reduced ACPI platforms (indicated by FADT `HW_REDUCED_ACPI` flag set to 1) have **no fixed hardware registers** — no PM1, no PM2, no GPE blocks. All power management is done via GPIO-signaled events and AML control methods. This is the model for all ARM/ARM64 platforms and some modern x86 SoCs. When this flag is set, skip all PM register initialization and use GPIO-based event sources instead. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: hardware-reduced mode support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Check FADT `HW_REDUCED_ACPI` flag during init
 - [ ] If set:
@@ -334,7 +334,7 @@
 
 ### 10.2 Platform Communications Channel (PCCT)
 
-**Prompt:** PCCT (Platform Communications Channel Table) provides a high-speed shared-memory communication mechanism between the OS and platform firmware. Used by CPPC2 (for HWP P-state control), PCC OpRegions, and RASF. Each channel is a shared memory buffer with doorbell registers for signaling. ACPICA handles most of PCCT via its AML interpreter, but the OS must set up the shared memory regions and doorbell mechanism. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: PCCT shared memory channels"`. Add notes directly in this TODO section.
+**Prompt:** PCCT (Platform Communications Channel Table) provides a high-speed shared-memory communication mechanism between the OS and platform firmware. Used by CPPC2 (for HWP P-state control), PCC OpRegions, and RASF. Each channel is a shared memory buffer with doorbell registers for signaling. ACPICA handles most of PCCT via its AML interpreter, but the OS must set up the shared memory regions and doorbell mechanism. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"acpi: PCCT shared memory channels"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse PCCT table: enumerate PCC subspace Type 0–4 entries
 - [ ] For each subspace: map shared memory region, configure doorbell register

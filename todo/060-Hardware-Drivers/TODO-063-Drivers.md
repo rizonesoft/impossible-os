@@ -527,7 +527,7 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ### 10.1 VMBus Core Protocol
 
-**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). This is the **foundation** — without VMBus, no synthetic device (disk, keyboard, mouse, video, network) can be accessed. Implement: discover Hyper-V via CPUID leaf `0x40000001`, set up the hypercall page via MSR `HV_X64_MSR_HYPERCALL`, negotiate VMBus protocol version, initiate the VMBus connection, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Clean-room implement from the public Hyper-V TLFS (Top-Level Functional Specification), NOT from Linux `hv_vmbus.c` (GPL). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section.
+**Prompt:** VMBus is Microsoft's proprietary channel-based communication framework between the guest OS (VSC — Virtualization Service Client) and the host hypervisor (VSP — Virtualization Service Provider). This is the **foundation** — without VMBus, no synthetic device (disk, keyboard, mouse, video, network) can be accessed. Implement: discover Hyper-V via CPUID leaf `0x40000001`, set up the hypercall page via MSR `HV_X64_MSR_HYPERCALL`, negotiate VMBus protocol version, initiate the VMBus connection, enumerate offered channels, and manage ring buffer pairs (send/receive) for each channel. VMBus channels are identified by GUIDs. Clean-room implement from the public Hyper-V TLFS (Top-Level Functional Specification), NOT from Linux `hv_vmbus.c` (GPL). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: VMBus core protocol"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!IMPORTANT]
 > **Legal:** Clean-room implement from the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
@@ -549,7 +549,7 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ### 10.2 Synthetic SCSI Storage (storvsc)
 
-**Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section.
+**Prompt:** On Hyper-V Gen 2, virtual hard disks (VHDX) are attached to a Synthetic SCSI Controller accessible only through VMBus. The storvsc protocol sends SCSI commands (READ/WRITE/INQUIRY) over a VMBus channel identified by the Storage VSP GUID (`BA6163D9-04A1-4D29-B605-72E2FFB1DC7F`). Without this driver, the OS cannot read any disk — IXFS/FAT32 mount fails, and the graphical desktop cannot load assets. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic SCSI (storvsc)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [x] Create `src/kernel/drivers/hyperv/storvsc.c`
 - [x] Open VMBus channel for Storage VSP GUID
@@ -565,7 +565,7 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ### 10.3 Synthetic Keyboard & Mouse (hid-hyperv)
 
-**Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop shell is completely unresponsive to user input. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section.
+**Prompt:** On Hyper-V Gen 2, the PS/2 (i8042) controller is removed. Keyboard and mouse input is delivered via VMBus channels: Keyboard VSP GUID (`F912AD6D-2B17-48EA-BD65-F927A61C7684`) and Mouse VSP GUID. The synthetic HID protocol sends serialized input events (key scancodes, mouse coordinates) over the VMBus ring buffer. Without this driver, the desktop shell is completely unresponsive to user input. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic HID input"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/drivers/hyperv/hv_kbd.c` and `hv_mouse.c`
 - [ ] Open VMBus channel for Keyboard VSP GUID
@@ -577,7 +577,7 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ### 10.4 Synthetic Video (hvfb)
 
-**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes, but proper VMBus video integration enables resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section.
+**Prompt:** After `ExitBootServices()` in Hyper-V, the firmware-managed GOP framebuffer may freeze or become invalid if the synthetic video device is not properly acknowledged. The Hyper-V Synthetic Video driver communicates over VMBus (Video VSP GUID) to negotiate resolution and receive framebuffer updates. Note: the GOP framebuffer address from the bootloader typically remains accessible for basic pixel writes, but proper VMBus video integration enables resolution changes and avoids display freezes. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"drivers: Hyper-V synthetic video (hvfb)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create `src/kernel/drivers/hyperv/hv_video.c`
 - [ ] Open VMBus channel for Video VSP GUID
@@ -592,7 +592,7 @@ Headers: `include/kernel/drivers/hyperv/vmbus.h`, `storvsc.h`, etc.
 
 ## 11. Device Manager GUI (🚀 Impossible OS Feature)
 
-**Prompt:** Build a graphical Device Manager that shows all detected hardware with live status. The PCI bus scanner already discovers all devices — expose this data in a tree view organized by device class (Storage, Network, Display, Input, Audio). Each device shows vendor/device names (from PCI ID database), driver status (loaded/missing/error), current IRQ vector, and live interrupt rate (interrupts/sec). This gives users unprecedented hardware visibility. Neither Windows Device Manager nor Linux has a single integrated view with live interrupt data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: Device Manager GUI"`. Add notes directly in this TODO section.
+**Prompt:** Build a graphical Device Manager that shows all detected hardware with live status. The PCI bus scanner already discovers all devices — expose this data in a tree view organized by device class (Storage, Network, Display, Input, Audio). Each device shows vendor/device names (from PCI ID database), driver status (loaded/missing/error), current IRQ vector, and live interrupt rate (interrupts/sec). This gives users unprecedented hardware visibility. Neither Windows Device Manager nor Linux has a single integrated view with live interrupt data. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"shell: Device Manager GUI"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Device Manager is static — no live data, no interrupt rates,
@@ -815,7 +815,7 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ### 9.2 ACPI S3 Suspend (Sleep)
 
-**Prompt:** S3 is the suspend-to-RAM state — all device state is saved in RAM, only memory is powered. Sequence: flush dirty buffers, save CPU state to wakeup trampoline page, write `SLP_TYP_S3` to PM1a control. On wake, re-enter long mode via trampoline, reinit devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI S3 suspend/resume"`. Add notes directly in this TODO section.
+**Prompt:** S3 is the suspend-to-RAM state — all device state is saved in RAM, only memory is powered. Sequence: flush dirty buffers, save CPU state to wakeup trampoline page, write `SLP_TYP_S3` to PM1a control. On wake, re-enter long mode via trampoline, reinit devices. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI S3 suspend/resume"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > **Production requirement:** Every laptop user expects sleep/resume. Windows and Linux both
 > support S3 natively. Without this, Impossible OS cannot be used on mobile hardware.
@@ -830,7 +830,7 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ### 9.3 Battery Status (ACPI Control Method Battery)
 
-**Prompt:** Read battery status via ACPI `_BST` (Battery Status) and `_BIF`/`_BIX` control methods in the DSDT using ACPICA (Apache-2.0). Show battery percentage in system tray. Gracefully degrade if no battery objects found. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI battery status"`. Add notes directly in this TODO section.
+**Prompt:** Read battery status via ACPI `_BST` (Battery Status) and `_BIF`/`_BIX` control methods in the DSDT using ACPICA (Apache-2.0). Show battery percentage in system tray. Gracefully degrade if no battery objects found. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI battery status"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Integrate ACPICA AML interpreter (Apache-2.0) for DSDT evaluation
 - [ ] Evaluate `_BIF`/`_BIX` at boot: design capacity, full charge capacity
@@ -842,7 +842,7 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ### 9.4 CPU Frequency Scaling (DVFS)
 
-**Prompt:** Read P-states from ACPI `_PSS`. Switch via `IA32_PERF_CTL` MSR (Intel) or `PERF_CTL` (AMD). Policy: max frequency when scheduler queue non-empty, min when idle > 100ms. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: CPU frequency scaling (DVFS)"`. Add notes directly in this TODO section.
+**Prompt:** Read P-states from ACPI `_PSS`. Switch via `IA32_PERF_CTL` MSR (Intel) or `PERF_CTL` (AMD). Policy: max frequency when scheduler queue non-empty, min when idle > 100ms. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: CPU frequency scaling (DVFS)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Read `_PSS` from ACPI DSDT: list of (frequency, voltage, latency) P-states
 - [ ] Detect Intel SpeedStep via CPUID (ECX bit 7 of leaf 0x01)
@@ -853,7 +853,7 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ### 9.5 ACPI Power Button Event Handler
 
-**Prompt:** The ACPI power button generates an SCI (System Control Interrupt) routed via the IOAPIC. When the user presses the physical power button, the OS should receive an ACPI event and initiate a clean shutdown (flush buffers, save registry, power off) rather than an instant hard power-off. Parse the ACPI FADT `SCI_INT` field for the interrupt vector, register an SCI handler, and decode Fixed Events (PM1a Status register bit 8 = Power Button). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI power button handler"`. Add notes directly in this TODO section.
+**Prompt:** The ACPI power button generates an SCI (System Control Interrupt) routed via the IOAPIC. When the user presses the physical power button, the OS should receive an ACPI event and initiate a clean shutdown (flush buffers, save registry, power off) rather than an instant hard power-off. Parse the ACPI FADT `SCI_INT` field for the interrupt vector, register an SCI handler, and decode Fixed Events (PM1a Status register bit 8 = Power Button). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: ACPI power button handler"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Parse FADT `SCI_INT` field — get SCI interrupt vector
 - [ ] Route SCI via IOAPIC to BSP (level-triggered, active-low)
@@ -868,7 +868,7 @@ Full ACPI power management is implemented in `acpi.c`:
 
 ### 9.6 Thermal Monitoring and Emergency Shutdown (🚀 Impossible OS Feature)
 
-**Prompt:** Read CPU thermal status via LAPIC Thermal LVT and `IA32_THERM_STATUS` MSR. Display CPU temperature in Task Manager. If temperature exceeds critical threshold, perform an emergency clean shutdown. Neither Windows nor Linux shows per-core temperature natively in their built-in task manager — both require third-party tools (HWMonitor, lm-sensors). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: thermal monitoring and emergency shutdown"`. Add notes directly in this TODO section.
+**Prompt:** Read CPU thermal status via LAPIC Thermal LVT and `IA32_THERM_STATUS` MSR. Display CPU temperature in Task Manager. If temperature exceeds critical threshold, perform an emergency clean shutdown. Neither Windows nor Linux shows per-core temperature natively in their built-in task manager — both require third-party tools (HWMonitor, lm-sensors). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: thermal monitoring and emergency shutdown"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 > [!TIP]
 > **Competitive Edge:** Windows Task Manager does NOT show CPU temperature. Linux
