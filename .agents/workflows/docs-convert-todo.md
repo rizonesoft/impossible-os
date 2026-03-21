@@ -85,6 +85,7 @@ The documentation must be visually clear and information-dense:
 
 - **Mermaid diagrams** for architecture, data flow, state machines, boot sequences
 - **Tables** for register layouts, field descriptions, flag values, API parameters, comparisons
+- **Aligned table columns** — pad cells so columns line up in raw markdown for readability
 - **Code blocks** with language tags for struct definitions, function signatures, example usage
 - **Admonition blocks** (`> [!WARNING]`, `> [!CAUTION]`, `> [!NOTE]`) for gotchas and critical constraints
 - **Hierarchical headers** (H2 for major sections, H3 for subsections) — never skip levels

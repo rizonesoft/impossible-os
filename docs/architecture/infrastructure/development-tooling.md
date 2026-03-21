@@ -40,13 +40,13 @@ graph TD
 
 ### Toolchain
 
-| Tool | Binary | Purpose |
-|------|--------|---------|
-| C compiler | `clang-19 --target=x86_64-elf` | Kernel + userland C code |
-| Assembler | `nasm` | x86-64 assembly (`.asm`) |
-| Linker | `ld.lld-19` | ELF linking (kernel, user programs) |
-| Object tools | `llvm-objcopy-19`, `llvm-ar-19`, `llvm-nm-19` | Binary manipulation |
-| Host compiler | `gcc` | Build tools only (jpg2raw, irespack, etc.) |
+| Tool          | Binary                                        | Purpose                                    |
+| ------------- | --------------------------------------------- | ------------------------------------------ |
+| C compiler    | `clang-19 --target=x86_64-elf`                | Kernel + userland C code                   |
+| Assembler     | `nasm`                                        | x86-64 assembly (`.asm`)                   |
+| Linker        | `ld.lld-19`                                   | ELF linking (kernel, user programs)        |
+| Object tools  | `llvm-objcopy-19`, `llvm-ar-19`, `llvm-nm-19` | Binary manipulation                        |
+| Host compiler | `gcc`                                         | Build tools only (jpg2raw, irespack, etc.) |
 
 > [!NOTE]
 > Migrated from GCC to Clang-19/LLD-19 for 8% smaller kernel binary (2,649,920 bytes vs 2,880,648 bytes GCC) and slightly faster builds (6.8s vs 8.0s clean at -j12). NASM pipeline is untouched — assembly files remain compiled by NASM.
@@ -69,12 +69,12 @@ Key flags:
 
 All builds go through `scripts/build.sh` — never raw `make` commands.
 
-| Command | Description |
-|---------|-------------|
-| `bash scripts/build.sh` | Incremental build |
-| `bash scripts/build.sh clean` | Full clean build |
-| `bash scripts/build.sh run` | Build + launch QEMU |
-| `bash scripts/build.sh clean run` | Clean build + QEMU |
+| Command                           | Description         |
+| --------------------------------- | ------------------- |
+| `bash scripts/build.sh`           | Incremental build   |
+| `bash scripts/build.sh clean`     | Full clean build    |
+| `bash scripts/build.sh run`       | Build + launch QEMU |
+| `bash scripts/build.sh clean run` | Clean build + QEMU  |
 
 **Features:**
 - Live progress bar during compilation
@@ -93,20 +93,20 @@ graph LR
     C --> D["Only changed files + dependents recompile"]
 ```
 
-| Scenario | Time | Speedup |
-|----------|------|---------|
-| Clean build (-j12) | 8.0s | Baseline |
-| Incremental (single .c change) | 3.3s | **5.8× faster** |
-| Header change (printk.h) | 12.1s | 71/96 files (correct) |
+| Scenario                       | Time  | Speedup               |
+| ------------------------------ | ----- | --------------------- |
+| Clean build (-j12)             | 8.0s  | Baseline              |
+| Incremental (single .c change) | 3.3s  | **5.8× faster**       |
+| Header change (printk.h)       | 12.1s | 71/96 files (correct) |
 
 ### Parallel Compilation
 
 Default: `-j$(nproc)`. Override with `--jobs=N`.
 
-| Configuration | Time |
-|---------------|------|
-| `-j1` clean | 19.6s |
-| `-j12` clean | 8.0s (**2.5× speedup**) |
+| Configuration      | Time                    |
+| ------------------ | ----------------------- |
+| `-j1` clean        | 19.6s                   |
+| `-j12` clean       | 8.0s (**2.5× speedup**) |
 | `-j12` kernel only | 3.7s (**3.6× speedup**) |
 
 > [!NOTE]
@@ -118,13 +118,13 @@ Version is auto-generated using CalVer: `YY.M.D` (e.g., `26.3.17`).
 
 **Auto-generated `include/build_info.h`:**
 
-| Define | Source | Example |
-|--------|--------|---------|
-| `BUILD_NUMBER` | `.build_number` (auto-increment) | `809` |
-| `BUILD_COMMIT` | `git rev-parse --short HEAD` | `d1016ab` |
-| `BUILD_BRANCH` | `git rev-parse --abbrev-ref HEAD` | `main` |
-| `BUILD_TIMESTAMP` | `date -u +%Y-%m-%dT%H:%M:%SZ` | `2026-03-17T16:13:00Z` |
-| `BUILD_VERSION` | CalVer from build date | `26.3.17` |
+| Define            | Source                            | Example                |
+| ----------------- | --------------------------------- | ---------------------- |
+| `BUILD_NUMBER`    | `.build_number` (auto-increment)  | `809`                  |
+| `BUILD_COMMIT`    | `git rev-parse --short HEAD`      | `d1016ab`              |
+| `BUILD_BRANCH`    | `git rev-parse --abbrev-ref HEAD` | `main`                 |
+| `BUILD_TIMESTAMP` | `date -u +%Y-%m-%dT%H:%M:%SZ`     | `2026-03-17T16:13:00Z` |
+| `BUILD_VERSION`   | CalVer from build date            | `26.3.17`              |
 
 **Where version appears:**
 - Boot log first line: `Impossible OS v26.3.17 (build 809, main@d1016ab, ...)`
@@ -138,11 +138,11 @@ Version is auto-generated using CalVer: `YY.M.D` (e.g., `26.3.17`).
 
 The build produces a bootable GPT disk image: `build/system-disk.img`
 
-| Partition | Size | Format | Contents |
-|-----------|------|--------|----------|
-| EFI System | 64 MiB | FAT32 | `BOOTX64.EFI`, `kernel.exe` |
-| Logs | 16 MiB | FAT32 | Runtime debug logs |
-| IXFS | Remaining | IXFS (custom) | System files, fonts, icons, wallpapers |
+| Partition  | Size      | Format        | Contents                               |
+| ---------- | --------- | ------------- | -------------------------------------- |
+| EFI System | 64 MiB    | FAT32         | `BOOTX64.EFI`, `kernel.exe`            |
+| Logs       | 16 MiB    | FAT32         | Runtime debug logs                     |
+| IXFS       | Remaining | IXFS (custom) | System files, fonts, icons, wallpapers |
 
 ---
 
@@ -152,12 +152,12 @@ The build produces a bootable GPT disk image: `build/system-disk.img`
 
 Migrated from GCC to Clang-19/LLD-19:
 
-| Aspect | Before (GCC) | After (Clang-19) |
-|--------|-------------|-------------------|
-| Compiler | `x86_64-elf-gcc` | `clang-19 --target=x86_64-elf` |
-| Linker | `ld` | `ld.lld-19` |
-| Kernel size | 2,880,648 bytes | 2,649,920 bytes (**8% smaller**) |
-| Clean build (-j12) | 8.0s | 6.8s |
+| Aspect             | Before (GCC)     | After (Clang-19)                 |
+| ------------------ | ---------------- | -------------------------------- |
+| Compiler           | `x86_64-elf-gcc` | `clang-19 --target=x86_64-elf`   |
+| Linker             | `ld`             | `ld.lld-19`                      |
+| Kernel size        | 2,880,648 bytes  | 2,649,920 bytes (**8% smaller**) |
+| Clean build (-j12) | 8.0s             | 6.8s                             |
 
 > [!CAUTION]
 > **UEFI bootloader PE/COFF conversion:** `llvm-objcopy` does NOT support `--target efi-app-x86_64`. The pipeline uses GNU `objcopy` for the EFI conversion step: Clang → ELF → GNU objcopy → PE/COFF.
@@ -169,11 +169,11 @@ Migrated from GCC to Clang-19/LLD-19:
 
 `scripts/setup-deps.sh` — detects distro and installs all build dependencies:
 
-| Distro | Package Manager |
-|--------|----------------|
-| Ubuntu/Debian | `apt` |
-| Fedora | `dnf` |
-| Arch | `pacman` |
+| Distro        | Package Manager |
+| ------------- | --------------- |
+| Ubuntu/Debian | `apt`           |
+| Fedora        | `dnf`           |
+| Arch          | `pacman`        |
 
 **Packages installed:**
 - Build: `nasm`, `clang-19`, `lld-19`, `llvm-19`
@@ -202,12 +202,12 @@ bash scripts/build.sh run
 
 `scripts/run-qemu.sh` — primary test environment.
 
-| Feature | Flag/Setting |
-|---------|-------------|
+| Feature       | Flag/Setting                              |
+| ------------- | ----------------------------------------- |
 | UEFI firmware | `-bios OVMF.fd` (auto-copied to `build/`) |
-| Disk | AHCI controller |
-| Serial | `-serial stdio` |
-| Resolution | VGA mode |
+| Disk          | AHCI controller                           |
+| Serial        | `-serial stdio`                           |
+| Resolution    | VGA mode                                  |
 
 `bash scripts/build.sh run` wraps this: build + auto-launch.
 
@@ -215,15 +215,15 @@ bash scripts/build.sh run
 
 `scripts/vm/run-vbox.sh` — cross-platform VirtualBox launcher.
 
-| Setting | Value |
-|---------|-------|
-| VM Name | `ImpossibleOS` |
-| Firmware | EFI |
-| Storage | AHCI |
-| Graphics | VMSVGA, 1280×720 |
-| Memory | 2048 MB |
-| CPUs | 4 |
-| Mouse | PS/2 (no Guest Additions) |
+| Setting  | Value                     |
+| -------- | ------------------------- |
+| VM Name  | `ImpossibleOS`            |
+| Firmware | EFI                       |
+| Storage  | AHCI                      |
+| Graphics | VMSVGA, 1280×720          |
+| Memory   | 2048 MB                   |
+| CPUs     | 4                         |
+| Mouse    | PS/2 (no Guest Additions) |
 
 **Features:**
 - Converts raw `system-disk.img` → VDI on each run
@@ -266,12 +266,12 @@ graph LR
 
 `scripts/deploy/read-usb-log.sh` — retrieves debug logs from USB boot.
 
-| Feature | Description |
-|---------|-------------|
-| Mount | Read-only (`-o ro`) — safe for forensic collection |
+| Feature   | Description                                                    |
+| --------- | -------------------------------------------------------------- |
+| Mount     | Read-only (`-o ro`) — safe for forensic collection             |
 | Detection | Auto-detects third partition (`/dev/sdX3` or `/dev/nvme0n1p3`) |
-| Output | Copies to `build/logs/<timestamp>/` |
-| Scanning | Highlights panic/BSOD/fault keywords in red |
+| Output    | Copies to `build/logs/<timestamp>/`                            |
+| Scanning  | Highlights panic/BSOD/fault keywords in red                    |
 
 ---
 
@@ -283,12 +283,12 @@ Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runn
 
 **API:**
 
-| Function | Purpose |
-|----------|---------|
-| `TEST_ASSERT(cond, msg)` | Assert condition, log pass/fail to serial |
-| `test_suite_register(name, fn)` | Register a test suite |
-| `test_runner_init()` | Initialize + register all suites |
-| `test_runner_run()` | Run all suites, print summary |
+| Function                        | Purpose                                   |
+| ------------------------------- | ----------------------------------------- |
+| `TEST_ASSERT(cond, msg)`        | Assert condition, log pass/fail to serial |
+| `test_suite_register(name, fn)` | Register a test suite                     |
+| `test_runner_init()`            | Initialize + register all suites          |
+| `test_runner_run()`             | Run all suites, print summary             |
 
 **Output format:**
 ```
@@ -304,13 +304,13 @@ Header: `include/kernel/test/test.h`, implementation: `src/kernel/test/test_runn
 
 5 test files in `src/kernel/test/`, 12 test suites total:
 
-| File | Suites | What's Tested |
-|------|--------|---------------|
-| `test_pmm.c` | 2 | alloc+free frame reuse, contiguous allocation, page alignment |
-| `test_heap.c` | 3 | kmalloc+kfree round-trip, zero-byte→NULL, no-overlap, krealloc |
-| `test_vfs.c` | 3 | create/write/read/close, open nonexistent, mkdir+rmdir |
-| `test_sched.c` | 1 | thread_create returns valid TID |
-| `test_registry.c` | 3 | set/get REG_DWORD, set/get REG_SZ, key cleanup |
+| File              | Suites | What's Tested                                                  |
+| ----------------- | ------ | -------------------------------------------------------------- |
+| `test_pmm.c`      | 2      | alloc+free frame reuse, contiguous allocation, page alignment  |
+| `test_heap.c`     | 3      | kmalloc+kfree round-trip, zero-byte→NULL, no-overlap, krealloc |
+| `test_vfs.c`      | 3      | create/write/read/close, open nonexistent, mkdir+rmdir         |
+| `test_sched.c`    | 1      | thread_create returns valid TID                                |
+| `test_registry.c` | 3      | set/get REG_DWORD, set/get REG_SZ, key cleanup                 |
 
 > [!NOTE]
 > VFS tests use IXFS paths (`C:\Impossible\...`) and clean up temp files. Registry tests use Win32 API (`RegSetValueEx`, `RegGetValue`, `RegDeleteKey`). Scheduler tests are minimal — preemptive testing requires runtime.
@@ -338,8 +338,8 @@ graph LR
 
 `scripts/test-fs.sh` — tests filesystem drivers against real disk images.
 
-| Image Source | Filesystems |
-|-------------|-------------|
+| Image Source               | Filesystems                                               |
+| -------------------------- | --------------------------------------------------------- |
 | `tools/make-test-disks.sh` | FAT32, exFAT, ext2/3/4, NTFS, IXFS, ISO 9660, Joliet, UDF |
 
 Each test: fresh OVMF vars, 20s timeout, KVM when available. Optical media (ISO/UDF) attached as ATAPI CD via `ide-cd` on AHCI port 1. Logs saved per-filesystem in `build/fs-tests/<name>.log`.
@@ -364,22 +364,22 @@ graph LR
     F --> G["symtab_resolve() — O(log n) binary search"]
 ```
 
-| Detail | Value |
-|--------|-------|
-| Format | KSYM: 8-byte addr + 32-byte name (packed) |
-| Size | ~40 KB for ~1000 symbols |
-| Lookup | O(log n) binary search — safe in panic context |
-| Allocation | PMM (not kmalloc) |
-| Filters | Only T/t/D/d symbols, skips `.` and `$` prefixes |
+| Detail     | Value                                            |
+| ---------- | ------------------------------------------------ |
+| Format     | KSYM: 8-byte addr + 32-byte name (packed)        |
+| Size       | ~40 KB for ~1000 symbols                         |
+| Lookup     | O(log n) binary search — safe in panic context   |
+| Allocation | PMM (not kmalloc)                                |
+| Filters    | Only T/t/D/d symbols, skips `.` and `$` prefixes |
 
 ### Code Size Tracking
 
 `scripts/size-report.sh` — tracks binary sizes across builds.
 
-| Metric | Current | Threshold |
-|--------|---------|-----------|
-| `kernel.exe` | ~2.6 MB | Warn at 8 MB |
-| `system-disk.img` | 512 MB | Warn at 1 GB |
+| Metric            | Current | Threshold    |
+| ----------------- | ------- | ------------ |
+| `kernel.exe`      | ~2.6 MB | Warn at 8 MB |
+| `system-disk.img` | 512 MB  | Warn at 1 GB |
 
 Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta tracking with colored output (red = grew, green = shrank), CSV history in `build/size-history.csv`.
 
@@ -387,14 +387,14 @@ Features: top 10 largest `.o` files, section breakdown via `llvm-size-19`, delta
 
 `scripts/lint.sh` — 6 automated style checks.
 
-| Check | Type | Notes |
-|-------|------|-------|
-| snake_case functions | Error | Excludes Win32 API wrappers (`Reg*`, `HKEY*`) |
-| UPPER_CASE macros | Error | Flags pure lowercase `#define` |
-| `#pragma once` | Error | Required in every `.h` |
-| Lines ≤ 120 chars | Error | Excludes comment lines |
-| No trailing whitespace | Error | — |
-| Functions ≤ 50 lines | Warning | Doesn't fail build |
+| Check                  | Type    | Notes                                         |
+| ---------------------- | ------- | --------------------------------------------- |
+| snake_case functions   | Error   | Excludes Win32 API wrappers (`Reg*`, `HKEY*`) |
+| UPPER_CASE macros      | Error   | Flags pure lowercase `#define`                |
+| `#pragma once`         | Error   | Required in every `.h`                        |
+| Lines ≤ 120 chars      | Error   | Excludes comment lines                        |
+| No trailing whitespace | Error   | —                                             |
+| Functions ≤ 50 lines   | Warning | Doesn't fail build                            |
 
 Excludes auto-generated files (`build_info.h`, `os_logo.h`, etc.) and third-party code (`stb_truetype`, `stb_image`).
 
@@ -404,11 +404,11 @@ Supports path filtering: `bash scripts/lint.sh src/kernel/mm/`
 
 `scripts/debug.sh` — enhanced GDB debugging.
 
-| Feature | Flag |
-|---------|------|
+| Feature             | Flag                                   |
+| ------------------- | -------------------------------------- |
 | Default breakpoints | `kernel_main`, `panic`, fault handlers |
-| Custom breakpoint | `--breakpoint=<function>` |
-| Skip defaults | `--no-default-bp` |
+| Custom breakpoint   | `--breakpoint=<function>`              |
+| Skip defaults       | `--no-default-bp`                      |
 
 Auto-generates `build/.gdbinit-kernel` with Intel syntax, pagination off, symbol count banner. Auto-builds kernel if not found. Cleans up QEMU on GDB exit.
 
@@ -416,11 +416,11 @@ Auto-generates `build/.gdbinit-kernel` with Intel syntax, pagination off, symbol
 
 Provides deep C code intelligence for editors.
 
-| Component | File | Notes |
-|-----------|------|-------|
-| Config | `.clangd` (repo root) | `--target=x86_64-elf`, `-nostdlib`, `-ffreestanding` |
-| Database | `compile_commands.json` | Generated by Bear on `build.sh clean` (101 entries) |
-| Editor | VS Code + clangd extension | `clangd.path` → `/usr/bin/clangd-19` |
+| Component | File                       | Notes                                                |
+| --------- | -------------------------- | ---------------------------------------------------- |
+| Config    | `.clangd` (repo root)      | `--target=x86_64-elf`, `-nostdlib`, `-ffreestanding` |
+| Database  | `compile_commands.json`    | Generated by Bear on `build.sh clean` (101 entries)  |
+| Editor    | VS Code + clangd extension | `clangd.path` → `/usr/bin/clangd-19`                 |
 
 > [!WARNING]
 > **clangd is LSP, not MCP.** Attempting to add clangd as an MCP server causes it to hang — the protocols are incompatible. Use clangd via the VS Code/Cursor clangd extension (LSP).
@@ -436,15 +436,15 @@ Provides deep C code intelligence for editors.
 
 `make assets` groups 7 sub-targets with stamp-file dependency tracking:
 
-| Sub-target | Source | Output |
-|------------|--------|--------|
-| `os-logo` | `resources/icons/color/*.png` | `include/os_logo.h` (BGRA C array) |
-| `bsod-icon` | `resources/icons/bsod/bsod_icon.png` | `include/bsod_icon.h` |
-| `boot-font` | Font data | `include/boot_splash_font_data.h` |
-| `sysroot-fonts` | `resources/fonts/*.ttf` (11 files) | `sysroot/Impossible/Fonts/` |
-| `sysroot-wallpapers` | `resources/backgrounds/background.jpg` | `sysroot/Impossible/Wallpapers/` |
-| `sysroot-cursors` | `resources/cursors/` (Adwaita XCursor) | `sysroot/Impossible/System/Cursors/` |
-| `sysroot-icons` | `resources/icons/color/` | `sysroot/Impossible/Icons/icons.ires` |
+| Sub-target           | Source                                 | Output                                |
+| -------------------- | -------------------------------------- | ------------------------------------- |
+| `os-logo`            | `resources/icons/color/*.png`          | `include/os_logo.h` (BGRA C array)    |
+| `bsod-icon`          | `resources/icons/bsod/bsod_icon.png`   | `include/bsod_icon.h`                 |
+| `boot-font`          | Font data                              | `include/boot_splash_font_data.h`     |
+| `sysroot-fonts`      | `resources/fonts/*.ttf` (11 files)     | `sysroot/Impossible/Fonts/`           |
+| `sysroot-wallpapers` | `resources/backgrounds/background.jpg` | `sysroot/Impossible/Wallpapers/`      |
+| `sysroot-cursors`    | `resources/cursors/` (Adwaita XCursor) | `sysroot/Impossible/System/Cursors/`  |
+| `sysroot-icons`      | `resources/icons/color/`               | `sysroot/Impossible/Icons/icons.ires` |
 
 > [!NOTE]
 > Cursors are Adwaita XCursor format (not BMP) — the kernel's cursor driver reads XCursor natively. Icon packing uses the `irespack` host tool to create IRES bundles.
@@ -453,12 +453,12 @@ Provides deep C code intelligence for editors.
 
 `make validate-assets` runs `tools/validate-assets.py` **before** any asset conversion:
 
-| Asset Type | Count | Validation |
-|------------|-------|------------|
-| PNG icons | 14 | Expected dimensions, RGBA, size < 1 MB |
-| TTF fonts | 11 | Parseable, glyph count > 0, sfVersion check |
-| XCursor | 11 | Dimensions ≤ 256, hotspot within bounds |
-| JPEG wallpaper | 1 | SOI/EOI markers + Pillow decode (optional) |
+| Asset Type     | Count | Validation                                  |
+| -------------- | ----- | ------------------------------------------- |
+| PNG icons      | 14    | Expected dimensions, RGBA, size < 1 MB      |
+| TTF fonts      | 11    | Parseable, glyph count > 0, sfVersion check |
+| XCursor        | 11    | Dimensions ≤ 256, hotspot within bounds     |
+| JPEG wallpaper | 1     | SOI/EOI markers + Pillow decode (optional)  |
 
 No external dependencies (stdlib only, Pillow optional for JPEG). Negative test confirmed: corrupted PNG → exit 1.
 
@@ -472,13 +472,13 @@ No external dependencies (stdlib only, Pillow optional for JPEG). Negative test 
 
 **Setup:** `git config core.hooksPath .githooks`
 
-| Behavior | Detail |
-|----------|--------|
-| Scope | Only staged `.c`/`.h` files |
-| Fast path | No C files staged → exits in < 1ms |
-| Errors | Block commit (exit 1) |
-| Warnings | Don't block |
-| Deleted files | Skipped (`--diff-filter=d`) |
+| Behavior      | Detail                             |
+| ------------- | ---------------------------------- |
+| Scope         | Only staged `.c`/`.h` files        |
+| Fast path     | No C files staged → exits in < 1ms |
+| Errors        | Block commit (exit 1)              |
+| Warnings      | Don't block                        |
+| Deleted files | Skipped (`--diff-filter=d`)        |
 
 ---
 
@@ -519,25 +519,25 @@ scripts/
 
 ## Key Files
 
-| File | Purpose |
-|------|---------|
-| `scripts/build.sh` | Core build script with progress bar + sentinel |
-| `scripts/run-qemu.sh` | Primary QEMU launcher |
-| `scripts/debug.sh` | GDB debug with symbol-aware breakpoints |
-| `scripts/setup.sh` | One-command dev environment setup |
-| `scripts/setup-deps.sh` | System dependency installer |
-| `scripts/test-smoke.sh` | Headless QEMU boot verification |
-| `scripts/test-fs.sh` | Filesystem driver test suite |
-| `scripts/size-report.sh` | Binary size tracker + CSV history |
-| `scripts/lint.sh` | Code style linter (6 checks) |
-| `tools/convert_symmap.py` | nm → KSYM binary symbol table |
-| `tools/validate-assets.py` | Build-time asset validation (37 assets) |
-| `include/build_info.h` | Auto-generated build metadata (in `.gitignore`) |
-| `.clangd` | clangd language server config |
-| `compile_commands.json` | Bear compilation database (generated) |
-| `.githooks/pre-commit` | Pre-commit lint hook (opt-in) |
-| `src/kernel/test/test_runner.c` | Unit test framework runner |
-| `src/kernel/test/test_*.c` | 5 test files, 12 suites |
+| File                            | Purpose                                         |
+| ------------------------------- | ----------------------------------------------- |
+| `scripts/build.sh`              | Core build script with progress bar + sentinel  |
+| `scripts/run-qemu.sh`           | Primary QEMU launcher                           |
+| `scripts/debug.sh`              | GDB debug with symbol-aware breakpoints         |
+| `scripts/setup.sh`              | One-command dev environment setup               |
+| `scripts/setup-deps.sh`         | System dependency installer                     |
+| `scripts/test-smoke.sh`         | Headless QEMU boot verification                 |
+| `scripts/test-fs.sh`            | Filesystem driver test suite                    |
+| `scripts/size-report.sh`        | Binary size tracker + CSV history               |
+| `scripts/lint.sh`               | Code style linter (6 checks)                    |
+| `tools/convert_symmap.py`       | nm → KSYM binary symbol table                   |
+| `tools/validate-assets.py`      | Build-time asset validation (37 assets)         |
+| `include/build_info.h`          | Auto-generated build metadata (in `.gitignore`) |
+| `.clangd`                       | clangd language server config                   |
+| `compile_commands.json`         | Bear compilation database (generated)           |
+| `.githooks/pre-commit`          | Pre-commit lint hook (opt-in)                   |
+| `src/kernel/test/test_runner.c` | Unit test framework runner                      |
+| `src/kernel/test/test_*.c`      | 5 test files, 12 suites                         |
 
 ---
 
