@@ -20,8 +20,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/virtio-1.2.md)
-> (OASIS, 2022). The block-device-focused summary is in the repo at `docs/specs/storage/virtio-1.2.md`.
+> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/specs/storage/controllers/virtio-1.2.md)
+> (OASIS, 2022). The block-device-focused summary is in the repo at `specs/storage/controllers/virtio-1.2.md`.
 
 ---
 
@@ -935,93 +935,62 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 
 ## Codebase Status & Known Issues
 
-> [!WARNING]
-> **Feature bit macros in `virtio_blk.h` are WRONG.** All 7 `VIRTIO_BLK_F_*` macros define
-> incorrect bit positions that do not match the VirtIO 1.2 specification. This is a latent bug —
-> the current driver only negotiates `VIRTIO_F_VERSION_1` (bit 32, defined correctly), so the
-> wrong block feature bits are never actually used. They **will** cause incorrect feature
-> negotiation the moment any §2.x item is implemented. Fix them as part of §1.2 or §2.1.
->
-> | Macro                      | Current (wrong) | Correct (spec) |
-> | -------------------------- | :-------------: | :------------: |
-> | `VIRTIO_BLK_F_SIZE_MAX`   | 1               | 0              |
-> | `VIRTIO_BLK_F_SEG_MAX`    | 2               | 1              |
-> | `VIRTIO_BLK_F_GEOMETRY`   | 4               | 2              |
-> | `VIRTIO_BLK_F_RO`         | 5               | 4              |
-> | `VIRTIO_BLK_F_BLK_SIZE`   | 6               | 5              |
-> | `VIRTIO_BLK_F_FLUSH`      | 9               | 6              |
-> | `VIRTIO_BLK_F_TOPOLOGY`   | 10              | 7              |
-
-> [!CAUTION]
-> **`virtq_init()` in `virtio.c` uses `kmalloc()` for virtqueue buffers** (line 285).
-> This violates `rules.md` Known Gotchas — virtqueue buffers (descriptor tables, available
-> rings, used rings) MUST use `pmm_alloc_contiguous()`. The current allocation works only
-> because queue sizes are small (~6 KiB) and the heap hasn't been exhausted. With multi-queue
-> (§6.1) or multiple VirtIO devices, this will silently fail. Fix as part of §1.2.
-
-> [!CAUTION]
-> **IRQ handler uses PIC masking** (`virtio_blk.c` lines 326–340). The driver directly
-> writes to PIC I/O ports `0x21`/`0xA1` to unmask the IRQ line. This violates the `rules.md`
-> APIC-only mandate and will not work on Hyper-V Gen 2 (no PIC). This entire code block
-> must be replaced with MSI-X routing in §3.1.
-
-> [!WARNING]
-> **No `config_generation` atomicity guard** when reading disk capacity (`virtio_blk.c`
-> lines 311–318). The driver reads `capacity` as two 32-bit MMIO reads without checking
-> `config_generation` — a hot-resize event between the low/high reads would produce a
-> corrupt 64-bit value. Fix as part of §1.2 (config_generation read loop).
-
 > [!NOTE]
-> **Missing constants in headers** — the following constants referenced in TODO sections are
-> not yet defined in the codebase and must be added before their respective sections:
-> - `VIRTQ_DESC_F_INDIRECT` (0x04) — needed for §7.1
-> - `VIRTIO_BLK_T_FLUSH` (0x04) — needed for §2.2
-> - `VIRTIO_BLK_T_GET_ID` (0x08) — needed for §2.3
-> - `VIRTIO_BLK_T_DISCARD` (0x0B) — needed for §4.1
-> - `VIRTIO_BLK_T_WRITE_ZEROES` (0x0D) — needed for §4.2
+> **Resolved issues (kept for historical reference):**
+> - ~~Feature bit macros wrong~~ — **Fixed in §2.2** (Flush). All `VIRTIO_BLK_F_*` macros now match VirtIO 1.2 §5.2.3.
+> - ~~`virtq_init()` used `kmalloc()` for VQ buffers~~ — **Fixed in §1.2** (Modern Init). Now uses `pmm_alloc_contiguous()`.
+> - ~~IRQ handler used PIC masking~~ — **Fixed in §3.1** (MSI-X). PIC code fully removed, replaced with MSI-X vectors.
+> - ~~No `config_generation` guard~~ — **Fixed in §1.2** (Modern Init). Capacity reads bracketed with generation checks.
+> - ~~Missing constants~~ — All request types (`T_FLUSH`, `T_GET_ID`, `T_DISCARD`, `T_WRITE_ZEROES`), feature bits (`F_DISCARD`, `F_WRITE_ZEROES`, `F_MQ`, `F_RING_RESET`, `F_RING_INDIRECT_DESC`, `F_RING_EVENT_IDX`), and status flags (`DEVICE_NEEDS_RESET`) added in their respective sections.
+
+> [!WARNING]
+> **Constants still needed for pending sections:**
 > - `VIRTIO_BLK_T_SECURE_ERASE` (0x0E) — needed for §9.1
-> - `VIRTIO_STATUS_DEVICE_NEEDS_RESET` (0x40) — needed for §5.1
-> - `VIRTIO_BLK_F_DISCARD` (bit 11), `_WRITE_ZEROES` (12), `_LIFETIME` (13),
->   `_SECURE_ERASE` (14), `_ZONED` (15), `_MQ` (22) — needed for §4–§11
-> - `VIRTIO_F_RING_INDIRECT_DESC` (28), `_EVENT_IDX` (29), `_RING_PACKED` (34),
->   `_IN_ORDER` (35), `_NOTIFICATION_DATA` (38), `_RING_RESET` (40) — needed for §7–§8
+> - `VIRTIO_BLK_F_LIFETIME` (bit 13) — needed for §10.1
+> - `VIRTIO_BLK_F_SECURE_ERASE` (bit 14) — needed for §9.1
+> - `VIRTIO_BLK_F_ZONED` (bit 15) — needed for §11.1
+> - `VIRTIO_F_IN_ORDER` (bit 35) — needed for §7.3
+> - `VIRTIO_F_NOTIFICATION_DATA` (bit 38) — needed for §7.4
+> - `VIRTIO_F_RING_PACKED` (bit 34) — needed for §8.1
 
 
 ---
 
 ## Priority Order
 
-| Priority  | Section                            | Description                                                     |
-| --------- | ---------------------------------- | --------------------------------------------------------------- |
-| 🔴 P0     | 3.1 MSI-X Interrupts              | Rules compliance — current driver uses legacy PIC               |
-| 🔴 P0     | 2.2 Flush (Write Barriers)        | Data integrity — FAT32/IXFS need write barriers                 |
-| 🔴 P0     | 1.1 PCI Capability Discovery      | Foundation for all modern VirtIO features                       |
-| 🔴 P0     | 1.2 Modern Init Sequence          | Correct spec-compliant initialization                           |
-| 🟠 P1     | 2.1 Block Size & Topology         | Correctness — 4K-sector drives break without this               |
-| 🟠 P1     | 2.4 Read-Only Detection           | Correctness — prevent writes to RO devices                      |
-| 🟠 P1     | 2.3 Device Identification         | Feature — serial number for block device registry               |
-| 🟠 P1     | 5.1 Device Reset & Recovery       | Production — recover from device errors and timeouts            |
-| 🟠 P1     | 14.1 Live Config Change ✅        | Correctness — handle hot-resize and config changes              |
-| 🟡 P2     | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                      |
-| 🟡 P2     | 4.1 Discard (TRIM) ✅              | SSD optimization — reclaim unused blocks                        |
-| 🟡 P2     | 4.2 Write-Zeroes ✅                | Performance — efficient large zeroing                           |
-| 🟡 P2     | 5.2 Individual Queue Reset ✅      | Less disruptive recovery than full device reset                 |
-| 🟡 P2     | 15.1 Hot-Plug/Unplug ✅             | Robustness — graceful device arrival/removal                    |
-| 🟢 P3     | 6.1 Per-CPU Request Queues ✅       | Scalability — eliminates virtqueue lock contention              |
-| 🟢 P3     | 7.1 Indirect Descriptors ✅         | Scalability — large scatter-gather lists                        |
-| 🟢 P3     | 7.2 Event Index (Coalescing) ✅     | Performance — reduce interrupt storms                           |
-| 🟢 P3     | 7.3 In-Order Completion           | Performance — optimized sequential descriptor recycling         |
-| 🟢 P3     | 7.4 Notification Data             | Performance — host-side polling optimization                    |
-| 🟢 P3     | 10.1 Lifetime Metrics             | Monitoring — drive endurance in Disk Manager                    |
-| 🟢 P3     | 12.1 Adaptive Hybrid Polling      | 🚀 **Exclusive** — workload-adaptive completion strategy        |
-| 🟢 P3     | 13.1 I/O Priority Queues          | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS           |
-| 🟢 P3     | 16.1 I/O Latency Telemetry        | 🚀 **Exclusive** — ns-resolution histograms in GUI              |
-| 🟢 P3     | 17.1 Predictive Prefetch          | 🚀 **Exclusive** — driver-level sequential read-ahead           |
-| 🟢 P3     | 18.1 I/O Request Merging          | 🚀 **Exclusive** — auto-coalesce adjacent requests              |
-| 🟢 P3     | 19.1 Multi-Device Striping        | 🚀 **Exclusive** — driver-level RAID-0 across VirtIO devices    |
-| 🔵 P4     | 8.1 Packed Virtqueue              | Performance — better cache locality                             |
-| 🔵 P4     | 9.1 Secure Erase                  | Feature — cryptographic data sanitization                       |
-| 🔵 P4     | 11.1 Zoned Block Device           | Future — SMR/ZNS enterprise storage compatibility               |
+| Priority | Section                          | Description                                                      |
+| -------- | -------------------------------- | ---------------------------------------------------------------- |
+| 🔴 P0    | 1.1 PCI Capability Discovery ✅  | Foundation for all modern VirtIO features                        |
+| 🔴 P0    | 1.2 Modern Init Sequence ✅      | Correct spec-compliant initialization                            |
+| 🔴 P0    | 2.2 Flush (Write Barriers) ✅    | Data integrity — FAT32/IXFS need write barriers                  |
+| 🔴 P0    | 3.1 MSI-X Interrupts ✅          | Rules compliance — APIC-only, no PIC                             |
+| 🟠 P1    | 2.1 Block Size & Topology ✅     | Correctness — 4K-sector drives break without this                |
+| 🟠 P1    | 2.3 Device Identification ✅     | Feature — serial number for block device registry                |
+| 🟠 P1    | 2.4 Read-Only Detection ✅       | Correctness — prevent writes to RO devices                       |
+| 🟠 P1    | 5.1 Device Reset & Recovery ✅   | Production — recover from device errors and timeouts             |
+| 🟠 P1    | 14.1 Live Config Change ✅       | Correctness — handle hot-resize and config changes               |
+| 🟡 P2    | 3.2 Async I/O Path ✅            | Performance — unblocks CPU during disk I/O                       |
+| 🟡 P2    | 4.1 Discard (TRIM) ✅            | SSD optimization — reclaim unused blocks                         |
+| 🟡 P2    | 4.2 Write-Zeroes ✅              | Performance — efficient large zeroing                            |
+| 🟡 P2    | 5.2 Individual Queue Reset ✅    | Less disruptive recovery than full device reset                  |
+| 🟡 P2    | 15.1 Hot-Plug/Unplug ✅          | Robustness — graceful device arrival/removal                     |
+| 🟢 P3    | 6.1 Per-CPU Request Queues ✅    | Scalability — eliminates virtqueue lock contention               |
+| 🟢 P3    | 7.1 Indirect Descriptors ✅      | Scalability — large scatter-gather lists                         |
+| 🟢 P3    | 7.2 Event Index (Coalescing) ✅  | Performance — reduce interrupt storms                            |
+| 🟢 P3    | 7.3 In-Order Completion          | Performance — optimized sequential descriptor recycling          |
+| 🟢 P3    | 7.4 Notification Data            | Performance — host-side polling optimization                     |
+| 🟢 P3    | 10.1 Lifetime Metrics            | Monitoring — drive endurance in Disk Manager                     |
+| 🟢 P3    | 12.1 Adaptive Hybrid Polling     | 🚀 **Exclusive** — workload-adaptive completion strategy         |
+| 🟢 P3    | 13.1 I/O Priority Queues         | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS            |
+| 🟢 P3    | 16.1 I/O Latency Telemetry       | 🚀 **Exclusive** — ns-resolution histograms in GUI               |
+| 🟢 P3    | 17.1 Predictive Prefetch         | 🚀 **Exclusive** — driver-level sequential read-ahead            |
+| 🟢 P3    | 18.1 I/O Request Merging         | 🚀 **Exclusive** — auto-coalesce adjacent requests               |
+| 🟢 P3    | 19.1 Multi-Device Striping       | 🚀 **Exclusive** — driver-level RAID-0 across VirtIO devices     |
+| 🟢 P3    | 20.1 Force Unit Access Writes    | 🚀 **Exclusive** — per-request FUA bypass of write cache         |
+| 🟢 P3    | 21.1 Inline Encryption           | 🚀 **Exclusive** — transparent block-level crypto offload        |
+| 🔵 P4    | 8.1 Packed Virtqueue             | Performance — better cache locality                              |
+| 🔵 P4    | 9.1 Secure Erase                 | Feature — cryptographic data sanitization                        |
+| 🔵 P4    | 11.1 Zoned Block Device          | Future — SMR/ZNS enterprise storage compatibility                |
 
 ---
 

@@ -24,8 +24,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CHS algorithms, and EBR rules reference the
-> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/mbr.md)
-> in the repo at `docs/specs/storage/mbr.md`.
+> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/specs/storage/partitioning/mbr.md)
+> in the repo at `specs/storage/partitioning/mbr.md`.
 
 ---
 
@@ -44,7 +44,7 @@ graph TD
     GPT["TODO-040.05-GPT.md<br/>GPT Parser (Protective MBR ↔ GPT handoff)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
     FAT["TODO-040.06-FAT32.md<br/>FAT32 Driver (partition mounting)"]
-    SPEC["docs/specs/storage/mbr.md<br/>MBR Specification"]
+    SPEC["specs/storage/partitioning/mbr.md<br/>MBR Specification"]
 
     A["§1.1 Full MBR Layout Parser"]
     B["§1.2 Partition Type Recognition"]
@@ -70,6 +70,7 @@ graph TD
     S["§13.1 Health Validation"]
     T["§14.1 Disk Cloning"]
     U["§14.2 Live Partition Map"]
+    V["§15.1 Forensic Recovery"]
 
     SPEC --> A
     BLK --> A
@@ -120,13 +121,16 @@ graph TD
     R --> T
     A --> U
     VFS --> U
+    A --> V
+    S --> V
+    R --> V
 ```
 
 ### Phase-by-Phase Implementation Order
 
 | ⭐ | Phase  | TODO File / Spec              | Sections                        | What It Delivers                                                      | Depends On                       | Status |
 | -- | :----: | ----------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/storage/mbr.md`        | Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
+| 💎 | **0**  | `specs/storage/partitioning/mbr.md`| Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer              | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                 | —                                |   ✅   |
 | 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.1 Full MBR Layout Parser    | Decode complete 512-byte MBR sector, disk signature, boot magic       | Phase 0 (block + spec)           |   ⬜   |
 | 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.2 Partition Type Recognition | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)           | Phase 1 (§1.1)                   |   ⬜   |
@@ -152,6 +156,7 @@ graph TD
 | ⭐ | **7**  | `TODO-040.04-MBR.md`          | §6.5 Partition Resize         | Non-destructive shrink/grow MBR partitions in-place                   | Phase 4 (§6.1) + Phase 3 (§5.1) |   ⬜   |
 | ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.1 Disk Cloning           | Clone entire MBR + partition data to another disk                     | Phase 3 (§5.1) + Phase 2 (§2.1) + Phase 6 (§12.1) |   ⬜   |
 | ⭐ | **7**  | `TODO-040.04-MBR.md`          | §14.2 Live Partition Map     | Real-time graphical partition layout in Disk Manager with I/O heatmap | Phase 1 (§1.1) + VFS            |   ⬜   |
+| ⭐ | **7**  | `TODO-040.04-MBR.md`          | §15.1 Forensic Recovery      | Scan disk for lost/deleted partitions and recover them non-destructively | Phase 1 (§1.1) + Phase 4 (§13.1) + Phase 6 (§12.1) |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–2** are the critical path. They deliver full read-only MBR parsing:
@@ -163,7 +168,7 @@ graph TD
 > **Phase 6** delivers conversion and backup features (⭐): Hybrid MBR creation,
 > non-destructive MBR↔GPT conversion, and auto-backup/restore.
 > **Phase 7** delivers the competitive-edge features (⭐): Secure wipe, partition
-> resize, disk cloning, and live partition map visualization.
+> resize, disk cloning, live partition map visualization, and forensic partition recovery.
 
 > [!TIP]
 > **Quick wins (any time after Phase 1):**
@@ -199,6 +204,7 @@ graph TD
 > - ❌ CHS fields: **not extracted** — only LBA-based parsing
 > - ❌ Multiple `0x80` boot flag detection: **not checked**
 > - ❌ `mbr_type_name()` only handles 6 types (Empty, FAT32 CHS/LBA, Linux, IXFS, GPT)
+> - ✅ `struct blkdev` already has `sector_size` field — can be used for 4Kn detection (§4.2)
 > - ❌ `struct blkdev` has no `disk_id` field — must add or use `mbr_table.disk_signature`
 > - ❌ `partition.c` has no EBR traversal — extended partitions are silently skipped
 
@@ -807,6 +813,43 @@ graph TD
 
 ---
 
+## 15. Forensic Partition Recovery (🚀 Impossible OS Feature)
+
+### 15.1 Lost Partition Scanner & Recovery
+
+**Prompt:** Implement a forensic scan engine that detects deleted or corrupted partitions by scanning the disk for filesystem signatures (FAT32 BPB at sector start, NTFS `$Boot`, ext4 superblock at offset 1024, IXFS superblock). When the MBR table is empty, corrupted, or missing entries, scan the first sector of every 1-MiB-aligned region (and LBA 63 for legacy) looking for known filesystem magic. Present discovered partitions to the user with type, estimated size, and confidence level. Allow one-click recovery that writes the discovered entry back into the MBR table. This is the "partition recovery" feature that competitors require third-party paid tools for (TestDisk, EaseUS, Stellar). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: forensic partition recovery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+> [!TIP]
+> **Competitive Edge:** Windows has NO built-in partition recovery — users must purchase
+> third-party tools (EaseUS, Stellar, Disk Drill). Linux has `testdisk` (open-source CLI)
+> but it's not bundled with most distros and requires expertise. Impossible OS having a
+> "Recover Lost Partitions" button in Disk Manager with automatic filesystem signature
+> scanning and one-click recovery is a standout safety feature.
+
+- [ ] Implement `mbr_forensic_scan(blkdev, *results, max_results)`:
+  - [ ] Scan disk at 1-MiB-aligned boundaries (LBA 2048, 4096, 6144, ...)
+  - [ ] Also scan LBA 63 (legacy alignment) and LBA 1 (GPT header)
+  - [ ] At each candidate LBA, read one sector and check for filesystem magic:
+    - [ ] FAT32: bytes 0–2 jump instruction + `0x55AA` at offset 510 + BPB fields
+    - [ ] NTFS: `"NTFS    "` OEM ID at offset 3
+    - [ ] ext2/3/4: superblock magic `0xEF53` at offset 1024 (read 2 sectors)
+    - [ ] IXFS: IXFS superblock magic at offset 0
+    - [ ] exFAT: `"EXFAT   "` OEM ID at offset 3
+  - [ ] For each match: estimate partition size from filesystem metadata (BPB total sectors, ext4 block count)
+  - [ ] Assign confidence: `HIGH` (magic + valid metadata), `MEDIUM` (magic only), `LOW` (partial match)
+  - [ ] Cap scan at disk size or user-specified range
+- [ ] Implement `mbr_forensic_recover(blkdev, scan_result, slot)`:
+  - [ ] Validate recovered partition doesn't overlap existing MBR entries
+  - [ ] Write partition entry to specified MBR slot (or first empty slot)
+  - [ ] Auto-backup current MBR before recovery (§12.1)
+  - [ ] Re-scan partition table after recovery
+- [ ] Progress callback: `scan_progress(current_lba, total_lba)` for GUI progress bar
+- [ ] Disk Manager GUI: "Recover Lost Partitions" button → scan dialog → results table → recover
+- [ ] Log: `[MBR] Forensic scan: found %d candidates at LBAs [%u, %u, ...]`
+- [ ] Commit: `"mbr: forensic partition recovery"`
+
+---
+
 ## Priority Order
 
 | ⭐ | Priority | Section                             | Description                                                        |
@@ -835,6 +878,7 @@ graph TD
 | ⭐ | 🔵 P4    | 6.5 Partition Resize                | **Non-destructive resize** — Windows cannot resize FAT32           |
 | ⭐ | 🔵 P4    | 14.1 Disk Cloning                   | **GUI disk clone wizard** — Windows has no built-in clone          |
 | ⭐ | 🔵 P4    | 14.2 Live Partition Map             | **Real-time I/O heatmap** — unique to Impossible OS                |
+| ⭐ | 🔵 P4    | 15.1 Forensic Partition Recovery    | **Scan & recover lost partitions** — competitors charge for this   |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
@@ -872,8 +916,9 @@ graph TD
 | **Non-destructive partition resize** | ⚠️ NTFS only, no FAT32            | ⚠️ `parted` / GParted (CLI/third)  | ⬜ **§6.5 P4 — GUI resize for all FS types**  |
 | **Disk cloning**                     | ❌ No built-in clone               | ⚠️ `dd` CLI only, no progress      | ⬜ **§14.1 P4 — GUI clone wizard**            |
 | **Live partition map with I/O**      | ⚠️ Static bar in Disk Management  | ⚠️ Static bar in GParted           | ⬜ **§14.2 P4 — real-time I/O heatmap**       |
+| **Forensic partition recovery**      | ❌ Requires paid 3rd-party tools   | ⚠️ `testdisk` CLI (not bundled)    | ⬜ **§15.1 P4 — GUI scan & one-click recover** |
 | Full MBR subsystem                   | ✅                                 | ✅                                  | ⬜ Requires §1–§7 at minimum                  |
 
 > **After P0+P1 items:** Impossible OS matches Windows and Linux on core MBR parsing feature-for-feature.
 > **After P2–P3 items:** Full write support, conversion, and health validation — exceeds both on UX.
-> **After P4 items (⭐):** Secure wipe, resize, disk cloning, and live I/O visualization — features neither Windows nor Linux offer natively.
+> **After P4 items (⭐):** Secure wipe, resize, disk cloning, live I/O visualization, and forensic partition recovery — features neither Windows nor Linux offer natively.

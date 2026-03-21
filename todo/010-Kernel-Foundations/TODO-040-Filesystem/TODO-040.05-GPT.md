@@ -15,8 +15,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CRC32 algorithms, and validation rules reference the
-> [GPT Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/gpt.md)
-> in the repo at `docs/specs/storage/gpt.md`.
+> [GPT Specification](file:///home/derickpayne/impossible-os/specs/storage/partitioning/gpt.md)
+> in the repo at `specs/storage/partitioning/gpt.md`.
 
 ---
 
@@ -31,7 +31,7 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/storage/gpt.md<br/>GPT Specification"]
+    SPEC["specs/storage/partitioning/gpt.md<br/>GPT Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     MBR["TODO-040.04-MBR.md<br/>Protective MBR + Hybrid MBR"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Drive Letters"]
@@ -69,6 +69,7 @@ graph TD
     A --> B
     A --> D
     A --> E
+    A --> F
     A --> G
     A --> I
     B --> C
@@ -110,7 +111,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec                      | Sections                           | What It Delivers                                                            | Depends On                       | Status |
 | -- | :----: | ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `docs/specs/storage/gpt.md`                | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
+| 💎 | **0**  | `specs/storage/partitioning/gpt.md`        | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                 | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                                |   ✅   |
 | 💎 | **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse             | Signature, CRC32, entry array, PMBR detection — **foundation complete**     | Phase 0 (block + spec)           |   ✅   |
 | 💎 | **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback        | Don't fail on single-sector corruption — read backup at last LBA            | Phase 0 (§1)                     |   ✅   |
@@ -586,6 +587,33 @@ graph TD
 
 ---
 
+## 12. GPT Test Suite
+
+### 12.1 QEMU-Based Test Images
+
+**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system to create test images: a standard GPT disk with 128 entries, a GPT disk with backup header only (corrupt primary), a GPT disk with 4Kn sectors, a Hybrid MBR GPT disk, a disk with maximum 128 partitions, and a disk with non-standard entry count (9 entries like OpenZFS). Attach each via QEMU and verify the parser handles all correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Test image: Standard GPT disk with 4 partitions (EFI, IXFS, Basic Data, Linux)
+  - [ ] Verify all 4 entries parsed correctly with correct types and LBAs
+- [ ] Test image: Corrupt primary header (zero bytes 0–7), valid backup at last LBA
+  - [ ] Verify backup fallback path activates and all partitions still found
+- [ ] Test image: 4Kn logical sector size (`-drive logical_block_size=4096`)
+  - [ ] Verify parser reads sector size from device and calculates LBAs correctly
+- [ ] Test image: Hybrid MBR (partial `0xEE` + real entries in slots 2–4)
+  - [ ] Verify Hybrid MBR detection warning and GPT-preferred parsing
+- [ ] Test image: Maximum 128 partitions (stress test)
+  - [ ] Verify `GPT_MAX_RESULTS` cap works and no buffer overflow
+- [ ] Test image: Non-standard entry count (9 entries, OpenZFS-style)
+  - [ ] Verify CRC32 calculated over actual `NumberOfEntries × EntrySize`
+- [ ] Test image: Empty GPT disk (valid headers, all entries zeroed)
+  - [ ] Verify `tbl.valid == 1` and `tbl.count == 0`
+- [ ] Test: Write path round-trip — create partition → re-read → verify match
+- [ ] Test: Delete partition → verify entry zeroed, CRC updated
+- [ ] Test: Resize partition → verify new LBA range, no overlap
+- [ ] Commit: `"test: GPT partition test suite"`
+
+---
+
 ## 13. GPT CRC Scrubbing & Self-Healing (🚀 Impossible OS Feature)
 
 ### 13.1 Periodic Integrity Validation
@@ -750,33 +778,6 @@ graph TD
 > **After P1 items:** Impossible OS matches Windows and Linux GPT feature-for-feature on read path.
 > **After P2 items:** Full write support + competitive features (CRC scrubbing, collision detection).
 > **After P3 items:** Exceeds both — drag-resize, auto-backup, hot-swap, and health dashboard.
-
----
-
-## 12. GPT Test Suite
-
-### 12.1 QEMU-Based Test Images
-
-**Prompt:** Create test disk images to validate GPT parsing and writing. Use the host build system to create test images: a standard GPT disk with 128 entries, a GPT disk with backup header only (corrupt primary), a GPT disk with 4Kn sectors, a Hybrid MBR GPT disk, a disk with maximum 128 partitions, and a disk with non-standard entry count (9 entries like OpenZFS). Attach each via QEMU and verify the parser handles all correctly. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"test: GPT partition test suite"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
-
-- [ ] Test image: Standard GPT disk with 4 partitions (EFI, IXFS, Basic Data, Linux)
-  - [ ] Verify all 4 entries parsed correctly with correct types and LBAs
-- [ ] Test image: Corrupt primary header (zero bytes 0–7), valid backup at last LBA
-  - [ ] Verify backup fallback path activates and all partitions still found
-- [ ] Test image: 4Kn logical sector size (`-drive logical_block_size=4096`)
-  - [ ] Verify parser reads sector size from device and calculates LBAs correctly
-- [ ] Test image: Hybrid MBR (partial `0xEE` + real entries in slots 2–4)
-  - [ ] Verify Hybrid MBR detection warning and GPT-preferred parsing
-- [ ] Test image: Maximum 128 partitions (stress test)
-  - [ ] Verify `GPT_MAX_RESULTS` cap works and no buffer overflow
-- [ ] Test image: Non-standard entry count (9 entries, OpenZFS-style)
-  - [ ] Verify CRC32 calculated over actual `NumberOfEntries × EntrySize`
-- [ ] Test image: Empty GPT disk (valid headers, all entries zeroed)
-  - [ ] Verify `tbl.valid == 1` and `tbl.count == 0`
-- [ ] Test: Write path round-trip — create partition → re-read → verify match
-- [ ] Test: Delete partition → verify entry zeroed, CRC updated
-- [ ] Test: Resize partition → verify new LBA range, no overlap
-- [ ] Commit: `"test: GPT partition test suite"`
 
 ---
 

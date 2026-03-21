@@ -8,7 +8,7 @@
 > ABAR mapping, port init, DMA read/write, IDENTIFY, and ATAPI — all via polling.
 
 > [!CAUTION]
-> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL DMA buffers (command lists, FIS buffers, PRD tables, identify buffers). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `rules.md` Known Gotchas.
+> **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL DMA buffers (command lists, FIS buffers, PRD tables, identify buffers). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). See `coding.md` Known Gotchas.
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
@@ -30,7 +30,7 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/storage/ahci-1.3.1.md<br/>AHCI 1.3.1 Specification"]
+    SPEC["specs/storage/controllers/ahci-1.3.1.md<br/>AHCI 1.3.1 Specification"]
     DRV["src/kernel/drivers/ahci.c<br/>Existing Driver (824 lines, polling)"]
     VIRTIO["TODO-040.01-VirtIO.md<br/>VirtIO Block (parallel transport)"]
     MBR["TODO-040.04-MBR.md<br/>MBR Partition Detection"]
@@ -822,4 +822,5 @@ graph TD
 | ⭐ | **Write cache management**    | ❌ Hidden in Device Manager          | ⚠️ Manual `hdparm -W` only             | ⬜ §15.1 P3 — **GUI toggle in Disk Manager**     |
 
 > **After P0+P1 items:** Impossible OS matches Windows and Linux feature-for-feature on SATA hardware.
-> **After P2 items (⭐):** Exceeds both — NCQ Priority, Autosense, per-tag telemetry, predictive failure, and native 4Kn are differentiators unique to Impossible OS.
+> **After P2–P3 items (⭐):** Exceeds both — NCQ Priority, Autosense, Auto-Depth Tuning, per-tag telemetry, predictive failure, native 4Kn, GUI secure erase, and write cache toggle are differentiators unique to Impossible OS.
+> **After P4 items:** Full AHCI 1.3.1 spec parity — enclosure LEDs, port multipliers, and ZPODD for enterprise and laptop use cases.

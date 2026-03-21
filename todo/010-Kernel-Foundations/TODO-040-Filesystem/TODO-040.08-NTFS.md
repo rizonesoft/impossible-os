@@ -22,8 +22,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, algorithms, and data structures
-> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/ntfs-3.1.md)
-> in the repo at `docs/specs/filesystem/ntfs-3.1.md`.
+> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/specs/storage/filesystems/ntfs-3.1.md)
+> in the repo at `specs/storage/filesystems/ntfs-3.1.md`.
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```mermaid
 graph TD
-    SPEC["docs/specs/filesystem/ntfs-3.1.md<br/>NTFS 3.1 Specification"]
+    SPEC["specs/storage/filesystems/ntfs-3.1.md<br/>NTFS 3.1 Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x07)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]

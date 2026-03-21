@@ -24,8 +24,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, field offsets, and encoding rules reference the
-> [FAT32 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/fat32.md)
-> in the repo at `docs/specs/filesystem/fat32.md`.
+> [FAT32 Specification](file:///home/derickpayne/impossible-os/specs/storage/filesystems/fat32.md)
+> in the repo at `specs/storage/filesystems/fat32.md`.
 
 ---
 
