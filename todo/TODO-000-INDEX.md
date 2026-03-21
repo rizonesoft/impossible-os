@@ -14,6 +14,7 @@
 | #   | TODO                                                                    | Status       |
 |-----|-------------------------------------------------------------------------|--------------|
 | 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ Done → [docs](../docs/infrastructure/development-tooling.md) |
+| 007 | [VMware Workstation Pro](000-Infrastructure/TODO-007-VMWare.md)         |              |
 | 008 | [Hyper-V Gen 2 Boot](000-Infrastructure/TODO-008-Hyper-V-Runner.md)     |              |
 | 005 | [Debug & Logging System](000-Infrastructure/TODO-005-Debug.md)          |              |
 | 006 | [Real Hardware Boot](000-Infrastructure/TODO-006-Real-Hardware.md)      |              |
