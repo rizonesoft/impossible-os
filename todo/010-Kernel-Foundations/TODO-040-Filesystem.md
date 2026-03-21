@@ -194,13 +194,13 @@ graph TD
 | 💎 | **5**  | `040.07-VFS.md`     | §1.5 Memory-Mapped Exec            | DLL/EXE mmap loading                                          | Phase 5 (§1.4)           |   ⬜   |
 | 💎 | **5**  | `040.07-VFS.md`     | §1.6 Attributes + Times            | FILETIME API (100ns since 1601)                               | VFS base                 |   ⬜   |
 | 💎 | **5**  | `040.07-VFS.md`     | §1.7 Byte-Range Locks              | LockFile / UnlockFile                                         | Phase 5 (§1.2)           |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.1 Handle Table                | HANDLE type, error codes, std handles                         | VFS base                 |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.2 CreateFile                  | CreateFile / CloseHandle                                      | Phase 5 (§1.1)         |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.3 ReadFile                    | ReadFile / WriteFile / SetFilePointer                         | Phase 5 (§1.2)         |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.4 Directories                 | FindFirstFile / CreateDirectory                               | Phase 5 (§1.2)         |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.5 File Mgmt                   | DeleteFile / MoveFile / CopyFile                              | Phase 5 (§1.2)         |   ⬜   |
-| 💎 | **5**  | `040-Filesystem.md` | §1.6 Shell Migration             | Shell + kernel → Win32 API (15 files)                         | Phase 5 (§1.2–5)       |   ⬜   |
-| 💎 | **5**  | `040.07-VFS.md`     | §2.1–2.4 Feature Spoofing          | ADS, ACL stubs, vol info, reparse                             | Phase 5 (§1)           |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.1 Handle Table                  | HANDLE type, error codes, std handles                         | VFS base                 |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.2 CreateFile                    | CreateFile / CloseHandle                                      | Phase 5 (§1.1)           |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.3 ReadFile                      | ReadFile / WriteFile / SetFilePointer                         | Phase 5 (§1.2)           |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.4 Directories                   | FindFirstFile / CreateDirectory                               | Phase 5 (§1.2)           |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.5 File Mgmt                     | DeleteFile / MoveFile / CopyFile                              | Phase 5 (§1.2)           |   ⬜   |
+| 💎 | **5**  | `040-Filesystem.md` | §1.6 Shell Migration               | Shell + kernel → Win32 API (15 files)                         | Phase 5 (§1.2–5)         |   ⬜   |
+| 💎 | **5**  | `040.07-VFS.md`     | §2.1–2.4 Feature Spoofing          | ADS, ACL stubs, vol info, reparse                             | Phase 5 (§1)             |   ⬜   |
 | 💎 | **6**  | `040-Filesystem.md` | §3.1 Auto-Mount                    | Drive letter assignment from real disks                       | All FS drivers + VFS     |   ⬜   |
 | 💎 | **6**  | `040-Filesystem.md` | §3.2 Mount/Unmount                 | Shell `mount` / `umount` commands                             | Phase 6 (§3.1)           |   ⬜   |
 | 💎 | **6**  | `040.10-exFAT.md`   | §1–3 Boot + FAT + Bitmap           | exFAT volume parsing basics                                   | blkdev + partition       |   ⬜   |

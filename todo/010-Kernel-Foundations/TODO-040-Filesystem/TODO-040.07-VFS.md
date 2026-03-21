@@ -852,3 +852,95 @@ filesystem TODO.
 > **After P0+P1 items:** Impossible OS matches Windows feature-for-feature on VFS semantics.
 > **After §6.1–6.3:** Exceeds both Windows and Linux — simpler filter API, unified IOCP, and safer symlink resolution.
 
+
+---
+
+## Appendix: VFS Capability Routing Strategy
+
+> [!NOTE]
+> **Moved from `TODO-040.99-Reference-Notes.md`.** This design note formalizes
+> how the VFS layer routes Win32 API calls when the underlying filesystem
+> doesn't support the requested feature.
+
+When a Win32 API requests a feature the underlying filesystem doesn't support,
+the VFS layer has **four possible responses**, depending on the feature:
+
+| Strategy | When to Use | Example |
+|----------|-------------|---------|
+| **1. Return error code** | Feature is fundamental, can't fake | `SetFileSecurity()` on FAT32 → `ERROR_NOT_SUPPORTED` |
+| **2. Silently succeed (no-op)** | Caller doesn't check, cosmetic | `SetFileAttributes(ARCHIVE)` on ext4 → return `TRUE`, discard |
+| **3. Emulate in VFS** | Can be faked at a higher layer | `GetFileInformationByHandle.nFileIndexHigh` → VFS generates a synthetic ID |
+| **4. Store in sidecar** | Data can be stored alongside | ADS on FAT32 → store in `._streams/` hidden directory |
+
+### Concrete Examples per Feature
+
+```
+CreateFile("D:\photo.jpg:Zone.Identifier")  ← ADS on FAT32
+├─ FAT32 doesn't support ADS
+├─ Option A: Return ERROR_NOT_SUPPORTED (what Windows does)
+├─ Option B: Store in D:\.streams\photo.jpg\Zone.Identifier (sidecar)
+└─ We choose: Option A (match Windows behavior exactly)
+
+SetFileSecurity(hFile, dacl)  ← ACLs on FAT32
+├─ FAT32 has no security at all
+├─ Windows returns ERROR_NOT_SUPPORTED
+└─ We choose: Option A (return ERROR_NOT_SUPPORTED)
+
+GetFileAttributes(hFile)  ← Win32 attrs on ext4
+├─ ext4 has no Win32 attributes (hidden, system, archive)
+├─ But ext4 HAS xattrs — can store them in user.win32_attrs
+└─ We choose: Option 3/4 (emulate via xattr if writable, else return 0)
+
+LockFile(hFile, ...)  ← Byte-range locking on any FS
+├─ This is a VFS-level feature, not filesystem-dependent
+└─ We choose: Option 3 (VFS handles it entirely — lock table in memory)
+
+FindFirstChangeNotification()  ← File change notifications
+├─ This is VFS-level (inotify-style event tracking)
+└─ We choose: Option 3 (VFS tracks all changes regardless of FS)
+```
+
+### VFS Capability Flags
+
+The VFS `vfs_ops` struct should include a **capability flags** field:
+
+```c
+#define VFS_CAP_ADS          (1 << 0)  /* Alternate Data Streams */
+#define VFS_CAP_ACLS         (1 << 1)  /* Security descriptors */
+#define VFS_CAP_COMPRESSION  (1 << 2)  /* Transparent compression */
+#define VFS_CAP_ENCRYPTION   (1 << 3)  /* Per-file encryption */
+#define VFS_CAP_HARDLINKS    (1 << 4)  /* Hard links */
+#define VFS_CAP_SYMLINKS     (1 << 5)  /* Symbolic links */
+#define VFS_CAP_SPARSE       (1 << 6)  /* Sparse files */
+#define VFS_CAP_CASE_SENS    (1 << 7)  /* Case-sensitive names */
+
+struct vfs_fs_driver {
+    uint32_t     capabilities;  /* VFS_CAP_* flags */
+    struct vfs_ops ops;
+};
+```
+
+### Per-Filesystem Capability Matrix
+
+| Filesystem | Capabilities |
+|------------|-------------|
+| **IXFS** | ALL flags (ADS + ACLs + compression + encryption + hardlinks + symlinks + sparse) |
+| **NTFS** | ADS + ACLs + hardlinks + symlinks + compression + sparse |
+| **ext4** | hardlinks + symlinks + sparse + case-sensitive |
+| **FAT32** | *(none)* |
+| **exFAT** | *(none)* |
+
+When a Win32 API comes in, the VFS checks `capabilities` first:
+
+```c
+// In VFS CreateFile handler, when "file:stream" is requested:
+if (!(driver->capabilities & VFS_CAP_ADS)) {
+    return ERROR_NOT_SUPPORTED;  // FAT32, ext4
+}
+// Else: pass through to filesystem's native ADS handler (IXFS, NTFS)
+```
+
+> [!IMPORTANT]
+> This capability routing is partially covered in §2 ("Feature Spoofing/Routing").
+> The `VFS_CAP_*` flags formalize it into a compile-time-checkable, per-driver
+> capability matrix that makes the routing deterministic and auditable.
