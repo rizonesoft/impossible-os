@@ -32,6 +32,7 @@ External reference specifications for hardware, firmware, storage, and hyperviso
 | [FAT32](storage/filesystems/fat32.md)                     | FAT32 BPB, cluster chains, LFN, FSInfo            |
 | [HFS+](storage/filesystems/hfsplus.md)                    | HFS+ volume header, B-trees, catalog, journal      |
 | [ISO 9660](storage/filesystems/iso9660.md)                | ISO 9660 PVD, directory records, path table, El Torito |
+| [Joliet/UDF](storage/filesystems/joliet-udf.md)          | Joliet SVD, UCS-2, UDF AVDP, File Entry, OSTA CS0 |
 | [NTFS 3.1](storage/filesystems/ntfs-3.1.md)              | NTFS MFT, attributes, $INDEX, journal             |
 
 ## Hardware
