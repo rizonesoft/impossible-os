@@ -49,7 +49,6 @@
 | 050.03 | [Hive Persistence](010-Kernel-Foundations/TODO-050-Registry/TODO-050.03-Hive.md)                   |                |
 | 050.04 | [Change Notifications](010-Kernel-Foundations/TODO-050-Registry/TODO-050.04-Notification.md)       |                |
 | 050.05 | [Syscalls & Win32 Compat](010-Kernel-Foundations/TODO-050-Registry/TODO-050.05-Syscalls.md)        |                |
-| 050.06 | [Win32 Compatibility](010-Kernel-Foundations/TODO-050-Registry/TODO-050.06-Win32-Compatibility.md) |                |
 ---
 
 ## Layer 2: Hardware & Drivers  `060-Hardware-Drivers/`
