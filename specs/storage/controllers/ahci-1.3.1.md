@@ -102,7 +102,7 @@ Following the global registers, each physical SATA port features its own dedicat
 
 The **Port Task File Data (PxTFD)** register acts as a mirror reflecting the current internal state of the attached SATA drive. It prominently features the legacy Status (STS) bits, most notably the Busy (BSY) and Data Request (DRQ) indicators. If a drive is locked in a Busy state, the HBA is physically prevented from issuing further commands to that drive until the bit clears.
 
-The nerve center of port operation is the **Port Command and Status (PxCMD)** register, located at offset `18h` within the port's memory block. This register contains the critical Start bit (`PxCMD.ST`). Setting this bit to `1` instructs the HBA's port-specific DMA engine to begin actively processing the command list in system memory. The register also houses bits for controlling aggressive power management features and executing interface communication control.
+The nerve center of port operation is the **Port Command and Status (PxCMD)** register, located at offset `0x18` within the port's memory block. This register contains the critical Start bit (`PxCMD.ST`). Setting this bit to `1` instructs the HBA's port-specific DMA engine to begin actively processing the command list in system memory. The register also houses bits for controlling aggressive power management features and executing interface communication control.
 
 The **Port Interrupt Status (PxIS)** and **Port Interrupt Enable (PxIE)** registers work in tandem. While the global IS register tells the OS which port fired an interrupt, the PxIS register tells the OS *why* that specific port fired it. This could range from a routine successful DMA transfer, the receipt of a PIO Setup FIS, or a catastrophic link failure. Software uses the PxIE register to selectively mask or unmask these specific interrupt causes based on the current operational context.
 
@@ -112,7 +112,7 @@ Finally, the **Port Command Issue (PxCI)** and **Port Serial ATA Active (PxSACT)
 
 The operational efficiency of an advanced storage controller is heavily dependent on how gracefully it notifies the host CPU that data transfers are complete. Under high workloads, if an HBA fired an individual hardware interrupt for every single completed 4-kilobyte sector transaction, the system's CPU would be overwhelmed by continuous context switching—a detrimental condition known in computer science as interrupt storming.
 
-The AHCI architecture mitigates this threat through native support for **Interrupt Coalescing** and advanced PCIe interrupt routing methodologies, such as Message Signaled Interrupts (MSI and MSI-X). The HBA allows software to program command completion coalescing control registers (`ccc_ctl` and `ccc_ports`), which instruct the hardware to delay firing an interrupt until a specific number of commands have completed or a predefined timer has expired, drastically reducing CPU overhead.
+The AHCI architecture mitigates this threat through native support for **Interrupt Coalescing** and advanced PCIe interrupt routing methodologies, such as Message Signaled Interrupts (MSI and MSI-X). The HBA allows software to program command completion coalescing control registers (`CCC_CTL` and `CCC_PORTS`), which instruct the hardware to delay firing an interrupt until a specific number of commands have completed or a predefined timer has expired, drastically reducing CPU overhead.
 
 ### The 5-Step Interrupt Clearance Mechanism
 
@@ -152,7 +152,7 @@ Device Sleep represents a highly coordinated, cooperative power-saving state whe
 
 To support this radical power reduction safely, AHCI 1.3.1 mandated several critical additions to both the hardware definition and the software programming interface:
 
-**Capability Detection (CAP2.SDS):** Upon system initialization, the storage driver must first read the extended capabilities register (CAP2 at offset `24h`). If the `CAP2.SDS` bit is asserted to `1`, it verifies that the underlying silicon and motherboard routing support the DevSleep signal paths.
+**Capability Detection (CAP2.SDS):** Upon system initialization, the storage driver must first read the extended capabilities register (CAP2 at offset `0x24`). If the `CAP2.SDS` bit is asserted to `1`, it verifies that the underlying silicon and motherboard routing support the DevSleep signal paths.
 
 **Interface Communication Control (PxCMD.ICC):** This previously existing field was significantly updated in 1.3.1 to allow direct, software-invoked control over interface power management states. If the link layer is currently residing in an `L_IDLE` or `L_NoCommPower` state, writing specific standardized values to the ICC field commands the AHCI HBA to initiate an immediate transition into the requested power state. If the link is busy, writes to this field are safely ignored, preventing data corruption.
 
