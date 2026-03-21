@@ -40,11 +40,7 @@
 
 ---
 
-## TODO Completion Roadmap
-
-### Dependency Graph
-
-```mermaid
+## TODO Completion Roadma```mermaid
 graph TD
     VFS["040.07-VFS<br/>VFS Semantics + Locks"]
     NTFS["040.08-NTFS<br/>NTFS Driver + $Secure"]
@@ -55,7 +51,7 @@ graph TD
     B["§2 Device Stacks"]
     C["§3 Memory Transfer<br/>MDLs + Buffered I/O"]
     D["§4 Handle Table Hierarchy"]
-    E["§5 Object Namespace<br/>\\Global??\\ + \\?\\"]
+    E["§5 Object Namespace<br/>\\Global??\\ + \\?\\ "]
     F["§6 NTSTATUS Translation"]
     G["§7 File Info Classes"]
     H["§8 Security Descriptors<br/>DACL Enforcement"]
@@ -63,6 +59,10 @@ graph TD
     J["§10 Filter Manager<br/>Minifilter Altitudes"]
     K["§11 Reparse Points<br/>Symlinks + Junctions"]
     L["§12 Shell Integration<br/>Common Item Dialogs"]
+    N["§14 FSCTL / DeviceIoControl"]
+    O["§15 Fast I/O<br/>Zero-IRP Cached Reads"]
+    P["§16 I/O Priority & QoS<br/>Hardware Queue Mapping"]
+    Q["§17 I/O Tracing<br/>ns-Resolution Profiling"]
 
     VFS --> M
     M --> A
@@ -71,15 +71,23 @@ graph TD
     A --> B
     A --> C
     A --> I
-    B --> J
-    C --> I
-    D --> E
     A --> F
     A --> G
+    A --> N
+    A --> Q
+    B --> J
+    B --> O
+    C --> I
+    C --> O
+    D --> E
     NTFS --> H
     D --> H
     I --> J
     H --> K
+    J --> L
+    M --> L
+    A --> P
+```   H --> K
     J --> L
     M --> L
 ```
@@ -133,7 +141,8 @@ graph TD
 > [!TIP]
 > **Incremental strategy:** Each phase can be built and tested independently.
 > Phase 1 alone makes IRPs flow through the existing VFS dispatch. Phase 2 adds
-> proper memory management. The system remains functional at each phase boundary.
+> proper memory management plus FSCTL dispatch. The system remains functional
+> at each phase boundary.
 >
 > **Memory rule reminder:** IRP headers (~64 bytes) and stack locations (~36 bytes
 > each) use `kmalloc`. MDL page arrays can grow to thousands of PFNs — use
@@ -523,32 +532,36 @@ graph TD
 
 ## Priority Order
 
-| Priority  | Section                                  | Description                                                    |
-|-----------|------------------------------------------|----------------------------------------------------------------|
-| 🔴 P0     | §13.1 Handle Table & Type Defs           | Win32 types, HANDLE, flags, error codes — everything uses this |
-| 🔴 P0     | §13.2 CreateFile / CloseHandle           | Core open/close — every file operation starts here             |
-| 🔴 P0     | §13.3 ReadFile / WriteFile               | Core I/O — data transfer functions                             |
-| 🔴 P0     | §1.1 IRP Structure Definition            | Foundation — all I/O flows through IRPs                        |
-| 🔴 P0     | §1.2 I/O Manager Core                    | Central dispatch — CreateFile/Read/Write route through this    |
-| 🟠 P1     | §13.4 Directory Operations               | FindFirstFile, CreateDirectory — shell needs these             |
-| 🟠 P1     | §13.5 File Management                    | DeleteFile, MoveFile, CopyFile — basic CRUD                    |
-| 🟠 P1     | §6.1 NTSTATUS Translation                | Apps rely on correct error codes for fallback logic             |
-| 🟠 P1     | §2.1 Device Stack Model                  | Filter + FDO + PDO layering — enables minifilters              |
-| 🟠 P1     | §3.1 MDL Direct I/O                      | Zero-copy for large reads/writes — major perf gain             |
-| 🟠 P1     | §3.2 Buffered I/O                        | Safe path for small requests                                   |
-| 🟠 P1     | §7.1 File Information Classes            | Win32 apps query file metadata via these structs               |
-| 🟡 P2     | §13.6 Shell & Kernel Migration           | Migrate all vfs_*() callers to Win32 API                       |
-| 🟡 P2     | §4.1 Handle Table Hierarchy              | Scales to thousands of handles per process                     |
-| 🟡 P2     | §4.2 Object Reference Counting           | Prevents use-after-free of kernel objects                      |
-| 🟡 P2     | §9.1 Completion Routines                 | Enables filter driver post-processing                          |
-| 🟡 P2     | §8.1 Security Descriptor Engine          | DACL enforcement — file-level access control                   |
-| 🟢 P3     | §5.1 Object Manager Namespace            | `\\?\` paths, symbolic links, device mapping                   |
-| 🟢 P3     | §8.2 $Secure Integration                 | Centralized NTFS security — space savings                      |
-| 🟢 P3     | §9.2 Cancel I/O                          | Graceful timeout + shutdown                                    |
-| 🟢 P3     | §10.1 Filter Manager (Minifilters)       | Extensible FS filtering — AV, encryption, compression          |
-| 🟢 P3     | §11.1 Reparse Points                     | Symlinks, junctions, mount points                              |
-| 🟢 P3     | §12.2 CLI Metadata Tools                 | 🚀 **Exclusive** — built-in `fileinfo` + `streams` commands   |
-| 🔵 P4     | §12.1 Common Item Dialogs                | 🚀 **Exclusive** — system-level COM file picker                |
+| Priority | Section                            | Description                                                          |
+| -------- | ---------------------------------- | -------------------------------------------------------------------- |
+| 🔴 P0   | §13.1 Handle Table & Type Defs    | Win32 types, HANDLE, flags, error codes — everything uses this       |
+| 🔴 P0   | §13.2 CreateFile / CloseHandle    | Core open/close — every file operation starts here                   |
+| 🔴 P0   | §13.3 ReadFile / WriteFile        | Core I/O — data transfer functions                                   |
+| 🔴 P0   | §1.1 IRP Structure Definition     | Foundation — all I/O flows through IRPs                              |
+| 🔴 P0   | §1.2 I/O Manager Core             | Central dispatch — CreateFile/Read/Write route through this          |
+| 🟠 P1   | §13.4 Directory Operations        | FindFirstFile, CreateDirectory — shell needs these                   |
+| 🟠 P1   | §13.5 File Management             | DeleteFile, MoveFile, CopyFile — basic CRUD                          |
+| 🟠 P1   | §6.1 NTSTATUS Translation         | Apps rely on correct error codes for fallback logic                   |
+| 🟠 P1   | §2.1 Device Stack Model           | Filter + FDO + PDO layering — enables minifilters                    |
+| 🟠 P1   | §3.1 MDL Direct I/O               | Zero-copy for large reads/writes — major perf gain                   |
+| 🟠 P1   | §3.2 Buffered I/O                 | Safe path for small requests                                         |
+| 🟠 P1   | §7.1 File Information Classes     | Win32 apps query file metadata via these structs                     |
+| 🟡 P2   | §13.6 Shell & Kernel Migration    | Migrate all vfs_*() callers to Win32 API                             |
+| 🟡 P2   | §4.1 Handle Table Hierarchy       | Scales to thousands of handles per process                           |
+| 🟡 P2   | §4.2 Object Reference Counting    | Prevents use-after-free of kernel objects                            |
+| 🟡 P2   | §9.1 Completion Routines          | Enables filter driver post-processing                                |
+| 🟡 P2   | §8.1 Security Descriptor Engine   | DACL enforcement — file-level access control                         |
+| 🟡 P2   | §14.1 FSCTL / DeviceIoControl     | Structured control dispatch for volume + FS operations               |
+| 🟡 P2   | §15.1 Fast I/O                    | 🚀 **Exclusive** — zero-IRP cached file reads                       |
+| 🟡 P2   | §16.1 I/O Priority & QoS          | 🚀 **Exclusive** — IRP priority → hardware queue mapping            |
+| 🟢 P3   | §5.1 Object Manager Namespace     | `\\?\` paths, symbolic links, device mapping                        |
+| 🟢 P3   | §8.2 $Secure Integration          | Centralized NTFS security — space savings                            |
+| 🟢 P3   | §9.2 Cancel I/O                   | Graceful timeout + shutdown                                          |
+| 🟢 P3   | §10.1 Filter Manager (Minifilters)| Extensible FS filtering — AV, encryption, compression                |
+| 🟢 P3   | §11.1 Reparse Points              | Symlinks, junctions, mount points                                    |
+| 🟢 P3   | §12.2 CLI Metadata Tools          | 🚀 **Exclusive** — built-in `fileinfo` + `streams` commands         |
+| 🟢 P3   | §17.1 I/O Tracing & Profiling     | 🚀 **Exclusive** — per-IRP ns-resolution latency histograms         |
+| 🔵 P4   | §12.1 Common Item Dialogs         | 🚀 **Exclusive** — system-level COM file picker                     |
 
 ---
 
