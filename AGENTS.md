@@ -96,29 +96,7 @@ sdk/                    SDK for user-mode development
 Verify success: `tail -1 build/build.log` → must show `=== BUILD OK ===`
 
 > [!WARNING]
-> **`command_status` gets stuck on builds.** The `command_status` tool frequently reports `RUNNING` with `No output` for commands that have already finished — especially builds with progress bars or high output. **Do NOT poll `command_status` after starting a build.** Instead, follow this pattern:
-
-**After starting a build:**
-
-1. Run the build via `run_command` with `WaitMsBeforeAsync: 500` (sends it to background immediately)
-2. Wait an appropriate time — 30s for incremental, 90s for clean builds
-3. Check the result with a **separate** `run_command`: `tail -1 build/build.log`
-4. Expected output: `=== BUILD OK ===` or `=== BUILD FAILED ===`
-5. If neither sentinel is present, wait 30s more and check again — **maximum 2 checks**
-
-| Build Type | Wait Before Checking |
-|------------|---------------------|
-| Incremental | ~30 seconds |
-| Clean | ~90 seconds |
-| Build + QEMU | Don't check — QEMU stays open |
-
-**For general long-running commands** (not builds), append a sentinel:
-
-```bash
-some-command 2>&1; echo "=== DONE ==="
-```
-
-Then verify with `tail -1` on the output. **Never re-run a command** just because `command_status` reported no output.
+> **`command_status` gets stuck on builds.** Do NOT poll `command_status` — it falsely reports `RUNNING`. Wait ~30s (incremental) or ~90s (clean), then check with `tail -1 build/build.log`. See [`safety.md`](.agents/rules/safety.md) for the full workaround pattern.
 
 ### Output
 
@@ -243,7 +221,7 @@ Headers mirror the source tree under `include/`. The Makefile uses `-Iinclude` a
 ### Include Style
 
 - **Always use subdirectory paths**: `#include "kernel/drivers/serial.h"` (not `#include "serial.h"`)
-- **NEVER use angle-bracket includes** — `-nostdinc` strips the compiler's include path
+- **NEVER use angle-bracket includes** — `-nostdinc` strips the compiler's include path. See [`coding.md`](.agents/rules/coding.md) for full freestanding C rules.
 - **Use `#pragma once`** for include guards
 - **No circular includes** — use forward declarations when needed
 
@@ -287,36 +265,11 @@ Common scopes: `kernel`, `boot`, `desktop`, `drivers`, `gfx`, `fs`, `net`, `buil
 
 ## Critical Rules
 
-### Freestanding Environment
-
-- **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. The build uses `-nostdinc` so even freestanding headers like `<stdint.h>`, `<stddef.h>`, `<stdbool.h>` are **NOT available**. Use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`.
-- **No `<stdint.h>`.** Use `#include "kernel/types.h"` — it defines `uint8_t`–`uint64_t`, `int8_t`–`int64_t`, `size_t`, `ssize_t`, `uintptr_t`, and `NULL`.
-- **No `malloc()`.** Use `kmalloc()` (≤ 4 KB) or `pmm_alloc_contiguous()` (everything else). See memory-allocation decision tree in coding rules.
-- **No `printf()`.** Use `printk()` for kernel output, `klog()` for logging.
-- **PMM returns `uintptr_t`, not `void *`.** Always cast: `(void *)(uintptr_t)pmm_alloc_contiguous(n)`.
-
-### Memory Allocation — Most Common Bug Source
-
-| Allocator | When to Use | Max Size |
-|-----------|------------|----------|
-| `kmalloc()` | Small kernel bookkeeping: VFS nodes, task structs, linked-list nodes, short strings | ≤ 4 KB |
-| `pmm_alloc_contiguous()` | Everything else: buffers, images, font data, framebuffers, file read buffers | No limit |
-
-> [!CAUTION]
-> The kernel heap is only **2 MiB**. Using `kmalloc()` for anything larger than a few KB causes **silent heap exhaustion** that is extremely difficult to debug. When in doubt, use PMM.
-
-### Hardware Constraints
-
-- **APIC-only interrupts.** Route all hardware interrupts via LAPIC/IOAPIC. Do NOT write new 8259 PIC routing code. The PIC is masked at boot. *(Legacy PIC masking code in `pic.c` is kept for boot-time disable only.)*
-- **DMA-only storage.** Use AHCI (DMA + NCQ) or VirtIO for disk I/O. Do NOT use legacy IDE/ATA PIO polling (port 0x1F0–0x1F7).
-- **UEFI GOP framebuffer.** The framebuffer is a linear 32bpp buffer from UEFI GOP. Do NOT write VGA text mode (0xB8000) code.
-- **RCU for read-heavy structures.** Prefer Read-Copy-Update over spinlocks for VFS mount list, process tree, and Registry cache.
-
-### API Surface
-
-- **Win32 is the native API.** User-space programs are PE32+ executables using Win32-style APIs (CreateFile, ReadFile, CreateProcess). POSIX APIs (open, read, fork) are secondary — for the Linux compat layer only.
-- **Windows paths are canonical.** Use `C:\Impossible\System32\`, not `/usr/bin/`. Use `C:\Program Files\`, not `/usr/local/`.
-- **Control Panel uses `.cpl` applets.** Settings are exposed via Windows-standard Control Panel Library applets (CPlApplet interface, `.cpl` extension).
+> Coding constraints, memory allocation rules, hardware constraints, and API surface are defined in the scoped rule files. These are injected automatically when editing relevant files.
+>
+> - **Coding rules** (freestanding C, memory allocation, hardware): [`coding.md`](.agents/rules/coding.md)
+> - **API surface & design** (Win32, Srclight, Memory MCP): [`intelligence.md`](.agents/rules/intelligence.md)
+> - **Safety & build** (workspace boundaries, build script): [`safety.md`](.agents/rules/safety.md)
 
 ---
 
@@ -387,28 +340,10 @@ Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
 
 ---
 
-## Code Intelligence
+## Known Gotchas & Code Intelligence
 
-- **Srclight is available.** The `.srclight/` index at the repo root provides deep code indexing via MCP. Use it for symbol search, call graph navigation, type hierarchy, semantic search, git blame, and hotspot analysis.
-- **Start sessions with `codebase_map()`** to orient before navigating the codebase.
-- **Prefer `hybrid_search()`** for most queries — it combines keyword + semantic search via RRF fusion.
-- **Memory MCP is available** for persistent cross-session knowledge. Use it to:
-  - **Read the graph at session start** (`read_graph`) to recall prior context — architectural decisions, known bugs, in-progress work, and component relationships.
-  - **Create entities** for significant discoveries: hardware quirks, driver behavior, subsystem interfaces, and design decisions that future sessions will need. Use descriptive entity types (`bug`, `design_decision`, `driver`, `subsystem`, `gotcha`, `pattern`).
-  - **Add observations** to existing entities as you learn more — don't duplicate entities, enrich them.
-  - **Create relations** to link entities (e.g., `virtio_blk` → `uses` → `blkdev_interface`, `ahci_driver` → `depends_on` → `pci_subsystem`). Use active-voice relation types: `uses`, `depends_on`, `implements`, `conflicts_with`, `fixed_by`, `discovered_in`.
-  - **Search nodes** (`search_nodes`) before creating new entities to avoid duplicates.
-  - **Don't store transient data** — build errors, one-off debugging notes, or anything already in the TODO system. Memory is for hard-won knowledge that would be costly to rediscover.
-
----
-
-## Known Gotchas
-
-1. **PMM is the default allocator. `kmalloc` is the exception.** The kernel heap is only 2 MiB. `kmalloc` is strictly for small kernel bookkeeping: VFS nodes, task structs, Codex values, short strings, linked-list nodes — typically tens of bytes to a few KB each. **NEVER use `kmalloc` for image buffers, file read buffers, pixel data, font data, or any allocation that could plausibly exceed a few KB.** Use `pmm_alloc_contiguous()` for everything else — it allocates directly from physical memory (identity-mapped) with no size limit. Violating this rule causes silent heap exhaustion that is extremely difficult to debug. *(Learned from framebuffer bug `9722a74`, JPEG decode bug `f673e46`)*
-2. **Framebuffer back buffer must use PMM, not kmalloc.** The back buffer for 1280×720×32bpp is 3.6 MiB. `kmalloc` fails silently → `back_buf = hw_addr` → zero double buffering → compositor flicker. Always use `pmm_alloc_contiguous()`. Boot log must show `[OK] Framebuffer back buffer:` and `[OK] VBE page flip enabled` to confirm double buffering is active. *(Fixed in commit `9722a74`)*
-3. **Never `#include <stdint.h>` or any angle-bracket header.** The build uses `-nostdinc` which strips the compiler's include search path entirely. Use `#include "kernel/types.h"` instead — it defines `uint8_t` through `uint64_t`, `int8_t` through `int64_t`, `size_t`, `ssize_t`, `uintptr_t`, and `NULL`. Only project-local headers via double-quotes are safe. *(Learned from VMBus build failure `daafc39`)*
-4. **SSE2 modules have special build rules.** Files using floating-point math (stb_truetype, stb_image, gfx_simd) are compiled with `-msse2` override. See the Makefile pattern rules.
-5. **CalVer versioning.** Version is auto-generated from build date: `YY.M.D` (e.g., `26.3.21`). Build number auto-increments from `.build_number`.
+> Full gotchas (memory allocation bugs, freestanding C pitfalls, SSE2 rules, CalVer) are in [`coding.md`](.agents/rules/coding.md).
+> Srclight and Memory MCP guidance is in [`intelligence.md`](.agents/rules/intelligence.md).
 
 ---
 
