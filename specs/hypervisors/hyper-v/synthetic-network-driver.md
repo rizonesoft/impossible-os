@@ -4,7 +4,7 @@
 
 The architectural evolution of datacenter network virtualization has necessitated a profound transition from traditional hardware emulation to highly optimized, paravirtualized software interfaces. Within the Microsoft Hyper-V ecosystem, providing robust, high-throughput, and low-latency network connectivity to child partitions (virtual machines) requires bypassing the inherent bottlenecks of legacy hardware mimics. Hyper-V facilitates network access through two primary mechanisms: emulated network adapters and synthetic network adapters.
 
-Emulated network adapters were designed to maximize compatibility, specifically engineered to mimic ubiquitous physical hardware such as the Intel 82574 Gigabit Ethernet controller (commonly referred to as the E1000E) or the older DEC 21140 (vlance) controllers. This emulation allows legacy operating systems, which lack specialized virtualization drivers, to establish network connectivity using out-of-the-box driver packages. However, this emulation incurs substantial processing overhead. Every network operation performed by the guest operating system using an emulated adapter requires the hypervisor to continuously trap hardware interrupts and intercept memory-mapped I/O (MMIO) operations. The constant context switching between the guest operating system and the hypervisor dramatically limits aggregate throughput and significantly increases CPU utilization on the host system.
+Emulated network adapters were designed to maximize compatibility, specifically engineered to mimic ubiquitous physical hardware such as the Multiport DEC 21140 10/100TX 100 MB Ethernet controller. This emulation allows legacy operating systems—particularly those used in Generation 1 virtual machines that lack specialized virtualization drivers—to establish network connectivity using out-of-the-box driver packages. However, this emulation incurs substantial processing overhead. Every network operation performed by the guest operating system using an emulated adapter requires the hypervisor to continuously trap hardware interrupts and intercept memory-mapped I/O (MMIO) operations. The constant context switching between the guest operating system and the hypervisor dramatically limits aggregate throughput and significantly increases CPU utilization on the host system.
 
 To circumvent the severe latency and CPU utilization penalties inherent in hardware emulation, the Hyper-V hypervisor utilizes a sophisticated paravirtualized architecture centered around the Synthetic Network Driver, universally identified by its module or device name, netvsc. The synthetic network adapter does not emulate any physical hardware. Instead, it exposes a virtualized view of the physical network interface, operating purely as a software construct that leverages specialized inter-partition communication channels provided by the virtualization stack. Operating systems equipped with Hyper-V Integration Services—including all modern Windows Server distributions, Windows 10/11, and natively supported Linux kernels—load the netvsc driver to achieve near bare-metal network throughput.
 
@@ -181,24 +181,24 @@ The architectural specification of the netvsc and the broader Hyper-V host enfor
 
 ### Hyper-V Maximum Scalability Limits
 
-| Component | Maximum Limit | Scope of Application |
-| :--- | :--- | :--- |
-| Running virtual machines per server | 1,024 | Applied across the entire physical host. |
-| Logical processors | 2,048 | Maximum addressable processor threads by the hypervisor. |
-| Virtual processors per host | 2,048 | Maximum total virtual processors in use across all partitions. |
-| Virtual processors available to host OS | 1,024 | Applied to the management operating system (root partition). |
-| Root Virtual Processors (Management) | 64 | Maximum actively utilized by management partition for I/O. |
-| Memory (5-level paging) | 4 PB | Maximum addressable physical RAM via 5-level paging. |
-| Synthetic network adapters per VM | 8 | Maximum netvsc instances attached to a single Gen 2 VM. |
-| DPDK Queues per adapter | 64 | Maximum queues addressable by the Linux DPDK poll mode driver. |
+| Component                              | Maximum Limit | Scope of Application                                             |
+| -------------------------------------- | ------------- | ---------------------------------------------------------------- |
+| Running virtual machines per server    | 1,024         | Applied across the entire physical host (WS 2022).               |
+| Logical processors                    | 2,048         | Maximum addressable processor threads by the hypervisor.         |
+| Virtual processors per host            | 2,048         | Maximum total virtual processors in use across all partitions.   |
+| Virtual processors available to host OS| 2,048         | Maximum vCPUs for the management operating system (WS 2025).     |
+| Root Virtual Processors (Management)   | 64            | Minroot VP limit actively utilized by the management partition.  |
+| Memory (5-level paging)                | 4 PB          | Maximum addressable physical RAM via 5-level paging.             |
+| Synthetic network adapters per VM      | 64            | Maximum netvsc instances per Gen 2 VM (8 for Gen 1).             |
+| DPDK Queues per adapter                | 64            | Maximum queues addressable by the Linux DPDK poll mode driver.   |
 
 The interaction of these limits dictates deployment architecture. While a host may support thousands of virtual machines, the limitation of 64 root Virtual Processors actively managing I/O within the parent partition underscores the absolute necessity of utilizing SR-IOV to bypass the host OS for network-intensive workloads. Relying purely on the synthetic VMBus data path for thousands of highly active VMs will inevitably saturate the root partition's scheduling capacity.
 
 ### Operating System Compatibility and Generation Requirements
 
-The deployment of synthetic network adapters is intertwined with the virtual machine generation topology. Hyper-V Generation 1 virtual machines utilize legacy BIOS structures and provide access to the emulated Intel and DEC network adapters. However, achieving maximum performance requires deploying Generation 2 virtual machines, which natively utilize a UEFI-based architecture and exclusively boot using the high-performance VMBus and VSP/VSC architecture, entirely deprecating hardware emulation components.
+The deployment of synthetic network adapters is intertwined with the virtual machine generation topology. Hyper-V Generation 1 virtual machines utilize legacy BIOS structures and provide access to the emulated DEC 21140 legacy network adapter alongside standard synthetic adapters. However, achieving maximum performance requires deploying Generation 2 virtual machines, which natively utilize a UEFI-based architecture and exclusively boot using the high-performance VMBus and VSP/VSC architecture, entirely deprecating hardware emulation components.
 
-Generation 2 virtual machines utilizing the netvsc driver are supported across a wide array of modern operating systems. Windows support includes Windows Server 2012 through Windows Server 2025, and client operating systems from Windows 8 up to Windows 11 (notably requiring specific CPU instructions like POPCNT and SSE4.2 for installation). Linux support is extensively provided through the integrated LIS packages for enterprise distributions including Red Hat Enterprise Linux (RHEL), CentOS, SUSE, Ubuntu, Debian, Oracle Linux, and even FreeBSD.
+Generation 2 virtual machines utilizing the netvsc driver are supported across a wide array of modern operating systems. Windows support includes Windows Server 2012 through Windows Server 2025, and client operating systems from Windows 8 up to Windows 11. Note that Windows 11 specifically requires the host to expose CPU instructions such as POPCNT and SSE4.2, which may necessitate disabling Hyper-V Processor Compatibility Mode on the host. Linux support is extensively provided through the integrated LIS packages for enterprise distributions including Red Hat Enterprise Linux (RHEL), CentOS, SUSE, Ubuntu, Debian, Oracle Linux, and even FreeBSD.
 
 ### Architectural Comparisons and Industry Context
 
