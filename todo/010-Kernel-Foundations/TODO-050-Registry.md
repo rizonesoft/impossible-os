@@ -10,153 +10,110 @@
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (hive file buffers, large binary values). `kmalloc` is ONLY for small kernel structs (≤ 4 KB). Violating this crashes the 2 MiB heap silently. See `rules.md` Known Gotchas.
 
 > [!IMPORTANT]
-> **Migration:** The current Codex system (`codex.c`, `codex.h`) must be fully replaced.
-> All existing call sites (`main.c`, `panic.c`, `swap.c`, `desktop.c`, `icon_store.h`)
-> must be updated to use the new Registry API. The disk format changes from `.codex` text
-> files to `.hive` binary files. Existing Codex defaults must be re-populated under the
-> new Registry key paths.
+> **Migration:** The current Codex system (`codex.c`, `codex.h`) has been fully replaced.
+> All call sites now use the new Registry API. The disk format uses `.hive` binary files
+> with crash-safe journaling (WAJ).
+
+---
+
+## TODO Completion Roadmap (Cross-File)
+
+> | File                               | Scope                                                                     |
+> | ---------------------------------- | ------------------------------------------------------------------------- |
+> | `TODO-050-Registry.md`             | Master file — sections, priorities, OS comparison                         |
+> | `TODO-050.01-Registry-Engine.md`   | Core engine: `reg_key_t`, `reg_value_t`, `HKEY`, pools, value types, root keys |
+> | `TODO-050.02-Win32-Reg-API.md`     | Win32 API: key/value operations, enumeration, convenience helpers         |
+
+### Dependency Graph
+
+```mermaid
+graph TD
+    subgraph "Layer 0: Core Engine"
+        ENGINE["050.01 Registry Engine ✅<br/>reg_key_t, reg_value_t, HKEY, root keys"]
+    end
+
+    subgraph "Layer 1: Win32 API"
+        API["050.02 Win32 Reg API ✅<br/>RegOpenKeyEx, RegSetValueEx, etc."]
+    end
+
+    subgraph "Layer 2: Migration"
+        MIGRATE["§3 Codex Migration ✅<br/>call sites + defaults + cleanup"]
+    end
+
+    subgraph "Layer 3: Persistence"
+        HIVE["§4 Hive Files ✅<br/>format + disk layout + journaling"]
+    end
+
+    subgraph "Layer 4: Advanced Features"
+        NOTIFY["§5 Change Notifications ⬜"]
+        SYSCALL["§6 User-Mode Syscalls ⬜"]
+        WIN32["§7 Win32 Compat Layer ⬜"]
+        REGEDIT["§8 Regedit Command ⬜"]
+    end
+
+    subgraph "Layer 5: Performance"
+        HASHMAP["§9.1 Hash Map ⬜"]
+        MMAP["§9.2 Memory-Mapped ⬜"]
+        BTREE["§9.3 B-Tree Format ⬜"]
+    end
+
+    ENGINE --> API
+    API --> MIGRATE
+    API --> HIVE
+    API --> NOTIFY
+    API --> SYSCALL
+    API --> WIN32
+    HIVE --> REGEDIT
+    MIGRATE --> HIVE
+    API --> HASHMAP
+    HIVE --> MMAP
+    HIVE --> BTREE
+```
+
+### Phase-by-Phase Implementation Order
+
+| ⭐  | Phase  | TODO File / Section              | What It Delivers                                                        | Depends On                      | Status |
+| --- | :----: | -------------------------------- | ----------------------------------------------------------------------- | ------------------------------- | :----: |
+| 💎  | **0**  | `050.01-Registry-Engine.md`      | `reg_key_t`, `reg_value_t`, static pools, FNV-1a, root keys, all types  | —                               |   ✅   |
+| 💎  | **1**  | `050.02-Win32-Reg-API.md`        | `RegOpenKeyEx`, `RegSetValueEx`, enumeration, convenience helpers       | Phase 0 (engine)                |   ✅   |
+| 💎  | **2**  | `050-Registry.md` §3             | Codex → Registry migration (call sites, defaults, cleanup)              | Phase 1 (API)                   |   ✅   |
+| 💎  | **3**  | `050-Registry.md` §4             | Hive file format, disk layout, crash-safe journaling                    | Phase 2 (migration)             |   ✅   |
+| 💎  | **4**  | `050-Registry.md` §5.1           | Change notifications (`RegNotifyChangeKeyValue`)                        | Phase 1 (API)                   |   ⬜   |
+| 💎  | **4**  | `050-Registry.md` §6.1           | User-mode registry syscalls                                             | Phase 1 (API)                   |   ⬜   |
+| 💎  | **4**  | `050-Registry.md` §8.1           | `regedit` shell command                                                 | Phase 3 (persistence)           |   ⬜   |
+| 💎  | **5**  | `050-Registry.md` §7.1           | advapi32.dll registry stubs (Win32 compat)                              | Phase 4 (§6.1 syscalls)         |   ⬜   |
+| 🔵  | **6**  | `050-Registry.md` §9.1           | Hash map child lookup (O(1))                                            | Phase 1 (API)                   |   ⬜   |
+| 🔵  | **6**  | `050-Registry.md` §9.2           | Memory-mapped hive files                                                | Phase 3 (hive)                  |   ⬜   |
+| 🔵  | **6**  | `050-Registry.md` §9.3           | B-tree cell format (NT hive compat)                                     | Phase 3 (hive)                  |   ⬜   |
+
+> [!NOTE]
+> **Phases 0–3 are complete.** The core engine, Win32 API, Codex migration, and disk
+> persistence (including crash-safe journaling) are all implemented and verified.
+>
+> **Phase 4** delivers advanced features: change notifications, user-mode syscalls, and
+> the `regedit` shell command. These are independent and can be done in any order.
+>
+> **Phase 5** adds Win32 compatibility layer stubs — depends on syscalls from Phase 4.
+>
+> **Phase 6** contains stretch performance goals: hash map optimization, mmap, B-tree.
+
 ---
 
 ## 1. Core Registry Engine
 
-### 1.1 Registry Data Structures
-
-**Prompt:** Verify the correctness and consistency of the Registry core data structures (commit `d44a791`). Confirm that `include/registry.h` defines `reg_key_t` with a 256-char name, parent pointer, 16-bucket FNV-1a child hash map (`children[REG_CHILD_BUCKETS]`), `hash_next` collision chain, `child_count`, `values` linked list, `value_count`, `last_write_time`, and `flags`. Confirm `reg_value_t` has a 256-char name, `type` (uint32_t), `data[REG_MAX_VALUE_SIZE]` buffer, `data_size`, and `next` pointer. Confirm `HKEY` is defined as `reg_handle_t*` wrapping `reg_key_t*` + access mode, and that `HKEY_LOCAL_MACHINE` through `HKEY_CURRENT_CONFIG` use sentinel addresses `0x80000000`–`0x80000005`. Confirm `src/kernel/registry.c` defines static pools `reg_key_pool[512]` and `reg_value_pool[1024]`, FNV-1a hash function (`reg_fnv1a`) with case-insensitive folding, pool allocators `reg_alloc_key`/`reg_alloc_value`, `reg_resolve_predefined()` mapping, and `registry_init()` creating all 5 root keys. Run `bash scripts/build.sh clean` and confirm zero warnings.1 structures.
-
-- [x] Define `reg_key_t` struct:
-  - [x] `name[256]` — key name
-  - [x] `parent` pointer — parent key
-  - [x] `children` — hash map of child keys (FNV-1a hash → `reg_key_t*`)
-  - [x] `child_count` — number of child keys
-  - [x] `values` — linked list of `reg_value_t`
-  - [x] `value_count` — number of values
-  - [x] `last_write_time` — timestamp of last modification
-  - [x] `flags` — access control flags
-- [x] Define `reg_value_t` struct:
-  - [x] `name[256]` — value name (empty string = default value)
-  - [x] `type` — `REG_*` type code
-  - [x] `data[REGISTRY_MAX_VALUE_SIZE]` — value data buffer
-  - [x] `data_size` — actual bytes used
-  - [x] `next` — linked list pointer
-- [x] Define `HKEY` as opaque handle type (internally: pointer + access mode)
-- [x] Define static pools: `key_pool[512]`, `value_pool[1024]`
-- [x] Commit: `"registry: core data structures"` (`d44a791`)
-
-### 1.2 Value Types
-
-**Prompt:** Verify the Registry value type implementation. Confirm `registry.h` defines all Win32 type constants (`REG_NONE=0`, `REG_SZ=1`, `REG_EXPAND_SZ=2`, `REG_BINARY=3`, `REG_DWORD=4`, `REG_DWORD_BIG_ENDIAN=5`, `REG_LINK=6`, `REG_MULTI_SZ=7`, `REG_QWORD=11`) plus alias `REG_DWORD_LITTLE_ENDIAN`. Confirm `REG_FLAG_LINK=0x04` flag defined for symbolic link keys. Confirm declarations for: `reg_type_name()`, `reg_expand_sz()`, `reg_multi_sz_count/get/pack()`, `reg_key_is_link()`, `reg_key_get_link_target()`. In `registry.c`, verify `reg_expand_sz()` parses `%VAR%` tokens and looks up values under `HKLM\System\Environment` via case-insensitive tree walk. Verify `reg_multi_sz_count()` counts strings by scanning for nulls with double-null termination. Verify `reg_multi_sz_get()` returns the Nth string by index. Verify `reg_multi_sz_pack()` packs an array of C strings into double-null format. Verify `reg_key_is_link()` checks `REG_FLAG_LINK` and `reg_key_get_link_target()` finds the unnamed `REG_LINK` value. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Define type constants matching Windows:
-  - [x] `REG_NONE        = 0`
-  - [x] `REG_SZ          = 1` — null-terminated string
-  - [x] `REG_EXPAND_SZ   = 2` — string with `%VAR%` expansion
-  - [x] `REG_BINARY      = 3` — raw binary data
-  - [x] `REG_DWORD       = 4` — 32-bit integer (little-endian)
-  - [x] `REG_MULTI_SZ    = 7` — double-null-terminated string array
-  - [x] `REG_QWORD       = 11` — 64-bit integer
-  - [x] `REG_LINK        = 6` — symbolic link to another key
-- [x] Implement `REG_EXPAND_SZ` expansion (resolve `%PATH%` etc. on read)
-- [x] Implement `REG_MULTI_SZ` pack/unpack helpers
-- [x] Implement `REG_LINK` transparent redirection on `RegOpenKeyEx`
-- [x] Commit: `"registry: value types"`
-
-### 1.3 Predefined Root Keys
-
-**Prompt:** Verify the predefined root key implementation. Confirm `registry_init()` creates 5 root keys (HKLM, HKCU, HKCR, HKU, HKCC) and sets `REG_FLAG_HKCU_REDIRECT` on HKCU and `REG_FLAG_HKCR_MERGED` on HKCR. Confirm default sub-keys: `HKLM\SYSTEM`, `HKLM\SOFTWARE`, `HKLM\HARDWARE`, `HKLM\SOFTWARE\Classes`, `HKU\Default`. Verify `reg_add_child()` inserts via FNV-1a bucket, `reg_find_child()` does case-insensitive lookup, `reg_create_child()` returns existing or allocates new. Verify `reg_set_current_user()` stores username, `reg_resolve_hkcu()` returns `HKU\{user}` (auto-creates if missing), `reg_resolve_hkcr()` returns `HKLM\SOFTWARE\Classes`. Verify boot log shows `Registry initialized (pool: X/512 keys, 0/1024 values)`. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Create predefined root key handles:
-  - [x] `HKEY_LOCAL_MACHINE` (HKLM) — system-wide config
-  - [x] `HKEY_CURRENT_USER` (HKCU) — current user (redirects to HKU\{user})
-  - [x] `HKEY_USERS` (HKU) — all user profiles
-  - [x] `HKEY_CLASSES_ROOT` (HKCR) — merged file associations view
-- [x] Create default sub-keys under HKLM:
-  - [x] `HKLM\SYSTEM` — boot config, drivers, services
-  - [x] `HKLM\SOFTWARE` — installed software settings
-  - [x] `HKLM\HARDWARE` — detected hardware info
-- [x] Create default user profile: `HKU\Default`
-- [x] Implement HKCU → HKU\{username} redirection
-- [x] Implement HKCR merged view (HKLM\SOFTWARE\Classes + HKCU\SOFTWARE\Classes)
-- [x] Commit: `"registry: root keys (HKLM, HKCU, HKU, HKCR)"`
+> **→ See [TODO-050.01-Registry-Engine.md](TODO-050-Registry/TODO-050.01-Registry-Engine.md)** ✅
+>
+> Covers: §1.1 Data Structures, §1.2 Value Types, §1.3 Predefined Root Keys.
+> All sections complete.
 
 ---
+
 ## 2. Win32-Compatible API
 
-### 2.1 Key Operations
-
-**Prompt:** Verify the Win32-compatible key operations implementation. Confirm `registry.h` declares `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey`, `RegDeleteTree` with correct Win32 signatures. Confirm `REG_HANDLE_POOL_SIZE=128`, `REG_CREATED_NEW_KEY=1`, `REG_OPENED_EXISTING_KEY=2`. In `registry.c`, verify: handle pool (`reg_handle_pool[128]`, `reg_handle_used[128]`), `reg_alloc_handle`/`reg_free_handle` for handle lifecycle, `reg_is_predefined` checks sentinel range `0x80000000–0x80000005`, `reg_resolve_key` handles HKCU→`reg_resolve_hkcu()` and HKCR→`reg_resolve_hkcr()` redirection. Verify `reg_walk_path` walks backslash-separated paths with `REG_LINK` following. Verify `RegOpenKeyEx` returns `ERROR_FILE_NOT_FOUND` for missing keys. Verify `RegCreateKeyEx` sets disposition and updates `parent->last_write_time`. Verify `RegCloseKey` is no-op for predefined handles. Verify `RegDeleteKey` returns `ERROR_ACCESS_DENIED` if child_count>0. Verify `RegDeleteTree` recursively deletes via `reg_delete_subtree`. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Implement `RegOpenKeyEx(hKey, subKey, options, access, &result)`:
-  - [x] Walk backslash-separated path from hKey
-  - [x] Handle `REG_LINK` transparent redirection
-  - [x] Store access mode in returned handle
-  - [x] Return `ERROR_FILE_NOT_FOUND` if key doesn't exist
-- [x] Implement `RegCreateKeyEx(hKey, subKey, reserved, class, options, access, security, &result, &disposition)`:
-  - [x] Create intermediate keys as needed
-  - [x] Set disposition: `REG_CREATED_NEW_KEY` or `REG_OPENED_EXISTING_KEY`
-  - [x] Update parent's last-write time
-- [x] Implement `RegCloseKey(hKey)` — release handle resources
-- [x] Implement `RegDeleteKey(hKey, subKey)` — delete key + values (not children)
-- [x] Implement `RegDeleteTree(hKey, subKey)` — recursive delete
-- [x] Define error codes:
-  - [x] `ERROR_SUCCESS          = 0`
-  - [x] `ERROR_FILE_NOT_FOUND   = 2`
-  - [x] `ERROR_ACCESS_DENIED    = 5`
-  - [x] `ERROR_INVALID_HANDLE   = 6`
-  - [x] `ERROR_MORE_DATA        = 234`
-  - [x] `ERROR_NO_MORE_ITEMS    = 259`
-- [x] Commit: `"registry: key operations (open, create, close, delete)"`
-
-### 2.2 Value Operations
-
-**Prompt:** Verify the Win32 value operations implementation. Confirm `registry.h` declares `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue` with correct Win32 signatures, and `RRF_*` flags (`RRF_RT_REG_SZ`, `RRF_RT_REG_EXPAND_SZ`, `RRF_RT_REG_BINARY`, `RRF_RT_REG_DWORD`, `RRF_RT_REG_QWORD`, `RRF_RT_ANY`, `RRF_NOEXPAND`). In `registry.c`, verify: `reg_find_value_in_key` matches empty name for default values. `RegSetValueEx` creates or updates values, stores data via `reg_memcpy`, updates `last_write_time`. `RegQueryValueEx` returns `ERROR_MORE_DATA` when `*lpcbData < v->data_size`, returns size when `lpData=NULL`. `RegGetValue` walks subkey, filters by `RRF_RT_*` type flags, auto-expands `REG_EXPAND_SZ` via `reg_expand_sz` unless `RRF_NOEXPAND`, sets `*pdwType=REG_SZ` after expansion. `RegDeleteValue` unlinks value from chain and decrements `value_count`. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Implement `RegSetValueEx(hKey, valueName, reserved, type, data, dataSize)`:
-  - [x] Create value if it doesn't exist, update if it does
-  - [x] Support all `REG_*` types
-  - [x] Handle NULL/empty valueName as "(Default)" value
-  - [x] Mark hive as dirty
-  - [x] Update key's `last_write_time`
-- [x] Implement `RegQueryValueEx(hKey, valueName, reserved, &type, data, &dataSize)`:
-  - [x] Return `ERROR_MORE_DATA` if buffer too small (set required size)
-  - [x] Return `ERROR_FILE_NOT_FOUND` if value doesn't exist
-  - [x] If `data` is NULL, just return the required size
-- [x] Implement `RegGetValue(hKey, subKey, valueName, flags, &type, data, &dataSize)`:
-  - [x] Combines open + query in one call
-  - [x] `RRF_RT_REG_SZ` flag: auto-expand `REG_EXPAND_SZ`
-  - [x] `RRF_NOEXPAND` flag: return unexpanded string
-- [x] Implement `RegDeleteValue(hKey, valueName)` — remove named value
-- [x] Commit: `"registry: value operations (get, set, delete)"`
-
-### 2.3 Enumeration
-
-**Prompt:** Verify the enumeration implementation. Confirm `registry.h` declares `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey` with correct Win32 signatures. In `registry.c`, verify `reg_get_child_by_index` scans all 16 hash buckets linearly to map 0-based index to child key. Verify `reg_get_value_by_index` walks the value linked list. Verify `RegEnumKeyEx` returns child name and `last_write_time`, `ERROR_NO_MORE_ITEMS` when index out of range, `ERROR_MORE_DATA` if name buffer too small. Verify `RegEnumValue` returns value name, type, and data with same error handling. Verify `RegQueryInfoKey` returns `child_count`, `value_count`, `last_write_time`, and computes max sub-key name length and max value name/data sizes by iterating. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] Implement `RegEnumKeyEx(hKey, index, name, &nameSize, ...)`:
-  - [x] Return child key name at given index
-  - [x] Return `ERROR_NO_MORE_ITEMS` when index out of range
-  - [x] Fill `lastWriteTime` from key metadata
-- [x] Implement `RegEnumValue(hKey, index, name, &nameSize, reserved, &type, data, &dataSize)`:
-  - [x] Return value name, type, and data at given index
-  - [x] Return `ERROR_NO_MORE_ITEMS` when index out of range
-  - [x] Return `ERROR_MORE_DATA` if data buffer too small
-- [x] Implement `RegQueryInfoKey(hKey, ...)`:
-  - [x] Return: sub-key count, max sub-key name length
-  - [x] Return: value count, max value name length, max value data size
-  - [x] Return: last write time
-- [x] Commit: `"registry: enumeration (keys, values, info)"`
-
-### 2.4 Convenience Helpers
-
-**Prompt:** Verify the typed convenience helpers. Confirm `registry.h` declares `RegGetDword/RegSetDword`, `RegGetString/RegSetString`, `RegGetQword/RegSetQword`, and `RegReadKeyValue`. In `registry.c`, verify `RegGetDword` calls `RegQueryValueEx` with `sizeof(uint32_t)` and validates `type==REG_DWORD`. Verify `RegGetString` accepts both `REG_SZ` and `REG_EXPAND_SZ`. Verify `RegSetString` includes the null terminator in size (`reg_strlen+1`). Verify `RegReadKeyValue` performs `RegOpenKeyEx` + `RegQueryValueEx` + `RegCloseKey` in sequence, properly closing the handle even on query failure. Run `bash scripts/build.sh clean` and confirm zero warnings.
-
-- [x] `RegGetDword(hKey, valueName, &value)` — read `REG_DWORD`
-- [x] `RegSetDword(hKey, valueName, value)` — write `REG_DWORD`
-- [x] `RegGetString(hKey, valueName, buf, bufSize)` — read `REG_SZ`
-- [x] `RegSetString(hKey, valueName, str)` — write `REG_SZ`
-- [x] `RegGetQword(hKey, valueName, &value)` — read `REG_QWORD`
-- [x] `RegSetQword(hKey, valueName, value)` — write `REG_QWORD`
-- [x] `RegReadKeyValue(root, path, valueName, type, buf, size)` — one-shot open+read+close
-- [x] Commit: `"registry: convenience helpers"`
+> **→ See [TODO-050.02-Win32-Reg-API.md](TODO-050-Registry/TODO-050.02-Win32-Reg-API.md)** ✅
+>
+> Covers: §2.1 Key Operations, §2.2 Value Operations, §2.3 Enumeration, §2.4 Convenience Helpers.
+> All sections complete.
 
 ---
 ## 3. Codex → Registry Migration
@@ -166,7 +123,7 @@
 > call sites to the new Registry API, re-mapping default values to Win32 paths, and
 > deleting the old Codex code.
 
-### 3.1 Replace Codex API Calls with Registry API
+### 3.1 Replace Codex API Calls with Registry API *(done)* ✅
 
 **Prompt:** Verify the Codex → Registry migration. Confirm `main.c` includes `registry.h` and calls `registry_init()` (no `codex_init/load/populate_defaults/save`). Confirm `codex_flush()` is commented out pending §4. In `panic.c`, verify HKLM\SYSTEM\Recovery is accessed via `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `swap.c`, verify HKLM\SYSTEM\Memory\SwapSlots uses `RegOpenKeyEx`/`RegGetDword`/`RegSetDword`/`RegCreateKeyEx`/`RegCloseKey`. In `desktop.c`, verify HKLM\SYSTEM\Theme uses `RegOpenKeyEx`/`RegGetString`/`RegCloseKey`. Confirm no remaining `#include "codex.h"` in any `.c` file except `codex.c` itself. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
@@ -190,7 +147,7 @@
 - [x] Update all `#include "codex.h"` → `#include "registry.h"`
 - [x] Commit: `"registry: migrate all codex call sites"`
 
-### 3.2 Migrate Default Values to Registry Paths
+### 3.2 Migrate Default Values to Registry Paths *(done)* ✅
 
 **Prompt:** Verify the default value migration. In `registry.c`, confirm `registry_populate_defaults()` creates keys under `HKLM\SYSTEM` (Display, Theme, Shell, Network, DateTime, Recovery, Memory), `HKLM\HARDWARE` (CPU, Memory), and `HKU\Default` (root, Shell, Desktop). Confirm all `codex_set_*` calls are replaced with `RegSetDword/RegSetString/RegSetQword`. Verify CPU detection uses `reg_cpuid()` for vendor and brand strings. Verify memory stats use `pmm_get_total_frames()/pmm_get_free_frames()`. In `main.c`, confirm boot splash says "Loading registry..." and `registry_populate_defaults()` is called after `registry_init()`. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
@@ -208,9 +165,9 @@
 - [x] Update boot splash: "Loading registry..."
 - [x] Commit: `"registry: migrate default values to Win32 paths"`
 
-### 3.3 Delete Old Codex Code
+### 3.3 Delete Old Codex Code *(done)* ✅
 
-**Prompt:** Verify the Codex cleanup. Confirm `include/codex.h` and `src/kernel/codex.c` no longer exist. Grep for `codex_` in all `.c` and `.h` files — only architectural comments in `registry.h` should remain.. Confirm stale "Codex" comments in `panic.h`, `icon_store.h`, and `desktop.c` have been updated to say "Registry". Run `bash scripts/build.sh clean` and confirm zero warnings.
+**Prompt:** Verify the Codex cleanup. Confirm `include/codex.h` and `src/kernel/codex.c` no longer exist. Grep for `codex_` in all `.c` and `.h` files — only architectural comments in `registry.h` should remain. Confirm stale "Codex" comments in `panic.h`, `icon_store.h`, and `desktop.c` have been updated to say "Registry". Run `bash scripts/build.sh clean` and confirm zero warnings.
 
 - [x] Delete `include/codex.h`
 - [x] Delete `src/kernel/codex.c`
@@ -221,7 +178,7 @@
 ---
 ## 4. Disk Persistence (Hive Files)
 
-### 4.1 Hive File Format
+### 4.1 Hive File Format *(done)* ✅
 
 **Prompt:** Verify the hive file format implementation. In `registry.h`, confirm `hive_header_t` is defined as a packed struct with `magic` (HIVE_MAGIC = 0x48474552), `version` (1), `checksum` (CRC32), `timestamp`, `root_name[64]`, `total_keys`, `total_values`, `data_offset`, `data_size`, and `padding` to 4096 bytes. Confirm `hive_save` and `hive_load` are declared. In `registry.c`, confirm `hive_crc32` implements table-less CRC32 with polynomial 0xEDB88320. Confirm `hive_serialize_key` writes depth-first key records as `[name_len:u16][name:N][value_count:u16][child_count:u16]` and value records as `[name_len:u16][name:N][type:u32][data_size:u32][data:N]`. Confirm `hive_save` uses PMM for the buffer, fills the header, computes CRC32, and writes via VFS. Confirm `hive_load` validates magic, version, and CRC32, and returns -1 with a klog warning on corrupt files. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
@@ -240,7 +197,7 @@
 - [x] Handle corrupt hive: log warning, skip file, use defaults
 - [x] Commit: `"registry: hive file format"`
 
-### 4.2 Hive File Layout on Disk
+### 4.2 Hive File Layout on Disk *(done)* ✅
 
 **Prompt:** Verify the hive file disk layout. In `registry.h`, confirm `REG_HIVE_DIR` is `"C:\Impossible\System\Config\Registry"` and `REG_HIVE_COUNT` is 4. Confirm `registry_flush()`, `registry_save_all()`, and `registry_load_hives()` are declared. In `registry.c`, confirm `hive_table` maps 4 descriptors: SYSTEM.hive→HKLM\SYSTEM, SOFTWARE.hive→HKLM\SOFTWARE, HARDWARE.hive→HKLM\HARDWARE, DEFAULT.hive→HKU\Default. Confirm `registry_mark_dirty()` walks up the parent chain to mark the correct hive dirty. Confirm it's called from `RegSetValueEx` and `RegDeleteValue`. Confirm `registry_flush()` only writes dirty hives. Confirm `hive_ensure_dir()` creates the directory chain. In `main.c`, confirm `registry_flush()` is enabled (not commented out). Run `bash scripts/build.sh clean` and confirm zero warnings.
 
@@ -257,7 +214,7 @@
 - [x] Enable `registry_flush()` in `main.c` compositor loop
 - [x] Commit: `"registry: hive file disk layout"`
 
-### 4.3 Crash-Safe Journaling
+### 4.3 Crash-Safe Journaling *(done)* ✅
 
 **Prompt:** Verify crash-safe journaling. In `registry.c`, confirm `hive_save` follows the 4-step sequence: (1) write `.hive.log`, (2) copy `.hive` → `.hive.bak`, (3) overwrite `.hive`, (4) invalidate `.hive.log` by zeroing magic. Confirm `hive_validate_file` checks magic, version, and CRC32. Confirm `hive_best_source` checks `.hive.log` → `.hive` → `.hive.bak` in priority order and copies the best source to `.hive`. Confirm `registry_load_hives` calls `hive_best_source` for each hive before loading. Confirm `hive_copy_file` does a byte-by-byte copy via VFS. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
@@ -379,46 +336,52 @@
 
 ## Priority Order
 
-| Priority | Section                   | Description                                        |
-|----------|---------------------------|----------------------------------------------------|
-| 🔴 P0     | 3.1 Rename Files          | Codex → Registry file rename (unblocks everything) |
-| 🔴 P0     | 3.2 Replace API           | Migrate all Codex call sites to Registry API       |
-| 🔴 P0     | 1.1 Data Structures       | Registry engine foundation                         |
-| 🔴 P0     | 1.2 Value Types           | Must support all REG_* types                       |
-| 🔴 P0     | 1.3 Root Keys             | HKLM, HKCU, HKU, HKCR                              |
-| 🔴 P0     | 2.1 Key Operations        | Core API: open, create, close, delete              |
-| 🔴 P0     | 2.2 Value Operations      | Core API: get, set, delete values                  |
-| 🔴 P0     | 3.3 Migrate Defaults      | Re-map Codex defaults to Win32 paths               |
-| 🟠 P1     | 2.3 Enumeration           | Needed for regedit + iteration                     |
-| 🟠 P1     | 2.4 Convenience Helpers   | Simplify common access patterns                    |
-| 🟠 P1     | 4.1 Hive File Format      | Binary disk persistence                            |
-| 🟠 P1     | 4.2 Disk Layout           | File paths + auto-flush                            |
-| 🟡 P2     | 5.1 Change Notifications  | Real-time settings updates                         |
-| 🟡 P2     | 6.1 Syscalls              | User-mode app access                               |
-| 🟡 P2     | 7.1 Win32 Stubs           | advapi32.dll registry wrappers                     |
-| 🟡 P2     | 8.1 Regedit Command       | Debugging + inspection                             |
-| 🟢 P3     | 4.3 Crash-Safe Journaling | Power-loss protection                              |
-| 🔵 P4     | 9.1 Hash Map Lookup       | O(1) performance                                   |
-| 🔵 P4     | 9.2 Memory-Mapped Hives   | Zero-copy reads                                    |
-| 🔵 P4     | 9.3 B-Tree Format         | Windows NT hive compat                             |
+| Priority | Section                                     | Description                                        |
+| -------- | ------------------------------------------- | -------------------------------------------------- |
+| ✅ Done  | `050.01` §1.1 Data Structures               | Registry engine foundation                         |
+| ✅ Done  | `050.01` §1.2 Value Types                   | All REG_* types                                    |
+| ✅ Done  | `050.01` §1.3 Root Keys                     | HKLM, HKCU, HKU, HKCR                             |
+| ✅ Done  | `050.02` §2.1 Key Operations                | Core API: open, create, close, delete              |
+| ✅ Done  | `050.02` §2.2 Value Operations              | Core API: get, set, delete values                  |
+| ✅ Done  | `050.02` §2.3 Enumeration                   | Needed for regedit + iteration                     |
+| ✅ Done  | `050.02` §2.4 Convenience Helpers           | Simplify common access patterns                    |
+| ✅ Done  | §3.1 Replace Codex API                      | Migrate all Codex call sites                       |
+| ✅ Done  | §3.2 Migrate Defaults                       | Re-map Codex defaults to Win32 paths               |
+| ✅ Done  | §3.3 Delete Codex Code                      | Remove legacy codex.c / codex.h                    |
+| ✅ Done  | §4.1 Hive File Format                       | Binary disk persistence                            |
+| ✅ Done  | §4.2 Disk Layout                            | File paths + auto-flush                            |
+| ✅ Done  | §4.3 Crash-Safe Journaling                  | Power-loss protection                              |
+| 🟡 P2   | §5.1 Change Notifications                   | Real-time settings updates                         |
+| 🟡 P2   | §6.1 Syscalls                               | User-mode app access                               |
+| 🟡 P2   | §7.1 Win32 Stubs                            | advapi32.dll registry wrappers                     |
+| 🟡 P2   | §8.1 Regedit Command                        | Debugging + inspection                             |
+| 🔵 P4   | §9.1 Hash Map Lookup                        | O(1) performance                                   |
+| 🔵 P4   | §9.2 Memory-Mapped Hives                    | Zero-copy reads                                    |
+| 🔵 P4   | §9.3 B-Tree Format                          | Windows NT hive compat                             |
 
 ---
 
 ## OS Comparison
 
 | Feature                             | 🪟 Windows 11 Registry       | 🐧 Linux (dconf / sysctl / ini files) | 🚀 Impossible OS                         |
-| ----------------------------------- | --------------------------- | ------------------------------------ | --------------------------------------- |
-| Hierarchical key/value store        | ✅ Full tree                 | ✅ dconf (GNOME), ini files           | ✅ §1.1 HKLM/HKCU/HKCR tree              |
-| Typed values (DWORD, SZ, BINARY...) | ✅ Full Win32 types          | ⚠️ Only strings (dconf has GVariant) | ✅ §1.2 All REG_* types                  |
-| Predefined root keys                | ✅ HKLM, HKCU, HKCR, HKU     | ❌ No concept                         | ✅ §1.3 Same root keys                   |
-| Win32 API (`RegOpenKeyEx`...)       | ✅ Native                    | ❌                                    | ✅ §2 Complete native API                |
-| Symbolic link keys (`REG_LINK`)     | ✅                           | ❌                                    | ✅ §1.2                                  |
-| Change notifications                | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify on ini files              | ⬜ §5.1 P2 — `RegNotifyChangeKeyValue`   |
-| Persistent binary hive files        | ✅ `.hive` format            | ✅ dconf binary db                    | ✅ §4.1–4.2                              |
-| Crash-safe journaling               | ✅ Transaction log           | ⚠️ No fsync guarantee on dconf       | ✅ §4.3 `.hive.log` WAJ                  |
-| User-mode access syscalls           | ✅ advapi32.dll              | ✅ libdconf/gsettings                 | ⬜ §6.1 P2                               |
-| `regedit` shell inspection          | ✅ GUI regedit.exe           | ✅ `dconf-editor` (GNOME)             | ⬜ §8.1 P2 — CLI + subcommands           |
-| advapi32.dll stubs (Win32 compat)   | ✅ Native                    | ❌                                    | ⬜ §7.1 P2 — Win32 compatibility layer   |
-| Per-user hive redirection (HKCU)    | ✅                           | ✅ per-user home dir                  | ✅ §1.3 HKU\{user} redirection           |
-| **Crash-safe WAJ in kernel space**  | ✅ (kernel-level)            | ❌ (user-space dconf)                 | ✅ **§4.3 — kernel WAJ, not user-space** |
-| **In-kernel typed value store**     | ✅                           | ❌                                    | ✅ **§1-2 — native, no daemon needed**   |
+| ----------------------------------- | ---------------------------- | -------------------------------------- | ---------------------------------------- |
+| Hierarchical key/value store        | ✅ Full tree                  | ✅ dconf (GNOME), ini files             | ✅ §1.1 HKLM/HKCU/HKCR tree              |
+| Typed values (DWORD, SZ, BINARY...) | ✅ Full Win32 types           | ⚠️ Only strings (dconf has GVariant)   | ✅ §1.2 All REG_* types                   |
+| Predefined root keys                | ✅ HKLM, HKCU, HKCR, HKU     | ❌ No concept                           | ✅ §1.3 Same root keys                    |
+| Win32 API (`RegOpenKeyEx`...)       | ✅ Native                     | ❌                                      | ✅ §2 Complete native API                 |
+| Symbolic link keys (`REG_LINK`)     | ✅                            | ❌                                      | ✅ §1.2                                   |
+| Change notifications                | ✅ `RegNotifyChangeKeyValue`  | ⚠️ inotify on ini files                | ⬜ §5.1 P2                                |
+| Persistent binary hive files        | ✅ `.hive` format             | ✅ dconf binary db                      | ✅ §4.1–4.2                               |
+| Crash-safe journaling               | ✅ Transaction log            | ⚠️ No fsync guarantee on dconf         | ✅ §4.3 `.hive.log` WAJ                   |
+| User-mode access syscalls           | ✅ advapi32.dll               | ✅ libdconf/gsettings                   | ⬜ §6.1 P2                                |
+| `regedit` shell inspection          | ✅ GUI regedit.exe            | ✅ `dconf-editor` (GNOME)               | ⬜ §8.1 P2 — CLI + subcommands            |
+| advapi32.dll stubs (Win32 compat)   | ✅ Native                     | ❌                                      | ⬜ §7.1 P2 — Win32 compatibility layer    |
+| Per-user hive redirection (HKCU)    | ✅                            | ✅ per-user home dir                    | ✅ §1.3 HKU\{user} redirection            |
+| **Crash-safe WAJ in kernel space**  | ✅ (kernel-level)             | ❌ (user-space dconf)                   | ✅ **§4.3 — kernel WAJ, not user-space**  |
+| **In-kernel typed value store**     | ✅                            | ❌                                      | ✅ **§1-2 — native, no daemon needed**    |
+| **Static pool allocation**          | ❌ Dynamic allocation          | ❌ Dynamic allocation                    | ✅ **§1.1 — zero heap pressure** 🚀       |
+
+> **After P0–P1 items (✅):** Impossible OS matches Windows feature-for-feature on core registry,
+> API, persistence, and crash safety. Exceeds Linux by having a native in-kernel typed store.
+> **After P2 items:** Full parity with Windows (change notifications, user-mode access, regedit).
+> **After P4 items:** Performance-optimized with mmap and B-tree (Windows NT hive compat).
