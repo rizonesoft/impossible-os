@@ -32,16 +32,16 @@ The primary channel is conventionally mapped to I/O ports `0x1F0` through `0x1F7
 
 #### Table 1: Legacy PATA Task File Register Mappings
 
-| I/O Port Offset | Register Name (Read) | Register Name (Write) | ATAPI Function |
-|-----------------|---------------------|----------------------|----------------|
-| `0x00` | Data Register | Data Register | 16-bit port for transmitting the SCSI CDB and reading payload data |
-| `0x01` | Error Register | Features Register | Flags for ATAPI DMA (`0x01`) or PIO (`0x00`) execution mode |
-| `0x02` | Sector Count | Sector Count | Used in ATAPI to report interrupt reason (C/D, I/O, REL bits) |
-| `0x03` | LBA Low | LBA Low | Unused in ATAPI packet phase |
-| `0x04` | LBA Mid | LBA Mid | Contains the ATAPI byte count limit (Low Byte) |
-| `0x05` | LBA High | LBA High | Contains the ATAPI byte count limit (High Byte) |
-| `0x06` | Drive / Head | Drive / Head | Selects Master/Slave and LBA addressing mode |
-| `0x07` | Status Register | Command Register | Reads device readiness (BSY, DRQ) / Writes the `0xA0` command |
+| I/O Port Offset | Register Name (Read) | Register Name (Write) | ATAPI Function                                                    |
+| --------------- | -------------------- | --------------------- | ----------------------------------------------------------------- |
+| `0x00`          | Data Register        | Data Register         | 16-bit port for transmitting the SCSI CDB and reading payload data |
+| `0x01`          | Error Register       | Features Register     | Flags for ATAPI DMA (`0x01`) or PIO (`0x00`) execution mode       |
+| `0x02`          | Sector Count         | Sector Count          | Used in ATAPI to report interrupt reason (C/D, I/O, REL bits)     |
+| `0x03`          | LBA Low              | LBA Low               | Unused in ATAPI packet phase                                      |
+| `0x04`          | LBA Mid              | LBA Mid               | Contains the ATAPI byte count limit (Low Byte)                    |
+| `0x05`          | LBA High             | LBA High              | Contains the ATAPI byte count limit (High Byte)                   |
+| `0x06`          | Drive / Head         | Drive / Head          | Selects Master/Slave and LBA addressing mode                      |
+| `0x07`          | Status Register      | Command Register      | Reads device readiness (BSY, DRQ) / Writes the `0xA0` command     |
 
 Because PATA operates on a synchronous parallel bus without hardware-level Native Command Queuing (NCQ), the CPU is heavily burdened with managing the synchronous transfer of data. The kernel must often rely on **Programmed I/O (PIO)**, which stalls the processor while reading words from the data port, or configure a **Direct Memory Access (DMA) Bus Master** interface to offload the transfer.
 
@@ -70,10 +70,10 @@ The evaluation of this hardware signature is the **only standardized, safe metho
 
 The operating system must read the registers and check against the following known signatures:
 
-| Device Type | Sector Count | LBA Low | LBA Mid | LBA High |
-|-------------|-------------|---------|---------|----------|
-| **ATA** (Magnetic Hard Disk) | `0x01` | `0x01` | `0x00` | `0x00` |
-| **ATAPI** (Optical/Tape) | `0x01` | `0x01` | `0x14` | `0xEB` |
+| Device Type                    | Sector Count | LBA Low | LBA Mid | LBA High |
+| ------------------------------ | ------------ | ------- | ------- | -------- |
+| **ATA** (Magnetic Hard Disk)   | `0x01`       | `0x01`  | `0x00`  | `0x00`   |
+| **ATAPI** (Optical/Tape)       | `0x01`       | `0x01`  | `0x14`  | `0xEB`   |
 
 > [!NOTE]
 > The presence of the `0x14` and `0xEB` byte values in the mid and high cylinder registers indicates that the device supports the Packet Interface. These specific "magic numbers" were historically chosen by the committee to ensure that older, non-ATAPI-aware BIOS implementations would recognize the values as an invalid cylinder geometry and safely abort the boot attempt, preventing the BIOS from treating a CD-ROM as a magnetic boot disk.
@@ -99,12 +99,13 @@ The 512-byte response contains a wealth of configuration data. For the purposes 
 
 The most crucial piece of information for ATAPI driver configuration is located in **Word 0 (General Configuration)** of the returned data. This 16-bit word is a complex bitfield containing several vital parameters that dictate how the OS must formulate its packets:
 
-| Bit Range | Field | Description |
-|-----------|-------|-------------|
-| **15–14** | Protocol Type | `10b` explicitly confirms the device is an ATAPI device |
-| **12–8** | Device Type | SCSI peripheral type: `0x05` = CD-ROM/DVD-ROM, `0x00` = direct-access, `0x01` = sequential-access tape |
-| **6–5** | DRQ Timing | DRQ assertion behavior: immediate (accelerated) vs. microprocessor delay |
-| **1–0** | Command Packet Size | `00b` = 12-byte packet, `01b` = 16-byte packet. Almost all modern CD/DVD devices use 12-byte |
+| Bit Range | Field               | Description                                                                                            |
+| --------- | ------------------- | ------------------------------------------------------------------------------------------------------ |
+| **15–14** | Protocol Type       | `10b` explicitly confirms the device is an ATAPI device                                                |
+| **12–8**  | Device Type         | SCSI peripheral type: `0x05` = CD-ROM/DVD-ROM, `0x00` = direct-access, `0x01` = sequential-access tape |
+| **7**     | Removable Media     | `1` = device has removable media                                                                       |
+| **6–5**   | DRQ Timing          | DRQ assertion behavior: immediate (accelerated) vs. microprocessor delay                               |
+| **1–0**   | Command Packet Size | `00b` = 12-byte packet, `01b` = 16-byte packet. Almost all modern CD/DVD devices use 12-byte           |
 
 #### 4.1.2 Capabilities and DMA Modes (Words 49, 63, 88)
 
@@ -112,15 +113,15 @@ Beyond the general configuration, the driver must evaluate the drive's timing an
 
 #### Table 2: Key IDENTIFY PACKET DEVICE Data Fields
 
-| Identity Word | Data Field | Critical Bitfields and OS Implications |
-|---------------|-----------|---------------------------------------|
-| Word 0 | General Configuration | Bits 12–8: SCSI Device Type. Bits 1–0: Packet Size (12 vs 16 bytes). Determines core driver logic |
-| Words 10–19 | Serial Number | 20 ASCII characters. Every pair of bytes is swapped and must be reversed by the OS |
-| Words 27–46 | Model Number | 40 ASCII characters (byte-swapped). Used by the OS for device nodes and user-space reporting |
-| Word 49 | Hardware Capabilities | Bit 11: IORDY supported. Bit 8: LBA supported. Bit 13: Standby timer supported |
-| Word 63 | Multiword DMA | Bits 2–0 indicate supported Multiword DMA modes. High bits indicate currently active mode |
-| Words 71–72 | Bus Release Timing | Typical time in microseconds a device needs to process an overlapped command before releasing the bus |
-| Word 88 | Ultra DMA (UDMA) | Bits 6–0 indicate supported Ultra DMA modes. High bits indicate currently selected UDMA mode |
+| Identity Word | Data Field            | Critical Bitfields and OS Implications                                                                |
+| ------------- | --------------------- | ----------------------------------------------------------------------------------------------------- |
+| Word 0        | General Configuration | Bits 12–8: SCSI Device Type. Bits 1–0: Packet Size (12 vs 16 bytes). Determines core driver logic     |
+| Words 10–19   | Serial Number         | 20 ASCII characters. Every pair of bytes is swapped and must be reversed by the OS                    |
+| Words 27–46   | Model Number          | 40 ASCII characters (byte-swapped). Used by the OS for device nodes and user-space reporting           |
+| Word 49       | Hardware Capabilities | Bit 13: Standby timer. Bit 11: IORDY. Bit 9: LBA. Bit 8: DMA                                         |
+| Word 63       | Multiword DMA         | Bits 2–0 indicate supported Multiword DMA modes. High bits indicate currently active mode             |
+| Words 71–72   | Bus Release Timing    | Typical time in microseconds a device needs to process an overlapped command before releasing the bus  |
+| Word 88       | Ultra DMA (UDMA)      | Bits 6–0 indicate supported Ultra DMA modes. High bits indicate currently selected UDMA mode          |
 
 ---
 
@@ -213,12 +214,12 @@ Under AHCI, the Host Bus Adapter (HBA) **automates the entire ATAPI state machin
 
 AHCI manages data movement through a tiered hierarchy of contiguous physical memory structures mapped into RAM:
 
-| Structure | Description |
-|-----------|-------------|
-| **Port Registers** | Global registers mapped via the ABAR (AHCI Base Address) containing port-specific controls like `PxCLB` (Command List Base Address) and `PxCI` (Command Issue) |
-| **Command List** | An array of **32 slots** per port. Each slot holds an `HBA_CMD_HEADER` (32 bytes) describing the pending transaction |
-| **Command Table** (`HBA_CMD_TBL`) | Pointed to by the Command Header, must be aligned to a **128-byte cache line** and contains the actual command parameters and packet data |
-| **PRDT** | Attached to the tail of the Command Table, detailing the system memory buffers for the incoming or outgoing data payload |
+| Structure                        | Description                                                                                                                                                   |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Port Registers**               | Global registers mapped via the ABAR (AHCI Base Address) containing port-specific controls like `PxCLB` (Command List Base Address) and `PxCI` (Command Issue) |
+| **Command List**                 | An array of **32 slots** per port. Each slot holds an `HBA_CMD_HEADER` (32 bytes) describing the pending transaction                                          |
+| **Command Table** (`HBA_CMD_TBL`) | Pointed to by the Command Header, must be aligned to a **128-byte boundary** and contains the actual command parameters and packet data                       |
+| **PRDT**                         | Attached to the tail of the Command Table, detailing the system memory buffers for the incoming or outgoing data payload                                       |
 
 ### 6.2 Formulating an ATAPI Request via AHCI
 
@@ -316,16 +317,16 @@ CDB Format (12 bytes, padded):
 
 Optical media uniquely relies on a **Table of Contents (TOC)** to dictate session boundaries, multi-session offsets, and audio track metadata.
 
-| Command | OpCode | Purpose |
-|---------|--------|---------|
-| **READ TOC** | `0x43` | Identify multi-session CDs and extract the LBA of specific tracks. Format field dictates track number vs. MSF output |
-| **START STOP UNIT** | `0x1B` | Spin up the drive, or eject the tray when `LOEJ` (Load/Eject) bit is set |
-| **PREVENT ALLOW MEDIUM REMOVAL** | `0x1E` | Lock the tray to prevent user interference during a read operation |
-| **TEST UNIT READY** | `0x00` | Check if the device is ready to accept commands (media present and spun up) |
-| **MODE SENSE (10)** | `0x5A` | Read current device operation parameters and page data |
-| **GET CONFIGURATION** | `0x46` | Query supported feature profiles (CD-ROM, CD-R, DVD-ROM, BD-R, etc.) |
-| **GET EVENT STATUS NOTIFICATION** | `0x4A` | Asynchronous media change notification (polled mode) |
-| **READ DISC INFORMATION** | `0x51` | Query disc status, session count, and recording state |
+| Command                            | OpCode | Purpose                                                                                              |
+| ---------------------------------- | ------ | ---------------------------------------------------------------------------------------------------- |
+| **READ TOC**                       | `0x43` | Identify multi-session CDs and extract the LBA of specific tracks. Format field dictates track vs MSF |
+| **START STOP UNIT**                | `0x1B` | Spin up the drive, or eject the tray when `LOEJ` (Load/Eject) bit is set                             |
+| **PREVENT ALLOW MEDIUM REMOVAL**   | `0x1E` | Lock the tray to prevent user interference during a read operation                                    |
+| **TEST UNIT READY**                | `0x00` | Check if the device is ready to accept commands (media present and spun up)                           |
+| **MODE SENSE (10)**                | `0x5A` | Read current device operation parameters and page data                                               |
+| **GET CONFIGURATION**              | `0x46` | Query supported feature profiles (CD-ROM, CD-R, DVD-ROM, BD-R, etc.)                                 |
+| **GET EVENT STATUS NOTIFICATION**  | `0x4A` | Asynchronous media change notification (polled mode)                                                 |
+| **READ DISC INFORMATION**          | `0x51` | Query disc status, session count, and recording state                                                |
 
 ---
 
@@ -363,18 +364,18 @@ The returned 18-byte buffer contains a hierarchical explanation of the fault. Th
 
 #### Table 3: Common SCSI Sense Keys and ASC/ASCQ Values
 
-| Sense Key | Key Definition | ASC/ASCQ | Description |
-|-----------|---------------|----------|-------------|
-| `0x00` | No Sense | `0x00`/`0x00` | No error. Command completed successfully |
-| `0x02` | Not Ready | `0x3A`/`0x00` | **Medium Not Present.** No disc is in the tray |
-| `0x02` | Not Ready | `0x04`/`0x01` | **Logical Unit is in process of becoming ready.** Disk is spinning up |
-| `0x03` | Medium Error | Various | Non-recoverable flaw: scratched media or unreadable sector |
-| `0x04` | Hardware Error | Various | Internal electronics failure, interface parity error, or mechanical failure |
-| `0x05` | Illegal Request | `0x20`/`0x00` | **Invalid command operation code.** Unsupported SCSI command |
-| `0x05` | Illegal Request | `0x24`/`0x00` | **Invalid field in CDB.** Malformed command parameter |
-| `0x06` | Unit Attention | `0x28`/`0x00` | **Not Ready to Ready Transition (Media Changed).** User swapped the disk |
-| `0x06` | Unit Attention | `0x29`/`0x00` | **Power on, reset, or bus device reset occurred** |
-| `0x0B` | Aborted Command | Various | Command aborted due to parity error, CRC mismatch, or protocol violation |
+| Sense Key | Key Definition  | ASC/ASCQ      | Description                                                                      |
+| --------- | --------------- | ------------- | -------------------------------------------------------------------------------- |
+| `0x00`    | No Sense        | `0x00`/`0x00` | No error. Command completed successfully                                         |
+| `0x02`    | Not Ready       | `0x3A`/`0x00` | **Medium Not Present.** No disc is in the tray                                   |
+| `0x02`    | Not Ready       | `0x04`/`0x01` | **Logical Unit is in process of becoming ready.** Disk is spinning up            |
+| `0x03`    | Medium Error    | Various       | Non-recoverable flaw: scratched media or unreadable sector                       |
+| `0x04`    | Hardware Error  | Various       | Internal electronics failure, interface parity error, or mechanical failure       |
+| `0x05`    | Illegal Request | `0x20`/`0x00` | **Invalid command operation code.** Unsupported SCSI command                     |
+| `0x05`    | Illegal Request | `0x24`/`0x00` | **Invalid field in CDB.** Malformed command parameter                            |
+| `0x06`    | Unit Attention  | `0x28`/`0x00` | **Not Ready to Ready Transition (Media Changed).** User swapped the disk         |
+| `0x06`    | Unit Attention  | `0x29`/`0x00` | **Power on, reset, or bus device reset occurred**                                |
+| `0x0B`    | Aborted Command | Various       | Command aborted due to parity error, CRC mismatch, or protocol violation         |
 
 > [!IMPORTANT]
 > Catching the **Unit Attention (`0x06`)** condition is vital. It alerts the kernel that the media has been changed and the file system cache **must be invalidated**. Failure to handle this condition causes stale data reads and potential file system corruption.
@@ -428,13 +429,13 @@ For legacy PIO and DMA implementations, the driver must rely on the INTRQ hardwa
 
 The ATAPI driver provides raw block-level access to the optical media. Above this layer, the kernel must implement the appropriate file system drivers to interpret the on-disc data structures:
 
-| File System | Standard | Primary Use |
-|-------------|----------|-------------|
-| **ISO 9660** | ECMA-119 | Standard CD-ROM data format. Read-only, 8-level directory depth |
-| **Joliet** | Microsoft Extension | Unicode filename support (up to 64 characters) on ISO 9660 |
-| **Rock Ridge** | IEEE P1282 | POSIX attribute support (permissions, symlinks, deep paths) on ISO 9660 |
-| **UDF** | ECMA-167 / ISO 13346 | Universal Disk Format. Required for DVD-ROM, BD-ROM, and packet-written CD-RW |
-| **El Torito** | Phoenix/IBM | Bootable CD/DVD specification. Defines boot catalog and boot image entries |
+| File System    | Standard             | Primary Use                                                                   |
+| -------------- | -------------------- | ----------------------------------------------------------------------------- |
+| **ISO 9660**   | ECMA-119             | Standard CD-ROM data format. Read-only, 8-level directory depth               |
+| **Joliet**     | Microsoft Extension  | Unicode filename support (up to 64 characters) on ISO 9660                    |
+| **Rock Ridge** | IEEE P1282           | POSIX attribute support (permissions, symlinks, deep paths) on ISO 9660       |
+| **UDF**        | ECMA-167 / ISO 13346 | Universal Disk Format. Required for DVD-ROM, BD-ROM, and packet-written CD-RW |
+| **El Torito**  | Phoenix/IBM          | Bootable CD/DVD specification. Defines boot catalog and boot image entries    |
 
 ---
 
@@ -442,32 +443,32 @@ The ATAPI driver provides raw block-level access to the optical media. Above thi
 
 For reference, the following table lists all SCSI MMC commands commonly required for a production-grade optical drive stack:
 
-| OpCode | Command Name | CDB Size | Direction | Description |
-|--------|-------------|----------|-----------|-------------|
-| `0x00` | TEST UNIT READY | 6 (+pad) | None | Check if device is ready |
-| `0x03` | REQUEST SENSE | 6 (+pad) | Data-In | Retrieve error diagnostics after CHECK CONDITION |
-| `0x12` | INQUIRY | 6 (+pad) | Data-In | Device identification and capabilities |
-| `0x1B` | START STOP UNIT | 6 (+pad) | None | Spin up, spin down, eject, or load tray |
-| `0x1E` | PREVENT ALLOW MEDIUM REMOVAL | 6 (+pad) | None | Lock or unlock the tray |
-| `0x25` | READ CAPACITY (10) | 10 (+pad) | Data-In | Get last LBA and block size |
-| `0x28` | READ (10) | 10 (+pad) | Data-In | Read data blocks from media |
-| `0x2B` | SEEK (10) | 10 (+pad) | None | Move the read head to a specific LBA |
-| `0x42` | READ SUB-CHANNEL | 10 (+pad) | Data-In | Audio playback status and CD-TEXT |
-| `0x43` | READ TOC/PMA/ATIP | 10 (+pad) | Data-In | Table of Contents, session info |
-| `0x45` | PLAY AUDIO (10) | 10 (+pad) | None | Begin audio playback from LBA |
-| `0x46` | GET CONFIGURATION | 10 (+pad) | Data-In | Query feature profiles |
-| `0x47` | PLAY AUDIO MSF | 10 (+pad) | None | Audio playback from MSF address |
-| `0x4A` | GET EVENT STATUS NOTIFICATION | 10 (+pad) | Data-In | Asynchronous event polling (media change) |
-| `0x4B` | PAUSE/RESUME | 10 (+pad) | None | Pause or resume audio playback |
-| `0x51` | READ DISC INFORMATION | 10 (+pad) | Data-In | Disc status, session count, erasable flag |
-| `0x52` | READ TRACK INFORMATION | 10 (+pad) | Data-In | Track-specific metadata |
-| `0x55` | MODE SELECT (10) | 10 (+pad) | Data-Out | Set device operating parameters |
-| `0x5A` | MODE SENSE (10) | 10 (+pad) | Data-In | Read current device parameters |
-| `0xA8` | READ (12) | 12 | Data-In | Extended read with 32-bit transfer length |
-| `0xAD` | READ DVD STRUCTURE | 12 | Data-In | DVD-specific metadata (CSS keys, layer info) |
-| `0xBB` | SET CD SPEED | 12 | None | Set read/write speed (RPM control) |
-| `0xBE` | READ CD | 12 | Data-In | Raw CD read with sector type selection (audio, mode1, mode2) |
-| `0xBF` | SEND DVD STRUCTURE | 12 | Data-Out | DVD authentication handshake |
+| OpCode | Command Name                   | CDB Size  | Direction | Description                                                   |
+| ------ | ------------------------------ | --------- | --------- | ------------------------------------------------------------- |
+| `0x00` | TEST UNIT READY                | 6 (+pad)  | None      | Check if device is ready                                      |
+| `0x03` | REQUEST SENSE                  | 6 (+pad)  | Data-In   | Retrieve error diagnostics after CHECK CONDITION              |
+| `0x12` | INQUIRY                        | 6 (+pad)  | Data-In   | Device identification and capabilities                        |
+| `0x1B` | START STOP UNIT                | 6 (+pad)  | None      | Spin up, spin down, eject, or load tray                       |
+| `0x1E` | PREVENT ALLOW MEDIUM REMOVAL   | 6 (+pad)  | None      | Lock or unlock the tray                                       |
+| `0x25` | READ CAPACITY (10)             | 10 (+pad) | Data-In   | Get last LBA and block size                                   |
+| `0x28` | READ (10)                      | 10 (+pad) | Data-In   | Read data blocks from media                                   |
+| `0x2B` | SEEK (10)                      | 10 (+pad) | None      | Move the read head to a specific LBA                          |
+| `0x42` | READ SUB-CHANNEL               | 10 (+pad) | Data-In   | Audio playback status and CD-TEXT                              |
+| `0x43` | READ TOC/PMA/ATIP              | 10 (+pad) | Data-In   | Table of Contents, session info                               |
+| `0x45` | PLAY AUDIO (10)                | 10 (+pad) | None      | Begin audio playback from LBA                                 |
+| `0x46` | GET CONFIGURATION              | 10 (+pad) | Data-In   | Query feature profiles                                        |
+| `0x47` | PLAY AUDIO MSF                 | 10 (+pad) | None      | Audio playback from MSF address                               |
+| `0x4A` | GET EVENT STATUS NOTIFICATION  | 10 (+pad) | Data-In   | Asynchronous event polling (media change)                     |
+| `0x4B` | PAUSE/RESUME                   | 10 (+pad) | None      | Pause or resume audio playback                                |
+| `0x51` | READ DISC INFORMATION          | 10 (+pad) | Data-In   | Disc status, session count, erasable flag                     |
+| `0x52` | READ TRACK INFORMATION         | 10 (+pad) | Data-In   | Track-specific metadata                                       |
+| `0x55` | MODE SELECT (10)               | 10 (+pad) | Data-Out  | Set device operating parameters                               |
+| `0x5A` | MODE SENSE (10)                | 10 (+pad) | Data-In   | Read current device parameters                                |
+| `0xA8` | READ (12)                      | 12        | Data-In   | Extended read with 32-bit transfer length                     |
+| `0xAD` | READ DVD STRUCTURE             | 12        | Data-In   | DVD-specific metadata (CSS keys, layer info)                  |
+| `0xBB` | SET CD SPEED                   | 12        | None      | Set read/write speed (RPM control)                            |
+| `0xBE` | READ CD                        | 12        | Data-In   | Raw CD read with sector type selection (audio, mode1, mode2)  |
+| `0xBF` | SEND DVD STRUCTURE             | 12        | Data-Out  | DVD authentication handshake                                  |
 
 ---
 
