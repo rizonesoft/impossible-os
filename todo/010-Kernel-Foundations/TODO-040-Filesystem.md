@@ -413,9 +413,9 @@ graph TD
 
 ---
 
-## 5. Agent-Recommended Additions
+## 5. Storage Tools & Utilities
 
-> Items not in the research files but critical for a complete storage subsystem.
+> Disk management utilities, filesystem integrity tools, and performance diagnostics.
 
 ### 5.1 Disk Cache (Buffer Cache)
 
