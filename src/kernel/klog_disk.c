@@ -415,23 +415,55 @@ void klog_disk_flush(void)
             logfile = vfs_open("C:\\Impossible\\System\\Logs\\kernel.log",
                                VFS_O_WRITE);
             if (logfile) {
-                uint32_t write_offset = (uint32_t)logfile->size;
+                /* Batch all entries into a single write to avoid
+                 * per-entry AHCI DMA overhead (was causing 19s stall) */
+                uint32_t batch_pages = 8;  /* 32 KB batch buffer */
+                uint8_t *batch = (uint8_t *)(uintptr_t)
+                    pmm_alloc_contiguous(batch_pages);
 
-                for (i = ixfs_flush_index; i < ring_count; i++) {
-                    uint32_t idx;
-                    if (ring_count < KLOG_RING_SIZE) {
-                        idx = i;
-                    } else {
-                        idx = (ring_head + (i - (ring_count - KLOG_RING_SIZE)))
-                              % KLOG_RING_SIZE;
+                if (batch) {
+                    uint32_t batch_size = batch_pages * 4096;
+                    uint32_t batch_pos = 0;
+                    uint32_t write_offset = (uint32_t)logfile->size;
+
+                    for (i = ixfs_flush_index; i < ring_count; i++) {
+                        uint32_t idx;
+                        if (ring_count < KLOG_RING_SIZE) {
+                            idx = i;
+                        } else {
+                            idx = (ring_head +
+                                   (i - (ring_count - KLOG_RING_SIZE)))
+                                  % KLOG_RING_SIZE;
+                        }
+
+                        char line[256];
+                        int pos = format_entry(&ring[idx], line, 256);
+
+                        /* Flush batch if it would overflow */
+                        if (batch_pos + (uint32_t)pos > batch_size - 1) {
+                            vfs_write(logfile, write_offset, batch_pos,
+                                      batch);
+                            write_offset += batch_pos;
+                            batch_pos = 0;
+                        }
+
+                        {
+                            int k;
+                            for (k = 0; k < pos; k++)
+                                batch[batch_pos++] = (uint8_t)line[k];
+                        }
                     }
 
-                    char line[256];
-                    int pos = format_entry(&ring[idx], line, 256);
+                    /* Final flush of remaining data */
+                    if (batch_pos > 0) {
+                        vfs_write(logfile, write_offset, batch_pos, batch);
+                    }
 
-                    vfs_write(logfile, write_offset, (uint32_t)pos,
-                              (const uint8_t *)line);
-                    write_offset += (uint32_t)pos;
+                    {
+                        uint32_t pg;
+                        for (pg = 0; pg < batch_pages; pg++)
+                            pmm_free_frame((uintptr_t)batch + pg * 4096);
+                    }
                 }
 
                 ixfs_flush_index = ring_count;

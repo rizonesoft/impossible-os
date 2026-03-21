@@ -164,10 +164,38 @@ int hv_detect(void)
 
 /* ---- §2. Hypercall Page Setup ---- */
 
+/* Status codes from the hypervisor */
+#define HV_STATUS_SUCCESS                   0x0000
+#define HV_STATUS_INVALID_HYPERCALL_CODE    0x0002
+#define HV_STATUS_INVALID_PARAMETER         0x0005
+
+/* Raw hypercall — returns status code (lower 16 bits of RAX).
+ * Used for smoke test before full VMBus init. */
+static uint16_t hv_do_hypercall_raw(uint64_t control, uint64_t input_gpa)
+{
+    uint64_t result;
+
+    if (!hypercall_page)
+        return 0xFFFF;
+
+    __asm__ volatile(
+        "mov %1, %%rcx\n\t"
+        "mov %2, %%rdx\n\t"
+        "call *%3\n\t"
+        "mov %%rax, %0\n\t"
+        : "=r"(result)
+        : "r"(control), "r"(input_gpa), "r"(hypercall_page)
+        : "rax", "rcx", "rdx", "r8", "memory"
+    );
+
+    return (uint16_t)(result & 0xFFFF);
+}
+
 static int hv_setup_hypercall(void)
 {
     uint64_t msr_val;
     uint64_t page_gpa;
+    uint16_t smoke_status;
 
     /* Step 1: Write guest OS identity (required before enabling hypercall page) */
     wrmsr(HV_X64_MSR_GUEST_OS_ID, HV_GUEST_OS_ID_IMPOSSIBLE);
@@ -195,6 +223,41 @@ static int hv_setup_hypercall(void)
 
     klog(LOG_INFO, "hyperv", "Hypercall page at 0x%x (enabled)",
          (uint64_t)page_gpa);
+
+    /* Step 5: Smoke test — try HvCallPostMessage (0x005C) with a
+     * minimal (intentionally invalid) input to verify the hypercall
+     * number is recognized. On real Hyper-V: returns 0x0005
+     * (HV_STATUS_INVALID_PARAMETER). On WHPX/KVM: returns 0x0002
+     * (HV_STATUS_INVALID_HYPERCALL_CODE) meaning VMBus hypercalls
+     * are not implemented by this hypervisor backend. */
+    {
+        /* Allocate a zeroed page for the hypercall input (must be page-aligned) */
+        void *smoke_input = (void *)(uintptr_t)pmm_alloc_contiguous(1);
+        if (!smoke_input) {
+            klog(LOG_WARN, "hyperv", "Smoke test skipped (no memory)");
+            return 0;  /* Proceed optimistically */
+        }
+        vmbus_memset(smoke_input, 0, 4096);
+
+        smoke_status = hv_do_hypercall_raw(0x005C,
+                                           (uint64_t)(uintptr_t)smoke_input);
+
+        pmm_free_frame((uintptr_t)smoke_input);
+    }
+
+    if (smoke_status == HV_STATUS_INVALID_HYPERCALL_CODE) {
+        klog(LOG_INFO, "hyperv",
+             "HvCallPostMessage not supported (status=0x%x) "
+             "— WHPX/KVM backend, skipping VMBus",
+             (uint64_t)smoke_status);
+        /* Clean up: disable hypercall page */
+        wrmsr(HV_X64_MSR_HYPERCALL, 0);
+        wrmsr(HV_X64_MSR_GUEST_OS_ID, 0);
+        return -1;
+    }
+
+    klog(LOG_DEBUG, "hyperv", "Hypercall smoke test OK (status=0x%x)",
+         (uint64_t)smoke_status);
     return 0;
 }
 
