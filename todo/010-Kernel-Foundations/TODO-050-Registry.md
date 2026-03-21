@@ -24,6 +24,7 @@
 > | `TODO-050.01-Registry-Engine.md`   | Core engine: `reg_key_t`, `reg_value_t`, `HKEY`, pools, value types, root keys |
 > | `TODO-050.02-Win32-Reg-API.md`     | Win32 API: key/value operations, enumeration, convenience helpers         |
 > | `TODO-050.03-Hive.md`             | Hive persistence: format, disk layout, crash-safe journaling              |
+> | `TODO-050.04-Notification.md`     | Change notifications: watchers, dispatch, coalescing, telemetry           |
 
 ### Dependency Graph
 
@@ -100,21 +101,13 @@ graph TD
 > All sections complete.
 
 ---
-## 5. Change Notifications
+## 4. Change Notifications
 
-### 5.1 Registry Watchers
-
-**Prompt:** Implement `RegNotifyChangeKeyValue` so applications can watch for registry changes without polling. This is how Windows apps detect settings changes in real time — for example, the desktop compositor watches `HKCU\Software\Impossible\Theme\DarkMode` and switches themes instantly. Internally, maintain a linked list of "watcher" structs, each containing the watched key path, filter flags (`REG_NOTIFY_CHANGE_NAME` for key add/delete, `REG_NOTIFY_CHANGE_LAST_SET` for value changes), and a callback function pointer. When `RegSetValueEx`, `RegCreateKeyEx`, or `RegDeleteKey` modifies a watched key, fire all matching watchers. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt that can be used for future correctness checks, run `bash scripts/build.sh clean`, and commit as `"registry: change notifications"`. Add notes, gotchas, and design decisions directly in this TODO section covering the watcher API, filter flags, and callback dispatch.
-
-- [ ] Define watcher struct (key path, filter, callback, user context)
-- [ ] Implement `RegNotifyChangeKeyValue(hKey, watchSubtree, filter, callback, ctx)`:
-  - [ ] `REG_NOTIFY_CHANGE_NAME` — fires on sub-key create/delete
-  - [ ] `REG_NOTIFY_CHANGE_LAST_SET` — fires on value change
-  - [ ] `watchSubtree` — also watch all descendant keys
-- [ ] Fire watchers from `RegSetValueEx`, `RegCreateKeyEx`, `RegDeleteKey`
-- [ ] `RegUnregisterNotify(watcherId)` — remove a watcher
-- [ ] Test: desktop theme change detected via watcher
-- [ ] Commit: `"registry: change notifications"`
+> **→ See [TODO-050.04-Notification.md](TODO-050-Registry/TODO-050.04-Notification.md)** ⬜
+>
+> Covers: §5.1 Watcher Data Structures, §5.2 RegNotifyChangeKeyValue, §5.3 Dispatch,
+> §5.4 Subtree Watching, §5.5 Lifecycle, §5.6 Batch Coalescing 🚀, §5.7 Telemetry 🚀.
+> Not yet started.
 
 ---
 
