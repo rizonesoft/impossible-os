@@ -7,8 +7,8 @@ description: How to implement a TODO section from start to commit
 // turbo-all
 
 ## Prerequisites
-- Read the UEFI bootloader skill (`.agent/skills/uefi-bootloader/SKILL.md`) if touching boot code
-- Read the TODO navigation skill (`.agent/skills/todo-system/SKILL.md`) for conventions
+- Review AGENTS.md Architecture section if touching boot code
+- Review AGENTS.md Development Roadmap section for TODO conventions
 
 ## Steps
 
@@ -23,11 +23,9 @@ description: How to implement a TODO section from start to commit
    - **Fast Mode** (code directly) for:
      - UI/UX iteration, bug fixes, documentation, asset loading
 
-4. **Implement the code** following the project rules:
-   - Compile with: `-Wall -Wextra -Werror -ffreestanding -nostdlib -nostdinc`
-   - Use `clang-19 --target=x86_64-elf` with `ld.lld-19`
-   - Use `kmalloc()` only for small bookkeeping (< 4 KB), `pmm_alloc_contiguous()` for everything else
-   - No angle-bracket headers (`<stdint.h>`, `<stddef.h>`, etc.) — use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`
+4. **Implement the code** following the project rules (see `.agents/rules/coding.md`):
+   - No angle-bracket headers — use `#include "kernel/types.h"`
+   - Use `pmm_alloc_contiguous()` for any buffer > 4 KB (never `kmalloc` for large data)
 
 5. **Build and test:**
    ```bash
