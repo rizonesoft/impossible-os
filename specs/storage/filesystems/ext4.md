@@ -86,30 +86,30 @@ Validation of the Superblock begins by verifying the magic signature, which is p
 
 ### Extended Superblock Fields (Revision 1+)
 
-| Offset (Hex) | Offset (Dec) | Size | Field Name | Description |
-|-------------|-------------|------|------------|-------------|
-| `0x54` | 84 | 4 | `s_first_ino` | First non-reserved inode (typically 11) |
-| `0x58` | 88 | 2 | `s_inode_size` | Inode size in bytes (128 for ext2/ext3, 256 for ext4) |
-| `0x5A` | 90 | 2 | `s_block_group_nr` | Block group number of this Superblock (for backups) |
-| `0x5C` | 92 | 4 | `s_feature_compat` | Compatible feature bitmask |
-| `0x60` | 96 | 4 | `s_feature_incompat` | Incompatible feature bitmask |
-| `0x64` | 100 | 4 | `s_feature_ro_compat` | Read-only compatible feature bitmask |
-| `0x68` | 104 | 16 | `s_uuid` | 128-bit filesystem UUID |
-| `0x78` | 120 | 16 | `s_volume_name` | Volume label (null-terminated) |
-| `0x88` | 136 | 64 | `s_last_mounted` | Last mount point path |
-| `0xC8` | 200 | 4 | `s_algorithm_usage_bitmap` | Compression algorithm bitmap |
-| `0xFE` | 254 | 2 | `s_desc_size` | Group descriptor size (32 or 64 bytes) |
-| `0x150` | 336 | 4 | `s_blocks_count_hi` | Total block count (upper 32 bits, 64-bit mode) |
-| `0x154` | 340 | 4 | `s_r_blocks_count_hi` | Reserved blocks (upper 32 bits) |
-| `0x158` | 344 | 4 | `s_free_blocks_count_hi` | Free blocks (upper 32 bits) |
-| `0x15C` | 348 | 2 | `s_min_extra_isize` | Minimum extra inode bytes required |
-| `0x15E` | 350 | 2 | `s_want_extra_isize` | Desired extra inode bytes |
-| `0x160` | 352 | 4 | `s_flags` | Miscellaneous flags |
-| `0x174` | 372 | 1 | `s_log_groups_per_flex` | Flex group size = `2 ^ s_log_groups_per_flex` |
-| `0x175` | 373 | 1 | `s_checksum_type` | Metadata checksum algorithm (1 = CRC32C) |
-| `0x178` | 376 | 8 | `s_kbytes_written` | KB written (lifetime) |
-| `0x270` | 624 | 4 | `s_checksum_seed` | CRC32C checksum seed (if `CSUM_SEED` feature set) |
-| `0x3FC` | 1020 | 4 | `s_checksum` | CRC32C checksum of the entire Superblock |
+| Offset (Hex) | Offset (Dec) | Size | Field Name               | Description                                              |
+| ------------ | ------------ | ---- | ------------------------ | -------------------------------------------------------- |
+| `0x54`       | 84           | 4    | `s_first_ino`            | First non-reserved inode (typically 11)                   |
+| `0x58`       | 88           | 2    | `s_inode_size`           | Inode size in bytes (128 for ext2/ext3, 256 for ext4)     |
+| `0x5A`       | 90           | 2    | `s_block_group_nr`       | Block group number of this Superblock (for backups)       |
+| `0x5C`       | 92           | 4    | `s_feature_compat`       | Compatible feature bitmask                                |
+| `0x60`       | 96           | 4    | `s_feature_incompat`     | Incompatible feature bitmask                              |
+| `0x64`       | 100          | 4    | `s_feature_ro_compat`    | Read-only compatible feature bitmask                      |
+| `0x68`       | 104          | 16   | `s_uuid`                 | 128-bit filesystem UUID                                   |
+| `0x78`       | 120          | 16   | `s_volume_name`          | Volume label (null-terminated)                            |
+| `0x88`       | 136          | 64   | `s_last_mounted`         | Last mount point path                                     |
+| `0xC8`       | 200          | 4    | `s_algorithm_usage_bitmap` | Compression algorithm bitmap                            |
+| `0xFE`       | 254          | 2    | `s_desc_size`            | Group descriptor size (32 or 64 bytes)                    |
+| `0x150`      | 336          | 4    | `s_blocks_count_hi`      | Total block count (upper 32 bits, 64-bit mode)            |
+| `0x154`      | 340          | 4    | `s_r_blocks_count_hi`    | Reserved blocks (upper 32 bits)                           |
+| `0x158`      | 344          | 4    | `s_free_blocks_count_hi` | Free blocks (upper 32 bits)                               |
+| `0x15C`      | 348          | 2    | `s_min_extra_isize`      | Minimum extra inode bytes required                        |
+| `0x15E`      | 350          | 2    | `s_want_extra_isize`     | Desired extra inode bytes                                 |
+| `0x160`      | 352          | 4    | `s_flags`                | Miscellaneous flags                                       |
+| `0x174`      | 372          | 1    | `s_log_groups_per_flex`  | Flex group size = `2 ^ s_log_groups_per_flex`             |
+| `0x175`      | 373          | 1    | `s_checksum_type`        | Metadata checksum algorithm (1 = CRC32C)                  |
+| `0x178`      | 376          | 8    | `s_kbytes_written`       | KB written (lifetime)                                     |
+| `0x270`      | 624          | 4    | `s_checksum_seed`        | CRC32C checksum seed (if `CSUM_SEED` feature set)         |
+| `0x3FC`      | 1020         | 4    | `s_checksum`             | CRC32C checksum of the entire Superblock                  |
 
 ### Block Size Calculation
 
@@ -146,59 +146,59 @@ The ext4 specification relies heavily on feature flags to maintain backward comp
 > [!CAUTION]
 > If a custom driver detects any set bit in `s_feature_incompat` that it does not explicitly support, the driver is **strictly forbidden** from mounting the filesystem. Attempting to interact with unsupported incompatible features will inevitably cause catastrophic data corruption.
 
-| Feature Flag | Hex Value | Description |
-|-------------|-----------|-------------|
-| `INCOMPAT_FILETYPE` | `0x0002` | Directory entries contain a file type byte. Allows `readdir` to identify file types without fetching individual inodes. |
-| `INCOMPAT_RECOVER` | `0x0004` | Filesystem needs journal recovery. |
-| `INCOMPAT_JOURNAL_DEV` | `0x0008` | Volume is a dedicated external journal device. |
-| `INCOMPAT_META_BG` | `0x0010` | Meta Block Group descriptor layout. |
-| `INCOMPAT_EXTENTS` | `0x0040` | File data mapped using hierarchical extent trees (not indirect block maps). **Mandatory for modern ext4.** |
-| `INCOMPAT_64BIT` | `0x0080` | 64-bit block numbers. Expands Superblock fields, descriptors, and journal tags. |
-| `INCOMPAT_MMP` | `0x0100` | Multiple Mount Protection — prevents concurrent RW mounts by independent nodes. |
-| `INCOMPAT_FLEX_BG` | `0x0200` | Flexible Block Groups — relocates bitmaps and inode tables for reduced seek latency. |
-| `INCOMPAT_EA_INODE` | `0x0400` | Extended attributes stored in dedicated hidden inodes when too large for a single block. |
-| `INCOMPAT_DIRDATA` | `0x1000` | Directory entries contain extra data. |
-| `INCOMPAT_CSUM_SEED` | `0x2000` | Checksum seed in Superblock — allows UUID changes without recalculating all checksums. |
-| `INCOMPAT_LARGEDIR` | `0x4000` | Directories support 3-level HTree depth (> 2 GB directory sizes). |
-| `INCOMPAT_INLINE_DATA` | `0x8000` | Small files store payload directly within the inode's `i_block` array. |
-| `INCOMPAT_ENCRYPT` | `0x10000` | Filesystem contains encrypted inodes. |
-| `INCOMPAT_CASEFOLD` | `0x20000` | Case-insensitive filename lookups. |
+| Feature Flag             | Hex Value  | Description                                                                         |
+| ------------------------ | ---------- | ----------------------------------------------------------------------------------- |
+| `INCOMPAT_FILETYPE`      | `0x0002`   | Directory entries contain a file type byte                                          |
+| `INCOMPAT_RECOVER`       | `0x0004`   | Filesystem needs journal recovery                                                   |
+| `INCOMPAT_JOURNAL_DEV`   | `0x0008`   | Volume is a dedicated external journal device                                       |
+| `INCOMPAT_META_BG`       | `0x0010`   | Meta Block Group descriptor layout                                                  |
+| `INCOMPAT_EXTENTS`       | `0x0040`   | Extent-based file data mapping. **Mandatory for modern ext4**                       |
+| `INCOMPAT_64BIT`         | `0x0080`   | 64-bit block numbers                                                                |
+| `INCOMPAT_MMP`           | `0x0100`   | Multiple Mount Protection                                                           |
+| `INCOMPAT_FLEX_BG`       | `0x0200`   | Flexible Block Groups                                                               |
+| `INCOMPAT_EA_INODE`      | `0x0400`   | Extended attributes stored in dedicated inodes                                      |
+| `INCOMPAT_DIRDATA`       | `0x1000`   | Directory entries contain extra data                                                |
+| `INCOMPAT_CSUM_SEED`     | `0x2000`   | Checksum seed in Superblock — allows UUID changes without recalculating checksums   |
+| `INCOMPAT_LARGEDIR`      | `0x4000`   | Directories support 3-level HTree depth (> 2 GiB directory sizes)                   |
+| `INCOMPAT_INLINE_DATA`   | `0x8000`   | Small files store payload directly within the inode's `i_block` array               |
+| `INCOMPAT_ENCRYPT`       | `0x10000`  | Filesystem contains encrypted inodes                                                |
+| `INCOMPAT_CASEFOLD`      | `0x20000`  | Case-insensitive filename lookups                                                   |
 
 ### Read-Only Compatible Feature Flags
 
 If unrecognized flags are present in `s_feature_ro_compat`, the OS may mount the filesystem but must enforce **read-only** mode:
 
-| Feature Flag | Hex Value | Description |
-|-------------|-----------|-------------|
-| `RO_COMPAT_SPARSE_SUPER` | `0x0001` | Sparse superblock backups (groups 0, 1, powers of 3/5/7) |
-| `RO_COMPAT_LARGE_FILE` | `0x0002` | Files larger than 2 GiB exist |
-| `RO_COMPAT_BTREE_DIR` | `0x0004` | (Unused) |
-| `RO_COMPAT_HUGE_FILE` | `0x0008` | File sizes in units of filesystem blocks (not 512-byte sectors) |
-| `RO_COMPAT_GDT_CSUM` | `0x0010` | Group descriptor checksums (ext3-style, not CRC32C) |
-| `RO_COMPAT_DIR_NLINK` | `0x0020` | Directories with > 64,999 subdirectories |
-| `RO_COMPAT_EXTRA_ISIZE` | `0x0040` | Inodes have extended fields (`i_extra_isize`) |
-| `RO_COMPAT_HAS_SNAPSHOT` | `0x0080` | Snapshot support |
-| `RO_COMPAT_QUOTA` | `0x0100` | Quota support |
-| `RO_COMPAT_BIGALLOC` | `0x0200` | Bitmap tracks clusters instead of blocks |
-| `RO_COMPAT_METADATA_CSUM` | `0x0400` | **Metadata checksumming (CRC32C)** — critical for data integrity |
-| `RO_COMPAT_READONLY` | `0x1000` | Filesystem is read-only |
-| `RO_COMPAT_PROJECT` | `0x2000` | Project quota support |
-| `RO_COMPAT_VERITY` | `0x8000` | fs-verity support |
+| Feature Flag                | Hex Value | Description                                                      |
+| --------------------------- | --------- | ---------------------------------------------------------------- |
+| `RO_COMPAT_SPARSE_SUPER`   | `0x0001`  | Sparse superblock backups (groups 0, powers of 3/5/7)            |
+| `RO_COMPAT_LARGE_FILE`     | `0x0002`  | Files larger than 2 GiB exist                                    |
+| `RO_COMPAT_BTREE_DIR`      | `0x0004`  | (Unused)                                                         |
+| `RO_COMPAT_HUGE_FILE`      | `0x0008`  | File sizes in units of filesystem blocks (not 512-byte sectors)  |
+| `RO_COMPAT_GDT_CSUM`       | `0x0010`  | Group descriptor checksums (ext3-style, not CRC32C)              |
+| `RO_COMPAT_DIR_NLINK`      | `0x0020`  | Directories with > 64,999 subdirectories                         |
+| `RO_COMPAT_EXTRA_ISIZE`    | `0x0040`  | Inodes have extended fields (`i_extra_isize`)                    |
+| `RO_COMPAT_HAS_SNAPSHOT`   | `0x0080`  | Snapshot support                                                 |
+| `RO_COMPAT_QUOTA`          | `0x0100`  | Quota support                                                    |
+| `RO_COMPAT_BIGALLOC`       | `0x0200`  | Bitmap tracks clusters instead of blocks                         |
+| `RO_COMPAT_METADATA_CSUM`  | `0x0400`  | **Metadata checksumming (CRC32C)**                               |
+| `RO_COMPAT_READONLY`       | `0x1000`  | Filesystem is read-only                                          |
+| `RO_COMPAT_PROJECT`        | `0x2000`  | Project quota support                                            |
+| `RO_COMPAT_VERITY`         | `0x8000`  | fs-verity support                                                |
 
 ### Compatible Feature Flags
 
-| Feature Flag | Hex Value | Description |
-|-------------|-----------|-------------|
-| `COMPAT_DIR_PREALLOC` | `0x0001` | Directory preallocation |
-| `COMPAT_IMAGIC_INODES` | `0x0002` | AFS server inodes |
-| `COMPAT_HAS_JOURNAL` | `0x0004` | **Filesystem has a JBD2 journal** |
-| `COMPAT_EXT_ATTR` | `0x0008` | Extended attributes supported |
-| `COMPAT_RESIZE_INODE` | `0x0010` | Online resize reserved GDT blocks |
-| `COMPAT_DIR_INDEX` | `0x0020` | HTree directory indexing |
-| `COMPAT_SPARSE_SUPER2` | `0x0200` | Only two superblock backups (at groups specified in Superblock) |
-| `COMPAT_FAST_COMMIT` | `0x0400` | JBD2 fast commits |
-| `COMPAT_STABLE_INODES` | `0x0800` | Stable inode numbers (encryption) |
-| `COMPAT_ORPHAN_FILE` | `0x1000` | Orphan file for tracking orphaned inodes |
+| Feature Flag              | Hex Value | Description                                                       |
+| ------------------------- | --------- | ----------------------------------------------------------------- |
+| `COMPAT_DIR_PREALLOC`     | `0x0001`  | Directory preallocation                                           |
+| `COMPAT_IMAGIC_INODES`    | `0x0002`  | AFS server inodes                                                 |
+| `COMPAT_HAS_JOURNAL`      | `0x0004`  | **Filesystem has a JBD2 journal**                                 |
+| `COMPAT_EXT_ATTR`         | `0x0008`  | Extended attributes supported                                     |
+| `COMPAT_RESIZE_INODE`     | `0x0010`  | Online resize reserved GDT blocks                                 |
+| `COMPAT_DIR_INDEX`        | `0x0020`  | HTree directory indexing                                          |
+| `COMPAT_SPARSE_SUPER2`    | `0x0200`  | Only two superblock backups (at groups specified in Superblock)    |
+| `COMPAT_FAST_COMMIT`      | `0x0400`  | JBD2 fast commits                                                 |
+| `COMPAT_STABLE_INODES`    | `0x0800`  | Stable inode numbers (encryption)                                 |
+| `COMPAT_ORPHAN_FILE`      | `0x1000`  | Orphan file for tracking orphaned inodes                          |
 
 ---
 
