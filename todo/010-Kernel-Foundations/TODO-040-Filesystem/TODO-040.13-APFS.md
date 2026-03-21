@@ -706,32 +706,35 @@ graph TD
 
 ## Priority Order
 
-| ⭐ | Priority | Section                        | Description                                                        |
-| -- | -------- | ------------------------------ | ------------------------------------------------------------------ |
-| 💎 | 🔴 P0   | 1.1 Container Superblock       | Foundation — parse block 0 bootstrap                               |
-| 💎 | 🔴 P0   | 1.2 Fletcher-64 Checksum       | Integrity — required for all metadata validation                   |
-| 💎 | 🔴 P0   | 1.3 Checkpoint Discovery       | Safety — find actual active superblock (block 0 is stale)          |
-| 💎 | 🔴 P0   | 2.1 Object Map (OMAP)          | Translation — virtual OID → physical block                         |
-| 💎 | 🔴 P0   | 2.2 B-Tree Engine              | Foundation — generic B-tree used by all metadata                   |
-| 💎 | 🟠 P1   | 3.1 Volume Superblock          | Volume — mount individual volumes                                  |
-| 💎 | 🟠 P1   | 3.2 Volume OMAP + Catalog      | Volume — set up catalog for metadata lookups                       |
-| 💎 | 🟠 P1   | 4.1 Inode Reader               | Metadata — read file/directory metadata                            |
-| 💎 | 🟠 P1   | 4.2 Directory Records          | Directory — enumerate and lookup entries                           |
-| 💎 | 🟠 P1   | 4.3 Path Resolution            | Directory — resolve full paths                                     |
-| 💎 | 🟠 P1   | 5.1 File Extent Reader         | Core — map file offsets to physical blocks                         |
-| 💎 | 🟠 P1   | 5.2 File Data Reader           | Core — actually read file contents                                 |
-| 💎 | 🟠 P1   | 6.1 VFS Registration           | Integration — make APFS mountable                                  |
-| 💎 | 🟡 P2   | 8.1 Space Manager              | Reporting — free space for Disk Manager                            |
-| 💎 | 🟡 P2   | 9.1 OMAP + Dentry Cache        | Performance — avoid I/O amplification                              |
-| 💎 | 🟡 P2   | 11.1 LZVN/LZFSE Decompression  | Correctness — prevent silent data corruption on compressed files   |
-| 💎 | 🟢 P3   | 7.1 Test Suite                 | Quality — automated validation                                     |
-| ⭐ | 🟢 P3   | 10.1 Health Dashboard          | **Container-level health** — no OS shows this 🚀                   |
-| ⭐ | 🟢 P3   | 10.2 Clone Detective           | **Clone relationship mapping** — unique forensic feature 🚀        |
-| ⭐ | 🟢 P3   | 10.3 Snapshot Explorer          | **GUI snapshot browser** — macOS is CLI-only 🚀                   |
-| ⭐ | 🟢 P3   | 10.4 Timestamp Inspector       | **Nanosecond timestamp viewer** — macOS Finder shows seconds 🚀    |
-| 🔵 | 🔵 P4   | Write support + CoW            | Full R/W — future stretch goal                                     |
-| 🔵 | 🔵 P4   | Encryption (AES-XTS + keybags) | Decrypt encrypted volumes — future stretch goal                    |
-| 🔵 | 🔵 P4   | TRIM/DEALLOCATE                | SSD optimization — future stretch goal                             |
+| ⭐ | Priority | Section                        | Description                                                          |
+| -- | -------- | ------------------------------ | -------------------------------------------------------------------- |
+| 💎 | 🔴 P0   | 1.1 Container Superblock       | Foundation — parse block 0 bootstrap                                 |
+| 💎 | 🔴 P0   | 1.2 Fletcher-64 Checksum       | Integrity — required for all metadata validation                     |
+| 💎 | 🔴 P0   | 1.3 Checkpoint Discovery       | Safety — find actual active superblock (block 0 is stale)            |
+| 💎 | 🔴 P0   | 2.1 Object Map (OMAP)          | Translation — virtual OID → physical block                           |
+| 💎 | 🔴 P0   | 2.2 B-Tree Engine              | Foundation — generic B-tree used by all metadata                     |
+| 💎 | 🟠 P1   | 3.1 Volume Superblock          | Volume — mount individual volumes                                    |
+| 💎 | 🟠 P1   | 3.2 Volume OMAP + Catalog      | Volume — set up catalog for metadata lookups                         |
+| 💎 | 🟠 P1   | 4.1 Inode Reader               | Metadata — read file/directory metadata                              |
+| 💎 | 🟠 P1   | 4.2 Directory Records          | Directory — enumerate and lookup entries                             |
+| 💎 | 🟠 P1   | 4.3 Path Resolution            | Directory — resolve full paths                                       |
+| 💎 | 🟠 P1   | 5.1 File Extent Reader         | Core — map file offsets to physical blocks                           |
+| 💎 | 🟠 P1   | 5.2 File Data Reader           | Core — actually read file contents                                   |
+| 💎 | 🟠 P1   | 6.1 VFS Registration           | Integration — make APFS mountable                                    |
+| 💎 | 🟡 P2   | 8.1 Space Manager              | Reporting — free space for Disk Manager                              |
+| 💎 | 🟡 P2   | 9.1 OMAP + Dentry Cache        | Performance — avoid I/O amplification                                |
+| 💎 | 🟡 P2   | 11.1 LZVN/LZFSE Decompression  | Correctness — prevent silent data corruption on compressed files     |
+| 💎 | 🟢 P3   | 7.1 Test Suite                 | Quality — automated validation                                       |
+| ⭐ | 🟢 P3   | 10.1 Health Dashboard          | **Container-level health** — no OS shows this 🚀                     |
+| ⭐ | 🟢 P3   | 10.2 Clone Detective           | **Clone relationship mapping** — unique forensic feature 🚀          |
+| ⭐ | 🟢 P3   | 10.3 Snapshot Explorer         | **GUI snapshot browser** — macOS is CLI-only 🚀                      |
+| ⭐ | 🟢 P3   | 10.4 Timestamp Inspector       | **Nanosecond timestamp viewer** — macOS Finder shows seconds 🚀      |
+| ⭐ | 🟢 P3   | 10.5 Volume Group Analyzer     | **Volume group + role classifier** — macOS CLI-only 🚀               |
+| ⭐ | 🟢 P3   | 10.6 Encryption Status Reporter| **Per-volume encryption audit** — no non-macOS OS does this 🚀       |
+| ⭐ | 🟢 P3   | 10.7 Fusion Drive Detector     | **Multi-device container detection** — Paragon doesn't support 🚀    |
+| 🔵 | 🔵 P4   | Write support + CoW            | Full R/W — future stretch goal                                       |
+| 🔵 | 🔵 P4   | Encryption (AES-XTS + keybags) | Decrypt encrypted volumes — future stretch goal                      |
+| 🔵 | 🔵 P4   | TRIM/DEALLOCATE                | SSD optimization — future stretch goal                               |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to macOS, Windows, and Linux.
@@ -740,43 +743,47 @@ graph TD
 
 ## OS Comparison
 
-| Feature                            | 🍎 macOS (native)                  | 🪟 Windows 11                     | 🐧 Linux                           | 🚀 Impossible OS                         |
-| ---------------------------------- | ---------------------------------- | --------------------------------- | ----------------------------------- | ---------------------------------------- |
-| Container superblock               | ✅ Full R/W                        | ⚠️ Paragon (paid, R/W)            | ⚠️ apfs-fuse (experimental RO)      | ⬜ §1.1 P0                               |
-| Fletcher-64 checksum               | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §1.2 P0                               |
-| Checkpoint system                  | ✅ Full crash recovery             | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §1.3 P0                               |
-| Object Map (OMAP)                  | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §2.1 P0                               |
-| B-tree traversal                   | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §2.2 P0                               |
-| Volume mounting                    | ✅ Full multi-volume               | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §3.1 P1                               |
-| Inode reading                      | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §4.1 P1                               |
-| Directory listing                  | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §4.2 P1                               |
-| File reading                       | ✅ Full                            | ⚠️ Paragon                        | ⚠️ apfs-fuse                        | ⬜ §5.2 P1                               |
-| Space Manager                      | ✅ Full                            | ❌                                 | ❌                                   | ⬜ §8.1 P2                               |
-| LZVN/LZFSE decompression           | ✅ Full                            | ⚠️ Paragon (partial)              | ❌ apfs-fuse (no)                    | ⬜ §11.1 P2                              |
-| Encryption (AES-XTS)               | ✅ Full + Secure Enclave           | ⚠️ Paragon (partial, no T2)       | ❌                                   | ⬜ Future P4                              |
-| Write support                      | ✅ Full                            | ⚠️ Paragon (paid)                 | ⚠️ linux-apfs-rw (experimental)     | ⬜ Future P3                              |
-| Snapshots                          | ✅ Time Machine + CLI              | ❌                                 | ❌                                   | ⬜ §10.3 P3                              |
-| Cloning                            | ✅ Zero-cost via Finder            | ❌                                 | ❌                                   | ⬜ Future P3                              |
-| **Container health dashboard**     | ❌ `diskutil` CLI only             | ❌ No APFS support                 | ❌ No health reporting               | ⬜ §10.1 P3 — **GUI health panel** 🚀    |
-| **Clone detective**                | ❌ No clone visibility             | ❌                                 | ❌                                   | ⬜ §10.2 P3 — **clone family view** 🚀   |
-| **Snapshot explorer**              | ❌ CLI-only (`tmutil`)             | ❌                                 | ❌                                   | ⬜ §10.3 P3 — **GUI browser** 🚀         |
-| **Nanosecond timestamps**          | ⚠️ Finder shows seconds only       | ❌                                 | ❌                                   | ⬜ §10.4 P3 — **full ns precision** 🚀   |
+| Feature                              | 🪟 Windows 11                      | 🐧 Linux                            | 🚀 Impossible OS                                    |
+| ------------------------------------ | ---------------------------------- | ------------------------------------ | --------------------------------------------------- |
+| Container superblock                 | ⚠️ Paragon (paid, R/W)             | ⚠️ apfs-fuse (experimental RO)       | ⬜ §1.1 P0                                           |
+| Fletcher-64 checksum                 | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §1.2 P0                                           |
+| Checkpoint system                    | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §1.3 P0                                           |
+| Object Map (OMAP)                    | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §2.1 P0                                           |
+| B-tree traversal                     | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §2.2 P0                                           |
+| Volume mounting                      | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §3.1 P1                                           |
+| Inode reading                        | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §4.1 P1                                           |
+| Directory listing                    | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §4.2 P1                                           |
+| File reading                         | ⚠️ Paragon                         | ⚠️ apfs-fuse                         | ⬜ §5.2 P1                                           |
+| Space Manager                        | ❌ Not supported                    | ❌ Not supported                      | ⬜ §8.1 P2                                           |
+| LZVN/LZFSE decompression             | ⚠️ Paragon (partial)               | ❌ apfs-fuse (no)                     | ⬜ §11.1 P2                                          |
+| Encryption (AES-XTS)                 | ⚠️ Paragon (partial, no T2)        | ❌ Not supported                      | ⬜ Future P4                                          |
+| Write support                        | ⚠️ Paragon (paid, beta)            | ⚠️ linux-apfs-rw (experimental)      | ⬜ Future P4                                          |
+| Snapshots                            | ❌ Not supported                    | ❌ Not supported                      | ⬜ §10.3 P3                                          |
+| **Container health dashboard**       | ❌ No APFS support                  | ❌ No health reporting                | ⬜ §10.1 P3 — **GUI health panel** 🚀                |
+| **Clone detective**                  | ❌ No APFS support                  | ❌ No clone visibility                | ⬜ §10.2 P3 — **clone family view** 🚀               |
+| **Snapshot explorer**                | ❌ No APFS support                  | ❌ No snapshot browsing               | ⬜ §10.3 P3 — **GUI browser** 🚀                     |
+| **Nanosecond timestamps**            | ❌ No APFS support                  | ❌ No timestamp display               | ⬜ §10.4 P3 — **full ns precision** 🚀               |
+| **Volume group analyzer**            | ❌ No APFS support                  | ❌ No volume group awareness          | ⬜ §10.5 P3 — **role + group GUI** 🚀                |
+| **Encryption status reporter**       | ❌ Shows "Unknown FS"               | ❌ Fails silently                     | ⬜ §10.6 P3 — **encryption audit** 🚀                |
+| **Fusion Drive detector**            | ❌ Paragon: "not supported"         | ⚠️ apfs-fuse (partial RO)            | ⬜ §10.7 P3 — **per-device breakdown** 🚀            |
 
 > **After P0+P1 items:** Impossible OS can read any unencrypted APFS volume — built-in,
 > free, and more reliable than third-party Windows/Linux tools.
-> **After P2–P3 exclusive features:** Exceeds all three OSes — container health, clone
-> detective, snapshot explorer, and nanosecond timestamps are unique to Impossible OS.
+> **After P2–P3 exclusive features:** Exceeds both — container health, clone detective,
+> snapshot explorer, nanosecond timestamps, volume groups, encryption auditing, and
+> Fusion Drive detection are all unique to Impossible OS.
 > **After P4 items:** Full spec parity including encryption and write support.
 
 ---
 
 ## Key Files
 
-| File                                   | Purpose                                                               |
-| -------------------------------------- | --------------------------------------------------------------------- |
-| `src/kernel/fs/apfs.c`                 | [NEW] APFS driver implementation                                      |
-| `include/kernel/fs/apfs.h`             | [NEW] APFS structures, constants, object types                        |
-| `src/kernel/fs/partition.c`            | Add GPT GUID `7C3457EF-0000-11AA-AA11-00306543ECAC` detection         |
-| `include/kernel/fs/partition.h`        | Add `PART_FS_APFS` constant                                          |
-| `src/kernel/fs/gpt.c`                  | Add `GPT_GUID_APFS` constant                                         |
-| `specs/storage/filesystems/apfs.md`    | Full on-disk specification reference (848 lines)                      |
+| File                                | Purpose                                                          |
+| ----------------------------------- | ---------------------------------------------------------------- |
+| `src/kernel/fs/apfs.c`             | [NEW] APFS driver implementation                                 |
+| `include/kernel/fs/apfs.h`         | [NEW] APFS structures, constants, object types                   |
+| `src/kernel/fs/partition.c`        | Add GPT GUID `7C3457EF-0000-11AA-AA11-00306543ECAC` detection    |
+| `include/kernel/fs/partition.h`    | Add `PART_FS_APFS` constant                                     |
+| `src/kernel/fs/gpt.c`             | Add `GPT_GUID_APFS` constant                                    |
+| `specs/storage/filesystems/apfs.md`| Full on-disk specification reference (848 lines)                 |
+
