@@ -225,6 +225,10 @@ grep -r "TODO-NNN" docs/ --include="*.md"
 git add -A && git commit -m "docs: convert TODO-NNN to documentation"
 ```
 
+### 9. Run `/docs-validate`
+
+Always run the `/docs-validate` workflow after committing. This catches broken links, stale references, and structural violations introduced by the conversion.
+
 ## Final Checklist
 
 Before committing, verify:
@@ -236,4 +240,5 @@ Before committing, verify:
 - [ ] Stub has status, doc link, commits, and critical gotchas
 - [ ] TODO index updated
 - [ ] No stale references in other docs
+- [ ] `/docs-validate` passed (no broken links or structural violations)
 - [ ] Build still passes (`bash scripts/build.sh`)
