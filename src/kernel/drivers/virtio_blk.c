@@ -23,6 +23,8 @@
 #include "kernel/irq.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/barrier.h"
+#include "kernel/sched/event.h"
 
 /* ---- Driver state ---- */
 static struct virtio_pci_dev  blk_dev;         /* Modern PCI transport */
@@ -32,6 +34,10 @@ static int                    initialized;     /* 1 if init succeeded */
 static volatile int           virtio_irq_fired; /* Queue completion flag */
 static uint8_t                msix_vec_queue;  /* MSI-X IDT vector: queue */
 static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
+static int                    use_events;      /* 1 after event_t is live */
+
+/* Interrupt-driven I/O completion event (AUTO_RESET: each set wakes one waiter) */
+static event_t                io_completion;
 
 /* Feature negotiation results */
 static int                    has_flush;       /* F_FLUSH negotiated */
@@ -50,12 +56,15 @@ static char device_serial[VIRTIO_BLK_ID_BYTES + 1]; /* +1 for null terminator */
 
 /* ---- MSI-X IRQ handlers ---- */
 
-/* Queue completion interrupt — device placed buffers in the used ring */
+/* Queue completion interrupt — device placed buffers in the used ring.
+ * Sets both the legacy polling flag AND the event for thread wakeup. */
 static void virtio_blk_queue_irq(uint8_t vector, void *ctx)
 {
     (void)vector;
     (void)ctx;
     virtio_irq_fired = 1;
+    if (use_events)
+        event_set(&io_completion);
 }
 
 /* Config change interrupt — device resized, topology changed, etc. */
@@ -154,11 +163,17 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
     blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
 
-    __asm__ volatile ("mfence" ::: "memory");
+    /* VirtIO §2.7.13.1: driver MUST perform a suitable device-specific
+     * memory barrier before the avail->idx update to ensure the device
+     * sees the descriptor chain written above. */
+    wmb();
     blk_vq.avail->idx++;
-    __asm__ volatile ("mfence" ::: "memory");
 
-    /* Enable interrupts for IRQ delivery. Save current RFLAGS first. */
+    /* Barrier before notification: device must see the new avail->idx
+     * before we write the notification register. */
+    mb();
+
+    /* Clear completion flag and enable interrupts */
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
     virtio_irq_fired = 0;
     __asm__ volatile ("sti");
@@ -166,31 +181,48 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     /* Notify device (modern MMIO notification) */
     virtq_kick(&blk_vq);
 
-    /* Poll for completion */
-    timeout = 5000000;
-    while (timeout-- > 0) {
-        __asm__ volatile ("mfence" ::: "memory");
-        if (blk_vq.used->idx != blk_vq.last_used)
-            break;
-        /* Yield CPU briefly — read a port to create a ~1µs delay */
-        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    /* Wait for completion — event-driven or polling fallback */
+    if (use_events) {
+        /* Interrupt-driven path: ISR calls event_set(), we block here.
+         * 5-second timeout prevents infinite hang on device failure. */
+        if (!event_wait_timeout(&io_completion, 5000)) {
+            klog(LOG_DEBUG, "virtio", "I/O timeout (event, avail=%u, used=%u)",
+                   (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx);
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return -1;
+        }
+    } else {
+        /* Polling fallback for pre-scheduler boot */
+        timeout = 5000000;
+        while (timeout-- > 0) {
+            mb();
+            if (blk_vq.used->idx != blk_vq.last_used)
+                break;
+            __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+        }
+        if (timeout == 0) {
+            klog(LOG_DEBUG, "virtio", "I/O timeout (poll, avail=%u, used=%u)",
+                   (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx);
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return -1;
+        }
     }
 
-    /* Restore interrupt state if it was previously disabled (bit 9 in RFLAGS) */
-    if (!(rflags & (1 << 9))) {
+    /* Restore interrupt state */
+    if (!(rflags & (1 << 9)))
         __asm__ volatile ("cli");
-    }
 
-    if (timeout == 0) {
-        klog(LOG_DEBUG, "virtio", "I/O timeout (avail=%u, used=%u, status=%x)",
-               (uint64_t)blk_vq.avail->idx, (uint64_t)blk_vq.used->idx,
-               (uint64_t)status_byte);
-        /* Free descriptors */
-        virtq_free_desc(&blk_vq, (uint16_t)d0);
-        virtq_free_desc(&blk_vq, (uint16_t)d1);
-        virtq_free_desc(&blk_vq, (uint16_t)d2);
-        return -1;
-    }
+    /* VirtIO §2.7.14: after reading used->idx, driver MUST perform
+     * a read barrier before accessing used->ring[] entries. */
+    rmb();
 
     /* Consume the used ring entry */
     blk_vq.last_used++;
@@ -251,9 +283,9 @@ static int virtio_blk_do_flush(void)
     uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
     blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
 
-    __asm__ volatile ("mfence" ::: "memory");
+    wmb();   /* Ensure descriptors visible before avail->idx update */
     blk_vq.avail->idx++;
-    __asm__ volatile ("mfence" ::: "memory");
+    mb();    /* Ensure avail->idx visible before notification */
 
     /* Enable interrupts for IRQ delivery */
     __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
@@ -263,26 +295,40 @@ static int virtio_blk_do_flush(void)
     /* Notify device */
     virtq_kick(&blk_vq);
 
-    /* Poll for completion — flush may take longer than normal I/O */
-    timeout = 10000000;
-    while (timeout-- > 0) {
-        __asm__ volatile ("mfence" ::: "memory");
-        if (blk_vq.used->idx != blk_vq.last_used)
-            break;
-        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    /* Wait for completion — event-driven or polling fallback */
+    if (use_events) {
+        /* Flush may take longer — 10s timeout */
+        if (!event_wait_timeout(&io_completion, 10000)) {
+            klog(LOG_DEBUG, "virtio", "Flush timeout (event)");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            return -1;
+        }
+    } else {
+        timeout = 10000000;
+        while (timeout-- > 0) {
+            mb();
+            if (blk_vq.used->idx != blk_vq.last_used)
+                break;
+            __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+        }
+        if (timeout == 0) {
+            klog(LOG_DEBUG, "virtio", "Flush timeout (poll)");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            return -1;
+        }
     }
 
     /* Restore interrupt state */
-    if (!(rflags & (1 << 9))) {
+    if (!(rflags & (1 << 9)))
         __asm__ volatile ("cli");
-    }
 
-    if (timeout == 0) {
-        klog(LOG_DEBUG, "virtio", "Flush timeout");
-        virtq_free_desc(&blk_vq, (uint16_t)d0);
-        virtq_free_desc(&blk_vq, (uint16_t)d1);
-        return -1;
-    }
+    rmb();   /* Barrier before reading used ring entries */
 
     /* Consume the used ring entry */
     blk_vq.last_used++;
@@ -648,15 +694,23 @@ int virtio_blk_init(void)
 
     initialized = 1;
 
+    /* Initialize I/O completion event (AUTO_RESET: each event_set wakes
+     * one waiter, then auto-clears — perfect for single-threaded I/O) */
+    event_init(&io_completion, "virtio-blk-io", EVENT_AUTO_RESET, 0);
+
     /* Set up MSI-X interrupts (replaces legacy PIC — rules.md APIC-only) */
     if (virtio_pci_setup_msix(&blk_dev, dev.bus, dev.dev, dev.func,
                               &msix_vec_queue, &msix_vec_config) != 0) {
-        klog(LOG_DEBUG, "virtio", "MSI-X setup failed — falling back to polling only");
+        klog(LOG_DEBUG, "virtio", "MSI-X setup failed — polling only");
         /* Polling-only mode still works via the timeout loop in do_io */
     } else {
         /* Register IRQ handlers for both MSI-X vectors */
         irq_register(msix_vec_queue, virtio_blk_queue_irq, NULL, "virtio-blk-q0");
         irq_register(msix_vec_config, virtio_blk_config_irq, NULL, "virtio-blk-cfg");
+
+        /* Enable event-driven completion — ISR will now wake waiters */
+        use_events = 1;
+        klog(LOG_DEBUG, "virtio", "Async I/O: interrupt-driven completion enabled");
     }
 
     klog(LOG_DEBUG, "virtio", "VirtIO-blk: %u MiB (%u sectors), blk_size=%u, opt_io=%u%s%s",

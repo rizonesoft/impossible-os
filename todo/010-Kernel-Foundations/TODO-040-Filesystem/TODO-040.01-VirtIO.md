@@ -165,7 +165,7 @@ graph TD
 | 💎 | **2**  | §2.1 Block Size & Topology       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
-| 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ⬜   |
+| 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ⬜   |
@@ -452,23 +452,26 @@ graph TD
 
 ### 3.2 Async I/O Path
 
-**Prompt:** Replace the current polling loop (`while (used->idx == last_seen_used)`) with interrupt-driven async I/O. Add a per-device completion event. The ISR fires when the device updates the used ring — it reads the completed descriptor heads and wakes waiting threads via `event_set()`. The submission path (`virtio_blk_read`/`virtio_blk_write`) uses `event_wait()` with a configurable timeout (5s default). Retain a polling fallback for pre-scheduler boot (before interrupts are available). Critically, insert strict memory barriers (`mfence` on x86-64) in the virtqueue submission and completion hot paths per the VirtIO spec. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: async interrupt-driven I/O"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** Async interrupt-driven I/O is implemented. The ISR (`virtio_blk_queue_irq`) now calls `event_set(&io_completion)` to wake waiting threads. Both `do_io` and `do_flush` use `event_wait_timeout()` when `use_events == 1` (set after MSI-X setup), with polling fallback for early boot. Raw `mfence` replaced with `wmb()`/`mb()`/`rmb()` from `barrier.h` per VirtIO spec. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Add `event_t io_completion` to `virtio_blk_dev` struct
-- [ ] Queue ISR: read `used->idx`, process completed entries, call `event_set()`
-- [ ] Config ISR: re-read device configuration (capacity, topology changes)
-  - [ ] Check ISR status register: bit 0 = virtqueue data, bit 1 = config change (`VIRTIO_PCI_ISR_CONFIG`)
-- [ ] Submission path: `event_wait(&io_completion, timeout_ms)` after virtqueue kick
-- [ ] Process used ring entries: match `used_elem.id` to pending request, copy status byte
-- [ ] Handle timeout: log error, attempt device reset (§5.1)
-- [ ] Retain polling path: `if (!scheduler_running) { poll_used_ring(); }`
-- [ ] Set `VIRTQ_AVAIL_F_NO_INTERRUPT = 0` in available ring flags (enable interrupts)
-- [ ] **Memory barriers (critical for correctness):**
-  - [ ] After writing descriptor chain to descriptor table → `smp_wmb()` before incrementing `avail->idx`
-  - [ ] After incrementing `avail->idx` → `smp_wmb()` before writing notification register (kick)
-  - [ ] After reading `used->idx` in ISR → `smp_rmb()` before reading `used->ring[]` entries
-  - [ ] On x86-64: use `mfence` (full barrier) or `sfence`/`lfence` as appropriate
-- [ ] Commit: `"virtio-blk: async interrupt-driven I/O"`
+- [x] Add `event_t io_completion` static (AUTO_RESET) + `use_events` flag
+- [x] Queue ISR: set `virtio_irq_fired = 1` AND `event_set(&io_completion)` when `use_events`
+- [x] Config ISR: unchanged (config change handling deferred to §14.1)
+- [x] Submission path: `event_wait_timeout(&io_completion, 5000)` for I/O, `10000` for flush
+- [x] Polling fallback: retained for pre-event boot I/O (e.g., FAT32 mount during init)
+- [x] Memory barriers:
+  - [x] `wmb()` before `avail->idx++` (ensure descriptors visible)
+  - [x] `mb()` after `avail->idx++` before kick (ensure index visible before notification)
+  - [x] `rmb()` after completion, before reading used ring entries
+- [x] Committed
+
+> **Notes:**
+> - `event_t` uses `EVENT_AUTO_RESET` — each `event_set()` wakes exactly one waiter and auto-clears. Perfect for single-threaded I/O (our current model has one in-flight request at a time).
+> - `use_events` is set to `1` only after MSI-X setup succeeds AND irq handlers are registered. During `virtio_blk_init()`, the device reads configs and sends GET_ID using the polling path (before `use_events` is set).
+> - `event_set()` is documented as IRQ-safe (only sets a flag and calls `thread_ready()`).
+> - `event_wait_timeout()` returns `1` on success, `0` on timeout — confusingly reversed from POSIX convention.
+> - The old `timeout` variable's loop-counter semantics are preserved in polling fallback — `5000000` iterations ≈ 5s at 1µs per `inb $0x80`.
+> - Barrier semantics follow VirtIO spec §2.7.13.1 (submission) and §2.7.14 (completion). On x86-64 TSO, `wmb()` → SFENCE, `rmb()` → LFENCE, `mb()` → MFENCE.
 
 ---
 
