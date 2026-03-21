@@ -22,8 +22,8 @@
 > JBD2 journal which is **big-endian**. The driver must handle this dichotomy.
 >
 > **Spec Reference:** All offsets, field layouts, and algorithms reference the
-> [ext4 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/ext4.md)
-> in the repo at `specs/filesystem/ext4.md`.
+> [ext4 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/ext4.md)
+> in the repo at `docs/specs/filesystem/ext4.md`.
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/filesystem/ext4.md<br/>ext4 On-Disk Specification"]
+    SPEC["docs/specs/filesystem/ext4.md<br/>ext4 On-Disk Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x83)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
@@ -102,7 +102,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec              | Sections                    | What It Delivers                                                           | Depends On                          | Status |
 | -- | :----: | ----------------------------- | --------------------------- | -------------------------------------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | **0**  | `specs/filesystem/ext4.md`    | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
+| 💎 | **0**  | `docs/specs/filesystem/ext4.md`    | Full spec                   | On-disk format, offset tables, algorithms — **read before coding**         | —                                   |   ✅   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer          | `blkdev_read()` via VirtIO or AHCI                                         | —                                   |   ✅   |
 | 💎 | **0**  | `TODO-040.04` / `TODO-040.05` | Partition detection         | MBR type `0x83` / GPT `0FC63DAF-...` → Linux partition found               | Phase 0 (block)                     |   ✅   |
 | 💎 | **1**  | `TODO-040.09-ext4.md`         | §1.1 Superblock Parsing     | Parse superblock at byte 1024, locate block groups and inodes              | Phase 0 (partitions)                |   ⬜   |
@@ -825,7 +825,7 @@ graph TD
 | `src/kernel/fs/ixfs/ixfs_core.c`       | `ixfs_crc32c()` — **factor out** to shared `kernel/crc32c.c` for reuse   |
 | `src/kernel/fs/gpt.c`                  | Has `GPT_GUID_LINUX_FS` (`0FC63DAF-...`) — ext4 partitions use this GUID |
 | `include/kernel/fs/gpt.h`              | `gpt_crc32()` — CRC32 (IEEE), different polynomial from CRC32C          |
-| `specs/filesystem/ext4.md`             | Full on-disk specification reference (753 lines)                         |
+| `docs/specs/filesystem/ext4.md`             | Full on-disk specification reference (753 lines)                         |
 
 > [!WARNING]
 > **Codebase gaps to close before ext4 driver:**

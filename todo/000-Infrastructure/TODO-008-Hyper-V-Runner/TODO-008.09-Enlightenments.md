@@ -14,8 +14,8 @@
 > [!IMPORTANT]
 > **Spec Reference:** All data structures, CPUID leaves, MSR layouts, hypercall
 > codes, and algorithms reference the
-> [Advanced Enlightenments Specification](file:///home/derickpayne/impossible-os/specs/hyper-v/advanced-enlightenments.md)
-> in the repo at `specs/hyper-v/advanced-enlightenments.md`.
+> [Advanced Enlightenments Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/advanced-enlightenments.md)
+> in the repo at `docs/specs/hyper-v/advanced-enlightenments.md`.
 >
 > **Legal:** Clean-room implement from the
 > [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
@@ -74,7 +74,7 @@ graph TD
 
 | ⭐ | Phase  | Section                              | What It Delivers                                                     | Depends On                     | Status |
 | -- | :----: | ------------------------------------ | -------------------------------------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | `specs/hyper-v/advanced-enlightenments.md` | Wire formats, CPUID leaves, MSR layouts — **read before coding** | —                              |   ✅   |
+| 💎 | **0**  | `docs/specs/hyper-v/advanced-enlightenments.md` | Wire formats, CPUID leaves, MSR layouts — **read before coding** | —                              |   ✅   |
 | 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol   | Hypercall page, SynIC, version negotiation                           | —                              |   ✅   |
 | 💎 | **1**  | §1 Privilege & Feature Detection     | CPUID gating for all enlightenments, feature flags struct            | Phase 0 (VMBus)                |   ⬜   |
 | 💎 | **2**  | §2 TSC Reference Page               | Zero-VM-exit nanosecond clock reads — **78% latency reduction**      | Phase 1 (§1)                   |   ⬜   |

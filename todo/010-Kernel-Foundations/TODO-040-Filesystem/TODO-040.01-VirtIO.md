@@ -20,8 +20,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/specs/storage/virtio-1.2.md)
-> (OASIS, 2022). The block-device-focused summary is in the repo at `specs/storage/virtio-1.2.md`.
+> [VirtIO 1.2 Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/virtio-1.2.md)
+> (OASIS, 2022). The block-device-focused summary is in the repo at `docs/specs/storage/virtio-1.2.md`.
 
 ---
 
@@ -40,7 +40,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/storage/virtio-1.2.md<br/>VirtIO 1.2 Specification"]
+    SPEC["docs/specs/storage/virtio-1.2.md<br/>VirtIO 1.2 Specification"]
     DRV["src/kernel/drivers/virtio_blk.c<br/>Existing Driver (~350 lines, MMIO polling)"]
     AHCI["TODO-040.02-AHCI.md<br/>AHCI SATA (parallel transport)"]
     MBR["TODO-040.04-MBR.md<br/>MBR Partition Detection"]

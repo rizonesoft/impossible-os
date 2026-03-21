@@ -24,8 +24,8 @@
 > [!IMPORTANT]
 > **Spec Reference:** All data structures, hypercall IDs, register conventions,
 > and security protocols reference the
-> [Page Table MMIO Safety Specification](file:///home/derickpayne/impossible-os/specs/hyper-v/page-table-mmio-safety.md)
-> in the repo at `specs/hyper-v/page-table-mmio-safety.md`.
+> [Page Table MMIO Safety Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/page-table-mmio-safety.md)
+> in the repo at `docs/specs/hyper-v/page-table-mmio-safety.md`.
 
 ---
 
@@ -41,7 +41,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/hyper-v/page-table-mmio-safety.md<br/>MMIO Safety Specification"]
+    SPEC["docs/specs/hyper-v/page-table-mmio-safety.md<br/>MMIO Safety Specification"]
     VMBUS["TODO-008 §3 VMBus Core Protocol ✅<br/>Hypercall page, SynIC, channels"]
     BOOTLOADER["TODO-010 §1.5<br/>Memory-Type Page Tables"]
     APIC["TODO-008 §2 APIC-Only Mode ✅<br/>PCAT_COMPAT gate"]
@@ -71,7 +71,7 @@ graph TD
 
 | ⭐ | Phase  | Section                                    | What It Delivers                                                        | Depends On                    | Status |
 | -- | :----: | ------------------------------------------ | ----------------------------------------------------------------------- | ----------------------------- | :----: |
-| 💎 | **0**  | `specs/hyper-v/page-table-mmio-safety.md`  | Wire formats, hypercall ABI, security protocols — **read before coding** | —                             |   ✅   |
+| 💎 | **0**  | `docs/specs/hyper-v/page-table-mmio-safety.md`  | Wire formats, hypercall ABI, security protocols — **read before coding** | —                             |   ✅   |
 | 💎 | **0**  | `TODO-008 §3 VMBus Core`                   | Hypercall page, SynIC, version negotiation — prerequisite                | —                             |   ✅   |
 | 💎 | **1**  | §1 Hypercall Interface                     | Hypervisor detection, hypercall page provisioning, calling convention    | Phase 0 (VMBus core)          |   ⬜   |
 | 💎 | **2**  | §2 Memory Visibility Transitions           | PRESENT bit shield, safe encrypted↔decrypted page flipping              | Phase 1 (§1)                  |   ⬜   |

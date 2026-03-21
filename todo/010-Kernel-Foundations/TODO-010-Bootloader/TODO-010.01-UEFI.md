@@ -11,8 +11,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All protocol GUIDs, table layouts, and service definitions reference the
-> [UEFI 2.10 Specification](file:///home/derickpayne/impossible-os/specs/firmware/uefi-2.10.md)
-> summary in the repo at `specs/firmware/uefi-2.10.md`.
+> [UEFI 2.10 Specification](file:///home/derickpayne/impossible-os/docs/specs/firmware/uefi-2.10.md)
+> summary in the repo at `docs/specs/firmware/uefi-2.10.md`.
 
 > [!NOTE]
 > **Cross-references:**

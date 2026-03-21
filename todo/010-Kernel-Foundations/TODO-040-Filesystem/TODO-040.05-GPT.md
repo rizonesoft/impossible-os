@@ -15,8 +15,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CRC32 algorithms, and validation rules reference the
-> [GPT Specification](file:///home/derickpayne/impossible-os/specs/storage/gpt.md)
-> in the repo at `specs/storage/gpt.md`.
+> [GPT Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/gpt.md)
+> in the repo at `docs/specs/storage/gpt.md`.
 
 ---
 
@@ -31,7 +31,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/storage/gpt.md<br/>GPT Specification"]
+    SPEC["docs/specs/storage/gpt.md<br/>GPT Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     MBR["TODO-040.04-MBR.md<br/>Protective MBR + Hybrid MBR"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Drive Letters"]
@@ -110,7 +110,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec                      | Sections                           | What It Delivers                                                            | Depends On                       | Status |
 | -- | :----: | ------------------------------------- | ---------------------------------- | --------------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/gpt.md`                | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
+| 💎 | **0**  | `docs/specs/storage/gpt.md`                | Full spec                          | Wire formats, CRC32 algorithm, mixed-endian GUID — **read before coding**   | —                                |   ✅   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02`         | Block device layer                 | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                       | —                                |   ✅   |
 | 💎 | **0**  | `TODO-040.05-GPT.md`                  | §1.1–1.3 Primary Parse             | Signature, CRC32, entry array, PMBR detection — **foundation complete**     | Phase 0 (block + spec)           |   ✅   |
 | 💎 | **1**  | `TODO-040.05-GPT.md`                  | §2.1 Backup Header Fallback        | Don't fail on single-sector corruption — read backup at last LBA            | Phase 0 (§1)                     |   ✅   |

@@ -22,8 +22,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, algorithms, and data structures
-> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/ntfs-3.1.md)
-> in the repo at `specs/filesystem/ntfs-3.1.md`.
+> reference the [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/ntfs-3.1.md)
+> in the repo at `docs/specs/filesystem/ntfs-3.1.md`.
 
 ---
 
@@ -38,7 +38,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/filesystem/ntfs-3.1.md<br/>NTFS 3.1 Specification"]
+    SPEC["docs/specs/filesystem/ntfs-3.1.md<br/>NTFS 3.1 Specification"]
     BLK["TODO-040.01-VirtIO / 040.02-AHCI<br/>Block Device Layer"]
     PART["TODO-040.04-MBR / 040.05-GPT<br/>Partition Detection (type 0x07)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
@@ -1282,7 +1282,7 @@ graph TD
 | `include/kernel/fs/partition.h` | **Needs `PART_FS_NTFS` constant** (add after `PART_FS_EXT2 = 3`)   |
 | `src/kernel/fs/vfs.c`           | Drive letter assignment for auto-mounted NTFS volumes              |
 | `src/kernel/fs/gpt.c`           | GPT GUID `EBD0A0A2-B9E5-…` detection for Microsoft Basic Data     |
-| `specs/filesystem/ntfs-3.1.md`  | NTFS 3.1 on-disk format specification (offsets, algorithms)        |
+| `docs/specs/filesystem/ntfs-3.1.md`  | NTFS 3.1 on-disk format specification (offsets, algorithms)        |
 
 > [!WARNING]
 > **Codebase gap:** `partition.c` currently probes for FAT32, IXFS, and ext2 — but

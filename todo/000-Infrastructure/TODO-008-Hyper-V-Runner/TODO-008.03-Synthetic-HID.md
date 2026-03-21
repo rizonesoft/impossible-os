@@ -22,8 +22,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All architectural decisions, protocol sequences, and data
-> structures reference the [Hyper-V Synthetic HID Input Driver Specification](file:///home/derickpayne/impossible-os/specs/hyper-v/hid-synthetic-input.md)
-> in the repo at `specs/hyper-v/hid-synthetic-input.md`.
+> structures reference the [Hyper-V Synthetic HID Input Driver Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/hid-synthetic-input.md)
+> in the repo at `docs/specs/hyper-v/hid-synthetic-input.md`.
 
 ---
 
@@ -41,7 +41,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/hyper-v/hid-synthetic-input.md<br/>HID Input Specification"]
+    SPEC["docs/specs/hyper-v/hid-synthetic-input.md<br/>HID Input Specification"]
     VMBUS["TODO-008 §3 VMBus Core Protocol ✅"]
     HID_BASIC["TODO-008 §5 Synthetic HID (basic) ✅"]
     COMPOSITOR["src/kernel/compositor/compositor.c<br/>Input Polling Loop"]
@@ -85,7 +85,7 @@ graph TD
 
 | ⭐ | Phase  | Section                                | What It Delivers                                                         | Depends On                    | Status |
 | -- | :----: | -------------------------------------- | ------------------------------------------------------------------------ | ----------------------------- | :----: |
-| 💎 | **0**  | `specs/hyper-v/hid-synthetic-input.md` | Full spec — architecture, protocols, GUIDs, security analysis            | —                             |   ✅   |
+| 💎 | **0**  | `docs/specs/hyper-v/hid-synthetic-input.md` | Full spec — architecture, protocols, GUIDs, security analysis            | —                             |   ✅   |
 | 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol     | Hypercall page, SynIC, ring buffers, channel enumeration                 | —                             |   ✅   |
 | 💎 | **0**  | `TODO-008 §5` Synthetic HID (basic)   | Keyboard + mouse over VMBus — `hv_input.c`                              | Phase 0 (VMBus)               |   ✅   |
 | 💎 | **1**  | §1 HID Descriptor Validation          | Secure parsing of host-provided HID Report Descriptors                   | Phase 0 (basic HID)           |   ⬜   |

@@ -12,8 +12,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [AHCI 1.3.1 Specification](file:///home/derickpayne/impossible-os/specs/storage/ahci-1.3.1.md)
-> (Intel, 2012). The spec is 121 pages; a comprehensive summary is in the repo at `specs/storage/ahci-1.3.1.md`.
+> [AHCI 1.3.1 Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/ahci-1.3.1.md)
+> (Intel, 2012). The spec is 121 pages; a comprehensive summary is in the repo at `docs/specs/storage/ahci-1.3.1.md`.
 
 ---
 
@@ -30,7 +30,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/storage/ahci-1.3.1.md<br/>AHCI 1.3.1 Specification"]
+    SPEC["docs/specs/storage/ahci-1.3.1.md<br/>AHCI 1.3.1 Specification"]
     DRV["src/kernel/drivers/ahci.c<br/>Existing Driver (824 lines, polling)"]
     VIRTIO["TODO-040.01-VirtIO.md<br/>VirtIO Block (parallel transport)"]
     MBR["TODO-040.04-MBR.md<br/>MBR Partition Detection"]
@@ -134,7 +134,7 @@ graph TD
 
 | ⭐ | Phase | TODO File / Spec                | Sections                    | What It Delivers                                                        | Depends On                       | Status |
 | -- | :---: | ------------------------------- | --------------------------- | ----------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0** | `specs/storage/ahci-1.3.1.md`   | Full spec                   | Register maps, bit definitions, state machines — **read before coding** | —                                |   ✅   |
+| 💎 | **0** | `docs/specs/storage/ahci-1.3.1.md`   | Full spec                   | Register maps, bit definitions, state machines — **read before coding** | —                                |   ✅   |
 | 💎 | **0** | `src/kernel/drivers/ahci.c`     | Existing driver             | PCI detect, ABAR mapping, port init, DMA R/W, IDENTIFY, ATAPI (polling) | —                                |   ✅   |
 | 💎 | **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                  | —                                |   ✅   |
 | 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports              | —                                |   ✅   |

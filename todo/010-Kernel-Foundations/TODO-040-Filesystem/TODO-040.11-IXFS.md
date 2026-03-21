@@ -978,7 +978,7 @@ Boot splash → Desktop
 > exclusively — there is no emulated IDE fallback. The full VMBus → StorVSC → GPADL
 > → VSCSI handshake must complete before ANY disk I/O. If VMBus version negotiation
 > fails or the ring buffer GPADL isn't created, the disk is simply invisible.
-> See commit `cd6f749` and [StorVSC spec](file:///specs/hyper-v/storvsc-synthetic-scsi.md).
+> See commit `cd6f749` and [StorVSC spec](file:///docs/specs/hyper-v/storvsc-synthetic-scsi.md).
 
 ---
 

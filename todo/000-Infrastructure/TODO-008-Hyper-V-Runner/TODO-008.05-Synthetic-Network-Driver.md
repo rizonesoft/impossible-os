@@ -15,8 +15,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** Architecture and protocol details reference the
-> [Synthetic Network Driver Spec](file:///home/derickpayne/impossible-os/specs/hyper-v/synthetic-network-driver.md)
-> in the repo at `specs/hyper-v/synthetic-network-driver.md`.
+> [Synthetic Network Driver Spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/synthetic-network-driver.md)
+> in the repo at `docs/specs/hyper-v/synthetic-network-driver.md`.
 
 ---
 

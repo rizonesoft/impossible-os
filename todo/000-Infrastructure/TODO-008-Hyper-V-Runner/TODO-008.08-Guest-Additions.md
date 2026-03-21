@@ -20,7 +20,7 @@
 > → XREF: `TODO-008-Hyper-V-Runner.md §11` — Parent section
 > → XREF: `TODO-064-Guest-Additions.md §6` — VMBus Integration
 > → XREF: `TODO-008-Hyper-V-Runner.md §3` — VMBus Core Protocol (prerequisite)
-> → XREF: Spec: `specs/hyper-v/guest-additions-integration.md` — Full TLFS-based specification
+> → XREF: Spec: `docs/specs/hyper-v/guest-additions-integration.md` — Full TLFS-based specification
 
 > [!CAUTION]
 > **Memory Rule:** Use `pmm_alloc_contiguous()` for ALL buffers > 4 KB (ring buffers,

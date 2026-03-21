@@ -13,7 +13,7 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, and bit definitions reference the
-> [VMBus Core Protocol Spec](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md)
+> [VMBus Core Protocol Spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md)
 > and the [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs)
 > (public spec). Do NOT reference Linux `hv_vmbus.c` (GPL contamination risk).
 
@@ -191,7 +191,7 @@ enumeration completion. Run `bash scripts/build.sh clean` and confirm `=== BUILD
 
 ## 6. Ring Buffer Architecture ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §3](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Ring Buffer Fundamentals
+> **XREF:** [vmbus-core-protocol.md §3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Ring Buffer Fundamentals
 
 **Prompt:** ~~Implement~~ **Verify** ring buffer allocation and management. Confirm
 `vmbus.c` allocates contiguous physical memory via `pmm_alloc_contiguous()` for each
@@ -231,7 +231,7 @@ channel's send and receive rings, structures the 4 KiB header + data layout, and
 
 ## 7. GPADL Establishment ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
+> **XREF:** [vmbus-core-protocol.md §5](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Memory Management and GPADL Mechanics
 
 **Prompt:** ~~Implement~~ **Verify** Guest Physical Address Descriptor List (GPADL) creation.
 Confirm `vmbus.c` packages ring buffer physical page frame numbers (PFNs) into
@@ -288,7 +288,7 @@ and confirm `=== BUILD OK ===`.
 
 ## 9. Packet Send and Receive ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §4](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — VMBus Message Types and Packet Anatomy
+> **XREF:** [vmbus-core-protocol.md §4](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — VMBus Message Types and Packet Anatomy
 
 **Prompt:** ~~Implement~~ **Verify** packet send/receive over open channels. Confirm
 `vmbus.c` implements `vmbus_sendpacket()` for in-band data and
@@ -325,7 +325,7 @@ strips the `vmpacket_descriptor` header and returns payload only. Run
 
 ## 10. Channel Signaling ✅ *(agent)*
 
-> **XREF:** [vmbus-core-protocol.md §7](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Interrupt Signaling
+> **XREF:** [vmbus-core-protocol.md §7](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Interrupt Signaling
 
 **Prompt:** ~~Implement~~ **Verify** channel signaling. Confirm `vmbus.c` implements
 `vmbus_signal_channel()` using the `HvCallSignalEvent` hypercall (call code `0x005D`)
@@ -379,7 +379,7 @@ written if more messages are pending. Run `bash scripts/build.sh clean` and conf
 
 ## 12. TOC-TOU Security Mitigations
 
-> **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Security Paradigms
+> **XREF:** [vmbus-core-protocol.md §9](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Security Paradigms
 
 **Prompt:** Audit all VMBus ring buffer read paths for Time-of-Check to Time-of-Use
 (TOC-TOU) vulnerabilities. Ensure all messages from the "in" ring buffer are first copied
@@ -407,7 +407,7 @@ and commit as `"hyperv: VMBus TOC-TOU security audit"`. Add notes directly in th
 
 ## 13. Monitor Page Optimization
 
-> **XREF:** [vmbus-core-protocol.md §7.2](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Monitor Page
+> **XREF:** [vmbus-core-protocol.md §7.2](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Monitor Page
 
 **Prompt:** Implement monitor page signaling as an optimization over the `HvCallSignalEvent`
 hypercall. Instead of executing a hypercall per signal, the guest modifies specific bits
@@ -429,7 +429,7 @@ and commit as `"hyperv: VMBus monitor page signaling"`. Add notes directly in th
 
 ## 14. Ring Buffer Flow Control
 
-> **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Flow Control
+> **XREF:** [vmbus-core-protocol.md §3.3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Flow Control
 
 **Prompt:** Implement interrupt-driven ring buffer flow control using the `feat_pending_send_sz`
 feature bit. When the guest cannot send because the ring is full, it writes the required
@@ -450,7 +450,7 @@ and commit as `"hyperv: VMBus ring buffer flow control"`. Add notes directly in 
 
 ## 15. Triple-Mapping Virtual Address Optimization
 
-> **XREF:** [vmbus-core-protocol.md §3.2](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Triple-Mapping
+> **XREF:** [vmbus-core-protocol.md §3.2](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Triple-Mapping
 
 **Prompt:** Implement the triple-mapping optimization for ring buffer virtual addresses.
 Map ring data pages three times in contiguous virtual space: (1) header page,

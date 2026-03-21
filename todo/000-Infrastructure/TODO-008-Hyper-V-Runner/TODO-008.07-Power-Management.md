@@ -20,8 +20,8 @@
 > [!IMPORTANT]
 > **Spec Reference:** All protocol details, MSR addresses, CPUID bits,
 > message structures, and flag semantics reference the
-> [Hyper-V Power Management Specification](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md)
-> in the repo at `specs/hyper-v/power-management.md`.
+> [Hyper-V Power Management Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md)
+> in the repo at `docs/specs/hyper-v/power-management.md`.
 
 ---
 
@@ -134,7 +134,7 @@ graph TD
 
 ## 2. Enlightened Virtual Processor Idle
 
-> **XREF:** [Spec §3](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — Virtual Processor State Machine and Enlightened Idle
+> **XREF:** [Spec §3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — Virtual Processor State Machine and Enlightened Idle
 
 **Prompt:** Replace the `HLT` instruction in the kernel's idle loop with an enlightened `RDMSR 0x400000F0` read of `HV_X64_MSR_GUEST_IDLE` when running on Hyper-V. This transitions the virtual processor from Running → Waiting state, releasing the physical core to the host with zero VM-Exit overhead. The VP wakes on any interrupt regardless of `RFLAGS.IF` state. Guard with the `AccessGuestIdleMsr` privilege check from §1. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: enlightened VP idle via HV_X64_MSR_GUEST_IDLE"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -169,7 +169,7 @@ graph TD
 
 ## 3. Integration Component (IC) Message Parser
 
-> **XREF:** [Spec §6](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — VMBus Architecture and Memory Management
+> **XREF:** [Spec §6](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — VMBus Architecture and Memory Management
 
 **Prompt:** Implement a universal packet parser that decodes raw VMBus ring buffer bytes into `vmbuspipe_hdr` + `icmsg_hdr` structures. This parser is shared by all three Integration Services (Shutdown, TimeSync, Heartbeat). Parse the pipe header for total message size, then the IC header for message type, framework version, transaction ID, and flags. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: IC message parser for Integration Services"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -210,7 +210,7 @@ graph TD
 
 ## 4. IC Version Negotiation Handler
 
-> **XREF:** [Spec §7](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — Integration Services Protocol and Version Negotiation
+> **XREF:** [Spec §7](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — Integration Services Protocol and Version Negotiation
 
 **Prompt:** The very first message on any newly opened IC VMBus channel is `ICMSGTYPE_NEGOTIATE` (value `0`). The host sends its supported framework and service-specific version arrays. The guest must parse these arrays, select the highest mutually supported version, write the selection back, set `icflags = ICMSGHDRFLAG_TRANSACTION | ICMSGHDRFLAG_RESPONSE`, set `status = HV_S_OK`, echo `ictransaction_id`, and transmit the response. Failure to respond correctly permanently terminates the channel. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: IC version negotiation handler"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -249,7 +249,7 @@ graph TD
 
 ## 5. Guest Shutdown Service
 
-> **XREF:** [Spec §8](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — The Guest Shutdown Service Specification
+> **XREF:** [Spec §8](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — The Guest Shutdown Service Specification
 > **XREF:** [TODO-065-Power-Management.md §9](file:///home/derickpayne/impossible-os/todo/060-Hardware-Drivers/TODO-065-Power-Management.md) — Hyper-V Power Validation
 
 **Prompt:** Implement the Guest Shutdown Service (`vmicshutdown`) on VMBus. Open the Shutdown VSP channel (GUID `0E0B6031-5213-4934-818B-38D90CED39DB`), complete version negotiation (§4), then listen for `ICMSGTYPE_SHUTDOWN` messages. Parse `shutdown_msg_data` for `flags` (0=shutdown, 1=forced shutdown, 2=reboot, 3=forced reboot, 4=hibernate, 5=forced hibernate). Send `HV_S_OK` acknowledgment BEFORE executing the power transition. Dispatch to existing `acpi_shutdown()`, `acpi_reboot()`, or future S4 handler. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: Guest Shutdown Service (vmicshutdown)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
@@ -298,7 +298,7 @@ graph TD
 
 ## 6. Time Synchronization Service
 
-> **XREF:** [Spec §9](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — The Time Synchronization Service Specification
+> **XREF:** [Spec §9](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — The Time Synchronization Service Specification
 
 **Prompt:** Implement the Time Synchronization Service (`vmictimesync`) on VMBus. Opens the TimeSync VSP channel, negotiates IC version, then processes `ICMSGTYPE_TIMESYNC` messages. The `ictimesync_data` structure provides host time in 100ns intervals since Windows epoch (1601-01-01). Two correction modes: `ICTIMESYNCFLAG_SYNC` (value `1`) requires **immediate** hard clock overwrite (post-resume/boot), while `ICTIMESYNCFLAG_SAMPLE` (value `2`) allows gradual NTP-like clock slewing. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: Time Synchronization Service (vmictimesync)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -349,7 +349,7 @@ graph TD
 
 ## 7. Heartbeat Service
 
-> **XREF:** [Spec §10](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — The Heartbeat Service Specification
+> **XREF:** [Spec §10](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — The Heartbeat Service Specification
 
 **Prompt:** Implement the Heartbeat Service (`vmicheartbeat`) on VMBus. This is the simplest Integration Service — the host sends periodic `ICMSGTYPE_HEARTBEAT` polling messages and the guest must echo the sequence number back to prove kernel vitality. Failure to respond causes Hyper-V Manager to report the VM as "unresponsive", which may trigger automated failover or recovery restarts in datacenter environments. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: Heartbeat Service (vmicheartbeat)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -382,7 +382,7 @@ graph TD
 
 ## 8. Autonomous Time Drift Detection (🚀 Impossible OS Feature)
 
-> **XREF:** [Spec §9.3](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — Implicit Synchronization Safeguards
+> **XREF:** [Spec §9.3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — Implicit Synchronization Safeguards
 
 **Prompt:** The initial `ICTIMESYNCFLAG_SYNC` packet after VM resume may be delayed or missed entirely. Implement autonomous clock drift detection using the Hyper-V partition reference time counter (`HV_X64_MSR_TIME_REF_COUNT`, MSR `0x40000020`). This counter ticks at a constant rate (100ns intervals) and is unaffected by VM suspension. If the divergence between the kernel's internal clock and the reference counter exceeds 5 seconds, force a hard clock update without waiting for a VMBus sync pulse. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: autonomous time drift detection via partition reference counter"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
@@ -412,7 +412,7 @@ graph TD
 
 ## 9. ACPI S4/S5 Integration
 
-> **XREF:** [Spec §5.3](file:///home/derickpayne/impossible-os/specs/hyper-v/power-management.md) — System Sleep States (Sx) and Transition Methods
+> **XREF:** [Spec §5.3](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/power-management.md) — System Sleep States (Sx) and Transition Methods
 > **XREF:** [TODO-065-Power-Management.md](file:///home/derickpayne/impossible-os/todo/060-Hardware-Drivers/TODO-065-Power-Management.md) — General ACPI Power Management
 
 **Prompt:** Wire the Guest Shutdown Service flags (§5) to ACPI sleep-state transitions. Hyper-V heavily deprecates S3 (Suspend-to-RAM) within guest partitions — map all deep sleep requests to S4 (Hibernate) or S5 (Soft Off). For S4: execute `_PTS(4)`, save memory state to disk, then enter hibernate. For S5: execute `_PTS(5)`, transition to soft-off. On resume from S4: execute `_WAK(4)`, restore context, request hard time sync from §6. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"hyperv: ACPI S4/S5 sleep state integration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).

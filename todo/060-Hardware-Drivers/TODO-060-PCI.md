@@ -12,8 +12,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All register offsets, command encodings, and capability IDs reference the
-> [PCI Local Bus Spec 3.0](file:///home/derickpayne/impossible-os/specs/bus/pci-3.0.md)
-> summary in the repo at `specs/bus/pci-3.0.md`. PCIe ECAM references [TODO-012-ACPI §1.3](../010-Kernel-Foundations/TODO-012-ACPI.md).
+> [PCI Local Bus Spec 3.0](file:///home/derickpayne/impossible-os/docs/specs/bus/pci-3.0.md)
+> summary in the repo at `docs/specs/bus/pci-3.0.md`. PCIe ECAM references [TODO-012-ACPI §1.3](../010-Kernel-Foundations/TODO-012-ACPI.md).
 
 > [!NOTE]
 > **Cross-references:**

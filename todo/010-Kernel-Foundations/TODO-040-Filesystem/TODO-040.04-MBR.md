@@ -24,8 +24,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All offsets, field layouts, CHS algorithms, and EBR rules reference the
-> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/specs/storage/mbr.md)
-> in the repo at `specs/storage/mbr.md`.
+> [MBR Partitioning Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/mbr.md)
+> in the repo at `docs/specs/storage/mbr.md`.
 
 ---
 
@@ -44,7 +44,7 @@ graph TD
     GPT["TODO-040.05-GPT.md<br/>GPT Parser (Protective MBR ↔ GPT handoff)"]
     VFS["TODO-040.07-VFS.md<br/>VFS Core + Win32 API"]
     FAT["TODO-040.06-FAT32.md<br/>FAT32 Driver (partition mounting)"]
-    SPEC["specs/storage/mbr.md<br/>MBR Specification"]
+    SPEC["docs/specs/storage/mbr.md<br/>MBR Specification"]
 
     A["§1.1 Full MBR Layout Parser"]
     B["§1.2 Partition Type Recognition"]
@@ -126,7 +126,7 @@ graph TD
 
 | ⭐ | Phase  | TODO File / Spec              | Sections                        | What It Delivers                                                      | Depends On                       | Status |
 | -- | :----: | ----------------------------- | ------------------------------- | --------------------------------------------------------------------- | -------------------------------- | :----: |
-| 💎 | **0**  | `specs/storage/mbr.md`        | Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
+| 💎 | **0**  | `docs/specs/storage/mbr.md`        | Full spec                       | Wire formats, offset tables, CHS formulas — **read before coding**    | —                                |   ⬜   |
 | 💎 | **0**  | `TODO-040.01` / `TODO-040.02` | Block device layer              | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI                 | —                                |   ✅   |
 | 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.1 Full MBR Layout Parser    | Decode complete 512-byte MBR sector, disk signature, boot magic       | Phase 0 (block + spec)           |   ⬜   |
 | 💎 | **1**  | `TODO-040.04-MBR.md`          | §1.2 Partition Type Recognition | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)           | Phase 1 (§1.1)                   |   ⬜   |

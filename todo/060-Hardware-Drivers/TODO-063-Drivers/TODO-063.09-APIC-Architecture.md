@@ -5,7 +5,7 @@
 > Inter-Processor Interrupts (IPIs). Support both xAPIC (MMIO) and x2APIC (MSR) modes.
 
 > [!IMPORTANT]
-> **Spec Reference:** [`specs/drivers/APIC-Architecture.md`](../../../specs/drivers/APIC-Architecture.md)
+> **Spec Reference:** [`docs/specs/drivers/APIC-Architecture.md`](../../../docs/specs/drivers/APIC-Architecture.md)
 > — Contains full register layouts, MADT parsing details, calibration procedure,
 > and the end-to-end initialization sequence.
 

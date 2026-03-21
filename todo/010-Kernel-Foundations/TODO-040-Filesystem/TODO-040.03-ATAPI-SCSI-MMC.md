@@ -18,8 +18,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, register offsets, CDB formats, and sense codes reference the
-> [ATAPI & SCSI MMC Specification](file:///home/derickpayne/impossible-os/specs/storage/atapi-scsi-mmc.md)
-> in the repo at `specs/storage/atapi-scsi-mmc.md`.
+> [ATAPI & SCSI MMC Specification](file:///home/derickpayne/impossible-os/docs/specs/storage/atapi-scsi-mmc.md)
+> in the repo at `docs/specs/storage/atapi-scsi-mmc.md`.
 
 > [!NOTE]
 > **Existing Implementation:** The AHCI driver (`src/kernel/drivers/ahci.c`, 828 lines)

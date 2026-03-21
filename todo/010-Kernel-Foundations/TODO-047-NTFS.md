@@ -12,8 +12,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All field offsets, data structures, and algorithms reference the
-> [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/ntfs-3.1.md)
-> in `specs/filesystem/ntfs-3.1.md`. See also Microsoft's open-source ntfs3 driver (Linux 5.15+)
+> [NTFS 3.1 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/ntfs-3.1.md)
+> in `docs/specs/filesystem/ntfs-3.1.md`. See also Microsoft's open-source ntfs3 driver (Linux 5.15+)
 > and the NTFS-3G FUSE project for reference implementations.
 
 > [!NOTE]

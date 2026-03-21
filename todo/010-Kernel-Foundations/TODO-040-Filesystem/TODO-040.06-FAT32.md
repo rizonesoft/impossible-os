@@ -6,7 +6,7 @@
 > FSInfo caching, file read/write, directory operations (SFN/LFN read, create, delete, rename,
 > truncate), timestamp encoding, VFS integration, and basic formatting.
 > This TODO covers missing spec compliance, robustness, performance, and interoperability
-> gaps identified against `specs/filesystem/fat32.md`.
+> gaps identified against `docs/specs/filesystem/fat32.md`.
 >
 > **Codebase scan findings** (verified against source):
 > - `fat32_set_fat_entry()` already writes to ALL FAT copies (`fi = 0..num_fats-1`) but ignores `BPB_ExtFlags` mirroring mode
@@ -24,8 +24,8 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** All section numbers, field offsets, and encoding rules reference the
-> [FAT32 Specification](file:///home/derickpayne/impossible-os/specs/filesystem/fat32.md)
-> in the repo at `specs/filesystem/fat32.md`.
+> [FAT32 Specification](file:///home/derickpayne/impossible-os/docs/specs/filesystem/fat32.md)
+> in the repo at `docs/specs/filesystem/fat32.md`.
 
 ---
 

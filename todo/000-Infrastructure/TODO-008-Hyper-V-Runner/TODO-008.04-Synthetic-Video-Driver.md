@@ -26,8 +26,8 @@
 > [!IMPORTANT]
 > **Spec Reference:** All protocol details, message formats, VRAM constraints,
 > and security considerations reference the
-> [Synthetic Video Driver Specification](file:///home/derickpayne/impossible-os/specs/hyper-v/synthetic-video-driver.md)
-> in the repo at `specs/hyper-v/synthetic-video-driver.md`.
+> [Synthetic Video Driver Specification](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/synthetic-video-driver.md)
+> in the repo at `docs/specs/hyper-v/synthetic-video-driver.md`.
 
 ---
 
@@ -44,7 +44,7 @@
 
 ```mermaid
 graph TD
-    SPEC["specs/hyper-v/synthetic-video-driver.md<br/>Synthvid Protocol Spec"]
+    SPEC["docs/specs/hyper-v/synthetic-video-driver.md<br/>Synthvid Protocol Spec"]
     VMBUS["TODO-008 §3 VMBus Core Protocol ✅"]
     GOP["Existing GOP Framebuffer<br/>fb_init() / fb_swap() ✅"]
     PMM["PMM Allocator ✅"]
@@ -85,7 +85,7 @@ graph TD
 
 | ⭐ | Phase  | Section                                  | What It Delivers                                                        | Depends On                   | Status |
 | -- | :----: | ---------------------------------------- | ----------------------------------------------------------------------- | ---------------------------- | :----: |
-| 💎 | **0**  | `specs/hyper-v/synthetic-video-driver.md` | Protocol wire formats, VRAM constraints, security — **read before coding** | —                           |   ✅   |
+| 💎 | **0**  | `docs/specs/hyper-v/synthetic-video-driver.md` | Protocol wire formats, VRAM constraints, security — **read before coding** | —                           |   ✅   |
 | 💎 | **0**  | `TODO-008 §3` VMBus Core Protocol       | VMBus channel open, ring buffers, GPADL — foundation for all synthvid    | —                            |   ✅   |
 | 💎 | **1**  | §1.1 VMBus Channel + Version Negotiation | Connect to Video VSP, agree on protocol version                          | Phase 0 (VMBus)              |   ⬜   |
 | 💎 | **1**  | §1.2 VRAM Allocation + GPA Registration  | PMM-backed VRAM, host knows where framebuffer lives                      | Phase 1 (§1.1)               |   ⬜   |
@@ -420,7 +420,7 @@ graph TD
 | `src/kernel/main/boot_storage.c`                  | MODIFY  | Call `hvfb_init()` after VMBus init              |
 | `src/kernel/video/fb.c`                           | MODIFY  | Route to synthvid VRAM when hvfb active          |
 | `src/kernel/compositor/compositor.c`              | MODIFY  | Hardware cursor + dirty rect integration         |
-| `specs/hyper-v/synthetic-video-driver.md`         | REF     | Protocol specification                           |
+| `docs/specs/hyper-v/synthetic-video-driver.md`         | REF     | Protocol specification                           |
 
 ---
 

@@ -6,8 +6,8 @@
 > TRIM/UNMAP passthrough, error recovery (LUN/adapter/bus reset), hot-add/remove,
 > 4K sector alignment, and I/O statistics — all per the VSCSI protocol
 > over VMBus as documented in the
-> [StorVSC spec](file:///home/derickpayne/impossible-os/specs/hyper-v/storvsc-synthetic-scsi.md)
-> and the [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md).
+> [StorVSC spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/storvsc-synthetic-scsi.md)
+> and the [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md).
 > The current driver (`src/kernel/drivers/hyperv/storvsc.c`, ~510 lines)
 > handles channel opening, VSTOR protocol negotiation, SCSI INQUIRY,
 > READ_CAPACITY(16), and single-threaded READ/WRITE(16) via a 64 KiB
@@ -18,8 +18,8 @@
 
 > [!IMPORTANT]
 > **Spec References:**
-> - [StorVSC Synthetic SCSI spec](file:///home/derickpayne/impossible-os/specs/hyper-v/storvsc-synthetic-scsi.md) — VSCSI protocol, packet structures, initialization sequence, scalability limits
-> - [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/specs/hyper-v/vmbus-core-protocol.md) — Ring buffer architecture, GPADL mechanics, packet framing, signaling
+> - [StorVSC Synthetic SCSI spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/storvsc-synthetic-scsi.md) — VSCSI protocol, packet structures, initialization sequence, scalability limits
+> - [VMBus Core Protocol spec](file:///home/derickpayne/impossible-os/docs/specs/hyper-v/vmbus-core-protocol.md) — Ring buffer architecture, GPADL mechanics, packet framing, signaling
 > - [Hyper-V TLFS](https://learn.microsoft.com/en-us/virtualization/hyper-v-on-windows/tlfs/tlfs) — Public hypervisor specification
 >
 > **Legal:** Clean-room implement from public specs. Do NOT reference Linux `hv_storvsc.ko` (GPL contamination risk).
