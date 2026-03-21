@@ -933,6 +933,51 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 
 ---
 
+## 20. Force Unit Access Writes (🚀 Impossible OS Exclusive)
+
+### 20.1 Per-Request FUA Cache Bypass
+
+**Prompt:** The VirtIO TC proposed Force Unit Access (FUA) writes for the block device specification in January 2025. Neither Windows viostor nor Linux virtio-blk currently implement per-request FUA at the VirtIO driver level — both rely on full cache flush (`T_FLUSH`) after writes, which flushes ALL pending data rather than targeting a single request. Implement a `VIRTIO_BLK_T_OUT_FUA` request type (or a flag in the request header) that tells the device to write this specific request directly to non-volatile storage, bypassing the write cache. This eliminates the need for a full flush after critical writes (journal commit, fsync single file, metadata update). The device guarantees the data reached stable storage before returning `S_OK`. For devices that don't support FUA, transparently fall back to `T_OUT` + `T_FLUSH`. This gives Impossible OS the first per-request write durability guarantee in a VirtIO block driver. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: force unit access writes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Define `VIRTIO_BLK_F_FUA` feature bit (proposed spec addition)
+- [ ] Negotiate `VIRTIO_BLK_F_FUA` during init
+- [ ] Implement `virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)`:
+  - [ ] Build request header with FUA flag set (type = `VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_FUA_FLAG`)
+  - [ ] Submit via standard 3-descriptor chain
+  - [ ] Completion guarantees data on stable storage
+- [ ] Fallback: if `F_FUA` not negotiated, issue `T_OUT` + `T_FLUSH` for equivalent semantics
+- [ ] Wire to VFS: `blkdev_write_fua()` API for journal commits and metadata writes
+- [ ] Track FUA vs non-FUA write counts: `HKLM\HARDWARE\VirtIO\Block0\FuaWrites`
+- [ ] Configurable: `HKLM\SYSTEM\Drivers\VirtIO\FUA\Enabled` (default true when supported)
+- [ ] Commit: `"virtio-blk: force unit access writes"`
+
+---
+
+## 21. Inline Encryption (🚀 Impossible OS Exclusive)
+
+### 21.1 Transparent Block-Level Crypto Offload
+
+**Prompt:** The VirtIO TC proposed inline encryption support for the block device specification in January 2025. Neither Windows viostor nor Linux virtio-blk implement VirtIO-level inline encryption — Windows uses BitLocker (software-layer encryption) and Linux uses blk-crypto (above the virtio driver). Implement transparent block-level encryption directly in the VirtIO block driver. When the host advertises encryption capability, the driver can tag individual I/O requests with a crypto context (key index, algorithm, data unit number) so that the host/hypervisor performs encryption and decryption inline at the storage layer. This offloads crypto from the guest CPU to the host, reducing latency and CPU usage for encrypted workloads. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: inline encryption support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Define `VIRTIO_BLK_F_INLINE_CRYPTO` feature bit (proposed spec addition)
+- [ ] Negotiate `VIRTIO_BLK_F_INLINE_CRYPTO` during init
+- [ ] Read crypto capabilities from device config: supported algorithms (AES-256-XTS, etc.), max key slots
+- [ ] Implement crypto context management:
+  - [ ] `virtio_blk_crypto_set_key(uint32_t slot, const uint8_t *key, uint32_t algo)` — program key slot
+  - [ ] `virtio_blk_crypto_clear_key(uint32_t slot)` — zeroize and release key slot
+- [ ] Extend request header for crypto I/O:
+  - [ ] Add `crypto_key_slot`, `crypto_tweak` (data unit number), `crypto_algo` fields
+  - [ ] Submit via extended descriptor chain (header + crypto context + data + status)
+- [ ] Wire to volume-level encryption: per-partition key assignment via Registry
+- [ ] Expose via Registry:
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Crypto\Supported` = boolean
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Crypto\Algorithms` = list
+  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Crypto\KeySlots\Used` = count
+- [ ] Fallback: if not negotiated, encryption handled by software layer (above driver)
+- [ ] Commit: `"virtio-blk: inline encryption support"`
+
+---
+
 ## Codebase Status & Known Issues
 
 > [!NOTE]

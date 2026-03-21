@@ -587,7 +587,7 @@ graph TD
 
 **Prompt:** Register NTFS as a VFS filesystem driver. Implement the `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. The `write`, `create`, `unlink`, `rename`, `mkdir`, `rmdir` callbacks return `NTFS_ERR_READ_ONLY` (read-only driver). Detect NTFS volumes during partition scanning by checking the OEM ID `"NTFS    "` in the boot sector. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: VFS driver registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
-- [ ] Create `src/kernel/fs/ntfs.c` and `include/kernel/fs/ntfs.h`
+- [x] Files exist: `src/kernel/fs/ntfs/ntfs_core.c` and `include/kernel/fs/ntfs.h` — ✅ already created
 - [ ] Define `struct ntfs_volume` — holds BPB data, MFT location, cluster size, etc.
 - [ ] Implement `ntfs_detect(blkdev)` — read first sector, check OEM ID `"NTFS    "`
 - [ ] Register with partition scanner: on MBR type `0x07` or GPT GUID `EBD0A0A2-...`
@@ -1006,8 +1006,8 @@ graph TD
 > This line MUST be updated to include `PART_FS_NTFS` or the NTFS partition
 > will be silently skipped during boot.
 
-- [ ] Add `PART_FS_NTFS = 4` to `include/kernel/fs/partition.h`
-- [ ] Add `probe_ntfs()` to `partition.c`: check OEM ID `"NTFS    "` at offset `0x03`
+- [x] Add `PART_FS_NTFS = 4` to `include/kernel/fs/partition.h` — ✅ already done
+- [x] Add `probe_ntfs()` to `partition.c`: check OEM ID `"NTFS    "` at offset `0x03` — ✅ already done (`ntfs_probe()` in `ntfs_core.c`, called at line 156)
 - [ ] Add `case PART_FS_NTFS: return "NTFS";` to `partition_fs_name()`
 - [ ] Update `probe_filesystem()` to call `probe_ntfs(sect)` after `probe_fat32()`
 - [ ] Update `partition_mount_filesystems()` to handle NTFS:
@@ -1277,24 +1277,21 @@ graph TD
 
 ## Key Files
 
-| File                            | Purpose                                                            |
-| ------------------------------- | ------------------------------------------------------------------ |
-| `src/kernel/fs/ntfs.c`          | [NEW] NTFS driver — BPB, MFT, attributes, data runs, VFS          |
-| `include/kernel/fs/ntfs.h`      | [NEW] Public API, on-disk structures, error codes                  |
-| `src/kernel/fs/ntfs_lznt1.c`    | [NEW] LZNT1 decompression engine                                   |
-| `src/kernel/fs/partition.c`     | **Needs `probe_ntfs()` and `PART_FS_NTFS`** — currently missing    |
-| `include/kernel/fs/partition.h` | **Needs `PART_FS_NTFS` constant** (add after `PART_FS_EXT2 = 3`)   |
-| `src/kernel/fs/vfs.c`           | Drive letter assignment for auto-mounted NTFS volumes              |
-| `src/kernel/fs/gpt.c`           | GPT GUID `EBD0A0A2-B9E5-…` detection for Microsoft Basic Data     |
-| `docs/specs/filesystem/ntfs-3.1.md`  | NTFS 3.1 on-disk format specification (offsets, algorithms)        |
+| File                                      | Purpose                                                        |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `src/kernel/fs/ntfs/ntfs_core.c`          | NTFS driver — BPB, MFT, fixup, attributes, data runs, indexes |
+| `include/kernel/fs/ntfs.h`                | Public API, on-disk structures, error codes                    |
+| `src/kernel/fs/ntfs_lznt1.c`              | [NEW] LZNT1 decompression engine                               |
+| `src/kernel/fs/partition.c`               | Partition scanner — `ntfs_probe()` integration ✅ done          |
+| `include/kernel/fs/partition.h`           | `PART_FS_NTFS = 4` ✅ defined                                  |
+| `src/kernel/fs/vfs.c`                     | Drive letter assignment for auto-mounted NTFS volumes          |
+| `src/kernel/fs/gpt.c`                     | GPT GUID `EBD0A0A2-B9E5-…` detection for Microsoft Basic Data |
+| `specs/storage/filesystems/ntfs-3.1.md`   | NTFS 3.1 on-disk format specification (offsets, algorithms)    |
 
-> [!WARNING]
-> **Codebase gap:** `partition.c` currently probes for FAT32, IXFS, and ext2 — but
-> **NOT** NTFS. Before the NTFS driver can auto-mount, you must add:
-> 1. `#define PART_FS_NTFS 4` to `partition.h`
-> 2. `probe_ntfs()` to `partition.c` (check OEM ID `"NTFS    "` at offset `0x03`)
-> 3. `case PART_FS_NTFS: return "NTFS";` to `partition_fs_name()`
-> 4. Call `probe_ntfs(sect)` in `probe_filesystem()` after `probe_fat32()`
+> [!NOTE]
+> **Completed codebase integration:** `partition.c` already probes NTFS via `ntfs_probe()`
+> (called at line 156) and `PART_FS_NTFS = 4` is defined in `partition.h` (line 22).
+> The NTFS source lives at `src/kernel/fs/ntfs/ntfs_core.c` (1376 lines), not `ntfs.c`.
 
 > [!NOTE]
 > **VFS gap:** `vfs.h` does not currently define `VFS_SYMLINK` or a `readlink()` callback.
