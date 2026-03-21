@@ -312,6 +312,12 @@ int ixfs_checksum_verify(struct ixfs_volume *vol, uint32_t block,
     if (!vol->checksum_table || block >= vol->checksum_count)
         return 0;  /* no table — skip check */
 
+    /* Skip metadata blocks: superblock, bitmap, checksum table, inode table,
+     * journal, refcount table, snapshot table. These are managed by subsystems
+     * that write via ixfs_disk_write() directly, bypassing checksum updates. */
+    if (block < vol->sb.s_data_start)
+        return 0;
+
     stored = vol->checksum_table[block];
     if (stored == 0)
         return 0;  /* uninitialized entry — skip */
