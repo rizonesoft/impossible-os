@@ -14,7 +14,9 @@
 > [!IMPORTANT]
 > **Prerequisite:** Depends on [TODO-050.02-Win32-Reg-API.md](TODO-050.02-Win32-Reg-API.md)
 > (§2 Win32 API — all kernel-side registry functions) and the existing syscall infrastructure
-> in `include/kernel/sched/syscall.h` (currently SYS_WRITE=1 through SYS_MUNMAP=38).
+> in `include/kernel/sched/syscall.h` (currently SYS_WRITE=1 through SYS_MUNMAP=38,
+> with gaps at 18–32 and 39). The syscall ABI passes arguments in `rdi`, `rsi`, `rdx`
+> (3-argument max per the current INT 0x80 handler).
 
 > [!CAUTION]
 > **User pointer validation is mandatory.** Every syscall that reads or writes user-mode
@@ -58,9 +60,12 @@ graph TD
     M["§6.7 Access Audit Log 🚀"]
     N["§7.7 API Call Tracing 🚀"]
     O["§7.8 App Compat Shims 🚀"]
+    P["§6.8 Per-Process Registry Quota 🚀"]
+    Q["§7.9 Registry Snapshot & Diff 🚀"]
+    R["§7.10 Registry Transaction API 🚀"]
 
     FILEASSOC["TODO-240 §1<br/>File Associations via HKCR"]
-    REGEDIT["TODO-050-Registry §8.1<br/>regedit shell command"]
+    REGEDIT["TODO-050-Registry §8<br/>regedit shell command ⬜ pending"]
 
     API --> A
     SYSCALL_H --> A
@@ -82,6 +87,10 @@ graph TD
     C --> K
     A --> L
     C --> M
+
+    A --> P
+    A --> Q
+    A --> R
 
     G --> FILEASSOC
     I --> REGEDIT
@@ -107,6 +116,9 @@ graph TD
 | ⭐  | **6**  | §6.7 Access Audit Log                | Log all registry access with PID, key, operation 🚀                            | Phase 2 (§6.3)   |   ⬜   |
 | ⭐  | **6**  | §7.7 API Call Tracing                | Debug logging for Win32 registry calls 🚀                                     | Phase 3 (§7.1)   |   ⬜   |
 | ⭐  | **7**  | §7.8 App Compat Shims               | Automatic fixes for known Win32 app quirks 🚀                                 | Phase 4 (§7.2)   |   ⬜   |
+| ⭐  | **7**  | §6.8 Per-Process Registry Quota      | Per-PID storage quota — prevent pool exhaustion 🚀                            | Phase 1 (§6.1)   |   ⬜   |
+| ⭐  | **7**  | §7.9 Registry Snapshot & Diff        | Point-in-time snapshot + diff for debugging 🚀                                | Phase 1 (§6.1)   |   ⬜   |
+| ⭐  | **7**  | §7.10 Registry Transaction API       | Atomic multi-write batches — no partial updates 🚀                            | Phase 1 (§6.1)   |   ⬜   |
 
 > [!NOTE]
 > **Phase 0 is complete.** The kernel registry API and syscall dispatch infrastructure
@@ -132,6 +144,9 @@ graph TD
 > logging, and Win32 API call tracing.
 >
 > **Phase 7** adds app compat shimming — automatic fixes for known Win32 quirks.
+> Also adds per-process registry quotas (preventing pool exhaustion), point-in-time
+> snapshot & diff (no third-party tools), and atomic registry transactions (no partial
+> updates on multi-write operations).
 
 > [!TIP]
 > **Syscall number assignment:** Use `SYS_REG_OPEN=40` through `SYS_REG_ENUM_VALUE=48`
@@ -157,8 +172,9 @@ graph TD
 
 **Prompt:** Add 9 registry syscall numbers to `include/kernel/sched/syscall.h` starting
 at `SYS_REG_OPEN=40`. Add dispatch cases in `syscall_handler()` in `src/kernel/sched/syscall.c`
-that extract arguments from registers (per the existing syscall ABI: `rdi`, `rsi`, `rdx`,
-`r10`, `r8`, `r9`) and call the corresponding kernel registry functions (`RegOpenKeyEx`,
+that extract arguments from registers (per the existing syscall ABI: `rdi`, `rsi`, `rdx`;
+note: the current INT 0x80 handler passes 3 args — extend to 6 via `r10`, `r8`, `r9`
+if needed) and call the corresponding kernel registry functions (`RegOpenKeyEx`,
 `RegCreateKeyEx`, `RegCloseKey`, `RegQueryValueEx`, `RegSetValueEx`, `RegDeleteKey`,
 `RegDeleteValue`, `RegEnumKeyEx`, `RegEnumValue`). Each handler should validate arguments,
 call the kernel function, and return the status code. After completing all items, mark
@@ -331,7 +347,8 @@ U+D800–U+DFFF). For the initial version, `W` variants that encounter conversio
 errors should return `ERROR_INVALID_PARAMETER`. After completing all items, mark every
 item as `[x]`, update this prompt to a verification prompt, run
 `bash scripts/build.sh clean`, and commit as `"win32: UTF-16 registry support"`.
-Add notes directly in this TODO section.
+Add notes directly in this TODO section. After implementation, save any gotchas,
+solutions, and important information to MCP memory.
 
 - [ ] Implement `utf16_to_utf8(wchar *src, int src_len, char *dst, int dst_size)`:
   - [ ] Handle BMP characters (1–3 byte UTF-8 sequences)
@@ -363,7 +380,8 @@ without affecting other users. Implement `reg_resolve_hkcr()` (already stubbed i
 HKCR), merge both sources — HKCU entries shadow HKLM entries with the same name.
 After completing all items, mark every item as `[x]`, update this prompt to a
 verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"win32: HKCR merged view"`. Add notes directly in this TODO section.
+`"win32: HKCR merged view"`. Add notes directly in this TODO section. After
+implementation, save any gotchas, solutions, and important information to MCP memory.
 
 > [!NOTE]
 > **Cross-reference:** File associations and icon mapping via HKCR are tracked in
@@ -394,7 +412,8 @@ Impossible OS apps use the access control policy in §6.3 directly. Virtualizati
 can be disabled per-app via `HKCU\Software\{App}\VirtualizationEnabled=0`. After
 completing all items, mark every item as `[x]`, update this prompt to a verification
 prompt, run `bash scripts/build.sh clean`, and commit as
-`"win32: registry virtualization"`. Add notes directly in this TODO section.
+`"win32: registry virtualization"`. Add notes directly in this TODO section. After
+implementation, save any gotchas, solutions, and important information to MCP memory.
 
 - [ ] Define virtual store path: `HKCU\Software\Classes\VirtualStore\MACHINE\SOFTWARE\`
 - [ ] On HKLM write via advapi32.dll:
@@ -420,7 +439,8 @@ as `"Name"=dword:0000001e`, binary as `"Name"=hex:01,02,03`, and key deletion as
 subcommand and export into `regedit export`. After completing all items, mark every
 item as `[x]`, update this prompt to a verification prompt, run
 `bash scripts/build.sh clean`, and commit as `"win32: reg file import/export"`.
-Add notes directly in this TODO section.
+Add notes directly in this TODO section. After implementation, save any gotchas,
+solutions, and important information to MCP memory.
 
 - [ ] Implement `.reg` file parser:
   - [ ] Parse header: `Windows Registry Editor Version 5.00`
@@ -451,7 +471,8 @@ However, future native error codes may diverge — implement a mapping table as 
 safety layer. Also map native-only codes (like `ERROR_KEY_DELETED`) to the closest
 Win32 equivalent. After completing all items, mark every item as `[x]`, update this
 prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"win32: registry error mapping"`. Add notes directly in this TODO section.
+`"win32: registry error mapping"`. Add notes directly in this TODO section. After
+implementation, save any gotchas, solutions, and important information to MCP memory.
 
 - [ ] Create error mapping table in `registry_win32.c`:
   - [ ] `ERROR_SUCCESS (0)` ↔ `ERROR_SUCCESS (0)`
@@ -615,51 +636,152 @@ Add notes directly in this TODO section.
 - [ ] Log shimmed calls via klog: `[Win32] Shimmed: %s → %s for %s`
 - [ ] Commit: `"win32: registry app shims"`
 
+### 6.8 Per-Process Registry Quota 🚀
+
+**Prompt:** Implement per-process registry storage quotas. Track the total bytes
+each process has written to its `HKCU` sandbox (or `HKU\{pid}` if sandboxed). When a
+process exceeds its quota (`REG_PROCESS_QUOTA_BYTES`, default 1 MiB), return
+`ERROR_DISK_FULL` on subsequent writes. The quota is configurable per-process via
+`HKLM\SYSTEM\Registry\Quota\{process_name}` (REG_DWORD, in KiB) and globally via
+`HKLM\SYSTEM\Registry\DefaultQuotaKiB` (default 1024). This prevents a runaway app
+from filling the registry pool with garbage data — a problem on Windows where a single
+app can consume hundreds of MiB of registry space. After completing all items, mark
+every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"registry: per-process quota"`.
+Add notes directly in this TODO section. After implementation, save any gotchas,
+solutions, and important information to MCP memory.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Windows has a global registry size limit but no
+> per-process quota — a single app can consume all available registry space. Linux
+> (dconf) has no size limits. Impossible OS enforces per-process quotas, preventing
+> any single app from monopolizing the registry pool.
+
+- [ ] Track per-process bytes written in the task struct or side table
+- [ ] On `SYS_REG_SET` and `SYS_REG_CREATE`: add data size to process's running total
+- [ ] On `SYS_REG_DELETE_VALUE` and `SYS_REG_DELETE_KEY`: subtract freed bytes
+- [ ] Check quota before allowing write — return `ERROR_DISK_FULL` if exceeded
+- [ ] Registry value: `HKLM\SYSTEM\Registry\DefaultQuotaKiB` (REG_DWORD, default 1024)
+- [ ] Per-process override: `HKLM\SYSTEM\Registry\Quota\{process_name}` (REG_DWORD)
+- [ ] Exempt kernel-mode callers from quota enforcement
+- [ ] Log quota violations via klog: `[Registry] PID %d quota exceeded (%u/%u KiB)`
+- [ ] Commit: `"registry: per-process quota"`
+
+### 7.9 Registry Snapshot & Diff 🚀
+
+**Prompt:** Implement a registry snapshot and diff mechanism for debugging and
+troubleshooting. `RegSnapshot(HKEY root, const char *tag)` captures a point-in-time
+snapshot of all keys and values under `root` into a ring buffer of snapshots (max 8
+per process). `RegDiff(const char *tag_before, const char *tag_after)` compares two
+snapshots and outputs added/removed/changed keys and values as a structured diff.
+This is invaluable for debugging install/uninstall operations — users can snapshot
+before, install an app, snapshot after, and see exactly what changed. Wire into
+`regedit snapshot` and `regedit diff` subcommands. After completing all items, mark
+every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"registry: snapshot and diff"`.
+Add notes directly in this TODO section. After implementation, save any gotchas,
+solutions, and important information to MCP memory.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Windows requires third-party tools (RegShot,
+> Process Monitor) to diff registry changes. Linux has no concept. Impossible OS
+> provides built-in snapshot+diff via a single syscall — zero external tools needed.
+
+- [ ] Define `reg_snapshot_entry_t` — key path + value hash
+- [ ] Implement `RegSnapshot(root, tag)` — walk subtree, hash each value, store
+- [ ] Ring buffer: 8 snapshots per process (reuse oldest on overflow)
+- [ ] Implement `RegDiff(tag_before, tag_after)` — compare two snapshots:
+  - [ ] List added keys/values (in `after` but not `before`)
+  - [ ] List removed keys/values (in `before` but not `after`)
+  - [ ] List changed values (same key, different hash)
+- [ ] Wire into `regedit snapshot <tag>` and `regedit diff <tag1> <tag2>` subcommands
+- [ ] Output diff as structured text (parseable by scripts)
+- [ ] Commit: `"registry: snapshot and diff"`
+
+### 7.10 Registry Transaction API 🚀
+
+**Prompt:** Implement a batch/transaction API for registry modifications. A transaction
+groups multiple registry writes into an atomic unit — either all succeed or all are
+rolled back. Implement `RegBeginTransaction()` → returns a transaction handle,
+`RegCommitTransaction(txn)` → applies all buffered writes atomically,
+`RegAbortTransaction(txn)` → discards all buffered writes. During a transaction,
+`SYS_REG_SET`, `SYS_REG_CREATE`, and `SYS_REG_DELETE_*` buffer their operations
+instead of applying immediately. On commit, the operations are applied in order with
+the registry lock held. On abort, the buffer is discarded. Maximum 32 pending
+operations per transaction. This eliminates partial-update bugs when an app needs
+to write multiple related settings. After completing all items, mark every item as
+`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
+and commit as `"registry: transaction API"`. Add notes directly in this TODO section.
+After implementation, save any gotchas, solutions, and important information to
+MCP memory.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Windows has `RegCreateTransaction` (KTM-based)
+> but it was deprecated in Windows 8 and removed in Windows 10 — no modern registry
+> transaction support. Linux dconf supports change sets but not true transactions.
+> Impossible OS provides simple, lightweight atomic registry transactions.
+
+- [ ] Define `reg_txn_t` struct: operation buffer (max 32 entries), state flag
+- [ ] Define `reg_txn_op_t`: operation type, key path, value name, data, size
+- [ ] Implement `RegBeginTransaction()` → allocate txn, return handle
+- [ ] Buffer `SYS_REG_SET` / `SYS_REG_CREATE` / `SYS_REG_DELETE_*` when txn active
+- [ ] Implement `RegCommitTransaction(txn)` — apply all ops atomically
+- [ ] Implement `RegAbortTransaction(txn)` — discard all ops
+- [ ] Return `ERROR_OUTOFMEMORY` if > 32 pending operations
+- [ ] Auto-abort on process exit (prevent leaked transactions)
+- [ ] Commit: `"registry: transaction API"`
+
 ---
 
 ## Priority Order
 
-| Priority | Section                                 | Description                                                          |
-| -------- | --------------------------------------- | -------------------------------------------------------------------- |
-| 🟡 P2   | §6.1 Syscall Numbers & Dispatch         | Foundation: add 9 `SYS_REG_*` syscalls to handler                    |
-| 🟡 P2   | §6.2 Pointer Validation                 | Security: validate all user buffers before access                     |
-| 🟡 P2   | §6.3 Access Control Policy              | Security: enforce HKCU+SOFTWARE writable, SYSTEM read-only            |
-| 🟡 P2   | §6.4 User-Mode Wrapper Library          | Usability: clean C API for user-mode apps                             |
-| 🟡 P2   | §7.1 advapi32.dll Registry Stubs        | Foundation: A-variant stubs in advapi32.dll export table               |
-| 🟡 P2   | §7.6 Error Code Mapping                 | Safety: Win32 ↔ native error translation layer                        |
-| 🟡 P2   | §7.2 ANSI/Wide String Handling          | Full Unicode: UTF-16LE ↔ UTF-8 for W variants                         |
-| 🟡 P2   | §7.3 HKCR Merged View                   | Compat: merged HKLM+HKCU class view for file associations             |
-| 🟢 P3   | §7.4 Registry Virtualization            | Compat: Vista-style HKLM → HKCU redirect for non-admin apps           |
-| 🟢 P3   | §7.5 .reg File Import/Export            | Migration: parse/generate Windows .reg format                          |
-| 🟢 P3   | §6.5 Per-Process Registry Sandbox       | 🚀 **Exclusive** — process-specific HKCU isolation                    |
-| 🟢 P3   | §6.6 Syscall Rate Limiting              | 🚀 **Exclusive** — anti-abuse throttling per process                   |
-| 🟢 P3   | §7.7 API Call Tracing                   | 🚀 **Exclusive** — built-in Win32 registry call tracing                |
-| 🔵 P4   | §6.7 Access Audit Log                   | 🚀 **Exclusive** — ring-buffer audit with on/off toggle               |
-| 🔵 P4   | §7.8 App Compat Shims                   | 🚀 **Exclusive** — auto-fix known Win32 app quirks via Registry        |
+| Priority | Section                                 | Description                                                            |
+| -------- | --------------------------------------- | ---------------------------------------------------------------------- |
+| 🟡 P2   | §6.1 Syscall Numbers & Dispatch         | Foundation: add 9 `SYS_REG_*` syscalls to handler                      |
+| 🟡 P2   | §6.2 Pointer Validation                 | Security: validate all user buffers before access                       |
+| 🟡 P2   | §6.3 Access Control Policy              | Security: enforce HKCU+SOFTWARE writable, SYSTEM read-only              |
+| 🟡 P2   | §6.4 User-Mode Wrapper Library          | Usability: clean C API for user-mode apps                               |
+| 🟡 P2   | §7.1 advapi32.dll Registry Stubs        | Foundation: A-variant stubs in advapi32.dll export table                 |
+| 🟡 P2   | §7.6 Error Code Mapping                 | Safety: Win32 ↔ native error translation layer                          |
+| 🟡 P2   | §7.2 ANSI/Wide String Handling          | Full Unicode: UTF-16LE ↔ UTF-8 for W variants                           |
+| 🟡 P2   | §7.3 HKCR Merged View                   | Compat: merged HKLM+HKCU class view for file associations               |
+| 🟢 P3   | §7.4 Registry Virtualization            | Compat: Vista-style HKLM → HKCU redirect for non-admin apps             |
+| 🟢 P3   | §7.5 .reg File Import/Export            | Migration: parse/generate Windows .reg format                            |
+| 🟢 P3   | §6.5 Per-Process Registry Sandbox       | 🚀 **Exclusive** — process-specific HKCU isolation                      |
+| 🟢 P3   | §6.6 Syscall Rate Limiting              | 🚀 **Exclusive** — anti-abuse throttling per process                     |
+| 🟢 P3   | §7.7 API Call Tracing                   | 🚀 **Exclusive** — built-in Win32 registry call tracing                  |
+| 🔵 P4   | §6.7 Access Audit Log                   | 🚀 **Exclusive** — ring-buffer audit with on/off toggle                 |
+| 🔵 P4   | §7.8 App Compat Shims                   | 🚀 **Exclusive** — auto-fix known Win32 app quirks via Registry          |
+| 🔵 P4   | §6.8 Per-Process Registry Quota         | 🚀 **Exclusive** — prevent single app from filling registry pool         |
+| 🔵 P4   | §7.9 Registry Snapshot & Diff           | 🚀 **Exclusive** — built-in before/after diff, no third-party tools      |
+| 🔵 P4   | §7.10 Registry Transaction API          | 🚀 **Exclusive** — atomic multi-write batches, no partial updates        |
 
 ---
 
 ## OS Comparison
 
-| Feature                                    | 🪟 Windows 11                                | 🐧 Linux                                     | 🚀 Impossible OS                                          |
-| ------------------------------------------ | -------------------------------------------- | --------------------------------------------- | --------------------------------------------------------- |
-| User-mode registry access via syscalls     | ✅ NtOpenKey, NtSetValueKey (ntdll)           | ❌ No registry (dconf via D-Bus IPC)           | ⬜ §6.1 P2 — `SYS_REG_*` syscalls                         |
-| User pointer validation                    | ✅ ProbeForRead/ProbeForWrite                 | ✅ copy_from_user/copy_to_user                | ⬜ §6.2 P2 — `user_ptr_valid` checks                      |
-| Access control (user vs kernel keys)       | ✅ ACL-based per key (SAM, SECURITY)          | ❌ No concept                                  | ⬜ §6.3 P2 — policy-based (HKCU+SOFTWARE writable)         |
-| User-mode wrapper library                  | ✅ advapi32.dll (RegOpenKeyEx, etc.)          | ⚠️ GLib dconf API (user-space only)           | ⬜ §6.4 P2 — `user/lib/registry.c`                        |
-| advapi32.dll registry API                  | ✅ Native (built-in DLL)                      | ⚠️ Wine reimplements                          | ⬜ §7.1 P2 — A-variant stubs in builtin table              |
-| A/W (ANSI/Wide) string variants            | ✅ Full A/W with codepage support             | ⚠️ Wine implements (partial)                  | ⬜ §7.2 P2 — UTF-16LE ↔ UTF-8 conversion                  |
-| HKCR merged view                           | ✅ HKCU\Classes overlays HKLM\Classes         | ❌ No concept                                  | ⬜ §7.3 P2 — two-level lookup with HKCU priority           |
-| Win32 error code mapping                   | ✅ Native (no mapping needed)                 | ⚠️ Wine maps internally                       | ⬜ §7.6 P2 — explicit translation table                    |
-| Registry virtualization (Vista+)           | ✅ VirtualStore under HKCU                    | ❌ No concept                                  | ⬜ §7.4 P3 — redirect non-admin HKLM writes                |
-| .reg file import/export                    | ✅ Registry Editor built-in                   | ⚠️ Wine `regedit` tool                        | ⬜ §7.5 P3 — full v5.00 format parser/generator            |
-| **Per-process registry sandbox**           | ❌ HKCU shared among all user processes       | ❌ No concept                                  | ⬜ §6.5 P3 — **per-PID HKCU isolation** 🚀                |
-| **Syscall rate limiting**                  | ❌ No rate limit (unlimited writes)           | ❌ No rate limit                               | ⬜ §6.6 P3 — **configurable throttle per process** 🚀     |
-| **Built-in API call tracing**              | ❌ Requires Process Monitor / ETW             | ❌ Requires strace (no registry)               | ⬜ §7.7 P3 — **on/off toggle, ring buffer** 🚀            |
-| **Access audit log**                       | ⚠️ ETW-based (complex, heavy overhead)        | ❌ No registry audit                           | ⬜ §6.7 P4 — **simple on/off toggle, ring buffer** 🚀     |
-| **Registry-based app compat shims**        | ⚠️ ACT + SDB files (binary, undocumented)     | ❌ No concept                                  | ⬜ §7.8 P4 — **transparent, editable via Registry** 🚀    |
-| **Native UTF-8 internally**               | ❌ UTF-16LE internally                        | ✅ UTF-8                                       | ✅ §7.2 — **zero conversion for A variants** 🚀            |
-| **Static-pool syscall dispatch**           | ❌ Dynamic kernel pool                        | ❌ Dynamic allocation                          | ⬜ §6.1 P2 — **zero heap pressure in dispatch** 🚀        |
+| Feature                                    | 🪟 Windows 11                          | 🐧 Linux                               | 🚀 Impossible OS                                         |
+| ------------------------------------------ | -------------------------------------- | --------------------------------------- | -------------------------------------------------------- |
+| User-mode registry access via syscalls     | ✅ NtOpenKey, NtSetValueKey (ntdll)     | ❌ No registry (dconf via D-Bus IPC)     | ⬜ §6.1 P2 — `SYS_REG_*` syscalls                        |
+| User pointer validation                    | ✅ ProbeForRead/ProbeForWrite           | ✅ copy_from_user/copy_to_user           | ⬜ §6.2 P2 — `user_ptr_valid` checks                     |
+| Access control (user vs kernel keys)       | ✅ ACL-based per key (SAM, SECURITY)    | ❌ No concept                            | ⬜ §6.3 P2 — policy-based (HKCU+SOFTWARE writable)        |
+| User-mode wrapper library                  | ✅ advapi32.dll (RegOpenKeyEx, etc.)    | ⚠️ GLib dconf API (user-space only)     | ⬜ §6.4 P2 — `user/lib/registry.c`                       |
+| advapi32.dll registry API                  | ✅ Native (built-in DLL)                | ⚠️ Wine reimplements                    | ⬜ §7.1 P2 — A-variant stubs in builtin table             |
+| A/W (ANSI/Wide) string variants            | ✅ Full A/W with codepage support       | ⚠️ Wine implements (partial)            | ⬜ §7.2 P2 — UTF-16LE ↔ UTF-8 conversion                 |
+| HKCR merged view                           | ✅ HKCU\Classes overlays HKLM\Classes   | ❌ No concept                            | ⬜ §7.3 P2 — two-level lookup with HKCU priority          |
+| Win32 error code mapping                   | ✅ Native (no mapping needed)           | ⚠️ Wine maps internally                 | ⬜ §7.6 P2 — explicit translation table                   |
+| Registry virtualization (Vista+)           | ✅ VirtualStore under HKCU              | ❌ No concept                            | ⬜ §7.4 P3 — redirect non-admin HKLM writes               |
+| .reg file import/export                    | ✅ Registry Editor built-in             | ⚠️ Wine `regedit` tool                  | ⬜ §7.5 P3 — full v5.00 format parser/generator           |
+| **Per-process registry sandbox**           | ❌ HKCU shared among all processes      | ❌ No concept                            | ⬜ §6.5 P3 — **per-PID HKCU isolation** 🚀               |
+| **Syscall rate limiting**                  | ❌ No rate limit (unlimited writes)     | ❌ No rate limit                         | ⬜ §6.6 P3 — **configurable throttle per process** 🚀    |
+| **Built-in API call tracing**              | ❌ Requires Process Monitor / ETW       | ❌ Requires strace (no registry)         | ⬜ §7.7 P3 — **on/off toggle, ring buffer** 🚀           |
+| **Access audit log**                       | ⚠️ ETW-based (complex, heavy overhead)  | ❌ No registry audit                     | ⬜ §6.7 P4 — **simple on/off toggle, ring buffer** 🚀    |
+| **Registry-based app compat shims**        | ⚠️ ACT + SDB files (binary, undoc)      | ❌ No concept                            | ⬜ §7.8 P4 — **transparent, editable via Registry** 🚀   |
+| **Per-process registry quota**             | ❌ Global limit only (no per-process)   | ❌ No size limits (dconf)                | ⬜ §6.8 P4 — **per-PID quota, configurable** 🚀          |
+| **Registry snapshot & diff**               | ❌ Requires RegShot (third-party)       | ❌ No concept                            | ⬜ §7.9 P4 — **built-in snapshot + diff** 🚀             |
+| **Atomic registry transactions**           | ❌ KTM deprecated (Win 8+), removed     | ⚠️ dconf change sets (not atomic)        | ⬜ §7.10 P4 — **lightweight atomic batches** 🚀          |
+| **Native UTF-8 internally**               | ❌ UTF-16LE internally                  | ✅ UTF-8                                 | ✅ §7.2 — **zero conversion for A variants** 🚀           |
+| **Static-pool syscall dispatch**           | ❌ Dynamic kernel pool                  | ❌ Dynamic allocation                    | ⬜ §6.1 P2 — **zero heap pressure in dispatch** 🚀       |
 
 > **After P2 items:** Impossible OS provides secure user-mode registry access with pointer
 > validation and access control, plus full Win32 A/W compatibility via advapi32.dll stubs,
@@ -667,5 +789,6 @@ Add notes directly in this TODO section.
 > **After P3 exclusive features:** Exceeds both Windows and Linux with per-process HKCU
 > sandboxing, syscall rate limiting, registry virtualization, .reg import/export,
 > and built-in Win32 API tracing.
-> **After P4 items:** Full audit logging and app compat shimming — simpler than Windows
-> ETW and ACT, more capable than Linux (which has no registry at all).
+> **After P4 items:** Full audit logging, app compat shimming, per-process quotas,
+> snapshot/diff, and atomic transactions — simpler than Windows ETW/ACT/KTM, more
+> capable than Linux (which has no registry at all).
