@@ -426,6 +426,108 @@ uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev)
     return mmio_read8(dev->common_cfg + VIRTIO_COMMON_CFGGEN);
 }
 
+int virtio_queue_reset(struct virtqueue *vq)
+{
+    volatile uint8_t *cfg;
+    uint16_t qsz;
+    uint64_t desc_sz, avail_sz, used_sz, total;
+    uint8_t *desc_mem, *avail_mem, *used_mem;
+    uint64_t pages_needed;
+    uintptr_t phys;
+    uintptr_t old_desc;
+    uint64_t old_pages;
+    uint32_t wait;
+    int i;
+
+    if (!vq || !vq->dev || !vq->dev->common_cfg)
+        return -1;
+
+    cfg = vq->dev->common_cfg;
+    qsz = vq->size;
+
+    klog(LOG_DEBUG, "virtio", "Queue %u: initiating per-queue reset",
+           (uint64_t)vq->queue_idx);
+
+    /* 1. Select the queue */
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_SELECT),
+                  vq->queue_idx);
+
+    /* 2. Write queue_reset = 1 to request reset */
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_RESET), 1);
+
+    /* 3. Poll until device acknowledges reset (readback = 1) */
+    wait = 100000;
+    while (wait-- > 0) {
+        uint16_t val = mmio_read16(
+            (volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_RESET));
+        if (val == 1)
+            break;
+        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    }
+    if (wait == 0) {
+        klog(LOG_DEBUG, "virtio",
+               "Queue %u: device did not acknowledge reset",
+               (uint64_t)vq->queue_idx);
+        return -1;
+    }
+
+    /* 4. Free old ring memory (desc/avail/used are contiguous from one alloc) */
+    old_desc = (uintptr_t)vq->desc;
+    desc_sz  = vq_align((uint64_t)qsz * 16, 16);
+    avail_sz = vq_align(6 + (uint64_t)qsz * 2, 2);
+    used_sz  = vq_align(6 + (uint64_t)qsz * 8, 4);
+    total    = desc_sz + avail_sz + used_sz;
+    old_pages = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+
+    for (i = 0; i < (int)old_pages; i++)
+        pmm_free_frame(old_desc + (uint64_t)i * PMM_FRAME_SIZE);
+
+    /* 5. Reallocate fresh ring memory */
+    pages_needed = old_pages;
+    phys = pmm_alloc_contiguous(pages_needed);
+    if (!phys) {
+        klog(LOG_DEBUG, "virtio",
+               "Queue %u: cannot reallocate ring memory",
+               (uint64_t)vq->queue_idx);
+        return -1;
+    }
+    desc_mem = (uint8_t *)phys;
+    vio_memset(desc_mem, 0, total);
+
+    avail_mem = desc_mem + desc_sz;
+    used_mem  = avail_mem + avail_sz;
+
+    /* 6. Update virtqueue pointers */
+    vq->desc  = (struct virtq_desc *)desc_mem;
+    vq->avail = (struct virtq_avail *)avail_mem;
+    vq->used  = (struct virtq_used *)used_mem;
+
+    /* 7. Re-initialize free descriptor chain */
+    for (i = 0; i < qsz - 1; i++) {
+        vq->desc[i].next  = (uint16_t)(i + 1);
+        vq->desc[i].flags = VIRTQ_DESC_F_NEXT;
+    }
+    vq->desc[qsz - 1].next  = 0;
+    vq->desc[qsz - 1].flags = 0;
+    vq->free_head = 0;
+    vq->num_free  = qsz;
+    vq->last_used = 0;
+
+    /* 8. Write new ring addresses to device */
+    mmio_write64(cfg, VIRTIO_COMMON_Q_DESC,  (uint64_t)desc_mem);
+    mmio_write64(cfg, VIRTIO_COMMON_Q_AVAIL, (uint64_t)avail_mem);
+    mmio_write64(cfg, VIRTIO_COMMON_Q_USED,  (uint64_t)used_mem);
+
+    /* 9. Write queue_reset = 0 to re-enable the queue */
+    mmio_write16((volatile uint16_t *)(cfg + VIRTIO_COMMON_Q_RESET), 0);
+
+    klog(LOG_DEBUG, "virtio",
+           "Queue %u: reset complete, desc=0x%x",
+           (uint64_t)vq->queue_idx, (uint64_t)(uintptr_t)desc_mem);
+
+    return 0;
+}
+
 /* ---- MSI-X setup ---- */
 
 int virtio_pci_setup_msix(struct virtio_pci_dev *dev,

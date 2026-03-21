@@ -71,6 +71,7 @@ struct msix_table_entry {
 #define VIRTIO_COMMON_Q_DESC         0x20  /* 64-bit: descriptor table addr */
 #define VIRTIO_COMMON_Q_AVAIL        0x28  /* 64-bit: avail ring addr */
 #define VIRTIO_COMMON_Q_USED         0x30  /* 64-bit: used ring addr */
+#define VIRTIO_COMMON_Q_RESET        0x38  /* 16-bit: queue reset (VirtIO 1.2+) */
 
 /* ---- VirtIO device status bits ---- */
 #define VIRTIO_STATUS_ACKNOWLEDGE       0x01
@@ -83,6 +84,9 @@ struct msix_table_entry {
 /* ---- VirtIO ISR status register bits (§4.1.4.5) ---- */
 #define VIRTIO_PCI_ISR_QUEUE   0x01  /* Queue interrupt pending */
 #define VIRTIO_PCI_ISR_CONFIG  0x02  /* Device configuration changed */
+
+/* ---- VirtIO transport feature bits ---- */
+#define VIRTIO_F_RING_RESET    40    /* Per-queue reset (VirtIO 1.2+) */
 
 /* ---- Virtqueue descriptor flags ---- */
 #define VIRTQ_DESC_F_NEXT      0x01  /* Descriptor continues via 'next' */
@@ -175,6 +179,12 @@ void    virtio_set_status(struct virtio_pci_dev *dev, uint8_t status);
 
 /* Read config_generation counter (for atomic device config reads) */
 uint8_t virtio_read_config_generation(struct virtio_pci_dev *dev);
+
+/* Reset a single virtqueue without resetting the entire device.
+ * Requires VIRTIO_F_RING_RESET (bit 40) to be negotiated.
+ * Frees old ring memory, reallocates fresh desc/avail/used, and re-enables.
+ * Returns 0 on success, -1 on failure. */
+int virtio_queue_reset(struct virtqueue *vq);
 
 /* Read ISR status (clears interrupt) */
 uint8_t virtio_read_isr(struct virtio_pci_dev *dev);

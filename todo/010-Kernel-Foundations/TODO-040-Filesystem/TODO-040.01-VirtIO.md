@@ -170,7 +170,7 @@ graph TD
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ⬜   |
+| 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
 | 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ⬜   |
@@ -537,21 +537,23 @@ graph TD
 > - `virtio_blk_reset()` clears `initialized` and `use_events` before writing 0 to device_status — prevents ISR or I/O attempts during the reset window.
 > - The wait loop for reset readback uses the same `inb $0x80` delay (~1µs) as the polling path — 100000 iterations ≈ 100ms max wait.
 
-### 5.2 Individual Queue Reset (VirtIO 1.2+)
+### 5.2 Individual Queue Reset (VirtIO 1.2+) *(done)* ✅
 
-**Prompt:** When `VIRTIO_F_RING_RESET` (bit 40) is negotiated, implement per-queue reset without resetting the entire device. Write `1` to `queue_reset` for the target queue, wait for readback `1` (device acknowledged), free old virtqueue memory, reallocate fresh descriptor table / available ring / used ring, write new addresses, then write `0` to `queue_reset` to re-enable. This is less disruptive than a full device reset for transient queue errors. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: individual queue reset"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `VIRTIO_F_RING_RESET` (bit 40 = page 1 bit 8) is negotiated during feature negotiation. `virtio_queue_reset()` in `virtio.c` implements the full VirtIO 1.2 §4.1.4.3.2 flow: select queue, write `queue_reset=1`, poll for device acknowledgement, free old ring memory (frame-by-frame), reallocate fresh desc/avail/used via `pmm_alloc_contiguous()`, re-init free descriptor chain, write new addresses, write `queue_reset=0` to re-enable. `virtio_blk_reset()` tries queue reset first before falling back to full device reset. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_F_RING_RESET` (bit 40)
-- [ ] Implement `virtio_queue_reset(int queue_idx)`:
-  - [ ] Write `queue_select = queue_idx`
-  - [ ] Write `queue_reset = 1`
-  - [ ] Poll until `queue_reset` reads back `1` (device acknowledged)
-  - [ ] Free old descriptor table, available ring, used ring
-  - [ ] Reallocate via `pmm_alloc_contiguous()`
-  - [ ] Write new `queue_desc`, `queue_driver`, `queue_device`
-  - [ ] Write `queue_reset = 0` to re-enable
-- [ ] Use queue reset as first recovery attempt before full device reset
-- [ ] Commit: `"virtio-blk: individual queue reset"`
+> **Notes:** The `queue_reset` register is at common config offset 0x38 (16-bit). `VIRTIO_F_RING_RESET` is a transport-level feature (bit 40), not device-specific, so it lives in `virtio.h`. `virtio_queue_reset()` takes a `struct virtqueue *` instead of `int queue_idx` so it can directly update the virtqueue pointers. Ring memory is freed frame-by-frame via `pmm_free_frame()` since there's no `pmm_free_contiguous()`. The function is transport-generic — used by `virtio_blk.c` but could be used by any VirtIO device driver.
+
+- [x] Negotiate `VIRTIO_F_RING_RESET` (bit 40)
+- [x] Implement `virtio_queue_reset(int queue_idx)`:
+  - [x] Write `queue_select = queue_idx`
+  - [x] Write `queue_reset = 1`
+  - [x] Poll until `queue_reset` reads back `1` (device acknowledged)
+  - [x] Free old descriptor table, available ring, used ring
+  - [x] Reallocate via `pmm_alloc_contiguous()`
+  - [x] Write new `queue_desc`, `queue_driver`, `queue_device`
+  - [x] Write `queue_reset = 0` to re-enable
+- [x] Use queue reset as first recovery attempt before full device reset
+- [x] Commit: `"virtio-blk: individual queue reset"`
 
 ---
 
@@ -995,7 +997,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟡 P2     | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                      |
 | 🟡 P2     | 4.1 Discard (TRIM) ✅              | SSD optimization — reclaim unused blocks                        |
 | 🟡 P2     | 4.2 Write-Zeroes ✅                | Performance — efficient large zeroing                           |
-| 🟡 P2     | 5.2 Individual Queue Reset        | Less disruptive recovery than full device reset                 |
+| 🟡 P2     | 5.2 Individual Queue Reset ✅      | Less disruptive recovery than full device reset                 |
 | 🟡 P2     | 15.1 Hot-Plug/Unplug              | Robustness — graceful device arrival/removal                    |
 | 🟢 P3     | 6.1 Per-CPU Request Queues        | Scalability — eliminates virtqueue lock contention              |
 | 🟢 P3     | 7.1 Indirect Descriptors          | Scalability — large scatter-gather lists                        |
@@ -1033,7 +1035,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Discard (TRIM)                  | ✅ Optimize Drives                 | ✅ `blk_queue_discard()`              | ✅ §4.1 P2                                      |
 | Write-zeroes                    | ✅                                 | ✅ `REQ_OP_WRITE_ZEROES`              | ✅ §4.2 P2                                      |
 | Error recovery / device reset   | ✅ Automatic retry + reset         | ✅ `virtio_break_device()` + reset    | ⬜ §5.1 P1 — no recovery                        |
-| Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ⬜ §5.2 P2                                      |
+| Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ✅ §5.2 P2                                      |
 | Multi-queue (`F_MQ`)            | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ⬜ §6.1 P3                                      |
 | Indirect descriptors            | ✅                                 | ✅                                    | ⬜ §7.1 P3                                      |
 | Event index (coalescing)        | ✅                                 | ✅                                    | ⬜ §7.2 P3                                      |

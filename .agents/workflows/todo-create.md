@@ -1,11 +1,105 @@
 ---
-description: Create a new TODO file following the project's established format and structure
+description: Create a new TODO file following the project's established format and structure, optionally driven by a spec document
 ---
 
 # Create a TODO File
 
 Create a comprehensive, properly structured TODO file for a new feature, driver, or subsystem.
 Each TODO file is a complete implementation roadmap — not just a checklist.
+
+---
+
+## Creating a TODO from a Spec Document
+
+When a spec document exists under `specs/`, it becomes the **primary input** for TODO creation.
+This produces higher-quality, more accurate TODOs because the spec already contains register layouts,
+feature bits, config offsets, struct definitions, protocol sequences, and testing commands.
+
+### When to use this path
+
+- A spec file already exists in `specs/` (e.g., `specs/storage/controllers/virtio-1.2.md`)
+- The user explicitly says to create a TODO from a spec
+- You're creating a TODO for a driver, filesystem, or protocol that has a corresponding spec
+
+### How to map spec content → TODO content
+
+| Spec Element                         | Maps To                                                                          |
+| ------------------------------------ | -------------------------------------------------------------------------------- |
+| Top-level sections (Transport, I/O)  | **TODO section groups** (`## N. Section Group Title`)                            |
+| Feature bit tables                   | **TODO sections** — one per feature or group of related features                 |
+| Config space offset tables           | **Checkbox items** with exact offsets, sizes, and field names                    |
+| Struct definitions                   | **Checkbox items** referencing exact field names and types                       |
+| Register bit-field tables            | **Checkbox items** with bit numbers, values, and flag names                      |
+| Init/protocol sequence steps         | **Checkbox items** matching the spec's step numbering                            |
+| Error/status code tables             | **Checkbox items** in an error-handling section                                  |
+| QEMU testing commands                | **Checkbox items** at the end of each section (`- [ ] Test: ...`)                |
+| Spec cautions/warnings               | **`> [!CAUTION]` / `> [!WARNING]` blocks** in the TODO header                   |
+| Priority/recommendation tables       | **Priority Order table** — use the spec's own priority classifications           |
+| Feature gate columns                 | **Dependency info** — features gated by other features form the dependency graph |
+
+### Spec-driven workflow (replaces steps 2–6 for spec-based TODOs)
+
+1. **Read the full spec** — `view_file` on the spec document under `specs/`
+2. **Extract the structure** — identify all major sections, subsections, and tables
+3. **Map sections to TODO groups** — each spec section becomes a `## N. Group` or `### N.M Section`
+4. **Extract feature bits** — each feature bit (or closely related group) becomes a TODO section:
+   - Section title = feature name (e.g., "Flush (Write Barriers)")
+   - Prompt = reference the spec section, explain what to negotiate, what config to read, what API to expose
+   - Checkboxes = one per config field, struct field, or protocol step from the spec
+   - Include exact offsets, bit numbers, type constants, and struct layouts from the spec
+5. **Build the dependency graph** — use the spec's own structure:
+   - Transport/init sections → Phase 1 (always first)
+   - Feature-gated configs → depend on the feature negotiation section
+   - I/O request types → depend on the init + interrupt sections
+   - Advanced features → depend on core I/O path
+6. **Generate cross-references** — link the TODO to the spec:
+   - `> [!IMPORTANT]` block with spec path and reference: `[Spec Name](file:///absolute/path/to/spec.md)`
+   - Each section's Prompt should reference the relevant spec section number
+7. **Extract QEMU testing flags** — copy verbatim from the spec's testing section into TIP blocks
+8. **Continue with steps 7–11** of the standard workflow below (Priority Order, exclusive features, OS Comparison, index update, commit)
+
+### Spec cross-reference rules
+
+- Always link to the spec using `file:///` absolute paths
+- Reference spec section numbers in prompts: "per VirtIO 1.2 §5.2.6"
+- Quote exact hex values, bit numbers, and struct field names from the spec
+- If the spec has a config space layout table, reproduce exact offsets in checkboxes
+- If the spec has QEMU command examples, include them in the TODO's TIP block verbatim
+
+### Example: Spec feature bit → TODO section
+
+Given this spec table row:
+
+```
+| 6 | VIRTIO_BLK_F_BLK_SIZE | Block size in `blk_size` config field (may differ from 512) |
+```
+
+And this spec config entry:
+
+```
+| 0x14 | 4 | blk_size | F_BLK_SIZE | Logical block size in bytes |
+```
+
+Generate this TODO section:
+
+```markdown
+### N.M Block Size Negotiation
+
+**Prompt:** Negotiate `VIRTIO_BLK_F_BLK_SIZE` (bit 6) per VirtIO 1.2 §5.2.3.
+When offered, read the `blk_size` field from device config offset `0x14` (4 bytes, le32).
+Store the value and use it instead of hardcoded 512 for all sector-to-byte conversions.
+Default to 512 bytes if the feature is not offered. Log the negotiated block size.
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"driver: block size negotiation"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Negotiate `VIRTIO_BLK_F_BLK_SIZE` (bit 6)
+- [ ] Read `blk_size` from device config offset `0x14` (le32)
+- [ ] Store in device struct, default to 512 if not offered
+- [ ] Use `blk_size` instead of hardcoded 512 in I/O path
+- [ ] Log: `[Driver] Block size: %u bytes`
+- [ ] Commit: `"driver: block size negotiation"`
+```
 
 ## Prerequisites
 
@@ -40,7 +134,7 @@ File naming: `TODO-NNN.NN-ShortName.md` (e.g., `TODO-040.01-VirtIO.md`)
 
 Before writing the TODO:
 
-1. **Read the relevant spec** (if one exists under `specs/`)
+1. **Read the relevant spec** (if one exists under `specs/`) — if a spec exists, follow the **"Creating a TODO from a Spec Document"** path above instead of this step
 2. **Search the codebase** via Srclight (`search_symbols`, `get_symbol`, `symbols_in_file`) to understand current state
 3. **Search the web** for authoritative sources on the technology
 4. **Study competitor implementations** — how do Windows 11 and Linux handle this?

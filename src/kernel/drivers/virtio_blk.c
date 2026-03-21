@@ -49,6 +49,7 @@ static int                    has_size_max;    /* F_SIZE_MAX negotiated */
 static int                    has_seg_max;     /* F_SEG_MAX negotiated */
 static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
+static int                    has_ring_reset;  /* F_RING_RESET negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -628,7 +629,19 @@ int virtio_blk_reset(void)
     if (!initialized)
         return -1;
 
-    klog(LOG_DEBUG, "virtio", "Device reset — reinitializing");
+    /* Try per-queue reset first (less disruptive than full device reset) */
+    if (has_ring_reset) {
+        klog(LOG_DEBUG, "virtio", "Attempting per-queue reset (F_RING_RESET)");
+        if (virtio_queue_reset(&blk_vq) == 0) {
+            klog(LOG_DEBUG, "virtio", "Per-queue reset succeeded");
+            error_stats.resets++;
+            return 0;
+        }
+        klog(LOG_DEBUG, "virtio",
+               "Per-queue reset failed — falling back to full device reset");
+    }
+
+    klog(LOG_DEBUG, "virtio", "Full device reset — reinitializing");
     error_stats.resets++;
 
     /* VirtIO §2.1.2: driver writes 0 to device_status to reset */
@@ -1193,12 +1206,20 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_WRITE_ZEROES");
     }
 
-    /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
+    /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1)
+     * and negotiate VIRTIO_F_RING_RESET (bit 8 of page 1) */
     {
         uint32_t feat_hi = read_device_features(1);
-        (void)feat_hi;
-        /* We must negotiate VERSION_1 for modern transport */
-        write_driver_features(1, 1);  /* Bit 0 of page 1 = VIRTIO_F_VERSION_1 */
+        uint32_t driver_feat_hi = 1;  /* Bit 0 = VIRTIO_F_VERSION_1 */
+
+        /* F_RING_RESET is bit 40 = page 1 bit 8 */
+        if (feat_hi & (1u << 8)) {
+            driver_feat_hi |= (1u << 8);
+            has_ring_reset = 1;
+            klog(LOG_DEBUG, "virtio", "Negotiated F_RING_RESET");
+        }
+
+        write_driver_features(1, driver_feat_hi);
         write_driver_features(0, driver_feat_lo);
     }
 
