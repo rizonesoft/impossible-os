@@ -7,7 +7,8 @@
 > and optional subtree watching. Internally, a static pool of watcher structs is maintained
 > and checked on every mutation path (`RegSetValueEx`, `RegCreateKeyEx`, `RegDeleteKey`,
 > `RegDeleteValue`). Includes Impossible OS exclusives: callback-based dispatch (no event
-> objects needed), watcher telemetry via Registry, and batch coalescing for high-frequency writes.
+> objects needed), persistent watcher registration (not single-shot), change-detail payloads,
+> watcher telemetry via Registry, and batch coalescing for high-frequency writes.
 
 > [!IMPORTANT]
 > **Prerequisite:** Depends on [TODO-050.01-Registry-Engine.md](TODO-050.01-Registry-Engine.md)
@@ -19,6 +20,11 @@
 > **Performance constraint:** Watcher dispatch runs in the critical path of every
 > `RegSetValueEx` and `RegCreateKeyEx` call. The dispatch loop must be O(n) in the
 > number of active watchers — keep the pool small (≤ 64) and avoid allocations.
+
+> [!CAUTION]
+> **Memory Rule:** The watcher pool uses static arrays — no `kmalloc`. All watchers
+> come from `reg_watcher_pool[64]`. The `reg_key_t*` pointer comparison for matching
+> is safe because keys are statically allocated from the registry pool (050.01 §1.1).
 
 ---
 
@@ -37,8 +43,10 @@ graph TD
     E["§5.5 Watcher Lifecycle ⬜<br/>Unregister, key deletion cleanup"]
     F["§5.6 Batch Coalescing ⬜<br/>Deduplicate rapid-fire notifications 🚀"]
     G["§5.7 Watcher Telemetry ⬜<br/>Hit counters in Registry 🚀"]
+    H["§5.8 Change-Detail Payloads ⬜<br/>Old/new value in callback 🚀"]
+    I["§5.9 Priority-Based Dispatch ⬜<br/>High-priority watchers fire first 🚀"]
 
-    SYSCALL["TODO-050-Registry §6<br/>User-Mode Syscalls"]
+    SYSCALL["TODO-050.05 §6<br/>User-Mode Syscalls"]
     DESKTOP["Desktop Theme Watcher<br/>Instant dark mode switch"]
 
     ENGINE --> A
@@ -49,22 +57,26 @@ graph TD
     B --> E
     C --> F
     C --> G
+    C --> H
+    C --> I
     B --> SYSCALL
     C --> DESKTOP
 ```
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐  | Phase  | Section                              | Description                                                             | Depends On      | Status |
-| --- | :----: | ------------------------------------ | ----------------------------------------------------------------------- | --------------- | :----: |
-| 💎  | **0**  | TODO-050.01 + 050.02                 | Core engine + Win32 API (mutation paths exist)                          | —               |   ✅   |
-| 💎  | **1**  | §5.1 Watcher Data Structures         | `reg_watcher_t` pool, filter flag constants, watcher ID allocator       | Phase 0         |   ⬜   |
-| 💎  | **2**  | §5.2 RegNotifyChangeKeyValue         | Register a watcher on a key with filter + callback                      | Phase 1 (§5.1)  |   ⬜   |
-| 💎  | **2**  | §5.3 Notification Dispatch           | Fire matching watchers from `RegSetValueEx`, `RegCreateKeyEx`, etc.     | Phase 1 (§5.1)  |   ⬜   |
-| 💎  | **3**  | §5.4 Subtree Watching                | `watchSubtree=TRUE` — watch all descendants                             | Phase 2 (§5.3)  |   ⬜   |
-| 💎  | **3**  | §5.5 Watcher Lifecycle               | `RegUnregisterNotify`, auto-cleanup on key deletion                     | Phase 2 (§5.2)  |   ⬜   |
-| ⭐  | **4**  | §5.6 Batch Coalescing               | Deduplicate rapid-fire notifications (timer-based window) 🚀           | Phase 2 (§5.3)  |   ⬜   |
-| ⭐  | **4**  | §5.7 Watcher Telemetry              | Hit counters exposed in `HKLM\SYSTEM\Registry\WatcherStats` 🚀        | Phase 2 (§5.3)  |   ⬜   |
+| ⭐ | Phase | Section                            | Description                                                           | Depends On     | Status |
+| -- | :---: | ---------------------------------- | --------------------------------------------------------------------- | -------------- | :----: |
+| 💎 | **0** | TODO-050.01 + 050.02               | Core engine + Win32 API (mutation paths exist)                        | —              |   ✅   |
+| 💎 | **1** | §5.1 Watcher Data Structures       | `reg_watcher_t` pool, filter flag constants, watcher ID allocator     | Phase 0        |   ⬜   |
+| 💎 | **2** | §5.2 RegNotifyChangeKeyValue       | Register a watcher on a key with filter + callback                    | Phase 1 (§5.1) |   ⬜   |
+| 💎 | **2** | §5.3 Notification Dispatch         | Fire matching watchers from `RegSetValueEx`, `RegCreateKeyEx`, etc.   | Phase 1 (§5.1) |   ⬜   |
+| 💎 | **3** | §5.4 Subtree Watching              | `watchSubtree=TRUE` — watch all descendants                           | Phase 2 (§5.3) |   ⬜   |
+| 💎 | **3** | §5.5 Watcher Lifecycle             | `RegUnregisterNotify`, auto-cleanup on key deletion                   | Phase 2 (§5.2) |   ⬜   |
+| ⭐ | **4** | §5.6 Batch Coalescing              | Deduplicate rapid-fire notifications (timer-based window) 🚀         | Phase 2 (§5.3) |   ⬜   |
+| ⭐ | **4** | §5.7 Watcher Telemetry             | Hit counters exposed in `HKLM\SYSTEM\Registry\WatcherStats` 🚀      | Phase 2 (§5.3) |   ⬜   |
+| ⭐ | **5** | §5.8 Change-Detail Payloads        | Old/new value included in notification callback 🚀                   | Phase 2 (§5.3) |   ⬜   |
+| ⭐ | **5** | §5.9 Priority-Based Dispatch       | High-priority watchers dispatched before low-priority ones 🚀        | Phase 2 (§5.3) |   ⬜   |
 
 > [!NOTE]
 > **Phase 0 is complete.** The core engine and Win32 API already provide the mutation
@@ -84,12 +96,21 @@ graph TD
 > **Phase 4** adds exclusive features: batch coalescing prevents callback storms during
 > rapid registry updates (e.g., installer writing 100 values), and telemetry exposes
 > watcher hit counters for debugging and performance tuning.
+>
+> **Phase 5** adds advanced exclusives: change-detail payloads let callbacks see what
+> actually changed (old vs new value), and priority-based dispatch ensures system-critical
+> watchers (e.g., theme engine) fire before low-priority application watchers.
 
 > [!TIP]
 > **Win32 difference — callback vs event:** Windows `RegNotifyChangeKeyValue` uses
 > an `HANDLE hEvent` (kernel event object) for signaling. Impossible OS uses a
 > direct callback function pointer instead — simpler, lower latency, no event
-> object overhead. The Win32 compatibility layer (§7) can wrap this as an event.
+> object overhead. The Win32 compatibility layer (050.05 §7) can wrap this as an event.
+>
+> **Win32 difference — persistent vs single-shot:** Windows `RegNotifyChangeKeyValue`
+> is single-shot — after one change fires, the application must re-register. This is
+> a well-known pain point. Impossible OS watchers persist until explicitly unregistered
+> via `RegUnregisterNotify`, eliminating the re-registration race condition.
 >
 > **Key identity by pointer:** Match watchers to keys using `reg_key_t*` pointer
 > comparison, not string path comparison. This avoids expensive string operations
@@ -108,8 +129,9 @@ graph TD
 notifications. Each watcher contains: the watched `reg_key_t*` pointer, filter flags
 (`uint32_t filter`), a boolean `watch_subtree`, a callback function pointer
 (`void (*callback)(HKEY key, uint32_t filter, void *ctx)`), a user context pointer,
-a `watcher_id` (uint32_t), and a `fire_count` (uint64_t) for telemetry. Define the
-filter flag constants: `REG_NOTIFY_CHANGE_NAME (0x01)` — sub-key create/delete,
+a `watcher_id` (uint32_t), a `fire_count` (uint64_t) for telemetry, and a `priority`
+(uint8_t, 0=highest). Define the filter flag constants:
+`REG_NOTIFY_CHANGE_NAME (0x01)` — sub-key create/delete,
 `REG_NOTIFY_CHANGE_ATTRIBUTES (0x02)` — key attribute changes,
 `REG_NOTIFY_CHANGE_LAST_SET (0x04)` — value changes,
 `REG_NOTIFY_CHANGE_SECURITY (0x08)` — security descriptor changes (reserved).
@@ -121,6 +143,10 @@ item as `[x]`, update this prompt to a verification prompt, run
 Add notes directly in this TODO section. After implementation, save any gotchas,
 solutions, and important information to MCP memory.
 
+> [!IMPORTANT]
+> → XREF: `TODO-050.01-Registry-Engine.md §1.1` — `reg_key_t` struct definition with
+> `parent` pointer (needed for ancestor walk in subtree watching).
+
 - [ ] Define `reg_watcher_t` struct in `registry.h`:
   - [ ] `reg_key_t *key` — pointer to watched key
   - [ ] `uint32_t filter` — bitmask of `REG_NOTIFY_CHANGE_*` flags
@@ -129,6 +155,7 @@ solutions, and important information to MCP memory.
   - [ ] `void *context` — user-supplied context for callback
   - [ ] `uint32_t id` — unique watcher ID
   - [ ] `uint64_t fire_count` — telemetry: number of times fired
+  - [ ] `uint8_t priority` — dispatch priority (0 = highest, 255 = lowest)
 - [ ] Define filter flag constants in `registry.h`:
   - [ ] `REG_NOTIFY_CHANGE_NAME       (0x01)`
   - [ ] `REG_NOTIFY_CHANGE_ATTRIBUTES (0x02)`
@@ -152,11 +179,25 @@ on the given key. The function allocates a `reg_watcher_t` from the pool, stores
 key pointer (resolved from the handle), filter flags, subtree flag, callback, and
 context. Returns a `uint32_t` watcher ID (used by `RegUnregisterNotify` to remove it).
 Returns `ERROR_OUTOFMEMORY` if the watcher pool is full. Returns
-`ERROR_INVALID_HANDLE` if the key handle is invalid. Windows returns `ERROR_SUCCESS`
-and uses an event object — our callback-based API is a deliberate Impossible OS
-simplification. After completing all items, mark every item as `[x]`, update this
-prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
-`"registry: RegNotifyChangeKeyValue"`. Add notes directly in this TODO section.
+`ERROR_INVALID_HANDLE` if the key handle is invalid. Unlike Windows which is single-shot
+(must re-register after each notification), Impossible OS watchers persist until
+explicitly unregistered — this is a deliberate improvement. After completing all items,
+mark every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"registry: RegNotifyChangeKeyValue"`.
+Add notes directly in this TODO section.
+
+> [!NOTE]
+> 🚀 **Improvement over Windows:** Windows `RegNotifyChangeKeyValue` is single-shot —
+> after one notification fires, the app must call it again to get the next one. This
+> creates a TOCTOU window where changes can be missed between re-registration. Impossible
+> OS watchers persist until `RegUnregisterNotify` is called, eliminating the gap.
+> The `REG_NOTIFY_THREAD_AGNOSTIC` flag (Win8+) is unnecessary because Impossible OS
+> callbacks are inherently thread-agnostic — they fire from whatever thread mutates
+> the registry.
+
+> [!IMPORTANT]
+> → XREF: `TODO-050.02-Win32-Reg-API.md §2.1` — handle resolution
+> (`reg_handle_t` → `reg_key_t*`).
 
 - [ ] Declare `reg_notify_callback_t` typedef:
   - [ ] `typedef void (*reg_notify_callback_t)(HKEY key, uint32_t filter, void *ctx)`
@@ -169,6 +210,7 @@ prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit a
   - [ ] Return watcher ID via return value
 - [ ] Return `ERROR_INVALID_PARAMETER` if callback is NULL
 - [ ] Return `ERROR_INVALID_PARAMETER` if filter is 0 (no flags set)
+- [ ] Prevent duplicate registration (same key + same callback = reuse existing watcher)
 - [ ] Commit: `"registry: RegNotifyChangeKeyValue"`
 
 ---
@@ -190,6 +232,14 @@ Keep the dispatch loop simple: iterate the entire pool (max 64 entries) and chec
 After completing all items, mark every item as `[x]`, update this prompt to a
 verification prompt, run `bash scripts/build.sh clean`, and commit as
 `"registry: notification dispatch"`. Add notes directly in this TODO section.
+
+> [!IMPORTANT]
+> → XREF: `TODO-050.02-Win32-Reg-API.md §2.1` — `RegSetValueEx` calls
+> `registry_mark_dirty()` after value write. Add `reg_fire_notifications()` call
+> in the same location.
+>
+> → XREF: `TODO-050.02-Win32-Reg-API.md §2.1` — `RegDeleteKey` and `RegDeleteTree`
+> must fire notifications before freeing the key (order matters for §5.5 cleanup).
 
 - [ ] Implement `reg_fire_notifications(reg_key_t *key, uint32_t change_type)`:
   - [ ] Iterate all active watchers in pool
@@ -232,6 +282,7 @@ directly in this TODO section.
 - [ ] Verify: watcher on `HKLM\SYSTEM` fires for `HKLM\SYSTEM\Theme\DarkMode` change
 - [ ] Verify: watcher on `HKLM\SYSTEM` does NOT fire for `HKLM\SOFTWARE\*` change
 - [ ] Verify: deeply nested changes (5 levels) trigger ancestor watcher
+- [ ] Verify: multiple subtree watchers on overlapping paths fire correctly
 - [ ] Commit: `"registry: subtree watching"`
 
 ---
@@ -252,6 +303,11 @@ item as `[x]`, update this prompt to a verification prompt, run
 `bash scripts/build.sh clean`, and commit as `"registry: watcher lifecycle"`. Add notes
 directly in this TODO section.
 
+> [!IMPORTANT]
+> → XREF: `TODO-050.02-Win32-Reg-API.md §2.1` — `RegDeleteKey` calls
+> `reg_remove_child()` + `reg_free_values()` + pool free. Watcher cleanup must
+> happen BEFORE the key is freed to avoid dangling pointers.
+
 - [ ] Implement `RegUnregisterNotify(uint32_t watcherId)`:
   - [ ] Find watcher in pool by ID
   - [ ] Free slot via `reg_free_watcher(id)`
@@ -263,6 +319,7 @@ directly in this TODO section.
 - [ ] Call `reg_cleanup_watchers_for_key` from `reg_delete_subtree` for each key
 - [ ] Verify: register watcher, delete watched key, watcher no longer in pool
 - [ ] Verify: re-registering on deleted key returns `ERROR_INVALID_HANDLE`
+- [ ] Verify: subtree watcher on parent survives child key deletion
 - [ ] Commit: `"registry: watcher lifecycle"`
 
 ---
@@ -289,8 +346,9 @@ directly in this TODO section. After implementation, save any gotchas to MCP mem
 > 🚀 **Impossible OS Exclusive:** Neither Windows nor Linux implements notification
 > coalescing at the registry level. Windows `RegNotifyChangeKeyValue` fires once per
 > change — applications that update 100 values get 100 notifications. dconf on Linux
-> has no coalescing either. Impossible OS deduplicates rapid-fire changes into a
-> single deferred callback.
+> has no coalescing either. Linux inotify can overflow its event queue during rapid
+> changes, dropping events entirely. Impossible OS deduplicates rapid-fire changes
+> into a single deferred callback with zero event loss.
 
 - [ ] Add to `reg_watcher_t`:
   - [ ] `uint32_t pending_fire` — coalesce flag
@@ -303,6 +361,7 @@ directly in this TODO section. After implementation, save any gotchas to MCP mem
 - [ ] Add `reg_flush_pending_watchers()` — scan pool, fire pending watchers past interval
 - [ ] Call `reg_flush_pending_watchers` from compositor loop (alongside `registry_flush`)
 - [ ] Read coalesce interval from `HKLM\SYSTEM\Registry\CoalesceIntervalMs` at boot
+- [ ] Allow per-watcher coalesce override (0 = immediate, no coalescing)
 - [ ] Commit: `"registry: batch coalescing"`
 
 ---
@@ -315,16 +374,23 @@ directly in this TODO section. After implementation, save any gotchas to MCP mem
 publish its fire count, watched key path, filter flags, and coalesce hit ratio under
 `HKLM\SYSTEM\Registry\WatcherStats\{id}\`. This lets developers and system tools
 inspect which watchers are active, how often they fire, and whether coalescing is
-effective. Add a `regedit watchers` subcommand (tie into §8 Regedit) that pretty-prints
-the watcher table. After completing all items, mark every item as `[x]`, update this
-prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+effective. Add a `regedit watchers` subcommand (tie into §8.1 Regedit in
+[TODO-050-Registry.md](../TODO-050-Registry.md)) that pretty-prints the watcher table.
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
 `"registry: watcher telemetry"`. Add notes directly in this TODO section.
 
 > [!NOTE]
 > 🚀 **Impossible OS Exclusive:** Neither Windows nor Linux exposes watcher
 > statistics via the registry. Debugging notification-related issues on Windows
-> requires kernel debugger + `!reg` extension. Impossible OS makes watcher state
-> visible to any tool that can read the registry.
+> requires kernel debugger + `!reg` extension. Linux inotify provides no visibility
+> into watch counts or fire rates. Impossible OS makes watcher state visible to any
+> tool that can read the registry — no debugger needed.
+
+> [!IMPORTANT]
+> → XREF: `TODO-050-Registry.md §8.1` — Regedit shell command. The `regedit watchers`
+> subcommand reads from `HKLM\SYSTEM\Registry\WatcherStats\` and pretty-prints
+> active watcher information.
 
 - [ ] On watcher register: create `HKLM\SYSTEM\Registry\WatcherStats\{id}\` key
   - [ ] `KeyPath` (REG_SZ) — path of watched key
@@ -332,6 +398,7 @@ prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit a
   - [ ] `Subtree` (REG_DWORD) — 0 or 1
   - [ ] `FireCount` (REG_QWORD) — total fires
   - [ ] `CoalesceHits` (REG_QWORD) — number of coalesced (skipped) fires
+  - [ ] `Priority` (REG_DWORD) — dispatch priority
 - [ ] On watcher unregister: delete the `WatcherStats\{id}\` key
 - [ ] Update `FireCount` and `CoalesceHits` on each dispatch
 - [ ] Wire into `regedit watchers` subcommand (pending §8.1 Regedit)
@@ -339,37 +406,119 @@ prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit a
 
 ---
 
+## 8. Change-Detail Payloads
+
+### 5.8 Change-Detail Payloads 🚀
+
+**Prompt:** Extend the notification callback to optionally include details about
+what changed — the old value, new value, and the specific value name that was modified.
+Windows `RegNotifyChangeKeyValue` only tells you THAT something changed (which filter
+flag matched), not WHAT changed. Applications must re-read the entire key to discover
+the change. Impossible OS can include a `reg_change_detail_t` struct pointer in the
+callback, providing: the value name, old type + data (if applicable), new type + data,
+and the change operation (`REG_CHANGE_SET`, `REG_CHANGE_DELETE`, `REG_CHANGE_CREATE`).
+This is opt-in: watchers registered with a `REG_NOTIFY_WANT_DETAILS` flag get the
+detail payload; others get NULL (backward-compatible). After completing all items,
+mark every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"registry: change-detail payloads"`.
+Add notes directly in this TODO section. After implementation, save any gotchas to
+MCP memory.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Windows `RegNotifyChangeKeyValue` only signals
+> "something changed" — the application must re-read all values to discover what.
+> This causes redundant I/O and latency. Linux inotify gives file-level events but
+> not content diffs. Impossible OS embeds old/new value directly in the callback,
+> enabling instant reactions without re-reading (e.g., theme engine reads new color
+> directly from the notification payload).
+
+- [ ] Define `reg_change_detail_t` struct:
+  - [ ] `const char *value_name` — name of changed value (or NULL for key operations)
+  - [ ] `uint32_t operation` — `REG_CHANGE_SET`, `REG_CHANGE_DELETE`, `REG_CHANGE_CREATE`
+  - [ ] `uint32_t old_type` + `const uint8_t *old_data` + `uint32_t old_size`
+  - [ ] `uint32_t new_type` + `const uint8_t *new_data` + `uint32_t new_size`
+- [ ] Define `REG_NOTIFY_WANT_DETAILS (0x10)` filter flag
+- [ ] Extended callback typedef: `void (*)(HKEY, uint32_t, void*, reg_change_detail_t*)`
+- [ ] In `reg_fire_notifications`: snapshot old value before mutation for detail watchers
+- [ ] Pass detail struct to callback if `REG_NOTIFY_WANT_DETAILS` set, NULL otherwise
+- [ ] Keep detail allocation on stack (snapshot into `reg_change_detail_t` local variable)
+- [ ] Commit: `"registry: change-detail payloads"`
+
+---
+
+## 9. Priority-Based Dispatch
+
+### 5.9 Priority-Based Dispatch 🚀
+
+**Prompt:** Implement priority-based watcher dispatch so system-critical watchers
+fire before application watchers. When multiple watchers match the same mutation,
+sort them by priority (0 = highest) before invoking callbacks. This ensures the
+compositor's theme watcher always fires before a third-party app's watcher, preventing
+visual glitches during theme transitions. The priority field is set at registration
+time (default = 128, system watchers use 0–31, application watchers use 32–255).
+After completing all items, mark every item as `[x]`, update this prompt to a
+verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"registry: priority-based dispatch"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Neither Windows nor Linux prioritizes notification
+> delivery. All watchers are treated equally — a debug logger gets the same dispatch
+> priority as the compositor. Impossible OS dispatches system-critical watchers first,
+> ensuring the desktop compositor reacts to theme/display changes before any app-level
+> watchers run.
+
+- [ ] Add `priority` field to `RegNotifyChangeKeyValue` (default 128)
+- [ ] Define priority ranges:
+  - [ ] `REG_WATCHER_PRIORITY_SYSTEM (0)` — compositor, theme engine
+  - [ ] `REG_WATCHER_PRIORITY_DRIVER (32)` — device drivers
+  - [ ] `REG_WATCHER_PRIORITY_APP    (128)` — applications (default)
+  - [ ] `REG_WATCHER_PRIORITY_DEBUG  (255)` — debug loggers, telemetry
+- [ ] In `reg_fire_notifications`: collect matching watchers, sort by priority, dispatch in order
+- [ ] Keep sort efficient: 64 max watchers → insertion sort is fine (O(n²) with n≤64)
+- [ ] Verify: system watcher fires before app watcher for same key change
+- [ ] Commit: `"registry: priority-based dispatch"`
+
+---
+
 ## Priority Order
 
-| Priority  | Section                                | Description                                                        |
-| --------- | -------------------------------------- | ------------------------------------------------------------------ |
-| 🟡 P2    | §5.1 Watcher Data Structures           | Foundation: pool, flags, allocator — all other sections need this   |
-| 🟡 P2    | §5.2 RegNotifyChangeKeyValue           | Core API: register a watcher on a key                               |
-| 🟡 P2    | §5.3 Notification Dispatch             | Core: hook into mutation paths, fire matching watchers              |
-| 🟡 P2    | §5.4 Subtree Watching                  | Correctness: ancestor-walk for recursive watching                   |
-| 🟡 P2    | §5.5 Watcher Lifecycle                 | Correctness: unregister + auto-cleanup on key deletion              |
-| 🟢 P3    | §5.6 Batch Coalescing                  | 🚀 **Exclusive** — prevent callback storms on rapid writes          |
-| 🟢 P3    | §5.7 Watcher Telemetry                 | 🚀 **Exclusive** — fire counters in Registry for debugging          |
+| Priority | Section                              | Description                                                        |
+| -------- | ------------------------------------ | ------------------------------------------------------------------ |
+| 🟡 P2   | §5.1 Watcher Data Structures        | Foundation: pool, flags, allocator — all other sections need this  |
+| 🟡 P2   | §5.2 RegNotifyChangeKeyValue        | Core API: register a watcher on a key                              |
+| 🟡 P2   | §5.3 Notification Dispatch          | Core: hook into mutation paths, fire matching watchers             |
+| 🟡 P2   | §5.4 Subtree Watching               | Correctness: ancestor-walk for recursive watching                  |
+| 🟡 P2   | §5.5 Watcher Lifecycle              | Correctness: unregister + auto-cleanup on key deletion             |
+| 🟢 P3   | §5.6 Batch Coalescing               | 🚀 **Exclusive** — prevent callback storms on rapid writes        |
+| 🟢 P3   | §5.7 Watcher Telemetry              | 🚀 **Exclusive** — fire counters in Registry for debugging        |
+| 🟢 P3   | §5.8 Change-Detail Payloads         | 🚀 **Exclusive** — old/new value in callback, no re-read needed   |
+| 🟢 P3   | §5.9 Priority-Based Dispatch        | 🚀 **Exclusive** — system watchers fire before app watchers       |
 
 ---
 
 ## OS Comparison
 
-| Feature                                   | 🪟 Windows 11                               | 🐧 Linux                                    | 🚀 Impossible OS                                        |
-| ----------------------------------------- | ------------------------------------------- | -------------------------------------------- | ------------------------------------------------------- |
-| Registry change notification API          | ✅ `RegNotifyChangeKeyValue` (event-based)   | ⚠️ inotify on config files (not registry)     | ⬜ §5.2 P2 — callback-based (simpler than events) 🚀    |
-| Filter flags (name, value, attr, sec)     | ✅ `REG_NOTIFY_CHANGE_*` (4 flags)           | ❌ No concept                                 | ⬜ §5.1 P2 — same 4 flags as Win32                      |
-| Subtree watching (recursive)              | ✅ `bWatchSubtree` parameter                 | ⚠️ inotify recursive is manual               | ⬜ §5.4 P2 — ancestor-walk from modified key             |
-| Watcher cleanup on key deletion           | ✅ Automatic (CM handles)                    | ❌ No concept                                 | ⬜ §5.5 P2 — auto-cleanup prevents dangling pointers     |
-| Notification dispatch from all mutators   | ✅ CM notifies on all changes                | ❌ No unified dispatch                        | ⬜ §5.3 P2 — hooks in Set, Delete, Create, DeleteTree    |
-| **Callback-based (no event objects)**     | ❌ Requires event object + wait              | ❌ inotify fd + read()                        | ⬜ §5.2 P2 — **direct callback, zero overhead** 🚀      |
-| **Batch coalescing**                      | ❌ Fires once per change (no dedup)          | ❌ No coalescing                              | ⬜ §5.6 P3 — **timer-based dedup window** 🚀            |
-| **Watcher telemetry in Registry**         | ❌ Requires kernel debugger                  | ❌ No visibility                              | ⬜ §5.7 P3 — **fire counts + coalesce stats** 🚀        |
-| **Static watcher pool (no heap)**         | ❌ Dynamic kernel allocation                 | ❌ Dynamic allocation                         | ⬜ §5.1 P2 — **static pool, zero heap pressure** 🚀     |
-| **Configurable pool + coalesce interval** | ❌ Hardcoded in CM                           | ❌ Hardcoded                                  | ⬜ §5.6 P3 — **tunable via Registry** 🚀                |
+| Feature                                   | 🪟 Windows 11                                   | 🐧 Linux                                        | 🚀 Impossible OS                                            |
+| ----------------------------------------- | ----------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------- |
+| Registry change notification API          | ✅ `RegNotifyChangeKeyValue` (event-based)       | ⚠️ inotify on config files (not registry)         | ⬜ §5.2 P2 — callback-based (simpler than events) 🚀        |
+| Filter flags (name, value, attr, sec)     | ✅ `REG_NOTIFY_CHANGE_*` (4 flags)               | ❌ No concept                                     | ⬜ §5.1 P2 — same 4 flags as Win32                          |
+| Subtree watching (recursive)              | ✅ `bWatchSubtree` parameter                     | ⚠️ inotify recursive requires per-dir watch       | ⬜ §5.4 P2 — ancestor-walk from modified key                |
+| Watcher cleanup on key deletion           | ✅ Automatic (CM handles)                        | ❌ No concept                                     | ⬜ §5.5 P2 — auto-cleanup prevents dangling pointers        |
+| Notification dispatch from all mutators   | ✅ CM notifies on all changes                    | ❌ No unified dispatch                            | ⬜ §5.3 P2 — hooks in Set, Delete, Create, DeleteTree       |
+| **Callback-based (no event objects)**     | ❌ Requires event object + wait                  | ❌ inotify fd + read()                            | ⬜ §5.2 P2 — **direct callback, zero overhead** 🚀          |
+| **Persistent registration (not 1-shot)**  | ❌ Single-shot — must re-register after each     | ⚠️ Persistent until `inotify_rm_watch`            | ⬜ §5.2 P2 — **persistent until unregister** 🚀             |
+| **Batch coalescing**                      | ❌ Fires once per change (no dedup)              | ❌ Queue overflow drops events entirely            | ⬜ §5.6 P3 — **timer-based dedup window** 🚀                |
+| **Watcher telemetry in Registry**         | ❌ Requires kernel debugger                      | ❌ No visibility into inotify watches              | ⬜ §5.7 P3 — **fire counts + coalesce stats** 🚀            |
+| **Static watcher pool (no heap)**         | ❌ Dynamic kernel allocation                     | ❌ Dynamic allocation (1080 bytes/watch)           | ⬜ §5.1 P2 — **static pool, zero heap pressure** 🚀         |
+| **Configurable pool + coalesce interval** | ❌ Hardcoded in CM                               | ❌ Hardcoded limits (max_user_watches)             | ⬜ §5.6 P3 — **tunable via Registry** 🚀                    |
+| **Change-detail payloads**                | ❌ Only signals "changed" — must re-read key     | ❌ inotify: file name only, no content diff        | ⬜ §5.8 P3 — **old/new value in callback** 🚀               |
+| **Priority-based dispatch**               | ❌ All watchers equal priority                   | ❌ All watchers equal priority                     | ⬜ §5.9 P3 — **system watchers fire first** 🚀              |
 
 > **After P2 items:** Impossible OS matches Windows on change notifications — same filter
 > flags, subtree watching, auto-cleanup — but with simpler callback-based API (no event
-> objects) and static pool allocation (zero heap pressure).
+> objects), persistent registration (no re-register after each change), and static pool
+> allocation (zero heap pressure).
 > **After P3 exclusive features:** Exceeds both Windows and Linux with batch coalescing
-> (prevents notification storms) and watcher telemetry (visible in Registry, no debugger needed).
+> (prevents notification storms), watcher telemetry (visible in Registry, no debugger
+> needed), change-detail payloads (old/new value in callback, no re-read needed), and
+> priority-based dispatch (system watchers fire before app watchers).
