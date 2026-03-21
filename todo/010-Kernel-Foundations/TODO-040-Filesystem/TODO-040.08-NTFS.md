@@ -1179,7 +1179,23 @@ graph TD
 > migrating between NTFS and their native filesystem. Users must use third-party
 > cloning tools (Clonezilla, Macrium) or manual copy. Impossible OS does it natively.
 
-- [ ] Implement `ntfs_migrate_to_ixfs(| ⭐  | Priority   | Section                        | Description                                                      |
+- [ ] Implement `ntfs_migrate_to_ixfs(vol, target_drive)`:
+  - [ ] Walk entire NTFS directory tree (recursive MFT + B+ tree traversal)
+  - [ ] For each directory: `vfs_create()` on target IXFS volume
+  - [ ] For each file: read via NTFS `$DATA` → write to IXFS file
+  - [ ] Preserve timestamps: map FILETIME → IXFS timestamps
+  - [ ] Preserve file attributes: map DOS flags → IXFS attributes
+  - [ ] Skip system metafiles ($MFT, $Volume, etc.) — IXFS has its own
+  - [ ] Handle symlinks/junctions: create equivalent IXFS links if supported
+- [ ] Progress UI: file count, bytes copied, ETA, current file path
+- [ ] Resume on failure: checkpoint last-copied inode, skip completed files
+- [ ] Verification pass: compare file sizes and checksums after migration
+- [ ] Wire to Disk Manager: "Migrate to IXFS" button on NTFS volumes
+- [ ] Commit: `"ntfs: NTFS-to-IXFS migration engine"`
+
+## Priority Order
+
+| ⭐  | Priority   | Section                        | Description                                                      |
 | --- | ---------- | ------------------------------ | ---------------------------------------------------------------- |
 | 💎  | 🔴 P0      | 1.1 BPB Parsing                | Foundation — locate MFT on disk ✅                                |
 | 💎  | 🔴 P0      | 2.1 MFT Record Reader          | Foundation — read any file's metadata ✅                          |
@@ -1221,19 +1237,7 @@ graph TD
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
 > 🟣 P4 = Required for NTFS as primary `C:\` boot volume (replaces IXFS).
-> ✅ = Already implemented and verified in `ntfs_core.c`.   |
-| 💎 | 🟣 P4    | 13.1 Journal Engine            | Crash safety — `$LogFile` redo/undo transaction logging          |
-| 💎 | 🟣 P4    | 13.2 Recovery Replay           | Crash safety — dirty mount redo/undo replay                      |
-| 💎 | 🟣 P4    | 14.1 B+ Tree Insert/Delete     | Write — directory mutation with node split/merge                 |
-| 💎 | 🟣 P4    | 16.1 File Write Engine         | Write — resident/non-resident data writes + truncation           |
-| ⭐ | 🟣 P4    | 15.1 Boot-Time Init            | **NTFS as `C:\`** — boot from NTFS instead of IXFS              |
-| ⭐ | 🟣 P4    | 15.2 System File Layout        | **NTFS as `C:\`** — directory hierarchy + Registry on NTFS       |
-| ⭐ | 🟣 P4    | 15.3 NTFS Volume Formatter     | **NTFS as `C:\`** — format tool for boot volume creation         |
-| ⭐ | 🔵 Future | 18.1 NTFS-to-IXFS Migration   | **One-click volume migration** — no OS does this natively        |
-
-> [!NOTE]
-> ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
-> 🟣 P4 = Required for NTFS as primary `C:\` boot volume (replaces IXFS).
+> ✅ = Already implemented and verified in `ntfs_core.c`.
 
 ---
 

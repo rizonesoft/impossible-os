@@ -64,6 +64,9 @@ graph TD
     O["§9.2 El Torito Inspector"]
     P["§9.3 Disc Health Analyzer"]
     Q["§9.4 Auto-Mount & Eject"]
+    R["§9.5 ISO Image File Mounting"]
+    S["§9.6 Read-Ahead I/O Scheduler"]
+    T["§9.7 Multi-Session Awareness"]
 
     SPEC --> A
     BLK --> A
@@ -90,30 +93,38 @@ graph TD
     L --> P
     ATAPI --> Q
     L --> Q
+    L --> R
+    G --> S
+    ATAPI --> S
+    A --> T
+    ATAPI --> T
 ```
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | Sections                                          | What It Delivers                                              | Depends On                     | Status |
-| -- | :----: | ------------------------------------------------- | ------------------------------------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | Block device + ATAPI + spec                       | `blkdev_read()`, ATAPI SCSI, spec knowledge                  | —                              |   ✅   |
-| 💎 | **1**  | §1.1 Volume Descriptor Scanner                    | `CD001` detection, PVD/SVD/Boot Record location               | Phase 0                        |   ⬜   |
-| 💎 | **1**  | §1.2 PVD Parser                                   | Root directory record, path table, volume size                | Phase 1 (§1.1)                 |   ⬜   |
-| 💎 | **2**  | §2.1 Directory Record Parser                      | Variable-length record parsing, sector-boundary handling      | Phase 1 (§1.2)                 |   ⬜   |
-| 💎 | **2**  | §2.2 File Flags & Special Entries                  | Hidden files, `.`/`..` entries, directory vs file detection   | Phase 2 (§2.1)                 |   ⬜   |
-| 💎 | **2**  | §3.1 Path Table Loader                             | Cached path table in kernel memory                            | Phase 1 (§1.2)                 |   ⬜   |
-| 💎 | **3**  | §3.2 Path Table Lookup                             | O(n) fast directory lookup without disk I/O                   | Phase 2 (§3.1)                 |   ⬜   |
-| 💎 | **3**  | §4.1 File Extent Reader                            | Read contiguous file data by LBA + length                     | Phase 2 (§2.1)                 |   ⬜   |
-| 💎 | **3**  | §4.2 Multi-Extent Files (Level 3)                  | Files > 4 GiB via concatenated extents                        | Phase 3 (§4.1)                 |   ⬜   |
-| 💎 | **4**  | §5.1 Joliet SVD Parser                             | Unicode filenames up to 64 chars via UCS-2 decoding           | Phase 1 (§1.2)                 |   ⬜   |
-| 💎 | **4**  | §5.2 Rock Ridge SUSP Parser                        | Long filenames, POSIX permissions, symlinks                   | Phase 2 (§2.1)                 |   ⬜   |
-| 💎 | **4**  | §6.1 El Torito Boot Catalog                        | Boot image enumeration for installation media                 | Phase 1 (§1.2)                 |   ⬜   |
-| 💎 | **5**  | §7.1 VFS Registration                              | Mount ISO volumes, `vfs_ops` callbacks, drive letter          | Phase 3 + Phase 4 + VFS       |   ⬜   |
-| 💎 | **6**  | §8.1 Test Suite                                    | Automated validation with ISO test images                     | Phase 5 (§7.1)                 |   ⬜   |
-| ⭐ | **6**  | §9.1 ISO Browser GUI                               | Visual ISO contents explorer in File Manager                  | Phase 5 (§7.1)                 |   ⬜   |
-| ⭐ | **6**  | §9.2 El Torito Inspector                           | Boot catalog viewer with platform/emulation details           | Phase 4 (§6.1)                 |   ⬜   |
-| ⭐ | **6**  | §9.3 Disc Health Analyzer                          | Media integrity verification with read-error mapping          | Phase 5 (§7.1)                 |   ⬜   |
-| ⭐ | **6**  | §9.4 Auto-Mount & Eject                            | Hot-insert notification, auto-mount, safe eject               | Phase 5 (§7.1) + ATAPI        |   ⬜   |
+| ⭐ | Phase  | Sections                                          | What It Delivers                                              | Depends On                      | Status |
+| -- | :----: | ------------------------------------------------- | ------------------------------------------------------------- | ------------------------------- | :----: |
+| 💎 | **0**  | Block device + ATAPI + spec                       | `blkdev_read()`, ATAPI SCSI, spec knowledge                   | —                               |   ✅   |
+| 💎 | **1**  | §1.1 Volume Descriptor Scanner                    | `CD001` detection, PVD/SVD/Boot Record location                | Phase 0                         |   ⬜   |
+| 💎 | **1**  | §1.2 PVD Parser                                   | Root directory record, path table, volume size                 | Phase 1 (§1.1)                  |   ⬜   |
+| 💎 | **2**  | §2.1 Directory Record Parser                      | Variable-length record parsing, sector-boundary handling       | Phase 1 (§1.2)                  |   ⬜   |
+| 💎 | **2**  | §2.2 File Flags & Special Entries                  | Hidden files, `.`/`..` entries, directory vs file detection    | Phase 2 (§2.1)                  |   ⬜   |
+| 💎 | **2**  | §3.1 Path Table Loader                             | Cached path table in kernel memory                             | Phase 1 (§1.2)                  |   ⬜   |
+| 💎 | **3**  | §3.2 Path Table Lookup                             | O(n) fast directory lookup without disk I/O                    | Phase 2 (§3.1)                  |   ⬜   |
+| 💎 | **3**  | §4.1 File Extent Reader                            | Read contiguous file data by LBA + length                      | Phase 2 (§2.1)                  |   ⬜   |
+| 💎 | **3**  | §4.2 Multi-Extent Files (Level 3)                  | Files > 4 GiB via concatenated extents                         | Phase 3 (§4.1)                  |   ⬜   |
+| 💎 | **4**  | §5.1 Joliet SVD Parser                             | Unicode filenames up to 64 chars via UCS-2 decoding            | Phase 1 (§1.2)                  |   ⬜   |
+| 💎 | **4**  | §5.2 Rock Ridge SUSP Parser                        | Long filenames, POSIX permissions, symlinks                    | Phase 2 (§2.1)                  |   ⬜   |
+| 💎 | **4**  | §6.1 El Torito Boot Catalog                        | Boot image enumeration for installation media                  | Phase 1 (§1.2)                  |   ⬜   |
+| 💎 | **5**  | §7.1 VFS Registration                              | Mount ISO volumes, `vfs_ops` callbacks, drive letter           | Phase 3 + Phase 4 + VFS        |   ⬜   |
+| 💎 | **6**  | §8.1 Test Suite                                    | Automated validation with ISO test images                      | Phase 5 (§7.1)                  |   ⬜   |
+| ⭐ | **6**  | §9.1 ISO Browser GUI                               | Visual ISO contents explorer in File Manager                   | Phase 5 (§7.1)                  |   ⬜   |
+| ⭐ | **6**  | §9.2 El Torito Inspector                           | Boot catalog viewer with platform/emulation details            | Phase 4 (§6.1)                  |   ⬜   |
+| ⭐ | **6**  | §9.3 Disc Health Analyzer                          | Media integrity verification with read-error mapping           | Phase 5 (§7.1)                  |   ⬜   |
+| ⭐ | **6**  | §9.4 Auto-Mount & Eject                            | Hot-insert notification, auto-mount, safe eject                | Phase 5 (§7.1) + ATAPI         |   ⬜   |
+| ⭐ | **7**  | §9.5 ISO Image File Mounting                       | Double-click `.iso` → virtual optical drive                    | Phase 5 (§7.1)                  |   ⬜   |
+| ⭐ | **7**  | §9.6 Read-Ahead I/O Scheduler                     | Adaptive prefetch with ns-latency histograms                   | Phase 3 (§4.1) + ATAPI         |   ⬜   |
+| ⭐ | **7**  | §9.7 Multi-Session Awareness                       | Detect and navigate multi-session discs (CD-R/RW)              | Phase 1 (§1.1) + ATAPI         |   ⬜   |
 
 > [!NOTE]
 > **Phase 0** is already done — block devices, ATAPI/SCSI, and VFS core are in place.
@@ -129,6 +140,9 @@ graph TD
 > **Phase 5** wires everything to VFS for mountable volumes.
 >
 > **Phase 6** adds competitive features (⭐) and the test suite.
+>
+> **Phase 7** adds stretch exclusive features: `.iso` loopback mounting, adaptive
+> read-ahead with telemetry, and multi-session disc browsing.
 
 > [!TIP]
 > **ISO 9660 is simple compared to other filesystems.** No free-space bitmap, no
@@ -599,67 +613,152 @@ graph TD
 - [ ] Taskbar tray icon for optical drives (eject button)
 - [ ] Commit: `"desktop: optical disc auto-mount and eject"`
 
+### 9.5 ISO Image File Mounting ⭐
+
+**Prompt:** Enable double-click `.iso` file mounting from the File Manager or command line. When the user opens an `.iso` file, create a virtual block device backed by the file (loopback mount), probe for `CD001` at LBA 16, mount the decoded ISO 9660 filesystem to the next available drive letter, and open the mounted contents in the File Manager. Support unmounting via right-click → "Eject" or tray icon. Windows provides this natively; Linux requires `mount -o loop`. Impossible OS should match Windows UX while exposing richer metadata. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: ISO image file loopback mounting"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows 10+ can mount `.iso` files natively. Linux requires root
+> (`mount -o loop`) or `udisksctl`. Impossible OS adds rich metadata (PVD info, extensions
+> detected) in the mount notification — neither OS does this.
+
+- [ ] Implement `iso_loopback_create(file_path)` — wrap a VFS file as a `blkdev_t`
+  - [ ] Open file via `vfs_open()`, get file size
+  - [ ] Create `blkdev_t` with `read` callback mapping LBA → file offset
+  - [ ] Register as virtual block device with auto-generated name
+- [ ] ISO detection on virtual blkdev: probe LBA 16 for `CD001`
+- [ ] Mount to next available drive letter (prefer `D:\` for first optical mount)
+- [ ] File Manager integration:
+  - [ ] Double-click `.iso` → mount + open in File Manager
+  - [ ] Right-click `.iso` → "Mount ISO Image" context menu
+  - [ ] Tray icon for mounted ISO images (eject button)
+- [ ] Rich mount notification toast:
+  - [ ] Volume name, publisher, extensions detected (Joliet/Rock Ridge/El Torito)
+  - [ ] Total size, file count
+- [ ] Unmount: release loopback, free virtual blkdev, close underlying file
+- [ ] Commit: `"fs: ISO image file loopback mounting"`
+
+### 9.6 Read-Ahead I/O Scheduler ⭐
+
+**Prompt:** Implement an adaptive read-ahead scheduler for ISO 9660 that prefetches contiguous sectors beyond the current read request. Optical media has high rotational latency (150–400 ms seek), making prefetch critical. Track sequential read patterns and ramp up prefetch window from 16 to 256 sectors (32 KiB–512 KiB). Log ns-resolution latency histograms per read request for performance tuning. Expose tunable parameters via the registry at `HKLM\SYSTEM\Drivers\ISO9660\ReadAhead`. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: ISO 9660 adaptive read-ahead scheduler"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Windows CDFS and Linux isofs use fixed-size read-ahead. Impossible OS
+> uses adaptive prefetch with workload-aware ramp-up and exposes ns-latency histograms — neither
+> Windows nor Linux provides this level of I/O telemetry for optical media.
+
+- [ ] Sequential detection: track last read position per file handle
+  - [ ] If `current_lba == last_lba + last_sectors` → sequential pattern detected
+  - [ ] Ramp prefetch: 16 → 32 → 64 → 128 → 256 sectors (exponential backoff)
+  - [ ] Random access → reset prefetch window to 16 sectors
+- [ ] Prefetch buffer management:
+  - [ ] Per-volume prefetch cache: `pmm_alloc_contiguous()` (512 KiB default)
+  - [ ] If next read hits prefetch buffer → zero-copy return (no disk I/O)
+  - [ ] Invalidate prefetch on file close or unmount
+- [ ] Latency histogram:
+  - [ ] Record `tsc_read()` before/after every `blkdev_read()` call
+  - [ ] Bucket into 1 µs / 10 µs / 100 µs / 1 ms / 10 ms / 100 ms+ bins
+  - [ ] Expose via `HKLM\SYSTEM\Drivers\ISO9660\ReadAhead\LatencyHistogram`
+- [ ] Registry tunables at `HKLM\SYSTEM\Drivers\ISO9660\ReadAhead`:
+  - [ ] `MinPrefetchSectors` (default: 16)
+  - [ ] `MaxPrefetchSectors` (default: 256)
+  - [ ] `PrefetchEnabled` (default: 1)
+- [ ] Commit: `"fs: ISO 9660 adaptive read-ahead scheduler"`
+
+### 9.7 Multi-Session Awareness ⭐
+
+**Prompt:** Support multi-session optical discs (CD-R, CD-RW) where additional sessions are appended after the initial session. Each session has its own Lead-In with a Volume Descriptor Set starting at the session's LBA 16 offset. The ATAPI READ TOC/PMA/ATIP command (opcode `0x43`) returns the TOC with session start LBAs. Parse all sessions, present the last session's filesystem as the default mount (matching Windows/Linux behavior), and provide a GUI session selector to browse any session. This goes beyond Windows and Linux which only expose the last session. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"fs: ISO 9660 multi-session awareness"`. After implementation, save any gotchas to MCP memory.
+
+> [!TIP]
+> **Competitive Edge:** Both Windows and Linux auto-mount only the last session of a
+> multi-session disc. Impossible OS adds a GUI session selector, allowing users to browse
+> any session — useful for data recovery and forensic analysis of incremental backups.
+
+- [ ] ATAPI READ TOC/PMA/ATIP (opcode `0x43`) to enumerate sessions:
+  - [ ] Format 0x01: Multi-session info → last session start LBA
+  - [ ] Format 0x00: Full TOC → all session start LBAs
+- [ ] For each session:
+  - [ ] Calculate session's LBA 16: `session_start_lba + 16`
+  - [ ] Probe for `CD001` at session's LBA 16
+  - [ ] Parse PVD/SVD for that session's directory tree
+- [ ] Default mount: last session (matches Windows/Linux behavior)
+- [ ] Session selector (File Manager or Disk Manager):
+  - [ ] List all sessions: number, start LBA, volume name, date/time
+  - [ ] Click session → switch mounted filesystem to that session's tree
+- [ ] Log: `[iso9660] Multi-session disc: %u sessions, mounting session %u`
+- [ ] Commit: `"fs: ISO 9660 multi-session awareness"`
+
 ---
 
 ## Priority Order
 
-| Star | Priority | Section                              | Description                                                                |
-| ---- | -------- | ------------------------------------ | -------------------------------------------------------------------------- |
-| 💎    | 🔴 P0   | 1.1 Volume Descriptor Scanner        | Foundation: detect ISO 9660 media, locate PVD/SVD/Boot Record              |
-| 💎    | 🔴 P0   | 1.2 PVD Parser                       | Foundation: root directory, path table, volume size                        |
-| 💎    | 🔴 P0   | 2.1 Directory Record Parser          | Core: navigate the directory hierarchy                                     |
-| 💎    | 🔴 P0   | 2.2 File Flags & Special Entries     | Core: `.`/`..`, hidden files, directory detection                          |
-| 💎    | 🟠 P1   | 3.1 Path Table Loader                | Performance: fast directory lookup via flat index                          |
-| 💎    | 🟠 P1   | 3.2 Path Table Lookup                | Performance: O(n) path resolution without disk I/O                         |
-| 💎    | 🟠 P1   | 4.1 File Extent Reader               | Core: read file data by LBA + length                                      |
-| 💎    | 🟠 P1   | 7.1 VFS Registration                 | Integration: mount ISO volumes, drive letter assignment                    |
-| 💎    | 🟡 P2   | 4.2 Multi-Extent Files (Level 3)     | Completeness: files > 4 GiB                                               |
-| 💎    | 🟡 P2   | 5.1 Joliet SVD Parser                | Usability: Unicode filenames on Windows-authored ISOs                      |
-| 💎    | 🟡 P2   | 5.2 Rock Ridge SUSP Parser           | Interop: POSIX metadata on Linux-authored ISOs                             |
-| 💎    | 🟡 P2   | 6.1 El Torito Boot Catalog           | Boot: parse bootable ISO image catalog                                     |
-| 💎    | 🟢 P3   | 8.1 Test Suite                       | Quality: automated validation with test images                             |
-| ⭐    | 🟢 P3   | 9.1 ISO Browser GUI                  | 🚀 **GUI ISO metadata**: PVD info, extent LBAs in File Manager            |
-| ⭐    | 🟢 P3   | 9.2 El Torito Inspector              | 🚀 **GUI boot catalog viewer**: first to show boot images in a panel       |
-| ⭐    | 🟢 P3   | 9.3 Disc Health Analyzer             | 🚀 **GUI integrity check**: structural + surface scan with error map       |
-| ⭐    | 🟢 P3   | 9.4 Auto-Mount & Eject               | 🚀 **Rich auto-mount**: ISO metadata in notification toasts                |
+| Star | Priority | Section                              | Description                                                                  |
+| ---- | -------- | ------------------------------------ | ---------------------------------------------------------------------------- |
+| 💎   | 🔴 P0    | 1.1 Volume Descriptor Scanner        | Foundation: detect ISO 9660 media, locate PVD/SVD/Boot Record                |
+| 💎   | 🔴 P0    | 1.2 PVD Parser                       | Foundation: root directory, path table, volume size                          |
+| 💎   | 🔴 P0    | 2.1 Directory Record Parser          | Core: navigate the directory hierarchy                                       |
+| 💎   | 🔴 P0    | 2.2 File Flags & Special Entries     | Core: `.`/`..`, hidden files, directory detection                            |
+| 💎   | 🟠 P1    | 3.1 Path Table Loader                | Performance: fast directory lookup via flat index                             |
+| 💎   | 🟠 P1    | 3.2 Path Table Lookup                | Performance: O(n) path resolution without disk I/O                           |
+| 💎   | 🟠 P1    | 4.1 File Extent Reader               | Core: read file data by LBA + length                                         |
+| 💎   | 🟠 P1    | 7.1 VFS Registration                 | Integration: mount ISO volumes, drive letter assignment                       |
+| 💎   | 🟡 P2    | 4.2 Multi-Extent Files (Level 3)     | Completeness: files > 4 GiB                                                  |
+| 💎   | 🟡 P2    | 5.1 Joliet SVD Parser                | Usability: Unicode filenames on Windows-authored ISOs                        |
+| 💎   | 🟡 P2    | 5.2 Rock Ridge SUSP Parser           | Interop: POSIX metadata on Linux-authored ISOs                               |
+| 💎   | 🟡 P2    | 6.1 El Torito Boot Catalog           | Boot: parse bootable ISO image catalog                                       |
+| 💎   | 🟢 P3    | 8.1 Test Suite                       | Quality: automated validation with test images                               |
+| ⭐   | 🟢 P3    | 9.1 ISO Browser GUI                  | 🚀 **GUI ISO metadata**: PVD info, extent LBAs in File Manager              |
+| ⭐   | 🟢 P3    | 9.2 El Torito Inspector              | 🚀 **GUI boot catalog viewer**: first to show boot images in a panel         |
+| ⭐   | 🟢 P3    | 9.3 Disc Health Analyzer             | 🚀 **GUI integrity check**: structural + surface scan with error map         |
+| ⭐   | 🟢 P3    | 9.4 Auto-Mount & Eject               | 🚀 **Rich auto-mount**: ISO metadata in notification toasts                  |
+| ⭐   | 🔵 P4    | 9.5 ISO Image File Mounting          | 🚀 **Loopback mount**: double-click `.iso` → virtual drive with metadata     |
+| ⭐   | 🔵 P4    | 9.6 Read-Ahead I/O Scheduler         | 🚀 **Adaptive prefetch**: ns-latency histograms, registry tunables           |
+| ⭐   | 🔵 P4    | 9.7 Multi-Session Awareness          | 🚀 **Session browser**: GUI selector for multi-session discs                 |
 
 ---
 
 ## Key Files
 
-| File                                | Purpose                                                   |
-| ----------------------------------- | --------------------------------------------------------- |
-| `include/kernel/fs/iso9660.h`       | [NEW] Public API, on-disk structures, constants           |
-| `src/kernel/fs/iso9660.c`          | [NEW] ISO 9660 driver: PVD, directory records, VFS        |
-| `src/kernel/fs/iso9660_ext.c`      | [NEW] Extensions: Joliet, Rock Ridge, El Torito           |
-| `src/kernel/fs/partition.c`         | ISO 9660 detection (CD001 at LBA 16)                      |
+| File                                | Purpose                                                     |
+| ----------------------------------- | ----------------------------------------------------------- |
+| `include/kernel/fs/iso9660.h`       | [NEW] Public API, on-disk structures, constants             |
+| `src/kernel/fs/iso9660.c`           | [NEW] ISO 9660 driver: PVD, directory records, VFS          |
+| `src/kernel/fs/iso9660_ext.c`       | [NEW] Extensions: Joliet, Rock Ridge, El Torito             |
+| `src/kernel/fs/iso9660_readahead.c` | [NEW] Adaptive read-ahead I/O scheduler                     |
+| `src/kernel/fs/partition.c`         | ISO 9660 detection (CD001 at LBA 16)                        |
 
 ---
 
 ## OS Comparison
 
-| Feature                              | 🪟 Windows 11                          | 🐧 Linux                                 | 🚀 Impossible OS                                  |
-| ------------------------------------ | -------------------------------------- | ----------------------------------------- | ------------------------------------------------- |
-| PVD parsing                          | ✅ Native CDFS driver                   | ✅ Native isofs driver                     | ⬜ §1.1-1.2 P0                                    |
-| Directory record navigation          | ✅ Full                                 | ✅ Full                                    | ⬜ §2.1-2.2 P0                                    |
-| Path table lookup                    | ✅ Internal optimization                | ✅ Internal optimization                   | ⬜ §3.1-3.2 P1                                    |
-| File reading (Level 1/2)             | ✅ Full                                 | ✅ Full                                    | ⬜ §4.1 P1                                        |
-| Multi-extent (Level 3)               | ✅ Full                                 | ✅ Full                                    | ⬜ §4.2 P2                                        |
-| Joliet (Unicode filenames)           | ✅ Full (Microsoft spec)                | ✅ Full                                    | ⬜ §5.1 P2                                        |
-| Rock Ridge (POSIX metadata)          | ⬜ Not supported                        | ✅ Full native support                     | ⬜ §5.2 P2                                        |
-| El Torito (boot catalog)             | ✅ BIOS/UEFI boot from ISO              | ✅ Full                                    | ⬜ §6.1 P2                                        |
-| VFS / mountable volumes              | ✅ Native mount + virtual drive          | ✅ Native mount                            | ⬜ §7.1 P1                                        |
-| ISO image mounting                   | ✅ Double-click `.iso` → virtual drive   | ✅ `mount -o loop`                         | ⬜ §7.1 P1                                        |
-| Write / packet writing               | ✅ UDF live filesystem                   | ✅ UDF + packet writing                    | N/A (read-only, by design)                        |
-| **ISO metadata in File Manager**     | ⬜ No PVD info shown                    | ⬜ No PVD info shown                       | ⬜ §9.1 P3: **GUI PVD metadata display** 🚀       |
-| **El Torito boot inspector**         | ⬜ No GUI                               | ⬜ CLI only (`isoinfo -d`)                 | ⬜ §9.2 P3: **GUI boot catalog viewer** 🚀        |
-| **Disc integrity checker**           | ⬜ No built-in checker                   | ⬜ CLI only (`checkisomd5`)                | ⬜ §9.3 P3: **GUI health + sector map** 🚀        |
-| **Rich auto-mount notifications**    | ⬜ Generic "Disc inserted"               | ⬜ Generic or manual mount                 | ⬜ §9.4 P3: **ISO metadata in toasts** ��         |
+| Feature                              | 🪟 Windows 11                           | 🐧 Linux                                  | 🚀 Impossible OS                                        |
+| ------------------------------------ | ---------------------------------------- | ------------------------------------------ | ------------------------------------------------------- |
+| PVD parsing                          | ✅ Native CDFS driver                     | ✅ Native isofs driver                      | ⬜ §1.1-1.2 P0                                          |
+| Directory record navigation          | ✅ Full                                   | ✅ Full                                     | ⬜ §2.1-2.2 P0                                          |
+| Path table lookup                    | ✅ Internal optimization                  | ✅ Internal optimization                    | ⬜ §3.1-3.2 P1                                          |
+| File reading (Level 1/2)             | ✅ Full                                   | ✅ Full                                     | ⬜ §4.1 P1                                              |
+| Multi-extent (Level 3)               | ✅ Full                                   | ✅ Full                                     | ⬜ §4.2 P2                                              |
+| Joliet (Unicode filenames)           | ✅ Full (Microsoft spec)                  | ✅ Full                                     | ⬜ §5.1 P2                                              |
+| Rock Ridge (POSIX metadata)          | ⬜ Not supported                          | ✅ Full native support                      | ⬜ §5.2 P2                                              |
+| El Torito (boot catalog)             | ✅ BIOS/UEFI boot from ISO                | ✅ Full                                     | ⬜ §6.1 P2                                              |
+| VFS / mountable volumes              | ✅ Native mount + virtual drive            | ✅ Native mount                             | ⬜ §7.1 P1                                              |
+| ISO image mounting                   | ✅ Double-click `.iso` → virtual drive     | ✅ `mount -o loop` (requires root)          | ⬜ §9.5 P4                                              |
+| Write / packet writing               | ✅ UDF live filesystem                     | ✅ UDF + packet writing                     | N/A (read-only, by design)                              |
+| Multi-session disc support           | ✅ Last session only                       | ✅ Last session only                        | ⬜ §9.7 P4                                              |
+| **ISO metadata in File Manager**     | ⬜ No PVD info shown                      | ⬜ No PVD info shown                        | ⬜ §9.1 P3: **GUI PVD metadata display** 🚀             |
+| **El Torito boot inspector**         | ⬜ No GUI                                 | ⬜ CLI only (`isoinfo -d`)                  | ⬜ §9.2 P3: **GUI boot catalog viewer** 🚀              |
+| **Disc integrity checker**           | ⬜ No built-in checker                     | ⬜ CLI only (`checkisomd5`)                 | ⬜ §9.3 P3: **GUI health + sector map** 🚀              |
+| **Rich auto-mount notifications**    | ⬜ Generic "Disc inserted"                 | ⬜ Generic or manual mount                  | ⬜ §9.4 P3: **ISO metadata in toasts** 🚀               |
+| **ISO image loopback mount**         | ⬜ Basic mount (no metadata toast)         | ⬜ Requires root (`mount -o loop`)          | ⬜ §9.5 P4: **Rich loopback with metadata toast** 🚀    |
+| **Adaptive read-ahead**              | ⬜ Fixed-size CDFS read-ahead              | ⬜ Fixed-size isofs read-ahead              | ⬜ §9.6 P4: **Adaptive prefetch + latency stats** 🚀    |
+| **Multi-session browser**            | ⬜ Last session only                       | ⬜ Last session only                        | ⬜ §9.7 P4: **GUI session selector** 🚀                 |
 
 > **After P0+P1 items:** Impossible OS can mount and read any ISO 9660 volume (including `.iso` files via QEMU).
 > **After P2 items:** Full extension support — Joliet Unicode names, Rock Ridge POSIX metadata,
 > El Torito boot catalog, and Level 3 multi-extent files exceeding 4 GiB.
 > **After P3 exclusive features:** Exceeds both Windows (no Rock Ridge, no ISO metadata display)
 > and Linux (CLI-only tools for boot catalog and integrity checking) with GUI-based ISO browsing,
-> boot inspector, health analyzer, and rich auto-mount notifications — features no OS currently
-> provides in a graphical interface.
+> boot inspector, health analyzer, and rich auto-mount notifications.
+> **After P4 exclusive features:** Full ISO 9660 mastery — loopback `.iso` mounting with rich
+> metadata, adaptive read-ahead with telemetry, and multi-session disc browsing with GUI session
+> selector. No other OS provides this level of optical media intelligence.

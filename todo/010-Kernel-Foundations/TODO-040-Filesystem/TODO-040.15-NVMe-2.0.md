@@ -139,37 +139,40 @@ graph TD
     VFS --> IXFS
 ```
 
-### Phase-by-Phase Implementation Order
-
-| ⭐ | Phase  | Sections                              | Depends On                    | Status |
-| -- | :----: | ------------------------------------- | ----------------------------- | :----: |
-| 💎 | **0**  | NVMe 2.0 spec (`nvme-2.0.md`)        | —                             |   ✅   |
-| 💎 | **0**  | PCI driver (`pci.c`)                  | —                             |   ✅   |
-| 💎 | **1**  | §1.1 PCIe Detection & BAR Mapping    | Phase 0                       |   ⬜   |
-| 💎 | **1**  | §1.2 Controller Init & Admin Queue   | Phase 1 (§1.1)                |   ⬜   |
-| 💎 | **1**  | §1.3 Identify Controller & Namespace | Phase 1 (§1.2)                |   ⬜   |
-| 💎 | **2**  | §2.1 I/O Queue Creation (Per-Core)   | Phase 1 (§1.3)                |   ⬜   |
-| 💎 | **2**  | §2.2 MSI-X Interrupt Handling        | Phase 1 (§1.3)                |   ⬜   |
-| �� | **3**  | §3.1 Read Command (PRP)              | Phase 2 (§2.1, §2.2)         |   ⬜   |
-| 💎 | **3**  | §3.2 Write Command (PRP)             | Phase 2 (§2.1, §2.2)         |   ⬜   |
-| 💎 | **3**  | §3.3 Flush Command                   | Phase 3 (§3.1)                |   ⬜   |
-| 💎 | **3**  | §3.4 Block Device Registration       | Phase 3 (§3.3)                |   ⬜   |
-| 💎 | **4**  | §4.1 Graceful Shutdown               | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **4**  | §4.2 Error Recovery & Reset          | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **5**  | §5.1 Dataset Management (TRIM)       | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **5**  | §5.2 Write Zeroes                    | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **5**  | §5.3 Multiple Namespace Support      | Phase 1 (§1.3)                |   ⬜   |
-| 💎 | **6**  | §6.1 SMART Health Monitoring         | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **6**  | §6.2 Asynchronous Event Requests     | Phase 6 (§6.1)                |   ⬜   |
-| 💎 | **7**  | §7.1 PRP List (Multi-Page I/O)       | Phase 3 (§3.4)                |   ⬜   |
-| 💎 | **7**  | §7.2 SGL Support                     | Phase 7 (§7.1)                |   ⬜   |
-| 💎 | **7**  | §8.1 Polling Mode                    | Phase 3 (§3.4)                |   ⬜   |
-| ⭐ | **8**  | §9.1 Adaptive Hybrid Polling         | Phase 7 (§8.1)                |   ⬜   |
-| ⭐ | **8**  | §9.2 I/O Priority Queues             | Phase 2 (§2.1)                |   ⬜   |
-| ⭐ | **8**  | §9.3 Latency Telemetry               | Phase 3 (§3.4)                |   ⬜   |
-| ⭐ | **8**  | §9.4 Predictive I/O Scheduling       | Phase 3 (§3.4)                |   ⬜   |
-| ⭐ | **8**  | §9.5 SMART Dashboard                 | Phase 6 (§6.1)                |   ⬜   |
-| 🔵 | **9**  | §10.1 Namespace Management           | Phase 1 (§1.3)                |   ⬜   |
+### Pha| ⭐ | Phase | Sections                              | Depends On              | Status |
+| -- | :---: | ------------------------------------- | ----------------------- | :----: |
+| 💎 | **0** | NVMe 2.0 spec (`nvme-2.0.md`)         | —                       |   ✅   |
+| 💎 | **0** | PCI driver (`pci.c`)                  | —                       |   ✅   |
+| 💎 | **1** | §1.1 PCIe Detection & BAR Mapping     | Phase 0                 |   ⬜   |
+| 💎 | **1** | §1.2 Controller Init & Admin Queue    | Phase 1 (§1.1)          |   ⬜   |
+| 💎 | **1** | §1.3 Identify Controller & Namespace  | Phase 1 (§1.2)          |   ⬜   |
+| 💎 | **2** | §2.1 I/O Queue Creation (Per-Core)    | Phase 1 (§1.3)          |   ⬜   |
+| 💎 | **2** | §2.2 MSI-X Interrupt Handling         | Phase 1 (§1.3)          |   ⬜   |
+| 💎 | **3** | §3.1 Read Command (PRP)               | Phase 2 (§2.1, §2.2)   |   ⬜   |
+| 💎 | **3** | §3.2 Write Command (PRP)              | Phase 2 (§2.1, §2.2)   |   ⬜   |
+| 💎 | **3** | §3.3 Flush Command                    | Phase 3 (§3.1)          |   ⬜   |
+| 💎 | **3** | §3.4 Block Device Registration        | Phase 3 (§3.3)          |   ⬜   |
+| 💎 | **4** | §4.1 Graceful Shutdown                | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **4** | §4.2 Error Recovery & Reset           | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **5** | §5.1 Dataset Management (TRIM)        | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **5** | §5.2 Write Zeroes                     | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **5** | §5.3 Multiple Namespace Support       | Phase 1 (§1.3)          |   ⬜   |
+| 💎 | **6** | §6.1 SMART Health Monitoring          | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **6** | §6.2 Asynchronous Event Requests      | Phase 6 (§6.1)          |   ⬜   |
+| 💎 | **7** | §7.1 PRP List (Multi-Page I/O)        | Phase 3 (§3.4)          |   ⬜   |
+| 💎 | **7** | §7.2 SGL Support                      | Phase 7 (§7.1)          |   ⬜   |
+| 💎 | **7** | §8.1 Polling Mode                     | Phase 3 (§3.4)          |   ⬜   |
+| ⭐ | **8** | §9.1 Adaptive Hybrid Polling          | Phase 7 (§8.1)          |   ⬜   |
+| ⭐ | **8** | §9.2 I/O Priority Queues              | Phase 2 (§2.1)          |   ⬜   |
+| ⭐ | **8** | §9.3 Latency Telemetry                | Phase 3 (§3.4)          |   ⬜   |
+| ⭐ | **8** | §9.4 Predictive I/O Scheduling        | Phase 3 (§3.4)          |   ⬜   |
+| ⭐ | **8** | §9.5 SMART Dashboard                  | Phase 6 (§6.1)          |   ⬜   |
+| ⭐ | **8** | §9.6 Simple Copy Offload              | Phase 3 (§3.4)          |   ⬜   |
+| ⭐ | **8** | §9.7 Zoned Namespace Awareness        | Phase 1 (§1.3)          |   ⬜   |
+| ⭐ | **8** | §9.8 Command Lockdown                 | Phase 3 (§3.4)          |   ⬜   |
+| 🔵 | **9** | §10.1 Namespace Management            | Phase 1 (§1.3)          |   ⬜   |
+| 🔵 | **9** | §10.2 Firmware Update                 | Phase 3 (§3.4)          |   ⬜   |
+| 🔵 | **9** | §10.3 NVMe Reservations               | Phase 3 (§3.4)          |   ⬜   |(§1.3)                |   ⬜   |
 | 🔵 | **9**  | §10.2 Firmware Update                | Phase 3 (§3.4)                |   ⬜   |
 | 🔵 | **9**  | §10.3 NVMe Reservations              | Phase 3 (§3.4)                |   ⬜   |
 
@@ -818,6 +821,83 @@ After implementation, save gotchas to MCP memory.
 - [ ] Warning notifications: low spare, high temperature, high percentage used
 - [ ] Commit: `"nvme: SMART dashboard"`
 
+### 9.6 Simple Copy Offload (🚀 Exclusive)
+
+**Prompt:** NVMe 2.0 introduces the Simple Copy Command (I/O opcode `0x19`) which copies data
+from multiple source ranges to a single destination LBA entirely within the drive — no host
+memory transfer needed. This saves PCIe bandwidth and CPU cycles for file copy, defrag, and
+GC workloads. Neither Windows StorNVMe nor Linux nvme exposes copy offload to userland or
+filesystem layers. Implement copy offload with a `blkdev_copy()` callback and wire to the
+VFS copy path. Check `ONCS` bit 8 (Identify Controller offset 256) for Copy support. Per
+NVMe 2.0 §"Simple Copy Command". After completing all items, mark every item as `[x]`,
+update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit
+as `"nvme: simple copy offload"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Check Identify Controller ONCS (offset 256) bit 8 for Copy support
+- [ ] Read MSSRL (offset 292, 2B) — max single source range length
+- [ ] Read MCL (offset 294, 4B) — max copy length (in LBAs)
+- [ ] Read MSRC (offset 298, 1B) — max source range count (0-based)
+- [ ] Build Simple Copy SQE: I/O opcode `0x19`, NSID, CDW10/11 = destination LBA
+- [ ] Build Source Range Entries descriptor list (16B each):
+  - [ ] Each entry: `{ rsvd(8B), slba(8B), nlb(2B), rsvd(6B) }`
+- [ ] CDW12: NR = number_of_ranges - 1 (0-based)
+- [ ] PRP1 = source range descriptor buffer physical address
+- [ ] Submit to I/O SQ, wait for completion
+- [ ] Add `copy_fn` callback to `blkdev` struct (extend the API)
+- [ ] Wire to `vfs_copy_range()` for filesystem-level copy acceleration
+- [ ] Fallback: read + write if controller does not support Copy
+- [ ] Commit: `"nvme: simple copy offload"`
+
+### 9.7 Zoned Namespace Awareness (🚀 Exclusive)
+
+**Prompt:** NVMe 2.0 introduces Zoned Namespaces (ZNS) as a distinct command set (CSS=`0x02`).
+ZNS devices expose storage as sequential write zones — the host controls data placement,
+reducing write amplification and extending SSD lifespan. Linux has ZNS support in the block
+layer but Windows has no native ZNS driver. Implement zone awareness: detect ZNS during
+Identify (CSS bit 2), issue Zone Management Receive (opcode `0x7A`) to enumerate zones,
+support Zone Append (opcode `0x7D`) for optimal sequential writes, and expose zone state
+via Registry and Device Manager. Per NVMe 2.0 §"Zoned Namespace Command Set". After
+completing all items, mark every item as `[x]`, update this prompt to a verification
+prompt, run `bash scripts/build.sh clean`, and commit as `"nvme: zoned namespace awareness"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Detect ZNS support: check Identify Controller CAP.CSS bit 2 or CNS `0x06`
+- [ ] Issue Identify Namespace with ZNS Command Set specific data (CNS `0x05`)
+- [ ] Parse zone size, zone capacity, max open/active zones
+- [ ] Implement Zone Management Receive (opcode `0x7A`): report zone states
+- [ ] Parse zone descriptors: ZCAP, ZSLBA, WP (write pointer), ZS (zone state)
+- [ ] Implement Zone Management Send (opcode `0x79`):
+  - [ ] Open Zone, Close Zone, Finish Zone, Reset Zone
+- [ ] Implement Zone Append (opcode `0x7D`): append-only write at zone WP
+- [ ] Register ZNS namespaces as special `blkdev` with zone metadata
+- [ ] Expose zone map via Registry: `HKLM\HARDWARE\NVMe\nvme0\Zones\*`
+- [ ] Wire to Device Manager: zone state visualization (Empty/Open/Full/Offline)
+- [ ] Commit: `"nvme: zoned namespace awareness"`
+
+### 9.8 Command Lockdown (🚀 Exclusive)
+
+**Prompt:** NVMe 2.0 introduces the Lockdown command (admin opcode `0x24`) which prevents
+specific admin or I/O commands from being executed after provisioning. This is a security
+feature — it can prevent firmware updates, format NVM, namespace deletion, or other
+destructive operations on a running system. Neither Windows nor Linux expose command
+lockdown via their NVMe drivers. Implement lockdown with a configurable policy via the
+Registry. Per NVMe 2.0 §"Lockdown Command". After completing all items, mark every item
+as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
+and commit as `"nvme: command lockdown"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Check Identify Controller OACS (offset 256) bit 10 for Lockdown support
+- [ ] Build Lockdown SQE: admin opcode `0x24`
+  - [ ] CDW10: Interface (bits 2:0), Lockdown Scope (bits 5:3)
+  - [ ] CDW10: Feature Identifier or Command Opcode (bits 15:8)
+- [ ] Implement lockdown profiles:
+  - [ ] `NVME_LOCKDOWN_PRODUCTION` — lock firmware update, format, sanitize
+  - [ ] `NVME_LOCKDOWN_SECURE` — lock all non-essential admin commands
+  - [ ] `NVME_LOCKDOWN_CUSTOM` — user-defined via Registry
+- [ ] Configurable via Registry: `HKLM\SYSTEM\Drivers\NVMe\Lockdown\*`
+- [ ] Apply lockdown during boot after driver init (before user-mode)
+- [ ] Log: `[NVMe] Command lockdown applied: profile=%s`
+- [ ] Commit: `"nvme: command lockdown"`
+
 ---
 
 ## 10. Enterprise & Stretch Features
@@ -875,35 +955,38 @@ After implementation, save gotchas to MCP memory.
 
 ## Priority Order
 
-| Priority | Section                             | Description                                                         |
-| -------- | ----------------------------------- | ------------------------------------------------------------------- |
-| 🔴 P0    | §1.1 PCIe Detection & BAR Mapping  | Foundation — all NVMe operations depend on MMIO access              |
-| 🔴 P0    | §1.2 Controller Init & Admin Queue | CAP parsing, CC config, Admin Queue — first commands require this   |
-| 🔴 P0    | §1.3 Identify Controller & NS      | Device capabilities, namespace geometry — needed for I/O            |
-| 🔴 P0    | §2.1 I/O Queue Creation            | Per-core queues — required for any data I/O                         |
-| 🔴 P0    | §3.1 Read Command                  | Core read path — OS cannot boot from NVMe without this              |
-| 🔴 P0    | §3.2 Write Command                 | Core write path — filesystem persistence                            |
-| 🔴 P0    | §3.3 Flush Command                 | Data integrity — prevents loss on power failure                     |
-| 🔴 P0    | §3.4 Block Device Registration     | `blkdev` integration — enables partition/FS mounting                |
-| 🟠 P1    | §2.2 MSI-X Interrupt Handling      | APIC-only compliance, async I/O — replaces polling                  |
-| 🟠 P1    | §4.1 Graceful Shutdown             | Prevents data loss — DRAM cache flush on OS shutdown                |
-| 🟠 P1    | §4.2 Error Recovery & Reset        | Reliability — handles CFS, transient errors, controller reset       |
-| 🟠 P1    | §7.1 PRP List (Multi-Page I/O)     | Multi-page transfers — needed for practical file I/O                |
-| 🟡 P2    | §5.1 Dataset Management (TRIM)     | SSD health — informs garbage collection                             |
-| 🟡 P2    | §5.2 Write Zeroes                  | Thin provisioning, secure pre-deletion                              |
-| 🟡 P2    | §5.3 Multiple Namespace Support    | Multi-volume — enumerate and expose N namespaces                    |
-| 🟡 P2    | §6.1 SMART Health Monitoring       | Drive health — temperature, spare, lifespan metrics                 |
-| 🟡 P2    | §6.2 Asynchronous Event Requests   | Proactive alerts — critical events without polling                  |
-| 🟡 P2    | §8.1 Polling Mode                  | High-IOPS — dedicated polling threads for peak throughput           |
-| 🟢 P3    | §7.2 SGL Support                   | Alternative to PRP — fragmented memory transfers                    |
-| 🟢 P3    | §9.1 Adaptive Hybrid Polling       | 🚀 **Exclusive** — dynamic interrupt/poll switching by IOPS        |
-| 🟢 P3    | §9.2 I/O Priority Queues           | 🚀 **Exclusive** — Win32 I/O priority → NVMe QPRIO mapping         |
-| 🟢 P3    | §9.3 Latency Telemetry             | 🚀 **Exclusive** — ns-resolution per-request latency histograms    |
-| 🟢 P3    | §9.4 Predictive I/O Scheduling     | 🚀 **Exclusive** — driver-level sequential prefetch                 |
-| 🟢 P3    | §9.5 SMART Dashboard               | 🚀 **Exclusive** — built-in GUI health visualization               |
-| 🔵 P4    | §10.1 Namespace Management         | Enterprise — dynamic namespace create/delete                        |
-| 🔵 P4    | §10.2 Firmware Update              | Field updates — download + commit firmware                          |
-| 🔵 P4    | §10.3 NVMe Reservations            | Multi-host — shared namespace locking                               |
+| Priority | Section                             | Description                                                          |
+| -------- | ----------------------------------- | -------------------------------------------------------------------- |
+| 🔴 P0   | §1.1 PCIe Detection & BAR Mapping   | Foundation — all NVMe operations depend on MMIO access               |
+| 🔴 P0   | §1.2 Controller Init & Admin Queue  | CAP parsing, CC config, Admin Queue — first commands require this    |
+| 🔴 P0   | §1.3 Identify Controller & NS       | Device capabilities, namespace geometry — needed for I/O             |
+| 🔴 P0   | §2.1 I/O Queue Creation             | Per-core queues — required for any data I/O                          |
+| 🔴 P0   | §3.1 Read Command                   | Core read path — OS cannot boot from NVMe without this               |
+| 🔴 P0   | §3.2 Write Command                  | Core write path — filesystem persistence                             |
+| 🔴 P0   | §3.3 Flush Command                  | Data integrity — prevents loss on power failure                      |
+| 🔴 P0   | §3.4 Block Device Registration      | `blkdev` integration — enables partition/FS mounting                 |
+| 🟠 P1   | §2.2 MSI-X Interrupt Handling       | APIC-only compliance, async I/O — replaces polling                   |
+| 🟠 P1   | §4.1 Graceful Shutdown              | Prevents data loss — DRAM cache flush on OS shutdown                 |
+| 🟠 P1   | §4.2 Error Recovery & Reset         | Reliability — handles CFS, transient errors, controller reset        |
+| 🟠 P1   | §7.1 PRP List (Multi-Page I/O)      | Multi-page transfers — needed for practical file I/O                 |
+| 🟡 P2   | §5.1 Dataset Management (TRIM)      | SSD health — informs garbage collection                              |
+| 🟡 P2   | §5.2 Write Zeroes                   | Thin provisioning, secure pre-deletion                               |
+| 🟡 P2   | §5.3 Multiple Namespace Support     | Multi-volume — enumerate and expose N namespaces                     |
+| 🟡 P2   | §6.1 SMART Health Monitoring        | Drive health — temperature, spare, lifespan metrics                  |
+| 🟡 P2   | §6.2 Asynchronous Event Requests    | Proactive alerts — critical events without polling                   |
+| 🟡 P2   | §8.1 Polling Mode                   | High-IOPS — dedicated polling threads for peak throughput            |
+| 🟢 P3   | §7.2 SGL Support                    | Alternative to PRP — fragmented memory transfers                     |
+| 🟢 P3   | §9.1 Adaptive Hybrid Polling        | 🚀 **Exclusive** — dynamic interrupt/poll switching by IOPS         |
+| 🟢 P3   | §9.2 I/O Priority Queues            | 🚀 **Exclusive** — Win32 I/O priority → NVMe QPRIO mapping          |
+| 🟢 P3   | §9.3 Latency Telemetry              | 🚀 **Exclusive** — ns-resolution per-request latency histograms     |
+| 🟢 P3   | §9.4 Predictive I/O Scheduling      | 🚀 **Exclusive** — driver-level sequential prefetch                  |
+| 🟢 P3   | §9.5 SMART Dashboard                | 🚀 **Exclusive** — built-in GUI health visualization                |
+| 🟢 P3   | §9.6 Simple Copy Offload            | 🚀 **Exclusive** — on-drive data copy, zero PCIe bandwidth          |
+| 🟢 P3   | §9.7 Zoned Namespace Awareness      | 🚀 **Exclusive** — host-managed zone data placement                 |
+| 🟢 P3   | §9.8 Command Lockdown               | 🚀 **Exclusive** — post-provisioning command restriction             |
+| 🔵 P4   | §10.1 Namespace Management          | Enterprise — dynamic namespace create/delete                         |
+| 🔵 P4   | §10.2 Firmware Update               | Field updates — download + commit firmware                           |
+| 🔵 P4   | §10.3 NVMe Reservations             | Multi-host — shared namespace locking                                |
 
 ---
 

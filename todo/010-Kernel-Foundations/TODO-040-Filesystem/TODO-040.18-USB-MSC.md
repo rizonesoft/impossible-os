@@ -554,3 +554,202 @@ to a verification prompt, run `bash scripts/build.sh clean`, and commit as
 - [ ] Commit: `"usb: block device registration"`
 
 ---
+
+## 4. Error Handling
+
+### 4.1 REQUEST SENSE Error Decoding
+
+**Prompt:** Implement REQUEST SENSE (`0x03`) per USB MSC spec §"REQUEST SENSE". 6-byte CDB,
+Data-In 18 bytes (fixed format). Parse sense key (byte 2, bits 3:0), ASC (byte 12), ASCQ
+(byte 13). Decode common combinations: `0x02/0x3A/0x00` = medium not present, `0x06/0x28/0x00`
+= not ready to ready transition, `0x07/0x27/0x00` = write protected, `0x03/0x11/0x00` =
+unrecovered read error. After completing all items, mark every item as `[x]`, update this
+prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as
+`"usb: REQUEST SENSE error decoding"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Build REQUEST SENSE CDB (6 bytes): opcode=`0x03`, allocation_len=18
+- [ ] Send via `bot_transaction()`: direction=IN, data_len=18
+- [ ] Parse fixed format sense data (18 bytes):
+  - [ ] Response Code (byte 0) — `0x70` (current) or `0x71` (deferred)
+  - [ ] Sense Key (byte 2, bits 3:0) — error category
+  - [ ] ASC (byte 12) — Additional Sense Code
+  - [ ] ASCQ (byte 13) — Additional Sense Code Qualifier
+- [ ] Decode common sense key / ASC / ASCQ combinations:
+  - [ ] `0x02/0x3A/0x00` — Medium Not Present
+  - [ ] `0x06/0x28/0x00` — Not Ready to Ready Transition (media inserted)
+  - [ ] `0x07/0x27/0x00` — Write Protected
+  - [ ] `0x03/0x11/0x00` — Unrecovered Read Error
+  - [ ] `0x03/0x0C/0x00` — Write Error
+  - [ ] `0x05/0x20/0x00` — Invalid Command Operation Code
+  - [ ] `0x05/0x24/0x00` — Invalid Field in CDB
+- [ ] Return structured error to caller: `{ sense_key, asc, ascq, description }`
+- [ ] Log: `[USB-MSC] Sense: key=0x%02x, ASC=0x%02x, ASCQ=0x%02x — %s`
+- [ ] Commit: `"usb: REQUEST SENSE error decoding"`
+
+### 4.2 Reset Recovery (3-Step)
+
+**Prompt:** Implement the BOT Reset Recovery sequence per USB MSC spec §"Reset Recovery
+Sequence". When CSW status = 0x02 (Phase Error), CSW validation fails, or endpoints are
+persistently stalled, execute this exact three-step sequence: (1) Bulk-Only Mass Storage
+Reset (control EP0, bRequest=0xFF), (2) ClearFeature(ENDPOINT_HALT) on Bulk-IN, (3)
+ClearFeature(ENDPOINT_HALT) on Bulk-OUT. These three steps MUST be in this exact order.
+After completing all items, mark every item as `[x]`, update this prompt to a verification
+prompt, run `bash scripts/build.sh clean`, and commit as `"usb: BOT reset recovery"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Implement `bot_reset_recovery(dev)`:
+  - [ ] Step 1: Bulk-Only Mass Storage Reset
+    - [ ] Control transfer: bmRequestType=`0x21`, bRequest=`0xFF`, wValue=0, wIndex=interface, wLength=0
+  - [ ] Step 2: ClearFeature(ENDPOINT_HALT) on Bulk-IN
+    - [ ] Control transfer: bmRequestType=`0x02`, bRequest=`0x01`, wValue=0, wIndex=bulk_in_ep
+  - [ ] Step 3: ClearFeature(ENDPOINT_HALT) on Bulk-OUT
+    - [ ] Control transfer: bmRequestType=`0x02`, bRequest=`0x01`, wValue=0, wIndex=bulk_out_ep
+- [ ] Steps MUST execute in this exact order — reordering causes zombie devices
+- [ ] Reset BOT state machine: clear pending tags, reset Data Toggle bits
+- [ ] Call on: CSW Phase Error (0x02), invalid CSW signature, invalid CSW tag
+- [ ] Log: `[USB-MSC] Reset Recovery: 3-step sequence completed`
+- [ ] Commit: `"usb: BOT reset recovery"`
+
+### 4.3 Retry Policy & Timeout Handling
+
+**Prompt:** Implement retry and timeout policies per USB MSC spec §"Retry Policy". Endpoint
+STALL: retry up to 3× with ClearFeature(ENDPOINT_HALT) between attempts. CSW tag/signature
+mismatch: immediate Reset Recovery (0 retries). Phase Error: immediate Reset Recovery.
+Command Failed (sense): retry up to 3× then report to VFS. Transfer timeout: 5-second
+default, reset recovery after 2 failed attempts. After completing all items, mark every
+item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
+and commit as `"usb: retry policy and timeout handling"`. After implementation, save
+gotchas to MCP memory.
+
+- [ ] Retry table:
+  - [ ] Endpoint STALL: max 3 retries, ClearFeature between each
+  - [ ] CSW tag mismatch: 0 retries → immediate Reset Recovery
+  - [ ] CSW signature invalid: 0 retries → immediate Reset Recovery
+  - [ ] Phase Error: 0 retries → immediate Reset Recovery
+  - [ ] Command Failed (sense): max 3 retries → report error to VFS
+  - [ ] Transfer timeout: max 2 retries → Reset Recovery
+- [ ] Implement configurable timeout: default 5 seconds per BOT transaction
+- [ ] Implement `bot_transaction_with_retry()` wrapper
+- [ ] Track error counters: `{ stalls, resets, timeouts, command_failures }`
+- [ ] Expose counters via Registry: `HKLM\HARDWARE\USB\usb0\ErrorStats\*`
+- [ ] Commit: `"usb: retry policy and timeout handling"`
+
+---
+
+## 5. Hot-Plug & Device Lifecycle
+
+### 5.1 Hot-Plug Detection
+
+**Prompt:** Handle USB device connection events per USB MSC spec §"Device Connection". xHCI
+generates Port Status Change Event TRB (type 34) when a device is plugged in. Read PORTSC
+to confirm CCS (Current Connect Status). Begin full enumeration sequence: reset port, enable
+slot, address device, parse descriptors, identify MSC, probe LUNs, read capacity. Register
+block device with VFS, trigger partition scanning and filesystem mounting. Show desktop
+notification toast: "USB drive detected — Drive E: (FAT32, 16 GB)". After completing all
+items, mark every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"usb: hot-plug detection"`. After implementation,
+save gotchas to MCP memory.
+
+- [ ] Monitor Event Ring for Port Status Change Event TRBs (type 34)
+- [ ] Read PORTSC: confirm CCS (bit 0) = 1 (device connected)
+- [ ] Determine port speed from PORTSC bits 13:10
+- [ ] Run full enumeration sequence (§2.1)
+- [ ] If MSC device: identify interface (§2.2), probe SCSI (§3.2–3.3)
+- [ ] Register `blkdev`, trigger `partition_scan()`, auto-mount filesystem
+- [ ] Assign next available drive letter (E:, F:, ...)
+- [ ] Show desktop notification toast: "USB drive detected — Drive X: (FS, N GB)"
+- [ ] Log: `[USB] Device connected on port %u → Drive %c:`
+- [ ] Commit: `"usb: hot-plug detection"`
+
+### 5.2 Surprise Removal & Safe Eject
+
+**Prompt:** Handle device disconnection per USB MSC spec §"Surprise Removal Teardown
+Sequence". On disconnect event: (1) quarantine — mark device offline, reject all pending
+I/O with ENODEV, (2) abort transfers — walk Transfer Rings, abort pending TRBs, (3) halt
+endpoints — issue Stop Endpoint Commands, (4) free slot — issue Disable Slot Command, (5)
+notify VFS — trigger filesystem unmount, (6) deallocate — free all DMA buffers and device
+tracking structures once refcount → 0. After completing all items, mark every item as
+`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and
+commit as `"usb: surprise removal and safe eject"`. After implementation, save gotchas to
+MCP memory.
+
+- [ ] Detect disconnect: Port Status Change Event with CCS = 0
+- [ ] Step 1 — Quarantine: set `dev->online = false`, reject new I/O with `ENODEV`
+- [ ] Step 2 — Abort transfers: walk Bulk-IN/Bulk-OUT Transfer Rings, mark TRBs as aborted
+- [ ] Step 3 — Halt endpoints: issue Stop Endpoint Command on Command Ring
+- [ ] Step 4 — Free slot: issue Disable Slot Command (TRB type 10) on Command Ring
+- [ ] Step 5 — Notify VFS: call `blkdev_unregister()`, trigger filesystem unmount
+- [ ] Step 6 — Deallocate: free Transfer Rings, Device Context, data buffers via `pmm_free_frame()`
+- [ ] Wait for refcount → 0 before final deallocation (open file handles)
+- [ ] Show desktop notification: "USB drive removed — Drive X: safely ejected" or warning
+- [ ] Log: `[USB] Device disconnected from port %u, slot %u freed`
+- [ ] Commit: `"usb: surprise removal and safe eject"`
+
+---
+
+## 6. Advanced Features
+
+### 6.1 Multi-LUN Support
+
+**Prompt:** Implement Get Max LUN per USB MSC spec §"Get Max LUN". Control transfer:
+bmRequestType=`0xA1`, bRequest=`0xFE`, wValue=0, wIndex=interface, wLength=1. Response is
+a single byte: max LUN index (0x00–0x0F). For each LUN: issue INQUIRY, TEST UNIT READY,
+READ CAPACITY, and register a separate `blkdev` (e.g., `usb0l0`, `usb0l1`). If device
+STALLs the request, assume Max LUN = 0. After completing all items, mark every item as
+`[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and
+commit as `"usb: multi-LUN support"`. After implementation, save gotchas to MCP memory.
+
+- [ ] Issue Get Max LUN: bmRequestType=`0xA1`, bRequest=`0xFE`, wIndex=interface, wLength=1
+- [ ] Parse response: single byte = max LUN index (0x00–0x0F, value 0x03 = 4 LUNs)
+- [ ] If STALL: ClearFeature(ENDPOINT_HALT) on EP0, assume Max LUN = 0
+- [ ] For each LUN (0 to max_lun):
+  - [ ] Issue INQUIRY (§3.2) with `bCBWLUN = lun`
+  - [ ] Issue TEST UNIT READY with `bCBWLUN = lun`
+  - [ ] Issue READ CAPACITY with `bCBWLUN = lun`
+  - [ ] Register separate `blkdev`: `usb0l0`, `usb0l1`, etc.
+- [ ] Skip LUNs that fail INQUIRY (not all LUNs may have media)
+- [ ] Log: `[USB-MSC] %u LUNs detected, %u with media`
+- [ ] Commit: `"usb: multi-LUN support"`
+
+### 6.2 Scatter-Gather for Large I/O (64 KiB TRB Split)
+
+**Prompt:** Handle large transfers per USB MSC spec §"Scatter-Gather for Large Transfers".
+A single TRB's data buffer MUST NOT cross a 64 KiB physical address boundary. Split large
+buffers into fragments ≤ 64 KiB that each stay within a single 64 KiB-aligned region. Chain
+TRBs with the Chain bit (control bit 4). Set IOC only on the final TRB. After completing
+all items, mark every item as `[x]`, update this prompt to a verification prompt, run
+`bash scripts/build.sh clean`, and commit as `"usb: scatter-gather 64 KiB TRB split"`.
+After implementation, save gotchas to MCP memory.
+
+- [ ] Detect when transfer buffer crosses 64 KiB boundary
+- [ ] Split into fragments: each ≤ 64 KiB, within single 64 KiB-aligned region
+- [ ] Create one Normal TRB per fragment:
+  - [ ] Set Chain bit (control bit 4) on all but last TRB
+  - [ ] Set IOC (control bit 5) on final TRB only
+- [ ] Ensure total fragment count does not exceed Transfer Ring capacity
+- [ ] Update `bot_recv_data` and `bot_send_data` to use scatter-gather
+- [ ] Commit: `"usb: scatter-gather 64 KiB TRB split"`
+
+### 6.3 Defensive Descriptor Validation
+
+**Prompt:** Implement security checks per USB MSC spec §"Security: Defensive Descriptor
+Parsing". Never trust device-reported lengths. Enforce mandatory bounds checks: Device
+Descriptor bLength==18, Config Descriptor bLength==9, wTotalLength ≤ 4096, Interface
+Descriptor bLength==9, Endpoint Descriptor bLength==7. Use two-stage Configuration
+Descriptor read. Cap all string descriptor fetches. After completing all items, mark every
+item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`,
+and commit as `"usb: defensive descriptor validation"`. After implementation, save gotchas to
+MCP memory.
+
+- [ ] Validate Device Descriptor: `bLength == 18`, `bDescriptorType == 0x01`
+- [ ] Validate Config Descriptor header: `bLength == 9`, `wTotalLength ≤ 4096`
+- [ ] Two-stage config read: 9 bytes first, validate wTotalLength, then full read
+- [ ] Validate Interface Descriptor: `bLength == 9`, class values within valid range
+- [ ] Validate Endpoint Descriptor: `bLength == 7`, valid direction bit
+- [ ] Cap string descriptor fetches to kernel max buffer (256 bytes)
+- [ ] CSW validation: signature match, tag match, exactly 13 bytes
+- [ ] Data residue check: `dCSWDataResidue ≤ dCBWDataTransferLength`
+- [ ] Reject devices with impossible descriptor values (disconnect + log warning)
+- [ ] Commit: `"usb: defensive descriptor validation"`
+
+---

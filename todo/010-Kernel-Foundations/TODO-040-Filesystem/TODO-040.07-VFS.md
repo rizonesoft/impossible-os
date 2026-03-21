@@ -927,35 +927,36 @@ remaining work in the entire filesystem TODO.
 
 ## OS Comparison
 
-| Feature                            | 🪟 Windows 11                     | 🐧 Linux                          | 🚀 Impossible OS                                    |
-| ---------------------------------- | --------------------------------- | ---------------------------------- | --------------------------------------------------- |
-| Case-insensitive lookup            | ✅ Native (OBJ_CASE_INSENSITIVE)  | ❌ Case-sensitive                   | ⬜ §1.1 — VFS-level flag                             |
-| Mandatory file locking             | ✅ dwShareMode enforced            | ❌ Advisory only (flock)            | ⬜ §1.2 — per-file lock table                        |
-| Deferred deletion                  | ✅ pending_delete                  | ❌ Immediate unlink                 | ⬜ §1.3 — pending flag + CloseHandle unlink           |
-| File IDs (inode-like)              | ✅ nFileIndex                      | ✅ ino_t                            | ⬜ §1.4 — uint64_t file_id                           |
-| Memory-mapped I/O                  | ✅ CreateFileMapping               | ✅ mmap                             | ⬜ §1.5 — demand paging via VMM                      |
-| File attributes API                | ✅ GetFileAttributes (fast)        | ✅ stat                             | ⬜ §1.6 — attribute get/set + FILETIME timestamps    |
-| **Byte-range locking**             | ✅ LockFile (no deadlock detect)   | ✅ fcntl (can deadlock)             | ⬜ §1.7 — **with deadlock detection** ⭐              |
-| ADS (streams)                      | ✅ Native NTFS                     | ❌ No equivalent                    | ⬜ §2.1 stub → TODO-040.11 §5.9.5 native             |
-| ACL security descriptors           | ✅ Full DACL/SACL                  | ✅ POSIX ACLs (different model)     | ⬜ §2.2 stub → TODO-040.11 §5.9.6 native             |
-| Volume info queries                | ✅ GetVolumeInformation            | ✅ statfs / statvfs                 | ⬜ §2.3 — accurate FS name + capability flags        |
-| Hard links / symlinks              | ✅ CreateHardLink                  | ✅ link() / symlink()               | ⬜ §2.4 route → TODO-040.11 §5.9.7 native            |
-| Extended attributes                | ✅ NtSetEaFile                     | ✅ setxattr                         | ⬜ TODO-040.11 §5.9.8 native                          |
-| Transparent compression            | ✅ NTFS compression                | ✅ btrfs/zstd                       | ⬜ TODO-040.11 §5.9.9 native                          |
-| Precise error codes                | ✅ 15,000+ distinct codes          | ✅ errno (limited set)              | ⬜ §3.1 — mapping table                               |
-| **Change notifications**           | ✅ Per-dir (no recursive native)   | ⚠️ inotify (no recursive)          | ⬜ §4.1 — **recursive + cross-FS** ⭐                 |
-| Async overlapped I/O               | ✅ OVERLAPPED struct               | ✅ io_uring / aio                   | ⬜ §5.1 — OVERLAPPED compat                           |
-| **VFS concurrency**                | ✅ IRP dispatch + ERESOURCE        | ✅ VFS mutex + RCU                  | ⬜ §6.1 — **rwlock — beats Linux simplicity** ⭐      |
-| **I/O Completion Ports**           | ✅ IOCP (files + sockets + pipes)  | ⚠️ epoll (no regular files)        | ⬜ §6.2 — **unified IOCP for all handle types** ⭐    |
-| **FS filter drivers**              | ✅ Minifilter (complex WDK)        | ⚠️ FUSE (userspace, slow)          | ⬜ §6.3 — **simple kernel-mode filter API** ⭐        |
-| Disk quotas                        | ✅ NTFS quotas                     | ✅ quota(1) on ext4/XFS             | ⬜ §6.4 — VFS-level (uniform across all FS)           |
-| **Symlink loop detection**         | ⚠️ Silent limit, no diagnostic    | ⚠️ ELOOP (no link identification)  | ⬜ §6.5 — **reports offending link** ⭐               |
-| Cross-drive move/copy              | ✅ MoveFileEx (transparent)        | ✅ mv (copy + unlink fallback)      | ⬜ §6.6 — transparent cross-drive MoveFile            |
-| Anti-aliased TTF boot font         | ✅                                 | ⚠️ Bitmap fonts                    | ✅ **Done — Selawik Semibold, atlas pre-baked**       |
+| Feature                              | 🪟 Windows 11                      | 🐧 Linux                           | 🚀 Impossible OS                                       |
+| ------------------------------------ | ---------------------------------- | ----------------------------------- | ------------------------------------------------------ |
+| Case-insensitive lookup              | ✅ Native (OBJ_CASE_INSENSITIVE)   | ❌ Case-sensitive                    | ⬜ §1.1 P0 — VFS-level flag                             |
+| Mandatory file locking               | ✅ dwShareMode enforced             | ❌ Advisory only (flock)             | ⬜ §1.2 P0 — per-file lock table                        |
+| Deferred deletion                    | ✅ pending_delete                   | ❌ Immediate unlink                  | ⬜ §1.3 P1 — pending flag + CloseHandle unlink           |
+| File IDs (inode-like)                | ✅ nFileIndex                       | ✅ ino_t                             | ⬜ §1.4 P1 — uint64_t file_id                           |
+| Memory-mapped I/O                    | ✅ CreateFileMapping                | ✅ mmap                              | ⬜ §1.5 P2 — demand paging via VMM                      |
+| File attributes API                  | ✅ GetFileAttributes (fast)         | ✅ stat                              | ⬜ §1.6 P1 — attribute get/set + FILETIME timestamps    |
+| **Byte-range locking**               | ✅ LockFile (no deadlock detect)    | ✅ fcntl (can deadlock)              | ⬜ §1.7 P2 — **with deadlock detection** 🚀             |
+| ADS (streams)                        | ✅ Native NTFS                      | ❌ No equivalent                     | ⬜ §2.1 P2 — stub → TODO-040.11 §5.9.5 native           |
+| ACL security descriptors             | ✅ Full DACL/SACL                   | ✅ POSIX ACLs (different model)      | ⬜ §2.2 P2 — stub → TODO-040.11 §5.9.6 native           |
+| Volume info queries                  | ✅ GetVolumeInformation             | ✅ statfs / statvfs                  | ⬜ §2.3 P1 — accurate FS name + capability flags        |
+| Hard links / symlinks                | ✅ CreateHardLink                   | ✅ link() / symlink()                | ⬜ §2.4 P3 — route → TODO-040.11 §5.9.7 native          |
+| Precise error codes                  | ✅ 15,000+ distinct codes           | ✅ errno (limited set)               | ⬜ §3.1 P0 — mapping table                               |
+| **Change notifications**             | ✅ Per-dir (no recursive native)    | ⚠️ inotify (no recursive)           | ⬜ §4.1 P2 — **recursive + cross-FS** 🚀                |
+| Async overlapped I/O                 | ✅ OVERLAPPED struct                | ✅ io_uring / aio                    | ⬜ §5.1 P3 — OVERLAPPED compat                           |
+| **VFS concurrency**                  | ✅ IRP dispatch + ERESOURCE         | ✅ VFS mutex + RCU                   | ⬜ §6.1 P0 — **rwlock — simpler than both** 🚀          |
+| **I/O Completion Ports**             | ✅ IOCP (files + sockets + pipes)   | ⚠️ epoll (no regular files)         | ⬜ §6.2 P3 — **unified IOCP for all handle types** 🚀   |
+| **FS filter drivers**                | ✅ Minifilter (complex WDK)         | ⚠️ FUSE (userspace, slow)           | ⬜ §6.3 P3 — **simple kernel-mode filter API** 🚀       |
+| Disk quotas                          | ✅ NTFS quotas                      | ✅ quota(1) on ext4/XFS              | ⬜ §6.4 P4 — VFS-level (uniform across all FS)           |
+| **Symlink loop detection**           | ⚠️ Silent limit, no diagnostic     | ⚠️ ELOOP (no link identification)   | ⬜ §6.5 P4 — **reports offending link** 🚀              |
+| Cross-drive move/copy                | ✅ MoveFileEx (transparent)         | ✅ mv (copy + unlink fallback)       | ⬜ §6.6 P4 — transparent cross-drive MoveFile            |
+| **VFS tracepoints**                  | ⚠️ ETW (complex dev tooling)       | ⚠️ BPF hooks (dev-only)             | ⬜ §6.7 P4 — **user-facing I/O profiling in GUI** 🚀    |
+| **Parallel directory ops**           | ⬜ Serialized per-dir               | ⬜ i_mutex serialized                | ⬜ §6.8 P4 — **per-directory rwlock** 🚀                |
+| **UID/GID remapped mounts**          | ⬜ No UID concept                   | ✅ idmapped mounts (complex setup)   | ⬜ §6.9 P4 — **one-flag mount operation** 🚀            |
+| **Filesystem transactions**          | ⬜ TxF deprecated (Windows 8)       | ⬜ No equivalent                     | ⬜ §6.10 P4 — **only OS with working TxF** 🚀           |
 
 > **After P0+P1 items:** Impossible OS matches Windows feature-for-feature on VFS semantics.
-> **After §6.1–6.3:** Exceeds both Windows and Linux — simpler filter API, unified IOCP, and safer symlink resolution.
-
+> **After P2–P3 items:** Exceeds both — deadlock-detecting locks, recursive change notifications, unified IOCP, simple filter API.
+> **After P4 exclusive features:** Industry-first capabilities — VFS tracepoints in GUI, parallel directory ops, simplified idmapped mounts, working filesystem transactions.
 
 ---
 
