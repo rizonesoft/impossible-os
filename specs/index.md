@@ -10,6 +10,7 @@ External reference specifications for hardware, firmware, storage, and hyperviso
 | ----------------------------------------------------------------- | ----------------------------------------------- |
 | [AHCI 1.3.1](storage/controllers/ahci-1.3.1.md)                  | AHCI HBA registers, command list, FIS, PRD      |
 | [ATAPI/SCSI/MMC](storage/controllers/atapi-scsi-mmc.md)          | ATAPI commands, SCSI CDB, MMC optical media     |
+| [NVMe 2.1](storage/controllers/nvme-2.1.md)                      | NVMe queues, doorbells, PRP, MSI-X, SMART       |
 | [VirtIO 1.2](storage/controllers/virtio-1.2.md)                  | VirtIO queues, device negotiation, MMIO/PCI     |
 
 ### Partitioning
