@@ -108,6 +108,9 @@ graph TD
     %% Layer 1 → Layer 2
     PARTSCAN --> FAT32
     PARTSCAN --> NTFS
+    NTFS_WRITE["040.08 NTFS Write<br/>§12–16 pending"]
+    NTFS --> NTFS_WRITE
+    NTFS_WRITE --> MIGRATE["040-FS §6<br/>IXFS→NTFS C: Switch"]
     PARTSCAN --> EXT4
     PARTSCAN --> EXFAT
     PARTSCAN --> IXFS
@@ -227,6 +230,13 @@ graph TD
 | ⭐ | **8**  | `040.11-IXFS.md`    | §12–14 Unicode + Sparse + Journal  | Unicode normalization, sparse files, change journals          | IXFS verified (Phase 7)  |   ⬜   |
 | ⭐ | **8**  | `040.11-IXFS.md`    | §15–19 Advanced                    | Quotas, TRIM/discard, compression, encryption, online defrag  | IXFS Phase 8             |   ⬜   |
 | 💎 | **8**  | `040-Filesystem.md` | §5.1 Disk Cache                    | Block-level LRU cache (all FS drivers)                        | Phase 6 (Mount)          |   ⬜   |
+| 💎 | **8**  | `040.08-NTFS.md`    | §12 Write Support                  | Cluster allocator, USA regen, MFT allocator, attr writer      | NTFS read (Phase 4)      |   ⬜   |
+| 💎 | **8**  | `040.08-NTFS.md`    | §13 $LogFile Journal               | Transaction engine + dirty-mount recovery replay              | Phase 8 (§12)            |   ⬜   |
+| 💎 | **8**  | `040.08-NTFS.md`    | §14 B+ Tree Mutation               | Directory insert/delete/split/merge                           | Phase 8 (§12)            |   ⬜   |
+| 💎 | **8**  | `040.08-NTFS.md`    | §12.5 File CRUD                    | CreateFile/DeleteFile/Rename on NTFS                          | Phase 8 (§12–14)         |   ⬜   |
+| 💎 | **8**  | `040.08-NTFS.md`    | §16 Write Data Path                | File write engine (extend/truncate/overwrite)                 | Phase 8 (§12–14)         |   ⬜   |
+| 💎 | **9**  | `040.08-NTFS.md`    | §15 NTFS Boot Volume               | Boot-time NTFS init, system file layout, NTFS formatter       | Phase 8 (NTFS R/W)       |   ⬜   |
+| 💎 | **9**  | `040-Filesystem.md` | **§6 IXFS → NTFS C: Switch**      | **Migrate C: from IXFS to NTFS — the big switch**            | Phase 9 (§15) + VFS      |   ⬜   |
 | 💎 | **9**  | `040-Filesystem.md` | §5.2 CheckDisk                     | CLI `chkdsk` + GUI                                            | Phase 6 (Mount)          |   ⬜   |
 | 💎 | **9**  | `040-Filesystem.md` | §5.3 Partition Mgr                 | CLI `diskpart` + GUI                                          | Phase 7 (GPT/MBR Write)  |   ⬜   |
 | 💎 | **9**  | `040-Filesystem.md` | §5.6 SFC                           | CLI `sfc` + GUI                                               | Phase 6 (Mount)          |   ⬜   |
@@ -257,6 +267,13 @@ graph TD
 >
 > **Phases 6–7** wire everything together: auto-mount drive letters, exFAT/ISO 9660,
 > driver hardening (NCQ, error recovery, GPT write), and IXFS verification.
+>
+> **Phase 8** adds NTFS write support (cluster allocator, $LogFile journaling,
+> B+ tree mutation, file CRUD) — the prerequisite for the C: drive switch.
+>
+> **Phase 9** executes the **IXFS → NTFS C: drive migration** (§6): update
+> build system, modify `partition.c` to boot from NTFS, migrate system files,
+> and demote IXFS to secondary data volumes.
 >
 > **Phases 8–10** are polish and competitive features: IXFS advanced features (ADS,
 > ACLs, compression, encryption), disk tools (chkdsk, defrag, recovery), and GUI
@@ -860,6 +877,83 @@ graph TD
 
 ---
 
+## 6. IXFS → NTFS C: Drive Migration
+
+> [!IMPORTANT]
+> **This section switches the system partition (C:\) from IXFS to NTFS.**
+> After this migration, IXFS serves only as a secondary data/CoW filesystem.
+> NTFS becomes the root — all system files, Registry, fonts, icons, and
+> user data live on NTFS for full Win32 compatibility.
+
+> [!CAUTION]
+> **Prerequisites:** NTFS read-only (040.08 §1–8 ✅), NTFS write support
+> (040.08 §12–16), $LogFile journaling (040.08 §13), and NTFS boot volume
+> initialization (040.08 §15) must ALL be complete before this switch.
+
+### 6.1 Build System Changes
+
+**Prompt:** Update `scripts/build.sh` and the Makefile to create an NTFS-formatted C: partition instead of IXFS. The EFI System Partition (FAT32, 64 MiB) remains unchanged. Replace the IXFS data partition with an NTFS partition: call `mkfs.ntfs` (from ntfs-3g host tools) during image creation, then copy system files (kernel, fonts, icons, wallpapers, cursors) to the NTFS partition. Update disk image layout: ESP (FAT32) + System (NTFS) + optional Data (IXFS). After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"build: NTFS system partition"`. Add notes directly in this TODO section.
+
+- [ ] Install `ntfs-3g` (provides `mkfs.ntfs`) in `scripts/setup.sh`
+- [ ] Update disk image layout:
+  - [ ] Partition 1: ESP (FAT32, 64 MiB) — unchanged
+  - [ ] Partition 2: Logs (FAT32, 16 MiB) — unchanged
+  - [ ] Partition 3: System (NTFS) — **new, replaces IXFS**
+  - [ ] Partition 4: Data (IXFS, optional) — for CoW/snapshot volumes
+- [ ] Set GPT partition type for NTFS: `EBD0A0A2-B9E5-4433-87C0-68B6B72699C7`
+- [ ] Format partition 3 as NTFS: `mkfs.ntfs -Q -L "Impossible" /dev/loopNpN`
+- [ ] Mount NTFS partition and copy sysroot contents:
+  - [ ] `C:\boot\kernel.exe`
+  - [ ] `C:\Impossible\Fonts\*.ttf`
+  - [ ] `C:\Impossible\Icons\icons.ires`
+  - [ ] `C:\Impossible\Web\Wallpaper\default.jpg`
+  - [ ] `C:\Impossible\System\Cursors\*`
+  - [ ] Standard directory tree (§5.13)
+- [ ] Update Limine config to load kernel from NTFS partition (not IXFS)
+- [ ] Verify: `bash scripts/build.sh clean run` boots from NTFS
+- [ ] Commit: `"build: NTFS system partition"`
+
+### 6.2 Kernel Boot Path Update
+
+**Prompt:** Update `partition.c` and the kernel initialization sequence to mount NTFS as C: instead of IXFS. The partition scanner must probe for NTFS (OEM ID `"NTFS    "`) and assign it the C: drive letter. IXFS partitions get secondary drive letters (D:, E:, ...). The NTFS driver must be initialized early enough in the boot sequence to load fonts, icons, and Registry from C:. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean`, and commit as `"kernel: NTFS as C: boot volume"`. Add notes directly in this TODO section.
+
+> [!WARNING]
+> **`partition.c` line 366** currently skips all non-FAT32/non-IXFS partitions.
+> This guard MUST be updated to include `PART_FS_NTFS`.
+
+- [ ] Add `PART_FS_NTFS = 4` to `include/kernel/fs/partition.h`
+- [ ] Add `probe_ntfs()` to `partition.c`: check OEM ID `"NTFS    "` at offset `0x03`
+- [ ] Update `partition_mount_filesystems()` mount priority:
+  - [ ] NTFS → C: (system partition, highest priority)
+  - [ ] IXFS → D:, E:, ... (data volumes)
+  - [ ] FAT32 → next available letter
+- [ ] Call `ntfs_init(blkdev)` for NTFS partition:
+  - [ ] Parse BPB → read MFT → initialize attribute engine
+  - [ ] Load `$UpCase` table for case-insensitive lookup
+  - [ ] Check dirty flag → replay journal if needed
+  - [ ] Register VFS callbacks
+- [ ] Update all `vfs_open("C:\\...")` callers — no code changes needed
+  (paths remain the same, only the underlying FS changes)
+- [ ] Verify: kernel boots, loads fonts from `C:\Impossible\Fonts\`
+- [ ] Verify: Registry loads from `C:\Impossible\System\Config\Registry\`
+- [ ] Commit: `"kernel: NTFS as C: boot volume"`
+
+### 6.3 IXFS Demotion & Dual-FS Verification
+
+**Prompt:** After the switch, verify IXFS still works as a data volume (D:, E:). Confirm IXFS CoW snapshots, checksums, and journaling still function on secondary volumes. Update documentation to reflect the new architecture: NTFS = C: system partition, IXFS = data/CoW volumes. Run full test suite: boot from NTFS, read/write files, create directories, load Desktop shell, open IXFS data volume. After completing all items, mark every item as `[x]`, run `bash scripts/build.sh clean run`, and commit as `"fs: IXFS→NTFS migration complete"`. Add notes directly in this TODO section.
+
+- [ ] Verify IXFS mounts as D: (or next letter) automatically
+- [ ] Verify IXFS CoW snapshots still work on data volumes
+- [ ] Verify IXFS CRC32C checksums still validate on data volumes
+- [ ] Full boot test: NTFS C: → Desktop shell → fonts + icons + wallpaper
+- [ ] Full write test: create file on C: (NTFS), read it back
+- [ ] Cross-drive test: copy file from C: (NTFS) to D: (IXFS)
+- [ ] Update `docs/architecture/` to document new partition layout
+- [ ] Update `AGENTS.md` if any paths or conventions changed
+- [ ] Commit: `"fs: IXFS→NTFS migration complete"`
+
+---
+
 ## Priority Order
 
 > **Scope:** This table tracks **master-level** priorities. Individual sub-file sections
@@ -885,6 +979,7 @@ graph TD
 | 🔵 P4     | §5.8 Disk Wipe (CLI + GUI)                    | Secure erase / privacy                                           |
 | 🔵 P4     | §5.10 Snapshot Manager (CLI + GUI)            | Volume shadow copy / backup                                      |
 | 🔵 P4     | §5.11 USB Mass Storage                        | Hot-plug USB drives (future)                                     |
+| 🟠 P1     | **§6 IXFS → NTFS C: Drive Migration**        | **Switch C: from IXFS to NTFS for Win32 compat**                 |
 | ✅ Done    | §5.13 System Directory Structure              | Standard paths on first boot (NTFS C:\)                          |
 
 > **Sub-file priorities** (see each file's internal Priority Order table):
