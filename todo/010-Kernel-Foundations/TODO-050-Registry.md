@@ -228,39 +228,41 @@ graph TD
 
 ## OS Comparison
 
-| Feature                               | 🪟 Windows 11                    | 🐧 Linux                         | 🚀 Impossible OS                                 |
-| ------------------------------------- | -------------------------------- | --------------------------------- | ------------------------------------------------ |
-| Hierarchical key/value store          | ✅ Full tree                      | ✅ dconf (GNOME), ini files        | ✅ `050.01` — HKLM/HKCU/HKCR tree                |
-| Typed values (DWORD, SZ, BINARY...)   | ✅ Full Win32 types               | ⚠️ Strings only (dconf: GVariant) | ✅ `050.01` — All REG_* types                     |
-| Win32 API (`RegOpenKeyEx`...)         | ✅ Native                         | ❌                                 | ✅ `050.02` — Complete native API                 |
-| Persistent binary hive files          | ✅ `.hive` format                 | ✅ dconf binary db                 | ✅ `050.03` — 4 KiB header, CRC32                |
-| Crash-safe journaling                 | ✅ Transaction log                | ⚠️ No fsync on dconf              | ✅ `050.03` — `.hive.log` WAJ                    |
-| Change notifications                  | ✅ `RegNotifyChangeKeyValue`      | ⚠️ inotify on ini files           | ⬜ `050.04` P2 — callback-based 🚀               |
-| User-mode registry syscalls           | ✅ NtOpenKey, NtSetValueKey       | ❌ No registry (dconf via D-Bus)   | ⬜ `050.05` §6.1 P2 — `SYS_REG_*`               |
-| advapi32.dll compatibility            | ✅ Native DLL                     | ⚠️ Wine reimplements              | ⬜ `050.05` §7.1 P2 — A/W stubs                 |
-| HKCR merged view                      | ✅ HKCU + HKLM\Classes merged    | ❌ No concept                      | ⬜ `050.05` §7.3 P2 — two-level lookup           |
-| `regedit` shell inspection            | ✅ GUI regedit.exe                | ✅ `dconf-editor` (GNOME)          | ⬜ §8.1 P2 — CLI + subcommands                   |
-| Registry virtualization (Vista+)      | ✅ VirtualStore under HKCU        | ❌ No concept                      | ⬜ `050.05` §7.4 P3 — HKLM → HKCU redirect      |
-| .reg file import/export              | ✅ Registry Editor built-in       | ⚠️ Wine `regedit` tool            | ⬜ `050.05` §7.5 P3 — full v5.00 format          |
-| **Dual-log WAJ failover**            | ✅ `.log1`/`.log2` alternating    | ❌ No concept                      | ⬜ `050.03` §4.4 P3 — **alternating WAJ** 🚀     |
-| **Incremental delta flush**           | ❌ Full hive rewrite              | ❌ Full db rewrite                 | ⬜ `050.03` §4.5 P3 — **dirty-page bitmap** 🚀   |
-| **Batch notification coalescing**     | ❌ Fires once per change          | ❌ No coalescing                   | ⬜ `050.04` §5.6 P3 — **timer-based dedup** 🚀   |
-| **Change-detail payloads**            | ❌ Only signals "changed"         | ❌ inotify: file only              | ⬜ `050.04` §5.8 P3 — **old/new in callback** 🚀 |
-| **Priority-based dispatch**           | ❌ All watchers equal             | ❌ All watchers equal              | ⬜ `050.04` §5.9 P3 — **system-first** 🚀        |
-| **Per-process registry sandbox**      | ❌ HKCU shared among all procs    | ❌ No concept                      | ⬜ `050.05` §6.5 P3 — **per-PID HKCU** 🚀       |
-| **Syscall rate limiting**             | ❌ No rate limit                  | ❌ No rate limit                   | ⬜ `050.05` §6.6 P3 — **throttle** 🚀           |
-| **Built-in API call tracing**         | ❌ Requires ProcMon / ETW         | ❌ No registry concept             | ⬜ `050.05` §7.7 P3 — **on/off toggle** 🚀      |
-| **Atomic registry transactions**      | ⚠️ KTM (deprecated)              | ⚠️ dconf change_set (no rollback) | ⬜ `050.02` §2.12 P3 — **lightweight** 🚀        |
-| **Native registry search API**        | ❌ Manual enumerate+match         | ❌ No search                       | ⬜ `050.02` §2.13 P4 — **glob pattern** 🚀       |
-| **Registry diff/compare**            | ❌ Requires third-party RegShot   | ❌ No equivalent                   | ⬜ `050.02` §2.14 P4 — **snapshot diff** 🚀      |
-| **Pool garbage collection**           | ❌ Dynamic alloc (no pool)        | ❌ Dynamic alloc                   | ⬜ `050.02` §2.15 P4 — **self-healing GC** 🚀    |
-| **Hive integrity reporter**           | ❌ No built-in health check       | ❌ No concept                      | ⬜ `050.03` §4.6 P3 — **chkregistry** 🚀        |
-| **Hive format versioning**            | ⚠️ regf v1.3/1.5 (no migrate)    | ❌ No versioning                   | ⬜ `050.03` §4.7 P3 — **auto-upgrade** 🚀        |
-| **Idle-time hive compaction**         | ❌ No defragmentation             | ❌ No concept                      | ⬜ `050.03` §4.8 P3 — **auto-compact** 🚀        |
-| **Per-process registry quota**        | ❌ Global limit only              | ❌ No size limits                  | ⬜ `050.05` §6.8 P4 — **per-PID quota** 🚀       |
-| **Registry app compat shims**         | ⚠️ ACT + SDB (binary)            | ❌ No concept                      | ⬜ `050.05` §7.8 P4 — **via Registry** 🚀        |
-| **Static pool allocation**            | ❌ Dynamic allocation             | ❌ Dynamic allocation              | ✅ `050.01` — **zero heap pressure** 🚀           |
-| **In-kernel WAJ**                     | ✅ Kernel-level                   | ❌ dconf in user-space             | ✅ `050.03` — **kernel WAJ, zero daemon** 🚀     |
+| ⭐ | Feature                            | 🪟 Windows 11                   | 🐧 Linux                        | 🚀 Impossible OS                                |
+| -- | ---------------------------------- | ------------------------------- | -------------------------------- | ----------------------------------------------- |
+| 💎 | Hierarchical key/value store       | ✅ Full tree                     | ✅ dconf (GNOME), ini files       | ✅ `050.01` — HKLM/HKCU/HKCR tree               |
+| 💎 | Typed values (DWORD, SZ, BINARY…)  | ✅ Full Win32 types              | ⚠️ Strings only (dconf: GVariant) | ✅ `050.01` — All REG_* types                    |
+| 💎 | Win32 API (`RegOpenKeyEx`…)        | ✅ Native                        | ❌                                | ✅ `050.02` — Complete native API                |
+| 💎 | Persistent binary hive files       | ✅ `.hive` format                | ✅ dconf binary db                | ✅ `050.03` — 4 KiB header, CRC32               |
+| 💎 | Crash-safe journaling              | ✅ Transaction log               | ⚠️ No fsync on dconf             | ✅ `050.03` — `.hive.log` WAJ                   |
+| 💎 | Change notifications               | ✅ `RegNotifyChangeKeyValue`     | ⚠️ inotify on ini files          | ⬜ `050.04` P2 — callback-based                 |
+| 💎 | User-mode registry syscalls        | ✅ NtOpenKey, NtSetValueKey      | ❌ No registry (dconf via D-Bus)  | ⬜ `050.05` §6.1 P2 — `SYS_REG_*`              |
+| 💎 | advapi32.dll compatibility         | ✅ Native DLL                    | ⚠️ Wine reimplements             | ⬜ `050.05` §7.1 P2 — A/W stubs                |
+| 💎 | HKCR merged view                   | ✅ HKCU + HKLM\Classes merged   | ❌ No concept                     | ⬜ `050.05` §7.3 P2 — two-level lookup          |
+| 💎 | `regedit` shell inspection         | ✅ GUI regedit.exe               | ✅ `dconf-editor` (GNOME)         | ⬜ §8.1 P2 — CLI + subcommands                  |
+| 💎 | Registry virtualization (Vista+)   | ✅ VirtualStore under HKCU       | ❌ No concept                     | ⬜ `050.05` §7.4 P3 — HKLM → HKCU redirect     |
+| 💎 | .reg file import/export            | ✅ Registry Editor built-in      | ⚠️ Wine `regedit` tool           | ⬜ `050.05` §7.5 P3 — full v5.00 format         |
+| 💎 | Dual-log WAJ failover              | ✅ `.log1`/`.log2` alternating   | ❌ No concept                     | ⬜ `050.03` §4.4 P3 — alternating WAJ           |
+| ⭐ | **Incremental delta flush**        | ❌ Full hive rewrite             | ❌ Full db rewrite                | ⬜ `050.03` §4.5 P3 — **dirty-page bitmap**     |
+| ⭐ | **Batch notification coalescing**  | ❌ Fires once per change         | ❌ No coalescing                  | ⬜ `050.04` §5.6 P3 — **timer-based dedup**     |
+| ⭐ | **Change-detail payloads**         | ❌ Only signals "changed"        | ❌ inotify: file only             | ⬜ `050.04` §5.8 P3 — **old/new in callback**   |
+| ⭐ | **Priority-based dispatch**        | ❌ All watchers equal            | ❌ All watchers equal             | ⬜ `050.04` §5.9 P3 — **system-first**          |
+| ⭐ | **Per-process registry sandbox**   | ❌ HKCU shared among all procs   | ❌ No concept                     | ⬜ `050.05` §6.5 P3 — **per-PID HKCU**          |
+| ⭐ | **Syscall rate limiting**          | ❌ No rate limit                 | ❌ No rate limit                  | ⬜ `050.05` §6.6 P3 — **throttle**              |
+| ⭐ | **Built-in API call tracing**      | ❌ Requires ProcMon / ETW        | ❌ No registry concept            | ⬜ `050.05` §7.7 P3 — **on/off toggle**         |
+| ⭐ | **Atomic registry transactions**   | ⚠️ KTM (deprecated)             | ⚠️ dconf change_set (no rollback) | ⬜ `050.02` §2.12 P3 — **lightweight**           |
+| ⭐ | **Registry app compat shims**      | ⚠️ ACT + SDB (binary)           | ❌ No concept                     | ⬜ `050.05` §7.8 P3 — **via Registry**          |
+| ⭐ | **Native registry search API**     | ❌ Manual enumerate+match        | ❌ No search                      | ⬜ `050.02` §2.13 P4 — **glob pattern**         |
+| ⭐ | **Registry diff/compare**          | ❌ Requires third-party RegShot  | ❌ No equivalent                  | ⬜ `050.02` §2.14 P4 — **snapshot diff**        |
+| ⭐ | **Pool garbage collection**        | ❌ Dynamic alloc (no pool)       | ❌ Dynamic alloc                  | ⬜ `050.02` §2.15 P4 — **self-healing GC**      |
+| ⭐ | **Hive integrity reporter**        | ❌ No built-in health check      | ❌ No concept                     | ⬜ `050.03` §4.6 P4 — **chkregistry**           |
+| ⭐ | **Hive format versioning**         | ⚠️ regf v1.3/1.5 (no migrate)   | ❌ No versioning                  | ⬜ `050.03` §4.7 P4 — **auto-upgrade**          |
+| ⭐ | **Idle-time hive compaction**      | ❌ No defragmentation            | ❌ No concept                     | ⬜ `050.03` §4.8 P4 — **auto-compact**          |
+| ⭐ | **Per-process registry quota**     | ❌ Global limit only             | ❌ No size limits                 | ⬜ `050.05` §6.8 P4 — **per-PID quota**         |
+| ⭐ | **Registry snapshot & diff**       | ❌ Requires third-party RegShot  | ❌ No concept                     | ⬜ `050.05` §7.9 P4 — **built-in snap+diff**    |
+| ⭐ | **Atomic user-mode transactions**  | ❌ KTM deprecated/removed        | ⚠️ dconf change_set (no rollback) | ⬜ `050.05` §7.10 P4 — **lightweight txn**       |
+| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation             | ✅ `050.01` — **zero heap pressure**             |
+| ⭐ | **In-kernel WAJ**                  | ✅ Kernel-level                  | ❌ dconf in user-space            | ✅ `050.03` — **kernel WAJ, zero daemon**        |
 
 > **After Phases 0–2 (✅):** Impossible OS matches Windows feature-for-feature on core
 > registry, API, persistence, and crash safety. Exceeds Linux with native in-kernel typed store.
