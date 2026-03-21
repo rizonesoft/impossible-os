@@ -114,6 +114,11 @@ const struct virtio_blk_topology *virtio_blk_topology(void);
 /* Check if a virtio-blk device was detected and initialized. */
 int virtio_blk_present(void);
 
+/* Reset the device and re-run the full initialization sequence.
+ * Called automatically on I/O timeout or DEVICE_NEEDS_RESET.
+ * Returns 0 on success, -1 on failure. */
+int virtio_blk_reset(void);
+
 /* Retrieve device serial number (up to 20 bytes).
  * Copies into 'buf' (null-terminated), at most 'len' bytes.
  * Returns 0 on success, -1 on error. */

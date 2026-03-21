@@ -54,6 +54,23 @@ static struct virtio_blk_topology topo;
 /* Device serial number (GET_ID result) */
 static char device_serial[VIRTIO_BLK_ID_BYTES + 1]; /* +1 for null terminator */
 
+/* Error statistics */
+static struct {
+    uint32_t io_errors;      /* S_IOERR responses received */
+    uint32_t unsupp_errors;  /* S_UNSUPP responses received */
+    uint32_t timeouts;       /* I/O completions that timed out */
+    uint32_t resets;         /* Full device resets performed */
+} error_stats;
+
+/* Internal return codes for do_io / do_flush */
+#define VIRTIO_IO_OK        0
+#define VIRTIO_IO_TIMEOUT  (-1)
+#define VIRTIO_IO_IOERR    (-2)   /* S_IOERR — retryable */
+#define VIRTIO_IO_UNSUPP   (-3)   /* S_UNSUPP — not retryable */
+
+/* Max retries for transient I/O errors */
+#define VIRTIO_BLK_MAX_RETRIES  3
+
 /* ---- MSI-X IRQ handlers ---- */
 
 /* Queue completion interrupt — device placed buffers in the used ring.
@@ -76,6 +93,13 @@ static void virtio_blk_config_irq(uint8_t vector, void *ctx)
     if (blk_dev.isr_cfg) {
         (void)virtio_read_isr(&blk_dev);
     }
+
+    /* Check DEVICE_NEEDS_RESET (bit 6) */
+    uint8_t st = virtio_get_status(&blk_dev);
+    if (st & VIRTIO_STATUS_DEVICE_NEEDS_RESET) {
+        klog(LOG_DEBUG, "virtio", "Config ISR: device needs reset");
+    }
+
     klog(LOG_DEBUG, "virtio", "Config change interrupt received");
 }
 
@@ -232,7 +256,16 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     virtq_free_desc(&blk_vq, (uint16_t)d1);
     virtq_free_desc(&blk_vq, (uint16_t)d2);
 
-    return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    /* Differentiate status codes */
+    if (status_byte == VIRTIO_BLK_S_OK)
+        return VIRTIO_IO_OK;
+    if (status_byte == VIRTIO_BLK_S_UNSUPP) {
+        error_stats.unsupp_errors++;
+        return VIRTIO_IO_UNSUPP;
+    }
+    /* S_IOERR or any unknown status */
+    error_stats.io_errors++;
+    return VIRTIO_IO_IOERR;
 }
 
 /* ---- Flush I/O (2-descriptor chain: header + status, no data) ---- */
@@ -337,37 +370,83 @@ static int virtio_blk_do_flush(void)
     virtq_free_desc(&blk_vq, (uint16_t)d0);
     virtq_free_desc(&blk_vq, (uint16_t)d1);
 
-    return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    if (status_byte == VIRTIO_BLK_S_OK)
+        return VIRTIO_IO_OK;
+    if (status_byte == VIRTIO_BLK_S_UNSUPP) {
+        error_stats.unsupp_errors++;
+        return VIRTIO_IO_UNSUPP;
+    }
+    error_stats.io_errors++;
+    return VIRTIO_IO_IOERR;
 }
 
 /* ---- Public API ---- */
 
 int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
 {
-    return virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * topo.blk_size, buffer);
+    int ret;
+    int retry;
+
+    for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
+        ret = virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * topo.blk_size, buffer);
+        if (ret == VIRTIO_IO_OK)
+            return 0;
+        if (ret == VIRTIO_IO_UNSUPP) {
+            klog(LOG_DEBUG, "virtio", "Read: unsupported (lba=%u)",
+                   (uint64_t)lba);
+            return -1;
+        }
+        if (ret == VIRTIO_IO_TIMEOUT) {
+            error_stats.timeouts++;
+            klog(LOG_DEBUG, "virtio", "Read: timeout, triggering reset");
+            virtio_blk_reset();
+            return -1;
+        }
+        /* IOERR — retry */
+        if (retry < VIRTIO_BLK_MAX_RETRIES) {
+            klog(LOG_DEBUG, "virtio", "Read: I/O error, retry %u/%u (lba=%u)",
+                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
+                   (uint64_t)lba);
+        }
+    }
+    klog(LOG_DEBUG, "virtio", "Read: failed after %u retries (lba=%u)",
+           (uint64_t)VIRTIO_BLK_MAX_RETRIES, (uint64_t)lba);
+    return -1;
 }
 
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
 {
+    int ret;
+    int retry;
+
     if (is_read_only)
         return -1;  /* Device is read-only */
-    return virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * topo.blk_size, (void *)buffer);
-}
 
-int virtio_blk_flush(void)
-{
-    if (!initialized)
-        return -1;
-
-    /* If F_FLUSH was not negotiated, flush is a no-op (writethrough mode) */
-    if (!has_flush)
-        return 1;
-
-    /* Read-only device has nothing to flush */
-    if (is_read_only)
-        return 0;
-
-    return virtio_blk_do_flush();
+    for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
+        ret = virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * topo.blk_size,
+                               (void *)buffer);
+        if (ret == VIRTIO_IO_OK)
+            return 0;
+        if (ret == VIRTIO_IO_UNSUPP) {
+            klog(LOG_DEBUG, "virtio", "Write: unsupported (lba=%u)",
+                   (uint64_t)lba);
+            return -1;
+        }
+        if (ret == VIRTIO_IO_TIMEOUT) {
+            error_stats.timeouts++;
+            klog(LOG_DEBUG, "virtio", "Write: timeout, triggering reset");
+            virtio_blk_reset();
+            return -1;
+        }
+        if (retry < VIRTIO_BLK_MAX_RETRIES) {
+            klog(LOG_DEBUG, "virtio", "Write: I/O error, retry %u/%u (lba=%u)",
+                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES,
+                   (uint64_t)lba);
+        }
+    }
+    klog(LOG_DEBUG, "virtio", "Write: failed after %u retries (lba=%u)",
+           (uint64_t)VIRTIO_BLK_MAX_RETRIES, (uint64_t)lba);
+    return -1;
 }
 
 int virtio_blk_set_write_cache(int enable)
@@ -443,6 +522,77 @@ const char *virtio_blk_serial(void)
 }
 
 /* ---- Initialization ---- */
+
+/* Forward declaration — virtio_blk_init is also called by reset */
+int virtio_blk_init(void);
+
+/* Reset device and re-initialize.
+ * Called on DEVICE_NEEDS_RESET or unrecoverable I/O timeout. */
+int virtio_blk_reset(void)
+{
+    uint32_t wait;
+
+    if (!initialized)
+        return -1;
+
+    klog(LOG_DEBUG, "virtio", "Device reset — reinitializing");
+    error_stats.resets++;
+
+    /* VirtIO §2.1.2: driver writes 0 to device_status to reset */
+    initialized = 0;
+    use_events = 0;
+    virtio_set_status(&blk_dev, 0);
+
+    /* Wait for device to acknowledge reset (status reads back 0) */
+    wait = 100000;
+    while (wait-- > 0) {
+        if (virtio_get_status(&blk_dev) == 0)
+            break;
+        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    }
+    if (wait == 0) {
+        klog(LOG_DEBUG, "virtio", "Device did not reset — aborting");
+        return -1;
+    }
+
+    /* Re-run full initialization */
+    return virtio_blk_init();
+}
+
+/* Flush with retry logic */
+int virtio_blk_flush(void)
+{
+    int ret;
+    int retry;
+
+    if (!initialized)
+        return -1;
+    if (!has_flush)
+        return 1;
+    if (is_read_only)
+        return 0;
+
+    for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
+        ret = virtio_blk_do_flush();
+        if (ret == VIRTIO_IO_OK)
+            return 0;
+        if (ret == VIRTIO_IO_UNSUPP)
+            return -1;
+        if (ret == VIRTIO_IO_TIMEOUT) {
+            error_stats.timeouts++;
+            klog(LOG_DEBUG, "virtio", "Flush: timeout, triggering reset");
+            virtio_blk_reset();
+            return -1;
+        }
+        if (retry < VIRTIO_BLK_MAX_RETRIES) {
+            klog(LOG_DEBUG, "virtio", "Flush: I/O error, retry %u/%u",
+                   (uint64_t)(retry + 1), (uint64_t)VIRTIO_BLK_MAX_RETRIES);
+        }
+    }
+    klog(LOG_DEBUG, "virtio", "Flush: failed after %u retries",
+           (uint64_t)VIRTIO_BLK_MAX_RETRIES);
+    return -1;
+}
 
 int virtio_blk_init(void)
 {

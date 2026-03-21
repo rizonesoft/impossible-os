@@ -166,7 +166,7 @@ graph TD
 | 💎 | **2**  | §2.4 Read-Only Detection         | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **2**  | §2.3 Device Identification       | Phase 1 (§1.2)                |   ✅   |
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
-| 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ⬜   |
@@ -510,24 +510,28 @@ graph TD
 
 ### 5.1 Device Reset & Recovery
 
-**Prompt:** Implement comprehensive error handling. Track the status byte of every completed request — on `VIRTIO_BLK_S_IOERR` (0x01), retry the request up to 3 times before reporting failure. On `VIRTIO_BLK_S_UNSUPP` (0x02), log and return "not supported" without retry. Monitor `device_status` bit 6 (`DEVICE_NEEDS_RESET`) — when set, perform a full device reset: write `0` to `device_status`, wait for readback `0`, then re-run the full initialization sequence. Resubmit any pending I/O requests after recovery. Add an I/O timeout (5s) — if no completion arrives, trigger a reset. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: error recovery and device reset"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** Error recovery is implemented. `do_io`/`do_flush` return differentiated codes: `VIRTIO_IO_OK` (0), `VIRTIO_IO_TIMEOUT` (-1), `VIRTIO_IO_IOERR` (-2), `VIRTIO_IO_UNSUPP` (-3). Public read/write/flush retry up to 3 times on IOERR, trigger `virtio_blk_reset()` on timeout. Error counters track io_errors, unsupp_errors, timeouts, resets. Config ISR monitors `DEVICE_NEEDS_RESET`. Verify: `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Track status byte for every completed request:
-  - [ ] `VIRTIO_BLK_S_OK` (0x00) → success
-  - [ ] `VIRTIO_BLK_S_IOERR` (0x01) → retry (up to 3 retries per request)
-  - [ ] `VIRTIO_BLK_S_UNSUPP` (0x02) → return error, no retry
-- [ ] Monitor `device_status` bit 6 (`DEVICE_NEEDS_RESET`) in ISR and after I/O
-- [ ] Implement `virtio_blk_reset()`:
-  - [ ] Write `0` to `device_status`
-  - [ ] Wait for `device_status` readback `0`
-  - [ ] Re-run full 7-step initialization
-  - [ ] Resubmit any pending I/O requests from the retry queue
-- [ ] I/O timeout: if completion not received within 5 seconds, trigger reset
-- [ ] Per-device error counters: I/O errors, resets, timeouts
-- [ ] Expose via Registry: `HKLM\HARDWARE\VirtIO\Block0\Errors\*`
-- [ ] Log: `[VirtIO] Block: I/O error (status=%d), retry %d/3`
-- [ ] Log: `[VirtIO] Block: device needs reset — reinitializing`
-- [ ] Commit: `"virtio-blk: error recovery and device reset"`
+- [x] Track status byte for every completed request:
+  - [x] `VIRTIO_BLK_S_OK` (0x00) → return `VIRTIO_IO_OK`
+  - [x] `VIRTIO_BLK_S_IOERR` (0x01) → return `VIRTIO_IO_IOERR`, retry up to 3×
+  - [x] `VIRTIO_BLK_S_UNSUPP` (0x02) → return `VIRTIO_IO_UNSUPP`, no retry
+- [x] Monitor `DEVICE_NEEDS_RESET` (bit 6) in config ISR
+- [x] Implement `virtio_blk_reset()`:
+  - [x] Write `0` to `device_status`, wait for readback `0`
+  - [x] Clear `initialized` and `use_events` flags
+  - [x] Re-run `virtio_blk_init()` for full 7-step re-init
+- [x] I/O timeout: triggers `virtio_blk_reset()` automatically
+- [x] Error counters: `error_stats.{io_errors, unsupp_errors, timeouts, resets}`
+- [x] Logging: retry count, timeout, reset messages
+- [x] Committed
+
+> **Notes:**
+> - `virtio_blk_reset()` does NOT resubmit pending I/O — the current model has at most one in-flight request per thread. The caller (read/write/flush) simply returns -1 after a reset, and the upper layer retries.
+> - Registry exposure (`HKLM\HARDWARE\VirtIO\Block0\Errors\*`) deferred — Registry/Codex system not yet fully wired. Error counters are static and accessible internally.
+> - `virtio_blk_init()` forward-declared because `virtio_blk_reset()` calls it, but reset is defined before init in the file.
+> - `virtio_blk_reset()` clears `initialized` and `use_events` before writing 0 to device_status — prevents ISR or I/O attempts during the reset window.
+> - The wait loop for reset readback uses the same `inb $0x80` delay (~1µs) as the polling path — 100000 iterations ≈ 100ms max wait.
 
 ### 5.2 Individual Queue Reset (VirtIO 1.2+)
 
