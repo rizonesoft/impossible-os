@@ -26,16 +26,16 @@ To confirm 64-bit Long Mode capability, the software must query `CPUID` extended
 
 Beyond basic Long Mode support, leaf `0x80000001` provides several critical feature flags that dictate how the operating system must configure the execution environment. The flags returned in the EDX and ECX registers are paramount for modern AMD64 kernel development, defining security paradigms, memory management optimizations, and system call protocols.
 
-| Register | Bit | Feature Mnemonic | Architectural Implication |
-|----------|-----|------------------|--------------------------|
-| EDX | 11 | SYSCALL | Indicates support for the `SYSCALL` and `SYSRET` instructions, which provide a low-latency, hardware-optimized mechanism for user-to-kernel privilege ring transitions, superseding legacy software interrupts. |
-| EDX | 20 | NX | Execute Disable bit. Enables the OS to mark virtual memory pages as non-executable in the page tables, effectively preventing buffer overrun payload execution attacks. |
-| EDX | 26 | Page1GB | Indicates support for 1-Gigabyte huge pages (with the Page Directory Pointer Entry mapping directly to physical memory), vital for minimizing TLB misses in memory-intensive server applications. |
-| EDX | 27 | RDTSCP | Support for the `RDTSCP` instruction, allowing user-space programs to read the Time-Stamp Counter and the Processor ID simultaneously without requiring heavy serialization instructions. |
-| EDX | 29 | LM | Long Mode capability confirmation. |
-| ECX | 2 | SVM | Secure Virtual Machine capability (AMD-V). Indicates support for hardware virtualization instructions including `VMRUN`, `VMLOAD`, and `VMSAVE`. |
-| ECX | 9 | OSVW | OS Visible Workaround support. Permits the OS to track and dynamically mitigate known silicon errata published in processor revision guides. |
-| ECX | 10 | IBS | Instruction Based Sampling. Represents the advanced performance profiling mechanism inherent to modern AMD processors. |
+| Register | Bit | Feature Mnemonic | Architectural Implication                                                          |
+| -------- | --- | ---------------- | ---------------------------------------------------------------------------------- |
+| EDX      | 11  | SYSCALL          | Support for `SYSCALL`/`SYSRET` fast privilege transitions, superseding `INT 0x80`. |
+| EDX      | 20  | NX               | Execute Disable bit. Marks pages non-executable to prevent code injection attacks. |
+| EDX      | 26  | Page1GB          | 1 GiB huge pages via PDPE direct mapping, reducing TLB misses for large datasets.  |
+| EDX      | 27  | RDTSCP           | Read TSC + Processor ID atomically without heavy serialization.                    |
+| EDX      | 29  | LM               | Long Mode capability confirmation.                                                 |
+| ECX      | 2   | SVM              | Secure Virtual Machine (AMD-V): `VMRUN`, `VMLOAD`, `VMSAVE` instructions.          |
+| ECX      | 9   | OSVW             | OS Visible Workaround: dynamic silicon errata mitigation.                          |
+| ECX      | 10  | IBS              | Instruction Based Sampling for advanced performance profiling.                     |
 
 ### 2.3 CPU Topology and Advanced Identification
 
@@ -145,19 +145,19 @@ Legacy 32-bit IDT gate descriptors are exactly 8 bytes long. To accommodate a fl
 
 The meticulous construction of a 64-bit IDT descriptor requires mapping data across highly fragmented bit-fields to form the full 64-bit instruction pointer and its associated attribute array. A failure to align these bits perfectly will result in unrecoverable CPU exceptions. The layout of the 128-bit structure is strictly defined as follows:
 
-| Bit Range | Field | Description |
-|-----------|-------|-------------|
-| 0–15 | Offset Low | The lowest 16 bits of the 64-bit ISR address. |
-| 16–31 | Segment Selector | A 16-bit selector that must point to a valid 64-bit Kernel Code Segment within the GDT. |
-| 32–34 | IST Offset | A 3-bit field representing an index (1 through 7) into the TSS for secure stack switching. If set to 0, the IST is not used. |
-| 35–39 | Reserved | Must be strictly set to 0. |
-| 40–43 | Gate Type | `0xE` (`0b1110`) = 64-bit Interrupt Gate (clears IF in RFLAGS). `0xF` (`0b1111`) = 64-bit Trap Gate (leaves IF untouched). |
-| 44 | Reserved | Must be strictly set to 0. |
-| 45–46 | DPL | Descriptor Privilege Level. 2-bit value dictating required CPU privilege ring for software `INT` access. |
-| 47 | Present (P) | Must be set to 1 for the descriptor to be valid. |
-| 48–63 | Offset Middle | Bits 16 through 31 of the 64-bit ISR address. |
-| 64–95 | Offset High | The upper 32 bits of the 64-bit ISR address. |
-| 96–127 | Reserved | Must be set to `0x00000000`. |
+| Bit Range | Field            | Description                                                                        |
+| --------- | ---------------- | ---------------------------------------------------------------------------------- |
+| 0–15      | Offset Low       | The lowest 16 bits of the 64-bit ISR address.                                      |
+| 16–31     | Segment Selector | Must point to a valid 64-bit Kernel Code Segment within the GDT.                   |
+| 32–34     | IST Offset       | 3-bit index (1–7) into the TSS for stack switching. 0 = IST not used.              |
+| 35–39     | Reserved         | Must be strictly set to 0.                                                         |
+| 40–43     | Gate Type        | `0xE` = 64-bit Interrupt Gate (clears IF). `0xF` = 64-bit Trap Gate (IF unchanged).|
+| 44        | Reserved         | Must be strictly set to 0.                                                         |
+| 45–46     | DPL              | Descriptor Privilege Level (2-bit). Required ring for software `INT` access.       |
+| 47        | Present (P)      | Must be set to 1 for the descriptor to be valid.                                   |
+| 48–63     | Offset Middle    | Bits 16–31 of the 64-bit ISR address.                                              |
+| 64–95     | Offset High      | The upper 32 bits (bits 32–63) of the 64-bit ISR address.                          |
+| 96–127    | Reserved         | Must be set to `0x00000000`.                                                       |
 
 Like the Global Descriptor Table, the Interrupt Descriptor Table Register (IDTR) is expanded to accommodate 64-bit addressing. The `LIDT` instruction in 64-bit mode ingests a 10-byte data structure containing a 16-bit table size limit parameter (representing the byte length of the table minus one) and a full 64-bit base address pointing to the start of the contiguous table array in virtual memory. To resolve an interrupt, the processor takes the received interrupt vector (ranging from 0 to 255), multiplies it by 16 (the byte size of a single expanded descriptor), and adds the resulting offset to the IDTR base address to fetch the gate.
 
@@ -189,7 +189,12 @@ Physical memory mapping begins with the CR3 register, which holds the physical b
 
 To optimize performance and reduce memory overhead for massive data sets, the OS can terminate the page walk early by setting the Page Size (PS) bit in the intermediary tables. Setting the PS bit in a PDPT entry maps a massive **1-Gigabyte huge page**, while setting it in a PD entry maps a **2-Megabyte large page**.
 
-Zen microarchitectures drastically enhance the speed of this traversal via sophisticated translation lookaside buffers (TLB) and dedicated hardware logic. For example, Zen 4 processors feature six dedicated hardware page table walkers designed specifically to handle L2 TLB misses concurrently, executing speculative page walks from both the data and instruction execution units.
+Zen microarchitectures drastically enhance the speed of this traversal via sophisticated translation lookaside buffers (TLB) and dedicated hardware logic. For example, Zen 4 processors feature two hardware page table walkers designed to handle L2 TLB misses concurrently, executing speculative page walks from both the data and instruction execution units.
+
+> [!NOTE]
+> The exact number of page table walkers varies by Zen generation and is not always
+> publicly documented in the PPR. The value of two walkers is the commonly reported
+> figure for Zen 4 cores. Consult the specific PPR for your stepping.
 
 ### 7.2 Memory Characterization: MTRRs and Write-Combining
 
@@ -203,7 +208,7 @@ Developing a standard x86-64 kernel will allow the system to boot and operate on
 
 ### 8.1 Multi-Chip Module (MCM) Topology and NUMA
 
-Unlike legacy monolithic processor designs where all cores reside on a single silicon die, the AMD EPYC and high-end Ryzen product lines utilize a disaggregated chiplet architecture. The Zen 4 EPYC architecture (Family 19h), for instance, utilizes up to twelve highly concentrated Core Complex Dies (CCDs) connected to a centralized routing I/O die via high-speed Infinity Fabric interfaces pushing up to 72 Gb/s of bandwidth per link.
+Unlike legacy monolithic processor designs where all cores reside on a single silicon die, the AMD EPYC and high-end Ryzen product lines utilize a disaggregated chiplet architecture. The Zen 4 EPYC architecture (Family 19h), for instance, utilizes up to twelve Core Complex Dies (CCDs) connected to a centralized routing I/O die via high-speed Infinity Fabric interfaces. Each CCD-to-IOD link provides up to 36 Gb/s of bandwidth, with aggregate bandwidth scaling according to the number of active CCDs.
 
 The kernel's memory management and thread scheduling subsystems must be explicitly programmed to account for this architecture to avoid massive latency penalties. Depending on motherboard BIOS configurations, the processor may present itself to the OS as a single vast Non-Uniform Memory Access (NUMA) domain (`NPS=1`) or subdivided into multiple discrete domains (e.g., `NPS=4`). In an `NPS=4` configuration, specific quadrants of the central I/O die and specific memory controllers are highly affiliated with specific sets of Zen CPU dies. To achieve maximum processing performance, the kernel memory allocator must be NUMA-aware, ensuring that threads executing on a specific CCD are allocated physical memory pages physically wired to that local memory controller quadrant, minimizing the need for data to incur the latency of traversing multiple hops across the Infinity Fabric.
 
