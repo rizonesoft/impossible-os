@@ -65,6 +65,7 @@ Transform the TODO content into **rich, well-formatted technical documentation**
 - Status emojis on section headers (⏳ 🔄 ✅)
 - `> [!IMPORTANT] → XREF:` blocks (convert to regular cross-references)
 - Priority markers (🔴 🟠 🟡 🟢)
+- Status tracking in feature tables (`⬜ planned`, `⏳ in progress`) — docs describe what IS, not what's planned
 
 **KEEP and restructure into documentation:**
 - All technical content, architecture diagrams, data structures
