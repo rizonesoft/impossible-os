@@ -1,17 +1,16 @@
 # 040.17-Win32-FS-API — Win32 Filesystem API Subsystem Architecture
 
-> **Goal:** Implement the full Windows NT I/O subsystem architecture that sits between
-> user-mode Win32 DLLs and the VFS/filesystem drivers. This goes far beyond the basic
-> function signatures in `TODO-040-Filesystem.md §1` — it adds the I/O Manager, IRP
-> dispatch, device stacks, Memory Descriptor Lists (MDLs), multi-level handle tables,
-> the Object Manager namespace, NTSTATUS→Win32 error translation, the Filter Manager
-> (minifilter architecture), security descriptor enforcement, and file information
-> classes. No existing code implements any of these layers.
+> **Goal:** Implement the complete Win32 filesystem API surface and the underlying
+> Windows NT I/O subsystem architecture. This includes the actual Win32 function
+> implementations (CreateFile, ReadFile, WriteFile, etc. in §13) plus the NT kernel
+> plumbing beneath them: I/O Manager, IRP dispatch, device stacks, Memory Descriptor
+> Lists (MDLs), multi-level handle tables, Object Manager namespace,
+> NTSTATUS→Win32 error translation, Filter Manager (minifilter architecture),
+> security descriptor enforcement, and file information classes.
 >
-> **Current state:** Basic Win32 function signatures (`CreateFile`, `ReadFile`, etc.) are
-> planned in the master TODO §1 with direct `vfs_ops` dispatch. VFS semantics (locks,
-> case-insensitive paths, OVERLAPPED, IOCP) are planned in `TODO-040.07-VFS.md`. This
-> TODO builds the NT kernel I/O plumbing that connects those two layers.
+> **Current state:** No Win32 file API functions or I/O subsystem code exists yet.
+> VFS semantics (locks, case-insensitive paths, OVERLAPPED, IOCP) are planned in
+> `TODO-040.07-VFS.md`. This TODO covers both the API surface and the I/O plumbing.
 
 > [!IMPORTANT]
 > **Spec Reference:** All structures, dispatch mechanisms, and status codes reference the
@@ -32,13 +31,12 @@
 
 > [!WARNING]
 > **This TODO does NOT duplicate existing work:**
-> - `CreateFile`/`ReadFile`/`WriteFile` function bodies → master TODO §1
 > - VFS case-insensitive lookup, share modes, byte-range locks → VFS TODO §1
 > - OVERLAPPED struct + basic async → VFS TODO §5.1
 > - IOCP kernel object → VFS TODO §6.2
 > - NTFS $Secure database → NTFS TODO §7.1
 >
-> This TODO covers the **I/O Manager architecture** that dispatches those calls.
+> §13 covers the Win32 function bodies; §1–§12 cover the I/O Manager plumbing.
 
 ---
 
@@ -48,11 +46,11 @@
 
 ```mermaid
 graph TD
-    MASTER["040-Filesystem §1<br/>Win32 Function Signatures"]
     VFS["040.07-VFS<br/>VFS Semantics + Locks"]
     NTFS["040.08-NTFS<br/>NTFS Driver + $Secure"]
     PROC["TODO-028-Process-Model<br/>Per-Process Address Spaces"]
 
+    M["§13 Win32 File API<br/>CreateFile / ReadFile / etc."]
     A["§1 I/O Manager + IRP"]
     B["§2 Device Stacks"]
     C["§3 Memory Transfer<br/>MDLs + Buffered I/O"]
@@ -66,8 +64,8 @@ graph TD
     K["§11 Reparse Points<br/>Symlinks + Junctions"]
     L["§12 Shell Integration<br/>Common Item Dialogs"]
 
-    MASTER --> A
-    VFS --> A
+    VFS --> M
+    M --> A
     PROC --> D
 
     A --> B
@@ -83,15 +81,16 @@ graph TD
     I --> J
     H --> K
     J --> L
+    M --> L
 ```
 
 ### Phase-by-Phase Implementation Order
 
 | ⭐ | Phase  | Sections                           | Depends On                     | Status |
 | -- | :----: | ---------------------------------- | ------------------------------ | :----: |
-| 💎 | **0**  | Prerequisites (§1 sigs, VFS, NTFS) | master §1 + VFS + NTFS        |   ⬜   |
-| 💎 | **1**  | §1 I/O Manager + IRP Architecture  | Phase 0                        |   ⬜   |
-| 💎 | **1**  | §6 NTSTATUS → Win32 Translation    | Phase 0                        |   ⬜   |
+| 💎 | **0**  | §13.1–13.5 Win32 File API          | VFS + NTFS drivers             |   ⬜   |
+| 💎 | **1**  | §1 I/O Manager + IRP Architecture  | Phase 0 (§13)                  |   ⬜   |
+| 💎 | **1**  | §6 NTSTATUS → Win32 Translation    | Phase 0 (§13)                  |   ⬜   |
 | 💎 | **2**  | §2 Device Stack Model              | Phase 1 (§1)                   |   ⬜   |
 | 💎 | **2**  | §3 Memory Transfer Modalities      | Phase 1 (§1)                   |   ⬜   |
 | 💎 | **2**  | §7 File Information Classes        | Phase 1 (§1)                   |   ⬜   |
@@ -102,10 +101,11 @@ graph TD
 | 💎 | **5**  | §10 Filter Manager (Minifilters)   | Phase 2 (§2) + Phase 3 (§9)   |   ⬜   |
 | 💎 | **5**  | §11 Reparse Points                 | Phase 4 (§8)                   |   ⬜   |
 | ⭐ | **6**  | §12 Shell Integration              | Phase 5 (§10)                  |   ⬜   |
+| 💎 | **7**  | §13.6 Shell & Kernel Migration     | Phase 0 (§13.1–13.5) + all FS |   ⬜   |
 
 > [!NOTE]
-> **Phase 0** requires completing the basic Win32 function signatures (master §1),
-> VFS semantics (040.07), and NTFS driver (040.08). These are separate TODOs.
+> **Phase 0** implements the basic Win32 function bodies (§13.1–13.5): types,
+> `CreateFile`, `ReadFile`, `WriteFile`, directory ops, file management.
 >
 > **Phase 1** builds the I/O Manager core: IRP allocation, major function dispatch,
 > and the NTSTATUS translation table. This is the foundation for everything else.
@@ -521,16 +521,22 @@ graph TD
 
 | Priority  | Section                                  | Description                                                    |
 |-----------|------------------------------------------|----------------------------------------------------------------|
+| 🔴 P0     | §13.1 Handle Table & Type Defs           | Win32 types, HANDLE, flags, error codes — everything uses this |
+| 🔴 P0     | §13.2 CreateFile / CloseHandle           | Core open/close — every file operation starts here             |
+| 🔴 P0     | §13.3 ReadFile / WriteFile               | Core I/O — data transfer functions                             |
 | 🔴 P0     | §1.1 IRP Structure Definition            | Foundation — all I/O flows through IRPs                        |
 | 🔴 P0     | §1.2 I/O Manager Core                    | Central dispatch — CreateFile/Read/Write route through this    |
+| 🟠 P1     | §13.4 Directory Operations               | FindFirstFile, CreateDirectory — shell needs these             |
+| 🟠 P1     | §13.5 File Management                    | DeleteFile, MoveFile, CopyFile — basic CRUD                    |
 | 🟠 P1     | §6.1 NTSTATUS Translation                | Apps rely on correct error codes for fallback logic             |
 | 🟠 P1     | §2.1 Device Stack Model                  | Filter + FDO + PDO layering — enables minifilters              |
 | 🟠 P1     | §3.1 MDL Direct I/O                      | Zero-copy for large reads/writes — major perf gain             |
 | 🟠 P1     | §3.2 Buffered I/O                        | Safe path for small requests                                   |
 | 🟠 P1     | §7.1 File Information Classes            | Win32 apps query file metadata via these structs               |
+| 🟡 P2     | §13.6 Shell & Kernel Migration           | Migrate all vfs_*() callers to Win32 API                       |
 | 🟡 P2     | §4.1 Handle Table Hierarchy              | Scales to thousands of handles per process                     |
 | 🟡 P2     | §4.2 Object Reference Counting           | Prevents use-after-free of kernel objects                      |
-| �� P2     | §9.1 Completion Routines                 | Enables filter driver post-processing                          |
+| 🟡 P2     | §9.1 Completion Routines                 | Enables filter driver post-processing                          |
 | 🟡 P2     | §8.1 Security Descriptor Engine          | DACL enforcement — file-level access control                   |
 | 🟢 P3     | §5.1 Object Manager Namespace            | `\\?\` paths, symbolic links, device mapping                   |
 | 🟢 P3     | §8.2 $Secure Integration                 | Centralized NTFS security — space savings                      |
@@ -592,3 +598,183 @@ graph TD
 | `src/kernel/io/security.c`            | DACL evaluation, $Secure integration                             |
 | `include/kernel/io/fltmgr.h`         | Filter Manager, FLT_REGISTRATION, altitude model                 |
 | `src/kernel/io/fltmgr.c`             | Minifilter dispatch, pre/post-operation callbacks                |
+
+---
+
+## 13. Win32 File API Implementation
+
+> These sections were previously in `TODO-040-Filesystem.md §1`. They define the
+> actual Win32 function bodies that the I/O Manager (§1–§2) dispatches. The I/O
+> subsystem plumbing (IRPs, device stacks, MDLs) sits beneath these functions.
+
+> **Design Principle:** Following the same pattern as `MessageBox()` (P0104),
+> all file I/O functions use **Win32-compatible signatures** as the native API.
+> There is **no separate VFS dispatch layer** — `CreateFile()`, `ReadFile()`,
+> etc. call `vfs_ops` function pointers **directly** to reach FS drivers.
+> The native Win32 API (P0105) is a **direct export** with
+> zero translation overhead.
+>
+> **Architecture — single call path, no translation:**
+> ```
+> Native app  → CreateFile(path, ...)  → vfs_ops→open() → FS driver
+> Win32 .exe  → CreateFileA(path, ...) → same function (A suffix = ANSI string handling only)
+> ```
+
+> [!IMPORTANT]
+> **Cross-references:**
+> - Win32 native exports: `TODO-510-Native-Win32.md` §5–6
+> - Native programs call this API directly: `TODO-510-Native-Win32.md`
+> - VFS enhancements that depend on this: `TODO-040.07-VFS.md` (Phase 0 = this API)
+
+### 13.1 Handle Table & Type Definitions
+
+**Prompt:** Create the Win32-compatible handle system. Define `HANDLE` as `void*`, with `INVALID_HANDLE_VALUE = (HANDLE)-1`. Implement a kernel handle table that maps `HANDLE` values to internal `vfs_node` pointers + per-handle state (current file position, access flags). `CreateFile` allocates a handle, `CloseHandle` releases it. Standard handles: `STD_INPUT_HANDLE (-10)`, `STD_OUTPUT_HANDLE (-11)`, `STD_ERROR_HANDLE (-12)`. Define constants: `GENERIC_READ (0x80000000)`, `GENERIC_WRITE (0x40000000)`, `FILE_SHARE_READ`, `OPEN_EXISTING`, `CREATE_NEW`, `CREATE_ALWAYS`, `OPEN_ALWAYS`, `TRUNCATE_EXISTING`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: Win32-compatible handle table"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] Create `include/kernel/fs/fileapi.h` — Win32-compatible file API header
+- [ ] Define `HANDLE`, `INVALID_HANDLE_VALUE`, standard handle constants
+- [ ] Define `DWORD`, `BOOL`, `LPVOID`, `LPCSTR`, `LPDWORD` types (or include from `win32.h` — see P0105 §5.1)
+- [ ] Define `FILETIME` struct (64-bit, 100-nanosecond intervals since 1601-01-01)
+- [ ] Define access flags: `GENERIC_READ`, `GENERIC_WRITE`, `GENERIC_EXECUTE`
+- [ ] Define share modes: `FILE_SHARE_READ`, `FILE_SHARE_WRITE`, `FILE_SHARE_DELETE`
+- [ ] Define creation dispositions: `CREATE_NEW`, `CREATE_ALWAYS`, `OPEN_EXISTING`, `OPEN_ALWAYS`, `TRUNCATE_EXISTING`
+- [ ] Define file attributes: `FILE_ATTRIBUTE_NORMAL`, `FILE_ATTRIBUTE_DIRECTORY`, `FILE_ATTRIBUTE_READONLY`, `FILE_ATTRIBUTE_HIDDEN`
+- [ ] Define error codes: `ERROR_FILE_NOT_FOUND`, `ERROR_ALREADY_EXISTS`, `ERROR_NO_MORE_FILES`, `ERROR_ACCESS_DENIED`, `ERROR_PATH_NOT_FOUND`
+- [ ] Implement `GetLastError()` / `SetLastError()` — per-task error code (global until multitasking)
+- [ ] Define seek methods: `FILE_BEGIN (0)`, `FILE_CURRENT (1)`, `FILE_END (2)`
+- [ ] Implement handle table: array mapping handle index → `{ vfs_node*, file_position, access_flags }`
+- [ ] `GetStdHandle(nStdHandle)` → return pre-allocated handles for stdin/stdout/stderr
+- [ ] Commit: `"vfs: Win32-compatible handle table"`
+
+### 13.2 CreateFile / CloseHandle
+
+**Prompt:** Implement `HANDLE CreateFile(LPCSTR lpFileName, DWORD dwDesiredAccess, DWORD dwShareMode, void* lpSecurityAttributes, DWORD dwCreationDisposition, DWORD dwFlagsAndAttributes, HANDLE hTemplateFile)`. This is the native file open/create function. Internally: normalize path (backslash → forward slash), resolve drive letter via `vfs_get_drive_root()`, walk path via `vfs_finddir()`, call `node->ops->open()` or `node->ops->create()` directly based on `dwCreationDisposition`, allocate a handle, store the `vfs_node*` + initial position 0 in the handle table. `CloseHandle(HANDLE hObject)` calls `node->ops->close()` and releases the handle slot. Set `GetLastError()` error codes on failure (`ERROR_FILE_NOT_FOUND`, `ERROR_ALREADY_EXISTS`, etc.). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: CreateFile / CloseHandle"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] Implement `CreateFile(lpFileName, dwDesiredAccess, dwShareMode, lpSecurityAttributes, dwCreationDisposition, dwFlagsAndAttributes, hTemplateFile)`:
+  - [ ] Normalize path: backslash → forward slash
+  - [ ] Resolve drive root via `vfs_get_drive_root()`, walk path via `vfs_finddir()`
+  - [ ] `OPEN_EXISTING` → `ops->open(node, flags)`, fail if not found
+  - [ ] `CREATE_NEW` → fail if exists, else `ops->create()` + `ops->open()`
+  - [ ] `CREATE_ALWAYS` → `ops->create()` (truncate if exists) + `ops->open()`
+  - [ ] `OPEN_ALWAYS` → `ops->open()`, create if not found
+  - [ ] `TRUNCATE_EXISTING` → `ops->truncate(node, 0)` + `ops->open()`
+  - [ ] Allocate handle in handle table with `vfs_node*`, position=0, access flags
+  - [ ] Return `HANDLE` on success, `INVALID_HANDLE_VALUE` on failure
+  - [ ] Set `SetLastError(ERROR_FILE_NOT_FOUND)` etc. on failure
+- [ ] Implement `CloseHandle(hObject)`:
+  - [ ] Look up handle → `node->ops->close(node)`
+  - [ ] Release handle table slot
+  - [ ] Return `TRUE` on success
+- [ ] Add `SYS_CREATEFILE` and `SYS_CLOSEHANDLE` syscalls
+- [ ] Commit: `"vfs: CreateFile / CloseHandle"`
+
+### 13.3 ReadFile / WriteFile
+
+**Prompt:** Implement `BOOL ReadFile(HANDLE hFile, LPVOID lpBuffer, DWORD nNumberOfBytesToRead, LPDWORD lpNumberOfBytesRead, void* lpOverlapped)`. Look up handle → call `vfs_read(node, position, size, buffer)`, advance file position, set `*lpNumberOfBytesRead`. Same for `WriteFile`. `SetFilePointer(HANDLE hFile, LONG lDistanceToMove, PLONG lpDistanceToMoveHigh, DWORD dwMoveMethod)` adjusts the handle's file position (FILE_BEGIN=0, FILE_CURRENT=1, FILE_END=2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: ReadFile / WriteFile"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] Implement `ReadFile(hFile, lpBuffer, nNumberOfBytesToRead, lpNumberOfBytesRead, lpOverlapped)`:
+  - [ ] Look up handle in handle table
+  - [ ] Call `vfs_read(node, position, size, buffer)`
+  - [ ] Advance file position by bytes read
+  - [ ] Set `*lpNumberOfBytesRead`
+  - [ ] Return `TRUE` on success
+- [ ] Implement `WriteFile(hFile, lpBuffer, nNumberOfBytesToWrite, lpNumberOfBytesWritten, lpOverlapped)`:
+  - [ ] Look up handle → `vfs_write(node, position, size, buffer)`
+  - [ ] Advance file position by bytes written
+  - [ ] Set `*lpNumberOfBytesWritten`
+  - [ ] Return `TRUE` on success
+- [ ] Implement `SetFilePointer(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod)`:
+  - [ ] `FILE_BEGIN (0)` → position = offset
+  - [ ] `FILE_CURRENT (1)` → position += offset
+  - [ ] `FILE_END (2)` → position = file_size + offset
+- [ ] Implement `GetFileSize(hFile, lpFileSizeHigh)` → return file size from `node->ops->stat`
+- [ ] Implement `FlushFileBuffers(hFile)` → `node->ops->flush(node)`
+- [ ] Add `SYS_READFILE`, `SYS_WRITEFILE`, `SYS_SETFILEPOINTER`, `SYS_FLUSHFILEBUFFERS` syscalls
+- [ ] Commit: `"vfs: ReadFile / WriteFile / SetFilePointer"`
+
+### 13.4 Directory Operations
+
+**Prompt:** Implement Win32 directory enumeration. `FindFirstFile(lpFileName, lpFindFileData)` opens a directory search, returning a `HANDLE` and populating `WIN32_FIND_DATA` (cFileName, dwFileAttributes, nFileSizeHigh/Low, ftCreationTime, ftLastWriteTime). `FindNextFile(hFindFile, lpFindFileData)` returns the next entry. `FindClose(hFindFile)` releases the search handle. Pattern matching: `*.*` matches all, `*.txt` filters by extension. `CreateDirectory(lpPathName, lpSecurityAttributes)` → `ops->mkdir()`. `RemoveDirectory(lpPathName)` → `ops->rmdir()` (must be empty). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: FindFirstFile / CreateDirectory"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] Define `WIN32_FIND_DATA` struct: `cFileName[260]`, `dwFileAttributes`, `nFileSizeHigh`, `nFileSizeLow`, `ftCreationTime`, `ftLastWriteTime`
+- [ ] Implement `FindFirstFile(lpFileName, lpFindFileData)`:
+  - [ ] Parse directory path and pattern from lpFileName
+  - [ ] Resolve path via `vfs_finddir()`, open directory
+  - [ ] Allocate search handle with state (directory node, current index, pattern)
+  - [ ] Call `node->ops->readdir()` for first matching entry → populate `lpFindFileData`
+  - [ ] Return search `HANDLE`
+- [ ] Implement `FindNextFile(hFindFile, lpFindFileData)`:
+  - [ ] Continue `ops->readdir()` from saved index
+  - [ ] Skip entries that don't match pattern
+  - [ ] Return `TRUE` if found, `FALSE` + `ERROR_NO_MORE_FILES` if done
+- [ ] Implement `FindClose(hFindFile)` → release search handle
+- [ ] Implement `CreateDirectory(lpPathName, lpSecurityAttributes)` → `parent->ops->mkdir(parent, name)`
+- [ ] Implement `RemoveDirectory(lpPathName)` → `parent->ops->rmdir(parent, name)` (fail if not empty)
+- [ ] Implement `GetCurrentDirectory(nBufferLength, lpBuffer)` → return CWD string
+- [ ] Implement `SetCurrentDirectory(lpPathName)` → set CWD
+- [ ] Add `SYS_FINDFIRSTFILE`, `SYS_FINDNEXTFILE`, `SYS_FINDCLOSE` syscalls
+- [ ] Commit: `"vfs: FindFirstFile / CreateDirectory"`
+
+### 13.5 File Management
+
+**Prompt:** Implement file management functions with Win32-compatible signatures. `DeleteFile(lpFileName)` → `ops->unlink()`. `MoveFile(lpExistingFileName, lpNewFileName)` → `ops->rename()`. `CopyFile(lpExistingFileName, lpNewFileName, bFailIfExists)` → open source, create dest, read/write loop, close both, preserve timestamps via `ops->set_times()`. `GetFileAttributes(lpFileName)` → `ops->stat()` → convert to `FILE_ATTRIBUTE_*` flags. `SetFileAttributes(lpFileName, dwFileAttributes)` → `ops->set_attr()`. `GetFileTime/SetFileTime` → `ops->stat()` / `ops->set_times()`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: DeleteFile / MoveFile / CopyFile"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] Implement `DeleteFile(lpFileName)` → `node->ops->unlink(parent, name)`
+- [ ] Implement `MoveFile(lpExistingFileName, lpNewFileName)` → `node->ops->rename(parent, old, new)`
+- [ ] Implement `CopyFile(lpExistingFileName, lpNewFileName, bFailIfExists)`:
+  - [ ] Open source with `CreateFile(OPEN_EXISTING)`
+  - [ ] Create dest with `CreateFile(CREATE_NEW or CREATE_ALWAYS)`
+  - [ ] Read/write loop (4 KB chunks)
+  - [ ] Preserve timestamps via `ops->set_times()`
+  - [ ] Close both handles
+- [ ] Implement `GetFileAttributes(lpFileName)` → `ops->stat()` → convert to `FILE_ATTRIBUTE_*`
+- [ ] Implement `SetFileAttributes(lpFileName, dwFileAttributes)` → `ops->set_attr(node, attrs)`
+- [ ] Implement `GetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `ops->stat()`
+- [ ] Implement `SetFileTime(hFile, lpCreation, lpLastAccess, lpLastWrite)` → `ops->set_times()`
+- [ ] Implement `GetFullPathName(lpFileName, nBufferLength, lpBuffer, lpFilePart)` → resolve relative path
+- [ ] Add `SYS_DELETEFILE`, `SYS_MOVEFILE`, `SYS_COPYFILE` syscalls
+- [ ] Commit: `"vfs: DeleteFile / MoveFile / CopyFile"`
+
+### 13.6 Shell & Kernel Migration
+
+**Prompt:** Migrate all kernel-internal and shell file operations from the old `vfs_*()` wrapper API to the new Win32-compatible API. The shell's `cat`, `cp`, `mv`, `rm`, `mkdir`, `ls`, `dir` commands should all use `CreateFile/ReadFile/WriteFile/CloseHandle/FindFirstFile/DeleteFile/MoveFile/CreateDirectory`. Registry hive I/O should use `CreateFile/ReadFile/WriteFile`. After migration, **remove the old `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()`, `vfs_create()`, `vfs_unlink()`, `vfs_rename()`, `vfs_stat()`, `vfs_truncate()`, `vfs_readdir()` public wrapper functions** from `vfs.h` and `vfs.c`. The `vfs_ops` driver interface, `vfs_node`, `vfs_mount()`, `vfs_finddir()`, and `vfs_get_drive_root()` stay. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"vfs: migrate shell to Win32 file API"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+- [ ] **Shell / Syscalls** — `src/kernel/sched/syscall.c`:
+  - [ ] `SYS_OPEN` / `SYS_READ` / `SYS_WRITE` / `SYS_CLOSE` → `SYS_CREATEFILE` / `SYS_READFILE` / `SYS_WRITEFILE` / `SYS_CLOSEHANDLE`
+  - [ ] `cat` → `CreateFile` + `ReadFile` + `CloseHandle`
+  - [ ] `cp` → `CopyFile()`
+  - [ ] `mv` → `MoveFile()`
+  - [ ] `rm` → `DeleteFile()`
+  - [ ] `mkdir` → `CreateDirectory()`
+  - [ ] `ls` / `dir` → `FindFirstFile` + `FindNextFile` + `FindClose`
+  - [ ] `touch` → `CreateFile(CREATE_ALWAYS)` + `CloseHandle`
+- [ ] **Registry** — `src/kernel/registry.c`:
+  - [ ] Hive load: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+  - [ ] Hive save: `vfs_open` + `vfs_write` → `CreateFile` + `WriteFile`
+  - [ ] Atomic swap: `vfs_rename` → `MoveFile()`
+  - [ ] Cleanup: `vfs_unlink` → `DeleteFile()`
+- [ ] **Font Loading** — `src/kernel/gfx/gfx_text.c`:
+  - [ ] Font file read: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+- [ ] **Image / Wallpaper Loading** — `src/kernel/image.c`, `src/desktop/desktop.c`:
+  - [ ] Image load: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+  - [ ] Wallpaper load: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+- [ ] **Icon Loading** — `src/kernel/ico.c`, `src/kernel/icon_store.c`:
+  - [ ] ICO file read: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+  - [ ] Icon asset load: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+- [ ] **Cursor Loading** — `src/kernel/drivers/cursor.c`:
+  - [ ] Cursor image read: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+- [ ] **Screenshot Saving** — `src/kernel/image_save.c`:
+  - [ ] Image write: `vfs_open` + `vfs_write` → `CreateFile` + `WriteFile`
+- [ ] **Kernel Log** — `src/kernel/klog_flush.c`:
+  - [ ] Log flush: `vfs_open` + `vfs_write` → `CreateFile` + `WriteFile`
+- [ ] **Panic / Crash Dump** — `src/kernel/panic.c`:
+  - [ ] Crash dump: `vfs_open` + `vfs_write` → `CreateFile` + `WriteFile`
+- [ ] **Memory-Mapped Files** — `src/kernel/mm/mmap.c`:
+  - [ ] File-backed mmap: `vfs_open` + `vfs_read` → `CreateFile` + `ReadFile`
+- [ ] **Swap** — `src/kernel/mm/swap.c`:
+  - [ ] Swap I/O: `vfs_open` + `vfs_read` + `vfs_write` → `CreateFile` + `ReadFile` + `WriteFile`
+- [ ] **Boot Init** — `src/kernel/main.c`:
+  - [ ] Boot-time file loading → `CreateFile` + `ReadFile`
+- [ ] **Keep as-is** (internal FS plumbing — no migration):
+  - [ ] `src/kernel/fs/vfs.c` — VFS driver interface (`vfs_ops`, `vfs_node`, `vfs_mount`, `vfs_finddir`)
+  - [ ] `src/kernel/fs/fat32/` — FAT32 driver internals
+  - [ ] `src/kernel/fs/ixfs/` — IXFS driver internals
+- [ ] **Remove old public wrappers** from `vfs.h` and `vfs.c`:
+  - [ ] Remove `vfs_open()`, `vfs_read()`, `vfs_write()`, `vfs_close()`
+  - [ ] Remove `vfs_create()`, `vfs_unlink()`, `vfs_rename()`
+  - [ ] Remove `vfs_stat()`, `vfs_truncate()`, `vfs_readdir()`
+  - [ ] Keep: `vfs_mount()`, `vfs_unmount()`, `vfs_get_drive_root()`, `vfs_finddir()`, `vfs_is_mounted()`
+- [ ] Commit: `"vfs: migrate shell + kernel to Win32 file API"`
