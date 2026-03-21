@@ -28,7 +28,7 @@ The core of the high-speed data transfer mechanism relies on the multiplexing of
 
 **C/BE[3:0]# (Command and Byte Enable):** This is a critical multiplexed signal line. During the Address Phase, these four pins are driven by the initiator to communicate the 4-bit bus command, dictating the nature of the transaction (e.g., indicating whether it is an I/O Read, a Memory Write, or a Configuration access). During the Data Phases, these exact same pins transition their function to act as byte enables. They explicitly signal which specific 8-bit bytes across the 32-bit AD bus contain valid and meaningful data payload. Each byte enable pertains to one specific group of 8 lines of data.
 
-**PAR (Parity):** Parity generation is a mandatory requirement for all PCI devices to ensure data integrity across the bus. The `PAR` pin asserts even parity calculated across the combination of `AD[31:00]` and `C/BE[3:0]#`. To accommodate the physical electrical propagation delay required to calculate parity across 36 lines, the parity bit is always driven exactly one clock cycle after the corresponding address or data phase to which it applies. Parity is completely invalid during the address phase and only becomes valid during the first data phase clock cycle.
+**PAR (Parity):** Parity generation is a mandatory requirement for all PCI devices to ensure data integrity across the bus. The `PAR` pin asserts even parity calculated across the combination of `AD[31:00]` and `C/BE[3:0]#`. To accommodate the physical electrical propagation delay required to calculate parity across 36 lines, the parity bit is always driven exactly one clock cycle after the corresponding address or data phase to which it applies. That is, parity for the address phase is driven during the first data phase clock, and parity for each data phase is driven during the following clock cycle.
 
 ### Interface Control Signals
 
@@ -60,13 +60,13 @@ The handshake mechanism that dictates the flow and pacing of data is managed by 
 
 To effectively double the maximum theoretical bandwidth from 133/266 MB/s to 266/533 MB/s, the PCI specification allows for a 64-bit extension. This architectural extension adds 39 pins to the physical connector footprint. Because the bus relies heavily on backward and forward compatibility, devices that are 32-bit inherently ignore these extended pins, and 64-bit devices must seamlessly default to 32-bit mode unless a 64-bit environment is explicitly negotiated during the address phase.
 
-| Signal Name | Pin Type | Core Timing | Description and Functional Behavior |
-|---|---|---|---|
-| **AD[63:32]** | Tri-state (t/s) | Synchronous | Carries the upper 32 bits of address during the address phase and the upper 32 bits of data payload during data phases. When parked, these lines may be driven by the central resource. |
-| **C/BE[7:4]#** | Tri-state (t/s) | Synchronous | Provides the multiplexed command signals and byte enables for the upper 32 bits of the bus, mirroring the behavior of the lower 4 bits. |
-| **REQ64#** | Sustained Tri-state | Synchronous | Asserted by a 64-bit initiator during the Address Phase (mirroring the timing of `FRAME#`) to formally request a 64-bit transaction. Requires a specific pull-up resistor on the motherboard. |
-| **ACK64#** | Sustained Tri-state | Synchronous | Asserted by the targeted device (mirroring the timing of `DEVSEL#`) to acknowledge and accept the 64-bit transfer request. If `ACK64#` is not asserted, the initiator transparently falls back to 32-bit transfers. Requires a pull-up resistor. |
-| **PAR64** | Tri-state (t/s) | Synchronous | Provides even parity specifically calculated across `AD[63:32]` and `C/BE[7:4]#`, functioning identically to the primary `PAR` signal and remaining valid one clock after the respective phase. It is strictly required for any 64-bit data phase. |
+| Signal Name    | Pin Type            | Core Timing  | Description and Functional Behavior                                                                                                                                                                                                                  |
+| -------------- | ------------------- | ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **AD[63:32]**  | Tri-state (t/s)     | Synchronous  | Carries the upper 32 bits of address during the address phase and the upper 32 bits of data payload during data phases. When parked, these lines may be driven by the central resource.                                                               |
+| **C/BE[7:4]#** | Tri-state (t/s)     | Synchronous  | Provides the multiplexed command signals and byte enables for the upper 32 bits of the bus, mirroring the behavior of the lower 4 bits.                                                                                                              |
+| **REQ64#**     | Sustained Tri-state | Synchronous  | Asserted by a 64-bit initiator during the Address Phase (mirroring the timing of `FRAME#`) to formally request a 64-bit transaction. Requires a specific pull-up resistor on the motherboard.                                                        |
+| **ACK64#**     | Sustained Tri-state | Synchronous  | Asserted by the targeted device (mirroring the timing of `DEVSEL#`) to acknowledge and accept the 64-bit transfer request. If `ACK64#` is not asserted, the initiator transparently falls back to 32-bit transfers. Requires a pull-up resistor.     |
+| **PAR64**      | Tri-state (t/s)     | Synchronous  | Provides even parity specifically calculated across `AD[63:32]` and `C/BE[7:4]#`, functioning identically to the primary `PAR` signal and remaining valid one clock after the respective phase. It is strictly required for any 64-bit data phase.    |
 
 During a transaction, if a 64-bit initiator asserts `REQ64#` but the targeted device responds with `DEVSEL#` without simultaneously asserting `ACK64#`, the initiator dynamically recognizes that it is speaking to a 32-bit target and immediately falls back to standard 32-bit data transfers. Importantly, the 64-bit extension is exclusively restricted to memory transactions. I/O transactions, Configuration transactions, Interrupt Acknowledge, and Special Cycle commands cannot be negotiated as 64-bit operations because the low bandwidth requirements of these operations simply cannot justify the added signaling complexity and protocol overhead.
 
@@ -86,24 +86,24 @@ PCI operates fundamentally on the premise of burst transactions. A single addres
 
 The explicit type of transaction is defined by the 4-bit hexadecimal code placed on the `C/BE[3:0]#` pins exclusively during the Address Phase. Revision 3.0 supports the following mandatory and optional commands, heavily dictating the state machine logic:
 
-| C/BE[3:0]# | Hex | Command Name | Technical Description and Use Case |
-|---|---|---|---|
-| `0000` | 0h | Interrupt Acknowledge | Used by the host processor to read the hardware interrupt vector directly from the system interrupt controller. |
-| `0001` | 1h | Special Cycle | Broadcasts a specialized message to all targets simultaneously. Because it is a broadcast, no single target asserts `DEVSEL#`. |
-| `0010` | 2h | I/O Read | Reads data from a peripheral mapped explicitly within the system's limited I/O address space. |
-| `0011` | 3h | I/O Write | Writes data to a peripheral mapped explicitly within the system's limited I/O address space. |
-| `0100` | 4h | Reserved | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator. |
-| `0101` | 5h | Reserved | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator. |
-| `0110` | 6h | Memory Read | Executes a standard read operation from a memory-mapped peripheral device. |
-| `0111` | 7h | Memory Write | Executes a standard write operation to a memory-mapped peripheral device. |
-| `1000` | 8h | Reserved | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator. |
-| `1001` | 9h | Reserved | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator. |
-| `1010` | Ah | Configuration Read | Allows system initialization software to read 32-bit blocks from a target's internal Configuration Space, utilizing `IDSEL`. |
-| `1011` | Bh | Configuration Write | Allows system initialization software to write 32-bit blocks to a target's internal Configuration Space. |
-| `1100` | Ch | Memory Read Multiple | Advanced read command indicating the master anticipates fetching multiple cachelines of data continuously. |
-| `1101` | Dh | Dual Address Cycle (DAC) | Specialized command used to transfer a 64-bit physical address sequentially across the 32-bit AD bus. |
-| `1110` | Eh | Memory Read Line | Advanced read command indicating the master anticipates fetching exactly one complete cacheline of data. |
-| `1111` | Fh | Memory Write & Invalidate | Advanced write command transferring an entire cacheline, allowing upstream PCI bridges to optimize buffers by dropping invalid cached data. |
+| C/BE[3:0]# | Hex  | Command Name               | Technical Description and Use Case                                                                                                      |
+| ---------- | ---- | -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `0000`     | 0x0  | Interrupt Acknowledge      | Used by the host processor to read the hardware interrupt vector directly from the system interrupt controller.                          |
+| `0001`     | 0x1  | Special Cycle              | Broadcasts a specialized message to all targets simultaneously. Because it is a broadcast, no single target asserts `DEVSEL#`.           |
+| `0010`     | 0x2  | I/O Read                   | Reads data from a peripheral mapped explicitly within the system's limited I/O address space.                                           |
+| `0011`     | 0x3  | I/O Write                  | Writes data to a peripheral mapped explicitly within the system's limited I/O address space.                                            |
+| `0100`     | 0x4  | Reserved                   | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator.                                                         |
+| `0101`     | 0x5  | Reserved                   | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator.                                                         |
+| `0110`     | 0x6  | Memory Read                | Executes a standard read operation from a memory-mapped peripheral device.                                                              |
+| `0111`     | 0x7  | Memory Write               | Executes a standard write operation to a memory-mapped peripheral device.                                                               |
+| `1000`     | 0x8  | Reserved                   | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator.                                                         |
+| `1001`     | 0x9  | Reserved                   | Strictly reserved by PCI-SIG. Must not be generated by any compliant initiator.                                                         |
+| `1010`     | 0xA  | Configuration Read         | Allows system initialization software to read 32-bit blocks from a target's internal Configuration Space, utilizing `IDSEL`.            |
+| `1011`     | 0xB  | Configuration Write        | Allows system initialization software to write 32-bit blocks to a target's internal Configuration Space.                                |
+| `1100`     | 0xC  | Memory Read Multiple       | Advanced read command indicating the master anticipates fetching multiple cachelines of data continuously.                               |
+| `1101`     | 0xD  | Dual Address Cycle (DAC)   | Specialized command used to transfer a 64-bit physical address sequentially across the 32-bit AD bus.                                   |
+| `1110`     | 0xE  | Memory Read Line           | Advanced read command indicating the master anticipates fetching exactly one complete cacheline of data.                                 |
+| `1111`     | 0xF  | Memory Write & Invalidate  | Advanced write command transferring an entire cacheline, allowing upstream PCI bridges to optimize buffers by dropping invalid cached data. |
 
 ### The Dual Address Cycle (DAC) Protocol
 
@@ -125,7 +125,7 @@ The independence of the master and target state machines allows transactions to 
 
 When a transaction fails catastrophically, it results in an abort condition, which is logged into the device's Configuration Status register.
 
-**Target-Abort:** If a target detects a fatal error condition (such as attempting to access an invalid internal address), it asserts `STOP#` and drops `DEVSEL#`. The specification explicitly notes that a Target-Abort is an error condition, and any data transferred during the final cycle must be assumed invalid. Software drivers encountering a Received Target Abort flag (Status register bit 12) or a Signalled Target Abort flag must take restorative action.
+**Target-Abort:** If a target detects a fatal error condition (such as attempting to access an invalid internal address), it asserts `STOP#` and drops `DEVSEL#`. The specification explicitly notes that a Target-Abort is an error condition, and any data transferred during the final cycle must be assumed invalid. Software drivers encountering a Signalled Target Abort flag (Status register bit 11) or a Received Target Abort flag (Status register bit 12) must take restorative action.
 
 **Master-Abort:** If a master asserts `FRAME#` and places an address on the bus, but no target claims the cycle by asserting `DEVSEL#` within a predetermined number of clock cycles, the master forces a termination. The master logs a Received Master Abort in its status register. This is normal during device probing on boot, but constitutes an error during normal operation.
 
@@ -165,13 +165,13 @@ All PCI connectors absolutely mandate the provision of four core power rails fro
 
 Total power consumption is strictly capped at 25 Watts per standard add-in card, distributed across the supplied rails according to specific tolerance envelopes. For power scaling and thermal management, the connector utilizes two grounded presence detect pins, `PRSNT1#` and `PRSNT2#`. By sensing the logical state of these pins (which the add-in card bridges to ground), the host motherboard can determine both the physical presence of the card and its maximum thermal dissipation profile, allowing the system to adjust total power budgets dynamically.
 
-| Power Rail | Nominal Voltage | Specification Tolerance | Maximum Current (Typical) |
-|---|---|---|---|
-| **+3.3 V** | 3.3 V | ±0.3 V (≈ ±9%) | 7.6 A |
-| **+5 V** | 5.0 V | ±5% | 5.0 A |
-| **+12 V** | 12.0 V | ±5% | 500 mA |
-| **-12 V** | -12.0 V | ±10% | 100 mA |
-| **+3.3Vaux** | 3.3 V | ±9% | 375 mA (when wakeup enabled) |
+| Power Rail     | Nominal Voltage | Specification Tolerance | Maximum Current (Typical)   |
+| -------------- | --------------- | ----------------------- | --------------------------- |
+| **+3.3 V**     | 3.3 V           | ±0.3 V (≈ ±9%)         | 7.6 A                       |
+| **+5 V**       | 5.0 V           | ±5%                     | 5.0 A                       |
+| **+12 V**      | 12.0 V          | ±5%                     | 500 mA                      |
+| **-12 V**      | -12.0 V         | ±10%                    | 100 mA                      |
+| **+3.3Vaux**   | 3.3 V           | ±9%                     | 375 mA (when wakeup enabled) |
 
 There is no specified sequence in which these power rails must be activated or deactivated during boot; they may ramp up in any order. However, the system logic must aggressively assert the `RST#` signal whenever the 3.3V or 5V rails drop out of specification tolerances.
 
@@ -197,9 +197,9 @@ At offset `0Ch`, a generic set of fields dictates the Cache Line Size, Latency T
 
 ### Base Address Registers (BARs) and Address Decoding
 
-The most critical component of the Type 0 header lies between offsets `10h` and `24h`, containing six 32-bit Base Address Registers (BARs). These registers are fundamentally responsible for address decoding. They define the position and the exact size of the memory the device requires. The system software probes the size of the required memory footprint by writing a value of all 1s to the BAR and immediately reading the value back. The hardware device returns zeros in all don't-care bits, effectively indicating to the operating system the size of the contiguous address space it requires. A device may request a maximum of 16 MB of address space via this mechanism.
+The most critical component of the Type 0 header lies between offsets `10h` and `24h`, containing six 32-bit Base Address Registers (BARs). These registers are fundamentally responsible for address decoding. They define the position and the exact size of the memory the device requires. The system software probes the size of the required memory footprint by writing a value of all 1s to the BAR and immediately reading the value back. The hardware device returns zeros in all don't-care bits, effectively indicating to the operating system the size of the contiguous address space it requires.
 
-BARs utilize specific, hard-coded bit flags within the lower nibble to communicate their operational constraints to the system. The lowest bit (Bit 0) determines the region type: if 0, it represents a Memory space request; if 1, it represents an I/O space request. For Memory BARs, Bit 3 acts as the Prefetchable bit. If set to 1, it signals to the upstream host bridge that reading data from this memory region does not alter the device state, allowing the bridge to proactively fetch excess data (bursting) without corrupting the peripheral's internal FIFOs or causing read side-effects. Bits 1 and 2 define the locatable aspect, dictating whether the region must be mapped firmly into 32-bit address space or if it possesses the logic capability to reside safely in 64-bit address space above the 4 GB boundary.
+BARs utilize specific, hard-coded bit flags within the lower nibble to communicate their operational constraints to the system. The lowest bit (Bit 0) determines the region type: if 0, it represents a Memory space request; if 1, it represents an I/O space request. For Memory BARs, Bit 3 acts as the Prefetchable bit. If set to 1, it signals to the upstream host bridge that reading data from this memory region does not alter the device state, allowing the bridge to proactively fetch excess data (bursting) without corrupting the peripheral's internal FIFOs or causing read side-effects. Bits 1 and 2 define the locatable aspect, dictating whether the region must be mapped firmly into 32-bit address space or if it possesses the logic capability to reside safely in 64-bit address space above the 4 GB boundary. Each BAR can describe a region between 16 bytes and 2 GB in size.
 
 ### The Capabilities Linked List
 

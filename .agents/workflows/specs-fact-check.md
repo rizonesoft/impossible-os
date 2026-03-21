@@ -4,7 +4,7 @@ description: Fact-check a specs document, align table columns, and fix issues
 
 # Fact-Check Specs Document
 
-Verify a specification document against authoritative sources, the codebase implementation, and internal consistency. Fix errors, align tables, and ensure the document is accurate and well-formatted.
+Verify a specification document against authoritative external sources and internal consistency. Fix errors, align tables, and ensure the document is accurate and well-formatted.
 
 ## When to Run
 
@@ -64,32 +64,18 @@ For every technical claim in the document, verify accuracy:
 - **Timeout values:** must match the spec's required minimums/maximums
 - **Error conditions:** must list all error codes the spec defines
 
-### 3. Cross-check against the codebase
+### 3. Verify against authoritative web sources
 
-Use Srclight to verify the spec matches what Impossible OS actually implements:
+Use `search_web` and `read_url_content` to verify claims against the official specification or trusted references
+(OSDev Wiki, kernel.org, Microsoft docs, Intel/AMD manuals):
 
-```
-# Find the relevant implementation
-mcp_srclight_search_symbols("ahci")
-mcp_srclight_get_symbol("ahci_init")
+- Search for the specific register, constant, or protocol detail being verified
+- Compare the spec doc's claim with at least one authoritative source
+- For each discrepancy, fix the spec doc to match the authoritative source
+- Add a `> [!NOTE]` block citing the source when correcting a non-obvious error
 
-# Verify struct layouts match the spec doc
-mcp_srclight_get_symbol("ahci_hba_memory_t")
-
-# Check constants match
-mcp_srclight_search_symbols("AHCI_SIG")
-```
-
-For each discrepancy:
-- If the **code is correct** and the spec doc is wrong → fix the spec doc
-- If the **spec doc is correct** and the code is wrong → note it as an implementation gap (do NOT silently fix code in a spec workflow)
-- Add a `> [!WARNING]` block for any known implementation deviations:
-
-```markdown
-> [!WARNING]
-> **Implementation deviation:** Impossible OS does not yet implement [feature].
-> See [TODO-NNN](../../todo/.../TODO-NNN.md) for planned work.
-```
+> **The official spec is the source of truth.** These documents guide our implementation — never
+> fact-check them against local code. The code should conform to the spec, not the other way around.
 
 ### 4. Check internal consistency
 
@@ -172,7 +158,7 @@ Before committing, verify:
 - [ ] All constants and magic numbers are correct
 - [ ] Struct layouts match on-disk/in-memory format
 - [ ] Protocol sequences are in the correct order
-- [ ] Implementation deviations are noted with WARNING blocks
+- [ ] All technical claims verified against authoritative sources
 - [ ] All table columns are aligned
 - [ ] Code blocks have language tags
 - [ ] Hex values use consistent `0x` format
