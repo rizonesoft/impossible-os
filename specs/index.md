@@ -47,6 +47,7 @@ External reference specifications for hardware, firmware, storage, and hyperviso
 | Document                                              | Topics                                |
 | ----------------------------------------------------- | ------------------------------------- |
 | [PCI 3.0](hardware/bus/pci-3.0.md)                    | PCI config space, BAR, MSI, bus enum  |
+| [PCIe](hardware/bus/pcie.md)                          | ECAM, enumeration, MSI-X, DMA, IOMMU  |
 
 ### Firmware
 

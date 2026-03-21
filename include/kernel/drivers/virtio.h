@@ -91,6 +91,7 @@ struct msix_table_entry {
 /* ---- Virtqueue descriptor flags ---- */
 #define VIRTQ_DESC_F_NEXT      0x01  /* Descriptor continues via 'next' */
 #define VIRTQ_DESC_F_WRITE     0x02  /* Device writes (vs reads) */
+#define VIRTQ_DESC_F_INDIRECT  0x04  /* Buffer contains indirect desc table */
 
 /* ---- Virtqueue structures (split virtqueue layout) ---- */
 

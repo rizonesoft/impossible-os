@@ -50,6 +50,7 @@
 #define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
 #define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
+#define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_VERSION_1      32   /* VirtIO 1.0 modern */
 
 /* Maximum number of virtqueues the driver supports */

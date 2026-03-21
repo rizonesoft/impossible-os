@@ -59,6 +59,7 @@ static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
 static int                    has_mq;          /* F_MQ negotiated */
+static int                    has_indirect;    /* F_RING_INDIRECT_DESC negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -257,7 +258,107 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     req.reserved = 0;
     req.sector   = sector;
 
-    /* Allocate 3 descriptors from the virtqueue free list */
+    /* Allocate descriptors and build chain */
+    if (has_indirect) {
+        /* Indirect path: build 3-entry indirect table on stack,
+         * allocate only 1 descriptor from main ring (saves 2 slots). */
+        struct virtq_desc indirect[3];
+        int di;
+
+        if (blk_vqs[qi].num_free < 1) {
+            klog(LOG_DEBUG, "virtio", "No free descriptor for indirect I/O");
+            return -1;
+        }
+
+        /* Build indirect table: header + data + status */
+        indirect[0].addr  = (uint64_t)(uintptr_t)&req;
+        indirect[0].len   = sizeof(struct virtio_blk_req);
+        indirect[0].flags = VIRTQ_DESC_F_NEXT;
+        indirect[0].next  = 1;
+
+        indirect[1].addr  = (uint64_t)(uintptr_t)buffer;
+        indirect[1].len   = len;
+        indirect[1].flags = VIRTQ_DESC_F_NEXT;
+        if (type != VIRTIO_BLK_T_OUT)
+            indirect[1].flags |= VIRTQ_DESC_F_WRITE;
+        indirect[1].next  = 2;
+
+        indirect[2].addr  = (uint64_t)(uintptr_t)&status_byte;
+        indirect[2].len   = 1;
+        indirect[2].flags = VIRTQ_DESC_F_WRITE;
+        indirect[2].next  = 0;
+
+        /* Allocate 1 primary descriptor */
+        d0 = blk_vqs[qi].free_head;
+        blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+        blk_vqs[qi].num_free--;
+
+        /* Primary descriptor: points to indirect table */
+        blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)indirect;
+        blk_vqs[qi].desc[d0].len   = 3 * 16;  /* 3 entries × 16 bytes each */
+        blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_INDIRECT;
+        blk_vqs[qi].desc[d0].next  = 0;
+
+        d1 = -1;  /* Mark as unused for cleanup */
+        d2 = -1;
+
+        /* Add to available ring */
+        di = (int)(blk_vqs[qi].avail->idx % blk_vqs[qi].size);
+        blk_vqs[qi].avail->ring[di] = (uint16_t)d0;
+
+        wmb();
+        blk_vqs[qi].avail->idx++;
+        mb();
+
+        /* Wait for completion */
+        __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+        virtio_irq_flags[qi] = 0;
+        __asm__ volatile ("sti");
+
+        virtq_kick(&blk_vqs[qi]);
+
+        if (use_events) {
+            if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                klog(LOG_DEBUG, "virtio",
+                       "I/O timeout (indirect, avail=%u, used=%u)",
+                       (uint64_t)blk_vqs[qi].avail->idx,
+                       (uint64_t)blk_vqs[qi].used->idx);
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        } else {
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio",
+                       "I/O timeout (indirect poll, avail=%u, used=%u)",
+                       (uint64_t)blk_vqs[qi].avail->idx,
+                       (uint64_t)blk_vqs[qi].used->idx);
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        }
+
+        if (!(rflags & (1 << 9)))
+            __asm__ volatile ("cli");
+
+        rmb();
+        blk_vqs[qi].last_used++;
+        virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+
+        return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    }
+
+    /* Direct path: allocate 3 descriptors from the virtqueue free list */
     if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors");
         return -1;
@@ -298,8 +399,10 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add chain head to available ring */
-    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
-    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    {
+        uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+        blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    }
 
     /* VirtIO §2.7.13.1: driver MUST perform a suitable device-specific
      * memory barrier before the avail->idx update to ensure the device
@@ -400,7 +503,87 @@ static int virtio_blk_do_flush(void)
     req.reserved = 0;
     req.sector   = 0;
 
-    /* Allocate 2 descriptors from the virtqueue free list */
+    /* Allocate descriptors and build chain */
+    if (has_indirect) {
+        /* Indirect path: 2-entry table (header + status) */
+        struct virtq_desc indirect[2];
+        int di;
+
+        if (blk_vqs[qi].num_free < 1) {
+            klog(LOG_DEBUG, "virtio", "No free descriptor for indirect flush");
+            return -1;
+        }
+
+        indirect[0].addr  = (uint64_t)(uintptr_t)&req;
+        indirect[0].len   = sizeof(struct virtio_blk_req);
+        indirect[0].flags = VIRTQ_DESC_F_NEXT;
+        indirect[0].next  = 1;
+
+        indirect[1].addr  = (uint64_t)(uintptr_t)&status_byte;
+        indirect[1].len   = 1;
+        indirect[1].flags = VIRTQ_DESC_F_WRITE;
+        indirect[1].next  = 0;
+
+        d0 = blk_vqs[qi].free_head;
+        blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+        blk_vqs[qi].num_free--;
+
+        blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)indirect;
+        blk_vqs[qi].desc[d0].len   = 2 * 16;
+        blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_INDIRECT;
+        blk_vqs[qi].desc[d0].next  = 0;
+
+        d1 = -1;
+
+        di = (int)(blk_vqs[qi].avail->idx % blk_vqs[qi].size);
+        blk_vqs[qi].avail->ring[di] = (uint16_t)d0;
+
+        wmb();
+        blk_vqs[qi].avail->idx++;
+        mb();
+
+        __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+        virtio_irq_flags[qi] = 0;
+        __asm__ volatile ("sti");
+
+        virtq_kick(&blk_vqs[qi]);
+
+        if (use_events) {
+            if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                klog(LOG_DEBUG, "virtio", "Flush timeout (indirect)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        } else {
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio", "Flush timeout (indirect poll)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        }
+
+        if (!(rflags & (1 << 9)))
+            __asm__ volatile ("cli");
+
+        rmb();
+        blk_vqs[qi].last_used++;
+        virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+
+        return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    }
+
+    /* Direct path: allocate 2 descriptors from the virtqueue free list */
     if (blk_vqs[qi].num_free < 2) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for flush");
         return -1;
@@ -428,8 +611,10 @@ static int virtio_blk_do_flush(void)
     blk_vqs[qi].desc[d1].next  = 0;
 
     /* Add chain head to available ring */
-    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
-    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    {
+        uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+        blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    }
 
     wmb();   /* Ensure descriptors visible before avail->idx update */
     blk_vqs[qi].avail->idx++;
@@ -754,7 +939,92 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     seg.num_sectors = num_sectors;
     seg.flags       = 0;  /* 0 = discard (not unmap) */
 
-    /* Allocate 3 descriptors */
+    /* Allocate descriptors and build chain */
+    if (has_indirect) {
+        struct virtq_desc indirect[3];
+        int di;
+
+        if (blk_vqs[qi].num_free < 1) {
+            klog(LOG_DEBUG, "virtio", "No free descriptor for indirect discard");
+            return -1;
+        }
+
+        indirect[0].addr  = (uint64_t)(uintptr_t)&req;
+        indirect[0].len   = sizeof(struct virtio_blk_req);
+        indirect[0].flags = VIRTQ_DESC_F_NEXT;
+        indirect[0].next  = 1;
+
+        indirect[1].addr  = (uint64_t)(uintptr_t)&seg;
+        indirect[1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+        indirect[1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable */
+        indirect[1].next  = 2;
+
+        indirect[2].addr  = (uint64_t)(uintptr_t)&status_byte;
+        indirect[2].len   = 1;
+        indirect[2].flags = VIRTQ_DESC_F_WRITE;
+        indirect[2].next  = 0;
+
+        d0 = blk_vqs[qi].free_head;
+        blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+        blk_vqs[qi].num_free--;
+
+        blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)indirect;
+        blk_vqs[qi].desc[d0].len   = 3 * 16;
+        blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_INDIRECT;
+        blk_vqs[qi].desc[d0].next  = 0;
+
+        d1 = -1;
+        d2 = -1;
+
+        di = (int)(blk_vqs[qi].avail->idx % blk_vqs[qi].size);
+        blk_vqs[qi].avail->ring[di] = (uint16_t)d0;
+
+        wmb();
+        blk_vqs[qi].avail->idx++;
+        mb();
+
+        __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+        virtio_irq_flags[qi] = 0;
+        __asm__ volatile ("sti");
+
+        virtq_kick(&blk_vqs[qi]);
+
+        if (use_events) {
+            if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                klog(LOG_DEBUG, "virtio", "Discard timeout (indirect)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        } else {
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio", "Discard timeout (indirect poll)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        }
+
+        if (!(rflags & (1 << 9)))
+            __asm__ volatile ("cli");
+
+        rmb();
+        blk_vqs[qi].last_used++;
+        virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+
+        return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    }
+
+    /* Direct path: allocate 3 descriptors */
     if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for discard");
         return -1;
@@ -793,8 +1063,10 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add to available ring */
-    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
-    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    {
+        uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+        blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    }
 
     wmb();
     blk_vqs[qi].avail->idx++;
@@ -929,7 +1201,92 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     seg.num_sectors = num_sectors;
     seg.flags       = flags;
 
-    /* Allocate 3 descriptors */
+    /* Allocate descriptors and build chain */
+    if (has_indirect) {
+        struct virtq_desc indirect[3];
+        int di;
+
+        if (blk_vqs[qi].num_free < 1) {
+            klog(LOG_DEBUG, "virtio", "No free descriptor for indirect write-zeroes");
+            return -1;
+        }
+
+        indirect[0].addr  = (uint64_t)(uintptr_t)&req;
+        indirect[0].len   = sizeof(struct virtio_blk_req);
+        indirect[0].flags = VIRTQ_DESC_F_NEXT;
+        indirect[0].next  = 1;
+
+        indirect[1].addr  = (uint64_t)(uintptr_t)&seg;
+        indirect[1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+        indirect[1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable */
+        indirect[1].next  = 2;
+
+        indirect[2].addr  = (uint64_t)(uintptr_t)&status_byte;
+        indirect[2].len   = 1;
+        indirect[2].flags = VIRTQ_DESC_F_WRITE;
+        indirect[2].next  = 0;
+
+        d0 = blk_vqs[qi].free_head;
+        blk_vqs[qi].free_head = blk_vqs[qi].desc[d0].next;
+        blk_vqs[qi].num_free--;
+
+        blk_vqs[qi].desc[d0].addr  = (uint64_t)(uintptr_t)indirect;
+        blk_vqs[qi].desc[d0].len   = 3 * 16;
+        blk_vqs[qi].desc[d0].flags = VIRTQ_DESC_F_INDIRECT;
+        blk_vqs[qi].desc[d0].next  = 0;
+
+        d1 = -1;
+        d2 = -1;
+
+        di = (int)(blk_vqs[qi].avail->idx % blk_vqs[qi].size);
+        blk_vqs[qi].avail->ring[di] = (uint16_t)d0;
+
+        wmb();
+        blk_vqs[qi].avail->idx++;
+        mb();
+
+        __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+        virtio_irq_flags[qi] = 0;
+        __asm__ volatile ("sti");
+
+        virtq_kick(&blk_vqs[qi]);
+
+        if (use_events) {
+            if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                klog(LOG_DEBUG, "virtio", "Write-zeroes timeout (indirect)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        } else {
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio", "Write-zeroes timeout (indirect poll)");
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                return -1;
+            }
+        }
+
+        if (!(rflags & (1 << 9)))
+            __asm__ volatile ("cli");
+
+        rmb();
+        blk_vqs[qi].last_used++;
+        virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+
+        return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
+    }
+
+    /* Direct path: allocate 3 descriptors */
     if (blk_vqs[qi].num_free < 3) {
         klog(LOG_DEBUG, "virtio", "No free descriptors for write-zeroes");
         return -1;
@@ -968,8 +1325,10 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     blk_vqs[qi].desc[d2].next  = 0;
 
     /* Add to available ring */
-    uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
-    blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    {
+        uint16_t avail_idx = blk_vqs[qi].avail->idx % blk_vqs[qi].size;
+        blk_vqs[qi].avail->ring[avail_idx] = (uint16_t)d0;
+    }
 
     wmb();
     blk_vqs[qi].avail->idx++;
@@ -1245,6 +1604,13 @@ int virtio_blk_init(void)
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
         has_mq = 1;
         klog(LOG_DEBUG, "virtio", "Negotiated F_MQ (multi-queue)");
+    }
+
+    /* Negotiate F_RING_INDIRECT_DESC (bit 28): indirect descriptor tables */
+    if (feat_lo & (1u << VIRTIO_F_RING_INDIRECT_DESC)) {
+        driver_feat_lo |= (1u << VIRTIO_F_RING_INDIRECT_DESC);
+        has_indirect = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_RING_INDIRECT_DESC");
     }
 
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1)
@@ -1613,6 +1979,7 @@ void virtio_blk_shutdown(void)
     has_write_zeroes = 0;
     has_ring_reset   = 0;
     has_mq           = 0;
+    has_indirect     = 0;
     is_read_only     = 0;
     disk_capacity    = 0;
     num_queues       = 1;

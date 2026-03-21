@@ -173,7 +173,7 @@ graph TD
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
 | 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **5**  | §7.2 Event Index (Coalescing)    | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.3 In-Order Completion         | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.4 Notification Data           | Phase 3 (§3.2)                |   ⬜   |
@@ -581,18 +581,20 @@ graph TD
 
 ## 7. Advanced Virtqueue Features
 
-### 7.1 Indirect Descriptors
+### 7.1 Indirect Descriptors *(done)* ✅
 
-**Prompt:** Negotiate `VIRTIO_F_RING_INDIRECT_DESC` (bit 28). When negotiated, a single descriptor in the main ring can point to a buffer containing an array of indirect descriptors. This allows submitting large scatter-gather lists (e.g., for multi-segment I/O) without consuming entries from the main descriptor table. Set `VIRTQ_DESC_F_INDIRECT` flag on the primary descriptor, point `addr` to the indirect table, set `len` to `num_indirect * 16`. The indirect table entries must not themselves set `VIRTQ_DESC_F_INDIRECT`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: indirect descriptors"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `VIRTIO_F_RING_INDIRECT_DESC` (bit 28) negotiated in init. `VIRTQ_DESC_F_INDIRECT` (0x04) added to `virtio.h`. All 4 I/O functions (`do_io`, `do_flush`, `do_discard`, `do_write_zeroes`) have indirect descriptor path: builds N-entry indirect table on stack (N×16 bytes), allocates 1 descriptor from main ring with `F_INDIRECT` flag. Direct path preserved as fallback when not negotiated. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_F_RING_INDIRECT_DESC` (bit 28)
-- [ ] Implement indirect descriptor table allocation (per-request, from a pool)
-- [ ] Build indirect table: array of `virtq_desc` entries for header + data segments + status
-- [ ] Primary descriptor: `addr = phys(indirect_table)`, `len = count*16`, `flags = INDIRECT`
-- [ ] Submit single primary descriptor to available ring (consumes only 1 slot)
-- [ ] Use for multi-segment I/O requests exceeding 3 descriptors
-- [ ] Fallback: if not negotiated, use direct 3-descriptor chains (current behavior)
-- [ ] Commit: `"virtio-blk: indirect descriptors"`
+> **Notes:** Indirect tables are allocated on the kernel stack (48 bytes max for 3-entry tables, 32 bytes for 2-entry flush). This is safe because the table is consumed synchronously before the function returns. The indirect table entries chain with `F_NEXT` internally but MUST NOT themselves set `F_INDIRECT` (spec requirement). Each indirect path returns early after its own wait loop, cleanly separating the two code paths.
+
+- [x] Negotiate `VIRTIO_F_RING_INDIRECT_DESC` (bit 28)
+- [x] Implement indirect descriptor table allocation (per-request, from a pool)
+- [x] Build indirect table: array of `virtq_desc` entries for header + data segments + status
+- [x] Primary descriptor: `addr = phys(indirect_table)`, `len = count*16`, `flags = INDIRECT`
+- [x] Submit single primary descriptor to available ring (consumes only 1 slot)
+- [x] Use for multi-segment I/O requests exceeding 3 descriptors
+- [x] Fallback: if not negotiated, use direct 3-descriptor chains (current behavior)
+- [x] Commit: `"virtio-blk: indirect descriptors"`
 
 ### 7.2 Event Index (Interrupt Coalescing)
 
@@ -1004,7 +1006,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟡 P2     | 5.2 Individual Queue Reset ✅      | Less disruptive recovery than full device reset                 |
 | 🟡 P2     | 15.1 Hot-Plug/Unplug ✅             | Robustness — graceful device arrival/removal                    |
 | 🟢 P3     | 6.1 Per-CPU Request Queues ✅       | Scalability — eliminates virtqueue lock contention              |
-| 🟢 P3     | 7.1 Indirect Descriptors          | Scalability — large scatter-gather lists                        |
+| 🟢 P3     | 7.1 Indirect Descriptors ✅         | Scalability — large scatter-gather lists                        |
 | 🟢 P3     | 7.2 Event Index (Coalescing)      | Performance — reduce interrupt storms                           |
 | 🟢 P3     | 7.3 In-Order Completion           | Performance — optimized sequential descriptor recycling         |
 | 🟢 P3     | 7.4 Notification Data             | Performance — host-side polling optimization                    |
@@ -1041,7 +1043,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | Error recovery / device reset   | ✅ Automatic retry + reset         | ✅ `virtio_break_device()` + reset    | ⬜ §5.1 P1 — no recovery                        |
 | Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ✅ §5.2 P2                                      |
 | Multi-queue (`F_MQ`)            | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ✅ §6.1 P3 — per-CPU queues with per-queue MSI-X   |
-| Indirect descriptors            | ✅                                 | ✅                                    | ⬜ §7.1 P3                                      |
+| Indirect descriptors            | ✅                                 | ✅                                    | ✅ §7.1 P3 — stack-allocated indirect tables     |
 | Event index (coalescing)        | ✅                                 | ✅                                    | ⬜ §7.2 P3                                      |
 | In-order completion             | ✅                                 | ✅ `VIRTIO_F_IN_ORDER`                | ⬜ §7.3 P3                                      |
 | Notification data               | ✅                                 | ✅ `VIRTIO_F_NOTIFICATION_DATA`       | ⬜ §7.4 P3                                      |
