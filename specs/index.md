@@ -23,6 +23,7 @@ External reference specifications for hardware, firmware, storage, and hyperviso
 
 | Document                                                  | Topics                                             |
 | --------------------------------------------------------- | -------------------------------------------------- |
+| [APFS](storage/filesystems/apfs.md)                       | APFS container, volume, B-tree, CoW, encryption    |
 | [Btrfs](storage/filesystems/btrfs.md)                     | Btrfs on-disk format, CoW, B-tree, checksums       |
 | [exFAT 1.0](storage/filesystems/exfat-1.0.md)            | exFAT BPB, allocation bitmap, directory entries    |
 | [ext4](storage/filesystems/ext4.md)                       | ext4 superblock, extents, journal, groups          |
