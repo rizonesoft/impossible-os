@@ -42,6 +42,10 @@ struct blkdev {
 /* Register a block device. Returns 0 on success, -1 if full. */
 int blkdev_register(const struct blkdev *dev);
 
+/* Unregister a block device by name. Marks it inactive.
+ * Returns 0 on success, -1 if not found. */
+int blkdev_unregister(const char *name);
+
 /* Look up a block device by name. Returns pointer or NULL if not found. */
 const struct blkdev *blkdev_get(const char *name);
 

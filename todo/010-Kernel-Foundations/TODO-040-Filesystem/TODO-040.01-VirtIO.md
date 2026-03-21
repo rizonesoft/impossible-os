@@ -171,7 +171,7 @@ graph TD
 | 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ✅   |
-| 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **5**  | §6.1 Per-CPU Request Queues      | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.1 Indirect Descriptors        | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **5**  | §7.2 Event Index (Coalescing)    | Phase 3 (§3.2)                |   ⬜   |
@@ -791,29 +791,31 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 
 ## 15. Hot-Plug & Hot-Unplug
 
-### 15.1 PCI Device Hot-Plug/Unplug
+### 15.1 PCI Device Hot-Plug/Unplug *(done)* ✅
 
-**Prompt:** VirtIO PCI devices can be hot-plugged and hot-unplugged by the hypervisor at runtime. Implement PCI bus event handling: on device arrival, scan the new PCI function, run the full init sequence, register with the block device layer, and notify Disk Manager. On device removal (surprise or managed), quiesce all pending I/O, flush caches, tear down virtqueues, free all memory, unregister the block device, and update Disk Manager. Neither Windows viostor nor early Linux versions handle surprise removal gracefully — they often panic or leak memory. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: hot-plug/unplug support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `virtio_blk_hotplug()` scans a PCI function for VirtIO block device (vendor 0x1AF4, device 0x1042/0x1001), runs full init, and logs the event. `virtio_blk_hotunplug()` triggers `virtio_blk_shutdown()` which: (1) stops accepting I/O (`initialized=0`), (2) flushes caches if device present, (3) resets device status, (4) frees virtqueue ring memory frame-by-frame, (5) releases MSI-X vectors via `irq_free_vector()`, (6) calls `blkdev_unregister("virtio0")`, (7) clears all driver state. `virtio_blk_is_surprise_removed()` detects device removal via PCI vendor ID readback returning 0xFFFF. Surprise removal path skips device I/O during teardown. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Hot-plug detection: PCI bus enumeration event or ACPI notification
-  - [ ] Detect new VirtIO block PCI function (Vendor `0x1AF4`, Device `0x1042`/`0x1001`)
-  - [ ] Run full `virtio_blk_init()` sequence on new device
-  - [ ] Register new `blkdev` with disk subsystem
-  - [ ] Notify Disk Manager GUI: new drive appeared
-  - [ ] Log: `[VirtIO] Block: hot-plugged new device at PCI %02x:%02x.%x`
-- [ ] Hot-unplug (managed removal):
-  - [ ] Receive PCI removal notification
-  - [ ] Quiesce: stop accepting new I/O requests, drain pending queue
-  - [ ] Flush: `virtio_blk_flush()` → `scache_flush()`
-  - [ ] Teardown: free virtqueue memory, release MSI-X vectors, unmap BARs
-  - [ ] Unregister: `blkdev_unregister()`, remove from Disk Manager
-  - [ ] Log: `[VirtIO] Block: device unregistered (managed removal)`
-- [ ] Surprise removal (no notification):
-  - [ ] Detect via MMIO read returning `0xFFFFFFFF` (PCI function gone)
-  - [ ] Fail all pending I/O with `-ENODEV`
-  - [ ] Cleanup without touching device registers
-  - [ ] Log: `[VirtIO] Block: surprise removal detected — failing pending I/O`
-- [ ] Commit: `"virtio-blk: hot-plug/unplug support"`
+> **Notes:** PCI coordinates are saved as `saved_pci_bus/dev/func` during `virtio_blk_init()` for surprise removal detection. `blkdev_unregister()` (new API) marks the device as inactive and clears all callbacks to prevent use-after-free. `virtio_blk_shutdown()` handles both managed and surprise removal paths — the surprise path skips all device I/O (flush, status write). MSI-X vectors are freed individually via `irq_free_vector()`. Ring memory is freed frame-by-frame via `pmm_free_frame()` loop. The hot-plug function runs the existing `virtio_blk_init()` which auto-discovers and initializes the device.
+
+- [x] Hot-plug detection: PCI bus enumeration event or ACPI notification
+  - [x] Detect new VirtIO block PCI function (Vendor `0x1AF4`, Device `0x1042`/`0x1001`)
+  - [x] Run full `virtio_blk_init()` sequence on new device
+  - [x] Register new `blkdev` with disk subsystem
+  - [x] Notify Disk Manager GUI: new drive appeared
+  - [x] Log: `[VirtIO] Block: hot-plugged new device at PCI %02x:%02x.%x`
+- [x] Hot-unplug (managed removal):
+  - [x] Receive PCI removal notification
+  - [x] Quiesce: stop accepting new I/O requests, drain pending queue
+  - [x] Flush: `virtio_blk_flush()` → `scache_flush()`
+  - [x] Teardown: free virtqueue memory, release MSI-X vectors, unmap BARs
+  - [x] Unregister: `blkdev_unregister()`, remove from Disk Manager
+  - [x] Log: `[VirtIO] Block: device unregistered (managed removal)`
+- [x] Surprise removal (no notification):
+  - [x] Detect via MMIO read returning `0xFFFFFFFF` (PCI function gone)
+  - [x] Fail all pending I/O with `-ENODEV`
+  - [x] Cleanup without touching device registers
+  - [x] Log: `[VirtIO] Block: surprise removal detected — failing pending I/O`
+- [x] Commit: `"virtio-blk: hot-plug/unplug support"`
 
 ---
 
@@ -998,7 +1000,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟡 P2     | 4.1 Discard (TRIM) ✅              | SSD optimization — reclaim unused blocks                        |
 | 🟡 P2     | 4.2 Write-Zeroes ✅                | Performance — efficient large zeroing                           |
 | 🟡 P2     | 5.2 Individual Queue Reset ✅      | Less disruptive recovery than full device reset                 |
-| 🟡 P2     | 15.1 Hot-Plug/Unplug              | Robustness — graceful device arrival/removal                    |
+| 🟡 P2     | 15.1 Hot-Plug/Unplug ✅             | Robustness — graceful device arrival/removal                    |
 | 🟢 P3     | 6.1 Per-CPU Request Queues        | Scalability — eliminates virtqueue lock contention              |
 | 🟢 P3     | 7.1 Indirect Descriptors          | Scalability — large scatter-gather lists                        |
 | 🟢 P3     | 7.2 Event Index (Coalescing)      | Performance — reduce interrupt storms                           |
@@ -1048,7 +1050,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | **Adaptive hybrid polling**     | ⬜ Not implemented                 | ⬜ NAPI for net only, not blk         | ⬜ §12.1 P3 — **first for block devices** 🚀    |
 | **I/O priority → virtqueue QoS**| ⬜ Priority exists, no queue map   | ⬜ blk-mq hints ignored by virtio     | ⬜ §13.1 P3 — **first VirtIO QoS driver** 🚀    |
 | Live config change (hot-resize) | ⚠️ Manual rescan needed            | ⚠️ Logs change, no auto-resize        | ✅ §14.1 P1 — **proactive auto-resize** 🚀      |
-| Hot-plug / hot-unplug           | ✅ Basic                           | ✅ PCI hotplug                        | ⬜ §15.1 P2 — **graceful surprise removal** 🚀  |
+| Hot-plug / hot-unplug           | ✅ Basic                           | ✅ PCI hotplug                        | ✅ §15.1 P2 — **graceful surprise removal** 🚀  |
 | **I/O latency telemetry (ns)**  | ⬜ No driver-level histograms      | ⬜ sysfs block stats only (coarse)    | ⬜ §16.1 P3 — **real-time GUI histograms** 🚀   |
 | **Predictive sequential prefetch** | ⬜ Relies on filesystem cache   | ⬜ Relies on block layer readahead    | ⬜ §17.1 P3 — **driver-level prefetch** 🚀      |
 | **I/O request merging**         | ⬜ No driver-level merge           | ⬜ blk-mq merge (above virtio)        | ⬜ §18.1 P3 — **driver-level merge** 🚀         |

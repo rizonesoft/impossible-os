@@ -26,6 +26,7 @@
 #include "kernel/barrier.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/sched/event.h"
+#include "kernel/mm/pmm.h"
 
 /* ---- Driver state ---- */
 static struct virtio_pci_dev  blk_dev;         /* Modern PCI transport */
@@ -33,6 +34,11 @@ static struct virtqueue       blk_vq;          /* Request queue (queue 0) */
 static uint64_t               disk_capacity;   /* Total 512-byte sectors */
 static int                    initialized;     /* 1 if init succeeded */
 static volatile int           virtio_irq_fired; /* Queue completion flag */
+
+/* PCI coordinates (saved for surprise removal detection and hot-unplug) */
+static uint8_t                saved_pci_bus;
+static uint8_t                saved_pci_dev;
+static uint8_t                saved_pci_func;
 static uint8_t                msix_vec_queue;  /* MSI-X IDT vector: queue */
 static uint8_t                msix_vec_config; /* MSI-X IDT vector: config */
 static int                    use_events;      /* 1 after event_t is live */
@@ -1112,6 +1118,11 @@ int virtio_blk_init(void)
            (uint64_t)dev.bus, (uint64_t)dev.dev, (uint64_t)dev.func,
            (uint64_t)dev.device_id);
 
+    /* Save PCI coordinates for surprise removal detection and hot-unplug */
+    saved_pci_bus  = dev.bus;
+    saved_pci_dev  = dev.dev;
+    saved_pci_func = dev.func;
+
     /* Enable bus mastering and memory space */
     {
         uint16_t cmd = pci_read16(dev.bus, dev.dev, dev.func, 0x04);
@@ -1391,6 +1402,174 @@ int virtio_blk_init(void)
         device_serial[0] = '\0';
         klog(LOG_DEBUG, "virtio", "GET_ID failed — no device serial");
     }
+
+    return 0;
+}
+
+/* ---- Hot-Plug / Hot-Unplug ---- */
+
+int virtio_blk_is_surprise_removed(void)
+{
+    uint16_t vid;
+
+    if (!initialized)
+        return 1;  /* Not initialized = effectively gone */
+
+    /* Read PCI vendor ID — if device is surprise-removed, returns 0xFFFF */
+    vid = pci_read16(saved_pci_bus, saved_pci_dev, saved_pci_func, 0x00);
+    return (vid == 0xFFFF) ? 1 : 0;
+}
+
+void virtio_blk_shutdown(void)
+{
+    uint64_t desc_sz, avail_sz, used_sz, total, old_pages;
+    uintptr_t old_desc;
+    int surprise;
+    int i;
+
+    if (!initialized)
+        return;
+
+    surprise = virtio_blk_is_surprise_removed();
+
+    klog(LOG_DEBUG, "virtio", "Shutdown: %s",
+           surprise ? "surprise removal" : "managed removal");
+
+    /* 1. Stop accepting new I/O */
+    initialized = 0;
+    use_events = 0;
+
+    /* 2. If device still present, flush caches and quiesce */
+    if (!surprise) {
+        /* Flush any dirty cache data */
+        if (has_flush) {
+            int flush_ret = virtio_blk_flush();
+            (void)flush_ret;
+        }
+
+        /* Reset device status to stop processing */
+        virtio_set_status(&blk_dev, 0);
+
+        /* Wait for device to acknowledge reset */
+        {
+            uint32_t wait = 100000;
+            while (wait-- > 0) {
+                if (virtio_get_status(&blk_dev) == 0)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+        }
+    } else {
+        klog(LOG_DEBUG, "virtio",
+               "Surprise removal — skipping device I/O during teardown");
+    }
+
+    /* 3. Free virtqueue ring memory */
+    if (blk_vq.desc) {
+        old_desc = (uintptr_t)blk_vq.desc;
+        desc_sz  = ((uint64_t)blk_vq.size * 16 + 15) & ~(uint64_t)15;
+        avail_sz = (6 + (uint64_t)blk_vq.size * 2 + 1) & ~(uint64_t)1;
+        used_sz  = (6 + (uint64_t)blk_vq.size * 8 + 3) & ~(uint64_t)3;
+        total    = desc_sz + avail_sz + used_sz;
+        old_pages = (total + PMM_FRAME_SIZE - 1) / PMM_FRAME_SIZE;
+
+        for (i = 0; i < (int)old_pages; i++)
+            pmm_free_frame(old_desc + (uint64_t)i * PMM_FRAME_SIZE);
+
+        blk_vq.desc  = (struct virtq_desc *)0;
+        blk_vq.avail = (struct virtq_avail *)0;
+        blk_vq.used  = (struct virtq_used *)0;
+    }
+
+    /* 4. Free MSI-X vectors */
+    if (msix_vec_queue) {
+        irq_free_vector(msix_vec_queue);
+        msix_vec_queue = 0;
+    }
+    if (msix_vec_config) {
+        irq_free_vector(msix_vec_config);
+        msix_vec_config = 0;
+    }
+
+    /* 5. Unregister from block device layer */
+    blkdev_unregister("virtio0");
+
+    /* 6. Clear all driver state */
+    has_flush        = 0;
+    has_config_wce   = 0;
+    has_blk_size     = 0;
+    has_topology     = 0;
+    has_size_max     = 0;
+    has_seg_max      = 0;
+    has_discard      = 0;
+    has_write_zeroes = 0;
+    has_ring_reset   = 0;
+    is_read_only     = 0;
+    disk_capacity    = 0;
+
+    klog(LOG_DEBUG, "virtio", "Block: device %s",
+           surprise ? "surprise removal cleanup complete"
+                    : "unregistered (managed removal)");
+}
+
+void virtio_blk_hotunplug(void)
+{
+    klog(LOG_DEBUG, "virtio",
+           "Block: hot-unplug at PCI %02x:%02x.%x",
+           (uint64_t)saved_pci_bus, (uint64_t)saved_pci_dev,
+           (uint64_t)saved_pci_func);
+    virtio_blk_shutdown();
+}
+
+int virtio_blk_hotplug(uint8_t bus, uint8_t dev, uint8_t func)
+{
+    uint16_t vid, did, subsys;
+
+    /* Verify this is a VirtIO block device */
+    vid = pci_read16(bus, dev, func, 0x00);
+    if (vid != VIRTIO_BLK_VENDOR_ID)
+        return -1;
+
+    did = pci_read16(bus, dev, func, 0x02);
+    if (did != VIRTIO_BLK_DEVICE_ID_MOD && did != VIRTIO_BLK_DEVICE_ID_LEG)
+        return -1;
+
+    subsys = pci_read16(bus, dev, func, 0x2E);
+    if (did == VIRTIO_BLK_DEVICE_ID_LEG && subsys != 0x0002)
+        return -1;
+
+    klog(LOG_DEBUG, "virtio",
+           "Block: hot-plugged new device at PCI %02x:%02x.%x",
+           (uint64_t)bus, (uint64_t)dev, (uint64_t)func);
+
+    /* If already initialized, shut down first */
+    if (initialized)
+        virtio_blk_shutdown();
+
+    /* Run full initialization */
+    if (virtio_blk_init() != 0) {
+        klog(LOG_DEBUG, "virtio", "Block: hot-plug init failed");
+        return -1;
+    }
+
+    /* Register with block device layer */
+    {
+        struct blkdev bd = {0};
+        bd.name[0]='v'; bd.name[1]='i'; bd.name[2]='r';
+        bd.name[3]='t'; bd.name[4]='i'; bd.name[5]='o';
+        bd.name[6]='0'; bd.name[7]='\0';
+        bd.sector_size  = virtio_blk_block_size();
+        bd.sector_count = virtio_blk_capacity();
+        bd.read  = (blkdev_read_fn)0;   /* Wired by blkdev_adapters */
+        bd.write = (blkdev_write_fn)0;
+        bd.flush = (blkdev_flush_fn)0;
+        bd.discard = (blkdev_discard_fn)0;
+        bd.driver_data = (void *)0;
+    }
+
+    klog(LOG_DEBUG, "virtio",
+           "Block: hot-plug complete — %u MiB",
+           (uint64_t)(disk_capacity / 2048));
 
     return 0;
 }

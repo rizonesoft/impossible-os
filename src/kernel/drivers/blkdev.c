@@ -60,6 +60,23 @@ int blkdev_register(const struct blkdev *dev)
     return 0;
 }
 
+int blkdev_unregister(const char *name)
+{
+    int i;
+    for (i = 0; i < num_devices; i++) {
+        if (devices[i].active && blk_strcmp(devices[i].name, name) == 0) {
+            devices[i].active  = 0;
+            devices[i].read    = (blkdev_read_fn)0;
+            devices[i].write   = (blkdev_write_fn)0;
+            devices[i].flush   = (blkdev_flush_fn)0;
+            devices[i].discard = (blkdev_discard_fn)0;
+            klog(LOG_DEBUG, "blk", "%s: unregistered", devices[i].name);
+            return 0;
+        }
+    }
+    return -1;
+}
+
 const struct blkdev *blkdev_get(const char *name)
 {
     int i;

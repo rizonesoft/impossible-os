@@ -172,3 +172,21 @@ const char *virtio_blk_serial(void);
  * using config_generation loop, detects changes, and updates driver state.
  * Also callable from a deferred work context if ISR deferral is needed. */
 void virtio_blk_handle_config_change(void);
+
+/* Shutdown the virtio-blk driver: quiesce I/O, flush caches, tear down
+ * virtqueues, free MSI-X vectors, unregister block device.
+ * Called during managed hot-unplug or system shutdown. */
+void virtio_blk_shutdown(void);
+
+/* Hot-plug: scan a new PCI function for a VirtIO block device,
+ * run full init, and register with the block device layer.
+ * Returns 0 on success, -1 if not a VirtIO block device. */
+int virtio_blk_hotplug(uint8_t bus, uint8_t dev, uint8_t func);
+
+/* Hot-unplug (managed): gracefully shut down and unregister.
+ * Flushes caches, drains I/O, tears down virtqueues. */
+void virtio_blk_hotunplug(void);
+
+/* Check if the device has been surprise-removed (PCI function gone).
+ * Returns 1 if the device is no longer present, 0 if present. */
+int virtio_blk_is_surprise_removed(void);
