@@ -68,29 +68,29 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐ | Phase  | TODO File / Section                          | Sections                           | What It Delivers                                                             | Depends On                          | Status |
-| -- | :----: | -------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------------------- | ----------------------------------- | :----: |
-| 💎 | **0**  | `TODO-040-Filesystem.md`                     | §3.5 VFS Driver Interface          | `vfs_ops` callbacks — foundation for all FS drivers                          | —                                   |   ✅   |
-| 💎 | **0**  | `TODO-040-Filesystem.md`                     | §3.6 Win32 File API                | `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle` — **prerequisite for everything here** | Phase 0 (§3.5)                      |   ⬜   |
-| 💎 | **1**  | `TODO-040.07-VFS.md`                         | §1.1 Case-Insensitive Lookup       | Win32 apps find files regardless of capitalization                           | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **1**  | `TODO-040.07-VFS.md`                         | §1.2 Mandatory File Locking        | Share mode enforcement — prevents database corruption                        | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **1**  | `TODO-040.07-VFS.md`                         | §3.1 Error Code Mapping            | Correct `GetLastError()` codes for all file operations                       | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **2**  | `TODO-040.07-VFS.md`                         | §1.3 Deletion Semantics            | `DeleteFile` defers removal until last handle closes                         | Phase 1 (§1.1 + §1.2)              |   ⬜   |
-| 💎 | **2**  | `TODO-040.07-VFS.md`                         | §1.4 Unique File Identifiers       | `GetFileInformationByHandle` returns consistent `nFileIndex`                 | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **2**  | `TODO-040.07-VFS.md`                         | §1.6 File Attributes & Timestamps  | `GetFileAttributes` (fast exist check), `GetFileTime`/`SetFileTime`          | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.07-VFS.md`                         | §2.3 Volume Information Spoofing   | `GetVolumeInformation` + `GetDiskFreeSpace` — app compat queries             | Phase 2 (§1.6)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.07-VFS.md`                         | §2.1 ADS Graceful Fallback         | `:Zone.Identifier` and other stream paths handled without crash              | Phase 1 (§1.1)                      |   ⬜   |
-| 💎 | **3**  | `TODO-040.07-VFS.md`                         | §2.2 ACL Routing (Stubs + Native)  | `Set/GetFileSecurity` — permissive stubs on FAT32, real on IXFS             | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **4**  | `TODO-040.07-VFS.md`                         | §2.4 Hard Links & Reparse Routing  | `CreateHardLink`, reparse points — WinSxS compat                            | Phase 1 (§1.1)                      |   ⬜   |
-| ⭐ | **4**  | `TODO-040.07-VFS.md`                         | §1.7 Byte-Range Locking            | `LockFile`/`UnlockFile` with **deadlock detection**                          | Phase 1 (§1.2) + Process Model     |   ⬜   |
-| 💎 | **5**  | `TODO-040.07-VFS.md`                         | §1.5 Memory-Mapped Files           | `CreateFileMapping` + `MapViewOfFile` — demand-paged exe loading             | Phase 0 (§3.6) + VMM               |   ⬜   |
-| ⭐ | **5**  | `TODO-040.07-VFS.md`                         | §4.1 Directory Change Notifications | `ReadDirectoryChangesW` — **recursive + cross-FS**                          | Phase 0 (§3.6)                      |   ⬜   |
-| 💎 | **6**  | `TODO-040.07-VFS.md`                         | §5.1 Overlapped Async I/O          | `OVERLAPPED` struct for non-blocking file I/O                                | Phase 1 (§1.2) + Process Model     |   ⬜   |
-| 💎 | **6**  | `TODO-040.11-IXFS.md`                        | §5.9.5 Native ADS                  | Real stream storage on IXFS — §2.1 routes here instead of discarding         | Phase 3 (§2.1)                      |   ⬜   |
-| 💎 | **6**  | `TODO-040.11-IXFS.md`                        | §5.9.6 Native ACLs                 | Real security descriptors on IXFS — §2.2 routes here instead of stub         | Phase 3 (§2.2)                      |   ⬜   |
-| 💎 | **6**  | `TODO-040.11-IXFS.md`                        | §5.9.7 Native Hard Links           | Real hard links on IXFS — §2.4 routes here instead of error                  | Phase 4 (§2.4)                      |   ⬜   |
-| 💎 | —      | `TODO-040.08-NTFS.md`                        | §6.1 VFS Registration              | NTFS volumes mountable — uses §1.1, §1.4, §1.6 from here                    | Phase 2 (§1.4 + §1.6) + NTFS §1–5  |   ⬜   |
-| 💎 | —      | `TODO-028-Process-Model.md`                  | Per-process handle tables           | Handle isolation between processes — informs §1.2, §1.7, §5.1               | Independent                         |   ⬜   |
+| ⭐ | Phase  | TODO File / Section                          | Sections                           | What It Delivers     | Depends On                          | Status |
+| -- | :----: | -------------------------------------------- | ---------------------------------- | -------------------------------------------- | ----------------------------------- | :----: |
+| 💎 | **0**  | `TODO-040-Filesystem.md` | §3.5 VFS Driver Interface          | `vfs_ops` callbacks — foundation for all FS drivers  | — |   ✅   |
+| 💎 | **0**  | `TODO-040-Filesystem.md` | §3.6 Win32 File API            | `CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`  | Phase 0 (§3.5)  |   ⬜   |
+| 💎 | **1**  | `TODO-040.07-VFS.md` | §1.1 Case-Insensitive Lookup       | Win32 apps find files regardless of capitalization                           | Phase 0 (§3.6)           |   ⬜   |
+| 💎 | **1**  | `TODO-040.07-VFS.md` | §1.2 Mandatory File Locking        | Share mode enforcement — prevents database corruption                        | Phase 0 (§3.6)         |   ⬜   |
+| 💎 | **1**  | `TODO-040.07-VFS.md` | §3.1 Error Code Mapping            | Correct `GetLastError()` codes for all file operations                       | Phase 0 (§3.6)      |   ⬜   |
+| 💎 | **2**  | `TODO-040.07-VFS.md` | §1.3 Deletion Semantics            | `DeleteFile` defers removal until last handle closes                         | Phase 1 (§1.1 + §1.2)    |   ⬜   |
+| 💎 | **2**  | `TODO-040.07-VFS.md` | §1.4 Unique File Identifiers       | `GetFileInformationByHandle` returns consistent `nFileIndex`                 | Phase 0 (§3.6)      |   ⬜   |
+| 💎 | **2**  | `TODO-040.07-VFS.md` | §1.6 File Attributes & Timestamps  | `GetFileAttributes` (fast exist check), `GetFileTime`/`SetFileTime`          | Phase 0 (§3.6)       |   ⬜   |
+| 💎 | **3**  | `TODO-040.07-VFS.md` | §2.3 Volume Information Spoofing   | `GetVolumeInformation` + `GetDiskFreeSpace` — app compat queries             | Phase 2 (§1.6)   |   ⬜   |
+| 💎 | **3**  | `TODO-040.07-VFS.md` | §2.1 ADS Graceful Fallback         | `:Zone.Identifier` and other stream paths handled without crash              | Phase 1 (§1.1)    |   ⬜   |
+| 💎 | **3**  | `TODO-040.07-VFS.md` | §2.2 ACL Routing (Stubs + Native)  | `Set/GetFileSecurity` — permissive stubs on FAT32, real on IXFS             | Phase 0 (§3.6)                      |   ⬜   |
+| 💎 | **4**  | `TODO-040.07-VFS.md` | §2.4 Hard Links & Reparse Routing  | `CreateHardLink`, reparse points — WinSxS compat                            | Phase 1 (§1.1)                      |   ⬜   |
+| ⭐ | **4**  | `TODO-040.07-VFS.md` | §1.7 Byte-Range Locking            | `LockFile`/`UnlockFile` with **deadlock detection**                          | Phase 1 (§1.2) + Process Model     |   ⬜   |
+| 💎 | **5**  | `TODO-040.07-VFS.md` | §1.5 Memory-Mapped Files           | `CreateFileMapping` + `MapViewOfFile` — demand-paged exe loading             | Phase 0 (§3.6) + VMM               |   ⬜   |
+| ⭐ | **5**  | `TODO-040.07-VFS.md` | §4.1 Directory Change Notifications | `ReadDirectoryChangesW` — **recursive + cross-FS**                          | Phase 0 (§3.6)                      |   ⬜   |
+| 💎 | **6**  | `TODO-040.07-VFS.md` | §5.1 Overlapped Async I/O          | `OVERLAPPED` struct for non-blocking file I/O                                | Phase 1 (§1.2) + Process Model     |   ⬜   |
+| 💎 | **6**  | `TODO-040.11-IXFS.md` | §5.9.5 Native ADS                  | Real stream storage on IXFS — §2.1 routes here instead of discarding         | Phase 3 (§2.1)   |   ⬜   |
+| 💎 | **6**  | `TODO-040.11-IXFS.md` | §5.9.6 Native ACLs                 | Real security descriptors on IXFS — §2.2 routes here instead of stub         | Phase 3 (§2.2)   |   ⬜   |
+| 💎 | **6**  | `TODO-040.11-IXFS.md` | §5.9.7 Native Hard Links           | Real hard links on IXFS — §2.4 routes here instead of error                  | Phase 4 (§2.4)   |   ⬜   |
+| 💎 | —      | `TODO-040.08-NTFS.md` | §6.1 VFS Registration              | NTFS volumes mountable — uses §1.1, §1.4, §1.6 from here                    | Phase 2 (§1.4 + §1.6) + NTFS §1–5  |   ⬜   |
+| 💎 | —      | `TODO-028-Process-Model.md` | Per-process handle tables           | Handle isolation between processes — informs §1.2, §1.7, §5.1               | Independent                         |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–1** are the critical path. Phase 0 (the Win32 File API from the parent
