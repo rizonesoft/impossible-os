@@ -1,7 +1,7 @@
 # TODO-001 — GitHub Repository Setup ✅
 
 **Status:** Completed — 2026-03-21
-**Documentation:** [github-setup.md](../../docs/architecture/infrastructure/github-setup.md)
+**Documentation:** [github-setup.md](../../docs/infrastructure/github-setup.md)
 **Commits:** See git log — spans initial repo setup through CI/CD, templates, branch protection, and GitHub Pages.
 
 ## Gotchas
@@ -18,4 +18,4 @@
 
 - Depends on: TODO-002 §1.4 (build version metadata), TODO-002 §5.3 (smoke test script)
 - Depended on by: (none — foundational infrastructure)
-- Related: [Development Tooling](../../docs/architecture/infrastructure/development-tooling.md)
+- Related: [Development Tooling](../../docs/infrastructure/development-tooling.md)

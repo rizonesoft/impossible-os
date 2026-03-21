@@ -53,7 +53,7 @@ scripts/                Build, test, deploy scripts
 tools/                  Host-side build tools (jpg2raw, irespack, asset converters)
 todo/                   Development roadmap (100+ TODO items across 50+ files)
 docs/                   Documentation (architecture, specs, guides)
-  ├── architecture/     Implementation docs (generated from completed TODOs)
+  ├── architecture/     System architecture and implementation docs
   ├── specs/            External reference specs (AHCI, FAT32, UEFI, ...)
   └── guides/           How-to guides
 user/                   User-mode programs (hello.exe, shell.exe)
@@ -340,7 +340,7 @@ Priority levels: 🔴 P0, 🟠 P1, 🟡 P2, 🟢 P3
 - **Don't create duplicate TODOs** — always check the index first
 - **Don't renumber existing TODOs** — gaps are intentional (allows inserting)
 - **Don't remove completed items** — keep them checked off for history
-- **Convert completed TODOs to docs** — when all items are `[x]`, use the `/docs-convert-todo` workflow to generate documentation in `docs/architecture/` and leave a stub
+- **Convert completed TODOs to docs** — when all items are `[x]`, use the `/docs-convert-todo` workflow to generate documentation in `docs/` and leave a stub
 
 ---
 

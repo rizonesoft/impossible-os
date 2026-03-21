@@ -41,16 +41,29 @@ Before writing the doc, **confirm the TODO content matches the actual implementa
 
 ### 3. Determine the documentation path
 
-| TODO scope | Doc path |
-|-----------|----------|
-| Driver (AHCI, VirtIO, NIC) | `docs/architecture/drivers/<name>.md` |
-| Filesystem (FAT32, IXFS, ext4) | `docs/architecture/filesystem/<name>.md` |
-| Kernel subsystem (PMM, VMM, scheduler) | `docs/architecture/kernel/<name>.md` |
-| Desktop component | `docs/architecture/desktop/<name>.md` |
-| Networking | `docs/architecture/net/<name>.md` |
-| Boot/firmware | `docs/architecture/boot/<name>.md` |
+Choose the most appropriate location under `docs/` based on the content — not just the TODO category. The doc should land where a developer would naturally look for it.
 
-Create subdirectories as needed.
+**Common directories (create subdirectories as needed):**
+
+| Directory                 | Content Type                                              |
+|---------------------------|-----------------------------------------------------------|
+| `docs/architecture/`      | OS internals: kernel, drivers, filesystem, networking     |
+| `docs/guides/`            | How-to guides, tutorials, getting-started docs            |
+| `docs/infrastructure/`    | Build system, CI/CD, tooling, development environment     |
+| `docs/specs/`             | External reference specs (AHCI, FAT32, UEFI, etc.)       |
+
+**Examples:**
+
+| TODO                       | Doc path                                            | Rationale                         |
+|----------------------------|-----------------------------------------------------|-----------------------------------|
+| AHCI driver                | `docs/architecture/drivers/ahci.md`                 | OS internal — driver architecture |
+| FAT32 filesystem           | `docs/architecture/filesystem/fat32.md`             | OS internal — filesystem          |
+| Build system tooling       | `docs/infrastructure/development-tooling.md`        | Dev tooling, not OS internals     |
+| GitHub CI/CD setup         | `docs/infrastructure/github-setup.md`               | Repo infrastructure               |
+| UEFI bootloader            | `docs/architecture/boot/uefi-bootloader.md`         | OS internal — boot chain          |
+| USB boot guide             | `docs/guides/usb-boot.md`                           | How-to guide                      |
+
+> Use your judgement. If the doc is about how the OS works internally → `architecture/`. If it's about how to use/build/deploy → `guides/` or `infrastructure/`.
 
 ### 4. Write the documentation file
 

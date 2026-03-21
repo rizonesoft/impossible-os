@@ -13,8 +13,8 @@
 
 | #   | TODO                                                                    | Status       |
 |-----|-------------------------------------------------------------------------|--------------|
-| 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   | ✅ Done → [docs](../docs/architecture/infrastructure/github-setup.md) |
-| 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ Done → [docs](../docs/architecture/infrastructure/development-tooling.md) |
+| 001 | [GitHub Setup](000-Infrastructure/TODO-001-GitHub.md)                   | ✅ Done → [docs](../docs/infrastructure/github-setup.md) |
+| 002 | [Development Tooling](000-Infrastructure/TODO-002-Development.md)       | ✅ Done → [docs](../docs/infrastructure/development-tooling.md) |
 | 003 | [Antigravity Agent IDE](000-Infrastructure/TODO-003-Antigravity.md)     | ✅ All done  |
 | 004 | [MCP Server Setup](000-Infrastructure/TODO-004-MCP.md)                  | ✅ All done  |
 | 008 | [Hyper-V Gen 2 Boot](000-Infrastructure/TODO-008-Hyper-V-Runner.md)     |              |

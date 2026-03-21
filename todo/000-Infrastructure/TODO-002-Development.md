@@ -1,7 +1,7 @@
 # TODO-002 — Development Tooling & Automation ✅
 
 **Status:** Completed — 2026-03-21
-**Documentation:** [development-tooling.md](../../docs/architecture/infrastructure/development-tooling.md)
+**Documentation:** [development-tooling.md](../../docs/infrastructure/development-tooling.md)
 **Commits:** `build.sh`, `Clang/LLD migration`, `unit test framework`, `asset pipeline`, `clangd + Bear` (see git log for full history)
 
 ## Outstanding Future Items
