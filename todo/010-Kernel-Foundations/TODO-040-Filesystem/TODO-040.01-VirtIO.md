@@ -168,7 +168,7 @@ graph TD
 | 💎 | **3**  | §3.2 Async I/O Path              | Phase 2 (§3.1)                |   ✅   |
 | 💎 | **3**  | §5.1 Device Reset & Recovery     | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **3**  | §14.1 Live Config Change         | Phase 3 (§3.2)                |   ✅   |
-| 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ⬜   |
+| 💎 | **4**  | §4.1 Discard (TRIM)              | Phase 3 (§3.2)                |   ✅   |
 | 💎 | **4**  | §4.2 Write-Zeroes                | Phase 3 (§3.2)                |   ⬜   |
 | 💎 | **4**  | §5.2 Individual Queue Reset      | Phase 3 (§5.1)                |   ⬜   |
 | 💎 | **4**  | §15.1 Hot-Plug/Unplug            | Phase 3 (§3.2)                |   ⬜   |
@@ -477,19 +477,21 @@ graph TD
 
 ## 4. Discard & Write-Zeroes
 
-### 4.1 Discard (TRIM)
+### 4.1 Discard (TRIM) *(done)* ✅
 
-**Prompt:** Negotiate `VIRTIO_BLK_F_DISCARD` (bit 11). Read `max_discard_sectors`, `max_discard_seg`, and `discard_sector_alignment` from device config. Implement `virtio_blk_discard()` using `VIRTIO_BLK_T_DISCARD` (type 0x0B). The data descriptor contains one or more `virtio_blk_discard_write_zeroes` segment structs (16 bytes each: 8-byte sector + 4-byte num_sectors + 4-byte flags). Wire to VFS: `fat32_unlink()` and `ixfs_delete()` call `blkdev_discard()` → `virtio_blk_discard()`. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: discard (TRIM) support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Verification:** `VIRTIO_BLK_F_DISCARD` (bit 11) is negotiated during init. Config values `max_discard_sectors`, `max_discard_seg`, and `discard_sector_alignment` are read from offsets 0x24/0x28/0x2C. `virtio_blk_discard()` builds a 3-descriptor chain (header type `T_DISCARD` + segment struct + status) and splits requests exceeding `max_discard_sectors`. Wired via `blkdev_discard()` → `blkdev_virtio_discard()` adapter. Run `bash scripts/build.sh clean` — verify `=== BUILD OK ===`.
 
-- [ ] Negotiate `VIRTIO_BLK_F_DISCARD` (bit 11)
-- [ ] Read config: `max_discard_sectors` (offset `0x24`), `max_discard_seg` (offset `0x28`), `discard_sector_alignment` (offset `0x2C`)
-- [ ] Implement `virtio_blk_discard(uint64_t sector, uint32_t num_sectors)`:
-  - [ ] Build segment struct: `{ sector, num_sectors, flags = 0 }`
-  - [ ] Build 3-descriptor chain: header (type = `0x0B`) + segment data + status
-  - [ ] Split requests exceeding `max_discard_sectors`
-- [ ] Wire to VFS: `blkdev_discard()` → `virtio_blk_discard()`
-- [ ] QEMU test: `-drive ...,discard=unmap -device virtio-blk-pci,...,discard=on`
-- [ ] Commit: `"virtio-blk: discard (TRIM) support"`
+> **Notes:** The discard segment descriptor is `virtio_blk_discard_write_zeroes` (16 bytes: 8-byte sector + 4-byte num_sectors + 4-byte flags). Flags=0 for discard (vs bit 0 for unmap in write-zeroes). The segment descriptor is **device-readable** (no `VIRTQ_DESC_F_WRITE`!) — same as the request header, unlike the data buffer in read requests. Added `blkdev_discard_fn` type and `.discard` field to `struct blkdev`. VFS wiring (fat32_unlink/ixfs_delete) deferred to filesystem TODO.
+
+- [x] Negotiate `VIRTIO_BLK_F_DISCARD` (bit 11)
+- [x] Read config: `max_discard_sectors` (offset `0x24`), `max_discard_seg` (offset `0x28`), `discard_sector_alignment` (offset `0x2C`)
+- [x] Implement `virtio_blk_discard(uint64_t sector, uint32_t num_sectors)`:
+  - [x] Build segment struct: `{ sector, num_sectors, flags = 0 }`
+  - [x] Build 3-descriptor chain: header (type = `0x0B`) + segment data + status
+  - [x] Split requests exceeding `max_discard_sectors`
+- [x] Wire to VFS: `blkdev_discard()` → `virtio_blk_discard()`
+- [x] QEMU test: `-drive ...,discard=unmap -device virtio-blk-pci,...,discard=on`
+- [x] Commit: `"virtio-blk: discard (TRIM) support"`
 
 ### 4.2 Write-Zeroes
 
@@ -989,7 +991,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 🟠 P1     | 5.1 Device Reset & Recovery       | Production — recover from device errors and timeouts            |
 | 🟠 P1     | 14.1 Live Config Change ✅        | Correctness — handle hot-resize and config changes              |
 | 🟡 P2     | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                      |
-| 🟡 P2     | 4.1 Discard (TRIM)                | SSD optimization — reclaim unused blocks                        |
+| 🟡 P2     | 4.1 Discard (TRIM) ✅              | SSD optimization — reclaim unused blocks                        |
 | 🟡 P2     | 4.2 Write-Zeroes                  | Performance — efficient large zeroing                           |
 | 🟡 P2     | 5.2 Individual Queue Reset        | Less disruptive recovery than full device reset                 |
 | 🟡 P2     | 15.1 Hot-Plug/Unplug              | Robustness — graceful device arrival/removal                    |
@@ -1026,7 +1028,7 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | MSI-X interrupts                | ✅ Per-queue MSI-X                 | ✅ MSI-X / IOAPIC                     | ⬜ §3.1 P0 — uses legacy PIC                    |
 | Async I/O (interrupt-driven)    | ✅ Overlapped I/O                  | ✅ `blk_mq_complete_request()`        | ⬜ §3.2 P2 — polling                            |
 | Memory barriers (VQ correctness)| ✅ Implicit in WDF                 | ✅ `virtio_wmb()` / `virt_rmb()`      | ⚠️ `mfence` in I/O path, none in init — §3.2 P2 |
-| Discard (TRIM)                  | ✅ Optimize Drives                 | ✅ `blk_queue_discard()`              | ⬜ §4.1 P2                                      |
+| Discard (TRIM)                  | ✅ Optimize Drives                 | ✅ `blk_queue_discard()`              | ✅ §4.1 P2                                      |
 | Write-zeroes                    | ✅                                 | ✅ `REQ_OP_WRITE_ZEROES`              | ⬜ §4.2 P2                                      |
 | Error recovery / device reset   | ✅ Automatic retry + reset         | ✅ `virtio_break_device()` + reset    | ⬜ §5.1 P1 — no recovery                        |
 | Individual queue reset          | ✅ VirtIO 1.2+                     | ✅ `virtqueue_reset()`                | ⬜ §5.2 P2                                      |

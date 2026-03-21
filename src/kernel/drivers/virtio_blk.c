@@ -47,6 +47,7 @@ static int                    has_blk_size;    /* F_BLK_SIZE negotiated */
 static int                    has_topology;    /* F_TOPOLOGY negotiated */
 static int                    has_size_max;    /* F_SIZE_MAX negotiated */
 static int                    has_seg_max;     /* F_SEG_MAX negotiated */
+static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    is_read_only;    /* F_RO detected */
 
 /* Block size and topology info */
@@ -685,6 +686,179 @@ int virtio_blk_flush(void)
     return -1;
 }
 
+/* ---- Discard (TRIM) ---- */
+
+/* Submit a single discard request for one segment.
+ * Uses 3-descriptor chain: header (T_DISCARD) + segment (device-readable) + status. */
+static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
+{
+    struct virtio_blk_req req;
+    struct virtio_blk_discard_write_zeroes seg;
+    uint8_t status_byte = 0xFF;
+    int d0, d1, d2;
+    uint32_t timeout;
+    uint64_t rflags;
+
+    if (!initialized)
+        return -1;
+
+    /* Build request header — sector field is ignored for discard */
+    req.type     = VIRTIO_BLK_T_DISCARD;
+    req.reserved = 0;
+    req.sector   = 0;
+
+    /* Build discard segment descriptor */
+    seg.sector      = sector;
+    seg.num_sectors = num_sectors;
+    seg.flags       = 0;  /* 0 = discard (not unmap) */
+
+    /* Allocate 3 descriptors */
+    if (blk_vq.num_free < 3) {
+        klog(LOG_DEBUG, "virtio", "No free descriptors for discard");
+        return -1;
+    }
+
+    /* Descriptor 0: request header (device-readable) */
+    d0 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d0].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].addr  = (uint64_t)(uintptr_t)&req;
+    blk_vq.desc[d0].len   = sizeof(struct virtio_blk_req);
+    blk_vq.desc[d0].flags = VIRTQ_DESC_F_NEXT;
+
+    /* Descriptor 1: discard segment data (device-readable — NOT F_WRITE!) */
+    d1 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d1].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d0].next = (uint16_t)d1;
+
+    blk_vq.desc[d1].addr  = (uint64_t)(uintptr_t)&seg;
+    blk_vq.desc[d1].len   = sizeof(struct virtio_blk_discard_write_zeroes);
+    blk_vq.desc[d1].flags = VIRTQ_DESC_F_NEXT;  /* Device-readable: no F_WRITE */
+
+    /* Descriptor 2: status byte (device-writable) */
+    d2 = blk_vq.free_head;
+    blk_vq.free_head = blk_vq.desc[d2].next;
+    blk_vq.num_free--;
+
+    blk_vq.desc[d1].next = (uint16_t)d2;
+
+    blk_vq.desc[d2].addr  = (uint64_t)(uintptr_t)&status_byte;
+    blk_vq.desc[d2].len   = 1;
+    blk_vq.desc[d2].flags = VIRTQ_DESC_F_WRITE;
+    blk_vq.desc[d2].next  = 0;
+
+    /* Add to available ring */
+    uint16_t avail_idx = blk_vq.avail->idx % blk_vq.size;
+    blk_vq.avail->ring[avail_idx] = (uint16_t)d0;
+
+    wmb();
+    blk_vq.avail->idx++;
+    mb();
+
+    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+    virtio_irq_fired = 0;
+    __asm__ volatile ("sti");
+
+    virtq_kick(&blk_vq);
+
+    /* Wait for completion */
+    if (use_events) {
+        if (!event_wait_timeout(&io_completion, 5000)) {
+            klog(LOG_DEBUG, "virtio", "Discard timeout");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return VIRTIO_IO_TIMEOUT;
+        }
+    } else {
+        timeout = 5000000;
+        while (timeout-- > 0) {
+            mb();
+            if (blk_vq.used->idx != blk_vq.last_used)
+                break;
+            __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+        }
+        if (timeout == 0) {
+            klog(LOG_DEBUG, "virtio", "Discard timeout (poll)");
+            if (!(rflags & (1 << 9)))
+                __asm__ volatile ("cli");
+            virtq_free_desc(&blk_vq, (uint16_t)d0);
+            virtq_free_desc(&blk_vq, (uint16_t)d1);
+            virtq_free_desc(&blk_vq, (uint16_t)d2);
+            return VIRTIO_IO_TIMEOUT;
+        }
+    }
+
+    if (!(rflags & (1 << 9)))
+        __asm__ volatile ("cli");
+
+    rmb();
+    blk_vq.last_used++;
+
+    virtq_free_desc(&blk_vq, (uint16_t)d0);
+    virtq_free_desc(&blk_vq, (uint16_t)d1);
+    virtq_free_desc(&blk_vq, (uint16_t)d2);
+
+    if (status_byte == VIRTIO_BLK_S_OK)
+        return VIRTIO_IO_OK;
+    if (status_byte == VIRTIO_BLK_S_UNSUPP) {
+        error_stats.unsupp_errors++;
+        return VIRTIO_IO_UNSUPP;
+    }
+    error_stats.io_errors++;
+    return VIRTIO_IO_IOERR;
+}
+
+/* Public discard API — splits large requests to fit max_discard_sectors */
+int virtio_blk_discard(uint64_t sector, uint32_t num_sectors)
+{
+    int ret;
+    uint32_t max_per_cmd;
+    uint32_t chunk;
+
+    if (!initialized)
+        return -1;
+    if (!has_discard)
+        return 1;  /* Not supported — same convention as flush */
+    if (is_read_only)
+        return 0;  /* RO device — discard is a no-op */
+
+    /* Determine max sectors per discard command */
+    max_per_cmd = topo.max_discard_sectors;
+    if (max_per_cmd == 0)
+        max_per_cmd = num_sectors;  /* No limit — send all at once */
+
+    /* Split large discards into max_per_cmd-sized chunks */
+    while (num_sectors > 0) {
+        chunk = num_sectors;
+        if (chunk > max_per_cmd)
+            chunk = max_per_cmd;
+
+        ret = virtio_blk_do_discard(sector, chunk);
+        if (ret == VIRTIO_IO_TIMEOUT) {
+            error_stats.timeouts++;
+            klog(LOG_DEBUG, "virtio", "Discard: timeout, triggering reset");
+            virtio_blk_reset();
+            return -1;
+        }
+        if (ret != VIRTIO_IO_OK) {
+            klog(LOG_DEBUG, "virtio", "Discard: failed at sector %u (%u sectors)",
+                   sector, (uint64_t)chunk);
+            return -1;
+        }
+
+        sector += chunk;
+        num_sectors -= chunk;
+    }
+
+    return 0;
+}
+
 int virtio_blk_init(void)
 {
     struct pci_device dev;
@@ -702,6 +876,9 @@ int virtio_blk_init(void)
     topo.opt_io_size = 0;
     topo.size_max = 0;
     topo.seg_max = 0;
+    topo.max_discard_sectors = 0;
+    topo.max_discard_seg = 0;
+    topo.discard_sector_alignment = 0;
 
     /* Scan PCI for virtio-blk: modern ID 0x1042 or transitional ID 0x1001 */
     for (bus = 0; bus < 8 && !found; bus++) {
@@ -820,6 +997,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Device is READ-ONLY (F_RO)");
     }
 
+    /* Negotiate F_DISCARD (bit 11): discard (TRIM/UNMAP) support */
+    if (feat_lo & (1u << VIRTIO_BLK_F_DISCARD)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_DISCARD);
+        has_discard = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_DISCARD (TRIM)");
+    }
+
     /* Accept VIRTIO_F_VERSION_1 (bit 0 of page 1) */
     {
         uint32_t feat_hi = read_device_features(1);
@@ -921,6 +1105,20 @@ int virtio_blk_init(void)
             (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_SEG_MAX));
         klog(LOG_DEBUG, "virtio", "Max segments/request: %u",
                (uint64_t)topo.seg_max);
+    }
+
+    /* Read discard limits if F_DISCARD negotiated */
+    if (has_discard && blk_dev.device_cfg) {
+        topo.max_discard_sectors = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MAX_DISCARD_SECTORS));
+        topo.max_discard_seg = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_MAX_DISCARD_SEG));
+        topo.discard_sector_alignment = mmio_read32(
+            (volatile uint32_t *)(blk_dev.device_cfg + VIRTIO_BLK_CFG_DISCARD_ALIGN));
+        klog(LOG_DEBUG, "virtio", "Discard: max_sectors=%u max_seg=%u align=%u",
+               (uint64_t)topo.max_discard_sectors,
+               (uint64_t)topo.max_discard_seg,
+               (uint64_t)topo.discard_sector_alignment);
     }
 
     /* Check for DEVICE_NEEDS_RESET — abort if device signalled failure */

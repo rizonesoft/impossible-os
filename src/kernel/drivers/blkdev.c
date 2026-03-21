@@ -52,6 +52,7 @@ int blkdev_register(const struct blkdev *dev)
     d->read         = dev->read;
     d->write        = dev->write;
     d->flush        = dev->flush;
+    d->discard      = dev->discard;
     d->driver_data  = dev->driver_data;
     d->active       = 1;
 
@@ -102,6 +103,16 @@ int blkdev_sync(const struct blkdev *dev)
     if (!dev->flush)
         return 0;
     return dev->flush(dev->driver_data);
+}
+
+int blkdev_discard(const struct blkdev *dev, uint64_t lba, uint32_t count)
+{
+    if (!dev || !dev->active)
+        return -1;
+    /* If no discard callback, device doesn't support TRIM — success (no-op) */
+    if (!dev->discard)
+        return 0;
+    return dev->discard(lba, count, dev->driver_data);
 }
 
 int blkdev_count(void)

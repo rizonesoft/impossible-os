@@ -21,10 +21,11 @@
 #define VIRTIO_BLK_DEVICE_ID_LEG 0x1001  /* legacy / transitional */
 
 /* VirtIO block request types (VirtIO 1.2 §5.2.6) */
-#define VIRTIO_BLK_T_IN    0   /* read */
-#define VIRTIO_BLK_T_OUT   1   /* write */
-#define VIRTIO_BLK_T_FLUSH 4   /* flush volatile cache to persistent storage */
-#define VIRTIO_BLK_T_GET_ID 8  /* retrieve device serial number (20 bytes) */
+#define VIRTIO_BLK_T_IN       0     /* read */
+#define VIRTIO_BLK_T_OUT      1     /* write */
+#define VIRTIO_BLK_T_FLUSH    4     /* flush volatile cache to persistent storage */
+#define VIRTIO_BLK_T_GET_ID   8     /* retrieve device serial number (20 bytes) */
+#define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
 
 /* Device serial number length (VirtIO 1.2 §5.2.6.1) */
 #define VIRTIO_BLK_ID_BYTES 20
@@ -45,6 +46,7 @@
 #define VIRTIO_BLK_F_FLUSH       6   /* Cache flush command supported */
 #define VIRTIO_BLK_F_TOPOLOGY    7   /* Topology info in config */
 #define VIRTIO_BLK_F_CONFIG_WCE  9   /* Writeback cache enable is negotiable */
+#define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
 #define VIRTIO_F_VERSION_1      32   /* VirtIO 1.0 modern */
 
 /* VirtIO block device config offsets (within device_cfg MMIO region)
@@ -59,11 +61,23 @@
 #define VIRTIO_BLK_CFG_OPT_IO_SIZE     0x1C  /* uint32_t: optimal (suggested max) I/O size (blocks) */
 #define VIRTIO_BLK_CFG_WRITEBACK       0x20  /* uint8_t:  0=writethrough, 1=writeback */
 
+/* Discard config offsets (VirtIO 1.2 §5.2.4, present when F_DISCARD) */
+#define VIRTIO_BLK_CFG_MAX_DISCARD_SECTORS 0x24  /* uint32_t: max sectors per discard */
+#define VIRTIO_BLK_CFG_MAX_DISCARD_SEG     0x28  /* uint32_t: max discard segments */
+#define VIRTIO_BLK_CFG_DISCARD_ALIGN       0x2C  /* uint32_t: sector alignment */
+
 /* VirtIO block request header */
 struct virtio_blk_req {
     uint32_t type;     /* VIRTIO_BLK_T_* */
     uint32_t reserved;
     uint64_t sector;   /* starting sector (LBA) */
+} __attribute__((packed));
+
+/* Discard/write-zeroes segment descriptor (VirtIO 1.2 §5.2.6.1) */
+struct virtio_blk_discard_write_zeroes {
+    uint64_t sector;       /* Starting sector to discard */
+    uint32_t num_sectors;  /* Number of sectors to discard */
+    uint32_t flags;        /* 0 = discard, bit 0 set = unmap (for write-zeroes) */
 } __attribute__((packed));
 
 /* Topology and segment limit information (populated during init) */
@@ -75,6 +89,9 @@ struct virtio_blk_topology {
     uint32_t opt_io_size;        /* Optimal I/O size in logical blocks */
     uint32_t size_max;           /* Max bytes per segment (0 = no limit) */
     uint32_t seg_max;            /* Max segments per request (0 = no limit) */
+    uint32_t max_discard_sectors; /* Max sectors per discard cmd (0 = no limit) */
+    uint32_t max_discard_seg;    /* Max discard segments per cmd (0 = no limit) */
+    uint32_t discard_sector_alignment; /* Discard sector alignment (0 = none) */
 };
 
 /* --- API --- */
@@ -94,6 +111,12 @@ int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer);
  * Only available when VIRTIO_BLK_F_FLUSH was negotiated.
  * Returns 0 on success, -1 on error, 1 if flush not supported. */
 int virtio_blk_flush(void);
+
+/* Discard (TRIM) sectors starting at 'sector' for 'num_sectors'.
+ * Tells the device that these sectors are no longer in use.
+ * Only available when VIRTIO_BLK_F_DISCARD was negotiated.
+ * Returns 0 on success, -1 on error, 1 if discard not supported. */
+int virtio_blk_discard(uint64_t sector, uint32_t num_sectors);
 
 /* Enable/disable writeback cache mode.
  * Only available when VIRTIO_BLK_F_CONFIG_WCE was negotiated.

@@ -21,6 +21,8 @@ typedef int (*blkdev_read_fn)(uint64_t lba, uint32_t count, void *buf,
 typedef int (*blkdev_write_fn)(uint64_t lba, uint32_t count, const void *buf,
                                 void *driver_data);
 typedef int (*blkdev_flush_fn)(void *driver_data);
+typedef int (*blkdev_discard_fn)(uint64_t sector, uint32_t num_sectors,
+                                 void *driver_data);
 
 /* Block device descriptor */
 struct blkdev {
@@ -30,6 +32,7 @@ struct blkdev {
     blkdev_read_fn  read;        /* Driver read function */
     blkdev_write_fn write;       /* Driver write function */
     blkdev_flush_fn flush;       /* Driver flush function (NULL = no cache) */
+    blkdev_discard_fn discard;   /* Driver discard/TRIM function (NULL = none) */
     void        *driver_data;    /* Opaque pointer passed to callbacks */
     uint8_t      active;         /* 1 if registered and valid */
 };
@@ -59,6 +62,11 @@ int blkdev_write(const struct blkdev *dev, uint64_t lba, uint32_t count,
  * Calls the driver's flush callback if available.
  * Returns 0 on success (or if no flush needed), -1 on error. */
 int blkdev_sync(const struct blkdev *dev);
+
+/* Discard (TRIM) 'count' sectors starting at LBA.
+ * Calls the driver's discard callback if available.
+ * Returns 0 on success (or if no discard), -1 on error. */
+int blkdev_discard(const struct blkdev *dev, uint64_t lba, uint32_t count);
 
 /* Get total number of registered block devices. */
 int blkdev_count(void);

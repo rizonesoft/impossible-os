@@ -36,6 +36,13 @@ static int blkdev_virtio_flush(void *driver_data)
     return virtio_blk_flush();
 }
 
+static int blkdev_virtio_discard(uint64_t sector, uint32_t num_sectors,
+                                 void *driver_data)
+{
+    (void)driver_data;
+    return virtio_blk_discard(sector, num_sectors);
+}
+
 static int blkdev_ahci_read(uint64_t lba, uint32_t count, void *buf,
                               void *driver_data)
 {
@@ -225,6 +232,7 @@ void blkdev_register_all(void)
         bd.read  = blkdev_virtio_read;
         bd.write = blkdev_virtio_write;
         bd.flush = blkdev_virtio_flush;
+        bd.discard = blkdev_virtio_discard;
         bd.driver_data  = (void *)0;
         blkdev_register(&bd);
     }
