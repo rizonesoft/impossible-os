@@ -18,8 +18,11 @@
 
 #include "kernel/drivers/ahci.h"
 #include "kernel/drivers/pci.h"
+#include "kernel/drivers/ioapic.h"
+#include "kernel/irq.h"
 #include "kernel/mm/heap.h"
 #include "kernel/mm/vmm.h"
+#include "kernel/sched/event.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
 
@@ -50,6 +53,14 @@ static int               num_drives;   /* Detected SATA drives */
 static int               atapi_map[AHCI_MAX_PORTS]; /* Index into ports[] for ATAPI */
 static int               num_atapi;    /* Detected ATAPI devices */
 static int               initialized;
+static int               num_ports_total; /* Total active ports (SATA + ATAPI) */
+
+/* ---- Interrupt state ---- */
+static uint8_t           ahci_pci_bus;  /* PCI bus of AHCI controller */
+static uint8_t           ahci_pci_slot; /* PCI slot of AHCI controller */
+static uint8_t           ahci_pci_func; /* PCI function of AHCI controller */
+static uint8_t           ahci_irq_vector; /* Allocated IDT vector */
+static int               use_events;   /* 1 after IRQ setup, 0 during boot */
 
 /* ---- Map MMIO region ---- */
 static void ahci_map_mmio(uint64_t phys, uint32_t size)
@@ -223,10 +234,16 @@ static int port_init(struct ahci_port *p, int port_num)
     /* Clear interrupt status */
     port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
 
-    /* Disable per-port interrupts — we use polling, not IRQ-driven I/O.
-     * Under WHPX, enabling AHCI interrupts without a registered handler
-     * creates an unhandled interrupt storm on the PCI IRQ line. */
-    port_write(pregs, AHCI_PxIE, 0x00);
+    /* Enable per-port interrupts for completion and error events.
+     * The ISR is registered later in ahci_init(); during early port init
+     * we use polling (use_events == 0) so these bits are harmless until
+     * GHC.IE is enabled globally. */
+    port_write(pregs, AHCI_PxIE,
+               AHCI_PxIS_DHRS | AHCI_PxIS_PSS | AHCI_PxIS_DSS |
+               AHCI_PxIS_SDBS | AHCI_PxIS_TFES);
+
+    /* Initialize per-port completion event (auto-reset, initially unsignalled) */
+    event_init(&p->completion, "ahci_port", EVENT_AUTO_RESET, 0);
 
     /* Start command engine */
     port_start_cmd(pregs);
@@ -235,38 +252,81 @@ static int port_init(struct ahci_port *p, int port_num)
     return 0;
 }
 
+/* ---- AHCI interrupt service routine ---- */
+static void ahci_irq_handler(uint8_t vector, void *ctx)
+{
+    uint32_t is;
+    int i;
+
+    (void)vector;
+    (void)ctx;
+
+    /* Read global interrupt status — one bit per port */
+    is = ahci_read32(abar, AHCI_IS);
+    if (!is)
+        return;  /* Spurious */
+
+    for (i = 0; i < num_ports_total; i++) {
+        if (!ports[i].active)
+            continue;
+        if (!(is & (1U << ports[i].port_num)))
+            continue;
+
+        /* Read and clear per-port interrupt status (write-1-to-clear).
+         * Must clear PxIS BEFORE clearing global IS — AHCI uses
+         * level-triggered interrupts; if PxIS still has bits set when
+         * IS is cleared, the HBA re-asserts the interrupt line. */
+        uint32_t pxis = port_read(ports[i].regs, AHCI_PxIS);
+        port_write(ports[i].regs, AHCI_PxIS, pxis);
+
+        /* Wake the thread waiting on this port */
+        event_set(&ports[i].completion);
+    }
+
+    /* Clear global IS (write-1-to-clear) */
+    ahci_write32(abar, AHCI_IS, is);
+}
+
 /* ---- Issue a command and wait for completion ---- */
 static int port_issue_cmd(struct ahci_port *p, int slot)
 {
     volatile uint8_t *pregs = p->regs;
-    uint32_t timeout = 5000000;
     uint32_t tfd;
 
     /* Issue command */
     port_write(pregs, AHCI_PxCI, 1U << slot);
 
-    /* Poll for completion: wait for CI bit to clear */
-    while (timeout--) {
-        uint32_t ci = port_read(pregs, AHCI_PxCI);
-        if (!(ci & (1U << slot)))
-            break;
+    if (use_events) {
+        /* ---- Interrupt-driven path ---- */
+        int signalled = event_wait_timeout(&p->completion, 5000);
+        if (!signalled) {
+            klog(LOG_DEBUG, "ahci", "Port %u: command timeout (IRQ)",
+                   (uint64_t)p->port_num);
+            return -1;
+        }
+    } else {
+        /* ---- Polling fallback (pre-scheduler boot) ---- */
+        uint32_t timeout = 5000000;
+        while (timeout--) {
+            uint32_t ci = port_read(pregs, AHCI_PxCI);
+            if (!(ci & (1U << slot)))
+                break;
 
-        /* Check for errors */
-        tfd = port_read(pregs, AHCI_PxTFD);
-        if (tfd & (AHCI_PxTFD_ERR | AHCI_PxTFD_BSY)) {
+            tfd = port_read(pregs, AHCI_PxTFD);
             if (tfd & AHCI_PxTFD_ERR) {
                 klog(LOG_DEBUG, "ahci", "Port %u: TFD error 0x%x",
                        (uint64_t)p->port_num, (uint64_t)tfd);
                 return -1;
             }
         }
-        /* No PAUSE — triggers Hyper-V PLE (~100ms stall per iter) */
-    }
+        if (timeout == 0) {
+            klog(LOG_DEBUG, "ahci", "Port %u: command timeout (poll)",
+                   (uint64_t)p->port_num);
+            return -1;
+        }
 
-    if (timeout == 0) {
-        klog(LOG_DEBUG, "ahci", "Port %u: command timeout",
-               (uint64_t)p->port_num);
-        return -1;
+        /* Clear interrupt status (polling path) */
+        port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
     }
 
     /* Check final TFD for errors */
@@ -276,9 +336,6 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
                (uint64_t)p->port_num, (uint64_t)tfd);
         return -1;
     }
-
-    /* Clear interrupt status */
-    port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
 
     return 0;
 }
@@ -706,7 +763,12 @@ int ahci_init(void)
     klog(LOG_DEBUG, "ahci", "Found controller at PCI %u:%u.%u",
            (uint64_t)bus, (uint64_t)slot, (uint64_t)func);
 
-    /* Enable bus mastering, memory space, and interrupt disable */
+    /* Save PCI location for IRQ setup later */
+    ahci_pci_bus  = bus;
+    ahci_pci_slot = slot;
+    ahci_pci_func = func;
+
+    /* Enable bus mastering, memory space, and clear interrupt disable */
     {
         uint16_t cmd = pci_read16(bus, slot, func, PCI_COMMAND);
         cmd |= PCI_CMD_BUS_MASTER | PCI_CMD_MEM_SPACE;
@@ -756,11 +818,8 @@ int ahci_init(void)
     /* Clear global interrupt status */
     ahci_write32(abar, AHCI_IS, ahci_read32(abar, AHCI_IS));
 
-    /* Disable global interrupts — we use polling, not IRQ-driven I/O.
-     * Under WHPX, unhandled AHCI interrupts cause interrupt storms. */
-    ghc = ahci_read32(abar, AHCI_GHC);
-    ghc &= ~AHCI_GHC_IE;
-    ahci_write32(abar, AHCI_GHC, ghc);
+    /* Keep GHC.IE disabled during port enumeration — we use polling
+     * for IDENTIFY commands. IRQs are enabled after port init. */
 
     /* Initialize each implemented port */
     num_drives = 0;
@@ -817,6 +876,49 @@ int ahci_init(void)
     if (num_drives == 0 && num_atapi == 0) {
         klog(LOG_WARN, "ahci", "AHCI: no devices detected");
         return -1;
+    }
+
+    num_ports_total = num_drives + num_atapi;
+
+    /* ---- Set up interrupt-driven I/O ---- */
+    {
+        uint8_t pci_irq_line = pci_read8(ahci_pci_bus, ahci_pci_slot,
+                                          ahci_pci_func, 0x3C);
+
+        if (pci_irq_line != 0 && pci_irq_line != 0xFF &&
+            ioapic_available()) {
+            ahci_irq_vector = irq_alloc_vector();
+            if (ahci_irq_vector) {
+                irq_register(ahci_irq_vector, ahci_irq_handler,
+                             NULL, "ahci");
+
+                /* Route PCI interrupt line via IOAPIC.
+                 * PCI INTx is level-triggered, active-low:
+                 *   flags bits 0-1 = 0x03 (active low)
+                 *   flags bits 2-3 = 0x0C (level triggered)
+                 *   combined = 0x0F */
+                ioapic_route_irq(pci_irq_line, ahci_irq_vector,
+                                 0, 0x0F);
+
+                /* Enable global AHCI interrupts */
+                ghc = ahci_read32(abar, AHCI_GHC);
+                ghc |= AHCI_GHC_IE;
+                ahci_write32(abar, AHCI_GHC, ghc);
+
+                use_events = 1;
+                klog(LOG_INFO, "ahci",
+                       "AHCI: IRQ %u -> vector 0x%x (interrupt-driven I/O)",
+                       (uint64_t)pci_irq_line,
+                       (uint64_t)ahci_irq_vector);
+            } else {
+                klog(LOG_WARN, "ahci",
+                       "AHCI: no free IRQ vector, using polling");
+            }
+        } else {
+            klog(LOG_WARN, "ahci",
+                   "AHCI: no PCI IRQ line (0x%x), using polling",
+                   (uint64_t)pci_irq_line);
+        }
     }
 
     initialized = 1;

@@ -16,6 +16,7 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/sched/event.h"
 
 /* ---- PCI identification ---- */
 #define AHCI_PCI_CLASS      0x01   /* Mass Storage */
@@ -57,6 +58,13 @@
 #define AHCI_PxSERR         0x30   /* SATA Error (SCR1: SError) */
 #define AHCI_PxSACT         0x34   /* SATA Active */
 #define AHCI_PxCI           0x38   /* Command Issue */
+
+/* PxIS interrupt status bits (write-1-to-clear) */
+#define AHCI_PxIS_DHRS      (1U << 0)   /* D2H Register FIS Interrupt */
+#define AHCI_PxIS_PSS       (1U << 1)   /* PIO Setup FIS Interrupt */
+#define AHCI_PxIS_DSS       (1U << 2)   /* DMA Setup FIS Interrupt */
+#define AHCI_PxIS_SDBS      (1U << 3)   /* Set Device Bits Interrupt */
+#define AHCI_PxIS_TFES      (1U << 30)  /* Task File Error Status */
 
 /* PxCMD bits */
 #define AHCI_PxCMD_ST       (1U << 0)   /* Start */
@@ -170,6 +178,7 @@ struct ahci_port {
     struct ahci_cmd_header *cmdlist; /* Command list (32 headers) */
     void    *fis_base;     /* FIS receive buffer (256 bytes) */
     struct ahci_cmd_tbl *cmdtbl[32]; /* Command tables */
+    event_t  completion;   /* Per-port I/O completion event (IRQ-driven) */
 };
 
 /* Max ports supported */

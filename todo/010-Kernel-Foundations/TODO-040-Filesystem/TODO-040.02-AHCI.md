@@ -149,7 +149,7 @@ graph TD
 | 💎 | **0** | `TODO-040.04` / `TODO-040.05`   | Partition detection         | MBR/GPT parsing → AHCI-backed partitions discoverable                   | —                               |   ✅   |
 | 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports               | —                               |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ⬜   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ⬜   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ⬜   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ⬜   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ⬜   |
@@ -242,18 +242,27 @@ graph TD
 
 ## 1. Interrupt-Driven I/O
 
-### 1.1 AHCI Interrupt Handler
+### 1.1 AHCI Interrupt Handler *(done)* ✅
 
-**Prompt:** The current driver uses polling (`while ((port_read(PxCI) & (1 << slot))`) to wait for command completion — this wastes CPU cycles and blocks the calling thread. Replace with interrupt-driven I/O: register an IRQ handler for the AHCI PCI interrupt, enable `GHC.IE` (Global HBA Control, Interrupt Enable), and set `PxIE` (Port Interrupt Enable) bits for each active port. The ISR reads the global `IS` register to identify which ports fired, then reads `PxIS` to determine the cause (DHRS for D2H FIS, PSS for PIO Setup, etc.). Clear `PxIS` by writing-1-to-clear, then clear `IS`. Wake the blocked thread via a per-port completion event. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: interrupt-driven I/O"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that AHCI interrupt-driven I/O is correctly implemented: (1) `ahci.h` defines `PxIS` status bits (`DHRS`, `PSS`, `DSS`, `SDBS`, `TFES`) and `struct ahci_port` has an `event_t completion` field. (2) `ahci.c` contains `ahci_irq_handler()` that reads `IS` → per-port `PxIS` → clears `PxIS` before `IS` → calls `event_set()`. (3) `port_issue_cmd()` uses `event_wait_timeout(5000)` when `use_events == 1`, with polling fallback when `use_events == 0`. (4) `port_init()` enables `PxIE` bits and initializes the completion event. (5) `ahci_init()` reads PCI interrupt line (`0x3C`), allocates an IDT vector via `irq_alloc_vector()`, registers the handler via `irq_register()`, routes via `ioapic_route_irq()` with level-triggered active-low flags (`0x0F`), and enables `GHC.IE`. (6) Build passes with `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Register AHCI IRQ handler via IOAPIC routing (PCI interrupt line from config space offset `3Ch`)
-- [ ] Enable `GHC.IE` (bit 1 of Global HBA Control, offset `04h`)
-- [ ] Enable `PxIE` for each active port: at minimum `DHRS` (D2H Register FIS), `PSS` (PIO Setup), `DSS` (DMA Setup), `SDBS` (Set Device Bits), `TFES` (Task File Error)
-- [ ] ISR: read `IS` → for each set bit, read `PxIS` → handle completion/error → clear `PxIS` → clear `IS`
-- [ ] Add per-port `event_t completion` — `event_wait()` in `port_issue_cmd()`, `event_set()` in ISR
-- [ ] Remove polling loop from `port_issue_cmd()`
-- [ ] Retain a polling fallback with configurable timeout (5s) for pre-scheduler boot
-- [ ] Commit: `"ahci: interrupt-driven I/O"`
+> [!NOTE]
+> **Implementation Notes:**
+> - IOAPIC flags `0x0F` = polarity active-low (0x03) | trigger level (0x0C) — required for PCI INTx
+> - `PxIS` cleared BEFORE `IS` — AHCI level-triggered: clearing `IS` first causes re-assertion
+> - `use_events` flag gates polling vs interrupt path — IDENTIFY commands during `ahci_init()` run via polling before IRQ is registered
+> - `event_t` uses `EVENT_AUTO_RESET` — self-clears after each `event_wait_timeout()` wakeup
+> - Polling fallback retained with 5s timeout for pre-scheduler boot phase
+> - PCI B/D/F saved to module-level statics for IRQ setup at end of `ahci_init()`
+
+- [x] Register AHCI IRQ handler via IOAPIC routing (PCI interrupt line from config space offset `3Ch`)
+- [x] Enable `GHC.IE` (bit 1 of Global HBA Control, offset `04h`)
+- [x] Enable `PxIE` for each active port: at minimum `DHRS` (D2H Register FIS), `PSS` (PIO Setup), `DSS` (DMA Setup), `SDBS` (Set Device Bits), `TFES` (Task File Error)
+- [x] ISR: read `IS` → for each set bit, read `PxIS` → handle completion/error → clear `PxIS` → clear `IS`
+- [x] Add per-port `event_t completion` — `event_wait()` in `port_issue_cmd()`, `event_set()` in ISR
+- [x] Remove polling loop from `port_issue_cmd()`
+- [x] Retain a polling fallback with configurable timeout (5s) for pre-scheduler boot
+- [x] Commit: `"ahci: interrupt-driven I/O"`
 
 ### 1.2 MSI / MSI-X Support
 
