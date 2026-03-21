@@ -90,26 +90,26 @@ to the guest if the highest bit of the standard CPUID feature flags is set; spec
 Once basic hypervisor presence is confirmed, the guest operating system must
 systematically query the Hyper-V specific leaves:
 
-| CPUID Leaf     | Macro Definition                          | Description |
-|----------------|-------------------------------------------|-------------|
-| `0x40000000`   | `HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS`   | Returns the maximum supported hypervisor CPUID leaf in EAX. Vendor signature across EBX, ECX, EDX must concatenate to ASCII `"Microsoft Hv"`. |
-| `0x40000001`   | `HYPERV_CPUID_INTERFACE`                  | Returns the hypervisor interface signature. EAX must return `"Hv#1"` (`0x31237648`). |
-| `0x40000002`   | `HYPERV_CPUID_VERSION`                    | Returns hypervisor build number, major version, minor version, and service pack across EAX–EDX. |
-| `0x40000003`   | `HYPERV_CPUID_FEATURES`                   | Returns critical bitmask of architectural features available to the partition. |
-| `0x40000004`   | `HYPERV_CPUID_ENLIGHTMENT_INFO`           | Returns recommendations for which enlightenments the guest should implement. |
-| `0x40000005`   | `HYPERV_CPUID_IMPLEMENT_LIMITS`           | Returns maximum hardware limits (e.g., max virtual processors). |
+| CPUID Leaf   | Macro Definition                        | Description                                                                                                                                    |
+| ------------ | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0x40000000` | `HYPERV_CPUID_VENDOR_AND_MAX_FUNCTIONS` | Returns the maximum supported hypervisor CPUID leaf in EAX. Vendor signature across EBX, ECX, EDX must concatenate to ASCII `"Microsoft Hv"`. |
+| `0x40000001` | `HYPERV_CPUID_INTERFACE`                | Returns the hypervisor interface signature. EAX must return `"Hv#1"` (`0x31237648`).                                                          |
+| `0x40000002` | `HYPERV_CPUID_VERSION`                  | Returns hypervisor build number, major version, minor version, and service pack across EAX–EDX.                                                |
+| `0x40000003` | `HYPERV_CPUID_FEATURES`                 | Returns critical bitmask of architectural features available to the partition.                                                                  |
+| `0x40000004` | `HYPERV_CPUID_ENLIGHTMENT_INFO`         | Returns recommendations for which enlightenments the guest should implement.                                                                   |
+| `0x40000005` | `HYPERV_CPUID_IMPLEMENT_LIMITS`         | Returns maximum hardware limits (e.g., max virtual processors).                                                                                |
 
 #### Feature Flags (CPUID 0x40000003, EAX)
 
-| Bit | Macro Definition                        | Description |
-|-----|-----------------------------------------|-------------|
-| 0   | `HV_X64_MSR_VP_RUNTIME_AVAILABLE`      | VP Runtime MSR available — query precise execution time. |
-| 1   | `HV_X64_MSR_TIME_REF_COUNT_AVAILABLE`  | Partition Reference Counter available — monotonic time source. |
-| 2   | `HV_X64_MSR_SYNIC_AVAILABLE`           | **SynIC MSRs available** (SCONTROL, SIMP, SIEFP, EOM, SINT0–SINT15). **Mandatory for VMBus.** |
-| 3   | `HV_X64_MSR_SYNTIMER_AVAILABLE`        | Synthetic Timer MSRs available. |
-| 4   | `HV_X64_MSR_APIC_ACCESS_AVAILABLE`     | APIC access MSRs (EOI, ICR, TPR) for optimized interrupt routing. |
-| 9   | `HV_X64_MSR_REFERENCE_TSC_AVAILABLE`   | Reference TSC page present. |
-| 11  | `HV_X64_MSR_APIC_FREQUENCY_AVAILABLE`  | MSRs to retrieve LAPIC timer frequency and TSC frequency. |
+| Bit | Macro Definition                       | Description                                                                                       |
+| --- | -------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 0   | `HV_X64_MSR_VP_RUNTIME_AVAILABLE`     | VP Runtime MSR available — query precise execution time.                                          |
+| 1   | `HV_X64_MSR_TIME_REF_COUNT_AVAILABLE` | Partition Reference Counter available — monotonic time source.                                     |
+| 2   | `HV_X64_MSR_SYNIC_AVAILABLE`          | **SynIC MSRs available** (SCONTROL, SIMP, SIEFP, EOM, SINT0–SINT15). **Mandatory for VMBus.**    |
+| 3   | `HV_X64_MSR_SYNTIMER_AVAILABLE`       | Synthetic Timer MSRs available.                                                                   |
+| 4   | `HV_X64_MSR_APIC_ACCESS_AVAILABLE`    | APIC access MSRs (EOI, ICR, TPR) for optimized interrupt routing.                                 |
+| 9   | `HV_X64_MSR_REFERENCE_TSC_AVAILABLE`  | Reference TSC page present.                                                                       |
+| 11  | `HV_X64_MSR_APIC_FREQUENCY_AVAILABLE` | MSRs to retrieve LAPIC timer frequency and TSC frequency.                                         |
 
 > [!IMPORTANT]
 > A conforming guest targeting VMBus integration **must** verify that **Bit 2**
@@ -178,12 +178,12 @@ into a memory page provided by the guest.
 
 The Hyper-V hypercall ABI for x64 uses register-based parameter passing:
 
-| Register | Purpose |
-|----------|---------|
-| **RCX**  | Hypercall code (operation identifier) + control flags (including "Fast" bit) |
+| Register | Purpose                                                                       |
+| -------- | ----------------------------------------------------------------------------- |
+| **RCX**  | Hypercall code (operation identifier) + control flags (including "Fast" bit)  |
 | **RDX**  | GPA of input parameter block (8-byte aligned, should not cross page boundary) |
-| **R8**   | GPA of output parameter block |
-| **RAX**  | Return value — 64-bit status code (set by hypervisor on return) |
+| **R8**   | GPA of output parameter block                                                 |
+| **RAX**  | Return value — 64-bit status code (set by hypervisor on return)               |
 
 #### 3.2.1 Fast Hypercalls (XMM Register Optimization)
 
@@ -197,16 +197,16 @@ convention:
 
 ### 3.3 Hypercall Status Codes
 
-| Hex Value  | Macro Definition                      | Description |
-|------------|---------------------------------------|-------------|
-| `0x0000`   | `HV_STATUS_SUCCESS`                   | Hypercall executed successfully. |
-| `0x0002`   | `HV_STATUS_INVALID_HYPERCALL_CODE`    | Unrecognized opcode in RCX. |
-| `0x0003`   | `HV_STATUS_INVALID_HYPERCALL_INPUT`   | Invalid input parameters or rep count. |
-| `0x0004`   | `HV_STATUS_INVALID_ALIGNMENT`         | Input/output blocks not 8-byte aligned. |
-| `0x0005`   | `HV_STATUS_ACCESS_DENIED`             | Partition lacks required privileges. |
-| `0x0011`   | `HV_STATUS_INVALID_PORT_ID`           | Port ID is invalid or deleted. |
-| `0x0012`   | `HV_STATUS_INVALID_CONNECTION_ID`     | Connection ID is invalid. |
-| `0x0013`   | `HV_STATUS_INSUFFICIENT_BUFFERS`      | Target port has no available message buffers. |
+| Hex Value | Macro Definition                    | Description                                      |
+| --------- | ----------------------------------- | ------------------------------------------------ |
+| `0x0000`  | `HV_STATUS_SUCCESS`                 | Hypercall executed successfully.                  |
+| `0x0002`  | `HV_STATUS_INVALID_HYPERCALL_CODE`  | Unrecognized opcode in RCX.                       |
+| `0x0003`  | `HV_STATUS_INVALID_HYPERCALL_INPUT` | Invalid input parameters or rep count.            |
+| `0x0004`  | `HV_STATUS_INVALID_ALIGNMENT`       | Input/output blocks not 8-byte aligned.           |
+| `0x0005`  | `HV_STATUS_ACCESS_DENIED`           | Partition lacks required privileges.              |
+| `0x0011`  | `HV_STATUS_INVALID_PORT_ID`         | Port ID is invalid or deleted.                    |
+| `0x0012`  | `HV_STATUS_INVALID_CONNECTION_ID`   | Connection ID is invalid.                         |
+| `0x0013`  | `HV_STATUS_INSUFFICIENT_BUFFERS`    | Target port has no available message buffers.      |
 
 > [!NOTE]
 > The two most frequently used hypercalls for VMBus integration are
@@ -229,27 +229,27 @@ virtual processor maintains its own distinct, private SynIC instance.
 
 ### 4.1 SynIC MSR Architecture
 
-| MSR Macro Name           | Address        | Description |
-|--------------------------|----------------|-------------|
-| `HV_X64_MSR_SCONTROL`   | `0x40000080`   | Global SynIC Control Register — enable/disable SynIC per VP. |
-| `HV_X64_MSR_SVERSION`   | `0x40000081`   | Read-only — SynIC architectural version. |
-| `HV_X64_MSR_SIEFP`      | `0x40000082`   | Physical address of Event Flags Page (bit-based signaling). |
-| `HV_X64_MSR_SIMP`       | `0x40000083`   | Physical address of Message Page (structured payload delivery). |
-| `HV_X64_MSR_EOM`        | `0x40000084`   | End of Message — acknowledge message processing. |
-| `HV_X64_MSR_SINT0`–`HV_X64_MSR_SINT15` | `0x40000090`–`0x4000009F` | 16 Synthetic Interrupt Source Registers. |
+| MSR Macro Name                          | Address                    | Description                                                  |
+| --------------------------------------- | -------------------------- | ------------------------------------------------------------ |
+| `HV_X64_MSR_SCONTROL`                  | `0x40000080`               | Global SynIC Control Register — enable/disable SynIC per VP. |
+| `HV_X64_MSR_SVERSION`                  | `0x40000081`               | Read-only — SynIC architectural version.                     |
+| `HV_X64_MSR_SIEFP`                     | `0x40000082`               | Physical address of Event Flags Page (bit-based signaling).  |
+| `HV_X64_MSR_SIMP`                      | `0x40000083`               | Physical address of Message Page (structured payload delivery). |
+| `HV_X64_MSR_EOM`                       | `0x40000084`               | End of Message — acknowledge message processing.             |
+| `HV_X64_MSR_SINT0`–`HV_X64_MSR_SINT15` | `0x40000090`–`0x4000009F` | 16 Synthetic Interrupt Source Registers.                      |
 
 ### 4.2 SINT Register Bitfield Layout
 
 Each 64-bit SINT register defines routing behavior for a specific interrupt source:
 
-| Bit Range | Field Name | Description |
-|-----------|------------|-------------|
-| 0:7       | `Vector`   | Local APIC vector (`0x10`–`0xFF`) injected when a message/event arrives. |
-| 8:15      | `RsvdP`    | Reserved — must be zero. |
-| 16        | `Masked`   | If 1, SINT is masked. Messages queue but interrupt is not delivered. |
+| Bit Range | Field Name | Description                                                                  |
+| --------- | ---------- | ---------------------------------------------------------------------------- |
+| 0:7       | `Vector`   | Local APIC vector (`0x10`–`0xFF`) injected when a message/event arrives.     |
+| 8:15      | `RsvdP`    | Reserved — must be zero.                                                     |
+| 16        | `Masked`   | If 1, SINT is masked. Messages queue but interrupt is not delivered.          |
 | 17        | `AutoEOI`  | If 1, hypervisor performs implicit EOI. **Eliminates costly APIC EOI writes.** |
-| 18        | `Polling`  | If 1, hardware interrupts suppressed; guest must poll SIMP/SIEFP. |
-| 19:63     | `RsvdP`    | Reserved — must be zero. |
+| 18        | `Polling`  | If 1, hardware interrupts suppressed; guest must poll SIMP/SIEFP.            |
+| 19:63     | `RsvdP`    | Reserved — must be zero.                                                     |
 
 > [!WARNING]
 > **AutoEOI and Hardware Conflicts**: Setting AutoEOI is highly recommended for VMBus
@@ -324,12 +324,12 @@ a specific virtual device instance.
 
 **Key fields in the offer message:**
 
-| Field | Description |
-|-------|-------------|
-| **Interface Type GUID (Class ID)** | Device category (e.g., Synthetic SCSI, Synthetic NIC, Heartbeat). |
-| **Instance GUID** | Unique identifier for this specific device instance. |
-| **`child_relid`** | Channel Relative ID — **primary identifier** for all subsequent operations on this channel. |
-| **`monitorid`** | Decomposed into `monitor_grp` + `monitor_bit` for event signaling via the monitor page. |
+| Field                              | Description                                                                                   |
+| ---------------------------------- | --------------------------------------------------------------------------------------------- |
+| **Interface Type GUID (Class ID)** | Device category (e.g., Synthetic SCSI, Synthetic NIC, Heartbeat).                             |
+| **Instance GUID**                  | Unique identifier for this specific device instance.                                          |
+| **`child_relid`**                  | Channel Relative ID — **primary identifier** for all subsequent operations on this channel.   |
+| **`monitorid`**                    | Decomposed into `monitor_grp` + `monitor_bit` for event signaling via the monitor page.       |
 
 ### 5.3 Ring Buffers and GPADL Memory Management
 
@@ -357,15 +357,15 @@ this gap by sending a complete list of underlying physical pages to the host:
 
 Each ring buffer is prefixed by a control header (`struct hv_ring_buffer`):
 
-| Offset | Type    | Field              | Description |
-|--------|---------|--------------------|-------------|
-| `0x00` | `u32`   | `write_index`      | Byte offset where producer writes next packet. |
-| `0x04` | `u32`   | `read_index`       | Byte offset where consumer reads next packet. |
-| `0x08` | `u32`   | `interrupt_mask`    | If 1, consumer suppresses producer interrupts (polling mode). |
-| `0x0C` | `u32`   | `pending_send_sz`  | Advanced flow control — receiver interrupts sender only when enough space frees up. |
-| `0x10` | `u32`   | `reserved1`        | Padding for future expansion. |
-| `0x40` | `union` | `feature_bits`     | Flags for advanced features (e.g., `feat_pending_send_sz`). |
-| `0x44` | `u8[]`  | `reserved2`        | Padding to ensure payload begins on a **4 KB page boundary**. |
+| Offset | Type    | Field             | Description                                                                           |
+| ------ | ------- | ----------------- | ------------------------------------------------------------------------------------- |
+| `0x00` | `u32`   | `write_index`     | Byte offset where producer writes next packet.                                        |
+| `0x04` | `u32`   | `read_index`      | Byte offset where consumer reads next packet.                                         |
+| `0x08` | `u32`   | `interrupt_mask`  | If 1, consumer suppresses producer interrupts (polling mode).                         |
+| `0x0C` | `u32`   | `pending_send_sz` | Advanced flow control — receiver interrupts sender only when enough space frees up.   |
+| `0x10` | `u32`   | `reserved1[12]`   | Padding for future expansion (48 bytes).                                              |
+| `0x40` | `union` | `feature_bits`    | Flags for advanced features (e.g., `feat_pending_send_sz`).                           |
+| `0x44` | `u8[]`  | `reserved2`       | Padding to ensure payload begins on a **4 KB page boundary**.                         |
 
 > [!IMPORTANT]
 > **Memory ordering is critical.** Modern processors reorder instructions aggressively.
@@ -391,12 +391,12 @@ payloads can be exchanged, host VSP and guest VSC must negotiate the protocol ve
 
 **Negotiation payload** (`struct icmsg_negotiate`):
 
-| Type               | Field               | Description |
-|--------------------|---------------------|-------------|
-| `u16`              | `icframe_vercnt`    | Count of framework versions offered by host. |
-| `u16`              | `icmsg_vercnt`      | Count of message protocol versions offered. |
-| `u32`              | `reserved`          | Padding. |
-| `struct ic_version` | `icversion_data[]` | Dynamically sized array of proposed version numbers. |
+| Type                | Field              | Description                                           |
+| ------------------- | ------------------ | ----------------------------------------------------- |
+| `u16`               | `icframe_vercnt`   | Count of framework versions offered by host.          |
+| `u16`               | `icmsg_vercnt`     | Count of message protocol versions offered.           |
+| `u32`               | `reserved`         | Padding.                                              |
+| `struct ic_version` | `icversion_data[]` | Dynamically sized array of proposed version numbers.  |
 
 The guest analyzes proposed versions, mutates the packet in the ring buffer (setting
 status to accept/reject + injecting its supported version), and transmits back to host.
@@ -405,16 +405,16 @@ status to accept/reject + injecting its supported version), and transmits back t
 
 Every data packet on an IC channel is prepended with a mandatory header:
 
-| Type               | Field                | Description |
-|--------------------|----------------------|-------------|
-| `struct ic_version` | `icverframe`        | Negotiated framework version. |
-| `u16`              | `icmsgtype`          | Message payload type identifier. |
-| `struct ic_version` | `icvermsg`          | Negotiated message structure version. |
-| `u16`              | `icmsgsize`          | Size in bytes of the functional payload. |
-| `u32`              | `status`             | `HV_S_OK` (`0x00000000`) on success, or error code. |
-| `u8`               | `ictransaction_id`   | Sequence ID for request/response correlation. |
-| `u8`               | `icflags`            | Direction/response bitflags. |
-| `u8`               | `reserved`           | Alignment padding. |
+| Type                | Field              | Description                                            |
+| ------------------- | ------------------ | ------------------------------------------------------ |
+| `struct ic_version` | `icverframe`       | Negotiated framework version.                          |
+| `u16`               | `icmsgtype`        | Message payload type identifier.                       |
+| `struct ic_version` | `icvermsg`         | Negotiated message structure version.                  |
+| `u16`               | `icmsgsize`        | Size in bytes of the functional payload.               |
+| `u32`               | `status`           | `HV_S_OK` (`0x00000000`) on success, or error code.   |
+| `u8`                | `ictransaction_id` | Sequence ID for request/response correlation.          |
+| `u8`                | `icflags`          | Direction/response bitflags.                           |
+| `u8[2]`             | `reserved`         | Alignment padding.                                     |
 
 ### 6.3 Heartbeat Service (`HV_HEARTBEAT_GUID`)
 
@@ -427,10 +427,10 @@ responses, Hyper-V reports "No Contact" or "Lost Communication."
 
 **Payload:**
 
-| Type  | Field       | Description |
-|-------|-------------|-------------|
-| `u64` | `seq_num`   | Monotonically incrementing sequence number. |
-| `u32` | `reserved`  | Padding. |
+| Type      | Field         | Description                                |
+| --------- | ------------- | ------------------------------------------ |
+| `u64`     | `seq_num`     | Monotonically incrementing sequence number. |
+| `u32[8]`  | `reserved`    | Padding (32 bytes).                        |
 
 **Execution:** Host sends a heartbeat with incrementing `seq_num`. Guest must:
 1. Read the payload
@@ -448,12 +448,12 @@ Critical after VM boot or resume from saved/paused state.
 
 **Payload:**
 
-| Type  | Field           | Description |
-|-------|-----------------|-------------|
-| `u64` | `parenttime`    | Authoritative time from root partition. |
-| `u64` | `childtime`     | Time currently perceived by guest. |
-| `u64` | `roundtriptime` | Message transmission latency. |
-| `u8`  | `flags`         | Command directives from host. |
+| Type  | Field           | Description                              |
+| ----- | --------------- | ---------------------------------------- |
+| `u64` | `parenttime`    | Authoritative time from root partition.  |
+| `u64` | `childtime`     | Time currently perceived by guest.       |
+| `u64` | `roundtriptime` | Message transmission latency.            |
+| `u8`  | `flags`         | Command directives from host.            |
 
 **Time Conversion:** `parenttime` is in **100-nanosecond intervals** from the
 **Windows NT epoch (January 1, 1601)**. For POSIX time (Unix epoch, January 1, 1970):
@@ -465,11 +465,11 @@ unix_time = (parenttime - WLTIMEDELTA) / 10000000
 
 **Flags:**
 
-| Flag                        | Value | Action |
-|-----------------------------|-------|--------|
-| `ICTIMESYNCFLAG_PROBE`     | `0`   | Latency test only — do **not** alter system clock. |
-| `ICTIMESYNCFLAG_SYNC`      | `1`   | **Force hard immediate clock update** regardless of delta. |
-| `ICTIMESYNCFLAG_SAMPLE`    | `2`   | Periodic sample — gently slew PLL clock to avoid abrupt jumps. |
+| Flag                     | Value | Action                                                          |
+| ------------------------ | ----- | --------------------------------------------------------------- |
+| `ICTIMESYNCFLAG_PROBE`   | `0`   | Latency test only — do **not** alter system clock.              |
+| `ICTIMESYNCFLAG_SYNC`    | `1`   | **Force hard immediate clock update** regardless of delta.      |
+| `ICTIMESYNCFLAG_SAMPLE`  | `2`   | Periodic sample — gently slew PLL clock to avoid abrupt jumps.  |
 
 > [!TIP]
 > In Active Directory environments, provide a mechanism for admins to **disable** this
@@ -487,12 +487,12 @@ and data loss.
 
 **Payload:**
 
-| Type  | Field             | Description |
-|-------|-------------------|-------------|
-| `u32` | `reason_code`     | Numeric code indicating shutdown reason. |
-| `u32` | `timeout_seconds` | Duration before forced hard power-off. |
-| `u32` | `flags`           | Modifiers (restart vs. power off). |
-| `u8[]`| `display_message` | Human-readable text (up to 2048 bytes, UTF-8/UTF-16). |
+| Type       | Field             | Description                                                |
+| ---------- | ----------------- | ---------------------------------------------------------- |
+| `u32`      | `reason_code`     | Numeric code indicating shutdown reason.                   |
+| `u32`      | `timeout_seconds` | Duration before forced hard power-off.                     |
+| `u32`      | `flags`           | Modifiers: `0`=shutdown, `2`=reboot, `4`=hibernate.        |
+| `u8[2048]` | `display_message` | Human-readable text (up to 2048 bytes, UTF-8/UTF-16).      |
 
 **Execution:** Upon receipt, the guest driver must:
 1. Trigger the OS's native soft-shutdown sequence
@@ -512,20 +512,20 @@ or report guest status to host management console.
 
 **Payload:**
 
-| Type            | Field   | Description |
-|-----------------|---------|-------------|
-| `unsigned char` | `key`   | String identifier (max `HV_KVP_EXCHANGE_MAX_KEY_SIZE`). |
-| `unsigned char` | `value` | String content (max `HV_KVP_EXCHANGE_MAX_VALUE_SIZE`). |
+| Type            | Field   | Description                                                |
+| --------------- | ------- | ---------------------------------------------------------- |
+| `unsigned char` | `key`   | String identifier (max `HV_KVP_EXCHANGE_MAX_KEY_SIZE`).    |
+| `unsigned char` | `value` | String content (max `HV_KVP_EXCHANGE_MAX_VALUE_SIZE`).     |
 
 **KVP Pool Files:**
 
-| Pool File       | Windows Registry Namespace       | Direction |
-|-----------------|----------------------------------|-----------|
-| `.kvp_pool_0`   | `Virtual Machine\External`       | Host → Guest |
-| `.kvp_pool_1`   | `Virtual Machine\Guest`          | Guest → Host |
-| `.kvp_pool_2`   | `Virtual Machine\Auto`           | Automatic |
-| `.kvp_pool_3`   | `Virtual Machine\Guest\Parameter` | Guest parameters |
-| `.kvp_pool_4`   | Reserved                         | Reserved |
+| Pool File     | Windows Registry Namespace          | Direction        |
+| ------------- | ----------------------------------- | ---------------- |
+| `.kvp_pool_0` | `Virtual Machine\External`          | Host → Guest     |
+| `.kvp_pool_1` | `Virtual Machine\Guest`             | Guest → Host     |
+| `.kvp_pool_2` | `Virtual Machine\Auto`              | Automatic        |
+| `.kvp_pool_3` | `Virtual Machine\Guest\Parameter`   | Guest parameters |
+| `.kvp_pool_4` | Reserved                            | Reserved         |
 
 ### 6.7 Volume Shadow Copy Requestor (`HV_VSS_GUID`)
 
@@ -537,20 +537,20 @@ snapshots produce crash-consistent states, risking database corruption.
 
 **Payload:**
 
-| Type | Field       | Description |
-|------|-------------|-------------|
-| `u8` | `operation` | VSS command (Freeze, Thaw, etc.). |
-| `u8` | `reserved`  | Alignment padding. |
+| Type    | Field       | Description                        |
+| ------- | ----------- | ---------------------------------- |
+| `u8`    | `operation` | VSS command (Freeze, Thaw, etc.).  |
+| `u8[7]` | `reserved`  | Alignment padding.                 |
 
 **Operations:**
 
-| Operation                | Value | Action |
-|--------------------------|-------|--------|
-| `VSS_OP_REGISTER`       | `128` | Initial daemon handshake. |
-| `VSS_OP_REGISTER1`      | `129` | Extended capability handshake. |
-| `VSS_OP_FREEZE`         | `5`   | **Freeze all filesystems** — flush caches, block writes (`FIFREEZE` ioctl). |
-| `VSS_OP_THAW`           | `6`   | **Thaw filesystems** — unblock I/O after snapshot secured (`FITHAW` ioctl). |
-| `VSS_OP_AUTO_RECOVER`   | `7`   | Fallback — respond with non-support flag if unsupported. |
+| Operation             | Value | Action                                                                       |
+| --------------------- | ----- | ---------------------------------------------------------------------------- |
+| `VSS_OP_REGISTER`     | `128` | Initial daemon handshake.                                                    |
+| `VSS_OP_REGISTER1`    | `129` | Extended capability handshake.                                               |
+| `VSS_OP_FREEZE`       | `5`   | **Freeze all filesystems** — flush caches, block writes (`FIFREEZE` ioctl).  |
+| `VSS_OP_THAW`         | `6`   | **Thaw filesystems** — unblock I/O after snapshot secured (`FITHAW` ioctl).  |
+| `VSS_OP_AUTO_RECOVER` | `7`   | Fallback — respond with non-support flag if unsupported.                     |
 
 > [!WARNING]
 > If the guest fails to freeze and return success within the strict timeout, the
