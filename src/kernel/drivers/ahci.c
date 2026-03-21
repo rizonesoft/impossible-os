@@ -61,6 +61,7 @@ static uint8_t           ahci_pci_slot; /* PCI slot of AHCI controller */
 static uint8_t           ahci_pci_func; /* PCI function of AHCI controller */
 static uint8_t           ahci_irq_vector; /* Allocated IDT vector */
 static int               use_events;   /* 1 after IRQ setup, 0 during boot */
+static int               ahci_clo_supported; /* 1 if CAP.SCLO is set */
 
 /* ---- Map MMIO region ---- */
 static void ahci_map_mmio(uint64_t phys, uint32_t size)
@@ -287,11 +288,94 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
     ahci_write32(abar, AHCI_IS, is);
 }
 
-/* ---- Issue a command and wait for completion ---- */
+/* ---- CLO + COMRESET recovery for stuck BSY/DRQ ---- */
+static int port_clo_reset(struct ahci_port *p)
+{
+    volatile uint8_t *pregs = p->regs;
+    uint32_t cmd, wait;
+
+    klog(LOG_WARN, "ahci", "Port %u: CLO recovery — BSY/DRQ stuck, link reset",
+           (uint64_t)p->port_num);
+
+    /* 1. Stop command engine: PxCMD.ST = 0, wait for PxCMD.CR = 0 */
+    port_stop_cmd(pregs);
+
+    /* 2. If HBA supports CLO, use it to clear BSY/DRQ forcefully */
+    if (ahci_clo_supported) {
+        cmd = port_read(pregs, AHCI_PxCMD);
+        cmd |= (1U << 3);  /* PxCMD.CLO */
+        port_write(pregs, AHCI_PxCMD, cmd);
+
+        /* Wait for CLO to auto-clear (HBA clears it when done) */
+        wait = 100000;
+        while ((port_read(pregs, AHCI_PxCMD) & (1U << 3)) && wait--)
+            ;
+    }
+
+    /* 3. Issue COMRESET: write PxSCTL.DET = 1 to initiate OOB */
+    {
+        uint32_t sctl = port_read(pregs, AHCI_PxSCTL);
+        sctl = (sctl & ~0xFU) | 0x1;  /* DET = 1 (perform interface reset) */
+        port_write(pregs, AHCI_PxSCTL, sctl);
+    }
+
+    /* Wait ~1ms for COMRESET signaling */
+    {
+        volatile uint32_t delay = 100000;
+        while (delay--)
+            ;
+    }
+
+    /* 4. Clear DET to allow link re-establishment */
+    {
+        uint32_t sctl = port_read(pregs, AHCI_PxSCTL);
+        sctl &= ~0xFU;  /* DET = 0 (no device detection action) */
+        port_write(pregs, AHCI_PxSCTL, sctl);
+    }
+
+    /* 5. Wait for PxSSTS.DET = 3 (device present + PHY communication) */
+    wait = 1000000;
+    while (wait--) {
+        uint32_t ssts = port_read(pregs, AHCI_PxSSTS);
+        if ((ssts & AHCI_SSTS_DET_MASK) == AHCI_SSTS_DET_OK)
+            break;
+    }
+    if (wait == 0) {
+        klog(LOG_WARN, "ahci", "Port %u: device not present after COMRESET",
+               (uint64_t)p->port_num);
+        return -1;
+    }
+
+    /* 6. Clear error bits */
+    port_write(pregs, AHCI_PxSERR, 0xFFFFFFFF);
+    port_write(pregs, AHCI_PxIS, 0xFFFFFFFF);
+
+    /* 7. Wait for BSY to clear (device ready) */
+    wait = 1000000;
+    while (wait--) {
+        uint32_t tfd = port_read(pregs, AHCI_PxTFD);
+        if (!(tfd & AHCI_PxTFD_BSY))
+            break;
+    }
+
+    /* 8. Restart command engine */
+    port_start_cmd(pregs);
+
+    klog(LOG_INFO, "ahci", "Port %u: CLO recovery complete",
+           (uint64_t)p->port_num);
+    return 0;
+}
+
+/* ---- Issue a command and wait for completion (with retry) ---- */
 static int port_issue_cmd(struct ahci_port *p, int slot)
 {
     volatile uint8_t *pregs = p->regs;
     uint32_t tfd;
+    int retries = 3;
+    int result;
+
+retry:
+    result = 0;
 
     /* Issue command */
     port_write(pregs, AHCI_PxCI, 1U << slot);
@@ -302,7 +386,7 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
         if (!signalled) {
             klog(LOG_DEBUG, "ahci", "Port %u: command timeout (IRQ)",
                    (uint64_t)p->port_num);
-            return -1;
+            result = -1;
         }
     } else {
         /* ---- Polling fallback (pre-scheduler boot) ---- */
@@ -316,13 +400,14 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
             if (tfd & AHCI_PxTFD_ERR) {
                 klog(LOG_DEBUG, "ahci", "Port %u: TFD error 0x%x",
                        (uint64_t)p->port_num, (uint64_t)tfd);
-                return -1;
+                result = -1;
+                break;
             }
         }
-        if (timeout == 0) {
+        if (timeout == 0 && result == 0) {
             klog(LOG_DEBUG, "ahci", "Port %u: command timeout (poll)",
                    (uint64_t)p->port_num);
-            return -1;
+            result = -1;
         }
 
         /* Clear interrupt status (polling path) */
@@ -331,13 +416,24 @@ static int port_issue_cmd(struct ahci_port *p, int slot)
 
     /* Check final TFD for errors */
     tfd = port_read(pregs, AHCI_PxTFD);
-    if (tfd & AHCI_PxTFD_ERR) {
-        klog(LOG_DEBUG, "ahci", "Port %u: command error TFD=0x%x",
-               (uint64_t)p->port_num, (uint64_t)tfd);
-        return -1;
+    if (tfd & AHCI_PxTFD_ERR)
+        result = -1;
+
+    /* ---- CLO recovery + retry on failure ---- */
+    if (result != 0 && retries > 0) {
+        tfd = port_read(pregs, AHCI_PxTFD);
+        if (tfd & (AHCI_PxTFD_BSY | AHCI_PxTFD_DRQ)) {
+            if (port_clo_reset(p) == 0) {
+                retries--;
+                klog(LOG_DEBUG, "ahci",
+                       "Port %u: retrying command (%d retries left)",
+                       (uint64_t)p->port_num, (uint64_t)retries);
+                goto retry;
+            }
+        }
     }
 
-    return 0;
+    return result;
 }
 
 /* ---- IDENTIFY DEVICE ---- */
@@ -854,11 +950,13 @@ int ahci_init(void)
 
     /* Read capabilities */
     cap = ahci_read32(abar, AHCI_CAP);
+    ahci_clo_supported = (cap & AHCI_CAP_SCLO) ? 1 : 0;
     {
         uint32_t max_ports = (cap & AHCI_CAP_NP_MASK) + 1;
         uint32_t max_slots = ((cap & AHCI_CAP_NCS_MASK) >> AHCI_CAP_NCS_SHIFT) + 1;
-        klog(LOG_DEBUG, "ahci", "Ports: %u, Command slots: %u",
-               (uint64_t)max_ports, (uint64_t)max_slots);
+        klog(LOG_DEBUG, "ahci", "Ports: %u, Command slots: %u, CLO: %s",
+               (uint64_t)max_ports, (uint64_t)max_slots,
+               ahci_clo_supported ? "yes" : "no");
     }
 
     /* Read ports implemented */

@@ -48,6 +48,7 @@
 #define AHCI_CAP_NP_MASK    0x1F        /* Number of ports (0-based) */
 #define AHCI_CAP_NCS_SHIFT  8           /* Number of command slots shift */
 #define AHCI_CAP_NCS_MASK   0x1F00      /* Number of command slots mask */
+#define AHCI_CAP_SCLO       (1U << 24)  /* Supports Command List Override */
 
 /* ---- Port registers (offset = 0x100 + port * 0x80) ---- */
 #define AHCI_PORT_BASE      0x100

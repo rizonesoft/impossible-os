@@ -150,7 +150,7 @@ graph TD
 | 💎 | **0** | `TODO-040.07-VFS.md`            | VFS core                    | `blkdev_read()` / `blkdev_write()` dispatch to AHCI ports               | —                               |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §7.1 BIOS/OS Handoff        | Clean controller ownership — prevents SMM firmware interference         | Phase 0 (spec + driver)         |   ✅   |
 | 💎 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
-| 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ⬜   |
+| 💎 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ✅   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ⬜   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ⬜   |
 | 💎 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
@@ -374,22 +374,32 @@ graph TD
 
 ## 3. Error Recovery
 
-### 3.1 Command List Override (CLO)
+### 3.1 Command List Override (CLO) *(done)* ✅
 
-**Prompt:** When a SATA device becomes unresponsive (e.g., bad sector, cable glitch), the port's `PxTFD.STS.BSY` or `PxTFD.STS.DRQ` bits get stuck at 1, blocking all further commands. AHCI provides Command List Override (`PxCMD.CLO`, bit 3) to forcefully clear these bits. Check `CAP.SCLO` (bit 24) for support. The recovery sequence: stop command engine (`PxCMD.ST = 0`), set `PxCMD.CLO = 1`, wait for CLO to auto-clear, then restart the command engine. After CLO, issue a COMRESET (write `PxSCTL.DET = 1`, wait 1ms, write `DET = 0`) to re-establish the link. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: error recovery with CLO"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that AHCI CLO error recovery is correctly implemented: (1) `ahci.h` defines `AHCI_CAP_SCLO` (bit 24). (2) `ahci.c` reads `CAP.SCLO` in `ahci_init()` and sets `ahci_clo_supported` flag. (3) `port_clo_reset()` implements the full recovery sequence: stop engine → CLO (if supported) → COMRESET (PxSCTL.DET=1→0) → wait DET=3 → clear PxSERR/PxIS → wait BSY clear → restart engine. (4) `port_issue_cmd()` detects stuck BSY/DRQ after timeout/error and calls `port_clo_reset()`, retrying up to 3 times. (5) Build passes: `=== BUILD OK ===`.
 
-- [ ] Check `CAP.SCLO` (bit 24) — HBA supports Command List Override
-- [ ] Detect stuck port: `PxTFD.STS.BSY == 1 || PxTFD.STS.DRQ == 1` after timeout
-- [ ] Recovery sequence:
-  - [ ] Stop command engine: `PxCMD.ST = 0`, wait for `PxCMD.CR = 0`
-  - [ ] Set `PxCMD.CLO = 1`, poll until CLO auto-clears to 0
-  - [ ] Issue COMRESET: write `PxSCTL.DET = 1`, wait 1ms, write `DET = 0`
-  - [ ] Wait for `PxSSTS.DET = 3` (device present + communication established)
-  - [ ] Clear `PxSERR` (write all-ones to clear error bits)
-  - [ ] Restart command engine: `PxCMD.ST = 1`
-- [ ] Retry failed commands (up to 3 retries) before reporting error
-- [ ] Log: `[AHCI] Port X: CLO recovery — BSY/DRQ stuck, link reset`
-- [ ] Commit: `"ahci: error recovery with CLO"`
+> [!NOTE]
+> **Implementation Notes:**
+> - CLO recovery integrated directly into `port_issue_cmd()` — all 4 callers benefit automatically
+> - Retry uses `goto retry` pattern with `retries` counter (3 attempts)
+> - COMRESET uses ~100000 iteration busy-wait for ~1ms signaling delay
+> - `port_clo_reset()` clears PxIS in addition to PxSERR (prevents stale interrupts)
+> - Waits for BSY to clear after COMRESET before restarting command engine
+> - If device doesn't re-appear after COMRESET (DET != 3), returns -1 and doesn't retry further
+> - CLO bit (PxCMD bit 3) used inline since only needed in one function
+
+- [x] Check `CAP.SCLO` (bit 24) — HBA supports Command List Override
+- [x] Detect stuck port: `PxTFD.STS.BSY == 1 || PxTFD.STS.DRQ == 1` after timeout
+- [x] Recovery sequence:
+  - [x] Stop command engine: `PxCMD.ST = 0`, wait for `PxCMD.CR = 0`
+  - [x] Set `PxCMD.CLO = 1`, poll until CLO auto-clears to 0
+  - [x] Issue COMRESET: write `PxSCTL.DET = 1`, wait 1ms, write `DET = 0`
+  - [x] Wait for `PxSSTS.DET = 3` (device present + communication established)
+  - [x] Clear `PxSERR` (write all-ones to clear error bits)
+  - [x] Restart command engine: `PxCMD.ST = 1`
+- [x] Retry failed commands (up to 3 retries) before reporting error
+- [x] Log: `[AHCI] Port X: CLO recovery — BSY/DRQ stuck, link reset`
+- [x] Commit: `"ahci: error recovery with CLO"`
 
 ### 3.2 Port Error Handling
 
