@@ -19,6 +19,11 @@
 > semantics follow the Win32 Registry API specification (advapi32.dll, Windows 11).
 > All `KEY_*` access rights, `ERROR_*` codes, and `RRF_*` flags use identical numeric values.
 
+> [!WARNING]
+> **Limit discrepancy:** The Win32 spec defines `REG_MAX_VALUE_NAME = 16,383` characters
+> but `registry.h` currently defines it as `255`. §2.6 must increase this constant to match
+> the spec when implementing API limits enforcement.
+
 ---
 
 ### Dependency Graph
@@ -38,10 +43,14 @@ graph TD
     I["§2.9 Hive Import/Export ⬜<br/>RegSaveKey, RegRestoreKey"]
     J["§2.10 Delayed Close Cache ⬜<br/>LRU cache for KCB reuse"]
     K["§2.11 REG_OPTION_VOLATILE ⬜<br/>Volatile (RAM-only) keys"]
+    L["§2.12 Registry Transactions ⬜<br/>Atomic multi-key updates"]
+    M["§2.13 Key Search API ⬜<br/>RegFindKey, RegFindValue"]
+    N["§2.14 Registry Diff/Compare ⬜<br/>RegCompareTree snapshots"]
+    O["§2.15 Orphan Key Garbage Collector ⬜<br/>Detect + prune unreachable keys"]
 
-    NOTIFY["TODO-050-Registry §5<br/>Change Notifications"]
-    SYSCALL["TODO-050-Registry §6<br/>User-Mode Syscalls"]
-    HIVE["TODO-050-Registry §4<br/>Hive Persistence"]
+    NOTIFY["TODO-050.04-Notification<br/>Change Notifications"]
+    SYSCALL["TODO-050.05-Syscalls<br/>User-Mode Syscalls"]
+    HIVE["TODO-050.03-Hive<br/>Hive Persistence"]
 
     ENGINE --> A
     A --> B
@@ -55,29 +64,38 @@ graph TD
     A --> I
     A --> J
     A --> K
+    A --> L
+    A --> M
+    A --> N
+    A --> O
 
     B --> NOTIFY
     A --> SYSCALL
     G --> HIVE
     K --> HIVE
+    L --> HIVE
 ```
 
 ### Phase-by-Phase Implementation Order
 
-| ⭐  | Phase  | Section                           | Description                                                              | Depends On      | Status |
-| --- | :----: | --------------------------------- | ------------------------------------------------------------------------ | --------------- | :----: |
-| 💎  | **0**  | TODO-050.01 Registry Engine       | `reg_key_t`, `reg_value_t`, `HKEY`, pools, root keys                     | —               |   ✅   |
-| 💎  | **1**  | §2.1 Key Operations               | `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey/Tree`     | Phase 0         |   ✅   |
-| 💎  | **2**  | §2.2 Value Operations             | `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue`      | Phase 1 (§2.1)  |   ✅   |
-| 💎  | **3**  | §2.3 Enumeration                  | `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey`                        | Phase 2 (§2.2)  |   ✅   |
-| 💎  | **3**  | §2.4 Convenience Helpers          | `RegGetDword`, `RegSetString`, `RegReadKeyValue` (one-shot wrappers)     | Phase 2 (§2.2)  |   ✅   |
-| 💎  | **4**  | §2.5 Access Rights Enforcement    | `KEY_*` bitmask validation per Win32 spec §6.1                           | Phase 1 (§2.1)  |   ⬜   |
-| 💎  | **4**  | §2.6 API Limits Enforcement       | 255-char key name, 16383-char value name, 512-level depth                | Phase 1 (§2.1)  |   ⬜   |
-| 💎  | **4**  | §2.7 RegFlushKey                  | Force immediate hive flush (bypass lazy writer)                          | Phase 1 (§2.1)  |   ⬜   |
-| 💎  | **5**  | §2.8 Advanced Key Operations      | `RegCopyTree`, `RegRenameKey` — tree-level manipulations                 | Phase 1 (§2.1)  |   ⬜   |
-| 💎  | **5**  | §2.9 Hive Import/Export           | `RegSaveKey`, `RegRestoreKey` — import/export sub-trees                  | Phase 1 (§2.1)  |   ⬜   |
-| 💎  | **5**  | §2.11 REG_OPTION_VOLATILE         | RAM-only keys that don't persist across reboot                           | Phase 1 (§2.1)  |   ⬜   |
-| ⭐  | **6**  | §2.10 Delayed Close Cache         | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1)  |   ⬜   |
+| ⭐ | Phase  | Section                              | Description                                                              | Depends On     | Status |
+| -- | :----: | ------------------------------------ | ------------------------------------------------------------------------ | -------------- | :----: |
+| 💎 | **0**  | TODO-050.01 Registry Engine          | `reg_key_t`, `reg_value_t`, `HKEY`, pools, root keys                     | —              |   ✅   |
+| 💎 | **1**  | §2.1 Key Operations                  | `RegOpenKeyEx`, `RegCreateKeyEx`, `RegCloseKey`, `RegDeleteKey/Tree`     | Phase 0        |   ✅   |
+| 💎 | **2**  | §2.2 Value Operations                | `RegSetValueEx`, `RegQueryValueEx`, `RegGetValue`, `RegDeleteValue`      | Phase 1 (§2.1) |   ✅   |
+| 💎 | **3**  | §2.3 Enumeration                     | `RegEnumKeyEx`, `RegEnumValue`, `RegQueryInfoKey`                        | Phase 2 (§2.2) |   ✅   |
+| 💎 | **3**  | §2.4 Convenience Helpers             | `RegGetDword`, `RegSetString`, `RegReadKeyValue` (one-shot wrappers)     | Phase 2 (§2.2) |   ✅   |
+| 💎 | **4**  | §2.5 Access Rights Enforcement       | `KEY_*` bitmask validation per Win32 spec §6.1                           | Phase 1 (§2.1) |   ⬜   |
+| 💎 | **4**  | §2.6 API Limits Enforcement          | 255-char key name, 16383-char value name, 512-level depth                | Phase 1 (§2.1) |   ⬜   |
+| 💎 | **4**  | §2.7 RegFlushKey                     | Force immediate hive flush (bypass lazy writer)                          | Phase 1 (§2.1) |   ⬜   |
+| 💎 | **5**  | §2.8 Advanced Key Operations         | `RegCopyTree`, `RegRenameKey` — tree-level manipulations                 | Phase 1 (§2.1) |   ⬜   |
+| 💎 | **5**  | §2.9 Hive Import/Export              | `RegSaveKey`, `RegRestoreKey` — import/export sub-trees                  | Phase 1 (§2.1) |   ⬜   |
+| 💎 | **5**  | §2.11 REG_OPTION_VOLATILE            | RAM-only keys that don't persist across reboot                           | Phase 1 (§2.1) |   ⬜   |
+| ⭐ | **6**  | §2.10 Delayed Close Cache            | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1) |   ⬜   |
+| ⭐ | **6**  | §2.12 Registry Transactions          | Atomic multi-key batch updates with rollback                             | Phase 4 (§2.7) |   ⬜   |
+| ⭐ | **7**  | §2.13 Key Search API                 | Find keys/values by name pattern or value content                        | Phase 3 (§2.3) |   ⬜   |
+| ⭐ | **7**  | §2.14 Registry Diff/Compare          | Snapshot-based tree comparison for change tracking                        | Phase 3 (§2.3) |   ⬜   |
+| ⭐ | **7**  | §2.15 Orphan Key Garbage Collector   | Detect and prune unreachable pool entries                                 | Phase 1 (§2.1) |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–3 are complete.** The core engine, Win32 API (CRUD + enumeration + helpers),
@@ -90,9 +108,11 @@ graph TD
 > `RegSaveKey`/`RegRestoreKey` for hive import/export, and `REG_OPTION_VOLATILE` for
 > RAM-only keys. These are needed for full Win32 compatibility.
 >
-> **Phase 6** adds the exclusive Delayed Close Cache — an LRU cache that avoids reallocating
-> Key Control Blocks for keys that are rapidly opened and closed. Windows has this in the
-> Configuration Manager; Linux has no equivalent.
+> **Phase 6** adds exclusive features: Delayed Close Cache (LRU for KCB reuse) and
+> Registry Transactions (atomic multi-key batch updates with rollback).
+>
+> **Phase 7** adds advanced exclusive features: key/value search API, tree diff/compare
+> for change tracking, and orphan key garbage collection for pool health.
 
 > [!TIP]
 > **Handle pool sizing:** `REG_HANDLE_POOL_SIZE=128` is sufficient for current use.
@@ -109,7 +129,7 @@ graph TD
 
 ---
 
-## 1. Key Operations
+## 2.1. Key Operations
 
 ### 2.1 Key Operations *(done)* ✅
 
@@ -150,7 +170,7 @@ graph TD
 
 ---
 
-## 2. Value Operations
+## 2.2. Value Operations
 
 ### 2.2 Value Operations *(done)* ✅
 
@@ -184,7 +204,7 @@ graph TD
 
 ---
 
-## 3. Enumeration
+## 2.3. Enumeration
 
 ### 2.3 Enumeration *(done)* ✅
 
@@ -213,7 +233,7 @@ graph TD
 
 ---
 
-## 4. Convenience Helpers
+## 2.4. Convenience Helpers
 
 ### 2.4 Convenience Helpers *(done)* ✅
 
@@ -237,7 +257,7 @@ graph TD
 
 ---
 
-## 5. Access Rights Enforcement
+## 2.5. Access Rights Enforcement
 
 ### 2.5 Access Rights Enforcement
 
@@ -263,32 +283,40 @@ graph TD
 
 ---
 
-## 6. API Limits Enforcement
+## 2.6. API Limits Enforcement
 
 ### 2.6 API Limits Enforcement
 
-**Prompt:** The Win32 registry specification mandates strict limits on key names (255 characters), value names (16,383 characters), and tree depth (512 levels, max 32 new levels per API call). The constants `REG_MAX_KEY_NAME` and `REG_MAX_VALUE_NAME` are already defined in `registry.h`, but `RegCreateKeyEx` does not currently validate path segment lengths or enforce depth limits. Add validation to `RegCreateKeyEx`, `RegOpenKeyEx`, `RegSetValueEx`, and `RegEnumKeyEx` to return `ERROR_INVALID_PARAMETER` or `ERROR_BUFFER_OVERFLOW` when limits are exceeded. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: API limits enforcement"`. Add notes directly in this TODO section.
+**Prompt:** The Win32 registry specification mandates strict limits on key names (255 characters), value names (16,383 characters), and tree depth (512 levels, max 32 new levels per API call). The constant `REG_MAX_KEY_NAME=255` is already defined in `registry.h`. However, `REG_MAX_VALUE_NAME` is currently `255` — it must be increased to `16383` per the Win32 spec (note: this changes the `reg_value_t.name[]` array size, increasing per-value memory usage — consider using a pointer + separate name buffer instead of an inline array). `RegCreateKeyEx` does not currently validate path segment lengths or enforce depth limits. Add validation to `RegCreateKeyEx`, `RegOpenKeyEx`, `RegSetValueEx`, and `RegEnumKeyEx` to return `ERROR_INVALID_PARAMETER` or `ERROR_BUFFER_OVERFLOW` when limits are exceeded. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: API limits enforcement"`. Add notes directly in this TODO section.
 
 > [!IMPORTANT]
 > → XREF: Win32 spec §8.1 — Hardcoded bounds: 255-char key name, 16383-char value name,
 > 512-level tree depth, max 32 new levels per single `RegCreateKeyEx` call.
 
+> [!WARNING]
+> **`REG_MAX_VALUE_NAME` mismatch:** `registry.h` defines `REG_MAX_VALUE_NAME=255` but
+> the Win32 spec requires 16,383. Increasing the inline `name[256]` array in `reg_value_t`
+> to `name[16384]` would bloat each value by ~16 KB. Consider switching to a `char *name`
+> pointer with a separate pool-allocated name buffer, or keeping the current limit and
+> documenting the deviation.
+
 - [ ] Validate key name length in `reg_walk_path()`:
   - [ ] Each backslash-separated segment ≤ `REG_MAX_KEY_NAME` (255)
   - [ ] Return `ERROR_INVALID_PARAMETER` if exceeded
 - [ ] Validate value name length in `RegSetValueEx`:
-  - [ ] `valueName` length ≤ `REG_MAX_VALUE_NAME` (16,383)
+  - [ ] `valueName` length ≤ `REG_MAX_VALUE_NAME` (16,383 per spec)
 - [ ] Enforce max tree depth in `RegCreateKeyEx`:
   - [ ] Walk parent chain to count current depth
   - [ ] Reject if total depth would exceed 512
   - [ ] Reject if creating > 32 new levels in single call
 - [ ] Add `REG_MAX_DEPTH` constant (512) and `REG_MAX_CREATE_DEPTH` (32)
+- [ ] Decide: increase `REG_MAX_VALUE_NAME` to 16383 (with struct redesign) or document deviation
 - [ ] Return `ERROR_BUFFER_OVERFLOW` for depth violations
 - [ ] Commit: `"registry: API limits enforcement"`
 
 ---
 
-## 7. RegFlushKey
+## 2.7. RegFlushKey
 
 ### 2.7 RegFlushKey (Forced Flush)
 
@@ -306,7 +334,7 @@ graph TD
 
 ---
 
-## 8. Advanced Key Operations
+## 2.8. Advanced Key Operations
 
 ### 2.8 Advanced Key Operations
 
@@ -327,7 +355,7 @@ graph TD
 
 ---
 
-## 9. Hive Import/Export
+## 2.9. Hive Import/Export
 
 ### 2.9 Hive Import/Export
 
@@ -346,7 +374,7 @@ graph TD
 
 ---
 
-## 10. Delayed Close Cache
+## 2.10. Delayed Close Cache
 
 ### 2.10 Delayed Close Cache 🚀
 
@@ -371,7 +399,7 @@ graph TD
 
 ---
 
-## 11. Volatile Keys (REG_OPTION_VOLATILE)
+## 2.11. Volatile Keys (REG_OPTION_VOLATILE)
 
 ### 2.11 REG_OPTION_VOLATILE
 
@@ -391,49 +419,168 @@ graph TD
 
 ---
 
+## 2.12. Registry Transactions
+
+### 2.12 Registry Transactions 🚀
+
+**Prompt:** Implement atomic registry transactions for batch updates to multiple keys/values. Windows has `RegCreateKeyTransacted`/`RegOpenKeyTransacted` (Vista+ via Kernel Transaction Manager) but these are heavy-weight and deprecated. Linux dconf supports `change_set` for grouped writes. Impossible OS will provide a lightweight, in-kernel transaction API: `RegBeginTransaction()` returns a transaction handle, `RegCommitTransaction()` applies all changes atomically, `RegRollbackTransaction()` discards them. Internally, buffer all writes in a journal list and only apply them to the live tree on commit — if any write fails, none are applied. This eliminates partial-update corruption for multi-key config changes (e.g., changing display resolution + scaling together). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: transactions"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Lightweight in-kernel registry transactions.
+> Windows' KTM-based transactions are deprecated and heavy-weight. Linux dconf
+> has change_set but no rollback. Impossible OS provides true atomic multi-key
+> updates with rollback — zero partial-update corruption.
+
+- [ ] Define `REG_TRANSACTION_MAX_OPS (64)` — max operations per transaction
+- [ ] Add `reg_transaction_t` struct: array of `{op_type, key_path, value_name, data}` entries
+- [ ] Implement `RegBeginTransaction()` — allocate from static transaction pool
+- [ ] Implement transaction-aware variants:
+  - [ ] `RegSetValueExT(txn, hKey, ...)` — buffer write in transaction
+  - [ ] `RegDeleteKeyT(txn, hKey, ...)` — buffer delete in transaction
+  - [ ] `RegCreateKeyExT(txn, hKey, ...)` — buffer create in transaction
+- [ ] Implement `RegCommitTransaction(txn)`:
+  - [ ] Validate all operations are still valid (keys exist, no conflicts)
+  - [ ] Apply all buffered operations atomically
+  - [ ] Call `registry_mark_dirty()` once after all operations
+  - [ ] Free transaction
+- [ ] Implement `RegRollbackTransaction(txn)` — discard all buffered operations
+- [ ] Verify: commit applies all changes, rollback applies none
+- [ ] Verify: partial failure on commit rolls back all changes
+- [ ] Commit: `"registry: transactions"`
+
+---
+
+## 2.13. Key Search API
+
+### 2.13 Key Search API 🚀
+
+**Prompt:** Implement `RegFindKey(HKEY hKey, const char *pattern, uint32_t flags, HKEY *result)` and `RegFindValue(HKEY hKey, const char *pattern, uint32_t flags, ...)` for searching registry trees by name pattern or value content. Windows has no built-in search API — users must recursively enumerate and match manually, which is why Regedit's "Find" feature is notoriously slow. Linux dconf has no search either. Impossible OS will provide native kernel-level search with glob pattern matching (`*`, `?`), optional case-insensitive matching, optional recursive subtree search, and optional value-content matching (find keys that contain a specific DWORD value). This eliminates the need for O(n) user-mode enumeration loops. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: key search API"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Native in-kernel registry search with pattern matching.
+> Windows requires manual recursive enumeration; Linux dconf has no search.
+> This makes regedit "Find" instant and enables apps to discover config keys efficiently.
+
+- [ ] Define search flags: `REG_SEARCH_KEYS`, `REG_SEARCH_VALUES`, `REG_SEARCH_DATA`
+- [ ] Define match flags: `REG_MATCH_GLOB`, `REG_MATCH_CASE_INSENSITIVE`, `REG_MATCH_RECURSIVE`
+- [ ] Implement `RegFindKey(hKey, pattern, flags, &result)`:
+  - [ ] Walk child hash buckets, glob-match against pattern
+  - [ ] If `REG_MATCH_RECURSIVE`, recurse into subtrees
+  - [ ] Return first match (caller can enumerate by passing previous result)
+- [ ] Implement `RegFindValue(hKey, pattern, flags, &valueName, &type, data, &dataSize)`:
+  - [ ] Match value names by glob pattern
+  - [ ] If `REG_SEARCH_DATA`, also match value content
+- [ ] Implement simple glob matcher (`*` = any chars, `?` = single char)
+- [ ] Integrate into `regedit find <pattern>` command
+- [ ] Commit: `"registry: key search API"`
+
+---
+
+## 2.14. Registry Diff/Compare
+
+### 2.14 Registry Diff/Compare 🚀
+
+**Prompt:** Implement `RegCompareTree(HKEY key1, HKEY key2, uint32_t flags)` and a snapshot mechanism for diffing registry state before/after an operation. Windows has no built-in diff — users must export `.reg` files and diff manually. Linux dconf has `dconf watch` for live changes but no snapshot comparison. Impossible OS will provide: `RegSnapshotTree(hKey)` to capture a lightweight snapshot (key names + value hashes), `RegCompareSnapshots(snap1, snap2)` to produce a diff listing added/removed/modified keys and values. This is invaluable for debugging — install an app, diff the registry, see exactly what it changed. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: diff/compare"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Built-in registry snapshot and diff.
+> Windows requires third-party tools (RegShot). Linux has no equivalent.
+> Enables `regedit diff --before --after` workflow for debugging.
+
+- [ ] Define `reg_snapshot_t` struct: flat array of `{path_hash, value_hash, flags}` entries
+- [ ] Implement `RegSnapshotTree(hKey)`:
+  - [ ] Recursively walk subtree
+  - [ ] For each key: store FNV-1a hash of full path
+  - [ ] For each value: store FNV-1a hash of name + type + data
+- [ ] Implement `RegCompareSnapshots(snap1, snap2, &diff)`:
+  - [ ] Sort both snapshots by path hash
+  - [ ] Merge-join to find: added keys, removed keys, modified values
+  - [ ] Return diff as array of `{path, change_type}` entries
+- [ ] Integrate into `regedit diff <path>` command (snapshot before/after)
+- [ ] Static pool for snapshots (max 2 active snapshots at a time)
+- [ ] Commit: `"registry: diff/compare"`
+
+---
+
+## 2.15. Orphan Key Garbage Collector
+
+### 2.15 Orphan Key Garbage Collector 🚀
+
+**Prompt:** Implement `RegGarbageCollect()` to detect and prune orphaned entries in the static key/value pools. In a static pool system, bugs in `RegDeleteKey`/`RegDeleteTree` or interrupted operations can leave pool entries marked as allocated but unreachable from any root key. Windows' Configuration Manager does not expose this (relies on hive file integrity). Linux dconf has no pool, so no equivalent. Impossible OS will walk all pool entries, mark reachable ones via root-key traversal, and free any unreachable entries. Expose stats via `regedit info --pool` (used slots, free slots, orphan count). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"registry: orphan garbage collector"`. Add notes directly in this TODO section.
+
+> [!NOTE]
+> 🚀 **Impossible OS Exclusive:** Static pool garbage collection for registry health.
+> Because Impossible OS uses static pools (no malloc), leaked entries waste finite slots.
+> This self-healing mechanism prevents pool exhaustion from accumulated orphans.
+
+- [ ] Implement `reg_gc_mark_reachable(reg_key_t *root)`:
+  - [ ] Recursively walk from root, set a temporary mark bit on each key/value
+  - [ ] Walk all 5 root keys (HKLM, HKCU, HKU, HKCR, HKCC)
+- [ ] Implement `reg_gc_sweep()`:
+  - [ ] Scan `reg_key_pool[]` — free any allocated but unmarked entries
+  - [ ] Scan `reg_value_pool[]` — free any allocated but unmarked entries
+  - [ ] Clear all mark bits
+  - [ ] Log orphan count to serial: `"registry: GC freed N orphan keys, M orphan values"`
+- [ ] Implement `RegGarbageCollect()` — public API: mark + sweep + report
+- [ ] Add `regedit info --pool` command showing pool usage + orphan stats
+- [ ] Run GC automatically on `registry_load_hives()` (after initial load)
+- [ ] Commit: `"registry: orphan garbage collector"`
+
+---
+
 ## Priority Order
 
-| Priority  | Section                                | Description                                                        |
-| --------- | -------------------------------------- | ------------------------------------------------------------------ |
-| ✅ Done   | §2.1 Key Operations                    | Core API: open, create, close, delete — all callers need this      |
-| ✅ Done   | §2.2 Value Operations                  | Core API: get, set, delete values — all callers need this          |
-| ✅ Done   | §2.3 Enumeration                       | For `regedit`, iterating keys/values, `RegQueryInfoKey`            |
-| ✅ Done   | §2.4 Convenience Helpers               | Simplify common access patterns, reduce boilerplate                |
-| 🟠 P1     | §2.5 Access Rights Enforcement         | Correctness: must validate `KEY_*` bits per Win32 spec             |
-| 🟠 P1     | §2.6 API Limits Enforcement            | Correctness: prevent 256+ char key names, 513+ depth              |
-| 🟡 P2     | §2.7 RegFlushKey                       | Persistence guarantee for critical writes                          |
-| 🟡 P2     | §2.11 REG_OPTION_VOLATILE              | Runtime-only keys for transient state                              |
-| 🟢 P3     | §2.8 Advanced Key Operations           | `RegCopyTree`, `RegRenameKey` — tree manipulation                  |
-| 🟢 P3     | §2.9 Hive Import/Export                | `RegSaveKey`/`RegRestoreKey` — backup/restore                      |
-| 🟢 P3     | §2.10 Delayed Close Cache              | 🚀 **Exclusive** — LRU cache for KCB reuse                        |
+| Priority | Section                                | Description                                                        |
+| -------- | -------------------------------------- | ------------------------------------------------------------------ |
+| ✅ Done  | §2.1 Key Operations                    | Core API: open, create, close, delete — all callers need this      |
+| ✅ Done  | §2.2 Value Operations                  | Core API: get, set, delete values — all callers need this          |
+| ✅ Done  | §2.3 Enumeration                       | For `regedit`, iterating keys/values, `RegQueryInfoKey`            |
+| ✅ Done  | §2.4 Convenience Helpers               | Simplify common access patterns, reduce boilerplate                |
+| 🟠 P1    | §2.5 Access Rights Enforcement         | Correctness: must validate `KEY_*` bits per Win32 spec             |
+| 🟠 P1    | §2.6 API Limits Enforcement            | Correctness: prevent 256+ char key names, 513+ depth              |
+| 🟡 P2    | §2.7 RegFlushKey                       | Persistence guarantee for critical writes                          |
+| 🟡 P2    | §2.11 REG_OPTION_VOLATILE              | Runtime-only keys for transient state                              |
+| 🟢 P3    | §2.8 Advanced Key Operations           | `RegCopyTree`, `RegRenameKey` — tree manipulation                  |
+| 🟢 P3    | §2.9 Hive Import/Export                | `RegSaveKey`/`RegRestoreKey` — backup/restore                      |
+| 🟢 P3    | §2.10 Delayed Close Cache              | 🚀 **Exclusive** — LRU cache for KCB reuse                        |
+| 🟢 P3    | §2.12 Registry Transactions            | 🚀 **Exclusive** — atomic multi-key batch updates                  |
+| 🔵 P4    | §2.13 Key Search API                   | 🚀 **Exclusive** — native search with glob matching               |
+| 🔵 P4    | §2.14 Registry Diff/Compare            | 🚀 **Exclusive** — snapshot-based tree comparison                  |
+| 🔵 P4    | §2.15 Orphan Key Garbage Collector     | 🚀 **Exclusive** — static pool self-healing                       |
 
 ---
 
 ## OS Comparison
 
-| Feature                                   | 🪟 Windows 11                               | 🐧 Linux                                  | 🚀 Impossible OS                                      |
-| ----------------------------------------- | ------------------------------------------- | ------------------------------------------ | ----------------------------------------------------- |
-| `RegOpenKeyEx` / `RegCreateKeyEx`         | ✅ Native advapi32.dll                       | ❌ No concept                               | ✅ §2.1 — handle pool + path walk + REG_LINK           |
-| `RegSetValueEx` / `RegQueryValueEx`       | ✅ Native advapi32.dll                       | ❌ dconf API (different)                     | ✅ §2.2 — full Win32 semantics + RRF flags             |
-| `RegGetValue` (combined open+query)       | ✅ Added in Vista                            | ❌ No equivalent                             | ✅ §2.2 — auto-expand EXPAND_SZ, type filter           |
-| `RegDeleteKey` / `RegDeleteTree`          | ✅ Native                                    | ❌ `rm -rf` on config files                  | ✅ §2.1 — recursive + access-denied for non-empty      |
-| `RegEnumKeyEx` / `RegEnumValue`           | ✅ Native                                    | ❌ `readdir` on config dirs                  | ✅ §2.3 — index-based, correct error codes             |
-| `RegQueryInfoKey`                         | ✅ Native                                    | ❌ No equivalent                             | ✅ §2.3 — child/value counts, max lengths              |
-| Access rights enforcement (`KEY_*`)       | ✅ Full DACL + ACL evaluation                | ⚠️ Unix permissions only                    | ⬜ §2.5 P1 — `KEY_*` bitmask validation               |
-| API limits (255 key, 512 depth)           | ✅ Enforced in CM                            | ❌ No concept                               | ⬜ §2.6 P1 — constants defined, enforcement pending    |
-| `RegFlushKey` (forced sync)               | ✅ Bypasses lazy writer                      | ❌ No equivalent                             | ⬜ §2.7 P2 — per-hive flush                           |
-| `REG_OPTION_VOLATILE` (RAM-only keys)     | ✅ Volatile storage class                    | ❌ No concept                               | ⬜ §2.11 P2 — flag defined, enforcement pending        |
-| `RegCopyTree` / `RegRenameKey`            | ✅ Vista+ / NtRenameKey                      | ❌ No equivalent                             | ⬜ §2.8 P3 — recursive copy + in-place rename          |
-| `RegSaveKey` / `RegRestoreKey`            | ✅ Hive export/import                        | ❌ No equivalent                             | ⬜ §2.9 P3 — wraps `hive_save`/`hive_load`             |
-| Delayed Close Table (LRU cache)           | ✅ Hardcoded in CM                           | ❌ No implementation                         | ⬜ §2.10 P3 — **configurable cache size** 🚀           |
-| Typed helpers (GetDword, SetString)       | ⚠️ Only via raw RegQueryValueEx              | ❌ No concept                               | ✅ §2.4 — `RegGetDword`, `RegSetString` wrappers 🚀    |
-| One-shot read (`RegReadKeyValue`)         | ❌ Must open+query+close manually            | ❌ Different API                             | ✅ §2.4 — **single-call pattern** 🚀                   |
-| Error codes matching Win32                | ✅ Native                                    | ❌ errno-based                               | ✅ §2.1 — identical values (0, 2, 5, 6, 87, 234, 259) |
-| Handle pool (no dynamic alloc)            | ❌ Dynamic kernel object allocation           | ❌ Dynamic allocation                        | ✅ §2.1 — **static pool, zero heap pressure** 🚀       |
-| Case-insensitive path walking             | ✅ NTFS-style                                | ❌ Case-sensitive                            | ✅ §2.1 — FNV-1a with 0x20 fold (via Engine §1.1)     |
+| Feature                                   | 🪟 Windows 11                                | 🐧 Linux                                   | 🚀 Impossible OS                                       |
+| ----------------------------------------- | -------------------------------------------- | ------------------------------------------- | ------------------------------------------------------ |
+| `RegOpenKeyEx` / `RegCreateKeyEx`         | ✅ Native advapi32.dll                        | ❌ No concept                                | ✅ §2.1 — handle pool + path walk + REG_LINK            |
+| `RegSetValueEx` / `RegQueryValueEx`       | ✅ Native advapi32.dll                        | ❌ dconf API (different)                      | ✅ §2.2 — full Win32 semantics + RRF flags              |
+| `RegGetValue` (combined open+query)       | ✅ Added in Vista                             | ❌ No equivalent                              | ✅ §2.2 — auto-expand EXPAND_SZ, type filter            |
+| `RegDeleteKey` / `RegDeleteTree`          | ✅ Native                                     | ❌ `rm -rf` on config files                   | ✅ §2.1 — recursive + access-denied for non-empty       |
+| `RegEnumKeyEx` / `RegEnumValue`           | ✅ Native                                     | ❌ `readdir` on config dirs                   | ✅ §2.3 — index-based, correct error codes              |
+| `RegQueryInfoKey`                         | ✅ Native                                     | ❌ No equivalent                              | ✅ §2.3 — child/value counts, max lengths               |
+| Access rights enforcement (`KEY_*`)       | ✅ Full DACL + ACL evaluation                 | ⚠️ Unix permissions only                     | ⬜ §2.5 P1 — `KEY_*` bitmask validation                |
+| API limits (255 key, 512 depth)           | ✅ Enforced in CM                             | ❌ No concept                                | ⬜ §2.6 P1 — constants defined, enforcement pending     |
+| `RegFlushKey` (forced sync)               | ✅ Bypasses lazy writer                       | ❌ No equivalent                              | ⬜ §2.7 P2 — per-hive flush                            |
+| `REG_OPTION_VOLATILE` (RAM-only keys)     | ✅ Volatile storage class                     | ❌ No concept                                | ⬜ §2.11 P2 — flag defined, enforcement pending         |
+| `RegCopyTree` / `RegRenameKey`            | ✅ Vista+ / NtRenameKey                       | ❌ No equivalent                              | ⬜ §2.8 P3 — recursive copy + in-place rename           |
+| `RegSaveKey` / `RegRestoreKey`            | ✅ Hive export/import                         | ❌ No equivalent                              | ⬜ §2.9 P3 — wraps `hive_save`/`hive_load`              |
+| Delayed Close Table (LRU cache)           | ✅ Hardcoded in CM                            | ❌ No implementation                          | ⬜ §2.10 P3 — **configurable cache size** 🚀            |
+| Typed helpers (GetDword, SetString)       | ⚠️ Only via raw RegQueryValueEx               | ❌ No concept                                | ✅ §2.4 — `RegGetDword`, `RegSetString` wrappers 🚀     |
+| One-shot read (`RegReadKeyValue`)         | ❌ Must open+query+close manually             | ❌ Different API                              | ✅ §2.4 — **single-call pattern** 🚀                    |
+| **Atomic registry transactions**          | ⚠️ KTM (deprecated, heavy-weight)             | ⚠️ dconf change_set (no rollback)             | ⬜ §2.12 P3 — **lightweight atomic batch** 🚀           |
+| **Native registry search API**            | ❌ Manual enumerate+match only                | ❌ No search                                  | ⬜ §2.13 P4 — **glob pattern search** 🚀                |
+| **Registry diff/compare**                 | ❌ Requires third-party RegShot               | ❌ No equivalent                              | ⬜ §2.14 P4 — **built-in snapshot diff** 🚀             |
+| **Pool garbage collection**               | ❌ Dynamic alloc (no pool)                    | ❌ Dynamic alloc (no pool)                    | ⬜ §2.15 P4 — **self-healing pool GC** 🚀               |
+| Error codes matching Win32                | ✅ Native                                     | ❌ errno-based                                | ✅ §2.1 — identical values (0, 2, 5, 6, 87, 234, 259)  |
+| Handle pool (no dynamic alloc)            | ❌ Dynamic kernel object allocation            | ❌ Dynamic allocation                         | ✅ §2.1 — **static pool, zero heap pressure** 🚀        |
+| Case-insensitive path walking             | ✅ NTFS-style                                 | ❌ Case-sensitive                             | ✅ §2.1 — FNV-1a with 0x20 fold (via Engine §1.1)      |
 
 > **After P0+P1 items:** Impossible OS matches Windows on core API surface + access rights +
 > limits enforcement. Exceeds Linux by having a native in-kernel typed registry store.
 > **After P2 items:** Adds `RegFlushKey` + volatile keys — parity with Windows advanced features.
 > **After P3 exclusive features:** Exceeds Windows with configurable Delayed Close Cache size,
-> typed convenience helpers, and one-shot `RegReadKeyValue` pattern.
+> typed convenience helpers, one-shot `RegReadKeyValue` pattern, and atomic transactions.
+> **After P4 exclusive features:** Further exceeds both with native search API, built-in
+> snapshot diff, and self-healing pool garbage collection — features neither OS provides.
