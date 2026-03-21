@@ -1158,6 +1158,12 @@ After implementation, save gotchas to MCP memory.
 | 🔵 P4    | §17.1 Namespace Management           | Enterprise — dynamic namespace create/delete                         |
 | 🔵 P4    | §18.1 TCG Opal 2.0 SED              | Enterprise — full-disk encryption management                         |
 | 🔵 P4    | §19.1 Zoned Namespaces               | Enterprise — ZNS/SMR zone-based storage                              |
+| 🟡 P2    | §20.1 Asynchronous Event Requests    | Reliability — proactive error/health notification                    |
+| 🟢 P3    | §20.2 SGL Support                    | Performance — byte-aligned DMA for fragmented memory                 |
+| 🟡 P2    | §21.1 APST Power Management         | Power — autonomous idle power state transitions                      |
+| 🟢 P3    | §22.1 SMART Dashboard               | 🚀 **Exclusive** — built-in GUI health visualization                 |
+| 🔵 P4    | §23.1 Firmware Update                | Enterprise — firmware download and commit                            |
+| 🟢 P3    | §24.1 FDP Write Hints               | 🚀 **Exclusive** — reduce write amplification via placement hints    |
 
 ---
 
@@ -1187,16 +1193,22 @@ After implementation, save gotchas to MCP memory.
 | Namespace management                | ✅ Via StorPort                            | ✅ Via nvme-cli                            | ⬜ §17.1 P4                                              |
 | TCG Opal 2.0 SED                    | ✅ BitLocker integration                   | ✅ sedutil                                 | ⬜ §18.1 P4                                              |
 | Zoned Namespaces                    | ⬜ Not supported                           | ✅ Full ZNS support                        | ⬜ §19.1 P4                                              |
+| Asynchronous Event Requests         | ✅ StorPort AER                            | ✅ nvme driver AER                         | ⬜ §20.1 P2                                              |
+| SGL data transfer                   | ✅ PRP + SGL                               | ✅ PRP + SGL                               | ⬜ §20.2 P3                                              |
+| Power management (APST)             | ✅ APST disabled by default                | ✅ APST enabled by default                 | ⬜ §21.1 P2                                              |
+| **Built-in SMART dashboard**        | ⬜ Third-party tools only                  | ⬜ nvme-cli / smartctl only                | ⬜ §22.1 P3 — **built-in GUI** 🚀                        |
+| Firmware update                     | ✅ Windows Update                          | ✅ nvme-cli fw-download                    | ⬜ §23.1 P4                                              |
+| **Flexible Data Placement (FDP)**   | ⬜ Not supported                           | ⚠️ Linux 6.16 write streams (new)          | ⬜ §24.1 P3 — **early adopter** 🚀                       |
 
 > **After P0+P1 items:** Impossible OS has a functional, interrupt-driven NVMe driver with
 > error recovery, flush, shutdown, and 4Kn support — matching core Windows and Linux capability.
 >
-> **After P2 items:** Adds multi-queue, TRIM, write-zeroes, and SMART — full feature parity
-> with Windows `stornvme` and Linux `nvme` for standard NVMe operations.
+> **After P2 items:** Adds multi-queue, TRIM, write-zeroes, SMART, AER, and APST — full
+> feature parity with Windows `stornvme` and Linux `nvme` for standard NVMe operations.
 >
 > **After P3 exclusive features:** Exceeds both — adaptive polling, I/O priority queues,
-> ns-resolution latency telemetry, predictive prefetch, and request merging provide competitive
-> advantages no other OS offers for NVMe storage.
+> ns-resolution latency telemetry, predictive prefetch, request merging, built-in SMART
+> dashboard, and FDP write hints provide competitive advantages no other OS offers.
 >
-> **After P4 items:** Enterprise features (namespace management, TCG Opal, ZNS) for full
-> spec parity with specialized hardware.
+> **After P4 items:** Enterprise features (namespace management, TCG Opal, ZNS, firmware
+> update) for full spec parity with specialized hardware.

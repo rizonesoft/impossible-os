@@ -680,9 +680,10 @@ graph TD
 - [ ] Log: `[btrfs] Timeline: gen %llu to %llu, %u snapshots over %u days`
 - [ ] Commit: `"btrfs: generation timeline"`
 
+---
+
 ## Priority Order
 
-| Star | Priority | Section                       | Description                                                          |
 | Star | Priority | Section                          | Description                                                              |
 | ---- | -------- | -------------------------------- | ------------------------------------------------------------------------ |
 | 💎   | 🔴 P0    | 1.1 Superblock Parsing           | Foundation: locate tree roots and feature flags                          |
