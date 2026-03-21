@@ -684,28 +684,32 @@ remaining work in the entire filesystem TODO.
 
 ## Priority Order
 
-| ⭐ | Priority | Section                          | Description                                                      | Rationale                                                        |
-| -- | -------- | -------------------------------- | ---------------------------------------------------------------- | ---------------------------------------------------------------- |
-| 💎 | 🔴 P0    | 1.1 Case-insensitive lookup      | Mandatory for nearly all Win32 apps                              | Without this, most apps fail with FILE_NOT_FOUND                 |
-| 💎 | 🔴 P0    | 1.2 Mandatory file locking       | Database corruption prevention                                   | SQLite, Office, installers all depend on this                    |
-| 💎 | 🔴 P0    | 3.1 Error code mapping           | Correct app behavior on errors                                   | Wrong error codes → wrong app code paths                         |
-| 💎 | 🔴 P0    | 6.1 VFS concurrency control      | Thread-safe VFS operations                                       | VFS has no locks — concurrent I/O causes data corruption         |
-| 💎 | 🟠 P1    | 1.3 Deletion semantics           | Installer compatibility                                          | Installers overwrite/delete files in use                         |
-| 💎 | 🟠 P1    | 1.4 Unique file IDs              | Application identity checks                                     | Used by many apps to detect same-file                            |
-| 💎 | 🟠 P1    | 1.6 File attributes & timestamps | Fastest file-existence check                                     | `GetFileAttributes` called thousands of times                    |
-| 💎 | 🟠 P1    | 2.3 Volume information           | App compatibility queries                                        | Some apps refuse to run on unknown FS                            |
-| 💎 | 🟡 P2    | 1.5 Memory-mapped files          | PE loader demand paging                                          | Performance-critical for large executables                       |
-| ⭐ | 🟡 P2    | 1.7 Byte-range locking           | Record-level DB concurrency                                      | SQLite, Access use byte-range locks + deadlock detect            |
-| 💎 | 🟡 P2    | 2.1 ADS handling                 | Browser download compat                                          | Zone.Identifier must not crash                                   |
-| 💎 | 🟡 P2    | 2.2 ACL stubs                    | Installer compat                                                 | MSI installers set permissions                                   |
-| ⭐ | 🟡 P2    | 4.1 Change notifications         | File manager / IDE compat                                        | **Recursive + cross-FS** — Linux inotify can't do recursive     |
-| 💎 | 🟢 P3    | 2.4 Hard links / reparse         | WinSxS / MSVC runtime compat                                    | Needed when running VC++ redistributable apps                    |
-| 💎 | 🟢 P3    | 5.1 Overlapped I/O               | High-perf app compat                                             | Database engines, web servers need async I/O                     |
-| ⭐ | 🟢 P3    | 6.2 I/O Completion Ports         | Scalable async I/O for servers                                   | **Beats Linux epoll** — unified file + socket + pipe completion  |
-| ⭐ | 🟢 P3    | 6.3 FS filter drivers            | AV, encryption, auditing integration                             | **Beats both** — minifilter API simpler than Linux FUSE/LSM      |
-| 💎 | 🔵 P4    | 6.4 Disk quotas                  | Per-user storage limits                                          | Enterprise deployments need storage governance                   |
-| ⭐ | 🔵 P4    | 6.5 Symlink loop detection       | Safe recursive path resolution                                  | **Beats both** — configurable max depth + clear error reporting  |
-| 💎 | 🔵 P4    | 6.6 Cross-drive operations       | Move/copy files across drive letters                             | Current `vfs_rename()` is same-drive only                        |
+| ⭐ | Priority | Section                              | Description                                  | Rationale                                                          |
+| -- | -------- | ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------ |
+| 💎 | 🔴 P0    | 1.1 Case-insensitive lookup          | Mandatory for nearly all Win32 apps          | Without this, most apps fail with `FILE_NOT_FOUND`                 |
+| 💎 | 🔴 P0    | 1.2 Mandatory file locking           | Database corruption prevention               | SQLite, Office, installers all depend on this                      |
+| 💎 | 🔴 P0    | 3.1 Error code mapping               | Correct app behavior on errors               | Wrong error codes → wrong app code paths                           |
+| 💎 | 🔴 P0    | 6.1 VFS concurrency control          | Thread-safe VFS operations                   | VFS has no locks — concurrent I/O causes data corruption           |
+| 💎 | 🟠 P1    | 1.3 Deletion semantics               | Installer compatibility                      | Installers overwrite/delete files in use                           |
+| 💎 | 🟠 P1    | 1.4 Unique file IDs                  | Application identity checks                  | Used by many apps to detect same-file                              |
+| 💎 | 🟠 P1    | 1.6 File attributes & timestamps     | Fastest file-existence check                 | `GetFileAttributes` called thousands of times                      |
+| 💎 | 🟠 P1    | 2.3 Volume information               | App compatibility queries                    | Some apps refuse to run on unknown FS                              |
+| 💎 | 🟡 P2    | 1.5 Memory-mapped files              | PE loader demand paging                      | Performance-critical for large executables                         |
+| ⭐ | 🟡 P2    | 1.7 Byte-range locking               | Record-level DB concurrency                  | SQLite, Access use byte-range locks + deadlock detect              |
+| 💎 | 🟡 P2    | 2.1 ADS handling                     | Browser download compat                      | Zone.Identifier must not crash                                     |
+| 💎 | 🟡 P2    | 2.2 ACL stubs                        | Installer compat                             | MSI installers set permissions                                     |
+| ⭐ | 🟡 P2    | 4.1 Change notifications             | File manager / IDE compat                    | **Recursive + cross-FS** — Linux inotify can't do recursive       |
+| 💎 | 🟢 P3    | 2.4 Hard links / reparse             | WinSxS / MSVC runtime compat                | Needed when running VC++ redistributable apps                      |
+| 💎 | 🟢 P3    | 5.1 Overlapped I/O                   | High-perf app compat                         | Database engines, web servers need async I/O                       |
+| ⭐ | 🟢 P3    | 6.2 I/O Completion Ports             | Scalable async I/O for servers               | **Beats Linux epoll** — unified file + socket + pipe completion    |
+| ⭐ | 🟢 P3    | 6.3 FS filter drivers                | AV, encryption, auditing integration         | **Beats both** — minifilter API simpler than Linux FUSE/LSM        |
+| 💎 | 🔵 P4    | 6.4 Disk quotas                      | Per-user storage limits                      | Enterprise deployments need storage governance                     |
+| ⭐ | 🔵 P4    | 6.5 Symlink loop detection           | Safe recursive path resolution               | **Beats both** — configurable max depth + clear error reporting    |
+| 💎 | 🔵 P4    | 6.6 Cross-drive operations           | Move/copy files across drive letters         | Current `vfs_rename()` is same-drive only                          |
+| ⭐ | 🔵 P4    | 6.7 VFS tracepoints                  | ns-resolution I/O profiling                  | **Beats both** — user-facing latency histograms in GUI             |
+| ⭐ | 🔵 P4    | 6.8 Parallel directory ops           | Concurrent creates/deletes in same dir       | **Beats Linux** — Linux serializes same-directory ops              |
+| ⭐ | 🔵 P4    | 6.9 UID/GID remapped mounts          | Per-mount UID remapping for containers       | **Beats Windows** — Windows has no UID concept; simpler than Linux |
+| ⭐ | 🔵 P4    | 6.10 Filesystem transactions         | Atomic multi-file operations with rollback   | **Beats both** — Windows deprecated TxF; Linux never had it        |
 
 > [!NOTE]
 > ⭐ = Feature where Impossible OS can be **superior** to both Windows and Linux.
