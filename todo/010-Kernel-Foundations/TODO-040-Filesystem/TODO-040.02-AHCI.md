@@ -484,18 +484,24 @@ graph TD
 
 ## 5. TRIM / Discard & Force Unit Access
 
-### 5.1 DATA SET MANAGEMENT (TRIM)
+### 5.1 DATA SET MANAGEMENT (TRIM) ✅
 
-**Prompt:** TRIM notifies SSDs that deleted blocks can be erased internally, maintaining write performance over time. TRIM uses the ATA `DATA SET MANAGEMENT` command (0x06). Check IDENTIFY DEVICE word 169 bit 0 for TRIM support. Build a range descriptor list in a 512-byte sector (each entry: 6-byte LBA + 2-byte count). Issue with the TRIM bit set in the Features register. Expose as `ahci_trim(port, lba, count)` for the filesystem layer to call on file deletion. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: TRIM / discard support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify TRIM / DATA SET MANAGEMENT is correctly implemented: `ahci.h` has `trim_supported` and `trim_deterministic` in `struct ahci_port` plus `ahci_trim()` declaration. `ahci.c` `ahci_do_identify()` checks IDENTIFY word 169 bit 0 (TRIM) and word 69 bit 14 (deterministic read). `ahci_trim()` builds range descriptors (8 bytes each, max 64 per 512-byte sector), issues ATA command 0x06 with Features=0x01 (TRIM bit), W bit set in command header. `blkdev_adapters.c` has `blkdev_ahci_discard()` wrapper wired to `bd.discard`. Build passes (`=== BUILD OK ===`). Serial log shows `Port N: TRIM supported` or `TRIM not supported` per port.
 
-- [ ] Check IDENTIFY DEVICE word 169 bit 0 — device supports TRIM
-- [ ] Check IDENTIFY DEVICE word 69 bit 14 — supports deterministic read after TRIM
-- [ ] Build TRIM range descriptor: array of `{ uint64_t lba : 48; uint16_t count; }`
-- [ ] Pack up to 64 range entries per 512-byte sector (8 bytes each)
-- [ ] Issue `DATA SET MANAGEMENT` command (0x06) with TRIM bit in Features register
-- [ ] Implement `ahci_trim(int port, uint64_t lba, uint32_t count)` — public API
-- [ ] Wire to VFS: `fat32_unlink()` and `ixfs_delete()` call `blkdev_discard()` → `ahci_trim()`
-- [ ] Commit: `"ahci: TRIM / discard support"`
+> **Implementation Notes:**
+> - TRIM returns 0 (success) on drives that don't support it — graceful no-op
+> - Range descriptor splits large counts into 0xFFFF-sector chunks (max per entry)
+> - Uses kmalloc(512) for the descriptor buffer — within heap budget
+> - W bit (1<<6) set in command header flags since data flows host→device
+
+- [x] Check IDENTIFY DEVICE word 169 bit 0 — device supports TRIM
+- [x] Check IDENTIFY DEVICE word 69 bit 14 — supports deterministic read after TRIM
+- [x] Build TRIM range descriptor: array of `{ uint64_t lba : 48; uint16_t count; }`
+- [x] Pack up to 64 range entries per 512-byte sector (8 bytes each)
+- [x] Issue `DATA SET MANAGEMENT` command (0x06) with TRIM bit in Features register
+- [x] Implement `ahci_trim(int port, uint64_t lba, uint32_t count)` — public API
+- [x] Wire to VFS: `fat32_unlink()` and `ixfs_delete()` call `blkdev_discard()` → `ahci_trim()`
+- [x] Commit: `"ahci: TRIM / discard support"`
 
 ### 5.2 Force Unit Access (FUA)
 

@@ -57,6 +57,13 @@ static int blkdev_ahci_write(uint64_t lba, uint32_t count,
     return ahci_write(port, lba, count, buf);
 }
 
+static int blkdev_ahci_discard(uint64_t sector, uint32_t num_sectors,
+                                void *driver_data)
+{
+    int port = (int)(uintptr_t)driver_data;
+    return ahci_trim(port, sector, num_sectors);
+}
+
 static int blkdev_atapi_read(uint64_t lba, uint32_t count, void *buf,
                                void *driver_data)
 {
@@ -249,6 +256,7 @@ void blkdev_register_all(void)
             bd.sector_count = ahci_capacity(di);
             bd.read  = blkdev_ahci_read;
             bd.write = blkdev_ahci_write;
+            bd.discard = blkdev_ahci_discard;
             bd.driver_data  = (void *)(uintptr_t)di;
             blkdev_register(&bd);
         }

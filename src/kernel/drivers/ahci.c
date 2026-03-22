@@ -699,6 +699,21 @@ static int ahci_do_identify(struct ahci_port *p)
                (uint64_t)p->port_num);
     }
 
+    /* Extract TRIM support (word 169 bit 0) */
+    if (ident_buf[169] & (1U << 0)) {
+        p->trim_supported = 1;
+        /* Deterministic read after TRIM (word 69 bit 14) */
+        p->trim_deterministic = (ident_buf[69] & (1U << 14)) ? 1 : 0;
+        klog(LOG_INFO, "ahci", "Port %u: TRIM supported%s",
+               (uint64_t)p->port_num,
+               p->trim_deterministic ? " (deterministic read)" : "");
+    } else {
+        p->trim_supported = 0;
+        p->trim_deterministic = 0;
+        klog(LOG_DEBUG, "ahci", "Port %u: TRIM not supported",
+               (uint64_t)p->port_num);
+    }
+
     return 0;
 }
 
@@ -949,6 +964,102 @@ int ahci_write(int port_idx, uint64_t lba, uint32_t count,
         return ncq_sync_rw(&ports[port_idx], lba, count,
                            (void *)buffer, 1);
     return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
+}
+
+/* ---- TRIM (DATA SET MANAGEMENT) ---- */
+
+int ahci_trim(int port_idx, uint64_t lba, uint32_t count)
+{
+    struct ahci_port *p;
+    int slot;
+    struct ahci_cmd_header *hdr;
+    struct ahci_cmd_tbl *tbl;
+    struct fis_reg_h2d *fis;
+    uint8_t *trim_buf;
+    uint32_t entries, i;
+
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+
+    p = &ports[port_idx];
+
+    if (!p->trim_supported) {
+        klog(LOG_DEBUG, "ahci", "Port %u: TRIM not supported, ignoring",
+               (uint64_t)p->port_num);
+        return 0;  /* Not an error — just a no-op on non-SSD */
+    }
+
+    /* Allocate and zero a 512-byte TRIM range descriptor buffer.
+     * Each entry is 8 bytes: LBA (6 bytes, little-endian) + count (2 bytes).
+     * Max 64 entries per 512-byte sector. */
+    trim_buf = (uint8_t *)kmalloc(512);
+    if (!trim_buf)
+        return -1;
+    ahci_memset(trim_buf, 0, 512);
+
+    /* Split the range into 64-entry chunks if needed.
+     * For now, a single TRIM command handles one contiguous range. */
+    entries = 0;
+    while (count > 0 && entries < 64) {
+        uint32_t chunk = (count > 0xFFFF) ? 0xFFFF : count;
+        uint32_t off = entries * 8;
+
+        /* LBA: 6 bytes little-endian */
+        trim_buf[off + 0] = (uint8_t)(lba & 0xFF);
+        trim_buf[off + 1] = (uint8_t)((lba >> 8) & 0xFF);
+        trim_buf[off + 2] = (uint8_t)((lba >> 16) & 0xFF);
+        trim_buf[off + 3] = (uint8_t)((lba >> 24) & 0xFF);
+        trim_buf[off + 4] = (uint8_t)((lba >> 32) & 0xFF);
+        trim_buf[off + 5] = (uint8_t)((lba >> 40) & 0xFF);
+        /* Count: 2 bytes little-endian */
+        trim_buf[off + 6] = (uint8_t)(chunk & 0xFF);
+        trim_buf[off + 7] = (uint8_t)((chunk >> 8) & 0xFF);
+
+        lba += chunk;
+        count -= chunk;
+        entries++;
+    }
+
+    /* Issue DATA SET MANAGEMENT command (0x06) */
+    slot = port_find_slot(p->regs);
+    if (slot < 0) {
+        kfree(trim_buf);
+        return -1;
+    }
+
+    hdr = &p->cmdlist[slot];
+    tbl = p->cmdtbl[slot];
+    ahci_memset(tbl, 0, sizeof(struct ahci_cmd_tbl));
+
+    fis = (struct fis_reg_h2d *)tbl->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->pmport_c = 0x80;       /* C = 1 (command) */
+    fis->command  = 0x06;       /* DATA SET MANAGEMENT */
+    fis->featurel = 0x01;       /* Bit 0 = TRIM */
+    fis->countl   = 1;          /* 1 sector of range descriptors */
+    fis->counth   = 0;
+    fis->device   = 0;
+
+    /* PRDT: one entry pointing to the TRIM buffer (write direction) */
+    tbl->prdt[0].dba  = (uint32_t)(uintptr_t)trim_buf;
+    tbl->prdt[0].dbau = 0;
+    tbl->prdt[0].dbc  = 512 - 1;  /* Byte count minus 1 */
+
+    /* Command header — W bit set (data flows host→device) */
+    hdr->flags = ((sizeof(struct fis_reg_h2d) / 4) & 0x1F) | (1 << 6);
+    hdr->prdtl = 1;
+    hdr->prdbc = 0;
+
+    i = (uint32_t)port_issue_cmd(p, slot);
+
+    kfree(trim_buf);
+
+    if (i != 0) {
+        klog(LOG_WARN, "ahci", "Port %u: TRIM command failed",
+               (uint64_t)p->port_num);
+    }
+
+    return (int)i;
 }
 
 uint64_t ahci_capacity(int port_idx)

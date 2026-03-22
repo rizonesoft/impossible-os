@@ -239,6 +239,10 @@ struct ahci_port {
     int8_t   tag_status[32];       /* Per-tag completion status (0=ok, -1=err) */
     ahci_callback_t tag_callbacks[32]; /* Async callbacks (NULL = sync) */
     void    *tag_cb_ctx[32];       /* Per-tag callback context */
+
+    /* TRIM state */
+    uint8_t  trim_supported;       /* 1 if device supports DATA SET MANAGEMENT */
+    uint8_t  trim_deterministic;   /* 1 if deterministic read after TRIM */
 };
 
 /* Max ports supported */
@@ -266,6 +270,10 @@ int ahci_drive_count(void);
 
 /* Flush per-port error counters to HKLM\HARDWARE\AHCI\PortN\Errors. */
 void ahci_flush_error_counters(void);
+
+/* Issue TRIM (DATA SET MANAGEMENT) for a range of sectors.
+ * Notifies SSDs that deleted blocks can be erased internally. */
+int ahci_trim(int port_idx, uint64_t lba, uint32_t count);
 
 /* ---- API: NCQ (Native Command Queuing) ---- */
 
