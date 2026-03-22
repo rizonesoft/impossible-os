@@ -12,7 +12,7 @@
  *   - Device-specific config (type 4)
  * ============================================================================ */
 
-#include "kernel/drivers/virtio.h"
+#include "kernel/drivers/virtio/virtio.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/irq.h"

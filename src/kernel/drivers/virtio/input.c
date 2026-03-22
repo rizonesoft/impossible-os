@@ -17,8 +17,8 @@
  * recycle the buffers.
  * ============================================================================ */
 
-#include "kernel/drivers/virtio_input.h"
-#include "kernel/drivers/virtio.h"
+#include "kernel/drivers/virtio/input.h"
+#include "kernel/drivers/virtio/virtio.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/idt.h"
 #include "kernel/drivers/pic.h"
