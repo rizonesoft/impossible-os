@@ -29,6 +29,7 @@
 #include "kernel/sched/event.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/smp.h"
+#include "kernel/timer.h"
 
 /* ---- Driver state ---- */
 static struct virtio_pci_dev  blk_dev;         /* Modern PCI transport */
@@ -90,6 +91,165 @@ static struct {
 
 /* Max retries for transient I/O errors */
 #define VIRTIO_BLK_MAX_RETRIES  3
+
+/* ---- Adaptive Hybrid Polling Engine ---- */
+
+/* I/O completion modes */
+#define VIRTIO_IO_MODE_INTERRUPT  0  /* Pure ISR-driven */
+#define VIRTIO_IO_MODE_HYBRID     1  /* Brief spin, fallback to ISR */
+#define VIRTIO_IO_MODE_POLL       2  /* Pure polling, interrupts off */
+
+static const char *io_mode_names[] = {
+    "interrupt", "hybrid", "poll"
+};
+
+/* Adaptive polling configuration and state */
+static struct {
+    int      enabled;           /* Master enable (default 1) */
+    int      mode;              /* Current VIRTIO_IO_MODE_* */
+    uint32_t low_threshold;     /* IOPS below this → INTERRUPT (default 1000) */
+    uint32_t high_threshold;    /* IOPS above this → POLL (default 50000) */
+    uint32_t spin_us;           /* Hybrid spin window in µs (default 4) */
+
+    /* Rolling IOPS tracking (100ms window) */
+    uint32_t io_count;          /* I/Os completed in current window */
+    uint64_t window_start;      /* system_get_ticks() at window start */
+    uint32_t window_ticks;      /* Ticks per 100ms window */
+    uint32_t last_iops;         /* IOPS from the last completed window */
+
+    /* Hysteresis counters (prevent mode thrashing) */
+    uint32_t up_count;          /* Consecutive windows above threshold */
+    uint32_t down_count;        /* Consecutive windows below threshold */
+} adaptive = {
+    .enabled = 1,
+    .mode = VIRTIO_IO_MODE_INTERRUPT,
+    .low_threshold = 1000,
+    .high_threshold = 50000,
+    .spin_us = 4,
+};
+
+/* Read TSC (Time Stamp Counter) for sub-microsecond timing */
+static inline uint64_t rdtsc_read(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Calibrate: approximate TSC ticks per microsecond.
+ * Called once during init using port 0x80 delay (~1 µs each). */
+static uint64_t tsc_per_us = 2000;  /* Conservative default (2 GHz) */
+
+static void calibrate_tsc(void)
+{
+    uint64_t start, end;
+    uint32_t i;
+    start = rdtsc_read();
+    for (i = 0; i < 1000; i++)
+        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    end = rdtsc_read();
+    /* 1000 port reads ≈ 1000 µs ≈ 1 ms */
+    tsc_per_us = (end - start) / 1000;
+    if (tsc_per_us == 0)
+        tsc_per_us = 2000;  /* Fallback */
+}
+
+/* Check if 100ms window has elapsed and transition modes if needed */
+static void adaptive_check_window(void)
+{
+    uint64_t now;
+    uint32_t elapsed_iops;
+
+    if (!adaptive.enabled || !adaptive.window_ticks)
+        return;
+
+    now = system_get_ticks();
+    if ((now - adaptive.window_start) < adaptive.window_ticks)
+        return;  /* Window not yet elapsed */
+
+    /* Window complete — compute IOPS */
+    elapsed_iops = adaptive.io_count * 10;  /* 100ms → multiply by 10 for per-second */
+    adaptive.last_iops = elapsed_iops;
+    adaptive.io_count = 0;
+    adaptive.window_start = now;
+
+    /* Mode transition logic with hysteresis */
+    switch (adaptive.mode) {
+    case VIRTIO_IO_MODE_INTERRUPT:
+        if (elapsed_iops > adaptive.low_threshold) {
+            adaptive.up_count++;
+            adaptive.down_count = 0;
+            if (adaptive.up_count >= 3) {
+                adaptive.mode = VIRTIO_IO_MODE_HYBRID;
+                adaptive.up_count = 0;
+                klog(LOG_DEBUG, "virtio",
+                       "Block: I/O mode -> HYBRID (IOPS=%u)",
+                       (uint64_t)elapsed_iops);
+            }
+        } else {
+            adaptive.up_count = 0;
+        }
+        break;
+
+    case VIRTIO_IO_MODE_HYBRID:
+        if (elapsed_iops > adaptive.high_threshold) {
+            adaptive.up_count++;
+            adaptive.down_count = 0;
+            if (adaptive.up_count >= 3) {
+                adaptive.mode = VIRTIO_IO_MODE_POLL;
+                adaptive.up_count = 0;
+                klog(LOG_DEBUG, "virtio",
+                       "Block: I/O mode -> POLL (IOPS=%u)",
+                       (uint64_t)elapsed_iops);
+            }
+        } else if (elapsed_iops < (adaptive.low_threshold * 4 / 5)) {
+            adaptive.down_count++;
+            adaptive.up_count = 0;
+            if (adaptive.down_count >= 5) {
+                adaptive.mode = VIRTIO_IO_MODE_INTERRUPT;
+                adaptive.down_count = 0;
+                klog(LOG_DEBUG, "virtio",
+                       "Block: I/O mode -> INTERRUPT (IOPS=%u)",
+                       (uint64_t)elapsed_iops);
+            }
+        } else {
+            adaptive.up_count = 0;
+            adaptive.down_count = 0;
+        }
+        break;
+
+    case VIRTIO_IO_MODE_POLL:
+        if (elapsed_iops < (adaptive.high_threshold * 4 / 5)) {
+            adaptive.down_count++;
+            adaptive.up_count = 0;
+            if (adaptive.down_count >= 5) {
+                adaptive.mode = VIRTIO_IO_MODE_HYBRID;
+                adaptive.down_count = 0;
+                klog(LOG_DEBUG, "virtio",
+                       "Block: I/O mode -> HYBRID (IOPS=%u)",
+                       (uint64_t)elapsed_iops);
+            }
+        } else {
+            adaptive.down_count = 0;
+        }
+        break;
+    }
+}
+
+/* Brief rdtsc-based spin checking used->idx.
+ * Returns 1 if completion arrived within spin window, 0 otherwise. */
+static int hybrid_spin_poll(struct virtqueue *vq, uint32_t spin_us)
+{
+    uint64_t deadline = rdtsc_read() + (uint64_t)spin_us * tsc_per_us;
+
+    while (rdtsc_read() < deadline) {
+        mb();
+        if (vq->used->idx != vq->last_used)
+            return 1;  /* Completed during spin */
+        __asm__ volatile ("pause");  /* Reduce power + SMT contention */
+    }
+    return 0;  /* Spin window expired — fall back to ISR */
+}
 
 /* ---- Helper: get per-CPU queue index ---- */
 static inline uint16_t get_queue_idx(void)
@@ -315,41 +475,74 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         blk_vqs[qi].avail->idx++;
         mb();
 
-        /* Wait for completion */
+        /* Wait for completion — adaptive strategy */
         __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
         virtio_irq_flags[qi] = 0;
         __asm__ volatile ("sti");
 
         virtq_kick(&blk_vqs[qi]);
 
-        if (use_events) {
-            if (!event_wait_timeout(&io_completions[qi], 5000)) {
-                klog(LOG_DEBUG, "virtio",
-                       "I/O timeout (indirect, avail=%u, used=%u)",
-                       (uint64_t)blk_vqs[qi].avail->idx,
-                       (uint64_t)blk_vqs[qi].used->idx);
-                if (!(rflags & (1 << 9)))
-                    __asm__ volatile ("cli");
-                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
-                return -1;
-            }
-        } else {
-            timeout = 5000000;
-            while (timeout-- > 0) {
-                mb();
-                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
-                    break;
-                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
-            }
-            if (timeout == 0) {
-                klog(LOG_DEBUG, "virtio",
-                       "I/O timeout (indirect poll, avail=%u, used=%u)",
-                       (uint64_t)blk_vqs[qi].avail->idx,
-                       (uint64_t)blk_vqs[qi].used->idx);
-                if (!(rflags & (1 << 9)))
-                    __asm__ volatile ("cli");
-                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
-                return -1;
+        {
+            int current_mode = (use_events && adaptive.enabled)
+                               ? adaptive.mode
+                               : VIRTIO_IO_MODE_INTERRUPT;
+
+            if (!use_events) {
+                timeout = 5000000;
+                while (timeout-- > 0) {
+                    mb();
+                    if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                        break;
+                    __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+                }
+                if (timeout == 0) {
+                    klog(LOG_DEBUG, "virtio",
+                           "I/O timeout (indirect poll, avail=%u, used=%u)",
+                           (uint64_t)blk_vqs[qi].avail->idx,
+                           (uint64_t)blk_vqs[qi].used->idx);
+                    if (!(rflags & (1 << 9)))
+                        __asm__ volatile ("cli");
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                    return -1;
+                }
+            } else if (current_mode == VIRTIO_IO_MODE_POLL) {
+                timeout = 5000000;
+                while (timeout-- > 0) {
+                    mb();
+                    if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                        break;
+                    __asm__ volatile ("pause");
+                }
+                if (timeout == 0) {
+                    klog(LOG_DEBUG, "virtio",
+                           "I/O timeout (indirect adaptive poll)");
+                    if (!(rflags & (1 << 9)))
+                        __asm__ volatile ("cli");
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                    return -1;
+                }
+            } else if (current_mode == VIRTIO_IO_MODE_HYBRID) {
+                if (!hybrid_spin_poll(&blk_vqs[qi], adaptive.spin_us)) {
+                    if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                        klog(LOG_DEBUG, "virtio",
+                               "I/O timeout (indirect hybrid)");
+                        if (!(rflags & (1 << 9)))
+                            __asm__ volatile ("cli");
+                        virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                        return -1;
+                    }
+                }
+            } else {
+                if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                    klog(LOG_DEBUG, "virtio",
+                           "I/O timeout (indirect, avail=%u, used=%u)",
+                           (uint64_t)blk_vqs[qi].avail->idx,
+                           (uint64_t)blk_vqs[qi].used->idx);
+                    if (!(rflags & (1 << 9)))
+                        __asm__ volatile ("cli");
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                    return -1;
+                }
             }
         }
 
@@ -361,6 +554,9 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         if (has_event_idx)
             virtq_used_event(&blk_vqs[qi]) = blk_vqs[qi].last_used;
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+
+        adaptive.io_count++;
+        adaptive_check_window();
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
     }
@@ -421,46 +617,103 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
      * before we write the notification register. */
     mb();
 
-    /* Clear completion flag and enable interrupts */
-    __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
-    virtio_irq_flags[qi] = 0;
-    __asm__ volatile ("sti");
+    /* ---- Adaptive completion strategy ---- */
+    {
+        int current_mode = (use_events && adaptive.enabled)
+                           ? adaptive.mode
+                           : VIRTIO_IO_MODE_INTERRUPT;
 
-    /* Notify device (modern MMIO notification) */
-    virtq_kick(&blk_vqs[qi]);
+        /* POLL mode: suppress device interrupts */
+        if (current_mode == VIRTIO_IO_MODE_POLL) {
+            blk_vqs[qi].avail->flags |= VIRTQ_AVAIL_F_NO_INTERRUPT;
+            wmb();
+        } else {
+            blk_vqs[qi].avail->flags &= ~VIRTQ_AVAIL_F_NO_INTERRUPT;
+            wmb();
+        }
 
-    /* Wait for completion — event-driven or polling fallback */
-    if (use_events) {
-        /* Interrupt-driven path: ISR calls event_set(), we block here.
-         * 5-second timeout prevents infinite hang on device failure. */
-        if (!event_wait_timeout(&io_completions[qi], 5000)) {
-            klog(LOG_DEBUG, "virtio", "I/O timeout (event, avail=%u, used=%u)",
-                   (uint64_t)blk_vqs[qi].avail->idx, (uint64_t)blk_vqs[qi].used->idx);
-            if (!(rflags & (1 << 9)))
-                __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
-            return -1;
-        }
-    } else {
-        /* Polling fallback for pre-scheduler boot */
-        timeout = 5000000;
-        while (timeout-- > 0) {
-            mb();
-            if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
-                break;
-            __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
-        }
-        if (timeout == 0) {
-            klog(LOG_DEBUG, "virtio", "I/O timeout (poll, avail=%u, used=%u)",
-                   (uint64_t)blk_vqs[qi].avail->idx, (uint64_t)blk_vqs[qi].used->idx);
-            if (!(rflags & (1 << 9)))
-                __asm__ volatile ("cli");
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
-            virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
-            return -1;
+        /* Clear completion flag and enable CPU interrupts */
+        __asm__ volatile ("pushfq; popq %0" : "=r"(rflags));
+        virtio_irq_flags[qi] = 0;
+        __asm__ volatile ("sti");
+
+        /* Notify device (modern MMIO notification) */
+        virtq_kick(&blk_vqs[qi]);
+
+        /* Wait for completion — mode-dependent strategy */
+        if (!use_events) {
+            /* Pre-scheduler: always poll (no events available) */
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio",
+                       "I/O timeout (poll, avail=%u, used=%u)",
+                       (uint64_t)blk_vqs[qi].avail->idx,
+                       (uint64_t)blk_vqs[qi].used->idx);
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+                return -1;
+            }
+        } else if (current_mode == VIRTIO_IO_MODE_POLL) {
+            /* Pure polling: spin on used->idx with timeout */
+            timeout = 5000000;
+            while (timeout-- > 0) {
+                mb();
+                if (blk_vqs[qi].used->idx != blk_vqs[qi].last_used)
+                    break;
+                __asm__ volatile ("pause");
+            }
+            if (timeout == 0) {
+                klog(LOG_DEBUG, "virtio",
+                       "I/O timeout (adaptive poll, avail=%u, used=%u)",
+                       (uint64_t)blk_vqs[qi].avail->idx,
+                       (uint64_t)blk_vqs[qi].used->idx);
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+                return -1;
+            }
+        } else if (current_mode == VIRTIO_IO_MODE_HYBRID) {
+            /* Hybrid: brief rdtsc spin, then fallback to ISR */
+            if (!hybrid_spin_poll(&blk_vqs[qi], adaptive.spin_us)) {
+                /* Spin didn't catch it — fall back to ISR wait */
+                if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                    klog(LOG_DEBUG, "virtio",
+                           "I/O timeout (hybrid, avail=%u, used=%u)",
+                           (uint64_t)blk_vqs[qi].avail->idx,
+                           (uint64_t)blk_vqs[qi].used->idx);
+                    if (!(rflags & (1 << 9)))
+                        __asm__ volatile ("cli");
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+                    virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+                    return -1;
+                }
+            }
+        } else {
+            /* Pure interrupt: ISR calls event_set(), we block here */
+            if (!event_wait_timeout(&io_completions[qi], 5000)) {
+                klog(LOG_DEBUG, "virtio",
+                       "I/O timeout (event, avail=%u, used=%u)",
+                       (uint64_t)blk_vqs[qi].avail->idx,
+                       (uint64_t)blk_vqs[qi].used->idx);
+                if (!(rflags & (1 << 9)))
+                    __asm__ volatile ("cli");
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+                virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+                return -1;
+            }
         }
     }
 
@@ -481,6 +734,10 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+
+    /* Track IOPS for adaptive mode switching */
+    adaptive.io_count++;
+    adaptive_check_window();
 
     /* Differentiate status codes */
     if (status_byte == VIRTIO_BLK_S_OK)
@@ -2026,6 +2283,77 @@ int virtio_blk_init(void)
             klog(LOG_DEBUG, "virtio", "GET_LIFETIME failed");
         }
     }
+
+    /* ---- Initialize Adaptive Hybrid Polling Engine ---- */
+    calibrate_tsc();
+
+    /* Read adaptive polling config from Registry (if available) */
+    {
+        HKEY hKey = (HKEY)0;
+        uint32_t val;
+
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE,
+                "SYSTEM\\Drivers\\VirtIO\\AdaptivePolling", 0,
+                KEY_READ, &hKey) == ERROR_SUCCESS) {
+            if (RegGetDword(hKey, "Enabled", &val) == ERROR_SUCCESS)
+                adaptive.enabled = (int)val;
+            if (RegGetDword(hKey, "LowThreshold", &val) == ERROR_SUCCESS)
+                adaptive.low_threshold = val;
+            if (RegGetDword(hKey, "HighThreshold", &val) == ERROR_SUCCESS)
+                adaptive.high_threshold = val;
+            if (RegGetDword(hKey, "SpinMicroseconds", &val) == ERROR_SUCCESS)
+                adaptive.spin_us = val;
+            RegCloseKey(hKey);
+        }
+    }
+
+    /* Compute window_ticks: ticks in 100ms */
+    {
+        uint32_t freq = system_get_freq();
+        adaptive.window_ticks = freq / 10;  /* 100ms = 1/10th of a second */
+        if (adaptive.window_ticks == 0)
+            adaptive.window_ticks = 10;  /* Fallback for pre-timer */
+        adaptive.window_start = system_get_ticks();
+    }
+
+    /* Write default config to Registry for visibility */
+    {
+        HKEY hKey = (HKEY)0;
+        uint32_t disp;
+
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                "SYSTEM\\Drivers\\VirtIO\\AdaptivePolling", 0,
+                (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetDword(hKey, "Enabled",
+                        (uint32_t)adaptive.enabled);
+            RegSetDword(hKey, "LowThreshold",
+                        adaptive.low_threshold);
+            RegSetDword(hKey, "HighThreshold",
+                        adaptive.high_threshold);
+            RegSetDword(hKey, "SpinMicroseconds",
+                        adaptive.spin_us);
+            RegCloseKey(hKey);
+        }
+
+        /* Expose current mode */
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                "HARDWARE\\VirtIO\\Block0", 0,
+                (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetString(hKey, "IoMode",
+                         io_mode_names[adaptive.mode]);
+            RegCloseKey(hKey);
+        }
+    }
+
+    klog(LOG_DEBUG, "virtio",
+           "Adaptive polling: %s (low=%u, high=%u, spin=%uus, tsc/us=%u)",
+           adaptive.enabled ? "enabled" : "disabled",
+           (uint64_t)adaptive.low_threshold,
+           (uint64_t)adaptive.high_threshold,
+           (uint64_t)adaptive.spin_us,
+           (uint64_t)tsc_per_us);
 
     return 0;
 }

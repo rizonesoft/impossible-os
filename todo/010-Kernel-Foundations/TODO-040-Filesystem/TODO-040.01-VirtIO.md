@@ -185,7 +185,7 @@ graph TD
 | 💎 | P5   | §7.3 In-Order Completion         | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §7.4 Notification Data           | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §10.1 Lifetime Metrics           | P3 (§3.2)                      |   ✅   |
-| ⭐ | P5   | §12.1 Adaptive Hybrid Polling    | P3 (§3.2)                      |   ⬜   |
+| ⭐ | P5   | §12.1 Adaptive Hybrid Polling    | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §13.1 I/O Priority Queues        | P5 (§6.1)                      |   ⬜   |
 | ⭐ | P5   | §16.1 I/O Latency Telemetry      | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §17.1 Predictive Prefetch        | P3 (§3.2)                      |   ⬜   |
@@ -764,32 +764,41 @@ graph TD
 
 ### 12.1 Adaptive Interrupt/Polling Mode Switching
 
-**Prompt:** Neither Windows viostor nor Linux virtio-blk implement adaptive hybrid polling for block devices. Linux has NAPI busy-polling for `virtio-net` but NOT for `virtio-blk`. Implement an adaptive I/O completion strategy that dynamically switches between three modes based on measured IOPS load:
-- **Low load (< 1K IOPS):** Pure interrupt-driven (§3.2) — minimize CPU usage.
-- **Medium load (1K–50K IOPS):** Hybrid — poll briefly after submission (configurable spin window, default 4 µs), then fall back to interrupt if no completion arrives. This catches fast completions without ISR overhead.
-- **High load (> 50K IOPS):** Pure polling — disable interrupts (`VIRTQ_AVAIL_F_NO_INTERRUPT = 1`), spin on `used->idx` changes. At extreme IOPS, interrupt overhead dominates; polling amortizes the cost across many completions.
-Track a rolling 100ms IOPS average to drive mode transitions. Expose the current mode and thresholds via Registry. This is a significant competitive advantage — no other OS adapts its VirtIO block completion strategy to workload in real time. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: adaptive hybrid polling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **DONE — Verify** adaptive hybrid polling. Boot in QEMU, check serial log for `"Adaptive polling: enabled (low=1000, high=50000, spin=4us, tsc/us=...)"`. Under low-IOPS boot the mode stays INTERRUPT. Under high-IOPS workload (e.g., sequential benchmark), verify log transitions: `"Block: I/O mode -> HYBRID"` and potentially `"-> POLL"`. Check Registry: `reg query HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling` and `HKLM\HARDWARE\VirtIO\Block0\IoMode`.
 
-- [ ] Implement three I/O completion modes:
-  - [ ] `VIRTIO_IO_MODE_INTERRUPT` — pure ISR-driven (§3.2 baseline)
-  - [ ] `VIRTIO_IO_MODE_HYBRID` — brief spin (4 µs default), fallback to ISR
-  - [ ] `VIRTIO_IO_MODE_POLL` — pure polling, interrupts disabled
-- [ ] Track rolling IOPS: increment counter per completed I/O, compute average over 100ms window
-- [ ] Mode transition logic (with hysteresis to prevent thrashing):
-  - [ ] INTERRUPT → HYBRID: when IOPS > `low_threshold` (default 1000) for 3 consecutive windows
-  - [ ] HYBRID → POLL: when IOPS > `high_threshold` (default 50000) for 3 consecutive windows
-  - [ ] POLL → HYBRID: when IOPS < `high_threshold * 0.8` for 5 consecutive windows
-  - [ ] HYBRID → INTERRUPT: when IOPS < `low_threshold * 0.8` for 5 consecutive windows
-- [ ] Hybrid spin implementation: `rdtsc`-based busy-wait for `spin_us` microseconds checking `used->idx`
-- [ ] Pure poll: set `VIRTQ_AVAIL_F_NO_INTERRUPT = 1`, process completions inline after submission
-- [ ] Configurable via Registry:
-  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\Enabled` (default true)
-  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\LowThreshold` (default 1000)
-  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\HighThreshold` (default 50000)
-  - [ ] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\SpinMicroseconds` (default 4)
-- [ ] Expose current mode: `HKLM\HARDWARE\VirtIO\Block0\IoMode` = `"interrupt"` / `"hybrid"` / `"poll"`
-- [ ] Log mode transitions: `[VirtIO] Block: I/O mode → HYBRID (IOPS=%u)`
-- [ ] Commit: `"virtio-blk: adaptive hybrid polling"`
+> [!NOTE]
+> **Implementation Notes:**
+> - Three modes: `VIRTIO_IO_MODE_INTERRUPT` (0), `VIRTIO_IO_MODE_HYBRID` (1), `VIRTIO_IO_MODE_POLL` (2)
+> - Rolling 100ms IOPS window using `system_get_ticks()` / `system_get_freq()` — multiply count × 10 for per-second rate
+> - Hysteresis: 3 consecutive windows to escalate, 5 to de-escalate. Down thresholds use 80% (× 4/5 integer math)
+> - `rdtsc_read()` inline asm for sub-µs timing; `calibrate_tsc()` uses 1000 port 0x80 reads ≈ 1ms
+> - `hybrid_spin_poll()`: rdtsc spin with `pause` instruction (reduces power + SMT contention)
+> - POLL mode: sets `VIRTQ_AVAIL_F_NO_INTERRUPT` on avail->flags to suppress device interrupts
+> - Both direct and indirect do_io paths updated; flush/discard/write-zeroes use same indirect path
+> - Registry config: `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\{Enabled,LowThreshold,HighThreshold,SpinMicroseconds}`
+> - Mode exposed: `HKLM\HARDWARE\VirtIO\Block0\IoMode` = "interrupt" / "hybrid" / "poll"
+> - Pre-scheduler boot: always uses raw polling (no adaptive) — `use_events=0` short-circuits
+
+- [x] Implement three I/O completion modes:
+  - [x] `VIRTIO_IO_MODE_INTERRUPT` — pure ISR-driven (§3.2 baseline)
+  - [x] `VIRTIO_IO_MODE_HYBRID` — brief spin (4 µs default), fallback to ISR
+  - [x] `VIRTIO_IO_MODE_POLL` — pure polling, interrupts disabled
+- [x] Track rolling IOPS: increment counter per completed I/O, compute average over 100ms window
+- [x] Mode transition logic (with hysteresis to prevent thrashing):
+  - [x] INTERRUPT → HYBRID: when IOPS > `low_threshold` (default 1000) for 3 consecutive windows
+  - [x] HYBRID → POLL: when IOPS > `high_threshold` (default 50000) for 3 consecutive windows
+  - [x] POLL → HYBRID: when IOPS < `high_threshold * 0.8` for 5 consecutive windows
+  - [x] HYBRID → INTERRUPT: when IOPS < `low_threshold * 0.8` for 5 consecutive windows
+- [x] Hybrid spin implementation: `rdtsc`-based busy-wait for `spin_us` microseconds checking `used->idx`
+- [x] Pure poll: set `VIRTQ_AVAIL_F_NO_INTERRUPT = 1`, process completions inline after submission
+- [x] Configurable via Registry:
+  - [x] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\Enabled` (default true)
+  - [x] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\LowThreshold` (default 1000)
+  - [x] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\HighThreshold` (default 50000)
+  - [x] `HKLM\SYSTEM\Drivers\VirtIO\AdaptivePolling\SpinMicroseconds` (default 4)
+- [x] Expose current mode: `HKLM\HARDWARE\VirtIO\Block0\IoMode` = `"interrupt"` / `"hybrid"` / `"poll"`
+- [x] Log mode transitions: `[VirtIO] Block: I/O mode → HYBRID (IOPS=%u)`
+- [x] Commit: `"virtio-blk: adaptive hybrid polling"`
 
 ---
 
