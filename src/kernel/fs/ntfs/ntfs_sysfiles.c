@@ -57,12 +57,6 @@ static int read_volume_info(struct ntfs_volume *vol)
         return rc;
     }
 
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
     /* ---- Read $VOLUME_NAME (0x60) ---- */
     attr = ntfs_attr_find(rec_buf, &hdr, NTFS_ATTR_VOLUME_NAME, &ah);
     if (attr && ah.non_resident == 0 && ah.content_length > 0) {
@@ -242,12 +236,6 @@ static int read_upcase_table(struct ntfs_volume *vol)
         return rc;
     }
 
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
     /* Find $DATA attribute */
     attr = ntfs_attr_find(rec_buf, &hdr, NTFS_ATTR_DATA, &ah);
     if (!attr) {
@@ -365,13 +353,6 @@ static int read_mftmirr_check(struct ntfs_volume *vol)
         return rc;
     }
 
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        pmm_free_frame(mirr_phys);
-        return rc;
-    }
-
     /* Get $MFTMirr's $DATA runs */
     {
         struct ntfs_attr_header ah;
@@ -412,8 +393,8 @@ static int read_mftmirr_check(struct ntfs_volume *vol)
                 continue;
             }
 
-            /* Read original $MFT record */
-            rc = ntfs_read_mft_record(vol, (uint64_t)i, rec_buf, &mirr_hdr);
+            /* Read original $MFT record (raw — compare pre-fixup bytes) */
+            rc = ntfs_read_mft_record_raw(vol, (uint64_t)i, rec_buf, &mirr_hdr);
             if (rc != NTFS_OK) {
                 mismatches++;
                 continue;

@@ -17,9 +17,6 @@
 #include "kernel/mm/heap.h"
 #include "kernel/klog.h"
 
-/* $MFT is always inode 0 */
-#define NTFS_INODE_MFT  0
-
 /* First 16 MFT records (0–15) are reserved for system metafiles.
  * User allocations start at inode 24 (with 16–23 as NTFS padding). */
 #define NTFS_FIRST_USER_INODE  24

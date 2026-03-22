@@ -663,13 +663,6 @@ int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
         return rc;
     }
 
-    /* Apply fixup */
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
     /* Verify this is a directory */
     if (!(hdr.flags & NTFS_MFT_FLAG_DIRECTORY)) {
         pmm_free_frame(rec_phys);
@@ -888,12 +881,6 @@ int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
 
     /* Read and fixup directory's MFT record */
     rc = ntfs_read_mft_record(vol, dir_inode, rec_buf, &hdr);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
     if (rc != NTFS_OK) {
         pmm_free_frame(rec_phys);
         return rc;

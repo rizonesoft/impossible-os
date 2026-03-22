@@ -281,13 +281,6 @@ static const uint8_t *attrlist_search(const uint8_t *attrlist_data,
                         goto next_entry;
                     }
 
-                    rc = ntfs_apply_fixup(rec_buf, vol->frs_size,
-                                           vol->bytes_per_sector);
-                    if (rc != NTFS_OK) {
-                        pmm_free_frame(rec_phys);
-                        goto next_entry;
-                    }
-
                     /* Search for the attribute in the extension record */
                     if (name)
                         found = ntfs_attr_find_named(rec_buf, &ehdr,

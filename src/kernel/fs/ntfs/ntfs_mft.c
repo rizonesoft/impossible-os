@@ -11,7 +11,7 @@
 #include "kernel/klog.h"
 
 /* ============================================================================
- * ntfs_read_mft_record — Read and parse a single MFT record by inode number.
+ * ntfs_read_mft_record_raw — Read and parse a single MFT record (uncached).
  *
  * Calculates byte offset: mft_byte_offset + (inode × frs_size)
  * Converts to LBA and reads frs_size/sector_size sectors.
@@ -20,8 +20,8 @@
  * The caller must provide a buffer of at least vol->frs_size bytes.
  * ============================================================================ */
 
-int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
-                         void *buf, struct ntfs_mft_header *hdr)
+int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
+                             void *buf, struct ntfs_mft_header *hdr)
 {
     uint64_t byte_offset;
     uint64_t lba;

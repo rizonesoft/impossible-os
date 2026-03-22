@@ -192,14 +192,6 @@ static int ntfs_vfs_read(struct vfs_node *node, uint32_t offset,
         return -1;
     }
 
-    /* Apply fixup */
-    rc = ntfs_apply_fixup(rec_buf, nd->vol->frs_size,
-                           nd->vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return -1;
-    }
-
     /* Read file data */
     bytes_read = ntfs_read_file_data(rec_buf, &hdr, nd->vol,
                                       (uint64_t)offset, (uint64_t)size,
@@ -298,9 +290,6 @@ static struct vfs_node *ntfs_vfs_finddir(struct vfs_node *node,
 
             if (ntfs_read_mft_record(parent_nd->vol, child_inode,
                                       rec_buf, &hdr) == NTFS_OK) {
-                ntfs_apply_fixup(rec_buf, parent_nd->vol->frs_size,
-                                  parent_nd->vol->bytes_per_sector);
-
                 if (hdr.flags & NTFS_MFT_FLAG_DIRECTORY) {
                     child_nd->is_directory = 1;
                 } else {
@@ -385,8 +374,6 @@ static int ntfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
 
             if (ntfs_read_mft_record(nd->vol, nd->inode,
                                       rec_buf, &hdr) == NTFS_OK) {
-                ntfs_apply_fixup(rec_buf, nd->vol->frs_size,
-                                  nd->vol->bytes_per_sector);
                 {
                     struct ntfs_std_info si;
                     if (ntfs_decode_std_info(rec_buf, &hdr, &si) == NTFS_OK) {

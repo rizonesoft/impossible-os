@@ -16,6 +16,7 @@
 /* Forward declarations */
 struct blkdev;
 struct ntfs_data_run;
+struct ntfs_mft_cache_entry;
 
 /* Maximum data runs we store per cached non-resident attribute */
 #define NTFS_MAX_BITMAP_RUNS  256
@@ -76,6 +77,14 @@ struct ntfs_volume {
     uint8_t  volume_dirty;                 /* 1 if volume was not cleanly unmounted */
     uint16_t *upcase_table;                /* Unicode uppercase mapping (65536 entries, PMM-allocated) */
     uint8_t  sysfiles_loaded;              /* 1 if system metafiles are loaded */
+
+    /* ---- MFT Record Cache (§10.1) ---- */
+    struct ntfs_mft_cache_entry *mft_cache; /* LRU cache array (PMM-allocated) */
+    uint32_t mft_cache_size;               /* Number of cache entries (default 64) */
+    uint64_t mft_cache_hits;               /* Telemetry: cache hits */
+    uint64_t mft_cache_misses;             /* Telemetry: cache misses */
+    uint64_t mft_cache_evictions;          /* Telemetry: LRU evictions */
+    uint8_t  mft_cache_loaded;             /* 1 if cache is initialized */
 };
 
 /* Well-known NTFS system inode numbers */
@@ -151,12 +160,39 @@ struct ntfs_mft_header {
     uint64_t base_record_ref;    /* 0x20: Base record ref (0 if this IS base) */
 };
 
-/* Read a single MFT record by inode number.
+/* Read a single MFT record by inode number (CACHED).
+ * Checks the LRU cache first; on miss, reads from disk and caches.
  * buf must point to vol->frs_size bytes of writable memory.
  * On success, hdr is filled with the parsed header fields.
  * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
 int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
                          void *buf, struct ntfs_mft_header *hdr);
+
+/* Read a single MFT record by inode number (UNCACHED).
+ * Always reads from disk. Used by the cache module itself and
+ * during early boot before the cache is initialized.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_read_mft_record_raw(struct ntfs_volume *vol, uint64_t inode,
+                             void *buf, struct ntfs_mft_header *hdr);
+
+/* ---- MFT Record Cache (§10.1) ---- */
+
+/* Default cache size (number of MFT record slots) */
+#define NTFS_MFT_CACHE_DEFAULT_SIZE  64
+
+/* Pinned inode flags (never evicted from cache) */
+#define NTFS_CACHE_PIN_MFT   (1u << 0)  /* Inode 0: $MFT */
+#define NTFS_CACHE_PIN_ROOT  (1u << 1)  /* Inode 5: root dir */
+
+/* Initialize the MFT record cache. Call after ntfs_init().
+ * cache_size: number of entries (0 = use default of 64). */
+int ntfs_cache_init(struct ntfs_volume *vol, uint32_t cache_size);
+
+/* Invalidate a specific inode's cache entry (e.g., after write). */
+void ntfs_cache_invalidate(struct ntfs_volume *vol, uint64_t inode);
+
+/* Log cache telemetry: hit rate, evictions. */
+void ntfs_cache_log_stats(const struct ntfs_volume *vol);
 
 /* Apply Update Sequence Array fixup to a raw record buffer.
  * Detects sector tears and restores original last-2-bytes-per-sector.
