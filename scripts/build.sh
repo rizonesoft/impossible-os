@@ -258,6 +258,26 @@ fi
 STEP=$((STEP + 1))
 run_kernel_step $STEP $TOTAL || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
+# ── BSS / user-mode address collision check ─────────────────────────────────
+# Kernel BSS must not overlap the user-mode ELF base address (user/user.ld).
+# If BSS grows past USER_BASE, user programs overwrite kernel data at runtime.
+USER_BASE=0x800000
+if [[ -f build/kernel.map ]]; then
+    BSS_END_HEX=$(grep ' [bB] ' build/kernel.map | awk '{print $1}' | sort | tail -1)
+    if [[ -n "$BSS_END_HEX" ]]; then
+        BSS_END=$((16#${BSS_END_HEX}))
+        if [[ $BSS_END -ge $USER_BASE ]]; then
+            printf '\n %b✗ BSS COLLISION:%b Kernel BSS end (0x%s) >= user base (0x%X)\n' \
+                "$RED" "$RESET" "$BSS_END_HEX" "$USER_BASE" | tee -a "$LOG"
+            printf '   Increase USER_BASE in user/user.ld or reduce kernel static allocations.\n' | tee -a "$LOG"
+            echo "=== BUILD FAILED ===" >> "$LOG"
+            exit 1
+        fi
+        printf ' %b✓ BSS check:%b kernel BSS end 0x%s < user base 0x%X\n' \
+            "$GREEN" "$RESET" "$BSS_END_HEX" "$USER_BASE" | tee -a "$LOG"
+    fi
+fi
+
 # Userland
 STEP=$((STEP + 1))
 run_step $STEP $TOTAL "Userland" "userland" || { print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }

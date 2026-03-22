@@ -79,3 +79,15 @@ void *ptr = kmalloc(small_size);  /* MUST be ≤ 4 KB */
 - **UEFI GOP framebuffer.** The framebuffer is a linear 32bpp buffer from UEFI GOP. Do NOT write VGA text mode (0xB8000) code.
 - **RCU for read-heavy structures.** Prefer Read-Copy-Update over spinlocks for VFS mount list, process tree, and Registry cache.
 
+## BSS Growth — Address Space Collision
+
+> [!CAUTION]
+> Adding or expanding large `static` arrays (e.g., `ports[32]`, pool arrays) in kernel code grows the **BSS section**. Kernel BSS **must stay below** the user-mode base address (`0x800000`, set in `user/user.ld`). If BSS crosses this boundary, user-mode ELF loading will silently overwrite kernel data at runtime.
+
+The build script (`scripts/build.sh`) automatically checks this after linking the kernel. If the check fails, either:
+1. Increase the user base address in `user/user.ld`
+2. Reduce kernel static allocations (move large arrays to PMM)
+
+| Commit | Bug | Root Cause |
+|--------|-----|------------|
+| `f38670f` | GPF in `RegSetValueEx` after desktop loaded | NCQ struct expansion pushed BSS past `0x400000`; shell.exe overwrote `reg_value_pool` |

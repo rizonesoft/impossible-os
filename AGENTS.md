@@ -154,6 +154,9 @@ PMM (physical pages) → VMM (page tables) → kmalloc (2 MiB heap)
                            Everything else → pmm_alloc_contiguous()
 ```
 
+> [!IMPORTANT]
+> Kernel BSS must stay below `0x800000` (user-mode ELF base in `user/user.ld`). The build script checks this automatically. See [`coding.md`](.agents/rules/coding.md) § BSS Growth.
+
 ### Storage Stack
 
 ```
