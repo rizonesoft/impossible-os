@@ -136,7 +136,7 @@ graph TD
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ✅   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ✅   |
-| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ⬜   |
+| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ✅   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §4.1 Transport Abstraction  | Unified SCSI transport (PIO/DMA/AHCI)                      | Phase 4 (§3.1 + §3.2)                  |   ⬜   |
 | **5** | `040.03-ATAPI-SCSI-MMC`  | §7.1 VFS Block Device       | Expose optical drive as block device + drive letter        | Phase 3 (§5.2) + Phase 4 + 040.17 §13  |   ⬜   |
 | **5** | `040.03-ATAPI-SCSI-MMC`  | §5.3 Media Control Cmds     | Eject, load tray, lock, READ TOC, disc structure           | Phase 3 (§5.1) + Phase 5 (§7.1)        |   ⬜   |
@@ -317,33 +317,29 @@ graph TD
 
 ### 3.2 AHCI ATAPI Command Delivery
 
-**Prompt:** Under AHCI, the HBA automates the entire ATAPI handshake in silicon. The driver builds memory structures and rings a doorbell — no PIO polling required. Configure the Command Header: set CFL=5 (H2D FIS length in DWORDs), set the `a` bit (bit 5) to signal ATAPI mode, set `w` for write direction, set PRDTL for scatter-gather entries. In the Command Table: build FIS_REG_H2D (`0x27`) in the CFIS field with command=`0xA0`, place the raw SCSI CDB in the 16-byte ACMD field. Populate PRDT entries, write PxCI to issue. Completion arrives via MSI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: AHCI command delivery"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify AHCI ATAPI command delivery is correctly implemented. Check: (1) `atapi_packet_cmd()` builds H2D FIS with `fis_type=0x27`, `command=0xA0`, `pmport_c=0x80`, `featurel=1` (DMA), `lba1/lba2`=byte count limit. (2) CDB copied to 16-byte ACMD area, zero-padded to device's packet_size. (3) Command header: CFL=5, ATAPI bit (bit 5), Write bit (bit 6), PRDTL from `atapi_build_prdt()`. (4) `port_issue_cmd_atapi()` writes PxCI doorbell, waits via `event_wait_timeout()` (30s), checks PxTFD for ERR, CLO resets on stuck BSY/DRQ. (5) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
-> **Existing code:** `atapi_packet_cmd()` in `ahci.c` (line 372) already
-> implements this: builds H2D FIS with `ATA_CMD_PACKET`, sets features=1 (DMA),
-> copies 12-byte CDB to `acmd[]`, sets bit 5 (ATAPI) in command header flags.
-> This section formalizes the existing implementation and extends it with
-> 16-byte CDB support and proper error checking via `PxTFD`.
+> **Implementation notes:** `atapi_packet_cmd()` in `ahci_atapi.c` is the
+> unified AHCI ATAPI command path — all SCSI commands flow through it. The
+> function name `ahci_atapi_command()` from the TODO was implemented as the
+> existing `atapi_packet_cmd()` (static, internal to ahci_atapi.c). The public
+> API is `atapi_dma_command()` which wraps it with PMM-backed DMA buffers.
+> `port_issue_cmd_atapi()` is a copy of `port_issue_cmd()` with 30-second
+> timeout for optical drives instead of the standard 5-second ATA timeout.
 
-- [ ] Implement `ahci_atapi_command(port, cdb, cdb_len, buf, buf_len, direction)`:
-  - [ ] Find free Command List slot (check PxCI and PxSACT)
-  - [ ] Configure `HBA_CMD_HEADER`:
-    - [ ] `CFL = 5` (Host-to-Device Register FIS = 5 DWORDs = 20 bytes)
-    - [ ] `A = 1` (ATAPI — tells HBA to use packet protocol)
-    - [ ] `W = (direction == WRITE) ? 1 : 0`
-    - [ ] `PRDTL = num_prdt_entries`
-  - [ ] Build Command Table (`HBA_CMD_TBL`), aligned to 128 bytes:
-    - [ ] **CFIS** (64 bytes): construct `FIS_REG_H2D` (type `0x27`):
-      - [ ] `fis_type = 0x27`, `command = 0xA0`, `c = 1` (command register update)
-      - [ ] `featurel = 0x01` (DMA) or `0x00` (PIO)
-      - [ ] `lba_mid = buf_len & 0xFF`, `lba_hi = (buf_len >> 8) & 0xFF`
-    - [ ] **ACMD** (16 bytes): copy raw SCSI CDB (12 or 16 bytes, zero-pad remainder)
-    - [ ] **PRDT**: populate entries with `{ dba, dbc, i_bit }`, max 4 MB per entry
-  - [ ] Issue: write `(1 << slot)` to `PxCI`
-- [ ] Completion: MSI fires, ISR reads `PxIS`, process `PxCI` clearance
-- [ ] Error: check `PxTFD` for ERR bit → issue REQUEST SENSE
-- [ ] Commit: `"atapi: AHCI command delivery"`
+- [x] `atapi_packet_cmd()` implements all AHCI ATAPI command delivery:
+  - [x] `port_find_slot()` finds free command slot via PxCI
+  - [x] Command header: CFL=5 (20-byte FIS / 4), A=1 (bit 5), W=direction (bit 6)
+  - [x] PRDTL set from `atapi_build_prdt()` (multi-entry scatter-gather)
+  - [x] H2D FIS: `fis_type=0x27`, `command=0xA0`, `c=1`, `featurel=0x01` (DMA)
+  - [x] Byte count limit: `lba1 = buf_len & 0xFF`, `lba2 = (buf_len >> 8) & 0xFF`
+  - [x] ACMD: 16-byte area, CDB copied and zero-padded to device's packet_size
+  - [x] PRDT: multi-entry via `atapi_build_prdt()`, 64KB boundaries, IOC on last
+  - [x] Issue: `port_write(PxCI, 1 << slot)` via `port_issue_cmd_atapi()`
+- [x] Completion: MSI → ISR clears PxIS → `event_set()` → `event_wait_timeout()`
+- [x] Error: PxTFD ERR bit checked → CLO reset on BSY/DRQ stuck → REQUEST SENSE
+- [x] Commit: `"atapi: AHCI command delivery"`
 
 ---
 
