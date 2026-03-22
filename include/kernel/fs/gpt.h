@@ -8,7 +8,7 @@
  * single-byte type IDs. The header and partition array are both protected
  * by CRC32 checksums.
  *
- * Full type GUID registry (25+ types) — see gpt.c for definitions.
+ * Full type GUID registry (36+ types) — see gpt.c for definitions.
  * ============================================================================ */
 
 #pragma once
@@ -91,6 +91,18 @@ extern const struct gpt_guid GPT_GUID_SOLARIS_ROOT;
 extern const struct gpt_guid GPT_GUID_VMWARE_VMFS;
 extern const struct gpt_guid GPT_GUID_CHROMEOS_KERNEL;
 extern const struct gpt_guid GPT_GUID_CEPH_OSD;
+extern const struct gpt_guid GPT_GUID_LINUX_USR_X64;
+extern const struct gpt_guid GPT_GUID_LINUX_VAR;
+extern const struct gpt_guid GPT_GUID_LINUX_TMP;
+extern const struct gpt_guid GPT_GUID_LINUX_XBOOT;
+extern const struct gpt_guid GPT_GUID_FREEBSD_BOOT;
+extern const struct gpt_guid GPT_GUID_FREEBSD_DATA;
+extern const struct gpt_guid GPT_GUID_FREEBSD_SWAP;
+extern const struct gpt_guid GPT_GUID_FREEBSD_UFS;
+extern const struct gpt_guid GPT_GUID_FREEBSD_VINUM;
+extern const struct gpt_guid GPT_GUID_NETBSD_SWAP;
+extern const struct gpt_guid GPT_GUID_NETBSD_FFS;
+extern const struct gpt_guid GPT_GUID_OPENBSD_DATA;
 
 /* ---- API ---- */
 

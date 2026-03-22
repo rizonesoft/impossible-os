@@ -134,9 +134,9 @@ const struct gpt_guid GPT_GUID_APPLE_APFS = {
     {0xAA, 0x11, 0x00, 0x30, 0x65, 0x43, 0xEC, 0xAC}
 };
 
-/* 516E7CB5-6ECF-11D6-8FF8-00022D09712B  — FreeBSD ZFS */
+/* 516E7CBA-6ECF-11D6-8FF8-00022D09712B  — FreeBSD ZFS */
 const struct gpt_guid GPT_GUID_FREEBSD_ZFS = {
-    0x516E7CB5, 0x6ECF, 0x11D6,
+    0x516E7CBA, 0x6ECF, 0x11D6,
     {0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B}
 };
 
@@ -162,6 +162,84 @@ const struct gpt_guid GPT_GUID_CHROMEOS_KERNEL = {
 const struct gpt_guid GPT_GUID_CEPH_OSD = {
     0x4FBD7E29, 0x9D25, 0x41B8,
     {0xAF, 0xD0, 0x06, 0x2C, 0x0C, 0xEF, 0xF0, 0x5D}
+};
+
+/* ---- Linux systemd Discoverable Partitions ---- */
+
+/* 8484680C-9521-48C6-9C11-B0720656F69B  — Linux /usr (x86-64) */
+const struct gpt_guid GPT_GUID_LINUX_USR_X64 = {
+    0x8484680C, 0x9521, 0x48C6,
+    {0x9C, 0x11, 0xB0, 0x72, 0x06, 0x56, 0xF6, 0x9B}
+};
+
+/* 4D21B016-B534-4796-B7EB-173692D58176  — Linux /var */
+const struct gpt_guid GPT_GUID_LINUX_VAR = {
+    0x4D21B016, 0xB534, 0x4796,
+    {0xB7, 0xEB, 0x17, 0x36, 0x92, 0xD5, 0x81, 0x76}
+};
+
+/* 7EC6F557-3BC5-4ACA-B293-16EF5DF639D1  — Linux /tmp */
+const struct gpt_guid GPT_GUID_LINUX_TMP = {
+    0x7EC6F557, 0x3BC5, 0x4ACA,
+    {0xB2, 0x93, 0x16, 0xEF, 0x5D, 0xF6, 0x39, 0xD1}
+};
+
+/* BC13C2FF-59E6-4262-A352-B275FD6F7172  — Linux Extended Boot (XBOOTLDR) */
+const struct gpt_guid GPT_GUID_LINUX_XBOOT = {
+    0xBC13C2FF, 0x59E6, 0x4262,
+    {0xA3, 0x52, 0xB2, 0x75, 0xFD, 0x6F, 0x71, 0x72}
+};
+
+/* ---- FreeBSD (complete set) ---- */
+
+/* 83BD6B9D-7F41-11DC-BE0B-001560B84F0F  — FreeBSD Boot */
+const struct gpt_guid GPT_GUID_FREEBSD_BOOT = {
+    0x83BD6B9D, 0x7F41, 0x11DC,
+    {0xBE, 0x0B, 0x00, 0x15, 0x60, 0xB8, 0x4F, 0x0F}
+};
+
+/* 516E7CB4-6ECF-11D6-8FF8-00022D09712B  — FreeBSD Data */
+const struct gpt_guid GPT_GUID_FREEBSD_DATA = {
+    0x516E7CB4, 0x6ECF, 0x11D6,
+    {0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B}
+};
+
+/* 516E7CB5-6ECF-11D6-8FF8-00022D09712B  — FreeBSD Swap */
+const struct gpt_guid GPT_GUID_FREEBSD_SWAP = {
+    0x516E7CB5, 0x6ECF, 0x11D6,
+    {0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B}
+};
+
+/* 516E7CB6-6ECF-11D6-8FF8-00022D09712B  — FreeBSD UFS */
+const struct gpt_guid GPT_GUID_FREEBSD_UFS = {
+    0x516E7CB6, 0x6ECF, 0x11D6,
+    {0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B}
+};
+
+/* 516E7CB8-6ECF-11D6-8FF8-00022D09712B  — FreeBSD Vinum/RAID */
+const struct gpt_guid GPT_GUID_FREEBSD_VINUM = {
+    0x516E7CB8, 0x6ECF, 0x11D6,
+    {0x8F, 0xF8, 0x00, 0x02, 0x2D, 0x09, 0x71, 0x2B}
+};
+
+/* ---- NetBSD / OpenBSD ---- */
+
+/* 49F48D32-B10E-11DC-B99B-0019D1879648  — NetBSD Swap */
+const struct gpt_guid GPT_GUID_NETBSD_SWAP = {
+    0x49F48D32, 0xB10E, 0x11DC,
+    {0xB9, 0x9B, 0x00, 0x19, 0xD1, 0x87, 0x96, 0x48}
+};
+
+/* 49F48D5A-B10E-11DC-B99B-0019D1879648  — NetBSD FFS */
+const struct gpt_guid GPT_GUID_NETBSD_FFS = {
+    0x49F48D5A, 0xB10E, 0x11DC,
+    {0xB9, 0x9B, 0x00, 0x19, 0xD1, 0x87, 0x96, 0x48}
+};
+
+/* 824CC7A0-36A8-11E3-890A-952519AD3F61  — OpenBSD Data */
+const struct gpt_guid GPT_GUID_OPENBSD_DATA = {
+    0x824CC7A0, 0x36A8, 0x11E3,
+    {0x89, 0x0A, 0x95, 0x25, 0x19, 0xAD, 0x3F, 0x61}
 };
 
 /* ---- CRC32 (IEEE 802.3, polynomial 0xEDB88320) ---- */
@@ -284,10 +362,22 @@ const char *gpt_type_name(const struct gpt_guid *guid)
     if (gpt_guid_equal(guid, &GPT_GUID_APPLE_HFS))         return "Apple HFS+";
     if (gpt_guid_equal(guid, &GPT_GUID_APPLE_APFS))        return "Apple APFS";
     if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_ZFS))       return "FreeBSD ZFS";
+    if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_BOOT))      return "FreeBSD Boot";
+    if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_DATA))      return "FreeBSD Data";
+    if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_SWAP))      return "FreeBSD Swap";
+    if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_UFS))       return "FreeBSD UFS";
+    if (gpt_guid_equal(guid, &GPT_GUID_FREEBSD_VINUM))     return "FreeBSD Vinum";
     if (gpt_guid_equal(guid, &GPT_GUID_SOLARIS_ROOT))      return "Solaris Root";
     if (gpt_guid_equal(guid, &GPT_GUID_VMWARE_VMFS))       return "VMware VMFS";
     if (gpt_guid_equal(guid, &GPT_GUID_CHROMEOS_KERNEL))   return "ChromeOS Kernel";
     if (gpt_guid_equal(guid, &GPT_GUID_CEPH_OSD))          return "Ceph OSD";
+    if (gpt_guid_equal(guid, &GPT_GUID_LINUX_USR_X64))     return "Linux /usr (x86-64)";
+    if (gpt_guid_equal(guid, &GPT_GUID_LINUX_VAR))         return "Linux /var";
+    if (gpt_guid_equal(guid, &GPT_GUID_LINUX_TMP))         return "Linux /tmp";
+    if (gpt_guid_equal(guid, &GPT_GUID_LINUX_XBOOT))       return "Linux Extended Boot";
+    if (gpt_guid_equal(guid, &GPT_GUID_NETBSD_SWAP))       return "NetBSD Swap";
+    if (gpt_guid_equal(guid, &GPT_GUID_NETBSD_FFS))        return "NetBSD FFS";
+    if (gpt_guid_equal(guid, &GPT_GUID_OPENBSD_DATA))      return "OpenBSD Data";
     return "Unknown";
 }
 

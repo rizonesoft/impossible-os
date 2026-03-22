@@ -329,10 +329,10 @@ graph TD
 
 ### 5.1 Comprehensive Type GUID Registry ✅
 
-**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` defines all 25+ partition type GUIDs as `const struct gpt_guid` constants and `gpt_type_name()` returns human-readable strings for all types including BIOS Boot, MS Reserved, MS LDM Meta/Data, MS Recovery, MS Storage Spaces, Linux Swap/Root/Home/Srv/LVM/RAID, Apple HFS+/APFS, FreeBSD ZFS, Solaris Root, VMware VMFS, ChromeOS Kernel, and Ceph OSD. Confirm `gpt.h` declares all `extern` constants. Confirm unknown types return `"Unknown"`. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` defines all 36 partition type GUIDs as `const struct gpt_guid` constants and `gpt_type_name()` returns human-readable strings for all types. Confirm `gpt.h` declares all `extern` constants. Confirm unknown types return `"Unknown"`. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
 > [!NOTE]
-> **Implementation note:** All 25 GUIDs are defined in `gpt.c:24-164` with corresponding `extern` declarations in `gpt.h:70-93`. The `gpt_type_name()` function at `gpt.c:245-271` returns strings for all known types and `"Unknown"` for unrecognized GUIDs.
+> **Implementation note:** All 36 GUIDs are defined in `gpt.c:24-244` with corresponding `extern` declarations in `gpt.h:70-105`. The `gpt_type_name()` function returns strings for all known types and `"Unknown"` for unrecognized GUIDs. **Bug fix:** FreeBSD ZFS GUID was `0x516E7CB5` (= FreeBSD Swap), corrected to `0x516E7CBA`.
 
 - [x] `GPT_GUID_EMPTY` — `00000000-0000-0000-0000-000000000000`
 - [x] `GPT_GUID_EFI_SYSTEM` — `C12A7328-F81F-11D2-BA4B-00A0C93EC93B`
@@ -353,14 +353,27 @@ graph TD
 - [x] `GPT_GUID_LINUX_RAID` — `A19D880F-05FC-4D3B-A006-743F0F84911E`
 - [x] `GPT_GUID_APPLE_HFS` — `48465300-0000-11AA-AA11-00306543ECAC`
 - [x] `GPT_GUID_APPLE_APFS` — `7C3457EF-0000-11AA-AA11-00306543ECAC`
-- [x] `GPT_GUID_FREEBSD_ZFS` — `516E7CB5-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_FREEBSD_ZFS` — `516E7CBA-6ECF-11D6-8FF8-00022D09712B` *(fixed: was 516E7CB5 = Swap)*
 - [x] `GPT_GUID_SOLARIS_ROOT` — `6A85CF4D-1DD2-11B2-99A6-080020736631`
 - [x] `GPT_GUID_VMWARE_VMFS` — `AA31E02A-400F-11DB-9590-000C2911D1B8`
 - [x] `GPT_GUID_CHROMEOS_KERNEL` — `FE3A2A5D-4F32-41A7-B725-ACCC3285A309`
 - [x] `GPT_GUID_CEPH_OSD` — `4FBD7E29-9D25-41B8-AFD0-062C0CEFF05D`
+- [x] `GPT_GUID_LINUX_USR_X64` — `8484680C-9521-48C6-9C11-B0720656F69B`
+- [x] `GPT_GUID_LINUX_VAR` — `4D21B016-B534-4796-B7EB-173692D58176`
+- [x] `GPT_GUID_LINUX_TMP` — `7EC6F557-3BC5-4ACA-B293-16EF5DF639D1`
+- [x] `GPT_GUID_LINUX_XBOOT` — `BC13C2FF-59E6-4262-A352-B275FD6F7172`
+- [x] `GPT_GUID_FREEBSD_BOOT` — `83BD6B9D-7F41-11DC-BE0B-001560B84F0F`
+- [x] `GPT_GUID_FREEBSD_DATA` — `516E7CB4-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_FREEBSD_SWAP` — `516E7CB5-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_FREEBSD_UFS` — `516E7CB6-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_FREEBSD_VINUM` — `516E7CB8-6ECF-11D6-8FF8-00022D09712B`
+- [x] `GPT_GUID_NETBSD_SWAP` — `49F48D32-B10E-11DC-B99B-0019D1879648`
+- [x] `GPT_GUID_NETBSD_FFS` — `49F48D5A-B10E-11DC-B99B-0019D1879648`
+- [x] `GPT_GUID_OPENBSD_DATA` — `824CC7A0-36A8-11E3-890A-952519AD3F61`
 - [x] For unknown types: display as `"Unknown"` — never crash
-- [x] Update `gpt_type_name()` to return human-readable strings for all types
+- [x] Update `gpt_type_name()` to return human-readable strings for all 36 types
 - [x] Commit: `"gpt: expanded type GUID registry"`
+- [x] Commit: `"gpt: expand GUID registry to 36 types"`
 
 ---
 
