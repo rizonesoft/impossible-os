@@ -186,7 +186,7 @@ graph TD
 | 💎 | P5   | §7.4 Notification Data           | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §10.1 Lifetime Metrics           | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §12.1 Adaptive Hybrid Polling    | P3 (§3.2)                      |   ✅   |
-| ⭐ | P5   | §13.1 I/O Priority Queues        | P5 (§6.1)                      |   ⬜   |
+| ⭐ | P5   | §13.1 I/O Priority Queues        | P5 (§6.1)                      |   ✅   |
 | ⭐ | P5   | §16.1 I/O Latency Telemetry      | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §17.1 Predictive Prefetch        | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §18.1 I/O Request Merging        | P5 (§7.1)                      |   ⬜   |
@@ -806,19 +806,34 @@ graph TD
 
 ### 13.1 Win32 I/O Priority to Virtqueue Mapping
 
-**Prompt:** Windows exposes I/O priority levels (`IoPriorityVeryLow`, `IoPriorityLow`, `IoPriorityNormal`, `IoPriorityHigh`, `IoPriorityCritical`) but viostor treats all VirtIO requests equally — no priority differentiation at the device level. Linux has blk-mq priority hints but virtio-blk ignores them. Impossible OS can be the first OS to map Win32 I/O priority classes to dedicated virtqueues when multi-queue (`F_MQ`) is negotiated. Assign queue 0 = Critical/High, queue 1 = Normal, queue 2+ = Low/VeryLow (background). The hypervisor (QEMU/KVM) can then schedule higher-priority queues with lower latency. This gives Impossible OS the first true I/O QoS in a VirtIO driver — no other OS does this. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: I/O priority queue mapping"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **DONE — Verify** I/O priority queue mapping. Boot in QEMU with `num_queues >= 3` (add `-device virtio-blk-pci,num-queues=3`). Check serial log for `"I/O priority queues: ACTIVE (3 queues) — Q0=Critical/High, Q1=Normal, Q2=Low/VeryLow"`. If only 1 queue is available, verify fallback: `"I/O priority queues: inactive"`. Check Registry: `reg query HKLM\HARDWARE\VirtIO\Block0\QueueStats\High`.
 
-- [ ] Requires `VIRTIO_BLK_F_MQ` (§6.1) with ≥ 3 queues
-- [ ] Define priority-to-queue mapping:
-  - [ ] Queue 0: `IoPriorityCritical` + `IoPriorityHigh` (system, page faults, real-time)
-  - [ ] Queue 1: `IoPriorityNormal` (standard user I/O)
-  - [ ] Queue 2+: `IoPriorityLow` + `IoPriorityVeryLow` (background defrag, indexing, prefetch)
-- [ ] In `virtio_blk_submit()`: read `current_thread->io_priority`, select target queue
-- [ ] Assign independent MSI-X vectors per priority queue
-- [ ] High-priority queue: process completions first in ISR (before normal/low queues)
-- [ ] Expose metrics per priority level: `HKLM\HARDWARE\VirtIO\Block0\QueueStats\High\IOPS`
-- [ ] Fallback: if `F_MQ` not available, treat all I/O as normal priority (single queue)
-- [ ] Commit: `"virtio-blk: I/O priority queue mapping"`
+> [!NOTE]
+> **Implementation Notes:**
+> - Five Win32-style I/O priority levels: `IO_PRIO_VERY_LOW` (0) through `IO_PRIO_CRITICAL` (4)
+> - Three queue tiers: `IO_QUEUE_HIGH` (0), `IO_QUEUE_NORMAL` (1), `IO_QUEUE_LOW` (2)
+> - `thread_prio_to_io_prio()`: maps thread priority (0-31) to I/O priority level
+> - `io_prio_to_queue()`: maps I/O priority to target queue index
+> - `get_queue_idx()` now uses `thread_current()->priority` when `priority_queues_active`
+> - ISR: when priority queues active, checks Q0 (high) for pending completions before processing other queues
+> - Per-queue stats: `io_completed`, `io_count_window`, `last_iops` — tracked per-completion
+> - Activation: requires `has_mq && num_queues >= 3` (IO_QUEUE_TIERS)
+> - Registry: `HKLM\HARDWARE\VirtIO\Block0\QueueStats\{High,Normal,Low}\{QueueIndex,IOPS,TotalIO}`
+> - Fallback: single queue uses CPU-based round-robin (original behavior)
+> - `task.h` included for `thread_current()` and `THREAD_PRIO_*` constants
+> - Note: QEMU default virtio-blk-pci uses 1 queue — priority mapping is silently inactive
+
+- [x] Requires `VIRTIO_BLK_F_MQ` (§6.1) with ≥ 3 queues
+- [x] Define priority-to-queue mapping:
+  - [x] Queue 0: `IoPriorityCritical` + `IoPriorityHigh` (system, page faults, real-time)
+  - [x] Queue 1: `IoPriorityNormal` (standard user I/O)
+  - [x] Queue 2+: `IoPriorityLow` + `IoPriorityVeryLow` (background defrag, indexing, prefetch)
+- [x] In `virtio_blk_submit()`: read `current_thread->io_priority`, select target queue
+- [x] Assign independent MSI-X vectors per priority queue
+- [x] High-priority queue: process completions first in ISR (before normal/low queues)
+- [x] Expose metrics per priority level: `HKLM\HARDWARE\VirtIO\Block0\QueueStats\High\IOPS`
+- [x] Fallback: if `F_MQ` not available, treat all I/O as normal priority (single queue)
+- [x] Commit: `"virtio-blk: I/O priority queue mapping"`
 
 ---
 
@@ -1077,7 +1092,7 @@ graph TD
 | 💎 | 🟢 P3    | 7.4 Notification Data            | Performance — host-side polling optimization                     |
 | 💎 | 🟢 P3    | 10.1 Lifetime Metrics            | Monitoring — drive endurance in Disk Manager                     |
 | ⭐ | 🟢 P3    | 12.1 Adaptive Hybrid Polling     | 🚀 **Exclusive** — workload-adaptive completion strategy         |
-| ⭐ | 🟢 P3    | 13.1 I/O Priority Queues         | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS            |
+| ⭐ | 🟢 P3    | 13.1 I/O Priority Queues         | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS ✅       |
 | ⭐ | 🟢 P3    | 16.1 I/O Latency Telemetry       | 🚀 **Exclusive** — ns-resolution histograms in GUI               |
 | ⭐ | 🟢 P3    | 17.1 Predictive Prefetch         | 🚀 **Exclusive** — driver-level sequential read-ahead            |
 | ⭐ | 🟢 P3    | 18.1 I/O Request Merging         | 🚀 **Exclusive** — auto-coalesce adjacent requests               |

@@ -27,6 +27,7 @@
 #include "kernel/barrier.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/sched/event.h"
+#include "kernel/sched/task.h"
 #include "kernel/mm/pmm.h"
 #include "kernel/smp.h"
 #include "kernel/timer.h"
@@ -91,6 +92,13 @@ static struct {
 
 /* Max retries for transient I/O errors */
 #define VIRTIO_BLK_MAX_RETRIES  3
+
+/* Per-queue I/O statistics (used by both adaptive polling and priority queues) */
+static struct {
+    uint32_t io_completed;     /* Total I/Os completed on this queue */
+    uint32_t io_count_window;  /* I/Os in current 100ms window */
+    uint32_t last_iops;        /* IOPS from last completed window */
+} queue_stats[VIRTIO_BLK_MAX_QUEUES];
 
 /* ---- Adaptive Hybrid Polling Engine ---- */
 
@@ -173,6 +181,15 @@ static void adaptive_check_window(void)
     adaptive.io_count = 0;
     adaptive.window_start = now;
 
+    /* Per-queue IOPS */
+    {
+        uint16_t q;
+        for (q = 0; q < num_queues; q++) {
+            queue_stats[q].last_iops = queue_stats[q].io_count_window * 10;
+            queue_stats[q].io_count_window = 0;
+        }
+    }
+
     /* Mode transition logic with hysteresis */
     switch (adaptive.mode) {
     case VIRTIO_IO_MODE_INTERRUPT:
@@ -251,11 +268,74 @@ static int hybrid_spin_poll(struct virtqueue *vq, uint32_t spin_us)
     return 0;  /* Spin window expired — fall back to ISR */
 }
 
-/* ---- Helper: get per-CPU queue index ---- */
+/* ---- I/O Priority Queue Mapping (§13.1 — 🚀 Impossible OS Exclusive) ---- */
+
+/* Win32-compatible I/O priority levels */
+#define IO_PRIO_VERY_LOW   0  /* Background: indexing, prefetch */
+#define IO_PRIO_LOW        1  /* Background: defrag, cleanup */
+#define IO_PRIO_NORMAL     2  /* Standard user I/O */
+#define IO_PRIO_HIGH       3  /* System, page faults */
+#define IO_PRIO_CRITICAL   4  /* Real-time, paging supervisor */
+
+/* Priority tiers map to queue classes */
+#define IO_QUEUE_HIGH      0  /* Critical + High priority */
+#define IO_QUEUE_NORMAL    1  /* Normal priority */
+#define IO_QUEUE_LOW       2  /* Low + VeryLow (background) */
+#define IO_QUEUE_TIERS     3  /* Number of priority tiers */
+
+static int priority_queues_active;  /* 1 if num_queues >= 3 and F_MQ */
+
+/* Map thread scheduling priority to I/O priority level.
+ * Thread priority (0-31) maps to Win32-style I/O priority. */
+static inline int thread_prio_to_io_prio(uint32_t thread_priority)
+{
+    if (thread_priority >= THREAD_PRIO_REALTIME)
+        return IO_PRIO_CRITICAL;
+    if (thread_priority >= THREAD_PRIO_HIGH)
+        return IO_PRIO_HIGH;
+    if (thread_priority >= THREAD_PRIO_NORMAL)
+        return IO_PRIO_NORMAL;
+    if (thread_priority >= THREAD_PRIO_LOW)
+        return IO_PRIO_LOW;
+    return IO_PRIO_VERY_LOW;
+}
+
+/* Map I/O priority level to target queue index.
+ * When priority queues are active (num_queues >= 3):
+ *   Queue 0 = Critical/High, Queue 1 = Normal, Queue 2 = Low/VeryLow
+ * When not active: falls through to CPU-based selection. */
+static inline uint16_t io_prio_to_queue(int io_prio)
+{
+    switch (io_prio) {
+    case IO_PRIO_CRITICAL:
+    case IO_PRIO_HIGH:
+        return IO_QUEUE_HIGH;    /* Queue 0 */
+    case IO_PRIO_NORMAL:
+        return IO_QUEUE_NORMAL;  /* Queue 1 */
+    case IO_PRIO_LOW:
+    case IO_PRIO_VERY_LOW:
+    default:
+        return IO_QUEUE_LOW;     /* Queue 2 */
+    }
+}
+
+/* ---- Helper: get queue index for current I/O ---- */
 static inline uint16_t get_queue_idx(void)
 {
     if (num_queues <= 1)
         return 0;
+
+    /* Priority-based queue selection when 3+ queues available */
+    if (priority_queues_active) {
+        struct thread *thr = thread_current();
+        if (thr) {
+            int io_prio = thread_prio_to_io_prio(thr->priority);
+            return io_prio_to_queue(io_prio);
+        }
+        return IO_QUEUE_NORMAL;  /* Default: normal if no thread context */
+    }
+
+    /* Fallback: round-robin across CPUs */
     return (uint16_t)(smp_cpu_id() % num_queues);
 }
 
@@ -267,6 +347,19 @@ static void virtio_blk_queue_irq(uint8_t vector, void *ctx)
 {
     int qi = (int)(uintptr_t)ctx;
     (void)vector;
+
+    /* When priority queues are active, process high-priority queue first
+     * by handling queue 0 (Critical/High) completions before others. */
+    if (priority_queues_active && qi != IO_QUEUE_HIGH) {
+        /* Check if high-priority queue has pending completions */
+        if (blk_vqs[IO_QUEUE_HIGH].used->idx !=
+            blk_vqs[IO_QUEUE_HIGH].last_used) {
+            virtio_irq_flags[IO_QUEUE_HIGH] = 1;
+            if (use_events)
+                event_set(&io_completions[IO_QUEUE_HIGH]);
+        }
+    }
+
     if (qi >= 0 && qi < (int)num_queues) {
         virtio_irq_flags[qi] = 1;
         if (use_events)
@@ -556,6 +649,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
 
         adaptive.io_count++;
+        queue_stats[qi].io_completed++;
+        queue_stats[qi].io_count_window++;
         adaptive_check_window();
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -737,6 +832,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
 
     /* Track IOPS for adaptive mode switching */
     adaptive.io_count++;
+    queue_stats[qi].io_completed++;
+    queue_stats[qi].io_count_window++;
     adaptive_check_window();
 
     /* Differentiate status codes */
@@ -2354,6 +2451,50 @@ int virtio_blk_init(void)
            (uint64_t)adaptive.high_threshold,
            (uint64_t)adaptive.spin_us,
            (uint64_t)tsc_per_us);
+
+    /* ---- I/O Priority Queue Activation ---- */
+    if (has_mq && num_queues >= IO_QUEUE_TIERS) {
+        priority_queues_active = 1;
+        klog(LOG_DEBUG, "virtio",
+               "I/O priority queues: ACTIVE (%u queues) — "
+               "Q0=Critical/High, Q1=Normal, Q2=Low/VeryLow",
+               (uint64_t)num_queues);
+
+        /* Expose queue mapping and initial stats via Registry */
+        {
+            HKEY hKey = (HKEY)0;
+            uint32_t disp;
+            static const char *tier_names[] = {"High", "Normal", "Low"};
+            uint16_t t;
+
+            for (t = 0; t < IO_QUEUE_TIERS; t++) {
+                char path[80];
+                /* Build path: HARDWARE\VirtIO\Block0\QueueStats\<tier> */
+                int pos = 0;
+                const char *prefix = "HARDWARE\\VirtIO\\Block0\\QueueStats\\";
+                const char *s;
+                for (s = prefix; *s; s++)
+                    path[pos++] = *s;
+                for (s = tier_names[t]; *s; s++)
+                    path[pos++] = *s;
+                path[pos] = '\0';
+
+                if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0,
+                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                        &hKey, &disp) == ERROR_SUCCESS) {
+                    RegSetDword(hKey, "QueueIndex", (uint32_t)t);
+                    RegSetDword(hKey, "IOPS", 0);
+                    RegSetDword(hKey, "TotalIO", 0);
+                    RegCloseKey(hKey);
+                }
+            }
+        }
+    } else {
+        priority_queues_active = 0;
+        klog(LOG_DEBUG, "virtio",
+               "I/O priority queues: inactive (need MQ with >= 3 queues, "
+               "have %u)", (uint64_t)num_queues);
+    }
 
     return 0;
 }
