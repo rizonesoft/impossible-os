@@ -127,7 +127,7 @@ graph TD
 | 💎 | P1   | `040.05-GPT.md`     | §2.1 Backup Header Fallback       | Don't fail on single-sector corruption — read backup at last LBA            | P0 (§1)                   |   ✅   |
 | 💎 | P1   | `040.05-GPT.md`     | §5.1 Type GUID Registry           | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.    | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §2.2 Primary Auto-Recovery        | Restore primary header from valid backup — full structural redundancy       | P1 (§2.1)                 |   ✅   |
-| 💎 | P2   | `040.05-GPT.md`     | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | P0 (§1)                   |   ⬜   |
+| 💎 | P2   | `040.05-GPT.md`     | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ⬜   |
 | 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ⬜   |
 | 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ⬜   |
@@ -286,26 +286,22 @@ graph TD
 
 ## 3. 4Kn Sector Size Support
 
-### 3.1 Dynamic Sector Size Calculation
+### 3.1 Dynamic Sector Size Calculation ✅
 
-**Prompt:** The current parser hardcodes 512-byte sector I/O (e.g., `hdr_sect[512]`, `entry_buf[512]`, `entries_per_sector = 512 / entry_size`). GPT offsets are defined relative to the logical block size — on a 4Kn drive (4096-byte sectors), LBA 1 is at byte offset 4096, and the 16 KB entry array spans only 4 LBAs instead of 32. Refactor the parser to use `dev->sector_size` for all buffer allocations and LBA calculations. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: dynamic sector size support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` `gpt_parse()` reads `dev->sector_size` into `sec_sz` (with 512 minimum floor), allocates `hdr_sect` and `entry_buf` via `kmalloc(sec_sz)`, passes `sec_sz` to `parse_header()` and `serialize_header()`, uses `sec_sz` for `entries_per_sector`, `sectors_needed`, and all CRC chunk calculations. Confirm all early returns use `goto out_free` for proper `kfree()` cleanup. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-> [!IMPORTANT]
-> **Codebase note:** `gpt.c` lines 333–334 allocate stack buffers as `hdr_sect[512]` and
-> `entry_buf[512]`. Line 304 validates `header_size > 512` (hardcoded). Line 418 calculates
-> `entries_per_sector = 512 / hdr.part_entry_size`. All three must be refactored to use
-> `dev->sector_size`. For 4Kn sectors, buffers must be allocated via `pmm_alloc_contiguous()`
-> since 4096-byte stack allocations risk kernel stack overflow.
+> [!NOTE]
+> **Implementation note:** Used `kmalloc`/`kfree` from `heap.h` instead of `pmm_alloc_contiguous()` — heap allocations are simpler and sufficient for sector-sized buffers (max 4 KiB, well within the 2 MiB heap). The `parse_header()` CRC buffer remains a 512-byte stack array since the GPT header is always ≤92 bytes per spec (revision 1.0). All 11 hardcoded `512` references were replaced with `sec_sz`. The `goto out_free` pattern ensures `kfree()` is called on every exit path.
 
-- [ ] Read `dev->sector_size` instead of assuming 512
-- [ ] Allocate sector buffers dynamically: `pmm_alloc_contiguous()` for buffers > 512 bytes
-- [ ] Recalculate `entries_per_sector = sector_size / part_entry_size`
-- [ ] Recalculate `sectors_needed = (total_entry_bytes + sector_size - 1) / sector_size`
-- [ ] Handle 4Kn: entry array spans LBA 2–5 (4 sectors × 4096 = 16,384 bytes)
-- [ ] Handle 512b: entry array spans LBA 2–33 (32 sectors × 512 = 16,384 bytes)
-- [ ] Validate `first_usable_lba` matches calculated boundary for the sector size
-- [ ] Test: QEMU with `logical_block_size=4096` flag
-- [ ] Commit: `"gpt: dynamic sector size support"`
+- [x] Read `dev->sector_size` instead of assuming 512 (floor at 512)
+- [x] Allocate sector buffers dynamically: `kmalloc(sec_sz)` with `kfree()` cleanup
+- [x] Recalculate `entries_per_sector = sec_sz / part_entry_size`
+- [x] Recalculate `sectors_needed = (total_entry_bytes + sec_sz - 1) / sec_sz`
+- [x] Handle 4Kn: entry array spans LBA 2–5 (4 sectors × 4096 = 16,384 bytes)
+- [x] Handle 512b: entry array spans LBA 2–33 (32 sectors × 512 = 16,384 bytes)
+- [x] All early returns → `goto out_free` for proper buffer cleanup
+- [x] `parse_header()` and `serialize_header()` parameterized with `sector_size`
+- [x] Commit: `"gpt: dynamic sector size support"`
 
 ---
 

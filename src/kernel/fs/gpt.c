@@ -20,6 +20,7 @@
 #include "kernel/drivers/serial.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "kernel/mm/heap.h"
 
 /* ---- Well-known GUIDs ---- */
 
@@ -292,13 +293,14 @@ const char *gpt_type_name(const struct gpt_guid *guid)
 
 /* ---- GPT Header Parsing ---- */
 
-static int parse_header(const uint8_t *buf, struct gpt_header *hdr)
+static int parse_header(const uint8_t *buf, struct gpt_header *hdr,
+                        uint32_t sector_size)
 {
     uint32_t stored_crc, computed_crc;
-    uint8_t tmp[92];
+    uint8_t tmp[512];  /* CRC buffer — header is always ≤92 bytes */
     int i;
 
-    /* Read fields from the raw 512-byte sector */
+    /* Read fields from the raw sector buffer */
     hdr->signature       = read_le64(buf + 0);
     hdr->revision        = read_le32(buf + 8);
     hdr->header_size     = read_le32(buf + 12);
@@ -321,12 +323,12 @@ static int parse_header(const uint8_t *buf, struct gpt_header *hdr)
     }
 
     /* Validate header CRC32: zero the CRC field, compute, compare */
-    if (hdr->header_size > 512 || hdr->header_size < 92) {
+    if (hdr->header_size > sector_size || hdr->header_size < 92) {
         serial_write("[GPT] Invalid header size\n");
         return -1;
     }
 
-    for (i = 0; i < (int)hdr->header_size && i < 92; i++)
+    for (i = 0; i < (int)hdr->header_size && i < 512; i++)
         tmp[i] = buf[i];
     /* Zero the CRC field (bytes 16–19) */
     tmp[16] = 0; tmp[17] = 0; tmp[18] = 0; tmp[19] = 0;
@@ -343,15 +345,17 @@ static int parse_header(const uint8_t *buf, struct gpt_header *hdr)
     return 0;
 }
 
-/* Serialize a gpt_header back to a raw 512-byte sector buffer.
- * Computes and fills in the Header CRC32 automatically. */
-static void serialize_header(const struct gpt_header *hdr, uint8_t *buf)
+/* Serialize a gpt_header back to a raw sector buffer.
+ * Computes and fills in the Header CRC32 automatically.
+ * 'buf' must be at least 'sector_size' bytes. */
+static void serialize_header(const struct gpt_header *hdr, uint8_t *buf,
+                             uint32_t sector_size)
 {
-    int i;
+    uint32_t i;
     uint32_t crc;
 
     /* Zero the entire sector */
-    for (i = 0; i < 512; i++)
+    for (i = 0; i < sector_size; i++)
         buf[i] = 0;
 
     /* Write all 13 fields at their spec offsets */
@@ -387,8 +391,9 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     struct gpt_table tbl;
     const uint8_t *mbr_buf = (const uint8_t *)sector0;
     struct gpt_header hdr;
-    uint8_t hdr_sect[512];
-    uint8_t entry_buf[512];     /* Read one sector at a time */
+    uint8_t *hdr_sect = NULL;
+    uint8_t *entry_buf = NULL;
+    uint32_t sec_sz;
     uint32_t entries_per_sector;
     uint32_t total_entries;
     uint32_t total_entry_bytes;
@@ -404,6 +409,21 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     tbl.valid = 0;
     tbl.count = 0;
 
+    /* §3.1: Use device sector size instead of assuming 512 */
+    sec_sz = dev->sector_size;
+    if (sec_sz < 512)
+        sec_sz = 512;  /* Minimum per UEFI spec */
+
+    /* Allocate sector-sized I/O buffers */
+    hdr_sect = (uint8_t *)kmalloc(sec_sz);
+    entry_buf = (uint8_t *)kmalloc(sec_sz);
+    if (!hdr_sect || !entry_buf) {
+        serial_write("[GPT] Failed to allocate sector buffers\n");
+        if (hdr_sect) kfree(hdr_sect);
+        if (entry_buf) kfree(entry_buf);
+        return tbl;
+    }
+
     /* Step 1: Verify protective MBR has type 0xEE */
     {
         int has_ee = 0;
@@ -416,42 +436,42 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         }
         if (!has_ee) {
             serial_write("[GPT] No protective MBR (0xEE) found\n");
-            return tbl;
+            goto out_free;
         }
     }
 
     /* Step 2: Read GPT header at LBA 1 */
     if (blkdev_read(dev, GPT_HEADER_LBA, 1, hdr_sect) != 0) {
         serial_write("[GPT] Failed to read LBA 1\n");
-        return tbl;
+        goto out_free;
     }
 
     /* Step 3: Parse and validate header (signature + CRC32) */
-    primary_ok = (parse_header(hdr_sect, &hdr) == 0);
+    primary_ok = (parse_header(hdr_sect, &hdr, sec_sz) == 0);
 
     /* §2.1 Backup Header Fallback: if primary fails, try backup at last LBA */
     if (!primary_ok) {
         if (dev->sector_count == 0) {
             serial_write("[GPT] Primary header corrupt, no sector count for backup\n");
-            return tbl;
+            goto out_free;
         }
         backup_lba = dev->sector_count - 1;
         if (blkdev_read(dev, backup_lba, 1, hdr_sect) != 0) {
             serial_write("[GPT] Failed to read backup header\n");
-            return tbl;
+            goto out_free;
         }
-        if (parse_header(hdr_sect, &hdr) != 0) {
+        if (parse_header(hdr_sect, &hdr, sec_sz) != 0) {
             serial_write("[GPT] Both primary and backup headers corrupt\n");
-            return tbl;
+            goto out_free;
         }
         /* Verify backup header's self-referencing fields */
         if (hdr.my_lba != backup_lba) {
             serial_write("[GPT] Backup header my_lba mismatch\n");
-            return tbl;
+            goto out_free;
         }
         if (hdr.alt_lba != GPT_HEADER_LBA) {
             serial_write("[GPT] Backup header alt_lba != 1\n");
-            return tbl;
+            goto out_free;
         }
         klog(LOG_WARN, "blk",
              "Primary GPT header corrupt - using backup at LBA %u",
@@ -462,7 +482,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     /* Sanity-check entry parameters (applies to whichever header we used) */
     if (hdr.part_entry_size < 128 || hdr.num_part_entries == 0) {
         serial_write("[GPT] Invalid partition entry params\n");
-        return tbl;
+        goto out_free;
     }
 
     /* Step 4: Read and validate partition entry array CRC32.
@@ -472,8 +492,8 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         total_entries = GPT_MAX_PARTITIONS;
 
     total_entry_bytes = total_entries * hdr.part_entry_size;
-    entries_per_sector = 512 / hdr.part_entry_size;
-    sectors_needed = (total_entry_bytes + 511) / 512;
+    entries_per_sector = sec_sz / hdr.part_entry_size;
+    sectors_needed = (total_entry_bytes + sec_sz - 1) / sec_sz;
     entry_lba = hdr.part_entry_lba;
 
     /* Compute CRC32 over the entire partition entry array */
@@ -488,10 +508,10 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
             uint32_t chunk;
             if (blkdev_read(dev, entry_lba + si, 1, entry_buf) != 0) {
                 serial_write("[GPT] Failed to read entry sector\n");
-                return tbl;
+                goto out_free;
             }
 
-            chunk = bytes_remaining > 512 ? 512 : bytes_remaining;
+            chunk = bytes_remaining > sec_sz ? sec_sz : bytes_remaining;
             for (i = 0; i < (int)chunk; i++)
                 crc = (crc >> 8) ^ crc32_table[(crc ^ entry_buf[i]) & 0xFF];
             bytes_remaining -= chunk;
@@ -502,7 +522,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     if (entry_crc != hdr.part_entry_crc32) {
         klog(LOG_DEBUG, "blk", "Entry array CRC32 mismatch: stored=%x computed=%x",
                (uint64_t)hdr.part_entry_crc32, (uint64_t)entry_crc);
-        return tbl;
+        goto out_free;
     }
 
     tbl.valid = 1;
@@ -553,7 +573,6 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     /* §2.2 Auto-recover primary header from valid backup */
     if (using_backup) {
         struct gpt_header primary_hdr;
-        uint8_t primary_sect[512];
         uint64_t primary_entry_lba = GPT_HEADER_LBA + 1; /* LBA 2 */
         uint64_t backup_entry_lba = hdr.part_entry_lba;
         int recovery_ok = 1;
@@ -564,11 +583,11 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         primary_hdr.alt_lba = backup_lba;        /* last LBA */
         primary_hdr.part_entry_lba = primary_entry_lba; /* LBA 2 */
 
-        /* Serialize header (CRC32 is auto-computed) */
-        serialize_header(&primary_hdr, primary_sect);
+        /* Serialize header into hdr_sect buffer (reused, sec_sz bytes) */
+        serialize_header(&primary_hdr, hdr_sect, sec_sz);
 
         /* Write reconstructed primary header to LBA 1 */
-        if (blkdev_write(dev, GPT_HEADER_LBA, 1, primary_sect) != 0) {
+        if (blkdev_write(dev, GPT_HEADER_LBA, 1, hdr_sect) != 0) {
             klog(LOG_WARN, "blk", "Failed to write recovered primary GPT header");
             recovery_ok = 0;
         }
@@ -604,7 +623,7 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
                     recovery_ok = 0;
                     break;
                 }
-                chunk = vbytes > 512 ? 512 : vbytes;
+                chunk = vbytes > sec_sz ? sec_sz : vbytes;
                 for (i = 0; i < (int)chunk; i++)
                     verify_crc = (verify_crc >> 8)
                                ^ crc32_table[(verify_crc ^ entry_buf[i]) & 0xFF];
@@ -628,5 +647,8 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         }
     }
 
+out_free:
+    kfree(hdr_sect);
+    kfree(entry_buf);
     return tbl;
 }
