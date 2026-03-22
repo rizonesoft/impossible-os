@@ -86,6 +86,7 @@ struct msix_table_entry {
 #define VIRTIO_PCI_ISR_CONFIG  0x02  /* Device configuration changed */
 
 /* ---- VirtIO transport feature bits ---- */
+#define VIRTIO_F_IN_ORDER      35    /* Device uses buffers in order (§2.7.7) */
 #define VIRTIO_F_RING_RESET    40    /* Per-queue reset (VirtIO 1.2+) */
 
 /* ---- Virtqueue descriptor flags ---- */

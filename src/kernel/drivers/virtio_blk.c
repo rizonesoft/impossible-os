@@ -58,6 +58,7 @@ static int                    has_seg_max;     /* F_SEG_MAX negotiated */
 static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
+static int                    has_in_order;    /* F_IN_ORDER negotiated */
 static int                    has_mq;          /* F_MQ negotiated */
 static int                    has_indirect;    /* F_RING_INDIRECT_DESC negotiated */
 static int                    has_event_idx;   /* F_RING_EVENT_IDX negotiated */
@@ -1643,9 +1644,21 @@ int virtio_blk_init(void)
         uint32_t feat_hi = read_device_features(1);
         uint32_t driver_feat_hi = 1;  /* Bit 0 = VIRTIO_F_VERSION_1 */
 
+        /* F_IN_ORDER is bit 35 = page 1 bit 3.
+         * When negotiated, the device guarantees it processes and returns
+         * descriptors in strict submission order.  This eliminates the
+         * need to match used_elem.id — the driver can reclaim buffers
+         * sequentially (FIFO), reducing cache and TLB pressure. */
+        if (feat_hi & (1u << (VIRTIO_F_IN_ORDER - 32))) {
+            driver_feat_hi |= (1u << (VIRTIO_F_IN_ORDER - 32));
+            has_in_order = 1;
+            klog(LOG_DEBUG, "virtio",
+                   "Negotiated F_IN_ORDER (sequential completion)");
+        }
+
         /* F_RING_RESET is bit 40 = page 1 bit 8 */
-        if (feat_hi & (1u << 8)) {
-            driver_feat_hi |= (1u << 8);
+        if (feat_hi & (1u << (VIRTIO_F_RING_RESET - 32))) {
+            driver_feat_hi |= (1u << (VIRTIO_F_RING_RESET - 32));
             has_ring_reset = 1;
             klog(LOG_DEBUG, "virtio", "Negotiated F_RING_RESET");
         }
