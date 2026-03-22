@@ -55,6 +55,19 @@ struct ntfs_volume {
 
     spinlock_t bitmap_lock;        /* Serializes bitmap modifications */
     uint8_t  bitmap_loaded;        /* 1 if bitmap runs are loaded */
+
+    /* ---- MFT Record Allocator (§12.3) ---- */
+    struct ntfs_data_run *mft_data_runs;   /* $MFT's $DATA runs (where records live) */
+    int      mft_data_run_count;           /* Number of $MFT data runs */
+    uint64_t mft_data_size;                /* $MFT $DATA real size in bytes */
+
+    struct ntfs_data_run *mft_bitmap_runs; /* $MFT's $BITMAP runs (which records exist) */
+    int      mft_bitmap_run_count;         /* Number of $MFT bitmap data runs */
+    uint64_t mft_bitmap_size;              /* $MFT $BITMAP real size in bytes */
+    uint64_t mft_total_records;            /* mft_data_size / frs_size */
+
+    spinlock_t mft_alloc_lock;             /* Serializes MFT record allocation */
+    uint8_t  mft_alloc_loaded;             /* 1 if MFT bitmap is loaded */
 };
 
 /* ---- API ---- */
@@ -560,6 +573,29 @@ int ntfs_free_clusters(struct ntfs_volume *vol,
 /* Count free clusters in the $Bitmap.
  * Performs a full scan of the bitmap — O(total_clusters/8). */
 uint64_t ntfs_get_free_space(struct ntfs_volume *vol);
+
+/* ---- MFT Record Allocator (§12.3) ---- */
+
+/* Load $MFT's own $BITMAP and $DATA runs into vol->mft_bitmap_runs
+ * and vol->mft_data_runs. Must be called during mount, after MFT is
+ * accessible. This is NOT inode 6 ($Bitmap) — it's $MFT's internal
+ * bitmap attribute that tracks which MFT records are allocated. */
+int ntfs_mft_alloc_load(struct ntfs_volume *vol);
+
+/* Allocate a new MFT record.
+ * Scans $MFT's $BITMAP for the first free inode slot, sets the bit,
+ * initializes the record header (magic, USA, flags, $END marker),
+ * applies USA regeneration, and writes the record to disk.
+ * is_directory: set to 1 for directory records (flags = 0x03).
+ * Returns the new inode number (>= 16), or 0 on failure. */
+uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory);
+
+/* Free an MFT record.
+ * Clears the in-use flag but does NOT zero the record (preserves
+ * data for deleted file recovery). Increments sequence number for
+ * stale reference detection. Clears the MFT bitmap bit.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_free_mft_record(struct ntfs_volume *vol, uint64_t inode);
 
 /* ---- File Data Reader (§4.2) ---- */
 
