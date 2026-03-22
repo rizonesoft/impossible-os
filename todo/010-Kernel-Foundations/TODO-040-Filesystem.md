@@ -172,12 +172,12 @@ graph TD
 | :----: | ------------------------ | --------------------------------- | ------------------------------------------------------------ | ----------------------- | :----: |
 | **1**  | `040.01-VirtIO.md`       | §1 PCI Transport                  | Modern PCI capability discovery, BAR mapping                 | —                       | ✅      |
 | **1**  | `040.01-VirtIO.md`       | §2 Initialization                 | Full feature negotiation + status machine                    | Phase 1 (§1)            | ✅      |
-| **1**  | `040.02-AHCI.md`         | §1 PCI + ABAR                     | PCI capability parsing, ABAR remapping                       | —                       | ⬜      |
-| **1**  | `040.02-AHCI.md`         | §2 HBA Init                       | Port enumeration, command lists, FIS buffers                 | Phase 1 (§1)            | ⬜      |
+| **1**  | `040.02-AHCI.md`         | §1 PCI + ABAR                     | PCI capability parsing, ABAR remapping                       | —                       | ✅      |
+| **1**  | `040.02-AHCI.md`         | §2 HBA Init                       | Port enumeration, command lists, FIS buffers                 | Phase 1 (§1)            | ✅      |
 | **2**  | `040.01-VirtIO.md`       | §3 Virtqueue                      | Descriptor rings, avail/used rings, kick                     | Phase 1                 | ✅      |
 | **2**  | `040.01-VirtIO.md`       | §4 MSI-X Interrupts               | Interrupt-driven I/O (no polling)                            | Phase 2 (§3)            | ✅      |
-| **2**  | `040.02-AHCI.md`         | §3 DMA R/W                        | READ/WRITE DMA EXT with PRDT                                 | Phase 1 (§2)            | ⬜      |
-| **2**  | `040.02-AHCI.md`         | §4 Interrupt-Driven I/O           | IRQ-based completion, per-port ISR                           | Phase 1 (§2)            | ⬜      |
+| **2**  | `040.02-AHCI.md`         | §3 DMA R/W                        | READ/WRITE DMA EXT with PRDT                                 | Phase 1 (§2)            | ✅      |
+| **2**  | `040.02-AHCI.md`         | §4 Interrupt-Driven I/O           | IRQ-based completion, per-port ISR                           | Phase 1 (§2)            | ✅      |
 | **2**  | `040.03-ATAPI.md`        | §1–3 SCSI + READ                  | ATAPI packet command, SCSI READ(10/12)                       | AHCI Phase 1            | ⬜      |
 | **2**  | `040.04-MBR.md`          | §1 Primary Parse                  | MBR primary partition reading                                | blkdev (Layer 0)        | ✅      |
 | **2**  | `040.04-MBR.md`          | §2 EBR Chain                      | Extended/logical partition walking                           | Phase 2 (§1)            | ⬜      |
