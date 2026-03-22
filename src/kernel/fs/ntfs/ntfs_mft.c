@@ -174,3 +174,76 @@ int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size, uint16_t sector_size)
 
     return NTFS_OK;
 }
+
+/* ============================================================================
+ * ntfs_regenerate_fixup — Regenerate Update Sequence Array for writing
+ *
+ * This is the REVERSE of ntfs_apply_fixup().  Before writing a multi-sector
+ * record (FILE, INDX) back to disk, we must:
+ *   1. Increment the USN (wrap 0 → 1, since USN 0 is invalid)
+ *   2. For each sector, save the original last 2 bytes into usa_array[i+1]
+ *   3. Stamp each sector's last 2 bytes with the new USN
+ *
+ * After this, the record can be safely written to disk.  On the next read,
+ * ntfs_apply_fixup() will verify the USN stamps and restore the originals.
+ * ============================================================================ */
+
+int ntfs_regenerate_fixup(uint8_t *buf, uint32_t record_size,
+                          uint16_t sector_size)
+{
+    uint16_t usa_offset;
+    uint16_t usa_size_words;
+    uint16_t usn;
+    uint32_t num_sectors;
+    uint32_t i;
+
+    if (!buf || sector_size == 0 || record_size < sector_size)
+        return NTFS_ERR_FIXUP;
+
+    /* Read USA offset and size from the record header */
+    usa_offset     = ntfs_le16(buf + 0x04);
+    usa_size_words = ntfs_le16(buf + 0x06);
+
+    /* Sanity: USA must fit within the record */
+    if (usa_offset + usa_size_words * 2 > record_size) {
+        klog(LOG_DEBUG, "ntfs",
+             "REGEN FIXUP: USA overflows record (off=%u, words=%u, rec=%u)",
+             (uint64_t)usa_offset, (uint64_t)usa_size_words,
+             (uint64_t)record_size);
+        return NTFS_ERR_FIXUP;
+    }
+
+    num_sectors = record_size / sector_size;
+
+    /* usa_size_words should be 1 (USN) + num_sectors */
+    if (usa_size_words != num_sectors + 1) {
+        klog(LOG_DEBUG, "ntfs",
+             "REGEN FIXUP: USA size mismatch (words=%u, expected %u)",
+             (uint64_t)usa_size_words, (uint64_t)(num_sectors + 1));
+        return NTFS_ERR_FIXUP;
+    }
+
+    /* Step 1: Increment USN (wrap 0 → 1 since 0 is invalid) */
+    usn = ntfs_le16(buf + usa_offset);
+    usn++;
+    if (usn == 0)
+        usn = 1;
+
+    /* Write new USN back to the USA header (first word) */
+    ntfs_le16_write(buf + usa_offset, usn);
+
+    /* Step 2+3: For each sector, save original last-2-bytes, stamp with USN */
+    for (i = 0; i < num_sectors; i++) {
+        uint32_t last_word_off = (i + 1) * sector_size - 2;
+        uint16_t usa_entry_off = usa_offset + 2 + i * 2; /* usa_array[i+1] */
+
+        /* Save original last 2 bytes into USA replacement entry */
+        buf[usa_entry_off]     = buf[last_word_off];
+        buf[usa_entry_off + 1] = buf[last_word_off + 1];
+
+        /* Stamp last 2 bytes of sector with new USN */
+        ntfs_le16_write(buf + last_word_off, usn);
+    }
+
+    return NTFS_OK;
+}

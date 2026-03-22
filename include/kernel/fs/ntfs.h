@@ -121,6 +121,17 @@ int ntfs_read_mft_record(struct ntfs_volume *vol, uint64_t inode,
 int ntfs_apply_fixup(uint8_t *buf, uint32_t record_size,
                      uint16_t sector_size);
 
+/* Regenerate the Update Sequence Array before writing a record to disk.
+ * This is the REVERSE of ntfs_apply_fixup():
+ *   1. Increment USN (wrap 0→1 since USN 0 is invalid)
+ *   2. Save each sector's last 2 bytes into the USA replacement entries
+ *   3. Stamp each sector's last 2 bytes with the new USN
+ * Must be called BEFORE writing to disk, AFTER modifying attributes.
+ * Works on both "FILE" (MFT) and "INDX" (index) records.
+ * Returns NTFS_OK on success, NTFS_ERR_FIXUP on bad USA layout. */
+int ntfs_regenerate_fixup(uint8_t *buf, uint32_t record_size,
+                          uint16_t sector_size);
+
 /* ---- Attribute Iterator ---- */
 
 /* Well-known attribute type IDs */

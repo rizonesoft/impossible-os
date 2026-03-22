@@ -17,6 +17,12 @@ static inline uint16_t ntfs_le16(const uint8_t *p)
     return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
 }
 
+static inline void ntfs_le16_write(uint8_t *p, uint16_t val)
+{
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)(val >> 8);
+}
+
 static inline uint32_t ntfs_le32(const uint8_t *p)
 {
     return (uint32_t)p[0]
