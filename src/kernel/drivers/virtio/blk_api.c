@@ -9,10 +9,17 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
     int ret;
     int retry;
 
+    /* Check prefetch buffer first — sub-microsecond if hit */
+    if (prefetch_try_read(lba, count, buffer))
+        return 0;
+
     for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
         ret = virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * topo.blk_size, buffer);
-        if (ret == VIRTIO_IO_OK)
+        if (ret == VIRTIO_IO_OK) {
+            /* Record history and potentially trigger prefetch */
+            prefetch_after_read(lba, count);
             return 0;
+        }
         if (ret == VIRTIO_IO_UNSUPP) {
             klog(LOG_DEBUG, "virtio", "Read: unsupported (lba=%u)",
                    (uint64_t)lba);
@@ -43,6 +50,9 @@ int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
 
     if (is_read_only)
         return -1;  /* Device is read-only */
+
+    /* Invalidate prefetch buffer if write overlaps it */
+    prefetch_invalidate(lba, count);
 
     for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
         ret = virtio_blk_do_io(VIRTIO_BLK_T_OUT, lba, count * topo.blk_size,

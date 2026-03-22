@@ -225,3 +225,11 @@ uint32_t read_device_features(uint32_t page);
 void     write_driver_features(uint32_t page, uint32_t features);
 void     virtio_blk_queue_irq(uint8_t vector, void *ctx);
 void     virtio_blk_config_irq(uint8_t vector, void *ctx);
+
+/* ---- Prefetch (defined in blk_prefetch.c) ---- */
+void prefetch_init(void);
+void prefetch_shutdown(void);
+int  prefetch_try_read(uint64_t sector, uint32_t count, void *buffer);
+void prefetch_after_read(uint64_t sector, uint32_t count);
+void prefetch_invalidate(uint64_t sector, uint32_t count);
+void prefetch_expose_registry(void);

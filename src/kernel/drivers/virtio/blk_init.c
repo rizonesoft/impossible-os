@@ -832,6 +832,10 @@ int virtio_blk_init(void)
            (uint64_t)tsc_per_us,
            (uint64_t)(tsc_per_us > 0 ? 1000 / tsc_per_us : 0));
 
+    /* ---- Sequential Prefetch Init ---- */
+    prefetch_init();
+    prefetch_expose_registry();
+
     return 0;
 }
 
@@ -865,6 +869,9 @@ void virtio_blk_shutdown(void)
     /* 1. Stop accepting new I/O */
     blk_initialized = 0;
     blk_use_events = 0;
+
+    /* Release prefetch buffer */
+    prefetch_shutdown();
 
     /* 2. If device still present, flush caches and quiesce */
     if (!surprise) {
