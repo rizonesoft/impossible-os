@@ -178,7 +178,7 @@ graph TD
 | **2**  | `040.01-VirtIO.md`       | §4 MSI-X Interrupts               | Interrupt-driven I/O (no polling)                            | Phase 2 (§3)            | ✅      |
 | **2**  | `040.02-AHCI.md`         | §3 DMA R/W                        | READ/WRITE DMA EXT with PRDT                                 | Phase 1 (§2)            | ✅      |
 | **2**  | `040.02-AHCI.md`         | §4 Interrupt-Driven I/O           | IRQ-based completion, per-port ISR                           | Phase 1 (§2)            | ✅      |
-| **2**  | `040.03-ATAPI.md`        | §1–3 SCSI + READ                  | ATAPI packet command, SCSI READ(10/12)                       | AHCI Phase 1            | ⬜      |
+| **2**  | `040.03-ATAPI.md`        | §1–3 SCSI + READ                  | ATAPI packet command, SCSI READ(10/12)                       | AHCI Phase 1            | ✅      |
 | **2**  | `040.04-MBR.md`          | §1 Primary Parse                  | MBR primary partition reading                                | blkdev (Layer 0)        | ✅      |
 | **2**  | `040.04-MBR.md`          | §2 EBR Chain                      | Extended/logical partition walking                           | Phase 2 (§1)            | ⬜      |
 | **2**  | `040.05-GPT.md`          | §1 Primary Header                 | GPT header + entry array parsing                             | blkdev (Layer 0)        | ✅      |

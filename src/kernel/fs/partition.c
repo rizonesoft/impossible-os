@@ -319,8 +319,9 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
 
     /* MBR partitions */
     if (mtbl.count > 0) {
-        klog(LOG_DEBUG, "blk", "%s: MBR %u partition(s)",
-               dev->name, (uint64_t)mtbl.count);
+        klog(LOG_DEBUG, "blk", "%s: MBR %u partition(s), disk sig 0x%08X",
+               dev->name, (uint64_t)mtbl.count,
+               (uint64_t)mtbl.disk_signature);
         for (i = 0; i < mtbl.count; i++) {
             register_partition(dev, disk_idx, i + 1,
                               (uint64_t)mtbl.parts[i].start_lba,
