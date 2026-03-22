@@ -1173,7 +1173,345 @@ int ntfs_decode_std_info(const uint8_t *record,
     /* DOS permission flags */
     out->dos_permissions = ntfs_le32(data + 0x20);
 
+    /* NTFS 3.0+ extended fields (at least 0x48 bytes: 0x24..0x47) */
+    out->has_extended = 0;
+    out->max_versions = 0;
+    out->version_number = 0;
+    out->class_id = 0;
+    out->owner_id = 0;
+    out->security_id = 0;
+    out->quota_charged = 0;
+    out->usn = 0;
+
+    if (ah.content_length >= 0x48) {
+        out->has_extended = 1;
+        out->max_versions   = ntfs_le32(data + 0x24);
+        out->version_number = ntfs_le32(data + 0x28);
+        out->class_id       = ntfs_le32(data + 0x2C);
+        out->owner_id       = ntfs_le32(data + 0x30);
+        out->security_id    = ntfs_le32(data + 0x34);
+        out->quota_charged  = ntfs_le64(data + 0x38);
+        out->usn            = ntfs_le64(data + 0x40);
+    }
+
     return NTFS_OK;
+}
+
+/* ============================================================================
+ * $SECURITY_DESCRIPTOR Parser — §3.5 (attribute type 0x50)
+ *
+ * NTFS stores security descriptors in self-relative format:
+ *   0x00  Revision (1 byte, must be 1)
+ *   0x01  Sbz1 (1 byte, reserved)
+ *   0x02  Control flags (2 bytes, LE)
+ *   0x04  Owner SID offset (4 bytes, LE, from descriptor start)
+ *   0x08  Group SID offset (4 bytes, LE)
+ *   0x0C  SACL offset (4 bytes, LE, 0 if absent)
+ *   0x10  DACL offset (4 bytes, LE, 0 if absent)
+ *
+ * SID format:
+ *   0x00  Revision (1 byte)
+ *   0x01  Sub-authority count (1 byte)
+ *   0x02  Identifier authority (6 bytes, big-endian)
+ *   0x08  Sub-authorities (4 bytes × count, LE)
+ *
+ * ACL format:
+ *   0x00  Revision (1 byte)
+ *   0x01  Sbz1 (1 byte)
+ *   0x02  ACL size (2 bytes, LE)
+ *   0x04  ACE count (2 bytes, LE)
+ *   0x06  Sbz2 (2 bytes)
+ *   0x08  ACEs...
+ *
+ * ACE format (ACCESS_ALLOWED/DENIED_ACE):
+ *   0x00  Type (1 byte)
+ *   0x01  Flags (1 byte)
+ *   0x02  Size (2 bytes, LE)
+ *   0x04  Access mask (4 bytes, LE)
+ *   0x08  SID (variable)
+ * ============================================================================ */
+
+/* Parse a SID from raw bytes. Returns bytes consumed, or 0 on error. */
+static uint32_t parse_sid(const uint8_t *data, uint32_t max_len,
+                           struct ntfs_sid *out)
+{
+    uint8_t i;
+    uint32_t sid_size;
+
+    if (max_len < 8)
+        return 0;
+
+    out->revision = data[0x00];
+    out->sub_auth_count = data[0x01];
+
+    if (out->revision != 1)
+        return 0;
+
+    if (out->sub_auth_count > NTFS_SID_MAX_SUB_AUTH)
+        return 0;
+
+    sid_size = 8 + (uint32_t)out->sub_auth_count * 4;
+    if (sid_size > max_len)
+        return 0;
+
+    /* 6-byte big-endian identifier authority */
+    for (i = 0; i < 6; i++)
+        out->authority[i] = data[0x02 + i];
+
+    /* Decode as 48-bit big-endian integer */
+    out->authority_value = ((uint64_t)data[0x02] << 40) |
+                           ((uint64_t)data[0x03] << 32) |
+                           ((uint64_t)data[0x04] << 24) |
+                           ((uint64_t)data[0x05] << 16) |
+                           ((uint64_t)data[0x06] << 8) |
+                           ((uint64_t)data[0x07]);
+
+    /* Sub-authorities (little-endian 32-bit each) */
+    for (i = 0; i < out->sub_auth_count; i++)
+        out->sub_authorities[i] = ntfs_le32(data + 0x08 + i * 4);
+
+    return sid_size;
+}
+
+/* Parse an ACL (DACL or SACL) from raw bytes. */
+static int parse_acl(const uint8_t *data, uint32_t max_len,
+                      struct ntfs_acl *out)
+{
+    uint16_t i;
+    uint32_t offset;
+
+    if (max_len < 8)
+        return NTFS_ERR_BAD_MAGIC;
+
+    out->revision = data[0x00];
+    out->size     = ntfs_le16(data + 0x02);
+    out->ace_count = ntfs_le16(data + 0x04);
+    out->parsed_count = 0;
+
+    if (out->size > max_len)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Walk ACEs */
+    offset = 8;  /* ACL header is 8 bytes */
+    for (i = 0; i < out->ace_count && out->parsed_count < NTFS_ACL_MAX_ACES;
+         i++) {
+        struct ntfs_ace *ace = &out->aces[out->parsed_count];
+        uint16_t ace_size;
+        uint32_t sid_offset;
+        uint32_t sid_max;
+
+        if (offset + 4 > out->size)
+            break;
+
+        ace->type  = data[offset + 0x00];
+        ace->flags = data[offset + 0x01];
+        ace->size  = ntfs_le16(data + offset + 0x02);
+        ace_size = ace->size;
+
+        if (ace_size < 8 || offset + ace_size > out->size)
+            break;
+
+        /* ACCESS_ALLOWED_ACE and ACCESS_DENIED_ACE share the same layout */
+        if (ace->type <= NTFS_ACE_SYSTEM_ALARM) {
+            ace->access_mask = ntfs_le32(data + offset + 0x04);
+
+            /* SID starts at offset 0x08 within the ACE */
+            sid_offset = offset + 0x08;
+            sid_max = (offset + ace_size > out->size) ?
+                      0 : (offset + ace_size - sid_offset);
+
+            if (sid_max >= 8) {
+                if (parse_sid(data + sid_offset, sid_max, &ace->sid) > 0)
+                    out->parsed_count++;
+            }
+        }
+
+        offset += ace_size;
+    }
+
+    return NTFS_OK;
+}
+
+int ntfs_parse_security_desc(const uint8_t *data, uint32_t data_len,
+                              struct ntfs_security_desc *out)
+{
+    uint32_t owner_off, group_off, sacl_off, dacl_off;
+
+    if (!data || !out || data_len < 0x14)
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Zero-init */
+    out->has_owner = 0;
+    out->has_group = 0;
+    out->has_dacl = 0;
+    out->has_sacl = 0;
+
+    out->revision = data[0x00];
+    if (out->revision != 1)
+        return NTFS_ERR_BAD_MAGIC;
+
+    out->control = ntfs_le16(data + 0x02);
+
+    owner_off = ntfs_le32(data + 0x04);
+    group_off = ntfs_le32(data + 0x08);
+    sacl_off  = ntfs_le32(data + 0x0C);
+    dacl_off  = ntfs_le32(data + 0x10);
+
+    /* Must be self-relative */
+    if (!(out->control & NTFS_SD_SELF_RELATIVE))
+        return NTFS_ERR_BAD_MAGIC;
+
+    /* Parse Owner SID */
+    if (owner_off != 0 && owner_off + 8 <= data_len) {
+        if (parse_sid(data + owner_off, data_len - owner_off,
+                       &out->owner) > 0)
+            out->has_owner = 1;
+    }
+
+    /* Parse Group SID */
+    if (group_off != 0 && group_off + 8 <= data_len) {
+        if (parse_sid(data + group_off, data_len - group_off,
+                       &out->group) > 0)
+            out->has_group = 1;
+    }
+
+    /* Parse SACL */
+    if ((out->control & NTFS_SD_SACL_PRESENT) &&
+        sacl_off != 0 && sacl_off + 8 <= data_len) {
+        if (parse_acl(data + sacl_off, data_len - sacl_off,
+                       &out->sacl) == NTFS_OK)
+            out->has_sacl = 1;
+    }
+
+    /* Parse DACL */
+    if ((out->control & NTFS_SD_DACL_PRESENT) &&
+        dacl_off != 0 && dacl_off + 8 <= data_len) {
+        if (parse_acl(data + dacl_off, data_len - dacl_off,
+                       &out->dacl) == NTFS_OK)
+            out->has_dacl = 1;
+    }
+
+    return NTFS_OK;
+}
+
+int ntfs_decode_security(const uint8_t *record,
+                          const struct ntfs_mft_header *hdr,
+                          struct ntfs_volume *vol,
+                          struct ntfs_security_desc *out)
+{
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+
+    if (!record || !hdr || !out)
+        return NTFS_ERR_IO;
+
+    /* Try inline $SECURITY_DESCRIPTOR (type 0x50) first */
+    attr = ntfs_attr_find(record, hdr,
+                           NTFS_ATTR_SECURITY_DESCRIPTOR, &ah);
+    if (attr && ah.non_resident == 0 && ah.content_length >= 0x14) {
+        const uint8_t *sd_data = attr + ah.content_offset;
+        return ntfs_parse_security_desc(sd_data, ah.content_length, out);
+    }
+
+    /* Inline descriptor not found — try $Secure via security_id */
+    if (vol) {
+        struct ntfs_std_info si;
+        int rc = ntfs_decode_std_info(record, hdr, &si);
+        if (rc == NTFS_OK && si.has_extended && si.security_id != 0) {
+            /* TODO: Look up security_id in $Secure (inode 9) $SII/$SDS.
+             * This requires reading $Secure's $INDEX_ROOT ($SII stream)
+             * and finding the matching security_id entry, which points
+             * to an offset in the $SDS data stream where the descriptor
+             * is stored. For now, log and return "not found". */
+            klog(LOG_DEBUG, "ntfs",
+                 "Security ID %u found (needs $Secure lookup)",
+                 (uint64_t)si.security_id);
+            return NTFS_ERR_NOT_FOUND;
+        }
+    }
+
+    return NTFS_ERR_NOT_FOUND;
+}
+
+/* Format a SID as "S-1-5-21-123456-789012-..." string */
+
+/* Write a decimal integer into buf. Returns chars written. */
+static int uint_to_str(uint64_t val, char *buf, int buf_len)
+{
+    char tmp[20];
+    int len = 0;
+    int i;
+
+    if (buf_len <= 0)
+        return 0;
+
+    /* Special case: zero */
+    if (val == 0) {
+        if (buf_len >= 2) {
+            buf[0] = '0';
+            buf[1] = '\0';
+            return 1;
+        }
+        return 0;
+    }
+
+    /* Build digits in reverse */
+    while (val > 0 && len < 20) {
+        tmp[len++] = '0' + (char)(val % 10);
+        val /= 10;
+    }
+
+    if (len >= buf_len)
+        len = buf_len - 1;
+
+    /* Reverse into output buffer */
+    for (i = 0; i < len; i++)
+        buf[i] = tmp[len - 1 - i];
+    buf[len] = '\0';
+
+    return len;
+}
+
+/* Append a character to buf at position pos.  Returns new pos. */
+static int sid_append_char(char *buf, int buf_len, int pos, char c)
+{
+    if (pos < buf_len - 1) {
+        buf[pos] = c;
+        buf[pos + 1] = '\0';
+        return pos + 1;
+    }
+    return pos;
+}
+
+int ntfs_format_sid(const struct ntfs_sid *sid, char *buf, int buf_len)
+{
+    int pos = 0;
+    uint8_t i;
+
+    if (!sid || !buf || buf_len < 8)
+        return 0;
+
+    buf[0] = '\0';
+
+    /* "S-" prefix */
+    pos = sid_append_char(buf, buf_len, pos, 'S');
+    pos = sid_append_char(buf, buf_len, pos, '-');
+
+    /* Revision */
+    pos += uint_to_str((uint64_t)sid->revision, buf + pos, buf_len - pos);
+
+    /* "-{authority}" */
+    pos = sid_append_char(buf, buf_len, pos, '-');
+    pos += uint_to_str(sid->authority_value, buf + pos, buf_len - pos);
+
+    /* "-{sub1}-{sub2}-..." */
+    for (i = 0; i < sid->sub_auth_count && pos < buf_len - 2; i++) {
+        pos = sid_append_char(buf, buf_len, pos, '-');
+        pos += uint_to_str((uint64_t)sid->sub_authorities[i],
+                           buf + pos, buf_len - pos);
+    }
+
+    return pos;
 }
 
 /* ============================================================================

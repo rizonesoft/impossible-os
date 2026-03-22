@@ -335,6 +335,16 @@ struct ntfs_std_info {
 
     /* DOS permission flags */
     uint32_t dos_permissions;    /* 0x20: NTFS_FILE_ATTR_* */
+
+    /* NTFS 3.0+ extended fields (valid when content_length >= 0x48) */
+    uint32_t max_versions;       /* 0x24: Maximum versions (0 = disabled) */
+    uint32_t version_number;     /* 0x28: Version number */
+    uint32_t class_id;           /* 0x2C: Class ID */
+    uint32_t owner_id;           /* 0x30: Owner ID (quota) */
+    uint32_t security_id;        /* 0x34: Security ID → $Secure:$SII index */
+    uint64_t quota_charged;      /* 0x38: Quota charged */
+    uint64_t usn;                /* 0x40: Update Sequence Number (USN) */
+    uint8_t  has_extended;       /* Set to 1 if extended fields are present */
 };
 
 /* Convert a Windows FILETIME (100-ns since 1601-01-01) to Unix timestamp.
@@ -349,6 +359,107 @@ uint64_t ntfs_filetime_to_unix(uint64_t filetime);
 int ntfs_decode_std_info(const uint8_t *record,
                          const struct ntfs_mft_header *hdr,
                          struct ntfs_std_info *out);
+
+/* ---- $SECURITY_DESCRIPTOR Parser (§3.5, attribute type 0x50) ---- */
+
+/* Maximum sub-authorities in a SID (Windows limit is 15) */
+#define NTFS_SID_MAX_SUB_AUTH  15
+
+/* Maximum ACEs in an ACL we'll parse */
+#define NTFS_ACL_MAX_ACES  64
+
+/* Parsed Security Identifier (SID).
+ * Format: S-{revision}-{authority}-{sub1}-{sub2}-...
+ * Common SIDs: S-1-5-18 (SYSTEM), S-1-5-32-544 (Administrators) */
+struct ntfs_sid {
+    uint8_t  revision;           /* Must be 1 */
+    uint8_t  sub_auth_count;     /* Number of sub-authorities */
+    uint8_t  authority[6];       /* 6-byte big-endian identifier authority */
+    uint64_t authority_value;    /* Decoded authority as integer */
+    uint32_t sub_authorities[NTFS_SID_MAX_SUB_AUTH];
+};
+
+/* ACE types */
+#define NTFS_ACE_ACCESS_ALLOWED  0x00
+#define NTFS_ACE_ACCESS_DENIED   0x01
+#define NTFS_ACE_SYSTEM_AUDIT    0x02
+#define NTFS_ACE_SYSTEM_ALARM    0x03
+
+/* ACE flags */
+#define NTFS_ACE_OBJECT_INHERIT      0x01
+#define NTFS_ACE_CONTAINER_INHERIT   0x02
+#define NTFS_ACE_NO_PROPAGATE        0x04
+#define NTFS_ACE_INHERIT_ONLY        0x08
+#define NTFS_ACE_INHERITED           0x10
+
+/* Parsed Access Control Entry */
+struct ntfs_ace {
+    uint8_t  type;               /* NTFS_ACE_* type */
+    uint8_t  flags;              /* NTFS_ACE_* flags */
+    uint16_t size;               /* Total ACE size in bytes */
+    uint32_t access_mask;        /* Access rights bitmask */
+    struct ntfs_sid sid;         /* Principal this ACE applies to */
+};
+
+/* Parsed Access Control List (DACL or SACL) */
+struct ntfs_acl {
+    uint8_t  revision;           /* ACL revision (2 or 4) */
+    uint16_t size;               /* Total ACL size in bytes */
+    uint16_t ace_count;          /* Number of ACEs in the list */
+    struct ntfs_ace aces[NTFS_ACL_MAX_ACES]; /* Parsed ACEs */
+    uint16_t parsed_count;       /* ACEs actually parsed (<= ace_count) */
+};
+
+/* Security descriptor control flags */
+#define NTFS_SD_OWNER_DEFAULTED   0x0001
+#define NTFS_SD_GROUP_DEFAULTED   0x0002
+#define NTFS_SD_DACL_PRESENT      0x0004
+#define NTFS_SD_DACL_DEFAULTED    0x0008
+#define NTFS_SD_SACL_PRESENT      0x0010
+#define NTFS_SD_SACL_DEFAULTED    0x0020
+#define NTFS_SD_DACL_AUTO_INHERIT 0x0400
+#define NTFS_SD_SACL_AUTO_INHERIT 0x0800
+#define NTFS_SD_DACL_PROTECTED    0x1000
+#define NTFS_SD_SACL_PROTECTED    0x2000
+#define NTFS_SD_SELF_RELATIVE     0x8000
+
+/* Parsed security descriptor (self-relative format) */
+struct ntfs_security_desc {
+    uint8_t  revision;           /* 0x00: Must be 1 */
+    uint16_t control;            /* 0x02: NTFS_SD_* control flags */
+    struct ntfs_sid owner;       /* Owner SID */
+    struct ntfs_sid group;       /* Group SID */
+    struct ntfs_acl dacl;        /* Discretionary ACL (if DACL_PRESENT) */
+    struct ntfs_acl sacl;        /* System ACL (if SACL_PRESENT) */
+    uint8_t  has_owner;          /* 1 if owner SID parsed */
+    uint8_t  has_group;          /* 1 if group SID parsed */
+    uint8_t  has_dacl;           /* 1 if DACL parsed */
+    uint8_t  has_sacl;           /* 1 if SACL parsed */
+};
+
+/* Decode a self-relative security descriptor from raw bytes.
+ * data: pointer to the security descriptor bytes.
+ * data_len: length of the data.
+ * out: filled with parsed security descriptor.
+ * Returns NTFS_OK on success, error code on failure. */
+int ntfs_parse_security_desc(const uint8_t *data, uint32_t data_len,
+                              struct ntfs_security_desc *out);
+
+/* Decode the security descriptor from an MFT record.
+ * First tries inline $SECURITY_DESCRIPTOR (type 0x50).
+ * Falls back to $STANDARD_INFORMATION security_id (NTFS 3.0+).
+ * Note: $Secure lookup is logged but not implemented (requires inode 9).
+ * Returns NTFS_OK if a descriptor was found and parsed. */
+int ntfs_decode_security(const uint8_t *record,
+                          const struct ntfs_mft_header *hdr,
+                          struct ntfs_volume *vol,
+                          struct ntfs_security_desc *out);
+
+/* Format a parsed SID into the string "S-1-5-21-..." representation.
+ * buf: output buffer.
+ * buf_len: capacity of buf.
+ * Returns the number of characters written (excluding null terminator). */
+int ntfs_format_sid(const struct ntfs_sid *sid, char *buf, int buf_len);
 
 /* ---- File Data Reader (§4.2) ---- */
 

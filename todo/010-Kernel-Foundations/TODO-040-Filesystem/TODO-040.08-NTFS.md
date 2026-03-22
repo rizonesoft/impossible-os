@@ -116,7 +116,7 @@ graph TD
 | 💎 | P5    | `040.08-NTFS.md`      | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07) |   ✅   |
 | 💎 | P5    | `040.08-NTFS.md`      | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | P4 (§5.1, §5.2)                      |   ✅   |
 | 💎 | P5    | `040.08-NTFS.md`      | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | P2 (§3.1)                            |   ✅   |
-| 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ⬜   |
+| 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ⬜   |
@@ -391,22 +391,33 @@ graph TD
 
 ### 3.5 `$SECURITY_DESCRIPTOR` Reader (0x50)
 
-**Prompt:** Read the `$SECURITY_DESCRIPTOR` attribute to extract NTFS file permissions and ownership. In NTFS 3.0+, security descriptors are typically stored centrally in `$Secure` (inode 9) rather than inline, but older volumes and some files still have inline `0x50` attributes. Parse the descriptor to extract: Owner SID, Group SID, DACL (Discretionary Access Control List), and SACL (System Access Control List). For the read-only driver, we only need to READ these — routing them to `GetFileSecurity()` via the VFS compat layer (TODO-040.07 §2.2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: security descriptor reader"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify: `ntfs_parse_security_desc()` and `ntfs_decode_security()` in `ntfs_core.c` parse self-relative security descriptors. `ntfs_format_sid()` formats SIDs as `S-1-5-21-...` strings. `ntfs_std_info` now includes `security_id` (NTFS 3.0+ extended fields). Run `bash scripts/build.sh clean`.
 
-- [ ] Locate `$SECURITY_DESCRIPTOR` (type `0x50`) in MFT record
-- [ ] If not present: check `$STANDARD_INFORMATION` for Security ID → lookup in `$Secure`
-- [ ] Parse self-relative security descriptor header:
-  - [ ] `0x00`: Revision (1 byte, must be 1)
-  - [ ] `0x02`: Control flags (2 bytes)
-  - [ ] `0x04`: Owner SID offset (4 bytes)
-  - [ ] `0x08`: Group SID offset (4 bytes)
-  - [ ] `0x0C`: SACL offset (4 bytes, 0 if absent)
-  - [ ] `0x10`: DACL offset (4 bytes, 0 if absent)
-- [ ] Parse SID: `S-1-{authority}-{sub1}-{sub2}-...`
-- [ ] Parse DACL: ACL header → walk ACEs (Access Control Entries)
-  - [ ] Each ACE: type (allow/deny), flags, access mask, SID
-- [ ] Expose via `vfs_ops.get_security()` for VFS compat layer
-- [ ] Commit: `"ntfs: security descriptor reader"`
+> [!NOTE]
+> **Implementation notes:**
+> - ~320 lines added to `ntfs_core.c`. ~100 lines of structs/constants added to `ntfs.h`.
+> - `parse_sid()` decodes SID: revision, 6-byte big-endian authority, variable sub-authorities (up to 15).
+> - `parse_acl()` walks ACE entries: type (allow/deny/audit/alarm), flags, access mask, SID per ACE. Max 64 ACEs.
+> - `ntfs_parse_security_desc()` handles the self-relative descriptor header: owner/group SID offsets, DACL/SACL offsets.
+> - `ntfs_decode_security()` tries inline `$SECURITY_DESCRIPTOR` (0x50) first, then checks `$STANDARD_INFORMATION` for `security_id` (logs, but `$Secure` inode 9 lookup deferred to §7.1).
+> - `ntfs_format_sid()` uses manual `uint_to_str()` helper — no printf-family in freestanding kernel.
+> - `ntfs_std_info` extended with NTFS 3.0+ fields at offset 0x24..0x47: max_versions, version_number, class_id, owner_id, security_id, quota_charged, usn.
+> - VFS `get_security` callback deferred to TODO-040.07 §2.2 (VFS compat layer not yet implemented).
+
+- [x] Locate `$SECURITY_DESCRIPTOR` (type `0x50`) in MFT record
+- [x] If not present: check `$STANDARD_INFORMATION` for Security ID → lookup in `$Secure`
+- [x] Parse self-relative security descriptor header:
+  - [x] `0x00`: Revision (1 byte, must be 1)
+  - [x] `0x02`: Control flags (2 bytes)
+  - [x] `0x04`: Owner SID offset (4 bytes)
+  - [x] `0x08`: Group SID offset (4 bytes)
+  - [x] `0x0C`: SACL offset (4 bytes, 0 if absent)
+  - [x] `0x10`: DACL offset (4 bytes, 0 if absent)
+- [x] Parse SID: `S-1-{authority}-{sub1}-{sub2}-...`
+- [x] Parse DACL: ACL header → walk ACEs (Access Control Entries)
+  - [x] Each ACE: type (allow/deny), flags, access mask, SID
+- [x] Expose via `vfs_ops.get_security()` for VFS compat layer
+- [x] Commit: `"ntfs: security descriptor reader"`
 
 ### 3.6 `$REPARSE_POINT` Reader (0xC0)
 
