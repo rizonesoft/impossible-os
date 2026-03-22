@@ -319,6 +319,11 @@ int ntfs_decode_file_name(const uint8_t *record,
 /* Sentinel LCN value for sparse (unallocated) runs — reads as all zeros */
 #define NTFS_LCN_SPARSE  ((uint64_t)-1)
 
+/* Attribute flags (at offset 0x0C in attribute header) */
+#define NTFS_ATTR_FLAG_COMPRESSED  0x0001  /* Data is LZNT1-compressed */
+#define NTFS_ATTR_FLAG_ENCRYPTED   0x4000  /* Data is encrypted (EFS) */
+#define NTFS_ATTR_FLAG_SPARSE      0x8000  /* Data has sparse ranges */
+
 /* A single data run: maps a range of Virtual Cluster Numbers to disk LCNs */
 struct ntfs_data_run {
     uint64_t vcn_start;    /* First VCN this run covers */
@@ -331,6 +336,7 @@ struct ntfs_nonres_header {
     uint64_t start_vcn;      /* 0x10: Starting VCN */
     uint64_t last_vcn;       /* 0x18: Last VCN */
     uint16_t data_run_off;   /* 0x20: Offset to data runs from attr start */
+    uint16_t compression_unit; /* 0x22: Compression unit shift (0 = none, 4 = 16 clusters) */
     uint64_t alloc_size;     /* 0x28: Allocated size in bytes */
     uint64_t real_size;      /* 0x30: Real (used) size in bytes */
     uint64_t init_size;      /* 0x38: Initialized size in bytes */
@@ -680,6 +686,33 @@ int64_t ntfs_read_file_data(const uint8_t *record,
                             struct ntfs_volume *vol,
                             uint64_t file_offset, uint64_t length,
                             void *buffer);
+
+/* ---- LZNT1 Decompression (§10.1) ---- */
+
+/* Decompress LZNT1-compressed data.
+ * LZNT1 is the compression algorithm used by NTFS transparent compression.
+ * Processes 4096-byte sub-blocks, each with a 2-byte header (bit 15 =
+ * compressed flag, bits 0-11 = data size - 1). Compressed sub-blocks
+ * contain literal bytes and back-references with variable-length
+ * displacement encoding.
+ * Returns decompressed bytes on success, -1 on error. */
+int ntfs_lznt1_decompress(const uint8_t *src, uint32_t src_len,
+                          uint8_t *dst, uint32_t dst_len);
+
+/* Read data from a compressed non-resident attribute.
+ * Processes compression units (2^compression_unit_shift clusters each):
+ *   - run_length == unit_size: stored uncompressed
+ *   - run_length <  unit_size: LZNT1-compressed, decompress on-the-fly
+ *   - run is sparse (LCN == -1): fill with zeros
+ * Returns bytes read on success, -1 on error. */
+int64_t ntfs_read_compressed_data(struct ntfs_volume *vol,
+                                  const struct ntfs_data_run *runs,
+                                  int run_count,
+                                  uint64_t real_size,
+                                  uint16_t compression_unit_shift,
+                                  uint64_t file_offset,
+                                  uint64_t length,
+                                  void *buffer);
 
 /* ---- $INDEX_ROOT Parser (§5.1, attribute type 0x90) ---- */
 

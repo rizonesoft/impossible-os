@@ -59,6 +59,7 @@ int ntfs_decode_data_runs(const uint8_t *attr, struct ntfs_data_run *runs,
         nrhdr->start_vcn    = ntfs_le64(attr + 0x10);
         nrhdr->last_vcn     = ntfs_le64(attr + 0x18);
         nrhdr->data_run_off = run_off;
+        nrhdr->compression_unit = ntfs_le16(attr + 0x22);
         nrhdr->alloc_size   = ntfs_le64(attr + 0x28);
         nrhdr->real_size    = ntfs_le64(attr + 0x30);
         nrhdr->init_size    = ntfs_le64(attr + 0x38);

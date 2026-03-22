@@ -241,6 +241,15 @@ int64_t ntfs_read_file_data(const uint8_t *record,
         if (run_count <= 0)
             return -1;
 
+        /* Check for compressed attribute (flag 0x0001 + compression_unit > 0) */
+        if ((ah.flags & NTFS_ATTR_FLAG_COMPRESSED) &&
+            nrhdr.compression_unit > 0) {
+            return ntfs_read_compressed_data(vol, runs, run_count,
+                                              nrhdr.real_size,
+                                              nrhdr.compression_unit,
+                                              file_offset, length, buffer);
+        }
+
         return ntfs_read_data(vol, runs, run_count, nrhdr.real_size,
                               file_offset, length, buffer);
     }
