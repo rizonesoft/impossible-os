@@ -258,6 +258,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_LIFETIME");
     }
 
+    /* Negotiate F_FUA (bit 14): Force Unit Access per-request (proposed spec) */
+    if (feat_lo & (1u << VIRTIO_BLK_F_FUA)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_FUA);
+        has_fua = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_FUA (per-request write-through)");
+    }
+
     /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
     if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
@@ -845,6 +852,50 @@ int virtio_blk_init(void)
     /* ---- Multi-Device Stripe Init ---- */
     stripe_init();
     stripe_expose_registry();
+
+    /* ---- Force Unit Access (FUA) Init ---- */
+    fua_enabled = 1;  /* Default: enabled when supported */
+    fua_writes = 0;
+    fua_fallback_writes = 0;
+    {
+        HKEY hKey = (HKEY)0;
+        uint32_t val;
+
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE,
+                "SYSTEM\\Drivers\\VirtIO\\FUA", 0,
+                KEY_READ, &hKey) == ERROR_SUCCESS) {
+            if (RegGetDword(hKey, "Enabled", &val) == ERROR_SUCCESS)
+                fua_enabled = (int)val;
+            RegCloseKey(hKey);
+        }
+    }
+    /* Write FUA config and initial stats to Registry */
+    {
+        HKEY hKey = (HKEY)0;
+        uint32_t disp;
+
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                "SYSTEM\\Drivers\\VirtIO\\FUA", 0,
+                (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetDword(hKey, "Enabled", fua_enabled ? 1 : 0);
+            RegSetDword(hKey, "NativeSupport", has_fua ? 1 : 0);
+            RegCloseKey(hKey);
+        }
+
+        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                "HARDWARE\\VirtIO\\Block0\\FUA", 0,
+                (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                &hKey, &disp) == ERROR_SUCCESS) {
+            RegSetDword(hKey, "FuaWrites", 0);
+            RegSetDword(hKey, "FallbackWrites", 0);
+            RegSetDword(hKey, "NativeSupport", has_fua ? 1 : 0);
+            RegCloseKey(hKey);
+        }
+    }
+    klog(LOG_DEBUG, "virtio", "FUA: %s (native=%s)",
+           fua_enabled ? "enabled" : "disabled",
+           has_fua ? "yes" : "no (fallback to T_OUT+T_FLUSH)");
 
     return 0;
 }

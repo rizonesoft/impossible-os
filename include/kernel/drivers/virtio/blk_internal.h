@@ -54,6 +54,7 @@ BLK_GLOBAL int has_topology;
 BLK_GLOBAL int has_size_max;
 BLK_GLOBAL int has_seg_max;
 BLK_GLOBAL int has_discard;
+BLK_GLOBAL int has_fua;          /* F_FUA negotiated: per-request FUA */
 BLK_GLOBAL int has_write_zeroes;
 BLK_GLOBAL int has_lifetime;
 BLK_GLOBAL int has_ring_reset;
@@ -248,3 +249,8 @@ void merge_expose_registry(void);
 void stripe_init(void);
 int  stripe_is_active(void);
 void stripe_expose_registry(void);
+
+/* ---- FUA (defined in blk_api.c) ---- */
+BLK_GLOBAL uint32_t fua_writes;         /* FUA write count */
+BLK_GLOBAL uint32_t fua_fallback_writes; /* Fallback (T_OUT + T_FLUSH) count */
+BLK_GLOBAL int      fua_enabled;        /* Registry config: FUA enabled */

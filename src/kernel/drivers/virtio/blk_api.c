@@ -99,6 +99,48 @@ int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer)
     return -1;
 }
 
+/* ---- Force Unit Access (FUA) Write ---- */
+int virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)
+{
+    int ret;
+
+    if (is_read_only)
+        return -1;
+
+    if (!fua_enabled) {
+        /* FUA disabled — normal write, no flush */
+        return virtio_blk_write(lba, count, buffer);
+    }
+
+    /* Invalidate prefetch buffer */
+    prefetch_invalidate(lba, count);
+
+    if (has_fua) {
+        /* Device supports per-request FUA — set FUA flag in type field */
+        ret = virtio_blk_do_io(VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_FUA_FLAG,
+                               lba, count * topo.blk_size, (void *)buffer);
+        if (ret == VIRTIO_IO_OK) {
+            fua_writes++;
+            return 0;
+        }
+        /* If FUA fails, try normal write + flush as fallback */
+    }
+
+    /* Fallback: normal write + full flush for equivalent durability */
+    ret = virtio_blk_write(lba, count, buffer);
+    if (ret != 0)
+        return ret;
+
+    if (has_flush) {
+        ret = virtio_blk_flush();
+        if (ret != 0)
+            return ret;
+    }
+
+    fua_fallback_writes++;
+    return 0;
+}
+
 int virtio_blk_set_write_cache(int enable)
 {
     if (!blk_initialized || !has_config_wce)

@@ -28,6 +28,7 @@
 #define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
 #define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
 #define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
+#define VIRTIO_BLK_T_FUA_FLAG 0x80000000u  /* Force Unit Access: OR with T_OUT */
 
 /* Device serial number length (VirtIO 1.2 §5.2.6.1) */
 #define VIRTIO_BLK_ID_BYTES 20
@@ -51,6 +52,7 @@
 #define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
 #define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
 #define VIRTIO_BLK_F_LIFETIME   13   /* Device lifetime metrics (VirtIO 1.2+) */
+#define VIRTIO_BLK_F_FUA        14   /* Force Unit Access per-request (proposed) */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_RING_EVENT_IDX 29     /* Event index for int coalescing */
@@ -138,6 +140,10 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer);
 /* Write 'count' sectors starting at LBA from 'buffer'.
  * Returns 0 on success, -1 on error. */
 int virtio_blk_write(uint64_t lba, uint32_t count, const void *buffer);
+
+/* Force Unit Access write — data guaranteed on stable storage on return.
+ * Uses F_FUA if negotiated, otherwise falls back to T_OUT + T_FLUSH. */
+int virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer);
 
 /* Flush volatile write cache to persistent storage.
  * Only available when VIRTIO_BLK_F_FLUSH was negotiated.
