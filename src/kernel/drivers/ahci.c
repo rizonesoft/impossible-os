@@ -538,7 +538,8 @@ static void ncq_free_tag(struct ahci_port *p, int tag)
 /* ---- Issue an NCQ (FPDMA) command ---- */
 
 static int ncq_issue_rw(struct ahci_port *p, int tag, uint64_t lba,
-                        uint32_t count, void *buffer, int is_write)
+                        uint32_t count, void *buffer, int is_write,
+                        int fua)
 {
     /* Tag == command slot for FPDMA (1:1 mapping per AHCI spec) */
     struct ahci_cmd_header *hdr = &p->cmdlist[tag];
@@ -570,6 +571,8 @@ static int ncq_issue_rw(struct ahci_port *p, int tag, uint64_t lba,
     fis->lba5 = (uint8_t)((lba >> 40) & 0xFF);
 
     fis->device = (1 << 6); /* LBA mode */
+    if (fua && is_write)
+        fis->device |= (1 << 7);  /* FUA bit for WRITE FPDMA QUEUED */
 
     /* Tag in Count[7:3] — bits 2:0 reserved (must be 0) */
     fis->countl = (uint8_t)(tag << 3);
@@ -711,6 +714,19 @@ static int ahci_do_identify(struct ahci_port *p)
         p->trim_supported = 0;
         p->trim_deterministic = 0;
         klog(LOG_DEBUG, "ahci", "Port %u: TRIM not supported",
+               (uint64_t)p->port_num);
+    }
+
+    /* Extract FUA support (word 86 bit 6) and write cache status (word 85 bit 5) */
+    p->write_cache_enabled = (ident_buf[85] & (1U << 5)) ? 1 : 0;
+    if (ident_buf[86] & (1U << 6)) {
+        p->fua_supported = 1;
+        klog(LOG_INFO, "ahci", "Port %u: FUA supported, write cache %s",
+               (uint64_t)p->port_num,
+               p->write_cache_enabled ? "enabled" : "disabled");
+    } else {
+        p->fua_supported = 0;
+        klog(LOG_DEBUG, "ahci", "Port %u: FUA not supported (flush fallback)",
                (uint64_t)p->port_num);
     }
 
@@ -891,7 +907,7 @@ static int atapi_do_read(struct ahci_port *p, uint64_t lba, uint32_t count,
 
 /* ---- DMA read/write ---- */
 static int ahci_do_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
-                       void *buffer, int is_write)
+                       void *buffer, int is_write, int fua)
 {
     int slot;
     struct ahci_cmd_header *hdr;
@@ -911,7 +927,9 @@ static int ahci_do_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
     fis = (struct fis_reg_h2d *)tbl->cfis;
     fis->fis_type = FIS_TYPE_REG_H2D;
     fis->pmport_c = 0x80;  /* C = 1 (command) */
-    fis->command  = is_write ? ATA_CMD_WRITE_DMA_EX : ATA_CMD_READ_DMA_EX;
+    fis->command  = is_write ? (fua ? ATA_CMD_WRITE_DMA_FUA_EX
+                                     : ATA_CMD_WRITE_DMA_EX)
+                              : ATA_CMD_READ_DMA_EX;
     fis->device   = (1 << 6); /* LBA mode */
 
     /* LBA48 */
@@ -944,15 +962,15 @@ static int ahci_do_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
 /* ---- Public API ---- */
 
 static int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
-                       void *buffer, int is_write);
+                       void *buffer, int is_write, int fua);
 
 int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
     if (ports[port_idx].ncq_supported && use_events)
-        return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0);
-    return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0);
+        return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0, 0);
+    return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0, 0);
 }
 
 int ahci_write(int port_idx, uint64_t lba, uint32_t count,
@@ -962,8 +980,78 @@ int ahci_write(int port_idx, uint64_t lba, uint32_t count,
         return -1;
     if (ports[port_idx].ncq_supported && use_events)
         return ncq_sync_rw(&ports[port_idx], lba, count,
-                           (void *)buffer, 1);
-    return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
+                           (void *)buffer, 1, 0);
+    return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1, 0);
+}
+
+/* ---- Force Unit Access write ---- */
+
+int ahci_write_fua(int port_idx, uint64_t lba, uint32_t count,
+                   const void *buffer)
+{
+    struct ahci_port *p;
+
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+
+    p = &ports[port_idx];
+
+    if (p->fua_supported) {
+        /* Use native FUA — data bypasses write cache */
+        if (p->ncq_supported && use_events)
+            return ncq_sync_rw(p, lba, count, (void *)buffer, 1, 1);
+        return ahci_do_rw(p, lba, count, (void *)buffer, 1, 1);
+    }
+
+    /* Fallback: normal write + FLUSH CACHE EXT */
+    {
+        int ret = ahci_write(port_idx, lba, count, buffer);
+        if (ret != 0)
+            return ret;
+        return ahci_flush(port_idx);
+    }
+}
+
+/* ---- FLUSH CACHE EXT ---- */
+
+int ahci_flush(int port_idx)
+{
+    struct ahci_port *p;
+    int slot;
+    struct ahci_cmd_header *hdr;
+    struct ahci_cmd_tbl *tbl;
+    struct fis_reg_h2d *fis;
+
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+
+    p = &ports[port_idx];
+
+    /* If write cache is disabled, flush is a no-op */
+    if (!p->write_cache_enabled)
+        return 0;
+
+    slot = port_find_slot(p->regs);
+    if (slot < 0)
+        return -1;
+
+    hdr = &p->cmdlist[slot];
+    tbl = p->cmdtbl[slot];
+    ahci_memset(tbl, 0, sizeof(struct ahci_cmd_tbl));
+
+    /* Build FIS — no data transfer, just the command */
+    fis = (struct fis_reg_h2d *)tbl->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->pmport_c = 0x80;       /* C = 1 (command) */
+    fis->command  = ATA_CMD_CACHE_FLUSH_EX;
+    fis->device   = 0;
+
+    /* Command header — no PRDT, no data */
+    hdr->flags = (sizeof(struct fis_reg_h2d) / 4) & 0x1F;
+    hdr->prdtl = 0;
+    hdr->prdbc = 0;
+
+    return port_issue_cmd(p, slot);
 }
 
 /* ---- TRIM (DATA SET MANAGEMENT) ---- */
@@ -1448,7 +1536,7 @@ void ahci_flush_error_counters(void)
 /* ---- NCQ synchronous read/write with retry ---- */
 
 static int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
-                       void *buffer, int is_write)
+                       void *buffer, int is_write, int fua)
 {
     int retries = 3;
     int tag, status;
@@ -1458,10 +1546,10 @@ static int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
         tag = ncq_alloc_tag(p);
         if (tag < 0) {
             /* All tags busy — fallback to DMA */
-            return ahci_do_rw(p, lba, count, buffer, is_write);
+            return ahci_do_rw(p, lba, count, buffer, is_write, fua);
         }
 
-        ncq_issue_rw(p, tag, lba, count, buffer, is_write);
+        ncq_issue_rw(p, tag, lba, count, buffer, is_write, fua);
 
         /* Wait for this tag to complete */
         {
@@ -1509,8 +1597,8 @@ int ahci_ncq_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
     if (!ports[port_idx].ncq_supported)
-        return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0);
-    return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0);
+        return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0, 0);
+    return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0, 0);
 }
 
 int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
@@ -1519,8 +1607,8 @@ int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
     if (!ports[port_idx].ncq_supported)
-        return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
-    return ncq_sync_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
+        return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1, 0);
+    return ncq_sync_rw(&ports[port_idx], lba, count, (void *)buffer, 1, 0);
 }
 
 int ahci_submit(int port_idx, uint64_t lba, uint32_t count, void *buffer,
@@ -1542,6 +1630,6 @@ int ahci_submit(int port_idx, uint64_t lba, uint32_t count, void *buffer,
     p->tag_callbacks[tag] = callback;
     p->tag_cb_ctx[tag] = ctx;
 
-    ncq_issue_rw(p, tag, lba, count, buffer, is_write);
+    ncq_issue_rw(p, tag, lba, count, buffer, is_write, 0);
     return tag;
 }

@@ -136,6 +136,7 @@
 #define ATA_CMD_PACKET           0xA0   /* PACKET command (ATAPI) */
 #define ATA_CMD_READ_DMA_EX      0x25   /* READ DMA EXT (LBA48) */
 #define ATA_CMD_WRITE_DMA_EX     0x35   /* WRITE DMA EXT (LBA48) */
+#define ATA_CMD_WRITE_DMA_FUA_EX 0x3D   /* WRITE DMA FUA EXT (LBA48, FUA) */
 #define ATA_CMD_CACHE_FLUSH_EX   0xEA   /* CACHE FLUSH EXT */
 #define ATA_CMD_READ_FPDMA       0x60   /* READ FPDMA QUEUED (NCQ) */
 #define ATA_CMD_WRITE_FPDMA      0x61   /* WRITE FPDMA QUEUED (NCQ) */
@@ -243,6 +244,10 @@ struct ahci_port {
     /* TRIM state */
     uint8_t  trim_supported;       /* 1 if device supports DATA SET MANAGEMENT */
     uint8_t  trim_deterministic;   /* 1 if deterministic read after TRIM */
+
+    /* FUA state */
+    uint8_t  fua_supported;        /* 1 if device supports Force Unit Access */
+    uint8_t  write_cache_enabled;  /* 1 if volatile write cache is enabled */
 };
 
 /* Max ports supported */
@@ -274,6 +279,14 @@ void ahci_flush_error_counters(void);
 /* Issue TRIM (DATA SET MANAGEMENT) for a range of sectors.
  * Notifies SSDs that deleted blocks can be erased internally. */
 int ahci_trim(int port_idx, uint64_t lba, uint32_t count);
+
+/* Write with Force Unit Access — data committed to non-volatile media.
+ * Falls back to normal write + FLUSH CACHE EXT if FUA not supported. */
+int ahci_write_fua(int port_idx, uint64_t lba, uint32_t count,
+                   const void *buffer);
+
+/* Flush drive's volatile write cache (FLUSH CACHE EXT 0xEA). */
+int ahci_flush(int port_idx);
 
 /* ---- API: NCQ (Native Command Queuing) ---- */
 
