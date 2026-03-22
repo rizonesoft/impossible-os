@@ -13,7 +13,7 @@
 
 > [!IMPORTANT]
 > **Spec Reference:** Data structures and value types follow the Win32 Registry API specification.
-> Predefined handles use sentinel addresses `0x80000000`–`0x80000004`.
+> Predefined handles use sentinel addresses `0x80000000`–`0x80000005`.
 
 ---
 
@@ -74,13 +74,13 @@ graph TD
 
 ### 1.1 Registry Data Structures *(done)* ✅
 
-**Prompt:** Verify the correctness and consistency of the Registry core data structures (commit `d44a791`). Confirm that `include/registry.h` defines `reg_key_t` with a 256-char name, parent pointer, 16-bucket FNV-1a child hash map (`children[REG_CHILD_BUCKETS]`), `hash_next` collision chain, `child_count`, `values` linked list, `value_count`, `last_write_time`, and `flags`. Confirm `reg_value_t` has a 256-char name, `type` (uint32_t), `data[REG_MAX_VALUE_SIZE]` buffer, `data_size`, and `next` pointer. Confirm `HKEY` is defined as `reg_handle_t*` wrapping `reg_key_t*` + access mode, and that `HKEY_LOCAL_MACHINE` through `HKEY_CURRENT_CONFIG` use sentinel addresses `0x80000000`–`0x80000004`. Confirm `src/kernel/registry.c` defines static pools `reg_key_pool[512]` and `reg_value_pool[1024]`, FNV-1a hash function (`reg_fnv1a`) with case-insensitive folding, pool allocators `reg_alloc_key`/`reg_alloc_value`, `reg_resolve_predefined()` mapping, and `registry_init()` creating all 5 root keys. Run `bash scripts/build.sh clean` and confirm zero warnings.
+**Prompt:** Verify the correctness and consistency of the Registry core data structures (commit `d44a791`). Confirm that `include/registry.h` defines `reg_key_t` with a 256-char name, parent pointer, 16-bucket FNV-1a child hash map (`children[REG_CHILD_BUCKETS]`), `hash_next` collision chain, `child_count`, `values` linked list, `value_count`, `last_write_time`, and `flags`. Confirm `reg_value_t` has a 256-char name, `type` (uint32_t), `data[REG_MAX_VALUE_SIZE]` buffer, `data_size`, and `next` pointer. Confirm `HKEY` is defined as `reg_handle_t*` wrapping `reg_key_t*` + access mode, and that `HKEY_LOCAL_MACHINE` through `HKEY_CURRENT_CONFIG` use sentinel addresses `0x80000000`–`0x80000005`. Confirm `src/kernel/registry.c` defines static pools `reg_key_pool[512]` and `reg_value_pool[1024]`, FNV-1a hash function (`reg_fnv1a`) with case-insensitive folding, pool allocators `reg_alloc_key`/`reg_alloc_value`, `reg_resolve_predefined()` mapping, and `registry_init()` creating all 5 root keys. Run `bash scripts/build.sh clean` and confirm zero warnings.
 
 > [!NOTE]
 > **Implementation Notes:**
 > - `reg_key_t` uses 16-bucket FNV-1a hash map for O(1) child lookup (collision chaining via `hash_next`)
 > - Static pools avoid dynamic allocation — no `kmalloc` dependency
-> - Sentinel `HKEY` addresses (`0x80000000`–`0x80000004`) match Windows predefined handle values
+> - Sentinel `HKEY` addresses (`0x80000000`–`0x80000005`) match Windows predefined handle values
 > - `reg_fnv1a()` folds case by ORing 0x20 on ASCII upper (A–Z) — same as Windows NTFS
 
 - [x] Define `reg_key_t` struct:
@@ -188,7 +188,7 @@ graph TD
 | 💎 | `REG_MULTI_SZ` pack/unpack         | ✅ Double-null terminated        | ❌ No equivalent                    | ✅ §1.2 — count/get/pack helpers                 |
 | 💎 | `REG_LINK` symbolic keys           | ✅ Transparent redirection       | ❌ No concept                       | ✅ §1.2 — flag-based + unnamed value lookup      |
 | 💎 | Case-insensitive key lookup        | ✅ NTFS-style folding            | ❌ Case-sensitive paths             | ✅ §1.1 — FNV-1a with 0x20 case fold             |
-| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation               | ✅ **§1.1 — Zero heap pressure** 🚀              |
+| ⭐ | **Static pool allocation**         | ❌ Dynamic allocation            | ❌ Dynamic allocation               | ✅ **§1.1 — Zero heap pressure**                 |
 
 > **Current state:** Impossible OS matches Windows feature-for-feature on core registry engine
 > capabilities. The static pool allocation model provides a competitive advantage over both
