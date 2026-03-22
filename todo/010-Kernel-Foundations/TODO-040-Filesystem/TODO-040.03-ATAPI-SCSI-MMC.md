@@ -133,7 +133,7 @@ graph TD
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ✅   |
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ✅   |
-| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ⬜   |
@@ -376,30 +376,32 @@ graph TD
 
 ### 5.1 TEST UNIT READY & INQUIRY
 
-**Prompt:** Implement the two most fundamental SCSI commands. TEST UNIT READY (`0x00`) is a no-data command that checks if the device is ready (media present, spun up). It must be sent repeatedly during spin-up, with delays between retries. INQUIRY (`0x12`) retrieves 36 bytes of device identification: peripheral type, vendor name, product name, revision. Both commands must be padded to the device's CDB size (12 bytes). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: TEST UNIT READY and INQUIRY"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify TEST UNIT READY and INQUIRY are correctly implemented. Check: (1) `atapi_test_unit_ready()` sends CDB 0x00 (no data), retries up to 10× with 500ms delay on `ATAPI_ERR_BECOMING`, returns `ATAPI_OK`/sense error. (2) `atapi_inquiry()` sends CDB 0x12 (alloc=36), parses peripheral type (byte 0), vendor (bytes 8-15), product (bytes 16-31), revision (bytes 32-35) with space-trimming. (3) `ahci_port` has `vendor[9]`, `product[17]`, `revision[5]` fields. (4) Both functions declared in `ahci_internal.h`. (5) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
-> **Existing defines:** `SCSI_TEST_UNIT_READY` (`0x00`) and `SCSI_INQUIRY`
-> (`0x12`) are defined in `ahci.h` (lines 99–100) but have no
-> implementation functions. This section adds the actual command functions.
+> **Implementation notes:** Uses `atapi_delay_us()` busy-wait for retry delays
+> since the scheduler may not be active during early AHCI init. INQUIRY's
+> peripheral device type (byte 0, bits 4-0) is more authoritative than IDENTIFY
+> PACKET DEVICE's Word 0 — `atapi_inquiry()` updates `p->atapi_scsi_type`.
+> Both CDBs use length 6 (padded to device's packet size by `atapi_packet_cmd`).
 
-- [ ] Implement `atapi_test_unit_ready(dev)`:
-  - [ ] CDB: `{ 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }` (12 bytes, zero-padded)
-  - [ ] No data transfer — check status only
-  - [ ] If CHECK CONDITION → issue REQUEST SENSE to determine cause
-  - [ ] Retry loop: up to 10 retries with 500ms delay (drive may be spinning up)
-  - [ ] Return: 0 = ready, -ENOMEDIUM = no disc, -EAGAIN = spinning up
-- [ ] Implement `atapi_inquiry(dev, buf)`:
-  - [ ] CDB: `{ 0x12, 0x00, 0x00, 0x00, 0x24, 0x00, ... }` (allocation length = 36)
-  - [ ] Parse 36-byte response:
-    - [ ] Byte 0 bits 4–0: peripheral device type (`0x05` = CD/DVD)
-    - [ ] Byte 0 bits 7–5: peripheral qualifier (0 = connected, 1 = not connected)
-    - [ ] Bytes 8–15: vendor identification (8 bytes, space-padded ASCII)
-    - [ ] Bytes 16–31: product identification (16 bytes)
-    - [ ] Bytes 32–35: product revision (4 bytes)
-  - [ ] Store in `dev->vendor`, `dev->product`, `dev->revision`
-- [ ] Log: `[ATAPI] INQUIRY: %s %s rev %s`
-- [ ] Commit: `"atapi: TEST UNIT READY and INQUIRY"`
+- [x] Implement `atapi_test_unit_ready(port)`:
+  - [x] CDB: `{ 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }` (12 bytes, zero-padded)
+  - [x] No data transfer — check status only
+  - [x] If CHECK CONDITION → issue REQUEST SENSE to determine cause
+  - [x] Retry loop: up to 10 retries with 500ms delay via `atapi_delay_us()`
+  - [x] Return: `ATAPI_OK` = ready, `ATAPI_ERR_NOMEDIUM`, `ATAPI_ERR_BECOMING`
+- [x] Implement `atapi_inquiry(port)`:
+  - [x] CDB: `{ 0x12, 0x00, 0x00, 0x00, 0x24, 0x00, ... }` (allocation length = 36)
+  - [x] Parse 36-byte response:
+    - [x] Byte 0 bits 4–0: peripheral device type (updates `atapi_scsi_type`)
+    - [x] Byte 0 bits 7–5: peripheral qualifier (logged if non-zero)
+    - [x] Bytes 8–15: vendor identification → `p->vendor`
+    - [x] Bytes 16–31: product identification → `p->product`
+    - [x] Bytes 32–35: product revision → `p->revision`
+  - [x] All strings space-trimmed and null-terminated
+- [x] Log: `ATAPI port %u: INQUIRY: %s %s rev %s`
+- [x] Commit: `"atapi: TEST UNIT READY and INQUIRY"`
 
 ### 5.2 READ CAPACITY & READ (10)
 

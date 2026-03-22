@@ -306,6 +306,9 @@ struct ahci_port {
     uint8_t  atapi_dma_mode;      /* Highest supported DMA mode (0=PIO only) */
     uint8_t  atapi_udma_mode;     /* Highest supported UDMA mode (0xFF=none) */
     uint16_t atapi_sata_caps;     /* SATA capabilities word 76 */
+    char     vendor[9];           /* SCSI INQUIRY vendor (8 chars + null) */
+    char     product[17];         /* SCSI INQUIRY product (16 chars + null) */
+    char     revision[5];         /* SCSI INQUIRY revision (4 chars + null) */
 };
 
 /* Max ports supported */

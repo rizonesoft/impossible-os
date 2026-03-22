@@ -300,7 +300,145 @@ int atapi_request_sense(struct ahci_port *p)
     return result;
 }
 
+/* ---- Simple busy-wait delay (microseconds) ----
+ * Used during early init when the scheduler may not be available yet.
+ * Reads the port's Alternate Status register to consume ~100ns per read. */
+static void atapi_delay_us(volatile uint8_t *pregs, uint32_t us)
+{
+    /* Each port_read takes ~100ns on modern hardware; 10 reads ≈ 1µs */
+    uint32_t loops = us * 10;
+    while (loops--)
+        port_read(pregs, AHCI_PxTFD);
+}
 
+/* ---- ATAPI: TEST UNIT READY ----
+ *
+ * CDB 0x00 — no data transfer. Checks if the device has media loaded and
+ * is ready to accept commands. Must be retried during optical spin-up.
+ *
+ * Returns:
+ *   ATAPI_OK          — device ready
+ *   ATAPI_ERR_NOMEDIUM — no disc in drive
+ *   ATAPI_ERR_BECOMING — still spinning up (caller should retry)
+ *   Other ATAPI_ERR_*  — sense-classified error
+ */
+int atapi_test_unit_ready(struct ahci_port *p)
+{
+    uint8_t cdb[12];
+    int retries = 10;
+    int rc, sense_rc;
+
+    ahci_memset(cdb, 0, 12);
+    cdb[0] = SCSI_TEST_UNIT_READY;
+
+    while (retries > 0) {
+        rc = atapi_packet_cmd(p, cdb, 6, (void *)0, 0, 0);
+        if (rc == 0)
+            return ATAPI_OK;    /* Device is ready */
+
+        /* Command failed — get sense data for error classification */
+        sense_rc = atapi_request_sense(p);
+
+        if (sense_rc == ATAPI_ERR_BECOMING) {
+            /* Drive is spinning up — wait 500ms and retry */
+            retries--;
+            if (retries > 0) {
+                klog(LOG_DEBUG, "ahci",
+                     "Port %u: TUR — becoming ready, %d retries left",
+                     (uint64_t)p->port_num, (uint64_t)retries);
+                atapi_delay_us(p->regs, 500000);  /* 500ms */
+            }
+            continue;
+        }
+
+        /* Non-transient error — return immediately */
+        return sense_rc;
+    }
+
+    klog(LOG_WARN, "ahci",
+         "Port %u: TEST UNIT READY exhausted retries", (uint64_t)p->port_num);
+    return ATAPI_ERR_BECOMING;
+}
+
+/* ---- ATAPI: INQUIRY ----
+ *
+ * CDB 0x12 — retrieves 36 bytes of device identification:
+ *   Byte 0  bits 4-0: peripheral device type (0x05 = CD/DVD)
+ *   Byte 0  bits 7-5: peripheral qualifier (0 = connected)
+ *   Bytes 8-15:  vendor identification (8 bytes, ASCII, space-padded)
+ *   Bytes 16-31: product identification (16 bytes, ASCII, space-padded)
+ *   Bytes 32-35: product revision level (4 bytes, ASCII, space-padded)
+ */
+int atapi_inquiry(struct ahci_port *p)
+{
+    uint8_t cdb[12];
+    uint8_t *resp;
+    int i;
+
+    resp = (uint8_t *)kmalloc(36);
+    if (!resp) return -1;
+    ahci_memset(resp, 0, 36);
+    ahci_memset(cdb, 0, 12);
+
+    cdb[0] = SCSI_INQUIRY;
+    cdb[4] = 36;                /* Allocation length */
+
+    if (atapi_packet_cmd(p, cdb, 6, resp, 36, 0) != 0) {
+        int sense_rc = atapi_request_sense(p);
+        kfree(resp);
+        return sense_rc < 0 ? sense_rc : -1;
+    }
+
+    /* Parse peripheral device type (byte 0, bits 4-0) */
+    {
+        uint8_t pdt = resp[0] & 0x1F;
+        uint8_t pq  = (resp[0] >> 5) & 0x07;
+        if (pq != 0) {
+            klog(LOG_DEBUG, "ahci",
+                 "Port %u: INQUIRY qualifier=%u (device may not be connected)",
+                 (uint64_t)p->port_num, (uint64_t)pq);
+        }
+        /* Update SCSI type from INQUIRY (more authoritative than IDENTIFY) */
+        p->atapi_scsi_type = pdt;
+    }
+
+    /* Vendor identification (bytes 8-15, 8 chars, space-padded) */
+    for (i = 0; i < 8; i++)
+        p->vendor[i] = (char)resp[8 + i];
+    p->vendor[8] = '\0';
+    for (i = 7; i > 0; i--) {
+        if (p->vendor[i] == ' ') p->vendor[i] = '\0';
+        else break;
+    }
+
+    /* Product identification (bytes 16-31, 16 chars, space-padded) */
+    for (i = 0; i < 16; i++)
+        p->product[i] = (char)resp[16 + i];
+    p->product[16] = '\0';
+    for (i = 15; i > 0; i--) {
+        if (p->product[i] == ' ') p->product[i] = '\0';
+        else break;
+    }
+
+    /* Product revision (bytes 32-35, 4 chars, space-padded) */
+    for (i = 0; i < 4; i++)
+        p->revision[i] = (char)resp[32 + i];
+    p->revision[4] = '\0';
+    for (i = 3; i > 0; i--) {
+        if (p->revision[i] == ' ') p->revision[i] = '\0';
+        else break;
+    }
+
+    kfree(resp);
+
+    klog(LOG_INFO, "ahci",
+         "ATAPI port %u: INQUIRY: %s %s rev %s",
+         (uint64_t)p->port_num, p->vendor, p->product, p->revision);
+
+    return 0;
+}
+
+/* ---- ATAPI: IDENTIFY PACKET DEVICE ---- */
 int atapi_do_identify(struct ahci_port *p)
 {
     int slot;
