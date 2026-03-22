@@ -193,7 +193,7 @@ graph TD
 | ⭐ | P5   | §19.1 Multi-Device Striping      | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §20.1 Force Unit Access Writes   | P2 (§2.2) + P3 (§3.2)          |   ✅   |
 | ⭐ | P5   | §21.1 Inline Encryption          | P3 (§3.2)                      |   ✅   |
-| 💎 | P6   | §8.1 Packed Virtqueue            | P3 (§3.2)                      |   ⬜   |
+| 💎 | P6   | §8.1 Packed Virtqueue            | P3 (§3.2)                      |   ✅   |
 | 💎 | P6   | §9.1 Secure Erase                | P3 (§5.1)                      |   ⬜   |
 | 💎 | P6   | §11.1 Zoned Block Device         | P3 (§3.2)                      |   ⬜   |
 | 💎 | —    | Downstream: FAT32 flush + TRIM   | P2 (§2.2) + P4 (§4.1)          |   ⬜   |
@@ -671,25 +671,34 @@ graph TD
 
 ### 8.1 Packed Virtqueue Format
 
-**Prompt:** Negotiate `VIRTIO_F_RING_PACKED` (bit 34). The packed virtqueue replaces the separate descriptor/available/used rings with a single unified ring, dramatically improving CPU cache locality by ensuring both driver and device read/write the same cache lines. Each packed descriptor is 16 bytes with `addr`, `len`, `id`, and `flags` fields — the `AVAIL` and `USED` bits in flags replace the separate rings. Both driver and device maintain internal boolean wrap counters (initialized to 1) that flip on every ring wraparound. This eliminates the Split VQ's problem of thrashing across 3 separate memory regions per I/O. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: packed virtqueue support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **IMPLEMENTED** — Verify: boot in QEMU (QEMU 5.1+ with `packed=on` virtio option), check serial for `"Negotiated F_RING_PACKED"` and `"PackedVQ: active"`. If device does not offer F_RING_PACKED, driver falls back to split VQ automatically.
 
-- [ ] Negotiate `VIRTIO_F_RING_PACKED` (bit 34) — mutually exclusive with split virtqueue
-- [ ] Allocate single unified ring: `queue_size * 16` bytes (16-byte aligned)
-- [ ] Implement packed descriptor format (`pvirtq_desc`):
-  - [ ] `addr` (le64), `len` (le32), `id` (le16), `flags` (le16)
-  - [ ] `VIRTQ_DESC_F_AVAIL` (bit 7) and `VIRTQ_DESC_F_USED` (bit 15) replace separate rings
-- [ ] Wrap counter mechanism (both driver and device, initialized to `1`):
-  - [ ] Counters flip `1 → 0 → 1` each time processing wraps past `queue_size`
-  - [ ] Available: write `AVAIL = driver_wrap`, `USED = !driver_wrap`
-  - [ ] Device detects available when descriptor's `AVAIL` matches its own wrap counter and `USED` is inverse
-  - [ ] Completion: device sets both `AVAIL` and `USED` to its current wrap counter
-  - [ ] Driver detects completion when `USED` bit matches `AVAIL` bit
-- [ ] Submission: populate `addr`/`len`/`id`, set flags with correct AVAIL/USED bits, advance driver index
-- [ ] Completion: scan ring for descriptors where USED matches driver's expected device wrap counter
-- [ ] Notification: use packed notification format (optional suppression via event suppression struct)
-- [ ] Fallback: if not negotiated, use split virtqueue (current behavior)
-- [ ] Note: some advanced features (mergeable RX buffers, Jumbo MTU, USO) may be unsupported with packed VQ on certain controllers
-- [ ] Commit: `"virtio-blk: packed virtqueue support"`
+- [x] Negotiate `VIRTIO_F_RING_PACKED` (bit 34) — mutually exclusive with split virtqueue
+- [x] Allocate single unified ring: `queue_size * sizeof(pvirtq_desc)` bytes (PMM contiguous)
+- [x] Implement packed descriptor format (`pvirtq_desc`):
+  - [x] `addr` (le64), `len` (le32), `id` (le16), `flags` (le16) = 16 bytes
+  - [x] `PVIRTQ_DESC_F_AVAIL` (bit 7) and `PVIRTQ_DESC_F_USED` (bit 15) replace separate rings
+- [x] Wrap counter mechanism (both driver and device, initialized to `1`):
+  - [x] Counters flip `1 → 0 → 1` each time processing wraps past `queue_size`
+  - [x] Available: write `AVAIL = driver_wrap`, `USED = !driver_wrap`
+  - [x] Device detects available when `AVAIL` matches its wrap counter
+  - [x] Completion: device sets both `AVAIL` and `USED` to its wrap counter
+  - [x] Driver detects completion when `AVAIL == USED == device_wrap`
+- [x] Submission: populate `addr`/`len`/`id`, set flags with correct AVAIL/USED bits, advance index
+- [x] Completion: poll ring for descriptors where USED matches device_wrap
+- [x] Notification: event suppression structs (driver/device) for interrupt control
+- [x] Fallback: if not negotiated, use split virtqueue (current behavior)
+- [x] `packed_vq_do_io()`: full 3-descriptor block I/O cycle via packed ring
+- [x] Commit: `"virtio-blk: packed virtqueue support"` → `68ffd3b`
+
+> **Implementation Notes:**
+> - File: `src/kernel/drivers/virtio/blk_packed.c` (new, ~400 lines)
+> - Packed VQ structs added to `include/kernel/drivers/virtio/virtio.h`
+> - `has_packed` global tracks negotiation; if init fails, falls back to split VQ
+> - Event suppression: both driver and device event structs set to DISABLE (polling mode)
+> - Ring address writes: desc=ring, avail=driver_event, used=device_event
+> - QEMU default does not offer F_RING_PACKED; enable with `-device virtio-blk-pci,packed=on`
+> - `packed_vq_do_io()` mirrors `virtio_blk_do_io()` but operates on the packed ring
 
 ---
 
