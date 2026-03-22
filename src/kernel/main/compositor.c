@@ -22,6 +22,7 @@
 #include "desktop/gallery.h"
 #include "desktop/desktop.h"
 #include "registry.h"
+#include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
 
 void compositor_run(void)
@@ -249,6 +250,9 @@ void compositor_run(void)
 
         /* Periodically flush dirty registry hives to disk */
         registry_flush();
+
+        /* Periodically write AHCI error counters to registry */
+        ahci_flush_error_counters();
 
         /* Sleep until next IRQ. */
         __asm__ volatile ("sti; hlt");

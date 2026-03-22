@@ -17,6 +17,7 @@
  * ============================================================================ */
 
 #include "kernel/drivers/ahci.h"
+#include "registry.h"
 #include "kernel/drivers/pci.h"
 #include "kernel/drivers/ioapic.h"
 #include "kernel/irq.h"
@@ -1102,4 +1103,57 @@ int ahci_init(void)
            (uint64_t)num_drives, (uint64_t)num_atapi);
 
     return 0;
+}
+
+/* ---- Flush per-port error counters to Registry ---- */
+
+static uint32_t ahci_reg_throttle;   /* only flush every Nth call */
+
+void ahci_flush_error_counters(void)
+{
+    int i;
+    HKEY hAhci, hPort;
+    char port_path[32];  /* "PortNN\Errors" — fits easily */
+    long rc;
+
+    if (!initialized) return;
+
+    /* Throttle: only flush every 256 iterations (~4s at 60 fps) */
+    if ((ahci_reg_throttle++ & 0xFF) != 0) return;
+
+    /* Open or create HKLM\HARDWARE\AHCI */
+    rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\AHCI", 0,
+                        (char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                        &hAhci, (uint32_t *)0);
+    if (rc != 0) return;
+
+    for (i = 0; i < num_ports_total; i++) {
+        if (!ports[i].active) continue;
+
+        /* Build sub-key path: "Port0\Errors", "Port1\Errors", ... */
+        {
+            int n = ports[i].port_num;
+            char *p = port_path;
+            *p++ = 'P'; *p++ = 'o'; *p++ = 'r'; *p++ = 't';
+            if (n >= 10) { *p++ = (char)('0' + n / 10); }
+            *p++ = (char)('0' + n % 10);
+            *p++ = '\\'; *p++ = 'E'; *p++ = 'r'; *p++ = 'r';
+            *p++ = 'o'; *p++ = 'r'; *p++ = 's'; *p = '\0';
+        }
+
+        rc = RegCreateKeyEx(hAhci, port_path, 0,
+                            (char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                            &hPort, (uint32_t *)0);
+        if (rc != 0) continue;
+
+        RegSetDword(hPort, "FatalErrors",   ports[i].errors.fatal_errors);
+        RegSetDword(hPort, "NonfatalErrors", ports[i].errors.nonfatal_errors);
+        RegSetDword(hPort, "CrcErrors",     ports[i].errors.crc_errors);
+        RegSetDword(hPort, "LinkResets",    ports[i].errors.link_resets);
+        RegSetDword(hPort, "CmdFailures",   ports[i].errors.cmd_failures);
+
+        RegCloseKey(hPort);
+    }
+
+    RegCloseKey(hAhci);
 }

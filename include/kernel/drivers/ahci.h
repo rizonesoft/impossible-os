@@ -248,6 +248,9 @@ int ahci_present(void);
 /* Get number of detected SATA drives. */
 int ahci_drive_count(void);
 
+/* Flush per-port error counters to HKLM\HARDWARE\AHCI\PortN\Errors. */
+void ahci_flush_error_counters(void);
+
 /* ---- API: ATAPI (optical) devices ---- */
 
 /* Get number of detected ATAPI devices. */

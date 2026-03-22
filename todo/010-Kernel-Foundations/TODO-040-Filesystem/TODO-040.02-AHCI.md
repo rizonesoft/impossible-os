@@ -411,8 +411,8 @@ graph TD
 > - Non-fatal errors (INFS, OFS) logged at DEBUG level, no recovery needed
 > - CRC errors detected from PxSERR.ERR.M (bit 1) during fatal error processing
 > - Error counters are simple `uint32_t` increments — safe in ISR context (single-writer)
-> - Registry exposure (`HKLM\HARDWARE\AHCI\PortX\Errors\*`) deferred until registry write API exists
-> - Counters accessible via debugger or future `ahci_get_error_counters()` API
+> - `ahci_flush_error_counters()` writes counters to `HKLM\HARDWARE\AHCI\PortN\Errors\*` every ~4s (256-iteration throttle)
+> - Flush called from compositor loop alongside `registry_flush()` — not from ISR (registry ops touch pool allocators)
 
 - [x] Classify `PxIS` error bits:
   - [x] Fatal: `HBFS` (Host Bus Fatal), `HBDS` (Host Bus Data), `IFS` (Interface Fatal), `TFES` (Task File Error)
@@ -422,7 +422,7 @@ graph TD
 - [x] Parse `PxSERR` for detailed error info:
   - [x] `DIAG.X` = exchange (hot-plug), `DIAG.N` = PhyRdy change, `ERR.E` = internal error
 - [x] Track per-port error counters (CRC errors, link resets, command failures)
-- [x] Expose error counters via Registry: `HKLM\HARDWARE\AHCI\PortX\Errors\*` *(deferred — registry write API not yet implemented)*
+- [x] Expose error counters via Registry: `HKLM\HARDWARE\AHCI\PortX\Errors\*` (`FatalErrors`, `NonfatalErrors`, `CrcErrors`, `LinkResets`, `CmdFailures`)
 - [x] Commit: `"ahci: comprehensive port error handling"`
 
 ---
