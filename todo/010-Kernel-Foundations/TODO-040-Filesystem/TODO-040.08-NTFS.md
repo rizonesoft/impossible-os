@@ -118,7 +118,7 @@ graph TD
 | 💎 | P5    | `040.08-NTFS.md`      | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | P2 (§3.1)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
-| 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ⬜   |
+| 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ⬜   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ⬜   |
@@ -680,27 +680,38 @@ graph TD
 
 ## 7. System File Access
 
-### 7.1 System Metafile Readers
+### 7.1 System Metafile Readers ✅
 
-**Prompt:** Implement reading key NTFS system files needed for full operation. `$MFTMirr` (inode 1): read the first 4 mirrored MFT records for backup recovery. `$Volume` (inode 3): extract volume name and dirty flag (check if volume was cleanly unmounted — if dirty, log warning). `$Bitmap` (inode 6): read the cluster allocation bitmap for free space queries. `$UpCase` (inode 10): load the Unicode uppercase mapping table for case-insensitive comparison. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: system metafile readers"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that system metafile readers are correctly implemented: (1) `ntfs_sysfiles.c` has `ntfs_load_sysfiles()` orchestrator that reads $Volume (inode 3), $Bitmap (inode 6), $UpCase (inode 10), $MFTMirr (inode 1). (2) $Volume: extracts `$VOLUME_NAME` (0x60) and `$VOLUME_INFORMATION` (0x70), logs dirty flag WARNING. (3) $Bitmap: counts free clusters by scanning bitmap bits. (4) $UpCase: loads 128 KB uppercase table via PMM, `ntfs_upcase_char()` helper. (5) $MFTMirr: compares first 4 records byte-for-byte. (6) `ntfs.h` has `NTFS_INODE_*` constants, vol fields, and declarations. (7) Build passes: `=== BUILD OK ===`.
 
-- [ ] Read `$Volume` (inode 3):
-  - [ ] Extract `$VOLUME_NAME` attribute (0x60) → volume label
-  - [ ] Extract `$VOLUME_INFORMATION` attribute (0x70) → NTFS version, flags
-  - [ ] Check dirty flag: if set, log `[NTFS] WARNING: Volume was not cleanly unmounted`
-  - [ ] Read-only driver: do NOT clear the dirty flag (Windows chkdsk will handle it)
-- [ ] Read `$Bitmap` (inode 6):
-  - [ ] Decode `$DATA` attribute (non-resident) → cluster bitmap
-  - [ ] Count free/used clusters for `GetDiskFreeSpace()` support
-  - [ ] Cache bitmap or compute stats lazily
-- [ ] Read `$UpCase` (inode 10):
-  - [ ] Load 128 KB uppercase mapping table into kernel memory
-  - [ ] Use for case-insensitive filename comparison in B+ tree lookups
-  - [ ] Fallback: ASCII-only `towupper` if `$UpCase` loading fails
-- [ ] Read `$MFTMirr` (inode 1):
-  - [ ] Compare first 4 records against `$MFT` for consistency
-  - [ ] Log warning if mismatch detected
-- [ ] Commit: `"ntfs: system metafile readers"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `ntfs_sysfiles.c` (~350 lines) — all four metafile readers + orchestrator
+> - $Volume: `$VOLUME_INFORMATION` at offset [reserved:8][major:1][minor:1][flags:2]; flags bit 0 = dirty, bit 15 = needs chkdsk
+> - $Bitmap: sector-at-a-time scan via existing bitmap_runs, handles sparse runs (all-free)
+> - $UpCase: 65536 × 2-byte entries = 128 KB, PMM-allocated (32 pages); `ntfs_upcase_char()` uses table or ASCII fallback
+> - $MFTMirr: reads via $MFTMirr's own data runs, compares raw bytes (pre-fixup) against original $MFT records
+> - `ntfs_load_sysfiles()` is non-fatal: individual failures logged but mount continues
+> - Added `NTFS_INODE_MFT` (0) through `NTFS_INODE_UPCASE` (10) well-known inode constants
+> - Added vol fields: `volume_name[128]`, `ntfs_version_major/minor`, `volume_dirty`, `upcase_table`, `sysfiles_loaded`
+
+- [x] Read `$Volume` (inode 3):
+  - [x] Extract `$VOLUME_NAME` attribute (0x60) → volume label
+  - [x] Extract `$VOLUME_INFORMATION` attribute (0x70) → NTFS version, flags
+  - [x] Check dirty flag: if set, log `[NTFS] WARNING: Volume was not cleanly unmounted`
+  - [x] Read-only driver: do NOT clear the dirty flag (Windows chkdsk will handle it)
+- [x] Read `$Bitmap` (inode 6):
+  - [x] Decode `$DATA` attribute (non-resident) → cluster bitmap
+  - [x] Count free/used clusters for `GetDiskFreeSpace()` support
+  - [x] Cache bitmap or compute stats lazily
+- [x] Read `$UpCase` (inode 10):
+  - [x] Load 128 KB uppercase mapping table into kernel memory
+  - [x] Use for case-insensitive filename comparison in B+ tree lookups
+  - [x] Fallback: ASCII-only `towupper` if `$UpCase` loading fails
+- [x] Read `$MFTMirr` (inode 1):
+  - [x] Compare first 4 records against `$MFT` for consistency
+  - [x] Log warning if mismatch detected
+- [x] Commit: `"ntfs: system metafile readers"`
 
 ---
 
