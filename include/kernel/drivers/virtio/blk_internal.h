@@ -243,3 +243,8 @@ int  merge_execute_read(int merge_dir, uint64_t original_sector,
                         uint32_t original_count, void *original_buffer,
                         uint64_t merged_sector, uint32_t merged_count);
 void merge_expose_registry(void);
+
+/* ---- Stripe (defined in blk_stripe.c) ---- */
+void stripe_init(void);
+int  stripe_is_active(void);
+void stripe_expose_registry(void);

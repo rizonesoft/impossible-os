@@ -842,6 +842,10 @@ int virtio_blk_init(void)
     merge_init();
     merge_expose_registry();
 
+    /* ---- Multi-Device Stripe Init ---- */
+    stripe_init();
+    stripe_expose_registry();
+
     return 0;
 }
 
