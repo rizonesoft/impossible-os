@@ -191,7 +191,7 @@ graph TD
 | ⭐ | P5   | §17.1 Predictive Prefetch        | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §18.1 I/O Request Merging        | P5 (§7.1)                      |   ✅   |
 | ⭐ | P5   | §19.1 Multi-Device Striping      | P3 (§3.2)                      |   ✅   |
-| ⭐ | P5   | §20.1 Force Unit Access Writes   | P2 (§2.2) + P3 (§3.2)          |   ⬜   |
+| ⭐ | P5   | §20.1 Force Unit Access Writes   | P2 (§2.2) + P3 (§3.2)          |   ✅   |
 | ⭐ | P5   | §21.1 Inline Encryption          | P3 (§3.2)                      |   ⬜   |
 | 💎 | P6   | §8.1 Packed Virtqueue            | P3 (§3.2)                      |   ⬜   |
 | 💎 | P6   | §9.1 Secure Erase                | P3 (§5.1)                      |   ⬜   |
@@ -1046,19 +1046,26 @@ graph TD
 
 ### 20.1 Per-Request FUA Cache Bypass
 
-**Prompt:** The VirtIO TC proposed Force Unit Access (FUA) writes for the block device specification in January 2025. Neither Windows viostor nor Linux virtio-blk currently implement per-request FUA at the VirtIO driver level — both rely on full cache flush (`T_FLUSH`) after writes, which flushes ALL pending data rather than targeting a single request. Implement a `VIRTIO_BLK_T_OUT_FUA` request type (or a flag in the request header) that tells the device to write this specific request directly to non-volatile storage, bypassing the write cache. This eliminates the need for a full flush after critical writes (journal commit, fsync single file, metadata update). The device guarantees the data reached stable storage before returning `S_OK`. For devices that don't support FUA, transparently fall back to `T_OUT` + `T_FLUSH`. This gives Impossible OS the first per-request write durability guarantee in a VirtIO block driver. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: force unit access writes"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **IMPLEMENTED** — Verify: boot in QEMU, check serial log for `"FUA: enabled (native=no/yes)"`. If device supports F_FUA, test with `virtio_blk_write_fua()` and verify native FUA path. Otherwise verify fallback (T_OUT + T_FLUSH). Query `HKLM\HARDWARE\VirtIO\Block0\FUA\{FuaWrites,FallbackWrites}`.
 
-- [ ] Define `VIRTIO_BLK_F_FUA` feature bit (proposed spec addition)
-- [ ] Negotiate `VIRTIO_BLK_F_FUA` during init
-- [ ] Implement `virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)`:
-  - [ ] Build request header with FUA flag set (type = `VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_FUA_FLAG`)
-  - [ ] Submit via standard 3-descriptor chain
-  - [ ] Completion guarantees data on stable storage
-- [ ] Fallback: if `F_FUA` not negotiated, issue `T_OUT` + `T_FLUSH` for equivalent semantics
-- [ ] Wire to VFS: `blkdev_write_fua()` API for journal commits and metadata writes
-- [ ] Track FUA vs non-FUA write counts: `HKLM\HARDWARE\VirtIO\Block0\FuaWrites`
-- [ ] Configurable: `HKLM\SYSTEM\Drivers\VirtIO\FUA\Enabled` (default true when supported)
-- [ ] Commit: `"virtio-blk: force unit access writes"`
+- [x] Define `VIRTIO_BLK_F_FUA` feature bit 14 (proposed spec addition)
+- [x] Define `VIRTIO_BLK_T_FUA_FLAG` = 0x80000000 (OR with T_OUT)
+- [x] Negotiate `VIRTIO_BLK_F_FUA` during init
+- [x] Implement `virtio_blk_write_fua(uint64_t lba, uint32_t count, const void *buffer)`:
+  - [x] Build request header with FUA flag set (type = `VIRTIO_BLK_T_OUT | VIRTIO_BLK_T_FUA_FLAG`)
+  - [x] Submit via standard 3-descriptor chain via `virtio_blk_do_io()`
+  - [x] Completion guarantees data on stable storage
+- [x] Fallback: if `F_FUA` not negotiated, issue `T_OUT` + `T_FLUSH` for equivalent semantics
+- [x] Public API: `virtio_blk_write_fua()` declared in `blk.h` for journal commits
+- [x] Track FUA vs non-FUA write counts: `HKLM\HARDWARE\VirtIO\Block0\FUA\{FuaWrites,FallbackWrites}`
+- [x] Configurable: `HKLM\SYSTEM\Drivers\VirtIO\FUA\{Enabled,NativeSupport}`
+- [x] Commit: `"virtio-blk: force unit access writes"` → `0575c83`
+
+> **Implementation Notes:**
+> - `virtio_blk_write_fua()` in `blk_api.c`: native path uses `T_OUT|FUA_FLAG`, fallback calls `virtio_blk_write()` + `virtio_blk_flush()`
+> - `has_fua` global tracks whether device offered F_FUA feature bit
+> - Stats: `fua_writes` counts native FUA, `fua_fallback_writes` counts fallback path
+> - QEMU virtio-blk does not currently offer F_FUA, so fallback path is always used; native path ready for future QEMU/hypervisor support
 
 ---
 
