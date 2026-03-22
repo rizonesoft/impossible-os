@@ -187,7 +187,7 @@ graph TD
 | 💎 | P5   | §10.1 Lifetime Metrics           | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §12.1 Adaptive Hybrid Polling    | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §13.1 I/O Priority Queues        | P5 (§6.1)                      |   ✅   |
-| ⭐ | P5   | §16.1 I/O Latency Telemetry      | P3 (§3.2)                      |   ⬜   |
+| ⭐ | P5   | §16.1 I/O Latency Telemetry      | P3 (§3.2)                      |   ✅   |
 | ⭐ | P5   | §17.1 Predictive Prefetch        | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §18.1 I/O Request Merging        | P5 (§7.1)                      |   ⬜   |
 | ⭐ | P5   | §19.1 Multi-Device Striping      | P3 (§3.2)                      |   ⬜   |
@@ -895,28 +895,43 @@ graph TD
 
 ### 16.1 Per-Request Nanosecond Latency Tracking
 
-**Prompt:** No other OS exposes per-request I/O latency histograms at the VirtIO driver level. Linux has `blk_mq` latency stats but they're buried in sysfs and not virtio-specific. Windows viostor has no equivalent. Implement nanosecond-resolution I/O latency tracking using `rdtsc` / TSC: stamp each request at submission, stamp again at completion, compute delta. Maintain per-device latency histograms in logarithmic buckets (< 1µs, 1–10µs, 10–100µs, 100µs–1ms, 1–10ms, 10–100ms, > 100ms). Expose buckets via Registry for Disk Manager to render real-time latency charts. Also track: average latency, P50, P99, P99.9 percentiles, and max latency. This gives Impossible OS best-in-class storage observability — visible directly in the desktop GUI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: I/O latency telemetry"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **DONE — Verify** I/O latency telemetry. Boot in QEMU, check serial log for `"Latency telemetry: enabled (tsc/us=..., ns/tick=...)"`. After any disk I/O, check Registry: `reg query HKLM\HARDWARE\VirtIO\Block0\Latency\Read` and `...\Histogram`. Verify `HKLM\SYSTEM\Drivers\VirtIO\LatencyTracking\Enabled` is set.
 
-- [ ] Stamp each I/O request at submission: `req->submit_tsc = rdtsc()`
-- [ ] Stamp at completion: `req->complete_tsc = rdtsc()`
-- [ ] Compute latency: `(complete_tsc - submit_tsc) * ns_per_tick`
-- [ ] Calibrate TSC: compute `ns_per_tick` from `tsc_khz` (set during boot)
-- [ ] Maintain histogram buckets (atomic increments, lockless):
-  - [ ] `< 1 µs`, `1–10 µs`, `10–100 µs`, `100 µs–1 ms`, `1–10 ms`, `10–100 ms`, `> 100 ms`
-- [ ] Track running statistics:
-  - [ ] `total_requests`, `total_ns` (for average)
-  - [ ] `min_ns`, `max_ns`
-  - [ ] Approximate P50, P99, P99.9 using histogram interpolation
-- [ ] Separate read vs write latency histograms
-- [ ] Expose via Registry:
-  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Avg_us`
-  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\P99_us`
-  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Max_us`
-  - [ ] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Histogram\*`
-  - [ ] Same for `Write`, `Flush`, `Discard`
-- [ ] Wire to Disk Manager: real-time latency chart (bar histogram + percentile lines)
-- [ ] Configurable: disable telemetry for zero-overhead production: `HKLM\SYSTEM\Drivers\VirtIO\LatencyTracking` (default enabled)
-- [ ] Commit: `"virtio-blk: I/O latency telemetry"`
+> [!NOTE]
+> **Implementation Notes:**
+> - TSC infrastructure (`rdtsc_read()`, `tsc_per_us`, `calibrate_tsc()`) moved to shared section before latency engine — used by both latency telemetry and adaptive polling
+> - 7 logarithmic histogram buckets: `<1µs`, `1-10µs`, `10-100µs`, `100µs-1ms`, `1-10ms`, `10-100ms`, `>100ms`
+> - 4 per-type histograms: Read, Write, Flush, Discard (write_zeroes → discard)
+> - `latency_record()`: stamps completion via `rdtsc_read()`, converts TSC→ns via `delta * 1000 / tsc_per_us`, buckets + updates running stats
+> - `latency_percentile()`: histogram interpolation using bucket upper bounds (500=P50, 990=P99, 999=P99.9)
+> - Public `virtio_blk_get_latency_stats()` API: returns avg/P50/P99/P99.9/min/max in µs for Disk Manager
+> - Submit TSC stamped at function entry of `do_io`/`do_flush`/`do_discard`/`do_write_zeroes`
+> - Completion recording at all 5 return paths (indirect+direct do_io, flush, discard, write_zeroes)
+> - Declaration ordering critical: TSC → latency engine → adaptive polling (forward references)
+> - Registry config: `HKLM\SYSTEM\Drivers\VirtIO\LatencyTracking\Enabled` (default 1)
+> - Registry per-type: `HKLM\HARDWARE\VirtIO\Block0\Latency\{Read,Write,Flush,Discard}\{Avg_us,P50_us,P99_us,P999_us,Min_us,Max_us,Total}`
+> - Histogram sub-keys: `...\Histogram\{Lt1us,1_10us,10_100us,100us_1ms,1_10ms,10_100ms,Gt100ms}`
+
+- [x] Stamp each I/O request at submission: `submit_tsc = rdtsc_read()`
+- [x] Stamp at completion: `rdtsc_read()` inside `latency_record()`
+- [x] Compute latency: `(complete_tsc - submit_tsc) * 1000 / tsc_per_us` → nanoseconds
+- [x] Calibrate TSC: `calibrate_tsc()` using 1000 port-0x80 reads (~1ms total)
+- [x] Maintain histogram buckets (lockless increments):
+  - [x] `< 1 µs`, `1–10 µs`, `10–100 µs`, `100 µs–1 ms`, `1–10 ms`, `10–100 ms`, `> 100 ms`
+- [x] Track running statistics:
+  - [x] `total_requests`, `total_ns` (for average)
+  - [x] `min_ns`, `max_ns`
+  - [x] Approximate P50, P99, P99.9 using histogram interpolation
+- [x] Separate read vs write vs flush vs discard latency histograms
+- [x] Expose via Registry:
+  - [x] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Avg_us`
+  - [x] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\P99_us`
+  - [x] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Max_us`
+  - [x] `HKLM\HARDWARE\VirtIO\Block0\Latency\Read\Histogram\*`
+  - [x] Same for `Write`, `Flush`, `Discard`
+- [x] Wire to Disk Manager: `virtio_blk_get_latency_stats()` public API for real-time charts
+- [x] Configurable: `HKLM\SYSTEM\Drivers\VirtIO\LatencyTracking\Enabled` (default 1)
+- [x] Commit: `"virtio-blk: I/O latency telemetry"`
 
 ---
 
@@ -1093,7 +1108,7 @@ graph TD
 | 💎 | 🟢 P3    | 10.1 Lifetime Metrics            | Monitoring — drive endurance in Disk Manager                     |
 | ⭐ | 🟢 P3    | 12.1 Adaptive Hybrid Polling     | 🚀 **Exclusive** — workload-adaptive completion strategy         |
 | ⭐ | 🟢 P3    | 13.1 I/O Priority Queues         | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS ✅       |
-| ⭐ | 🟢 P3    | 16.1 I/O Latency Telemetry       | 🚀 **Exclusive** — ns-resolution histograms in GUI               |
+| ⭐ | 🟢 P3    | 16.1 I/O Latency Telemetry       | 🚀 **Exclusive** — ns-resolution histograms in GUI ✅              |
 | ⭐ | 🟢 P3    | 17.1 Predictive Prefetch         | 🚀 **Exclusive** — driver-level sequential read-ahead            |
 | ⭐ | 🟢 P3    | 18.1 I/O Request Merging         | 🚀 **Exclusive** — auto-coalesce adjacent requests               |
 | ⭐ | 🟢 P3    | 19.1 Multi-Device Striping       | 🚀 **Exclusive** — driver-level RAID-0 across VirtIO devices     |

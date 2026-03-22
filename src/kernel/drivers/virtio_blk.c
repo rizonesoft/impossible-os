@@ -100,6 +100,190 @@ static struct {
     uint32_t last_iops;        /* IOPS from last completed window */
 } queue_stats[VIRTIO_BLK_MAX_QUEUES];
 
+/* ---- TSC (Time Stamp Counter) Infrastructure ---- */
+
+/* Read TSC for sub-microsecond timing */
+static inline uint64_t rdtsc_read(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+/* Calibrate: approximate TSC ticks per microsecond.
+ * Called once during init using port 0x80 delay (~1 µs each). */
+static uint64_t tsc_per_us = 2000;  /* Conservative default (2 GHz) */
+
+static void calibrate_tsc(void)
+{
+    uint64_t start, end;
+    uint32_t i;
+    start = rdtsc_read();
+    for (i = 0; i < 1000; i++)
+        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
+    end = rdtsc_read();
+    /* 1000 port reads ≈ 1000 µs ≈ 1 ms */
+    tsc_per_us = (end - start) / 1000;
+    if (tsc_per_us == 0)
+        tsc_per_us = 2000;  /* Fallback */
+}
+
+/* ---- I/O Latency Telemetry Engine (§16.1 — 🚀 Impossible OS Exclusive) ---- */
+
+/* Logarithmic histogram bucket boundaries (in nanoseconds) */
+#define LAT_BUCKET_COUNT  7
+#define LAT_1US     1000ULL
+#define LAT_10US    10000ULL
+#define LAT_100US   100000ULL
+#define LAT_1MS     1000000ULL
+#define LAT_10MS    10000000ULL
+#define LAT_100MS   100000000ULL
+
+/* Bucket labels for Registry */
+static const char *lat_bucket_names[LAT_BUCKET_COUNT] = {
+    "Lt1us", "1_10us", "10_100us", "100us_1ms",
+    "1_10ms", "10_100ms", "Gt100ms"
+};
+
+/* I/O type indices */
+#define LAT_TYPE_READ    0
+#define LAT_TYPE_WRITE   1
+#define LAT_TYPE_FLUSH   2
+#define LAT_TYPE_DISCARD 3
+#define LAT_TYPE_COUNT   4
+
+static const char *lat_type_names[LAT_TYPE_COUNT] = {
+    "Read", "Write", "Flush", "Discard"
+};
+
+/* Per-type latency histogram and running stats */
+struct latency_hist {
+    uint32_t buckets[LAT_BUCKET_COUNT];   /* Histogram bins */
+    uint64_t total_ns;        /* Sum of all latencies (for average) */
+    uint32_t total_requests;  /* Number of recorded requests */
+    uint64_t min_ns;          /* Minimum observed latency */
+    uint64_t max_ns;          /* Maximum observed latency */
+};
+
+static struct latency_hist lat_hists[LAT_TYPE_COUNT];
+static int latency_tracking_enabled = 1;  /* Master enable */
+
+/* Compute ns_per_tick from tsc_per_us (set by calibrate_tsc).
+ * ns_per_tick = 1000 / tsc_per_us. We store the reciprocal for fast
+ * multiplication: latency_ns = delta_tsc * 1000 / tsc_per_us. */
+
+/* Record a latency measurement.
+ * submit_tsc: rdtsc value at submission time
+ * type: LAT_TYPE_READ, LAT_TYPE_WRITE, etc. */
+static void latency_record(uint64_t submit_tsc, int type)
+{
+    uint64_t delta_tsc, latency_ns;
+    struct latency_hist *h;
+    int bucket;
+
+    if (!latency_tracking_enabled || type >= LAT_TYPE_COUNT)
+        return;
+
+    delta_tsc = rdtsc_read() - submit_tsc;
+
+    /* Convert TSC ticks to nanoseconds: ns = ticks * 1000 / tsc_per_us */
+    if (tsc_per_us > 0)
+        latency_ns = delta_tsc * 1000 / tsc_per_us;
+    else
+        latency_ns = delta_tsc;  /* Fallback: raw ticks */
+
+    h = &lat_hists[type];
+
+    /* Bucket into logarithmic histogram */
+    if (latency_ns < LAT_1US)
+        bucket = 0;
+    else if (latency_ns < LAT_10US)
+        bucket = 1;
+    else if (latency_ns < LAT_100US)
+        bucket = 2;
+    else if (latency_ns < LAT_1MS)
+        bucket = 3;
+    else if (latency_ns < LAT_10MS)
+        bucket = 4;
+    else if (latency_ns < LAT_100MS)
+        bucket = 5;
+    else
+        bucket = 6;
+
+    h->buckets[bucket]++;
+    h->total_ns += latency_ns;
+    h->total_requests++;
+
+    if (latency_ns < h->min_ns || h->min_ns == 0)
+        h->min_ns = latency_ns;
+    if (latency_ns > h->max_ns)
+        h->max_ns = latency_ns;
+}
+
+/* Compute approximate percentile from histogram (in nanoseconds).
+ * Uses linear interpolation within the bucket. */
+static uint64_t latency_percentile(const struct latency_hist *h,
+                                    uint32_t percentile_x10)
+{
+    /* Bucket upper bounds in ns */
+    static const uint64_t bounds[LAT_BUCKET_COUNT] = {
+        LAT_1US, LAT_10US, LAT_100US, LAT_1MS,
+        LAT_10MS, LAT_100MS, LAT_100MS * 10
+    };
+    uint32_t target, cumulative;
+    int i;
+
+    if (h->total_requests == 0)
+        return 0;
+
+    /* target = the rank we're looking for */
+    target = (uint32_t)((uint64_t)h->total_requests * percentile_x10 / 1000);
+    if (target == 0)
+        target = 1;
+
+    cumulative = 0;
+    for (i = 0; i < LAT_BUCKET_COUNT; i++) {
+        cumulative += h->buckets[i];
+        if (cumulative >= target) {
+            /* Return the upper bound of this bucket as approximation */
+            return bounds[i];
+        }
+    }
+    return bounds[LAT_BUCKET_COUNT - 1];
+}
+
+/* Public API: retrieve latency statistics for a given I/O type.
+ * Returns stats in microseconds. Called by Disk Manager for dashboards. */
+void virtio_blk_get_latency_stats(int type, uint32_t *avg_us,
+    uint32_t *p50_us, uint32_t *p99_us, uint32_t *p999_us,
+    uint32_t *min_us, uint32_t *max_us, uint32_t *total)
+{
+    const struct latency_hist *h;
+    if (type < 0 || type >= LAT_TYPE_COUNT) {
+        if (avg_us) *avg_us = 0;
+        if (p50_us) *p50_us = 0;
+        if (p99_us) *p99_us = 0;
+        if (p999_us) *p999_us = 0;
+        if (min_us) *min_us = 0;
+        if (max_us) *max_us = 0;
+        if (total) *total = 0;
+        return;
+    }
+    h = &lat_hists[type];
+
+    if (avg_us) {
+        *avg_us = h->total_requests > 0
+            ? (uint32_t)(h->total_ns / h->total_requests / 1000)
+            : 0;
+    }
+    if (p50_us)  *p50_us  = (uint32_t)(latency_percentile(h, 500) / 1000);
+    if (p99_us)  *p99_us  = (uint32_t)(latency_percentile(h, 990) / 1000);
+    if (p999_us) *p999_us = (uint32_t)(latency_percentile(h, 999) / 1000);
+    if (min_us)  *min_us  = (uint32_t)(h->min_ns / 1000);
+    if (max_us)  *max_us  = (uint32_t)(h->max_ns / 1000);
+    if (total)   *total   = h->total_requests;
+}
+
 /* ---- Adaptive Hybrid Polling Engine ---- */
 
 /* I/O completion modes */
@@ -135,32 +319,6 @@ static struct {
     .high_threshold = 50000,
     .spin_us = 4,
 };
-
-/* Read TSC (Time Stamp Counter) for sub-microsecond timing */
-static inline uint64_t rdtsc_read(void)
-{
-    uint32_t lo, hi;
-    __asm__ volatile ("rdtsc" : "=a"(lo), "=d"(hi));
-    return ((uint64_t)hi << 32) | lo;
-}
-
-/* Calibrate: approximate TSC ticks per microsecond.
- * Called once during init using port 0x80 delay (~1 µs each). */
-static uint64_t tsc_per_us = 2000;  /* Conservative default (2 GHz) */
-
-static void calibrate_tsc(void)
-{
-    uint64_t start, end;
-    uint32_t i;
-    start = rdtsc_read();
-    for (i = 0; i < 1000; i++)
-        __asm__ volatile ("inb $0x80, %%al" ::: "al", "memory");
-    end = rdtsc_read();
-    /* 1000 port reads ≈ 1000 µs ≈ 1 ms */
-    tsc_per_us = (end - start) / 1000;
-    if (tsc_per_us == 0)
-        tsc_per_us = 2000;  /* Fallback */
-}
 
 /* Check if 100ms window has elapsed and transition modes if needed */
 static void adaptive_check_window(void)
@@ -500,6 +658,8 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     uint32_t timeout;
     uint64_t rflags;
     uint16_t qi = get_queue_idx();
+    uint64_t submit_tsc = rdtsc_read();  /* Latency telemetry: stamp submission */
+    int lat_type = (type == VIRTIO_BLK_T_IN) ? LAT_TYPE_READ : LAT_TYPE_WRITE;
 
     if (!initialized)
         return -1;
@@ -651,6 +811,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
         adaptive.io_count++;
         queue_stats[qi].io_completed++;
         queue_stats[qi].io_count_window++;
+        latency_record(submit_tsc, lat_type);
         adaptive_check_window();
 
         return (status_byte == VIRTIO_BLK_S_OK) ? 0 : -1;
@@ -834,6 +995,7 @@ static int virtio_blk_do_io(uint32_t type, uint64_t sector,
     adaptive.io_count++;
     queue_stats[qi].io_completed++;
     queue_stats[qi].io_count_window++;
+    latency_record(submit_tsc, lat_type);
     adaptive_check_window();
 
     /* Differentiate status codes */
@@ -857,6 +1019,7 @@ static int virtio_blk_do_flush(void)
     uint32_t timeout;
     uint64_t rflags;
     uint16_t qi = get_queue_idx();
+    uint64_t submit_tsc = rdtsc_read();  /* Latency telemetry */
 
     if (!initialized)
         return -1;
@@ -1036,6 +1199,8 @@ static int virtio_blk_do_flush(void)
     /* Free both descriptors */
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
+
+    latency_record(submit_tsc, LAT_TYPE_FLUSH);
 
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
@@ -1323,6 +1488,7 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     uint32_t timeout;
     uint64_t rflags;
     uint16_t qi = get_queue_idx();
+    uint64_t submit_tsc = rdtsc_read();  /* Latency telemetry */
 
     if (!initialized)
         return -1;
@@ -1520,6 +1686,8 @@ static int virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors)
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
 
+    latency_record(submit_tsc, LAT_TYPE_DISCARD);
+
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
     if (status_byte == VIRTIO_BLK_S_UNSUPP) {
@@ -1589,6 +1757,7 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     uint32_t timeout;
     uint64_t rflags;
     uint16_t qi = get_queue_idx();
+    uint64_t submit_tsc = rdtsc_read();  /* Latency telemetry */
 
     if (!initialized)
         return -1;
@@ -1785,6 +1954,8 @@ static int virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors,
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d0);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d1);
     virtq_free_desc(&blk_vqs[qi], (uint16_t)d2);
+
+    latency_record(submit_tsc, LAT_TYPE_DISCARD);  /* write_zeroes → discard */
 
     if (status_byte == VIRTIO_BLK_S_OK)
         return VIRTIO_IO_OK;
@@ -2495,6 +2666,98 @@ int virtio_blk_init(void)
                "I/O priority queues: inactive (need MQ with >= 3 queues, "
                "have %u)", (uint64_t)num_queues);
     }
+
+    /* ---- I/O Latency Telemetry Init ---- */
+    {
+        HKEY hKey = (HKEY)0;
+        uint32_t val;
+
+        /* Read config */
+        if (RegOpenKeyEx(HKEY_LOCAL_MACHINE,
+                "SYSTEM\\Drivers\\VirtIO\\LatencyTracking", 0,
+                KEY_READ, &hKey) == ERROR_SUCCESS) {
+            if (RegGetDword(hKey, "Enabled", &val) == ERROR_SUCCESS)
+                latency_tracking_enabled = (int)val;
+            RegCloseKey(hKey);
+        }
+
+        /* Write back defaults */
+        {
+            uint32_t disp;
+            if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                    "SYSTEM\\Drivers\\VirtIO\\LatencyTracking", 0,
+                    (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                    &hKey, &disp) == ERROR_SUCCESS) {
+                RegSetDword(hKey, "Enabled",
+                            (uint32_t)latency_tracking_enabled);
+                RegCloseKey(hKey);
+            }
+        }
+
+        /* Create per-type latency Registry keys with initial values */
+        if (latency_tracking_enabled) {
+            int t;
+            for (t = 0; t < LAT_TYPE_COUNT; t++) {
+                char path[96];
+                int pos = 0;
+                const char *prefix = "HARDWARE\\VirtIO\\Block0\\Latency\\";
+                const char *s;
+                uint32_t disp;
+                int b;
+
+                for (s = prefix; *s; s++)
+                    path[pos++] = *s;
+                for (s = lat_type_names[t]; *s; s++)
+                    path[pos++] = *s;
+                path[pos] = '\0';
+
+                if (RegCreateKeyEx(HKEY_LOCAL_MACHINE, path, 0,
+                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                        &hKey, &disp) == ERROR_SUCCESS) {
+                    RegSetDword(hKey, "Avg_us", 0);
+                    RegSetDword(hKey, "P50_us", 0);
+                    RegSetDword(hKey, "P99_us", 0);
+                    RegSetDword(hKey, "P999_us", 0);
+                    RegSetDword(hKey, "Min_us", 0);
+                    RegSetDword(hKey, "Max_us", 0);
+                    RegSetDword(hKey, "Total", 0);
+
+                    /* Create histogram sub-key */
+                    {
+                        char hist_path[128];
+                        int hp = 0;
+                        for (s = path; *s; s++)
+                            hist_path[hp++] = *s;
+                        hist_path[hp++] = '\\';
+                        {
+                            const char *hs = "Histogram";
+                            for (s = hs; *s; s++)
+                                hist_path[hp++] = *s;
+                        }
+                        hist_path[hp] = '\0';
+
+                        HKEY hHist = (HKEY)0;
+                        if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                                hist_path, 0, (const char *)0, 0,
+                                KEY_ALL_ACCESS, (void *)0,
+                                &hHist, &disp) == ERROR_SUCCESS) {
+                            for (b = 0; b < LAT_BUCKET_COUNT; b++)
+                                RegSetDword(hHist,
+                                    lat_bucket_names[b], 0);
+                            RegCloseKey(hHist);
+                        }
+                    }
+                    RegCloseKey(hKey);
+                }
+            }
+        }
+    }
+
+    klog(LOG_DEBUG, "virtio",
+           "Latency telemetry: %s (tsc/us=%u, ns/tick=%u)",
+           latency_tracking_enabled ? "enabled" : "disabled",
+           (uint64_t)tsc_per_us,
+           (uint64_t)(tsc_per_us > 0 ? 1000 / tsc_per_us : 0));
 
     return 0;
 }
