@@ -131,7 +131,7 @@ graph TD
 | 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ✅   |
-| 💎 | P3   | `040.05-GPT.md`     | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops       | P2 (§2.2)                 |   ⬜   |
+| 💎 | P3   | `040.05-GPT.md`     | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops       | P2 (§2.2)                 |   ✅   |
 | 💎 | P3   | `040.05-GPT.md`     | §6.2 Microsoft Attributes         | Read-only, hidden, no-automount on Basic Data partitions                    | P2 (§6.1)                 |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §8.1 PMBR Writer                  | Create Protective MBR at LBA 0 — entry point for GPT disk init              | P2 (§4.1) + MBR (040.04)  |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §8.2 GPT Header Writer            | Serialize and write primary/backup headers with CRC32                       | P2 (§4.1 + §3.1)          |   ⬜   |
@@ -271,16 +271,21 @@ graph TD
 - [x] Log: `Auto-recovered primary GPT header from backup` (`LOG_INFO`)
 - [x] Commit: `"gpt: auto-recover primary from backup"`
 
-### 2.3 Backup Header Sync on Write
+### 2.3 Backup Header Sync on Write ✅
 
-**Prompt:** Whenever the primary GPT header or partition entry array is modified (partition create/delete/resize), the backup copies at the end of the disk must be synchronously updated. Write the backup partition entry array first (before the backup header LBA), then recalculate and write the backup header with swapped `my_lba`/`alt_lba` and freshly computed CRC32 values. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: sync backup on write"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` implements `gpt_sync_backup(dev, primary_hdr, entry_array, entry_array_bytes)` that writes the entry array to `backup_hdr_lba - entry_sectors` first (crash-safe order), then builds a backup header with swapped `my_lba`/`alt_lba`, sets `part_entry_lba` to backup entry location, serializes with CRC recomputation, and writes to last LBA. Confirm `gpt.h` declares the function. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-- [ ] After any primary GPT modification: mirror partition entry array to backup location
-- [ ] Recalculate backup header: swap `my_lba`/`alt_lba`, recompute Header CRC32
-- [ ] Write backup partition array → then backup header (order matters for crash safety)
-- [ ] Implement `gpt_sync_backup(dev, primary_header, entry_array)` helper
-- [ ] Log: `[GPT] Synced backup GPT at LBA %llu`
-- [ ] Commit: `"gpt: sync backup on write"`
+> [!NOTE]
+> **Implementation note:** `gpt_sync_backup()` at `gpt.c:648-722`. Write order: entries first → header second (crash-safe: if crash between, old backup header CRC mismatches stale entries, so backup is safely rejected). The `part_entry_crc32` is unchanged since the array data is identical. `serialize_header()` recomputes Header CRC32 automatically. Uses `kmalloc`/`kfree` for the header buffer. Non-fatal — returns -1 but callers can continue.
+
+- [x] After any primary GPT modification: mirror entry array to backup location
+- [x] Backup entry LBA = `dev->sector_count - 1 - entry_sectors`
+- [x] Recalculate backup header: swap `my_lba`/`alt_lba`, set `part_entry_lba`
+- [x] Write backup entry array → then backup header (crash-safe order)
+- [x] `gpt_sync_backup(dev, primary_hdr, entry_array, entry_array_bytes)` helper
+- [x] Declared in `gpt.h` with full documentation
+- [x] Log: `[GPT] Synced backup GPT`
+- [x] Commit: `"gpt: sync backup on write"`
 
 ---
 

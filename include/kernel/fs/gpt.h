@@ -139,5 +139,12 @@ int guid_from_string(const char *str, struct gpt_guid *g);
 /* Generate a random v4 GUID (uses RDRAND if available, TSC fallback). */
 struct gpt_guid guid_generate(void);
 
+/* Sync primary GPT header + entry array to backup location at end of disk.
+ * Writes entry array first (crash-safe), then backup header with swapped
+ * my_lba/alt_lba and recomputed CRC32. Returns 0 on success, -1 on error. */
+int gpt_sync_backup(const struct blkdev *dev,
+                    const struct gpt_header *primary_hdr,
+                    const void *entry_array, uint32_t entry_array_bytes);
+
 /* Compute CRC32 (used internally and available for other modules). */
 uint32_t gpt_crc32(const void *data, uint32_t len);

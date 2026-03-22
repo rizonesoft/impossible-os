@@ -645,6 +645,79 @@ static void serialize_header(const struct gpt_header *hdr, uint8_t *buf,
     write_le32(buf + 16, crc);
 }
 
+/* ---- §2.3 Backup Sync on Write ---- */
+
+int gpt_sync_backup(const struct blkdev *dev,
+                    const struct gpt_header *primary_hdr,
+                    const void *entry_array, uint32_t entry_array_bytes)
+{
+    uint32_t sec_sz = dev->sector_size;
+    uint64_t backup_hdr_lba;
+    uint64_t backup_entry_lba;
+    uint32_t entry_sectors;
+    struct gpt_header backup_hdr;
+    uint8_t *hdr_buf;
+    uint32_t si;
+
+    if (sec_sz < 512)
+        sec_sz = 512;
+
+    if (dev->sector_count == 0)
+        return -1;
+
+    /* Backup header is at the last LBA */
+    backup_hdr_lba = dev->sector_count - 1;
+
+    /* Entry array sectors */
+    entry_sectors = (entry_array_bytes + sec_sz - 1) / sec_sz;
+
+    /* Backup entry array lives BEFORE the backup header.
+     * backup_entry_lba = backup_hdr_lba - entry_sectors */
+    backup_entry_lba = backup_hdr_lba - entry_sectors;
+
+    /* Step 1: Write entry array to backup location first (crash safety).
+     * If we crash after entries but before header, the old backup header
+     * CRC will mismatch, so the stale header is safely rejected. */
+    {
+        const uint8_t *src = (const uint8_t *)entry_array;
+        for (si = 0; si < entry_sectors; si++) {
+            if (blkdev_write(dev, backup_entry_lba + si, 1,
+                             src + si * sec_sz) != 0) {
+                serial_write("[GPT] WARNING: Failed to write backup"
+                             " entry array\n");
+                return -1;
+            }
+        }
+    }
+
+    /* Step 2: Build backup header from primary with swapped LBAs */
+    backup_hdr = *primary_hdr;
+    backup_hdr.my_lba  = backup_hdr_lba;
+    backup_hdr.alt_lba = GPT_HEADER_LBA;  /* Primary is at LBA 1 */
+    backup_hdr.part_entry_lba = backup_entry_lba;
+    /* part_entry_crc32 remains the same — same array data */
+
+    /* Step 3: Serialize backup header (recomputes Header CRC32) */
+    hdr_buf = (uint8_t *)kmalloc(sec_sz);
+    if (!hdr_buf) {
+        serial_write("[GPT] WARNING: Failed to allocate backup"
+                     " header buffer\n");
+        return -1;
+    }
+
+    serialize_header(&backup_hdr, hdr_buf, sec_sz);
+
+    /* Step 4: Write backup header to last LBA */
+    if (blkdev_write(dev, backup_hdr_lba, 1, hdr_buf) != 0) {
+        serial_write("[GPT] WARNING: Failed to write backup header\n");
+        kfree(hdr_buf);
+        return -1;
+    }
+
+    kfree(hdr_buf);
+    serial_write("[GPT] Synced backup GPT\n");
+    return 0;
+}
 /* ---- Main Parser ---- */
 
 struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
