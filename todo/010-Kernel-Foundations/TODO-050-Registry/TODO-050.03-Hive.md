@@ -70,11 +70,11 @@ graph TD
 | :---: | ----------------------------- | ---------------------------------------------------------------------- | -------------- | :----: |
 | **0** | TODO-050.01 Registry Engine   | `reg_key_t`, `reg_value_t`, static pools, root keys                    | —              |   ✅   |
 | **0** | TODO-050.02 Win32 Reg API     | `RegSetValueEx`, `RegDeleteValue` (trigger dirty marking)              | —              |   ✅   |
-| **1** | §4.1 Hive File Format         | `hive_header_t` (4 KiB), `hive_save`, `hive_load`, CRC32 validation   | Phase 0        |   ✅   |
+| **1** | §4.1 Hive File Format         | `hive_header_t` (4 KiB), `hive_save`, `hive_load`, CRC32 validation    | Phase 0        |   ✅   |
 | **2** | §4.2 Disk Layout              | `hive_table[4]`, `registry_flush`, `registry_mark_dirty`, auto-flush   | Phase 1 (§4.1) |   ✅   |
-| **3** | §4.3 Crash-Safe Journaling    | WAJ protocol: `.hive.log` → `.hive` → `.hive.bak`, `hive_best_source` | Phase 2 (§4.2) |   ✅   |
+| **3** | §4.3 Crash-Safe Journaling    | WAJ protocol: `.hive.log` → `.hive` → `.hive.bak`, `hive_best_source`  | Phase 2 (§4.2) |   ✅   |
 | **4** | §4.4 Dual-Log Journaling      | `.hive.log1`/`.hive.log2` alternating — zero window of total loss      | Phase 3 (§4.3) |   ⬜   |
-| **4** | §4.5 Incremental Delta Flush  | Dirty-page bitmap — write only changed 4 KiB blocks, not entire hive  | Phase 3 (§4.3) |   ⬜   |
+| **4** | §4.5 Incremental Delta Flush  | Dirty-page bitmap — write only changed 4 KiB blocks, not entire hive   | Phase 3 (§4.3) |   ⬜   |
 | **5** | §4.6 Hive Integrity Reporter  | `chkregistry` command + GUI health dashboard for hive files            | Phase 3 (§4.3) |   ⬜   |
 | **5** | §4.7 Hive Format Versioning   | Version negotiation, forward/backward compat, auto-migration           | Phase 1 (§4.1) |   ⬜   |
 | **6** | §4.8 Hive Compaction          | Defragment + shrink hives on idle — reclaim dead key/value space       | Phase 3 (§4.3) |   ⬜   |
@@ -197,6 +197,10 @@ graph TD
 - [x] On boot: if `.hive` is corrupt (bad CRC), fall back to `.hive.bak`
 - [x] Keep one backup: copy old `.hive` → `.hive.bak` before overwriting
 - [x] Commit: `"registry: crash-safe journaling"`
+
+> [!IMPORTANT]
+> **NTFS boot volume improvement:** When Impossible OS switches to NTFS as the `C:\` root filesystem, the hive journaling benefits from NTFS's atomic `vfs_rename` (MFT-level guarantee) and NTFS's own `$LogFile` journal for double crash protection. The 4-step WAJ could be simplified to 2-step (write `.log` → atomic rename). The current 4-step approach remains correct on any filesystem.
+> → XREF: `TODO-040.08-NTFS §15.2` — Registry on NTFS
 
 ---
 

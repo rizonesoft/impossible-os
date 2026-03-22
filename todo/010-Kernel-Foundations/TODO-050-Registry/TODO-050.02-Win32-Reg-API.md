@@ -94,8 +94,8 @@ graph TD
 | **6**  | §2.10 Delayed Close Cache            | LRU cache for KCB reuse on rapid open/close cycles                       | Phase 1 (§2.1) |   ⬜   |
 | **6**  | §2.12 Registry Transactions          | Atomic multi-key batch updates with rollback                             | Phase 4 (§2.7) |   ⬜   |
 | **7**  | §2.13 Key Search API                 | Find keys/values by name pattern or value content                        | Phase 3 (§2.3) |   ⬜   |
-| **7**  | §2.14 Registry Diff/Compare          | Snapshot-based tree comparison for change tracking                        | Phase 3 (§2.3) |   ⬜   |
-| **7**  | §2.15 Orphan Key Garbage Collector   | Detect and prune unreachable pool entries                                 | Phase 1 (§2.1) |   ⬜   |
+| **7**  | §2.14 Registry Diff/Compare          | Snapshot-based tree comparison for change tracking                       | Phase 3 (§2.3) |   ⬜   |
+| **7**  | §2.15 Orphan Key Garbage Collector   | Detect and prune unreachable pool entries                                | Phase 1 (§2.1) |   ⬜   |
 
 > [!NOTE]
 > **Phases 0–3 are complete.** The core engine, Win32 API (CRUD + enumeration + helpers),

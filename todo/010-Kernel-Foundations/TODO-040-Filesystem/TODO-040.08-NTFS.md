@@ -1060,6 +1060,15 @@ graph TD
   - [ ] Verify Registry file read/write works via NTFS `$DATA` attribute I/O
   - [ ] Registry hive files: `SYSTEM`, `SOFTWARE`, `DEFAULT`, `SAM`, `SECURITY`
   - [ ] Ensure journal protects Registry writes (§13 — atomicity on power failure)
+  - [ ] Verify `vfs_rename` is truly atomic on NTFS (MFT-level guarantee) — remove copy fallback in `hive_save()` step 3
+  - [ ] Consider simplifying hive WAJ from 4-step to 2-step (write `.log` → atomic rename) since NTFS rename is atomic
+
+> [!IMPORTANT]
+> **NTFS improves the Registry hive journaling** (→ XREF: `TODO-050.03-Hive §4.3`):
+> - **`vfs_rename` becomes truly atomic** — NTFS guarantees atomic rename at the MFT level. The current code in `hive_save()` uses `vfs_rename` in step 3 with a copy fallback for filesystems that don't support it. On NTFS, the rename path will always succeed and the fallback won't be needed.
+> - **NTFS has its own journal (`$LogFile`)** — this provides filesystem-level metadata consistency. Combined with the registry's application-level WAJ journaling, you get double protection: NTFS protects against filesystem corruption, and the hive journal protects against partial hive data writes.
+> - **Backslash paths** — the hive code already uses `C:\\Impossible\\System\\Config\\Registry\\` — native NTFS style, no changes needed.
+> - **Potential simplification:** Once NTFS is the boot filesystem, the 4-step journal (write `.log` → backup → rename → invalidate) could theoretically be simplified to a 2-step process (write `.log` → atomic rename). However, the current 4-step approach is strictly more robust and works on any filesystem, so there's no urgency to change it.
 - [ ] Boot configuration:
   - [ ] Store boot config in `C:\Impossible\System32\config\BOOT`
   - [ ] Define root filesystem type: `NTFS` or `IXFS` (switchable)
