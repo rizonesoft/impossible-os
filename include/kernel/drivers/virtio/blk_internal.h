@@ -233,3 +233,13 @@ int  prefetch_try_read(uint64_t sector, uint32_t count, void *buffer);
 void prefetch_after_read(uint64_t sector, uint32_t count);
 void prefetch_invalidate(uint64_t sector, uint32_t count);
 void prefetch_expose_registry(void);
+
+/* ---- Merge (defined in blk_merge.c) ---- */
+void merge_init(void);
+void merge_reset(void);
+int  merge_try_coalesce(uint32_t type, uint64_t sector, uint32_t count,
+                        void *buffer, uint64_t *out_sector, uint32_t *out_count);
+int  merge_execute_read(int merge_dir, uint64_t original_sector,
+                        uint32_t original_count, void *original_buffer,
+                        uint64_t merged_sector, uint32_t merged_count);
+void merge_expose_registry(void);

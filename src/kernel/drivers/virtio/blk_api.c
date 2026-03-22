@@ -13,6 +13,24 @@ int virtio_blk_read(uint64_t lba, uint32_t count, void *buffer)
     if (prefetch_try_read(lba, count, buffer))
         return 0;
 
+    /* Check for merge opportunity with previous read */
+    {
+        uint64_t merged_sector;
+        uint32_t merged_count;
+        int merge_dir = merge_try_coalesce(VIRTIO_BLK_T_IN, lba, count,
+                                           buffer, &merged_sector,
+                                           &merged_count);
+        if (merge_dir > 0) {
+            ret = merge_execute_read(merge_dir, lba, count, buffer,
+                                     merged_sector, merged_count);
+            if (ret == VIRTIO_IO_OK) {
+                prefetch_after_read(lba, count);
+                return 0;
+            }
+            /* Merge read failed — fall through to normal path */
+        }
+    }
+
     for (retry = 0; retry <= VIRTIO_BLK_MAX_RETRIES; retry++) {
         ret = virtio_blk_do_io(VIRTIO_BLK_T_IN, lba, count * topo.blk_size, buffer);
         if (ret == VIRTIO_IO_OK) {

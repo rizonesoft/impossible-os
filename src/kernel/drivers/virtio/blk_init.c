@@ -11,6 +11,8 @@ int virtio_blk_init(void);
  * Called on DEVICE_NEEDS_RESET or unrecoverable I/O timeout. */
 int virtio_blk_reset(void)
 {
+    /* Reset merge tracking before device reset */
+    merge_reset();
     uint32_t wait;
     uint16_t qi = 0;  /* Reset always targets queue 0 */
 
@@ -835,6 +837,10 @@ int virtio_blk_init(void)
     /* ---- Sequential Prefetch Init ---- */
     prefetch_init();
     prefetch_expose_registry();
+
+    /* ---- I/O Request Merge Init ---- */
+    merge_init();
+    merge_expose_registry();
 
     return 0;
 }
