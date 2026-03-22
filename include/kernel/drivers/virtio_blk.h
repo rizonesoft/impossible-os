@@ -27,6 +27,7 @@
 #define VIRTIO_BLK_T_GET_ID   8     /* retrieve device serial number (20 bytes) */
 #define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
 #define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
+#define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
 
 /* Device serial number length (VirtIO 1.2 §5.2.6.1) */
 #define VIRTIO_BLK_ID_BYTES 20
@@ -49,6 +50,7 @@
 #define VIRTIO_BLK_F_CONFIG_WCE  9   /* Writeback cache enable is negotiable */
 #define VIRTIO_BLK_F_DISCARD    11   /* Discard (TRIM/UNMAP) supported */
 #define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
+#define VIRTIO_BLK_F_LIFETIME   13   /* Device lifetime metrics (VirtIO 1.2+) */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_RING_EVENT_IDX 29     /* Event index for int coalescing */
@@ -92,6 +94,19 @@ struct virtio_blk_discard_write_zeroes {
     uint32_t num_sectors;  /* Number of sectors to discard */
     uint32_t flags;        /* 0 = discard, bit 0 set = unmap (for write-zeroes) */
 } __attribute__((packed));
+
+/* Device lifetime response (VirtIO 1.2+ §5.2.6, JESD84-B50) */
+struct virtio_blk_lifetime {
+    uint16_t pre_eol_info;              /* Pre End-of-Life indicator */
+    uint16_t device_lifetime_est_typ_a; /* SLC wear: 0=undef, 1=0-10%...10=90-100%, 11=exceeded */
+    uint16_t device_lifetime_est_typ_b; /* MLC wear: same encoding as typ_a */
+} __attribute__((packed));
+
+/* Pre-EOL info constants (§5.2.6) */
+#define VIRTIO_BLK_PRE_EOL_UNDEFINED 0  /* Not defined */
+#define VIRTIO_BLK_PRE_EOL_NORMAL    1  /* Normal (<80% consumed) */
+#define VIRTIO_BLK_PRE_EOL_WARNING   2  /* Warning (80% consumed) */
+#define VIRTIO_BLK_PRE_EOL_URGENT    3  /* Urgent (90% consumed) */
 
 /* Topology and segment limit information (populated during init) */
 struct virtio_blk_topology {
@@ -172,6 +187,11 @@ int virtio_blk_reset(void);
  * Copies into 'buf' (null-terminated), at most 'len' bytes.
  * Returns 0 on success, -1 on error. */
 int virtio_blk_get_id(char *buf, uint32_t len);
+
+/* Retrieve device lifetime metrics (JESD84-B50).
+ * Only available when VIRTIO_BLK_F_LIFETIME was negotiated.
+ * Returns 0 on success, -1 on error, 1 if not supported. */
+int virtio_blk_get_lifetime(struct virtio_blk_lifetime *out);
 
 /* Get the cached serial string (null-terminated, max 20 chars).
  * Returns empty string if GET_ID was not performed. */

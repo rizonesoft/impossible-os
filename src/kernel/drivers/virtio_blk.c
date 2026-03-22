@@ -23,6 +23,7 @@
 #include "kernel/irq.h"
 #include "kernel/klog.h"
 #include "kernel/printk.h"
+#include "registry.h"
 #include "kernel/barrier.h"
 #include "kernel/drivers/blkdev.h"
 #include "kernel/sched/event.h"
@@ -57,6 +58,7 @@ static int                    has_size_max;    /* F_SIZE_MAX negotiated */
 static int                    has_seg_max;     /* F_SEG_MAX negotiated */
 static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
+static int                    has_lifetime;    /* F_LIFETIME negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
 static int                    has_in_order;    /* F_IN_ORDER negotiated */
 static int                    has_notify_data; /* F_NOTIFICATION_DATA negotiated */
@@ -828,6 +830,37 @@ int virtio_blk_get_id(char *buf, uint32_t len)
     for (i = 0; i < len - 1 && i < VIRTIO_BLK_ID_BYTES; i++)
         buf[i] = tmp[i];
     buf[i] = '\0';
+
+    return 0;
+}
+
+int virtio_blk_get_lifetime(struct virtio_blk_lifetime *out)
+{
+    uint8_t tmp[6];
+    uint32_t i;
+    int ret;
+
+    if (!initialized || !out)
+        return -1;
+
+    if (!has_lifetime)
+        return 1;  /* Not supported */
+
+    /* Zero the temp buffer */
+    for (i = 0; i < sizeof(tmp); i++)
+        tmp[i] = 0;
+
+    /* GET_LIFETIME: 3-descriptor chain — header (type=10, sector=0) +
+     * 6-byte device-writable buffer + status byte.
+     * do_io sets F_WRITE on data descriptor for all non-OUT types. */
+    ret = virtio_blk_do_io(VIRTIO_BLK_T_GET_LIFETIME, 0, sizeof(tmp), tmp);
+    if (ret != 0)
+        return -1;
+
+    /* Parse little-endian fields */
+    out->pre_eol_info = (uint16_t)tmp[0] | ((uint16_t)tmp[1] << 8);
+    out->device_lifetime_est_typ_a = (uint16_t)tmp[2] | ((uint16_t)tmp[3] << 8);
+    out->device_lifetime_est_typ_b = (uint16_t)tmp[4] | ((uint16_t)tmp[5] << 8);
 
     return 0;
 }
@@ -1618,6 +1651,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_WRITE_ZEROES");
     }
 
+    /* Negotiate F_LIFETIME (bit 13): device lifetime metrics (JESD84-B50) */
+    if (feat_lo & (1u << VIRTIO_BLK_F_LIFETIME)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_LIFETIME);
+        has_lifetime = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_LIFETIME");
+    }
+
     /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
     if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
@@ -1927,6 +1967,64 @@ int virtio_blk_init(void)
     } else {
         device_serial[0] = '\0';
         klog(LOG_DEBUG, "virtio", "GET_ID failed — no device serial");
+    }
+
+    /* Retrieve device lifetime metrics via GET_LIFETIME */
+    if (has_lifetime) {
+        struct virtio_blk_lifetime lt;
+        if (virtio_blk_get_lifetime(&lt) == 0) {
+            /* Decode pre-EOL in human terms */
+            const char *eol_status = "unknown";
+            if (lt.pre_eol_info == VIRTIO_BLK_PRE_EOL_NORMAL)
+                eol_status = "normal";
+            else if (lt.pre_eol_info == VIRTIO_BLK_PRE_EOL_WARNING)
+                eol_status = "warning (80%% consumed)";
+            else if (lt.pre_eol_info == VIRTIO_BLK_PRE_EOL_URGENT)
+                eol_status = "urgent (90%% consumed)";
+
+            /* Compute remaining life percentage from typ_a (SLC wear).
+             * Values 1–10 are in 10%% increments of used life.
+             * remaining = max(0, 100 - typ_a * 10) */
+            uint32_t remaining = 100;
+            if (lt.device_lifetime_est_typ_a >= 1 &&
+                lt.device_lifetime_est_typ_a <= 10) {
+                remaining = 100 -
+                    (uint32_t)lt.device_lifetime_est_typ_a * 10;
+            } else if (lt.device_lifetime_est_typ_a >= 11) {
+                remaining = 0;  /* Exceeded */
+            }
+
+            klog(LOG_DEBUG, "virtio",
+                   "Block: device lifetime: %u%% remaining"
+                   " (eol=%s, a=%u, b=%u)",
+                   (uint64_t)remaining, eol_status,
+                   (uint64_t)lt.device_lifetime_est_typ_a,
+                   (uint64_t)lt.device_lifetime_est_typ_b);
+
+            /* Expose via Registry: HKLM\HARDWARE\VirtIO\Block0\Lifetime */
+            {
+
+                HKEY hKey = (HKEY)0;
+                uint32_t disp;
+                if (RegCreateKeyEx(HKEY_LOCAL_MACHINE,
+                        "HARDWARE\\VirtIO\\Block0\\Lifetime", 0,
+                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
+                        &hKey, &disp) == ERROR_SUCCESS) {
+                    RegSetDword(hKey, "PreEolInfo",
+                                (uint32_t)lt.pre_eol_info);
+                    RegSetDword(hKey, "LifetimeEstTypA",
+                                (uint32_t)lt.device_lifetime_est_typ_a);
+                    RegSetDword(hKey, "LifetimeEstTypB",
+                                (uint32_t)lt.device_lifetime_est_typ_b);
+                    RegSetDword(hKey, "RemainingLifePct",
+                                remaining);
+                    RegSetString(hKey, "EolStatus", eol_status);
+                    RegCloseKey(hKey);
+                }
+            }
+        } else {
+            klog(LOG_DEBUG, "virtio", "GET_LIFETIME failed");
+        }
     }
 
     return 0;
