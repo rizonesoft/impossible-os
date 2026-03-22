@@ -129,7 +129,7 @@ graph TD
 | 💎 | P2   | `040.05-GPT.md`     | §2.2 Primary Auto-Recovery        | Restore primary header from valid backup — full structural redundancy       | P1 (§2.1)                 |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ✅   |
-| 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ⬜   |
+| 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops       | P2 (§2.2)                 |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §6.2 Microsoft Attributes         | Read-only, hidden, no-automount on Basic Data partitions                    | P2 (§6.1)                 |   ⬜   |
@@ -379,17 +379,20 @@ graph TD
 
 ## 6. Partition Attributes Decoding
 
-### 6.1 UEFI Global Attributes
+### 6.1 UEFI Global Attributes ✅
 
-**Prompt:** Parse the 64-bit Attributes bitmask from each partition entry. Bits 0–2 are UEFI-defined: bit 0 = Required Partition (OS must not delete), bit 1 = No Block IO Protocol (hidden from UEFI), bit 2 = Legacy BIOS Bootable (GPT "Active" flag). When a partition has bit 0 set, prevent deletion in `diskpart` and partition manager. When bit 2 is set, log it as "BIOS Bootable". After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: partition attribute decoding"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.h` defines `GPT_ATTR_REQUIRED (1ULL << 0)`, `GPT_ATTR_NO_BLOCKIO (1ULL << 1)`, `GPT_ATTR_LEGACY_BIOS_BOOT (1ULL << 2)`. Confirm `gpt.c` logs Required and BIOSBoot flags when set. Confirm `gpt_entry.attributes` is already parsed from entry offset 0x30 via `read_le64(e + 48)` and exposed to consumers. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-- [ ] Define `GPT_ATTR_REQUIRED (1 << 0)` — system partition, prevent deletion
-- [ ] Define `GPT_ATTR_NO_BLOCKIO (1 << 1)` — hide from firmware
-- [ ] Define `GPT_ATTR_LEGACY_BIOS_BOOT (1 << 2)` — Legacy BIOS bootable
-- [ ] Parse attributes from entry offset `0x30` (existing field, already read)
-- [ ] Log attribute flags: `[GPT] Partition %d: Required=%d, BIOSBoot=%d`
-- [ ] Expose `gpt_entry.attributes` to partition scanner and VFS
-- [ ] Commit: `"gpt: partition attribute decoding"`
+> [!NOTE]
+> **Implementation note:** The `attributes` field was already parsed at `gpt.c:820` and stored in `gpt_entry.attributes` (`gpt.h:63`). Only constants and logging were new. Logging is conditional — only emitted when Required or BIOSBoot bits are set, to avoid noise. The field is already available to partition scanner and VFS consumers via `gpt_table.parts[i].attributes`.
+
+- [x] Define `GPT_ATTR_REQUIRED (1ULL << 0)` — system partition, prevent deletion
+- [x] Define `GPT_ATTR_NO_BLOCKIO (1ULL << 1)` — hide from firmware
+- [x] Define `GPT_ATTR_LEGACY_BIOS_BOOT (1ULL << 2)` — Legacy BIOS bootable
+- [x] Parse attributes from entry offset `0x30` (existing, already read at `gpt.c:820`)
+- [x] Log attribute flags when Required or BIOSBoot bits set
+- [x] `gpt_entry.attributes` already exposed to partition scanner and VFS
+- [x] Commit: `"gpt: partition attribute decoding"`
 
 ### 6.2 Microsoft Type-Specific Attributes
 

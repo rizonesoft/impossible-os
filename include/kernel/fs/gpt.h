@@ -23,6 +23,11 @@
 #define GPT_MAX_RESULTS     32   /* Max partitions we report */
 #define GPT_NAME_MAX        36   /* UTF-16LE chars in entry name field */
 
+/* UEFI-defined partition attribute bits (offset 0x30 in entry) */
+#define GPT_ATTR_REQUIRED           (1ULL << 0)  /* OS must not delete */
+#define GPT_ATTR_NO_BLOCKIO         (1ULL << 1)  /* Hidden from UEFI firmware */
+#define GPT_ATTR_LEGACY_BIOS_BOOT   (1ULL << 2)  /* Legacy BIOS bootable */
+
 /* 16-byte GUID (stored in mixed-endian per UEFI spec) */
 struct gpt_guid {
     uint32_t data1;      /* Little-endian */

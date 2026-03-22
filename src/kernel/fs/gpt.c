@@ -827,6 +827,20 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
             }
             p->name[GPT_NAME_MAX] = '\0';
 
+            /* Log attribute flags for notable partitions */
+            if (p->attributes & (GPT_ATTR_REQUIRED |
+                                 GPT_ATTR_LEGACY_BIOS_BOOT)) {
+                serial_write("[GPT] Partition ");
+                serial_write(p->name[0] ? p->name : "(unnamed)");
+                serial_write(": Required=");
+                serial_write((p->attributes & GPT_ATTR_REQUIRED)
+                              ? "1" : "0");
+                serial_write(", BIOSBoot=");
+                serial_write((p->attributes & GPT_ATTR_LEGACY_BIOS_BOOT)
+                              ? "1" : "0");
+                serial_write("\n");
+            }
+
             tbl.count++;
         }
     }
