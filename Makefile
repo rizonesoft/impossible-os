@@ -282,9 +282,9 @@ USER_CFLAGS := --target=x86_64-elf \
                -mno-mmx -mno-sse -mno-sse2 -std=gnu11 -O2 -g \
                -MMD -MP
 
-userland: $(SYSROOT)/hello.exe $(SYSROOT)/shell.exe
+userland: $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe
 
-$(SYSROOT)/hello.exe $(SYSROOT)/shell.exe &: sysroot user/hello.c user/shell.c user/lib/crt0.asm \
+$(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe &: sysroot user/hello.c user/cmd.c user/lib/crt0.asm \
                                            user/lib/string.c user/lib/stdlib.c user/lib/stdio.c \
                                            user/lib/ctype.c user/lib/math.c user/user.ld
 	@mkdir -p $(BUILD_DIR)/user/lib
@@ -305,12 +305,12 @@ $(SYSROOT)/hello.exe $(SYSROOT)/shell.exe &: sysroot user/hello.c user/shell.c u
 	$(CC) $(USER_CFLAGS) -Iuser/include -c user/hello.c -o $(BUILD_DIR)/user/hello.o
 	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/hello.exe \
 		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/hello.o $(BUILD_DIR)/user/libc.a
-	$(CC) $(USER_CFLAGS) -Iuser/include -Iinclude -c user/shell.c -o $(BUILD_DIR)/user/shell.o
-	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/shell.exe \
-		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/shell.o $(BUILD_DIR)/user/libc.a
+	$(CC) $(USER_CFLAGS) -Iuser/include -Iinclude -c user/cmd.c -o $(BUILD_DIR)/user/cmd.o
+	$(LD) -nostdlib -static -T user/user.ld -o $(BUILD_DIR)/user/cmd.exe \
+		$(BUILD_DIR)/user/lib/crt0.o $(BUILD_DIR)/user/cmd.o $(BUILD_DIR)/user/libc.a
 	@cp -f $(BUILD_DIR)/user/hello.exe $(SYSROOT)/hello.exe
-	@cp -f $(BUILD_DIR)/user/shell.exe $(SYSROOT)/shell.exe
-	@echo "[USER] hello.exe + shell.exe → sysroot"
+	@cp -f $(BUILD_DIR)/user/cmd.exe $(SYSROOT)/cmd.exe
+	@echo "[USER] hello.exe + cmd.exe → sysroot"
 
 ## iso: Package kernel + sysroot into a bootable UEFI ISO via GRUB (optional)
 iso: $(ISO_FILE)

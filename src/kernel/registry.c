@@ -1686,7 +1686,7 @@ void registry_populate_defaults(void)
                        (const char *)0, 0, KEY_ALL_ACCESS, (void *)0,
                        &hKey, &disp) == ERROR_SUCCESS) {
         RegSetString(hKey, "HomeDir", "C:\\Users\\Default");
-        RegSetString(hKey, "Shell",   "C:\\shell.exe");
+        RegSetString(hKey, "Shell",   "C:\\cmd.exe");
         RegCloseKey(hKey);
         count += 2;
     }

@@ -1,8 +1,8 @@
 /* ============================================================================
- * shell.c — Impossible OS Command-Line Shell
+ * cmd.c — Impossible OS Command Prompt (cmd.exe)
  *
  * User-mode REPL with line editing, command parsing, and built-in commands.
- * Linked against libc.a.
+ * Equivalent to Windows cmd.exe — linked against libc.a.
  * ============================================================================ */
 
 #include "stdio.h"
@@ -15,7 +15,7 @@
 /* --- Constants --- */
 #define LINE_MAX    256
 #define ARGV_MAX    32
-#define PROMPT      "impossible> "
+#define PROMPT      "C:\\>"
 #define HISTORY_MAX 16
 
 /* Arrow key codes (must match kernel keyboard.h) */
@@ -157,7 +157,7 @@ static int parse(char *line, char **argv, int max_args)
 
 static void cmd_help(void)
 {
-    printf("Impossible OS Shell v" BUILD_VERSION " - Commands:\n\n");
+    printf("Impossible OS Command Prompt v" BUILD_VERSION " - Commands:\n\n");
     printf("  help              Show this message\n");
     printf("  echo [args...]    Print arguments\n");
     printf("  clear             Clear the screen\n");
@@ -200,7 +200,7 @@ static void cmd_version(void)
     printf("Impossible OS v" BUILD_VERSION " (build %d, " BUILD_BRANCH "@" BUILD_COMMIT ", " BUILD_TIMESTAMP ")\n",
            BUILD_NUMBER);
     printf("  Architecture: x86-64 (Long Mode)\n");
-    printf("  Shell:        built-in REPL\n");
+    printf("  Shell:        cmd.exe\n");
     printf("  Libc:         minimal freestanding\n");
 }
 
@@ -454,11 +454,8 @@ int main(void)
     char *argv[ARGV_MAX];
     int argc, len, result;
 
-    printf("\n");
-    printf("  ====================================\n");
-    printf("  |   Impossible OS Shell v" BUILD_VERSION "     |\n");
-    printf("  |   Type 'help' for commands.      |\n");
-    printf("  ====================================\n");
+    printf("Impossible OS [Version " BUILD_VERSION "]\n");
+    printf("(c) Rizonesoft. All rights reserved.\n");
     printf("\n");
 
     for (;;) {

@@ -296,26 +296,26 @@ void exec_loader_func(void)
         __asm__ volatile("hlt");
 }
 
-/* --- Shell loader: kernel task that execs shell.exe from C:\ --- */
+/* --- Cmd loader: kernel task that execs cmd.exe from C:\ --- */
 void shell_loader_func(void)
 {
     struct vfs_node *file;
     uint8_t *buf;
 
     if (!vfs_is_mounted('C')) {
-        klog(LOG_WARN, "shell", "C:\\ not mounted");
+        klog(LOG_WARN, "cmd", "C:\\ not mounted");
         return;
     }
 
-    file = vfs_open("C:\\shell.exe", VFS_O_READ);
+    file = vfs_open("C:\\cmd.exe", VFS_O_READ);
     if (!file) {
-        klog(LOG_WARN, "shell", "shell.exe not found on C:\\");
+        klog(LOG_WARN, "cmd", "cmd.exe not found on C:\\");
         return;
     }
 
     buf = (uint8_t *)kmalloc(file->size);
     if (!buf) {
-        klog(LOG_ERROR, "shell", "cannot allocate buffer");
+        klog(LOG_ERROR, "cmd", "cannot allocate buffer");
         vfs_close(file);
         return;
     }
@@ -324,7 +324,7 @@ void shell_loader_func(void)
     vfs_close(file);
 
     if (task_exec(buf, file->size) < 0) {
-        klog(LOG_ERROR, "shell", "exec failed");
+        klog(LOG_ERROR, "cmd", "exec failed");
         kfree(buf);
         return;
     }

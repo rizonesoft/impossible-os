@@ -56,9 +56,22 @@ docs/                   Documentation (architecture, specs, guides)
   ├── architecture/     System architecture and implementation docs
   ├── specs/            External reference specs (AHCI, FAT32, UEFI, ...)
   └── guides/           How-to guides
-user/                   User-mode programs (hello.exe, shell.exe)
+user/                   User-mode programs (hello.exe, cmd.exe)
 sdk/                    SDK for user-mode development
 ```
+
+### Win32 Naming Conventions
+
+Executables and system components follow **Windows 10/11 naming** for consistency with the Win32-compatible API surface:
+
+| Impossible OS | Windows equivalent | Role |
+|---------------|-------------------|------|
+| `cmd.exe` | `cmd.exe` | Command-line interpreter |
+| *(future)* `explorer.exe` | `explorer.exe` | Desktop shell (taskbar, Start menu, file manager) |
+| `hello.exe` | — | Test program |
+
+> [!NOTE]
+> The desktop shell currently runs kernel-mode in `src/desktop/`. When it becomes a user-mode process, it should be named **`explorer.exe`** following the Windows convention.
 
 ---
 

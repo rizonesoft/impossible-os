@@ -1,7 +1,7 @@
 /* ============================================================================
- * terminal.c — Graphical terminal emulator window
+ * terminal.c — Graphical Command Prompt window
  *
- * Kernel-side terminal that renders shell text output into a WM window and
+ * Kernel-side terminal that renders cmd.exe text output into a WM window and
  * provides a keyboard input ring buffer for sys_read consumption.
  *
  * The text buffer is a grid of (TERM_ROWS × TERM_COLS) characters.  Writing
@@ -32,13 +32,17 @@ static int      term_handle = -1;
 static int      term_dirty;  /* 1 = needs re-render */
 
 /* ---- Colors ---- */
-#define TERM_BG   0xFF1A1A1A   /* Win11 dark neutral */
+#define TERM_BG   0xFF0C0C0C   /* Win11 Command Prompt black    */
 #define TERM_FG   0xFFCCCCCC   /* light gray text */
 #define TERM_PROMPT_FG 0xFF60CDFF  /* Win11 accent blue prompt */
 
+/* ---- Padding (inner margin like Windows Command Prompt) ---- */
+#define TERM_PAD_X  8   /* left/right padding in pixels */
+#define TERM_PAD_Y  4   /* top/bottom padding in pixels */
+
 /* ---- Pixel dimensions ---- */
-#define TERM_PX_WIDTH  (TERM_COLS * FONT_WIDTH)
-#define TERM_PX_HEIGHT (TERM_ROWS * FONT_HEIGHT)
+#define TERM_PX_WIDTH  (TERM_COLS * FONT_WIDTH  + TERM_PAD_X * 2)
+#define TERM_PX_HEIGHT (TERM_ROWS * FONT_HEIGHT + TERM_PAD_Y * 2)
 
 /* ---- Helpers ---- */
 
@@ -77,7 +81,7 @@ int terminal_open(void)
     if (term_handle >= 0)
         return 0;  /* already open */
 
-    term_handle = wm_create_window("Terminal",
+    term_handle = wm_create_window("Command Prompt",
                                    50, 30,
                                    TERM_PX_WIDTH, TERM_PX_HEIGHT,
                                    WM_DEFAULT_FLAGS);
@@ -103,7 +107,7 @@ int terminal_open(void)
     wm_raise_window(term_handle);
     wm_focus_window(term_handle);
 
-    printk("[OK] Terminal window opened (%ux%u chars)\n",
+    printk("[OK] Command Prompt window opened (%ux%u chars)\n",
            (uint64_t)TERM_COLS, (uint64_t)TERM_ROWS);
     return 0;
 }
@@ -227,8 +231,8 @@ void terminal_render(void)
         for (c = 0; c < TERM_COLS; c++) {
             char ch = term_cells[r][c];
             const uint8_t *glyph = font_get_glyph(ch);
-            uint32_t x0 = (uint32_t)c * FONT_WIDTH;
-            uint32_t y0 = (uint32_t)r * FONT_HEIGHT;
+            uint32_t x0 = (uint32_t)c * FONT_WIDTH  + TERM_PAD_X;
+            uint32_t y0 = (uint32_t)r * FONT_HEIGHT + TERM_PAD_Y;
 
             for (py = 0; py < FONT_HEIGHT; py++) {
                 uint8_t row = glyph[py];
@@ -242,8 +246,8 @@ void terminal_render(void)
 
     /* Draw cursor (inverted block at current position) */
     if (cursor_col < TERM_COLS && cursor_row < TERM_ROWS) {
-        uint32_t cx = (uint32_t)cursor_col * FONT_WIDTH;
-        uint32_t cy = (uint32_t)cursor_row * FONT_HEIGHT;
+        uint32_t cx = (uint32_t)cursor_col * FONT_WIDTH  + TERM_PAD_X;
+        uint32_t cy = (uint32_t)cursor_row * FONT_HEIGHT + TERM_PAD_Y;
         for (py = 0; py < FONT_HEIGHT; py++) {
             for (px = 0; px < FONT_WIDTH; px++) {
                 wm_put_pixel(term_handle, cx + px, cy + py, TERM_FG);
