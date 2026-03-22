@@ -387,7 +387,8 @@ void partition_mount_filesystems(void)
         int pos;
         const struct blkdev *sub_dev;
 
-        if (pi->fs_type != PART_FS_FAT32 && pi->fs_type != PART_FS_IXFS)
+        if (pi->fs_type != PART_FS_FAT32 && pi->fs_type != PART_FS_IXFS
+            && pi->fs_type != PART_FS_NTFS)
             continue;
 
         /* Skip EFI System Partition — no drive letter (like Windows) */
@@ -434,6 +435,24 @@ void partition_mount_filesystems(void)
                           fat32_get_driver(),
                           fat32_get_root(fat_vol));
                 next_fat32_letter++;
+            }
+        } else if (pi->fs_type == PART_FS_NTFS) {
+            struct ntfs_volume *ntfs_vol = ntfs_init(sub_dev);
+            if (!ntfs_vol) {
+                klog(LOG_WARN, "blk", "NTFS: failed to init %s", name);
+                continue;
+            }
+            if (next_fat32_letter <= 'Z') {
+                struct vfs_node *ntfs_root = ntfs_get_root(ntfs_vol);
+                if (ntfs_root) {
+                    vfs_mount(next_fat32_letter,
+                              ntfs_get_driver(), ntfs_root);
+                    klog(LOG_INFO, "ntfs",
+                         "Mounted NTFS volume on drive %c: (%u sectors)",
+                         (uint64_t)next_fat32_letter,
+                         ntfs_vol->total_sectors);
+                    next_fat32_letter++;
+                }
             }
         }
     }

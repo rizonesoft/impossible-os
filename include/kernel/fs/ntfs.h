@@ -68,6 +68,7 @@ int ntfs_probe(const uint8_t *sector);
 #define NTFS_ERR_FREE       -4  /* Record is not in-use (deleted) */
 #define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
 #define NTFS_ERR_NOT_FOUND  -6  /* File not found in directory */
+#define NTFS_ERR_READ_ONLY -7  /* Write operation on read-only driver */
 
 /* Parsed MFT record header — matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
@@ -459,3 +460,28 @@ int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
  * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if any component missing. */
 int ntfs_resolve_path(struct ntfs_volume *vol, const char *path,
                       uint64_t *out_inode);
+
+/* ---- VFS Integration (§6.1) ---- */
+
+struct vfs_fs_driver;
+struct vfs_node;
+
+/* Get the singleton VFS driver descriptor for NTFS (read-only). */
+struct vfs_fs_driver *ntfs_get_driver(void);
+
+/* Get the root VFS node for a mounted NTFS volume. */
+struct vfs_node *ntfs_get_root(struct ntfs_volume *vol);
+
+/* Enumerate a directory entry by index (for VFS readdir).
+ * dir_inode: MFT inode of the directory.
+ * index: 0-based index of entry to retrieve.
+ * out_name: filled with the filename (ASCII, null-terminated).
+ * out_name_max: capacity of out_name buffer.
+ * out_inode: filled with the entry's MFT inode.
+ * out_is_dir: set to 1 if entry is a directory.
+ * out_size: set to file size (0 for directories).
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if index >= entry count. */
+int ntfs_readdir_entry(struct ntfs_volume *vol, uint64_t dir_inode,
+                       uint32_t index, char *out_name, int out_name_max,
+                       uint64_t *out_inode, int *out_is_dir,
+                       uint64_t *out_size);

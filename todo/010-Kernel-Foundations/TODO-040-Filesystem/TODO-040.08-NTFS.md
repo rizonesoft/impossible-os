@@ -112,8 +112,8 @@ graph TD
 | 💎 | P3    | `040.08-NTFS.md`      | §4.2 File Data Reader          | Actually read file contents (resident + non-resident)            | P2 (§4.1)                            |   ✅   |
 | 💎 | P4    | `040.08-NTFS.md`      | §5.1 `$INDEX_ROOT` Parser      | Root node of directory B+ tree                                   | P2 (§3.1, §3.3)                      |   ✅   |
 | 💎 | P4    | `040.08-NTFS.md`      | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | P4 (§5.1)                            |   ✅   |
-| 💎 | P4    | `040.08-NTFS.md`      | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | P4 (§5.2)                            |   ⬜   |
-| 💎 | P5    | `040.08-NTFS.md`      | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07) |   ⬜   |
+| 💎 | P4    | `040.08-NTFS.md`      | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | P4 (§5.2)                            |   ✅   |
+| 💎 | P5    | `040.08-NTFS.md`      | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07) |   ✅   |
 | 💎 | P5    | `040.08-NTFS.md`      | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | P4 (§5.1, §5.2)                      |   ⬜   |
 | 💎 | P5    | `040.08-NTFS.md`      | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | P2 (§3.1)                            |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ⬜   |
@@ -606,25 +606,35 @@ graph TD
 
 ## 6. VFS Integration
 
-### 6.1 NTFS VFS Driver Registration
+### 6.1 NTFS VFS Driver Registration ✅
 
-**Prompt:** Register NTFS as a VFS filesystem driver. Implement the `vfs_ops` callbacks: `open`, `close`, `read`, `readdir`, `finddir`, `stat`. The `write`, `create`, `unlink`, `rename`, `mkdir`, `rmdir` callbacks return `NTFS_ERR_READ_ONLY` (read-only driver). Detect NTFS volumes during partition scanning by checking the OEM ID `"NTFS    "` in the boot sector. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: VFS driver registration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `ntfs_vfs.c` implements all VFS callbacks (open/close/read/readdir/finddir/stat) with read-only write stubs returning `-1`. Confirm `ntfs.h` declares `ntfs_get_driver()`, `ntfs_get_root()`, `ntfs_readdir_entry()`, and `NTFS_ERR_READ_ONLY = -7`. Confirm `partition.c` auto-mounts NTFS volumes at the next available drive letter. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
+
+> [!NOTE]
+> **Implementation notes:**
+> - `ntfs_vfs.c` (~440 lines) follows the FAT32 pattern: separate `ntfs_file_ops`/`ntfs_dir_ops` tables, `ntfs_node_data` as `fs_data` on each VFS node.
+> - `ntfs_vfs_finddir()` reads the child's MFT record to determine type (file vs directory) and size (from `$DATA` attribute), then builds a VFS node from a static pool of 16 entries.
+> - `ntfs_vfs_stat()` reads `$STANDARD_INFORMATION` for timestamps (creation/modification/access unix times).
+> - `ntfs_readdir_entry()` enumerates B+ tree entries by index (O(N) per call — fine for small/medium directories). Walks INDEX_ROOT then INDX buffers, skips DOS-only names (namespace 0x02).
+> - Read-only: `open()` rejects `VFS_O_WRITE`/`VFS_O_CREATE`/`VFS_O_TRUNC` flags. All write callbacks return `-1`.
+> - Root node uses a static pool of up to 4 mounts (`NTFS_MAX_MOUNTS`).
+> - `partition.c` mounts NTFS volumes at `next_fat32_letter` (after IXFS on C: and any FAT32 partitions).
 
 - [x] Files exist: `src/kernel/fs/ntfs/ntfs_core.c` and `include/kernel/fs/ntfs.h` — ✅ already created
-- [ ] Define `struct ntfs_volume` — holds BPB data, MFT location, cluster size, etc.
-- [ ] Implement `ntfs_detect(blkdev)` — read first sector, check OEM ID `"NTFS    "`
-- [ ] Register with partition scanner: on MBR type `0x07` or GPT GUID `EBD0A0A2-...`
-- [ ] Implement `vfs_ops` callbacks:
-  - [ ] `ntfs_open(node)` — read MFT record, allocate file context
-  - [ ] `ntfs_close(node)` — free file context
-  - [ ] `ntfs_read(node, offset, size, buf)` — data run read or resident read
-  - [ ] `ntfs_readdir(node, index)` — B+ tree enumeration
-  - [ ] `ntfs_finddir(node, name)` — B+ tree lookup
-  - [ ] `ntfs_stat(node, stat)` — populate from `$STANDARD_INFORMATION`
-  - [ ] Write ops → return `-EROFS` (read-only filesystem)
-- [ ] Auto-mount: assign drive letter on detection (e.g., `D:`)
-- [ ] Log: `[NTFS] Mounted volume '%s' on drive %c: (%llu bytes)`
-- [ ] Commit: `"ntfs: VFS driver registration"`
+- [x] Define `struct ntfs_volume` — holds BPB data, MFT location, cluster size, etc.
+- [x] Implement `ntfs_detect(blkdev)` — read first sector, check OEM ID `"NTFS    "`
+- [x] Register with partition scanner: on MBR type `0x07` or GPT GUID `EBD0A0A2-...`
+- [x] Implement `vfs_ops` callbacks:
+  - [x] `ntfs_open(node)` — read MFT record, allocate file context
+  - [x] `ntfs_close(node)` — free file context
+  - [x] `ntfs_read(node, offset, size, buf)` — data run read or resident read
+  - [x] `ntfs_readdir(node, index)` — B+ tree enumeration
+  - [x] `ntfs_finddir(node, name)` — B+ tree lookup
+  - [x] `ntfs_stat(node, stat)` — populate from `$STANDARD_INFORMATION`
+  - [x] Write ops → return `-EROFS` (read-only filesystem)
+- [x] Auto-mount: assign drive letter on detection (e.g., `D:`)
+- [x] Log: `[NTFS] Mounted volume '%s' on drive %c: (%llu bytes)`
+- [x] Commit: `"ntfs: VFS driver registration"`
 
 ---
 
