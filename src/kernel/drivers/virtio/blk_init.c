@@ -265,6 +265,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_FUA (per-request write-through)");
     }
 
+    /* Negotiate F_INLINE_CRYPTO (bit 15): inline encryption (proposed spec) */
+    if (feat_lo & (1u << VIRTIO_BLK_F_INLINE_CRYPTO)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_INLINE_CRYPTO);
+        has_inline_crypto = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_INLINE_CRYPTO");
+    }
+
     /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
     if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
@@ -896,6 +903,10 @@ int virtio_blk_init(void)
     klog(LOG_DEBUG, "virtio", "FUA: %s (native=%s)",
            fua_enabled ? "enabled" : "disabled",
            has_fua ? "yes" : "no (fallback to T_OUT+T_FLUSH)");
+
+    /* ---- Inline Encryption Init ---- */
+    crypto_init();
+    crypto_expose_registry();
 
     return 0;
 }

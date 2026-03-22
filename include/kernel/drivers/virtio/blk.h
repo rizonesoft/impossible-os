@@ -30,6 +30,17 @@
 #define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
 #define VIRTIO_BLK_T_FUA_FLAG 0x80000000u  /* Force Unit Access: OR with T_OUT */
 
+/* Crypto algorithm identifiers for inline encryption */
+#define VIRTIO_BLK_CRYPTO_ALG_NONE       0
+#define VIRTIO_BLK_CRYPTO_ALG_AES_128_XTS 1
+#define VIRTIO_BLK_CRYPTO_ALG_AES_256_XTS 2
+#define VIRTIO_BLK_CRYPTO_ALG_AES_128_CBC 3
+#define VIRTIO_BLK_CRYPTO_ALG_AES_256_CBC 4
+
+/* Crypto key slot limits */
+#define VIRTIO_BLK_CRYPTO_MAX_KEY_SLOTS  16
+#define VIRTIO_BLK_CRYPTO_KEY_SIZE       64  /* Max key size in bytes (AES-256-XTS) */
+
 /* Device serial number length (VirtIO 1.2 §5.2.6.1) */
 #define VIRTIO_BLK_ID_BYTES 20
 
@@ -53,6 +64,7 @@
 #define VIRTIO_BLK_F_WRITE_ZEROES 12 /* Write-zeroes command supported */
 #define VIRTIO_BLK_F_LIFETIME   13   /* Device lifetime metrics (VirtIO 1.2+) */
 #define VIRTIO_BLK_F_FUA        14   /* Force Unit Access per-request (proposed) */
+#define VIRTIO_BLK_F_INLINE_CRYPTO 15 /* Inline encryption/decryption (proposed) */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_RING_EVENT_IDX 29     /* Event index for int coalescing */

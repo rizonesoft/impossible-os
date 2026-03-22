@@ -55,6 +55,7 @@ BLK_GLOBAL int has_size_max;
 BLK_GLOBAL int has_seg_max;
 BLK_GLOBAL int has_discard;
 BLK_GLOBAL int has_fua;          /* F_FUA negotiated: per-request FUA */
+BLK_GLOBAL int has_inline_crypto; /* F_INLINE_CRYPTO negotiated */
 BLK_GLOBAL int has_write_zeroes;
 BLK_GLOBAL int has_lifetime;
 BLK_GLOBAL int has_ring_reset;
@@ -254,3 +255,13 @@ void stripe_expose_registry(void);
 BLK_GLOBAL uint32_t fua_writes;         /* FUA write count */
 BLK_GLOBAL uint32_t fua_fallback_writes; /* Fallback (T_OUT + T_FLUSH) count */
 BLK_GLOBAL int      fua_enabled;        /* Registry config: FUA enabled */
+
+/* ---- Crypto (defined in blk_crypto.c) ---- */
+void     crypto_init(void);
+int      crypto_set_key(uint32_t slot, const uint8_t *key,
+                        uint32_t key_len, uint32_t algo);
+int      crypto_clear_key(uint32_t slot);
+int      crypto_slot_active(uint32_t slot);
+uint32_t crypto_slot_algorithm(uint32_t slot);
+int      crypto_is_available(void);
+void     crypto_expose_registry(void);
