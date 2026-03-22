@@ -107,5 +107,19 @@ int gpt_guid_equal(const struct gpt_guid *a, const struct gpt_guid *b);
 /* Return human-readable name for a known partition type GUID. */
 const char *gpt_type_name(const struct gpt_guid *guid);
 
+/* Serialize a GUID to 16-byte on-disk mixed-endian format. */
+void write_guid(const struct gpt_guid *g, uint8_t *buf);
+
+/* Convert a GUID to canonical string "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx".
+ * 'buf' must be at least 37 bytes. */
+void guid_to_string(const struct gpt_guid *g, char *buf);
+
+/* Parse a canonical GUID string into a gpt_guid struct.
+ * Returns 0 on success, -1 on invalid format. */
+int guid_from_string(const char *str, struct gpt_guid *g);
+
+/* Generate a random v4 GUID (uses RDRAND if available, TSC fallback). */
+struct gpt_guid guid_generate(void);
+
 /* Compute CRC32 (used internally and available for other modules). */
 uint32_t gpt_crc32(const void *data, uint32_t len);

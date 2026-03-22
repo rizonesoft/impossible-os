@@ -128,7 +128,7 @@ graph TD
 | 💎 | P1   | `040.05-GPT.md`     | §5.1 Type GUID Registry           | Identify all partition types: BIOS Boot, MS Reserved, Linux, Apple, etc.    | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §2.2 Primary Auto-Recovery        | Restore primary header from valid backup — full structural redundancy       | P1 (§2.1)                 |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | P0 (§1)                   |   ✅   |
-| 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ⬜   |
+| 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ⬜   |
 | 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops       | P2 (§2.2)                 |   ⬜   |
@@ -307,21 +307,21 @@ graph TD
 
 ## 4. Mixed-Endian GUID Operations
 
-### 4.1 GUID Encoding (Write Path) ✅ (Read Path)
+### 4.1 GUID Encoding (Write Path) ✅
 
-**Prompt:** The read path (`read_guid()`) correctly handles mixed-endian parsing. Implement the write path: `write_guid(guid, buffer)` that serializes a `gpt_guid` struct back to the 16-byte on-disk mixed-endian format. `TimeLow` → 4 bytes LE, `TimeMid` → 2 bytes LE, `TimeHiAndVersion` → 2 bytes LE, trailing 8 bytes → direct copy. Also implement `guid_to_string(guid, buf)` for human-readable output (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`) and `guid_from_string(str, guid)` for parsing user input. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: GUID encode + string conversion"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` implements `write_guid()` serializing mixed-endian (data1 LE32, data2 LE16, data3 LE16, data4 direct copy), `guid_to_string()` producing canonical `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` format (36 chars + NUL), `guid_from_string()` parsing hex with dashes back to `gpt_guid`, and `guid_generate()` producing RFC 4122 v4 UUIDs (version=4, variant=2) using RDRAND with XorShift64/TSC fallback. Confirm `gpt.h` declares all four functions. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
+
+> [!NOTE]
+> **Implementation note:** All four functions at `gpt.c:294-467`. `write_guid()` reuses existing `write_le32/16` helpers. `guid_to_string()` serializes to raw bytes first then formats hex with dashes. `guid_from_string()` skips dashes during parsing and uses `read_guid()` for mixed-endian decode. `guid_generate()` uses `rdrand_fill()` with `cpu_has(CPU_FEATURE_RDRAND)` check, falls back to XorShift64 PRNG seeded from TSC. v4 version bits set at raw[6] (0x4x), variant bits at raw[8] (0x8x–0xBx).
 
 - [x] `read_guid(bytes, guid)` — mixed-endian parse (existing, working)
 - [x] `gpt_guid_equal(a, b)` — field-by-field comparison (existing, working)
-- [ ] Implement `write_guid(guid, bytes[16])`:
-  - [ ] Write `data1` as 4 bytes LE
-  - [ ] Write `data2` as 2 bytes LE
-  - [ ] Write `data3` as 2 bytes LE
-  - [ ] Copy `data4[8]` directly
-- [ ] Implement `guid_to_string(guid, buf[37])` → `"xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"`
-- [ ] Implement `guid_from_string(str, guid)` → parse canonical text format
-- [ ] Implement `guid_generate()` → random v4 GUID (RDRAND or PIT-seeded PRNG)
-- [ ] Commit: `"gpt: GUID encode + string conversion"`
+- [x] `write_guid(guid, bytes[16])`: data1 LE32, data2 LE16, data3 LE16, data4 copy
+- [x] `guid_to_string(guid, buf[37])` → canonical 36-char format + NUL
+- [x] `guid_from_string(str, guid)` → parse hex with dashes, returns 0/-1
+- [x] `guid_generate()` → v4 UUID via RDRAND + XorShift64/TSC fallback
+- [x] All four declared in `gpt.h`
+- [x] Commit: `"gpt: GUID encode + string conversion"`
 
 ---
 

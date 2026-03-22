@@ -291,6 +291,177 @@ const char *gpt_type_name(const struct gpt_guid *guid)
     return "Unknown";
 }
 
+/* ---- GUID Write / String / Generate ---- */
+
+void write_guid(const struct gpt_guid *g, uint8_t *p)
+{
+    int i;
+    /* Mixed endian: data1 (LE32), data2 (LE16), data3 (LE16), data4 (bytes) */
+    write_le32(p, g->data1);
+    write_le16(p + 4, g->data2);
+    write_le16(p + 6, g->data3);
+    for (i = 0; i < 8; i++)
+        p[8 + i] = g->data4[i];
+}
+
+/* Convert a nibble (0–15) to a lowercase hex character */
+static char hex_nibble(uint8_t n)
+{
+    return (n < 10) ? ('0' + (char)n) : ('a' + (char)(n - 10));
+}
+
+/* Convert a byte to two hex characters */
+static void hex_byte(uint8_t b, char *out)
+{
+    out[0] = hex_nibble((b >> 4) & 0x0F);
+    out[1] = hex_nibble(b & 0x0F);
+}
+
+void guid_to_string(const struct gpt_guid *g, char *buf)
+{
+    uint8_t raw[16];
+    int i, pos;
+    /* Serialize to raw bytes (mixed endian) */
+    write_guid(g, raw);
+
+    /* Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx (36 chars + NUL) */
+    pos = 0;
+    for (i = 0; i < 4; i++) { hex_byte(raw[i], buf + pos); pos += 2; }
+    buf[pos++] = '-';
+    for (i = 4; i < 6; i++) { hex_byte(raw[i], buf + pos); pos += 2; }
+    buf[pos++] = '-';
+    for (i = 6; i < 8; i++) { hex_byte(raw[i], buf + pos); pos += 2; }
+    buf[pos++] = '-';
+    for (i = 8; i < 10; i++) { hex_byte(raw[i], buf + pos); pos += 2; }
+    buf[pos++] = '-';
+    for (i = 10; i < 16; i++) { hex_byte(raw[i], buf + pos); pos += 2; }
+    buf[pos] = '\0';
+}
+
+/* Parse a single hex character. Returns 0–15 or -1 on error. */
+static int parse_hex_char(char c)
+{
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+int guid_from_string(const char *str, struct gpt_guid *g)
+{
+    uint8_t raw[16];
+    int byte_idx = 0;
+    int i = 0;
+
+    /* Parse 32 hex digits with dashes at positions 8, 13, 18, 23 */
+    while (byte_idx < 16) {
+        int hi, lo;
+        /* Skip dashes */
+        if (str[i] == '-') { i++; continue; }
+        if (str[i] == '\0') return -1;
+
+        hi = parse_hex_char(str[i++]);
+        if (hi < 0 || str[i] == '\0') return -1;
+        lo = parse_hex_char(str[i++]);
+        if (lo < 0) return -1;
+
+        raw[byte_idx++] = (uint8_t)((hi << 4) | lo);
+    }
+
+    /* Decode raw bytes back to struct (mixed endian) */
+    read_guid(raw, g);
+    return 0;
+}
+
+/* ---- GUID v4 Generation (random) ---- */
+
+#include "kernel/cpuid.h"
+
+/* Try RDRAND to fill 'n' bytes. Returns 1 on success, 0 if unavailable. */
+static int rdrand_fill(uint8_t *buf, int n)
+{
+    int i;
+    if (!cpu_has(CPU_FEATURE_RDRAND))
+        return 0;
+
+    for (i = 0; i < n; i += 8) {
+        uint64_t val;
+        int ok, retries = 10;
+        do {
+            __asm__ volatile(
+                "rdrand %0\n\t"
+                "setc   %1\n\t"
+                : "=r"(val), "=qm"(ok)
+            );
+        } while (!ok && --retries > 0);
+
+        if (!ok) return 0;
+
+        /* Copy available bytes */
+        {
+            int j;
+            int remain = n - i;
+            if (remain > 8) remain = 8;
+            for (j = 0; j < remain; j++)
+                buf[i + j] = (uint8_t)(val >> (j * 8));
+        }
+    }
+    return 1;
+}
+
+/* XorShift64 PRNG fallback seeded from TSC */
+static uint64_t prng_state;
+
+static uint64_t xorshift64(void)
+{
+    uint64_t x = prng_state;
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    prng_state = x;
+    return x;
+}
+
+static void prng_fill(uint8_t *buf, int n)
+{
+    int i;
+    /* Seed from TSC if not yet seeded */
+    if (prng_state == 0) {
+        uint32_t lo, hi;
+        __asm__ volatile("rdtsc" : "=a"(lo), "=d"(hi));
+        prng_state = ((uint64_t)hi << 32) | lo;
+        if (prng_state == 0) prng_state = 0xDEADBEEFCAFEBABEULL;
+    }
+
+    for (i = 0; i < n; i += 8) {
+        uint64_t val = xorshift64();
+        int j;
+        int remain = n - i;
+        if (remain > 8) remain = 8;
+        for (j = 0; j < remain; j++)
+            buf[i + j] = (uint8_t)(val >> (j * 8));
+    }
+}
+
+struct gpt_guid guid_generate(void)
+{
+    struct gpt_guid g;
+    uint8_t raw[16];
+
+    /* Fill 16 bytes with random data */
+    if (!rdrand_fill(raw, 16))
+        prng_fill(raw, 16);
+
+    /* Set version 4 (random): bits 48–51 = 0100 */
+    raw[6] = (raw[6] & 0x0F) | 0x40;
+    /* Set variant 2 (RFC 4122): bits 64–65 = 10 */
+    raw[8] = (raw[8] & 0x3F) | 0x80;
+
+    /* Decode as mixed-endian GUID */
+    read_guid(raw, &g);
+    return g;
+}
+
 /* ---- GPT Header Parsing ---- */
 
 static int parse_header(const uint8_t *buf, struct gpt_header *hdr,
