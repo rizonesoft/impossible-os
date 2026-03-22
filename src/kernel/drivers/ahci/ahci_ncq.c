@@ -141,6 +141,8 @@ int ahci_ncq_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
+    if (ports[port_idx].device_type == AHCI_DEV_ATAPI)
+        return -1;
     if (!ports[port_idx].ncq_supported)
         return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0, 0);
     return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0, 0);
@@ -150,6 +152,8 @@ int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
                    const void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    if (ports[port_idx].device_type == AHCI_DEV_ATAPI)
         return -1;
     if (!ports[port_idx].ncq_supported)
         return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1, 0);

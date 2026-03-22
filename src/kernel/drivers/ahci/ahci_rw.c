@@ -241,6 +241,9 @@ int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
+    /* ATAPI devices require SCSI PACKET commands, not native ATA DMA */
+    if (ports[port_idx].device_type == AHCI_DEV_ATAPI)
+        return -1;
     if (ports[port_idx].ncq_supported && use_events)
         return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0, 0);
     return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0, 0);
@@ -250,6 +253,9 @@ int ahci_write(int port_idx, uint64_t lba, uint32_t count,
                const void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    /* ATAPI devices require SCSI PACKET commands, not native ATA DMA */
+    if (ports[port_idx].device_type == AHCI_DEV_ATAPI)
         return -1;
     if (ports[port_idx].ncq_supported && use_events)
         return ncq_sync_rw(&ports[port_idx], lba, count,
@@ -265,6 +271,8 @@ int ahci_write_fua(int port_idx, uint64_t lba, uint32_t count,
     struct ahci_port *p;
 
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    if (ports[port_idx].device_type == AHCI_DEV_ATAPI)
         return -1;
 
     p = &ports[port_idx];

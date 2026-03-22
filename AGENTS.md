@@ -10,6 +10,20 @@
 
 ---
 
+## Philosophy
+
+> **Nothing is impossible.**
+
+Impossible OS is a **production-level operating system** — not a hobby project, not a prototype. Every decision, every line of code, every fix is held to this standard:
+
+1. **Proper solutions over quick fixes.** Don't patch symptoms — find root causes, implement correct solutions, and optimize them. If a fix requires restructuring, restructure.
+2. **No workarounds, no hacks, no temporary fixes.** Every change must be long-term thinking. Code that "works for now" is technical debt that compounds. Do it right or don't do it.
+3. **Outperform Windows 11 and Linux.** This is non-negotiable. Every subsystem — boot time, I/O throughput, memory management, UI responsiveness — must meet or exceed what the industry leaders deliver.
+4. **Expansive mindset.** Think bigger. If a feature exists in Windows or Linux, we implement it better. If it doesn't exist anywhere, we invent it. Constraints are challenges, not stop signs.
+5. **Nothing is impossible.** The name is the mission. A from-scratch OS with a custom bootloader, kernel, compositor, and Win32-compatible API — built to compete with decades-old platforms. We don't accept "can't be done."
+
+---
+
 ## Project Overview
 
 Impossible OS is a freestanding, bare-metal OS targeting x86-64 Long Mode. The native API surface is **Win32-compatible** (PE32+ executables, `CreateFile`/`ReadFile`/`CreateProcess`). POSIX APIs exist only in a secondary Linux compatibility layer. Canonical paths use Windows style: `C:\Impossible\System32\`.

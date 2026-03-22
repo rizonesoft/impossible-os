@@ -4,6 +4,14 @@ globs: ["**/*.c", "**/*.h", "**/*.asm"]
 
 # Impossible OS — Coding Rules
 
+## Engineering Quality
+
+> **Impossible OS is production-level. No workarounds. No hacks. No temporary fixes.**
+
+- **Fix root causes, not symptoms.** If a bug requires restructuring, restructure. Quick patches create technical debt.
+- **Optimize, don't settle.** Every subsystem must outperform Windows 11 and Linux. Benchmark-aware, cache-friendly, DMA-aligned.
+- **Long-term thinking only.** Every line of code must be written as if it ships tomorrow. No "fix later" comments.
+
 ## Freestanding C
 
 - **No standard library.** Never include `<stdio.h>`, `<stdlib.h>`, `<string.h>`, or any user-space headers. The build uses `-nostdinc` so even freestanding headers like `<stdint.h>`, `<stddef.h>`, `<stdbool.h>` are **NOT available**. Use `#include "kernel/types.h"` for all integer types, `size_t`, and `NULL`.

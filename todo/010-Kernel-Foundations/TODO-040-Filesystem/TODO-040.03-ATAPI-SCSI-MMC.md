@@ -126,37 +126,37 @@ graph TD
 
 ### Phase-by-Phase Implementation Order
 
-| Phase  | TODO File                             | Sections                         | What It Delivers                                                  | Depends On                               | Status |
-| :----: | ------------------------------------- | -------------------------------- | ----------------------------------------------------------------- | ---------------------------------------- | :----: |
-| **1**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §1.1 ATAPI Signature            | Identify optical drives during port enumeration                   | —                                        |   ⬜   |
-| **1**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §1.2 IDENTIFY PACKET DEVICE     | Parse device capabilities, model name, DMA modes                  | Phase 1 (§1.1)                           |   ⬜   |
-| **2**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §2.1 PIO Packet Protocol        | ATAPI command transport — all SCSI commands depend on this        | Phase 1 (§1.2)                           |   ⬜   |
-| **2**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §6.1 REQUEST SENSE              | Error classification (Sense Key/ASC/ASCQ) for all commands        | Phase 2 (§2.1)                           |   ⬜   |
-| **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.2 READ CAPACITY & READ       | Read data from optical media — core I/O capability                | Phase 2 (§2.1)                           |   ⬜   |
-| **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.1 TEST UNIT READY & INQ      | Media presence check and device probing                           | Phase 2 (§6.1)                           |   ⬜   |
-| **3**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.4 GET CONFIGURATION          | Drive/media type detection (CD/DVD/BD profiles)                   | Phase 3 (§5.1)                           |   ⬜   |
-| **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.1 Bus Master DMA             | Async DMA transfer — stop wasting CPU on PIO                      | Phase 2 (§2.1)                           |   ⬜   |
-| **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §3.2 AHCI ATAPI Delivery        | AHCI hardware-automated ATAPI handshake                           | Phase 2 (§2.1) + AHCI §1.1              |   ⬜   |
-| **4**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §4.1 Transport Abstraction      | Unified SCSI transport interface (PIO/DMA/AHCI)                   | Phase 4 (§3.1 + §3.2)                   |   ⬜   |
-| **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §7.1 VFS Block Device           | Expose optical drive as block device with drive letter             | Phase 3 (§5.2) + Phase 4 + 040.17 §13   |   ⬜   |
-| **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.3 Media Control Commands     | Eject, load tray, lock, READ TOC, disc structure                  | Phase 3 (§5.1) + Phase 5 (§7.1)         |   ⬜   |
-| **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §5.5 MODE SENSE & Caps          | Drive speeds, buffer size, mechanism type, audio caps              | Phase 3 (§5.4)                           |   ⬜   |
-| **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §6.2 Media Change Detection     | Detect disc swaps, invalidate caches, auto-remount                 | Phase 2 (§6.1) + Phase 5 (§5.3)         |   ⬜   |
-| **5**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §10.1 Async I/O                 | Non-blocking optical drive access with per-device events           | Phase 4 (§4.1) + AHCI §1.1              |   ⬜   |
-| **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §8.1 ISO 9660 / Joliet          | Standard CD/DVD filesystem — mount data discs                      | Phase 5 (§7.1 + §6.2)                   |   ⬜   |
-| **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §8.2 UDF Filesystem             | DVD-ROM and Blu-ray filesystem support                             | Phase 5 (§7.1 + §6.2)                   |   ⬜   |
-| **6**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §9.1 Audio CD Extraction        | CD playback and digital audio extraction                           | Phase 5 (§5.3)                           |   ⬜   |
-| **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §12.1 Rock Ridge                | Long filenames + POSIX attributes on ISO 9660                      | Phase 6 (§8.1)                           |   ⬜   |
-| **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §12.2 El Torito                  | Bootable CD/DVD detection and "Bootable" badge                     | Phase 6 (§8.1)                           |   ⬜   |
-| **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §9.2 Paranoia DAE + C2          | **Bit-perfect ripping** with C2 error pointer detection            | Phase 6 (§9.1) + Phase 5 (§5.5)         |   ⬜   |
-| **7**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §11.1 Drive Speed Control       | **Native noise/speed GUI** — no third-party tools needed           | Phase 5 (§5.5)                           |   ⬜   |
-| **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.1 SCSI Passthrough API      | **Direct SCSI access** — no third-party tools needed               | Phase 5 (§7.1)                           |   ⬜   |
-| **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.2 Disc Imaging & Burning    | **Built-in ISO creation and CD/DVD burning**                       | Phase 6 (§9.1)                           |   ⬜   |
-| **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §13.3 Optical Media Health      | **Disc quality scanner** — surface error mapping                   | Phase 5 (§5.5)                           |   ⬜   |
-| **8**  | `TODO-040.03-ATAPI-SCSI-MMC.md`       | §14.1 DVD Region Management     | **Region-free playback** — no 5-change firmware limit              | Phase 3 (§5.4)                           |   ⬜   |
-| —      | `TODO-040.02-AHCI.md`                 | §1.1 Interrupt-Driven I/O       | AHCI interrupts — enables §3.2 AHCI transport + §10.1 async       | —                                        |   ⬜   |
-| —      | `TODO-040.02-AHCI.md`                 | §9.2 Enhanced ATAPI/CD-ROM      | AHCI-side SCSI commands — supplements §3.2                         | AHCI §1.1                               |   ⬜   |
-| —      | `TODO-040.17-Win32-FS-API.md`         | §13 Win32 File API              | Handle system (CreateFile, etc.) — enables §7.1 block device       | —                                        |   ⬜   |
+| Phase | TODO File                | Section                      | What It Delivers                                          | Depends On                             | Status |
+| :---: | ------------------------ | ---------------------------- | --------------------------------------------------------- | -------------------------------------- | :----: |
+| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.1 ATAPI Signature        | Identify optical drives during port enumeration            | —                                      |   ⬜   |
+| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.2 IDENTIFY PACKET        | Parse device capabilities, model name, DMA modes           | Phase 1 (§1.1)                         |   ⬜   |
+| **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ⬜   |
+| **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ⬜   |
+| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ⬜   |
+| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ⬜   |
+| **4** | `040.03-ATAPI-SCSI-MMC`  | §4.1 Transport Abstraction  | Unified SCSI transport (PIO/DMA/AHCI)                      | Phase 4 (§3.1 + §3.2)                  |   ⬜   |
+| **5** | `040.03-ATAPI-SCSI-MMC`  | §7.1 VFS Block Device       | Expose optical drive as block device + drive letter        | Phase 3 (§5.2) + Phase 4 + 040.17 §13  |   ⬜   |
+| **5** | `040.03-ATAPI-SCSI-MMC`  | §5.3 Media Control Cmds     | Eject, load tray, lock, READ TOC, disc structure           | Phase 3 (§5.1) + Phase 5 (§7.1)        |   ⬜   |
+| **5** | `040.03-ATAPI-SCSI-MMC`  | §5.5 MODE SENSE & Caps      | Drive speeds, buffer size, mechanism type, audio caps      | Phase 3 (§5.4)                         |   ⬜   |
+| **5** | `040.03-ATAPI-SCSI-MMC`  | §6.2 Media Change Detection | Detect disc swaps, invalidate caches, auto-remount         | Phase 2 (§6.1) + Phase 5 (§5.3)        |   ⬜   |
+| **5** | `040.03-ATAPI-SCSI-MMC`  | §10.1 Async I/O             | Non-blocking optical drive access + per-device events      | Phase 4 (§4.1) + AHCI §1.1             |   ⬜   |
+| **6** | `040.03-ATAPI-SCSI-MMC`  | §8.1 ISO 9660 / Joliet      | Standard CD/DVD filesystem — mount data discs              | Phase 5 (§7.1 + §6.2)                  |   ⬜   |
+| **6** | `040.03-ATAPI-SCSI-MMC`  | §8.2 UDF Filesystem         | DVD-ROM and Blu-ray filesystem support                     | Phase 5 (§7.1 + §6.2)                  |   ⬜   |
+| **6** | `040.03-ATAPI-SCSI-MMC`  | §9.1 Audio CD Extraction    | CD playback and digital audio extraction                   | Phase 5 (§5.3)                         |   ⬜   |
+| **7** | `040.03-ATAPI-SCSI-MMC`  | §12.1 Rock Ridge            | Long filenames + POSIX attributes on ISO 9660              | Phase 6 (§8.1)                         |   ⬜   |
+| **7** | `040.03-ATAPI-SCSI-MMC`  | §12.2 El Torito             | Bootable CD/DVD detection + "Bootable" badge               | Phase 6 (§8.1)                         |   ⬜   |
+| **7** | `040.03-ATAPI-SCSI-MMC`  | §9.2 Paranoia DAE + C2      | **Bit-perfect ripping** with C2 error detection            | Phase 6 (§9.1) + Phase 5 (§5.5)        |   ⬜   |
+| **7** | `040.03-ATAPI-SCSI-MMC`  | §11.1 Drive Speed Control   | **Native noise/speed GUI** — no 3rd-party needed           | Phase 5 (§5.5)                         |   ⬜   |
+| **8** | `040.03-ATAPI-SCSI-MMC`  | §13.1 SCSI Passthrough      | **Direct SCSI access** — no 3rd-party needed               | Phase 5 (§7.1)                         |   ⬜   |
+| **8** | `040.03-ATAPI-SCSI-MMC`  | §13.2 Disc Imaging & Burn   | **Built-in ISO creation + CD/DVD burning**                 | Phase 6 (§9.1)                         |   ⬜   |
+| **8** | `040.03-ATAPI-SCSI-MMC`  | §13.3 Optical Media Health  | **Disc quality scanner** — surface error mapping           | Phase 5 (§5.5)                         |   ⬜   |
+| **8** | `040.03-ATAPI-SCSI-MMC`  | §14.1 DVD Region Mgmt       | **Region-free playback** — no 5-change limit               | Phase 3 (§5.4)                         |   ⬜   |
+| —     | `040.02-AHCI`            | §1.1 Interrupt-Driven I/O   | AHCI interrupts — enables §3.2 + §10.1 async               | —                                      |   ⬜   |
+| —     | `040.02-AHCI`            | §9.2 Enhanced ATAPI/CD-ROM  | AHCI-side SCSI commands — supplements §3.2                 | AHCI §1.1                              |   ⬜   |
+| —     | `040.17-Win32-FS-API`    | §13 Win32 File API          | Handle system (CreateFile, etc.) — enables §7.1            | —                                      |   ⬜   |
 
 > [!NOTE]
 > **Phases 1–3** are the critical path. They deliver a working read-only optical
@@ -196,26 +196,26 @@ graph TD
 
 ### 1.1 ATAPI Signature Evaluation
 
-**Prompt:** After a hardware reset, software reset (SRST), or EXECUTE DEVICE DIAGNOSTIC, ATA/ATAPI devices place a signature into the task file registers. The kernel must read LBA Mid and LBA High to detect the ATAPI signature (`0x14`, `0xEB`). This is the only standardized method to differentiate optical/tape drives from magnetic hard drives. Never use the Status register alone — it fails on modern hardware. Under AHCI, read the port's Signature register (`PxSIG`). If the ATAPI signature is detected, do not send native ATA commands (READ SECTORS `0x20`, etc.) — they will fail. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: device signature detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that ATAPI device signature detection is correctly implemented. Check: (1) `ahci.h` defines `AHCI_SIG_SEMB` (`0xC33C0101`), `AHCI_SIG_PM` (`0x96690101`), and `enum ahci_device_type` with `AHCI_DEV_NULL/ATA/ATAPI/SEMB/PM`. (2) `ahci_core.c` `port_init()` uses a `switch` on `PxSIG` to classify all device types with correct logging. (3) `ahci_rw.c` guards `ahci_read()`, `ahci_write()`, `ahci_write_fua()` against ATAPI ports. (4) `ahci_ncq.c` guards `ahci_ncq_read()`, `ahci_ncq_write()` against ATAPI ports. (5) `bash scripts/build.sh clean` → `=== BUILD OK ===`. (6) Boot log shows SATA drives detected normally.
 
 > [!NOTE]
-> **Existing code:** `ahci.c` line 168 reads `PxSIG` and checks for
-> `AHCI_SIG_ATAPI` (`0xEB140101`) at line 171. The `ahci_port.is_atapi` field
-> is set at line 172. This section formalizes and extends that detection to
-> include legacy IDE task file register checking and edge cases.
+> **Implementation notes:** Used `enum ahci_device_type` instead of bare `is_atapi`
+> flag. Kept `is_atapi` field for backward compatibility. SEMB and PM signatures
+> are logged and skipped. Unknown signatures (not 0xFFFFFFFF/0x00000000) are
+> logged at DEBUG level.
 
-- [ ] On each ATA/AHCI port during enumeration:
-  - [ ] Read task file registers: Sector Count, LBA Low, LBA Mid, LBA High
-  - [ ] ATA signature: `SC=0x01, LBALo=0x01, LBAMid=0x00, LBAHi=0x00` → magnetic disk
-  - [ ] ATAPI signature: `SC=0x01, LBALo=0x01, LBAMid=0x14, LBAHi=0xEB` → optical/tape
-- [ ] Under AHCI: read `PxSIG` register — value `0xEB140101` = ATAPI device
-- [ ] If ATAPI detected: set `port->device_type = DEVICE_ATAPI`
-- [ ] If ATAPI detected: suppress all native ATA commands for this port
-- [ ] Handle no-device case: `PxSIG = 0xFFFFFFFF` or status register reads `0xFF`
-- [ ] Handle SEMB signature: `PxSIG = 0xC33C0101` (enclosure management bridge — skip)
-- [ ] Handle PM signature: `PxSIG = 0x96690101` (port multiplier — defer to §9.1)
-- [ ] Log: `[ATAPI] Port %d: ATAPI device detected (signature 0x14/0xEB)`
-- [ ] Commit: `"atapi: device signature detection"`
+- [x] On each ATA/AHCI port during enumeration:
+  - [x] Read task file registers: Sector Count, LBA Low, LBA Mid, LBA High
+  - [x] ATA signature: `SC=0x01, LBALo=0x01, LBAMid=0x00, LBAHi=0x00` → magnetic disk
+  - [x] ATAPI signature: `SC=0x01, LBALo=0x01, LBAMid=0x14, LBAHi=0xEB` → optical/tape
+- [x] Under AHCI: read `PxSIG` register — value `0xEB140101` = ATAPI device
+- [x] If ATAPI detected: set `port->device_type = AHCI_DEV_ATAPI`
+- [x] If ATAPI detected: suppress all native ATA commands for this port
+- [x] Handle no-device case: `PxSIG = 0xFFFFFFFF` or status register reads `0xFF`
+- [x] Handle SEMB signature: `PxSIG = 0xC33C0101` (enclosure management bridge — skip)
+- [x] Handle PM signature: `PxSIG = 0x96690101` (port multiplier — defer to §9.1)
+- [x] Log: `[ATAPI] Port %d: ATAPI device detected (signature 0x14/0xEB)`
+- [x] Commit: `"atapi: device signature detection"`
 
 ### 1.2 IDENTIFY PACKET DEVICE (`0xA1`)
 

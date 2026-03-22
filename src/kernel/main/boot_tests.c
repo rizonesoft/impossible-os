@@ -167,6 +167,7 @@ void boot_tests_run(void)
     boot_splash_status("Initializing scheduler...");
     klog_disk_flush();
     task_init();
+    ahci_enable_events();  /* Safe now: yield handler registered */
 
     /* Create the system work queue */
     {

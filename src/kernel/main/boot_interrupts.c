@@ -30,6 +30,7 @@
 #include "kernel/boot_splash.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/fs/partition.h"
+#include "kernel/drivers/ahci.h"
 #include "main/main_internal.h"
 
 void boot_interrupts_init(void)
@@ -135,6 +136,11 @@ void boot_interrupts_init(void)
             }
         }
         HV_BAR(193, 0x0080FF00);  /* LIME = LAPIC/IOAPIC OK */
+
+        /* AHCI MSI targets the LAPIC at 0xFEE00000 — it MUST be initialized
+         * before we program MSI.  INTx fallback needs IOAPIC routing.
+         * This also must follow irq_init() so handlers aren't wiped. */
+        ahci_setup_interrupts();
     }
 
     /* PIC init — only when a PIC exists AND IOAPIC has NOT taken over.
@@ -178,6 +184,12 @@ void boot_interrupts_init(void)
     HV_BAR(256, 0x00FF00FF);  /* MAGENTA = fb_init OK */
 
     boot_splash_init();
+
+    /* Enable interrupts + start splash animation now — the LAPIC timer
+     * is already calibrated and running, so the spinner can animate
+     * during the slow PCI scan and network init that follow. */
+    __asm__ volatile ("sti");
+    boot_splash_start_animation();
     boot_splash_status("Setting up hardware...");
 
     klog(LOG_DEBUG, "boot", "--- Phase: PCI & network hardware ---");
@@ -190,12 +202,6 @@ void boot_interrupts_init(void)
     net_init();
     virtio_input_init();
     vbox_mouse_init();
-
-    /* Enable interrupts */
-    __asm__ volatile ("sti");
-
-    /* Start timer-driven splash animation (needs PIT IRQs running) */
-    boot_splash_start_animation();
 
     /* DHCP fire-and-forget */
     klog(LOG_DEBUG, "boot",

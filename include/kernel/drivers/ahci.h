@@ -120,7 +120,9 @@
 
 /* Port signature values */
 #define AHCI_SIG_ATA        0x00000101  /* SATA drive */
-#define AHCI_SIG_ATAPI      0xEB140101  /* SATAPI device */
+#define AHCI_SIG_ATAPI      0xEB140101  /* SATAPI device (LBAMid=0x14, LBAHi=0xEB) */
+#define AHCI_SIG_SEMB       0xC33C0101  /* Enclosure management bridge */
+#define AHCI_SIG_PM         0x96690101  /* Port multiplier */
 
 /* ---- FIS types ---- */
 #define FIS_TYPE_REG_H2D    0x27   /* Register FIS — Host to Device */
@@ -214,12 +216,22 @@ struct ahci_error_counters {
     uint32_t cmd_failures;      /* Commands that failed after all retries */
 };
 
+/* ---- Device type classification ---- */
+enum ahci_device_type {
+    AHCI_DEV_NULL,    /* No device / unknown signature */
+    AHCI_DEV_ATA,     /* SATA hard drive or SSD */
+    AHCI_DEV_ATAPI,   /* SATAPI optical / tape drive */
+    AHCI_DEV_SEMB,    /* Enclosure management bridge */
+    AHCI_DEV_PM,      /* Port multiplier */
+};
+
 /* ---- AHCI port state ---- */
 struct ahci_port {
     uint8_t  active;       /* 1 if drive attached */
     uint8_t  port_num;     /* Physical port number */
     uint8_t  is_atapi;     /* 1 if ATAPI (optical) device */
-    uint32_t sig;          /* Port signature */
+    enum ahci_device_type device_type; /* Device classification */
+    uint32_t sig;          /* Port signature (PxSIG) */
     uint32_t sector_size;  /* Bytes per sector (512 for HDD, 2048 for optical) */
     uint64_t sectors;      /* Total sector count */
     char     model[41];    /* Model string (null-terminated) */
@@ -261,6 +273,15 @@ struct ahci_port {
 
 /* Initialize the AHCI driver and detect SATA/ATAPI devices. */
 int ahci_init(void);
+
+/* Set up AHCI interrupts (MSI or INTx).  Must be called AFTER irq_init()
+ * so that the IRQ handler table is not zeroed after registration. */
+void ahci_setup_interrupts(void);
+
+/* Enable event-based (interrupt-driven) I/O.  Must be called AFTER task_init()
+ * so that yield() (INT 0x81) is handled by the scheduler.  Before this,
+ * all AHCI I/O uses polling. */
+void ahci_enable_events(void);
 
 /* Read 'count' logical sectors starting at LBA into 'buffer'. */
 int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer);

@@ -4,6 +4,14 @@ description: API design direction and code intelligence tools (Srclight + Memory
 
 # Impossible OS — Intelligence & Design Rules
 
+## Design Quality
+
+> **Nothing is impossible. Impossible OS aims to outperform Windows 11 and Linux — non-negotiable.**
+
+- **Expansive mindset.** Think bigger than existing OS implementations. If Windows or Linux does something, we do it better. If neither does it, we invent it.
+- **Production-level architecture.** Every API, data structure, and subsystem design must be deliberate, optimized, and built for the long term. No prototyping shortcuts.
+- **No workarounds in design.** If an interface feels hacky, redesign it. Clean abstractions compound; hacks compound too — in the wrong direction.
+
 ## API Surface
 
 - **Win32 is the native API.** User-space programs are PE32+ executables using Win32-style APIs (CreateFile, ReadFile, CreateProcess). POSIX APIs (open, read, fork) are secondary — for the Linux compat layer only.
