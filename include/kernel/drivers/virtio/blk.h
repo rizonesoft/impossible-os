@@ -28,6 +28,7 @@
 #define VIRTIO_BLK_T_DISCARD  11    /* discard (TRIM) — unmap sectors (§5.2.6.1) */
 #define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
 #define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
+#define VIRTIO_BLK_T_SECURE_ERASE 14 /* secure erase (crypto wipe) sectors */
 #define VIRTIO_BLK_T_FUA_FLAG 0x80000000u  /* Force Unit Access: OR with T_OUT */
 
 /* Crypto algorithm identifiers for inline encryption */
@@ -65,6 +66,7 @@
 #define VIRTIO_BLK_F_LIFETIME   13   /* Device lifetime metrics (VirtIO 1.2+) */
 #define VIRTIO_BLK_F_FUA        14   /* Force Unit Access per-request (proposed) */
 #define VIRTIO_BLK_F_INLINE_CRYPTO 15 /* Inline encryption/decryption (proposed) */
+#define VIRTIO_BLK_F_SECURE_ERASE 16  /* Secure erase (crypto wipe) support */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_RING_EVENT_IDX 29     /* Event index for int coalescing */
@@ -89,6 +91,11 @@
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SECTORS 0x24  /* uint32_t: max sectors per discard */
 #define VIRTIO_BLK_CFG_MAX_DISCARD_SEG     0x28  /* uint32_t: max discard segments */
 #define VIRTIO_BLK_CFG_DISCARD_ALIGN       0x2C  /* uint32_t: sector alignment */
+
+/* Secure erase config offsets (present when F_SECURE_ERASE) */
+#define VIRTIO_BLK_CFG_MAX_SERASE_SECTORS  0x3C  /* uint32_t: max sectors per erase */
+#define VIRTIO_BLK_CFG_MAX_SERASE_SEG      0x40  /* uint32_t: max erase segments */
+#define VIRTIO_BLK_CFG_SERASE_ALIGN        0x44  /* uint32_t: sector alignment */
 
 /* Write-zeroes config offsets (VirtIO 1.2 §5.2.4, present when F_WRITE_ZEROES) */
 #define VIRTIO_BLK_CFG_MAX_WZ_SECTORS      0x30  /* uint32_t: max sectors per write-zeroes */
@@ -137,6 +144,9 @@ struct virtio_blk_topology {
     uint32_t max_wz_sectors;     /* Max sectors per write-zeroes (0 = no limit) */
     uint32_t max_wz_seg;         /* Max write-zeroes segments (0 = no limit) */
     uint8_t  wz_may_unmap;       /* 1 = unmap flag allowed in write-zeroes */
+    uint32_t max_serase_sectors;  /* Max sectors per secure erase (0 = no limit) */
+    uint32_t max_serase_seg;      /* Max secure erase segments (0 = no limit) */
+    uint32_t serase_sector_alignment; /* Secure erase sector alignment (0 = none) */
     uint16_t num_queues;         /* Number of request queues (F_MQ, default 1) */
 };
 
@@ -167,6 +177,11 @@ int virtio_blk_flush(void);
  * Only available when VIRTIO_BLK_F_DISCARD was negotiated.
  * Returns 0 on success, -1 on error, 1 if discard not supported. */
 int virtio_blk_discard(uint64_t sector, uint32_t num_sectors);
+
+/* Secure erase: cryptographically erase sectors for data sanitization.
+ * Only available when VIRTIO_BLK_F_SECURE_ERASE was negotiated.
+ * Returns 0 on success, -1 on error, 1 if not supported. */
+int virtio_blk_secure_erase(uint64_t sector, uint32_t num_sectors);
 
 /* Write-zeroes: zero out sectors starting at 'sector' for 'num_sectors'.
  * If unmap=1 and device supports it (F_WRITE_ZEROES + write_zeroes_may_unmap),

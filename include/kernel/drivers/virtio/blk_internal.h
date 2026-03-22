@@ -54,6 +54,7 @@ BLK_GLOBAL int has_topology;
 BLK_GLOBAL int has_size_max;
 BLK_GLOBAL int has_seg_max;
 BLK_GLOBAL int has_discard;
+BLK_GLOBAL int has_secure_erase; /* F_SECURE_ERASE negotiated */
 BLK_GLOBAL int has_fua;          /* F_FUA negotiated: per-request FUA */
 BLK_GLOBAL int has_inline_crypto; /* F_INLINE_CRYPTO negotiated */
 BLK_GLOBAL int has_packed;        /* F_RING_PACKED negotiated */
@@ -223,6 +224,7 @@ int  virtio_blk_do_io(uint32_t type, uint64_t sector, uint32_t len, void *buffer
 int  virtio_blk_do_flush(void);
 int  virtio_blk_do_discard(uint64_t sector, uint32_t num_sectors);
 int  virtio_blk_do_write_zeroes(uint64_t sector, uint32_t num_sectors, uint32_t flags);
+int  virtio_blk_do_secure_erase(uint64_t sector, uint32_t num_sectors);
 
 uint32_t read_device_features(uint32_t page);
 void     write_driver_features(uint32_t page, uint32_t features);

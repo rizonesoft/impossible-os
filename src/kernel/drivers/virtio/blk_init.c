@@ -272,6 +272,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_INLINE_CRYPTO");
     }
 
+    /* Negotiate F_SECURE_ERASE (bit 16): cryptographic erase */
+    if (feat_lo & (1u << VIRTIO_BLK_F_SECURE_ERASE)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_SECURE_ERASE);
+        has_secure_erase = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_SECURE_ERASE");
+    }
+
     /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
     if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
