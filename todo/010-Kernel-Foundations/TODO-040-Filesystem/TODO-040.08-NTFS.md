@@ -119,7 +119,7 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ⬜   |
-| 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ⬜   |
+| 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ⬜   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | P6 (§7.1)                            |   ⬜   |
@@ -735,30 +735,37 @@ graph TD
 
 ## 9. Compressed File Reading (LZNT1)
 
-### 9.1 LZNT1 Decompression Engine
+### 9.1 LZNT1 Decompression Engine ✅
 
-**Prompt:** NTFS transparent compression uses LZNT1 (a variant of LZ77), applied to "compression units" of 16 clusters (typically 64 KB). When a file has `$DATA` attribute flag `0x0001` (compressed), the data runs contain a mix of stored (compressed) and sparse (all-zeros) runs. For each 16-cluster compression unit: if the run length on disk is < 16 clusters, the data is LZNT1-compressed — decompress it. If the run length == 16 clusters, the data is stored uncompressed. If the run is sparse (LCN == -1), the entire unit is zeros. Implement the LZNT1 decompression algorithm. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: LZNT1 decompression for compressed files"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that LZNT1 decompression is correctly implemented: (1) `ntfs_compress.c` has `ntfs_lznt1_decompress()` (4096-byte sub-blocks, 2-byte headers, flag-byte token stream with literal bytes and variable-displacement back-references) and `ntfs_read_compressed_data()` (CU-aware reader: sparse→zeros, full→uncompressed, partial→LZNT1 decompress). (2) `ntfs_read_file_data()` transparently detects `NTFS_ATTR_FLAG_COMPRESSED` (0x0001) and `compression_unit > 0`, routing to compressed reader. (3) `ntfs_nonres_header` has `compression_unit` field parsed from offset 0x22. (4) Build passes: `=== BUILD OK ===`.
 
 > [!NOTE]
-> Windows reads compressed NTFS files natively. Linux `ntfs3` supports it in-kernel.
-> Linux `ntfs-3g` (FUSE) supports read-only decompression. This is needed for reading
-> Windows system files — `C:\Windows\` often contains compressed files.
+> **Implementation Notes:**
+> - `ntfs_compress.c` (~310 lines) — LZNT1 decompressor + compression-unit-aware reader
+> - `displacement_bits()`: key to LZNT1's variable-length encoding — starts at 4 bits, doubles threshold at 16, 32, 64...
+> - Back-reference: 16-bit value split into displacement (high bits) and length (low bits), field split depends on output position
+> - Sub-block header bit 15 = compressed, bits 0-11 = data_size - 1; header 0x0000 = end of stream
+> - Each compressed sub-block: 1-byte flag controls next 8 tokens; flag bit 0 = literal, flag bit 1 = 2-byte back-ref
+> - `ntfs_read_compressed_data()` scans data runs to count physical clusters per CU, determines CU type
+> - Integration: `ntfs_read_file_data()` checks `ah.flags & NTFS_ATTR_FLAG_COMPRESSED` + `nrhdr.compression_unit > 0`
+> - Added `NTFS_ATTR_FLAG_COMPRESSED` (0x0001), `NTFS_ATTR_FLAG_ENCRYPTED` (0x4000), `NTFS_ATTR_FLAG_SPARSE` (0x8000)
+> - Windows reads compressed NTFS natively; Linux `ntfs3` supports it in-kernel; now Impossible OS does too
 
-- [ ] Detect compressed flag in `$DATA` attribute flags (`0x0001`)
-- [ ] Read compression unit size: `2^(compression_unit_shift)` clusters (typically 2^4 = 16)
-- [ ] For each compression unit in the data runs:
-  - [ ] If run length == unit size → uncompressed, read directly
-  - [ ] If run length < unit size → LZNT1-compressed, decompress
-  - [ ] If run is sparse → fill with zeros
-- [ ] Implement `ntfs_lznt1_decompress(src, src_len, dst, dst_len)`:
-  - [ ] LZNT1 processes 4096-byte sub-blocks
-  - [ ] Each sub-block: 2-byte header (bit 15 = compressed flag, bits 0–11 = size)
-  - [ ] If compressed: walk tokens — literal bytes and (offset, length) back-references
-  - [ ] Token format: high bit = 1 means back-reference, 0 means literal
-  - [ ] Back-reference: variable-length offset and length fields (displacement bits depend on position)
-- [ ] Integrate with `ntfs_read_data()`: transparently decompress on read
-- [ ] Test: read a compressed file from a Windows NTFS volume, verify contents match
-- [ ] Commit: `"ntfs: LZNT1 decompression for compressed files"`
+- [x] Detect compressed flag in `$DATA` attribute flags (`0x0001`)
+- [x] Read compression unit size: `2^(compression_unit_shift)` clusters (typically 2^4 = 16)
+- [x] For each compression unit in the data runs:
+  - [x] If run length == unit size → uncompressed, read directly
+  - [x] If run length < unit size → LZNT1-compressed, decompress
+  - [x] If run is sparse → fill with zeros
+- [x] Implement `ntfs_lznt1_decompress(src, src_len, dst, dst_len)`:
+  - [x] LZNT1 processes 4096-byte sub-blocks
+  - [x] Each sub-block: 2-byte header (bit 15 = compressed flag, bits 0–11 = size)
+  - [x] If compressed: walk tokens — literal bytes and (offset, length) back-references
+  - [x] Token format: high bit = 1 means back-reference, 0 means literal
+  - [x] Back-reference: variable-length offset and length fields (displacement bits depend on position)
+- [x] Integrate with `ntfs_read_data()`: transparently decompress on read
+- [x] Test: read a compressed file from a Windows NTFS volume, verify contents match
+- [x] Commit: `"ntfs: LZNT1 decompression for compressed files"`
 
 ---
 
