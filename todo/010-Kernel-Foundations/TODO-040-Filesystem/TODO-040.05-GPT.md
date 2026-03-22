@@ -130,7 +130,7 @@ graph TD
 | 💎 | P2   | `040.05-GPT.md`     | §3.1 Dynamic Sector Size          | 4Kn NVMe + AF drive support — `dev->sector_size` everywhere                 | P0 (§1)                   |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §4.1 GUID Encode + String         | `write_guid()`, `guid_to_string()`, `guid_from_string()`, `guid_generate()` | P0 (§1 read path)         |   ✅   |
 | 💎 | P2   | `040.05-GPT.md`     | §6.1 UEFI Global Attributes       | Required, BIOSBoot, hidden partition handling                               | P0 (§1)                   |   ✅   |
-| 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ⬜   |
+| 💎 | P2   | `040.05-GPT.md`     | §7.1 Hybrid MBR Detection         | Warn and always prefer GPT over conflicting legacy MBR entries              | P0 (§1) + MBR (040.04 §7) |   ✅   |
 | 💎 | P3   | `040.05-GPT.md`     | §2.3 Backup Sync on Write         | Mirror every primary write to backup — prerequisite for all write ops       | P2 (§2.2)                 |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §6.2 Microsoft Attributes         | Read-only, hidden, no-automount on Basic Data partitions                    | P2 (§6.1)                 |   ⬜   |
 | 💎 | P3   | `040.05-GPT.md`     | §8.1 PMBR Writer                  | Create Protective MBR at LBA 0 — entry point for GPT disk init              | P2 (§4.1) + MBR (040.04)  |   ⬜   |
@@ -412,18 +412,21 @@ graph TD
 
 ## 7. Hybrid MBR Detection
 
-### 7.1 Hybrid MBR Warning
+### 7.1 Hybrid MBR Warning ✅
 
-**Prompt:** Detect the Hybrid MBR anomaly: when LBA 0 contains a `0xEE` partition entry whose size does NOT span the entire disk AND other non-zero partition entries exist in slots 2–4. This indicates a legacy dual-boot layout (typically Apple BootCamp). Log a critical warning and always prefer the GPT structures over the MBR mappings. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"gpt: Hybrid MBR detection"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify the implementation is correct: confirm `gpt.c` `gpt_parse()` detects Hybrid MBR after finding 0xEE by reading the entry's `size_lba` (LE32 at offset +12), comparing against `dev->sector_count - 1`, and checking other MBR slots for non-zero types. Confirm `gpt_table.hybrid_mbr` is set to 1 on detection and a warning is logged. Confirm GPT structures are always preferred. Run `bash scripts/build.sh clean`. Fix any inconsistencies.
 
-- [ ] After detecting `0xEE` at LBA 0: check if its `Size in LBA` covers the full disk
-  - [ ] Full disk: `size_lba >= disk_sectors - 1` → standard PMBR ✅
-  - [ ] Partial: `size_lba < disk_sectors - 1` AND other entries non-zero → Hybrid MBR ⚠️
-- [ ] Check MBR entries 2–4 for non-zero type codes
-- [ ] If Hybrid MBR: log `[GPT] WARNING: Hybrid MBR detected — ignoring legacy MBR entries`
-- [ ] Always prefer GPT structures over Hybrid MBR entries
-- [ ] Set `blkdev->hybrid_mbr = true` flag for informational purposes
-- [ ] Commit: `"gpt: Hybrid MBR detection"`
+> [!NOTE]
+> **Implementation note:** The `hybrid_mbr` flag is stored in `gpt_table` (not `blkdev`) because `blkdev` is passed as `const` to `gpt_parse()`. Detection at `gpt.c:703-730`: reads `ee_size_lba = read_le32(ee_entry + 12)`, checks all 4 MBR slots (skipping the 0xEE slot) for non-zero types. Hybrid = partial 0xEE + other_entries > 0. The parser always continues to GPT regardless.
+
+- [x] After detecting `0xEE`: read `size_lba` from entry offset +12
+- [x] Full disk: `(uint64_t)ee_size_lba >= dev->sector_count - 1` → standard PMBR
+- [x] Partial + other non-zero entries → Hybrid MBR ⚠️
+- [x] Check all MBR entries (skip 0xEE slot) for non-zero type codes
+- [x] Log `[GPT] WARNING: Hybrid MBR detected -- ignoring legacy MBR entries`
+- [x] Always prefer GPT structures over Hybrid MBR entries
+- [x] Set `tbl.hybrid_mbr = 1` flag (in `gpt_table`, not `blkdev` — device is const)
+- [x] Commit: `"gpt: Hybrid MBR detection"`
 
 ---
 

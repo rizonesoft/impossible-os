@@ -66,8 +66,9 @@ struct gpt_entry {
 
 /* Partition scan result */
 struct gpt_table {
-    int              valid;   /* 1 if GPT sig + CRC verified */
-    int              count;   /* Number of non-empty partitions */
+    int              valid;       /* 1 if GPT sig + CRC verified */
+    int              count;       /* Number of non-empty partitions */
+    int              hybrid_mbr;  /* 1 if Hybrid MBR detected (informational) */
     struct gpt_entry parts[GPT_MAX_RESULTS];
 };
 

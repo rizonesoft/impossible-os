@@ -688,16 +688,46 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
     /* Step 1: Verify protective MBR has type 0xEE */
     {
         int has_ee = 0;
+        int ee_slot = -1;
         for (i = 0; i < 4; i++) {
             uint8_t ptype = mbr_buf[MBR_ENTRY_OFFSET + i * MBR_ENTRY_SIZE + 4];
             if (ptype == MBR_TYPE_GPT) {
                 has_ee = 1;
+                ee_slot = i;
                 break;
             }
         }
         if (!has_ee) {
             serial_write("[GPT] No protective MBR (0xEE) found\n");
             goto out_free;
+        }
+
+        /* §7.1 Hybrid MBR Detection:
+         * Standard PMBR: 0xEE entry spans entire disk, slots 2-4 are empty.
+         * Hybrid MBR: 0xEE is partial AND other non-zero entries exist.
+         * Always prefer GPT — log warning for hybrid. */
+        {
+            const uint8_t *ee_entry = mbr_buf + MBR_ENTRY_OFFSET
+                                      + ee_slot * MBR_ENTRY_SIZE;
+            uint32_t ee_size_lba = read_le32(ee_entry + 12);
+            int other_entries = 0;
+
+            /* Check other MBR slots for non-zero type */
+            for (i = 0; i < 4; i++) {
+                if (i == ee_slot) continue;
+                uint8_t ptype = mbr_buf[MBR_ENTRY_OFFSET
+                                        + i * MBR_ENTRY_SIZE + 4];
+                if (ptype != 0x00)
+                    other_entries++;
+            }
+
+            /* Partial 0xEE + other entries = Hybrid MBR */
+            if (other_entries > 0 && dev->sector_count > 0 &&
+                (uint64_t)ee_size_lba < dev->sector_count - 1) {
+                tbl.hybrid_mbr = 1;
+                serial_write("[GPT] WARNING: Hybrid MBR detected"
+                             " -- ignoring legacy MBR entries\n");
+            }
         }
     }
 
