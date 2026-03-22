@@ -1515,6 +1515,187 @@ int ntfs_format_sid(const struct ntfs_sid *sid, char *buf, int buf_len)
 }
 
 /* ============================================================================
+ * $REPARSE_POINT Parser — §3.6 (attribute type 0xC0)
+ *
+ * Reparse point attribute layout:
+ *   0x00  Reparse Tag (4 bytes, LE)
+ *   0x04  Reparse Data Length (2 bytes, LE) — bytes after the header (0x08)
+ *   0x06  Reserved (2 bytes)
+ *
+ * For IO_REPARSE_TAG_MOUNT_POINT (0xA0000003) — junction:
+ *   0x08  Substitute Name Offset (2 bytes, from start of path buffer)
+ *   0x0A  Substitute Name Length (2 bytes, in bytes, NOT including null)
+ *   0x0C  Print Name Offset (2 bytes)
+ *   0x0E  Print Name Length (2 bytes)
+ *   0x10  Path Buffer (UTF-16LE, contains both names at their offsets)
+ *
+ * For IO_REPARSE_TAG_SYMLINK (0xA000000C):
+ *   0x08  Substitute Name Offset (2 bytes)
+ *   0x0A  Substitute Name Length (2 bytes)
+ *   0x0C  Print Name Offset (2 bytes)
+ *   0x0E  Print Name Length (2 bytes)
+ *   0x10  Flags (4 bytes) — 0x01 = relative symlink
+ *   0x14  Path Buffer (UTF-16LE)
+ *
+ * Substitute names often have `\??\` prefix which must be stripped.
+ * ============================================================================ */
+
+/* Decode a UTF-16LE path to ASCII (lossy: non-ASCII chars become '?') */
+static void decode_utf16_path(const uint8_t *utf16, uint16_t byte_len,
+                               char *out, int out_max)
+{
+    uint16_t chars = byte_len / 2;
+    uint16_t i;
+    int pos = 0;
+
+    for (i = 0; i < chars && pos < out_max - 1; i++) {
+        uint16_t wc = ntfs_le16(utf16 + i * 2);
+        if (wc == 0)
+            break;
+        /* Convert backslash to forward slash for internal use, or keep */
+        out[pos++] = (wc < 128) ? (char)wc : '?';
+    }
+    out[pos] = '\0';
+}
+
+/* Strip `\??\` prefix from a substitute name — it means "NT native path" */
+static void strip_nt_prefix(char *path)
+{
+    /* Check for `\??\` (4 chars) */
+    if (path[0] == '\\' && path[1] == '?' && path[2] == '?' &&
+        path[3] == '\\') {
+        int i;
+        for (i = 0; path[i + 4]; i++)
+            path[i] = path[i + 4];
+        path[i] = '\0';
+    }
+}
+
+int ntfs_decode_reparse(const uint8_t *record,
+                         const struct ntfs_mft_header *hdr,
+                         struct ntfs_reparse_data *out)
+{
+    struct ntfs_attr_header ah;
+    const uint8_t *attr;
+    const uint8_t *data;
+    uint32_t data_len;
+    uint32_t tag;
+    uint16_t reparse_data_len;
+
+    if (!record || !hdr || !out)
+        return NTFS_ERR_IO;
+
+    out->tag = 0;
+    out->type = 0;
+    out->data_length = 0;
+    out->symlink_flags = 0;
+    out->substitute_name[0] = '\0';
+    out->print_name[0] = '\0';
+    out->is_relative = 0;
+
+    /* Find $REPARSE_POINT attribute (type 0xC0) */
+    attr = ntfs_attr_find(record, hdr, NTFS_ATTR_REPARSE_POINT, &ah);
+    if (!attr)
+        return NTFS_ERR_NOT_FOUND;
+
+    if (ah.non_resident != 0)
+        return NTFS_ERR_NOT_FOUND;  /* Should always be resident */
+
+    if (ah.content_length < 8)
+        return NTFS_ERR_BAD_MAGIC;
+
+    data = attr + ah.content_offset;
+    data_len = ah.content_length;
+
+    tag = ntfs_le32(data + 0x00);
+    reparse_data_len = ntfs_le16(data + 0x04);
+
+    out->tag = tag;
+    out->data_length = reparse_data_len;
+
+    if (tag == NTFS_REPARSE_TAG_MOUNT_POINT) {
+        /* Junction / mount point */
+        uint16_t sub_off, sub_len, print_off, print_len;
+        uint32_t path_buf_start;
+
+        out->type = NTFS_REPARSE_JUNCTION;
+
+        if (data_len < 0x10)
+            return NTFS_ERR_BAD_MAGIC;
+
+        sub_off   = ntfs_le16(data + 0x08);
+        sub_len   = ntfs_le16(data + 0x0A);
+        print_off = ntfs_le16(data + 0x0C);
+        print_len = ntfs_le16(data + 0x0E);
+        path_buf_start = 0x10;  /* Path buffer starts here */
+
+        /* Decode substitute name */
+        if (path_buf_start + sub_off + sub_len <= data_len) {
+            decode_utf16_path(data + path_buf_start + sub_off, sub_len,
+                               out->substitute_name, NTFS_REPARSE_MAX_PATH);
+            strip_nt_prefix(out->substitute_name);
+        }
+
+        /* Decode print name */
+        if (path_buf_start + print_off + print_len <= data_len) {
+            decode_utf16_path(data + path_buf_start + print_off, print_len,
+                               out->print_name, NTFS_REPARSE_MAX_PATH);
+        }
+
+    } else if (tag == NTFS_REPARSE_TAG_SYMLINK) {
+        /* Symbolic link — same layout but with flags at 0x10 */
+        uint16_t sub_off, sub_len, print_off, print_len;
+        uint32_t flags;
+        uint32_t path_buf_start;
+
+        out->type = NTFS_REPARSE_SYMLINK;
+
+        if (data_len < 0x14)
+            return NTFS_ERR_BAD_MAGIC;
+
+        sub_off   = ntfs_le16(data + 0x08);
+        sub_len   = ntfs_le16(data + 0x0A);
+        print_off = ntfs_le16(data + 0x0C);
+        print_len = ntfs_le16(data + 0x0E);
+        flags     = ntfs_le32(data + 0x10);
+        path_buf_start = 0x14;  /* After the extra flags field */
+
+        out->symlink_flags = flags;
+        out->is_relative = (flags & NTFS_SYMLINK_FLAG_RELATIVE) ? 1 : 0;
+
+        /* Decode substitute name */
+        if (path_buf_start + sub_off + sub_len <= data_len) {
+            decode_utf16_path(data + path_buf_start + sub_off, sub_len,
+                               out->substitute_name, NTFS_REPARSE_MAX_PATH);
+            if (!out->is_relative)
+                strip_nt_prefix(out->substitute_name);
+        }
+
+        /* Decode print name */
+        if (path_buf_start + print_off + print_len <= data_len) {
+            decode_utf16_path(data + path_buf_start + print_off, print_len,
+                               out->print_name, NTFS_REPARSE_MAX_PATH);
+        }
+
+    } else {
+        /* Unknown reparse tag — store tag but can't decode paths */
+        out->type = NTFS_REPARSE_OTHER;
+    }
+
+    return NTFS_OK;
+}
+
+int ntfs_is_reparse_point(const uint8_t *record,
+                           const struct ntfs_mft_header *hdr)
+{
+    if (!record || !hdr)
+        return 0;
+
+    return (ntfs_attr_find(record, hdr,
+                            NTFS_ATTR_REPARSE_POINT, NULL) != NULL) ? 1 : 0;
+}
+
+/* ============================================================================
  * File Data Reader — §4.2
  *
  * Reads actual file content via two paths:

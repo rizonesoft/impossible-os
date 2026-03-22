@@ -461,6 +461,52 @@ int ntfs_decode_security(const uint8_t *record,
  * Returns the number of characters written (excluding null terminator). */
 int ntfs_format_sid(const struct ntfs_sid *sid, char *buf, int buf_len);
 
+/* ---- $REPARSE_POINT Parser (§3.6, attribute type 0xC0) ---- */
+
+/* Reparse tag values */
+#define NTFS_REPARSE_TAG_MOUNT_POINT  0xA0000003  /* Junction (directory) */
+#define NTFS_REPARSE_TAG_SYMLINK      0xA000000C  /* Symbolic link */
+#define NTFS_REPARSE_TAG_WOF          0x80000017  /* Windows Overlay FS */
+
+/* Symlink flags */
+#define NTFS_SYMLINK_FLAG_RELATIVE    0x00000001  /* Relative symlink */
+
+/* Reparse point types (decoded) */
+#define NTFS_REPARSE_JUNCTION   1  /* Junction / mount point */
+#define NTFS_REPARSE_SYMLINK    2  /* Symbolic link */
+#define NTFS_REPARSE_OTHER      3  /* Other/unknown reparse tag */
+
+/* Maximum target path length we'll decode */
+#define NTFS_REPARSE_MAX_PATH   512
+
+/* Parsed reparse point data */
+struct ntfs_reparse_data {
+    uint32_t tag;                  /* Raw reparse tag */
+    uint8_t  type;                 /* NTFS_REPARSE_* decoded type */
+    uint16_t data_length;          /* Reparse data length (after header) */
+    uint32_t symlink_flags;        /* Symlink flags (0x01 = relative) */
+
+    /* Decoded target path (ASCII, lossy conversion from UTF-16LE) */
+    char     substitute_name[NTFS_REPARSE_MAX_PATH + 1];
+    char     print_name[NTFS_REPARSE_MAX_PATH + 1];
+
+    uint8_t  is_relative;          /* 1 if relative symlink */
+};
+
+/* Decode the $REPARSE_POINT attribute from an MFT record.
+ * record: raw MFT record buffer (after fixup).
+ * hdr: parsed MFT record header.
+ * out: filled with parsed reparse data.
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if no reparse point. */
+int ntfs_decode_reparse(const uint8_t *record,
+                         const struct ntfs_mft_header *hdr,
+                         struct ntfs_reparse_data *out);
+
+/* Check if an MFT record has a reparse point attribute.
+ * Returns 1 if present, 0 if not. */
+int ntfs_is_reparse_point(const uint8_t *record,
+                           const struct ntfs_mft_header *hdr);
+
 /* ---- File Data Reader (§4.2) ---- */
 
 /* Read file data from non-resident runs.

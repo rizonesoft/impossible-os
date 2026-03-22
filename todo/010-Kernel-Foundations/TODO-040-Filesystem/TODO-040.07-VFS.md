@@ -115,7 +115,7 @@ graph TD
 | **8**  | `TODO-040.07-VFS.md`                         | §6.5 Symlink Loop Detection        | Configurable depth + offending link identification    | Phase 0 (Win32 API)                 |   ⬜   |
 | **8**  | `TODO-040.07-VFS.md`                         | §6.6 Cross-Drive Operations        | Transparent cross-drive `MoveFile` + `CopyFile`       | Phase 0 (Win32 API)                 |   ⬜   |
 | **9**  | `TODO-040.07-VFS.md`                         | §6.7 VFS Tracepoints               | ns-resolution I/O tracepoints for profiling           | Phase 7 (§6.1)                      |   ⬜   |
-| **9**  | `TODO-040.07-VFS.md`                         | §6.8 Parallel Directory Operations  | Lock-free concurrent ops in same directory            | Phase 7 (§6.1)                      |   ⬜   |
+| **9**  | `TODO-040.07-VFS.md`                         | §6.8 Parallel Directory Operations  | Lock-free concurrent ops in same directory            | Phase 7 (§6.1)                     |   ⬜   |
 | **9**  | `TODO-040.07-VFS.md`                         | §6.9 UID/GID Remapped Mounts       | Per-mount UID/GID remapping for containers            | Phase 0 (Win32 API)                 |   ⬜   |
 | **10** | `TODO-040.07-VFS.md`                         | §6.10 Filesystem Transactions      | Atomic multi-file operations with rollback            | Phase 7 (§6.1)                      |   ⬜   |
 | —      | `TODO-040.08-NTFS.md`                        | §6.1 VFS Registration              | NTFS volumes mountable                                | Phase 2 (§1.4 + §1.6) + NTFS §1–5   |   ⬜   |
