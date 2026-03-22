@@ -289,32 +289,22 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
     }
 
     /* Check for GPT (protective MBR with type 0xEE) */
-    {
-        int is_gpt = 0;
-        for (i = 0; i < mtbl.count; i++) {
-            if (mtbl.parts[i].type == MBR_TYPE_GPT) {
-                is_gpt = 1;
-                break;
+    if (mtbl.has_gpt) {
+        struct gpt_table gtbl = gpt_parse(dev, sect);
+        if (gtbl.valid && gtbl.count > 0) {
+            int gi;
+            klog(LOG_DEBUG, "blk", "%s: %u partition(s)",
+                   dev->name, (uint64_t)gtbl.count);
+            for (gi = 0; gi < gtbl.count; gi++) {
+                uint64_t sectors = gtbl.parts[gi].end_lba
+                                 - gtbl.parts[gi].start_lba + 1;
+                register_partition(dev, disk_idx, gi + 1,
+                                  gtbl.parts[gi].start_lba, sectors,
+                                  gpt_type_name(&gtbl.parts[gi].type_guid),
+                                  gtbl.parts[gi].name);
             }
         }
-
-        if (is_gpt) {
-            struct gpt_table gtbl = gpt_parse(dev, sect);
-            if (gtbl.valid && gtbl.count > 0) {
-                int gi;
-                klog(LOG_DEBUG, "blk", "%s: %u partition(s)",
-                       dev->name, (uint64_t)gtbl.count);
-                for (gi = 0; gi < gtbl.count; gi++) {
-                    uint64_t sectors = gtbl.parts[gi].end_lba
-                                     - gtbl.parts[gi].start_lba + 1;
-                    register_partition(dev, disk_idx, gi + 1,
-                                      gtbl.parts[gi].start_lba, sectors,
-                                      gpt_type_name(&gtbl.parts[gi].type_guid),
-                                      gtbl.parts[gi].name);
-                }
-            }
-            return;  /* GPT found — skip MBR */
-        }
+        return;  /* GPT found — skip MBR */
     }
 
     /* MBR partitions */

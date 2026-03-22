@@ -19,7 +19,9 @@
  *   8       4     Starting LBA (Little-Endian)
  *   12      4     Total Sectors (Little-Endian)
  *
- * The MBR is valid only if bytes 510–511 contain 0x55 0xAA.
+ * Recognizes 30+ partition types. Flags extended containers (0x05/0x0F/0x85),
+ * hidden/vendor recovery partitions, Dynamic Disks (0x42), and GPT
+ * Protective MBR (0xEE, triggers redirect to GPT parser).
  * ============================================================================ */
 
 #include "kernel/fs/mbr.h"
@@ -62,6 +64,26 @@ static int chs_is_overflow(const uint8_t *b)
     return 0;
 }
 
+/* ---- Type classification helpers ---- */
+
+int mbr_type_is_extended(uint8_t type)
+{
+    return (type == MBR_TYPE_EXT_CHS
+         || type == MBR_TYPE_EXT_LBA
+         || type == MBR_TYPE_LINUX_EXT);
+}
+
+int mbr_type_is_hidden(uint8_t type)
+{
+    return (type == MBR_TYPE_HIDDEN_FAT12
+         || type == MBR_TYPE_HIDDEN_FAT16
+         || type == MBR_TYPE_HIDDEN_FAT32
+         || type == MBR_TYPE_HIDDEN_FAT32_LBA
+         || type == MBR_TYPE_WINRE);
+}
+
+/* ---- MBR parser ---- */
+
 struct mbr_table mbr_parse(const void *sector0)
 {
     struct mbr_table tbl;
@@ -74,6 +96,7 @@ struct mbr_table mbr_parse(const void *sector0)
     tbl.disk_signature = 0;
     tbl.reserved       = 0;
     tbl.boot_count     = 0;
+    tbl.has_gpt        = 0;
 
     /* ---- Validate Boot Record Signature at offset 510 ---- */
     sig = read_le16(buf + MBR_SIG_OFFSET);
@@ -106,9 +129,24 @@ struct mbr_table mbr_parse(const void *sector0)
         uint32_t start    = read_le32(entry + 8);
         uint32_t sectors  = read_le32(entry + 12);
 
-        /* Skip completely empty entries (all 16 bytes zero) */
+        /* Skip completely empty entries */
         if (type == MBR_TYPE_EMPTY && sectors == 0)
             continue;
+
+        /* Detect GPT Protective MBR → set redirect flag */
+        if (type == MBR_TYPE_GPT) {
+            tbl.has_gpt = 1;
+            klog(LOG_DEBUG, "mbr",
+                 "Entry %d: GPT Protective (0xEE) — redirect to GPT parser",
+                 (uint64_t)i);
+        }
+
+        /* Warn on Dynamic Disk — not supported */
+        if (type == MBR_TYPE_DYNAMIC) {
+            klog(LOG_WARN, "mbr",
+                 "Entry %d: Dynamic Disk (0x42) — LDM volumes not supported",
+                 (uint64_t)i);
+        }
 
         /* Validate Boot Indicator: only 0x00 or 0x80 are legal */
         if (boot_ind != 0x00 && boot_ind != 0x80) {
@@ -134,12 +172,18 @@ struct mbr_table mbr_parse(const void *sector0)
         p->chs_overflow  = chs_is_overflow(entry + 1)
                         || chs_is_overflow(entry + 5);
 
-        /* Log the parsed entry */
+        /* Classify the partition type */
+        p->is_extended  = mbr_type_is_extended(type);
+        p->is_hidden    = mbr_type_is_hidden(type);
+
+        /* Log the parsed entry with type name */
         klog(LOG_DEBUG, "mbr",
-             "Entry %d: type=0x%02X, LBA=%u, sectors=%u, boot=%s",
-             (uint64_t)i, (uint64_t)type, (uint64_t)start,
-             (uint64_t)sectors,
-             (boot_ind == 0x80) ? "active" : "inactive");
+             "Entry %d: %s (0x%02X), LBA=%u, sectors=%u, boot=%s%s%s",
+             (uint64_t)i, mbr_type_name(type), (uint64_t)type,
+             (uint64_t)start, (uint64_t)sectors,
+             (boot_ind == 0x80) ? "active" : "inactive",
+             p->is_extended ? ", extended" : "",
+             p->is_hidden ? ", hidden" : "");
 
         tbl.count++;
     }
@@ -154,17 +198,60 @@ struct mbr_table mbr_parse(const void *sector0)
     return tbl;
 }
 
+/* ---- Partition type name lookup ----
+ * Returns a human-readable string for known types.
+ * Unknown types return "Unknown" — callers can use the hex code for detail. */
+
 const char *mbr_type_name(uint8_t type)
 {
     switch (type) {
-    case MBR_TYPE_EMPTY:      return "Empty";
-    case MBR_TYPE_EXT_CHS:    return "Extended (CHS)";
-    case MBR_TYPE_FAT32_CHS:  return "FAT32 (CHS)";
-    case MBR_TYPE_FAT32_LBA:  return "FAT32 (LBA)";
-    case MBR_TYPE_EXT_LBA:    return "Extended (LBA)";
-    case MBR_TYPE_LINUX:      return "Linux";
-    case MBR_TYPE_IXFS:       return "IXFS";
-    case MBR_TYPE_GPT:        return "GPT Protective";
-    default:                  return "Unknown";
+    /* Basic types */
+    case MBR_TYPE_EMPTY:           return "Empty";
+    case MBR_TYPE_FAT12:           return "FAT12";
+    case MBR_TYPE_FAT16_SM:        return "FAT16 (<=32M)";
+    case MBR_TYPE_EXT_CHS:         return "Extended (CHS)";
+    case MBR_TYPE_FAT16B:          return "FAT16B (>32M)";
+    case MBR_TYPE_NTFS:            return "NTFS/HPFS/exFAT";
+    case MBR_TYPE_FAT32_CHS:       return "FAT32 (CHS)";
+    case MBR_TYPE_FAT32_LBA:       return "FAT32 (LBA)";
+    case MBR_TYPE_FAT16_LBA:       return "FAT16 (LBA)";
+    case MBR_TYPE_EXT_LBA:         return "Extended (LBA)";
+
+    /* Hidden / vendor recovery */
+    case MBR_TYPE_HIDDEN_FAT12:    return "Hidden FAT12";
+    case MBR_TYPE_HIDDEN_FAT16:    return "Hidden FAT16";
+    case MBR_TYPE_HIDDEN_FAT32:    return "Hidden FAT32";
+    case MBR_TYPE_HIDDEN_FAT32_LBA: return "Hidden FAT32 LBA";
+    case MBR_TYPE_WINRE:           return "Windows Recovery";
+
+    /* Microsoft */
+    case MBR_TYPE_DYNAMIC:         return "Dynamic Disk (LDM)";
+
+    /* Linux */
+    case MBR_TYPE_LINUX_SWAP:      return "Linux Swap";
+    case MBR_TYPE_LINUX:           return "Linux";
+    case MBR_TYPE_LINUX_EXT:       return "Linux Extended";
+    case MBR_TYPE_LINUX_LVM:       return "Linux LVM";
+
+    /* BSD */
+    case MBR_TYPE_FREEBSD:         return "FreeBSD";
+    case MBR_TYPE_OPENBSD:         return "OpenBSD";
+    case MBR_TYPE_NETBSD:          return "NetBSD";
+
+    /* macOS / Solaris */
+    case MBR_TYPE_HFS_PLUS:        return "HFS+";
+    case MBR_TYPE_SOLARIS:         return "Solaris";
+
+    /* Impossible OS */
+    case MBR_TYPE_IXFS:            return "IXFS";
+
+    /* Special */
+    case MBR_TYPE_BEOS:            return "BeOS/Haiku";
+    case MBR_TYPE_GPT:             return "GPT Protective";
+    case MBR_TYPE_EFI_SP:          return "EFI System";
+    case MBR_TYPE_VMFS:            return "VMware VMFS";
+    case MBR_TYPE_LINUX_RAID:      return "Linux RAID";
+
+    default:                       return "Unknown";
     }
 }

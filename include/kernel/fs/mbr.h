@@ -9,19 +9,9 @@
  *   - 4 × 16-byte partition entries (offsets 446–509)
  *   - Boot Record Signature 0x55AA (offsets 510–511)
  *
- * Each partition entry contains:
- *   - Boot Indicator (0x80 active, 0x00 inactive)
- *   - CHS start (3 bytes, bit-packed)
- *   - Partition Type ID
- *   - CHS end (3 bytes, bit-packed)
- *   - Starting LBA (4 bytes LE)
- *   - Total Sectors (4 bytes LE)
- *
- * Recognized partition types:
- *   0x0C — FAT32 with LBA          0x0B — FAT32 with CHS
- *   0x83 — Linux (ext2/ext4)       0xDA — IXFS (Impossible OS)
- *   0xEE — GPT Protective MBR      0x05 — Extended (CHS)
- *   0x0F — Extended (LBA)
+ * Recognizes 30+ partition type IDs for robust interoperability.
+ * Flags GPT Protective (0xEE), Extended containers (0x05/0x0F/0x85),
+ * hidden vendor recovery partitions, and Dynamic Disks (0x42).
  * ============================================================================ */
 
 #pragma once
@@ -37,15 +27,55 @@
 #define MBR_RESERVED_OFFSET  444
 #define MBR_SIG_OFFSET       510
 
-/* Known partition type IDs */
-#define MBR_TYPE_EMPTY       0x00
-#define MBR_TYPE_EXT_CHS     0x05
-#define MBR_TYPE_FAT32_CHS   0x0B
-#define MBR_TYPE_FAT32_LBA   0x0C
-#define MBR_TYPE_EXT_LBA     0x0F
-#define MBR_TYPE_LINUX       0x83
-#define MBR_TYPE_IXFS        0xDA
-#define MBR_TYPE_GPT         0xEE
+/* ---- Partition Type IDs ----
+ * Comprehensive set for filesystem identification and interoperability. */
+
+/* Basic filesystem types */
+#define MBR_TYPE_EMPTY       0x00  /* Unallocated / empty slot */
+#define MBR_TYPE_FAT12       0x01  /* FAT12 (floppy, small media) */
+#define MBR_TYPE_FAT16_SM    0x04  /* FAT16 ≤32 MB */
+#define MBR_TYPE_EXT_CHS     0x05  /* Extended Partition (CHS) → EBR chain */
+#define MBR_TYPE_FAT16B      0x06  /* FAT16B >32 MB */
+#define MBR_TYPE_NTFS        0x07  /* NTFS / HPFS / exFAT */
+#define MBR_TYPE_FAT32_CHS   0x0B  /* FAT32 (CHS addressing) */
+#define MBR_TYPE_FAT32_LBA   0x0C  /* FAT32 (LBA addressing) */
+#define MBR_TYPE_FAT16_LBA   0x0E  /* FAT16 (LBA addressing) */
+#define MBR_TYPE_EXT_LBA     0x0F  /* Extended Partition (LBA) → EBR chain */
+
+/* Hidden / vendor recovery types (do NOT auto-mount) */
+#define MBR_TYPE_HIDDEN_FAT12     0x11  /* Hidden FAT12 */
+#define MBR_TYPE_HIDDEN_FAT16     0x14  /* Hidden FAT16 */
+#define MBR_TYPE_HIDDEN_FAT32     0x1B  /* Hidden FAT32 */
+#define MBR_TYPE_HIDDEN_FAT32_LBA 0x1C  /* Hidden FAT32 LBA */
+#define MBR_TYPE_WINRE        0x27  /* Windows Recovery Environment */
+
+/* Special Microsoft types */
+#define MBR_TYPE_DYNAMIC      0x42  /* Windows Dynamic Disk (LDM) */
+
+/* Linux types */
+#define MBR_TYPE_LINUX_SWAP   0x82  /* Linux Swap */
+#define MBR_TYPE_LINUX        0x83  /* Linux Native (ext2/3/4) */
+#define MBR_TYPE_LINUX_EXT    0x85  /* Linux Extended (nested) */
+#define MBR_TYPE_LINUX_LVM    0x8E  /* Linux LVM */
+
+/* BSD / Unix types */
+#define MBR_TYPE_FREEBSD      0xA5  /* FreeBSD */
+#define MBR_TYPE_OPENBSD      0xA6  /* OpenBSD */
+#define MBR_TYPE_NETBSD       0xA9  /* NetBSD */
+
+/* macOS / Solaris */
+#define MBR_TYPE_HFS_PLUS     0xAF  /* macOS HFS+ */
+#define MBR_TYPE_SOLARIS      0xBF  /* Solaris / illumos */
+
+/* Impossible OS */
+#define MBR_TYPE_IXFS         0xDA  /* IXFS (Impossible OS native) */
+
+/* Exotic / special */
+#define MBR_TYPE_BEOS         0xEB  /* BeOS / Haiku */
+#define MBR_TYPE_GPT          0xEE  /* GPT Protective MBR → redirect */
+#define MBR_TYPE_EFI_SP       0xEF  /* EFI System Partition (Hybrid MBR) */
+#define MBR_TYPE_VMFS         0xFB  /* VMware VMFS */
+#define MBR_TYPE_LINUX_RAID   0xFD  /* Linux RAID autodetect */
 
 /* CHS address (decoded from 3-byte bit-packed MBR format).
  * The 10-bit cylinder is split across two bytes:
@@ -66,6 +96,8 @@ struct mbr_entry {
     struct mbr_chs chs_start;   /* CHS of first sector */
     struct mbr_chs chs_end;     /* CHS of last sector */
     int            chs_overflow; /* 1 if CHS is FE FF FF or FF FF FF */
+    int            is_extended;  /* 1 if type is 0x05, 0x0F, or 0x85 */
+    int            is_hidden;    /* 1 if type is hidden/recovery/WinRE */
 };
 
 /* Partition scan result (from 512-byte MBR sector) */
@@ -75,14 +107,23 @@ struct mbr_table {
     uint32_t         disk_signature; /* 32-bit Unique Disk Signature (LE) */
     uint16_t         reserved;       /* Reserved field (offsets 444–445) */
     int              boot_count;     /* Number of entries with status 0x80 */
+    int              has_gpt;        /* 1 if any entry is type 0xEE */
     struct mbr_entry parts[MBR_MAX_PARTITIONS];
 };
 
 /* ---- API ---- */
 
 /* Parse MBR from a 512-byte sector buffer.
- * Returns filled mbr_table. Check .valid for signature presence. */
+ * Returns filled mbr_table. Check .valid for signature presence.
+ * If .has_gpt is set, caller should redirect to GPT parser. */
 struct mbr_table mbr_parse(const void *sector0);
 
-/* Return human-readable name for a partition type ID. */
+/* Return human-readable name for a partition type ID.
+ * Returns static string — never returns NULL. */
 const char *mbr_type_name(uint8_t type);
+
+/* Check if a partition type ID is an extended container (0x05/0x0F/0x85). */
+int mbr_type_is_extended(uint8_t type);
+
+/* Check if a partition type ID is hidden/vendor recovery. */
+int mbr_type_is_hidden(uint8_t type);

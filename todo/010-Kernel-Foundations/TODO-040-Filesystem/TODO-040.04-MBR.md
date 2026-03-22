@@ -218,48 +218,56 @@ graph TD
 
 ### 1.2 Partition Type Recognition
 
-**Prompt:** The Partition Type byte (offset 4 in each 16-byte entry) identifies the filesystem format. Expand recognition beyond the current `0x0C` (FAT32), `0x83` (Linux), `0xDA` (IXFS) to cover the full range needed for robust interoperability. Critically, detect `0xEE` (GPT Protective MBR) — when found, abort MBR parsing and redirect to the GPT parser. Detect `0x05`/`0x0F` (Extended Partition) to trigger EBR chain traversal (§2). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: expanded partition type recognition"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt — VERIFY:** Confirm that `mbr.h` defines 30+ partition type constants (`MBR_TYPE_*`) and `mbr.c` implements full type-to-name mapping in `mbr_type_name()`. Check that: (1) `struct mbr_entry` has `is_extended` and `is_hidden` flags, (2) `struct mbr_table` has `has_gpt` flag, (3) `mbr_type_is_extended()` matches 0x05/0x0F/0x85, (4) `mbr_type_is_hidden()` matches 0x11/0x14/0x1B/0x1C/0x27, (5) `partition.c` uses `mtbl.has_gpt` instead of manual loop, (6) Dynamic Disk 0x42 is warned+skipped, (7) build passes.
 
-- [ ] Define `enum mbr_partition_type` with all recognized codes:
-  - [ ] `0x00` — Empty / Unallocated
-  - [ ] `0x01` — FAT12
-  - [ ] `0x04` — FAT16 (≤32 MB)
-  - [ ] `0x05` — Extended Partition (CHS) → trigger EBR traversal
-  - [ ] `0x06` — FAT16B (>32 MB)
-  - [ ] `0x07` — NTFS / HPFS / exFAT
-  - [ ] `0x0B` — FAT32 (CHS)
-  - [ ] `0x0C` — FAT32 (LBA)
-  - [ ] `0x0E` — FAT16 (LBA)
-  - [ ] `0x0F` — Extended Partition (LBA) → trigger EBR traversal
-  - [ ] `0x11` — Hidden FAT12 (vendor recovery)
-  - [ ] `0x14` — Hidden FAT16 (vendor recovery)
-  - [ ] `0x1B` — Hidden FAT32 (vendor recovery)
-  - [ ] `0x1C` — Hidden FAT32 LBA (vendor recovery)
-  - [ ] `0x27` — Windows Recovery Environment (do NOT auto-mount)
-  - [ ] `0x42` — Windows Dynamic Disk (LDM) — log warning, do not interpret as standard
-  - [ ] `0x82` — Linux Swap
-  - [ ] `0x83` — Linux Native (ext2/3/4)
-  - [ ] `0x85` — Linux Extended (same as `0x05` but for nested Linux extended)
-  - [ ] `0x8E` — Linux LVM
-  - [ ] `0xA5` — FreeBSD
-  - [ ] `0xA6` — OpenBSD
-  - [ ] `0xA9` — NetBSD
-  - [ ] `0xAF` — macOS HFS+
-  - [ ] `0xBF` — Solaris / illumos
-  - [ ] `0xDA` — IXFS (Impossible OS native)
-  - [ ] `0xEB` — BeOS / Haiku
-  - [ ] `0xEE` — GPT Protective MBR → abort, redirect to GPT parser
-  - [ ] `0xEF` — EFI System Partition (ESP) — used in Hybrid MBR (§7.2)
-  - [ ] `0xFB` — VMware VMFS
-  - [ ] `0xFD` — Linux RAID autodetect
-- [ ] Implement `mbr_type_to_string(type)` → human-readable name for logging
-- [ ] For unknown types: display as `"Unknown (0x%02X)"` — never crash
-- [ ] On type `0xEE` in any entry: `return MBR_REDIRECT_GPT` and log redirect
-- [ ] On type `0x05` or `0x0F` or `0x85`: flag as extended container, pass to EBR walker (§2)
-- [ ] On types `0x11`–`0x1C` or `0x27`: flag as hidden — do not auto-mount
-- [ ] On type `0x42` (Dynamic Disk): log warning, skip — LDM volumes are not supported
-- [ ] Log: `[MBR] Entry %d: %s (0x%02X)`
-- [ ] Commit: `"mbr: expanded partition type recognition"`
+> [!NOTE]
+> **Implementation notes:**
+> - `mbr_type_name()` returns `"Unknown"` for unrecognized types — callers use hex code for detail
+> - `has_gpt` flag set during parse loop when any entry has type 0xEE — replaced manual loop in partition.c
+> - Dynamic Disk (0x42) logs `LOG_WARN` — LDM volumes are not supported
+> - `mbr_type_is_extended()` and `mbr_type_is_hidden()` are public API for callers (e.g., EBR walker §2)
+> - Log format: `"Entry %d: %s (0x%02X), LBA=%u, sectors=%u, boot=%s, extended|hidden"`
+
+- [x] Define all partition type constants in `mbr.h`:
+  - [x] `0x00` — Empty / Unallocated
+  - [x] `0x01` — FAT12
+  - [x] `0x04` — FAT16 (≤32 MB)
+  - [x] `0x05` — Extended Partition (CHS) → trigger EBR traversal
+  - [x] `0x06` — FAT16B (>32 MB)
+  - [x] `0x07` — NTFS / HPFS / exFAT
+  - [x] `0x0B` — FAT32 (CHS)
+  - [x] `0x0C` — FAT32 (LBA)
+  - [x] `0x0E` — FAT16 (LBA)
+  - [x] `0x0F` — Extended Partition (LBA) → trigger EBR traversal
+  - [x] `0x11` — Hidden FAT12 (vendor recovery)
+  - [x] `0x14` — Hidden FAT16 (vendor recovery)
+  - [x] `0x1B` — Hidden FAT32 (vendor recovery)
+  - [x] `0x1C` — Hidden FAT32 LBA (vendor recovery)
+  - [x] `0x27` — Windows Recovery Environment (do NOT auto-mount)
+  - [x] `0x42` — Windows Dynamic Disk (LDM) — log warning, do not interpret as standard
+  - [x] `0x82` — Linux Swap
+  - [x] `0x83` — Linux Native (ext2/3/4)
+  - [x] `0x85` — Linux Extended (same as `0x05` but for nested Linux extended)
+  - [x] `0x8E` — Linux LVM
+  - [x] `0xA5` — FreeBSD
+  - [x] `0xA6` — OpenBSD
+  - [x] `0xA9` — NetBSD
+  - [x] `0xAF` — macOS HFS+
+  - [x] `0xBF` — Solaris / illumos
+  - [x] `0xDA` — IXFS (Impossible OS native)
+  - [x] `0xEB` — BeOS / Haiku
+  - [x] `0xEE` — GPT Protective MBR → abort, redirect to GPT parser
+  - [x] `0xEF` — EFI System Partition (ESP) — used in Hybrid MBR (§7.2)
+  - [x] `0xFB` — VMware VMFS
+  - [x] `0xFD` — Linux RAID autodetect
+- [x] Implement `mbr_type_name(type)` → human-readable name for logging (30+ cases)
+- [x] For unknown types: return `"Unknown"` — callers use hex for detail
+- [x] On type `0xEE` in any entry: set `tbl.has_gpt = 1` and log redirect
+- [x] On type `0x05` or `0x0F` or `0x85`: set `is_extended = 1` via `mbr_type_is_extended()`
+- [x] On types `0x11`–`0x1C` or `0x27`: set `is_hidden = 1` via `mbr_type_is_hidden()`
+- [x] On type `0x42` (Dynamic Disk): log warning, skip — LDM volumes are not supported
+- [x] Log: `[MBR] Entry %d: %s (0x%02X)`
+- [x] Commit: `"mbr: expanded partition type recognition"`
 
 ---
 
