@@ -49,6 +49,8 @@
 #define AHCI_CAP_NCS_SHIFT  8           /* Number of command slots shift */
 #define AHCI_CAP_NCS_MASK   0x1F00      /* Number of command slots mask */
 #define AHCI_CAP_SCLO       (1U << 24)  /* Supports Command List Override */
+#define AHCI_CAP_SXS        (1U << 5)   /* Supports External SATA (eSATA) */
+#define AHCI_CAP_SMPS       (1U << 28)  /* Supports Mechanical Presence Switch */
 #define AHCI_CAP_SNCQ       (1U << 30)  /* Supports Native Command Queuing */
 
 /* ---- Port registers (offset = 0x100 + port * 0x80) ---- */
@@ -106,6 +108,9 @@
 #define AHCI_PxCMD_FRE      (1U << 4)   /* FIS Receive Enable */
 #define AHCI_PxCMD_FR       (1U << 14)  /* FIS Receive Running */
 #define AHCI_PxCMD_CR       (1U << 15)  /* Command List Running */
+#define AHCI_PxCMD_HPCP     (1U << 18)  /* Hot Plug Capable Port */
+#define AHCI_PxCMD_MPSP     (1U << 19)  /* Mechanical Presence Switch Present */
+#define AHCI_PxCMD_ESP      (1U << 21)  /* External SATA Port */
 
 /* PxTFD bits */
 #define AHCI_PxTFD_ERR      (1U << 0)   /* Error */

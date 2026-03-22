@@ -67,3 +67,9 @@ int atapi_get_configuration(struct ahci_port *p);
 int atapi_dma_command(struct ahci_port *p, const uint8_t *cdb,
                       uint32_t cdb_len, void *buffer, uint32_t buf_len,
                       int direction);
+
+/* ahci_hotplug.c */
+void ahci_hotplug_check(int port_idx);
+void ahci_hotplug_insert(int port_idx);
+void ahci_hotplug_remove(int port_idx);
+void ahci_hotplug_flush_stats(void);

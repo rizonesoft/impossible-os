@@ -260,7 +260,8 @@ static int port_init(struct ahci_port *p, int port_num)
                AHCI_PxIS_DHRS | AHCI_PxIS_PSS | AHCI_PxIS_DSS |
                AHCI_PxIS_SDBS | AHCI_PxIS_TFES |
                AHCI_PxIS_HBFS | AHCI_PxIS_HBDS | AHCI_PxIS_IFS |
-               AHCI_PxIS_INFS | AHCI_PxIS_OFS);
+               AHCI_PxIS_INFS | AHCI_PxIS_OFS |
+               AHCI_PxIS_PCS  | AHCI_PxIS_PRCS);  /* Hot-plug events */
 
     /* Initialize per-port completion event */
     event_init(&p->completion, "ahci_port", EVENT_AUTO_RESET, 0);
@@ -356,6 +357,11 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
         }
 
         event_set(&ports[i].completion);
+
+        /* ---- Hot-plug detection (PCS / PRCS) ---- */
+        if (pxis & (AHCI_PxIS_PCS | AHCI_PxIS_PRCS)) {
+            ahci_hotplug_check(i);
+        }
     }
 
     ahci_write32(abar, AHCI_IS, is);
