@@ -126,7 +126,7 @@ graph TD
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | P6 (§7.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §17.1 ADS Explorer             | GUI Alternate Data Streams viewer — **hidden data transparency** | P5 (§3.4)                            |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ⬜   |
-| 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ⬜   |
+| 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | P8 (§12.4) + P9 (§14.1)              |   ⬜   |
@@ -886,18 +886,27 @@ graph TD
 - [x] Thread-safety: spinlock on bitmap modifications
 - [x] Commit: `"ntfs: cluster allocator"`
 
-### 12.2 Update Sequence Array Regeneration
+### 12.2 Update Sequence Array Regeneration ✅
 
-**Prompt:** When writing MFT records and INDX buffers back to disk, the Update Sequence Array must be regenerated. This is the reverse of §2.2: before writing, save the last 2 bytes of each sector into the USA array, then stamp every sector's last 2 bytes with the USN (Update Sequence Number). Increment the USN on every write. If the USN wraps to 0, skip to 1 (USN 0 is invalid). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: USA write regeneration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that USA write regeneration is correctly implemented: (1) `ntfs_internal.h` has `ntfs_le16_write()` helper. (2) `ntfs_mft.c` has `ntfs_regenerate_fixup(buf, record_size, sector_size)`: reads USA offset/size from header, validates bounds, increments USN (wrap 0→1), writes new USN to usa_array[0], for each sector saves original last-2-bytes to usa_array[i+1] then stamps with new USN. (3) `ntfs.h` declares `ntfs_regenerate_fixup()` with doc comment. (4) Function returns `NTFS_OK` on success, `NTFS_ERR_FIXUP` on bad USA layout. (5) Build passes: `=== BUILD OK ===`.
 
-- [ ] Implement `ntfs_regenerate_fixup(buffer, record_size, sector_size)`:
-  - [ ] Increment USN at `buffer[usa_offset]` (wrap 0 → 1)
-  - [ ] For each sector `i` (0-based):
-    - [ ] Save original last 2 bytes: `usa_array[i + 1] = buffer[sector_size * (i + 1) - 2]`
-    - [ ] Stamp last 2 bytes with new USN: `buffer[sector_size * (i + 1) - 2] = usn`
-  - [ ] Record is now safe to write to disk
-- [ ] Apply to both `"FILE"` and `"INDX"` record writes
-- [ ] Commit: `"ntfs: USA write regeneration"`
+> [!NOTE]
+> **Implementation Notes:**
+> - Exact mirror image of `ntfs_apply_fixup()` — same validation checks (usa_offset bounds, usa_size_words == num_sectors + 1)
+> - USN wraps 0 → 1 since USN 0 is invalid in NTFS (used as "never written" sentinel)
+> - USA entry offset computed as `usa_offset + 2 + i * 2` — the +2 skips over the USN word itself
+> - Sector last-2-bytes are raw bytes, saved before stamping to preserve content
+> - `ntfs_le16_write()` added to `ntfs_internal.h` alongside existing `ntfs_le16()` — ensures correct LE byte order
+> - Function applies identically to FILE (1024-byte, 2 sectors) and INDX (4096-byte, 8 sectors) records
+
+- [x] Implement `ntfs_regenerate_fixup(buffer, record_size, sector_size)`:
+  - [x] Increment USN at `buffer[usa_offset]` (wrap 0 → 1)
+  - [x] For each sector `i` (0-based):
+    - [x] Save original last 2 bytes: `usa_array[i + 1] = buffer[sector_size * (i + 1) - 2]`
+    - [x] Stamp last 2 bytes with new USN: `buffer[sector_size * (i + 1) - 2] = usn`
+  - [x] Record is now safe to write to disk
+- [x] Apply to both `"FILE"` and `"INDX"` record writes
+- [x] Commit: `"ntfs: USA write regeneration"`
 
 ### 12.3 MFT Record Allocator
 
