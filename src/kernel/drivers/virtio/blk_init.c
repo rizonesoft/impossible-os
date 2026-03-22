@@ -299,6 +299,16 @@ int virtio_blk_init(void)
         uint32_t feat_hi = read_device_features(1);
         uint32_t driver_feat_hi = 1;  /* Bit 0 = VIRTIO_F_VERSION_1 */
 
+        /* F_RING_PACKED is bit 34 = page 1 bit 2.
+         * Replaces split VQ's 3 separate rings with a single unified ring.
+         * Mutually exclusive with split virtqueue. */
+        if (feat_hi & (1u << (VIRTIO_F_RING_PACKED - 32))) {
+            driver_feat_hi |= (1u << (VIRTIO_F_RING_PACKED - 32));
+            has_packed = 1;
+            klog(LOG_DEBUG, "virtio",
+                   "Negotiated F_RING_PACKED (unified ring)");
+        }
+
         /* F_IN_ORDER is bit 35 = page 1 bit 3.
          * When negotiated, the device guarantees it processes and returns
          * descriptors in strict submission order.  This eliminates the
@@ -907,6 +917,18 @@ int virtio_blk_init(void)
     /* ---- Inline Encryption Init ---- */
     crypto_init();
     crypto_expose_registry();
+
+    /* ---- Packed Virtqueue Init ---- */
+    if (has_packed) {
+        if (packed_vq_init(&blk_dev, 0) == 0) {
+            klog(LOG_DEBUG, "virtio",
+                   "PackedVQ: active — using unified ring for queue 0");
+        } else {
+            has_packed = 0;  /* Fall back to split VQ */
+            klog(LOG_DEBUG, "virtio",
+                   "PackedVQ: init failed, falling back to split VQ");
+        }
+    }
 
     return 0;
 }

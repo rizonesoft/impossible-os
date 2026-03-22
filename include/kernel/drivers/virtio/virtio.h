@@ -87,6 +87,7 @@ struct msix_table_entry {
 
 /* ---- VirtIO transport feature bits ---- */
 #define VIRTIO_F_IN_ORDER          35    /* Device uses buffers in order (§2.7.7) */
+#define VIRTIO_F_RING_PACKED       34    /* Packed virtqueue format (§2.7) */
 #define VIRTIO_F_NOTIFICATION_DATA 38    /* Notification carries extra data (§2.7.25) */
 #define VIRTIO_F_RING_RESET        40    /* Per-queue reset (VirtIO 1.2+) */
 
@@ -133,6 +134,29 @@ struct virtq_used {
     uint16_t flags;
     uint16_t idx;       /* Next index the device will write to */
     struct virtq_used_elem ring[];
+} __attribute__((packed));
+
+/* ---- Packed Virtqueue structures (VirtIO 1.1 §2.7) ---- */
+
+/* Packed descriptor flags */
+#define PVIRTQ_DESC_F_NEXT      0x01  /* Continues via next descriptor */
+#define PVIRTQ_DESC_F_WRITE     0x02  /* Device writes (vs reads) */
+#define PVIRTQ_DESC_F_INDIRECT  0x04  /* Indirect descriptor table */
+#define PVIRTQ_DESC_F_AVAIL     (1u << 7)   /* Availability bit */
+#define PVIRTQ_DESC_F_USED      (1u << 15)  /* Used bit */
+
+/* Packed descriptor (16 bytes each, single unified ring) */
+struct pvirtq_desc {
+    uint64_t addr;     /* Physical address of the buffer */
+    uint32_t len;      /* Length of the buffer */
+    uint16_t id;       /* Descriptor ID (buffer identifier) */
+    uint16_t flags;    /* PVIRTQ_DESC_F_* with AVAIL/USED bits */
+} __attribute__((packed));
+
+/* Packed event suppression structure (replaces avail/used ring flags) */
+struct pvirtq_event_suppress {
+    uint16_t desc;     /* Descriptor ring change event offset */
+    uint16_t flags;    /* 0=enable, 1=disable, 2=desc-triggered */
 } __attribute__((packed));
 
 /* ---- VirtIO PCI modern device state ---- */

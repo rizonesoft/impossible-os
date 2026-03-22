@@ -56,6 +56,7 @@ BLK_GLOBAL int has_seg_max;
 BLK_GLOBAL int has_discard;
 BLK_GLOBAL int has_fua;          /* F_FUA negotiated: per-request FUA */
 BLK_GLOBAL int has_inline_crypto; /* F_INLINE_CRYPTO negotiated */
+BLK_GLOBAL int has_packed;        /* F_RING_PACKED negotiated */
 BLK_GLOBAL int has_write_zeroes;
 BLK_GLOBAL int has_lifetime;
 BLK_GLOBAL int has_ring_reset;
@@ -265,3 +266,13 @@ int      crypto_slot_active(uint32_t slot);
 uint32_t crypto_slot_algorithm(uint32_t slot);
 int      crypto_is_available(void);
 void     crypto_expose_registry(void);
+
+/* ---- Packed VQ (defined in blk_packed.c) ---- */
+int  packed_vq_init(struct virtio_pci_dev *pdev, uint16_t queue_idx);
+int  packed_vq_submit(struct virtio_blk_req *header, void *data,
+                      uint32_t data_len, int is_write, uint8_t *status_ptr);
+void packed_vq_kick(void);
+int  packed_vq_poll_completion(void);
+int  packed_vq_do_io(uint32_t type, uint64_t sector,
+                     uint32_t data_len, void *buffer);
+int  packed_vq_is_active(void);
