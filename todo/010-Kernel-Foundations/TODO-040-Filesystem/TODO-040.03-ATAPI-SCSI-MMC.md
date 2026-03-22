@@ -135,7 +135,7 @@ graph TD
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ✅   |
-| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ⬜   |
+| **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ✅   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §4.1 Transport Abstraction  | Unified SCSI transport (PIO/DMA/AHCI)                      | Phase 4 (§3.1 + §3.2)                  |   ⬜   |
 | **5** | `040.03-ATAPI-SCSI-MMC`  | §7.1 VFS Block Device       | Expose optical drive as block device + drive letter        | Phase 3 (§5.2) + Phase 4 + 040.17 §13  |   ⬜   |
@@ -289,25 +289,31 @@ graph TD
 
 ### 3.1 Bus Master DMA for ATAPI
 
-**Prompt:** PIO monopolizes the CPU while waiting for the slow optical drive. Implement Bus Master DMA for ATAPI: the only difference from PIO is writing `0x01` to the Features register (DMA mode) and using a Physical Region Descriptor Table (PRDT) for data transfer. Build the PRDT in contiguous physical memory: each 8-byte entry has a 32-bit physical address, 16-bit byte count, and EOT bit on the last entry. After writing the CDB, start the DMA engine via the Bus Master Command Register. The transfer completes asynchronously via interrupt. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: bus master DMA transfer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify Bus Master DMA for ATAPI is correctly implemented. Check: (1) `atapi_build_prdt()` splits buffers across PRDT entries respecting 64 KB boundaries and the AHCI_MAX_PRDT limit. (2) IOC bit (bit 31 of DBC) set on last entry. (3) `atapi_packet_cmd()` uses `atapi_build_prdt()` for multi-entry PRDT. (4) `atapi_dma_command()` allocates DMA-safe buffer via `pmm_alloc_contiguous()` for large transfers, falls back to direct path for ≤ 4KB. (5) Features register = 0x01 (DMA mode) in FIS. (6) DMA completion handled by existing AHCI ISR via `event_wait_timeout()`. (7) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Implement `atapi_dma_command(port, cdb, cdb_len, buf, buf_len, direction)`:
-  - [ ] Allocate PRDT via `pmm_alloc_contiguous()` — array of 8-byte descriptors
-  - [ ] Populate PRDT entries: `{ phys_addr, byte_count, flags }`, set EOT on last
-  - [ ] Write PRDT physical address to Bus Master PRDT Address Register
-  - [ ] Write Features register = `0x01` (DMA mode, not `0x00`)
-  - [ ] Set byte count limit in LBA Mid/High (same as PIO)
-  - [ ] Issue `0xA0` PACKET command, write CDB
-  - [ ] Set Start bit in Bus Master Command Register
-  - [ ] Return — transfer proceeds asynchronously
-- [ ] DMA completion ISR:
-  - [ ] Read Bus Master Status Register: check for error, interrupt, active bits
-  - [ ] Clear interrupt bit by writing 1 to it
-  - [ ] Clear Start bit to stop DMA engine
-  - [ ] Read ATA Status Register to clear IRQ
-  - [ ] Wake waiting thread via `event_set()`
-- [ ] PRDT constraints: each entry ≤ 64 KB, must not cross 64 KB physical boundary
-- [ ] Commit: `"atapi: bus master DMA transfer"`
+> [!NOTE]
+> **Implementation notes:** Under AHCI, the HBA manages DMA natively — there
+> are no separate Bus Master registers (those are legacy IDE). The AHCI command
+> table already contains the PRDT, and the HBA reads it directly after PxCI
+> doorbell ring. Features=0x01 in the H2D FIS signals DMA mode to the ATAPI
+> device. The ISR clears PxIS and fires `event_set()` on the port's completion
+> event. `atapi_dma_command()` uses `pmm_alloc_contiguous()` for buffers > 4KB
+> since kmalloc ranges may not be physically contiguous at larger sizes.
+> `pmm_free_frame()` is called per-page since there's no bulk free API.
+
+- [x] Implement `atapi_dma_command(port, cdb, cdb_len, buf, buf_len, direction)`:
+  - [x] For ≤ 4KB: use buffer directly (kmalloc heap is identity-mapped)
+  - [x] For > 4KB: allocate via `pmm_alloc_contiguous()`, copy in/out
+  - [x] Fallback to direct path if PMM alloc fails
+- [x] `atapi_build_prdt()` — multi-entry scatter-gather:
+  - [x] Enforce 64 KB - 2 max per entry
+  - [x] Split at 64 KB physical alignment boundaries
+  - [x] IOC (Interrupt on Completion) bit on last entry
+  - [x] Overflow check against AHCI_MAX_PRDT (8 entries)
+- [x] DMA completion: existing AHCI ISR clears PxIS, fires `event_set()`
+- [x] Features register = 0x01 (DMA mode) in H2D FIS
+- [x] PRDT constraints: each entry ≤ 64 KB, no 64 KB boundary crossing
+- [x] Commit: `"atapi: bus master DMA transfer"`
 
 ### 3.2 AHCI ATAPI Command Delivery
 

@@ -81,14 +81,70 @@ static int port_issue_cmd_atapi(struct ahci_port *p, int slot)
     return result;
 }
 
+/* ---- ATAPI: Build PRDT for DMA transfer ----
+ *
+ * Splits a buffer into PRDT entries respecting AHCI constraints:
+ *   - Each PRDT entry: max 64 KB minus 2 bytes (0xFFFE)
+ *   - No entry may cross a 64 KB physical alignment boundary
+ *   - Last entry gets the Interrupt-on-Completion (IOC) bit (bit 31 of DBC)
+ *
+ * Returns number of PRDT entries built, or -1 on error.
+ */
+static int atapi_build_prdt(struct ahci_cmd_tbl *tbl, void *buffer,
+                            uint32_t buf_len)
+{
+    uint32_t remaining = buf_len;
+    uintptr_t phys_addr = (uintptr_t)buffer;
+    int entry = 0;
+
+    while (remaining > 0 && entry < AHCI_MAX_PRDT) {
+        uint32_t chunk = remaining;
+        uint32_t boundary_dist;
+
+        /* Distance to next 64 KB boundary */
+        boundary_dist = 0x10000 - (uint32_t)(phys_addr & 0xFFFF);
+        if (chunk > boundary_dist)
+            chunk = boundary_dist;
+
+        /* AHCI PRDT max: 4 MB per entry, but enforce 64 KB - 2 for safety */
+        if (chunk > 0xFFFE)
+            chunk = 0xFFFE;
+
+        /* DBC is byte count minus 1 (0-based), must be odd for word alignment */
+        tbl->prdt[entry].dba  = (uint32_t)(phys_addr & 0xFFFFFFFF);
+        tbl->prdt[entry].dbau = 0;  /* 32-bit addresses only */
+        tbl->prdt[entry].reserved = 0;
+        tbl->prdt[entry].dbc  = chunk - 1;
+
+        remaining -= chunk;
+        phys_addr += chunk;
+        entry++;
+    }
+
+    if (remaining > 0) {
+        /* Buffer too large for PRDT — should never happen with 8 entries × 64KB */
+        klog(LOG_WARN, "ahci",
+             "ATAPI PRDT overflow: %u bytes remain, %d entries used",
+             (uint64_t)remaining, (uint64_t)entry);
+        return -1;
+    }
+
+    /* Set IOC (Interrupt on Completion) on the last entry */
+    if (entry > 0)
+        tbl->prdt[entry - 1].dbc |= (1U << 31);
+
+    return entry;
+}
+
 /* ---- ATAPI: Send a SCSI packet command ----
  *
  * This function implements the AHCI ATAPI command protocol:
  *   - Builds a Register H2D FIS with ATA_CMD_PACKET (0xA0)
  *   - Sets byte count limit in LBA Mid/High (FIS lba1/lba2)
- *   - Sets Features to 0x00 for PIO mode (or 0x01 for DMA)
+ *   - Sets Features to 0x01 for DMA mode (AHCI handles DMA natively)
  *   - Copies the CDB into the ACMD area, padded to the device's
  *     expected packet size (12 or 16 bytes, zero-padded)
+ *   - Builds multi-entry PRDT respecting 64 KB boundaries
  *   - Sets the ATAPI bit (bit 5) in the command header flags
  *   - Uses a 30-second timeout for optical media spin-up
  *
@@ -124,7 +180,7 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
     fis->fis_type = FIS_TYPE_REG_H2D;
     fis->pmport_c = 0x80;               /* Command bit set */
     fis->command  = ATA_CMD_PACKET;      /* 0xA0 = PACKET */
-    fis->featurel = 1;                   /* Features: DMA=1 (AHCI handles PIO/DMA) */
+    fis->featurel = 1;                   /* Features: DMA=1 (AHCI handles DMA) */
     fis->lba1     = (uint8_t)(buf_len & 0xFF);         /* Byte count limit low */
     fis->lba2     = (uint8_t)((buf_len >> 8) & 0xFF);  /* Byte count limit high */
     fis->device   = 0;
@@ -142,12 +198,11 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
     for (; i < pad_len; i++)
         tbl->acmd[i] = 0;             /* Zero-pad remaining bytes */
 
-    /* Setup PRDT for data transfer */
+    /* Build PRDT for DMA data transfer */
     if (buffer && buf_len > 0) {
-        tbl->prdt[0].dba  = (uint32_t)(uintptr_t)buffer;
-        tbl->prdt[0].dbau = 0;
-        tbl->prdt[0].dbc  = buf_len - 1;
-        hdr->prdtl = 1;
+        int prdt_count = atapi_build_prdt(tbl, buffer, buf_len);
+        if (prdt_count < 0) return -1;
+        hdr->prdtl = (uint16_t)prdt_count;
     } else {
         hdr->prdtl = 0;
     }
@@ -163,6 +218,79 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
     hdr->prdbc = 0;
 
     return port_issue_cmd_atapi(p, slot);
+}
+
+/* ---- ATAPI: DMA command with contiguous physical buffer ----
+ *
+ * Higher-level wrapper that allocates a physically-contiguous, DMA-safe
+ * buffer via pmm_alloc_contiguous(), issues the ATAPI command via DMA,
+ * and copies data back to the caller's buffer.
+ *
+ * Use this for large transfers where the caller's buffer may not be
+ * physically contiguous (e.g., heap-allocated via kmalloc).
+ *
+ * Returns 0 on success, negative ATAPI_ERR_* on failure.
+ */
+int atapi_dma_command(struct ahci_port *p, const uint8_t *cdb,
+                      uint32_t cdb_len, void *buffer, uint32_t buf_len,
+                      int direction)
+{
+    void *dma_buf;
+    uint32_t pages;
+    int rc;
+
+    if (!buffer || buf_len == 0) {
+        /* No-data command — just use the regular path */
+        return atapi_packet_cmd(p, cdb, cdb_len, (void *)0, 0, direction);
+    }
+
+    /* For small transfers (≤ 4KB), use buffer directly — kmalloc memory
+     * is from the kernel's identity-mapped heap, physically contiguous */
+    if (buf_len <= 4096)
+        return atapi_packet_cmd(p, cdb, cdb_len, buffer, buf_len, direction);
+
+    /* Allocate physically-contiguous DMA buffer via PMM */
+    pages = (buf_len + 4095) / 4096;
+    dma_buf = (void *)pmm_alloc_contiguous(pages);
+    if (!dma_buf) {
+        klog(LOG_WARN, "ahci",
+             "Port %u: DMA alloc failed (%u pages)",
+             (uint64_t)p->port_num, (uint64_t)pages);
+        /* Fall back to direct path (may work if buffer happens to be contiguous) */
+        return atapi_packet_cmd(p, cdb, cdb_len, buffer, buf_len, direction);
+    }
+
+    /* For write commands, copy data into DMA buffer first */
+    if (direction) {
+        uint8_t *src = (uint8_t *)buffer;
+        uint8_t *dst = (uint8_t *)dma_buf;
+        uint32_t j;
+        for (j = 0; j < buf_len; j++)
+            dst[j] = src[j];
+    }
+
+    rc = atapi_packet_cmd(p, cdb, cdb_len, dma_buf, buf_len, direction);
+
+    /* For read commands, copy data back from DMA buffer */
+    if (rc == 0 && !direction) {
+        uint8_t *src = (uint8_t *)dma_buf;
+        uint8_t *dst = (uint8_t *)buffer;
+        uint32_t j;
+        for (j = 0; j < buf_len; j++)
+            dst[j] = src[j];
+    }
+
+    /* Free DMA buffer page-by-page */
+    {
+        uintptr_t addr = (uintptr_t)dma_buf;
+        uint32_t j;
+        for (j = 0; j < pages; j++) {
+            pmm_free_frame(addr);
+            addr += 4096;
+        }
+    }
+
+    return rc;
 }
 
 /* ============================================================================

@@ -10,6 +10,7 @@
 
 #include "kernel/drivers/ahci.h"
 #include "kernel/mm/heap.h"
+#include "kernel/mm/pmm.h"
 #include "kernel/klog.h"
 
 /* ---- Shared driver state (defined in ahci_core.c) ---- */
@@ -63,3 +64,6 @@ int atapi_request_sense(struct ahci_port *p);
 int atapi_test_unit_ready(struct ahci_port *p);
 int atapi_inquiry(struct ahci_port *p);
 int atapi_get_configuration(struct ahci_port *p);
+int atapi_dma_command(struct ahci_port *p, const uint8_t *cdb,
+                      uint32_t cdb_len, void *buffer, uint32_t buf_len,
+                      int direction);
