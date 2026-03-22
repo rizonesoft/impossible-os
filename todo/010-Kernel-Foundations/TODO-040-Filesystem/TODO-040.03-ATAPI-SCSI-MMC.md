@@ -132,7 +132,7 @@ graph TD
 | **1** | `040.03-ATAPI-SCSI-MMC`  | §1.2 IDENTIFY PACKET        | Parse device capabilities, model name, DMA modes           | Phase 1 (§1.1)                         |   ✅   |
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ✅   |
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ✅   |
-| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ⬜   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ⬜   |
@@ -403,33 +403,36 @@ graph TD
 
 ### 5.2 READ CAPACITY & READ (10)
 
-**Prompt:** READ CAPACITY (`0x25`) returns the last LBA and block size (typically 2048 for data CDs). Both fields are 32-bit Big-Endian — they MUST be byte-swapped on x86. Total capacity = `(Last_LBA + 1) × Block_Size`. READ (10) (`0x28`) reads data blocks. The transfer length field is block count, not byte count. For a 2048-byte-sector CD, reading 512 blocks reads 1 MB. LBA and transfer length are Big-Endian in the CDB. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: READ CAPACITY and READ(10)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify READ CAPACITY and READ commands are correctly implemented. Check: (1) `atapi_read_capacity()` byte-swaps 8-byte Big-Endian response, validates block_size (2048/2352/512), logs capacity in MB, issues REQUEST SENSE on failure. (2) `atapi_do_read()` delegates to `atapi_do_read12()` for >65535 blocks, issues REQUEST SENSE on failure. (3) `atapi_do_read12()` uses CDB 0xA8 with 32-bit transfer length, chunks at 65535 blocks. (4) `SCSI_READ_12` constant in `ahci.h`. (5) `atapi_do_read12()` declared in `ahci_internal.h`. (6) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
-> **Existing code:** `atapi_read_capacity()` in `ahci.c` (line 489) and
-> `atapi_do_read()` (line 522) already implement these commands with correct
-> Big-Endian byte-swapping. This section formalizes and adds READ(12) for
-> large media (>2 TB optical) and proper error handling on capacity queries.
+> **Implementation notes:** READ CAPACITY response is always Big-Endian on
+> wire — manual byte-swap is required on x86 (no `__builtin_bswap32` in
+> freestanding). Buffer allocated via `kmalloc(8)` — small, freed after parsing.
+> `atapi_do_read()` automatically delegates to `atapi_do_read12()` for large
+> transfers, which chunks at 65535 blocks to keep individual DMA transfers
+> manageable. All read failures now go through `atapi_request_sense()` for
+> proper SCSI error classification.
 
-- [ ] Implement `atapi_read_capacity(dev, *last_lba, *block_size)`:
-  - [ ] CDB: `{ 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }`
-  - [ ] Read 8-byte response
-  - [ ] Byte-swap bytes 0–3 → `last_lba` (Big-Endian to Little-Endian)
-  - [ ] Byte-swap bytes 4–7 → `block_size`
-  - [ ] Validate: `block_size` should be 2048 (data CD/DVD) or 2352 (raw)
-  - [ ] Compute: `capacity = (last_lba + 1) * block_size`
-  - [ ] Store in `dev->capacity`, `dev->block_size`
-- [ ] Implement `atapi_read(dev, lba, block_count, buf)`:
-  - [ ] CDB: `{ 0x28, 0x00, LBA[3], LBA[2], LBA[1], LBA[0], 0x00, Len[1], Len[0], 0x00, 0x00, 0x00 }`
-  - [ ] LBA and Len encoded Big-Endian in CDB
-  - [ ] Buffer size = `block_count * dev->block_size`
-  - [ ] For requests > 65535 blocks: split into multiple READ(10) commands
-  - [ ] Allocate read buffer via `pmm_alloc_contiguous()` for DMA
-- [ ] Implement `atapi_read12(dev, lba, block_count, buf)`:
-  - [ ] CDB: `{ 0xA8, 0x00, LBA[3..0], Len[3..0], 0x00, 0x00 }`
-  - [ ] For transfer lengths > 65535 blocks (exceeds READ(10) 16-bit field)
-- [ ] Log: `[ATAPI] Capacity: %u MB (%u blocks × %u bytes)`
-- [ ] Commit: `"atapi: READ CAPACITY and READ(10)"`
+- [x] Implement `atapi_read_capacity(port)`:
+  - [x] CDB: `{ 0x25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }`
+  - [x] Read 8-byte response
+  - [x] Byte-swap bytes 0–3 → `last_lba` (Big-Endian to Little-Endian)
+  - [x] Byte-swap bytes 4–7 → `block_size`
+  - [x] Validate: `block_size` must be 2048, 2352, or 512 (warn otherwise)
+  - [x] Compute: `capacity = (last_lba + 1) * block_size`
+  - [x] Store in `p->sectors`, `p->sector_size`
+- [x] Implement `atapi_do_read(port, lba, count, buf)`:
+  - [x] CDB: `{ 0x28, 0x00, LBA[3..0], 0x00, Len[1], Len[0], 0x00, 0x00, 0x00 }`
+  - [x] LBA and Len encoded Big-Endian in CDB
+  - [x] Buffer size = `count * sector_size`
+  - [x] For requests > 65535 blocks: delegates to `atapi_do_read12()`
+  - [x] REQUEST SENSE on failure for error classification
+- [x] Implement `atapi_do_read12(port, lba, count, buf)`:
+  - [x] CDB: `{ 0xA8, 0x00, LBA[3..0], Len[3..0], 0x00, 0x00 }`
+  - [x] Chunks at 65535 blocks per DMA transfer
+- [x] Log: `ATAPI port %u: %u MB (%u blocks x %u bytes)`
+- [x] Commit: `"atapi: READ CAPACITY and READ(10)"`
 
 ### 5.3 Media Control Commands
 

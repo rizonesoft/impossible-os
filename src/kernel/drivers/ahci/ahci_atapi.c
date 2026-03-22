@@ -463,14 +463,20 @@ int atapi_do_identify(struct ahci_port *p)
     return 0;
 }
 
-/* ---- ATAPI: READ CAPACITY (10) ---- */
+/* ---- ATAPI: READ CAPACITY (10) ----
+ *
+ * Returns 8 bytes Big-Endian: Last LBA (4 bytes) + Block Size (4 bytes).
+ * Both fields MUST be byte-swapped on x86 (Little-Endian).
+ * Typical block sizes: 2048 (data CD/DVD), 2352 (raw audio), 512 (rare).
+ */
 int atapi_read_capacity(struct ahci_port *p)
 {
     uint8_t cdb[12];
-    uint32_t *resp;
+    uint8_t *resp;
     uint32_t last_lba, block_size;
+    uint64_t capacity_mb;
 
-    resp = (uint32_t *)kmalloc(8);
+    resp = (uint8_t *)kmalloc(8);
     if (!resp) return -1;
     ahci_memset(resp, 0, 8);
     ahci_memset(cdb, 0, 12);
@@ -478,30 +484,70 @@ int atapi_read_capacity(struct ahci_port *p)
     cdb[0] = SCSI_READ_CAPACITY;
 
     if (atapi_packet_cmd(p, cdb, 10, resp, 8, 0) != 0) {
-        return -1;
+        /* Command failed — issue REQUEST SENSE for details */
+        int sense_err = atapi_request_sense(p);
+        kfree(resp);
+        if (sense_err == ATAPI_ERR_NOMEDIUM)
+            klog(LOG_DEBUG, "ahci",
+                 "Port %u: READ CAPACITY — no medium", (uint64_t)p->port_num);
+        return sense_err < 0 ? sense_err : -1;
     }
 
-    {
-        uint8_t *r = (uint8_t *)resp;
-        last_lba   = ((uint32_t)r[0] << 24) | ((uint32_t)r[1] << 16)
-                   | ((uint32_t)r[2] << 8)  | (uint32_t)r[3];
-        block_size = ((uint32_t)r[4] << 24) | ((uint32_t)r[5] << 16)
-                   | ((uint32_t)r[6] << 8)  | (uint32_t)r[7];
+    /* Big-Endian to Little-Endian byte-swap */
+    last_lba   = ((uint32_t)resp[0] << 24) | ((uint32_t)resp[1] << 16)
+               | ((uint32_t)resp[2] << 8)  | (uint32_t)resp[3];
+    block_size = ((uint32_t)resp[4] << 24) | ((uint32_t)resp[5] << 16)
+               | ((uint32_t)resp[6] << 8)  | (uint32_t)resp[7];
+
+    kfree(resp);
+
+    /* Validate block size */
+    if (block_size == 0) {
+        klog(LOG_WARN, "ahci",
+             "Port %u: READ CAPACITY returned block_size=0, defaulting to 2048",
+             (uint64_t)p->port_num);
+        block_size = 2048;
+    } else if (block_size != 2048 && block_size != 2352 && block_size != 512) {
+        klog(LOG_DEBUG, "ahci",
+             "Port %u: unusual block_size=%u (expected 2048/2352/512)",
+             (uint64_t)p->port_num, (uint64_t)block_size);
     }
 
     p->sectors     = (uint64_t)last_lba + 1;
-    p->sector_size = block_size ? block_size : 2048;
+    p->sector_size = block_size;
+
+    /* Log capacity */
+    capacity_mb = (p->sectors * (uint64_t)block_size) / (1024 * 1024);
+    klog(LOG_INFO, "ahci",
+         "ATAPI port %u: %u MB (%u blocks x %u bytes)",
+         (uint64_t)p->port_num, capacity_mb,
+         (uint64_t)p->sectors, (uint64_t)block_size);
 
     return 0;
 }
 
-/* ---- ATAPI: READ (10) ---- */
+/* ---- ATAPI: READ (10) ----
+ *
+ * CDB format: { 0x28, flags, LBA[3], LBA[2], LBA[1], LBA[0],
+ *               group, Len[1], Len[0], control, 0, 0 }
+ * LBA and transfer length are Big-Endian in the CDB.
+ * Transfer length is in BLOCKS (not bytes).
+ * Maximum 65535 blocks per READ(10) (16-bit field).
+ */
 int atapi_do_read(struct ahci_port *p, uint64_t lba, uint32_t count,
                   void *buffer)
 {
     uint8_t cdb[12];
-    uint32_t byte_count = count * p->sector_size;
-    uint32_t lba32 = (uint32_t)lba;
+    uint32_t byte_count;
+    uint32_t lba32;
+    int rc;
+
+    /* For >65535 blocks, use READ(12) which has a 32-bit transfer length */
+    if (count > 65535)
+        return atapi_do_read12(p, lba, count, buffer);
+
+    byte_count = count * p->sector_size;
+    lba32 = (uint32_t)lba;
 
     ahci_memset(cdb, 0, 12);
     cdb[0] = SCSI_READ_10;
@@ -512,7 +558,65 @@ int atapi_do_read(struct ahci_port *p, uint64_t lba, uint32_t count,
     cdb[7] = (uint8_t)((count >> 8) & 0xFF);
     cdb[8] = (uint8_t)(count & 0xFF);
 
-    return atapi_packet_cmd(p, cdb, 10, buffer, byte_count, 0);
+    rc = atapi_packet_cmd(p, cdb, 10, buffer, byte_count, 0);
+    if (rc != 0) {
+        /* Command failed — issue REQUEST SENSE for error classification */
+        return atapi_request_sense(p);
+    }
+
+    return 0;
+}
+
+/* ---- ATAPI: READ (12) ----
+ *
+ * CDB format: { 0xA8, flags, LBA[3], LBA[2], LBA[1], LBA[0],
+ *               Len[3], Len[2], Len[1], Len[0], 0, control }
+ * For transfer lengths exceeding READ(10)'s 16-bit (65535 block) limit.
+ * Splits into multiple READ(12) commands at 65535-block chunks to
+ * avoid oversized single DMA transfers.
+ */
+int atapi_do_read12(struct ahci_port *p, uint64_t lba, uint32_t count,
+                    void *buffer)
+{
+    uint32_t remaining = count;
+    uint64_t cur_lba = lba;
+    uint8_t *dst = (uint8_t *)buffer;
+
+    while (remaining > 0) {
+        uint8_t cdb[12];
+        uint32_t chunk = remaining;
+        uint32_t byte_count;
+        uint32_t lba32;
+        int rc;
+
+        /* Cap each transfer to 65535 blocks to keep DMA manageable */
+        if (chunk > 65535)
+            chunk = 65535;
+
+        byte_count = chunk * p->sector_size;
+        lba32 = (uint32_t)cur_lba;
+
+        ahci_memset(cdb, 0, 12);
+        cdb[0]  = SCSI_READ_12;
+        cdb[2]  = (uint8_t)((lba32 >> 24) & 0xFF);
+        cdb[3]  = (uint8_t)((lba32 >> 16) & 0xFF);
+        cdb[4]  = (uint8_t)((lba32 >> 8) & 0xFF);
+        cdb[5]  = (uint8_t)(lba32 & 0xFF);
+        cdb[6]  = (uint8_t)((chunk >> 24) & 0xFF);
+        cdb[7]  = (uint8_t)((chunk >> 16) & 0xFF);
+        cdb[8]  = (uint8_t)((chunk >> 8) & 0xFF);
+        cdb[9]  = (uint8_t)(chunk & 0xFF);
+
+        rc = atapi_packet_cmd(p, cdb, 12, dst, byte_count, 0);
+        if (rc != 0)
+            return atapi_request_sense(p);
+
+        remaining -= chunk;
+        cur_lba   += chunk;
+        dst       += byte_count;
+    }
+
+    return 0;
 }
 
 /* ---- ATAPI public API ---- */

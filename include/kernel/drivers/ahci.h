@@ -149,6 +149,7 @@
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY    0x25   /* READ CAPACITY (10) */
 #define SCSI_READ_10          0x28   /* READ (10) */
+#define SCSI_READ_12          0xA8   /* READ (12) — for >65535 block transfers */
 
 /* ---- SCSI Sense Keys ---- */
 #define SCSI_SK_NO_SENSE        0x00
