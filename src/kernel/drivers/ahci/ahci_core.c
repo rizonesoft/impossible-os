@@ -645,38 +645,140 @@ int ahci_init(void)
 
     num_ports_total = num_drives + num_atapi;
 
-    /* ---- Set up interrupt-driven I/O ---- */
+    /* ---- Set up interrupt-driven I/O (MSI preferred, INTx fallback) ---- */
     {
-        uint8_t pci_irq_line = pci_read8(ahci_pci_bus, ahci_pci_slot,
-                                          ahci_pci_func, 0x3C);
+        int irq_ok = 0;
 
-        if (pci_irq_line != 0 && pci_irq_line != 0xFF &&
-            ioapic_available()) {
-            ahci_irq_vector = irq_alloc_vector();
-            if (ahci_irq_vector) {
-                irq_register(ahci_irq_vector, ahci_irq_handler,
-                             NULL, "ahci");
+        /* --- Try MSI first ---
+         * Walk PCI Capabilities List searching for MSI (Cap ID 0x05).
+         * PCI Status bit 4 indicates capabilities list is present.
+         * First capability pointer is at config offset 0x34.
+         * Each capability: byte 0 = Cap ID, byte 1 = next pointer. */
+        {
+            uint16_t pci_status = pci_read16(ahci_pci_bus, ahci_pci_slot,
+                                              ahci_pci_func, PCI_STATUS);
+            if (pci_status & (1U << 4)) {
+                /* Capabilities list present */
+                uint8_t cap_off = pci_read8(ahci_pci_bus, ahci_pci_slot,
+                                             ahci_pci_func, 0x34) & 0xFC;
 
-                ioapic_route_irq(pci_irq_line, ahci_irq_vector,
-                                 0, 0x0F);
+                while (cap_off >= 0x40) {
+                    uint8_t cap_id = pci_read8(ahci_pci_bus, ahci_pci_slot,
+                                               ahci_pci_func, cap_off);
 
-                ghc = ahci_read32(abar, AHCI_GHC);
-                ghc |= AHCI_GHC_IE;
-                ahci_write32(abar, AHCI_GHC, ghc);
+                    if (cap_id == 0x05) {
+                        /* Found MSI capability */
+                        uint16_t msi_ctrl;
+                        uint8_t  msi_addr_off;
+                        uint8_t  msi_data_off;
 
-                use_events = 1;
-                klog(LOG_INFO, "ahci",
-                       "AHCI: IRQ %u -> vector 0x%x (interrupt-driven I/O)",
-                       (uint64_t)pci_irq_line,
-                       (uint64_t)ahci_irq_vector);
+                        msi_ctrl = pci_read16(ahci_pci_bus, ahci_pci_slot,
+                                              ahci_pci_func, cap_off + 2);
+
+                        ahci_irq_vector = irq_alloc_vector();
+                        if (ahci_irq_vector) {
+                            irq_register(ahci_irq_vector, ahci_irq_handler,
+                                         NULL, "ahci");
+
+                            /* Message Address: 0xFEE00000 targets BSP
+                             * (LAPIC ID 0, no redirection) */
+                            msi_addr_off = cap_off + 4;
+                            pci_write32(ahci_pci_bus, ahci_pci_slot,
+                                        ahci_pci_func, msi_addr_off,
+                                        0xFEE00000);
+
+                            /* Check 64-bit capable (bit 7 of MSI Control) */
+                            if (msi_ctrl & (1U << 7)) {
+                                /* 64-bit: upper address = 0 */
+                                pci_write32(ahci_pci_bus, ahci_pci_slot,
+                                            ahci_pci_func, msi_addr_off + 4,
+                                            0);
+                                msi_data_off = cap_off + 12;
+                            } else {
+                                msi_data_off = cap_off + 8;
+                            }
+
+                            /* Message Data: vector number, edge trigger,
+                             * fixed delivery mode */
+                            pci_write16(ahci_pci_bus, ahci_pci_slot,
+                                        ahci_pci_func, msi_data_off,
+                                        (uint16_t)ahci_irq_vector);
+
+                            /* Enable MSI: set bit 0 of MSI Control,
+                             * keep Multiple Message Enable at 0 (1 vector) */
+                            msi_ctrl &= ~(0x7U << 4);  /* MME = 0 (1 msg) */
+                            msi_ctrl |= (1U << 0);     /* MSI Enable */
+                            pci_write16(ahci_pci_bus, ahci_pci_slot,
+                                        ahci_pci_func, cap_off + 2,
+                                        msi_ctrl);
+
+                            /* Disable legacy INTx — MSI takes over */
+                            {
+                                uint16_t cmd = pci_read16(ahci_pci_bus,
+                                                          ahci_pci_slot,
+                                                          ahci_pci_func,
+                                                          PCI_COMMAND);
+                                cmd |= PCI_CMD_INT_DISABLE;
+                                pci_write16(ahci_pci_bus, ahci_pci_slot,
+                                            ahci_pci_func, PCI_COMMAND, cmd);
+                            }
+
+                            /* Enable global AHCI interrupts */
+                            ghc = ahci_read32(abar, AHCI_GHC);
+                            ghc |= AHCI_GHC_IE;
+                            ahci_write32(abar, AHCI_GHC, ghc);
+
+                            use_events = 1;
+                            irq_ok = 1;
+                            klog(LOG_INFO, "ahci",
+                                   "AHCI: MSI vector 0x%x (%s-bit)",
+                                   (uint64_t)ahci_irq_vector,
+                                   (msi_ctrl & (1U << 7)) ? "64" : "32");
+                        }
+                        break;
+                    }
+
+                    /* Next capability */
+                    cap_off = pci_read8(ahci_pci_bus, ahci_pci_slot,
+                                        ahci_pci_func, cap_off + 1) & 0xFC;
+                }
+            }
+        }
+
+        /* --- Fallback to legacy INTx via IOAPIC --- */
+        if (!irq_ok) {
+            uint8_t pci_irq_line = pci_read8(ahci_pci_bus, ahci_pci_slot,
+                                              ahci_pci_func, 0x3C);
+
+            if (pci_irq_line != 0 && pci_irq_line != 0xFF &&
+                ioapic_available()) {
+                ahci_irq_vector = irq_alloc_vector();
+                if (ahci_irq_vector) {
+                    irq_register(ahci_irq_vector, ahci_irq_handler,
+                                 NULL, "ahci");
+
+                    ioapic_route_irq(pci_irq_line, ahci_irq_vector,
+                                     0, 0x0F);
+
+                    ghc = ahci_read32(abar, AHCI_GHC);
+                    ghc |= AHCI_GHC_IE;
+                    ahci_write32(abar, AHCI_GHC, ghc);
+
+                    use_events = 1;
+                    irq_ok = 1;
+                    klog(LOG_INFO, "ahci",
+                           "AHCI: INTx IRQ %u -> vector 0x%x (legacy)",
+                           (uint64_t)pci_irq_line,
+                           (uint64_t)ahci_irq_vector);
+                } else {
+                    klog(LOG_WARN, "ahci",
+                           "AHCI: no free IRQ vector, using polling");
+                }
             } else {
                 klog(LOG_WARN, "ahci",
-                       "AHCI: no free IRQ vector, using polling");
+                       "AHCI: no PCI IRQ line (0x%x), using polling",
+                       (uint64_t)pci_irq_line);
             }
-        } else {
-            klog(LOG_WARN, "ahci",
-                   "AHCI: no PCI IRQ line (0x%x), using polling",
-                   (uint64_t)pci_irq_line);
         }
     }
 

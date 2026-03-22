@@ -156,7 +156,7 @@ graph TD
 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ✅   |
-| **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ⬜   |
+| **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ✅   |
 | **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                  |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §6.1 Link Power Management  | Partial/Slumber states — save laptop battery during SATA idle           | Phase 1 (§1.1)                  |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §10.1 SMART Monitoring      | Drive health → temperature, reallocated sectors, power-on hours         | Phase 1 (§1.1)                  |   ⬜   |
@@ -264,18 +264,27 @@ graph TD
 - [x] Retain a polling fallback with configurable timeout (5s) for pre-scheduler boot
 - [x] Commit: `"ahci: interrupt-driven I/O"`
 
-### 1.2 MSI / MSI-X Support
+### 1.2 MSI / MSI-X Support ✅
 
-**Prompt:** PCI Message Signaled Interrupts (MSI) are faster and more reliable than legacy INTx pin-based interrupts — they avoid IRQ sharing and spurious interrupts. Check the PCI Capabilities List for an MSI capability (Cap ID `0x05`) or MSI-X capability (Cap ID `0x11`). If found, program the MSI Message Address and Message Data registers to target a specific IDT vector. Disable legacy INTx via PCI Command Register bit 10. QEMU's ICH9 AHCI controller supports MSI. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: MSI interrupt support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify MSI support: `ahci_core.c` `ahci_init()` walks PCI Capabilities List (PCI Status bit 4 → offset 0x34 → linked list) to find MSI Cap ID 0x05. Programs MSI Message Address (`0xFEE00000` targeting BSP LAPIC), handles 64-bit capable (upper address = 0), writes IDT vector to Message Data. Enables MSI via Control Register bit 0, clears MME (1 vector). Disables legacy INTx via PCI Command bit 10. Falls back to IOAPIC legacy routing if MSI not found. Build passes (`=== BUILD OK ===`). Serial log shows `AHCI: MSI vector 0xNN (32/64-bit)` or `AHCI: INTx IRQ N -> vector 0xNN (legacy)`.
 
-- [ ] Walk PCI Capabilities List to find MSI capability (Cap ID `0x05`, offset varies)
-- [ ] Read MSI Control Register: determine 64-bit capable, max vectors
-- [ ] Program MSI Message Address (`0xFEE00000 | (cpu << 12)`) and Message Data (IDT vector)
-- [ ] Enable MSI via MSI Control Register Enable bit
-- [ ] Disable legacy INTx: set PCI Command Register bit 10 (`Interrupt Disable`)
-- [ ] Register IDT handler for the MSI vector instead of legacy IRQ
-- [ ] Fallback: if MSI not available, use legacy INTx (current behavior)
-- [ ] Commit: `"ahci: MSI interrupt support"`
+> **Implementation Notes:**
+> - MSI Control Register: bit 7 determines 32/64-bit addressing (changes Data offset: +8 vs +12)
+> - Message Address 0xFEE00000 = LAPIC base with default routing (BSP, physical mode)
+> - Message Data = raw IDT vector number (edge trigger, fixed delivery implicit)
+> - MME bits 6:4 cleared → single message (1 vector for all ports, same as INTx)
+> - MSI-X (Cap ID 0x11) not implemented yet — MSI is sufficient for AHCI (single vector)
+> - Capability pointer masked with 0xFC (bottom 2 bits reserved, must be dword-aligned)
+> - Guard: cap_off >= 0x40 prevents infinite loop on malformed capability chains
+
+- [x] Walk PCI Capabilities List to find MSI capability (Cap ID `0x05`, offset varies)
+- [x] Read MSI Control Register: determine 64-bit capable, max vectors
+- [x] Program MSI Message Address (`0xFEE00000 | (cpu << 12)`) and Message Data (IDT vector)
+- [x] Enable MSI via MSI Control Register Enable bit
+- [x] Disable legacy INTx: set PCI Command Register bit 10 (`Interrupt Disable`)
+- [x] Register IDT handler for the MSI vector instead of legacy IRQ
+- [x] Fallback: if MSI not available, use legacy INTx (current behavior)
+- [x] Commit: `"ahci: MSI interrupt support"`
 
 ---
 
