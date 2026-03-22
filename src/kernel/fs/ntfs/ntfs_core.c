@@ -1683,3 +1683,288 @@ int ntfs_resolve_path(struct ntfs_volume *vol, const char *path,
     *out_inode = current_inode;
     return NTFS_OK;
 }
+
+/* ============================================================================
+ * Directory Enumeration — §5.4
+ *
+ * Walks all entries in a directory in B+ tree order.  For each non-sentinel,
+ * non-DOS entry, builds an ntfs_dir_entry and invokes the user callback.
+ *
+ * Algorithm:
+ *   1. Read directory's MFT record
+ *   2. Parse $INDEX_ROOT → walk entries in the root node
+ *   3. If $INDEX_ALLOCATION exists:
+ *      a. Read $BITMAP ($I30) to find which INDX VCNs are in-use
+ *      b. For each active VCN: read INDX buffer, walk entries
+ *   4. Skip DOS-only names (namespace 0x02) and sentinel entries
+ *
+ * The $BITMAP attribute (type 0xB0, named "$I30") is a bitfield where
+ * bit N corresponds to the INDX record at VCN = N * clusters_per_indx.
+ * ============================================================================ */
+
+/* Helper: fill ntfs_dir_entry from a parsed ntfs_index_entry */
+static void fill_dir_entry(struct ntfs_dir_entry *de,
+                            const struct ntfs_index_entry *ie)
+{
+    int i;
+
+    /* Copy filename */
+    for (i = 0; i < NTFS_MAX_NAME && ie->fn.name[i]; i++)
+        de->name[i] = ie->fn.name[i];
+    de->name[i] = '\0';
+
+    de->inode = ie->mft_inode;
+    de->file_size = ie->fn.real_size;
+    de->creation_time = ie->fn.creation_time;
+    de->modification_time = ie->fn.modification_time;
+    de->access_time = ie->fn.access_time;
+    de->flags = ie->fn.flags;
+    de->name_space = ie->fn.name_space;
+    de->is_directory = (ie->fn.flags & 0x10000000) ? 1 : 0;
+}
+
+/* Walk entries in a single index node, invoking cb for each visible entry.
+ * Returns NTFS_OK if enumeration completed, or a callback's non-zero return
+ * to signal early stop. */
+static int walk_node_entries(const uint8_t *entries_base,
+                              const struct ntfs_index_node_header *nh,
+                              ntfs_readdir_cb cb, void *user_data)
+{
+    struct ntfs_index_entry ie;
+    struct ntfs_dir_entry de;
+    const uint8_t *entry;
+    int cb_rc;
+
+    entry = ntfs_index_entry_first(entries_base, nh, &ie);
+    while (entry) {
+        if (ie.flags & NTFS_INDEX_ENTRY_LAST)
+            break;  /* Sentinel — no filename */
+
+        /* Skip DOS-only namespace (0x02) */
+        if (ie.fn.name_space != 0x02) {
+            fill_dir_entry(&de, &ie);
+            cb_rc = cb(&de, user_data);
+            if (cb_rc != 0)
+                return cb_rc;  /* Caller wants to stop */
+        }
+
+        entry = ntfs_index_entry_next(entry, entries_base, nh, &ie);
+    }
+
+    return NTFS_OK;
+}
+
+int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
+                 ntfs_readdir_cb callback, void *user_data)
+{
+    uintptr_t rec_phys = 0;
+    uint8_t *rec_buf = NULL;
+    struct ntfs_mft_header hdr;
+    struct ntfs_index_root_header root_hdr;
+    struct ntfs_index_node_header node_hdr;
+    const uint8_t *entries_base;
+    int rc;
+
+    if (!vol || !callback)
+        return NTFS_ERR_IO;
+
+    /* Allocate MFT record buffer */
+    rec_phys = pmm_alloc_contiguous(1);
+    if (!rec_phys)
+        return NTFS_ERR_IO;
+    rec_buf = (uint8_t *)(uintptr_t)rec_phys;
+
+    /* Read and fixup directory's MFT record */
+    rc = ntfs_read_mft_record(vol, dir_inode, rec_buf, &hdr);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    if (!(hdr.flags & NTFS_MFT_FLAG_DIRECTORY)) {
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_NOT_FOUND;  /* Not a directory */
+    }
+
+    /* Parse $INDEX_ROOT */
+    rc = ntfs_parse_index_root(rec_buf, &hdr, &root_hdr, &node_hdr,
+                                &entries_base);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    /* Walk entries in $INDEX_ROOT */
+    rc = walk_node_entries(entries_base, &node_hdr, callback, user_data);
+    if (rc != NTFS_OK && rc != NTFS_ERR_NOT_FOUND) {
+        /* Callback signalled stop (positive rc) — not an error */
+        pmm_free_frame(rec_phys);
+        return NTFS_OK;
+    }
+
+    /* If index root has children, walk INDX buffers */
+    if (node_hdr.flags & 0x01) {
+        struct ntfs_attr_header ia_ah;
+        const uint8_t *ia_attr;
+
+        ia_attr = ntfs_attr_find_named(rec_buf, &hdr,
+                                        NTFS_ATTR_INDEX_ALLOCATION,
+                                        "$I30", &ia_ah);
+        if (ia_attr && ia_ah.non_resident == 1) {
+            struct ntfs_data_run ia_runs[64];
+            struct ntfs_nonres_header ia_nrhdr;
+            int ia_run_count;
+
+            ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs, 64,
+                                                  &ia_nrhdr);
+            if (ia_run_count > 0) {
+                uint32_t indx_size = root_hdr.index_record_size;
+                uintptr_t indx_phys;
+                uint32_t indx_pages;
+
+                /* Read $BITMAP ($I30) to find active INDX records */
+                struct ntfs_attr_header bm_ah;
+                const uint8_t *bm_attr;
+                const uint8_t *bitmap = NULL;
+                uint32_t bitmap_len = 0;
+                uintptr_t bm_phys = 0;
+
+                if (indx_size == 0)
+                    indx_size = 4096;
+
+                bm_attr = ntfs_attr_find_named(rec_buf, &hdr,
+                                                NTFS_ATTR_BITMAP,
+                                                "$I30", &bm_ah);
+                if (bm_attr) {
+                    if (bm_ah.non_resident == 0) {
+                        /* Resident bitmap — inline data */
+                        bitmap = bm_attr + bm_ah.content_offset;
+                        bitmap_len = bm_ah.content_length;
+                    } else {
+                        /* Non-resident bitmap — read from disk */
+                        struct ntfs_data_run bm_runs[16];
+                        struct ntfs_nonres_header bm_nrhdr;
+                        int bm_run_count;
+
+                        bm_run_count = ntfs_decode_data_runs(bm_attr, bm_runs,
+                                                              16, &bm_nrhdr);
+                        if (bm_run_count > 0 && bm_nrhdr.real_size > 0) {
+                            uint32_t bm_pages;
+                            bitmap_len = (uint32_t)bm_nrhdr.real_size;
+                            bm_pages = (bitmap_len + 4095) / 4096;
+                            bm_phys = pmm_alloc_contiguous(bm_pages);
+                            if (bm_phys) {
+                                uint8_t *bm_buf;
+                                bm_buf = (uint8_t *)(uintptr_t)bm_phys;
+                                /* Read bitmap clusters */
+                                {
+                                    int ri;
+                                    uint32_t buf_off = 0;
+                                    for (ri = 0; ri < bm_run_count &&
+                                         buf_off < bitmap_len; ri++) {
+                                        uint64_t byte_off =
+                                            bm_runs[ri].lcn *
+                                            vol->cluster_size;
+                                        uint64_t byte_len =
+                                            bm_runs[ri].length *
+                                            vol->cluster_size;
+                                        uint32_t to_read;
+                                        if (byte_len > bitmap_len - buf_off)
+                                            byte_len = bitmap_len - buf_off;
+                                        to_read = (uint32_t)byte_len;
+                                        if (blkdev_read(vol->dev,
+                                                byte_off / vol->dev->sector_size,
+                                                to_read / vol->dev->sector_size
+                                                    + 1,
+                                                bm_buf + buf_off) != 0) {
+                                            pmm_free_frame(bm_phys);
+                                            bm_phys = 0;
+                                            bitmap = NULL;
+                                            bitmap_len = 0;
+                                            break;
+                                        }
+                                        buf_off += to_read;
+                                    }
+                                }
+                                if (bm_phys)
+                                    bitmap = (const uint8_t *)(uintptr_t)
+                                             bm_phys;
+                            }
+                        }
+                    }
+                }
+
+                /* Allocate INDX buffer */
+                indx_pages = (indx_size + 4095) / 4096;
+                indx_phys = pmm_alloc_contiguous(indx_pages);
+                if (indx_phys) {
+                    uint8_t *indx_buf = (uint8_t *)(uintptr_t)indx_phys;
+                    uint64_t clusters_per_indx = indx_size / vol->cluster_size;
+                    uint64_t total_bytes = ia_nrhdr.alloc_size;
+                    uint64_t vcn;
+                    uint32_t indx_index = 0;
+
+                    if (clusters_per_indx == 0)
+                        clusters_per_indx = 1;
+
+                    for (vcn = 0; vcn * vol->cluster_size < total_bytes;
+                         vcn += clusters_per_indx) {
+                        struct ntfs_index_node_header indx_nh;
+                        const uint8_t *indx_entries;
+
+                        /* Check $BITMAP if available */
+                        if (bitmap && bitmap_len > 0) {
+                            uint32_t bit_idx = indx_index;
+                            uint32_t byte_idx = bit_idx / 8;
+                            uint8_t bit_mask = (uint8_t)(1 << (bit_idx % 8));
+
+                            if (byte_idx < bitmap_len &&
+                                !(bitmap[byte_idx] & bit_mask)) {
+                                /* This INDX VCN is not in-use — skip */
+                                indx_index++;
+                                continue;
+                            }
+                        }
+
+                        rc = ntfs_read_indx(vol, ia_runs, ia_run_count,
+                                             vcn, indx_size, indx_buf);
+                        if (rc != NTFS_OK) {
+                            indx_index++;
+                            continue;
+                        }
+
+                        rc = ntfs_parse_indx_entries(indx_buf, &indx_nh,
+                                                      &indx_entries);
+                        if (rc != NTFS_OK) {
+                            indx_index++;
+                            continue;
+                        }
+
+                        rc = walk_node_entries(indx_entries, &indx_nh,
+                                               callback, user_data);
+                        if (rc != NTFS_OK && rc != NTFS_ERR_NOT_FOUND) {
+                            /* Callback signalled stop */
+                            break;
+                        }
+
+                        indx_index++;
+                    }
+
+                    pmm_free_frame(indx_phys);
+                }
+
+                if (bm_phys)
+                    pmm_free_frame(bm_phys);
+            }
+        }
+    }
+
+    pmm_free_frame(rec_phys);
+    return NTFS_OK;
+}

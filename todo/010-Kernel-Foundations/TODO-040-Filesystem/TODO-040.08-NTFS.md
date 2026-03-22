@@ -114,7 +114,7 @@ graph TD
 | 💎 | P4    | `040.08-NTFS.md`      | §5.2 INDX Buffer Reader        | Child nodes of B+ tree (4 KB INDX records)                       | P4 (§5.1)                            |   ✅   |
 | 💎 | P4    | `040.08-NTFS.md`      | §5.3 Directory Lookup          | Full path resolution: `C:\path\to\file`                          | P4 (§5.2)                            |   ✅   |
 | 💎 | P5    | `040.08-NTFS.md`      | §6.1 VFS Registration          | Mount NTFS as **C: drive**, wire `vfs_ops` (replaces IXFS)       | P3 (§4.2) + P4 (§5.3) + VFS (040.07) |   ✅   |
-| 💎 | P5    | `040.08-NTFS.md`      | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | P4 (§5.1, §5.2)                      |   ⬜   |
+| 💎 | P5    | `040.08-NTFS.md`      | §5.4 Directory Enumeration     | `FindFirstFile` / `FindNextFile` support                         | P4 (§5.1, §5.2)                      |   ✅   |
 | 💎 | P5    | `040.08-NTFS.md`      | §3.4 `$ATTRIBUTE_LIST`         | Handle MFT record overflow (extension records)                   | P2 (§3.1)                            |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.5 `$SECURITY_DESCRIPTOR`    | Read NTFS ACLs → route to `GetFileSecurity()`                    | P2 (§3.1) + VFS §2.2                 |   ⬜   |
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ⬜   |
@@ -587,20 +587,29 @@ graph TD
 
 ### 5.4 Directory Enumeration (readdir)
 
-**Prompt:** Implement enumerating all entries in an NTFS directory for `FindFirstFile`/`FindNextFile`. Walk the `$INDEX_ROOT` entries first, then recursively walk all INDX buffers from `$INDEX_ALLOCATION`. Use the `$BITMAP` attribute (type `0xB0`, named `$I30`) to determine which INDX VCNs are in-use. Skip the last sentinel entry (flag `0x02`). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: directory enumeration"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify: `ntfs_readdir()` in `ntfs_core.c` enumerates all entries via callback, walking `$INDEX_ROOT` then INDX buffers. `$BITMAP` attribute (`0xB0`, named `$I30`) is checked to determine which INDX VCNs are active. `ntfs_readdir_entry()` in `ntfs_vfs.c` delegates to `ntfs_readdir()` via a counting callback. Run `bash scripts/build.sh clean`.
 
-- [ ] Implement `ntfs_readdir(vol, dir_inode, callback)`:
-  - [ ] Read directory's MFT record
-  - [ ] Walk `$INDEX_ROOT` entries → invoke callback for each (skip sentinel)
-  - [ ] If root has children:
-    - [ ] Read `$INDEX_ALLOCATION` data runs
-    - [ ] Read `$BITMAP` (`$I30`) to find active INDX VCNs
-    - [ ] For each active VCN: read INDX buffer, walk entries, invoke callback
-    - [ ] Recurse into child nodes if entries have sub-node flag
-  - [ ] Callback receives: filename, MFT inode, file size, timestamps, flags
-- [ ] Handle directories with thousands of entries (many INDX buffers)
-- [ ] Skip DOS 8.3 names (namespace `0x02`) — only enumerate Win32/POSIX names
-- [ ] Commit: `"ntfs: directory enumeration"`
+> [!NOTE]
+> **Implementation notes:**
+> - `ntfs_readdir()` (~200 lines in ntfs_core.c): reads MFT record, parses `$INDEX_ROOT`, walks entries via `walk_node_entries()` helper, then reads `$BITMAP` ($I30) to determine active INDX VCNs and walks each.
+> - `$BITMAP` can be resident (small dirs) or non-resident (large dirs) — both cases handled.
+> - `fill_dir_entry()` helper builds `ntfs_dir_entry` from `ntfs_index_entry` with filename, inode, file_size, timestamps, flags.
+> - Callback returns 0 to continue, non-zero to stop (for FindFirstFile/FindNextFile early exit).
+> - `ntfs_readdir_entry()` refactored from ~170 lines to ~35 lines — delegates to `ntfs_readdir()` via `readdir_by_index_cb` counting callback.
+> - `ntfs_dir_entry` struct includes: name, inode, file_size, creation/modification/access timestamps, flags, namespace, is_directory.
+
+- [x] Implement `ntfs_readdir(vol, dir_inode, callback)`:
+  - [x] Read directory's MFT record
+  - [x] Walk `$INDEX_ROOT` entries → invoke callback for each (skip sentinel)
+  - [x] If root has children:
+    - [x] Read `$INDEX_ALLOCATION` data runs
+    - [x] Read `$BITMAP` (`$I30`) to find active INDX VCNs
+    - [x] For each active VCN: read INDX buffer, walk entries, invoke callback
+    - [x] Recurse into child nodes if entries have sub-node flag
+  - [x] Callback receives: filename, MFT inode, file size, timestamps, flags
+- [x] Handle directories with thousands of entries (many INDX buffers)
+- [x] Skip DOS 8.3 names (namespace `0x02`) — only enumerate Win32/POSIX names
+- [x] Commit: `"ntfs: directory enumeration"`
 
 ---
 

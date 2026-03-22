@@ -485,3 +485,31 @@ int ntfs_readdir_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                        uint32_t index, char *out_name, int out_name_max,
                        uint64_t *out_inode, int *out_is_dir,
                        uint64_t *out_size);
+
+/* ---- Directory Enumeration (§5.4) ---- */
+
+/* Directory entry passed to readdir callback */
+struct ntfs_dir_entry {
+    char     name[NTFS_MAX_NAME + 1];  /* Filename (ASCII, null-terminated) */
+    uint64_t inode;                     /* MFT inode number */
+    uint64_t file_size;                 /* Real file size (0 for dirs) */
+    uint64_t creation_time;             /* FILETIME: 100-ns since 1601 */
+    uint64_t modification_time;
+    uint64_t access_time;
+    uint32_t flags;                     /* $FILE_NAME flags */
+    uint8_t  name_space;                /* 0=POSIX, 1=Win32, 2=DOS, 3=Both */
+    uint8_t  is_directory;              /* 1 if directory */
+};
+
+/* Callback for ntfs_readdir().  Return 0 to continue, non-zero to stop. */
+typedef int (*ntfs_readdir_cb)(const struct ntfs_dir_entry *entry,
+                                void *user_data);
+
+/* Enumerate all entries in an NTFS directory.
+ * Walks $INDEX_ROOT then all active INDX buffers (via $BITMAP).
+ * Skips DOS-only names (namespace 0x02) and sentinel entries.
+ * callback: invoked for each visible entry.
+ * user_data: opaque pointer passed to callback.
+ * Returns NTFS_OK, or error code. */
+int ntfs_readdir(struct ntfs_volume *vol, uint64_t dir_inode,
+                 ntfs_readdir_cb callback, void *user_data);

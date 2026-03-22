@@ -422,171 +422,62 @@ static int ntfs_vfs_stat(struct vfs_node *node, struct vfs_stat *st)
 /* ============================================================================
  * ntfs_readdir_entry — enumerate a directory by index
  *
- * Walks the B+ tree (INDEX_ROOT + INDX buffers) and returns the Nth entry
- * (0-based). This is O(N) per call — fine for small/medium directories.
- * For directories with thousands of entries, a cached approach would be
- * needed (deferred to §5.4 optimization).
+ * Uses ntfs_readdir() callback internally, counting entries until the
+ * target index is reached.  Inherits $BITMAP support from ntfs_readdir().
  * ============================================================================ */
+
+/* Context for the index-based readdir callback */
+struct readdir_by_index_ctx {
+    uint32_t target_index;
+    uint32_t current;
+    char    *out_name;
+    int      out_name_max;
+    uint64_t *out_inode;
+    int     *out_is_dir;
+    uint64_t *out_size;
+    int      found;
+};
+
+static int readdir_by_index_cb(const struct ntfs_dir_entry *entry,
+                                void *user_data)
+{
+    struct readdir_by_index_ctx *ctx =
+        (struct readdir_by_index_ctx *)user_data;
+
+    if (ctx->current == ctx->target_index) {
+        ntfs_vfs_strcpy(ctx->out_name, entry->name, ctx->out_name_max);
+        *ctx->out_inode = entry->inode;
+        *ctx->out_size = entry->file_size;
+        *ctx->out_is_dir = entry->is_directory;
+        ctx->found = 1;
+        return 1;  /* Stop enumeration */
+    }
+    ctx->current++;
+    return 0;  /* Continue */
+}
 
 int ntfs_readdir_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                        uint32_t index, char *out_name, int out_name_max,
                        uint64_t *out_inode, int *out_is_dir,
                        uint64_t *out_size)
 {
-    uintptr_t rec_phys;
-    uint8_t *rec_buf;
-    struct ntfs_mft_header hdr;
-    struct ntfs_index_root_header root_hdr;
-    struct ntfs_index_node_header node_hdr;
-    const uint8_t *entries_base;
-    struct ntfs_index_entry ie;
-    const uint8_t *entry;
-    uint32_t current = 0;
-    int rc;
+    struct readdir_by_index_ctx ctx;
 
     if (!vol || !out_name || !out_inode || !out_is_dir || !out_size)
         return NTFS_ERR_IO;
 
-    rec_phys = pmm_alloc_contiguous(1);
-    if (!rec_phys)
-        return NTFS_ERR_IO;
-    rec_buf = (uint8_t *)(uintptr_t)rec_phys;
+    ctx.target_index = index;
+    ctx.current = 0;
+    ctx.out_name = out_name;
+    ctx.out_name_max = out_name_max;
+    ctx.out_inode = out_inode;
+    ctx.out_is_dir = out_is_dir;
+    ctx.out_size = out_size;
+    ctx.found = 0;
 
-    rc = ntfs_read_mft_record(vol, dir_inode, rec_buf, &hdr);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
+    ntfs_readdir(vol, dir_inode, readdir_by_index_cb, &ctx);
 
-    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
-    rc = ntfs_parse_index_root(rec_buf, &hdr, &root_hdr, &node_hdr,
-                                &entries_base);
-    if (rc != NTFS_OK) {
-        pmm_free_frame(rec_phys);
-        return rc;
-    }
-
-    /* Walk entries in INDEX_ROOT */
-    entry = ntfs_index_entry_first(entries_base, &node_hdr, &ie);
-    while (entry) {
-        if (ie.flags & NTFS_INDEX_ENTRY_LAST)
-            break;
-
-        /* Skip DOS-only names (namespace 0x02) — only show Win32/POSIX */
-        if (ie.fn.name_space != 0x02) {
-            if (current == index) {
-                ntfs_vfs_strcpy(out_name, ie.fn.name, out_name_max);
-                *out_inode = ie.mft_inode;
-                *out_size = ie.fn.real_size;
-                *out_is_dir = (ie.fn.flags & 0x10000000) ? 1 : 0;
-
-                /* Double-check directory flag from MFT if attr flags
-                 * don't have the directory bit */
-                if (*out_is_dir == 0) {
-                    /* Check if $FILE_NAME flags field has directory */
-                    /* FAT32-style attr flag 0x10 is at bit 4 */
-                    if (ie.fn.flags & 0x10000000)
-                        *out_is_dir = 1;
-                }
-
-                pmm_free_frame(rec_phys);
-                return NTFS_OK;
-            }
-            current++;
-        }
-
-        entry = ntfs_index_entry_next(entry, entries_base, &node_hdr, &ie);
-    }
-
-    /* If INDEX_ROOT didn't have enough entries and there are INDX buffers,
-     * walk those too */
-    if (node_hdr.flags & 0x01) {
-        struct ntfs_attr_header ia_ah;
-        const uint8_t *ia_attr;
-
-        ia_attr = ntfs_attr_find_named(rec_buf, &hdr,
-                                        NTFS_ATTR_INDEX_ALLOCATION,
-                                        "$I30", &ia_ah);
-        if (ia_attr && ia_ah.non_resident == 1) {
-            struct ntfs_data_run ia_runs[64];
-            int ia_run_count;
-            struct ntfs_nonres_header ia_nrhdr;
-
-            ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs, 64,
-                                                  &ia_nrhdr);
-            if (ia_run_count > 0) {
-                uint32_t indx_size = root_hdr.index_record_size;
-                uint64_t total_bytes;
-                uint64_t vcn;
-                uintptr_t indx_phys;
-                uint32_t indx_pages;
-
-                if (indx_size == 0)
-                    indx_size = 4096;
-
-                indx_pages = (indx_size + 4095) / 4096;
-                indx_phys = pmm_alloc_contiguous(indx_pages);
-                if (indx_phys) {
-                    uint8_t *indx_buf = (uint8_t *)(uintptr_t)indx_phys;
-                    uint64_t clusters_per_indx = indx_size / vol->cluster_size;
-                    if (clusters_per_indx == 0)
-                        clusters_per_indx = 1;
-
-                    total_bytes = ia_nrhdr.alloc_size;
-
-                    for (vcn = 0; vcn * vol->cluster_size < total_bytes;
-                         vcn += clusters_per_indx) {
-                        struct ntfs_index_node_header indx_nh;
-                        const uint8_t *indx_entries;
-
-                        rc = ntfs_read_indx(vol, ia_runs, ia_run_count,
-                                             vcn, indx_size, indx_buf);
-                        if (rc != NTFS_OK)
-                            continue;
-
-                        rc = ntfs_parse_indx_entries(indx_buf, &indx_nh,
-                                                      &indx_entries);
-                        if (rc != NTFS_OK)
-                            continue;
-
-                        entry = ntfs_index_entry_first(indx_entries,
-                                                        &indx_nh, &ie);
-                        while (entry) {
-                            if (ie.flags & NTFS_INDEX_ENTRY_LAST)
-                                break;
-
-                            if (ie.fn.name_space != 0x02) {
-                                if (current == index) {
-                                    ntfs_vfs_strcpy(out_name, ie.fn.name,
-                                                     out_name_max);
-                                    *out_inode = ie.mft_inode;
-                                    *out_size = ie.fn.real_size;
-                                    *out_is_dir = (ie.fn.flags & 0x10000000)
-                                                  ? 1 : 0;
-                                    pmm_free_frame(indx_phys);
-                                    pmm_free_frame(rec_phys);
-                                    return NTFS_OK;
-                                }
-                                current++;
-                            }
-
-                            entry = ntfs_index_entry_next(entry, indx_entries,
-                                                           &indx_nh, &ie);
-                        }
-                    }
-                    pmm_free_frame(indx_phys);
-                }
-            }
-        }
-    }
-
-    pmm_free_frame(rec_phys);
-    return NTFS_ERR_NOT_FOUND;
+    return ctx.found ? NTFS_OK : NTFS_ERR_NOT_FOUND;
 }
 
 /* ---- Public API ---- */
