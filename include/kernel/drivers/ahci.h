@@ -149,6 +149,7 @@
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY    0x25   /* READ CAPACITY (10) */
 #define SCSI_READ_10          0x28   /* READ (10) */
+#define SCSI_GET_CONFIGURATION 0x46  /* GET CONFIGURATION (MMC) */
 #define SCSI_READ_12          0xA8   /* READ (12) — for >65535 block transfers */
 
 /* ---- SCSI Sense Keys ---- */
@@ -181,6 +182,43 @@
 #define ATAPI_ERR_INVALID     -14   /* Invalid command or parameter */
 #define ATAPI_ERR_ABORTED     -15   /* Command aborted (retry) */
 #define ATAPI_ERR_SENSE_FAIL  -16   /* REQUEST SENSE itself failed */
+
+/* ---- MMC Profile Codes (GET CONFIGURATION) ---- */
+#define MMC_PROF_NONE         0x0000  /* No current profile */
+#define MMC_PROF_NON_REMOVABLE 0x0001 /* Non-removable disc */
+#define MMC_PROF_REMOVABLE    0x0002  /* Removable disc */
+#define MMC_PROF_CD_ROM       0x0008  /* CD-ROM */
+#define MMC_PROF_CD_R         0x0009  /* CD-R */
+#define MMC_PROF_CD_RW        0x000A  /* CD-RW */
+#define MMC_PROF_DVD_ROM      0x0010  /* DVD-ROM */
+#define MMC_PROF_DVD_R        0x0011  /* DVD-R Sequential */
+#define MMC_PROF_DVD_RAM      0x0012  /* DVD-RAM */
+#define MMC_PROF_DVD_RW_RO    0x0013  /* DVD-RW Restricted Overwrite */
+#define MMC_PROF_DVD_RW_SEQ   0x0014  /* DVD-RW Sequential */
+#define MMC_PROF_DVD_R_DL_SEQ 0x0015  /* DVD-R DL Sequential */
+#define MMC_PROF_DVD_R_DL_LJ  0x0016  /* DVD-R DL Layer Jump */
+#define MMC_PROF_DVD_PLUS_RW  0x001A  /* DVD+RW */
+#define MMC_PROF_DVD_PLUS_R   0x001B  /* DVD+R */
+#define MMC_PROF_DVD_PLUS_RW_DL 0x002A /* DVD+RW DL */
+#define MMC_PROF_DVD_PLUS_R_DL 0x002B  /* DVD+R DL */
+#define MMC_PROF_BD_ROM       0x0040  /* BD-ROM */
+#define MMC_PROF_BD_R_SRM     0x0041  /* BD-R Sequential */
+#define MMC_PROF_BD_R_RRM     0x0042  /* BD-R Random */
+#define MMC_PROF_BD_RE        0x0043  /* BD-RE */
+
+/* Profile capability flags (bitmap in ahci_port.profile_flags) */
+#define ATAPI_CAP_CD_READ     (1U << 0)   /* Can read CD */
+#define ATAPI_CAP_CD_WRITE    (1U << 1)   /* Can write CD-R/RW */
+#define ATAPI_CAP_DVD_READ    (1U << 2)   /* Can read DVD */
+#define ATAPI_CAP_DVD_WRITE   (1U << 3)   /* Can write DVD±R/RW */
+#define ATAPI_CAP_BD_READ     (1U << 4)   /* Can read Blu-ray */
+#define ATAPI_CAP_BD_WRITE    (1U << 5)   /* Can write Blu-ray */
+
+/* ATAPI drive type (derived from profile list) */
+#define ATAPI_DRIVE_UNKNOWN   0
+#define ATAPI_DRIVE_CD_ONLY   1  /* CD-ROM/R/RW only */
+#define ATAPI_DRIVE_DVD_COMBO 2  /* DVD combo (reads CD+DVD) */
+#define ATAPI_DRIVE_BD_COMBO  3  /* BD combo (reads CD+DVD+BD) */
 
 /* ---- FIS: Register Host to Device (20 bytes) ---- */
 struct fis_reg_h2d {
@@ -309,6 +347,11 @@ struct ahci_port {
     char     vendor[9];           /* SCSI INQUIRY vendor (8 chars + null) */
     char     product[17];         /* SCSI INQUIRY product (16 chars + null) */
     char     revision[5];         /* SCSI INQUIRY revision (4 chars + null) */
+
+    /* MMC profile / GET CONFIGURATION state */
+    uint16_t current_profile;     /* Currently active MMC profile code */
+    uint32_t profile_flags;       /* ATAPI_CAP_* bitmap of drive capabilities */
+    uint8_t  drive_type;          /* ATAPI_DRIVE_* derived from profile list */
 };
 
 /* Max ports supported */

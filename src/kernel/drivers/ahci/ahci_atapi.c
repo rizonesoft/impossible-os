@@ -438,6 +438,191 @@ int atapi_inquiry(struct ahci_port *p)
     return 0;
 }
 
+/* ---- Human-readable profile name ---- */
+static const char *atapi_profile_name(uint16_t profile)
+{
+    switch (profile) {
+    case MMC_PROF_NONE:           return "No media";
+    case MMC_PROF_CD_ROM:         return "CD-ROM";
+    case MMC_PROF_CD_R:           return "CD-R";
+    case MMC_PROF_CD_RW:          return "CD-RW";
+    case MMC_PROF_DVD_ROM:        return "DVD-ROM";
+    case MMC_PROF_DVD_R:          return "DVD-R";
+    case MMC_PROF_DVD_RAM:        return "DVD-RAM";
+    case MMC_PROF_DVD_RW_RO:      return "DVD-RW (RO)";
+    case MMC_PROF_DVD_RW_SEQ:     return "DVD-RW (Seq)";
+    case MMC_PROF_DVD_R_DL_SEQ:   return "DVD-R DL";
+    case MMC_PROF_DVD_PLUS_RW:    return "DVD+RW";
+    case MMC_PROF_DVD_PLUS_R:     return "DVD+R";
+    case MMC_PROF_DVD_PLUS_RW_DL: return "DVD+RW DL";
+    case MMC_PROF_DVD_PLUS_R_DL:  return "DVD+R DL";
+    case MMC_PROF_BD_ROM:         return "BD-ROM";
+    case MMC_PROF_BD_R_SRM:       return "BD-R (SRM)";
+    case MMC_PROF_BD_R_RRM:       return "BD-R (RRM)";
+    case MMC_PROF_BD_RE:          return "BD-RE";
+    default:                      return "Unknown";
+    }
+}
+
+/* ---- Map a profile code to capability flags ---- */
+static uint32_t atapi_profile_to_cap(uint16_t profile)
+{
+    switch (profile) {
+    case MMC_PROF_CD_ROM:
+        return ATAPI_CAP_CD_READ;
+    case MMC_PROF_CD_R:
+    case MMC_PROF_CD_RW:
+        return ATAPI_CAP_CD_READ | ATAPI_CAP_CD_WRITE;
+    case MMC_PROF_DVD_ROM:
+        return ATAPI_CAP_DVD_READ;
+    case MMC_PROF_DVD_R:
+    case MMC_PROF_DVD_RAM:
+    case MMC_PROF_DVD_RW_RO:
+    case MMC_PROF_DVD_RW_SEQ:
+    case MMC_PROF_DVD_R_DL_SEQ:
+    case MMC_PROF_DVD_R_DL_LJ:
+    case MMC_PROF_DVD_PLUS_RW:
+    case MMC_PROF_DVD_PLUS_R:
+    case MMC_PROF_DVD_PLUS_RW_DL:
+    case MMC_PROF_DVD_PLUS_R_DL:
+        return ATAPI_CAP_DVD_READ | ATAPI_CAP_DVD_WRITE;
+    case MMC_PROF_BD_ROM:
+        return ATAPI_CAP_BD_READ;
+    case MMC_PROF_BD_R_SRM:
+    case MMC_PROF_BD_R_RRM:
+    case MMC_PROF_BD_RE:
+        return ATAPI_CAP_BD_READ | ATAPI_CAP_BD_WRITE;
+    default:
+        return 0;
+    }
+}
+
+/* ---- ATAPI: GET CONFIGURATION ----
+ *
+ * CDB 0x46 — retrieves the drive's MMC profile list and active features.
+ * The profile list indicates what disc types the drive supports (CD, DVD, BD)
+ * and the current profile indicates what type of media is currently inserted.
+ *
+ * CDB format: { 0x46, RT, Start[1], Start[0], 0, 0, 0, Len[1], Len[0], 0, 0, 0 }
+ *   RT=0x00: return all features from start_feature onward
+ *   RT=0x01: return only current (active) features
+ *   RT=0x02: return one specific feature only
+ *
+ * Response starts with 8-byte Feature Header:
+ *   Bytes 0-3 (BE): Data length (total response minus these 4 bytes)
+ *   Bytes 6-7 (BE): Current profile code
+ * Followed by Feature Descriptors, each starting with:
+ *   Bytes 0-1 (BE): Feature code
+ *   Byte 2: version/persistent/current flags
+ *   Byte 3: Additional length
+ *   Bytes 4+: Feature-specific data
+ *
+ * Feature 0x0000 (Profile List) contains 4-byte profile descriptors:
+ *   Bytes 0-1 (BE): Profile number
+ *   Byte 2 bit 0: 1 = this profile is currently active
+ */
+int atapi_get_configuration(struct ahci_port *p)
+{
+    uint8_t cdb[12];
+    uint8_t *resp;
+    uint32_t data_len, offset;
+    uint16_t current_profile;
+    const char *drive_desc;
+
+    /* Allocate response buffer — 512 bytes is sufficient for profile list */
+    resp = (uint8_t *)kmalloc(512);
+    if (!resp) return -1;
+    ahci_memset(resp, 0, 512);
+    ahci_memset(cdb, 0, 12);
+
+    /* GET CONFIGURATION: RT=0x00 (all features), starting from feature 0 */
+    cdb[0] = SCSI_GET_CONFIGURATION;
+    cdb[1] = 0x00;                   /* RT = 0 (all features) */
+    cdb[2] = 0x00;                   /* Starting Feature Number (high) */
+    cdb[3] = 0x00;                   /* Starting Feature Number (low) */
+    cdb[7] = (uint8_t)((512 >> 8) & 0xFF);  /* Allocation length high */
+    cdb[8] = (uint8_t)(512 & 0xFF);          /* Allocation length low */
+
+    if (atapi_packet_cmd(p, cdb, 10, resp, 512, 0) != 0) {
+        int sense_rc = atapi_request_sense(p);
+        kfree(resp);
+        return sense_rc < 0 ? sense_rc : -1;
+    }
+
+    /* Parse Feature Header (8 bytes) */
+    data_len = ((uint32_t)resp[0] << 24) | ((uint32_t)resp[1] << 16)
+             | ((uint32_t)resp[2] << 8)  | (uint32_t)resp[3];
+    current_profile = ((uint16_t)resp[6] << 8) | (uint16_t)resp[7];
+
+    p->current_profile = current_profile;
+    p->profile_flags = 0;
+    p->drive_type = ATAPI_DRIVE_UNKNOWN;
+
+    /* Add current profile's capabilities */
+    p->profile_flags |= atapi_profile_to_cap(current_profile);
+
+    /* Clamp data_len to buffer size */
+    if (data_len > 508)
+        data_len = 508;   /* 512 - 4 byte header */
+
+    /* Walk Feature Descriptors starting at offset 8 */
+    offset = 8;
+    while (offset + 4 <= data_len + 4) {
+        uint16_t feat_code;
+        uint8_t  add_len;
+
+        feat_code = ((uint16_t)resp[offset] << 8) | (uint16_t)resp[offset + 1];
+        add_len   = resp[offset + 3];
+
+        if (feat_code == 0x0000) {
+            /* Profile List feature — parse profile descriptors */
+            uint32_t prof_offset = offset + 4;
+            uint32_t prof_end    = prof_offset + add_len;
+            if (prof_end > data_len + 4)
+                prof_end = data_len + 4;
+
+            while (prof_offset + 4 <= prof_end) {
+                uint16_t prof_num;
+                prof_num = ((uint16_t)resp[prof_offset] << 8)
+                         | (uint16_t)resp[prof_offset + 1];
+                /* Accumulate capabilities for every supported profile */
+                p->profile_flags |= atapi_profile_to_cap(prof_num);
+                prof_offset += 4;
+            }
+        }
+
+        /* Advance to next feature descriptor */
+        offset += 4 + add_len;
+        if (add_len == 0 && offset > 8)
+            break;  /* Safety: avoid infinite loop on malformed data */
+    }
+
+    kfree(resp);
+
+    /* Derive drive type from capability flags */
+    if (p->profile_flags & (ATAPI_CAP_BD_READ | ATAPI_CAP_BD_WRITE))
+        p->drive_type = ATAPI_DRIVE_BD_COMBO;
+    else if (p->profile_flags & (ATAPI_CAP_DVD_READ | ATAPI_CAP_DVD_WRITE))
+        p->drive_type = ATAPI_DRIVE_DVD_COMBO;
+    else if (p->profile_flags & (ATAPI_CAP_CD_READ | ATAPI_CAP_CD_WRITE))
+        p->drive_type = ATAPI_DRIVE_CD_ONLY;
+
+    /* Build drive capabilities description */
+    switch (p->drive_type) {
+    case ATAPI_DRIVE_BD_COMBO:  drive_desc = "BD combo"; break;
+    case ATAPI_DRIVE_DVD_COMBO: drive_desc = "DVD combo"; break;
+    case ATAPI_DRIVE_CD_ONLY:   drive_desc = "CD-only"; break;
+    default:                    drive_desc = "unknown"; break;
+    }
+
+    klog(LOG_INFO, "ahci",
+         "ATAPI port %u: %s drive, current media: %s",
+         (uint64_t)p->port_num, drive_desc,
+         atapi_profile_name(current_profile));
+
+    return 0;
+}
+
 /* ---- ATAPI: IDENTIFY PACKET DEVICE ---- */
 int atapi_do_identify(struct ahci_port *p)
 {

@@ -62,3 +62,4 @@ int atapi_do_read12(struct ahci_port *p, uint64_t lba, uint32_t count,
 int atapi_request_sense(struct ahci_port *p);
 int atapi_test_unit_ready(struct ahci_port *p);
 int atapi_inquiry(struct ahci_port *p);
+int atapi_get_configuration(struct ahci_port *p);

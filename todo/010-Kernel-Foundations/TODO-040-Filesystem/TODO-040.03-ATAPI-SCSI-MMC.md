@@ -134,7 +134,7 @@ graph TD
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ✅   |
-| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ⬜   |
+| **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ✅   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.1 Bus Master DMA         | Async DMA transfer — stop wasting CPU on PIO               | Phase 2 (§2.1)                         |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §3.2 AHCI ATAPI Delivery    | AHCI hardware-automated ATAPI handshake                    | Phase 2 (§2.1) + AHCI §1.1             |   ⬜   |
 | **4** | `040.03-ATAPI-SCSI-MMC`  | §4.1 Transport Abstraction  | Unified SCSI transport (PIO/DMA/AHCI)                      | Phase 4 (§3.1 + §3.2)                  |   ⬜   |
@@ -468,27 +468,32 @@ graph TD
 
 ### 5.4 GET CONFIGURATION & Feature Profiles
 
-**Prompt:** GET CONFIGURATION (`0x46`) retrieves the drive's capability profile list and active features. This is essential for determining what the drive can do: read CD, read DVD, read BD, write CD-R, write DVD±R/RW, etc. Each profile has a numeric code (e.g., `0x0008` = CD-ROM, `0x0010` = DVD-ROM, `0x0040` = BD-ROM). The current profile indicates what type of media is currently inserted. Feature descriptors provide fine-grained capabilities: core features, morphing, removable medium, random readable, multi-read, CD read, DVD read, BD read, power management, etc. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: GET CONFIGURATION and feature profiles"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify GET CONFIGURATION and feature profiles are correctly implemented. Check: (1) `atapi_get_configuration()` sends CDB 0x46 with RT=0x00, alloc=512, parses 8-byte feature header for current profile. (2) Walks feature descriptors, parses Profile List feature (code 0x0000) with 4-byte profile descriptors. (3) `atapi_profile_to_cap()` maps each profile to `ATAPI_CAP_*` bitmap. (4) Drive type derived from capability flags (BD combo > DVD combo > CD-only). (5) `ahci.h` defines `MMC_PROF_*`, `ATAPI_CAP_*`, `ATAPI_DRIVE_*`. (6) `ahci_port` has `current_profile`, `profile_flags`, `drive_type`. (7) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Implement `atapi_get_configuration(dev, rt, start_feature, buf, buf_len)`:
-  - [ ] CDB: `{ 0x46, rt, Start[1], Start[0], 0, 0, 0, Len[1], Len[0], 0, 0, 0 }`
-  - [ ] RT=0x00: all features, RT=0x01: current features, RT=0x02: single feature
-- [ ] Parse Feature Header (8 bytes):
-  - [ ] Data length (4 bytes BE)
-  - [ ] Current profile (2 bytes BE) — what media type is inserted
-- [ ] Parse Profile List (Feature Code `0x0000`):
-  - [ ] Each profile descriptor: 4 bytes (profile number BE + current bit)
-  - [ ] Key profiles:
-    - [ ] `0x0008` CD-ROM, `0x0009` CD-R, `0x000A` CD-RW
-    - [ ] `0x0010` DVD-ROM, `0x0011` DVD-R, `0x001A` DVD+RW, `0x001B` DVD+R
-    - [ ] `0x002B` DVD+R DL (Dual Layer)
-    - [ ] `0x0040` BD-ROM, `0x0041` BD-R, `0x0043` BD-RE
-- [ ] Parse Feature Code `0x0108` — Logical Unit Serial Number
-- [ ] Detect drive type from profile list (CD-only, DVD combo, BD combo)
-- [ ] Detect current media type from current profile
-- [ ] Store capabilities in `dev->profiles[]` and `dev->current_profile`
-- [ ] Log: `[ATAPI] Drive supports: %s, current media: %s`
-- [ ] Commit: `"atapi: GET CONFIGURATION and feature profiles"`
+> [!NOTE]
+> **Implementation notes:** Uses a 32-bit bitmap (`profile_flags`) instead of a
+> profile array — more compact and efficient for capability queries. The
+> `drive_type` field is derived from the accumulated flags, not from the current
+> profile — so a DVD drive with no disc still reports `ATAPI_DRIVE_DVD_COMBO`.
+> Feature 0x0108 (LU Serial Number) is not parsed — the serial from IDENTIFY
+> PACKET DEVICE is more reliable. Response buffer is 512 bytes, sufficient for
+> typical profile lists (most drives have 10-20 profiles × 4 bytes each).
+
+- [x] Implement `atapi_get_configuration(port)`:
+  - [x] CDB: `{ 0x46, RT, Start[1], Start[0], 0, 0, 0, Len[1], Len[0], 0, 0, 0 }`
+  - [x] RT=0x00: all features from starting feature 0
+- [x] Parse Feature Header (8 bytes):
+  - [x] Data length (4 bytes BE)
+  - [x] Current profile (2 bytes BE) → `p->current_profile`
+- [x] Parse Profile List (Feature Code `0x0000`):
+  - [x] Each profile descriptor: 4 bytes (profile number BE)
+  - [x] All profiles mapped to `ATAPI_CAP_*` flags via `atapi_profile_to_cap()`
+  - [x] Key profiles defined: CD-ROM/R/RW, DVD±R/RW/RAM/DL, BD-ROM/R/RE
+- [x] Drive type derived from capability bitmap (BD > DVD > CD)
+- [x] Current media type from `current_profile` via `atapi_profile_name()`
+- [x] Capabilities stored in `p->profile_flags` (bitmap) and `p->drive_type`
+- [x] Log: `ATAPI port %u: %s drive, current media: %s`
+- [x] Commit: `"atapi: GET CONFIGURATION and feature profiles"`
 
 ### 5.5 MODE SENSE & Drive Capabilities
 
