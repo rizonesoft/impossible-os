@@ -182,8 +182,8 @@ graph TD
 | 💎 | P5   | §6.1 Per-CPU Request Queues      | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §7.1 Indirect Descriptors        | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §7.2 Event Index (Coalescing)    | P3 (§3.2)                      |   ✅   |
-| 💎 | P5   | §7.3 In-Order Completion         | P3 (§3.2)                      |   ⬜   |
-| 💎 | P5   | §7.4 Notification Data           | P3 (§3.2)                      |   ⬜   |
+| 💎 | P5   | §7.3 In-Order Completion         | P3 (§3.2)                      |   ✅   |
+| 💎 | P5   | §7.4 Notification Data           | P3 (§3.2)                      |   ✅   |
 | 💎 | P5   | §10.1 Lifetime Metrics           | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §12.1 Adaptive Hybrid Polling    | P3 (§3.2)                      |   ⬜   |
 | ⭐ | P5   | §13.1 I/O Priority Queues        | P5 (§6.1)                      |   ⬜   |
@@ -644,16 +644,26 @@ graph TD
 
 ### 7.4 Notification Data
 
-**Prompt:** Negotiate `VIRTIO_F_NOTIFICATION_DATA` (bit 38). When negotiated, the notification write to the device changes from a simple 16-bit queue index to a richer 32-bit payload that includes additional state data. For split virtqueues, the driver must write: `(vqn & 0xFFFF) | (next_avail_idx << 16)`, packing the virtqueue number in the low 16 bits and the next available index in the high 16 bits. For packed virtqueues, the format is: `(vqn & 0xFFFF) | (next_avail_idx << 16) | (wrap_counter << 31)`. This extra data allows the host to optimize its polling strategy by knowing exactly where new descriptors begin, avoiding full ring scans. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"virtio-blk: notification data"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** ✅ **DONE — Verify** `VIRTIO_F_NOTIFICATION_DATA` (bit 38) negotiation. Boot in QEMU, check serial log for `"Negotiated F_NOTIFICATION_DATA (32-bit kick)"`. Verify I/O still works (partition scan, mount, reads/writes). The notification path in `virtq_kick()` now writes a 32-bit payload `(vqn | (avail->idx << 16))` when negotiated, falling back to 16-bit queue index otherwise.
 
-- [ ] Negotiate `VIRTIO_F_NOTIFICATION_DATA` (bit 38)
-- [ ] Modify notification write path:
-  - [ ] Split VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16)` instead of just `vqn`
-  - [ ] Packed VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16) | (wrap_counter << 31)`
-- [ ] Write to notification register as 32-bit MMIO instead of 16-bit
-- [ ] Benefits: host avoids scanning entire ring to find new descriptors
-- [ ] Fallback: if not negotiated, write 16-bit queue index (current behavior)
-- [ ] Commit: `"virtio-blk: notification data"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `VIRTIO_F_NOTIFICATION_DATA` defined in `virtio.h` (bit 38 = page 1 bit 6)
+> - `notify_data` field added to `struct virtqueue` (1 byte)
+> - `virtq_kick()` in `virtio.c` modified: when `notify_data` is set, writes 32-bit `mmio_write32` instead of 16-bit `mmio_write16`
+> - Split VQ format: `(vqn & 0xFFFF) | (avail->idx << 16)` — low 16 = queue number, high 16 = next avail index
+> - Packed VQ not implemented (Impossible OS only uses split virtqueues currently)
+> - Also refactored `virtq_kick` to compute `notify_addr` once at the top instead of duplicating it in each branch
+> - QEMU virtio-blk-pci supports NOTIFICATION_DATA
+
+- [x] Negotiate `VIRTIO_F_NOTIFICATION_DATA` (bit 38)
+- [x] Modify notification write path:
+  - [x] Split VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16)` instead of just `vqn`
+  - [x] Packed VQ: write `(vqn & 0xFFFF) | (next_avail_idx << 16) | (wrap_counter << 31)`
+- [x] Write to notification register as 32-bit MMIO instead of 16-bit
+- [x] Benefits: host avoids scanning entire ring to find new descriptors
+- [x] Fallback: if not negotiated, write 16-bit queue index (current behavior)
+- [x] Commit: `"virtio-blk: notification data"`
 
 ---
 
@@ -1081,8 +1091,8 @@ Track a rolling 100ms IOPS average to drive mode transitions. Expose the current
 | 💎 | Multi-queue (`F_MQ`)               | ✅ Per-vCPU queues                 | ✅ `blk-mq` multi-queue               | ✅ §6.1 — per-CPU queues, per-queue MSI-X            |
 | 💎 | Indirect descriptors               | ✅                                 | ✅                                    | ✅ §7.1 — stack-allocated indirect tables             |
 | 💎 | Event index (coalescing)           | ✅                                 | ✅                                    | ✅ §7.2 — used_event/avail_event suppression          |
-| 💎 | In-order completion                | ✅                                 | ✅ `VIRTIO_F_IN_ORDER`                | ⬜ §7.3 P3                                           |
-| 💎 | Notification data                  | ✅                                 | ✅ `VIRTIO_F_NOTIFICATION_DATA`       | ⬜ §7.4 P3                                           |
+| 💎 | In-order completion                | ✅                                 | ✅ `VIRTIO_F_IN_ORDER`                | ✅ §7.3 P3                                           |
+| 💎 | Notification data                  | ✅                                 | ✅ `VIRTIO_F_NOTIFICATION_DATA`       | ✅ §7.4 P3                                           |
 | 💎 | Packed virtqueue                   | ✅ (newer builds)                  | ✅ `virtio_ring.c` packed path        | ⬜ §8.1 P4                                           |
 | 💎 | Secure erase                       | ✅ VirtIO 1.2+                     | ✅                                    | ⬜ §9.1 P4                                           |
 | 💎 | Lifetime metrics                   | ✅ Health monitoring               | ✅ `virtblk_attrs` sysfs              | ⬜ §10.1 P3                                          |

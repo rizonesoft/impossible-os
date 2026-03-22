@@ -59,6 +59,7 @@ static int                    has_discard;     /* F_DISCARD negotiated */
 static int                    has_write_zeroes; /* F_WRITE_ZEROES negotiated */
 static int                    has_ring_reset;  /* F_RING_RESET negotiated */
 static int                    has_in_order;    /* F_IN_ORDER negotiated */
+static int                    has_notify_data; /* F_NOTIFICATION_DATA negotiated */
 static int                    has_mq;          /* F_MQ negotiated */
 static int                    has_indirect;    /* F_RING_INDIRECT_DESC negotiated */
 static int                    has_event_idx;   /* F_RING_EVENT_IDX negotiated */
@@ -1656,6 +1657,18 @@ int virtio_blk_init(void)
                    "Negotiated F_IN_ORDER (sequential completion)");
         }
 
+        /* F_NOTIFICATION_DATA is bit 38 = page 1 bit 6.
+         * When negotiated, notification writes carry additional data:
+         * Split VQ: (vqn & 0xFFFF) | (next_avail_idx << 16)
+         * This tells the host exactly where new descriptors begin,
+         * avoiding a full ring scan on each kick. */
+        if (feat_hi & (1u << (VIRTIO_F_NOTIFICATION_DATA - 32))) {
+            driver_feat_hi |= (1u << (VIRTIO_F_NOTIFICATION_DATA - 32));
+            has_notify_data = 1;
+            klog(LOG_DEBUG, "virtio",
+                   "Negotiated F_NOTIFICATION_DATA (32-bit kick)");
+        }
+
         /* F_RING_RESET is bit 40 = page 1 bit 8 */
         if (feat_hi & (1u << (VIRTIO_F_RING_RESET - 32))) {
             driver_feat_hi |= (1u << (VIRTIO_F_RING_RESET - 32));
@@ -1708,6 +1721,8 @@ int virtio_blk_init(void)
             }
             /* Set event_idx flag on each queue */
             blk_vqs[qi].event_idx = has_event_idx ? 1 : 0;
+            /* Set notify_data flag on each queue */
+            blk_vqs[qi].notify_data = has_notify_data ? 1 : 0;
             if (has_event_idx) {
                 /* Clear NO_INTERRUPT flag — event_idx supersedes it */
                 blk_vqs[qi].avail->flags = 0;

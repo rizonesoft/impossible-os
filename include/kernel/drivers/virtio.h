@@ -86,8 +86,9 @@ struct msix_table_entry {
 #define VIRTIO_PCI_ISR_CONFIG  0x02  /* Device configuration changed */
 
 /* ---- VirtIO transport feature bits ---- */
-#define VIRTIO_F_IN_ORDER      35    /* Device uses buffers in order (§2.7.7) */
-#define VIRTIO_F_RING_RESET    40    /* Per-queue reset (VirtIO 1.2+) */
+#define VIRTIO_F_IN_ORDER          35    /* Device uses buffers in order (§2.7.7) */
+#define VIRTIO_F_NOTIFICATION_DATA 38    /* Notification carries extra data (§2.7.25) */
+#define VIRTIO_F_RING_RESET        40    /* Per-queue reset (VirtIO 1.2+) */
 
 /* ---- Virtqueue descriptor flags ---- */
 #define VIRTQ_DESC_F_NEXT      0x01  /* Descriptor continues via 'next' */
@@ -157,6 +158,7 @@ struct virtqueue {
     struct virtio_pci_dev *dev;     /* Parent device (for notifications) */
     uint16_t            queue_idx;  /* Queue index (0, 1, ...) */
     uint8_t             event_idx;  /* EVENT_IDX negotiated (suppress notifications) */
+    uint8_t             notify_data; /* NOTIFICATION_DATA negotiated (32-bit kick) */
 };
 
 /* ---- API ---- */

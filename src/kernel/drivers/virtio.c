@@ -368,6 +368,11 @@ void virtq_kick(struct virtqueue *vq)
     /* Memory barrier before notify — ensure avail->idx is visible */
     __asm__ volatile("mfence" ::: "memory");
 
+    /* Calculate notification register address */
+    uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
+                           (uint64_t)vq->notify_off *
+                           (uint64_t)vq->dev->notify_off_multiplier;
+
     if (vq->event_idx) {
         /* EVENT_IDX path (VirtIO §2.7.7.2):
          * Notify only if avail->idx crosses the avail_event threshold.
@@ -382,17 +387,25 @@ void virtq_kick(struct virtqueue *vq)
 
         /* Wrapping subtract: notify if we just crossed the threshold */
         if ((uint16_t)(new_idx - event - 1) < 1) {
-            uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
-                                   (uint64_t)vq->notify_off *
-                                   (uint64_t)vq->dev->notify_off_multiplier;
-            mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+            if (vq->notify_data) {
+                /* NOTIFICATION_DATA (§2.7.25): pack queue index + avail idx
+                 * Split VQ format: low 16 = vqn, high 16 = next_avail_idx */
+                uint32_t data = ((uint32_t)vq->queue_idx & 0xFFFF) |
+                                ((uint32_t)vq->avail->idx << 16);
+                mmio_write32((volatile uint32_t *)notify_addr, data);
+            } else {
+                mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+            }
         }
     } else {
         /* Legacy path: always notify (no suppression) */
-        uint64_t notify_addr = (uint64_t)vq->dev->notify_base +
-                               (uint64_t)vq->notify_off *
-                               (uint64_t)vq->dev->notify_off_multiplier;
-        mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+        if (vq->notify_data) {
+            uint32_t data = ((uint32_t)vq->queue_idx & 0xFFFF) |
+                            ((uint32_t)vq->avail->idx << 16);
+            mmio_write32((volatile uint32_t *)notify_addr, data);
+        } else {
+            mmio_write16((volatile uint16_t *)notify_addr, vq->queue_idx);
+        }
     }
 }
 
