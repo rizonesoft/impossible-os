@@ -219,6 +219,26 @@ static uint64_t read_le64(const uint8_t *p)
     return (uint64_t)read_le32(p) | ((uint64_t)read_le32(p + 4) << 32);
 }
 
+static void write_le16(uint8_t *p, uint16_t v)
+{
+    p[0] = (uint8_t)(v);
+    p[1] = (uint8_t)(v >> 8);
+}
+
+static void write_le32(uint8_t *p, uint32_t v)
+{
+    p[0] = (uint8_t)(v);
+    p[1] = (uint8_t)(v >> 8);
+    p[2] = (uint8_t)(v >> 16);
+    p[3] = (uint8_t)(v >> 24);
+}
+
+static void write_le64(uint8_t *p, uint64_t v)
+{
+    write_le32(p, (uint32_t)v);
+    write_le32(p + 4, (uint32_t)(v >> 32));
+}
+
 static void read_guid(const uint8_t *p, struct gpt_guid *g)
 {
     int i;
@@ -321,6 +341,43 @@ static int parse_header(const uint8_t *buf, struct gpt_header *hdr)
     }
 
     return 0;
+}
+
+/* Serialize a gpt_header back to a raw 512-byte sector buffer.
+ * Computes and fills in the Header CRC32 automatically. */
+static void serialize_header(const struct gpt_header *hdr, uint8_t *buf)
+{
+    int i;
+    uint32_t crc;
+
+    /* Zero the entire sector */
+    for (i = 0; i < 512; i++)
+        buf[i] = 0;
+
+    /* Write all 13 fields at their spec offsets */
+    write_le64(buf + 0,  hdr->signature);
+    write_le32(buf + 8,  hdr->revision);
+    write_le32(buf + 12, hdr->header_size);
+    /* bytes 16-19 (CRC32) left as zero for now */
+    write_le32(buf + 20, hdr->reserved);
+    write_le64(buf + 24, hdr->my_lba);
+    write_le64(buf + 32, hdr->alt_lba);
+    write_le64(buf + 40, hdr->first_usable_lba);
+    write_le64(buf + 48, hdr->last_usable_lba);
+    /* Disk GUID (mixed endian) */
+    write_le32(buf + 56, hdr->disk_guid.data1);
+    write_le16(buf + 60, hdr->disk_guid.data2);
+    write_le16(buf + 62, hdr->disk_guid.data3);
+    for (i = 0; i < 8; i++)
+        buf[64 + i] = hdr->disk_guid.data4[i];
+    write_le64(buf + 72, hdr->part_entry_lba);
+    write_le32(buf + 80, hdr->num_part_entries);
+    write_le32(buf + 84, hdr->part_entry_size);
+    write_le32(buf + 88, hdr->part_entry_crc32);
+
+    /* Compute Header CRC32 with CRC field zeroed (already zero) */
+    crc = gpt_crc32(buf, hdr->header_size);
+    write_le32(buf + 16, crc);
 }
 
 /* ---- Main Parser ---- */
@@ -493,7 +550,83 @@ struct gpt_table gpt_parse(const struct blkdev *dev, const void *sector0)
         }
     }
 
-    (void)using_backup; /* Will be used by §2.2 auto-recovery */
+    /* §2.2 Auto-recover primary header from valid backup */
+    if (using_backup) {
+        struct gpt_header primary_hdr;
+        uint8_t primary_sect[512];
+        uint64_t primary_entry_lba = GPT_HEADER_LBA + 1; /* LBA 2 */
+        uint64_t backup_entry_lba = hdr.part_entry_lba;
+        int recovery_ok = 1;
+
+        /* Build reconstructed primary header from backup */
+        primary_hdr = hdr;
+        primary_hdr.my_lba  = GPT_HEADER_LBA;   /* 1 */
+        primary_hdr.alt_lba = backup_lba;        /* last LBA */
+        primary_hdr.part_entry_lba = primary_entry_lba; /* LBA 2 */
+
+        /* Serialize header (CRC32 is auto-computed) */
+        serialize_header(&primary_hdr, primary_sect);
+
+        /* Write reconstructed primary header to LBA 1 */
+        if (blkdev_write(dev, GPT_HEADER_LBA, 1, primary_sect) != 0) {
+            klog(LOG_WARN, "blk", "Failed to write recovered primary GPT header");
+            recovery_ok = 0;
+        }
+
+        /* Copy backup entry array to primary location (LBA 2+) */
+        if (recovery_ok) {
+            for (si = 0; si < sectors_needed; si++) {
+                if (blkdev_read(dev, backup_entry_lba + si, 1, entry_buf) != 0) {
+                    klog(LOG_WARN, "blk",
+                         "Failed to read backup entry sector %u",
+                         (uint64_t)si);
+                    recovery_ok = 0;
+                    break;
+                }
+                if (blkdev_write(dev, primary_entry_lba + si, 1, entry_buf) != 0) {
+                    klog(LOG_WARN, "blk",
+                         "Failed to write primary entry sector %u",
+                         (uint64_t)si);
+                    recovery_ok = 0;
+                    break;
+                }
+            }
+        }
+
+        /* Verify: re-read primary and check CRC matches */
+        if (recovery_ok) {
+            uint32_t verify_crc = 0xFFFFFFFF;
+            uint32_t vbytes = total_entry_bytes;
+
+            for (si = 0; si < sectors_needed; si++) {
+                uint32_t chunk;
+                if (blkdev_read(dev, primary_entry_lba + si, 1, entry_buf) != 0) {
+                    recovery_ok = 0;
+                    break;
+                }
+                chunk = vbytes > 512 ? 512 : vbytes;
+                for (i = 0; i < (int)chunk; i++)
+                    verify_crc = (verify_crc >> 8)
+                               ^ crc32_table[(verify_crc ^ entry_buf[i]) & 0xFF];
+                vbytes -= chunk;
+            }
+            verify_crc ^= 0xFFFFFFFF;
+
+            if (recovery_ok && verify_crc != hdr.part_entry_crc32) {
+                klog(LOG_WARN, "blk",
+                     "Primary entry array CRC32 verify failed after recovery");
+                recovery_ok = 0;
+            }
+        }
+
+        if (recovery_ok) {
+            klog(LOG_INFO, "blk",
+                 "Auto-recovered primary GPT header from backup");
+        } else {
+            klog(LOG_WARN, "blk",
+                 "Primary GPT recovery attempted but failed - backup still valid");
+        }
+    }
 
     return tbl;
 }

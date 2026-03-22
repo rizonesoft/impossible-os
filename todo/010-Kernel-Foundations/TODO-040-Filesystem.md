@@ -180,7 +180,7 @@ graph TD
 | **2**  | `040.02-AHCI.md`         | §4 Interrupt-Driven I/O           | IRQ-based completion, per-port ISR                           | Phase 1 (§2)            | ✅      |
 | **2**  | `040.03-ATAPI.md`        | §1–3 SCSI + READ                  | ATAPI packet command, SCSI READ(10/12)                       | AHCI Phase 1            | ✅      |
 | **2**  | `040.04-MBR.md`          | §1 Primary Parse                  | MBR primary partition reading                                | blkdev (Layer 0)        | ✅      |
-| **2**  | `040.04-MBR.md`          | §2 EBR Chain                      | Extended/logical partition walking                           | Phase 2 (§1)            | ⬜      |
+| **2**  | `040.04-MBR.md`          | §2 EBR Chain                      | Extended/logical partition walking                           | Phase 2 (§1)            | ✅      |
 | **2**  | `040.05-GPT.md`          | §1 Primary Header                 | GPT header + entry array parsing                             | blkdev (Layer 0)        | ✅      |
 | **2**  | `040.05-GPT.md`          | §2 Backup Header                  | Backup GPT recovery + primary sync                           | Phase 2 (§1)            | ⬜      |
 | **2**  | `040.05-GPT.md`          | §3 4Kn Support                    | 4096-byte sector partition tables                            | Phase 2 (§1)            | ⬜      |

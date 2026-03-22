@@ -131,9 +131,9 @@ graph TD
 | ⭐ | P    | TODO File           | Sections                         | What It Delivers                                               | Depends On                          | Status |
 | -- | :--: | -------------------- | -------------------------------- | -------------------------------------------------------------- | ----------------------------------- | :----: |
 | 💎 | P0   | `040.01` / `040.02` | Block device layer               | `blkdev_read()` / `blkdev_write()` via VirtIO or AHCI          | —                                   |   ✅   |
-| 💎 | P1   | `040.04-MBR.md`     | §1.1 Full MBR Layout Parser      | Decode complete 512-byte MBR sector, disk signature, boot mag  | P0 (block + spec)                   |   ⬜   |
-| 💎 | P1   | `040.04-MBR.md`     | §1.2 Partition Type Recognition  | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)    | P1 (§1.1)                           |   ⬜   |
-| 💎 | P2   | `040.04-MBR.md`     | §2.1 EBR Chain Walker            | Traverse extended partition linked list, logical parts ≥5      | P1 (§1.2)                           |   ⬜   |
+| 💎 | P1   | `040.04-MBR.md`     | §1.1 Full MBR Layout Parser      | Decode complete 512-byte MBR sector, disk signature, boot mag  | P0 (block + spec)                   |   ✅   |
+| 💎 | P1   | `040.04-MBR.md`     | §1.2 Partition Type Recognition  | Identify 30+ filesystem types, detect GPT redirect (`0xEE`)    | P1 (§1.1)                           |   ✅   |
+| 💎 | P2   | `040.04-MBR.md`     | §2.1 EBR Chain Walker            | Traverse extended partition linked list, logical parts ≥5      | P1 (§1.2)                           |   ✅   |
 | 💎 | P2   | `040.04-MBR.md`     | §3.1 CHS Extraction & Encoding   | Bidirectional CHS↔LBA translation, overflow (`FE FF FF`)       | P1 (§1.1)                           |   ⬜   |
 | 💎 | P2   | `040.04-MBR.md`     | §4.1 1-MiB Alignment             | Enforce LBA 2048 alignment, warn on legacy 63                  | P1 (§1.1)                           |   ⬜   |
 | ⭐ | P2   | `040.04-MBR.md`     | §4.2 4Kn Sector Awareness        | Detect 4096-byte native sector drives, adjust alignment        | P2 (§4.1) + block device            |   ⬜   |
