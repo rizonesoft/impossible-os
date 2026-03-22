@@ -68,7 +68,26 @@ struct ntfs_volume {
 
     spinlock_t mft_alloc_lock;             /* Serializes MFT record allocation */
     uint8_t  mft_alloc_loaded;             /* 1 if MFT bitmap is loaded */
+
+    /* ---- System Metafiles (§7.1) ---- */
+    char     volume_name[128];             /* Volume label from $Volume (inode 3) */
+    uint8_t  ntfs_version_major;           /* NTFS major version (typically 3) */
+    uint8_t  ntfs_version_minor;           /* NTFS minor version (typically 1) */
+    uint8_t  volume_dirty;                 /* 1 if volume was not cleanly unmounted */
+    uint16_t *upcase_table;                /* Unicode uppercase mapping (65536 entries, PMM-allocated) */
+    uint8_t  sysfiles_loaded;              /* 1 if system metafiles are loaded */
 };
+
+/* Well-known NTFS system inode numbers */
+#define NTFS_INODE_MFT       0   /* $MFT — Master File Table */
+#define NTFS_INODE_MFTMIRR   1   /* $MFTMirr — MFT mirror (first 4 records) */
+#define NTFS_INODE_LOGFILE   2   /* $LogFile — Transaction journal */
+#define NTFS_INODE_VOLUME    3   /* $Volume — Volume name and flags */
+#define NTFS_INODE_ATTRDEF   4   /* $AttrDef — Attribute definitions */
+#define NTFS_INODE_BITMAP    6   /* $Bitmap — Cluster allocation bitmap */
+#define NTFS_INODE_BOOT      7   /* $Boot — Boot sector backup */
+#define NTFS_INODE_BADCLUS   8   /* $BadClus — Bad cluster list */
+#define NTFS_INODE_UPCASE   10   /* $UpCase — Unicode uppercase table */
 
 /* ---- API ---- */
 
@@ -81,6 +100,21 @@ struct ntfs_volume *ntfs_init(const struct blkdev *dev);
  * Used by the partition scanner to identify NTFS partitions.
  * Returns 1 if NTFS, 0 otherwise. */
 int ntfs_probe(const uint8_t *sector);
+
+/* ---- System Metafile Readers (§7.1) ---- */
+
+/* Load all system metafiles during mount.
+ * Reads $Volume (inode 3) for label/version/dirty flag,
+ * $Bitmap (inode 6) for free space counting,
+ * $UpCase (inode 10) for Unicode uppercase table,
+ * $MFTMirr (inode 1) for integrity check.
+ * Non-fatal: individual failures are logged but don't abort mount.
+ * Call after ntfs_init() and ntfs_bitmap_load(). */
+int ntfs_load_sysfiles(struct ntfs_volume *vol);
+
+/* Return the uppercase equivalent of a Unicode code point.
+ * Uses the $UpCase table if loaded, falls back to ASCII towupper. */
+uint16_t ntfs_upcase_char(const struct ntfs_volume *vol, uint16_t ch);
 
 /* ---- MFT Record Reader ---- */
 
