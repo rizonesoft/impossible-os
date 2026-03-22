@@ -248,6 +248,10 @@ struct ahci_port {
     /* FUA state */
     uint8_t  fua_supported;        /* 1 if device supports Force Unit Access */
     uint8_t  write_cache_enabled;  /* 1 if volatile write cache is enabled */
+
+    /* 4Kn / Advanced Format */
+    uint32_t physical_sector_size; /* Physical sector size in bytes (512 or 4096) */
+    uint16_t alignment_offset;    /* Logical sectors offset within first physical sector */
 };
 
 /* Max ports supported */
@@ -258,14 +262,17 @@ struct ahci_port {
 /* Initialize the AHCI driver and detect SATA/ATAPI devices. */
 int ahci_init(void);
 
-/* Read 'count' 512-byte sectors starting at LBA into 'buffer'. */
+/* Read 'count' logical sectors starting at LBA into 'buffer'. */
 int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer);
 
-/* Write 'count' 512-byte sectors starting at LBA from 'buffer'. */
+/* Write 'count' logical sectors starting at LBA from 'buffer'. */
 int ahci_write(int port_idx, uint64_t lba, uint32_t count, const void *buffer);
 
-/* Get total capacity in 512-byte sectors for a given SATA port. */
+/* Get total capacity in logical sectors for a given SATA port. */
 uint64_t ahci_capacity(int port_idx);
+
+/* Get logical sector size in bytes for a given SATA port (512 or 4096). */
+uint32_t ahci_sector_size(int port_idx);
 
 /* Check if any AHCI device was detected and initialized. */
 int ahci_present(void);

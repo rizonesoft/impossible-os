@@ -155,7 +155,7 @@ graph TD
 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ✅   |
-| **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ✅   |
 | **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                  |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §6.1 Link Power Management  | Partial/Slumber states — save laptop battery during SATA idle           | Phase 1 (§1.1)                  |   ⬜   |
@@ -778,26 +778,35 @@ graph TD
 
 ## 14. Advanced Format (4Kn / 512e) Support
 
-### 14.1 4Kn Native Sector Support
+### 14.1 4Kn Native Sector Support ✅
 
-**Prompt:** Modern drives use 4096-byte physical sectors (Advanced Format). Most expose a 512-byte logical sector via 512e emulation — but native 4Kn drives report 4096 as both logical AND physical sector size. Check IDENTIFY DEVICE words 106 (physical/logical sector size) and 209 (logical-to-physical alignment). If logical sector size > 512, all DMA transfers, PRDT entries, and LBA calculations must use the actual logical sector size. The existing driver hardcodes 512-byte sectors in several places (`sector_size = 512`). Without 4Kn support, native 4Kn SSDs are unusable. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: 4Kn native sector support"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify 4Kn support: `ahci.h` has `physical_sector_size`/`alignment_offset` in `struct ahci_port` and `ahci_sector_size()` API. `ahci_rw.c` `ahci_do_identify()` parses IDENTIFY word 106 (bits 12-15 validity, bit 12 for large logical, bit 13 + bits 3:0 for physical/logical ratio), words 117-118 (logical sector size in words × 2), word 209 (alignment offset). `sector_size` set from parsed data, overriding the 512 default. `ahci_do_rw()` and `ncq_issue_rw()` use `p->sector_size` for byte count. `blkdev_adapters.c` uses `ahci_sector_size(di)`. Build passes (`=== BUILD OK ===`). Serial log shows `Port N: 512-byte logical, 512-byte physical sectors` (or 4096 for 4Kn).
+
+> **Implementation Notes:**
+> - Word 106 validity: bit 14 must be 1, bit 15 must be 0
+> - Word 106 bit 12: logical sector > 256 words → read words 117-118 (value in words, multiply by 2 for bytes)
+> - Word 106 bit 13: multiple logical sectors per physical → exponent in bits 3:0
+> - Word 209 validity: same bit 14/15 pattern; bits 13:0 = alignment offset
+> - Sanity: if parsed logical sector < 512, clamp to 512
+> - IDENTIFY always transfers exactly 512 bytes (ATA spec), not affected by sector_size
+> - TRIM buffer is always 512 bytes (one sector of range descriptors per ATA spec)
 
 > [!TIP]
 > **Competitive Edge:** Windows uses 512e emulation for most drives — native 4Kn support has
 > edge-case bugs. Linux supports 4Kn but many user-space tools assume 512-byte sectors.
 > Impossible OS can handle 4Kn natively from day one — zero performance penalty, zero emulation.
 
-- [ ] Parse IDENTIFY DEVICE word 106:
-  - [ ] Bit 12: logical sector size > 256 words (4Kn indicator)
-  - [ ] Bits 3:0: 2^N logical sectors per physical sector
-- [ ] Parse IDENTIFY DEVICE word 117–118: logical sector size in words (if word 106 bit 12 set)
-- [ ] Store actual `sector_size` in `struct ahci_port` (currently hardcoded to 512)
-- [ ] Update `ahci_do_rw()`: PRDT byte count must be multiple of `sector_size`
-- [ ] Update `blkdev_register()` call: pass actual `sector_size` instead of hardcoded 512
-- [ ] Alignment check: warn if partition start LBA not aligned to physical sector boundary
-- [ ] Parse word 209: logical-to-physical alignment offset
-- [ ] Log: `[AHCI] Port %d: %s (%u-byte logical, %u-byte physical sectors)`
-- [ ] Commit: `"ahci: 4Kn native sector support"`
+- [x] Parse IDENTIFY DEVICE word 106:
+  - [x] Bit 12: logical sector size > 256 words (4Kn indicator)
+  - [x] Bits 3:0: 2^N logical sectors per physical sector
+- [x] Parse IDENTIFY DEVICE word 117–118: logical sector size in words (if word 106 bit 12 set)
+- [x] Store actual `sector_size` in `struct ahci_port` (currently hardcoded to 512)
+- [x] Update `ahci_do_rw()`: PRDT byte count must be multiple of `sector_size`
+- [x] Update `blkdev_register()` call: pass actual `sector_size` instead of hardcoded 512
+- [x] Alignment check: warn if partition start LBA not aligned to physical sector boundary
+- [x] Parse word 209: logical-to-physical alignment offset
+- [x] Log: `[AHCI] Port %d: %s (%u-byte logical, %u-byte physical sectors)`
+- [x] Commit: `"ahci: 4Kn native sector support"`
 
 ---
 

@@ -38,7 +38,7 @@ int ncq_issue_rw(struct ahci_port *p, int tag, uint64_t lba,
     struct ahci_cmd_header *hdr = &p->cmdlist[tag];
     struct ahci_cmd_tbl *tbl = p->cmdtbl[tag];
     struct fis_reg_h2d *fis;
-    uint32_t byte_count = count * 512;
+    uint32_t byte_count = count * p->sector_size;
 
     ahci_memset(tbl, 0, sizeof(struct ahci_cmd_tbl));
 

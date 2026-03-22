@@ -124,6 +124,65 @@ int ahci_do_identify(struct ahci_port *p)
                (uint64_t)p->port_num);
     }
 
+    /* ---- Sector size detection (Advanced Format / 4Kn) ----
+     * Word 106: Physical/Logical Sector Size
+     *   Bit 14 must be 1, bit 15 must be 0 for word to be valid
+     *   Bit 12: logical sector size > 256 words (i.e., > 512 bytes)
+     *   Bits 3:0: 2^N logical sectors per physical sector
+     * Words 117-118: logical sector size in words (if word 106 bit 12 set)
+     * Word 209: logical-to-physical alignment offset */
+    {
+        uint16_t w106 = ident_buf[106];
+        uint32_t log_sector  = 512;  /* default */
+        uint32_t phys_sector = 512;  /* default */
+
+        if ((w106 & (1U << 14)) && !(w106 & (1U << 15))) {
+            /* Word 106 is valid */
+
+            /* Logical sector size from words 117-118 */
+            if (w106 & (1U << 12)) {
+                log_sector = ((uint32_t)ident_buf[117]
+                           | ((uint32_t)ident_buf[118] << 16)) * 2;
+                if (log_sector < 512)
+                    log_sector = 512;  /* sanity */
+            }
+
+            /* Physical sector size: 2^N logical sectors per physical */
+            if (w106 & (1U << 13)) {
+                uint32_t exp = w106 & 0x0F;
+                phys_sector = log_sector * (1U << exp);
+            } else {
+                phys_sector = log_sector;
+            }
+        }
+
+        p->sector_size = log_sector;
+        p->physical_sector_size = phys_sector;
+
+        /* Alignment offset (word 209) */
+        {
+            uint16_t w209 = ident_buf[209];
+            if ((w209 & (1U << 14)) && !(w209 & (1U << 15))) {
+                p->alignment_offset = w209 & 0x3FFF;
+            } else {
+                p->alignment_offset = 0;
+            }
+        }
+
+        klog(LOG_INFO, "ahci",
+               "Port %u: %u-byte logical, %u-byte physical sectors%s",
+               (uint64_t)p->port_num,
+               (uint64_t)log_sector, (uint64_t)phys_sector,
+               (log_sector > 512) ? " (4Kn)" : "");
+
+        if (p->alignment_offset != 0) {
+            klog(LOG_DEBUG, "ahci",
+                   "Port %u: alignment offset %u logical sectors",
+                   (uint64_t)p->port_num,
+                   (uint64_t)p->alignment_offset);
+        }
+    }
+
     return 0;
 }
 
@@ -135,7 +194,7 @@ int ahci_do_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
     struct ahci_cmd_header *hdr;
     struct ahci_cmd_tbl *tbl;
     struct fis_reg_h2d *fis;
-    uint32_t byte_count = count * 512;
+    uint32_t byte_count = count * p->sector_size;
 
     slot = port_find_slot(p->regs);
     if (slot < 0) return -1;
@@ -364,4 +423,11 @@ int ahci_present(void)
 int ahci_drive_count(void)
 {
     return num_drives;
+}
+
+uint32_t ahci_sector_size(int port_idx)
+{
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return 512;
+    return ports[port_idx].sector_size;
 }

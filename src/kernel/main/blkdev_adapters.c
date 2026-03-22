@@ -258,7 +258,7 @@ void blkdev_register_all(void)
             bd.name[0]='s'; bd.name[1]='a'; bd.name[2]='t';
             bd.name[3]='a'; bd.name[4]='0' + (char)di;
             bd.name[5]='\0';
-            bd.sector_size  = 512;
+            bd.sector_size  = ahci_sector_size(di);
             bd.sector_count = ahci_capacity(di);
             bd.read  = blkdev_ahci_read;
             bd.write = blkdev_ahci_write;
