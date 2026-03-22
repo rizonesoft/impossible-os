@@ -1373,3 +1373,313 @@ int ntfs_parse_indx_entries(const uint8_t *buffer,
 
     return NTFS_OK;
 }
+
+/* ============================================================================
+ * Directory Lookup — §5.3
+ *
+ * Resolves paths by walking each directory's B+ tree.  The algorithm:
+ *   1. Parse $INDEX_ROOT to get the root node's sorted entries
+ *   2. For each entry, compare the search name (case-insensitive)
+ *   3. If match → return the entry's MFT inode
+ *   4. If name < entry and entry has a sub-node → descend to child INDX
+ *   5. If name < entry and no sub-node → not found (leaf)
+ *   6. If we pass the sentinel (LAST) entry and it has a sub-node → descend
+ *   7. Repeat in the child INDX buffer until match or leaf
+ *
+ * Case-insensitive comparison uses ASCII toupper() as fallback.  Full
+ * Unicode $UpCase table support is added in §7.1.
+ * ============================================================================ */
+
+/* Maximum B+ tree depth to prevent infinite loops on corrupt volumes */
+#define NTFS_MAX_TREE_DEPTH  16
+
+/* Maximum data runs for $INDEX_ALLOCATION */
+#define NTFS_MAX_INDEX_RUNS  64
+
+/* ASCII uppercase (fallback until $UpCase loaded in §7.1) */
+static uint16_t ntfs_toupper(uint16_t c)
+{
+    if (c >= 'a' && c <= 'z')
+        return c - ('a' - 'A');
+    return c;
+}
+
+/* Case-insensitive comparison of ASCII name vs UTF-16LE index entry name.
+ * Returns negative if name < entry, 0 if equal, positive if name > entry.
+ * Both sides are uppercased before comparison. */
+static int ntfs_name_cmp_i(const char *name, int name_len,
+                            const uint8_t *entry_name_utf16, int entry_name_len)
+{
+    int i;
+    int min_len = name_len < entry_name_len ? name_len : entry_name_len;
+
+    for (i = 0; i < min_len; i++) {
+        uint16_t a = ntfs_toupper((uint16_t)(uint8_t)name[i]);
+        uint16_t b = ntfs_toupper(ntfs_le16(entry_name_utf16 + i * 2));
+
+        if (a != b)
+            return (int)a - (int)b;
+    }
+
+    /* If all compared chars are equal, shorter name sorts first */
+    return name_len - entry_name_len;
+}
+
+/* Search sorted index entries in a single node for 'name'.
+ *
+ * Returns:
+ *   NTFS_OK          — match found, *out_inode set
+ *   NTFS_ERR_NOT_FOUND — not found; if *out_child_vcn != (uint64_t)-1,
+ *                         descend to that VCN; else it's a leaf (definitive miss).
+ */
+static int ntfs_search_index_entries(const uint8_t *entries_base,
+                                      const struct ntfs_index_node_header *nh,
+                                      const char *name, int name_len,
+                                      uint64_t *out_inode,
+                                      uint64_t *out_child_vcn)
+{
+    struct ntfs_index_entry ie;
+    const uint8_t *entry;
+    int cmp;
+
+    *out_child_vcn = (uint64_t)-1;  /* Default: leaf, no descent */
+
+    entry = ntfs_index_entry_first(entries_base, nh, &ie);
+    while (entry) {
+        /* Sentinel (LAST) entry: no filename to compare */
+        if (ie.flags & NTFS_INDEX_ENTRY_LAST) {
+            /* If sentinel has a sub-node, descend there
+             * (name sorts after all entries in this node) */
+            if (ie.flags & NTFS_INDEX_ENTRY_SUBNODE)
+                *out_child_vcn = ie.child_vcn;
+            return NTFS_ERR_NOT_FOUND;
+        }
+
+        /* Compare search name against this entry's $FILE_NAME.
+         * The $FILE_NAME content starts at entry+0x10.
+         * name_length is at fn_data[0x40], UTF-16LE name at fn_data[0x42]. */
+        {
+            const uint8_t *fn_data = entry + 0x10;  /* $FILE_NAME content */
+            uint8_t entry_nlen = fn_data[0x40];      /* name_length (chars) */
+            const uint8_t *entry_name = fn_data + 0x42;  /* UTF-16LE name */
+
+            cmp = ntfs_name_cmp_i(name, name_len, entry_name, (int)entry_nlen);
+        }
+
+        if (cmp == 0) {
+            /* Match! Return this entry's MFT inode */
+            *out_inode = ie.mft_inode;
+            return NTFS_OK;
+        }
+
+        if (cmp < 0) {
+            /* name < entry: if sub-node exists, descend; else not found */
+            if (ie.flags & NTFS_INDEX_ENTRY_SUBNODE)
+                *out_child_vcn = ie.child_vcn;
+            return NTFS_ERR_NOT_FOUND;
+        }
+
+        /* cmp > 0: name > entry, continue to next entry */
+        entry = ntfs_index_entry_next(entry, entries_base, nh, &ie);
+    }
+
+    /* Fell off the end without hitting sentinel — shouldn't happen on
+     * well-formed NTFS, but handle gracefully */
+    return NTFS_ERR_NOT_FOUND;
+}
+
+int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
+               const char *name, uint64_t *out_inode)
+{
+    uintptr_t rec_phys = 0;
+    uintptr_t indx_phys = 0;
+    uint8_t *rec_buf = NULL;
+    uint8_t *indx_buf = NULL;
+    struct ntfs_mft_header hdr;
+    struct ntfs_index_root_header root_hdr;
+    struct ntfs_index_node_header node_hdr;
+    const uint8_t *entries_base;
+    struct ntfs_attr_header ia_ah;
+    const uint8_t *ia_attr;
+    struct ntfs_data_run ia_runs[NTFS_MAX_INDEX_RUNS];
+    int ia_run_count = 0;
+    uint32_t indx_size;
+    uint64_t child_vcn;
+    int name_len;
+    int depth;
+    int rc;
+
+    if (!vol || !name || !out_inode)
+        return NTFS_ERR_IO;
+
+    /* Compute name length */
+    name_len = 0;
+    while (name[name_len])
+        name_len++;
+    if (name_len == 0)
+        return NTFS_ERR_NOT_FOUND;
+
+    /* Allocate MFT record buffer (1 page = 4096 bytes, frs_size <= 4096) */
+    rec_phys = pmm_alloc_contiguous(1);
+    if (!rec_phys)
+        return NTFS_ERR_IO;
+    rec_buf = (uint8_t *)(uintptr_t)rec_phys;
+
+    /* Read the directory's MFT record */
+    rc = ntfs_read_mft_record(vol, dir_inode, rec_buf, &hdr);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    /* Apply fixup */
+    rc = ntfs_apply_fixup(rec_buf, vol->frs_size, vol->bytes_per_sector);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    /* Verify this is a directory */
+    if (!(hdr.flags & NTFS_MFT_FLAG_DIRECTORY)) {
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_NOT_FOUND;  /* Not a directory */
+    }
+
+    /* Parse $INDEX_ROOT */
+    rc = ntfs_parse_index_root(rec_buf, &hdr, &root_hdr, &node_hdr,
+                                &entries_base);
+    if (rc != NTFS_OK) {
+        pmm_free_frame(rec_phys);
+        return rc;
+    }
+
+    indx_size = root_hdr.index_record_size;
+    if (indx_size == 0)
+        indx_size = 4096;  /* Default INDX size */
+
+    /* Search in root node first */
+    rc = ntfs_search_index_entries(entries_base, &node_hdr, name, name_len,
+                                    out_inode, &child_vcn);
+    if (rc == NTFS_OK) {
+        /* Found in root node */
+        pmm_free_frame(rec_phys);
+        return NTFS_OK;
+    }
+
+    /* If no sub-node to descend to, it's definitively not found */
+    if (child_vcn == (uint64_t)-1) {
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_NOT_FOUND;
+    }
+
+    /* Need to descend into INDX buffers — get $INDEX_ALLOCATION data runs */
+    ia_attr = ntfs_attr_find_named(rec_buf, &hdr,
+                                    NTFS_ATTR_INDEX_ALLOCATION, "$I30", &ia_ah);
+    if (!ia_attr || ia_ah.non_resident != 1) {
+        /* Root says "has children" but no $INDEX_ALLOCATION — corrupt */
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_NOT_FOUND;
+    }
+
+    ia_run_count = ntfs_decode_data_runs(ia_attr, ia_runs,
+                                          NTFS_MAX_INDEX_RUNS, NULL);
+    if (ia_run_count <= 0) {
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_NOT_FOUND;
+    }
+
+    /* Allocate INDX buffer */
+    {
+        uint32_t indx_pages = (indx_size + 4095) / 4096;
+        indx_phys = pmm_alloc_contiguous(indx_pages);
+    }
+    if (!indx_phys) {
+        pmm_free_frame(rec_phys);
+        return NTFS_ERR_IO;
+    }
+    indx_buf = (uint8_t *)(uintptr_t)indx_phys;
+
+    /* Descend through INDX buffers */
+    for (depth = 0; depth < NTFS_MAX_TREE_DEPTH; depth++) {
+        struct ntfs_index_node_header indx_nh;
+        const uint8_t *indx_entries;
+
+        /* Read INDX at child_vcn */
+        rc = ntfs_read_indx(vol, ia_runs, ia_run_count, child_vcn,
+                             indx_size, indx_buf);
+        if (rc != NTFS_OK)
+            break;
+
+        /* Parse entries from the INDX buffer */
+        rc = ntfs_parse_indx_entries(indx_buf, &indx_nh, &indx_entries);
+        if (rc != NTFS_OK)
+            break;
+
+        /* Search this node */
+        rc = ntfs_search_index_entries(indx_entries, &indx_nh, name, name_len,
+                                        out_inode, &child_vcn);
+        if (rc == NTFS_OK) {
+            /* Found! */
+            pmm_free_frame(rec_phys);
+            pmm_free_frame(indx_phys);
+            return NTFS_OK;
+        }
+
+        /* If no sub-node to descend to, it's definitively not found */
+        if (child_vcn == (uint64_t)-1)
+            break;
+
+        /* Otherwise, loop: read next INDX at the new child_vcn */
+    }
+
+    pmm_free_frame(rec_phys);
+    pmm_free_frame(indx_phys);
+    return NTFS_ERR_NOT_FOUND;
+}
+
+int ntfs_resolve_path(struct ntfs_volume *vol, const char *path,
+                      uint64_t *out_inode)
+{
+    uint64_t current_inode = NTFS_ROOT_INODE;
+    char component[NTFS_MAX_NAME + 1];
+    int ci;
+    int rc;
+
+    if (!vol || !path || !out_inode)
+        return NTFS_ERR_IO;
+
+    /* Skip leading separator(s) */
+    while (*path == '\\' || *path == '/')
+        path++;
+
+    /* Empty path after stripping → root directory itself */
+    if (*path == '\0') {
+        *out_inode = NTFS_ROOT_INODE;
+        return NTFS_OK;
+    }
+
+    while (*path) {
+        /* Extract next path component */
+        ci = 0;
+        while (*path && *path != '\\' && *path != '/' && ci < NTFS_MAX_NAME) {
+            component[ci++] = *path++;
+        }
+        component[ci] = '\0';
+
+        /* Skip separator(s) between components */
+        while (*path == '\\' || *path == '/')
+            path++;
+
+        /* Skip empty components (e.g., double backslash) */
+        if (ci == 0)
+            continue;
+
+        /* Look up this component in the current directory */
+        rc = ntfs_lookup(vol, current_inode, component, &current_inode);
+        if (rc != NTFS_OK)
+            return rc;
+    }
+
+    *out_inode = current_inode;
+    return NTFS_OK;
+}

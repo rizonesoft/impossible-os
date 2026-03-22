@@ -67,6 +67,7 @@ int ntfs_probe(const uint8_t *sector);
 #define NTFS_ERR_BAD_MAGIC  -3  /* Magic is unrecognized */
 #define NTFS_ERR_FREE       -4  /* Record is not in-use (deleted) */
 #define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
+#define NTFS_ERR_NOT_FOUND  -6  /* File not found in directory */
 
 /* Parsed MFT record header — matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
@@ -437,3 +438,24 @@ int ntfs_read_indx(struct ntfs_volume *vol,
 int ntfs_parse_indx_entries(const uint8_t *buffer,
                             struct ntfs_index_node_header *node_hdr,
                             const uint8_t **entries_base);
+
+/* ---- Directory Lookup (§5.3) ---- */
+
+/* NTFS root directory inode */
+#define NTFS_ROOT_INODE  5
+
+/* Search a directory's B+ tree for a single filename component.
+ * dir_inode: MFT inode of the parent directory.
+ * name: ASCII filename to search for (case-insensitive).
+ * out_inode: filled with the matching file's MFT inode on success.
+ * Returns NTFS_OK on match, NTFS_ERR_NOT_FOUND if absent, or error. */
+int ntfs_lookup(struct ntfs_volume *vol, uint64_t dir_inode,
+               const char *name, uint64_t *out_inode);
+
+/* Resolve a full backslash-separated path to an MFT inode number.
+ * path: absolute path like "\Impossible\Fonts\Inter.ttf".
+ *        Leading backslash is optional.  Forward slashes also accepted.
+ * out_inode: filled with the final component's MFT inode.
+ * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if any component missing. */
+int ntfs_resolve_path(struct ntfs_volume *vol, const char *path,
+                      uint64_t *out_inode);

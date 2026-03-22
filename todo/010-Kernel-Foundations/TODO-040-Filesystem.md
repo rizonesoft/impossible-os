@@ -182,86 +182,76 @@ graph TD
 | **2**  | `040.04-MBR.md`          | §1 Primary Parse                  | MBR primary partition reading                                | blkdev (Layer 0)        | ✅      |
 | **2**  | `040.04-MBR.md`          | §2 EBR Chain                      | Extended/logical partition walking                           | Phase 2 (§1)            | ✅      |
 | **2**  | `040.05-GPT.md`          | §1 Primary Header                 | GPT header + entry array parsing                             | blkdev (Layer 0)        | ✅      |
-| **2**  | `040.05-GPT.md`          | §2 Backup Header                  | Backup GPT recovery + primary sync                           | Phase 2 (§1)            | ⬜      |
-| **2**  | `040.05-GPT.md`          | §3 4Kn Support                    | 4096-byte sector partition tables                            | Phase 2 (§1)            | ⬜      |
-| **3**  | `040.06-FAT32.md`        | §1 BPB Validation                 | Strict mount validation, dirty volume detect                 | FAT32 base              | ⬜      |
-| **3**  | `040.06-FAT32.md`        | §2 FSInfo Sync                    | FSInfo validation + full FAT scan fallback                   | Phase 3 (§1)            | ⬜      |
-| **3**  | `040.06-FAT32.md`        | §3 Dual-FAT                       | FAT mirroring + backup boot sector                           | Phase 3 (§1)            | ⬜      |
-| **3**  | `040.06-FAT32.md`        | §4 LFN Support                    | Full LFN creation + deletion + Unicode                       | Phase 3 (§1)            | ⬜      |
-| **3**  | `040.06-FAT32.md`        | §5 Timestamps                     | Hi-res creation time, year 2107 boundary                     | Phase 3 (§1)            | ⬜      |
+| **2**  | `040.05-GPT.md`          | §2 Backup Header                  | Backup GPT recovery + primary sync                           | Phase 2 (§1)            | ✅      |
+| **2**  | `040.05-GPT.md`          | §3 4Kn Support                    | 4096-byte sector partition tables                            | Phase 2 (§1)            | ✅      |
 | **3**  | `040.08-NTFS.md`         | §1 BPB                            | Volume boot record, cluster geometry                         | blkdev + partition      | ✅      |
 | **3**  | `040.08-NTFS.md`         | §2 MFT + Fixup                    | MFT inode reader + USA fixup                                 | Phase 3 (§1)            | ✅      |
 | **3**  | `040.08-NTFS.md`         | §3 Attribute Engine               | Attribute iterator, $FILE_NAME, $STD_INFO                    | Phase 3 (§2)            | ✅      |
 | **3**  | `040.08-NTFS.md`         | §4 Data Runs                      | VCN→LCN decoder + file data reader                           | Phase 3 (§3)            | ✅      |
-| **4**  | `040.08-NTFS.md`         | §5.1–5.2 B+ Tree                  | $INDEX_ROOT + INDX buffer reader                             | Phase 3 (§3–4)          | ✅      |
-| **4**  | `040.08-NTFS.md`         | §5.3 Directory Lookup             | Full `C:\path\to\file` resolution                            | Phase 4 (§5.2)          | ⬜      |
-| **4**  | `040.08-NTFS.md`         | §5.4 Dir Enumeration              | FindFirstFile / FindNextFile for NTFS                        | Phase 4 (§5.1–5.2)      | ⬜      |
-| **4**  | `040.08-NTFS.md`         | §3.1 VFS Registration             | Mount NTFS as C: drive                                       | Phase 4 (§5.3) + VFS    | ⬜      |
-| **4**  | `040.09-ext4.md`         | §1 Superblock                     | ext4 superblock + feature flag gating                        | blkdev + partition      | ⬜      |
-| **4**  | `040.09-ext4.md`         | §2 Block Groups                   | Group descriptor table, bitmaps                              | Phase 4 (§1)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §3 Inodes                         | Inode table reader + metadata                                | Phase 4 (§2)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §4 Extent Tree                    | Extent-based block mapping (ext4)                            | Phase 4 (§3)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §5 Indirect Blocks                | Legacy ext2/ext3 block pointer fallback                      | Phase 4 (§3)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §3 Directories                    | Linear parser + HTree directory index                        | Phase 4 (§3)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §4 CRC32C                         | Metadata checksum validation                                 | Phase 4 (§1)            | ⬜      |
-| **4**  | `040.09-ext4.md`         | §5 VFS Integration                | Mount ext4 partitions to drive letters                       | Phase 4 (§3) + VFS      | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.1 Case-Insensitive Paths       | `$UpCase` / uppercase path comparison                        | VFS base                | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.2 Mandatory Locking            | Share mode enforcement (FILE_SHARE_*)                        | VFS base                | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.3 Deletion Semantics           | Mark-for-delete-on-close (Windows style)                     | VFS base                | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.4 File Identifiers             | 64-bit unique file IDs                                       | VFS base                | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.5 Memory-Mapped Exec           | DLL/EXE mmap loading                                         | Phase 5 (§1.4)          | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.6 Attributes + Times           | FILETIME API (100ns since 1601)                              | VFS base                | ⬜      |
-| **5**  | `040.07-VFS.md`          | §1.7 Byte-Range Locks             | LockFile / UnlockFile                                        | Phase 5 (§1.2)          | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.1 Handle Table                | HANDLE type, error codes, std handles                        | VFS base                | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.2 CreateFile                  | CreateFile / CloseHandle                                     | Phase 5 (§13.1)         | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.3 ReadFile                    | ReadFile / WriteFile / SetFilePointer                        | Phase 5 (§13.2)         | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.4 Directories                 | FindFirstFile / CreateDirectory                              | Phase 5 (§13.2)         | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.5 File Mgmt                   | DeleteFile / MoveFile / CopyFile                             | Phase 5 (§13.2)         | ⬜      |
-| **5**  | `040.17-Win32-FS-API.md` | §13.6 Shell Migration             | Shell + kernel → Win32 API (15 files)                        | Phase 5 (§13.2–5)       | ⬜      |
-| **5**  | `040.07-VFS.md`          | §2.1–2.4 Feature Spoofing         | ADS, ACL stubs, vol info, reparse                            | Phase 5 (§1)            | ⬜      |
-| **6**  | `040-Filesystem.md`      | §3.1 Auto-Mount                   | Drive letter assignment from real disks                      | All FS drivers + VFS    | ⬜      |
-| **6**  | `040-Filesystem.md`      | §3.2 Mount/Unmount                | Shell `mount` / `umount` commands                            | Phase 6 (§3.1)          | ⬜      |
-| **6**  | `040.10-exFAT.md`        | §1–3 Boot + FAT + Bitmap          | exFAT volume parsing basics                                  | blkdev + partition      | ⬜      |
-| **6**  | `040.10-exFAT.md`        | §4–5 Upcase + Dir                 | Directory entry sets, timestamps                             | Phase 6 (§1–3)          | ⬜      |
-| **6**  | `040.10-exFAT.md`        | §3–7 File Read + Lookup           | File data reading + path resolution                          | Phase 6 (§4–5)          | ⬜      |
-| **6**  | `040.10-exFAT.md`        | §5–9 VFS Integration              | Mount exFAT to drive letter                                  | Phase 6 (§3–7) + VFS    | ⬜      |
-| **6**  | `040.03-ATAPI.md`        | §4–6 Capacity + Status            | Full SCSI layer (TOC, disc info)                             | ATAPI Phase 2           | ⬜      |
-| **6**  | `040.18-ISO9660.md`      | §1–9 ISO 9660 Read-Only           | CD/DVD filesystem + Rock Ridge + El Torito                   | ATAPI + blkdev          | ⬜      |
-| **6**  | `040.19-Joliet-UDF.md`   | §1–8 Joliet + UDF Read-Only       | Unicode filenames + DVD/Blu-ray format                       | Phase 6 (040.18)        | ⬜      |
-| **6**  | `040.12-BTRS.md`         | §1–7 Btrfs Read-Only              | Read Btrfs Linux partitions (Fedora default)                 | blkdev + partition      | ⬜      |
-| **6**  | `040.13-APFS.md`         | §1–8 APFS Read-Only               | Read macOS APFS volumes                                      | blkdev + partition      | ⬜      |
-| **6**  | `040.14-HFSPlus.md`      | §1–8 HFS+ Read-Only               | Read macOS HFS+ volumes                                      | blkdev + partition      | ⬜      |
-| **7**  | `040.06-FAT32.md`        | §3 Performance                    | Sector cache tuning, contiguous reads                        | FAT32 Phase 3           | ⬜      |
-| **7**  | `040.06-FAT32.md`        | §4–5 Consistency                  | FAT chain validation, fsck checks                            | FAT32 Phase 3           | ⬜      |
-| **7**  | `040.01-VirtIO.md`       | §5–7 Error + Flush                | Error recovery + flush/write-back                            | VirtIO Phase 2          | ⚠️      |
-| **7**  | `040.02-AHCI.md`         | §5–7 NCQ + Error                  | Native Command Queuing, error recovery                       | AHCI Phase 2            | ⬜      |
-| **7**  | `040.04-MBR.md`          | §3–6 CHS + Write + Create         | CHS encoding, MBR write, partition CRUD                      | MBR Phase 2             | ⬜      |
-| **7**  | `040.05-GPT.md`          | §4–7 GUID + Attrs + Hybrid        | Type GUID expansion, attribute decode                        | GPT Phase 2             | ⬜      |
-| **7**  | `040.05-GPT.md`          | §5–11 GPT Write + CLI             | GPT create + delete + resize + shell cmd                     | Phase 7 (§4–7)          | ⬜      |
-| **7**  | `040.11-IXFS.md`         | §1–8 Verification                 | Verify existing IXFS implementation                          | —                       | ⬜      |
-| **8**  | `040.11-IXFS.md`         | §9 ADS                            | Native Alternate Data Streams                                | IXFS verified (Phase 7) | ⬜      |
-| **8**  | `040.11-IXFS.md`         | §10 ACLs                          | Security descriptors + DACL/SACL                             | IXFS verified (Phase 7) | ⬜      |
-| **8**  | `040.11-IXFS.md`         | §11 Links                         | Hard links + symbolic links                                  | IXFS verified (Phase 7) | ⬜      |
-| **8**  | `040.11-IXFS.md`         | §12–14 Unicode + Sparse + Journal | Unicode normalization, sparse files, change journals         | IXFS verified (Phase 7) | ⬜      |
-| **8**  | `040.11-IXFS.md`         | §15–19 Advanced                   | Quotas, TRIM/discard, compression, encryption, online defrag | IXFS Phase 8            | ⬜      |
-| **8**  | `040-Filesystem.md`      | §5.1 Disk Cache                   | Block-level LRU cache (all FS drivers)                       | Phase 6 (Mount)         | ⬜      |
-| **8**  | `040.08-NTFS.md`         | §12 Write Support                 | Cluster allocator, USA regen, MFT allocator, attr writer     | NTFS read (Phase 4)     | ⬜      |
-| **8**  | `040.08-NTFS.md`         | §13 $LogFile Journal              | Transaction engine + dirty-mount recovery replay             | Phase 8 (§12)           | ⬜      |
-| **8**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation              | Directory insert/delete/split/merge                          | Phase 8 (§12)           | ⬜      |
-| **8**  | `040.08-NTFS.md`         | §12.5 File CRUD                   | CreateFile/DeleteFile/Rename on NTFS                         | Phase 8 (§12–14)        | ⬜      |
-| **8**  | `040.08-NTFS.md`         | §16 Write Data Path               | File write engine (extend/truncate/overwrite)                | Phase 8 (§12–14)        | ⬜      |
-| **9**  | `040.08-NTFS.md`         | §15 NTFS Boot Volume              | Boot-time NTFS init, system file layout, NTFS formatter      | Phase 8 (NTFS R/W)      | ⬜      |
-| **9**  | `040-Filesystem.md`      | **§6 IXFS → NTFS C: Switch**      | **Migrate C: from IXFS to NTFS — the big switch**            | Phase 9 (§15) + VFS     | ⬜      |
-| **9**  | `040-Filesystem.md`      | §5.2 CheckDisk                    | CLI `chkdsk` + GUI                                           | Phase 6 (Mount)         | ⬜      |
-| **9**  | `040-Filesystem.md`      | §5.3 Partition Mgr                | CLI `diskpart` + GUI                                         | Phase 7 (GPT/MBR Write) | ⬜      |
-| **9**  | `040-Filesystem.md`      | §5.6 SFC                          | CLI `sfc` + GUI                                              | Phase 6 (Mount)         | ⬜      |
+| **3**  | `040.08-NTFS.md`         | §5.1–5.2 B+ Tree                  | $INDEX_ROOT + INDX buffer reader                             | Phase 3 (§3–4)          | ✅      |
+| **3**  | `040.08-NTFS.md`         | §5.3 Directory Lookup             | Full `C:\path\to\file` resolution                            | Phase 3 (§5.2)          | ⬜      |
+| **3**  | `040.08-NTFS.md`         | §5.4 Dir Enumeration              | FindFirstFile / FindNextFile for NTFS                        | Phase 3 (§5.1–5.2)      | ⬜      |
+| **3**  | `040.08-NTFS.md`         | §3.1 VFS Registration             | Mount NTFS as C: drive                                       | Phase 3 (§5.3) + VFS    | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §12 Write Support                 | Cluster allocator, USA regen, MFT allocator, attr writer     | NTFS read (Phase 3)     | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal              | Transaction engine + dirty-mount recovery replay             | Phase 4 (§12)           | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation              | Directory insert/delete/split/merge                          | Phase 4 (§12)           | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §12.5 File CRUD                   | CreateFile/DeleteFile/Rename on NTFS                         | Phase 4 (§12–14)        | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §16 Write Data Path               | File write engine (extend/truncate/overwrite)                | Phase 4 (§12–14)        | ⬜      |
+| **5**  | `040.08-NTFS.md`         | §15 NTFS Boot Volume              | Boot-time NTFS init, system file layout, NTFS formatter      | Phase 4 (NTFS R/W)      | ⬜      |
+| **5**  | `040-Filesystem.md`      | **§6 IXFS → NTFS C: Switch**      | **Migrate C: from IXFS to NTFS — the big switch**            | Phase 5 (§15) + VFS     | ⬜      |
+| **6**  | `040.06-FAT32.md`        | §1 BPB Validation                 | Strict mount validation, dirty volume detect                 | FAT32 base              | ⬜      |
+| **6**  | `040.06-FAT32.md`        | §2 FSInfo Sync                    | FSInfo validation + full FAT scan fallback                   | Phase 6 (§1)            | ⬜      |
+| **6**  | `040.06-FAT32.md`        | §3 Dual-FAT                       | FAT mirroring + backup boot sector                           | Phase 6 (§1)            | ⬜      |
+| **6**  | `040.06-FAT32.md`        | §4 LFN Support                    | Full LFN creation + deletion + Unicode                       | Phase 6 (§1)            | ⬜      |
+| **6**  | `040.06-FAT32.md`        | §5 Timestamps                     | Hi-res creation time, year 2107 boundary                     | Phase 6 (§1)            | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.1 Case-Insensitive Paths       | `$UpCase` / uppercase path comparison                        | VFS base                | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.2 Mandatory Locking            | Share mode enforcement (FILE_SHARE_*)                        | VFS base                | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.3 Deletion Semantics           | Mark-for-delete-on-close (Windows style)                     | VFS base                | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.4 File Identifiers             | 64-bit unique file IDs                                       | VFS base                | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.5 Memory-Mapped Exec           | DLL/EXE mmap loading                                         | Phase 6 (§1.4)          | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.6 Attributes + Times           | FILETIME API (100ns since 1601)                              | VFS base                | ⬜      |
+| **6**  | `040.07-VFS.md`          | §1.7 Byte-Range Locks             | LockFile / UnlockFile                                        | Phase 6 (§1.2)          | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.1 Handle Table                | HANDLE type, error codes, std handles                        | VFS base                | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.2 CreateFile                  | CreateFile / CloseHandle                                     | Phase 6 (§13.1)         | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.3 ReadFile                    | ReadFile / WriteFile / SetFilePointer                        | Phase 6 (§13.2)         | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.4 Directories                 | FindFirstFile / CreateDirectory                              | Phase 6 (§13.2)         | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.5 File Mgmt                   | DeleteFile / MoveFile / CopyFile                             | Phase 6 (§13.2)         | ⬜      |
+| **6**  | `040.17-Win32-FS-API.md` | §13.6 Shell Migration             | Shell + kernel → Win32 API (15 files)                        | Phase 6 (§13.2–5)       | ⬜      |
+| **6**  | `040.07-VFS.md`          | §2.1–2.4 Feature Spoofing         | ADS, ACL stubs, vol info, reparse                            | Phase 6 (§1)            | ⬜      |
+| **7**  | `040-Filesystem.md`      | §3.1 Auto-Mount                   | Drive letter assignment from real disks                      | All FS drivers + VFS    | ⬜      |
+| **7**  | `040-Filesystem.md`      | §3.2 Mount/Unmount                | Shell `mount` / `umount` commands                            | Phase 7 (§3.1)          | ⬜      |
+| **7**  | `040.09-ext4.md`         | §1–5 Full Driver                  | Superblock, block groups, inodes, extents, dirs, VFS mount   | blkdev + partition      | ⬜      |
+| **7**  | `040.10-exFAT.md`        | §1–9 Full Driver                  | Boot region, FAT, bitmap, upcase, dirs, file read, VFS mount | blkdev + partition      | ⬜      |
+| **7**  | `040.03-ATAPI.md`        | §4–6 Capacity + Status            | Full SCSI layer (TOC, disc info)                             | ATAPI Phase 2           | ⬜      |
+| **7**  | `040.18-ISO9660.md`      | §1–9 ISO 9660 Read-Only           | CD/DVD filesystem + Rock Ridge + El Torito                   | ATAPI + blkdev          | ⬜      |
+| **7**  | `040.19-Joliet-UDF.md`   | §1–8 Joliet + UDF Read-Only       | Unicode filenames + DVD/Blu-ray format                       | Phase 7 (040.18)        | ⬜      |
+| **7**  | `040.12-BTRS.md`         | §1–7 Btrfs Read-Only              | Read Btrfs Linux partitions (Fedora default)                 | blkdev + partition      | ⬜      |
+| **7**  | `040.13-APFS.md`         | §1–8 APFS Read-Only               | Read macOS APFS volumes                                      | blkdev + partition      | ⬜      |
+| **7**  | `040.14-HFSPlus.md`      | §1–8 HFS+ Read-Only               | Read macOS HFS+ volumes                                      | blkdev + partition      | ⬜      |
+| **8**  | `040.06-FAT32.md`        | §6 Performance                    | Sector cache tuning, contiguous reads                        | FAT32 Phase 6           | ⬜      |
+| **8**  | `040.06-FAT32.md`        | §7 Consistency                    | FAT chain validation, fsck checks                            | FAT32 Phase 6           | ⬜      |
+| **8**  | `040.01-VirtIO.md`       | §5–7 Error + Flush                | Error recovery + flush/write-back                            | VirtIO Phase 2          | ⚠️      |
+| **8**  | `040.02-AHCI.md`         | §5–7 NCQ + Error                  | Native Command Queuing, error recovery                       | AHCI Phase 2            | ⬜      |
+| **8**  | `040.04-MBR.md`          | §3–6 CHS + Write + Create         | CHS encoding, MBR write, partition CRUD                      | MBR Phase 2             | ⬜      |
+| **8**  | `040.05-GPT.md`          | §4–7 GUID + Attrs + Hybrid        | Type GUID expansion, attribute decode                        | GPT Phase 2             | ✅      |
+| **8**  | `040.05-GPT.md`          | §5–11 GPT Write + CLI             | GPT create + delete + resize + shell cmd                     | Phase 8 (§4–7)          | ⬜      |
+| **8**  | `040.11-IXFS.md`         | §1–8 Verification                 | Verify existing IXFS implementation                          | —                       | ⬜      |
+| **9**  | `040.11-IXFS.md`         | §9 ADS                            | Native Alternate Data Streams                                | IXFS verified (Phase 8) | ⬜      |
+| **9**  | `040.11-IXFS.md`         | §10 ACLs                          | Security descriptors + DACL/SACL                             | IXFS verified (Phase 8) | ⬜      |
+| **9**  | `040.11-IXFS.md`         | §11 Links                         | Hard links + symbolic links                                  | IXFS verified (Phase 8) | ⬜      |
+| **9**  | `040.11-IXFS.md`         | §12–14 Unicode + Sparse + Journal | Unicode normalization, sparse files, change journals         | IXFS verified (Phase 8) | ⬜      |
+| **9**  | `040.11-IXFS.md`         | §15–19 Advanced                   | Quotas, TRIM/discard, compression, encryption, online defrag | IXFS Phase 9            | ⬜      |
+| **9**  | `040-Filesystem.md`      | §5.1 Disk Cache                   | Block-level LRU cache (all FS drivers)                       | Phase 7 (Mount)         | ⬜      |
+| **9**  | `040-Filesystem.md`      | §5.2 CheckDisk                    | CLI `chkdsk` + GUI                                           | Phase 7 (Mount)         | ⬜      |
+| **9**  | `040-Filesystem.md`      | §5.3 Partition Mgr                | CLI `diskpart` + GUI                                         | Phase 8 (GPT/MBR Write) | ⬜      |
+| **9**  | `040-Filesystem.md`      | §5.6 SFC                          | CLI `sfc` + GUI                                              | Phase 7 (Mount)         | ⬜      |
 | **9**  | `040-Filesystem.md`      | §5.12 I/O Metrics                 | Per-device stats + `iostat` cmd                              | blkdev                  | ⬜      |
-| **9**  | `040-Filesystem.md`      | §4 Disk Mgmt GUI                  | Graphical partition layout viewer                            | Phase 6 (Mount)         | ⬜      |
-| **10** | `040-Filesystem.md`      | §5.4 Defrag/TRIM                  | CLI `defrag` + visual block map GUI                          | Phase 6 (Mount)         | ⬜      |
-| **10** | `040-Filesystem.md`      | §5.5 Recovery                     | CLI `recover` + Recovery Wizard GUI                          | Phase 6 (Mount)         | ⬜      |
+| **9**  | `040-Filesystem.md`      | §4 Disk Mgmt GUI                  | Graphical partition layout viewer                            | Phase 7 (Mount)         | ⬜      |
+| **10** | `040-Filesystem.md`      | §5.4 Defrag/TRIM                  | CLI `defrag` + visual block map GUI                          | Phase 7 (Mount)         | ⬜      |
+| **10** | `040-Filesystem.md`      | §5.5 Recovery                     | CLI `recover` + Recovery Wizard GUI                          | Phase 7 (Mount)         | ⬜      |
 | **10** | `040-Filesystem.md`      | §5.7 Disk Benchmark               | CLI `diskbench` + real-time bar GUI                          | blkdev                  | ⬜      |
-| **10** | `040-Filesystem.md`      | §5.8 Disk Wipe                    | Secure erase CLI + GUI                                       | Phase 6 (Mount)         | ⬜      |
-| **10** | `040-Filesystem.md`      | §5.9 Disk Usage                   | CLI `diskuse` + treemap GUI                                  | Phase 6 (Mount)         | ⬜      |
+| **10** | `040-Filesystem.md`      | §5.8 Disk Wipe                    | Secure erase CLI + GUI                                       | Phase 7 (Mount)         | ⬜      |
+| **10** | `040-Filesystem.md`      | §5.9 Disk Usage                   | CLI `diskuse` + treemap GUI                                  | Phase 7 (Mount)         | ⬜      |
 | **10** | `040-Filesystem.md`      | §5.10 Snapshots                   | CLI `snapshot` + Snapshot Manager GUI                        | IXFS §3 CoW             | ⬜      |
 | —      | `040.15-NVMe-2.0.md`     | §1–10 NVMe 2.0 PCIe Driver        | Full NVMe driver (28 sections, 5 exclusives)                 | PCI                     | ⬜      |
 | —      | `040.16-NVMe-2.1.md`     | §1–19 NVMe 2.1 PCIe Driver        | Full NVMe driver (19 sections, 5 exclusives)                 | PCI                     | ⬜      |
@@ -270,44 +260,43 @@ graph TD
 ### Notes and Tips
 
 > [!NOTE]
-> **Phases 1–4** build the core storage stack: block device hardening (MSI-X, NCQ),
-> partition table extensions (EBR, 4Kn, backup GPT), and filesystem drivers
-> (FAT32 hardening, NTFS C: drive, ext4 read-only).
+> **Phases 1–2** build the core storage stack: block device drivers (VirtIO, AHCI),
+> ATAPI transport, and partition table parsing (MBR, GPT) — all ✅ complete.
 >
-> **Phase 5** delivers the Win32-compatible file API (`CreateFile`/`ReadFile`/`WriteFile`)
-> via `040.17-Win32-FS-API.md §13` and completes VFS enhancements (case-insensitive
-> paths, share modes, deletion semantics). This is the **critical single gate**: all
-> shell commands, font loading, icon loading, registry I/O, crash dumps, and swap must
-> migrate from `vfs_*()` to Win32 API. Expect ~15 files to touch in §13.6.
+> **Phase 3** completes NTFS read-only: directory lookup, enumeration, and VFS
+> registration so NTFS can mount as C:. NTFS §1–4 (BPB, MFT, attributes, data runs,
+> B+ tree) are already ✅.
 >
-> **Phases 6–7** wire everything together: auto-mount drive letters, exFAT/ISO 9660,
-> driver hardening (NCQ, error recovery, GPT write), and IXFS verification.
+> **Phase 4** delivers full NTFS write support: cluster allocator, `$LogFile`
+> journaling, B+ tree mutation, file CRUD, and the write data path.
 >
-> **Phase 8** adds NTFS write support (cluster allocator, $LogFile journaling,
-> B+ tree mutation, file CRUD) — the prerequisite for the C: drive switch.
+> **Phase 5** executes the **IXFS → NTFS C: drive migration** (§6): NTFS boot
+> volume init, build system changes, kernel boot path update, and verification.
+> **This is the first major milestone — boot from NTFS and test everything.**
 >
-> **Phase 9** executes the **IXFS → NTFS C: drive migration** (§6): update
-> build system, modify `partition.c` to boot from NTFS, migrate system files,
-> and demote IXFS to secondary data volumes.
+> **Phase 6** adds FAT32 hardening (BPB validation, LFN write, timestamps),
+> VFS enhancements (case-insensitive paths, share modes, deletion semantics),
+> and the Win32 file API (`CreateFile`/`ReadFile`/`WriteFile` + shell migration).
 >
-> **Phases 8–10** are polish and competitive features: IXFS advanced features (ADS,
-> ACLs, compression, encryption), disk tools (chkdsk, defrag, recovery), and GUI
-> utilities (Disk Management, Usage Analyzer, Benchmark).
+> **Phase 7** brings additional filesystem drivers: ext4, exFAT, ISO 9660,
+> Joliet/UDF, Btrfs, APFS, HFS+, plus auto-mount and shell mount commands.
+>
+> **Phases 8–10** are hardening and polish: driver hardening (NCQ, error recovery,
+> GPT write), IXFS advanced features, and disk tools (chkdsk, defrag, benchmark).
 
 > [!TIP]
 > **Quick wins (any time — zero dependencies):**
-> - `§5.11` (I/O metrics) — wraps existing `blkdev_read/write` counters, no FS needed.
+> - `§5.12` (I/O metrics) — wraps existing `blkdev_read/write` counters, no FS needed.
 > - `§5.7` (disk benchmark) — pure blkdev-level sequential + random I/O.
 > - `040.11-IXFS.md §1–8` (verification) — validate existing code, no new features.
-> - `040.05-GPT.md §5.1` (type GUID registry) — data-only expansion, already ✅.
+> - `040.05-GPT.md §4–7` (type GUID registry + attributes) — already ✅.
 >
-> **NTFS is the critical path to C: drive.** Phases 1–3 of `040.08-NTFS.md`
-> (BPB, MFT, attributes, data runs, B+ tree) are ✅ complete. Phase 4
-> (§5.3 directory lookup + §3.1 VFS registration) is the final gate before
-> NTFS serves as the boot volume.
+> **NTFS is the critical path to C: drive.** Phases 3–5 are a single focused
+> pipeline: complete NTFS read → add write support → switch C: to NTFS → test.
+> No other filesystem work blocks this path.
 >
-> **The biggest single task** is `040.17 §13 Win32 File API` + `§13.6 Migration` —
-> it touches every kernel file that does I/O. Plan for 2–3 days of focused work.
+> **The biggest single task** is Phase 4 (NTFS write) — cluster allocator, journal,
+> and B+ tree mutation are complex subsystems. Plan for 1–2 weeks of focused work.
 >
 > **Sub-file roadmaps exist** within each of the 20 sub-TODO files (e.g.,
 > `040.08-NTFS.md` has its own 5-phase internal roadmap). This master roadmap
@@ -708,8 +697,8 @@ graph TD
 > user data live on NTFS for full Win32 compatibility.
 
 > [!CAUTION]
-> **Prerequisites:** NTFS read-only (040.08 §1–8 ✅), NTFS write support
-> (040.08 §12–16), $LogFile journaling (040.08 §13), and NTFS boot volume
+> **Prerequisites:** NTFS read-only (040.08 §1–8 ✅, Phase 3), NTFS write support
+> (040.08 §12–16, Phase 4), $LogFile journaling (040.08 §13), and NTFS boot volume
 > initialization (040.08 §15) must ALL be complete before this switch.
 
 ### 6.1 Build System Changes
