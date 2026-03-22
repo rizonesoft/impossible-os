@@ -504,6 +504,334 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
 }
 
 /* ============================================================================
+ * $ATTRIBUTE_LIST Handler — §3.4
+ *
+ * When a file's attributes overflow a single 1024-byte MFT record, NTFS
+ * creates extension records. The base record contains a $ATTRIBUTE_LIST
+ * (type 0x20) that maps every attribute to the MFT record that holds it.
+ *
+ * Entry layout (variable-length, walk by entry_length at 0x04):
+ *   0x00  Attribute Type ID       (4 bytes, LE)
+ *   0x04  Entry length            (2 bytes, LE)
+ *   0x06  Name length             (1 byte, UTF-16 chars)
+ *   0x07  Name offset             (1 byte, from entry start)
+ *   0x08  Starting VCN            (8 bytes, LE) — for split non-res attrs
+ *   0x10  MFT Reference           (8 bytes, LE: low 48 = inode, high 16 = seq)
+ *   0x18  Attribute Instance ID   (2 bytes, LE)
+ *
+ * Minimum entry length: 0x1A (26 bytes).
+ *
+ * The $ATTRIBUTE_LIST itself can be resident (small) or non-resident (rare,
+ * for files with many attributes spread across many extension records).
+ * ============================================================================ */
+
+/* Parse a single $ATTRIBUTE_LIST entry from raw bytes */
+static void parse_attrlist_entry(const uint8_t *p,
+                                  struct ntfs_attrlist_entry *out)
+{
+    out->type          = ntfs_le32(p + 0x00);
+    out->entry_length  = ntfs_le16(p + 0x04);
+    out->name_length   = p[0x06];
+    out->name_offset   = p[0x07];
+    out->start_vcn     = ntfs_le64(p + 0x08);
+    out->mft_reference = ntfs_le64(p + 0x10);
+    out->mft_inode     = out->mft_reference & 0x0000FFFFFFFFFFFF;
+    out->attr_id       = ntfs_le16(p + 0x18);
+}
+
+/* Internal: search $ATTRIBUTE_LIST entries for a given type (and optional
+ * name), read the extension MFT record, and return the attribute pointer.
+ *
+ * attrlist_data: pointer to $ATTRIBUTE_LIST content bytes.
+ * attrlist_len: length of the content.
+ * base_inode: inode of the base record (to skip self-referencing entries).
+ * vol: volume context for reading extension records.
+ * type_id: target attribute type.
+ * name: optional ASCII name to match (NULL for unnamed).
+ * out: filled with parsed attribute header on success.
+ * ext_record: set to PMM-allocated extension record buffer. Caller frees.
+ * ext_hdr: filled with extension record header.
+ *
+ * Returns raw pointer to the attribute within ext_record, or NULL. */
+static const uint8_t *attrlist_search(const uint8_t *attrlist_data,
+                                       uint32_t attrlist_len,
+                                       uint64_t base_inode,
+                                       struct ntfs_volume *vol,
+                                       uint32_t type_id,
+                                       const char *name,
+                                       struct ntfs_attr_header *out,
+                                       uintptr_t *ext_record,
+                                       struct ntfs_mft_header *ext_hdr)
+{
+    uint32_t offset = 0;
+
+    while (offset + 0x1A <= attrlist_len) {
+        struct ntfs_attrlist_entry ale;
+        parse_attrlist_entry(attrlist_data + offset, &ale);
+
+        /* Sanity: entry_length must be >= 0x1A and not exceed remaining */
+        if (ale.entry_length < 0x1A ||
+            offset + ale.entry_length > attrlist_len)
+            break;
+
+        /* Match type */
+        if (ale.type == type_id) {
+            /* Match name if specified */
+            int name_ok = 1;
+            if (name && ale.name_length > 0) {
+                const uint8_t *ename = attrlist_data + offset +
+                                       ale.name_offset;
+                name_ok = ntfs_name_match(ename, ale.name_length, name);
+            } else if (name && ale.name_length == 0) {
+                /* Caller wants named, entry is unnamed */
+                name_ok = (name[0] == '\0') ? 1 : 0;
+            } else if (!name && ale.name_length > 0) {
+                /* Caller wants unnamed, entry is named — skip */
+                name_ok = 0;
+            }
+
+            if (name_ok && ale.mft_inode != base_inode) {
+                /* Attribute lives in an extension record — read it */
+                uintptr_t rec_phys = pmm_alloc_contiguous(1);
+                if (!rec_phys)
+                    return NULL;
+
+                {
+                    uint8_t *rec_buf = (uint8_t *)(uintptr_t)rec_phys;
+                    struct ntfs_mft_header ehdr;
+                    const uint8_t *found;
+                    int rc;
+
+                    rc = ntfs_read_mft_record(vol, ale.mft_inode,
+                                               rec_buf, &ehdr);
+                    if (rc != NTFS_OK) {
+                        pmm_free_frame(rec_phys);
+                        goto next_entry;
+                    }
+
+                    rc = ntfs_apply_fixup(rec_buf, vol->frs_size,
+                                           vol->bytes_per_sector);
+                    if (rc != NTFS_OK) {
+                        pmm_free_frame(rec_phys);
+                        goto next_entry;
+                    }
+
+                    /* Search for the attribute in the extension record */
+                    if (name)
+                        found = ntfs_attr_find_named(rec_buf, &ehdr,
+                                                      type_id, name, out);
+                    else
+                        found = ntfs_attr_find(rec_buf, &ehdr,
+                                                type_id, out);
+
+                    if (found) {
+                        *ext_record = rec_phys;
+                        if (ext_hdr)
+                            *ext_hdr = ehdr;
+                        return found;
+                    }
+
+                    pmm_free_frame(rec_phys);
+                }
+            }
+        }
+
+next_entry:
+        offset += ale.entry_length;
+    }
+
+    return NULL;
+}
+
+/* Read $ATTRIBUTE_LIST content, handling both resident and non-resident.
+ * Returns a pointer to the content data and sets *data_len.
+ * For resident: returns a pointer into the record buffer (no alloc).
+ * For non-resident: allocates via PMM and sets *alloc_phys (caller frees).
+ * Returns NULL on failure. */
+static const uint8_t *read_attrlist_content(struct ntfs_volume *vol,
+                                             const uint8_t *al_attr,
+                                             const struct ntfs_attr_header *al_ah,
+                                             uint32_t *data_len,
+                                             uintptr_t *alloc_phys)
+{
+    *alloc_phys = 0;
+
+    if (al_ah->non_resident == 0) {
+        /* Resident — data is inline */
+        *data_len = al_ah->content_length;
+        return al_attr + al_ah->content_offset;
+    }
+
+    /* Non-resident $ATTRIBUTE_LIST — decode data runs and read from disk */
+    {
+        struct ntfs_data_run runs[32];
+        struct ntfs_nonres_header nrhdr;
+        int run_count;
+        uint32_t total_len;
+        uint32_t pages;
+        uintptr_t buf_phys;
+        uint8_t *buf;
+        int ri;
+        uint32_t buf_off;
+
+        run_count = ntfs_decode_data_runs(al_attr, runs, 32, &nrhdr);
+        if (run_count <= 0 || nrhdr.real_size == 0)
+            return NULL;
+
+        total_len = (uint32_t)nrhdr.real_size;
+        pages = (total_len + 4095) / 4096;
+        buf_phys = pmm_alloc_contiguous(pages);
+        if (!buf_phys)
+            return NULL;
+
+        buf = (uint8_t *)(uintptr_t)buf_phys;
+        buf_off = 0;
+
+        for (ri = 0; ri < run_count && buf_off < total_len; ri++) {
+            uint64_t byte_off = runs[ri].lcn * vol->cluster_size;
+            uint64_t byte_len = runs[ri].length * vol->cluster_size;
+            uint32_t to_read;
+
+            if (runs[ri].lcn == NTFS_LCN_SPARSE)
+                continue;  /* Sparse run — skip */
+
+            if (byte_len > total_len - buf_off)
+                byte_len = total_len - buf_off;
+            to_read = (uint32_t)byte_len;
+
+            if (blkdev_read(vol->dev,
+                    byte_off / vol->dev->sector_size,
+                    to_read / vol->dev->sector_size + 1,
+                    buf + buf_off) != 0) {
+                pmm_free_frame(buf_phys);
+                return NULL;
+            }
+            buf_off += to_read;
+        }
+
+        *data_len = total_len;
+        *alloc_phys = buf_phys;
+        return (const uint8_t *)(uintptr_t)buf_phys;
+    }
+}
+
+/* ---- Public API: extended attribute search with $ATTRIBUTE_LIST ---- */
+
+const uint8_t *ntfs_attr_find_ext(struct ntfs_volume *vol,
+                                   const uint8_t *record,
+                                   const struct ntfs_mft_header *hdr,
+                                   uint32_t type_id,
+                                   struct ntfs_attr_header *out,
+                                   uintptr_t *ext_record,
+                                   struct ntfs_mft_header *ext_hdr)
+{
+    const uint8_t *found;
+
+    if (ext_record)
+        *ext_record = 0;
+
+    /* Try base record first */
+    found = ntfs_attr_find(record, hdr, type_id, out);
+    if (found)
+        return found;
+
+    /* Not in base record — check for $ATTRIBUTE_LIST */
+    {
+        struct ntfs_attr_header al_ah;
+        const uint8_t *al_attr;
+
+        al_attr = ntfs_attr_find(record, hdr,
+                                  NTFS_ATTR_ATTRIBUTE_LIST, &al_ah);
+        if (!al_attr)
+            return NULL;  /* No $ATTRIBUTE_LIST — attribute doesn't exist */
+
+        {
+            const uint8_t *al_data;
+            uint32_t al_len;
+            uintptr_t al_phys;
+            uint64_t base_inode;
+            const uint8_t *result;
+
+            al_data = read_attrlist_content(vol, al_attr, &al_ah,
+                                             &al_len, &al_phys);
+            if (!al_data)
+                return NULL;
+
+            /* Base inode from the MFT record header (for self-ref skip) */
+            base_inode = ntfs_le32(record + 0x2C);  /* MFT record number */
+            /* For NTFS 3.1+, the 48-bit reference is at 0x2C..0x31 */
+            base_inode = ntfs_le32(record + 0x2C) |
+                         ((uint64_t)ntfs_le16(record + 0x30) << 32);
+
+            result = attrlist_search(al_data, al_len, base_inode, vol,
+                                      type_id, NULL, out,
+                                      ext_record, ext_hdr);
+
+            if (al_phys)
+                pmm_free_frame(al_phys);
+
+            return result;
+        }
+    }
+}
+
+const uint8_t *ntfs_attr_find_named_ext(struct ntfs_volume *vol,
+                                         const uint8_t *record,
+                                         const struct ntfs_mft_header *hdr,
+                                         uint32_t type_id,
+                                         const char *name,
+                                         struct ntfs_attr_header *out,
+                                         uintptr_t *ext_record,
+                                         struct ntfs_mft_header *ext_hdr)
+{
+    const uint8_t *found;
+
+    if (ext_record)
+        *ext_record = 0;
+
+    /* Try base record first */
+    found = ntfs_attr_find_named(record, hdr, type_id, name, out);
+    if (found)
+        return found;
+
+    /* Not in base record — check for $ATTRIBUTE_LIST */
+    {
+        struct ntfs_attr_header al_ah;
+        const uint8_t *al_attr;
+
+        al_attr = ntfs_attr_find(record, hdr,
+                                  NTFS_ATTR_ATTRIBUTE_LIST, &al_ah);
+        if (!al_attr)
+            return NULL;
+
+        {
+            const uint8_t *al_data;
+            uint32_t al_len;
+            uintptr_t al_phys;
+            uint64_t base_inode;
+            const uint8_t *result;
+
+            al_data = read_attrlist_content(vol, al_attr, &al_ah,
+                                             &al_len, &al_phys);
+            if (!al_data)
+                return NULL;
+
+            base_inode = ntfs_le32(record + 0x2C) |
+                         ((uint64_t)ntfs_le16(record + 0x30) << 32);
+
+            result = attrlist_search(al_data, al_len, base_inode, vol,
+                                      type_id, name, out,
+                                      ext_record, ext_hdr);
+
+            if (al_phys)
+                pmm_free_frame(al_phys);
+
+            return result;
+        }
+    }
+}
+
+/* ============================================================================
  * $FILE_NAME Decoder — attribute type 0x30
  *
  * Every MFT record has at least one $FILE_NAME attribute. Records with both

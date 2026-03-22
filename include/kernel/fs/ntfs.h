@@ -177,6 +177,56 @@ const uint8_t *ntfs_attr_find_named(const uint8_t *record,
                                     const char *name,
                                     struct ntfs_attr_header *out);
 
+/* ---- $ATTRIBUTE_LIST Handler (§3.4, attribute type 0x20) ---- */
+
+/* A parsed entry from the $ATTRIBUTE_LIST attribute.
+ * The list maps which attributes live in which MFT record. */
+struct ntfs_attrlist_entry {
+    uint32_t type;         /* 0x00: Attribute type ID */
+    uint16_t entry_length; /* 0x04: Length of this list entry */
+    uint8_t  name_length;  /* 0x06: Name length (UTF-16 chars) */
+    uint8_t  name_offset;  /* 0x07: Offset to name from entry start */
+    uint64_t start_vcn;    /* 0x08: Starting VCN (for split non-res attrs) */
+    uint64_t mft_reference; /* 0x10: MFT reference of record holding attr */
+    uint64_t mft_inode;    /* Extracted: low 48 bits of mft_reference */
+    uint16_t attr_id;      /* 0x18: Attribute instance ID */
+};
+
+/* Extended attribute search: tries base record first, then follows
+ * $ATTRIBUTE_LIST references to extension MFT records.
+ *
+ * vol: NTFS volume (needed to read extension records).
+ * record: raw base MFT record buffer (after fixup).
+ * hdr: parsed base MFT record header.
+ * type_id: attribute type to find.
+ * out: filled with parsed header of found attribute.
+ * ext_record: if the attribute was found in an extension record, this is
+ *   set to the PMM-allocated buffer. Caller MUST call pmm_free_frame()
+ *   on it when done. Set to 0 if attribute found in base record.
+ * ext_hdr: if ext_record is set, filled with the extension record header.
+ *
+ * Returns raw pointer to the attribute, or NULL if not found anywhere.
+ * The returned pointer is valid within either `record` (if ext_record==0)
+ * or within `ext_record` (if ext_record!=0). */
+const uint8_t *ntfs_attr_find_ext(struct ntfs_volume *vol,
+                                   const uint8_t *record,
+                                   const struct ntfs_mft_header *hdr,
+                                   uint32_t type_id,
+                                   struct ntfs_attr_header *out,
+                                   uintptr_t *ext_record,
+                                   struct ntfs_mft_header *ext_hdr);
+
+/* Extended named attribute search (type + name match, with $ATTRIBUTE_LIST
+ * fallback). Same semantics as ntfs_attr_find_ext() but also matches name. */
+const uint8_t *ntfs_attr_find_named_ext(struct ntfs_volume *vol,
+                                         const uint8_t *record,
+                                         const struct ntfs_mft_header *hdr,
+                                         uint32_t type_id,
+                                         const char *name,
+                                         struct ntfs_attr_header *out,
+                                         uintptr_t *ext_record,
+                                         struct ntfs_mft_header *ext_hdr);
+
 /* ---- $FILE_NAME Decoder (attribute type 0x30) ---- */
 
 /* Filename namespace values */
