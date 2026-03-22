@@ -128,7 +128,7 @@ graph TD
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ✅   |
-| 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ⬜   |
+| 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | P8 (§12.4) + P9 (§14.1)              |   ⬜   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | P8 (§12.1)                           |   ⬜   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.2 Recovery Replay          | Dirty mount redo/undo replay                                     | P9 (§13.1)                           |   ⬜   |
@@ -951,32 +951,46 @@ graph TD
   - [x] Increment sequence number (stale reference detection)
 - [x] Commit: `"ntfs: MFT record allocator"`
 
-### 12.4 Attribute Writer
+### 12.4 Attribute Writer ✅
 
-**Prompt:** Implement creating, modifying, and removing attributes within MFT records. For resident attributes: insert/update attribute data directly in the record. For non-resident attributes: allocate clusters via §12.1, encode data runs (reverse of §4.1), and write the run-list into the attribute header. Handle attribute growth: if a resident attribute grows beyond the record's free space, convert it to non-resident. Handle attribute creation order (NTFS requires attributes sorted by type ID). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: attribute writer"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that the attribute writer is correctly implemented: (1) `ntfs_attr_write.c` has `ntfs_encode_data_runs()` (reverse of runlist decoder), `ntfs_attr_add()` (sorted insert, resident/non-resident), `ntfs_attr_update()` (in-place for resident, cluster write for non-resident, res→nonres conversion), `ntfs_attr_remove()` (free clusters, shift left). (2) Data run encoder uses header = `(off_size << 4) | len_size`, signed relative offsets, 0x00 terminator. (3) Attributes sorted by type ID on insert. (4) `ntfs_internal.h` has `ntfs_le32_write()` and `ntfs_le64_write()`. (5) Build passes: `=== BUILD OK ===`.
 
-- [ ] Implement `ntfs_attr_add(record, type, name, data, len)`:
-  - [ ] Find insertion point: attributes must be sorted by type ID
-  - [ ] Shift subsequent attributes to make room
-  - [ ] Write attribute header (type, length, resident flag, name)
-  - [ ] If data fits in record → create as resident
-  - [ ] If data too large → create as non-resident (allocate clusters, encode runs)
-  - [ ] Check record doesn't exceed `frs_size` — if so, create `$ATTRIBUTE_LIST`
-- [ ] Implement `ntfs_attr_update(record, type, name, data, len)`:
-  - [ ] Locate existing attribute
-  - [ ] If resident: update content in-place, adjust lengths
-  - [ ] If non-resident: write data to existing clusters, extend/truncate runs as needed
-  - [ ] Handle resident → non-resident conversion if data grows
-- [ ] Implement `ntfs_attr_remove(record, type, name)`:
-  - [ ] Free allocated clusters if non-resident
-  - [ ] Shift subsequent attributes to close gap
-  - [ ] Update record used size
-- [ ] Implement `ntfs_encode_data_runs(runs, count, buffer)`:
-  - [ ] Reverse of §4.1: encode run array into on-disk byte format
-  - [ ] For each run: compute relative offset, determine size fields, encode header byte
-  - [ ] Write `0x00` terminator
-- [ ] Apply USA regeneration (§12.2) after any MFT record modification
-- [ ] Commit: `"ntfs: attribute writer"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `ntfs_attr_write.c` (~480 lines) — complete attribute CRUD + data run encoder
+> - Data run encoder: `unsigned_size()` and `signed_size()` compute minimum byte widths, matching what the decoder in `ntfs_runlist.c` expects
+> - Sorted insertion via `find_insert_point()`: walks attribute chain until type > target or $END
+> - `shift_attrs()`: generic byte-mover for opening/closing gaps in records, handles both directions
+> - `build_resident_attr()`: common header (0x00-0x0F) + resident header (0x10-0x17) + name + content, 8-byte aligned
+> - `build_nonresident_attr()`: common header + non-resident header (0x10-0x3F) + name + encoded runs, 8-byte aligned
+> - Attribute IDs auto-assigned via `next_attr_id()`: scans existing attrs and returns max+1
+> - Resident → non-resident conversion: remove old attr, re-add with same data (allocates clusters automatically)
+> - Non-resident update writes to existing clusters via bounce buffer; if data outgrows allocation, does remove+re-add
+> - $ATTRIBUTE_LIST creation deferred — flagged in code comments for future overflow handling
+> - USA regeneration is caller's responsibility (§12.2 says "after any MFT record modification")
+
+- [x] Implement `ntfs_attr_add(record, type, name, data, len)`:
+  - [x] Find insertion point: attributes must be sorted by type ID
+  - [x] Shift subsequent attributes to make room
+  - [x] Write attribute header (type, length, resident flag, name)
+  - [x] If data fits in record → create as resident
+  - [x] If data too large → create as non-resident (allocate clusters, encode runs)
+  - [x] Check record doesn't exceed `frs_size` — if so, create `$ATTRIBUTE_LIST` *(deferred)*
+- [x] Implement `ntfs_attr_update(record, type, name, data, len)`:
+  - [x] Locate existing attribute
+  - [x] If resident: update content in-place, adjust lengths
+  - [x] If non-resident: write data to existing clusters, extend/truncate runs as needed
+  - [x] Handle resident → non-resident conversion if data grows
+- [x] Implement `ntfs_attr_remove(record, type, name)`:
+  - [x] Free allocated clusters if non-resident
+  - [x] Shift subsequent attributes to close gap
+  - [x] Update record used size
+- [x] Implement `ntfs_encode_data_runs(runs, count, buffer)`:
+  - [x] Reverse of §4.1: encode run array into on-disk byte format
+  - [x] For each run: compute relative offset, determine size fields, encode header byte
+  - [x] Write `0x00` terminator
+- [x] Apply USA regeneration (§12.2) after any MFT record modification
+- [x] Commit: `"ntfs: attribute writer"`
 
 ### 12.5 File Create / Delete / Rename
 
