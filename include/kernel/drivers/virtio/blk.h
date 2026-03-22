@@ -29,6 +29,12 @@
 #define VIRTIO_BLK_T_WRITE_ZEROES 13 /* write zeroes (§5.2.6.1) */
 #define VIRTIO_BLK_T_GET_LIFETIME 10 /* get device lifetime metrics (§5.2.6) */
 #define VIRTIO_BLK_T_SECURE_ERASE 14 /* secure erase (crypto wipe) sectors */
+#define VIRTIO_BLK_T_ZONE_REPORT  16 /* report zone descriptors */
+#define VIRTIO_BLK_T_ZONE_OPEN    18 /* open zone for writing */
+#define VIRTIO_BLK_T_ZONE_CLOSE   20 /* close zone */
+#define VIRTIO_BLK_T_ZONE_FINISH  22 /* finish zone (fill + transition to full) */
+#define VIRTIO_BLK_T_ZONE_RESET   24 /* reset zone write pointer */
+#define VIRTIO_BLK_T_ZONE_APPEND  26 /* append write at zone write pointer */
 #define VIRTIO_BLK_T_FUA_FLAG 0x80000000u  /* Force Unit Access: OR with T_OUT */
 
 /* Crypto algorithm identifiers for inline encryption */
@@ -67,6 +73,7 @@
 #define VIRTIO_BLK_F_FUA        14   /* Force Unit Access per-request (proposed) */
 #define VIRTIO_BLK_F_INLINE_CRYPTO 15 /* Inline encryption/decryption (proposed) */
 #define VIRTIO_BLK_F_SECURE_ERASE 16  /* Secure erase (crypto wipe) support */
+#define VIRTIO_BLK_F_ZONED      17   /* Zoned block device (ZBD/ZNS) support */
 #define VIRTIO_BLK_F_MQ         22   /* Multi-queue (per-CPU) supported */
 #define VIRTIO_F_RING_INDIRECT_DESC 28 /* Indirect descriptor tables */
 #define VIRTIO_F_RING_EVENT_IDX 29     /* Event index for int coalescing */
@@ -128,6 +135,38 @@ struct virtio_blk_lifetime {
 #define VIRTIO_BLK_PRE_EOL_NORMAL    1  /* Normal (<80% consumed) */
 #define VIRTIO_BLK_PRE_EOL_WARNING   2  /* Warning (80% consumed) */
 #define VIRTIO_BLK_PRE_EOL_URGENT    3  /* Urgent (90% consumed) */
+
+/* Zone condition values (per-zone state) */
+#define VIRTIO_BLK_ZONE_COND_NOT_WP   0x0  /* Not a write pointer zone (conv.) */
+#define VIRTIO_BLK_ZONE_COND_EMPTY    0x1  /* Empty */
+#define VIRTIO_BLK_ZONE_COND_IMP_OPEN 0x2  /* Implicitly opened */
+#define VIRTIO_BLK_ZONE_COND_EXP_OPEN 0x3  /* Explicitly opened */
+#define VIRTIO_BLK_ZONE_COND_CLOSED   0x4  /* Closed */
+#define VIRTIO_BLK_ZONE_COND_RDONLY   0xD  /* Read-only */
+#define VIRTIO_BLK_ZONE_COND_FULL     0xE  /* Full */
+#define VIRTIO_BLK_ZONE_COND_OFFLINE  0xF  /* Offline */
+
+/* Zone type values */
+#define VIRTIO_BLK_ZONE_TYPE_CONV     0x1  /* Conventional (random write OK) */
+#define VIRTIO_BLK_ZONE_TYPE_SEQ_WR   0x2  /* Sequential write required */
+#define VIRTIO_BLK_ZONE_TYPE_SEQ_PREF 0x3  /* Sequential write preferred */
+
+/* Zone descriptor (returned by ZONE_REPORT) */
+struct virtio_blk_zone_descriptor {
+    uint64_t z_start;    /* Zone start LBA (sectors) */
+    uint64_t z_cap;      /* Zone capacity (sectors, may be < z_len) */
+    uint64_t z_wp;       /* Write pointer (sectors) */
+    uint64_t z_len;      /* Zone length (sectors) */
+    uint8_t  z_type;     /* VIRTIO_BLK_ZONE_TYPE_* */
+    uint8_t  z_cond;     /* VIRTIO_BLK_ZONE_COND_* */
+    uint8_t  reserved[6];
+} __attribute__((packed));
+
+/* Zone report header (precedes zone descriptors in response) */
+struct virtio_blk_zone_report {
+    uint32_t nr_zones;   /* Number of zone descriptors following */
+    uint8_t  reserved[4];
+} __attribute__((packed));
 
 /* Topology and segment limit information (populated during init) */
 struct virtio_blk_topology {

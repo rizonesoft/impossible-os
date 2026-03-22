@@ -1147,38 +1147,38 @@ graph TD
 ## Priority Order
 
 | ⭐ | Priority | Section                          | Description                                                      |
-| -- | -------- | -------------------------------- | ---------------------------------------------------------------- |
-| 💎 | 🔴 P0    | 1.1 PCI Capability Discovery ✅  | Foundation for all modern VirtIO features                        |
-| 💎 | 🔴 P0    | 1.2 Modern Init Sequence ✅      | Correct spec-compliant initialization                            |
-| 💎 | 🔴 P0    | 2.2 Flush (Write Barriers) ✅    | Data integrity — FAT32/IXFS need write barriers                  |
-| 💎 | 🔴 P0    | 3.1 MSI-X Interrupts ✅          | Rules compliance — APIC-only, no PIC                             |
-| 💎 | 🟠 P1    | 2.1 Block Size & Topology ✅     | Correctness — 4K-sector drives break without this                |
-| 💎 | 🟠 P1    | 2.3 Device Identification ✅     | Feature — serial number for block device registry                |
-| 💎 | 🟠 P1    | 2.4 Read-Only Detection ✅       | Correctness — prevent writes to RO devices                       |
-| 💎 | 🟠 P1    | 5.1 Device Reset & Recovery ✅   | Production — recover from device errors and timeouts             |
-| ⭐ | 🟠 P1    | 14.1 Live Config Change ✅       | Correctness — handle hot-resize and config changes               |
-| 💎 | 🟡 P2    | 3.2 Async I/O Path ✅            | Performance — unblocks CPU during disk I/O                       |
-| 💎 | 🟡 P2    | 4.1 Discard (TRIM) ✅            | SSD optimization — reclaim unused blocks                         |
-| 💎 | 🟡 P2    | 4.2 Write-Zeroes ✅              | Performance — efficient large zeroing                            |
-| 💎 | 🟡 P2    | 5.2 Individual Queue Reset ✅    | Less disruptive recovery than full device reset                  |
-| ⭐ | 🟡 P2    | 15.1 Hot-Plug/Unplug ✅          | Robustness — graceful device arrival/removal                     |
-| 💎 | 🟢 P3    | 6.1 Per-CPU Request Queues ✅    | Scalability — eliminates virtqueue lock contention               |
-| 💎 | 🟢 P3    | 7.1 Indirect Descriptors ✅      | Scalability — large scatter-gather lists                         |
-| 💎 | 🟢 P3    | 7.2 Event Index (Coalescing) ✅  | Performance — reduce interrupt storms                            |
-| 💎 | 🟢 P3    | 7.3 In-Order Completion          | Performance — optimized sequential descriptor recycling          |
-| 💎 | 🟢 P3    | 7.4 Notification Data            | Performance — host-side polling optimization                     |
-| 💎 | 🟢 P3    | 10.1 Lifetime Metrics            | Monitoring — drive endurance in Disk Manager                     |
-| ⭐ | 🟢 P3    | 12.1 Adaptive Hybrid Polling     | 🚀 **Exclusive** — workload-adaptive completion strategy         |
-| ⭐ | 🟢 P3    | 13.1 I/O Priority Queues         | 🚀 **Exclusive** — Win32 I/O priority → virtqueue QoS ✅       |
-| ⭐ | 🟢 P3    | 16.1 I/O Latency Telemetry       | 🚀 **Exclusive** — ns-resolution histograms in GUI ✅              |
-| ⭐ | 🟢 P3    | 17.1 Predictive Prefetch         | 🚀 **Exclusive** — driver-level sequential read-ahead            |
-| ⭐ | 🟢 P3    | 18.1 I/O Request Merging         | 🚀 **Exclusive** — auto-coalesce adjacent requests               |
-| ⭐ | 🟢 P3    | 19.1 Multi-Device Striping       | 🚀 **Exclusive** — driver-level RAID-0 across VirtIO devices     |
-| ⭐ | 🟢 P3    | 20.1 Force Unit Access Writes    | 🚀 **Exclusive** — per-request FUA bypass of write cache         |
-| ⭐ | 🟢 P3    | 21.1 Inline Encryption           | 🚀 **Exclusive** — transparent block-level crypto offload        |
-| 💎 | 🔵 P4    | 8.1 Packed Virtqueue             | Performance — better cache locality                              |
-| 💎 | 🔵 P4    | 9.1 Secure Erase                 | Feature — cryptographic data sanitization                        |
-| 💎 | 🔵 P4    | 11.1 Zoned Block Device          | Future — SMR/ZNS enterprise storage compatibility                |
+| -- | --------- | --------------------------------- | ---------------------------------------------------------------- |
+| 💎 | 🔴 P0    | 1.1 PCI Capability Discovery      | Foundation for all modern VirtIO features                        |
+| 💎 | 🔴 P0    | 1.2 Modern Init Sequence          | Correct spec-compliant initialization                            |
+| 💎 | 🔴 P0    | 2.2 Flush (Write Barriers)        | Data integrity — FAT32/IXFS need write barriers                  |
+| 💎 | 🔴 P0    | 3.1 MSI-X Interrupts              | Rules compliance — APIC-only, no PIC                             |
+| 💎 | 🟠 P1    | 2.1 Block Size & Topology         | Correctness — 4K-sector drives break without this                |
+| 💎 | 🟠 P1    | 2.3 Device Identification         | Feature — serial number for block device registry                |
+| 💎 | 🟠 P1    | 2.4 Read-Only Detection           | Correctness — prevent writes to RO devices                       |
+| 💎 | 🟠 P1    | 5.1 Device Reset & Recovery       | Production — recover from device errors and timeouts             |
+| ⭐ | 🟠 P1    | 14.1 Live Config Change           | Correctness — handle hot-resize and config changes               |
+| 💎 | 🟡 P2    | 3.2 Async I/O Path                | Performance — unblocks CPU during disk I/O                       |
+| 💎 | 🟡 P2    | 4.1 Discard (TRIM)                | SSD optimization — reclaim unused blocks                         |
+| 💎 | 🟡 P2    | 4.2 Write-Zeroes                  | Performance — efficient large zeroing                            |
+| 💎 | 🟡 P2    | 5.2 Individual Queue Reset        | Less disruptive recovery than full device reset                  |
+| ⭐ | 🟡 P2    | 15.1 Hot-Plug/Unplug              | Robustness — graceful device arrival/removal                     |
+| 💎 | 🟢 P3    | 6.1 Per-CPU Request Queues        | Scalability — eliminates virtqueue lock contention               |
+| 💎 | 🟢 P3    | 7.1 Indirect Descriptors          | Scalability — large scatter-gather lists                         |
+| 💎 | 🟢 P3    | 7.2 Event Index (Coalescing)      | Performance — reduce interrupt storms                            |
+| 💎 | 🟢 P3    | 7.3 In-Order Completion           | Performance — optimized sequential descriptor recycling          |
+| 💎 | 🟢 P3    | 7.4 Notification Data             | Performance — host-side polling optimization                     |
+| 💎 | 🟢 P3    | 10.1 Lifetime Metrics             | Monitoring — drive endurance in Disk Manager                     |
+| ⭐ | 🟢 P3    | 12.1 Adaptive Hybrid Polling      | **Exclusive** — workload-adaptive completion strategy            |
+| ⭐ | 🟢 P3    | 13.1 I/O Priority Queues          | **Exclusive** — Win32 I/O priority → virtqueue QoS               |
+| ⭐ | 🟢 P3    | 16.1 I/O Latency Telemetry        | **Exclusive** — ns-resolution histograms in GUI                  |
+| ⭐ | 🟢 P3    | 17.1 Predictive Prefetch          | **Exclusive** — driver-level sequential read-ahead               |
+| ⭐ | 🟢 P3    | 18.1 I/O Request Merging          | **Exclusive** — auto-coalesce adjacent requests                  |
+| ⭐ | 🟢 P3    | 19.1 Multi-Device Striping        | **Exclusive** — driver-level RAID-0 across VirtIO devices        |
+| ⭐ | 🟢 P3    | 20.1 Force Unit Access Writes     | **Exclusive** — per-request FUA bypass of write cache          |
+| ⭐ | 🟢 P3    | 21.1 Inline Encryption            | **Exclusive** — transparent block-level crypto offload        |
+| 💎 | 🔵 P4    | 8.1 Packed Virtqueue              | Performance — better cache locality                              |
+| 💎 | 🔵 P4    | 9.1 Secure Erase                  | Feature — cryptographic data sanitization                        |
+| 💎 | 🔵 P4    | 11.1 Zoned Block Device           | Future — SMR/ZNS enterprise storage compatibility                |
 
 ---
 

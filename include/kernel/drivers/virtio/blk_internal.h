@@ -55,6 +55,7 @@ BLK_GLOBAL int has_size_max;
 BLK_GLOBAL int has_seg_max;
 BLK_GLOBAL int has_discard;
 BLK_GLOBAL int has_secure_erase; /* F_SECURE_ERASE negotiated */
+BLK_GLOBAL int has_zoned;        /* F_ZONED negotiated */
 BLK_GLOBAL int has_fua;          /* F_FUA negotiated: per-request FUA */
 BLK_GLOBAL int has_inline_crypto; /* F_INLINE_CRYPTO negotiated */
 BLK_GLOBAL int has_packed;        /* F_RING_PACKED negotiated */
@@ -278,3 +279,12 @@ int  packed_vq_poll_completion(void);
 int  packed_vq_do_io(uint32_t type, uint64_t sector,
                      uint32_t data_len, void *buffer);
 int  packed_vq_is_active(void);
+
+/* ---- Zoned Block Device (defined in blk_zoned.c) ---- */
+void     zone_init(void);
+void     zone_expose_registry(void);
+int      zone_is_active(void);
+uint32_t zone_get_nr_zones(void);
+uint64_t zone_get_zone_sectors(void);
+uint32_t zone_get_max_open(void);
+uint32_t zone_get_max_active(void);

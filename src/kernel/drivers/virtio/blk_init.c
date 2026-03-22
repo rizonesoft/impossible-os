@@ -279,6 +279,13 @@ int virtio_blk_init(void)
         klog(LOG_DEBUG, "virtio", "Negotiated F_SECURE_ERASE");
     }
 
+    /* Negotiate F_ZONED (bit 17): zoned block device (ZBD/ZNS) */
+    if (feat_lo & (1u << VIRTIO_BLK_F_ZONED)) {
+        driver_feat_lo |= (1u << VIRTIO_BLK_F_ZONED);
+        has_zoned = 1;
+        klog(LOG_DEBUG, "virtio", "Negotiated F_ZONED");
+    }
+
     /* Negotiate F_MQ (bit 22): multi-queue (per-CPU request queues) */
     if (feat_lo & (1u << VIRTIO_BLK_F_MQ)) {
         driver_feat_lo |= (1u << VIRTIO_BLK_F_MQ);
@@ -936,6 +943,10 @@ int virtio_blk_init(void)
                    "PackedVQ: init failed, falling back to split VQ");
         }
     }
+
+    /* ---- Zoned Block Device Init ---- */
+    zone_init();
+    zone_expose_registry();
 
     return 0;
 }
