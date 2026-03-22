@@ -26,6 +26,7 @@
 #define MBR_DISK_SIG_OFFSET  440
 #define MBR_RESERVED_OFFSET  444
 #define MBR_SIG_OFFSET       510
+#define MBR_MAX_LOGICAL      128  /* Safety cap for EBR chain traversal */
 
 /* ---- Partition Type IDs ----
  * Comprehensive set for filesystem identification and interoperability. */
@@ -77,6 +78,9 @@
 #define MBR_TYPE_VMFS         0xFB  /* VMware VMFS */
 #define MBR_TYPE_LINUX_RAID   0xFD  /* Linux RAID autodetect */
 
+/* Forward-declare blkdev for EBR walker */
+struct blkdev;
+
 /* CHS address (decoded from 3-byte bit-packed MBR format).
  * The 10-bit cylinder is split across two bytes:
  *   byte[0] = head, byte[1] low 6 bits = sector,
@@ -127,3 +131,12 @@ int mbr_type_is_extended(uint8_t type);
 
 /* Check if a partition type ID is hidden/vendor recovery. */
 int mbr_type_is_hidden(uint8_t type);
+
+/* Walk the EBR linked list starting from an extended partition entry.
+ * Reads sectors from 'dev'. Populates 'out' with up to 'max_out' logical
+ * partition entries (absolute LBAs). Returns count of logical partitions
+ * found, or -1 on read error. Numbering starts at 5 per MBR convention.
+ * Caps traversal at MBR_MAX_LOGICAL (128) to prevent infinite loops. */
+int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
+                 uint64_t disk_sectors,
+                 struct mbr_entry *out, int max_out);

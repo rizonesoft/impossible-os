@@ -275,26 +275,35 @@ graph TD
 
 ### 2.1 EBR Chain Walker
 
-**Prompt:** When an MBR entry has type `0x05` (CHS Extended) or `0x0F` (LBA Extended), it defines a container region subdivided into logical partitions via a linked list of Extended Boot Records. Each EBR is a 512-byte sector with the same layout as the MBR, but only entries 1 and 2 are used. Entry 1 defines the local logical volume (LBA relative to the current EBR). Entry 2 points to the next EBR (LBA relative to the FIRST EBR in the chain). Entry 2 all-zeros terminates the chain. The parser must cache the absolute LBA of the first EBR permanently and apply two distinct relative addressing rules. Cap traversal at 128 logical partitions to prevent infinite loops on corrupted disks. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"mbr: EBR linked list traversal"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt — VERIFY:** Confirm that `mbr_walk_ebr()` in `src/kernel/fs/mbr.c` correctly traverses EBR linked lists. Check that: (1) `mbr.h` declares `mbr_walk_ebr(dev, ext_start_lba, disk_sectors, out, max_out)` and `MBR_MAX_LOGICAL=128`, (2) Entry 1 uses Rule 1 (`volume_lba = current_ebr + entry1.start_lba`), (3) Entry 2 uses Rule 2 (`next_ebr = first_ebr + entry2.start_lba`), (4) all-zero entry 2 terminates chain, (5) entries 3/4 checked for zero, (6) circular link and bounds checks, (7) 128-cap safety, (8) `partition.c` skips extended containers and registers logical partitions at 5+, (9) build passes.
 
-- [ ] Detect Extended Partition entry in MBR (type `0x05` or `0x0F`)
-- [ ] Read first EBR sector at `extended_entry.start_lba`
-- [ ] Cache `first_ebr_lba = extended_entry.start_lba` — persist for entire traversal
-- [ ] Validate EBR boot signature `0xAA55` at offsets 510–511
-- [ ] Parse EBR Entry 1 (offset `0x1BE`): local logical volume
-  - [ ] **Rule 1:** `volume_lba = current_ebr_lba + entry1.start_lba`
-  - [ ] Store volume type, absolute LBA, total sectors
-  - [ ] Register as logical partition (numbering starts at 5 for MBR)
-- [ ] Parse EBR Entry 2 (offset `0x1CE`): next EBR pointer
-  - [ ] **Rule 2:** `next_ebr_lba = first_ebr_lba + entry2.start_lba`
-  - [ ] If entry 2 is all zeros → end of chain, stop traversal
-- [ ] Verify EBR entries 3 and 4 (offsets `0x1DE`, `0x1EE`) are zero — log warning if not
-- [ ] Loop: read next EBR, repeat Entry 1 + Entry 2 processing
-- [ ] Safety cap: maximum 128 logical partitions per extended container
-- [ ] Safety: if `next_ebr_lba` points outside disk bounds → abort with error
-- [ ] Safety: if `next_ebr_lba == current_ebr_lba` → circular link, abort
-- [ ] Log each logical: `[MBR] Logical %d: type=0x%02X, LBA=%u, sectors=%u`
-- [ ] Commit: `"mbr: EBR linked list traversal"`
+> [!NOTE]
+> **Implementation notes:**
+> - `entry_is_zero()` helper checks all 16 bytes for zero determination
+> - Stack array in `partition.c` limited to 32 entries (~1KB) to stay under kernel stack limit
+> - `mbr_walk_ebr()` internally caps at `min(max_out, MBR_MAX_LOGICAL)` for safety
+> - Extended containers (0x05/0x0F/0x85) are NOT registered as partitions — only their logical volumes
+> - Logical partition numbering starts at 5 per MBR convention (1–4 = primary)
+> - klog uses `"mbr"` subsystem for all EBR messages
+
+- [x] Detect Extended Partition entry in MBR (type `0x05` or `0x0F`)
+- [x] Read first EBR sector at `extended_entry.start_lba`
+- [x] Cache `first_ebr_lba = extended_entry.start_lba` — persist for entire traversal
+- [x] Validate EBR boot signature `0xAA55` at offsets 510–511
+- [x] Parse EBR Entry 1 (offset `0x1BE`): local logical volume
+  - [x] **Rule 1:** `volume_lba = current_ebr_lba + entry1.start_lba`
+  - [x] Store volume type, absolute LBA, total sectors
+  - [x] Register as logical partition (numbering starts at 5 for MBR)
+- [x] Parse EBR Entry 2 (offset `0x1CE`): next EBR pointer
+  - [x] **Rule 2:** `next_ebr_lba = first_ebr_lba + entry2.start_lba`
+  - [x] If entry 2 is all zeros → end of chain, stop traversal
+- [x] Verify EBR entries 3 and 4 (offsets `0x1DE`, `0x1EE`) are zero — log warning if not
+- [x] Loop: read next EBR, repeat Entry 1 + Entry 2 processing
+- [x] Safety cap: maximum 128 logical partitions per extended container
+- [x] Safety: if `next_ebr_lba` points outside disk bounds → abort with error
+- [x] Safety: if `next_ebr_lba == current_ebr_lba` → circular link, abort
+- [x] Log each logical: `[MBR] Logical %d: type=0x%02X, LBA=%u, sectors=%u`
+- [x] Commit: `"mbr: EBR linked list traversal"`
 
 ---
 

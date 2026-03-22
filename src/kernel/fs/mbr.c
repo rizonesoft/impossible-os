@@ -25,6 +25,7 @@
  * ============================================================================ */
 
 #include "kernel/fs/mbr.h"
+#include "kernel/drivers/blkdev.h"
 #include "kernel/klog.h"
 
 /* ---- Read little-endian uint32 from byte buffer ---- */
@@ -254,4 +255,169 @@ const char *mbr_type_name(uint8_t type)
 
     default:                       return "Unknown";
     }
+}
+
+/* ---- EBR chain walker ----
+ * Traverses Extended Boot Record linked list to discover logical partitions.
+ *
+ * EBR layout (same 512-byte format as MBR, but only entries 1 & 2 used):
+ *   Entry 1 (offset 0x1BE): logical partition, LBA relative to THIS EBR
+ *   Entry 2 (offset 0x1CE): next EBR pointer, LBA relative to FIRST EBR
+ *   Entries 3 & 4: must be zero
+ *
+ * Addressing rules:
+ *   volume_lba   = current_ebr_lba + entry1.start_lba  (Rule 1)
+ *   next_ebr_lba = first_ebr_lba   + entry2.start_lba  (Rule 2)
+ */
+
+/* Check if a 16-byte entry is all zeros */
+static int entry_is_zero(const uint8_t *entry)
+{
+    int j;
+    for (j = 0; j < MBR_ENTRY_SIZE; j++) {
+        if (entry[j] != 0)
+            return 0;
+    }
+    return 1;
+}
+
+int mbr_walk_ebr(const struct blkdev *dev, uint32_t ext_start_lba,
+                 uint64_t disk_sectors,
+                 struct mbr_entry *out, int max_out)
+{
+    uint8_t sect[512];
+    uint32_t first_ebr_lba = ext_start_lba;
+    uint32_t current_ebr_lba = ext_start_lba;
+    int logical_num = 0;  /* index into out[] */
+    int part_label = 5;   /* MBR logical numbering starts at 5 */
+    int cap;
+
+    /* Determine actual cap */
+    cap = max_out;
+    if (cap > MBR_MAX_LOGICAL)
+        cap = MBR_MAX_LOGICAL;
+
+    klog(LOG_DEBUG, "mbr", "EBR chain: starting at LBA %u",
+         (uint64_t)ext_start_lba);
+
+    while (logical_num < cap) {
+        const uint8_t *e1;  /* Entry 1: logical volume */
+        const uint8_t *e2;  /* Entry 2: next EBR pointer */
+        const uint8_t *e3;  /* Entry 3: must be zero */
+        const uint8_t *e4;  /* Entry 4: must be zero */
+
+        uint8_t  type1;
+        uint32_t start1, sectors1;
+        uint32_t start2;
+        uint16_t sig;
+
+        /* Bounds check: current EBR must be within disk */
+        if ((uint64_t)current_ebr_lba >= disk_sectors) {
+            klog(LOG_WARN, "mbr",
+                 "EBR at LBA %u beyond disk (%u sectors) — aborting",
+                 (uint64_t)current_ebr_lba, disk_sectors);
+            break;
+        }
+
+        /* Read EBR sector */
+        if (blkdev_read(dev, (uint64_t)current_ebr_lba, 1, sect) != 0) {
+            klog(LOG_WARN, "mbr", "EBR read failed at LBA %u",
+                 (uint64_t)current_ebr_lba);
+            return -1;
+        }
+
+        /* Validate EBR boot signature 0xAA55 */
+        sig = read_le16(sect + MBR_SIG_OFFSET);
+        if (sig != MBR_SIGNATURE) {
+            klog(LOG_WARN, "mbr",
+                 "EBR at LBA %u: missing 0xAA55 signature — aborting chain",
+                 (uint64_t)current_ebr_lba);
+            break;
+        }
+
+        /* Entry 1 (offset 0x1BE = 446): local logical volume */
+        e1 = sect + MBR_ENTRY_OFFSET;
+        type1    = e1[4];
+        start1   = read_le32(e1 + 8);
+        sectors1 = read_le32(e1 + 12);
+
+        /* Entry 2 (offset 0x1CE = 462): next EBR pointer */
+        e2 = sect + MBR_ENTRY_OFFSET + MBR_ENTRY_SIZE;
+        start2 = read_le32(e2 + 8);
+
+        /* Entries 3 & 4 should be zero */
+        e3 = sect + MBR_ENTRY_OFFSET + 2 * MBR_ENTRY_SIZE;
+        e4 = sect + MBR_ENTRY_OFFSET + 3 * MBR_ENTRY_SIZE;
+        if (!entry_is_zero(e3) || !entry_is_zero(e4)) {
+            klog(LOG_WARN, "mbr",
+                 "EBR at LBA %u: entries 3/4 non-zero (non-standard)",
+                 (uint64_t)current_ebr_lba);
+        }
+
+        /* Parse logical volume from Entry 1 */
+        if (type1 != MBR_TYPE_EMPTY && sectors1 > 0) {
+            struct mbr_entry *p = &out[logical_num];
+
+            /* Rule 1: volume LBA = current EBR LBA + entry1.start_lba */
+            p->status       = e1[0];
+            p->type         = type1;
+            p->start_lba    = current_ebr_lba + start1;
+            p->sector_count = sectors1;
+            p->chs_start    = chs_decode(e1 + 1);
+            p->chs_end      = chs_decode(e1 + 5);
+            p->chs_overflow  = chs_is_overflow(e1 + 1)
+                            || chs_is_overflow(e1 + 5);
+            p->is_extended  = 0;
+            p->is_hidden    = mbr_type_is_hidden(type1);
+
+            klog(LOG_DEBUG, "mbr",
+                 "Logical %d: %s (0x%02X), LBA=%u, sectors=%u",
+                 (uint64_t)part_label, mbr_type_name(type1),
+                 (uint64_t)type1, (uint64_t)p->start_lba,
+                 (uint64_t)sectors1);
+
+            logical_num++;
+            part_label++;
+        }
+
+        /* Check Entry 2: next EBR pointer */
+        if (entry_is_zero(e2)) {
+            /* End of chain */
+            break;
+        }
+
+        {
+            /* Rule 2: next EBR LBA = first EBR LBA + entry2.start_lba */
+            uint32_t next_ebr_lba = first_ebr_lba + start2;
+
+            /* Circular link detection */
+            if (next_ebr_lba == current_ebr_lba) {
+                klog(LOG_WARN, "mbr",
+                     "EBR circular link at LBA %u — aborting",
+                     (uint64_t)current_ebr_lba);
+                break;
+            }
+
+            /* Bounds check */
+            if ((uint64_t)next_ebr_lba >= disk_sectors) {
+                klog(LOG_WARN, "mbr",
+                     "EBR next pointer LBA %u beyond disk — aborting",
+                     (uint64_t)next_ebr_lba);
+                break;
+            }
+
+            current_ebr_lba = next_ebr_lba;
+        }
+    }
+
+    if (logical_num >= cap) {
+        klog(LOG_WARN, "mbr",
+             "EBR chain capped at %d logical partitions",
+             (uint64_t)cap);
+    }
+
+    klog(LOG_DEBUG, "mbr", "EBR chain: found %d logical partition(s)",
+         (uint64_t)logical_num);
+
+    return logical_num;
 }

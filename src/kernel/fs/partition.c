@@ -312,11 +312,38 @@ static void scan_device(const struct blkdev *dev, int disk_idx)
         klog(LOG_DEBUG, "blk", "%s: MBR %u partition(s), disk sig 0x%08X",
                dev->name, (uint64_t)mtbl.count,
                (uint64_t)mtbl.disk_signature);
+
+        /* Register primary partitions (skip extended containers) */
         for (i = 0; i < mtbl.count; i++) {
+            if (mtbl.parts[i].is_extended)
+                continue;  /* Don't register the container itself */
             register_partition(dev, disk_idx, i + 1,
                               (uint64_t)mtbl.parts[i].start_lba,
                               (uint64_t)mtbl.parts[i].sector_count,
                               mbr_type_name(mtbl.parts[i].type), NULL);
+        }
+
+        /* Walk EBR chain for each extended partition */
+        for (i = 0; i < mtbl.count; i++) {
+            if (!mtbl.parts[i].is_extended)
+                continue;
+            {
+                struct mbr_entry logical[32];
+                int lcount = mbr_walk_ebr(dev,
+                                          mtbl.parts[i].start_lba,
+                                          dev->sector_count,
+                                          logical, 32);
+                if (lcount > 0) {
+                    int li;
+                    for (li = 0; li < lcount; li++) {
+                        register_partition(dev, disk_idx, 5 + li,
+                                          (uint64_t)logical[li].start_lba,
+                                          (uint64_t)logical[li].sector_count,
+                                          mbr_type_name(logical[li].type),
+                                          NULL);
+                    }
+                }
+            }
         }
     } else {
         /* MBR signature present (0x55AA) but no usable partition entries.
