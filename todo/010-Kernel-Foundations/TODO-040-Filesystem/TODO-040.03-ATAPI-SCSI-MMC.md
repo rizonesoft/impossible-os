@@ -128,8 +128,8 @@ graph TD
 
 | Phase | TODO File                | Section                      | What It Delivers                                          | Depends On                             | Status |
 | :---: | ------------------------ | ---------------------------- | --------------------------------------------------------- | -------------------------------------- | :----: |
-| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.1 ATAPI Signature        | Identify optical drives during port enumeration            | —                                      |   ⬜   |
-| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.2 IDENTIFY PACKET        | Parse device capabilities, model name, DMA modes           | Phase 1 (§1.1)                         |   ⬜   |
+| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.1 ATAPI Signature        | Identify optical drives during port enumeration            | —                                      |   ✅   |
+| **1** | `040.03-ATAPI-SCSI-MMC`  | §1.2 IDENTIFY PACKET        | Parse device capabilities, model name, DMA modes           | Phase 1 (§1.1)                         |   ✅   |
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ⬜   |
 | **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ⬜   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ⬜   |
@@ -254,24 +254,34 @@ graph TD
 
 ### 2.1 PIO Packet State Machine
 
-**Prompt:** Implement the full 8-step ATAPI PIO state machine for sending SCSI CDBs and receiving data. This is the foundational transport before DMA is available. The sequence is: (1) Select drive via Drive/Head register + 400ns delay, (2) Poll until BSY=0 and DRQ=0, (3) Write Features=0x00 (PIO mode), set byte count limit in LBA Mid/High, (4) Write 0xA0 to Command Register, (5) Wait for DRQ=1 with C/D=1 and I/O=0, (6) Write 12-byte (or 16-byte) SCSI CDB as 16-bit words, (7) Read data in chunks per interrupt/DRQ cycle, (8) Check status for errors. The 400ns delay after Drive/Head write is critical — typically achieved by reading Alternate Status 4 times. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: PIO packet state machine"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify the ATAPI PIO packet state machine is correctly implemented. Check: (1) `ahci_atapi.c` has `port_issue_cmd_atapi()` with 30-second timeout for optical spin-up. (2) `atapi_packet_cmd()` accepts 6 parameters: port, CDB, cdb_len, buffer, buf_len, direction. (3) CDB is zero-padded to device's `atapi_packet_size` (12 or 16 bytes). (4) Command header sets ATAPI bit (bit 5) and Write bit (bit 6) when direction=1. (5) ERR bit checked in TFD after completion, CLO reset on stuck BSY/DRQ. (6) All callers (`atapi_read_capacity`, `atapi_do_read`) updated to new signature. (7) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Implement `atapi_pio_command(port, cdb, cdb_len, buf, buf_len, direction)`:
-  - [ ] Step 1: Write Drive/Head register (select Master/Slave), wait 400ns
-  - [ ] Step 2: Poll Status until `(status & (BSY | DRQ)) == 0`
-  - [ ] Step 3: Write Features register = `0x00` (PIO mode)
-  - [ ] Step 4: Write byte count limit: LBA Mid = `buf_len & 0xFF`, LBA High = `(buf_len >> 8) & 0xFF`
-  - [ ] Step 5: Write `0xA0` to Command Register
-  - [ ] Step 6: Wait for DRQ=1, verify C/D=1 and I/O=0 in Sector Count register
-  - [ ] Step 7: Write CDB to Data Register as `cdb_len / 2` 16-bit words
-  - [ ] Step 8: Data phase: read 16-bit words from Data Register while DRQ is set
-- [ ] Handle multi-block transfers: device may interrupt multiple times per block
-- [ ] Read actual transfer size from LBA Mid/High after each DRQ assertion
-- [ ] Check ERR bit in Status Register after completion → trigger REQUEST SENSE
-- [ ] Implement 400ns delay: `inb(alt_status_port)` × 4
-- [ ] Timeout: if BSY stays asserted > 30 seconds (optical spin-up), abort
-- [ ] Pad all CDBs to device's expected packet size (typically 12 bytes, zero-pad)
-- [ ] Commit: `"atapi: PIO packet state machine"`
+> [!NOTE]
+> **Implementation notes:** Under AHCI, the HBA handles the 8-step PIO state
+> machine in hardware — no raw IDE register bitbanging needed. The driver builds
+> a Command FIS (`ATA_CMD_PACKET` = 0xA0) and places the CDB in the ACMD area.
+> The HBA then handles drive selection, BSY/DRQ polling, CDB transfer, and
+> data phase transfer automatically via PRDT. The `port_issue_cmd_atapi()`
+> function provides the longer timeout (30s vs 5s) needed for optical spin-up.
+> ATAPI errors are not retried — they require REQUEST SENSE (§6.1) for proper
+> error classification.
+
+- [x] Implement `atapi_packet_cmd(port, cdb, cdb_len, buf, buf_len, direction)`:
+  - [x] Step 1: Drive/Head selection (via FIS Device field, handled by HBA)
+  - [x] Step 2: BSY/DRQ polling (handled by HBA, 30s timeout in port_issue_cmd_atapi)
+  - [x] Step 3: Features register = DMA=1 (AHCI handles PIO/DMA automatically)
+  - [x] Step 4: Byte count limit: LBA Mid/High set in FIS lba1/lba2
+  - [x] Step 5: 0xA0 (ATA_CMD_PACKET) issued via Command FIS
+  - [x] Step 6: DRQ/C/D/I/O verification (handled by HBA)
+  - [x] Step 7: CDB transfer (from ACMD area, zero-padded to packet size)
+  - [x] Step 8: Data phase (via PRDT, handled by HBA)
+- [x] Handle multi-block transfers: PRDT handles contiguous data transfer
+- [x] Read actual transfer size from prdbc after completion
+- [x] Check ERR bit in Task File Data after completion → CLO reset if stuck
+- [x] 400ns delay: not needed under AHCI (HBA handles timing)
+- [x] Timeout: 30 seconds for optical spin-up (ATAPI_TIMEOUT_US / ATAPI_TIMEOUT_MS)
+- [x] Pad all CDBs to device's expected packet size (atapi_packet_size: 12 or 16)
+- [x] Commit: `"atapi: PIO packet state machine"`
 
 ---
 

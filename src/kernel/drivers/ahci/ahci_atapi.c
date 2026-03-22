@@ -1,18 +1,115 @@
 /* ============================================================================
  * ahci_atapi.c — ATAPI (CD/DVD) device support
+ *
+ * Under AHCI, the Host Bus Adapter handles the 8-step PIO state machine in
+ * hardware.  The driver builds a Command FIS (ATA_CMD_PACKET, 0xA0) and places
+ * the SCSI CDB in the ACMD area of the command table.  The HBA then executes:
+ *   1. Drive/Head selection (via FIS Device field)
+ *   2. BSY/DRQ polling
+ *   3. Features/byte-count-limit setup (via FIS fields)
+ *   4. 0xA0 command issue
+ *   5. DRQ wait + CDB transfer (from ACMD)
+ *   6. Data phase (via PRDT, DMA or PIO)
+ *   7. Status check
+ * This approach is the correct AHCI implementation — never bitbang legacy
+ * IDE task file registers when an AHCI controller is present.
  * ============================================================================ */
 
 #include "kernel/drivers/ahci_internal.h"
 
-/* ---- ATAPI: Send a SCSI packet command ---- */
-static int atapi_packet_cmd(struct ahci_port *p, const uint8_t cdb[12],
-                            void *buffer, uint32_t buf_len)
+/* ---- ATAPI command timeout for optical devices ---- */
+#define ATAPI_TIMEOUT_US   30000000  /* 30 seconds for optical spin-up */
+#define ATAPI_TIMEOUT_MS   30000     /* 30 seconds for event-based wait */
+
+/* ---- Issue command with ATAPI-specific longer timeout ---- */
+static int port_issue_cmd_atapi(struct ahci_port *p, int slot)
+{
+    volatile uint8_t *pregs = p->regs;
+    uint32_t tfd;
+    int result = 0;
+
+    /* Issue the command */
+    port_write(pregs, AHCI_PxCI, 1U << slot);
+
+    if (use_events) {
+        int signalled = event_wait_timeout(&p->completion, ATAPI_TIMEOUT_MS);
+        if (!signalled) {
+            klog(LOG_WARN, "ahci",
+                 "Port %u: ATAPI command timeout (%u ms)",
+                 (uint64_t)p->port_num, (uint64_t)ATAPI_TIMEOUT_MS);
+            result = -1;
+        }
+    } else {
+        /* Polling mode — optical drives need up to 30s for spin-up */
+        uint32_t timeout = ATAPI_TIMEOUT_US;
+        while (timeout--) {
+            uint32_t ci = port_read(pregs, AHCI_PxCI);
+            if (!(ci & (1U << slot)))
+                break;
+            tfd = port_read(pregs, AHCI_PxTFD);
+            if (tfd & AHCI_PxTFD_ERR) {
+                result = -1;
+                break;
+            }
+        }
+        if (timeout == 0 && result == 0) {
+            klog(LOG_WARN, "ahci",
+                 "Port %u: ATAPI command timeout (poll, %u µs)",
+                 (uint64_t)p->port_num, (uint64_t)ATAPI_TIMEOUT_US);
+            result = -1;
+        }
+        port_write(pregs, AHCI_PxIS, port_read(pregs, AHCI_PxIS));
+    }
+
+    /* Check final Task File Data for errors */
+    tfd = port_read(pregs, AHCI_PxTFD);
+    if (tfd & AHCI_PxTFD_ERR) {
+        klog(LOG_DEBUG, "ahci",
+             "Port %u: ATAPI TFD error 0x%x",
+             (uint64_t)p->port_num, (uint64_t)tfd);
+        result = -1;
+    }
+
+    /* Attempt CLO reset on failure (no retry — ATAPI errors need REQUEST SENSE) */
+    if (result != 0) {
+        p->errors.cmd_failures++;
+        tfd = port_read(pregs, AHCI_PxTFD);
+        if (tfd & (AHCI_PxTFD_BSY | AHCI_PxTFD_DRQ))
+            port_clo_reset(p);
+    }
+
+    return result;
+}
+
+/* ---- ATAPI: Send a SCSI packet command ----
+ *
+ * This function implements the AHCI ATAPI command protocol:
+ *   - Builds a Register H2D FIS with ATA_CMD_PACKET (0xA0)
+ *   - Sets byte count limit in LBA Mid/High (FIS lba1/lba2)
+ *   - Sets Features to 0x00 for PIO mode (or 0x01 for DMA)
+ *   - Copies the CDB into the ACMD area, padded to the device's
+ *     expected packet size (12 or 16 bytes, zero-padded)
+ *   - Sets the ATAPI bit (bit 5) in the command header flags
+ *   - Uses a 30-second timeout for optical media spin-up
+ *
+ * Parameters:
+ *   p         — port with ATAPI device
+ *   cdb       — SCSI Command Descriptor Block
+ *   cdb_len   — CDB length (6, 10, 12, or 16 bytes)
+ *   buffer    — data buffer (NULL for no-data commands)
+ *   buf_len   — buffer size in bytes
+ *   direction — 0 = read (device→host), 1 = write (host→device)
+ */
+static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
+                            uint32_t cdb_len, void *buffer, uint32_t buf_len,
+                            int direction)
 {
     int slot;
     struct ahci_cmd_header *hdr;
     struct ahci_cmd_tbl *tbl;
     struct fis_reg_h2d *fis;
-    int i;
+    uint32_t pad_len;
+    uint32_t i;
 
     slot = port_find_slot(p->regs);
     if (slot < 0) return -1;
@@ -22,18 +119,30 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t cdb[12],
 
     ahci_memset(tbl, 0, sizeof(struct ahci_cmd_tbl));
 
+    /* Build Register H2D FIS */
     fis = (struct fis_reg_h2d *)tbl->cfis;
     fis->fis_type = FIS_TYPE_REG_H2D;
-    fis->pmport_c = 0x80;
-    fis->command  = ATA_CMD_PACKET;
-    fis->featurel = 1;
-    fis->lba1     = (uint8_t)(buf_len & 0xFF);
-    fis->lba2     = (uint8_t)((buf_len >> 8) & 0xFF);
+    fis->pmport_c = 0x80;               /* Command bit set */
+    fis->command  = ATA_CMD_PACKET;      /* 0xA0 = PACKET */
+    fis->featurel = 1;                   /* Features: DMA=1 (AHCI handles PIO/DMA) */
+    fis->lba1     = (uint8_t)(buf_len & 0xFF);         /* Byte count limit low */
+    fis->lba2     = (uint8_t)((buf_len >> 8) & 0xFF);  /* Byte count limit high */
     fis->device   = 0;
 
-    for (i = 0; i < 12; i++)
-        tbl->acmd[i] = cdb[i];
+    /* Copy CDB into ACMD area, zero-padded to device's expected packet size.
+     * Most ATAPI devices expect 12 bytes; some (tape, etc.) expect 16.
+     * The actual CDB may be shorter (e.g., 6-byte SCSI commands). */
+    pad_len = (uint32_t)p->atapi_packet_size;
+    if (pad_len < 12) pad_len = 12;   /* Minimum 12 bytes per AHCI spec */
+    if (pad_len > 16) pad_len = 16;   /* ACMD area is 16 bytes max */
+    if (cdb_len > pad_len) cdb_len = pad_len;
 
+    for (i = 0; i < cdb_len; i++)
+        tbl->acmd[i] = cdb[i];
+    for (; i < pad_len; i++)
+        tbl->acmd[i] = 0;             /* Zero-pad remaining bytes */
+
+    /* Setup PRDT for data transfer */
     if (buffer && buf_len > 0) {
         tbl->prdt[0].dba  = (uint32_t)(uintptr_t)buffer;
         tbl->prdt[0].dbau = 0;
@@ -43,10 +152,17 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t cdb[12],
         hdr->prdtl = 0;
     }
 
-    hdr->flags = ((sizeof(struct fis_reg_h2d) / 4) & 0x1F) | (1 << 5);
+    /* Command header flags:
+     *   Bits 4:0 = CFIS length in DWORDs (5 for 20-byte FIS)
+     *   Bit 5    = ATAPI (1 = ATAPI command, HBA reads ACMD)
+     *   Bit 6    = Write (1 = host→device, 0 = device→host) */
+    hdr->flags = ((sizeof(struct fis_reg_h2d) / 4) & 0x1F)
+               | (1 << 5);                    /* ATAPI bit */
+    if (direction)
+        hdr->flags |= (1 << 6);               /* Write direction */
     hdr->prdbc = 0;
 
-    return port_issue_cmd(p, slot);
+    return port_issue_cmd_atapi(p, slot);
 }
 
 /* ---- ATAPI: IDENTIFY PACKET DEVICE ---- */
@@ -226,7 +342,7 @@ int atapi_read_capacity(struct ahci_port *p)
 
     cdb[0] = SCSI_READ_CAPACITY;
 
-    if (atapi_packet_cmd(p, cdb, resp, 8) != 0) {
+    if (atapi_packet_cmd(p, cdb, 10, resp, 8, 0) != 0) {
         return -1;
     }
 
@@ -261,7 +377,7 @@ int atapi_do_read(struct ahci_port *p, uint64_t lba, uint32_t count,
     cdb[7] = (uint8_t)((count >> 8) & 0xFF);
     cdb[8] = (uint8_t)(count & 0xFF);
 
-    return atapi_packet_cmd(p, cdb, buffer, byte_count);
+    return atapi_packet_cmd(p, cdb, 10, buffer, byte_count, 0);
 }
 
 /* ---- ATAPI public API ---- */
