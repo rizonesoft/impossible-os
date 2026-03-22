@@ -152,7 +152,7 @@ graph TD
 | **1** | `TODO-040.02-AHCI.md`           | §1.1 Interrupt-Driven I/O   | Replace polling with ISR + per-port completion events                   | Phase 1 (§7.1)                  |   ✅   |
 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ✅   |
-| **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
 | **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ⬜   |
 | **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ⬜   |
@@ -281,21 +281,34 @@ graph TD
 
 ## 2. Native Command Queuing (NCQ)
 
-### 2.1 NCQ Read/Write (FPDMA)
+### 2.1 NCQ Read/Write (FPDMA) *(done)* ✅
 
-**Prompt:** Native Command Queuing allows up to 32 concurrent I/O requests per port, enabling the drive to reorder them for optimal performance (elevator algorithm). NCQ uses FPDMA (First Party DMA) commands: `READ FPDMA QUEUED` (0x60) and `WRITE FPDMA QUEUED` (0x61). Each command uses a unique tag (0–31) written to the count register bits 7:3. The drive reports completion via Set Device Bits FIS, which sets bits in `PxSACT`. The ISR checks `PxSACT` to determine which tags completed. Check `CAP.SNCQ` to verify NCQ support, and read `CAP.NCS` for the number of command slots. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ahci: NCQ read/write (FPDMA)"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that AHCI NCQ (Native Command Queuing) is correctly implemented: (1) `ahci.h` defines `AHCI_CAP_SNCQ` (bit 30), `ATA_CMD_READ_FPDMA` (0x60), `ATA_CMD_WRITE_FPDMA` (0x61), `ahci_callback_t` type, and `struct ahci_port` has NCQ fields (ncq_supported, ncq_depth, tags_allocated, tags_pending, tags_completed, tag_status[32], tag_callbacks[32], tag_cb_ctx[32]). (2) `ahci_init()` reads `CAP.SNCQ` and stores `ahci_max_cmd_slots` from `CAP.NCS+1`. (3) `ahci_do_identify()` checks IDENTIFY word 76 bit 8 (device NCQ) and word 75 bits 4:0 (queue depth), sets `ncq_depth = min(device, HBA)`. (4) `ncq_issue_rw()` builds FPDMA FIS with sector count in Features, tag in Count[7:3], sets PxSACT before PxCI. (5) ISR handles SDBS: reads PxSACT, computes completed = pending & ~PxSACT, calls async callbacks. On TFES during NCQ: marks all pending tags failed. (6) `ncq_sync_rw()` with retry+CLO. (7) `ahci_read()`/`ahci_write()` dispatch to NCQ when supported. (8) `ahci_submit()` async API returns tag. (9) Build passes: `=== BUILD OK ===`.
 
-- [ ] Check `CAP.SNCQ` (bit 30) — verify HBA supports NCQ
-- [ ] Read `CAP.NCS` (bits 12:8) — number of command slots minus one (0-based, add 1 for actual count, max 32)
-- [ ] Implement `ahci_ncq_read(port, lba, count, buf, tag)` using `READ FPDMA QUEUED` (0x60)
-- [ ] Implement `ahci_ncq_write(port, lba, count, buf, tag)` using `WRITE FPDMA QUEUED` (0x61)
-- [ ] FIS setup: command in Features register, LBA in standard LBA fields, tag in Count bits 7:3
-- [ ] Set `PxSACT` bit for the tag before setting `PxCI` bit
-- [ ] ISR: on `SDBS` (Set Device Bits) interrupt, read `PxSACT` to find completed tags
-- [ ] Tag allocation: simple bitmap with `find_first_zero_bit()` per port
-- [ ] Async API: `ahci_submit(port, lba, count, buf, is_write, callback)` — returns tag
-- [ ] Fallback: if `CAP.SNCQ == 0`, use existing sequential DMA read/write
-- [ ] Commit: `"ahci: NCQ read/write (FPDMA)"`
+> [!NOTE]
+> **Implementation Notes:**
+> - FPDMA FIS encoding: sector count in Features (NOT Count), tag in Count[7:3] — opposite of standard DMA
+> - **PxSACT before PxCI** is the #1 NCQ implementation gotcha — reversed order causes silent corruption
+> - ISR NCQ completion: `completed = tags_pending & ~PxSACT` (HBA auto-clears PxSACT bits on SDB FIS)
+> - NCQ error recovery is conservative: all pending tags marked failed on TFES (per-tag recovery via §2.4)
+> - `ncq_sync_rw()` retries up to 3× with CLO recovery, falls back to DMA if all tags busy
+> - `ahci_read()`/`ahci_write()` transparently dispatch to NCQ when `ncq_supported && use_events`
+> - IDENTIFY word 76 bit 8 = device NCQ support, word 75 bits 4:0 = max depth minus 1
+> - Effective depth = min(device depth, CAP.NCS+1) — QEMU ICH9 typically supports 32 slots
+> - PxIE now enables HBFS/HBDS/IFS/INFS/OFS for full error interrupt coverage
+> - `ahci_submit()` async API only works with NCQ + IRQ enabled (returns -1 otherwise)
+
+- [x] Check `CAP.SNCQ` (bit 30) — verify HBA supports NCQ
+- [x] Read `CAP.NCS` (bits 12:8) — number of command slots minus one (0-based, add 1 for actual count, max 32)
+- [x] Implement `ahci_ncq_read(port, lba, count, buf)` using `READ FPDMA QUEUED` (0x60)
+- [x] Implement `ahci_ncq_write(port, lba, count, buf)` using `WRITE FPDMA QUEUED` (0x61)
+- [x] FIS setup: command in Features register, LBA in standard LBA fields, tag in Count bits 7:3
+- [x] Set `PxSACT` bit for the tag before setting `PxCI` bit
+- [x] ISR: on `SDBS` (Set Device Bits) interrupt, read `PxSACT` to find completed tags
+- [x] Tag allocation: simple bitmap with `find_first_zero_bit()` per port
+- [x] Async API: `ahci_submit(port, lba, count, buf, is_write, callback, ctx)` — returns tag
+- [x] Fallback: if `CAP.SNCQ == 0`, use existing sequential DMA read/write
+- [x] Commit: `"ahci: NCQ read/write (FPDMA)"`
 
 ### 2.2 Interrupt Coalescing
 

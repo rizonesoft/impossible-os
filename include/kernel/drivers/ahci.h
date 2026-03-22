@@ -49,6 +49,7 @@
 #define AHCI_CAP_NCS_SHIFT  8           /* Number of command slots shift */
 #define AHCI_CAP_NCS_MASK   0x1F00      /* Number of command slots mask */
 #define AHCI_CAP_SCLO       (1U << 24)  /* Supports Command List Override */
+#define AHCI_CAP_SNCQ       (1U << 30)  /* Supports Native Command Queuing */
 
 /* ---- Port registers (offset = 0x100 + port * 0x80) ---- */
 #define AHCI_PORT_BASE      0x100
@@ -136,6 +137,8 @@
 #define ATA_CMD_READ_DMA_EX      0x25   /* READ DMA EXT (LBA48) */
 #define ATA_CMD_WRITE_DMA_EX     0x35   /* WRITE DMA EXT (LBA48) */
 #define ATA_CMD_CACHE_FLUSH_EX   0xEA   /* CACHE FLUSH EXT */
+#define ATA_CMD_READ_FPDMA       0x60   /* READ FPDMA QUEUED (NCQ) */
+#define ATA_CMD_WRITE_FPDMA      0x61   /* WRITE FPDMA QUEUED (NCQ) */
 
 /* ---- SCSI commands (used inside ATAPI PACKET) ---- */
 #define SCSI_TEST_UNIT_READY  0x00
@@ -198,6 +201,9 @@ struct ahci_cmd_tbl {
     struct ahci_prdt_entry prdt[AHCI_MAX_PRDT];
 } __attribute__((packed));
 
+/* ---- NCQ async callback ---- */
+typedef void (*ahci_callback_t)(int port, int tag, int status, void *ctx);
+
 /* ---- Per-port error counters ---- */
 struct ahci_error_counters {
     uint32_t fatal_errors;      /* HBFS + HBDS + IFS + TFES count */
@@ -223,6 +229,16 @@ struct ahci_port {
     struct ahci_cmd_tbl *cmdtbl[32]; /* Command tables */
     event_t  completion;   /* Per-port I/O completion event (IRQ-driven) */
     struct ahci_error_counters errors; /* Error tracking */
+
+    /* NCQ state */
+    uint8_t  ncq_supported;        /* 1 if both HBA and device support NCQ */
+    uint8_t  ncq_depth;            /* Effective max queue depth (1–32) */
+    uint32_t tags_allocated;       /* Bitmap of allocated tags */
+    uint32_t tags_pending;         /* Bitmap of issued/pending tags */
+    uint32_t tags_completed;       /* Bitmap of completed tags (set by ISR) */
+    int8_t   tag_status[32];       /* Per-tag completion status (0=ok, -1=err) */
+    ahci_callback_t tag_callbacks[32]; /* Async callbacks (NULL = sync) */
+    void    *tag_cb_ctx[32];       /* Per-tag callback context */
 };
 
 /* Max ports supported */
@@ -250,6 +266,20 @@ int ahci_drive_count(void);
 
 /* Flush per-port error counters to HKLM\HARDWARE\AHCI\PortN\Errors. */
 void ahci_flush_error_counters(void);
+
+/* ---- API: NCQ (Native Command Queuing) ---- */
+
+/* Synchronous NCQ read — falls back to DMA if NCQ not supported. */
+int ahci_ncq_read(int port_idx, uint64_t lba, uint32_t count, void *buffer);
+
+/* Synchronous NCQ write — falls back to DMA if NCQ not supported. */
+int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
+                   const void *buffer);
+
+/* Asynchronous NCQ submit — returns tag (0–31) or -1 on error.
+ * Callback is called from ISR context on completion. */
+int ahci_submit(int port_idx, uint64_t lba, uint32_t count, void *buffer,
+                int is_write, ahci_callback_t callback, void *ctx);
 
 /* ---- API: ATAPI (optical) devices ---- */
 

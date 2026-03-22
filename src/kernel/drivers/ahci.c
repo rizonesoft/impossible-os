@@ -63,6 +63,8 @@ static uint8_t           ahci_pci_func; /* PCI function of AHCI controller */
 static uint8_t           ahci_irq_vector; /* Allocated IDT vector */
 static int               use_events;   /* 1 after IRQ setup, 0 during boot */
 static int               ahci_clo_supported; /* 1 if CAP.SCLO is set */
+static int               ahci_ncq_capable;   /* 1 if CAP.SNCQ is set */
+static uint8_t           ahci_max_cmd_slots; /* CAP.NCS + 1 (1–32) */
 
 /* ---- Map MMIO region ---- */
 static void ahci_map_mmio(uint64_t phys, uint32_t size)
@@ -242,7 +244,9 @@ static int port_init(struct ahci_port *p, int port_num)
      * GHC.IE is enabled globally. */
     port_write(pregs, AHCI_PxIE,
                AHCI_PxIS_DHRS | AHCI_PxIS_PSS | AHCI_PxIS_DSS |
-               AHCI_PxIS_SDBS | AHCI_PxIS_TFES);
+               AHCI_PxIS_SDBS | AHCI_PxIS_TFES |
+               AHCI_PxIS_HBFS | AHCI_PxIS_HBDS | AHCI_PxIS_IFS |
+               AHCI_PxIS_INFS | AHCI_PxIS_OFS);
 
     /* Initialize per-port completion event (auto-reset, initially unsignalled) */
     event_init(&p->completion, "ahci_port", EVENT_AUTO_RESET, 0);
@@ -296,6 +300,26 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
                    "Port %u: fatal error PxIS=0x%x PxSERR=0x%x",
                    (uint64_t)ports[i].port_num,
                    (uint64_t)pxis, (uint64_t)serr);
+
+            /* NCQ error: mark ALL pending tags as failed.
+             * Proper per-tag recovery via NCQ Error Log deferred to §2.4. */
+            if (ports[i].ncq_supported && ports[i].tags_pending) {
+                uint32_t pending = ports[i].tags_pending;
+                int t;
+                for (t = 0; t < 32; t++) {
+                    if (pending & (1U << t)) {
+                        ports[i].tag_status[t] = -1;
+                        ports[i].tags_completed |= (1U << t);
+                        if (ports[i].tag_callbacks[t]) {
+                            ports[i].tag_callbacks[t](
+                                i, t, -1, ports[i].tag_cb_ctx[t]);
+                            ports[i].tag_callbacks[t] =
+                                (ahci_callback_t)0;
+                        }
+                    }
+                }
+                ports[i].tags_pending = 0;
+            }
         }
 
         if (pxis & AHCI_PxIS_NONFATAL) {
@@ -303,6 +327,27 @@ static void ahci_irq_handler(uint8_t vector, void *ctx)
             klog(LOG_DEBUG, "ahci",
                    "Port %u: non-fatal error PxIS=0x%x",
                    (uint64_t)ports[i].port_num, (uint64_t)pxis);
+        }
+
+        /* ---- NCQ completion via Set Device Bits FIS ---- */
+        if ((pxis & AHCI_PxIS_SDBS) && ports[i].ncq_supported) {
+            uint32_t sact = port_read(ports[i].regs, AHCI_PxSACT);
+            uint32_t completed = ports[i].tags_pending & ~sact;
+            int t;
+
+            for (t = 0; t < 32; t++) {
+                if (!(completed & (1U << t)))
+                    continue;
+                ports[i].tags_completed |= (1U << t);
+                /* Call async callback if registered */
+                if (ports[i].tag_callbacks[t]) {
+                    ports[i].tag_callbacks[t](
+                        i, t, ports[i].tag_status[t],
+                        ports[i].tag_cb_ctx[t]);
+                    ports[i].tag_callbacks[t] = (ahci_callback_t)0;
+                }
+            }
+            ports[i].tags_pending &= ~completed;
         }
 
         /* Wake the thread waiting on this port */
@@ -465,6 +510,96 @@ retry:
     return result;
 }
 
+/* ---- NCQ tag allocator (bitmap) ---- */
+
+static int ncq_alloc_tag(struct ahci_port *p)
+{
+    uint32_t mask = (p->ncq_depth >= 32) ? 0xFFFFFFFF
+                  : ((1U << p->ncq_depth) - 1);
+    uint32_t free = ~p->tags_allocated & mask;
+    int i;
+    if (!free) return -1;
+    for (i = 0; i < 32; i++) {
+        if (free & (1U << i)) {
+            p->tags_allocated |= (1U << i);
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void ncq_free_tag(struct ahci_port *p, int tag)
+{
+    p->tags_allocated &= ~(1U << tag);
+    p->tag_callbacks[tag] = (ahci_callback_t)0;
+    p->tag_cb_ctx[tag] = (void *)0;
+}
+
+/* ---- Issue an NCQ (FPDMA) command ---- */
+
+static int ncq_issue_rw(struct ahci_port *p, int tag, uint64_t lba,
+                        uint32_t count, void *buffer, int is_write)
+{
+    /* Tag == command slot for FPDMA (1:1 mapping per AHCI spec) */
+    struct ahci_cmd_header *hdr = &p->cmdlist[tag];
+    struct ahci_cmd_tbl *tbl = p->cmdtbl[tag];
+    struct fis_reg_h2d *fis;
+    uint32_t byte_count = count * 512;
+
+    ahci_memset(tbl, 0, sizeof(struct ahci_cmd_tbl));
+
+    /* Build FPDMA FIS — different from standard DMA:
+     *   Sector count → Features register (NOT Count)
+     *   Tag → Count register bits [7:3]
+     *   Command: 0x60 (read) or 0x61 (write) */
+    fis = (struct fis_reg_h2d *)tbl->cfis;
+    fis->fis_type = FIS_TYPE_REG_H2D;
+    fis->pmport_c = 0x80;  /* C = 1 (command) */
+    fis->command  = is_write ? ATA_CMD_WRITE_FPDMA : ATA_CMD_READ_FPDMA;
+
+    /* Sector count in Features (FPDMA encoding) */
+    fis->featurel = (uint8_t)(count & 0xFF);
+    fis->featureh = (uint8_t)((count >> 8) & 0xFF);
+
+    /* LBA48 */
+    fis->lba0 = (uint8_t)(lba & 0xFF);
+    fis->lba1 = (uint8_t)((lba >> 8) & 0xFF);
+    fis->lba2 = (uint8_t)((lba >> 16) & 0xFF);
+    fis->lba3 = (uint8_t)((lba >> 24) & 0xFF);
+    fis->lba4 = (uint8_t)((lba >> 32) & 0xFF);
+    fis->lba5 = (uint8_t)((lba >> 40) & 0xFF);
+
+    fis->device = (1 << 6); /* LBA mode */
+
+    /* Tag in Count[7:3] — bits 2:0 reserved (must be 0) */
+    fis->countl = (uint8_t)(tag << 3);
+    fis->counth = 0;
+
+    /* PRDT: one entry */
+    tbl->prdt[0].dba  = (uint32_t)(uintptr_t)buffer;
+    tbl->prdt[0].dbau = 0;
+    tbl->prdt[0].dbc  = byte_count - 1;
+
+    /* Command header */
+    hdr->flags = ((sizeof(struct fis_reg_h2d) / 4) & 0x1F);
+    if (is_write)
+        hdr->flags |= (1 << 6);  /* W bit */
+    hdr->prdtl = 1;
+    hdr->prdbc = 0;
+
+    /* Initialize tag status */
+    p->tag_status[tag] = 0;
+
+    /* CRITICAL: Set PxSACT BEFORE PxCI for NCQ commands.
+     * If PxCI is set first, the HBA interprets this as standard DMA
+     * and silently corrupts completion tracking (AHCI spec §3.3.14). */
+    port_write(p->regs, AHCI_PxSACT, 1U << tag);
+    p->tags_pending |= (1U << tag);
+    port_write(p->regs, AHCI_PxCI, 1U << tag);
+
+    return 0;
+}
+
 /* ---- IDENTIFY DEVICE ---- */
 static int ahci_do_identify(struct ahci_port *p)
 {
@@ -547,6 +682,21 @@ static int ahci_do_identify(struct ahci_port *p)
             p->serial[i] = '\0';
         else
             break;
+    }
+
+    /* Extract device NCQ capability (word 76 bit 8, word 75 bits 4:0) */
+    if (ahci_ncq_capable && (ident_buf[76] & (1U << 8))) {
+        uint8_t dev_depth = (uint8_t)(ident_buf[75] & 0x1F) + 1;
+        p->ncq_supported = 1;
+        p->ncq_depth = (dev_depth < ahci_max_cmd_slots)
+                     ? dev_depth : ahci_max_cmd_slots;
+        klog(LOG_INFO, "ahci", "Port %u: NCQ supported (depth %u)",
+               (uint64_t)p->port_num, (uint64_t)p->ncq_depth);
+    } else {
+        p->ncq_supported = 0;
+        p->ncq_depth = 1;
+        klog(LOG_DEBUG, "ahci", "Port %u: NCQ not supported",
+               (uint64_t)p->port_num);
     }
 
     return 0;
@@ -778,10 +928,15 @@ static int ahci_do_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
 
 /* ---- Public API ---- */
 
+static int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
+                       void *buffer, int is_write);
+
 int ahci_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
+    if (ports[port_idx].ncq_supported && use_events)
+        return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0);
     return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0);
 }
 
@@ -790,6 +945,9 @@ int ahci_write(int port_idx, uint64_t lba, uint32_t count,
 {
     if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
         return -1;
+    if (ports[port_idx].ncq_supported && use_events)
+        return ncq_sync_rw(&ports[port_idx], lba, count,
+                           (void *)buffer, 1);
     return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
 }
 
@@ -980,12 +1138,15 @@ int ahci_init(void)
     /* Read capabilities */
     cap = ahci_read32(abar, AHCI_CAP);
     ahci_clo_supported = (cap & AHCI_CAP_SCLO) ? 1 : 0;
+    ahci_ncq_capable   = (cap & AHCI_CAP_SNCQ) ? 1 : 0;
+    ahci_max_cmd_slots = (uint8_t)(((cap & AHCI_CAP_NCS_MASK)
+                                    >> AHCI_CAP_NCS_SHIFT) + 1);
     {
         uint32_t max_ports = (cap & AHCI_CAP_NP_MASK) + 1;
-        uint32_t max_slots = ((cap & AHCI_CAP_NCS_MASK) >> AHCI_CAP_NCS_SHIFT) + 1;
-        klog(LOG_DEBUG, "ahci", "Ports: %u, Command slots: %u, CLO: %s",
-               (uint64_t)max_ports, (uint64_t)max_slots,
-               ahci_clo_supported ? "yes" : "no");
+        klog(LOG_DEBUG, "ahci", "Ports: %u, Slots: %u, CLO: %s, NCQ: %s",
+               (uint64_t)max_ports, (uint64_t)ahci_max_cmd_slots,
+               ahci_clo_supported ? "yes" : "no",
+               ahci_ncq_capable ? "yes" : "no");
     }
 
     /* Read ports implemented */
@@ -1107,27 +1268,24 @@ int ahci_init(void)
 
 /* ---- Flush per-port error counters to Registry ---- */
 
-static uint32_t ahci_reg_throttle;   /* only flush every Nth call */
+static uint32_t ahci_reg_throttle;          /* only flush every Nth call */
+static HKEY     ahci_reg_port_keys[32];     /* Cached per-port HKEY (0 = not open) */
+static int      ahci_reg_keys_init;         /* 1 after first successful init */
 
-void ahci_flush_error_counters(void)
+/* One-time setup: open/create all port error keys and keep them cached. */
+static void ahci_reg_keys_open(void)
 {
-    int i;
-    HKEY hAhci, hPort;
-    char port_path[32];  /* "PortNN\Errors" — fits easily */
+    HKEY hAhci;
     long rc;
+    int i;
 
-    if (!initialized) return;
-
-    /* Throttle: only flush every 256 iterations (~4s at 60 fps) */
-    if ((ahci_reg_throttle++ & 0xFF) != 0) return;
-
-    /* Open or create HKLM\HARDWARE\AHCI */
     rc = RegCreateKeyEx(HKEY_LOCAL_MACHINE, "HARDWARE\\AHCI", 0,
                         (char *)0, 0, KEY_ALL_ACCESS, (void *)0,
                         &hAhci, (uint32_t *)0);
     if (rc != 0) return;
 
     for (i = 0; i < num_ports_total; i++) {
+        char port_path[32];
         if (!ports[i].active) continue;
 
         /* Build sub-key path: "Port0\Errors", "Port1\Errors", ... */
@@ -1143,17 +1301,136 @@ void ahci_flush_error_counters(void)
 
         rc = RegCreateKeyEx(hAhci, port_path, 0,
                             (char *)0, 0, KEY_ALL_ACCESS, (void *)0,
-                            &hPort, (uint32_t *)0);
-        if (rc != 0) continue;
+                            &ahci_reg_port_keys[i], (uint32_t *)0);
+    }
+
+    RegCloseKey(hAhci);  /* Only the parent handle — port keys stay open */
+    ahci_reg_keys_init = 1;
+}
+
+void ahci_flush_error_counters(void)
+{
+    int i;
+
+    if (!initialized) return;
+
+    /* Throttle: only flush every 256 iterations (~4s at 60 fps) */
+    if ((ahci_reg_throttle++ & 0xFF) != 0) return;
+
+    /* Lazy init: open cached keys on first flush */
+    if (!ahci_reg_keys_init)
+        ahci_reg_keys_open();
+
+    for (i = 0; i < num_ports_total; i++) {
+        HKEY hPort = ahci_reg_port_keys[i];
+        if (!hPort || !ports[i].active) continue;
 
         RegSetDword(hPort, "FatalErrors",   ports[i].errors.fatal_errors);
         RegSetDword(hPort, "NonfatalErrors", ports[i].errors.nonfatal_errors);
         RegSetDword(hPort, "CrcErrors",     ports[i].errors.crc_errors);
         RegSetDword(hPort, "LinkResets",    ports[i].errors.link_resets);
         RegSetDword(hPort, "CmdFailures",   ports[i].errors.cmd_failures);
+    }
+}
 
-        RegCloseKey(hPort);
+
+/* ---- NCQ synchronous read/write with retry ---- */
+
+static int ncq_sync_rw(struct ahci_port *p, uint64_t lba, uint32_t count,
+                       void *buffer, int is_write)
+{
+    int retries = 3;
+    int tag, status;
+    uint32_t tfd;
+
+    while (retries > 0) {
+        tag = ncq_alloc_tag(p);
+        if (tag < 0) {
+            /* All tags busy — fallback to DMA */
+            return ahci_do_rw(p, lba, count, buffer, is_write);
+        }
+
+        ncq_issue_rw(p, tag, lba, count, buffer, is_write);
+
+        /* Wait for this tag to complete */
+        {
+            int timeout = 50;  /* 50 × 100ms = 5s max */
+            while (!(p->tags_completed & (1U << tag)) && timeout > 0) {
+                event_wait_timeout(&p->completion, 100);
+                timeout--;
+            }
+            if (!(p->tags_completed & (1U << tag))) {
+                /* Timeout — mark as failed */
+                p->tag_status[tag] = -1;
+                p->tags_completed |= (1U << tag);
+                p->tags_pending &= ~(1U << tag);
+                klog(LOG_WARN, "ahci",
+                       "Port %u: NCQ tag %u timeout",
+                       (uint64_t)p->port_num, (uint64_t)tag);
+            }
+        }
+
+        p->tags_completed &= ~(1U << tag);
+        status = p->tag_status[tag];
+        ncq_free_tag(p, tag);
+
+        if (status == 0)
+            return 0;  /* Success */
+
+        /* CLO recovery on failure */
+        retries--;
+        tfd = port_read(p->regs, AHCI_PxTFD);
+        if (tfd & (AHCI_PxTFD_BSY | AHCI_PxTFD_DRQ)) {
+            if (port_clo_reset(p) != 0)
+                break;  /* Port unrecoverable */
+        }
+        klog(LOG_DEBUG, "ahci",
+               "Port %u: NCQ retry (%d left)",
+               (uint64_t)p->port_num, (uint64_t)retries);
     }
 
-    RegCloseKey(hAhci);
+    p->errors.cmd_failures++;
+    return -1;
+}
+
+int ahci_ncq_read(int port_idx, uint64_t lba, uint32_t count, void *buffer)
+{
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    if (!ports[port_idx].ncq_supported)
+        return ahci_do_rw(&ports[port_idx], lba, count, buffer, 0);
+    return ncq_sync_rw(&ports[port_idx], lba, count, buffer, 0);
+}
+
+int ahci_ncq_write(int port_idx, uint64_t lba, uint32_t count,
+                   const void *buffer)
+{
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    if (!ports[port_idx].ncq_supported)
+        return ahci_do_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
+    return ncq_sync_rw(&ports[port_idx], lba, count, (void *)buffer, 1);
+}
+
+int ahci_submit(int port_idx, uint64_t lba, uint32_t count, void *buffer,
+                int is_write, ahci_callback_t callback, void *ctx)
+{
+    struct ahci_port *p;
+    int tag;
+
+    if (port_idx < 0 || port_idx >= num_drives || !ports[port_idx].active)
+        return -1;
+    p = &ports[port_idx];
+    if (!p->ncq_supported || !use_events)
+        return -1;  /* Async only available with NCQ + IRQ */
+
+    tag = ncq_alloc_tag(p);
+    if (tag < 0)
+        return -1;  /* No free tags */
+
+    p->tag_callbacks[tag] = callback;
+    p->tag_cb_ctx[tag] = ctx;
+
+    ncq_issue_rw(p, tag, lba, count, buffer, is_write);
+    return tag;
 }
