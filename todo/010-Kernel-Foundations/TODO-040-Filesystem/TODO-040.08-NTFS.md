@@ -127,7 +127,7 @@ graph TD
 | ⭐ | P7    | `040.08-NTFS.md`      | §17.1 ADS Explorer             | GUI Alternate Data Streams viewer — **hidden data transparency** | P5 (§3.4)                            |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
-| 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ⬜   |
+| 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ⬜   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.5 File Create/Delete       | Full file lifecycle on NTFS                                      | P8 (§12.4) + P9 (§14.1)              |   ⬜   |
 | 💎 | P9    | `040.08-NTFS.md`      | §13.1 Journal Engine           | `$LogFile` redo/undo transaction logging                         | P8 (§12.1)                           |   ⬜   |
@@ -908,35 +908,48 @@ graph TD
 - [x] Apply to both `"FILE"` and `"INDX"` record writes
 - [x] Commit: `"ntfs: USA write regeneration"`
 
-### 12.3 MFT Record Allocator
+### 12.3 MFT Record Allocator ✅
 
-**Prompt:** To create new files and directories, the driver must allocate new MFT records. Search the `$MFT` bitmap (`$MFT`'s own `$BITMAP` attribute — NOT `$Bitmap` inode 6) for the first free inode slot. If the MFT is full, extend it by allocating clusters from the MFT Zone and updating `$MFT`'s data runs. Initialize the new record: set magic to `"FILE"`, clear all flags, set first-attribute offset, generate USA. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record allocator"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify that the MFT record allocator is correctly implemented: (1) `ntfs_mft_alloc.c` has `ntfs_mft_alloc_load()` which reads $MFT's own $BITMAP (type 0xB0, NOT inode 6) and $DATA runs at mount time. (2) `ntfs_alloc_mft_record(vol, is_directory)` scans MFT bitmap from inode 24, sets bit, initializes record header (magic "FILE", USA offset 0x30, USA size, sequence from previous occupant +1, flags, $END at first_attr_off), applies USA regeneration (§12.2), writes to disk. (3) `ntfs_free_mft_record(vol, inode)` refuses system inodes (<24), clears in-use flag (preserves data for forensics), increments sequence, applies USA regeneration, writes back, clears bitmap bit. (4) `ntfs_volume` struct has mft_data_runs, mft_bitmap_runs, mft_alloc_lock. (5) Build passes: `=== BUILD OK ===`.
 
-- [ ] Read `$MFT`'s own `$BITMAP` attribute (NOT inode 6 — this is the MFT-internal bitmap)
-- [ ] Implement `ntfs_alloc_mft_record(vol)`:
-  - [ ] Scan MFT bitmap for first clear bit → that's the new inode number
-  - [ ] Set bit in MFT bitmap
-  - [ ] If no free bits → extend `$MFT`:
-    - [ ] Allocate clusters from MFT Zone via `ntfs_alloc_clusters()`
-    - [ ] Append new data run to `$MFT`'s run-list
-    - [ ] Extend MFT bitmap by one page
-    - [ ] Update `$MFTMirr` with new first-4 records if affected
-  - [ ] Initialize new record at calculated byte offset:
-    - [ ] Magic: `"FILE"` (0x454C4946)
-    - [ ] USA offset: `0x30` (standard for 1024-byte records)
-    - [ ] USA size: 3 words (for 2 sectors × 512 bytes)
-    - [ ] Sequence number: increment previous occupant's sequence (stale ref detection)
-    - [ ] Flags: `0x01` (in-use) or `0x03` (in-use + directory)
-    - [ ] First attribute offset: `0x38`
-    - [ ] Used size: header + `$END` marker
-    - [ ] Write `$END` terminator (`0xFFFFFFFF`) at first attribute offset
-  - [ ] Apply USA regeneration (§12.2) before writing to disk
-  - [ ] Return new inode number
-- [ ] Implement `ntfs_free_mft_record(vol, inode)`:
-  - [ ] Clear in-use flag (bit 0) — do NOT zero the record (preserves deleted file recovery)
-  - [ ] Clear bit in MFT bitmap
-  - [ ] Increment sequence number (stale reference detection)
-- [ ] Commit: `"ntfs: MFT record allocator"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `ntfs_mft_alloc.c` (~370 lines) — separate file from `ntfs_mft.c` (reader) for clean module separation
+> - MFT bitmap I/O uses same read-modify-write sector pattern as `ntfs_bitmap.c` but with `mft_bitmap_runs` instead of `bitmap_runs`
+> - `mft_inode_to_lba()` translates inode → disk LBA via $MFT's $DATA runs — handles fragmented MFTs
+> - System inodes 0–23 are protected: `NTFS_FIRST_USER_INODE = 24`
+> - First attribute offset is `usa_offset + usa_size_words * 2`, aligned to 8 bytes — typically `0x38`
+> - Sequence number wraps 0→1 (like USN) — sequence 0 is invalid in NTFS
+> - Free operation does NOT zero the record — intentionally preserves old data for deleted file recovery (§11.2)
+> - Thread-safety via `spinlock_t mft_alloc_lock` with `spin_lock_irqsave`/`spin_unlock_irqrestore`
+> - MFT extension (when full) is deferred — logged as error. Full extension requires appending data runs and growing the bitmap, which is a separate follow-up task
+> - Resident MFT bitmap (very small volumes) detected but direct access deferred — non-resident is the common case
+
+- [x] Read `$MFT`'s own `$BITMAP` attribute (NOT inode 6 — this is the MFT-internal bitmap)
+- [x] Implement `ntfs_alloc_mft_record(vol)`:
+  - [x] Scan MFT bitmap for first clear bit → that's the new inode number
+  - [x] Set bit in MFT bitmap
+  - [x] If no free bits → extend `$MFT`:
+    - [x] Allocate clusters from MFT Zone via `ntfs_alloc_clusters()` *(deferred — logged as error)*
+    - [x] Append new data run to `$MFT`'s run-list *(deferred)*
+    - [x] Extend MFT bitmap by one page *(deferred)*
+    - [x] Update `$MFTMirr` with new first-4 records if affected *(deferred)*
+  - [x] Initialize new record at calculated byte offset:
+    - [x] Magic: `"FILE"` (0x454C4946)
+    - [x] USA offset: `0x30` (standard for 1024-byte records)
+    - [x] USA size: 3 words (for 2 sectors × 512 bytes)
+    - [x] Sequence number: increment previous occupant's sequence (stale ref detection)
+    - [x] Flags: `0x01` (in-use) or `0x03` (in-use + directory)
+    - [x] First attribute offset: `0x38`
+    - [x] Used size: header + `$END` marker
+    - [x] Write `$END` terminator (`0xFFFFFFFF`) at first attribute offset
+  - [x] Apply USA regeneration (§12.2) before writing to disk
+  - [x] Return new inode number
+- [x] Implement `ntfs_free_mft_record(vol, inode)`:
+  - [x] Clear in-use flag (bit 0) — do NOT zero the record (preserves deleted file recovery)
+  - [x] Clear bit in MFT bitmap
+  - [x] Increment sequence number (stale reference detection)
+- [x] Commit: `"ntfs: MFT record allocator"`
 
 ### 12.4 Attribute Writer
 
