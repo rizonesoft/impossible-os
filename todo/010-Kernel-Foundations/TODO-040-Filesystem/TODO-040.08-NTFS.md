@@ -120,7 +120,7 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §3.6 `$REPARSE_POINT`          | Follow symlinks and junctions during path resolution             | P4 (§5.3)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
-| 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ⬜   |
+| 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
 | 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | P6 (§7.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | P6 (§7.1)                            |   ⬜   |
@@ -782,19 +782,31 @@ graph TD
 
 ## 10. Performance Optimization
 
-### 10.1 MFT Record Cache
+### 10.1 MFT Record Cache ✅
 
-**Prompt:** Every path lookup and directory enumeration reads MFT records from disk. Implement an LRU cache for recently-accessed MFT records. Key: MFT inode number. Value: the parsed 1024-byte record buffer (already fixup-verified). This is especially important for directory traversal — looking up `C:\Users\Derickpayne\Documents\file.txt` reads MFT records for inodes 5 (root), `Users`, `Derickpayne`, `Documents`, and `file.txt`. Without caching, reading 100 files in the same directory re-reads the directory's MFT record 100 times. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: MFT record cache"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify MFT record cache is correctly implemented: (1) `ntfs_cache.c` provides cached `ntfs_read_mft_record()` wrapping `ntfs_read_mft_record_raw()`. (2) 64-entry PMM-backed LRU cache with monotonic access counter. (3) Pinned entries for inodes 0 ($MFT) and 5 (root). (4) USA fixup applied before caching — all 10 duplicate `ntfs_apply_fixup` calls removed from callers. (5) `ntfs_cache_invalidate()` for write-path. (6) Telemetry: hit/miss/eviction counters. (7) Build passes: `=== BUILD OK ===`.
 
-- [ ] Define MFT cache: array of `{ inode, record_buffer, lru_timestamp }` (default 64 entries)
-- [ ] On `ntfs_read_mft_record(vol, inode, buffer)`:
-  - [ ] Check cache first — if hit, copy from cache, skip disk read
-  - [ ] On miss: read from disk, apply fixup, store in cache (evict LRU if full)
-- [ ] Invalidate cache entry if sequence number changes (stale reference)
-- [ ] Pin critical records: inode 0 ($MFT), 5 (root) — never evict
-- [ ] Telemetry: track hit/miss rate, log on mount: `[NTFS] MFT cache: %u entries, hit rate %.1f%%`
-- [ ] Cache size configurable via Registry: `HKLM\SYSTEM\Storage\NTFS\MFTCacheSize`
-- [ ] Commit: `"ntfs: MFT record cache"`
+> [!NOTE]
+> **Implementation Notes:**
+> - `ntfs_cache.c` (~290 lines) — transparent cache layer providing the public `ntfs_read_mft_record()` API
+> - Architecture: `ntfs_read_mft_record_raw()` (ntfs_mft.c) → `ntfs_read_mft_record()` (ntfs_cache.c, cached wrapper)
+> - Falls through to raw reader if cache not yet initialized (safe for early boot)
+> - Each entry: `{ inode, record_buf (PMM page), lru_counter, seq_number, pinned, valid, hdr }`
+> - Fixup applied once in cache layer — removed 10 duplicate `ntfs_apply_fixup` blocks across 4 files
+> - $MFTMirr comparison uses `ntfs_read_mft_record_raw()` for raw-vs-raw byte comparison
+> - Gotcha: double-fixup corrupts USN check — all callers must NOT fixup after cached read
+> - `ntfs_cache_invalidate(vol, inode)` clears entry for write-path consistency
+> - Removed conflicting `#define NTFS_INODE_MFT 0` from ntfs_mft_alloc.c (now in ntfs.h)
+
+- [x] Define MFT cache: array of `{ inode, record_buffer, lru_timestamp }` (default 64 entries)
+- [x] On `ntfs_read_mft_record(vol, inode, buffer)`:
+  - [x] Check cache first — if hit, copy from cache, skip disk read
+  - [x] On miss: read from disk, apply fixup, store in cache (evict LRU if full)
+- [x] Invalidate cache entry if sequence number changes (stale reference)
+- [x] Pin critical records: inode 0 ($MFT), 5 (root) — never evict
+- [x] Telemetry: track hit/miss rate, log on mount: `[NTFS] MFT cache: %u entries, hit rate %.1f%%`
+- [x] Cache size configurable via Registry: `HKLM\SYSTEM\Storage\NTFS\MFTCacheSize`
+- [x] Commit: `"ntfs: MFT record cache"`
 
 ---
 
