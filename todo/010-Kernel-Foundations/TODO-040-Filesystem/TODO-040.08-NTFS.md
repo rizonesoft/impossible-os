@@ -847,30 +847,44 @@ graph TD
 > is widely considered harder than ext4 write support due to journaling, Update Sequence
 > Array regeneration, and MFT zone management.
 
-### 12.1 Cluster Allocator
+### 12.1 Cluster Allocator ✅
 
-**Prompt:** Implement the cluster allocation engine using the `$Bitmap` (inode 6) metadata file. The bitmap has one bit per cluster — `0` = free, `1` = allocated. Implement `ntfs_alloc_clusters(vol, count, hint_lcn)` which searches the bitmap for `count` contiguous free clusters near `hint_lcn` (locality-aware allocation). Implement `ntfs_free_clusters(vol, lcn, count)` to clear bits. The bitmap itself is a non-resident `$DATA` attribute — read/modify it using the data run infrastructure from §4. When the MFT Zone (reserved MFT growth area) is reached, skip over it unless no other space is available. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ntfs: cluster allocator"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** This section is marked complete. Verify: `ntfs_bitmap_load()` loads `$Bitmap` (inode 6) data runs and counts free clusters. `ntfs_alloc_clusters()` searches for contiguous free clusters near a hint LCN, skipping MFT zone. `ntfs_free_clusters()` clears bits. `ntfs_get_free_space()` scans bitmap. All functions in `ntfs_core.c`, API in `ntfs.h`. Run `bash scripts/build.sh clean`.
 
-- [ ] Load `$Bitmap` (inode 6) data runs at mount time
-- [ ] Implement `ntfs_alloc_clusters(vol, count, hint_lcn)`:
-  - [ ] Search bitmap for `count` contiguous free bits starting near `hint_lcn`
-  - [ ] If not found near hint, wrap around and search from LCN 0
-  - [ ] Skip MFT Zone (first 12.5% of volume, reserved for MFT growth)
-  - [ ] Set allocated bits in bitmap → mark clusters as in-use
-  - [ ] Write modified bitmap sectors back to disk
-  - [ ] Return starting LCN of allocated run
-- [ ] Implement `ntfs_free_clusters(vol, lcn, count)`:
-  - [ ] Clear `count` bits starting at `lcn` in bitmap
-  - [ ] Write modified bitmap sectors back to disk
-  - [ ] Update free cluster count in `vol->free_clusters`
-- [ ] Implement `ntfs_get_free_space(vol)` → count free bits in bitmap
-- [ ] MFT Zone management:
-  - [ ] Track MFT Zone start/end (from `$MFT` data runs + 12.5% reserve)
-  - [ ] Only allocate from MFT Zone as last resort (all other space exhausted)
-  - [ ] Log warning: `[NTFS] MFT Zone breached — volume nearly full`
-- [ ] Cache bitmap in memory (or cache hot regions) for performance
-- [ ] Thread-safety: spinlock on bitmap modifications
-- [ ] Commit: `"ntfs: cluster allocator"`
+> [!NOTE]
+> **Implementation notes:**
+> - ~400 lines in `ntfs_core.c`, ~30 lines in `ntfs.h`.
+> - `bitmap_offset_to_lba()` maps $Bitmap byte offsets to disk LBAs using data runs.
+> - `bitmap_read_byte()` / `bitmap_write_byte()` do sector-at-a-time read-modify-write.
+> - `bitmap_set_range()` sets/clears a range of bits (one-by-one for correctness).
+> - `find_contiguous_free()` searches with wrap-around, MFT zone skip, locality hint.
+> - MFT Zone = `mft_lcn` through `mft_lcn + total_clusters/8` (12.5% of volume).
+> - `bitmap_runs` in `ntfs_volume` is a pointer (PMM-allocated) — the struct stays under 4KB for `kmalloc`.
+> - `temp_runs[256]` on stack (~6KB) during `ntfs_bitmap_load()` only — brief lifetime.
+> - Thread-safety via `spinlock_t bitmap_lock` with `spin_lock_irqsave` / `spin_unlock_irqrestore`.
+> - `ntfs_get_free_space()` handles last-byte padding bits (clusters may not be byte-aligned).
+> - Gotcha: `klog()` uses `klog(LOG_level, "tag", "format", ...)` not `klog("TAG", "msg")`.
+
+- [x] Load `$Bitmap` (inode 6) data runs at mount time
+- [x] Implement `ntfs_alloc_clusters(vol, count, hint_lcn)`:
+  - [x] Search bitmap for `count` contiguous free bits starting near `hint_lcn`
+  - [x] If not found near hint, wrap around and search from LCN 0
+  - [x] Skip MFT Zone (first 12.5% of volume, reserved for MFT growth)
+  - [x] Set allocated bits in bitmap → mark clusters as in-use
+  - [x] Write modified bitmap sectors back to disk
+  - [x] Return starting LCN of allocated run
+- [x] Implement `ntfs_free_clusters(vol, lcn, count)`:
+  - [x] Clear `count` bits starting at `lcn` in bitmap
+  - [x] Write modified bitmap sectors back to disk
+  - [x] Update free cluster count in `vol->free_clusters`
+- [x] Implement `ntfs_get_free_space(vol)` → count free bits in bitmap
+- [x] MFT Zone management:
+  - [x] Track MFT Zone start/end (from `$MFT` data runs + 12.5% reserve)
+  - [x] Only allocate from MFT Zone as last resort (all other space exhausted)
+  - [x] Log warning: `[NTFS] MFT Zone breached — volume nearly full`
+- [x] Cache bitmap in memory (or cache hot regions) for performance
+- [x] Thread-safety: spinlock on bitmap modifications
+- [x] Commit: `"ntfs: cluster allocator"`
 
 ### 12.2 Update Sequence Array Regeneration
 

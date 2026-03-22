@@ -64,7 +64,7 @@ graph TD
 
     subgraph "Layer 2: Filesystem Drivers"
         FAT32["040.06 FAT32<br/>✅ base — hardening pending"]
-        NTFS["040.08 NTFS<br/>§1–5.2 ✅ — §5.3+ pending"]
+        NTFS["040.08 NTFS<br/>§1–6 ✅ — write pending"]
         EXT4["040.09 ext4<br/>read-only — all pending"]
         EXFAT["040.10 exFAT<br/>all pending"]
         IXFS["040.11 IXFS<br/>✅ base — advanced pending"]
@@ -189,9 +189,9 @@ graph TD
 | **3**  | `040.08-NTFS.md`         | §3 Attribute Engine               | Attribute iterator, $FILE_NAME, $STD_INFO                    | Phase 3 (§2)            | ✅      |
 | **3**  | `040.08-NTFS.md`         | §4 Data Runs                      | VCN→LCN decoder + file data reader                           | Phase 3 (§3)            | ✅      |
 | **3**  | `040.08-NTFS.md`         | §5.1–5.2 B+ Tree                  | $INDEX_ROOT + INDX buffer reader                             | Phase 3 (§3–4)          | ✅      |
-| **3**  | `040.08-NTFS.md`         | §5.3 Directory Lookup             | Full `C:\path\to\file` resolution                            | Phase 3 (§5.2)          | ⬜      |
-| **3**  | `040.08-NTFS.md`         | §5.4 Dir Enumeration              | FindFirstFile / FindNextFile for NTFS                        | Phase 3 (§5.1–5.2)      | ⬜      |
-| **3**  | `040.08-NTFS.md`         | §3.1 VFS Registration             | Mount NTFS as C: drive                                       | Phase 3 (§5.3) + VFS    | ⬜      |
+| **3**  | `040.08-NTFS.md`         | §5.3 Directory Lookup             | Full `C:\path\to\file` resolution                            | Phase 3 (§5.2)          | ✅      |
+| **3**  | `040.08-NTFS.md`         | §5.4 Dir Enumeration              | FindFirstFile / FindNextFile for NTFS                        | Phase 3 (§5.1–5.2)      | ✅      |
+| **3**  | `040.08-NTFS.md`         | §3.1 VFS Registration             | Mount NTFS as C: drive                                       | Phase 3 (§5.3) + VFS    | ✅      |
 | **4**  | `040.08-NTFS.md`         | §12 Write Support                 | Cluster allocator, USA regen, MFT allocator, attr writer     | NTFS read (Phase 3)     | ⬜      |
 | **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal              | Transaction engine + dirty-mount recovery replay             | Phase 4 (§12)           | ⬜      |
 | **4**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation              | Directory insert/delete/split/merge                          | Phase 4 (§12)           | ⬜      |

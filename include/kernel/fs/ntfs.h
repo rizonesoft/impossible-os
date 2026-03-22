@@ -11,9 +11,14 @@
 #pragma once
 
 #include "kernel/types.h"
+#include "kernel/sched/spinlock.h"
 
 /* Forward declarations */
 struct blkdev;
+struct ntfs_data_run;
+
+/* Maximum data runs we store per cached non-resident attribute */
+#define NTFS_MAX_BITMAP_RUNS  256
 
 /* NTFS volume context — parsed from boot sector BPB */
 struct ntfs_volume {
@@ -36,6 +41,20 @@ struct ntfs_volume {
 
     /* Volume identity */
     uint64_t volume_serial;        /* Volume serial number (offset 0x48) */
+
+    /* ---- Cluster Bitmap (§12.1) ---- */
+    uint64_t total_clusters;       /* Total clusters on the volume */
+    uint64_t free_clusters;        /* Free clusters (cached count) */
+    struct ntfs_data_run *bitmap_runs; /* PMM-allocated array of bitmap data runs */
+    int      bitmap_run_count;     /* Number of valid bitmap data runs */
+    uint64_t bitmap_size;          /* $Bitmap real size in bytes */
+
+    /* MFT Zone — reserved for MFT growth (first 12.5% of volume) */
+    uint64_t mft_zone_start;       /* First LCN of MFT zone */
+    uint64_t mft_zone_end;         /* Last LCN + 1 of MFT zone */
+
+    spinlock_t bitmap_lock;        /* Serializes bitmap modifications */
+    uint8_t  bitmap_loaded;        /* 1 if bitmap runs are loaded */
 };
 
 /* ---- API ---- */
@@ -506,6 +525,30 @@ int ntfs_decode_reparse(const uint8_t *record,
  * Returns 1 if present, 0 if not. */
 int ntfs_is_reparse_point(const uint8_t *record,
                            const struct ntfs_mft_header *hdr);
+
+/* ---- Cluster Allocator (§12.1) ---- */
+
+/* Load $Bitmap (inode 6) data runs into vol->bitmap_runs.
+ * Must be called during mount, after MFT is accessible.
+ * Also computes total_clusters, free_clusters, and MFT zone. */
+int ntfs_bitmap_load(struct ntfs_volume *vol);
+
+/* Allocate `count` contiguous clusters near `hint_lcn`.
+ * Searches for a free run, skipping the MFT zone unless
+ * no other space is available (last resort).
+ * Returns starting LCN on success, or 0 on failure (disk full). */
+uint64_t ntfs_alloc_clusters(struct ntfs_volume *vol,
+                              uint64_t count, uint64_t hint_lcn);
+
+/* Free `count` clusters starting at `lcn`.
+ * Clears their bits in $Bitmap and writes back to disk.
+ * Returns NTFS_OK on success. */
+int ntfs_free_clusters(struct ntfs_volume *vol,
+                        uint64_t lcn, uint64_t count);
+
+/* Count free clusters in the $Bitmap.
+ * Performs a full scan of the bitmap — O(total_clusters/8). */
+uint64_t ntfs_get_free_space(struct ntfs_volume *vol);
 
 /* ---- File Data Reader (§4.2) ---- */
 
