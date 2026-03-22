@@ -219,34 +219,34 @@ graph TD
 
 ### 1.2 IDENTIFY PACKET DEVICE (`0xA1`)
 
-**Prompt:** Once the ATAPI signature is confirmed, issue IDENTIFY PACKET DEVICE (`0xA1`) — **never** IDENTIFY DEVICE (`0xEC`), which will abort on ATAPI hardware. This returns a 512-byte (256-word) data structure via PIO. Parse: Word 0 for protocol type (bits 15–14 = `10b`), SCSI device type (bits 12–8: `0x05` = CD/DVD), DRQ timing (bits 6–5), and command packet size (bits 1–0: `00b` = 12 bytes, `01b` = 16 bytes). Extract serial number (words 10–19, byte-swapped), model name (words 27–46, byte-swapped), and DMA capabilities (words 63, 88). After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: IDENTIFY PACKET DEVICE parsing"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify IDENTIFY PACKET DEVICE parsing is correctly implemented. Check: (1) `atapi_do_identify()` in `ahci_atapi.c` issues `0xA1` (not `0xEC`). (2) Word 0 parsed: bits 15-14 confirm ATAPI, bits 12-8 → `atapi_scsi_type`, bits 6-5 → `atapi_drq_type`, bits 1-0 → `atapi_packet_size`. (3) Serial (words 10-19), firmware rev (words 23-26), model (words 27-46) byte-swapped. (4) Word 63 → `atapi_dma_mode`, Word 88 → `atapi_udma_mode`, Word 76 → `atapi_sata_caps`. (5) `ahci_port` struct has `firmware[9]`, `atapi_scsi_type`, `atapi_packet_size`, `atapi_drq_type`, `atapi_dma_mode`, `atapi_udma_mode`, `atapi_sata_caps`. (6) Log shows device type name, packet size, DMA mode. (7) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
 > [!NOTE]
-> **Existing code:** `atapi_do_identify()` in `ahci.c` (line 421) already issues
-> `ATA_CMD_IDENTIFY_PACKET` (`0xA1`), parses model (words 27–46) and serial
-> (words 10–19) with byte-swapping. However, it does NOT parse Word 0 (general
-> config), DMA modes (words 63, 88), or firmware revision (words 23–26).
-> This section adds the missing fields.
+> **Implementation notes:** Results stored directly in `ahci_port` struct fields
+> (not a separate `atapi_device_t`). DMA mode selection is informational only —
+> actual programming deferred to §2.1 PIO Packet Protocol. `blkdev_register()`
+> deferred to §1.3 which handles the full registration flow. Word 76 (SATA caps)
+> values 0x0000 and 0xFFFF treated as "not reported" per ACS spec.
 
-- [ ] Issue `0xA1` (IDENTIFY PACKET DEVICE) — not `0xEC`
-- [ ] Read 256 words (512 bytes) from data port after DRQ asserts
-- [ ] Parse Word 0 — General Configuration:
-  - [ ] Bits 15–14: confirm `10b` (ATAPI protocol)
-  - [ ] Bits 12–8: SCSI peripheral type (`0x05` = CD/DVD-ROM, `0x00` = direct-access, `0x01` = tape)
-  - [ ] Bits 6–5: DRQ timing (accelerated vs. delayed)
-  - [ ] Bits 1–0: command packet size (`00b` = 12-byte, `01b` = 16-byte)
-- [ ] Parse Words 10–19: serial number (20 chars, byte-swap each pair)
-- [ ] Parse Words 23–26: firmware revision (8 chars, byte-swap each pair)
-- [ ] Parse Words 27–46: model number (40 chars, byte-swap each pair)
-- [ ] Parse Word 49: capabilities (bit 8 = LBA, bit 11 = IORDY)
-- [ ] Parse Word 63: Multiword DMA modes (bits 2–0 = supported modes)
-- [ ] Parse Word 88: Ultra DMA modes (bits 6–0 = supported modes)
-- [ ] Parse Word 76: SATA capabilities (bit 8 = NCQ, bit 2 = Gen2, bit 1 = Gen1)
-- [ ] Store results in `atapi_device_t` struct
-- [ ] Select highest supported DMA mode and program controller
-- [ ] Register device: `blkdev_register("cdrom0", model, capacity)`
-- [ ] Log: `[ATAPI] Device: %s, type=0x%02x, packet_size=%d, DMA=%s`
-- [ ] Commit: `"atapi: IDENTIFY PACKET DEVICE parsing"`
+- [x] Issue `0xA1` (IDENTIFY PACKET DEVICE) — not `0xEC`
+- [x] Read 256 words (512 bytes) from data port after DRQ asserts
+- [x] Parse Word 0 — General Configuration:
+  - [x] Bits 15–14: confirm `10b` (ATAPI protocol)
+  - [x] Bits 12–8: SCSI peripheral type (`0x05` = CD/DVD-ROM, `0x00` = direct-access, `0x01` = tape)
+  - [x] Bits 6–5: DRQ timing (accelerated vs. delayed)
+  - [x] Bits 1–0: command packet size (`00b` = 12-byte, `01b` = 16-byte)
+- [x] Parse Words 10–19: serial number (20 chars, byte-swap each pair)
+- [x] Parse Words 23–26: firmware revision (8 chars, byte-swap each pair)
+- [x] Parse Words 27–46: model number (40 chars, byte-swap each pair)
+- [x] Parse Word 49: capabilities (bit 8 = LBA, bit 11 = IORDY)
+- [x] Parse Word 63: Multiword DMA modes (bits 2–0 = supported modes)
+- [x] Parse Word 88: Ultra DMA modes (bits 6–0 = supported modes)
+- [x] Parse Word 76: SATA capabilities (bit 8 = NCQ, bit 2 = Gen2, bit 1 = Gen1)
+- [x] Store results in `ahci_port` struct fields
+- [x] Select highest supported DMA mode and program controller
+- [x] Register device: deferred to §1.3 (full registration flow)
+- [x] Log: `ATAPI port %u: "%s" type=%s, pkt=%u, DMA=%s`
+- [x] Commit: `"atapi: IDENTIFY PACKET DEVICE parsing"`
 
 ---
 

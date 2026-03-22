@@ -264,6 +264,15 @@ struct ahci_port {
     /* 4Kn / Advanced Format */
     uint32_t physical_sector_size; /* Physical sector size in bytes (512 or 4096) */
     uint16_t alignment_offset;    /* Logical sectors offset within first physical sector */
+
+    /* ATAPI device info (from IDENTIFY PACKET DEVICE) */
+    char     firmware[9];         /* Firmware revision (null-terminated) */
+    uint8_t  atapi_scsi_type;     /* SCSI peripheral type (0x05=CD/DVD, 0x00=direct, 0x01=tape) */
+    uint8_t  atapi_packet_size;   /* Command packet size: 12 or 16 bytes */
+    uint8_t  atapi_drq_type;      /* DRQ timing: 0=slow, 1=IRQ, 2=accelerated */
+    uint8_t  atapi_dma_mode;      /* Highest supported DMA mode (0=PIO only) */
+    uint8_t  atapi_udma_mode;     /* Highest supported UDMA mode (0xFF=none) */
+    uint16_t atapi_sata_caps;     /* SATA capabilities word 76 */
 };
 
 /* Max ports supported */
