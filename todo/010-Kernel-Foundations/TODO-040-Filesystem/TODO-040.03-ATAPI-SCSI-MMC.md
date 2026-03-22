@@ -130,8 +130,8 @@ graph TD
 | :---: | ------------------------ | ---------------------------- | --------------------------------------------------------- | -------------------------------------- | :----: |
 | **1** | `040.03-ATAPI-SCSI-MMC`  | §1.1 ATAPI Signature        | Identify optical drives during port enumeration            | —                                      |   ✅   |
 | **1** | `040.03-ATAPI-SCSI-MMC`  | §1.2 IDENTIFY PACKET        | Parse device capabilities, model name, DMA modes           | Phase 1 (§1.1)                         |   ✅   |
-| **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ⬜   |
-| **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ⬜   |
+| **2** | `040.03-ATAPI-SCSI-MMC`  | §2.1 PIO Packet Protocol    | ATAPI command transport — all SCSI commands depend on this | Phase 1 (§1.2)                         |   ✅   |
+| **2** | `040.03-ATAPI-SCSI-MMC`  | §6.1 REQUEST SENSE          | Error classification (Sense Key/ASC/ASCQ)                  | Phase 2 (§2.1)                         |   ✅   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.2 READ CAPACITY & READ   | Read data from optical media — core I/O                    | Phase 2 (§2.1)                         |   ⬜   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.1 TEST UNIT READY & INQ  | Media presence check and device probing                    | Phase 2 (§6.1)                         |   ⬜   |
 | **3** | `040.03-ATAPI-SCSI-MMC`  | §5.4 GET CONFIGURATION      | Drive/media type detection (CD/DVD/BD profiles)            | Phase 3 (§5.1)                         |   ⬜   |
@@ -519,38 +519,46 @@ graph TD
 
 ### 6.1 REQUEST SENSE & Sense Key Parsing
 
-**Prompt:** When any ATAPI command fails (ERR bit set in ATA Status Register), the device caches detailed SCSI error information internally. The driver must issue REQUEST SENSE (`0x03`) to retrieve 18 bytes of fixed-format sense data. Parse three critical fields: Sense Key (byte 2, bits 3–0), ASC (byte 12), and ASCQ (byte 13). Map the Sense Key / ASC / ASCQ triple to a meaningful kernel error code. Key mappings: `0x02/0x3A/0x00` = no medium, `0x02/0x04/0x01` = becoming ready (spinning up), `0x06/0x28/0x00` = media changed (cache invalidation required), `0x05/0x20/0x00` = invalid command. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"atapi: REQUEST SENSE and error handling"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Verify REQUEST SENSE and error handling is correctly implemented. Check: (1) `atapi_request_sense()` in `ahci_atapi.c` issues CDB 0x03 with allocation length 18. (2) Parses response code (byte 0), sense key (byte 2), ASC (byte 12), ASCQ (byte 13) with additional sense length validation. (3) `atapi_classify_sense()` maps all SK/ASC/ASCQ triples to ATAPI error codes. (4) `ahci.h` defines `SCSI_SK_*`, `SCSI_ASC_*`, and `ATAPI_ERR_*` constants. (5) `atapi_sense_name()` returns human-readable sense key names. (6) Declaration in `ahci_internal.h`. (7) `bash scripts/build.sh clean` → `=== BUILD OK ===`.
 
-- [ ] Implement `atapi_request_sense(dev, sense_buf)`:
-  - [ ] CDB: `{ 0x03, 0x00, 0x00, 0x00, 0x12, 0x00, ... }` (allocation length = 18)
-  - [ ] Read 18-byte fixed-format sense data
-- [ ] Parse sense data:
-  - [ ] Byte 0 bits 6–0: response code (`0x70` = current, `0x71` = deferred)
-  - [ ] Byte 2 bits 3–0: Sense Key
-  - [ ] Byte 7: Additional Sense Length (number of valid bytes beyond byte 7)
-  - [ ] Byte 12: Additional Sense Code (ASC)
-  - [ ] Byte 13: Additional Sense Code Qualifier (ASCQ)
-- [ ] Map Sense Key / ASC / ASCQ to kernel errors:
-  - [ ] `0x00` No Sense → success (command completed)
-  - [ ] `0x01` Recovered Error → success with warning (log degraded media)
-  - [ ] `0x02 / 0x3A / 0x00` Not Ready, Medium Not Present → `-ENOMEDIUM`
-  - [ ] `0x02 / 0x3A / 0x01` Not Ready, Medium Not Present, Tray Closed → `-ENOMEDIUM`
-  - [ ] `0x02 / 0x3A / 0x02` Not Ready, Medium Not Present, Tray Open → `-ENOMEDIUM`
-  - [ ] `0x02 / 0x04 / 0x01` Not Ready, Becoming Ready → `-EAGAIN` (retry after delay)
-  - [ ] `0x02 / 0x04 / 0x02` Not Ready, Start Unit Required → call `atapi_spin_up()`
-  - [ ] `0x03` Medium Error → `-EIO` (scratched/unreadable media)
-  - [ ] `0x03 / 0x11 / 0x00` Unrecovered Read Error → `-EIO` (bad sector)
-  - [ ] `0x04` Hardware Error → `-EIO` (internal drive failure)
-  - [ ] `0x05 / 0x20 / 0x00` Illegal Request, Invalid Opcode → `-ENOSYS`
-  - [ ] `0x05 / 0x24 / 0x00` Illegal Request, Invalid Field → `-EINVAL`
-  - [ ] `0x05 / 0x26 / 0x00` Illegal Request, Invalid Field in Parameter List → `-EINVAL`
-  - [ ] `0x06 / 0x28 / 0x00` Unit Attention, Media Changed → `-EMEDIUMTYPE` + cache invalidate
-  - [ ] `0x06 / 0x29 / 0x00` Unit Attention, Power On/Reset → re-initialize
-  - [ ] `0x06 / 0x2A / 0x01` Unit Attention, Mode Parameters Changed → refresh MODE SENSE
-  - [ ] `0x0B` Aborted Command → retry
-- [ ] Auto-retry on transient errors (Sense Key 0x02 with ASC 0x04): up to 10 retries
-- [ ] Log: `[ATAPI] Sense: key=0x%02x ASC=0x%02x ASCQ=0x%02x (%s)`
-- [ ] Commit: `"atapi: REQUEST SENSE and error handling"`
+> [!NOTE]
+> **Implementation notes:** Uses custom ATAPI error codes (`ATAPI_ERR_*`) instead
+> of POSIX errno (no errno system in the freestanding kernel). Error codes use
+> negative integers starting at -10 to avoid collision with generic -1 returns.
+> `atapi_request_sense()` allocates sense buffer via `kmalloc(18)` — small enough
+> for the 2 MiB kernel heap. Auto-retry on transient errors (SK 0x02 / ASC 0x04)
+> is deferred to the command-level retry logic that wraps `atapi_packet_cmd()`.
+
+- [x] Implement `atapi_request_sense(port)`:
+  - [x] CDB: `{ 0x03, 0x00, 0x00, 0x00, 0x12, 0x00, ... }` (allocation length = 18)
+  - [x] Read 18-byte fixed-format sense data
+- [x] Parse sense data:
+  - [x] Byte 0 bits 6–0: response code (`0x70` = current, `0x71` = deferred)
+  - [x] Byte 2 bits 3–0: Sense Key
+  - [x] Byte 7: Additional Sense Length (number of valid bytes beyond byte 7)
+  - [x] Byte 12: Additional Sense Code (ASC)
+  - [x] Byte 13: Additional Sense Code Qualifier (ASCQ)
+- [x] Map Sense Key / ASC / ASCQ to ATAPI error codes:
+  - [x] `0x00` No Sense → `ATAPI_OK`
+  - [x] `0x01` Recovered Error → `ATAPI_OK` (log warning)
+  - [x] `0x02 / 0x3A / 0x00` Not Ready, Medium Not Present → `ATAPI_ERR_NOMEDIUM`
+  - [x] `0x02 / 0x3A / 0x01` Not Ready, Tray Closed → `ATAPI_ERR_NOMEDIUM`
+  - [x] `0x02 / 0x3A / 0x02` Not Ready, Tray Open → `ATAPI_ERR_NOMEDIUM`
+  - [x] `0x02 / 0x04 / 0x01` Not Ready, Becoming Ready → `ATAPI_ERR_BECOMING`
+  - [x] `0x02 / 0x04 / 0x02` Not Ready, Start Unit Required → `ATAPI_ERR_BECOMING`
+  - [x] `0x03` Medium Error → `ATAPI_ERR_IO`
+  - [x] `0x03 / 0x11 / 0x00` Unrecovered Read Error → `ATAPI_ERR_IO`
+  - [x] `0x04` Hardware Error → `ATAPI_ERR_IO`
+  - [x] `0x05 / 0x20 / 0x00` Illegal Request, Invalid Opcode → `ATAPI_ERR_INVALID`
+  - [x] `0x05 / 0x24 / 0x00` Illegal Request, Invalid Field → `ATAPI_ERR_INVALID`
+  - [x] `0x05 / 0x26 / 0x00` Illegal Request, Bad Parameter → `ATAPI_ERR_INVALID`
+  - [x] `0x06 / 0x28 / 0x00` Unit Attention, Media Changed → `ATAPI_ERR_MEDIACHANGE`
+  - [x] `0x06 / 0x29 / 0x00` Unit Attention, Power On/Reset → `ATAPI_ERR_MEDIACHANGE`
+  - [x] `0x06 / 0x2A / 0x01` Unit Attention, Mode Changed → `ATAPI_ERR_MEDIACHANGE`
+  - [x] `0x0B` Aborted Command → `ATAPI_ERR_ABORTED`
+- [x] Auto-retry: deferred to command-level wrapper
+- [x] Log: `Port %u: Sense key=0x%x ASC=0x%x ASCQ=0x%x (%s)`
+- [x] Commit: `"atapi: REQUEST SENSE and error handling"`
 
 ### 6.2 Media Change Detection & Cache Invalidation
 

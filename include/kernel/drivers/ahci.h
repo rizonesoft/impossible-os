@@ -145,9 +145,41 @@
 
 /* ---- SCSI commands (used inside ATAPI PACKET) ---- */
 #define SCSI_TEST_UNIT_READY  0x00
+#define SCSI_REQUEST_SENSE    0x03   /* REQUEST SENSE (retrieve error info) */
 #define SCSI_INQUIRY          0x12
 #define SCSI_READ_CAPACITY    0x25   /* READ CAPACITY (10) */
 #define SCSI_READ_10          0x28   /* READ (10) */
+
+/* ---- SCSI Sense Keys ---- */
+#define SCSI_SK_NO_SENSE        0x00
+#define SCSI_SK_RECOVERED       0x01   /* Recovered error (success with warning) */
+#define SCSI_SK_NOT_READY       0x02
+#define SCSI_SK_MEDIUM_ERROR    0x03
+#define SCSI_SK_HARDWARE_ERROR  0x04
+#define SCSI_SK_ILLEGAL_REQUEST 0x05
+#define SCSI_SK_UNIT_ATTENTION  0x06
+#define SCSI_SK_DATA_PROTECT    0x07
+#define SCSI_SK_BLANK_CHECK     0x08
+#define SCSI_SK_ABORTED_COMMAND 0x0B
+
+/* ---- Common ASC/ASCQ codes ---- */
+#define SCSI_ASC_NO_MEDIUM      0x3A   /* Medium not present */
+#define SCSI_ASC_BECOMING_READY 0x04   /* Logical unit not ready */
+#define SCSI_ASC_MEDIA_CHANGED  0x28   /* Not ready to ready transition */
+#define SCSI_ASC_POWER_ON       0x29   /* Power-on or reset occurred */
+#define SCSI_ASC_INVALID_OPCODE 0x20   /* Invalid command operation code */
+#define SCSI_ASC_INVALID_FIELD  0x24   /* Invalid field in CDB */
+#define SCSI_ASC_READ_ERROR     0x11   /* Unrecovered read error */
+
+/* ---- ATAPI error codes (returned by atapi_request_sense) ---- */
+#define ATAPI_OK               0    /* Success */
+#define ATAPI_ERR_NOMEDIUM    -10   /* No disc in drive */
+#define ATAPI_ERR_BECOMING    -11   /* Drive spinning up (retry after delay) */
+#define ATAPI_ERR_MEDIACHANGE -12   /* Disc changed (cache invalidation needed) */
+#define ATAPI_ERR_IO          -13   /* Medium or hardware error */
+#define ATAPI_ERR_INVALID     -14   /* Invalid command or parameter */
+#define ATAPI_ERR_ABORTED     -15   /* Command aborted (retry) */
+#define ATAPI_ERR_SENSE_FAIL  -16   /* REQUEST SENSE itself failed */
 
 /* ---- FIS: Register Host to Device (20 bytes) ---- */
 struct fis_reg_h2d {

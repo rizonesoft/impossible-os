@@ -165,7 +165,142 @@ static int atapi_packet_cmd(struct ahci_port *p, const uint8_t *cdb,
     return port_issue_cmd_atapi(p, slot);
 }
 
-/* ---- ATAPI: IDENTIFY PACKET DEVICE ---- */
+/* ============================================================================
+ * REQUEST SENSE — SCSI error information retrieval
+ *
+ * When any ATAPI command fails (ERR bit in Task File Data), the device caches
+ * detailed error information internally.  The driver must issue REQUEST SENSE
+ * (0x03) to retrieve 18 bytes of fixed-format sense data containing:
+ *   Byte 2  bits 3-0 : Sense Key (error category)
+ *   Byte 12          : Additional Sense Code (ASC)
+ *   Byte 13          : Additional Sense Code Qualifier (ASCQ)
+ * ============================================================================ */
+
+/* ---- Sense key name for logging ---- */
+static const char *atapi_sense_name(uint8_t sense_key)
+{
+    switch (sense_key) {
+    case SCSI_SK_NO_SENSE:        return "No Sense";
+    case SCSI_SK_RECOVERED:       return "Recovered";
+    case SCSI_SK_NOT_READY:       return "Not Ready";
+    case SCSI_SK_MEDIUM_ERROR:    return "Medium Error";
+    case SCSI_SK_HARDWARE_ERROR:  return "Hardware Error";
+    case SCSI_SK_ILLEGAL_REQUEST: return "Illegal Request";
+    case SCSI_SK_UNIT_ATTENTION:  return "Unit Attention";
+    case SCSI_SK_DATA_PROTECT:    return "Data Protect";
+    case SCSI_SK_BLANK_CHECK:     return "Blank Check";
+    case SCSI_SK_ABORTED_COMMAND: return "Aborted Command";
+    default:                      return "Unknown";
+    }
+}
+
+/* ---- Classify Sense Key / ASC / ASCQ into an ATAPI error code ---- */
+static int atapi_classify_sense(uint8_t sense_key, uint8_t asc, uint8_t ascq)
+{
+    switch (sense_key) {
+    case SCSI_SK_NO_SENSE:
+        return ATAPI_OK;
+
+    case SCSI_SK_RECOVERED:
+        /* Recovered error — data is valid, log warning */
+        return ATAPI_OK;
+
+    case SCSI_SK_NOT_READY:
+        if (asc == SCSI_ASC_NO_MEDIUM)
+            return ATAPI_ERR_NOMEDIUM;           /* 0x3A/xx — no disc */
+        if (asc == SCSI_ASC_BECOMING_READY) {
+            if (ascq == 0x01)
+                return ATAPI_ERR_BECOMING;        /* 0x04/01 — spinning up */
+            if (ascq == 0x02)
+                return ATAPI_ERR_BECOMING;        /* 0x04/02 — start unit needed */
+            return ATAPI_ERR_BECOMING;            /* 0x04/xx — not ready */
+        }
+        return ATAPI_ERR_NOMEDIUM;               /* Other not-ready */
+
+    case SCSI_SK_MEDIUM_ERROR:
+        return ATAPI_ERR_IO;                     /* Scratched/unreadable media */
+
+    case SCSI_SK_HARDWARE_ERROR:
+        return ATAPI_ERR_IO;                     /* Internal drive failure */
+
+    case SCSI_SK_ILLEGAL_REQUEST:
+        if (asc == SCSI_ASC_INVALID_OPCODE)
+            return ATAPI_ERR_INVALID;            /* 0x20/00 — bad command */
+        if (asc == SCSI_ASC_INVALID_FIELD)
+            return ATAPI_ERR_INVALID;            /* 0x24/00 — bad field */
+        if (asc == 0x26)
+            return ATAPI_ERR_INVALID;            /* 0x26/00 — bad parameter */
+        return ATAPI_ERR_INVALID;
+
+    case SCSI_SK_UNIT_ATTENTION:
+        if (asc == SCSI_ASC_MEDIA_CHANGED)
+            return ATAPI_ERR_MEDIACHANGE;        /* 0x28/00 — disc changed */
+        if (asc == SCSI_ASC_POWER_ON)
+            return ATAPI_ERR_MEDIACHANGE;        /* 0x29/00 — power-on/reset */
+        return ATAPI_ERR_MEDIACHANGE;            /* Other unit attention */
+
+    case SCSI_SK_DATA_PROTECT:
+        return ATAPI_ERR_INVALID;                /* Write-protected */
+
+    case SCSI_SK_BLANK_CHECK:
+        return ATAPI_ERR_IO;                     /* Blank/empty medium area */
+
+    case SCSI_SK_ABORTED_COMMAND:
+        return ATAPI_ERR_ABORTED;                /* Retry candidate */
+
+    default:
+        return ATAPI_ERR_IO;
+    }
+}
+
+/* ---- Issue REQUEST SENSE and return classified error code ---- */
+int atapi_request_sense(struct ahci_port *p)
+{
+    uint8_t cdb[12];
+    uint8_t *sense;
+    uint8_t response_code, sense_key, asc, ascq, add_len;
+    int result;
+
+    sense = (uint8_t *)kmalloc(18);
+    if (!sense) return ATAPI_ERR_SENSE_FAIL;
+    ahci_memset(sense, 0, 18);
+    ahci_memset(cdb, 0, 12);
+
+    /* CDB for REQUEST SENSE: opcode=0x03, allocation_length=18 */
+    cdb[0] = SCSI_REQUEST_SENSE;
+    cdb[4] = 18;                          /* Allocation length */
+
+    if (atapi_packet_cmd(p, cdb, 6, sense, 18, 0) != 0) {
+        kfree(sense);
+        return ATAPI_ERR_SENSE_FAIL;
+    }
+
+    /* Parse fixed-format sense data (SPC-4 §4.5.3) */
+    response_code = sense[0] & 0x7F;
+    sense_key     = sense[2] & 0x0F;
+    add_len       = sense[7];             /* Additional sense length */
+    asc           = (add_len >= 5) ? sense[12] : 0;
+    ascq          = (add_len >= 6) ? sense[13] : 0;
+
+    /* Log sense data */
+    klog(LOG_DEBUG, "ahci",
+         "Port %u: Sense key=0x%x ASC=0x%x ASCQ=0x%x (%s)",
+         (uint64_t)p->port_num, (uint64_t)sense_key,
+         (uint64_t)asc, (uint64_t)ascq, atapi_sense_name(sense_key));
+
+    /* Warn on deferred errors (response code 0x71) */
+    if (response_code == 0x71) {
+        klog(LOG_DEBUG, "ahci",
+             "Port %u: deferred sense (response=0x71)", (uint64_t)p->port_num);
+    }
+
+    kfree(sense);
+
+    result = atapi_classify_sense(sense_key, asc, ascq);
+    return result;
+}
+
+
 int atapi_do_identify(struct ahci_port *p)
 {
     int slot;
