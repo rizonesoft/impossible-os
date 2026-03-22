@@ -31,9 +31,23 @@ static inline uint32_t ntfs_le32(const uint8_t *p)
          | ((uint32_t)p[3] << 24);
 }
 
+static inline void ntfs_le32_write(uint8_t *p, uint32_t val)
+{
+    p[0] = (uint8_t)(val & 0xFF);
+    p[1] = (uint8_t)((val >> 8) & 0xFF);
+    p[2] = (uint8_t)((val >> 16) & 0xFF);
+    p[3] = (uint8_t)((val >> 24) & 0xFF);
+}
+
 static inline uint64_t ntfs_le64(const uint8_t *p)
 {
     return (uint64_t)ntfs_le32(p) | ((uint64_t)ntfs_le32(p + 4) << 32);
+}
+
+static inline void ntfs_le64_write(uint8_t *p, uint64_t val)
+{
+    ntfs_le32_write(p, (uint32_t)(val & 0xFFFFFFFF));
+    ntfs_le32_write(p + 4, (uint32_t)(val >> 32));
 }
 
 /* ---- Memory helpers (no libc available) ---- */

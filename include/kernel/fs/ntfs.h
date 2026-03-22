@@ -597,6 +597,47 @@ uint64_t ntfs_alloc_mft_record(struct ntfs_volume *vol, int is_directory);
  * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
 int ntfs_free_mft_record(struct ntfs_volume *vol, uint64_t inode);
 
+/* ---- Attribute Writer (§12.4) ---- */
+
+/* Encode an array of data runs into the on-disk byte format.
+ * Reverse of ntfs_decode_data_runs() in ntfs_runlist.c:
+ *   header = (off_size << 4) | len_size
+ *   length = unsigned LE (len_size bytes)
+ *   offset = signed LE (off_size bytes), relative to previous LCN
+ * Terminates with 0x00 byte.
+ * Returns bytes written on success, -1 on error. */
+int ntfs_encode_data_runs(const struct ntfs_data_run *runs, int count,
+                          uint8_t *buffer, int buf_size);
+
+/* Add a new attribute to an MFT record.
+ * Inserts at the correct sorted position (attributes sorted by type ID).
+ * Creates resident if data fits, non-resident if too large (allocates
+ * clusters via ntfs_alloc_clusters and encodes data runs).
+ * hdr is updated on return with new used_size.
+ * Returns NTFS_OK on success, NTFS_ERR_* on failure. */
+int ntfs_attr_add(struct ntfs_volume *vol, uint8_t *rec,
+                  struct ntfs_mft_header *hdr, uint32_t frs_size,
+                  uint32_t type, const char *name,
+                  const void *data, uint32_t data_len);
+
+/* Update an existing attribute's content.
+ * Resident: updates in-place, adjusting header lengths.
+ * Non-resident: writes to existing clusters, extends if needed.
+ * Handles resident → non-resident conversion when data outgrows record.
+ * Returns NTFS_OK, NTFS_ERR_NOT_FOUND, or NTFS_ERR_IO. */
+int ntfs_attr_update(struct ntfs_volume *vol, uint8_t *rec,
+                     struct ntfs_mft_header *hdr, uint32_t frs_size,
+                     uint32_t type, const char *name,
+                     const void *data, uint32_t data_len);
+
+/* Remove an attribute from an MFT record.
+ * Frees allocated clusters for non-resident attributes.
+ * Shifts subsequent attributes left to close the gap.
+ * Returns NTFS_OK or NTFS_ERR_NOT_FOUND. */
+int ntfs_attr_remove(struct ntfs_volume *vol, uint8_t *rec,
+                     struct ntfs_mft_header *hdr, uint32_t frs_size,
+                     uint32_t type, const char *name);
+
 /* ---- File Data Reader (§4.2) ---- */
 
 /* Read file data from non-resident runs.
