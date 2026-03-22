@@ -153,8 +153,8 @@ graph TD
 | **1** | `TODO-040.02-AHCI.md`           | §3.1 CLO Recovery           | Command List Override — unblock stuck BSY/DRQ ports                     | Phase 0 (driver)                |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §3.2 Port Error Handling    | Classify fatal vs non-fatal errors, auto-recover + track counters       | Phase 1 (§3.1)                  |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §2.1 NCQ (FPDMA)            | 32-deep command queue — major IOPS improvement                          | Phase 1 (§1.1)                  |   ✅   |
-| **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ⬜   |
-| **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ⬜   |
+| **2** | `TODO-040.02-AHCI.md`           | §5.1 TRIM / Discard         | SSD block reclamation — `DATA SET MANAGEMENT` command                   | Phase 2 (§2.1 for NCQ TRIM)     |   ✅   |
+| **2** | `TODO-040.02-AHCI.md`           | §5.2 Force Unit Access      | Per-command write durability — bypass volatile write cache              | Phase 2 (§2.1 for NCQ FUA)      |   ✅   |
 | **2** | `TODO-040.02-AHCI.md`           | §14.1 4Kn Sector Support    | Native 4096-byte sector handling — **no 512e penalty**                  | Phase 0 (driver)                |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §1.2 MSI / MSI-X            | Message Signaled Interrupts — no IRQ sharing, no spurious IRQs          | Phase 1 (§1.1)                  |   ⬜   |
 | **3** | `TODO-040.02-AHCI.md`           | §4.1 Hot-Plug Detection     | eSATA / swap-bay insertion/removal with auto-mount & toast              | Phase 1 (§1.1)                  |   ⬜   |
