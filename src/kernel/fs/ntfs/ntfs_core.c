@@ -97,12 +97,15 @@ struct ntfs_volume *ntfs_init(const struct blkdev *dev)
         return NULL;
     }
 
-    /* Allocate volume context (< 100 bytes — safe for kmalloc) */
+    /* Allocate volume context — kmalloc does NOT zero memory, so we must
+     * memset to ensure spinlocks (bitmap_lock, mft_alloc_lock) start
+     * unlocked (0) and all pointers/flags start NULL/false. */
     vol = (struct ntfs_volume *)kmalloc(sizeof(struct ntfs_volume));
     if (!vol) {
         klog(LOG_DEBUG, "ntfs", "Failed to allocate ntfs_volume");
         return NULL;
     }
+    ntfs_memset(vol, 0, sizeof(struct ntfs_volume));
 
     vol->dev = dev;
     vol->bytes_per_sector = bps;
