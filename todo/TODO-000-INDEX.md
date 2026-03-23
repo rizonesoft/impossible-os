@@ -43,12 +43,6 @@
 | 040.18 | [ISO 9660 / ECMA-119](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.18-ISO9660.md)          |                |
 | 040.19 | [Joliet / UDF](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.19-Joliet-UDF.md)             |                |
 | 040.20 | [USB Mass Storage Class](010-Kernel-Foundations/TODO-040-Filesystem/TODO-040.20-USB-MSC.md)       |                |
-| 041 | [Filesystem Tools](010-Kernel-Foundations/TODO-041-Filesystem-Tools.md)                                  |                |
-| 041.01 | [Disk Manager](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.01-Disk-Manager.md)       |                |
-| 041.02 | [Disk Health Dashboard](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.02-Disk-Health-Dashboard.md) |                |
-| 041.03 | [Deleted Recovery](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.03-Deleted-Recovery.md)           |                |
-| 041.04 | [ADS Explorer](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.04-ADS-Explorer.md)                   |                |
-| 041.50 | [CMD Diskpart](010-Kernel-Foundations/TODO-041-Filesystem-Tools/TODO-041.50-CMD-Diskpart.md)                   |                |
 | 042 | [Binary System (ELF + PE32+ + EIF)](010-Kernel-Foundations/TODO-042-Binary-System.md)                        |                |
 | 050 | [Registry](010-Kernel-Foundations/TODO-050-Registry.md)                                                 |                |
 | 050.01 | [Registry Engine](010-Kernel-Foundations/TODO-050-Registry/TODO-050.01-Registry-Engine.md)         |                |
@@ -125,6 +119,12 @@
 | 350 | [Control Panel](310-Core-Apps/TODO-350-Settings-Panel.md)         |        |
 | 360 | [Task Manager](310-Core-Apps/TODO-360-Task-Manager.md)            |        |
 | 370 | [Utility Apps](310-Core-Apps/TODO-370-Utility-Apps.md)            |        |
+| 313 | [Filesystem Tools](310-Core-Apps/TODO-313-Filesystem-Tools.md)    |        |
+| 313.01 | [Disk Manager](310-Core-Apps/TODO-313-Filesystem-Tools/TODO-313.01-Disk-Manager.md)                     |        |
+| 313.02 | [Disk Health Dashboard](310-Core-Apps/TODO-313-Filesystem-Tools/TODO-313.02-Disk-Health-Dashboard.md)   |        |
+| 313.03 | [Deleted Recovery](310-Core-Apps/TODO-313-Filesystem-Tools/TODO-313.03-Deleted-Recovery.md)             |        |
+| 313.04 | [ADS Explorer](310-Core-Apps/TODO-313-Filesystem-Tools/TODO-313.04-ADS-Explorer.md)                     |        |
+| 313.50 | [CMD Diskpart](310-Core-Apps/TODO-313-Filesystem-Tools/TODO-313.50-CMD-Diskpart.md)                     |        |
 
 ---
 

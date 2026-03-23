@@ -257,7 +257,15 @@ After all changes:
 - Verify the OS Comparison table includes every feature
 - Verify the dependency graph includes every section
 
-### 11. Commit
+### 11. Format all tables
+
+Run the `/todo-table-format` workflow on the TODO file to standardize all tables:
+- Add ⭐/💎 column to OS Comparison and Priority Order tables
+- Shorten Phase column values (`**3**` → `P3`)
+- Align all table columns
+- Do NOT commit — save only
+
+### 12. Commit
 
 If any fixes were made:
 

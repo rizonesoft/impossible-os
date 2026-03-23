@@ -1,12 +1,13 @@
-# 040.81-Disk-Health-Dashboard — Volume Health Monitoring & SMART Integration
+# 313.02-Disk-Health-Dashboard — Volume Health Monitoring & SMART Integration
 
 > **Goal:** Build a centralized disk and volume health monitoring system. Aggregate
-> filesystem-specific health metrics (dirty flag, bad clusters, MFT fragmentation,
-> free space) and disk-level SMART data into a unified health dashboard panel within
-> the Disk Manager. No operating system provides this at-a-glance view — Windows
-> scatters volume info across Properties → Tools → chkdsk, and Linux relies on
-> separate CLI tools (`smartctl`, `ntfsinfo`, `e2fsck`). Impossible OS shows
-> everything in one GUI panel with computed health scores.
+> filesystem-specific health metrics (dirty flag, bad clusters, journal state, free space,
+> metadata integrity) across **all supported filesystems** (NTFS, FAT32, IXFS, ext4,
+> exFAT, Btrfs, APFS, HFS+) and disk-level SMART data into a unified health dashboard
+> panel within the Disk Manager. No operating system provides this at-a-glance view —
+> Windows scatters volume info across Properties → Tools → chkdsk, and Linux relies on
+> separate CLI tools (`smartctl`, `ntfsinfo`, `e2fsck`). Impossible OS shows every
+> filesystem’s health in one GUI panel with computed health scores.
 
 > [!IMPORTANT]
 > **Origins:** The NTFS Volume Health section (§3) was originally §11.1 in
@@ -14,8 +15,8 @@
 > It was moved here because health monitoring is a cross-filesystem, tool-level
 > concern — not specific to the NTFS driver implementation.
 >
-> → XREF: `TODO-041-Filesystem-Tools.md` (master)
-> → XREF: `TODO-040.80-Disk-Manager.md` (GUI host)
+> → XREF: `TODO-313-Filesystem-Tools.md` (master)
+> → XREF: `TODO-313.01-Disk-Manager.md` (GUI host)
 > → XREF: `TODO-040.08-NTFS.md §7.1` (system metafiles — dirty flag, `$Bitmap`, `$BadClus`)
 
 ---
@@ -28,15 +29,21 @@
 graph TD
     BLKDEV["Block Device Layer<br/>(VirtIO, AHCI) ✅"]
     VFS["VFS + Mount System<br/>TODO-040 §3.1"]
-    NTFS_META["NTFS §7.1 Metafiles<br/>$Volume, $Bitmap, $BadClus ✅"]
-    IXFS["IXFS Base<br/>Superblock, CRC32C ✅"]
-    FAT32["FAT32 Base<br/>BPB, FSInfo ✅"]
-    DISKMGR["TODO-040.80<br/>Disk Manager GUI"]
-    AHCI_DRV["AHCI Driver<br/>TODO-040.02 ✅"]
+    NTFS_META["NTFS §7.1 Metafiles ✅"]
+    IXFS["IXFS Base ✅"]
+    FAT32["FAT32 Base ✅"]
+    EXT4["ext4 Driver"]
+    EXFAT["exFAT Driver"]
+    BTRFS["Btrfs Driver"]
+    DISKMGR["TODO-313.01<br/>Disk Manager GUI"]
+    AHCI_DRV["AHCI Driver ✅"]
 
     A["§1.1 Health API"]
     B["§1.2 FAT32 Health"]
     C["§1.3 IXFS Health"]
+    C2["§1.4 ext4 Health"]
+    C3["§1.5 exFAT Health"]
+    C4["§1.6 Btrfs Health"]
     D["§2.1 Dashboard GUI"]
     E["§3.1 NTFS Dirty Flag"]
     F["§3.2 NTFS Bad Clusters"]
@@ -52,6 +59,9 @@ graph TD
     BLKDEV --> A
     FAT32 --> B
     IXFS --> C
+    EXT4 --> C2
+    EXFAT --> C3
+    BTRFS --> C4
     A --> D
     DISKMGR --> D
     NTFS_META --> E
@@ -67,6 +77,9 @@ graph TD
     J --> D
     B --> D
     C --> D
+    C2 --> D
+    C3 --> D
+    C4 --> D
     AHCI_DRV --> K
     K --> L
     L --> D
@@ -81,17 +94,20 @@ graph TD
 | P1   | §1.1 Health API             | Generic `vol_health_query()` interface     | P0 (VFS)               |   ⬜   |
 | P1   | §1.2 FAT32 Health           | FAT32 BPB + FSInfo + dirty flag checks    | P0 (FAT32)             |   ⬜   |
 | P1   | §1.3 IXFS Health            | IXFS superblock + CRC + journal checks    | P0 (IXFS)              |   ⬜   |
+| P1   | §1.4 ext4 Health            | ext4 superblock + journal + orphan checks | P0 (ext4)              |   ⬜   |
+| P1   | §1.5 exFAT Health           | exFAT boot region + bitmap checks         | P0 (exFAT)             |   ⬜   |
+| P1   | §1.6 Btrfs Health           | Btrfs superblock + checksum tree checks   | P0 (Btrfs)             |   ⬜   |
 | P2   | §2.1 Dashboard GUI          | Health panel in Disk Manager               | P1 (§1.1)              |   ⬜   |
-| P2   | §3.1–3.5 NTFS Health Checks | All 5 NTFS health metrics                 | P1 (§1.1) + NTFS §7.1  |   ⬜   |
+| P2   | §3.1–3.5 NTFS Health Checks | All 5 NTFS deep health metrics            | P1 (§1.1) + NTFS §7.1  |   ⬜   |
 | P2   | §3.6 NTFS Health Score      | Aggregated health score                    | P2 (§3.1–3.5)          |   ⬜   |
 | P3   | §4.1 SMART Read             | AHCI/NVMe SMART data via ATA IDENTIFY     | P0 (AHCI)              |   ⬜   |
 | P3   | §4.2 SMART Panel            | SMART attributes in health dashboard       | P3 (§4.1) + P2 (§2.1)  |   ⬜   |
 | P3   | §5.1 Trend Log              | Historical health metrics in Registry      | P2 (§2.1)              |   ⬜   |
 
 > [!NOTE]
-> **Phase 1** creates the health query API and per-filesystem health checks (FAT32, IXFS).
+> **Phase 1** creates the health query API and per-filesystem health checks for **all 6 writable filesystems** (FAT32, IXFS, ext4, exFAT, Btrfs, + NTFS basic).
 >
-> **Phase 2** delivers the visual dashboard and NTFS-specific health checks — the core exclusive feature.
+> **Phase 2** delivers the visual dashboard and NTFS-specific deep health checks (MFT, mirror, bad clusters).
 >
 > **Phase 3** adds SMART monitoring and historical trend tracking — neither Windows nor Linux integrates these.
 
@@ -145,13 +161,56 @@ graph TD
 - [ ] Register via `vfs_register_health_provider()`
 - [ ] Commit: `"ixfs: health query provider"`
 
+### 1.4 ext4 Health Provider
+
+**Prompt:** Implement `ext4_health_query()` that checks: superblock magic (0xEF53) + version, filesystem state flag (clean/errors detected), error count from superblock `s_error_count`, journal state (JBD2 header clean/recovery needed), orphan inode list (leaked inodes from crashes), last mount time vs last check time (overdue fsck if interval exceeded), and free block/inode percentage. Return per-metric status. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"ext4: health query provider"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Implement `ext4_health_query()` in `src/kernel/fs/ext4.c`
+- [ ] Check superblock magic (0xEF53) + revision level
+- [ ] Check `s_state`: `EXT4_VALID_FS` = ✅, `EXT4_ERROR_FS` = ⚠️
+- [ ] Read `s_error_count`: 0 = ✅, >0 = ⚠️
+- [ ] Check journal (JBD2) header state: clean = ✅, needs recovery = ⚠️
+- [ ] Check orphan inode list: empty = ✅, non-empty = ⚠️ (crash residue)
+- [ ] Free blocks/inodes percentage: >20% = ✅, 10–20% = ⚠️, <10% = ❌
+- [ ] Check mount count vs max mount count (fsck interval)
+- [ ] Register via `vfs_register_health_provider()`
+- [ ] Commit: `"ext4: health query provider"`
+
+### 1.5 exFAT Health Provider
+
+**Prompt:** Implement `exfat_health_query()` that checks: boot region checksum (VBR checksum at sector 11 matches computed checksum), volume dirty flag (VolumeFlags bit 1 in boot sector), media failure flag (VolumeFlags bit 2), allocation bitmap consistency (set bits match cluster chain lengths), and free cluster percentage. exFAT has no journal, so dirty flag is the primary crash indicator. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"exfat: health query provider"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Implement `exfat_health_query()` in `src/kernel/fs/exfat.c`
+- [ ] Verify boot region checksum (sector 11)
+- [ ] Check VolumeFlags bit 1 (VolumeDirty): clear = ✅, set = ⚠️
+- [ ] Check VolumeFlags bit 2 (MediaFailure): clear = ✅, set = ❌
+- [ ] Verify allocation bitmap consistency
+- [ ] Free cluster percentage: >20% = ✅, 10–20% = ⚠️, <10% = ❌
+- [ ] Register via `vfs_register_health_provider()`
+- [ ] Commit: `"exfat: health query provider"`
+
+### 1.6 Btrfs Health Provider
+
+**Prompt:** Implement `btrfs_health_query()` that checks: superblock magic (`_BHRfS_M`) + checksum (CRC32C), generation counter consistency across superblock copies (at 64 KiB, 64 MiB, 256 GiB), log tree state (clean/dirty), device stats error counters (read/write/flush/corruption/generation errors per device), and free space percentage. Btrfs stores error counters per-device in the dev stats tree — these are equivalent to SMART errors but at the filesystem level. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"btrfs: health query provider"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+
+- [ ] Implement `btrfs_health_query()` in `src/kernel/fs/btrfs.c`
+- [ ] Verify superblock magic + CRC32C checksum
+- [ ] Compare generation counters across superblock copies (3 locations)
+- [ ] Check log tree: committed = ✅, dirty = ⚠️
+- [ ] Read device stats tree error counters:
+  - [ ] All zeros = ✅, any read/write errors = ⚠️, corruption errors = ❌
+- [ ] Free space percentage: >20% = ✅, 10–20% = ⚠️, <10% = ❌
+- [ ] Verify chunk tree consistency (allocated vs actual)
+- [ ] Register via `vfs_register_health_provider()`
+- [ ] Commit: `"btrfs: health query provider"`
+
 ---
 
 ## 2. Health Dashboard GUI
 
 ### 2.1 Dashboard Panel
 
-**Prompt:** Create a health dashboard panel that integrates into the Disk Manager (TODO-040.80) as a "Health" tab on the properties side-panel. For each selected volume, show: a health score bar (green/yellow/red gradient), per-metric rows with status icon (✅/⚠️/❌), metric name, and description. Include a "Check Disk" button that launches `chkdsk` (TODO-040 §5.2). The panel auto-refreshes when a different volume is selected. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"apps: health dashboard panel"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
+**Prompt:** Create a health dashboard panel that integrates into the Disk Manager (TODO-313.01) as a "Health" tab on the properties side-panel. For each selected volume, show: a health score bar (green/yellow/red gradient), per-metric rows with status icon (✅/⚠️/❌), metric name, and description. Include a "Check Disk" button that launches `chkdsk` (TODO-040 §5.2). The panel auto-refreshes when a different volume is selected. After completing all items, mark every item as `[x]`, update this prompt to a verification prompt, run `bash scripts/build.sh clean`, and commit as `"apps: health dashboard panel"`. Add notes directly in this TODO section. After implementation, save any gotchas, solutions, and important information to MCP memory (`mcp_memory_create_entities` / `mcp_memory_add_observations`).
 
 - [ ] Create "Health" tab in Disk Manager properties panel
 - [ ] Health score bar: gradient green → yellow → red based on overall status
@@ -302,6 +361,9 @@ graph TD
 | 💎 | 🟡 P2     | §1.1 Health Query API            | Foundation — generic health interface                    |
 | 💎 | 🟡 P2     | §1.2 FAT32 Health Provider       | FAT32 BPB/FSInfo/dirty checks                            |
 | 💎 | 🟡 P2     | §1.3 IXFS Health Provider        | IXFS superblock/CRC/journal checks                       |
+| 💎 | 🟡 P2     | §1.4 ext4 Health Provider        | ext4 superblock/journal/orphan checks                    |
+| 💎 | 🟡 P2     | §1.5 exFAT Health Provider       | exFAT boot checksum/dirty/bitmap checks                  |
+| 💎 | 🟡 P2     | §1.6 Btrfs Health Provider       | Btrfs superblock/device stats/generation checks          |
 | 💎 | 🟡 P2     | §2.1 Dashboard GUI Panel         | Visual health panel in Disk Manager                      |
 | ⭐ | 🟢 P3     | §3.1 NTFS Dirty Flag             | 🚀 NTFS dirty flag check                                |
 | ⭐ | 🟢 P3     | §3.2 NTFS Bad Clusters           | 🚀 `$BadClus` scan                                      |
@@ -319,9 +381,13 @@ graph TD
 
 | ⭐ | Feature                          | 🪟 Windows 11                      | 🐧 Linux                           | 🚀 Impossible OS                                  |
 | -- | -------------------------------- | ---------------------------------- | ----------------------------------- | -------------------------------------------------- |
-| 💎 | Filesystem health checks         | ⚠️ `chkdsk` (CLI, not visual)      | ⚠️ `fsck` (CLI, per-FS)             | ⬜ §1 P2 — unified API + GUI                      |
+| 💎 | Filesystem health checks         | ⚠️ `chkdsk` (CLI, not visual)      | ⚠️ `fsck` (CLI, per-FS)             | ⬜ §1 P2 — unified API + GUI for ALL filesystems    |
 | 💎 | FAT32 health                     | ⚠️ `chkdsk` text output            | ⚠️ `dosfsck` CLI only               | ⬜ §1.2 P2 — visual metrics                       |
-| 💎 | Volume free space warnings       | ✅ Low disk space notification     | ❌ No built-in notification          | ⬜ §3.5 P3 — color-coded in health panel          |
+| 💎 | ext4 health                      | ❌ Not supported                   | ⚠️ `e2fsck` CLI only               | ⬜ §1.4 P2 — journal + orphan + error count       |
+| 💎 | exFAT health                     | ⚠️ `chkdsk` text output            | ❌ No built-in tool                  | ⬜ §1.5 P2 — dirty flag + bitmap check            |
+| 💎 | Btrfs health                     | ❌ Not supported                   | ⚠️ `btrfs device stats` CLI only   | ⬜ §1.6 P2 — device stats + generation checks    |
+| 💎 | Volume free space warnings       | ✅ Low disk space notification     | ❌ No built-in notification          | ⬜ All FS providers — color-coded in health panel |
+| ⭐ | **Unified cross-FS health**      | ❌ Different tool per FS           | ❌ Different tool per FS            | ⬜ **§1 P2 — one API, all FS types** 🚀             |
 | ⭐ | **NTFS health aggregation**      | ❌ Props → Tools → chkdsk          | ❌ `ntfsinfo` CLI only               | ⬜ **§3 P3 — one-panel health** 🚀                |
 | ⭐ | **MFT mirror validation**        | ❌ Hidden in chkdsk output         | ❌ Not available                     | ⬜ **§3.3 P3 — visual mirror status** 🚀          |
 | ⭐ | **MFT fragmentation display**    | ❌ Hidden in `defrag /a` output    | ❌ Not available                     | ⬜ **§3.4 P3 — run count + status** 🚀            |
@@ -331,5 +397,5 @@ graph TD
 | ⭐ | **Computed health score**        | ❌ No per-volume health score      | ❌ No per-volume health score        | ⬜ **§3.6 P3 — green/yellow/red** 🚀              |
 | ⭐ | **Proactive failure warnings**   | ❌ Shows only after failure        | ❌ No built-in prediction            | ⬜ **§5.1 P3 — trend-based warnings** 🚀          |
 
-> **After P2 items:** Impossible OS has a unified health dashboard — basic checks for all filesystems.
-> **After P3 exclusive features:** Exceeds both — NTFS health aggregation, SMART integration, and trend tracking are features no other OS provides in one panel.
+> **After P2 items:** Impossible OS has a unified health dashboard covering ALL 6 writable filesystems.
+> **After P3 exclusive features:** Exceeds both — NTFS deep health, SMART integration, and trend tracking in one panel.

@@ -373,7 +373,15 @@ Add the new TODO to `todo/TODO-000-INDEX.md` in the correct category section:
 - [ ] TODO-NNN.NN — Short Title
 ```
 
-### 11. Commit
+### 11. Format all tables
+
+Run the `/todo-table-format` workflow on the new TODO file to standardize all tables:
+- Add ⭐/💎 column to OS Comparison and Priority Order tables
+- Shorten Phase column values (`**3**` → `P3`)
+- Align all table columns
+- Do NOT commit — save only
+
+### 12. Commit
 
 ```bash
 git add -A && git commit -m "todo: add TODO-NNN.NN Short Title roadmap"

@@ -78,11 +78,21 @@ sdk/                    SDK for user-mode development
 
 Executables and system components follow **Windows 10/11 naming** for consistency with the Win32-compatible API surface:
 
-| Impossible OS | Windows equivalent | Role |
-|---------------|-------------------|------|
-| `cmd.exe` | `cmd.exe` | Command-line interpreter |
-| *(future)* `explorer.exe` | `explorer.exe` | Desktop shell (taskbar, Start menu, file manager) |
-| `hello.exe` | — | Test program |
+| Impossible OS | Windows equivalent | Role | Binary Format |
+|---------------|-------------------|------|:-------------:|
+| `BOOTX64.EFI` | `BOOTX64.EFI` | UEFI bootloader | PE/COFF |
+| `kernel.exe` | `ntoskrnl.exe` | Kernel (Ring 0) | ELF |
+| `cmd.exe` | `cmd.exe` | Command-line interpreter | EIF → PE32+ |
+| `diskpart.exe` | `diskpart.exe` | CLI disk partitioning tool | EIF → PE32+ |
+| *(future)* `explorer.exe` | `explorer.exe` | Desktop shell (taskbar, Start menu, file manager) | EIF → PE32+ |
+| `hello.exe` | — | Test program | EIF → PE32+ |
+
+> [!NOTE]
+> **Binary formats:** The kernel is the **loader**, not the **loaded** — it stays ELF
+> (loaded by the UEFI bootloader). All user-mode apps use **EIF** (Executable Impossible
+> Format, the native format) or **PE32+** (for Windows compatibility). EIF → PE32+ means:
+> start with EIF, add PE32+ support when the Win32 import resolver is complete. Both use
+> the same Win32 API underneath. See `TODO-042-Binary-System.md` for details.
 
 > [!NOTE]
 > The desktop shell currently runs kernel-mode in `src/desktop/`. When it becomes a user-mode process, it should be named **`explorer.exe`** following the Windows convention.
