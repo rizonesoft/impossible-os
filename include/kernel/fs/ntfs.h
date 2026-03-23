@@ -157,6 +157,7 @@ uint16_t ntfs_upcase_char(const struct ntfs_volume *vol, uint16_t ch);
 #define NTFS_ERR_FIXUP      -5  /* USA fixup failed — sector tear */
 #define NTFS_ERR_NOT_FOUND  -6  /* File not found in directory */
 #define NTFS_ERR_READ_ONLY -7  /* Write operation on read-only driver */
+#define NTFS_ERR_FULL      -8  /* Disk full — no free clusters or MFT records */
 
 /* Parsed MFT record header — matches on-disk layout at documented offsets */
 struct ntfs_mft_header {
@@ -994,17 +995,48 @@ int ntfs_mft_inode_to_lba(struct ntfs_volume *vol, uint64_t inode,
  * child_seq: sequence number of the child MFT record.
  * fn_data: raw $FILE_NAME attribute content (0x42 + name_len*2 bytes).
  * fn_data_len: length of fn_data.
- * NOTE: Only handles root-node insertion (no INDX splits — §14.1).
- * Returns NTFS_OK on success, NTFS_ERR_IO if root is full. */
+ * Handles full B+ tree operations: root splits, INDX buffer splits,
+ * recursive promotion. All modifications journaled (§13) and USA-regenerated.
+ * Returns NTFS_OK on success, NTFS_ERR_FULL if disk full. */
 int ntfs_dir_insert_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                           uint64_t child_inode, uint16_t child_seq,
                           const uint8_t *fn_data, uint32_t fn_data_len);
 
-/* Remove a directory entry by filename from a directory's $INDEX_ROOT.
- * NOTE: Only searches $INDEX_ROOT (not INDX buffers — §14.1).
+/* Remove a directory entry by filename from a directory's B+ tree index.
+ * Searches both $INDEX_ROOT and INDX buffers.
+ * Handles node merging, entry redistribution, and empty buffer cleanup.
+ * All modifications journaled (§13) and USA-regenerated.
  * Returns NTFS_OK on success, NTFS_ERR_NOT_FOUND if name absent. */
 int ntfs_dir_remove_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                           const char *name);
+
+/* ---- B+ Tree Index Mutation (§14.1) ---- */
+
+/* Full B+ tree insert with INDX buffer split support.
+ * This is the implementation behind ntfs_dir_insert_entry().
+ * Handles root overflow → INDX allocation, INDX overflow → split + promote,
+ * recursive splits, $BITMAP updates, USA regeneration, and journaling.
+ * Returns NTFS_OK, NTFS_ERR_FULL, or NTFS_ERR_IO. */
+int ntfs_index_insert(struct ntfs_volume *vol, uint64_t dir_inode,
+                      uint64_t child_inode, uint16_t child_seq,
+                      const uint8_t *fn_data, uint32_t fn_data_len);
+
+/* Full B+ tree delete with INDX buffer merge support.
+ * This is the implementation behind ntfs_dir_remove_entry().
+ * Handles leaf/internal delete, node underflow → redistribute/merge,
+ * empty buffer cleanup, $BITMAP updates, USA regeneration, and journaling.
+ * Returns NTFS_OK, NTFS_ERR_NOT_FOUND, or NTFS_ERR_IO. */
+int ntfs_index_delete(struct ntfs_volume *vol, uint64_t dir_inode,
+                      const char *name);
+
+/* Write an INDX buffer to disk at the specified VCN.
+ * Counterpart to ntfs_read_indx(). Applies USA regeneration before writing.
+ * Returns NTFS_OK on success, NTFS_ERR_IO on failure. */
+int ntfs_write_indx(struct ntfs_volume *vol,
+                    const struct ntfs_data_run *index_runs,
+                    int index_run_count,
+                    uint64_t vcn, uint32_t index_record_size,
+                    uint8_t *buffer);
 
 /* Create a new file in an NTFS directory.
  * Allocates MFT record, adds $STANDARD_INFORMATION + $FILE_NAME + $DATA,

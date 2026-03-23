@@ -8,13 +8,9 @@
  *   - ntfs_alloc_clusters() / ntfs_free_clusters()  (§12.1)
  *   - ntfs_regenerate_fixup()  (§12.2)
  *
- * NOTE: Journaling (§13) is NOT implemented yet — these operations are
- * un-journaled.  When §13 is done, wrap each public function in a
- * journal transaction.
- *
- * NOTE: B+ tree node split/merge (§14.1) is NOT implemented yet —
- * directory entry insert/remove only handles the $INDEX_ROOT node.
- * If the root node overflows, NTFS_ERR_IO is returned.
+ * Directory index insert/delete delegate to:
+ *   - ntfs_index_insert()  (ntfs_index_insert.c — §14.1)
+ *   - ntfs_index_delete()  (ntfs_index_delete.c — §14.1)
  * ============================================================================ */
 
 #include "kernel/fs/ntfs.h"
@@ -71,31 +67,6 @@ static int ntfs_strlen(const char *s)
 }
 
 /* Case-insensitive comparison of two ASCII characters */
-static int ntfs_toupper_ch(int c)
-{
-    if (c >= 'a' && c <= 'z') return c - ('a' - 'A');
-    return c;
-}
-
-/* Case-insensitive ASCII name vs UTF-16LE comparison.
- * Returns negative if name < entry, 0 if equal, positive if name > entry. */
-static int ntfs_name_compare(const char *name, int name_len,
-                              const uint8_t *utf16_name, int utf16_len)
-{
-    int i;
-    int min_len = name_len < utf16_len ? name_len : utf16_len;
-
-    for (i = 0; i < min_len; i++) {
-        uint16_t a = (uint16_t)ntfs_toupper_ch((uint8_t)name[i]);
-        uint16_t b = ntfs_le16(utf16_name + i * 2);
-        if (b >= 'a' && b <= 'z') b -= ('a' - 'A');
-
-        if (a != b)
-            return (int)a - (int)b;
-    }
-    return name_len - utf16_len;
-}
-
 /* Build the raw on-disk $STANDARD_INFORMATION content (NTFS 3.x, 72 bytes).
  * All 4 timestamps set to `now`.  DOS attrs set to `dos_attrs`. */
 static void build_std_info(uint8_t *buf, uint64_t now, uint32_t dos_attrs)
@@ -161,37 +132,6 @@ static uint32_t build_file_name(uint8_t *buf, uint64_t parent_ref,
         ntfs_le16_write(buf + 0x42 + i * 2, (uint16_t)(uint8_t)name[i]);
 
     return total;
-}
-
-/* Build a raw index entry for insertion into $INDEX_ROOT.
- * child_ref: full MFT reference of the child file/dir.
- * fn_data: raw $FILE_NAME attribute content.
- * fn_data_len: length of fn_data.
- * Returns the total entry length (aligned to 8 bytes). */
-static uint32_t build_index_entry(uint8_t *buf, uint64_t child_ref,
-                                   const uint8_t *fn_data, uint32_t fn_data_len)
-{
-    uint32_t entry_len = 0x10 + fn_data_len;   /* header + stream */
-    entry_len = (entry_len + 7) & ~7u;          /* align to 8 */
-
-    ntfs_memset(buf, 0, entry_len);
-
-    /* 0x00: MFT reference of the indexed file */
-    ntfs_le64_write(buf + 0x00, child_ref);
-
-    /* 0x08: Entry length */
-    ntfs_le16_write(buf + 0x08, (uint16_t)entry_len);
-
-    /* 0x0A: Stream ($FILE_NAME) length */
-    ntfs_le16_write(buf + 0x0A, (uint16_t)fn_data_len);
-
-    /* 0x0C: Flags (0 = leaf, no sub-node) */
-    buf[0x0C] = 0;
-
-    /* 0x10: $FILE_NAME content */
-    ntfs_memcpy(buf + 0x10, fn_data, fn_data_len);
-
-    return entry_len;
 }
 
 /* Build an empty $INDEX_ROOT attribute content for a new directory.
@@ -286,370 +226,22 @@ int ntfs_dir_insert_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                           uint64_t child_inode, uint16_t child_seq,
                           const uint8_t *fn_data, uint32_t fn_data_len)
 {
-    uint8_t *rec;
-    struct ntfs_mft_header hdr;
-    struct ntfs_attr_header ah;
-    const uint8_t *attr;
-    uint8_t *root_content;
-    uint32_t content_off;
-    uint32_t content_len;
-    uint8_t *node;
-    uint32_t entries_off;
-    uint32_t total_entries_size;
-    uint8_t  new_entry[MAX_INDEX_ENTRY_SIZE];
-    uint32_t new_entry_len;
-    uint64_t child_ref;
-    int rc;
-
-    /* Build the child MFT reference */
-    child_ref = (child_inode & 0x0000FFFFFFFFFFFFULL) |
-                ((uint64_t)child_seq << 48);
-
-    /* Build the new index entry */
-    new_entry_len = build_index_entry(new_entry, child_ref,
-                                       fn_data, fn_data_len);
-
-    /* Allocate and read directory MFT record */
-    rec = (uint8_t *)kmalloc(vol->frs_size);
-    if (!rec)
-        return NTFS_ERR_IO;
-
-    rc = ntfs_read_mft_record(vol, dir_inode, rec, &hdr);
-    if (rc != NTFS_OK) {
-        kfree(rec);
-        return rc;
-    }
-
-    /* Find $INDEX_ROOT named "$I30" */
-    attr = ntfs_attr_find_named(rec, &hdr, NTFS_ATTR_INDEX_ROOT,
-                                "$I30", &ah);
-    if (!attr || ah.non_resident) {
-        kfree(rec);
-        return NTFS_ERR_BAD_MAGIC;
-    }
-
-    content_off = (uint32_t)(attr - rec) + ah.content_offset;
-    content_len = ah.content_length;
-
-    root_content = rec + content_off;
-
-    /* Node header starts at content + 0x10 */
-    node = root_content + 0x10;
-    entries_off = ntfs_le32(node + 0x00);
-    total_entries_size = ntfs_le32(node + 0x04);
-
-    /* Find the sorted insertion point within entries.
-     * Entries are sorted by filename using case-insensitive comparison. */
-    {
-        uint8_t *entries_base = node + entries_off;
-        uint32_t pos = 0;
-        uint32_t insert_pos = 0;  /* Offset within entries area */
-        int found_spot = 0;
-        int child_name_len = fn_data[0x40];
-        const uint8_t *child_name_utf16 = fn_data + 0x42;
-
-        while (pos < total_entries_size) {
-            uint16_t e_len = ntfs_le16(entries_base + pos + 0x08);
-            uint8_t  e_flags = entries_base[pos + 0x0C];
-
-            if (e_len < 0x10) break;  /* Corrupt */
-
-            /* Sentinel (LAST): insert before it */
-            if (e_flags & NTFS_INDEX_ENTRY_LAST) {
-                insert_pos = pos;
-                found_spot = 1;
-                break;
-            }
-
-            /* Compare new entry's name against this entry's name */
-            {
-                const uint8_t *e_fn = entries_base + pos + 0x10;
-                int e_nlen = e_fn[0x40];
-                const uint8_t *e_name = e_fn + 0x42;
-                /* Compare child name (UTF-16) vs entry name (UTF-16) */
-                int cmp;
-                int min_len = child_name_len < e_nlen ?
-                              child_name_len : e_nlen;
-                int ci;
-
-                cmp = 0;
-                for (ci = 0; ci < min_len; ci++) {
-                    uint16_t a = ntfs_le16(child_name_utf16 + ci * 2);
-                    uint16_t b = ntfs_le16(e_name + ci * 2);
-                    if (a >= 'a' && a <= 'z') a -= ('a' - 'A');
-                    if (b >= 'a' && b <= 'z') b -= ('a' - 'A');
-                    if (a != b) { cmp = (int)a - (int)b; break; }
-                }
-                if (cmp == 0)
-                    cmp = child_name_len - e_nlen;
-
-                if (cmp < 0) {
-                    /* New entry sorts before this one */
-                    insert_pos = pos;
-                    found_spot = 1;
-                    break;
-                }
-            }
-
-            pos += e_len;
-        }
-
-        if (!found_spot) {
-            /* Should not happen — sentinel always found */
-            kfree(rec);
-            return NTFS_ERR_IO;
-        }
-
-        /* Check if we have room in the attribute.
-         * The $INDEX_ROOT is a resident attribute inside the MFT record.
-         * We need new_entry_len extra bytes. */
-        {
-            uint32_t new_total_entries = total_entries_size + new_entry_len;
-            uint32_t new_content_len = 0x10 + entries_off + new_total_entries;
-
-            /* Check against MFT record free space */
-            uint32_t old_attr_total = ah.total_length;
-            uint32_t new_attr_total = ah.content_offset + new_content_len;
-            new_attr_total = (new_attr_total + 7) & ~7u;
-            int32_t growth = (int32_t)new_attr_total - (int32_t)old_attr_total;
-
-            if (growth > 0 &&
-                (uint32_t)growth > hdr.alloc_size - hdr.used_size) {
-                klog(LOG_WARN, "ntfs",
-                     "dir_insert: $INDEX_ROOT overflow (need %d bytes, "
-                     "free %u) — B+ tree split needed (§14.1)",
-                     growth,
-                     (uint64_t)(hdr.alloc_size - hdr.used_size));
-                kfree(rec);
-                return NTFS_ERR_IO;  /* Need §14.1 for B+ tree split */
-            }
-        }
-
-        /* Remove the old $INDEX_ROOT, build updated content, re-add it */
-        {
-            uint32_t old_root_size = content_len;
-            uint32_t new_entries_total = total_entries_size + new_entry_len;
-            uint32_t new_root_size = 0x10 + entries_off + new_entries_total;
-            uint8_t *new_root;
-
-            new_root = (uint8_t *)kmalloc(new_root_size);
-            if (!new_root) {
-                kfree(rec);
-                return NTFS_ERR_IO;
-            }
-
-            /* Copy index root header (16 bytes) */
-            ntfs_memcpy(new_root, root_content, 0x10);
-
-            /* Copy node header (entries_off bytes) */
-            ntfs_memcpy(new_root + 0x10, node, entries_off);
-
-            /* Copy entries before insertion point */
-            if (insert_pos > 0)
-                ntfs_memcpy(new_root + 0x10 + entries_off,
-                            entries_base, insert_pos);
-
-            /* Insert new entry */
-            ntfs_memcpy(new_root + 0x10 + entries_off + insert_pos,
-                        new_entry, new_entry_len);
-
-            /* Copy remaining entries (from insert_pos to end) */
-            {
-                uint32_t remaining = total_entries_size - insert_pos;
-                if (remaining > 0)
-                    ntfs_memcpy(new_root + 0x10 + entries_off +
-                                insert_pos + new_entry_len,
-                                entries_base + insert_pos, remaining);
-            }
-
-            /* Update node header: total_size and alloc_size */
-            ntfs_le32_write(new_root + 0x10 + 0x04, new_entries_total);
-            ntfs_le32_write(new_root + 0x10 + 0x08, new_entries_total);
-
-            /* Remove old $INDEX_ROOT and add updated one */
-            rc = ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
-                                   NTFS_ATTR_INDEX_ROOT, "$I30");
-            if (rc != NTFS_OK) {
-                kfree(new_root);
-                kfree(rec);
-                return rc;
-            }
-
-            rc = ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
-                                NTFS_ATTR_INDEX_ROOT, "$I30",
-                                new_root, new_root_size);
-            kfree(new_root);
-
-            if (rc != NTFS_OK) {
-                kfree(rec);
-                return rc;
-            }
-
-            (void)old_root_size;
-        }
-    }
-
-    /* Write updated directory record to disk */
-    rc = ntfs_write_mft_record(vol, dir_inode, rec);
-    kfree(rec);
-
-    return rc;
+    /* Delegate to full B+ tree implementation (§14.1) */
+    return ntfs_index_insert(vol, dir_inode, child_inode, child_seq,
+                              fn_data, fn_data_len);
 }
 
 /* ============================================================================
- * ntfs_dir_remove_entry — Remove a directory entry by filename
- *
- * Reads the directory's MFT record, scans $INDEX_ROOT for the entry,
- * removes it, compacts entries, and writes the record back.
- *
- * LIMITATION: Only searches $INDEX_ROOT (not INDX buffers).
+ * ntfs_dir_remove_entry — Remove a directory entry by filename (§14.1)
  * ============================================================================ */
 
 int ntfs_dir_remove_entry(struct ntfs_volume *vol, uint64_t dir_inode,
                           const char *name)
 {
-    uint8_t *rec;
-    struct ntfs_mft_header hdr;
-    struct ntfs_attr_header ah;
-    const uint8_t *attr;
-    uint8_t *root_content;
-    uint32_t content_off;
-    uint8_t *node;
-    uint32_t entries_off;
-    uint32_t total_entries_size;
-    int name_len;
-    int rc;
-
-    name_len = ntfs_strlen(name);
-    if (name_len == 0)
-        return NTFS_ERR_NOT_FOUND;
-
-    /* Read directory MFT record */
-    rec = (uint8_t *)kmalloc(vol->frs_size);
-    if (!rec)
-        return NTFS_ERR_IO;
-
-    rc = ntfs_read_mft_record(vol, dir_inode, rec, &hdr);
-    if (rc != NTFS_OK) {
-        kfree(rec);
-        return rc;
-    }
-
-    /* Find $INDEX_ROOT "$I30" */
-    attr = ntfs_attr_find_named(rec, &hdr, NTFS_ATTR_INDEX_ROOT,
-                                "$I30", &ah);
-    if (!attr || ah.non_resident) {
-        kfree(rec);
-        return NTFS_ERR_BAD_MAGIC;
-    }
-
-    content_off = (uint32_t)(attr - rec) + ah.content_offset;
-    root_content = rec + content_off;
-
-    node = root_content + 0x10;
-    entries_off = ntfs_le32(node + 0x00);
-    total_entries_size = ntfs_le32(node + 0x04);
-
-    /* Scan entries for the matching filename */
-    {
-        uint8_t *entries_base = node + entries_off;
-        uint32_t pos = 0;
-        int found = 0;
-        uint32_t found_pos = 0;
-        uint16_t found_len = 0;
-
-        while (pos < total_entries_size) {
-            uint16_t e_len = ntfs_le16(entries_base + pos + 0x08);
-            uint8_t  e_flags = entries_base[pos + 0x0C];
-
-            if (e_len < 0x10) break;
-
-            if (e_flags & NTFS_INDEX_ENTRY_LAST)
-                break;  /* Sentinel — name not found */
-
-            /* Compare */
-            {
-                const uint8_t *e_fn = entries_base + pos + 0x10;
-                int e_nlen = e_fn[0x40];
-                const uint8_t *e_name = e_fn + 0x42;
-                int cmp = ntfs_name_compare(name, name_len,
-                                             e_name, e_nlen);
-                if (cmp == 0) {
-                    found = 1;
-                    found_pos = pos;
-                    found_len = e_len;
-                    break;
-                }
-            }
-
-            pos += e_len;
-        }
-
-        if (!found) {
-            kfree(rec);
-            return NTFS_ERR_NOT_FOUND;
-        }
-
-        /* Remove the entry by compacting */
-        {
-            uint32_t new_total = total_entries_size - found_len;
-            uint32_t new_root_size = 0x10 + entries_off + new_total;
-            uint8_t *new_root;
-
-            new_root = (uint8_t *)kmalloc(new_root_size);
-            if (!new_root) {
-                kfree(rec);
-                return NTFS_ERR_IO;
-            }
-
-            /* Copy root header + node header */
-            ntfs_memcpy(new_root, root_content, 0x10 + entries_off);
-
-            /* Copy entries before the removed one */
-            if (found_pos > 0)
-                ntfs_memcpy(new_root + 0x10 + entries_off,
-                            entries_base, found_pos);
-
-            /* Copy entries after the removed one */
-            {
-                uint32_t after_off = found_pos + found_len;
-                uint32_t remaining = total_entries_size - after_off;
-                if (remaining > 0)
-                    ntfs_memcpy(new_root + 0x10 + entries_off + found_pos,
-                                entries_base + after_off, remaining);
-            }
-
-            /* Update node header */
-            ntfs_le32_write(new_root + 0x10 + 0x04, new_total);
-            ntfs_le32_write(new_root + 0x10 + 0x08, new_total);
-
-            /* Replace $INDEX_ROOT attribute */
-            rc = ntfs_attr_remove(vol, rec, &hdr, vol->frs_size,
-                                   NTFS_ATTR_INDEX_ROOT, "$I30");
-            if (rc != NTFS_OK) {
-                kfree(new_root);
-                kfree(rec);
-                return rc;
-            }
-
-            rc = ntfs_attr_add(vol, rec, &hdr, vol->frs_size,
-                                NTFS_ATTR_INDEX_ROOT, "$I30",
-                                new_root, new_root_size);
-            kfree(new_root);
-
-            if (rc != NTFS_OK) {
-                kfree(rec);
-                return rc;
-            }
-        }
-    }
-
-    /* Write updated record to disk */
-    rc = ntfs_write_mft_record(vol, dir_inode, rec);
-    kfree(rec);
-
-    return rc;
+    /* Delegate to full B+ tree implementation (§14.1) */
+    return ntfs_index_delete(vol, dir_inode, name);
 }
+
 
 /* ============================================================================
  * ntfs_create_file — Create a new file in an NTFS directory
