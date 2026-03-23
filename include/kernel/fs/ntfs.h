@@ -913,6 +913,11 @@ struct vfs_fs_driver *ntfs_get_driver(void);
 /* Get the root VFS node for a mounted NTFS volume. */
 struct vfs_node *ntfs_get_root(struct ntfs_volume *vol);
 
+/* Run NTFS self-test suite (§8.1).
+ * Only executes if vol->volume_name is "NTFS_TEST".
+ * Logs pass/fail results to serial via klog. */
+void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root);
+
 /* Enumerate a directory entry by index (for VFS readdir).
  * dir_inode: MFT inode of the directory.
  * index: 0-based index of entry to retrieve.

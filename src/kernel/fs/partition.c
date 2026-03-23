@@ -451,6 +451,10 @@ void partition_mount_filesystems(void)
                          "Mounted NTFS volume on drive %c: (%u sectors)",
                          (uint64_t)next_fat32_letter,
                          ntfs_vol->total_sectors);
+
+                    /* Run self-test if this is the test volume */
+                    ntfs_run_self_test(ntfs_vol, ntfs_root);
+
                     next_fat32_letter++;
                 }
             }

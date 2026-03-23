@@ -161,21 +161,15 @@ else
 fi
 
 # ============================================================================
-# 6. NTFS (16 MiB)
+# 6. NTFS (32 MiB — comprehensive test image)
 # ============================================================================
 IMG="$OUT/ntfs.img"
 if [ ! -f "$IMG" ]; then
-    if command -v mkntfs &>/dev/null && command -v ntfscp &>/dev/null; then
-        log "Creating ntfs.img (16 MiB)"
-        dd if=/dev/zero of="$IMG" bs=1M count=16 2>/dev/null
-        mkntfs -Q -F -L "test_ntfs" "$IMG" >/dev/null 2>&1
-        ntfscp "$IMG" "$SAMPLE_DIR/test.txt" test.txt 2>/dev/null
-        ntfscp "$IMG" "$SAMPLE_DIR/empty.txt" empty.txt 2>/dev/null
-        ntfscp "$IMG" "$SAMPLE_DIR/large.bin" large.bin 2>/dev/null
-        # ntfscp doesn't support mkdir; create formatted-only for subdir test
+    bash "$(dirname "$0")/../scripts/make-ntfs-test.sh" "$OUT" 2>&1
+    if [ -f "$IMG" ]; then
         CREATED=$((CREATED + 1))
     else
-        warn "ntfs.img — mkntfs or ntfscp not found (install ntfs-3g)"
+        warn "ntfs.img — NTFS test image creation failed"
         SKIPPED=$((SKIPPED + 1))
     fi
 else
