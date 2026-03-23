@@ -461,6 +461,41 @@ static void test_many_files(struct vfs_node *root)
         test_fail("many_files", "expected >= 100 entries");
 }
 
+/* ---- Test 10: Long filename (200+ chars, UTF-16LE) ---- */
+
+static void test_long_filename(struct vfs_node *root)
+{
+    /* The test image has a file with a 200+ character name.
+     * Search root for any entry with name length > 100 characters.
+     * This verifies UTF-16LE → ASCII decoding and length handling. */
+    struct vfs_dirent *de;
+    uint32_t idx = 0;
+    int found = 0;
+
+    if (!root || !root->ops || !root->ops->readdir) {
+        test_fail("long_filename", "root readdir unavailable");
+        return;
+    }
+
+    while ((de = root->ops->readdir(root, idx)) != NULL) {
+        uint32_t len = test_strlen(de->name);
+        if (len > 100) {
+            found = 1;
+            klog(LOG_DEBUG, "ntfs-test",
+                 "Long filename found: %u chars",
+                 (uint64_t)len);
+            break;
+        }
+        idx++;
+    }
+
+    if (found)
+        test_pass("long_filename");
+    else
+        test_fail("long_filename",
+                  "no entry > 100 chars (FUSE-created?)");
+}
+
 /* ---- Test 9: Dirty volume flag ---- */
 
 static void test_dirty_flag(struct ntfs_volume *vol)
@@ -509,26 +544,28 @@ void ntfs_run_self_test(struct ntfs_volume *vol, struct vfs_node *root)
          (uint64_t)vol->cluster_size);
 
     /* Core tests (always available — created via ntfscp) */
-    klog(LOG_INFO, "ntfs-test", "Test 1/9: root listing...");
+    klog(LOG_INFO, "ntfs-test", "Test 1/10: root listing...");
     test_root_listing(root);
-    klog(LOG_INFO, "ntfs-test", "Test 2/9: known content...");
+    klog(LOG_INFO, "ntfs-test", "Test 2/10: known content...");
     test_known_content(root);
-    klog(LOG_INFO, "ntfs-test", "Test 3/9: empty file...");
+    klog(LOG_INFO, "ntfs-test", "Test 3/10: empty file...");
     test_empty_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 4/9: resident file...");
+    klog(LOG_INFO, "ntfs-test", "Test 4/10: resident file...");
     test_resident_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 5/9: large file...");
+    klog(LOG_INFO, "ntfs-test", "Test 5/10: large file...");
     test_large_file(root);
-    klog(LOG_INFO, "ntfs-test", "Test 6/9: dirty flag...");
+    klog(LOG_INFO, "ntfs-test", "Test 6/10: dirty flag...");
     test_dirty_flag(vol);
 
     /* Extended tests (require FUSE-created directories) */
-    klog(LOG_INFO, "ntfs-test", "Test 7/9: subdirectory...");
+    klog(LOG_INFO, "ntfs-test", "Test 7/10: subdirectory...");
     test_subdir(root);
-    klog(LOG_INFO, "ntfs-test", "Test 8/9: deep directory...");
+    klog(LOG_INFO, "ntfs-test", "Test 8/10: deep directory...");
     test_deep_dir(root);
-    klog(LOG_INFO, "ntfs-test", "Test 9/9: many files...");
+    klog(LOG_INFO, "ntfs-test", "Test 9/10: many files...");
     test_many_files(root);
+    klog(LOG_INFO, "ntfs-test", "Test 10/10: long filename...");
+    test_long_filename(root);
 
     /* Summary */
     klog(LOG_INFO, "ntfs-test",
