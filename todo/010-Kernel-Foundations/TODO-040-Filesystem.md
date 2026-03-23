@@ -192,13 +192,13 @@ graph TD
 | **3**  | `040.08-NTFS.md`         | §5.3 Directory Lookup             | Full `C:\path\to\file` resolution                            | Phase 3 (§5.2)          | ✅      |
 | **3**  | `040.08-NTFS.md`         | §5.4 Dir Enumeration              | FindFirstFile / FindNextFile for NTFS                        | Phase 3 (§5.1–5.2)      | ✅      |
 | **3**  | `040.08-NTFS.md`         | §3.1 VFS Registration             | Mount NTFS as C: drive                                       | Phase 3 (§5.3) + VFS    | ✅      |
-| **4**  | `040.08-NTFS.md`         | §9.1 LZNT1 Decompression           | Compressed file reading (transparent decompress)             | Phase 3 (§4)           | ✅      |
+| **4**  | `040.08-NTFS.md`         | §9.1 LZNT1 Decompression           | Compressed file reading (transparent decompress)            | Phase 3 (§4)            | ✅      |
 | **4**  | `040.08-NTFS.md`         | §10.1 MFT Cache                    | 64-entry LRU cache with pinned system inodes                | Phase 3 (§2)            | ✅      |
-| **4**  | `040.08-NTFS.md`         | §12.1–12.4 Write Foundations       | Cluster allocator, USA regen, MFT allocator, attr writer     | NTFS read (Phase 3)     | ✅      |
-| **4**  | `040.08-NTFS.md`         | §12.5 File CRUD                    | CreateFile/DeleteFile/Rename on NTFS                         | Phase 4 (§12.1–14)      | ⬜      |
-| **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal               | Transaction engine + dirty-mount recovery replay             | Phase 4 (§12)           | ⬜      |
-| **4**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation               | Directory insert/delete/split/merge                          | Phase 4 (§12)           | ⬜      |
-| **4**  | `040.08-NTFS.md`         | §16 Write Data Path                | File write engine (extend/truncate/overwrite)                | Phase 4 (§12–14)        | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §12.1–12.4 Write Foundations       | Cluster allocator, USA regen, MFT allocator, attr writer    | NTFS read (Phase 3)     | ✅      |
+| **4**  | `040.08-NTFS.md`         | §12.5 File CRUD                    | CreateFile/DeleteFile/Rename on NTFS                        | Phase 4 (§12.1–14)      | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §13 $LogFile Journal               | Transaction engine + dirty-mount recovery replay            | Phase 4 (§12)           | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §14 B+ Tree Mutation               | Directory insert/delete/split/merge                         | Phase 4 (§12)           | ⬜      |
+| **4**  | `040.08-NTFS.md`         | §16 Write Data Path                | File write engine (extend/truncate/overwrite)               | Phase 4 (§12–14)        | ⬜      |
 | **5**  | `040.08-NTFS.md`         | §15 NTFS Boot Volume              | Boot-time NTFS init, system file layout, NTFS formatter      | Phase 4 (NTFS R/W)      | ⬜      |
 | **5**  | `040-Filesystem.md`      | **§6 IXFS → NTFS C: Switch**      | **Migrate C: from IXFS to NTFS — the big switch**            | Phase 5 (§15) + VFS     | ⬜      |
 | **6**  | `040.06-FAT32.md`        | §1 BPB Validation                 | Strict mount validation, dirty volume detect                 | FAT32 base              | ⬜      |

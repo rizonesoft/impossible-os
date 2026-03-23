@@ -121,11 +121,11 @@ graph TD
 | 💎 | P6    | `040.08-NTFS.md`      | §7.1 System Metafiles          | Volume label, dirty flag, `$UpCase`, free space, `$MFTMirr`      | P1 (§2.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §9.1 LZNT1 Decompression       | Read compressed Windows system files                             | P3 (§4.2)                            |   ✅   |
 | 💎 | P6    | `040.08-NTFS.md`      | §10.1 MFT Record Cache         | LRU cache — avoid redundant disk reads                           | P1 (§2.1)                            |   ✅   |
-| 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ⬜   |
+| 💎 | P7    | `040.08-NTFS.md`      | §8.1 Test Suite                | Automated validation with NTFS test images                       | P5 (§6.1)                            |   ✅   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.1 Health Dashboard         | At-a-glance NTFS volume health — **no OS does this**             | P6 (§7.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §11.2 Deleted File Recovery    | Built-in GUI forensic recovery — **Windows needs 3rd-party**     | P6 (§7.1)                            |   ⬜   |
 | ⭐ | P7    | `040.08-NTFS.md`      | §17.1 ADS Explorer             | GUI Alternate Data Streams viewer — **hidden data transparency** | P5 (§3.4)                            |   ⬜   |
-| 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ⬜   |
+| 💎 | P8    | `040.08-NTFS.md`      | §12.1 Cluster Allocator        | `$Bitmap` alloc/free with MFT Zone awareness                     | P6 (§7.1)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.2 USA Regeneration         | Fixup generation for MFT/INDX writes                             | P1 (§2.2)                            |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.3 MFT Record Allocator     | Allocate/free MFT inodes, extend `$MFT`                          | P8 (§12.1)                           |   ✅   |
 | 💎 | P8    | `040.08-NTFS.md`      | §12.4 Attribute Writer         | Add/update/remove attributes, encode data runs                   | P8 (§12.2, §12.3)                    |   ✅   |
